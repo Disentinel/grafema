@@ -1,0 +1,46 @@
+{
+  "compilerOptions": {
+    // Модульная система — ESM
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+
+    // Постепенная миграция
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+
+    // Строгость (включаем постепенно)
+    "strict": true,
+    "noImplicitAny": true,
+    "strictNullChecks": true,
+
+    // Удобства
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "declaration": true,
+    "declarationMap": true,
+
+    // Пути
+    "baseUrl": ".",
+    "outDir": "./dist",
+    "rootDir": ".",
+
+    // Типы
+    "types": ["node"]
+  },
+  "include": [
+    "src/**/*",
+    "types/**/*"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "test",
+    "gui",
+    "rust-engine",
+    "rfguard"
+  ]
+}

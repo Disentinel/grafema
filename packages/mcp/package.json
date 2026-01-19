@@ -1,0 +1,52 @@
+{
+  "name": "@grafema/mcp",
+  "version": "0.1.0-alpha.1",
+  "description": "MCP server for Grafema code analysis toolkit",
+  "type": "module",
+  "main": "./dist/server.js",
+  "types": "./dist/server.d.ts",
+  "bin": {
+    "grafema-mcp": "./dist/server.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/server.d.ts",
+      "import": "./dist/server.js"
+    },
+    "./handlers": {
+      "types": "./dist/handlers.d.ts",
+      "import": "./dist/handlers.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "start": "node dist/server.js"
+  },
+  "keywords": [
+    "grafema",
+    "mcp",
+    "model-context-protocol",
+    "code-analysis"
+  ],
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Disentinel/grafema.git",
+    "directory": "packages/mcp"
+  },
+  "dependencies": {
+    "@grafema/core": "workspace:*",
+    "@grafema/types": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.25.1",
+    "ajv": "^8.17.1"
+  },
+  "devDependencies": {
+    "@types/node": "^25.0.8",
+    "typescript": "^5.9.3"
+  }
+}

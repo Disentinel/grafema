@@ -1,0 +1,55 @@
+{
+  "name": "@grafema/core",
+  "version": "0.1.0-alpha.1",
+  "description": "Core analysis engine for Grafema code analysis toolkit",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./*": {
+      "types": "./dist/*.d.ts",
+      "import": "./dist/*.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist"
+  },
+  "keywords": [
+    "grafema",
+    "code-analysis",
+    "ast",
+    "static-analysis"
+  ],
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Disentinel/grafema.git",
+    "directory": "packages/core"
+  },
+  "dependencies": {
+    "@grafema/rfdb-client": "workspace:*",
+    "@grafema/types": "workspace:*",
+    "@babel/parser": "^7.26.3",
+    "ajv": "^8.17.1",
+    "@babel/traverse": "^7.26.4",
+    "@babel/types": "^7.26.3",
+    "chokidar": "^4.0.3",
+    "minimatch": "^10.1.1",
+    "oxc-parser": "^0.96.0",
+    "yaml": "^2.8.2"
+  },
+  "devDependencies": {
+    "@types/babel__traverse": "^7.20.6",
+    "@types/node": "^25.0.8",
+    "typescript": "^5.9.3"
+  }
+}
