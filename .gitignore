@@ -25,3 +25,12 @@ npm-debug.log*
 
 # pnpm
 .pnpm-store/
+
+# Claude/MCP local configs
+.mcp.json
+.claude/
+.grafema/
+
+# Local project data
+projects/
+tmp/

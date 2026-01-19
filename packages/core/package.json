@@ -37,14 +37,15 @@
     "directory": "packages/core"
   },
   "dependencies": {
-    "@grafema/rfdb-client": "workspace:*",
-    "@grafema/types": "workspace:*",
     "@babel/parser": "^7.26.3",
-    "ajv": "^8.17.1",
     "@babel/traverse": "^7.26.4",
     "@babel/types": "^7.26.3",
+    "@grafema/rfdb-client": "workspace:*",
+    "@grafema/types": "workspace:*",
+    "ajv": "^8.17.1",
     "chokidar": "^4.0.3",
     "minimatch": "^10.1.1",
+    "node-source-walk": "^7.0.1",
     "oxc-parser": "^0.96.0",
     "yaml": "^2.8.2"
   },

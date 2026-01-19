@@ -1,0 +1,9 @@
+{
+  "name": "socketio-fixture",
+  "version": "1.0.0",
+  "main": "index.js",
+  "dependencies": {
+    "socket.io": "^4.0.0",
+    "socket.io-client": "^4.0.0"
+  }
+}

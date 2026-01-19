@@ -1,0 +1,37 @@
+{
+  "plugins": {
+    "discovery": [
+      "GalaxyDemoDiscovery"
+    ],
+    "indexing": [
+      "JSModuleIndexer"
+    ],
+    "analysis": [
+      "JSASTAnalyzer",
+      "ExpressRouteAnalyzer",
+      "SocketIOAnalyzer",
+      "DatabaseAnalyzer",
+      "FetchAnalyzer",
+      "ServiceLayerAnalyzer"
+    ],
+    "enrichment": [
+      "MethodCallResolver",
+      "AliasTracker",
+      "ValueDomainAnalyzer",
+      "MountPointResolver",
+      "PrefixEvaluator"
+    ],
+    "validation": [
+      "CallResolverValidator",
+      "EvalBanValidator",
+      "SQLInjectionValidator",
+      "ShadowingDetector",
+      "GraphConnectivityValidator",
+      "DataFlowValidator"
+    ]
+  },
+  "discovery": {
+    "enabled": true,
+    "customOnly": false
+  }
+}

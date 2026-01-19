@@ -1,0 +1,6 @@
+{
+  "name": "advanced-routing-fixture",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Test fixture for advanced Express routing scenarios"
+}

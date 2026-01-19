@@ -183,7 +183,7 @@ export class RFDBServerBackend {
     }
 
     // Find server binary
-    const projectRoot = join(__dirname, '../../../..');
+    const projectRoot = join(__dirname, '../../../../..');
     const releaseBinary = join(projectRoot, 'rust-engine/target/release/rfdb-server');
     const debugBinary = join(projectRoot, 'rust-engine/target/debug/rfdb-server');
 

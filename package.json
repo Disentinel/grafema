@@ -9,7 +9,9 @@
     "clean": "pnpm -r clean",
     "typecheck": "pnpm -r exec tsc --noEmit",
     "lint": "eslint packages/",
-    "mcp": "node --import tsx packages/mcp/src/server.ts"
+    "mcp": "node --import tsx packages/mcp/src/server.ts",
+    "test": "node --test test/unit/",
+    "test:scenarios": "node --test test/scenarios/"
   },
   "keywords": [
     "grafema",
@@ -25,6 +27,8 @@
     "url": "https://github.com/Disentinel/grafema.git"
   },
   "devDependencies": {
+    "@grafema/core": "workspace:*",
+    "@grafema/types": "workspace:*",
     "@typescript-eslint/eslint-plugin": "^8.53.0",
     "@typescript-eslint/parser": "^8.53.0",
     "eslint": "^9.39.2",

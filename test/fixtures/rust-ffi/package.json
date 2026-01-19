@@ -1,0 +1,6 @@
+{
+  "name": "rust-ffi-fixture",
+  "version": "1.0.0",
+  "description": "Test fixture for Rust FFI plugins",
+  "main": "src/index.js"
+}
