@@ -26,6 +26,7 @@
     "typescript"
   ],
   "license": "Apache-2.0",
+  "author": "Vadim Reshetnikov",
   "repository": {
     "type": "git",
     "url": "https://github.com/Disentinel/grafema.git",
