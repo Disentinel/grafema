@@ -77,6 +77,34 @@ trace_data_flow({ from: "req.body", file: "api/users.js" })
 check_invariant("violation(X) :- node(X, 'CALL'), attr(X, 'name', 'eval')")
 ```
 
+## Configuration
+
+### GitHub Token (for bug reporting)
+
+The `report_issue` tool can automatically create GitHub issues if `GITHUB_TOKEN` is set.
+
+**Option 1: In `.mcp.json`**
+```json
+{
+  "mcpServers": {
+    "grafema": {
+      "command": "npx",
+      "args": ["@grafema/mcp", "--project", "."],
+      "env": {
+        "GITHUB_TOKEN": "ghp_your_token_here"
+      }
+    }
+  }
+}
+```
+
+**Option 2: Environment variable**
+```bash
+export GITHUB_TOKEN=ghp_your_token_here
+```
+
+To create a token: https://github.com/settings/tokens/new (needs `repo` scope for public repos, or `public_repo` for public only).
+
 ## License
 
 Apache-2.0
