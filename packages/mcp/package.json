@@ -41,8 +41,8 @@
     "directory": "packages/mcp"
   },
   "dependencies": {
-    "@grafema/core": "0.1.0-alpha.2",
-    "@grafema/types": "0.1.0-alpha.2",
+    "@grafema/core": "workspace:*",
+    "@grafema/types": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.25.1",
     "ajv": "^8.17.1"
   },

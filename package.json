@@ -11,7 +11,8 @@
     "lint": "eslint packages/",
     "mcp": "node --import tsx packages/mcp/src/server.ts",
     "test": "node --test test/unit/",
-    "test:scenarios": "node --test test/scenarios/"
+    "test:scenarios": "node --test test/scenarios/",
+    "publish:all": "./scripts/publish.sh"
   },
   "keywords": [
     "grafema",
