@@ -1,6 +1,6 @@
 {
   "name": "@grafema/mcp",
-  "version": "0.1.0-alpha.1",
+  "version": "0.1.0-alpha.2",
   "description": "MCP server for Grafema code analysis toolkit",
   "type": "module",
   "main": "./dist/server.js",
@@ -41,8 +41,8 @@
     "directory": "packages/mcp"
   },
   "dependencies": {
-    "@grafema/core": "workspace:*",
-    "@grafema/types": "workspace:*",
+    "@grafema/core": "0.1.0-alpha.2",
+    "@grafema/types": "0.1.0-alpha.2",
     "@modelcontextprotocol/sdk": "^1.25.1",
     "ajv": "^8.17.1"
   },
