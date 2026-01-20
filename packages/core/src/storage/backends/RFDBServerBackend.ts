@@ -175,6 +175,56 @@ export class RFDBServerBackend {
   }
 
   /**
+   * Find RFDB server binary in order of preference:
+   * 1. @grafema/rfdb npm package
+   * 2. rust-engine/target/release (monorepo development)
+   * 3. rust-engine/target/debug
+   */
+  private _findServerBinary(): string | null {
+    // 1. Check @grafema/rfdb npm package
+    try {
+      const rfdbPkg = require.resolve('@grafema/rfdb');
+      const rfdbDir = dirname(rfdbPkg);
+      const platform = process.platform;
+      const arch = process.arch;
+
+      let platformDir: string;
+      if (platform === 'darwin') {
+        platformDir = arch === 'arm64' ? 'darwin-arm64' : 'darwin-x64';
+      } else if (platform === 'linux') {
+        platformDir = arch === 'arm64' ? 'linux-arm64' : 'linux-x64';
+      } else {
+        platformDir = `${platform}-${arch}`;
+      }
+
+      const npmBinary = join(rfdbDir, 'prebuilt', platformDir, 'rfdb-server');
+      if (existsSync(npmBinary)) {
+        console.log(`[RFDBServerBackend] Found binary in @grafema/rfdb: ${npmBinary}`);
+        return npmBinary;
+      }
+    } catch {
+      // @grafema/rfdb not installed
+    }
+
+    // 2. Check rust-engine in monorepo
+    const projectRoot = join(__dirname, '../../../../..');
+    const releaseBinary = join(projectRoot, 'rust-engine/target/release/rfdb-server');
+    if (existsSync(releaseBinary)) {
+      console.log(`[RFDBServerBackend] Found release binary: ${releaseBinary}`);
+      return releaseBinary;
+    }
+
+    // 3. Check debug build
+    const debugBinary = join(projectRoot, 'rust-engine/target/debug/rfdb-server');
+    if (existsSync(debugBinary)) {
+      console.log(`[RFDBServerBackend] Found debug binary: ${debugBinary}`);
+      return debugBinary;
+    }
+
+    return null;
+  }
+
+  /**
    * Start RFDB server process
    */
   private async _startServer(): Promise<void> {
@@ -182,21 +232,14 @@ export class RFDBServerBackend {
       throw new Error('dbPath required to start RFDB server');
     }
 
-    // Find server binary
-    const projectRoot = join(__dirname, '../../../../..');
-    const releaseBinary = join(projectRoot, 'rust-engine/target/release/rfdb-server');
-    const debugBinary = join(projectRoot, 'rust-engine/target/debug/rfdb-server');
-
-    let binaryPath = existsSync(releaseBinary) ? releaseBinary : debugBinary;
-
-    if (!existsSync(binaryPath)) {
-      console.log(`[RFDBServerBackend] Server binary not found, building...`);
-      const { execSync } = await import('child_process');
-      execSync('cargo build --bin rfdb-server', {
-        cwd: join(projectRoot, 'rust-engine'),
-        stdio: 'inherit',
-      });
-      binaryPath = debugBinary;
+    // Find server binary - check multiple locations
+    const binaryPath = this._findServerBinary();
+    if (!binaryPath) {
+      throw new Error(
+        'RFDB server binary not found.\n' +
+        'Install @grafema/rfdb: npm install @grafema/rfdb\n' +
+        'Or build from source: cargo build --release --bin rfdb-server'
+      );
     }
 
     // Remove stale socket
