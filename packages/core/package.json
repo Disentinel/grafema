@@ -1,6 +1,6 @@
 {
   "name": "@grafema/core",
-  "version": "0.1.0-alpha.4",
+  "version": "0.1.0-alpha.5",
   "description": "Core analysis engine for Grafema code analysis toolkit",
   "type": "module",
   "main": "./dist/index.js",
@@ -48,6 +48,9 @@
     "node-source-walk": "^7.0.1",
     "oxc-parser": "^0.96.0",
     "yaml": "^2.8.2"
+  },
+  "optionalDependencies": {
+    "@grafema/rfdb": "^0.1.0-alpha.2"
   },
   "devDependencies": {
     "@types/babel__traverse": "^7.20.6",
