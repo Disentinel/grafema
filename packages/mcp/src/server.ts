@@ -33,8 +33,9 @@ import {
   handleDeleteGuarantee,
   handleGetCoverage,
   handleGetDocumentation,
+  handleReportIssue,
 } from './handlers.js';
-import type { ToolResult } from './types.js';
+import type { ToolResult, ReportIssueArgs, GetDocumentationArgs } from './types.js';
 
 // Initialize from command line args
 initializeFromArgs();
@@ -140,7 +141,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
         break;
 
       case 'get_documentation':
-        result = await handleGetDocumentation(args as any);
+        result = await handleGetDocumentation(args as GetDocumentationArgs);
+        break;
+
+      case 'report_issue':
+        result = await handleReportIssue(args as unknown as ReportIssueArgs);
         break;
 
       default:

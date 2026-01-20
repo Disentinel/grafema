@@ -395,4 +395,44 @@ Examples:
       },
     },
   },
+  {
+    name: 'report_issue',
+    description: `Report a bug or issue with Grafema to GitHub.
+
+Use this tool when you encounter:
+- Unexpected errors or crashes
+- Incorrect analysis results
+- Missing features that should exist
+- Documentation issues
+
+The tool will create a GitHub issue automatically if GITHUB_TOKEN is configured.
+If not configured, it will return a pre-formatted issue template that the user
+can manually submit at https://github.com/Disentinel/grafema/issues/new
+
+IMPORTANT: Always ask the user for permission before reporting an issue.
+Include relevant context: error messages, file paths, query used, etc.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        title: {
+          type: 'string',
+          description: 'Brief issue title (e.g., "Query returns empty results for FUNCTION nodes")',
+        },
+        description: {
+          type: 'string',
+          description: 'Detailed description of the issue',
+        },
+        context: {
+          type: 'string',
+          description: 'Relevant context: error messages, queries, file paths, etc.',
+        },
+        labels: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Labels: bug, enhancement, documentation, question',
+        },
+      },
+      required: ['title', 'description'],
+    },
+  },
 ];

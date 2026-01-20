@@ -235,3 +235,11 @@ export interface AnalyzerSuggestion {
   reason: string;
   priority: number;
 }
+
+// === BUG REPORTING ===
+export interface ReportIssueArgs {
+  title: string;
+  description: string;
+  context?: string;
+  labels?: string[];
+}
