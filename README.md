@@ -23,6 +23,7 @@ Key capabilities:
 | [@grafema/core](./packages/core) | Core analysis engine |
 | [@grafema/mcp](./packages/mcp) | MCP server for AI assistants |
 | [@grafema/rfdb-client](./packages/rfdb) | RFDB graph database client |
+| [@grafema/rfdb](https://github.com/Disentinel/rfdb) | RFDB server (optional, for persistent storage) |
 
 ## Quick Start
 
@@ -34,24 +35,65 @@ pnpm install
 pnpm build
 ```
 
-### Using with Claude
+### Using with Claude Code
 
-```bash
-npx @grafema/mcp --project /path/to/your/project
+Add to your `.mcp.json` in the project root:
+
+```json
+{
+  "mcpServers": {
+    "grafema": {
+      "command": "npx",
+      "args": ["@grafema/mcp", "--project", "."]
+    }
+  }
+}
+```
+
+Or for Claude Desktop (`~/.config/claude/claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "grafema": {
+      "command": "npx",
+      "args": ["@grafema/mcp", "--project", "/path/to/project"]
+    }
+  }
+}
 ```
 
 ### Programmatic usage
 
 ```typescript
-import { Orchestrator, RFDBServerBackend } from '@grafema/core';
+import { Orchestrator } from '@grafema/core';
 
+// Default: in-memory backend (no persistence, works out of the box)
 const orchestrator = new Orchestrator({
   rootDir: './src',
-  backend: new RFDBServerBackend({ socketPath: '/tmp/rfdb.sock' })
 });
 
 await orchestrator.initialize();
 await orchestrator.run();
+```
+
+### With RFDB (optional, for persistent storage)
+
+```typescript
+import { Orchestrator, RFDBServerBackend } from '@grafema/core';
+
+// Requires rfdb-server to be running
+const orchestrator = new Orchestrator({
+  rootDir: './src',
+  backend: new RFDBServerBackend({ socketPath: '/tmp/rfdb.sock' }),
+});
+```
+
+To start RFDB server:
+
+```bash
+npm install @grafema/rfdb
+npx rfdb-server --socket /tmp/rfdb.sock --data-dir ./rfdb-data
 ```
 
 ## Requirements

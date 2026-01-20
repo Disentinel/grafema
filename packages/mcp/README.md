@@ -22,16 +22,31 @@ Model Context Protocol (MCP) server that exposes Grafema's code analysis capabil
 npx grafema-mcp --project /path/to/your/project
 ```
 
-### Claude Desktop configuration
+### Claude Code configuration
 
-Add to your Claude Desktop config (`~/.config/claude/claude_desktop_config.json`):
+Add to your project's `.mcp.json`:
 
 ```json
 {
   "mcpServers": {
     "grafema": {
       "command": "npx",
-      "args": ["grafema-mcp", "--project", "/path/to/project"]
+      "args": ["@grafema/mcp", "--project", "."]
+    }
+  }
+}
+```
+
+### Claude Desktop configuration
+
+Add to `~/.config/claude/claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "grafema": {
+      "command": "npx",
+      "args": ["@grafema/mcp", "--project", "/path/to/project"]
     }
   }
 }

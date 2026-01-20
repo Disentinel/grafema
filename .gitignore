@@ -34,3 +34,7 @@ npm-debug.log*
 # Local project data
 projects/
 tmp/
+
+# NPM auth
+.npmrc.local
+.rfguard/
