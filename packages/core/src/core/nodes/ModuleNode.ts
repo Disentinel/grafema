@@ -1,9 +1,19 @@
 /**
  * ModuleNode - contract for MODULE node
+ *
+ * Supports two creation modes:
+ * 1. createWithContext() - NEW: Uses ScopeContext for semantic IDs
+ * 2. create() - LEGACY: Uses hash-based IDs for backward compatibility
+ *
+ * Semantic ID format: {file}->global->MODULE->module
+ * Example: src/index.js->global->MODULE->module
+ *
+ * Each file has exactly one MODULE node. The name in the ID is always "module".
  */
 
 import { createHash } from 'crypto';
 import type { BaseNodeRecord } from '@grafema/types';
+import { computeSemanticId, type ScopeContext } from '../SemanticId.js';
 
 interface ModuleNodeRecord extends BaseNodeRecord {
   type: 'MODULE';
@@ -12,6 +22,14 @@ interface ModuleNodeRecord extends BaseNodeRecord {
 }
 
 interface ModuleNodeOptions {
+  isTest?: boolean;
+}
+
+/**
+ * Options for createWithContext
+ */
+interface ModuleContextOptions {
+  contentHash?: string;
   isTest?: boolean;
 }
 
@@ -45,6 +63,38 @@ export class ModuleNode {
       file: filePath,
       line: 0,
       contentHash,
+      isTest: options.isTest || false
+    };
+  }
+
+  /**
+   * Create MODULE node with semantic ID (NEW API)
+   *
+   * Uses ScopeContext for stable identifiers that don't change
+   * when file content changes (unlike hash-based IDs).
+   *
+   * Each file has exactly one MODULE node.
+   * The name in the semantic ID is always "module".
+   *
+   * @param context - Scope context with file path (relative to project root)
+   * @param options - Optional contentHash and isTest flag
+   * @returns ModuleNodeRecord with semantic ID
+   */
+  static createWithContext(
+    context: ScopeContext,
+    options: ModuleContextOptions = {}
+  ): ModuleNodeRecord {
+    if (!context.file) throw new Error('ModuleNode.createWithContext: file is required in context');
+
+    const id = computeSemanticId(this.TYPE, 'module', context);
+
+    return {
+      id,
+      type: this.TYPE,
+      name: context.file,
+      file: context.file,
+      line: 0,
+      contentHash: options.contentHash || '',
       isTest: options.isTest || false
     };
   }

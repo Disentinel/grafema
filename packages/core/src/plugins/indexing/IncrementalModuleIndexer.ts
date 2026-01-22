@@ -183,12 +183,13 @@ export class IncrementalModuleIndexer extends Plugin {
         if (processed.has(file)) continue;
         processed.add(file);
 
-        // Create MODULE node
+        // Create MODULE node with semantic ID
         const fileHash = this.calculateFileHash(file);
         const relativePath = relative(projectPath, file);
+        const semanticId = `${relativePath}->global->MODULE->module`;
 
         const moduleNode: NodeRecord = {
-          id: `${file}:MODULE:${file}:0`,
+          id: semanticId,
           type: 'MODULE',
           name: relativePath,
           file: file,
@@ -211,10 +212,12 @@ export class IncrementalModuleIndexer extends Plugin {
         const imports = this.parseImports(file, projectPath);
         totalImportsParsed += imports.length;
         for (const importFile of imports) {
-          // Store for later edge creation
+          // Store for later edge creation with semantic ID format
+          const importRelativePath = relative(projectPath, importFile);
+          const importSemanticId = `${importRelativePath}->global->MODULE->module`;
           pendingImports.push({
             src: moduleNode.id,
-            dst: `${importFile}:MODULE:${importFile}:0`
+            dst: importSemanticId
           });
 
           if (!processed.has(importFile)) {

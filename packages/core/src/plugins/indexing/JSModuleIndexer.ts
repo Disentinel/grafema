@@ -4,7 +4,7 @@
  */
 
 import { readFileSync, existsSync } from 'fs';
-import { join, resolve, dirname } from 'path';
+import { join, resolve, dirname, relative, basename } from 'path';
 import { createHash } from 'crypto';
 import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
@@ -279,16 +279,23 @@ export class JSModuleIndexer extends Plugin {
           continue;
         }
 
-        // Создаём MODULE ноду для текущего файла
+        // Создаём MODULE ноду для текущего файла с semantic ID
         const fileHash = this.calculateFileHash(currentFile);
-        const moduleId = `MODULE:${fileHash}`; // StableID-based for deduplication
+        const relativePath = relative(projectPath, currentFile) || basename(currentFile);
+        const semanticId = `${relativePath}->global->MODULE->module`;
 
-        // Используем NodeFactory для создания MODULE ноды
+        // Construct MODULE node manually to preserve absolute file path for analyzers
         const isTest = this.isTestFile(currentFile);
-        const moduleNode = NodeFactory.createModule(currentFile, projectPath, {
-          contentHash: fileHash ?? undefined,
+        const moduleNode = {
+          id: semanticId,
+          type: 'MODULE' as const,
+          name: relativePath,
+          file: currentFile, // Keep absolute path for file reading in analyzers
+          line: 0,
+          contentHash: fileHash || '',
           isTest
-        });
+        };
+        const moduleId = moduleNode.id;
 
         console.log(`[JSModuleIndexer] Creating MODULE node: ${moduleNode.id}`);
         await graph.addNode(moduleNode);
@@ -322,8 +329,9 @@ export class JSModuleIndexer extends Plugin {
           }
 
           // Queue DEPENDS_ON edges for later (after all nodes exist)
-          const depHash = this.calculateFileHash(resolvedDep);
-          const depModuleId = `MODULE:${depHash}`;
+          // Use semantic ID format for dependency reference
+          const depRelativePath = relative(projectPath, resolvedDep) || basename(resolvedDep);
+          const depModuleId = `${depRelativePath}->global->MODULE->module`;
           pendingDependsOnEdges.push({
             src: moduleId,
             dst: depModuleId,
