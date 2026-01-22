@@ -170,9 +170,10 @@ export class VersionManager {
       return `${type}:${name}:${file}:${line || 0}`;
     }
 
-    // Для MODULE - только file
+    // Для MODULE - use semantic ID format with name (relative path)
     if (type === 'MODULE') {
-      return `MODULE:${file}`;
+      // name stores the relative path for MODULE nodes
+      return `${name}->global->MODULE->module`;
     }
 
     // Для SERVICE - используем имя или file

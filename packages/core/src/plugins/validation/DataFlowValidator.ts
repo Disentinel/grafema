@@ -94,11 +94,11 @@ export class DataFlowValidator extends Plugin {
     const issues: DataFlowIssue[] = [];
     const leafTypes = new Set([
       'LITERAL',
-      'EXTERNAL_STDIO',
-      'EXTERNAL_DATABASE',
-      'EXTERNAL_NETWORK',
-      'EXTERNAL_FILESYSTEM',
-      'EVENT_LISTENER',
+      'net:stdio',
+      'db:query',
+      'net:request',
+      'fs:operation',
+      'event:listener',
       'CLASS',          // NewExpression - конструкторы классов
       'FUNCTION',       // Arrow functions и function expressions
       'METHOD_CALL',    // Вызовы методов (промежуточные узлы)

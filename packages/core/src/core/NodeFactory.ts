@@ -48,6 +48,7 @@ import {
 } from './nodes/index.js';
 
 import type { BaseNodeRecord } from '@grafema/types';
+import type { ScopeContext } from './SemanticId.js';
 
 interface ServiceOptions {
   version?: string;
@@ -72,6 +73,11 @@ interface EntrypointOptions {
 }
 
 interface ModuleOptions {
+  contentHash?: string;
+  isTest?: boolean;
+}
+
+interface ModuleContextOptions {
   contentHash?: string;
   isTest?: boolean;
 }
@@ -237,7 +243,7 @@ export class NodeFactory {
   }
 
   /**
-   * Create MODULE node
+   * Create MODULE node (LEGACY)
    */
   static createModule(filePath: string, projectPath: string, options: ModuleOptions = {}) {
     if (!filePath) throw new Error('NodeFactory.createModule: filePath is required');
@@ -247,6 +253,19 @@ export class NodeFactory {
     const relativePath = relative(projectPath, filePath) || basename(filePath);
 
     return ModuleNode.create(filePath, relativePath, contentHash, options);
+  }
+
+  /**
+   * Create MODULE node with semantic ID (NEW API)
+   *
+   * Uses ScopeContext for stable identifiers.
+   *
+   * @param context - Scope context with file path (relative to project root)
+   * @param options - Optional contentHash and isTest flag
+   * @returns ModuleNodeRecord with semantic ID
+   */
+  static createModuleWithContext(context: ScopeContext, options: ModuleContextOptions = {}) {
+    return ModuleNode.createWithContext(context, options);
   }
 
   /**

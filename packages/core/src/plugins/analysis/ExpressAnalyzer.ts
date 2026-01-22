@@ -6,12 +6,13 @@
 import { readFileSync } from 'fs';
 import { parse, ParserPlugin } from '@babel/parser';
 import traverseModule from '@babel/traverse';
-import { dirname, resolve } from 'path';
+import { dirname, resolve, relative } from 'path';
 import type { CallExpression, ImportDeclaration, StringLiteral, TemplateLiteral, Identifier, MemberExpression } from '@babel/types';
 import type { NodePath } from '@babel/traverse';
 import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { NodeRecord } from '@grafema/types';
+import { NetworkRequestNode } from '../../core/nodes/NetworkRequestNode.js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const traverse = (traverseModule as any).default || traverseModule;
@@ -80,14 +81,9 @@ export class ExpressAnalyzer extends Plugin {
     try {
       const { graph } = context;
 
-      // Создаём net:request ноду (дедупликация в GraphBackend)
-      const networkId = 'net:request#__network__';
-      await graph.addNode({
-        id: networkId,
-        type: 'net:request',
-        name: '__network__',
-        description: 'External HTTP network'
-      });
+      // Create net:request singleton (GraphBackend handles deduplication)
+      const networkNode = NetworkRequestNode.create();
+      await graph.addNode(networkNode);
 
       // Получаем все MODULE ноды
       const modules = await this.getModules(graph);
@@ -98,7 +94,7 @@ export class ExpressAnalyzer extends Plugin {
 
       // Анализируем каждый модуль
       for (const module of modules) {
-        const result = await this.analyzeModule(module, graph, networkId);
+        const result = await this.analyzeModule(module, graph, networkNode.id);
         endpointsCreated += result.endpoints;
         mountPointsCreated += result.mountPoints;
         edgesCreated += result.edges;
@@ -382,7 +378,18 @@ export class ExpressAnalyzer extends Plugin {
 
     // Если нашли целевой модуль, создаем MOUNTS ребро
     if (targetModulePath) {
-      const targetModuleId = `${targetModulePath}:MODULE:${targetModulePath}:0`;
+      // Derive project root from module's absolute and relative paths
+      // module.file is absolute path, module.name is relative path
+      const moduleAbsPath = module.file!;
+      const moduleRelPath = module.name!;
+      // projectRoot = absolute path minus relative path suffix
+      const projectRoot = moduleAbsPath.endsWith(moduleRelPath)
+        ? moduleAbsPath.slice(0, moduleAbsPath.length - moduleRelPath.length)
+        : dirname(moduleAbsPath); // fallback
+
+      // Convert target absolute path to relative path for semantic ID
+      const targetRelativePath = relative(projectRoot, targetModulePath);
+      const targetModuleId = `${targetRelativePath}->global->MODULE->module`;
 
       // Проверяем что модуль существует в графе
       const targetModule = await graph.getNode(targetModuleId);
