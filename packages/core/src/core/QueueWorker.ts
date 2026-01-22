@@ -18,6 +18,7 @@ import type * as t from '@babel/types';
 
 import { RFDBClient } from '@grafema/rfdb-client';
 import type { WireNode, WireEdge } from '@grafema/types';
+import { ClassNode } from './nodes/ClassNode.js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const traverse = (traverseModule as any).default || traverseModule;
@@ -322,18 +323,25 @@ async function analyzeJSAST(
 
       const className = node.id.name;
       const line = node.loc?.start.line || 0;
-      const classId = `CLASS#${className}#${filePath}#${line}`;
+      const column = node.loc?.start.column || 0;
 
-      nodes.push({
-        id: classId,
-        type: 'CLASS',
-        name: className,
-        file: filePath,
+      // Extract superClass name
+      const superClassName = node.superClass && node.superClass.type === 'Identifier'
+        ? node.superClass.name
+        : null;
+
+      // Create CLASS node using ClassNode.create() (legacy format for workers)
+      const classRecord = ClassNode.create(
+        className,
+        filePath,
         line,
-        superClass: node.superClass && node.superClass.type === 'Identifier' ? node.superClass.name : null,
-      });
+        column,
+        { superClass: superClassName || undefined }
+      );
 
-      edges.push({ src: moduleId, dst: classId, type: 'CONTAINS' });
+      nodes.push(classRecord as unknown as GraphNode);
+
+      edges.push({ src: moduleId, dst: classRecord.id, type: 'CONTAINS' });
 
       // Extract methods
       node.body.body.forEach((member) => {
@@ -354,7 +362,7 @@ async function analyzeJSAST(
             isConstructor: member.kind === 'constructor',
           });
 
-          edges.push({ src: classId, dst: methodId, type: 'CONTAINS' });
+          edges.push({ src: classRecord.id, dst: methodId, type: 'CONTAINS' });
         }
       });
     },

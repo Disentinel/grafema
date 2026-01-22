@@ -25,22 +25,15 @@ import type { AnalyzeFunctionBodyCallback } from './FunctionVisitor.js';
 import type { DecoratorInfo } from '../types.js';
 import { ExpressionEvaluator } from '../ExpressionEvaluator.js';
 import { ScopeTracker } from '../../../../core/ScopeTracker.js';
+import { ClassNode, type ClassNodeRecord } from '../../../../core/nodes/ClassNode.js';
 import { computeSemanticId } from '../../../../core/SemanticId.js';
 
 /**
  * Class declaration info
+ * Extends ClassNodeRecord with TypeScript-specific metadata
  */
-interface ClassInfo {
-  id: string;
-  semanticId?: string;
-  type: 'CLASS';
-  name: string;
-  file: string;
-  line: number;
-  column: number;
-  superClass: string | null;
-  implements?: string[];  // TypeScript implements
-  methods: string[];
+interface ClassInfo extends ClassNodeRecord {
+  implements?: string[];  // TypeScript implements (visitor extension)
 }
 
 /**
@@ -81,19 +74,19 @@ interface ScopeInfo {
 
 export class ClassVisitor extends ASTVisitor {
   private analyzeFunctionBody: AnalyzeFunctionBodyCallback;
-  private scopeTracker?: ScopeTracker;
+  private scopeTracker: ScopeTracker;
 
   /**
    * @param module - Current module being analyzed
    * @param collections - Must contain arrays and counter refs
    * @param analyzeFunctionBody - Callback to analyze method internals
-   * @param scopeTracker - Optional ScopeTracker for semantic ID generation
+   * @param scopeTracker - REQUIRED for semantic ID generation
    */
   constructor(
     module: VisitorModule,
     collections: VisitorCollections,
     analyzeFunctionBody: AnalyzeFunctionBodyCallback,
-    scopeTracker?: ScopeTracker
+    scopeTracker: ScopeTracker  // REQUIRED, not optional
   ) {
     super(module, collections);
     this.analyzeFunctionBody = analyzeFunctionBody;
@@ -168,17 +161,18 @@ export class ClassVisitor extends ASTVisitor {
 
         const className = classNode.id.name;
 
-        // Create CLASS node for declaration
-        const classId = `CLASS#${className}#${module.file}#${classNode.loc!.start.line}`;
+        // Extract superClass name
         const superClassName = classNode.superClass?.type === 'Identifier'
           ? (classNode.superClass as Identifier).name
           : null;
 
-        // Generate semantic ID if scopeTracker available
-        let classSemanticId: string | undefined;
-        if (scopeTracker) {
-          classSemanticId = computeSemanticId('CLASS', className, scopeTracker.getContext());
-        }
+        // Create CLASS node using NodeFactory with semantic ID
+        const classRecord = ClassNode.createWithContext(
+          className,
+          scopeTracker.getContext(),
+          { line: classNode.loc!.start.line, column: classNode.loc!.start.column },
+          { superClass: superClassName || undefined }
+        );
 
         // Extract implements (TypeScript)
         const implementsNames: string[] = [];
@@ -191,29 +185,20 @@ export class ClassVisitor extends ASTVisitor {
           }
         }
 
+        // Store ClassNodeRecord + TypeScript metadata
         (classDeclarations as ClassInfo[]).push({
-          id: classId,
-          semanticId: classSemanticId,
-          type: 'CLASS',
-          name: className,
-          file: module.file,
-          line: classNode.loc!.start.line,
-          column: classNode.loc!.start.column,
-          superClass: superClassName,
-          implements: implementsNames.length > 0 ? implementsNames : undefined,
-          methods: []
+          ...classRecord,
+          implements: implementsNames.length > 0 ? implementsNames : undefined
         });
 
         // Enter class scope for tracking methods
-        if (scopeTracker) {
-          scopeTracker.enterScope(className, 'CLASS');
-        }
+        scopeTracker.enterScope(className, 'CLASS');
 
         // Extract class decorators
         const classNodeWithDecorators = classNode as ClassDeclaration & { decorators?: Decorator[] };
         if (classNodeWithDecorators.decorators && classNodeWithDecorators.decorators.length > 0 && decorators) {
           for (const decorator of classNodeWithDecorators.decorators) {
-            const decoratorInfo = this.extractDecoratorInfo(decorator, classId, 'CLASS', module);
+            const decoratorInfo = this.extractDecoratorInfo(decorator, classRecord.id, 'CLASS', module);
             if (decoratorInfo) {
               (decorators as DecoratorInfo[]).push(decoratorInfo);
             }
@@ -260,11 +245,8 @@ export class ClassVisitor extends ASTVisitor {
 
               const functionId = `FUNCTION#${className}.${propName}#${module.file}#${propNode.loc!.start.line}:${propNode.loc!.start.column}`;
 
-              // Generate semantic ID if scopeTracker available
-              let methodSemanticId: string | undefined;
-              if (scopeTracker) {
-                methodSemanticId = computeSemanticId('FUNCTION', propName, scopeTracker.getContext());
-              }
+              // Generate semantic ID using scopeTracker
+              const methodSemanticId = computeSemanticId('FUNCTION', propName, scopeTracker.getContext());
 
               // Add method to class methods list for CONTAINS edges
               currentClass.methods.push(functionId);
@@ -286,15 +268,11 @@ export class ClassVisitor extends ASTVisitor {
               });
 
               // Enter method scope for tracking
-              if (scopeTracker) {
-                scopeTracker.enterScope(propName, 'FUNCTION');
-              }
+              scopeTracker.enterScope(propName, 'FUNCTION');
 
               // Create SCOPE for property function body
               const propBodyScopeId = `SCOPE#${className}.${propName}:body#${module.file}#${propNode.loc!.start.line}`;
-              const propBodySemanticId = scopeTracker
-                ? computeSemanticId('SCOPE', 'body', scopeTracker.getContext())
-                : undefined;
+              const propBodySemanticId = computeSemanticId('SCOPE', 'body', scopeTracker.getContext());
               (scopes as ScopeInfo[]).push({
                 id: propBodyScopeId,
                 semanticId: propBodySemanticId,
@@ -311,9 +289,7 @@ export class ClassVisitor extends ASTVisitor {
               analyzeFunctionBody(funcPath, propBodyScopeId, module, collections);
 
               // Exit method scope
-              if (scopeTracker) {
-                scopeTracker.exitScope();
-              }
+              scopeTracker.exitScope();
             }
           },
 
@@ -330,11 +306,8 @@ export class ClassVisitor extends ASTVisitor {
 
             const functionId = `FUNCTION#${className}.${methodName}#${module.file}#${methodNode.loc!.start.line}:${methodNode.loc!.start.column}`;
 
-            // Generate semantic ID if scopeTracker available
-            let methodSemanticId: string | undefined;
-            if (scopeTracker) {
-              methodSemanticId = computeSemanticId('FUNCTION', methodName, scopeTracker.getContext());
-            }
+            // Generate semantic ID using scopeTracker
+            const methodSemanticId = computeSemanticId('FUNCTION', methodName, scopeTracker.getContext());
 
             // Add method to class methods list for CONTAINS edges
             currentClass.methods.push(functionId);
@@ -368,15 +341,11 @@ export class ClassVisitor extends ASTVisitor {
             }
 
             // Enter method scope for tracking
-            if (scopeTracker) {
-              scopeTracker.enterScope(methodName, 'FUNCTION');
-            }
+            scopeTracker.enterScope(methodName, 'FUNCTION');
 
             // Create SCOPE for method body
             const methodBodyScopeId = `SCOPE#${className}.${methodName}:body#${module.file}#${methodNode.loc!.start.line}`;
-            const methodBodySemanticId = scopeTracker
-              ? computeSemanticId('SCOPE', 'body', scopeTracker.getContext())
-              : undefined;
+            const methodBodySemanticId = computeSemanticId('SCOPE', 'body', scopeTracker.getContext());
             (scopes as ScopeInfo[]).push({
               id: methodBodyScopeId,
               semanticId: methodBodySemanticId,
@@ -392,16 +361,12 @@ export class ClassVisitor extends ASTVisitor {
             analyzeFunctionBody(methodPath, methodBodyScopeId, module, collections);
 
             // Exit method scope
-            if (scopeTracker) {
-              scopeTracker.exitScope();
-            }
+            scopeTracker.exitScope();
           }
         });
 
         // Exit class scope
-        if (scopeTracker) {
-          scopeTracker.exitScope();
-        }
+        scopeTracker.exitScope();
       }
     };
   }

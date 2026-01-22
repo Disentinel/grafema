@@ -19,6 +19,7 @@ import type { ImportDeclaration, FunctionDeclaration, ArrowFunctionExpression, C
 import type { NodePath } from '@babel/traverse';
 
 import { RFDBClient } from '@grafema/rfdb-client';
+import { ClassNode } from './nodes/ClassNode.js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const traverse = (traverseModule as any).default || traverseModule;
@@ -251,20 +252,29 @@ async function analyzeFile(filePath: string, moduleId: string, moduleName: strin
         if (!node.id) return;
 
         const className = node.id.name;
-        const classId = `CLASS#${className}#${filePath}#${node.loc!.start.line}`;
+        const superClassName = (node.superClass as Identifier)?.name || null;
+
+        // Use ClassNode.create() for consistent ID format
+        const classRecord = ClassNode.create(
+          className,
+          filePath,
+          node.loc!.start.line,
+          node.loc!.start.column || 0,
+          { superClass: superClassName || undefined }
+        );
 
         nodes.push({
-          id: classId,
+          id: classRecord.id,
           type: 'CLASS',
           name: className,
           file: filePath,
           metadata: JSON.stringify({
             line: node.loc!.start.line,
-            superClass: (node.superClass as Identifier)?.name || null
+            superClass: superClassName
           })
         });
 
-        edges.push({ src: moduleId, dst: classId, type: 'CONTAINS' });
+        edges.push({ src: moduleId, dst: classRecord.id, type: 'CONTAINS' });
 
         // Extract methods
         node.body.body.forEach(member => {
@@ -286,7 +296,7 @@ async function analyzeFile(filePath: string, moduleId: string, moduleName: strin
               })
             });
 
-            edges.push({ src: classId, dst: methodId, type: 'CONTAINS' });
+            edges.push({ src: classRecord.id, dst: methodId, type: 'CONTAINS' });
             stats.functions++;
           }
         });

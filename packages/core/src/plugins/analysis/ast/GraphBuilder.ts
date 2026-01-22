@@ -415,9 +415,13 @@ export class GraphBuilder {
         });
       }
 
-      // If superClass, buffer DERIVES_FROM edge
+      // If superClass, buffer DERIVES_FROM edge with computed ID
       if (superClass) {
-        const superClassId = `CLASS#${superClass}#${file}`;
+        // Compute superclass ID using same format as ClassNode (line 0 = unknown location)
+        // Assume superclass is in same file (most common case)
+        // When superclass is in different file, edge will be dangling until that file analyzed
+        const superClassId = `${file}:CLASS:${superClass}:0`;
+
         this._bufferEdge({
           type: 'DERIVES_FROM',
           src: id,
@@ -442,16 +446,12 @@ export class GraphBuilder {
       let classId = declarationMap.get(className);
 
       if (!classId) {
-        // External class - buffer CLASS node
-        const classNode = NodeFactory.createClass(
-          className,
-          module.file,
-          line,
-          0,  // column not available
-          { isInstantiationRef: true }
-        );
-        classId = classNode.id;
-        this._bufferNode(classNode as unknown as GraphNode);
+        // External class - compute ID using ClassNode format (line 0 = unknown location)
+        // Assume class is in same file (most common case)
+        // When class is in different file, edge will be dangling until that file analyzed
+        classId = `${module.file}:CLASS:${className}:0`;
+
+        // NO node creation - node will exist when class file analyzed
       }
 
       // Buffer INSTANCE_OF edge

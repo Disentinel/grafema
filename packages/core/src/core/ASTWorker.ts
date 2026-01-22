@@ -11,6 +11,7 @@ import { parse, ParserPlugin } from '@babel/parser';
 import traverseModule from '@babel/traverse';
 import type { Node, ImportDeclaration, ExportNamedDeclaration, ExportDefaultDeclaration, VariableDeclaration, FunctionDeclaration, ClassDeclaration, CallExpression, Identifier, ExportSpecifier } from '@babel/types';
 import type { NodePath, Visitor } from '@babel/traverse';
+import { ClassNode, type ClassNodeRecord } from './nodes/ClassNode.js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const traverse = (traverseModule as any).default || traverseModule;
@@ -121,15 +122,11 @@ interface ParameterNode {
 }
 
 /**
- * Class declaration node
+ * Class declaration node (matches ClassNodeRecord from ClassNode factory)
+ * Workers use legacy line-based IDs
  */
-interface ClassDeclarationNode {
-  id: string;
-  type: 'CLASS';
-  name: string;
-  file: string;
-  line: number;
-  superClass: string | null;
+interface ClassDeclarationNode extends ClassNodeRecord {
+  // All fields inherited from ClassNodeRecord
 }
 
 /**
@@ -459,16 +456,22 @@ function parseModule(filePath: string, moduleId: string, moduleName: string): AS
       if (!node.id) return;
 
       const className = node.id.name;
-      const classId = `CLASS#${className}#${filePath}#${node.loc!.start.line}`;
 
-      collections.classDeclarations.push({
-        id: classId,
-        type: 'CLASS',
-        name: className,
-        file: filePath,
-        line: node.loc!.start.line,
-        superClass: (node.superClass as Identifier)?.name || null
-      });
+      // Extract superClass name
+      const superClassName = node.superClass && node.superClass.type === 'Identifier'
+        ? (node.superClass as Identifier).name
+        : null;
+
+      // Create CLASS node using ClassNode.create() (legacy format for workers)
+      const classRecord = ClassNode.create(
+        className,
+        filePath,
+        node.loc!.start.line,
+        node.loc!.start.column || 0,
+        { superClass: superClassName || undefined }
+      );
+
+      collections.classDeclarations.push(classRecord);
 
       // Extract methods
       node.body.body.forEach(member => {
@@ -482,7 +485,7 @@ function parseModule(filePath: string, moduleId: string, moduleName: string): AS
             type: 'METHOD',
             name: methodName,
             className,
-            classId,
+            classId: classRecord.id,
             file: filePath,
             line: member.loc!.start.line,
             column: member.loc!.start.column,
