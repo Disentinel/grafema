@@ -74,7 +74,9 @@ export class JSModuleIndexer extends Plugin {
 
   constructor() {
     super();
-    this.walker = new Walker();
+    this.walker = new Walker({
+      plugins: ['jsx', 'typescript']
+    });
     this.cache = new Map(); // Кеш зависимостей файла
     this.testPatterns = DEFAULT_TEST_PATTERNS;
     this.markTestFiles = true; // Default: enabled
