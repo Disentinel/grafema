@@ -286,6 +286,24 @@ export class RFDBClient extends EventEmitter implements IRFDBClient {
   }
 
   /**
+   * Reachability query - find all nodes reachable from start nodes
+   */
+  async reachability(
+    startIds: string[],
+    maxDepth: number,
+    edgeTypes: EdgeType[] = [],
+    backward: boolean = false
+  ): Promise<string[]> {
+    const response = await this._send('reachability', {
+      startIds: startIds.map(String),
+      maxDepth,
+      edgeTypes,
+      backward
+    });
+    return (response as { ids?: string[] }).ids || [];
+  }
+
+  /**
    * Get outgoing edges from a node
    */
   async getOutgoingEdges(id: string, edgeTypes: EdgeType[] | null = null): Promise<WireEdge[]> {

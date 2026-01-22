@@ -595,6 +595,19 @@ export class RFDBServerBackend {
     return this.client.dfs(startIds, maxDepth, edgeTypes);
   }
 
+  /**
+   * Reachability query - find all nodes reachable from start nodes
+   */
+  async reachability(
+    startIds: string[],
+    maxDepth: number,
+    edgeTypes: EdgeType[] = [],
+    backward: boolean = false
+  ): Promise<string[]> {
+    if (!this.client) throw new Error('Not connected');
+    return this.client.reachability(startIds, maxDepth, edgeTypes, backward);
+  }
+
   // ===========================================================================
   // Statistics
   // ===========================================================================

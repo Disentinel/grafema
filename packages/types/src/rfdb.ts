@@ -28,6 +28,7 @@ export type RFDBCommand =
   | 'neighbors'
   | 'bfs'
   | 'dfs'
+  | 'reachability'
   | 'getOutgoingEdges'
   | 'getIncomingEdges'
   // Stats
@@ -127,6 +128,14 @@ export interface BfsRequest extends RFDBRequest {
   edgeTypes?: EdgeType[];
 }
 
+export interface ReachabilityRequest extends RFDBRequest {
+  cmd: 'reachability';
+  startIds: string[];
+  maxDepth: number;
+  edgeTypes?: EdgeType[];
+  backward: boolean;
+}
+
 export interface GetOutgoingEdgesRequest extends RFDBRequest {
   cmd: 'getOutgoingEdges';
   id: string;
@@ -184,6 +193,10 @@ export interface NeighborsResponse extends RFDBResponse {
 }
 
 export interface BfsResponse extends RFDBResponse {
+  ids: string[];
+}
+
+export interface ReachabilityResponse extends RFDBResponse {
   ids: string[];
 }
 
@@ -258,6 +271,7 @@ export interface IRFDBClient {
   neighbors(id: string, edgeTypes?: EdgeType[]): Promise<string[]>;
   bfs(startIds: string[], maxDepth: number, edgeTypes?: EdgeType[]): Promise<string[]>;
   dfs(startIds: string[], maxDepth: number, edgeTypes?: EdgeType[]): Promise<string[]>;
+  reachability(startIds: string[], maxDepth: number, edgeTypes?: EdgeType[], backward?: boolean): Promise<string[]>;
   getOutgoingEdges(id: string, edgeTypes?: EdgeType[] | null): Promise<WireEdge[]>;
   getIncomingEdges(id: string, edgeTypes?: EdgeType[] | null): Promise<WireEdge[]>;
 
