@@ -81,6 +81,8 @@ import type {
   ArrayElementInfo,
   ArrayMutationInfo,
   ArrayMutationArgument,
+  ObjectMutationInfo,
+  ObjectMutationValue,
   CounterRef,
   ProcessedNodes,
   ASTCollections,
@@ -128,6 +130,8 @@ interface Collections {
   arrayElements: ArrayElementInfo[];
   // Array mutation tracking for FLOWS_INTO edges
   arrayMutations: ArrayMutationInfo[];
+  // Object mutation tracking for FLOWS_INTO edges
+  objectMutations: ObjectMutationInfo[];
   objectLiteralCounterRef: CounterRef;
   arrayLiteralCounterRef: CounterRef;
   ifScopeCounterRef: CounterRef;
@@ -779,6 +783,8 @@ export class JSASTAnalyzer extends Plugin {
       const arrayElements: ArrayElementInfo[] = [];
       // Array mutation tracking for FLOWS_INTO edges
       const arrayMutations: ArrayMutationInfo[] = [];
+      // Object mutation tracking for FLOWS_INTO edges
+      const objectMutations: ObjectMutationInfo[] = [];
 
       const ifScopeCounterRef: CounterRef = { value: 0 };
       const scopeCounterRef: CounterRef = { value: 0 };
@@ -842,6 +848,8 @@ export class JSASTAnalyzer extends Plugin {
         objectLiterals, objectProperties, arrayLiterals, arrayElements,
         // Array mutation tracking
         arrayMutations,
+        // Object mutation tracking
+        objectMutations,
         objectLiteralCounterRef, arrayLiteralCounterRef,
         ifScopeCounterRef, scopeCounterRef, varDeclCounterRef,
         callSiteCounterRef, functionCounterRef, httpRequestCounterRef,
@@ -891,7 +899,8 @@ export class JSASTAnalyzer extends Plugin {
             }
 
             const funcNode = assignNode.right;
-            const functionId = `FUNCTION#${functionName}#${module.file}#${assignNode.loc!.start.line}:${assignNode.loc!.start.column}`;
+            // Use semantic ID as primary ID (matching FunctionVisitor pattern)
+            const functionId = computeSemanticId('FUNCTION', functionName, scopeTracker.getContext());
 
             functions.push({
               id: functionId,
@@ -930,6 +939,9 @@ export class JSASTAnalyzer extends Plugin {
 
           // Check for indexed array assignment at module level: arr[i] = value
           this.detectIndexedArrayAssignment(assignNode, module, arrayMutations);
+
+          // Check for object property assignment at module level: obj.prop = value
+          this.detectObjectPropertyAssignment(assignNode, module, objectMutations, scopeTracker);
         }
       });
       this.profiler.end('traverse_assignments');
@@ -961,7 +973,8 @@ export class JSASTAnalyzer extends Plugin {
 
           if (funcPath.parent && funcPath.parent.type === 'CallExpression') {
             const funcName = funcNode.id ? funcNode.id.name : this.generateAnonymousName(moduleScopeCtx);
-            const functionId = `FUNCTION#${funcName}#${module.file}#${funcNode.loc!.start.line}:${funcNode.loc!.start.column}`;
+            // Use semantic ID as primary ID (matching FunctionVisitor pattern)
+            const functionId = computeSemanticId('FUNCTION', funcName, scopeTracker.getContext());
 
             functions.push({
               id: functionId,
@@ -1087,6 +1100,8 @@ export class JSASTAnalyzer extends Plugin {
         decorators,
         // Array mutation tracking
         arrayMutations,
+        // Object mutation tracking
+        objectMutations,
         // Object/Array literal tracking - use allCollections refs as visitors may have created new arrays
         objectLiterals: allCollections.objectLiterals || objectLiterals,
         arrayLiterals: allCollections.arrayLiterals || arrayLiterals
@@ -1280,6 +1295,15 @@ export class JSASTAnalyzer extends Plugin {
 
         // Check for indexed array assignment: arr[i] = value
         this.detectIndexedArrayAssignment(assignNode, module, arrayMutations);
+
+        // Initialize object mutations collection if not exists
+        if (!collections.objectMutations) {
+          collections.objectMutations = [];
+        }
+        const objectMutations = collections.objectMutations as ObjectMutationInfo[];
+
+        // Check for object property assignment: obj.prop = value
+        this.detectObjectPropertyAssignment(assignNode, module, objectMutations, scopeTracker);
       },
 
       ForStatement: {
@@ -1651,7 +1675,11 @@ export class JSASTAnalyzer extends Plugin {
       FunctionExpression: (funcPath: NodePath<t.FunctionExpression>) => {
         const node = funcPath.node;
         const funcName = node.id ? node.id.name : this.generateAnonymousName(scopeCtx);
-        const functionId = `FUNCTION#${funcName}#${module.file}#${node.loc!.start.line}:${node.loc!.start.column}:${functionCounterRef.value++}`;
+        // Use semantic ID as primary ID when scopeTracker available
+        const legacyId = `FUNCTION#${funcName}#${module.file}#${node.loc!.start.line}:${node.loc!.start.column}:${functionCounterRef.value++}`;
+        const functionId = scopeTracker
+          ? computeSemanticId('FUNCTION', funcName, scopeTracker.getContext())
+          : legacyId;
 
         functions.push({
           id: functionId,
@@ -1705,7 +1733,11 @@ export class JSASTAnalyzer extends Plugin {
           funcName = this.generateAnonymousName(scopeCtx);
         }
 
-        const functionId = `FUNCTION#${funcName}:${line}:${column}:${functionCounterRef.value++}`;
+        // Use semantic ID as primary ID when scopeTracker available
+        const legacyId = `FUNCTION#${funcName}:${line}:${column}:${functionCounterRef.value++}`;
+        const functionId = scopeTracker
+          ? computeSemanticId('FUNCTION', funcName, scopeTracker.getContext())
+          : legacyId;
 
         functions.push({
           id: functionId,
@@ -1953,6 +1985,21 @@ export class JSASTAnalyzer extends Plugin {
                 scopeTracker
               );
             }
+
+            // Check for Object.assign() calls
+            if (objectName === 'Object' && methodName === 'assign') {
+              // Initialize collection if not exists
+              if (!collections.objectMutations) {
+                collections.objectMutations = [];
+              }
+              const objectMutations = collections.objectMutations as ObjectMutationInfo[];
+              this.detectObjectAssignInFunction(
+                callNode,
+                module,
+                objectMutations,
+                scopeTracker
+              );
+            }
           }
         }
       },
@@ -2134,6 +2181,14 @@ export class JSASTAnalyzer extends Plugin {
     if (assignNode.left.type === 'MemberExpression' && assignNode.left.computed) {
       const memberExpr = assignNode.left;
 
+      // Only process NumericLiteral keys - those are clearly array indexed assignments
+      // e.g., arr[0] = value, arr[1] = value
+      // All other computed keys (StringLiteral, Identifier, expressions) are handled as object mutations
+      // This avoids duplicate edge creation for ambiguous cases like obj[key] = value
+      if (memberExpr.property.type !== 'NumericLiteral') {
+        return;
+      }
+
       // Get array name (only simple identifiers for now)
       if (memberExpr.object.type === 'Identifier') {
         const arrayName = memberExpr.object.name;
@@ -2176,6 +2231,202 @@ export class JSASTAnalyzer extends Plugin {
           insertedValues: [argInfo]
         });
       }
+    }
+  }
+
+  /**
+   * Detect object property assignment: obj.prop = value, obj['prop'] = value
+   * Creates ObjectMutationInfo for FLOWS_INTO edge generation in GraphBuilder
+   *
+   * @param assignNode - The assignment expression node
+   * @param module - Current module being analyzed
+   * @param objectMutations - Collection to push mutation info into
+   * @param scopeTracker - Optional scope tracker for semantic IDs
+   */
+  private detectObjectPropertyAssignment(
+    assignNode: t.AssignmentExpression,
+    module: VisitorModule,
+    objectMutations: ObjectMutationInfo[],
+    scopeTracker?: ScopeTracker
+  ): void {
+    // Check for property assignment: obj.prop = value or obj['prop'] = value
+    if (assignNode.left.type !== 'MemberExpression') return;
+
+    const memberExpr = assignNode.left;
+
+    // Skip NumericLiteral indexed assignment (handled by array mutation handler)
+    // Array mutation handler processes: arr[0] (numeric literal index)
+    // Object mutation handler processes: obj.prop, obj['prop'], obj[key], obj[expr]
+    if (memberExpr.computed && memberExpr.property.type === 'NumericLiteral') {
+      return; // Let array mutation handler deal with this
+    }
+
+    // Get object name
+    let objectName: string;
+    if (memberExpr.object.type === 'Identifier') {
+      objectName = memberExpr.object.name;
+    } else if (memberExpr.object.type === 'ThisExpression') {
+      objectName = 'this';
+    } else {
+      // Complex expressions like obj.nested.prop = value
+      // For now, skip these (documented limitation)
+      return;
+    }
+
+    // Get property name
+    let propertyName: string;
+    let mutationType: 'property' | 'computed';
+
+    if (!memberExpr.computed) {
+      // obj.prop
+      if (memberExpr.property.type === 'Identifier') {
+        propertyName = memberExpr.property.name;
+        mutationType = 'property';
+      } else {
+        return; // Unexpected property type
+      }
+    } else {
+      // obj['prop'] or obj[key]
+      if (memberExpr.property.type === 'StringLiteral') {
+        propertyName = memberExpr.property.value;
+        mutationType = 'property'; // String literal is effectively a property name
+      } else {
+        propertyName = '<computed>';
+        mutationType = 'computed';
+      }
+    }
+
+    // Extract value info
+    const value = assignNode.right;
+    const valueInfo = this.extractMutationValue(value);
+
+    // Use defensive loc checks
+    const line = assignNode.loc?.start.line ?? 0;
+    const column = assignNode.loc?.start.column ?? 0;
+
+    // Generate semantic ID if scopeTracker available
+    let mutationId: string | undefined;
+    if (scopeTracker) {
+      const discriminator = scopeTracker.getItemCounter(`OBJECT_MUTATION:${objectName}.${propertyName}`);
+      mutationId = computeSemanticId('OBJECT_MUTATION', `${objectName}.${propertyName}`, scopeTracker.getContext(), { discriminator });
+    }
+
+    objectMutations.push({
+      id: mutationId,
+      objectName,
+      propertyName,
+      mutationType,
+      file: module.file,
+      line,
+      column,
+      value: valueInfo
+    });
+  }
+
+  /**
+   * Extract value information from an expression for mutation tracking
+   */
+  private extractMutationValue(value: t.Expression): ObjectMutationValue {
+    const valueInfo: ObjectMutationValue = {
+      valueType: 'EXPRESSION'  // Default
+    };
+
+    const literalValue = ExpressionEvaluator.extractLiteralValue(value);
+    if (literalValue !== null) {
+      valueInfo.valueType = 'LITERAL';
+      valueInfo.literalValue = literalValue;
+    } else if (value.type === 'Identifier') {
+      valueInfo.valueType = 'VARIABLE';
+      valueInfo.valueName = value.name;
+    } else if (value.type === 'ObjectExpression') {
+      valueInfo.valueType = 'OBJECT_LITERAL';
+    } else if (value.type === 'ArrayExpression') {
+      valueInfo.valueType = 'ARRAY_LITERAL';
+    } else if (value.type === 'CallExpression') {
+      valueInfo.valueType = 'CALL';
+      valueInfo.callLine = value.loc?.start.line;
+      valueInfo.callColumn = value.loc?.start.column;
+    }
+
+    return valueInfo;
+  }
+
+  /**
+   * Detect Object.assign() calls inside functions
+   * Creates ObjectMutationInfo for FLOWS_INTO edge generation in GraphBuilder
+   */
+  private detectObjectAssignInFunction(
+    callNode: t.CallExpression,
+    module: VisitorModule,
+    objectMutations: ObjectMutationInfo[],
+    scopeTracker?: ScopeTracker
+  ): void {
+    // Need at least 2 arguments: target and at least one source
+    if (callNode.arguments.length < 2) return;
+
+    // First argument is target
+    const targetArg = callNode.arguments[0];
+    let targetName: string;
+
+    if (targetArg.type === 'Identifier') {
+      targetName = targetArg.name;
+    } else if (targetArg.type === 'ObjectExpression') {
+      targetName = '<anonymous>';
+    } else {
+      return;
+    }
+
+    const line = callNode.loc?.start.line ?? 0;
+    const column = callNode.loc?.start.column ?? 0;
+
+    for (let i = 1; i < callNode.arguments.length; i++) {
+      let arg = callNode.arguments[i];
+      let isSpread = false;
+
+      if (arg.type === 'SpreadElement') {
+        isSpread = true;
+        arg = arg.argument;
+      }
+
+      const valueInfo: ObjectMutationValue = {
+        valueType: 'EXPRESSION',
+        argIndex: i - 1,
+        isSpread
+      };
+
+      const literalValue = ExpressionEvaluator.extractLiteralValue(arg);
+      if (literalValue !== null) {
+        valueInfo.valueType = 'LITERAL';
+        valueInfo.literalValue = literalValue;
+      } else if (arg.type === 'Identifier') {
+        valueInfo.valueType = 'VARIABLE';
+        valueInfo.valueName = arg.name;
+      } else if (arg.type === 'ObjectExpression') {
+        valueInfo.valueType = 'OBJECT_LITERAL';
+      } else if (arg.type === 'ArrayExpression') {
+        valueInfo.valueType = 'ARRAY_LITERAL';
+      } else if (arg.type === 'CallExpression') {
+        valueInfo.valueType = 'CALL';
+        valueInfo.callLine = arg.loc?.start.line;
+        valueInfo.callColumn = arg.loc?.start.column;
+      }
+
+      let mutationId: string | undefined;
+      if (scopeTracker) {
+        const discriminator = scopeTracker.getItemCounter(`OBJECT_MUTATION:Object.assign:${targetName}`);
+        mutationId = computeSemanticId('OBJECT_MUTATION', `Object.assign:${targetName}`, scopeTracker.getContext(), { discriminator });
+      }
+
+      objectMutations.push({
+        id: mutationId,
+        objectName: targetName,
+        propertyName: '<assign>',
+        mutationType: 'assign',
+        file: module.file,
+        line,
+        column,
+        value: valueInfo
+      });
     }
   }
 }

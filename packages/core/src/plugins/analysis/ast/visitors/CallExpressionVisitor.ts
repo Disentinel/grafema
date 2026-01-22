@@ -12,7 +12,7 @@ import type { Node, CallExpression, NewExpression, Identifier, MemberExpression,
 import type { NodePath } from '@babel/traverse';
 import { ASTVisitor, type VisitorModule, type VisitorCollections, type VisitorHandlers, type CounterRef } from './ASTVisitor.js';
 import { ExpressionEvaluator } from '../ExpressionEvaluator.js';
-import type { ArrayMutationInfo, ArrayMutationArgument } from '../types.js';
+import type { ArrayMutationInfo, ArrayMutationArgument, ObjectMutationInfo, ObjectMutationValue } from '../types.js';
 import { ScopeTracker } from '../../../../core/ScopeTracker.js';
 import { computeSemanticId } from '../../../../core/SemanticId.js';
 import { NodeFactory } from '../../../../core/NodeFactory.js';
@@ -887,34 +887,150 @@ export class CallExpressionVisitor extends ASTVisitor {
   }
 
   /**
-   * Get a stable scope ID for a function parent
-   * Format must match what FunctionVisitor creates:
-   * - FunctionDeclaration: FUNCTION#name#file#line
-   * - ArrowFunctionExpression: FUNCTION#name#file#line:col:counter
+   * Detect Object.assign(target, source1, source2, ...) calls
+   * Creates ObjectMutationInfo for FLOWS_INTO edge generation in GraphBuilder
    *
-   * NOTE: We don't have access to the counter here, so for arrow functions
-   * we try to match by name+file+line:col. This may not always work for
-   * multiple arrow functions on the same line.
+   * @param callNode - The call expression node
+   * @param module - Current module being analyzed
+   */
+  private detectObjectAssign(
+    callNode: CallExpression,
+    module: VisitorModule
+  ): void {
+    // Need at least 2 arguments: target and at least one source
+    if (callNode.arguments.length < 2) return;
+
+    // Initialize object mutations collection if not exists
+    if (!this.collections.objectMutations) {
+      this.collections.objectMutations = [];
+    }
+    const objectMutations = this.collections.objectMutations as ObjectMutationInfo[];
+
+    // First argument is target
+    const targetArg = callNode.arguments[0];
+    let targetName: string;
+
+    if (targetArg.type === 'Identifier') {
+      targetName = targetArg.name;
+    } else if (targetArg.type === 'ObjectExpression') {
+      targetName = '<anonymous>';
+    } else {
+      return;
+    }
+
+    const line = callNode.loc?.start.line ?? 0;
+    const column = callNode.loc?.start.column ?? 0;
+
+    for (let i = 1; i < callNode.arguments.length; i++) {
+      let arg = callNode.arguments[i];
+      let isSpread = false;
+
+      if (arg.type === 'SpreadElement') {
+        isSpread = true;
+        arg = arg.argument;
+      }
+
+      const valueInfo: ObjectMutationValue = {
+        valueType: 'EXPRESSION',
+        argIndex: i - 1,
+        isSpread
+      };
+
+      const literalValue = ExpressionEvaluator.extractLiteralValue(arg);
+      if (literalValue !== null) {
+        valueInfo.valueType = 'LITERAL';
+        valueInfo.literalValue = literalValue;
+      } else if (arg.type === 'Identifier') {
+        valueInfo.valueType = 'VARIABLE';
+        valueInfo.valueName = arg.name;
+      } else if (arg.type === 'ObjectExpression') {
+        valueInfo.valueType = 'OBJECT_LITERAL';
+      } else if (arg.type === 'ArrayExpression') {
+        valueInfo.valueType = 'ARRAY_LITERAL';
+      } else if (arg.type === 'CallExpression') {
+        valueInfo.valueType = 'CALL';
+        valueInfo.callLine = arg.loc?.start.line;
+        valueInfo.callColumn = arg.loc?.start.column;
+      }
+
+      let mutationId: string | undefined;
+      if (this.scopeTracker) {
+        const discriminator = this.scopeTracker.getItemCounter(`OBJECT_MUTATION:Object.assign:${targetName}`);
+        mutationId = computeSemanticId('OBJECT_MUTATION', `Object.assign:${targetName}`, this.scopeTracker.getContext(), { discriminator });
+      }
+
+      objectMutations.push({
+        id: mutationId,
+        objectName: targetName,
+        propertyName: '<assign>',
+        mutationType: 'assign',
+        file: module.file,
+        line,
+        column,
+        value: valueInfo
+      });
+    }
+  }
+
+  /**
+   * Get a stable scope ID for a function parent.
+   *
+   * Format must match what FunctionVisitor/ClassVisitor creates (semantic ID):
+   * - Module-level function: {file}->global->FUNCTION->{name}
+   * - Class method: {file}->{className}->FUNCTION->{methodName}
+   *
+   * Reconstructs scope path by walking up the AST.
    */
   getFunctionScopeId(functionParent: NodePath, module: VisitorModule): string {
     const funcNode = functionParent.node as Node & {
       id?: { name: string } | null;
+      key?: { name?: string; type: string };
       loc?: { start: { line: number; column: number } };
       type: string;
     };
-    const line = funcNode.loc?.start.line || 0;
-    const col = funcNode.loc?.start.column || 0;
 
-    // FunctionDeclaration with name
+    // Get function name
+    let funcName: string | undefined;
     if (funcNode.type === 'FunctionDeclaration' && funcNode.id?.name) {
-      return `FUNCTION#${funcNode.id.name}#${module.file}#${line}`;
+      funcName = funcNode.id.name;
+    } else if (funcNode.type === 'ClassMethod' && funcNode.key?.type === 'Identifier') {
+      funcName = funcNode.key.name;
     }
 
-    // For arrow functions and other cases, we can't perfectly match the ID
-    // because FunctionVisitor uses a counter. For now, use module.id as fallback
-    // to avoid creating invalid edges. The CALL node will be connected to MODULE
-    // instead of the specific function.
-    return module.id;
+    if (!funcName) {
+      // Anonymous function - fall back to module scope
+      return module.id;
+    }
+
+    // Build scope path by walking up the AST
+    const scopePath: string[] = [];
+    let current: NodePath | null = functionParent.parentPath;
+
+    while (current) {
+      const node = current.node as Node & {
+        id?: { name: string } | null;
+        type: string;
+      };
+
+      if (node.type === 'ClassDeclaration' && node.id?.name) {
+        scopePath.unshift(node.id.name);
+        break; // Class is the outermost scope we need
+      } else if (node.type === 'ClassBody') {
+        // Continue up to ClassDeclaration
+      } else if (node.type === 'Program') {
+        break;
+      }
+
+      current = current.parentPath;
+    }
+
+    // If no class found, it's at module level (global scope)
+    if (scopePath.length === 0) {
+      scopePath.push('global');
+    }
+
+    // Compute semantic ID: {file}->{scopePath}->FUNCTION->{name}
+    return `${module.file}->${scopePath.join('->')}->FUNCTION->${funcName}`;
   }
 
   getHandlers(): VisitorHandlers {
@@ -1063,6 +1179,11 @@ export class CallExpressionVisitor extends ASTVisitor {
                     methodName as 'push' | 'unshift' | 'splice',
                     module
                   );
+                }
+
+                // Check for Object.assign() calls
+                if (objectName === 'Object' && methodName === 'assign') {
+                  this.detectObjectAssign(callNode, module);
                 }
 
                 // Extract arguments for PASSES_ARGUMENT edges

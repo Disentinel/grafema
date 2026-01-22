@@ -42,7 +42,6 @@ interface ClassInfo extends ClassNodeRecord {
 interface ClassFunctionInfo {
   id: string;
   stableId: string;
-  semanticId?: string;
   type: 'FUNCTION';
   name: string;
   file: string;
@@ -55,6 +54,7 @@ interface ClassFunctionInfo {
   isClassMethod?: boolean;
   className: string;
   methodKind?: 'constructor' | 'method' | 'get' | 'set';
+  legacyId?: string;  // Kept for debugging/migration purposes
 }
 
 /**
@@ -243,18 +243,16 @@ export class ClassVisitor extends ASTVisitor {
 
               const funcNode = propNode.value as ArrowFunctionExpression | FunctionExpression;
 
-              const functionId = `FUNCTION#${className}.${propName}#${module.file}#${propNode.loc!.start.line}:${propNode.loc!.start.column}`;
-
-              // Generate semantic ID using scopeTracker
-              const methodSemanticId = computeSemanticId('FUNCTION', propName, scopeTracker.getContext());
+              // Use semantic ID as primary ID (matching FunctionVisitor pattern)
+              const legacyId = `FUNCTION#${className}.${propName}#${module.file}#${propNode.loc!.start.line}:${propNode.loc!.start.column}`;
+              const functionId = computeSemanticId('FUNCTION', propName, scopeTracker.getContext());
 
               // Add method to class methods list for CONTAINS edges
               currentClass.methods.push(functionId);
 
               (functions as ClassFunctionInfo[]).push({
                 id: functionId,
-                stableId: methodSemanticId || functionId,
-                semanticId: methodSemanticId,
+                stableId: functionId,
                 type: 'FUNCTION',
                 name: propName,
                 file: module.file,
@@ -264,7 +262,8 @@ export class ClassVisitor extends ASTVisitor {
                 generator: funcNode.type === 'FunctionExpression' ? funcNode.generator || false : false,
                 arrowFunction: funcNode.type === 'ArrowFunctionExpression',
                 isClassProperty: true,
-                className: className
+                className: className,
+                legacyId  // Keep for debugging/migration purposes
               });
 
               // Enter method scope for tracking
@@ -304,18 +303,16 @@ export class ClassVisitor extends ASTVisitor {
               return;
             }
 
-            const functionId = `FUNCTION#${className}.${methodName}#${module.file}#${methodNode.loc!.start.line}:${methodNode.loc!.start.column}`;
-
-            // Generate semantic ID using scopeTracker
-            const methodSemanticId = computeSemanticId('FUNCTION', methodName, scopeTracker.getContext());
+            // Use semantic ID as primary ID (matching FunctionVisitor pattern)
+            const legacyId = `FUNCTION#${className}.${methodName}#${module.file}#${methodNode.loc!.start.line}:${methodNode.loc!.start.column}`;
+            const functionId = computeSemanticId('FUNCTION', methodName, scopeTracker.getContext());
 
             // Add method to class methods list for CONTAINS edges
             currentClass.methods.push(functionId);
 
             const funcData: ClassFunctionInfo = {
               id: functionId,
-              stableId: methodSemanticId || functionId,
-              semanticId: methodSemanticId,
+              stableId: functionId,
               type: 'FUNCTION',
               name: methodName,
               file: module.file,
@@ -325,7 +322,8 @@ export class ClassVisitor extends ASTVisitor {
               generator: methodNode.generator || false,
               isClassMethod: true,
               className: className,
-              methodKind: methodNode.kind as 'constructor' | 'method' | 'get' | 'set'
+              methodKind: methodNode.kind as 'constructor' | 'method' | 'get' | 'set',
+              legacyId  // Keep for debugging/migration purposes
             };
             (functions as ClassFunctionInfo[]).push(funcData);
 

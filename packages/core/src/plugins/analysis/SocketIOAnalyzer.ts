@@ -308,15 +308,23 @@ export class SocketIOAnalyzer extends Plugin {
           dst: listener.id
         });
 
-        // Ищем FUNCTION node для handler и создаём ребро LISTENS_TO
-        const handlerFunctionId = `FUNCTION#${listener.handlerName}#${listener.file}#${listener.handlerLine}`;
-        const handlerFunction = await graph.getNode(handlerFunctionId);
+        // Find FUNCTION node for handler by name and file (supports both legacy and semantic IDs)
+        const handlerFunctions = await graph.getAllNodes({
+          type: 'FUNCTION',
+          name: listener.handlerName,
+          file: listener.file
+        });
+
+        // Find the handler at the matching line
+        const handlerFunction = handlerFunctions.find(fn =>
+          fn.line === listener.handlerLine
+        );
 
         if (handlerFunction) {
           await graph.addEdge({
             type: 'LISTENS_TO',
             src: listener.id,
-            dst: handlerFunctionId
+            dst: handlerFunction.id
           });
         }
       }
