@@ -17,6 +17,7 @@ import type { NodePath } from '@babel/traverse';
 import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { NodeRecord } from '@grafema/types';
+import { NetworkRequestNode } from '../../core/nodes/NetworkRequestNode.js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const traverse = (traverseModule as any).default || traverseModule;
@@ -44,6 +45,8 @@ interface AnalysisResult {
 }
 
 export class FetchAnalyzer extends Plugin {
+  private networkNodeCreated = false;
+
   get metadata(): PluginMetadata {
     return {
       name: 'FetchAnalyzer',
@@ -61,6 +64,11 @@ export class FetchAnalyzer extends Plugin {
     try {
       const { graph } = context;
 
+      // Create net:request singleton (GraphBackend handles deduplication)
+      const networkNode = NetworkRequestNode.create();
+      await graph.addNode(networkNode);
+      this.networkNodeCreated = true;
+
       // Получаем все модули
       const modules = await this.getModules(graph);
       console.log(`[FetchAnalyzer] Processing ${modules.length} modules...`);
@@ -71,7 +79,7 @@ export class FetchAnalyzer extends Plugin {
 
       for (let i = 0; i < modules.length; i++) {
         const module = modules[i];
-        const result = await this.analyzeModule(module, graph);
+        const result = await this.analyzeModule(module, graph, networkNode.id);
         requestsCount += result.requests;
         apisCount += result.apis;
 
@@ -89,12 +97,13 @@ export class FetchAnalyzer extends Plugin {
 
       return createSuccessResult(
         {
-          nodes: requestsCount + apisCount,
-          edges: 0
+          nodes: requestsCount + apisCount + (this.networkNodeCreated ? 1 : 0),
+          edges: requestsCount  // CALLS edges from http:request to net:request
         },
         {
           requestsCount,
-          apisCount
+          apisCount,
+          networkSingletonCreated: this.networkNodeCreated
         }
       );
     } catch (error) {
@@ -105,7 +114,8 @@ export class FetchAnalyzer extends Plugin {
 
   private async analyzeModule(
     module: NodeRecord,
-    graph: PluginContext['graph']
+    graph: PluginContext['graph'],
+    networkId: string
   ): Promise<AnalysisResult> {
     try {
       const code = readFileSync(module.file!, 'utf-8');
@@ -277,6 +287,13 @@ export class FetchAnalyzer extends Plugin {
           type: 'CONTAINS',
           src: module.id,
           dst: request.id
+        });
+
+        // http:request --CALLS--> net:request singleton
+        await graph.addEdge({
+          type: 'CALLS',
+          src: request.id,
+          dst: networkId
         });
 
         // Ищем FUNCTION node которая делает запрос
