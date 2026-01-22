@@ -30,6 +30,7 @@ npm-debug.log*
 .mcp.json
 .claude/
 .grafema/
+_tasks
 
 # Local project data
 projects/
@@ -38,3 +39,7 @@ tmp/
 # NPM auth
 .npmrc.local
 .rfguard/
+
+# Grafema
+.grafema/graph.rfdb
+.grafema/rfdb.sock

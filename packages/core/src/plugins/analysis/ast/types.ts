@@ -281,6 +281,95 @@ export interface LiteralInfo {
   argIndex?: number;
 }
 
+// === OBJECT LITERAL INFO ===
+export interface ObjectLiteralInfo {
+  id: string;
+  type: 'OBJECT_LITERAL';
+  file: string;
+  line: number;
+  column: number;
+  parentCallId?: string;
+  argIndex?: number;
+  isSpread?: boolean;
+}
+
+// === OBJECT PROPERTY INFO ===
+export interface ObjectPropertyInfo {
+  objectId: string;
+  propertyName: string;
+  valueNodeId?: string;
+  valueType: 'LITERAL' | 'VARIABLE' | 'CALL' | 'EXPRESSION' | 'OBJECT_LITERAL' | 'ARRAY_LITERAL' | 'SPREAD';
+  valueName?: string;       // For VARIABLE
+  literalValue?: unknown;   // For LITERAL
+  file: string;
+  line: number;
+  column: number;
+  // For CALL values
+  callLine?: number;
+  callColumn?: number;
+  // For nested object/array
+  nestedObjectId?: string;
+  nestedArrayId?: string;
+}
+
+// === ARRAY LITERAL INFO ===
+export interface ArrayLiteralInfo {
+  id: string;
+  type: 'ARRAY_LITERAL';
+  file: string;
+  line: number;
+  column: number;
+  parentCallId?: string;
+  argIndex?: number;
+}
+
+// === ARRAY ELEMENT INFO ===
+export interface ArrayElementInfo {
+  arrayId: string;
+  index: number;
+  valueNodeId?: string;
+  valueType: 'LITERAL' | 'VARIABLE' | 'CALL' | 'EXPRESSION' | 'OBJECT_LITERAL' | 'ARRAY_LITERAL' | 'SPREAD';
+  valueName?: string;       // For VARIABLE
+  literalValue?: unknown;   // For LITERAL
+  file: string;
+  line: number;
+  column: number;
+  // For CALL values
+  callLine?: number;
+  callColumn?: number;
+  // For nested object/array
+  nestedObjectId?: string;
+  nestedArrayId?: string;
+}
+
+// === ARRAY MUTATION INFO ===
+/**
+ * Tracks array mutation calls (push, unshift, splice) and indexed assignments
+ * Used to create FLOWS_INTO edges in GraphBuilder
+ *
+ * IMPORTANT: This type is defined ONLY here. Import from this file everywhere.
+ */
+export interface ArrayMutationInfo {
+  arrayName: string;           // Name of the array variable being mutated
+  arrayLine?: number;          // Line where array is referenced (for scope resolution)
+  mutationMethod: 'push' | 'unshift' | 'splice' | 'indexed';
+  file: string;
+  line: number;
+  column: number;
+  arguments: ArrayMutationArgument[];  // What's being added to the array
+}
+
+export interface ArrayMutationArgument {
+  argIndex: number;
+  isSpread?: boolean;
+  valueType: 'LITERAL' | 'VARIABLE' | 'CALL' | 'EXPRESSION' | 'OBJECT_LITERAL' | 'ARRAY_LITERAL';
+  valueName?: string;          // For VARIABLE type - name of the variable
+  valueNodeId?: string;        // For LITERAL, OBJECT_LITERAL, ARRAY_LITERAL - node ID
+  literalValue?: unknown;      // For LITERAL type
+  callLine?: number;           // For CALL type
+  callColumn?: number;
+}
+
 // === VARIABLE ASSIGNMENT INFO ===
 export interface VariableAssignmentInfo {
   variableId: string;
@@ -348,6 +437,13 @@ export interface ASTCollections {
   httpRequests?: HttpRequestInfo[];
   literals?: LiteralInfo[];
   variableAssignments?: VariableAssignmentInfo[];
+  // Object/Array literal tracking for data flow
+  objectLiterals?: ObjectLiteralInfo[];
+  objectProperties?: ObjectPropertyInfo[];
+  arrayLiterals?: ArrayLiteralInfo[];
+  arrayElements?: ArrayElementInfo[];
+  // Array mutation tracking for FLOWS_INTO edges
+  arrayMutations?: ArrayMutationInfo[];
   // TypeScript-specific collections
   interfaces?: InterfaceDeclarationInfo[];
   typeAliases?: TypeAliasInfo[];
@@ -361,6 +457,8 @@ export interface ASTCollections {
   functionCounterRef?: CounterRef;
   httpRequestCounterRef?: CounterRef;
   literalCounterRef?: CounterRef;
+  objectLiteralCounterRef?: CounterRef;
+  arrayLiteralCounterRef?: CounterRef;
   processedNodes?: ProcessedNodes;
 }
 
@@ -381,6 +479,12 @@ export interface GraphNode {
   file?: string;
   line?: number;
   column?: number;
+  // IMPORT node fields
+  source?: string;
+  importType?: 'default' | 'named' | 'namespace';
+  importBinding?: 'value' | 'type' | 'typeof';
+  imported?: string;
+  local?: string;
   [key: string]: unknown;
 }
 

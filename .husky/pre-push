@@ -1,0 +1,17 @@
+#!/bin/sh
+
+# NodeFactory guarantee check
+# Ensures all nodes passed to graph.addNode/addNodes are created through NodeFactory
+
+# Only run if packages/core was modified
+if git diff --cached --name-only | grep -q "^packages/core/"; then
+  echo "Running NodeFactory guarantee check..."
+
+  # Check if grafema CLI is available
+  if command -v grafema &> /dev/null; then
+    grafema check --guarantee=node-creation --project=packages/core --quiet
+  else
+    echo "Warning: grafema CLI not found, skipping NodeFactory check"
+    echo "Install with: pnpm install && pnpm build"
+  fi
+fi

@@ -1,0 +1,53 @@
+{
+  "name": "@grafema/cli",
+  "version": "0.1.0-alpha.1",
+  "description": "CLI for Grafema code analysis toolkit",
+  "type": "module",
+  "main": "./dist/cli.js",
+  "types": "./dist/cli.d.ts",
+  "bin": {
+    "grafema": "./dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/cli.d.ts",
+      "import": "./dist/cli.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "start": "node dist/cli.js",
+    "test": "node --import tsx --test test/*.test.ts"
+  },
+  "keywords": [
+    "grafema",
+    "cli",
+    "code-analysis",
+    "static-analysis"
+  ],
+  "license": "Apache-2.0",
+  "author": "Vadim Reshetnikov",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/grafema/grafema.git",
+    "directory": "packages/cli"
+  },
+  "dependencies": {
+    "@grafema/core": "workspace:*",
+    "@grafema/types": "workspace:*",
+    "commander": "^13.0.0",
+    "ink": "^6.6.0",
+    "ink-text-input": "^6.0.0",
+    "react": "^19.2.3"
+  },
+  "devDependencies": {
+    "@types/node": "^25.0.8",
+    "@types/react": "^19.2.9",
+    "typescript": "^5.9.3"
+  }
+}

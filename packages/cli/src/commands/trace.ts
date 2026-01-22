@@ -1,0 +1,349 @@
+/**
+ * Trace command - Data flow analysis
+ *
+ * Usage:
+ *   grafema trace "userId from authenticate"
+ *   grafema trace "config"
+ */
+
+import { Command } from 'commander';
+import { resolve, join, relative } from 'path';
+import { existsSync } from 'fs';
+import { RFDBServerBackend } from '@grafema/core';
+
+interface TraceOptions {
+  project: string;
+  json?: boolean;
+  depth: string;
+}
+
+interface NodeInfo {
+  id: string;
+  type: string;
+  name: string;
+  file: string;
+  line?: number;
+  value?: unknown;
+}
+
+interface TraceStep {
+  node: NodeInfo;
+  edgeType: string;
+  depth: number;
+}
+
+export const traceCommand = new Command('trace')
+  .description('Trace data flow for a variable')
+  .argument('<pattern>', 'Pattern: "varName from functionName" or just "varName"')
+  .option('-p, --project <path>', 'Project path', '.')
+  .option('-j, --json', 'Output as JSON')
+  .option('-d, --depth <n>', 'Max trace depth', '10')
+  .action(async (pattern: string, options: TraceOptions) => {
+    const projectPath = resolve(options.project);
+    const grafemaDir = join(projectPath, '.grafema');
+    const dbPath = join(grafemaDir, 'graph.rfdb');
+
+    if (!existsSync(dbPath)) {
+      console.error('✗ No graph database found');
+      console.error('  → Run "grafema analyze" first');
+      process.exit(1);
+    }
+
+    const backend = new RFDBServerBackend({ dbPath });
+    await backend.connect();
+
+    try {
+      // Parse pattern: "varName from functionName" or just "varName"
+      const { varName, scopeName } = parseTracePattern(pattern);
+      const maxDepth = parseInt(options.depth, 10);
+
+      console.log(`Tracing ${varName}${scopeName ? ` from ${scopeName}` : ''}...`);
+      console.log('');
+
+      // Find starting variable(s)
+      const variables = await findVariables(backend, varName, scopeName);
+
+      if (variables.length === 0) {
+        console.log(`No variable "${varName}" found${scopeName ? ` in ${scopeName}` : ''}`);
+        return;
+      }
+
+      // Trace each variable
+      for (const variable of variables) {
+        const loc = formatLocation(variable.file, variable.line, projectPath);
+        console.log(`Variable: ${variable.name}`);
+        console.log(`Location: ${loc}`);
+        console.log('');
+
+        // Trace backwards through ASSIGNED_FROM
+        const backwardTrace = await traceBackward(backend, variable.id, maxDepth);
+
+        if (backwardTrace.length > 0) {
+          console.log('Data sources (where value comes from):');
+          displayTrace(backwardTrace, projectPath, '  ');
+        }
+
+        // Trace forward through ASSIGNED_FROM (where this value flows to)
+        const forwardTrace = await traceForward(backend, variable.id, maxDepth);
+
+        if (forwardTrace.length > 0) {
+          console.log('');
+          console.log('Data sinks (where value flows to):');
+          displayTrace(forwardTrace, projectPath, '  ');
+        }
+
+        // Show value domain if available
+        const sources = await getValueSources(backend, variable.id);
+        if (sources.length > 0) {
+          console.log('');
+          console.log('Possible values:');
+          for (const src of sources) {
+            if (src.type === 'LITERAL' && src.value !== undefined) {
+              console.log(`  • ${JSON.stringify(src.value)} (literal)`);
+            } else if (src.type === 'PARAMETER') {
+              console.log(`  • <parameter ${src.name}> (runtime input)`);
+            } else if (src.type === 'CALL') {
+              console.log(`  • <return from ${src.name || 'call'}> (computed)`);
+            } else {
+              console.log(`  • <${src.type.toLowerCase()}> ${src.name || ''}`);
+            }
+          }
+        }
+
+        if (variables.length > 1) {
+          console.log('');
+          console.log('---');
+        }
+      }
+
+      if (options.json) {
+        // TODO: structured JSON output
+      }
+
+    } finally {
+      await backend.close();
+    }
+  });
+
+/**
+ * Parse trace pattern
+ */
+function parseTracePattern(pattern: string): { varName: string; scopeName: string | null } {
+  const fromMatch = pattern.match(/^(.+?)\s+from\s+(.+)$/i);
+  if (fromMatch) {
+    return { varName: fromMatch[1].trim(), scopeName: fromMatch[2].trim() };
+  }
+  return { varName: pattern.trim(), scopeName: null };
+}
+
+/**
+ * Find variables by name, optionally scoped to a function
+ */
+async function findVariables(
+  backend: RFDBServerBackend,
+  varName: string,
+  scopeName: string | null
+): Promise<NodeInfo[]> {
+  const results: NodeInfo[] = [];
+
+  // Search VARIABLE, CONSTANT, PARAMETER
+  for (const nodeType of ['VARIABLE', 'CONSTANT', 'PARAMETER']) {
+    for await (const node of backend.queryNodes({ nodeType: nodeType as any })) {
+      const name = (node as any).name || '';
+      if (name.toLowerCase() === varName.toLowerCase()) {
+        // If scope specified, check if variable is in that scope
+        if (scopeName) {
+          const file = (node as any).file || '';
+          // Simple heuristic: check if function name is in file path or nearby
+          if (!file.toLowerCase().includes(scopeName.toLowerCase())) {
+            continue;
+          }
+        }
+
+        results.push({
+          id: node.id,
+          type: (node as any).type || nodeType,
+          name: name,
+          file: (node as any).file || '',
+          line: (node as any).line,
+        });
+
+        if (results.length >= 5) break;
+      }
+    }
+    if (results.length >= 5) break;
+  }
+
+  return results;
+}
+
+/**
+ * Trace backward through ASSIGNED_FROM edges
+ */
+async function traceBackward(
+  backend: RFDBServerBackend,
+  startId: string,
+  maxDepth: number
+): Promise<TraceStep[]> {
+  const trace: TraceStep[] = [];
+  const visited = new Set<string>();
+  const queue: Array<{ id: string; depth: number }> = [{ id: startId, depth: 0 }];
+
+  while (queue.length > 0) {
+    const { id, depth } = queue.shift()!;
+
+    if (visited.has(id) || depth > maxDepth) continue;
+    visited.add(id);
+
+    try {
+      const edges = await backend.getOutgoingEdges(id, ['ASSIGNED_FROM', 'DERIVES_FROM']);
+
+      for (const edge of edges) {
+        const targetNode = await backend.getNode(edge.dst);
+        if (!targetNode) continue;
+
+        const nodeInfo: NodeInfo = {
+          id: targetNode.id,
+          type: (targetNode as any).type || (targetNode as any).nodeType || 'UNKNOWN',
+          name: (targetNode as any).name || '',
+          file: (targetNode as any).file || '',
+          line: (targetNode as any).line,
+          value: (targetNode as any).value,
+        };
+
+        trace.push({
+          node: nodeInfo,
+          edgeType: edge.edgeType || edge.type,
+          depth: depth + 1,
+        });
+
+        // Continue tracing unless we hit a leaf
+        const leafTypes = ['LITERAL', 'PARAMETER', 'EXTERNAL_MODULE'];
+        if (!leafTypes.includes(nodeInfo.type)) {
+          queue.push({ id: targetNode.id, depth: depth + 1 });
+        }
+      }
+    } catch {
+      // Ignore errors
+    }
+  }
+
+  return trace;
+}
+
+/**
+ * Trace forward - find what uses this variable
+ */
+async function traceForward(
+  backend: RFDBServerBackend,
+  startId: string,
+  maxDepth: number
+): Promise<TraceStep[]> {
+  const trace: TraceStep[] = [];
+  const visited = new Set<string>();
+  const queue: Array<{ id: string; depth: number }> = [{ id: startId, depth: 0 }];
+
+  while (queue.length > 0) {
+    const { id, depth } = queue.shift()!;
+
+    if (visited.has(id) || depth > maxDepth) continue;
+    visited.add(id);
+
+    try {
+      // Find nodes that get their value FROM this node
+      const edges = await backend.getIncomingEdges(id, ['ASSIGNED_FROM', 'DERIVES_FROM']);
+
+      for (const edge of edges) {
+        const sourceNode = await backend.getNode(edge.src);
+        if (!sourceNode) continue;
+
+        const nodeInfo: NodeInfo = {
+          id: sourceNode.id,
+          type: (sourceNode as any).type || (sourceNode as any).nodeType || 'UNKNOWN',
+          name: (sourceNode as any).name || '',
+          file: (sourceNode as any).file || '',
+          line: (sourceNode as any).line,
+        };
+
+        trace.push({
+          node: nodeInfo,
+          edgeType: edge.edgeType || edge.type,
+          depth: depth + 1,
+        });
+
+        // Continue forward
+        if (depth < maxDepth - 1) {
+          queue.push({ id: sourceNode.id, depth: depth + 1 });
+        }
+      }
+    } catch {
+      // Ignore errors
+    }
+  }
+
+  return trace;
+}
+
+/**
+ * Get immediate value sources (for "possible values" display)
+ */
+async function getValueSources(
+  backend: RFDBServerBackend,
+  nodeId: string
+): Promise<NodeInfo[]> {
+  const sources: NodeInfo[] = [];
+
+  try {
+    const edges = await backend.getOutgoingEdges(nodeId, ['ASSIGNED_FROM']);
+
+    for (const edge of edges.slice(0, 5)) {
+      const node = await backend.getNode(edge.dst);
+      if (node) {
+        sources.push({
+          id: node.id,
+          type: (node as any).type || (node as any).nodeType || 'UNKNOWN',
+          name: (node as any).name || '',
+          file: (node as any).file || '',
+          line: (node as any).line,
+          value: (node as any).value,
+        });
+      }
+    }
+  } catch {
+    // Ignore
+  }
+
+  return sources;
+}
+
+/**
+ * Display trace results
+ */
+function displayTrace(trace: TraceStep[], projectPath: string, indent: string): void {
+  // Group by depth
+  const byDepth = new Map<number, TraceStep[]>();
+  for (const step of trace) {
+    if (!byDepth.has(step.depth)) {
+      byDepth.set(step.depth, []);
+    }
+    byDepth.get(step.depth)!.push(step);
+  }
+
+  for (const [depth, steps] of [...byDepth.entries()].sort((a, b) => a[0] - b[0])) {
+    for (const step of steps) {
+      const loc = formatLocation(step.node.file, step.node.line, projectPath);
+      const arrow = step.edgeType === 'ASSIGNED_FROM' ? '←' : '⟵';
+      const valueStr = step.node.value !== undefined ? ` = ${JSON.stringify(step.node.value)}` : '';
+      console.log(`${indent}${arrow} ${step.node.name || step.node.type}${valueStr} (${loc})`);
+    }
+  }
+}
+
+/**
+ * Format file location
+ */
+function formatLocation(file: string | undefined, line: number | undefined, projectPath: string): string {
+  if (!file) return '';
+  const relPath = relative(projectPath, file);
+  return line ? `${relPath}:${line}` : relPath;
+}

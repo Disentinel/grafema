@@ -36,6 +36,12 @@ export const EDGE_TYPE = {
   ASSIGNED_FROM: 'ASSIGNED_FROM',
   READS_FROM: 'READS_FROM',
   WRITES_TO: 'WRITES_TO',
+  DERIVES_FROM: 'DERIVES_FROM',
+  FLOWS_INTO: 'FLOWS_INTO',
+
+  // Object/Array structure
+  HAS_PROPERTY: 'HAS_PROPERTY',   // OBJECT_LITERAL -> property value
+  HAS_ELEMENT: 'HAS_ELEMENT',     // ARRAY_LITERAL -> element
 
   // HTTP/Routing
   ROUTES_TO: 'ROUTES_TO',
@@ -100,8 +106,28 @@ export interface ExportsEdge extends EdgeRecord {
 }
 
 export interface DataFlowEdge extends EdgeRecord {
-  type: 'ASSIGNED_FROM' | 'READS_FROM' | 'WRITES_TO' | 'PASSES_ARGUMENT';
+  type: 'ASSIGNED_FROM' | 'READS_FROM' | 'WRITES_TO' | 'PASSES_ARGUMENT' | 'DERIVES_FROM' | 'FLOWS_INTO';
   dataType?: string;
+}
+
+/**
+ * Edge representing data flowing INTO a container (array, collection)
+ * Source: the value being added
+ * Destination: the container receiving the value
+ *
+ * Example: arr.push(obj) creates edge obj --FLOWS_INTO--> arr
+ */
+export interface FlowsIntoEdge extends EdgeRecord {
+  type: 'FLOWS_INTO';
+  mutationMethod?: 'push' | 'unshift' | 'splice' | 'indexed';
+  argIndex?: number;
+  isSpread?: boolean;
+}
+
+export interface ObjectStructureEdge extends EdgeRecord {
+  type: 'HAS_PROPERTY' | 'HAS_ELEMENT';
+  propertyName?: string;  // For HAS_PROPERTY
+  elementIndex?: number;  // For HAS_ELEMENT
 }
 
 export interface RouteEdge extends EdgeRecord {

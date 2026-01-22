@@ -23,10 +23,13 @@ import {
   VariableDeclarationNode,
   ConstantNode,
   LiteralNode,
+  ObjectLiteralNode,
+  ArrayLiteralNode,
   ExternalStdioNode,
   EventListenerNode,
   HttpRequestNode,
   DatabaseQueryNode,
+  ImportNode,
   type EntrypointType,
   type EntrypointTrigger,
 } from './nodes/index.js';
@@ -109,6 +112,18 @@ interface LiteralOptions {
   counter?: number;
 }
 
+interface ObjectLiteralOptions {
+  parentCallId?: string;
+  argIndex?: number;
+  counter?: number;
+}
+
+interface ArrayLiteralOptions {
+  parentCallId?: string;
+  argIndex?: number;
+  counter?: number;
+}
+
 interface EventListenerOptions {
   column?: number;
   parentScopeId?: string;
@@ -124,6 +139,13 @@ interface HttpRequestOptions {
 
 interface DatabaseQueryOptions {
   parentScopeId?: string;
+}
+
+interface ImportOptions {
+  importType?: 'default' | 'named' | 'namespace';
+  importBinding?: 'value' | 'type' | 'typeof';
+  imported?: string;
+  local?: string;
 }
 
 // Validator type for node classes
@@ -209,6 +231,20 @@ export class NodeFactory {
   }
 
   /**
+   * Create OBJECT_LITERAL node
+   */
+  static createObjectLiteral(file: string, line: number, column: number, options: ObjectLiteralOptions = {}) {
+    return ObjectLiteralNode.create(file, line, column, options);
+  }
+
+  /**
+   * Create ARRAY_LITERAL node
+   */
+  static createArrayLiteral(file: string, line: number, column: number, options: ArrayLiteralOptions = {}) {
+    return ArrayLiteralNode.create(file, line, column, options);
+  }
+
+  /**
    * Create EXTERNAL_STDIO node (singleton)
    */
   static createExternalStdio() {
@@ -237,6 +273,33 @@ export class NodeFactory {
   }
 
   /**
+   * Create IMPORT node
+   *
+   * ImportNode automatically detects importType from imported field:
+   * - imported === 'default' → importType: 'default'
+   * - imported === '*' → importType: 'namespace'
+   * - anything else → importType: 'named'
+   *
+   * @param name - Local binding name (how it's used in this file)
+   * @param file - Absolute file path
+   * @param line - Line number (for debugging, not part of ID)
+   * @param column - Column position (0 if unavailable)
+   * @param source - Source module (e.g., 'react', './utils')
+   * @param options - Optional fields
+   * @returns ImportNodeRecord
+   */
+  static createImport(
+    name: string,
+    file: string,
+    line: number,
+    column: number,
+    source: string,
+    options: ImportOptions = {}
+  ) {
+    return ImportNode.create(name, file, line, column, source, options);
+  }
+
+  /**
    * Validate node by its type
    */
   static validate(node: BaseNodeRecord): string[] {
@@ -251,10 +314,13 @@ export class NodeFactory {
       'VARIABLE_DECLARATION': VariableDeclarationNode,
       'CONSTANT': ConstantNode,
       'LITERAL': LiteralNode,
+      'OBJECT_LITERAL': ObjectLiteralNode,
+      'ARRAY_LITERAL': ArrayLiteralNode,
       'EXTERNAL_STDIO': ExternalStdioNode,
       'EVENT_LISTENER': EventListenerNode,
       'HTTP_REQUEST': HttpRequestNode,
-      'DATABASE_QUERY': DatabaseQueryNode
+      'DATABASE_QUERY': DatabaseQueryNode,
+      'IMPORT': ImportNode
     };
 
     const validator = validators[node.type];

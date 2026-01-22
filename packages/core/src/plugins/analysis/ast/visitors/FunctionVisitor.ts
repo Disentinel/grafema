@@ -14,10 +14,12 @@ import type {
   Identifier,
   AssignmentPattern,
   RestElement,
-  VariableDeclarator
+  VariableDeclarator,
+  Comment
 } from '@babel/types';
 import type { NodePath } from '@babel/traverse';
 import { ASTVisitor, type VisitorModule, type VisitorCollections, type VisitorHandlers, type CounterRef } from './ASTVisitor.js';
+import { typeNodeToString } from './TypeScriptVisitor.js';
 
 /**
  * Scope context for generating stable semantic IDs
@@ -56,6 +58,11 @@ interface FunctionInfo {
   async: boolean;
   generator?: boolean;
   arrowFunction?: boolean;
+  params?: string[];
+  paramTypes?: string[];
+  returnType?: string;
+  signature?: string;
+  jsdocSummary?: string;
 }
 
 /**
@@ -116,6 +123,100 @@ export class FunctionVisitor extends ASTVisitor {
       const index = moduleScopeCtx.siblingCounters.get('anonymous') || 0;
       moduleScopeCtx.siblingCounters.set('anonymous', index + 1);
       return `anonymous[${index}]`;
+    };
+
+    // Helper function to extract parameter names and types from function params
+    const extractParamInfo = (params: Node[]): { names: string[]; types: string[] } => {
+      const names: string[] = [];
+      const types: string[] = [];
+
+      params.forEach((param) => {
+        if (param.type === 'Identifier') {
+          const id = param as Identifier;
+          names.push(id.name);
+          // Check for type annotation
+          const typeAnnotation = (id as any).typeAnnotation?.typeAnnotation;
+          types.push(typeAnnotation ? typeNodeToString(typeAnnotation) : 'any');
+        } else if (param.type === 'AssignmentPattern') {
+          const assignmentParam = param as AssignmentPattern;
+          if (assignmentParam.left.type === 'Identifier') {
+            const id = assignmentParam.left as Identifier;
+            names.push(id.name + '?');
+            const typeAnnotation = (id as any).typeAnnotation?.typeAnnotation;
+            types.push(typeAnnotation ? typeNodeToString(typeAnnotation) : 'any');
+          }
+        } else if (param.type === 'RestElement') {
+          const restParam = param as unknown as RestElement;
+          if (restParam.argument.type === 'Identifier') {
+            const id = restParam.argument as Identifier;
+            names.push('...' + id.name);
+            const typeAnnotation = (id as any).typeAnnotation?.typeAnnotation;
+            types.push(typeAnnotation ? typeNodeToString(typeAnnotation) : 'any[]');
+          }
+        }
+      });
+
+      return { names, types };
+    };
+
+    // Helper function to extract return type from function
+    const extractReturnType = (node: Function): string => {
+      const returnTypeAnnotation = (node as any).returnType?.typeAnnotation;
+      if (returnTypeAnnotation) {
+        return typeNodeToString(returnTypeAnnotation);
+      }
+      return 'void';
+    };
+
+    // Helper function to extract JSDoc summary from leading comments
+    const extractJsdocSummary = (node: Node): string | undefined => {
+      const comments = node.leadingComments as Comment[] | null | undefined;
+      if (!comments || comments.length === 0) return undefined;
+
+      // Find the last block comment that looks like JSDoc
+      for (let i = comments.length - 1; i >= 0; i--) {
+        const comment = comments[i];
+        if (comment.type === 'CommentBlock' && comment.value.startsWith('*')) {
+          // Parse JSDoc - get first non-empty line after the opening
+          const lines = comment.value.split('\n');
+          for (const line of lines) {
+            const trimmed = line.replace(/^\s*\*\s?/, '').trim();
+            // Skip empty lines and @tags
+            if (trimmed && !trimmed.startsWith('@')) {
+              return trimmed.slice(0, 200); // Limit length
+            }
+          }
+        }
+      }
+      return undefined;
+    };
+
+    // Helper function to build function signature
+    const buildSignature = (
+      params: string[],
+      paramTypes: string[],
+      returnType: string,
+      isAsync: boolean
+    ): string => {
+      const paramParts = params.map((name, i) => {
+        const type = paramTypes[i] || 'any';
+        // Handle rest params
+        if (name.startsWith('...')) {
+          return `${name}: ${type}`;
+        }
+        // Handle optional params (with ?)
+        if (name.endsWith('?')) {
+          return `${name}: ${type}`;
+        }
+        return `${name}: ${type}`;
+      });
+
+      const paramsStr = `(${paramParts.join(', ')})`;
+      const retStr = isAsync && !returnType.startsWith('Promise')
+        ? `Promise<${returnType}>`
+        : returnType;
+
+      return `${paramsStr} => ${retStr}`;
     };
 
     // Helper function to create PARAMETER nodes for function params
@@ -184,6 +285,13 @@ export class FunctionVisitor extends ASTVisitor {
         if (!node.id) return; // Skip anonymous function declarations
 
         const functionId = `FUNCTION#${node.id.name}#${module.file}#${node.loc!.start.line}`;
+        const isAsync = node.async || false;
+
+        // Extract type info
+        const { names: paramNames, types: paramTypes } = extractParamInfo(node.params);
+        const returnType = extractReturnType(node);
+        const jsdocSummary = extractJsdocSummary(node);
+        const signature = buildSignature(paramNames, paramTypes, returnType, isAsync);
 
         (functions as FunctionInfo[]).push({
           id: functionId,
@@ -192,8 +300,13 @@ export class FunctionVisitor extends ASTVisitor {
           name: node.id.name,
           file: module.file,
           line: node.loc!.start.line,
-          async: node.async || false,
-          generator: node.generator || false
+          async: isAsync,
+          generator: node.generator || false,
+          params: paramNames,
+          paramTypes,
+          returnType,
+          signature,
+          jsdocSummary
         });
 
         // Create PARAMETER nodes for function parameters
@@ -224,6 +337,7 @@ export class FunctionVisitor extends ASTVisitor {
         const node = path.node as ArrowFunctionExpression;
         const line = node.loc!.start.line;
         const column = node.loc!.start.column;
+        const isAsync = node.async || false;
 
         // Determine arrow function name (use scope-level counter for stable semanticId)
         let functionName = generateAnonymousName();
@@ -239,6 +353,12 @@ export class FunctionVisitor extends ASTVisitor {
 
         const functionId = `FUNCTION#${functionName}#${module.file}#${line}:${column}:${functionCounterRef.value++}`;
 
+        // Extract type info
+        const { names: paramNames, types: paramTypes } = extractParamInfo(node.params);
+        const returnType = extractReturnType(node);
+        const jsdocSummary = extractJsdocSummary(node);
+        const signature = buildSignature(paramNames, paramTypes, returnType, isAsync);
+
         (functions as FunctionInfo[]).push({
           id: functionId,
           stableId: functionId,
@@ -247,8 +367,13 @@ export class FunctionVisitor extends ASTVisitor {
           file: module.file,
           line,
           column,
-          async: node.async || false,
-          arrowFunction: true
+          async: isAsync,
+          arrowFunction: true,
+          params: paramNames,
+          paramTypes,
+          returnType,
+          signature,
+          jsdocSummary
         });
 
         // Create PARAMETER nodes for arrow function parameters

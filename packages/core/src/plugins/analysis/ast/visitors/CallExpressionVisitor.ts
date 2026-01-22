@@ -8,10 +8,76 @@
  * - Constructor calls: new Foo(), new Function()
  */
 
-import type { Node, CallExpression, NewExpression, Identifier, MemberExpression } from '@babel/types';
+import type { Node, CallExpression, NewExpression, Identifier, MemberExpression, ObjectExpression, ArrayExpression, ObjectProperty, SpreadElement } from '@babel/types';
 import type { NodePath } from '@babel/traverse';
 import { ASTVisitor, type VisitorModule, type VisitorCollections, type VisitorHandlers, type CounterRef } from './ASTVisitor.js';
 import { ExpressionEvaluator } from '../ExpressionEvaluator.js';
+import type { ArrayMutationInfo, ArrayMutationArgument } from '../types.js';
+
+/**
+ * Object literal info for OBJECT_LITERAL nodes
+ */
+interface ObjectLiteralInfo {
+  id: string;
+  type: 'OBJECT_LITERAL';
+  file: string;
+  line: number;
+  column: number;
+  parentCallId?: string;
+  argIndex?: number;
+  isSpread?: boolean;
+}
+
+/**
+ * Object property info for HAS_PROPERTY edges
+ */
+interface ObjectPropertyInfo {
+  objectId: string;
+  propertyName: string;
+  valueNodeId?: string;
+  valueType: 'LITERAL' | 'VARIABLE' | 'CALL' | 'EXPRESSION' | 'OBJECT_LITERAL' | 'ARRAY_LITERAL' | 'SPREAD';
+  valueName?: string;
+  literalValue?: unknown;
+  file: string;
+  line: number;
+  column: number;
+  callLine?: number;
+  callColumn?: number;
+  nestedObjectId?: string;
+  nestedArrayId?: string;
+}
+
+/**
+ * Array literal info for ARRAY_LITERAL nodes
+ */
+interface ArrayLiteralInfo {
+  id: string;
+  type: 'ARRAY_LITERAL';
+  file: string;
+  line: number;
+  column: number;
+  parentCallId?: string;
+  argIndex?: number;
+}
+
+/**
+ * Array element info for HAS_ELEMENT edges
+ */
+interface ArrayElementInfo {
+  arrayId: string;
+  index: number;
+  valueNodeId?: string;
+  valueType: 'LITERAL' | 'VARIABLE' | 'CALL' | 'EXPRESSION' | 'OBJECT_LITERAL' | 'ARRAY_LITERAL' | 'SPREAD';
+  valueName?: string;
+  literalValue?: unknown;
+  file: string;
+  line: number;
+  column: number;
+  callLine?: number;
+  callColumn?: number;
+  nestedObjectId?: string;
+  nestedArrayId?: string;
+}
 
 /**
  * Argument info for PASSES_ARGUMENT edges
@@ -234,11 +300,99 @@ export class CallExpressionVisitor extends ASTVisitor {
       }
       // Object literal
       else if (actualArg.type === 'ObjectExpression') {
+        const objectExpr = actualArg as ObjectExpression;
+        // Initialize collections if not exist (must assign back to this.collections!)
+        if (!this.collections.objectLiteralCounterRef) {
+          this.collections.objectLiteralCounterRef = { value: 0 };
+        }
+        if (!this.collections.objectLiterals) {
+          this.collections.objectLiterals = [];
+        }
+        if (!this.collections.objectProperties) {
+          this.collections.objectProperties = [];
+        }
+        const objectLiteralCounterRef = this.collections.objectLiteralCounterRef as CounterRef;
+        const objectId = `OBJECT_LITERAL#arg${index}#${module.file}#${argInfo.line}:${argInfo.column}:${objectLiteralCounterRef.value++}`;
+
+        // Create OBJECT_LITERAL node
+        (this.collections.objectLiterals as ObjectLiteralInfo[]).push({
+          id: objectId,
+          type: 'OBJECT_LITERAL',
+          file: module.file,
+          line: argInfo.line,
+          column: argInfo.column,
+          parentCallId: callId,
+          argIndex: index
+        });
+
+        // Extract properties
+        this.extractObjectProperties(
+          objectExpr,
+          objectId,
+          module,
+          this.collections.objectProperties as ObjectPropertyInfo[],
+          this.collections.objectLiterals as ObjectLiteralInfo[],
+          objectLiteralCounterRef,
+          literals as LiteralInfo[],
+          literalCounterRef
+        );
+
         argInfo.targetType = 'OBJECT_LITERAL';
+        argInfo.targetId = objectId;
       }
       // Array literal
       else if (actualArg.type === 'ArrayExpression') {
+        const arrayExpr = actualArg as ArrayExpression;
+        // Initialize collections if not exist (must assign back to this.collections!)
+        if (!this.collections.arrayLiteralCounterRef) {
+          this.collections.arrayLiteralCounterRef = { value: 0 };
+        }
+        if (!this.collections.arrayLiterals) {
+          this.collections.arrayLiterals = [];
+        }
+        if (!this.collections.arrayElements) {
+          this.collections.arrayElements = [];
+        }
+        if (!this.collections.objectLiteralCounterRef) {
+          this.collections.objectLiteralCounterRef = { value: 0 };
+        }
+        if (!this.collections.objectLiterals) {
+          this.collections.objectLiterals = [];
+        }
+        if (!this.collections.objectProperties) {
+          this.collections.objectProperties = [];
+        }
+        const arrayLiteralCounterRef = this.collections.arrayLiteralCounterRef as CounterRef;
+        const arrayId = `ARRAY_LITERAL#arg${index}#${module.file}#${argInfo.line}:${argInfo.column}:${arrayLiteralCounterRef.value++}`;
+
+        // Create ARRAY_LITERAL node
+        (this.collections.arrayLiterals as ArrayLiteralInfo[]).push({
+          id: arrayId,
+          type: 'ARRAY_LITERAL',
+          file: module.file,
+          line: argInfo.line,
+          column: argInfo.column,
+          parentCallId: callId,
+          argIndex: index
+        });
+
+        // Extract elements
+        this.extractArrayElements(
+          arrayExpr,
+          arrayId,
+          module,
+          this.collections.arrayElements as ArrayElementInfo[],
+          this.collections.arrayLiterals as ArrayLiteralInfo[],
+          arrayLiteralCounterRef,
+          this.collections.objectLiterals as ObjectLiteralInfo[],
+          this.collections.objectLiteralCounterRef as CounterRef,
+          this.collections.objectProperties as ObjectPropertyInfo[],
+          literals as LiteralInfo[],
+          literalCounterRef
+        );
+
         argInfo.targetType = 'ARRAY_LITERAL';
+        argInfo.targetId = arrayId;
       }
       // Other expression types
       else {
@@ -295,6 +449,391 @@ export class CallExpressionVisitor extends ASTVisitor {
     }
 
     return Array.from(identifiers);
+  }
+
+  /**
+   * Extract object properties and create ObjectPropertyInfo records
+   */
+  extractObjectProperties(
+    objectExpr: ObjectExpression,
+    objectId: string,
+    module: VisitorModule,
+    objectProperties: ObjectPropertyInfo[],
+    objectLiterals: ObjectLiteralInfo[],
+    objectLiteralCounterRef: CounterRef,
+    literals: LiteralInfo[],
+    literalCounterRef: CounterRef
+  ): void {
+    for (const prop of objectExpr.properties) {
+      const propLine = prop.loc?.start.line || 0;
+      const propColumn = prop.loc?.start.column || 0;
+
+      // Handle spread properties: { ...other }
+      if (prop.type === 'SpreadElement') {
+        const spreadArg = prop.argument;
+        const propertyInfo: ObjectPropertyInfo = {
+          objectId,
+          propertyName: '<spread>',
+          valueType: 'SPREAD',
+          file: module.file,
+          line: propLine,
+          column: propColumn
+        };
+
+        if (spreadArg.type === 'Identifier') {
+          propertyInfo.valueName = spreadArg.name;
+          propertyInfo.valueType = 'VARIABLE';
+        }
+
+        objectProperties.push(propertyInfo);
+        continue;
+      }
+
+      // Handle regular properties
+      if (prop.type === 'ObjectProperty') {
+        const objProp = prop as ObjectProperty;
+        let propertyName: string;
+
+        // Get property name
+        if (objProp.key.type === 'Identifier') {
+          propertyName = objProp.key.name;
+        } else if (objProp.key.type === 'StringLiteral') {
+          propertyName = objProp.key.value;
+        } else if (objProp.key.type === 'NumericLiteral') {
+          propertyName = String(objProp.key.value);
+        } else {
+          propertyName = '<computed>';
+        }
+
+        const propertyInfo: ObjectPropertyInfo = {
+          objectId,
+          propertyName,
+          file: module.file,
+          line: propLine,
+          column: propColumn,
+          valueType: 'EXPRESSION'
+        };
+
+        const value = objProp.value;
+
+        // Literal value
+        const literalValue = ExpressionEvaluator.extractLiteralValue(value);
+        if (literalValue !== null) {
+          const literalId = `LITERAL#${propertyName}#${module.file}#${propLine}:${propColumn}:${literalCounterRef.value++}`;
+          literals.push({
+            id: literalId,
+            type: 'LITERAL',
+            value: literalValue,
+            valueType: typeof literalValue,
+            file: module.file,
+            line: propLine,
+            column: propColumn,
+            parentCallId: objectId,
+            argIndex: 0
+          });
+          propertyInfo.valueType = 'LITERAL';
+          propertyInfo.valueNodeId = literalId;
+          propertyInfo.literalValue = literalValue;
+        }
+        // Variable reference
+        else if (value.type === 'Identifier') {
+          propertyInfo.valueType = 'VARIABLE';
+          propertyInfo.valueName = value.name;
+        }
+        // Nested object literal
+        else if (value.type === 'ObjectExpression') {
+          const nestedObjectId = `OBJECT_LITERAL#${propertyName}#${module.file}#${value.loc?.start.line}:${value.loc?.start.column}:${objectLiteralCounterRef.value++}`;
+          objectLiterals.push({
+            id: nestedObjectId,
+            type: 'OBJECT_LITERAL',
+            file: module.file,
+            line: value.loc?.start.line || 0,
+            column: value.loc?.start.column || 0
+          });
+
+          // Recursively extract nested properties
+          this.extractObjectProperties(
+            value,
+            nestedObjectId,
+            module,
+            objectProperties,
+            objectLiterals,
+            objectLiteralCounterRef,
+            literals,
+            literalCounterRef
+          );
+
+          propertyInfo.valueType = 'OBJECT_LITERAL';
+          propertyInfo.nestedObjectId = nestedObjectId;
+          propertyInfo.valueNodeId = nestedObjectId;
+        }
+        // Nested array literal
+        else if (value.type === 'ArrayExpression') {
+          const arrayLiteralCounterRef = (this.collections.arrayLiteralCounterRef ?? { value: 0 }) as CounterRef;
+          const arrayLiterals = this.collections.arrayLiterals ?? [];
+          const arrayElements = this.collections.arrayElements ?? [];
+
+          const nestedArrayId = `ARRAY_LITERAL#${propertyName}#${module.file}#${value.loc?.start.line}:${value.loc?.start.column}:${arrayLiteralCounterRef.value++}`;
+          (arrayLiterals as ArrayLiteralInfo[]).push({
+            id: nestedArrayId,
+            type: 'ARRAY_LITERAL',
+            file: module.file,
+            line: value.loc?.start.line || 0,
+            column: value.loc?.start.column || 0
+          });
+
+          // Recursively extract array elements
+          this.extractArrayElements(
+            value,
+            nestedArrayId,
+            module,
+            arrayElements as ArrayElementInfo[],
+            arrayLiterals as ArrayLiteralInfo[],
+            arrayLiteralCounterRef,
+            objectLiterals,
+            objectLiteralCounterRef,
+            objectProperties,
+            literals,
+            literalCounterRef
+          );
+
+          propertyInfo.valueType = 'ARRAY_LITERAL';
+          propertyInfo.nestedArrayId = nestedArrayId;
+          propertyInfo.valueNodeId = nestedArrayId;
+        }
+        // Call expression
+        else if (value.type === 'CallExpression') {
+          propertyInfo.valueType = 'CALL';
+          propertyInfo.callLine = value.loc?.start.line;
+          propertyInfo.callColumn = value.loc?.start.column;
+        }
+        // Other expressions
+        else {
+          propertyInfo.valueType = 'EXPRESSION';
+        }
+
+        objectProperties.push(propertyInfo);
+      }
+      // Handle object methods: { foo() {} }
+      else if (prop.type === 'ObjectMethod') {
+        const propertyName = prop.key.type === 'Identifier' ? prop.key.name : '<computed>';
+        objectProperties.push({
+          objectId,
+          propertyName,
+          valueType: 'EXPRESSION',
+          file: module.file,
+          line: propLine,
+          column: propColumn
+        });
+      }
+    }
+  }
+
+  /**
+   * Extract array elements and create ArrayElementInfo records
+   */
+  extractArrayElements(
+    arrayExpr: ArrayExpression,
+    arrayId: string,
+    module: VisitorModule,
+    arrayElements: ArrayElementInfo[],
+    arrayLiterals: ArrayLiteralInfo[],
+    arrayLiteralCounterRef: CounterRef,
+    objectLiterals: ObjectLiteralInfo[],
+    objectLiteralCounterRef: CounterRef,
+    objectProperties: ObjectPropertyInfo[],
+    literals: LiteralInfo[],
+    literalCounterRef: CounterRef
+  ): void {
+    arrayExpr.elements.forEach((element, index) => {
+      if (!element) return;  // Skip holes in arrays
+
+      const elemLine = element.loc?.start.line || 0;
+      const elemColumn = element.loc?.start.column || 0;
+
+      const elementInfo: ArrayElementInfo = {
+        arrayId,
+        index,
+        file: module.file,
+        line: elemLine,
+        column: elemColumn,
+        valueType: 'EXPRESSION'
+      };
+
+      // Handle spread elements: [...arr]
+      if (element.type === 'SpreadElement') {
+        const spreadArg = element.argument;
+        elementInfo.valueType = 'SPREAD';
+        if (spreadArg.type === 'Identifier') {
+          elementInfo.valueName = spreadArg.name;
+        }
+        arrayElements.push(elementInfo);
+        return;
+      }
+
+      // Literal value
+      const literalValue = ExpressionEvaluator.extractLiteralValue(element);
+      if (literalValue !== null) {
+        const literalId = `LITERAL#elem${index}#${module.file}#${elemLine}:${elemColumn}:${literalCounterRef.value++}`;
+        literals.push({
+          id: literalId,
+          type: 'LITERAL',
+          value: literalValue,
+          valueType: typeof literalValue,
+          file: module.file,
+          line: elemLine,
+          column: elemColumn,
+          parentCallId: arrayId,
+          argIndex: index
+        });
+        elementInfo.valueType = 'LITERAL';
+        elementInfo.valueNodeId = literalId;
+        elementInfo.literalValue = literalValue;
+      }
+      // Variable reference
+      else if (element.type === 'Identifier') {
+        elementInfo.valueType = 'VARIABLE';
+        elementInfo.valueName = element.name;
+      }
+      // Nested object literal
+      else if (element.type === 'ObjectExpression') {
+        const nestedObjectId = `OBJECT_LITERAL#elem${index}#${module.file}#${elemLine}:${elemColumn}:${objectLiteralCounterRef.value++}`;
+        objectLiterals.push({
+          id: nestedObjectId,
+          type: 'OBJECT_LITERAL',
+          file: module.file,
+          line: elemLine,
+          column: elemColumn
+        });
+
+        // Recursively extract properties
+        this.extractObjectProperties(
+          element,
+          nestedObjectId,
+          module,
+          objectProperties,
+          objectLiterals,
+          objectLiteralCounterRef,
+          literals,
+          literalCounterRef
+        );
+
+        elementInfo.valueType = 'OBJECT_LITERAL';
+        elementInfo.nestedObjectId = nestedObjectId;
+        elementInfo.valueNodeId = nestedObjectId;
+      }
+      // Nested array literal
+      else if (element.type === 'ArrayExpression') {
+        const nestedArrayId = `ARRAY_LITERAL#elem${index}#${module.file}#${elemLine}:${elemColumn}:${arrayLiteralCounterRef.value++}`;
+        arrayLiterals.push({
+          id: nestedArrayId,
+          type: 'ARRAY_LITERAL',
+          file: module.file,
+          line: elemLine,
+          column: elemColumn
+        });
+
+        // Recursively extract elements
+        this.extractArrayElements(
+          element,
+          nestedArrayId,
+          module,
+          arrayElements,
+          arrayLiterals,
+          arrayLiteralCounterRef,
+          objectLiterals,
+          objectLiteralCounterRef,
+          objectProperties,
+          literals,
+          literalCounterRef
+        );
+
+        elementInfo.valueType = 'ARRAY_LITERAL';
+        elementInfo.nestedArrayId = nestedArrayId;
+        elementInfo.valueNodeId = nestedArrayId;
+      }
+      // Call expression
+      else if (element.type === 'CallExpression') {
+        elementInfo.valueType = 'CALL';
+        elementInfo.callLine = element.loc?.start.line;
+        elementInfo.callColumn = element.loc?.start.column;
+      }
+      // Other expressions
+      else {
+        elementInfo.valueType = 'EXPRESSION';
+      }
+
+      arrayElements.push(elementInfo);
+    });
+  }
+
+  /**
+   * Detect array mutation calls (push, unshift, splice) and collect mutation info
+   * for later FLOWS_INTO edge creation in GraphBuilder
+   */
+  private detectArrayMutation(
+    callNode: CallExpression,
+    arrayName: string,
+    method: 'push' | 'unshift' | 'splice',
+    module: VisitorModule
+  ): void {
+    // Initialize collection if not exists
+    if (!this.collections.arrayMutations) {
+      this.collections.arrayMutations = [];
+    }
+    const arrayMutations = this.collections.arrayMutations as ArrayMutationInfo[];
+
+    const mutationArgs: ArrayMutationArgument[] = [];
+
+    // For splice, only arguments from index 2 onwards are insertions
+    // splice(start, deleteCount, item1, item2, ...)
+    callNode.arguments.forEach((arg, index) => {
+      // Skip start and deleteCount for splice
+      if (method === 'splice' && index < 2) return;
+
+      const argInfo: ArrayMutationArgument = {
+        argIndex: method === 'splice' ? index - 2 : index,
+        isSpread: arg.type === 'SpreadElement',
+        valueType: 'EXPRESSION'  // Default
+      };
+
+      let actualArg = arg;
+      if (arg.type === 'SpreadElement') {
+        actualArg = arg.argument;
+      }
+
+      // Determine value type
+      const literalValue = ExpressionEvaluator.extractLiteralValue(actualArg);
+      if (literalValue !== null) {
+        argInfo.valueType = 'LITERAL';
+        argInfo.literalValue = literalValue;
+      } else if (actualArg.type === 'Identifier') {
+        argInfo.valueType = 'VARIABLE';
+        argInfo.valueName = actualArg.name;
+      } else if (actualArg.type === 'ObjectExpression') {
+        argInfo.valueType = 'OBJECT_LITERAL';
+      } else if (actualArg.type === 'ArrayExpression') {
+        argInfo.valueType = 'ARRAY_LITERAL';
+      } else if (actualArg.type === 'CallExpression') {
+        argInfo.valueType = 'CALL';
+        argInfo.callLine = actualArg.loc?.start.line;
+        argInfo.callColumn = actualArg.loc?.start.column;
+      }
+
+      mutationArgs.push(argInfo);
+    });
+
+    // Only record if there are actual insertions
+    if (mutationArgs.length > 0) {
+      arrayMutations.push({
+        arrayName,
+        mutationMethod: method,
+        file: module.file,
+        line: callNode.loc!.start.line,
+        column: callNode.loc!.start.column,
+        arguments: mutationArgs
+      });
+    }
   }
 
   /**
@@ -438,6 +977,17 @@ export class CallExpressionVisitor extends ASTVisitor {
                   column: callNode.loc!.start.column,
                   parentScopeId
                 });
+
+                // Check for array mutation methods (push, unshift, splice)
+                const ARRAY_MUTATION_METHODS = ['push', 'unshift', 'splice'];
+                if (ARRAY_MUTATION_METHODS.includes(methodName)) {
+                  this.detectArrayMutation(
+                    callNode,
+                    objectName,
+                    methodName as 'push' | 'unshift' | 'splice',
+                    module
+                  );
+                }
 
                 // Extract arguments for PASSES_ARGUMENT edges
                 if (callNode.arguments.length > 0) {

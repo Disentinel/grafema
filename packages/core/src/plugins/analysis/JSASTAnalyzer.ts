@@ -71,6 +71,12 @@ import type {
   TypeAliasInfo,
   EnumDeclarationInfo,
   DecoratorInfo,
+  ObjectLiteralInfo,
+  ObjectPropertyInfo,
+  ArrayLiteralInfo,
+  ArrayElementInfo,
+  ArrayMutationInfo,
+  ArrayMutationArgument,
   CounterRef,
   ProcessedNodes,
   ASTCollections,
@@ -111,6 +117,15 @@ interface Collections {
   typeAliases: TypeAliasInfo[];
   enums: EnumDeclarationInfo[];
   decorators: DecoratorInfo[];
+  // Object/Array literal tracking
+  objectLiterals: ObjectLiteralInfo[];
+  objectProperties: ObjectPropertyInfo[];
+  arrayLiterals: ArrayLiteralInfo[];
+  arrayElements: ArrayElementInfo[];
+  // Array mutation tracking for FLOWS_INTO edges
+  arrayMutations: ArrayMutationInfo[];
+  objectLiteralCounterRef: CounterRef;
+  arrayLiteralCounterRef: CounterRef;
   ifScopeCounterRef: CounterRef;
   scopeCounterRef: CounterRef;
   varDeclCounterRef: CounterRef;
@@ -740,6 +755,13 @@ export class JSASTAnalyzer extends Plugin {
       const typeAliases: TypeAliasInfo[] = [];
       const enums: EnumDeclarationInfo[] = [];
       const decorators: DecoratorInfo[] = [];
+      // Object/Array literal tracking for data flow
+      const objectLiterals: ObjectLiteralInfo[] = [];
+      const objectProperties: ObjectPropertyInfo[] = [];
+      const arrayLiterals: ArrayLiteralInfo[] = [];
+      const arrayElements: ArrayElementInfo[] = [];
+      // Array mutation tracking for FLOWS_INTO edges
+      const arrayMutations: ArrayMutationInfo[] = [];
 
       const ifScopeCounterRef: CounterRef = { value: 0 };
       const scopeCounterRef: CounterRef = { value: 0 };
@@ -749,6 +771,8 @@ export class JSASTAnalyzer extends Plugin {
       const httpRequestCounterRef: CounterRef = { value: 0 };
       const literalCounterRef: CounterRef = { value: 0 };
       const anonymousFunctionCounterRef: CounterRef = { value: 0 };
+      const objectLiteralCounterRef: CounterRef = { value: 0 };
+      const arrayLiteralCounterRef: CounterRef = { value: 0 };
 
       const processedNodes: ProcessedNodes = {
         functions: new Set(),
@@ -796,6 +820,11 @@ export class JSASTAnalyzer extends Plugin {
         httpRequests, literals, variableAssignments,
         // TypeScript-specific collections
         interfaces, typeAliases, enums, decorators,
+        // Object/Array literal tracking
+        objectLiterals, objectProperties, arrayLiterals, arrayElements,
+        // Array mutation tracking
+        arrayMutations,
+        objectLiteralCounterRef, arrayLiteralCounterRef,
         ifScopeCounterRef, scopeCounterRef, varDeclCounterRef,
         callSiteCounterRef, functionCounterRef, httpRequestCounterRef,
         literalCounterRef, anonymousFunctionCounterRef, processedNodes,
@@ -876,6 +905,50 @@ export class JSASTAnalyzer extends Plugin {
               siblingCounters: new Map()
             };
             this.analyzeFunctionBody(funcPath, funcBodyScopeId, module, allCollections, funcScopeCtx);
+          }
+
+          // Check for indexed array assignment at module level: arr[i] = value
+          if (assignNode.left.type === 'MemberExpression' && assignNode.left.computed) {
+            const memberExpr = assignNode.left;
+
+            // Get array name (only simple identifiers for now)
+            if (memberExpr.object.type === 'Identifier') {
+              const arrayName = memberExpr.object.name;
+              const value = assignNode.right;
+
+              const argInfo: ArrayMutationArgument = {
+                argIndex: 0,
+                isSpread: false,
+                valueType: 'EXPRESSION'
+              };
+
+              // Determine value type
+              const literalValue = ExpressionEvaluator.extractLiteralValue(value);
+              if (literalValue !== null) {
+                argInfo.valueType = 'LITERAL';
+                argInfo.literalValue = literalValue;
+              } else if (value.type === 'Identifier') {
+                argInfo.valueType = 'VARIABLE';
+                argInfo.valueName = value.name;
+              } else if (value.type === 'ObjectExpression') {
+                argInfo.valueType = 'OBJECT_LITERAL';
+              } else if (value.type === 'ArrayExpression') {
+                argInfo.valueType = 'ARRAY_LITERAL';
+              } else if (value.type === 'CallExpression') {
+                argInfo.valueType = 'CALL';
+                argInfo.callLine = value.loc?.start.line;
+                argInfo.callColumn = value.loc?.start.column;
+              }
+
+              arrayMutations.push({
+                arrayName,
+                mutationMethod: 'indexed',
+                file: module.file,
+                line: assignNode.loc!.start.line,
+                column: assignNode.loc!.start.column,
+                arguments: [argInfo]
+              });
+            }
           }
         }
       });
@@ -1030,7 +1103,9 @@ export class JSASTAnalyzer extends Plugin {
         interfaces,
         typeAliases,
         enums,
-        decorators
+        decorators,
+        // Array mutation tracking
+        arrayMutations
       });
       this.profiler.end('graph_build');
 
@@ -1199,6 +1274,61 @@ export class JSASTAnalyzer extends Plugin {
             }
           });
         });
+      },
+
+      // Detect indexed array assignments: arr[i] = value
+      AssignmentExpression: (assignPath: NodePath<t.AssignmentExpression>) => {
+        const assignNode = assignPath.node;
+
+        // Check for indexed array assignment: arr[i] = value
+        if (assignNode.left.type === 'MemberExpression' && assignNode.left.computed) {
+          const memberExpr = assignNode.left;
+
+          // Get array name (only simple identifiers for now)
+          if (memberExpr.object.type === 'Identifier') {
+            const arrayName = memberExpr.object.name;
+            const value = assignNode.right;
+
+            // Initialize collection if not exists
+            if (!collections.arrayMutations) {
+              collections.arrayMutations = [];
+            }
+            const arrayMutations = collections.arrayMutations as ArrayMutationInfo[];
+
+            const argInfo: ArrayMutationArgument = {
+              argIndex: 0,
+              isSpread: false,
+              valueType: 'EXPRESSION'
+            };
+
+            // Determine value type
+            const literalValue = ExpressionEvaluator.extractLiteralValue(value);
+            if (literalValue !== null) {
+              argInfo.valueType = 'LITERAL';
+              argInfo.literalValue = literalValue;
+            } else if (value.type === 'Identifier') {
+              argInfo.valueType = 'VARIABLE';
+              argInfo.valueName = value.name;
+            } else if (value.type === 'ObjectExpression') {
+              argInfo.valueType = 'OBJECT_LITERAL';
+            } else if (value.type === 'ArrayExpression') {
+              argInfo.valueType = 'ARRAY_LITERAL';
+            } else if (value.type === 'CallExpression') {
+              argInfo.valueType = 'CALL';
+              argInfo.callLine = value.loc?.start.line;
+              argInfo.callColumn = value.loc?.start.column;
+            }
+
+            arrayMutations.push({
+              arrayName,
+              mutationMethod: 'indexed',
+              file: module.file,
+              line: assignNode.loc!.start.line,
+              column: assignNode.loc!.start.column,
+              arguments: [argInfo]
+            });
+          }
+        }
       },
 
       ForStatement: (forPath: NodePath<t.ForStatement>) => {

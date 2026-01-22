@@ -103,6 +103,10 @@ export interface FunctionNodeRecord extends BaseNodeRecord {
   isClassMethod?: boolean;
   className?: string;
   params?: string[];
+  paramTypes?: string[];     // Types for each param
+  returnType?: string;       // Return type
+  signature?: string;        // Full signature: "(a: T) => R"
+  jsdocSummary?: string;     // First line of JSDoc
 }
 
 // Class node

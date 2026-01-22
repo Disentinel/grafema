@@ -165,6 +165,13 @@ export class Orchestrator {
     // Resolve to absolute path
     const absoluteProjectPath = projectPath.startsWith('/') ? projectPath : resolve(projectPath);
 
+    // RADICAL SIMPLIFICATION: Clear entire graph once at the start if forceAnalysis
+    if (this.forceAnalysis && this.graph.clear) {
+      console.log('[Orchestrator] Clearing entire graph (forceAnalysis=true)...');
+      await this.graph.clear();
+      console.log('[Orchestrator] Graph cleared successfully');
+    }
+
     this.onProgress({ phase: 'discovery', currentPlugin: 'Starting discovery...', message: 'Discovering services...', totalFiles: 0, processedFiles: 0 });
 
     // PHASE 0: DISCOVERY - запуск плагинов фазы DISCOVERY
@@ -232,6 +239,7 @@ export class Orchestrator {
       // Параллельно обрабатываем батч units
       await Promise.all(batch.map(async (unit, idx) => {
         const unitStart = Date.now();
+
         const unitManifest: UnitManifest = {
           projectPath: manifest.projectPath,
           service: {
@@ -243,7 +251,11 @@ export class Orchestrator {
           modules: []
         };
 
-        await this.runPhase('INDEXING', { manifest: unitManifest, graph: this.graph, workerCount: 1 });
+        await this.runPhase('INDEXING', {
+          manifest: unitManifest,
+          graph: this.graph,
+          workerCount: 1,
+        });
         const unitTime = ((Date.now() - unitStart) / 1000).toFixed(2);
         console.log(`[Orchestrator] ⏱️ INDEXING ${unit.name}: ${unitTime}s`);
 
@@ -313,7 +325,11 @@ export class Orchestrator {
             modules: []
           };
 
-          await this.runPhase('ANALYSIS', { manifest: unitManifest, graph: this.graph, workerCount: 1 });
+          await this.runPhase('ANALYSIS', {
+          manifest: unitManifest,
+          graph: this.graph,
+          workerCount: 1,
+        });
           const unitTime = ((Date.now() - unitStart) / 1000).toFixed(2);
           console.log(`[Orchestrator] ⏱️ ANALYSIS ${unit.name}: ${unitTime}s`);
 

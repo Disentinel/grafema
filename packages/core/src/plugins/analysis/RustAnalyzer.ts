@@ -140,16 +140,17 @@ interface EdgeToAdd {
 let parseRustFile: ((code: string) => RustParseResult) | undefined;
 
 // Try to load the native binding
+// Path: from dist/plugins/analysis/ go up 5 levels to reach project root, then rust-engine/
 try {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const nativeBinding = await import('../../../../rust-engine/grafema-graph-engine.node' as any);
+  const nativeBinding = await import('../../../../../rust-engine/grafema-graph-engine.node' as any);
   parseRustFile = nativeBinding.parseRustFile;
 } catch {
   // Fallback: try require
   try {
     const { createRequire } = await import('module');
     const require = createRequire(import.meta.url);
-    const nativeBinding = require('../../../../rust-engine/grafema-graph-engine.node');
+    const nativeBinding = require('../../../../../rust-engine/grafema-graph-engine.node');
     parseRustFile = nativeBinding.parseRustFile;
   } catch (e2) {
     console.warn('[RustAnalyzer] Native binding not available:', (e2 as Error).message);

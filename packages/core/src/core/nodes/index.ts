@@ -18,9 +18,11 @@ export { MethodCallNode, type MethodCallNodeRecord } from './MethodCallNode.js';
 export { VariableDeclarationNode, type VariableDeclarationNodeRecord } from './VariableDeclarationNode.js';
 export { ConstantNode, type ConstantNodeRecord } from './ConstantNode.js';
 export { LiteralNode, type LiteralNodeRecord } from './LiteralNode.js';
+export { ObjectLiteralNode, type ObjectLiteralNodeRecord, type ObjectLiteralNodeOptions } from './ObjectLiteralNode.js';
+export { ArrayLiteralNode, type ArrayLiteralNodeRecord, type ArrayLiteralNodeOptions } from './ArrayLiteralNode.js';
 
 // Import/Export nodes
-export { ImportNode, type ImportNodeRecord, type ImportKind } from './ImportNode.js';
+export { ImportNode, type ImportNodeRecord, type ImportBinding, type ImportType } from './ImportNode.js';
 export { ExportNode, type ExportNodeRecord, type ExportKind } from './ExportNode.js';
 
 // External/IO nodes

@@ -12,7 +12,8 @@
     "mcp": "node --import tsx packages/mcp/src/server.ts",
     "test": "node --test test/unit/",
     "test:scenarios": "node --test test/scenarios/",
-    "publish:all": "./scripts/publish.sh"
+    "publish:all": "./scripts/publish.sh",
+    "prepare": "husky"
   },
   "keywords": [
     "grafema",
@@ -33,6 +34,7 @@
     "@typescript-eslint/eslint-plugin": "^8.53.0",
     "@typescript-eslint/parser": "^8.53.0",
     "eslint": "^9.39.2",
+    "husky": "^9.1.7",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"
   },

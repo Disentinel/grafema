@@ -40,6 +40,12 @@ export interface PluginContext {
   onProgress?: (info: Record<string, unknown>) => void;
   forceAnalysis?: boolean;
   workerCount?: number;
+  /**
+   * Set of file paths already processed ("touched") in this analysis run.
+   * Used for idempotent re-analysis: first touch clears all nodes for that file,
+   * subsequent touches are no-ops. Only populated when forceAnalysis=true.
+   */
+  touchedFiles?: Set<string>;
 }
 
 // === PLUGIN RESULT ===
@@ -136,6 +142,7 @@ export interface GraphBackend {
   // Optional delete methods
   deleteNode?(id: string): Promise<void>;
   deleteEdge?(src: string, dst: string, type: string): Promise<void>;
+  clear?(): Promise<void>;
 
   // Optional persistence
   flush?(): Promise<void>;

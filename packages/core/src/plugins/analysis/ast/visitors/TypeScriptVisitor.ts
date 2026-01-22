@@ -30,7 +30,7 @@ import type {
 /**
  * Extracts a string representation of a TypeScript type node
  */
-function typeNodeToString(node: unknown): string {
+export function typeNodeToString(node: unknown): string {
   if (!node || typeof node !== 'object') return 'unknown';
 
   const typeNode = node as { type: string; [key: string]: unknown };

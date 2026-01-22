@@ -371,14 +371,22 @@ export class RFDBServerBackend {
     }
 
     const wireEdges: WireEdge[] = edges.map(e => {
-      const { src, dst, type, edgeType, edge_type, etype, ...rest } = e;
+      const { src, dst, type, edgeType, edge_type, etype, metadata, ...rest } = e;
+
+      // Flatten metadata: spread both edge-level properties and nested metadata
+      const flatMetadata = {
+        _origSrc: String(src),
+        _origDst: String(dst),
+        ...rest,
+        ...(typeof metadata === 'object' && metadata !== null ? metadata : {})
+      };
 
       return {
         src: String(src),
         dst: String(dst),
         edgeType: (edgeType || edge_type || etype || type || 'UNKNOWN') as EdgeType,
-        // Store original string IDs in metadata for retrieval
-        metadata: JSON.stringify({ _origSrc: String(src), _origDst: String(dst), ...rest }),
+        // Store flattened metadata for retrieval
+        metadata: JSON.stringify(flatMetadata),
       };
     });
 

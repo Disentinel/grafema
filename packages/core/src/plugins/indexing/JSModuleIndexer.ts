@@ -284,7 +284,6 @@ export class JSModuleIndexer extends Plugin {
         const moduleId = `MODULE:${fileHash}`; // StableID-based for deduplication
 
         // Используем NodeFactory для создания MODULE ноды
-        // ВСЕГДА создаём ноду в графе (граф может быть пустой после force)
         const isTest = this.isTestFile(currentFile);
         const moduleNode = NodeFactory.createModule(currentFile, projectPath, {
           contentHash: fileHash ?? undefined,

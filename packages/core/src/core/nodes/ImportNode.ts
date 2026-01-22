@@ -4,20 +4,23 @@
 
 import type { BaseNodeRecord } from '@grafema/types';
 
-type ImportKind = 'value' | 'type' | 'typeof';
+type ImportBinding = 'value' | 'type' | 'typeof';
+type ImportType = 'default' | 'named' | 'namespace';
 
 interface ImportNodeRecord extends BaseNodeRecord {
   type: 'IMPORT';
   column: number;
   source: string;
-  importKind: ImportKind;
+  importType: ImportType;      // NEW: HOW it's imported (syntax)
+  importBinding: ImportBinding; // RENAMED: WHAT is imported (semantics)
   imported: string;
   local: string;
 }
 
 interface ImportNodeOptions {
-  importKind?: ImportKind;
-  imported?: string;
+  importType?: ImportType;      // Optional - will be auto-detected if not provided
+  importBinding?: ImportBinding;
+  imported?: string;            // Used for auto-detection if importType not provided
   local?: string;
 }
 
@@ -25,8 +28,19 @@ export class ImportNode {
   static readonly TYPE = 'IMPORT' as const;
 
   static readonly REQUIRED = ['name', 'file', 'line', 'source'] as const;
-  static readonly OPTIONAL = ['column', 'importKind', 'imported', 'local'] as const;
+  static readonly OPTIONAL = ['column', 'importType', 'importBinding', 'imported', 'local'] as const;
 
+  /**
+   * Create IMPORT node
+   *
+   * @param name - The local binding name (what the import is called in this module)
+   * @param file - Absolute file path
+   * @param line - Line number (for debugging only, not part of ID)
+   * @param column - Column position (pass 0 if unavailable - JSASTAnalyzer limitation)
+   * @param source - Module source (e.g., 'react', './utils')
+   * @param options - Optional fields
+   * @returns ImportNodeRecord
+   */
   static create(
     name: string,
     file: string,
@@ -37,18 +51,26 @@ export class ImportNode {
   ): ImportNodeRecord {
     if (!name) throw new Error('ImportNode.create: name is required');
     if (!file) throw new Error('ImportNode.create: file is required');
-    if (!line) throw new Error('ImportNode.create: line is required');
+    if (line === undefined) throw new Error('ImportNode.create: line is required');
     if (!source) throw new Error('ImportNode.create: source is required');
 
+    // Auto-detect importType from imported field if not explicitly provided
+    let importType = options.importType;
+    if (!importType && options.imported) {
+      importType = options.imported === 'default' ? 'default' :
+                   options.imported === '*' ? 'namespace' : 'named';
+    }
+
     return {
-      id: `${file}:IMPORT:${name}:${line}`,
+      id: `${file}:IMPORT:${source}:${name}`,  // SEMANTIC ID: no line number
       type: this.TYPE,
       name,
       file,
-      line,
+      line,      // Stored as field, not in ID
       column: column || 0,
       source,
-      importKind: options.importKind || 'value',
+      importType: importType || 'named',           // NEW field with auto-detection
+      importBinding: options.importBinding || 'value',  // RENAMED field
       imported: options.imported || name,
       local: options.local || name
     };
@@ -72,4 +94,4 @@ export class ImportNode {
   }
 }
 
-export type { ImportNodeRecord, ImportKind };
+export type { ImportNodeRecord, ImportBinding, ImportType };

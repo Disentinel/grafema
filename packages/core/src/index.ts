@@ -33,6 +33,7 @@ export { Profiler } from './core/Profiler.js';
 export { AnalysisQueue } from './core/AnalysisQueue.js';
 export { GuaranteeManager } from './core/GuaranteeManager.js';
 export type { GuaranteeGraph } from './core/GuaranteeManager.js';
+export { clearFileNodesIfNeeded, clearServiceNodeIfExists } from './core/FileNodeManager.js';
 
 // API
 export { GraphAPI } from './api/GraphAPI.js';
@@ -83,6 +84,7 @@ export { ShadowingDetector } from './plugins/validation/ShadowingDetector.js';
 export { GraphConnectivityValidator } from './plugins/validation/GraphConnectivityValidator.js';
 export { DataFlowValidator } from './plugins/validation/DataFlowValidator.js';
 export { TypeScriptDeadCodeValidator } from './plugins/validation/TypeScriptDeadCodeValidator.js';
+export { NodeCreationValidator } from './plugins/validation/NodeCreationValidator.js';
 
 // Discovery plugins
 export { SimpleProjectDiscovery } from './plugins/discovery/SimpleProjectDiscovery.js';
