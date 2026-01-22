@@ -6,6 +6,7 @@
 import { dirname, resolve } from 'path';
 import type { GraphBackend } from '@grafema/types';
 import { ImportNode } from '../../../core/nodes/ImportNode.js';
+import { InterfaceNode, type InterfaceNodeRecord } from '../../../core/nodes/InterfaceNode.js';
 import { NodeFactory } from '../../../core/NodeFactory.js';
 import type {
   ModuleNode,
@@ -1057,38 +1058,51 @@ export class GraphBuilder {
 
   /**
    * Buffer INTERFACE nodes and EXTENDS edges
+   *
+   * Uses two-pass approach:
+   * 1. First pass: create all interface nodes, store in Map
+   * 2. Second pass: create EXTENDS edges using stored node IDs
    */
   private bufferInterfaceNodes(module: ModuleNode, interfaces: InterfaceDeclarationInfo[]): void {
+    // First pass: create all interface nodes and store them
+    const interfaceNodes = new Map<string, InterfaceNodeRecord>();
+
     for (const iface of interfaces) {
-      // Buffer INTERFACE node
-      this._bufferNode({
-        id: iface.id,
-        type: 'INTERFACE',
-        name: iface.name,
-        file: iface.file,
-        line: iface.line,
-        column: iface.column,
-        properties: iface.properties,
-        extends: iface.extends
-      });
+      const interfaceNode = InterfaceNode.create(
+        iface.name,
+        iface.file,
+        iface.line,
+        iface.column || 0,
+        {
+          extends: iface.extends,
+          properties: iface.properties
+        }
+      );
+      interfaceNodes.set(iface.name, interfaceNode);
+      this._bufferNode(interfaceNode as unknown as GraphNode);
 
       // MODULE -> CONTAINS -> INTERFACE
       this._bufferEdge({
         type: 'CONTAINS',
         src: module.id,
-        dst: iface.id
+        dst: interfaceNode.id
       });
+    }
 
-      // INTERFACE -> EXTENDS -> INTERFACE (for each parent interface)
+    // Second pass: create EXTENDS edges
+    for (const iface of interfaces) {
       if (iface.extends && iface.extends.length > 0) {
+        const srcNode = interfaceNodes.get(iface.name)!;
+
         for (const parentName of iface.extends) {
-          // Try to find the parent interface in the same file
-          const parentInterface = interfaces.find(i => i.name === parentName);
-          if (parentInterface) {
+          const parentNode = interfaceNodes.get(parentName);
+
+          if (parentNode) {
+            // Same-file interface
             this._bufferEdge({
               type: 'EXTENDS',
-              src: iface.id,
-              dst: parentInterface.id
+              src: srcNode.id,
+              dst: parentNode.id
             });
           } else {
             // External interface - create a reference node
@@ -1102,7 +1116,7 @@ export class GraphBuilder {
             this._bufferNode(externalInterface as unknown as GraphNode);
             this._bufferEdge({
               type: 'EXTENDS',
-              src: iface.id,
+              src: srcNode.id,
               dst: externalInterface.id
             });
           }

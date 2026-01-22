@@ -126,7 +126,7 @@ export class TypeScriptVisitor extends ASTVisitor {
         if (!node.id) return;
 
         const interfaceName = node.id.name;
-        const interfaceId = `INTERFACE#${interfaceName}#${module.file}#${node.loc!.start.line}`;
+        const interfaceId = `${module.file}:INTERFACE:${interfaceName}:${node.loc!.start.line}`;
 
         // Generate semantic ID if scopeTracker available
         let interfaceSemanticId: string | undefined;
