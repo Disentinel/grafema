@@ -13,6 +13,7 @@ import { Command } from 'commander';
 import { resolve, join, relative } from 'path';
 import { existsSync } from 'fs';
 import { RFDBServerBackend } from '@grafema/core';
+import { formatNodeDisplay, formatNodeInline } from '../utils/formatNode.js';
 
 interface QueryOptions {
   project: string;
@@ -99,8 +100,7 @@ export const queryCommand = new Command('query')
             console.log('');
             console.log(`Called by (${callers.length}${callers.length >= 5 ? '+' : ''}):`);
             for (const caller of callers) {
-              const loc = formatLocation(caller.file, caller.line, projectPath);
-              console.log(`  ← ${caller.name} (${loc})`);
+              console.log(`  <- ${formatNodeInline(caller)}`);
             }
           }
 
@@ -108,8 +108,7 @@ export const queryCommand = new Command('query')
             console.log('');
             console.log(`Calls (${callees.length}${callees.length >= 5 ? '+' : ''}):`);
             for (const callee of callees) {
-              const loc = formatLocation(callee.file, callee.line, projectPath);
-              console.log(`  → ${callee.name} (${loc})`);
+              console.log(`  -> ${formatNodeInline(callee)}`);
             }
           }
         }
@@ -392,27 +391,10 @@ async function findCallsInFunction(
 }
 
 /**
- * Display a node
+ * Display a node with semantic ID as primary identifier
  */
 function displayNode(node: NodeInfo, projectPath: string): void {
-  const loc = formatLocation(node.file, node.line, projectPath);
-  console.log(`Found: ${node.name} (${node.type})`);
-  if (loc) {
-    console.log(`Location: ${loc}`);
-  }
-}
-
-/**
- * Format file location relative to project
- */
-function formatLocation(
-  file: string | undefined,
-  line: number | undefined,
-  projectPath: string
-): string {
-  if (!file) return '';
-  const relPath = relative(projectPath, file);
-  return line ? `${relPath}:${line}` : relPath;
+  console.log(formatNodeDisplay(node, { projectPath }));
 }
 
 /**

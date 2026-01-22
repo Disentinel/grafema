@@ -7,9 +7,11 @@
  */
 
 import { Command } from 'commander';
-import { resolve, join, relative, dirname } from 'path';
+import { resolve, join, dirname } from 'path';
+import { relative } from 'path';
 import { existsSync } from 'fs';
 import { RFDBServerBackend } from '@grafema/core';
+import { formatNodeDisplay, formatNodeInline } from '../utils/formatNode.js';
 
 interface ImpactOptions {
   project: string;
@@ -324,13 +326,10 @@ function getModulePath(file: string, projectPath: string): string {
 }
 
 /**
- * Display impact analysis results
+ * Display impact analysis results with semantic IDs
  */
 function displayImpact(impact: ImpactResult, projectPath: string): void {
-  const loc = formatLocation(impact.target.file, impact.target.line, projectPath);
-
-  console.log(`Target: ${impact.target.name} (${impact.target.type})`);
-  console.log(`Location: ${loc}`);
+  console.log(formatNodeDisplay(impact.target, { projectPath }));
   console.log('');
 
   // Direct impact
@@ -344,8 +343,7 @@ function displayImpact(impact: ImpactResult, projectPath: string): void {
   if (impact.directCallers.length > 0) {
     console.log('Direct callers:');
     for (const caller of impact.directCallers.slice(0, 10)) {
-      const callerLoc = formatLocation(caller.file, caller.line, projectPath);
-      console.log(`  ← ${caller.name} (${callerLoc})`);
+      console.log(`  <- ${formatNodeInline(caller)}`);
     }
     if (impact.directCallers.length > 10) {
       console.log(`  ... and ${impact.directCallers.length - 10} more`);
@@ -401,11 +399,3 @@ function displayImpact(impact: ImpactResult, projectPath: string): void {
   }
 }
 
-/**
- * Format file location
- */
-function formatLocation(file: string | undefined, line: number | undefined, projectPath: string): string {
-  if (!file) return '';
-  const relPath = relative(projectPath, file);
-  return line ? `${relPath}:${line}` : relPath;
-}

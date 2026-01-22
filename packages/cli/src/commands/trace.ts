@@ -7,9 +7,10 @@
  */
 
 import { Command } from 'commander';
-import { resolve, join, relative } from 'path';
+import { resolve, join } from 'path';
 import { existsSync } from 'fs';
 import { RFDBServerBackend } from '@grafema/core';
+import { formatNodeDisplay, formatNodeInline } from '../utils/formatNode.js';
 
 interface TraceOptions {
   project: string;
@@ -70,9 +71,7 @@ export const traceCommand = new Command('trace')
 
       // Trace each variable
       for (const variable of variables) {
-        const loc = formatLocation(variable.file, variable.line, projectPath);
-        console.log(`Variable: ${variable.name}`);
-        console.log(`Location: ${loc}`);
+        console.log(formatNodeDisplay(variable, { projectPath }));
         console.log('');
 
         // Trace backwards through ASSIGNED_FROM
@@ -317,9 +316,9 @@ async function getValueSources(
 }
 
 /**
- * Display trace results
+ * Display trace results with semantic IDs
  */
-function displayTrace(trace: TraceStep[], projectPath: string, indent: string): void {
+function displayTrace(trace: TraceStep[], _projectPath: string, indent: string): void {
   // Group by depth
   const byDepth = new Map<number, TraceStep[]>();
   for (const step of trace) {
@@ -329,21 +328,12 @@ function displayTrace(trace: TraceStep[], projectPath: string, indent: string): 
     byDepth.get(step.depth)!.push(step);
   }
 
-  for (const [depth, steps] of [...byDepth.entries()].sort((a, b) => a[0] - b[0])) {
+  for (const [_depth, steps] of [...byDepth.entries()].sort((a, b) => a[0] - b[0])) {
     for (const step of steps) {
-      const loc = formatLocation(step.node.file, step.node.line, projectPath);
-      const arrow = step.edgeType === 'ASSIGNED_FROM' ? '←' : '⟵';
       const valueStr = step.node.value !== undefined ? ` = ${JSON.stringify(step.node.value)}` : '';
-      console.log(`${indent}${arrow} ${step.node.name || step.node.type}${valueStr} (${loc})`);
+      console.log(`${indent}<- ${step.node.name || step.node.type} (${step.node.type})${valueStr}`);
+      console.log(`${indent}   ${formatNodeInline(step.node)}`);
     }
   }
 }
 
-/**
- * Format file location
- */
-function formatLocation(file: string | undefined, line: number | undefined, projectPath: string): string {
-  if (!file) return '';
-  const relPath = relative(projectPath, file);
-  return line ? `${relPath}:${line}` : relPath;
-}

@@ -154,8 +154,12 @@ export const checkCommand = new Command('check')
             if (!result.passed && result.violations.length > 0) {
               console.log(`  Violations (${result.violationCount}):`);
               for (const v of result.violations.slice(0, 10)) {
-                const location = v.file ? `${v.file}${v.line ? `:${v.line}` : ''}` : v.nodeId;
-                console.log(`    - ${location}: ${v.name || v.type}`);
+                // Prefer nodeId (semantic ID) for queryability
+                const identifier = v.nodeId || (v.file ? `${v.file}${v.line ? `:${v.line}` : ''}` : '(unknown)');
+                console.log(`    - ${identifier}`);
+                if (v.name || v.type) {
+                  console.log(`      ${v.name || ''} (${v.type || 'unknown'})`);
+                }
               }
               if (result.violations.length > 10) {
                 console.log(`    ... and ${result.violations.length - 10} more`);
