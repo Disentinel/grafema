@@ -7,6 +7,7 @@ import { dirname, resolve } from 'path';
 import type { GraphBackend } from '@grafema/types';
 import { ImportNode } from '../../../core/nodes/ImportNode.js';
 import { InterfaceNode, type InterfaceNodeRecord } from '../../../core/nodes/InterfaceNode.js';
+import { EnumNode, type EnumNodeRecord } from '../../../core/nodes/EnumNode.js';
 import { NodeFactory } from '../../../core/NodeFactory.js';
 import type {
   ModuleNode,
@@ -1130,48 +1131,51 @@ export class GraphBuilder {
    */
   private bufferTypeAliasNodes(module: ModuleNode, typeAliases: TypeAliasInfo[]): void {
     for (const typeAlias of typeAliases) {
-      // Buffer TYPE node
-      this._bufferNode({
-        id: typeAlias.id,
-        type: 'TYPE',
-        name: typeAlias.name,
-        file: typeAlias.file,
-        line: typeAlias.line,
-        column: typeAlias.column,
-        aliasOf: typeAlias.aliasOf
-      });
+      // Create TYPE node using factory
+      const typeNode = NodeFactory.createType(
+        typeAlias.name,
+        typeAlias.file,
+        typeAlias.line,
+        typeAlias.column || 0,
+        { aliasOf: typeAlias.aliasOf }
+      );
+      this._bufferNode(typeNode as unknown as GraphNode);
 
       // MODULE -> CONTAINS -> TYPE
       this._bufferEdge({
         type: 'CONTAINS',
         src: module.id,
-        dst: typeAlias.id
+        dst: typeNode.id
       });
     }
   }
 
   /**
    * Buffer ENUM nodes
+   * Uses EnumNode.create() to ensure consistent ID format (colon separator)
    */
   private bufferEnumNodes(module: ModuleNode, enums: EnumDeclarationInfo[]): void {
     for (const enumDecl of enums) {
-      // Buffer ENUM node
-      this._bufferNode({
-        id: enumDecl.id,
-        type: 'ENUM',
-        name: enumDecl.name,
-        file: enumDecl.file,
-        line: enumDecl.line,
-        column: enumDecl.column,
-        isConst: enumDecl.isConst,
-        members: enumDecl.members
-      });
+      // Use EnumNode.create() to generate proper ID (colon format)
+      // Do NOT use enumDecl.id which has legacy # format from TypeScriptVisitor
+      const enumNode = EnumNode.create(
+        enumDecl.name,
+        enumDecl.file,
+        enumDecl.line,
+        enumDecl.column || 0,
+        {
+          isConst: enumDecl.isConst || false,
+          members: enumDecl.members || []
+        }
+      );
+
+      this._bufferNode(enumNode as unknown as GraphNode);
 
       // MODULE -> CONTAINS -> ENUM
       this._bufferEdge({
         type: 'CONTAINS',
         src: module.id,
-        dst: enumDecl.id
+        dst: enumNode.id  // Use factory-generated ID (colon format)
       });
     }
   }
