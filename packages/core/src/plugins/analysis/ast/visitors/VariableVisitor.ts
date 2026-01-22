@@ -19,6 +19,7 @@ import { ASTVisitor, type VisitorModule, type VisitorCollections, type VisitorHa
 import { ExpressionEvaluator } from '../ExpressionEvaluator.js';
 import { ScopeTracker } from '../../../../core/ScopeTracker.js';
 import { computeSemanticId } from '../../../../core/SemanticId.js';
+import { NodeFactory } from '../../../../core/NodeFactory.js';
 
 /**
  * Variable info extracted from pattern
@@ -225,20 +226,23 @@ export class VariableVisitor extends ASTVisitor {
                     expressionPath = `${initName}[${varInfo.arrayIndex}]`;
                   }
 
-                  const expressionId = `EXPRESSION#${expressionPath}#${module.file}#${varInfo.loc.start.line}:${varInfo.loc.start.column}`;
-
                   // Create EXPRESSION node representing the property access
-                  (literals as LiteralExpressionInfo[]).push({
-                    id: expressionId,
-                    type: 'EXPRESSION',
-                    expressionType: varInfo.propertyPath ? 'MemberExpression' : 'ArrayAccess',
-                    path: expressionPath,
-                    baseName: initName,
-                    propertyPath: varInfo.propertyPath || null,
-                    arrayIndex: varInfo.arrayIndex,
-                    file: module.file,
-                    line: varInfo.loc.start.line
-                  });
+                  const expressionType = varInfo.propertyPath ? 'MemberExpression' : 'ArrayAccess';
+                  const expressionNode = NodeFactory.createExpression(
+                    expressionType,
+                    module.file,
+                    varInfo.loc.start.line,
+                    varInfo.loc.start.column,
+                    {
+                      path: expressionPath,
+                      baseName: initName,
+                      propertyPath: varInfo.propertyPath || undefined,
+                      arrayIndex: varInfo.arrayIndex
+                    }
+                  );
+
+                  const expressionId = expressionNode.id;
+                  (literals as LiteralExpressionInfo[]).push(expressionNode as LiteralExpressionInfo);
 
                   // Create ASSIGNED_FROM edge: VARIABLE -> EXPRESSION
                   (variableAssignments as VariableAssignmentInfo[]).push({

@@ -51,6 +51,7 @@ import { ConditionParser } from './ast/ConditionParser.js';
 import { Profiler } from '../../core/Profiler.js';
 import { ScopeTracker } from '../../core/ScopeTracker.js';
 import { computeSemanticId } from '../../core/SemanticId.js';
+import { ExpressionNode } from '../../core/nodes/ExpressionNode.js';
 import type { PluginContext, PluginResult, PluginMetadata, GraphBackend } from '@grafema/types';
 import type {
   ModuleNode,
@@ -168,14 +169,12 @@ export class JSASTAnalyzer extends Plugin {
   private graphBuilder: GraphBuilder;
   private analyzedModules: Set<string>;
   private profiler: Profiler;
-  private _cacheCleared: boolean;
 
   constructor() {
     super();
     this.graphBuilder = new GraphBuilder();
     this.analyzedModules = new Set();
     this.profiler = new Profiler('JSASTAnalyzer');
-    this._cacheCleared = false;
   }
 
   get metadata(): PluginMetadata {
@@ -259,9 +258,8 @@ export class JSASTAnalyzer extends Plugin {
       const { manifest, graph, forceAnalysis = false } = context;
       const projectPath = manifest?.projectPath ?? '';
 
-      if (forceAnalysis && !this._cacheCleared) {
+      if (forceAnalysis) {
         this.analyzedModules.clear();
-        this._cacheCleared = true;
       }
 
       const allModules = await this.getModuleNodes(graph);
@@ -604,7 +602,8 @@ export class JSASTAnalyzer extends Plugin {
         ? initExpression.property.name
         : null;
 
-      const expressionId = `EXPRESSION#${objectName}.${propertyName}#${module.file}#${line}:${initExpression.start}`;
+      const column = initExpression.start ?? 0;
+      const expressionId = ExpressionNode.generateId('MemberExpression', module.file, line, column);
 
       variableAssignments.push({
         variableId,
@@ -617,14 +616,16 @@ export class JSASTAnalyzer extends Plugin {
         computedPropertyVar,
         objectSourceName: initExpression.object.type === 'Identifier' ? initExpression.object.name : null,
         file: module.file,
-        line: line
+        line: line,
+        column: column
       });
       return;
     }
 
     // 8. BinaryExpression
     if (initExpression.type === 'BinaryExpression') {
-      const expressionId = `EXPRESSION#binary#${module.file}#${line}:${initExpression.start}`;
+      const column = initExpression.start ?? 0;
+      const expressionId = ExpressionNode.generateId('BinaryExpression', module.file, line, column);
 
       variableAssignments.push({
         variableId,
@@ -635,14 +636,16 @@ export class JSASTAnalyzer extends Plugin {
         leftSourceName: initExpression.left.type === 'Identifier' ? initExpression.left.name : null,
         rightSourceName: initExpression.right.type === 'Identifier' ? initExpression.right.name : null,
         file: module.file,
-        line: line
+        line: line,
+        column: column
       });
       return;
     }
 
     // 9. ConditionalExpression
     if (initExpression.type === 'ConditionalExpression') {
-      const expressionId = `EXPRESSION#conditional#${module.file}#${line}:${initExpression.start}`;
+      const column = initExpression.start ?? 0;
+      const expressionId = ExpressionNode.generateId('ConditionalExpression', module.file, line, column);
 
       variableAssignments.push({
         variableId,
@@ -652,7 +655,8 @@ export class JSASTAnalyzer extends Plugin {
         consequentSourceName: initExpression.consequent.type === 'Identifier' ? initExpression.consequent.name : null,
         alternateSourceName: initExpression.alternate.type === 'Identifier' ? initExpression.alternate.name : null,
         file: module.file,
-        line: line
+        line: line,
+        column: column
       });
 
       this.trackVariableAssignment(initExpression.consequent, variableId, variableName, module, line, literals, variableAssignments, literalCounterRef);
@@ -662,7 +666,8 @@ export class JSASTAnalyzer extends Plugin {
 
     // 10. LogicalExpression
     if (initExpression.type === 'LogicalExpression') {
-      const expressionId = `EXPRESSION#logical#${module.file}#${line}:${initExpression.start}`;
+      const column = initExpression.start ?? 0;
+      const expressionId = ExpressionNode.generateId('LogicalExpression', module.file, line, column);
 
       variableAssignments.push({
         variableId,
@@ -673,7 +678,8 @@ export class JSASTAnalyzer extends Plugin {
         leftSourceName: initExpression.left.type === 'Identifier' ? initExpression.left.name : null,
         rightSourceName: initExpression.right.type === 'Identifier' ? initExpression.right.name : null,
         file: module.file,
-        line: line
+        line: line,
+        column: column
       });
 
       this.trackVariableAssignment(initExpression.left, variableId, variableName, module, line, literals, variableAssignments, literalCounterRef);
@@ -683,7 +689,8 @@ export class JSASTAnalyzer extends Plugin {
 
     // 11. TemplateLiteral
     if (initExpression.type === 'TemplateLiteral' && initExpression.expressions.length > 0) {
-      const expressionId = `EXPRESSION#template#${module.file}#${line}:${initExpression.start}`;
+      const column = initExpression.start ?? 0;
+      const expressionId = ExpressionNode.generateId('TemplateLiteral', module.file, line, column);
 
       const expressionSourceNames = initExpression.expressions
         .filter((expr): expr is t.Identifier => expr.type === 'Identifier')
@@ -696,7 +703,8 @@ export class JSASTAnalyzer extends Plugin {
         expressionType: 'TemplateLiteral',
         expressionSourceNames,
         file: module.file,
-        line: line
+        line: line,
+        column: column
       });
 
       for (const expr of initExpression.expressions) {
@@ -1078,7 +1086,10 @@ export class JSASTAnalyzer extends Plugin {
         enums,
         decorators,
         // Array mutation tracking
-        arrayMutations
+        arrayMutations,
+        // Object/Array literal tracking - use allCollections refs as visitors may have created new arrays
+        objectLiterals: allCollections.objectLiterals || objectLiterals,
+        arrayLiterals: allCollections.arrayLiterals || arrayLiterals
       });
       this.profiler.end('graph_build');
 

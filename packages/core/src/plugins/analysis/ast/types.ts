@@ -402,6 +402,7 @@ export interface VariableAssignmentInfo {
   className?: string;
   functionName?: string;
   line?: number;
+  column?: number;  // Column position for EXPRESSION nodes
   expressionType?: string;
   object?: string;
   property?: string;

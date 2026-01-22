@@ -67,11 +67,13 @@ export { MethodNode } from './core/nodes/MethodNode.js';
 export { ExportNode } from './core/nodes/ExportNode.js';
 export { VariableDeclarationNode } from './core/nodes/VariableDeclarationNode.js';
 export { ExternalModuleNode } from './core/nodes/ExternalModuleNode.js';
+export { NetworkRequestNode } from './core/nodes/NetworkRequestNode.js';
 export { InterfaceNode, type InterfacePropertyRecord } from './core/nodes/InterfaceNode.js';
 export { TypeNode } from './core/nodes/TypeNode.js';
 export { EnumNode, type EnumMemberRecord } from './core/nodes/EnumNode.js';
 export { DecoratorNode, type DecoratorTargetType } from './core/nodes/DecoratorNode.js';
 export { ExpressionNode, type ExpressionNodeOptions } from './core/nodes/ExpressionNode.js';
+export { ArgumentExpressionNode, type ArgumentExpressionNodeRecord, type ArgumentExpressionNodeOptions } from './core/nodes/ArgumentExpressionNode.js';
 
 // AST Visitors (for advanced usage)
 export {

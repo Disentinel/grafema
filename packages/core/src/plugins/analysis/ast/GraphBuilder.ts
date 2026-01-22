@@ -8,6 +8,8 @@ import type { GraphBackend } from '@grafema/types';
 import { ImportNode } from '../../../core/nodes/ImportNode.js';
 import { InterfaceNode, type InterfaceNodeRecord } from '../../../core/nodes/InterfaceNode.js';
 import { EnumNode, type EnumNodeRecord } from '../../../core/nodes/EnumNode.js';
+import { DecoratorNode } from '../../../core/nodes/DecoratorNode.js';
+import { NetworkRequestNode } from '../../../core/nodes/NetworkRequestNode.js';
 import { NodeFactory } from '../../../core/NodeFactory.js';
 import type {
   ModuleNode,
@@ -32,6 +34,8 @@ import type {
   EnumDeclarationInfo,
   DecoratorInfo,
   ArrayMutationInfo,
+  ObjectLiteralInfo,
+  ArrayLiteralInfo,
   ASTCollections,
   GraphNode,
   GraphEdge,
@@ -115,7 +119,10 @@ export class GraphBuilder {
       enums = [],
       decorators = [],
       // Array mutation tracking for FLOWS_INTO edges
-      arrayMutations = []
+      arrayMutations = [],
+      // Object/Array literal tracking
+      objectLiterals = [],
+      arrayLiterals = []
     } = data;
 
     // Reset buffers for this build
@@ -228,17 +235,20 @@ export class GraphBuilder {
     // 26. Buffer FLOWS_INTO edges for array mutations (push, unshift, splice, indexed assignment)
     this.bufferArrayMutationEdges(arrayMutations, variableDeclarations);
 
+    // 27. Buffer OBJECT_LITERAL nodes
+    this.bufferObjectLiteralNodes(objectLiterals);
+
+    // 28. Buffer ARRAY_LITERAL nodes
+    this.bufferArrayLiteralNodes(arrayLiterals);
+
     // FLUSH: Write all nodes first, then edges in single batch calls
     const nodesCreated = await this._flushNodes(graph);
     const edgesCreated = await this._flushEdges(graph);
 
-    // Handle async operations that need graph queries (IMPORTS_FROM edges)
-    const importExportEdges = await this.createImportExportEdges(module, imports, exports, graph, projectPath);
-
     // Handle async operations for ASSIGNED_FROM with CLASS lookups
     const classAssignmentEdges = await this.createClassAssignmentEdges(variableAssignments, graph);
 
-    return { nodes: nodesCreated, edges: edgesCreated + importExportEdges + classAssignmentEdges };
+    return { nodes: nodesCreated, edges: edgesCreated + classAssignmentEdges };
   }
 
   // ============= BUFFERED METHODS (synchronous, no awaits) =============
@@ -370,16 +380,12 @@ export class GraphBuilder {
     );
 
     if (consoleIOMethods.length > 0) {
-      const stdioId = 'net:stdio#__stdio__';
+      const stdioNode = NodeFactory.createExternalStdio();
+
       // Buffer net:stdio node only once (singleton)
-      if (!this._createdSingletons.has(stdioId)) {
-        this._bufferNode({
-          id: stdioId,
-          type: 'net:stdio',
-          name: '__stdio__',
-          description: 'Standard input/output stream'
-        });
-        this._createdSingletons.add(stdioId);
+      if (!this._createdSingletons.has(stdioNode.id)) {
+        this._bufferNode(stdioNode as unknown as GraphNode);
+        this._createdSingletons.add(stdioNode.id);
       }
 
       // Buffer WRITES_TO edges for console.log/error
@@ -387,7 +393,7 @@ export class GraphBuilder {
         this._bufferEdge({
           type: 'WRITES_TO',
           src: methodCall.id,
-          dst: stdioId
+          dst: stdioNode.id
         });
       }
     }
@@ -646,15 +652,12 @@ export class GraphBuilder {
 
   private bufferHttpRequests(httpRequests: HttpRequestInfo[], functions: FunctionInfo[]): void {
     if (httpRequests.length > 0) {
-      const networkId = 'net:request#__network__';
+      // Create net:request singleton using factory
+      const networkNode = NetworkRequestNode.create();
 
-      if (!this._createdSingletons.has(networkId)) {
-        this._bufferNode({
-          id: networkId,
-          type: 'net:request',
-          name: '__network__'
-        });
-        this._createdSingletons.add(networkId);
+      if (!this._createdSingletons.has(networkNode.id)) {
+        this._bufferNode(networkNode as unknown as GraphNode);
+        this._createdSingletons.add(networkNode.id);
       }
 
       for (const request of httpRequests) {
@@ -665,7 +668,7 @@ export class GraphBuilder {
         this._bufferEdge({
           type: 'CALLS',
           src: request.id,
-          dst: networkId
+          dst: networkNode.id
         });
 
         if (parentScopeId) {
@@ -814,7 +817,7 @@ export class GraphBuilder {
           });
         }
       }
-      // EXPRESSION node creation
+      // EXPRESSION node creation using NodeFactory
       else if (sourceType === 'EXPRESSION' && sourceId) {
         const {
           expressionType,
@@ -829,33 +832,25 @@ export class GraphBuilder {
           consequentSourceName,
           alternateSourceName,
           file: exprFile,
-          line: exprLine
+          line: exprLine,
+          column: exprColumn
         } = assignment;
 
-        const expressionNode: GraphNode = {
-          id: sourceId,
-          type: 'EXPRESSION',
-          expressionType,
-          file: exprFile,
-          line: exprLine
-        };
-
-        if (expressionType === 'MemberExpression') {
-          expressionNode.object = object;
-          expressionNode.property = property;
-          expressionNode.computed = computed;
-          if (computedPropertyVar) {
-            expressionNode.computedPropertyVar = computedPropertyVar;
+        // Create node from upstream metadata using factory
+        const expressionNode = NodeFactory.createExpressionFromMetadata(
+          expressionType || 'Unknown',
+          exprFile || '',
+          exprLine || 0,
+          exprColumn || 0,
+          {
+            id: sourceId,  // ID from JSASTAnalyzer
+            object,
+            property,
+            computed,
+            computedPropertyVar: computedPropertyVar ?? undefined,
+            operator
           }
-          expressionNode.name = `${object}.${property}`;
-        } else if (expressionType === 'BinaryExpression' || expressionType === 'LogicalExpression') {
-          expressionNode.operator = operator;
-          expressionNode.name = `<${expressionType}>`;
-        } else if (expressionType === 'ConditionalExpression') {
-          expressionNode.name = '<ternary>';
-        } else if (expressionType === 'TemplateLiteral') {
-          expressionNode.name = '<template>';
-        }
+        );
 
         this._bufferNode(expressionNode);
 
@@ -1185,23 +1180,24 @@ export class GraphBuilder {
    */
   private bufferDecoratorNodes(decorators: DecoratorInfo[]): void {
     for (const decorator of decorators) {
-      // Buffer DECORATOR node
-      this._bufferNode({
-        id: decorator.id,
-        type: 'DECORATOR',
-        name: decorator.name,
-        file: decorator.file,
-        line: decorator.line,
-        column: decorator.column,
-        arguments: decorator.arguments,
-        targetType: decorator.targetType
-      });
+      // Create DECORATOR node using factory (generates colon-format ID)
+      const decoratorNode = DecoratorNode.create(
+        decorator.name,
+        decorator.file,
+        decorator.line,
+        decorator.column || 0,
+        decorator.targetId,  // Now included in the node!
+        decorator.targetType,
+        { arguments: decorator.arguments }
+      );
+
+      this._bufferNode(decoratorNode as unknown as GraphNode);
 
       // TARGET -> DECORATED_BY -> DECORATOR
       this._bufferEdge({
         type: 'DECORATED_BY',
         src: decorator.targetId,
-        dst: decorator.id
+        dst: decoratorNode.id  // Use factory-generated ID (colon format)
       });
     }
   }
@@ -1283,6 +1279,44 @@ export class GraphBuilder {
   }
 
   /**
+   * Buffer OBJECT_LITERAL nodes to the graph.
+   * These are object literals passed as function arguments or nested in other literals.
+   */
+  private bufferObjectLiteralNodes(objectLiterals: ObjectLiteralInfo[]): void {
+    for (const obj of objectLiterals) {
+      this._bufferNode({
+        id: obj.id,
+        type: obj.type,
+        name: '<object>',
+        file: obj.file,
+        line: obj.line,
+        column: obj.column,
+        parentCallId: obj.parentCallId,
+        argIndex: obj.argIndex
+      } as GraphNode);
+    }
+  }
+
+  /**
+   * Buffer ARRAY_LITERAL nodes to the graph.
+   * These are array literals passed as function arguments or nested in other literals.
+   */
+  private bufferArrayLiteralNodes(arrayLiterals: ArrayLiteralInfo[]): void {
+    for (const arr of arrayLiterals) {
+      this._bufferNode({
+        id: arr.id,
+        type: arr.type,
+        name: '<array>',
+        file: arr.file,
+        line: arr.line,
+        column: arr.column,
+        parentCallId: arr.parentCallId,
+        argIndex: arr.argIndex
+      } as GraphNode);
+    }
+  }
+
+  /**
    * Handle CLASS ASSIGNED_FROM edges asynchronously (needs graph queries)
    */
   private async createClassAssignmentEdges(variableAssignments: VariableAssignmentInfo[], graph: GraphBackend): Promise<number> {
@@ -1310,120 +1344,6 @@ export class GraphBuilder {
             dst: classNode.id
           });
           edgesCreated++;
-        }
-      }
-    }
-
-    return edgesCreated;
-  }
-
-  /**
-   * Create IMPORTS_FROM edges linking imports to their target exports
-   */
-  private async createImportExportEdges(
-    module: ModuleNode,
-    imports: ImportInfo[],
-    _exports: ExportInfo[],
-    graph: GraphBackend,
-    _projectPath: string
-  ): Promise<number> {
-    let edgesCreated = 0;
-
-    for (const imp of imports) {
-      const { source, specifiers, line } = imp;
-
-      // Только для относительных импортов
-      const isRelative = source.startsWith('./') || source.startsWith('../');
-      if (!isRelative) {
-        continue;
-      }
-
-      // Резолвим целевой модуль
-      const currentDir = dirname(module.file);
-      let targetPath = resolve(currentDir, source);
-
-      // Пытаемся найти файл с расширениями .js, .ts, .jsx, .tsx
-      const extensions = ['', '.js', '.ts', '.jsx', '.tsx', '/index.js', '/index.ts'];
-      let targetModule: { id: string; file: string } | null = null;
-
-      // Ищем MODULE ноду по file атрибуту (не по ID, т.к. формат ID изменился)
-      for (const ext of extensions) {
-        const testPath = targetPath + ext;
-
-        // Ищем MODULE с этим file path
-        for await (const node of graph.queryNodes({ type: 'MODULE' })) {
-          if (node.file === testPath) {
-            targetModule = node as { id: string; file: string };
-            targetPath = testPath;
-            break;
-          }
-        }
-        if (targetModule) break;
-      }
-
-      if (!targetModule) {
-        // Целевой модуль не найден в графе
-        continue;
-      }
-
-      // Создаём IMPORTS edge от MODULE к MODULE (для совместимости с тестами)
-      await graph.addEdge({
-        type: 'IMPORTS',
-        src: module.id,
-        dst: targetModule.id
-      });
-      edgesCreated++;
-
-      // Для каждого импортированного идентификатора создаём ребро к соответствующему EXPORT
-      for (const spec of specifiers) {
-        const importId = `${module.file}:IMPORT:${source}:${spec.local}:${line}`;
-        const importType = spec.imported === 'default' ? 'default' :
-                          spec.imported === '*' ? 'namespace' : 'named';
-
-        if (importType === 'namespace') {
-          // import * as foo - связываем со всем модулем
-          await graph.addEdge({
-            type: 'IMPORTS_FROM',
-            src: importId,
-            dst: targetModule.id
-          });
-          edgesCreated++;
-        } else if (importType === 'default') {
-          // Находим EXPORT default в целевом модуле
-          const targetExports: { id: string }[] = [];
-          for await (const node of graph.queryNodes({ type: 'EXPORT' })) {
-            const exportNode = node as { id: string; file?: string; exportType?: string };
-            if (exportNode.file === targetPath && exportNode.exportType === 'default') {
-              targetExports.push(exportNode);
-            }
-          }
-
-          if (targetExports.length > 0) {
-            await graph.addEdge({
-              type: 'IMPORTS_FROM',
-              src: importId,
-              dst: targetExports[0].id
-            });
-            edgesCreated++;
-          }
-        } else {
-          // Named import - находим соответствующий named export
-          const targetExports: { id: string }[] = [];
-          for await (const node of graph.queryNodes({ type: 'EXPORT' })) {
-            const exportNode = node as { id: string; file?: string; exportType?: string; name?: string };
-            if (exportNode.file === targetPath && exportNode.exportType === 'named' && exportNode.name === spec.imported) {
-              targetExports.push(exportNode);
-            }
-          }
-
-          if (targetExports.length > 0) {
-            await graph.addEdge({
-              type: 'IMPORTS_FROM',
-              src: importId,
-              dst: targetExports[0].id
-            });
-            edgesCreated++;
-          }
         }
       }
     }

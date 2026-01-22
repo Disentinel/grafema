@@ -15,6 +15,9 @@ import { ExpressionEvaluator } from '../ExpressionEvaluator.js';
 import type { ArrayMutationInfo, ArrayMutationArgument } from '../types.js';
 import { ScopeTracker } from '../../../../core/ScopeTracker.js';
 import { computeSemanticId } from '../../../../core/SemanticId.js';
+import { NodeFactory } from '../../../../core/NodeFactory.js';
+import { ObjectLiteralNode } from '../../../../core/nodes/ObjectLiteralNode.js';
+import { ArrayLiteralNode } from '../../../../core/nodes/ArrayLiteralNode.js';
 
 /**
  * Object literal info for OBJECT_LITERAL nodes
@@ -219,27 +222,130 @@ export class CallExpressionVisitor extends ASTVisitor {
         actualArg = arg.argument;  // Get the actual argument
       }
 
-      // Literal value
-      const literalValue = ExpressionEvaluator.extractLiteralValue(actualArg);
-      if (literalValue !== null) {
-        const literalId = `LITERAL#arg${index}#${module.file}#${argInfo.line}:${argInfo.column}:${literalCounterRef.value++}`;
-        literals.push({
-          id: literalId,
-          type: 'LITERAL',
-          value: literalValue,
-          valueType: typeof literalValue,
-          file: module.file,
-          line: argInfo.line,
-          column: argInfo.column,
-          parentCallId: callId,
-          argIndex: index
-        });
-        argInfo.targetType = 'LITERAL';
-        argInfo.targetId = literalId;
-        argInfo.literalValue = literalValue;
+      // Object literal - check BEFORE extractLiteralValue to handle object-typed args properly
+      if (actualArg.type === 'ObjectExpression') {
+        const objectExpr = actualArg as ObjectExpression;
+        // Initialize collections if not exist (must assign back to this.collections!)
+        if (!this.collections.objectLiteralCounterRef) {
+          this.collections.objectLiteralCounterRef = { value: 0 };
+        }
+        if (!this.collections.objectLiterals) {
+          this.collections.objectLiterals = [];
+        }
+        if (!this.collections.objectProperties) {
+          this.collections.objectProperties = [];
+        }
+        const objectLiteralCounterRef = this.collections.objectLiteralCounterRef as CounterRef;
+
+        // Use factory to create OBJECT_LITERAL node
+        const objectNode = ObjectLiteralNode.create(
+          module.file,
+          argInfo.line,
+          argInfo.column,
+          {
+            parentCallId: callId,
+            argIndex: index,
+            counter: objectLiteralCounterRef.value++
+          }
+        );
+        // Factory guarantees line is set, cast to ObjectLiteralInfo
+        (this.collections.objectLiterals as ObjectLiteralInfo[]).push(objectNode as unknown as ObjectLiteralInfo);
+        const objectId = objectNode.id;
+
+        // Extract properties
+        this.extractObjectProperties(
+          objectExpr,
+          objectId,
+          module,
+          this.collections.objectProperties as ObjectPropertyInfo[],
+          this.collections.objectLiterals as ObjectLiteralInfo[],
+          objectLiteralCounterRef,
+          literals as LiteralInfo[],
+          literalCounterRef
+        );
+
+        argInfo.targetType = 'OBJECT_LITERAL';
+        argInfo.targetId = objectId;
       }
-      // Variable reference
-      else if (actualArg.type === 'Identifier') {
+      // Array literal - check BEFORE extractLiteralValue to handle array-typed args properly
+      else if (actualArg.type === 'ArrayExpression') {
+        const arrayExpr = actualArg as ArrayExpression;
+        // Initialize collections if not exist (must assign back to this.collections!)
+        if (!this.collections.arrayLiteralCounterRef) {
+          this.collections.arrayLiteralCounterRef = { value: 0 };
+        }
+        if (!this.collections.arrayLiterals) {
+          this.collections.arrayLiterals = [];
+        }
+        if (!this.collections.arrayElements) {
+          this.collections.arrayElements = [];
+        }
+        if (!this.collections.objectLiteralCounterRef) {
+          this.collections.objectLiteralCounterRef = { value: 0 };
+        }
+        if (!this.collections.objectLiterals) {
+          this.collections.objectLiterals = [];
+        }
+        if (!this.collections.objectProperties) {
+          this.collections.objectProperties = [];
+        }
+        const arrayLiteralCounterRef = this.collections.arrayLiteralCounterRef as CounterRef;
+
+        // Use factory to create ARRAY_LITERAL node
+        const arrayNode = ArrayLiteralNode.create(
+          module.file,
+          argInfo.line,
+          argInfo.column,
+          {
+            parentCallId: callId,
+            argIndex: index,
+            counter: arrayLiteralCounterRef.value++
+          }
+        );
+        // Factory guarantees line is set, cast to ArrayLiteralInfo
+        (this.collections.arrayLiterals as ArrayLiteralInfo[]).push(arrayNode as unknown as ArrayLiteralInfo);
+        const arrayId = arrayNode.id;
+
+        // Extract elements
+        this.extractArrayElements(
+          arrayExpr,
+          arrayId,
+          module,
+          this.collections.arrayElements as ArrayElementInfo[],
+          this.collections.arrayLiterals as ArrayLiteralInfo[],
+          arrayLiteralCounterRef,
+          this.collections.objectLiterals as ObjectLiteralInfo[],
+          this.collections.objectLiteralCounterRef as CounterRef,
+          this.collections.objectProperties as ObjectPropertyInfo[],
+          literals as LiteralInfo[],
+          literalCounterRef
+        );
+
+        argInfo.targetType = 'ARRAY_LITERAL';
+        argInfo.targetId = arrayId;
+      }
+      // Literal value (primitives only - objects/arrays handled above)
+      else {
+        const literalValue = ExpressionEvaluator.extractLiteralValue(actualArg);
+        if (literalValue !== null) {
+          const literalId = `LITERAL#arg${index}#${module.file}#${argInfo.line}:${argInfo.column}:${literalCounterRef.value++}`;
+          literals.push({
+            id: literalId,
+            type: 'LITERAL',
+            value: literalValue,
+            valueType: typeof literalValue,
+            file: module.file,
+            line: argInfo.line,
+            column: argInfo.column,
+            parentCallId: callId,
+            argIndex: index
+          });
+          argInfo.targetType = 'LITERAL';
+          argInfo.targetId = literalId;
+          argInfo.literalValue = literalValue;
+        }
+        // Variable reference
+        else if (actualArg.type === 'Identifier') {
         argInfo.targetType = 'VARIABLE';
         argInfo.targetName = (actualArg as Identifier).name;  // Will be resolved in GraphBuilder
       }
@@ -272,25 +378,26 @@ export class CallExpressionVisitor extends ASTVisitor {
       else if (actualArg.type === 'BinaryExpression' || actualArg.type === 'LogicalExpression') {
         const expr = actualArg as { operator?: string; type: string };
         const operator = expr.operator || '?';
-        const exprName = `<${actualArg.type}:${operator}>`;
-        const expressionId = `EXPRESSION#${exprName}#${module.file}#${argInfo.line}:${argInfo.column}:${literalCounterRef.value++}`;
+        const counter = literalCounterRef.value++;
 
-        // Create EXPRESSION node
-        literals.push({
-          id: expressionId,
-          type: 'EXPRESSION',
-          expressionType: actualArg.type,
-          operator: operator,
-          name: exprName,
-          file: module.file,
-          line: argInfo.line,
-          column: argInfo.column,
-          parentCallId: callId,
-          argIndex: index
-        });
+        // Create EXPRESSION node via NodeFactory
+        const expressionNode = NodeFactory.createArgumentExpression(
+          actualArg.type,
+          module.file,
+          argInfo.line,
+          argInfo.column,
+          {
+            parentCallId: callId,
+            argIndex: index,
+            operator,
+            counter
+          }
+        );
+
+        literals.push(expressionNode as LiteralInfo);
 
         argInfo.targetType = 'EXPRESSION';
-        argInfo.targetId = expressionId;
+        argInfo.targetId = expressionNode.id;
         argInfo.expressionType = actualArg.type;
 
         // Track DERIVES_FROM edges for identifiers in expression
@@ -299,7 +406,7 @@ export class CallExpressionVisitor extends ASTVisitor {
         if (variableAssignments) {
           for (const identName of identifiers) {
             variableAssignments.push({
-              variableId: expressionId,
+              variableId: expressionNode.id,
               sourceId: null,
               sourceName: identName,
               sourceType: 'DERIVES_FROM_VARIABLE',
@@ -308,106 +415,11 @@ export class CallExpressionVisitor extends ASTVisitor {
           }
         }
       }
-      // Object literal
-      else if (actualArg.type === 'ObjectExpression') {
-        const objectExpr = actualArg as ObjectExpression;
-        // Initialize collections if not exist (must assign back to this.collections!)
-        if (!this.collections.objectLiteralCounterRef) {
-          this.collections.objectLiteralCounterRef = { value: 0 };
-        }
-        if (!this.collections.objectLiterals) {
-          this.collections.objectLiterals = [];
-        }
-        if (!this.collections.objectProperties) {
-          this.collections.objectProperties = [];
-        }
-        const objectLiteralCounterRef = this.collections.objectLiteralCounterRef as CounterRef;
-        const objectId = `OBJECT_LITERAL#arg${index}#${module.file}#${argInfo.line}:${argInfo.column}:${objectLiteralCounterRef.value++}`;
-
-        // Create OBJECT_LITERAL node
-        (this.collections.objectLiterals as ObjectLiteralInfo[]).push({
-          id: objectId,
-          type: 'OBJECT_LITERAL',
-          file: module.file,
-          line: argInfo.line,
-          column: argInfo.column,
-          parentCallId: callId,
-          argIndex: index
-        });
-
-        // Extract properties
-        this.extractObjectProperties(
-          objectExpr,
-          objectId,
-          module,
-          this.collections.objectProperties as ObjectPropertyInfo[],
-          this.collections.objectLiterals as ObjectLiteralInfo[],
-          objectLiteralCounterRef,
-          literals as LiteralInfo[],
-          literalCounterRef
-        );
-
-        argInfo.targetType = 'OBJECT_LITERAL';
-        argInfo.targetId = objectId;
-      }
-      // Array literal
-      else if (actualArg.type === 'ArrayExpression') {
-        const arrayExpr = actualArg as ArrayExpression;
-        // Initialize collections if not exist (must assign back to this.collections!)
-        if (!this.collections.arrayLiteralCounterRef) {
-          this.collections.arrayLiteralCounterRef = { value: 0 };
-        }
-        if (!this.collections.arrayLiterals) {
-          this.collections.arrayLiterals = [];
-        }
-        if (!this.collections.arrayElements) {
-          this.collections.arrayElements = [];
-        }
-        if (!this.collections.objectLiteralCounterRef) {
-          this.collections.objectLiteralCounterRef = { value: 0 };
-        }
-        if (!this.collections.objectLiterals) {
-          this.collections.objectLiterals = [];
-        }
-        if (!this.collections.objectProperties) {
-          this.collections.objectProperties = [];
-        }
-        const arrayLiteralCounterRef = this.collections.arrayLiteralCounterRef as CounterRef;
-        const arrayId = `ARRAY_LITERAL#arg${index}#${module.file}#${argInfo.line}:${argInfo.column}:${arrayLiteralCounterRef.value++}`;
-
-        // Create ARRAY_LITERAL node
-        (this.collections.arrayLiterals as ArrayLiteralInfo[]).push({
-          id: arrayId,
-          type: 'ARRAY_LITERAL',
-          file: module.file,
-          line: argInfo.line,
-          column: argInfo.column,
-          parentCallId: callId,
-          argIndex: index
-        });
-
-        // Extract elements
-        this.extractArrayElements(
-          arrayExpr,
-          arrayId,
-          module,
-          this.collections.arrayElements as ArrayElementInfo[],
-          this.collections.arrayLiterals as ArrayLiteralInfo[],
-          arrayLiteralCounterRef,
-          this.collections.objectLiterals as ObjectLiteralInfo[],
-          this.collections.objectLiteralCounterRef as CounterRef,
-          this.collections.objectProperties as ObjectPropertyInfo[],
-          literals as LiteralInfo[],
-          literalCounterRef
-        );
-
-        argInfo.targetType = 'ARRAY_LITERAL';
-        argInfo.targetId = arrayId;
-      }
-      // Other expression types
+      // Other expression types (fallback for unhandled expression types)
       else {
         argInfo.targetType = 'EXPRESSION';
         argInfo.expressionType = actualArg.type;
+      }
       }
 
       callArguments.push(argInfo);
@@ -526,40 +538,19 @@ export class CallExpressionVisitor extends ASTVisitor {
 
         const value = objProp.value;
 
-        // Literal value
-        const literalValue = ExpressionEvaluator.extractLiteralValue(value);
-        if (literalValue !== null) {
-          const literalId = `LITERAL#${propertyName}#${module.file}#${propLine}:${propColumn}:${literalCounterRef.value++}`;
-          literals.push({
-            id: literalId,
-            type: 'LITERAL',
-            value: literalValue,
-            valueType: typeof literalValue,
-            file: module.file,
-            line: propLine,
-            column: propColumn,
-            parentCallId: objectId,
-            argIndex: 0
-          });
-          propertyInfo.valueType = 'LITERAL';
-          propertyInfo.valueNodeId = literalId;
-          propertyInfo.literalValue = literalValue;
-        }
-        // Variable reference
-        else if (value.type === 'Identifier') {
-          propertyInfo.valueType = 'VARIABLE';
-          propertyInfo.valueName = value.name;
-        }
-        // Nested object literal
-        else if (value.type === 'ObjectExpression') {
-          const nestedObjectId = `OBJECT_LITERAL#${propertyName}#${module.file}#${value.loc?.start.line}:${value.loc?.start.column}:${objectLiteralCounterRef.value++}`;
-          objectLiterals.push({
-            id: nestedObjectId,
-            type: 'OBJECT_LITERAL',
-            file: module.file,
-            line: value.loc?.start.line || 0,
-            column: value.loc?.start.column || 0
-          });
+        // Nested object literal - check BEFORE extractLiteralValue
+        if (value.type === 'ObjectExpression') {
+          // Use factory - do NOT pass argIndex for nested literals (uses 'obj' suffix)
+          const nestedObjectNode = ObjectLiteralNode.create(
+            module.file,
+            value.loc?.start.line || 0,
+            value.loc?.start.column || 0,
+            {
+              counter: objectLiteralCounterRef.value++
+            }
+          );
+          objectLiterals.push(nestedObjectNode as unknown as ObjectLiteralInfo);
+          const nestedObjectId = nestedObjectNode.id;
 
           // Recursively extract nested properties
           this.extractObjectProperties(
@@ -577,20 +568,23 @@ export class CallExpressionVisitor extends ASTVisitor {
           propertyInfo.nestedObjectId = nestedObjectId;
           propertyInfo.valueNodeId = nestedObjectId;
         }
-        // Nested array literal
+        // Nested array literal - check BEFORE extractLiteralValue
         else if (value.type === 'ArrayExpression') {
           const arrayLiteralCounterRef = (this.collections.arrayLiteralCounterRef ?? { value: 0 }) as CounterRef;
           const arrayLiterals = this.collections.arrayLiterals ?? [];
           const arrayElements = this.collections.arrayElements ?? [];
 
-          const nestedArrayId = `ARRAY_LITERAL#${propertyName}#${module.file}#${value.loc?.start.line}:${value.loc?.start.column}:${arrayLiteralCounterRef.value++}`;
-          (arrayLiterals as ArrayLiteralInfo[]).push({
-            id: nestedArrayId,
-            type: 'ARRAY_LITERAL',
-            file: module.file,
-            line: value.loc?.start.line || 0,
-            column: value.loc?.start.column || 0
-          });
+          // Use factory - do NOT pass argIndex for nested literals (uses 'arr' suffix)
+          const nestedArrayNode = ArrayLiteralNode.create(
+            module.file,
+            value.loc?.start.line || 0,
+            value.loc?.start.column || 0,
+            {
+              counter: arrayLiteralCounterRef.value++
+            }
+          );
+          (arrayLiterals as ArrayLiteralInfo[]).push(nestedArrayNode as unknown as ArrayLiteralInfo);
+          const nestedArrayId = nestedArrayNode.id;
 
           // Recursively extract array elements
           this.extractArrayElements(
@@ -611,15 +605,41 @@ export class CallExpressionVisitor extends ASTVisitor {
           propertyInfo.nestedArrayId = nestedArrayId;
           propertyInfo.valueNodeId = nestedArrayId;
         }
-        // Call expression
-        else if (value.type === 'CallExpression') {
-          propertyInfo.valueType = 'CALL';
-          propertyInfo.callLine = value.loc?.start.line;
-          propertyInfo.callColumn = value.loc?.start.column;
-        }
-        // Other expressions
+        // Literal value (primitives only - objects/arrays handled above)
         else {
-          propertyInfo.valueType = 'EXPRESSION';
+          const literalValue = ExpressionEvaluator.extractLiteralValue(value);
+          if (literalValue !== null) {
+            const literalId = `LITERAL#${propertyName}#${module.file}#${propLine}:${propColumn}:${literalCounterRef.value++}`;
+            literals.push({
+              id: literalId,
+              type: 'LITERAL',
+              value: literalValue,
+              valueType: typeof literalValue,
+              file: module.file,
+              line: propLine,
+              column: propColumn,
+              parentCallId: objectId,
+              argIndex: 0
+            });
+            propertyInfo.valueType = 'LITERAL';
+            propertyInfo.valueNodeId = literalId;
+            propertyInfo.literalValue = literalValue;
+          }
+          // Variable reference
+          else if (value.type === 'Identifier') {
+            propertyInfo.valueType = 'VARIABLE';
+            propertyInfo.valueName = value.name;
+          }
+          // Call expression
+          else if (value.type === 'CallExpression') {
+            propertyInfo.valueType = 'CALL';
+            propertyInfo.callLine = value.loc?.start.line;
+            propertyInfo.callColumn = value.loc?.start.column;
+          }
+          // Other expressions
+          else {
+            propertyInfo.valueType = 'EXPRESSION';
+          }
         }
 
         objectProperties.push(propertyInfo);
@@ -681,40 +701,19 @@ export class CallExpressionVisitor extends ASTVisitor {
         return;
       }
 
-      // Literal value
-      const literalValue = ExpressionEvaluator.extractLiteralValue(element);
-      if (literalValue !== null) {
-        const literalId = `LITERAL#elem${index}#${module.file}#${elemLine}:${elemColumn}:${literalCounterRef.value++}`;
-        literals.push({
-          id: literalId,
-          type: 'LITERAL',
-          value: literalValue,
-          valueType: typeof literalValue,
-          file: module.file,
-          line: elemLine,
-          column: elemColumn,
-          parentCallId: arrayId,
-          argIndex: index
-        });
-        elementInfo.valueType = 'LITERAL';
-        elementInfo.valueNodeId = literalId;
-        elementInfo.literalValue = literalValue;
-      }
-      // Variable reference
-      else if (element.type === 'Identifier') {
-        elementInfo.valueType = 'VARIABLE';
-        elementInfo.valueName = element.name;
-      }
-      // Nested object literal
-      else if (element.type === 'ObjectExpression') {
-        const nestedObjectId = `OBJECT_LITERAL#elem${index}#${module.file}#${elemLine}:${elemColumn}:${objectLiteralCounterRef.value++}`;
-        objectLiterals.push({
-          id: nestedObjectId,
-          type: 'OBJECT_LITERAL',
-          file: module.file,
-          line: elemLine,
-          column: elemColumn
-        });
+      // Nested object literal - check BEFORE extractLiteralValue
+      if (element.type === 'ObjectExpression') {
+        // Use factory - do NOT pass argIndex for nested literals (uses 'obj' suffix)
+        const nestedObjectNode = ObjectLiteralNode.create(
+          module.file,
+          elemLine,
+          elemColumn,
+          {
+            counter: objectLiteralCounterRef.value++
+          }
+        );
+        objectLiterals.push(nestedObjectNode as unknown as ObjectLiteralInfo);
+        const nestedObjectId = nestedObjectNode.id;
 
         // Recursively extract properties
         this.extractObjectProperties(
@@ -732,16 +731,19 @@ export class CallExpressionVisitor extends ASTVisitor {
         elementInfo.nestedObjectId = nestedObjectId;
         elementInfo.valueNodeId = nestedObjectId;
       }
-      // Nested array literal
+      // Nested array literal - check BEFORE extractLiteralValue
       else if (element.type === 'ArrayExpression') {
-        const nestedArrayId = `ARRAY_LITERAL#elem${index}#${module.file}#${elemLine}:${elemColumn}:${arrayLiteralCounterRef.value++}`;
-        arrayLiterals.push({
-          id: nestedArrayId,
-          type: 'ARRAY_LITERAL',
-          file: module.file,
-          line: elemLine,
-          column: elemColumn
-        });
+        // Use factory - do NOT pass argIndex for nested literals (uses 'arr' suffix)
+        const nestedArrayNode = ArrayLiteralNode.create(
+          module.file,
+          elemLine,
+          elemColumn,
+          {
+            counter: arrayLiteralCounterRef.value++
+          }
+        );
+        arrayLiterals.push(nestedArrayNode as unknown as ArrayLiteralInfo);
+        const nestedArrayId = nestedArrayNode.id;
 
         // Recursively extract elements
         this.extractArrayElements(
@@ -762,15 +764,41 @@ export class CallExpressionVisitor extends ASTVisitor {
         elementInfo.nestedArrayId = nestedArrayId;
         elementInfo.valueNodeId = nestedArrayId;
       }
-      // Call expression
-      else if (element.type === 'CallExpression') {
-        elementInfo.valueType = 'CALL';
-        elementInfo.callLine = element.loc?.start.line;
-        elementInfo.callColumn = element.loc?.start.column;
-      }
-      // Other expressions
+      // Literal value (primitives only - objects/arrays handled above)
       else {
-        elementInfo.valueType = 'EXPRESSION';
+        const literalValue = ExpressionEvaluator.extractLiteralValue(element);
+        if (literalValue !== null) {
+          const literalId = `LITERAL#elem${index}#${module.file}#${elemLine}:${elemColumn}:${literalCounterRef.value++}`;
+          literals.push({
+            id: literalId,
+            type: 'LITERAL',
+            value: literalValue,
+            valueType: typeof literalValue,
+            file: module.file,
+            line: elemLine,
+            column: elemColumn,
+            parentCallId: arrayId,
+            argIndex: index
+          });
+          elementInfo.valueType = 'LITERAL';
+          elementInfo.valueNodeId = literalId;
+          elementInfo.literalValue = literalValue;
+        }
+        // Variable reference
+        else if (element.type === 'Identifier') {
+          elementInfo.valueType = 'VARIABLE';
+          elementInfo.valueName = element.name;
+        }
+        // Call expression
+        else if (element.type === 'CallExpression') {
+          elementInfo.valueType = 'CALL';
+          elementInfo.callLine = element.loc?.start.line;
+          elementInfo.callColumn = element.loc?.start.column;
+        }
+        // Other expressions
+        else {
+          elementInfo.valueType = 'EXPRESSION';
+        }
       }
 
       arrayElements.push(elementInfo);

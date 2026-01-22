@@ -34,9 +34,11 @@ export { DecoratorNode, type DecoratorNodeRecord, type DecoratorTargetType } fro
 
 // Expression nodes
 export { ExpressionNode, type ExpressionNodeRecord, type ExpressionNodeOptions } from './ExpressionNode.js';
+export { ArgumentExpressionNode, type ArgumentExpressionNodeRecord, type ArgumentExpressionNodeOptions } from './ArgumentExpressionNode.js';
 
 // External/IO nodes
 export { ExternalStdioNode, type ExternalStdioNodeRecord } from './ExternalStdioNode.js';
+export { NetworkRequestNode, type NetworkRequestNodeRecord } from './NetworkRequestNode.js';
 export { EventListenerNode, type EventListenerNodeRecord } from './EventListenerNode.js';
 export { HttpRequestNode, type HttpRequestNodeRecord } from './HttpRequestNode.js';
 export { DatabaseQueryNode, type DatabaseQueryNodeRecord } from './DatabaseQueryNode.js';
