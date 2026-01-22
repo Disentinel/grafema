@@ -26,6 +26,8 @@ import type {
   EnumDeclarationInfo,
   EnumMemberInfo
 } from '../types.js';
+import { ScopeTracker } from '../../../../core/ScopeTracker.js';
+import { computeSemanticId } from '../../../../core/SemanticId.js';
 
 /**
  * Extracts a string representation of a TypeScript type node
@@ -97,8 +99,16 @@ export function typeNodeToString(node: unknown): string {
 }
 
 export class TypeScriptVisitor extends ASTVisitor {
-  constructor(module: VisitorModule, collections: VisitorCollections) {
+  private scopeTracker?: ScopeTracker;
+
+  /**
+   * @param module - Current module being analyzed
+   * @param collections - Must contain interfaces, typeAliases, enums arrays
+   * @param scopeTracker - Optional ScopeTracker for semantic ID generation
+   */
+  constructor(module: VisitorModule, collections: VisitorCollections, scopeTracker?: ScopeTracker) {
     super(module, collections);
+    this.scopeTracker = scopeTracker;
   }
 
   getHandlers(): VisitorHandlers {
@@ -108,6 +118,7 @@ export class TypeScriptVisitor extends ASTVisitor {
       typeAliases,
       enums
     } = this.collections;
+    const scopeTracker = this.scopeTracker;
 
     return {
       TSInterfaceDeclaration: (path: NodePath) => {
@@ -116,6 +127,12 @@ export class TypeScriptVisitor extends ASTVisitor {
 
         const interfaceName = node.id.name;
         const interfaceId = `INTERFACE#${interfaceName}#${module.file}#${node.loc!.start.line}`;
+
+        // Generate semantic ID if scopeTracker available
+        let interfaceSemanticId: string | undefined;
+        if (scopeTracker) {
+          interfaceSemanticId = computeSemanticId('INTERFACE', interfaceName, scopeTracker.getContext());
+        }
 
         // Extract extends
         const extendsNames: string[] = [];
@@ -157,6 +174,7 @@ export class TypeScriptVisitor extends ASTVisitor {
 
         (interfaces as InterfaceDeclarationInfo[]).push({
           id: interfaceId,
+          semanticId: interfaceSemanticId,
           type: 'INTERFACE',
           name: interfaceName,
           file: module.file,
@@ -174,11 +192,18 @@ export class TypeScriptVisitor extends ASTVisitor {
         const typeName = node.id.name;
         const typeId = `TYPE#${typeName}#${module.file}#${node.loc!.start.line}`;
 
+        // Generate semantic ID if scopeTracker available
+        let typeSemanticId: string | undefined;
+        if (scopeTracker) {
+          typeSemanticId = computeSemanticId('TYPE', typeName, scopeTracker.getContext());
+        }
+
         // Extract the type being aliased
         const aliasOf = typeNodeToString(node.typeAnnotation);
 
         (typeAliases as TypeAliasInfo[]).push({
           id: typeId,
+          semanticId: typeSemanticId,
           type: 'TYPE',
           name: typeName,
           file: module.file,
@@ -194,6 +219,12 @@ export class TypeScriptVisitor extends ASTVisitor {
 
         const enumName = node.id.name;
         const enumId = `ENUM#${enumName}#${module.file}#${node.loc!.start.line}`;
+
+        // Generate semantic ID if scopeTracker available
+        let enumSemanticId: string | undefined;
+        if (scopeTracker) {
+          enumSemanticId = computeSemanticId('ENUM', enumName, scopeTracker.getContext());
+        }
 
         // Extract members
         const members: EnumMemberInfo[] = [];
@@ -221,6 +252,7 @@ export class TypeScriptVisitor extends ASTVisitor {
 
         (enums as EnumDeclarationInfo[]).push({
           id: enumId,
+          semanticId: enumSemanticId,
           type: 'ENUM',
           name: enumName,
           file: module.file,

@@ -24,6 +24,16 @@ export { ArrayLiteralNode, type ArrayLiteralNodeRecord, type ArrayLiteralNodeOpt
 // Import/Export nodes
 export { ImportNode, type ImportNodeRecord, type ImportBinding, type ImportType } from './ImportNode.js';
 export { ExportNode, type ExportNodeRecord, type ExportKind } from './ExportNode.js';
+export { ExternalModuleNode, type ExternalModuleNodeRecord } from './ExternalModuleNode.js';
+
+// TypeScript declaration nodes
+export { InterfaceNode, type InterfaceNodeRecord, type InterfacePropertyRecord } from './InterfaceNode.js';
+export { TypeNode, type TypeNodeRecord } from './TypeNode.js';
+export { EnumNode, type EnumNodeRecord, type EnumMemberRecord } from './EnumNode.js';
+export { DecoratorNode, type DecoratorNodeRecord, type DecoratorTargetType } from './DecoratorNode.js';
+
+// Expression nodes
+export { ExpressionNode, type ExpressionNodeRecord, type ExpressionNodeOptions } from './ExpressionNode.js';
 
 // External/IO nodes
 export { ExternalStdioNode, type ExternalStdioNodeRecord } from './ExternalStdioNode.js';

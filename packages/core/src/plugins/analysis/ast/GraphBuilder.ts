@@ -5,6 +5,8 @@
 
 import { dirname, resolve } from 'path';
 import type { GraphBackend } from '@grafema/types';
+import { ImportNode } from '../../../core/nodes/ImportNode.js';
+import { NodeFactory } from '../../../core/NodeFactory.js';
 import type {
   ModuleNode,
   FunctionInfo,
@@ -435,15 +437,15 @@ export class GraphBuilder {
 
       if (!classId) {
         // External class - buffer CLASS node
-        classId = `${module.file}:CLASS:${className}:${line}`;
-        this._bufferNode({
-          id: classId,
-          type: 'CLASS',
-          name: className,
-          file: module.file,
+        const classNode = NodeFactory.createClass(
+          className,
+          module.file,
           line,
-          isInstantiationRef: true
-        });
+          0,  // column not available
+          { isInstantiationRef: true }
+        );
+        classId = classNode.id;
+        this._bufferNode(classNode as unknown as GraphNode);
       }
 
       // Buffer INSTANCE_OF edge
@@ -475,49 +477,47 @@ export class GraphBuilder {
 
   private bufferImportNodes(module: ModuleNode, imports: ImportInfo[]): void {
     for (const imp of imports) {
-      const { source, specifiers, line } = imp;
+      const { source, specifiers, line, column } = imp;
 
       for (const spec of specifiers) {
-        const importType = spec.imported === 'default' ? 'default' :
-                          spec.imported === '*' ? 'namespace' : 'named';
+        // Use ImportNode factory for proper semantic IDs and field population
+        const importNode = ImportNode.create(
+          spec.local,           // name = local binding
+          module.file,          // file
+          line,                 // line (stored as field, not in ID)
+          column || 0,          // column
+          source,               // source module
+          {
+            imported: spec.imported,
+            local: spec.local
+            // importType is auto-detected from imported field
+          }
+        );
 
-        const importId = `${module.file}:IMPORT:${source}:${spec.local}:${line}`;
-
-        this._bufferNode({
-          id: importId,
-          type: 'IMPORT',
-          source: source,
-          importType: importType,
-          imported: spec.imported,
-          local: spec.local,
-          file: module.file,
-          line: line
-        });
+        this._bufferNode(importNode as unknown as GraphNode);
 
         // MODULE -> CONTAINS -> IMPORT
         this._bufferEdge({
           type: 'CONTAINS',
           src: module.id,
-          dst: importId
+          dst: importNode.id
         });
 
         // Create EXTERNAL_MODULE node for external modules
         const isRelative = source.startsWith('./') || source.startsWith('../');
         if (!isRelative) {
-          const externalModuleId = `EXTERNAL_MODULE:${source}`;
+          const externalModule = NodeFactory.createExternalModule(source);
 
-          this._bufferNode({
-            id: externalModuleId,
-            type: 'EXTERNAL_MODULE',
-            name: source,
-            file: module.file,
-            line: line
-          });
+          // Avoid duplicate EXTERNAL_MODULE nodes
+          if (!this._createdSingletons.has(externalModule.id)) {
+            this._bufferNode(externalModule as unknown as GraphNode);
+            this._createdSingletons.add(externalModule.id);
+          }
 
           this._bufferEdge({
             type: 'IMPORTS',
             src: module.id,
-            dst: externalModuleId
+            dst: externalModule.id
           });
         }
       }
@@ -529,79 +529,79 @@ export class GraphBuilder {
       const { type, line, name, specifiers, source } = exp;
 
       if (type === 'default') {
-        const exportId = `${module.file}:EXPORT:default:${line}`;
+        const exportNode = NodeFactory.createExport(
+          'default',
+          module.file,
+          line,
+          0,
+          { default: true, exportType: 'default' }
+        );
 
-        this._bufferNode({
-          id: exportId,
-          type: 'EXPORT',
-          exportType: 'default',
-          name: 'default',
-          file: module.file,
-          line: line
-        });
+        this._bufferNode(exportNode as unknown as GraphNode);
 
         this._bufferEdge({
           type: 'CONTAINS',
           src: module.id,
-          dst: exportId
+          dst: exportNode.id
         });
       } else if (type === 'named') {
         if (specifiers) {
           for (const spec of specifiers) {
-            const exportId = `${module.file}:EXPORT:${spec.exported}:${line}`;
+            const exportNode = NodeFactory.createExport(
+              spec.exported,
+              module.file,
+              line,
+              0,
+              {
+                local: spec.local,
+                source: source,
+                exportType: 'named'
+              }
+            );
 
-            this._bufferNode({
-              id: exportId,
-              type: 'EXPORT',
-              exportType: 'named',
-              name: spec.exported,
-              local: spec.local,
-              file: module.file,
-              line: line,
-              source: source
-            });
+            this._bufferNode(exportNode as unknown as GraphNode);
 
             this._bufferEdge({
               type: 'CONTAINS',
               src: module.id,
-              dst: exportId
+              dst: exportNode.id
             });
           }
         } else if (name) {
-          const exportId = `${module.file}:EXPORT:${name}:${line}`;
+          const exportNode = NodeFactory.createExport(
+            name,
+            module.file,
+            line,
+            0,
+            { exportType: 'named' }
+          );
 
-          this._bufferNode({
-            id: exportId,
-            type: 'EXPORT',
-            exportType: 'named',
-            name: name,
-            file: module.file,
-            line: line
-          });
+          this._bufferNode(exportNode as unknown as GraphNode);
 
           this._bufferEdge({
             type: 'CONTAINS',
             src: module.id,
-            dst: exportId
+            dst: exportNode.id
           });
         }
       } else if (type === 'all') {
-        const exportId = `${module.file}:EXPORT:*:${line}`;
+        const exportNode = NodeFactory.createExport(
+          '*',
+          module.file,
+          line,
+          0,
+          {
+            source: source,
+            exportType: 'all'
+          }
+        );
 
-        this._bufferNode({
-          id: exportId,
-          type: 'EXPORT',
-          exportType: 'all',
-          name: '*',
-          file: module.file,
-          line: line,
-          source: source
-        });
+        this._bufferNode(exportNode as unknown as GraphNode);
 
         this._bufferEdge({
           type: 'CONTAINS',
           src: module.id,
-          dst: exportId
+          dst: exportNode.id
         });
       }
     }
@@ -1086,19 +1086,18 @@ export class GraphBuilder {
             });
           } else {
             // External interface - create a reference node
-            const externalId = `INTERFACE#${parentName}#${iface.file}#external`;
-            this._bufferNode({
-              id: externalId,
-              type: 'INTERFACE',
-              name: parentName,
-              file: iface.file,
-              line: iface.line,
-              isExternal: true
-            });
+            const externalInterface = NodeFactory.createInterface(
+              parentName,
+              iface.file,
+              iface.line,
+              0,
+              { isExternal: true }
+            );
+            this._bufferNode(externalInterface as unknown as GraphNode);
             this._bufferEdge({
               type: 'EXTENDS',
               src: iface.id,
-              dst: externalId
+              dst: externalInterface.id
             });
           }
         }
@@ -1200,19 +1199,18 @@ export class GraphBuilder {
             });
           } else {
             // External interface - create a reference node
-            const externalId = `INTERFACE#${ifaceName}#${classDecl.file}#external`;
-            this._bufferNode({
-              id: externalId,
-              type: 'INTERFACE',
-              name: ifaceName,
-              file: classDecl.file,
-              line: classDecl.line,
-              isExternal: true
-            });
+            const externalInterface = NodeFactory.createInterface(
+              ifaceName,
+              classDecl.file,
+              classDecl.line,
+              0,
+              { isExternal: true }
+            );
+            this._bufferNode(externalInterface as unknown as GraphNode);
             this._bufferEdge({
               type: 'IMPLEMENTS',
               src: classDecl.id,
-              dst: externalId
+              dst: externalInterface.id
             });
           }
         }

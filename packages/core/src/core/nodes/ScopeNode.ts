@@ -1,8 +1,16 @@
 /**
  * ScopeNode - contract for SCOPE node
+ *
+ * Supports two creation modes:
+ * 1. createWithContext() - NEW: Uses ScopeContext + Location for semantic IDs
+ * 2. create() - LEGACY: Uses line-based IDs for backward compatibility
+ *
+ * Semantic ID format: {file}->{scope_path}->SCOPE->{scopeType}#N
+ * Example: src/app.js->handler->SCOPE->if#0
  */
 
 import type { BaseNodeRecord } from '@grafema/types';
+import { computeSemanticId, type ScopeContext, type Location } from '../SemanticId.js';
 
 interface ScopeNodeRecord extends BaseNodeRecord {
   type: 'SCOPE';
@@ -20,6 +28,17 @@ interface ScopeNodeOptions {
   parentFunctionId?: string;
   capturesFrom?: string[];
   counter?: number;
+}
+
+/**
+ * Options for createWithContext
+ */
+interface ScopeContextOptions {
+  discriminator: number;
+  conditional?: boolean;
+  parentScopeId?: string;
+  parentFunctionId?: string;
+  capturesFrom?: string[];
 }
 
 export class ScopeNode {
@@ -52,6 +71,52 @@ export class ScopeNode {
       name,
       file,
       line,
+      conditional: options.conditional || false,
+      parentScopeId: options.parentScopeId,
+      parentFunctionId: options.parentFunctionId,
+      capturesFrom: options.capturesFrom
+    };
+  }
+
+  /**
+   * Create SCOPE node with semantic ID (NEW API)
+   *
+   * Uses ScopeContext from ScopeTracker for stable identifiers.
+   * Requires discriminator for multiple scopes of same type within parent scope.
+   *
+   * @param scopeType - Type of scope (if, else, try, catch, finally, for, while, switch)
+   * @param context - Scope context from ScopeTracker.getContext()
+   * @param location - Source location { line }
+   * @param options - Options including required discriminator
+   * @returns ScopeNodeRecord with semantic ID
+   */
+  static createWithContext(
+    scopeType: string,
+    context: ScopeContext,
+    location: Partial<Location>,
+    options: ScopeContextOptions
+  ): ScopeNodeRecord {
+    // Validate required fields
+    if (!scopeType) throw new Error('ScopeNode.createWithContext: scopeType is required');
+    if (!context.file) throw new Error('ScopeNode.createWithContext: file is required');
+    if (location.line === undefined) throw new Error('ScopeNode.createWithContext: line is required');
+    if (options.discriminator === undefined) throw new Error('ScopeNode.createWithContext: discriminator is required');
+
+    // Compute semantic ID with discriminator
+    const id = computeSemanticId('SCOPE', scopeType, context, {
+      discriminator: options.discriminator
+    });
+
+    // Name includes the discriminator for display purposes
+    const name = `${scopeType}#${options.discriminator}`;
+
+    return {
+      id,
+      type: this.TYPE,
+      scopeType,
+      name,
+      file: context.file,
+      line: location.line,
       conditional: options.conditional || false,
       parentScopeId: options.parentScopeId,
       parentFunctionId: options.parentFunctionId,

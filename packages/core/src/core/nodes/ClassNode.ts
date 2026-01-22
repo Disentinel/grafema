@@ -1,8 +1,16 @@
 /**
  * ClassNode - contract for CLASS node
+ *
+ * Supports two creation modes:
+ * 1. createWithContext() - NEW: Uses ScopeContext + Location for semantic IDs
+ * 2. create() - LEGACY: Uses line-based IDs for backward compatibility
+ *
+ * Semantic ID format: {file}->{scope_path}->CLASS->{name}
+ * Example: src/models/User.js->global->CLASS->User
  */
 
 import type { BaseNodeRecord } from '@grafema/types';
+import { computeSemanticId, type ScopeContext, type Location } from '../SemanticId.js';
 
 interface ClassNodeRecord extends BaseNodeRecord {
   type: 'CLASS';
@@ -10,19 +18,31 @@ interface ClassNodeRecord extends BaseNodeRecord {
   exported: boolean;
   superClass?: string;
   methods: string[];
+  isInstantiationRef?: boolean;
 }
 
 interface ClassNodeOptions {
   exported?: boolean;
   superClass?: string;
   methods?: string[];
+  isInstantiationRef?: boolean;
+}
+
+/**
+ * Options for createWithContext
+ */
+interface ClassContextOptions {
+  exported?: boolean;
+  superClass?: string;
+  methods?: string[];
+  isInstantiationRef?: boolean;
 }
 
 export class ClassNode {
   static readonly TYPE = 'CLASS' as const;
 
   static readonly REQUIRED = ['name', 'file', 'line'] as const;
-  static readonly OPTIONAL = ['column', 'exported', 'superClass', 'methods'] as const;
+  static readonly OPTIONAL = ['column', 'exported', 'superClass', 'methods', 'isInstantiationRef'] as const;
 
   static create(
     name: string,
@@ -44,7 +64,48 @@ export class ClassNode {
       column: column || 0,
       exported: options.exported || false,
       superClass: options.superClass,
-      methods: options.methods || []
+      methods: options.methods || [],
+      ...(options.isInstantiationRef !== undefined && { isInstantiationRef: options.isInstantiationRef })
+    };
+  }
+
+  /**
+   * Create CLASS node with semantic ID (NEW API)
+   *
+   * Uses ScopeContext from ScopeTracker for stable identifiers.
+   * Class names are unique within scope, so no discriminator needed.
+   *
+   * @param name - Class name
+   * @param context - Scope context from ScopeTracker.getContext()
+   * @param location - Source location { line, column }
+   * @param options - Optional class properties
+   * @returns ClassNodeRecord with semantic ID
+   */
+  static createWithContext(
+    name: string,
+    context: ScopeContext,
+    location: Partial<Location>,
+    options: ClassContextOptions = {}
+  ): ClassNodeRecord {
+    // Validate required fields
+    if (!name) throw new Error('ClassNode.createWithContext: name is required');
+    if (!context.file) throw new Error('ClassNode.createWithContext: file is required');
+    if (location.line === undefined) throw new Error('ClassNode.createWithContext: line is required');
+
+    // Compute semantic ID
+    const id = computeSemanticId(this.TYPE, name, context);
+
+    return {
+      id,
+      type: this.TYPE,
+      name,
+      file: context.file,
+      line: location.line,
+      column: location.column ?? 0,
+      exported: options.exported || false,
+      superClass: options.superClass,
+      methods: options.methods || [],
+      ...(options.isInstantiationRef !== undefined && { isInstantiationRef: options.isInstantiationRef })
     };
   }
 

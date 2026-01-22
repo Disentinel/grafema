@@ -825,13 +825,16 @@ export class CallExpressionVisitor extends ASTVisitor {
 
     // Only record if there are actual insertions
     if (mutationArgs.length > 0) {
+      const line = callNode.loc?.start.line ?? 0;
+      const column = callNode.loc?.start.column ?? 0;
+
       arrayMutations.push({
         arrayName,
         mutationMethod: method,
         file: module.file,
-        line: callNode.loc!.start.line,
-        column: callNode.loc!.start.column,
-        arguments: mutationArgs
+        line,
+        column,
+        insertedValues: mutationArgs
       });
     }
   }

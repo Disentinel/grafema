@@ -30,6 +30,20 @@ export { RFDBServerBackend } from './storage/backends/RFDBServerBackend.js';
 // Core utilities
 export { NodeFactory } from './core/NodeFactory.js';
 export { Profiler } from './core/Profiler.js';
+export {
+  computeSemanticId,
+  parseSemanticId,
+  computeDiscriminator
+} from './core/SemanticId.js';
+export type {
+  Location,
+  ScopeContext,
+  SemanticIdOptions,
+  ParsedSemanticId,
+  LocatedItem
+} from './core/SemanticId.js';
+export { ScopeTracker } from './core/ScopeTracker.js';
+export type { ScopeEntry, CountedScopeResult } from './core/ScopeTracker.js';
 export { AnalysisQueue } from './core/AnalysisQueue.js';
 export { GuaranteeManager } from './core/GuaranteeManager.js';
 export type { GuaranteeGraph } from './core/GuaranteeManager.js';
@@ -42,6 +56,43 @@ export type { GuaranteeGraphBackend } from './api/GuaranteeAPI.js';
 
 // Node kinds
 export { isGuaranteeType } from './core/nodes/NodeKind.js';
+
+// Node contracts
+export { FunctionNode } from './core/nodes/FunctionNode.js';
+export { CallSiteNode } from './core/nodes/CallSiteNode.js';
+export { MethodCallNode } from './core/nodes/MethodCallNode.js';
+export { ScopeNode } from './core/nodes/ScopeNode.js';
+export { ClassNode } from './core/nodes/ClassNode.js';
+export { MethodNode } from './core/nodes/MethodNode.js';
+export { ExportNode } from './core/nodes/ExportNode.js';
+export { VariableDeclarationNode } from './core/nodes/VariableDeclarationNode.js';
+export { ExternalModuleNode } from './core/nodes/ExternalModuleNode.js';
+export { InterfaceNode, type InterfacePropertyRecord } from './core/nodes/InterfaceNode.js';
+export { TypeNode } from './core/nodes/TypeNode.js';
+export { EnumNode, type EnumMemberRecord } from './core/nodes/EnumNode.js';
+export { DecoratorNode, type DecoratorTargetType } from './core/nodes/DecoratorNode.js';
+export { ExpressionNode, type ExpressionNodeOptions } from './core/nodes/ExpressionNode.js';
+
+// AST Visitors (for advanced usage)
+export {
+  ASTVisitor,
+  ImportExportVisitor,
+  VariableVisitor,
+  FunctionVisitor,
+  ClassVisitor,
+  CallExpressionVisitor,
+  TypeScriptVisitor
+} from './plugins/analysis/ast/visitors/index.js';
+export type {
+  VisitorModule,
+  VisitorCollections,
+  VisitorHandlers,
+  VisitorHandler,
+  VariableInfo,
+  ExtractVariableNamesCallback,
+  TrackVariableAssignmentCallback,
+  AnalyzeFunctionBodyCallback
+} from './plugins/analysis/ast/visitors/index.js';
 
 // === PLUGINS ===
 

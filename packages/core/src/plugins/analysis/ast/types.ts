@@ -36,6 +36,7 @@ export interface FunctionInfo {
 // === PARAMETER INFO ===
 export interface ParameterInfo {
   id: string;
+  semanticId?: string;  // Stable ID: file->scope->PARAMETER->name
   type: 'PARAMETER';
   name: string;
   file: string;
@@ -66,6 +67,7 @@ export interface ScopeInfo {
 // === VARIABLE DECLARATION INFO ===
 export interface VariableDeclarationInfo {
   id: string;
+  semanticId?: string;  // Stable ID: file->scope->VARIABLE->name
   type: 'VARIABLE' | 'CONSTANT';
   name: string;
   file: string;
@@ -78,6 +80,7 @@ export interface VariableDeclarationInfo {
 // === CALL SITE INFO ===
 export interface CallSiteInfo {
   id: string;
+  semanticId?: string;  // Stable ID: file->scope->CALL->name#N
   type: 'CALL';
   name: string;
   file: string;
@@ -91,6 +94,7 @@ export interface CallSiteInfo {
 // === METHOD CALL INFO ===
 export interface MethodCallInfo {
   id: string;
+  semanticId?: string;  // Stable ID: file->scope->CALL->object.method#N
   type: 'CALL';
   name: string;
   object: string;
@@ -106,6 +110,7 @@ export interface MethodCallInfo {
 // === EVENT LISTENER INFO ===
 export interface EventListenerInfo {
   id: string;
+  semanticId?: string;  // Stable ID: file->scope->EVENT_LISTENER->name#N
   type: 'event:listener';
   name: string;
   object: string;
@@ -127,6 +132,7 @@ export interface ClassInstantiationInfo {
 // === CLASS DECLARATION INFO ===
 export interface ClassDeclarationInfo {
   id: string;
+  semanticId?: string;  // Stable ID: file->scope->CLASS->name
   type: 'CLASS';
   name: string;
   file: string;
@@ -140,6 +146,7 @@ export interface ClassDeclarationInfo {
 // === INTERFACE DECLARATION INFO ===
 export interface InterfaceDeclarationInfo {
   id: string;
+  semanticId?: string;  // Stable ID: file->scope->INTERFACE->name
   type: 'INTERFACE';
   name: string;
   file: string;
@@ -159,6 +166,7 @@ export interface InterfacePropertyInfo {
 // === TYPE ALIAS INFO ===
 export interface TypeAliasInfo {
   id: string;
+  semanticId?: string;  // Stable ID: file->scope->TYPE->name
   type: 'TYPE';
   name: string;
   file: string;
@@ -170,6 +178,7 @@ export interface TypeAliasInfo {
 // === ENUM DECLARATION INFO ===
 export interface EnumDeclarationInfo {
   id: string;
+  semanticId?: string;  // Stable ID: file->scope->ENUM->name
   type: 'ENUM';
   name: string;
   file: string;
@@ -187,6 +196,7 @@ export interface EnumMemberInfo {
 // === DECORATOR INFO ===
 export interface DecoratorInfo {
   id: string;
+  semanticId?: string;  // Stable ID: file->target->DECORATOR->name#N
   type: 'DECORATOR';
   name: string;
   file: string;
@@ -229,6 +239,7 @@ export interface ImportInfo {
   source: string;
   file: string;
   line: number;
+  column?: number;  // Column position for ImportNode
   specifiers: ImportSpecifier[];
 }
 
@@ -267,6 +278,7 @@ export interface HttpRequestInfo {
 // === LITERAL INFO ===
 export interface LiteralInfo {
   id: string;
+  semanticId?: string;  // Stable ID: file->scope->LITERAL->type#N
   type: 'LITERAL' | 'CALL';
   value?: unknown;
   valueType?: string;
@@ -284,6 +296,7 @@ export interface LiteralInfo {
 // === OBJECT LITERAL INFO ===
 export interface ObjectLiteralInfo {
   id: string;
+  semanticId?: string;  // Stable ID: file->scope->OBJECT_LITERAL->literal#N
   type: 'OBJECT_LITERAL';
   file: string;
   line: number;
@@ -315,6 +328,7 @@ export interface ObjectPropertyInfo {
 // === ARRAY LITERAL INFO ===
 export interface ArrayLiteralInfo {
   id: string;
+  semanticId?: string;  // Stable ID: file->scope->ARRAY_LITERAL->literal#N
   type: 'ARRAY_LITERAL';
   file: string;
   line: number;
@@ -356,7 +370,7 @@ export interface ArrayMutationInfo {
   file: string;
   line: number;
   column: number;
-  arguments: ArrayMutationArgument[];  // What's being added to the array
+  insertedValues: ArrayMutationArgument[];  // What's being added to the array
 }
 
 export interface ArrayMutationArgument {

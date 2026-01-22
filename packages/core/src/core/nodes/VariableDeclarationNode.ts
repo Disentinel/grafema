@@ -1,8 +1,16 @@
 /**
  * VariableDeclarationNode - contract for VARIABLE_DECLARATION node
+ *
+ * Supports two creation modes:
+ * 1. createWithContext() - NEW: Uses ScopeContext + Location for semantic IDs
+ * 2. create() - LEGACY: Uses line-based IDs for backward compatibility
+ *
+ * Semantic ID format: {file}->{scope_path}->VARIABLE->{name}
+ * Example: src/app.js->handler->VARIABLE->result
  */
 
 import type { BaseNodeRecord } from '@grafema/types';
+import { computeSemanticId, type ScopeContext, type Location } from '../SemanticId.js';
 
 interface VariableDeclarationNodeRecord extends BaseNodeRecord {
   type: 'VARIABLE_DECLARATION';
@@ -13,6 +21,13 @@ interface VariableDeclarationNodeRecord extends BaseNodeRecord {
 interface VariableDeclarationNodeOptions {
   parentScopeId?: string;
   counter?: number;
+}
+
+/**
+ * Options for createWithContext
+ */
+interface VariableContextOptions {
+  parentScopeId?: string;
 }
 
 export class VariableDeclarationNode {
@@ -42,6 +57,43 @@ export class VariableDeclarationNode {
       file,
       line,
       column: column || 0,
+      parentScopeId: options.parentScopeId
+    };
+  }
+
+  /**
+   * Create VARIABLE_DECLARATION node with semantic ID (NEW API)
+   *
+   * Uses ScopeContext from ScopeTracker for stable identifiers.
+   * Variable names are unique within scope (handles shadowing naturally).
+   *
+   * @param name - Variable name
+   * @param context - Scope context from ScopeTracker.getContext()
+   * @param location - Source location { line, column }
+   * @param options - Optional variable properties
+   * @returns VariableDeclarationNodeRecord with semantic ID
+   */
+  static createWithContext(
+    name: string,
+    context: ScopeContext,
+    location: Partial<Location>,
+    options: VariableContextOptions = {}
+  ): VariableDeclarationNodeRecord {
+    // Validate required fields
+    if (!name) throw new Error('VariableDeclarationNode.createWithContext: name is required');
+    if (!context.file) throw new Error('VariableDeclarationNode.createWithContext: file is required');
+    if (location.line === undefined) throw new Error('VariableDeclarationNode.createWithContext: line is required');
+
+    // Compute semantic ID using 'VARIABLE' type for cleaner IDs
+    const id = computeSemanticId('VARIABLE', name, context);
+
+    return {
+      id,
+      type: this.TYPE,
+      name,
+      file: context.file,
+      line: location.line,
+      column: location.column ?? 0,
       parentScopeId: options.parentScopeId
     };
   }

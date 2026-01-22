@@ -47,6 +47,7 @@ interface ImportInfo {
   source: string;
   specifiers: ImportSpecifierInfo[];
   line: number;
+  column?: number;
 }
 
 /**
@@ -127,7 +128,8 @@ export class ImportExportVisitor extends ASTVisitor {
         (imports as ImportInfo[]).push({
           source,
           specifiers,
-          line: node.loc!.start.line
+          line: node.loc!.start.line,
+          column: node.loc!.start.column
         });
       }
     };

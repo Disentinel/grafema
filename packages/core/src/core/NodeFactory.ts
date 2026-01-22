@@ -30,8 +30,19 @@ import {
   HttpRequestNode,
   DatabaseQueryNode,
   ImportNode,
+  ClassNode,
+  ExportNode,
+  ExternalModuleNode,
+  InterfaceNode,
+  TypeNode,
+  EnumNode,
+  DecoratorNode,
+  ExpressionNode,
   type EntrypointType,
   type EntrypointTrigger,
+  type DecoratorTargetType,
+  type InterfacePropertyRecord,
+  type EnumMemberRecord,
 } from './nodes/index.js';
 
 import type { BaseNodeRecord } from '@grafema/types';
@@ -146,6 +157,55 @@ interface ImportOptions {
   importBinding?: 'value' | 'type' | 'typeof';
   imported?: string;
   local?: string;
+}
+
+interface ClassOptions {
+  exported?: boolean;
+  superClass?: string;
+  methods?: string[];
+  isInstantiationRef?: boolean;
+}
+
+interface ExportOptions {
+  exportKind?: 'value' | 'type';
+  local?: string;
+  default?: boolean;
+  source?: string;
+  exportType?: 'default' | 'named' | 'all';
+}
+
+interface InterfaceOptions {
+  extends?: string[];
+  properties?: InterfacePropertyRecord[];
+  isExternal?: boolean;
+}
+
+interface TypeOptions {
+  aliasOf?: string;
+}
+
+interface EnumOptions {
+  isConst?: boolean;
+  members?: EnumMemberRecord[];
+}
+
+interface DecoratorOptions {
+  arguments?: unknown[];
+}
+
+interface ExpressionOptions {
+  // MemberExpression
+  object?: string;
+  property?: string;
+  computed?: boolean;
+  computedPropertyVar?: string;
+  // Binary/Logical
+  operator?: string;
+  // Tracking
+  path?: string;
+  baseName?: string;
+  propertyPath?: string[];
+  arrayIndex?: number;
 }
 
 // Validator type for node classes
@@ -300,6 +360,111 @@ export class NodeFactory {
   }
 
   /**
+   * Create CLASS node
+   */
+  static createClass(
+    name: string,
+    file: string,
+    line: number,
+    column: number,
+    options: ClassOptions = {}
+  ) {
+    return ClassNode.create(name, file, line, column, options);
+  }
+
+  /**
+   * Create EXPORT node
+   */
+  static createExport(
+    name: string,
+    file: string,
+    line: number,
+    column: number,
+    options: ExportOptions = {}
+  ) {
+    return ExportNode.create(name, file, line, column, options);
+  }
+
+  /**
+   * Create EXTERNAL_MODULE node
+   *
+   * Represents external npm packages or Node.js built-in modules.
+   * Uses singleton pattern - same source always produces same ID.
+   *
+   * @param source - Module name (e.g., 'lodash', '@tanstack/react-query', 'node:fs')
+   */
+  static createExternalModule(source: string) {
+    return ExternalModuleNode.create(source);
+  }
+
+  /**
+   * Create INTERFACE node
+   */
+  static createInterface(
+    name: string,
+    file: string,
+    line: number,
+    column: number,
+    options: InterfaceOptions = {}
+  ) {
+    return InterfaceNode.create(name, file, line, column, options);
+  }
+
+  /**
+   * Create TYPE node
+   */
+  static createType(
+    name: string,
+    file: string,
+    line: number,
+    column: number,
+    options: TypeOptions = {}
+  ) {
+    return TypeNode.create(name, file, line, column, options);
+  }
+
+  /**
+   * Create ENUM node
+   */
+  static createEnum(
+    name: string,
+    file: string,
+    line: number,
+    column: number,
+    options: EnumOptions = {}
+  ) {
+    return EnumNode.create(name, file, line, column, options);
+  }
+
+  /**
+   * Create DECORATOR node
+   */
+  static createDecorator(
+    name: string,
+    file: string,
+    line: number,
+    column: number,
+    targetId: string,
+    targetType: DecoratorTargetType,
+    options: DecoratorOptions = {}
+  ) {
+    return DecoratorNode.create(name, file, line, column, targetId, targetType, options);
+  }
+
+  /**
+   * Create EXPRESSION node
+   */
+  static createExpression(
+    expressionType: string,
+    file: string,
+    line: number,
+    column: number,
+    options: ExpressionOptions = {}
+  ) {
+    return ExpressionNode.create(expressionType, file, line, column, options);
+  }
+
+  /**
    * Validate node by its type
    */
   static validate(node: BaseNodeRecord): string[] {
@@ -320,7 +485,15 @@ export class NodeFactory {
       'EVENT_LISTENER': EventListenerNode,
       'HTTP_REQUEST': HttpRequestNode,
       'DATABASE_QUERY': DatabaseQueryNode,
-      'IMPORT': ImportNode
+      'IMPORT': ImportNode,
+      'CLASS': ClassNode,
+      'EXPORT': ExportNode,
+      'EXTERNAL_MODULE': ExternalModuleNode,
+      'INTERFACE': InterfaceNode,
+      'TYPE': TypeNode,
+      'ENUM': EnumNode,
+      'DECORATOR': DecoratorNode,
+      'EXPRESSION': ExpressionNode
     };
 
     const validator = validators[node.type];

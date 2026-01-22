@@ -20,14 +20,8 @@ import type {
 import type { NodePath } from '@babel/traverse';
 import { ASTVisitor, type VisitorModule, type VisitorCollections, type VisitorHandlers, type CounterRef } from './ASTVisitor.js';
 import { typeNodeToString } from './TypeScriptVisitor.js';
-
-/**
- * Scope context for generating stable semantic IDs
- */
-interface ScopeContext {
-  semanticPath: string;
-  siblingCounters: Map<string, number>;
-}
+import { ScopeTracker } from '../../../../core/ScopeTracker.js';
+import { computeSemanticId } from '../../../../core/SemanticId.js';
 
 /**
  * Parameter node info
@@ -91,19 +85,23 @@ export type AnalyzeFunctionBodyCallback = (
 
 export class FunctionVisitor extends ASTVisitor {
   private analyzeFunctionBody: AnalyzeFunctionBodyCallback;
+  private scopeTracker?: ScopeTracker;
 
   /**
    * @param module - Current module being analyzed
    * @param collections - Must contain arrays and counter refs
    * @param analyzeFunctionBody - Callback to analyze function internals
+   * @param scopeTracker - Optional ScopeTracker for semantic ID generation
    */
   constructor(
     module: VisitorModule,
     collections: VisitorCollections,
-    analyzeFunctionBody: AnalyzeFunctionBodyCallback
+    analyzeFunctionBody: AnalyzeFunctionBodyCallback,
+    scopeTracker?: ScopeTracker
   ) {
     super(module, collections);
     this.analyzeFunctionBody = analyzeFunctionBody;
+    this.scopeTracker = scopeTracker;
   }
 
   getHandlers(): VisitorHandlers {
@@ -112,16 +110,15 @@ export class FunctionVisitor extends ASTVisitor {
     const parameters = this.collections.parameters ?? [];
     const scopes = this.collections.scopes ?? [];
     const functionCounterRef = (this.collections.functionCounterRef ?? { value: 0 }) as CounterRef;
-    const moduleScopeCtx = this.collections.moduleScopeCtx as ScopeContext | undefined;
+    const scopeTracker = this.scopeTracker;
 
     const analyzeFunctionBody = this.analyzeFunctionBody;
     const collections = this.collections;
 
     // Helper function to generate stable anonymous function name
     const generateAnonymousName = (): string => {
-      if (!moduleScopeCtx) return 'anonymous';
-      const index = moduleScopeCtx.siblingCounters.get('anonymous') || 0;
-      moduleScopeCtx.siblingCounters.set('anonymous', index + 1);
+      if (!scopeTracker) return 'anonymous';
+      const index = scopeTracker.getSiblingIndex('anonymous');
       return `anonymous[${index}]`;
     };
 
@@ -287,6 +284,12 @@ export class FunctionVisitor extends ASTVisitor {
         const functionId = `FUNCTION#${node.id.name}#${module.file}#${node.loc!.start.line}`;
         const isAsync = node.async || false;
 
+        // Generate semantic ID if scopeTracker available
+        let stableId = functionId;
+        if (scopeTracker) {
+          stableId = computeSemanticId('FUNCTION', node.id.name, scopeTracker.getContext());
+        }
+
         // Extract type info
         const { names: paramNames, types: paramTypes } = extractParamInfo(node.params);
         const returnType = extractReturnType(node);
@@ -295,7 +298,7 @@ export class FunctionVisitor extends ASTVisitor {
 
         (functions as FunctionInfo[]).push({
           id: functionId,
-          stableId: functionId,
+          stableId,
           type: 'FUNCTION',
           name: node.id.name,
           file: module.file,
@@ -312,8 +315,15 @@ export class FunctionVisitor extends ASTVisitor {
         // Create PARAMETER nodes for function parameters
         createParameterNodes(node.params, functionId, module.file, node.loc!.start.line);
 
+        // Enter function scope for tracking
+        if (scopeTracker) {
+          scopeTracker.enterScope(node.id.name, 'FUNCTION');
+        }
+
         // Create SCOPE for function body
-        const functionBodyScopeId = `SCOPE#${node.id.name}:body#${module.file}#${node.loc!.start.line}`;
+        const functionBodyScopeId = scopeTracker
+          ? computeSemanticId('SCOPE', 'body', scopeTracker.getContext())
+          : `SCOPE#${node.id.name}:body#${module.file}#${node.loc!.start.line}`;
         (scopes as ScopeInfo[]).push({
           id: functionBodyScopeId,
           type: 'SCOPE',
@@ -327,6 +337,11 @@ export class FunctionVisitor extends ASTVisitor {
 
         // Analyze function body
         analyzeFunctionBody(path as NodePath<FunctionDeclaration>, functionBodyScopeId, module, collections);
+
+        // Exit function scope
+        if (scopeTracker) {
+          scopeTracker.exitScope();
+        }
 
         // Stop traversal - analyzeFunctionBody already processed contents
         path.skip();
@@ -353,6 +368,12 @@ export class FunctionVisitor extends ASTVisitor {
 
         const functionId = `FUNCTION#${functionName}#${module.file}#${line}:${column}:${functionCounterRef.value++}`;
 
+        // Generate semantic ID if scopeTracker available
+        let stableId = functionId;
+        if (scopeTracker) {
+          stableId = computeSemanticId('FUNCTION', functionName, scopeTracker.getContext());
+        }
+
         // Extract type info
         const { names: paramNames, types: paramTypes } = extractParamInfo(node.params);
         const returnType = extractReturnType(node);
@@ -361,7 +382,7 @@ export class FunctionVisitor extends ASTVisitor {
 
         (functions as FunctionInfo[]).push({
           id: functionId,
-          stableId: functionId,
+          stableId,
           type: 'FUNCTION',
           name: functionName,
           file: module.file,
@@ -379,8 +400,15 @@ export class FunctionVisitor extends ASTVisitor {
         // Create PARAMETER nodes for arrow function parameters
         createParameterNodes(node.params, functionId, module.file, line);
 
+        // Enter function scope for tracking
+        if (scopeTracker) {
+          scopeTracker.enterScope(functionName, 'FUNCTION');
+        }
+
         // Create SCOPE for arrow function body
-        const bodyScope = `SCOPE#${functionName}:body#${module.file}#${line}:${column}`;
+        const bodyScope = scopeTracker
+          ? computeSemanticId('SCOPE', 'body', scopeTracker.getContext())
+          : `SCOPE#${functionName}:body#${module.file}#${line}:${column}`;
         (scopes as ScopeInfo[]).push({
           id: bodyScope,
           type: 'SCOPE',
@@ -392,6 +420,11 @@ export class FunctionVisitor extends ASTVisitor {
         });
 
         analyzeFunctionBody(path as NodePath<ArrowFunctionExpression>, bodyScope, module, collections);
+
+        // Exit function scope
+        if (scopeTracker) {
+          scopeTracker.exitScope();
+        }
       }
     };
   }

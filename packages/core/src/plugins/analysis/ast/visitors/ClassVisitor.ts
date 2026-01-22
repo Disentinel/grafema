@@ -24,12 +24,15 @@ import { ASTVisitor, type VisitorModule, type VisitorCollections, type VisitorHa
 import type { AnalyzeFunctionBodyCallback } from './FunctionVisitor.js';
 import type { DecoratorInfo } from '../types.js';
 import { ExpressionEvaluator } from '../ExpressionEvaluator.js';
+import { ScopeTracker } from '../../../../core/ScopeTracker.js';
+import { computeSemanticId } from '../../../../core/SemanticId.js';
 
 /**
  * Class declaration info
  */
 interface ClassInfo {
   id: string;
+  semanticId?: string;
   type: 'CLASS';
   name: string;
   file: string;
@@ -46,6 +49,7 @@ interface ClassInfo {
 interface ClassFunctionInfo {
   id: string;
   stableId: string;
+  semanticId?: string;
   type: 'FUNCTION';
   name: string;
   file: string;
@@ -65,6 +69,7 @@ interface ClassFunctionInfo {
  */
 interface ScopeInfo {
   id: string;
+  semanticId?: string;
   type: 'SCOPE';
   scopeType: string;
   name: string;
@@ -76,19 +81,23 @@ interface ScopeInfo {
 
 export class ClassVisitor extends ASTVisitor {
   private analyzeFunctionBody: AnalyzeFunctionBodyCallback;
+  private scopeTracker?: ScopeTracker;
 
   /**
    * @param module - Current module being analyzed
    * @param collections - Must contain arrays and counter refs
    * @param analyzeFunctionBody - Callback to analyze method internals
+   * @param scopeTracker - Optional ScopeTracker for semantic ID generation
    */
   constructor(
     module: VisitorModule,
     collections: VisitorCollections,
-    analyzeFunctionBody: AnalyzeFunctionBodyCallback
+    analyzeFunctionBody: AnalyzeFunctionBodyCallback,
+    scopeTracker?: ScopeTracker
   ) {
     super(module, collections);
     this.analyzeFunctionBody = analyzeFunctionBody;
+    this.scopeTracker = scopeTracker;
   }
 
   /**
@@ -150,6 +159,7 @@ export class ClassVisitor extends ASTVisitor {
 
     const analyzeFunctionBody = this.analyzeFunctionBody;
     const collections = this.collections;
+    const scopeTracker = this.scopeTracker;
 
     return {
       ClassDeclaration: (classPath: NodePath) => {
@@ -164,6 +174,12 @@ export class ClassVisitor extends ASTVisitor {
           ? (classNode.superClass as Identifier).name
           : null;
 
+        // Generate semantic ID if scopeTracker available
+        let classSemanticId: string | undefined;
+        if (scopeTracker) {
+          classSemanticId = computeSemanticId('CLASS', className, scopeTracker.getContext());
+        }
+
         // Extract implements (TypeScript)
         const implementsNames: string[] = [];
         const classNodeWithImplements = classNode as ClassDeclaration & { implements?: Array<{ expression: { type: string; name?: string } }> };
@@ -177,6 +193,7 @@ export class ClassVisitor extends ASTVisitor {
 
         (classDeclarations as ClassInfo[]).push({
           id: classId,
+          semanticId: classSemanticId,
           type: 'CLASS',
           name: className,
           file: module.file,
@@ -186,6 +203,11 @@ export class ClassVisitor extends ASTVisitor {
           implements: implementsNames.length > 0 ? implementsNames : undefined,
           methods: []
         });
+
+        // Enter class scope for tracking methods
+        if (scopeTracker) {
+          scopeTracker.enterScope(className, 'CLASS');
+        }
 
         // Extract class decorators
         const classNodeWithDecorators = classNode as ClassDeclaration & { decorators?: Decorator[] };
@@ -238,12 +260,19 @@ export class ClassVisitor extends ASTVisitor {
 
               const functionId = `FUNCTION#${className}.${propName}#${module.file}#${propNode.loc!.start.line}:${propNode.loc!.start.column}`;
 
+              // Generate semantic ID if scopeTracker available
+              let methodSemanticId: string | undefined;
+              if (scopeTracker) {
+                methodSemanticId = computeSemanticId('FUNCTION', propName, scopeTracker.getContext());
+              }
+
               // Add method to class methods list for CONTAINS edges
               currentClass.methods.push(functionId);
 
               (functions as ClassFunctionInfo[]).push({
                 id: functionId,
-                stableId: functionId,
+                stableId: methodSemanticId || functionId,
+                semanticId: methodSemanticId,
                 type: 'FUNCTION',
                 name: propName,
                 file: module.file,
@@ -256,10 +285,19 @@ export class ClassVisitor extends ASTVisitor {
                 className: className
               });
 
+              // Enter method scope for tracking
+              if (scopeTracker) {
+                scopeTracker.enterScope(propName, 'FUNCTION');
+              }
+
               // Create SCOPE for property function body
               const propBodyScopeId = `SCOPE#${className}.${propName}:body#${module.file}#${propNode.loc!.start.line}`;
+              const propBodySemanticId = scopeTracker
+                ? computeSemanticId('SCOPE', 'body', scopeTracker.getContext())
+                : undefined;
               (scopes as ScopeInfo[]).push({
                 id: propBodyScopeId,
+                semanticId: propBodySemanticId,
                 type: 'SCOPE',
                 scopeType: 'property_body',
                 name: `${className}.${propName}:body`,
@@ -271,6 +309,11 @@ export class ClassVisitor extends ASTVisitor {
 
               const funcPath = propPath.get('value') as NodePath<ArrowFunctionExpression | FunctionExpression>;
               analyzeFunctionBody(funcPath, propBodyScopeId, module, collections);
+
+              // Exit method scope
+              if (scopeTracker) {
+                scopeTracker.exitScope();
+              }
             }
           },
 
@@ -287,12 +330,19 @@ export class ClassVisitor extends ASTVisitor {
 
             const functionId = `FUNCTION#${className}.${methodName}#${module.file}#${methodNode.loc!.start.line}:${methodNode.loc!.start.column}`;
 
+            // Generate semantic ID if scopeTracker available
+            let methodSemanticId: string | undefined;
+            if (scopeTracker) {
+              methodSemanticId = computeSemanticId('FUNCTION', methodName, scopeTracker.getContext());
+            }
+
             // Add method to class methods list for CONTAINS edges
             currentClass.methods.push(functionId);
 
             const funcData: ClassFunctionInfo = {
               id: functionId,
-              stableId: functionId,
+              stableId: methodSemanticId || functionId,
+              semanticId: methodSemanticId,
               type: 'FUNCTION',
               name: methodName,
               file: module.file,
@@ -317,10 +367,19 @@ export class ClassVisitor extends ASTVisitor {
               }
             }
 
+            // Enter method scope for tracking
+            if (scopeTracker) {
+              scopeTracker.enterScope(methodName, 'FUNCTION');
+            }
+
             // Create SCOPE for method body
             const methodBodyScopeId = `SCOPE#${className}.${methodName}:body#${module.file}#${methodNode.loc!.start.line}`;
+            const methodBodySemanticId = scopeTracker
+              ? computeSemanticId('SCOPE', 'body', scopeTracker.getContext())
+              : undefined;
             (scopes as ScopeInfo[]).push({
               id: methodBodyScopeId,
+              semanticId: methodBodySemanticId,
               type: 'SCOPE',
               scopeType: 'method_body',
               name: `${className}.${methodName}:body`,
@@ -331,8 +390,18 @@ export class ClassVisitor extends ASTVisitor {
             });
 
             analyzeFunctionBody(methodPath, methodBodyScopeId, module, collections);
+
+            // Exit method scope
+            if (scopeTracker) {
+              scopeTracker.exitScope();
+            }
           }
         });
+
+        // Exit class scope
+        if (scopeTracker) {
+          scopeTracker.exitScope();
+        }
       }
     };
   }
