@@ -358,10 +358,25 @@ describe('NodeFactory.createImport', () => {
       }, /file is required/);
     });
 
-    it('should throw when line is missing', () => {
+    it('should throw when line is undefined', () => {
       assert.throws(() => {
-        NodeFactory.createImport('React', '/file.js', 0, 0, 'react');
+        NodeFactory.createImport('React', '/file.js', undefined, 0, 'react');
       }, /line is required/);
+    });
+
+    it('should accept line=0 as valid (unlike undefined)', () => {
+      const node = NodeFactory.createImport(
+        'React',
+        '/file.js',
+        0,
+        0,
+        'react',
+        { imported: 'default' }
+      );
+
+      assert.strictEqual(node.line, 0);
+      assert.strictEqual(node.type, 'IMPORT');
+      assert.strictEqual(node.id, '/file.js:IMPORT:react:React');
     });
 
     it('should throw when source is missing', () => {

@@ -12,6 +12,7 @@ import traverseModule from '@babel/traverse';
 import type { Node, ImportDeclaration, ExportNamedDeclaration, ExportDefaultDeclaration, VariableDeclaration, FunctionDeclaration, ClassDeclaration, CallExpression, Identifier, ExportSpecifier } from '@babel/types';
 import type { NodePath, Visitor } from '@babel/traverse';
 import { ClassNode, type ClassNodeRecord } from './nodes/ClassNode.js';
+import { ImportNode, type ImportNodeRecord } from './nodes/ImportNode.js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const traverse = (traverseModule as any).default || traverseModule;
@@ -36,18 +37,6 @@ interface ExitMessage {
 
 type WorkerMessage = ParseMessage | ExitMessage;
 
-/**
- * Import node structure
- */
-interface ImportNode {
-  id: string;
-  type: 'IMPORT';
-  name: string;
-  importedName: string;
-  source: string;
-  file: string;
-  line: number;
-}
 
 /**
  * Export node structure
@@ -159,7 +148,7 @@ export interface ASTCollections {
   classDeclarations: ClassDeclarationNode[];
   methodCallbacks: unknown[];
   callArguments: unknown[];
-  imports: ImportNode[];
+  imports: ImportNodeRecord[];
   exports: ExportNode[];
   httpRequests: unknown[];
   literals: unknown[];
@@ -271,15 +260,16 @@ function parseModule(filePath: string, moduleId: string, moduleName: string): AS
           localName = spec.local.name;
         }
 
-        collections.imports.push({
-          id: `IMPORT#${localName}#${filePath}#${node.loc!.start.line}`,
-          type: 'IMPORT',
-          name: localName,
-          importedName,
-          source,
-          file: filePath,
-          line: node.loc!.start.line
-        });
+        // Babel AST guarantees node.loc exists with locations: true option
+        const importNode = ImportNode.create(
+          localName,      // name
+          filePath,       // file
+          node.loc!.start.line,  // line (non-null - Babel guarantees location)
+          0,              // column (not available in this worker)
+          source,         // source
+          { imported: importedName, local: localName }
+        );
+        collections.imports.push(importNode);
       });
     }
   });

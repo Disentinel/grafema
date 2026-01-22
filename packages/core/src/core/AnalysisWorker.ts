@@ -20,6 +20,7 @@ import type { NodePath } from '@babel/traverse';
 
 import { RFDBClient } from '@grafema/rfdb-client';
 import { ClassNode } from './nodes/ClassNode.js';
+import { ImportNode } from './nodes/ImportNode.js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const traverse = (traverseModule as any).default || traverseModule;
@@ -158,16 +159,29 @@ async function analyzeFile(filePath: string, moduleId: string, moduleName: strin
             localName = spec.local.name;
           }
 
-          const importId = `IMPORT#${localName}#${filePath}#${node.loc!.start.line}`;
+          const importNode = ImportNode.create(
+            localName,      // name
+            filePath,       // file
+            node.loc!.start.line,  // line
+            0,              // column (not available in this worker)
+            source,         // source
+            { imported: importedName, local: localName }
+          );
           nodes.push({
-            id: importId,
-            type: 'IMPORT',
-            name: localName,
-            file: filePath,
-            metadata: JSON.stringify({ importedName, source, line: node.loc!.start.line })
+            id: importNode.id,
+            type: importNode.type,
+            name: importNode.name,
+            file: importNode.file,
+            metadata: JSON.stringify({
+              importedName: importNode.imported,
+              source: importNode.source,
+              line: importNode.line,
+              importType: importNode.importType,
+              importBinding: importNode.importBinding
+            })
           });
 
-          edges.push({ src: moduleId, dst: importId, type: 'CONTAINS' });
+          edges.push({ src: moduleId, dst: importNode.id, type: 'CONTAINS' });
         });
       }
     });

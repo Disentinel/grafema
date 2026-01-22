@@ -19,6 +19,7 @@ import type * as t from '@babel/types';
 import { RFDBClient } from '@grafema/rfdb-client';
 import type { WireNode, WireEdge } from '@grafema/types';
 import { ClassNode } from './nodes/ClassNode.js';
+import { ImportNode } from './nodes/ImportNode.js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const traverse = (traverseModule as any).default || traverseModule;
@@ -231,18 +232,25 @@ async function analyzeJSAST(
           localName = spec.local.name;
         }
 
-        const importId = `IMPORT#${localName}#${filePath}#${node.loc?.start.line || 0}`;
+        const importNode = ImportNode.create(
+          localName,      // name
+          filePath,       // file
+          node.loc?.start.line || 1,  // line - fallback to line 1 if location unavailable
+          0,              // column
+          source,         // source
+          { imported: importedName, local: localName }
+        );
         nodes.push({
-          id: importId,
-          type: 'IMPORT',
-          name: localName,
-          file: filePath,
-          line: node.loc?.start.line || 0,
-          importedName,
-          source,
+          id: importNode.id,
+          type: importNode.type,
+          name: importNode.name,
+          file: importNode.file,
+          line: importNode.line,
+          importedName: importNode.imported,  // ImportNodeRecord uses 'imported' field
+          source: importNode.source,
         });
 
-        edges.push({ src: moduleId, dst: importId, type: 'CONTAINS' });
+        edges.push({ src: moduleId, dst: importNode.id, type: 'CONTAINS' });
       });
     },
   });
