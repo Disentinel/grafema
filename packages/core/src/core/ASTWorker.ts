@@ -13,6 +13,7 @@ import type { Node, ImportDeclaration, ExportNamedDeclaration, ExportDefaultDecl
 import type { NodePath, Visitor } from '@babel/traverse';
 import { ClassNode, type ClassNodeRecord } from './nodes/ClassNode.js';
 import { ImportNode, type ImportNodeRecord } from './nodes/ImportNode.js';
+import { ExportNode, type ExportNodeRecord } from './nodes/ExportNode.js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const traverse = (traverseModule as any).default || traverseModule;
@@ -37,20 +38,6 @@ interface ExitMessage {
 
 type WorkerMessage = ParseMessage | ExitMessage;
 
-
-/**
- * Export node structure
- */
-interface ExportNode {
-  id: string;
-  type: 'EXPORT';
-  name: string;
-  exportType?: string;
-  localName?: string;
-  isDefault?: boolean;
-  file: string;
-  line: number;
-}
 
 /**
  * Variable declaration node
@@ -149,7 +136,7 @@ export interface ASTCollections {
   methodCallbacks: unknown[];
   callArguments: unknown[];
   imports: ImportNodeRecord[];
-  exports: ExportNode[];
+  exports: ExportNodeRecord[];
   httpRequests: unknown[];
   literals: unknown[];
   variableAssignments: unknown[];
@@ -281,34 +268,34 @@ function parseModule(filePath: string, moduleId: string, moduleName: string): AS
 
       if (node.declaration) {
         if (node.declaration.type === 'FunctionDeclaration' && node.declaration.id) {
-          collections.exports.push({
-            id: `EXPORT#${node.declaration.id.name}#${filePath}#${node.loc!.start.line}`,
-            type: 'EXPORT',
-            name: node.declaration.id.name,
-            exportType: 'function',
-            file: filePath,
-            line: node.loc!.start.line
-          });
+          const exportNode = ExportNode.create(
+            node.declaration.id.name,
+            filePath,
+            node.loc!.start.line,
+            0,
+            { exportType: 'named' }
+          );
+          collections.exports.push(exportNode);
         } else if (node.declaration.type === 'ClassDeclaration' && node.declaration.id) {
-          collections.exports.push({
-            id: `EXPORT#${node.declaration.id.name}#${filePath}#${node.loc!.start.line}`,
-            type: 'EXPORT',
-            name: node.declaration.id.name,
-            exportType: 'class',
-            file: filePath,
-            line: node.loc!.start.line
-          });
+          const exportNode = ExportNode.create(
+            node.declaration.id.name,
+            filePath,
+            node.loc!.start.line,
+            0,
+            { exportType: 'named' }
+          );
+          collections.exports.push(exportNode);
         } else if (node.declaration.type === 'VariableDeclaration') {
           node.declaration.declarations.forEach(decl => {
             if (decl.id.type === 'Identifier') {
-              collections.exports.push({
-                id: `EXPORT#${decl.id.name}#${filePath}#${node.loc!.start.line}`,
-                type: 'EXPORT',
-                name: decl.id.name,
-                exportType: 'variable',
-                file: filePath,
-                line: node.loc!.start.line
-              });
+              const exportNode = ExportNode.create(
+                decl.id.name,
+                filePath,
+                node.loc!.start.line,
+                0,
+                { exportType: 'named' }
+              );
+              collections.exports.push(exportNode);
             }
           });
         }
@@ -318,37 +305,43 @@ function parseModule(filePath: string, moduleId: string, moduleName: string): AS
         node.specifiers.forEach(spec => {
           if (spec.type !== 'ExportSpecifier') return;
           const exportedName = spec.exported.type === 'Identifier' ? spec.exported.name : spec.exported.value;
-          collections.exports.push({
-            id: `EXPORT#${exportedName}#${filePath}#${node.loc!.start.line}`,
-            type: 'EXPORT',
-            name: exportedName,
-            localName: (spec as ExportSpecifier).local.name,
-            file: filePath,
-            line: node.loc!.start.line
-          });
+          const exportNode = ExportNode.create(
+            exportedName,
+            filePath,
+            node.loc!.start.line,
+            0,
+            {
+              local: (spec as ExportSpecifier).local.name,
+              exportType: 'named'
+            }
+          );
+          collections.exports.push(exportNode);
         });
       }
     },
 
     ExportDefaultDeclaration(path: NodePath<ExportDefaultDeclaration>) {
       const node = path.node;
-      let name = 'default';
+      let localName = 'default';
 
       if (node.declaration.type === 'Identifier') {
-        name = node.declaration.name;
+        localName = node.declaration.name;
       } else if ('id' in node.declaration && node.declaration.id) {
-        name = (node.declaration.id as Identifier).name;
+        localName = (node.declaration.id as Identifier).name;
       }
 
-      collections.exports.push({
-        id: `EXPORT#default#${filePath}#${node.loc!.start.line}`,
-        type: 'EXPORT',
-        name: 'default',
-        localName: name,
-        isDefault: true,
-        file: filePath,
-        line: node.loc!.start.line
-      });
+      const exportNode = ExportNode.create(
+        'default',
+        filePath,
+        node.loc!.start.line,
+        0,
+        {
+          local: localName,
+          default: true,
+          exportType: 'default'
+        }
+      );
+      collections.exports.push(exportNode);
     }
   });
 
