@@ -28,6 +28,7 @@ import {
   MountPointResolver,
   PrefixEvaluator,
   InstanceOfResolver,
+  ImportExportLinker,
   HTTPConnectionEnricher,
   RustFFIEnricher,
   // Validation
@@ -71,6 +72,7 @@ const BUILTIN_PLUGINS: Record<string, () => Plugin> = {
   MountPointResolver: () => new MountPointResolver() as Plugin,
   PrefixEvaluator: () => new PrefixEvaluator() as Plugin,
   InstanceOfResolver: () => new InstanceOfResolver() as Plugin,
+  ImportExportLinker: () => new ImportExportLinker() as Plugin,
   HTTPConnectionEnricher: () => new HTTPConnectionEnricher() as Plugin,
   RustFFIEnricher: () => new RustFFIEnricher() as Plugin,
   // Validation
@@ -99,6 +101,7 @@ const DEFAULT_PLUGINS: PluginConfig = {
     'ValueDomainAnalyzer',
     'MountPointResolver',
     'PrefixEvaluator',
+    'ImportExportLinker',
     'HTTPConnectionEnricher',
   ],
   validation: [

@@ -6,12 +6,16 @@
  * - JSModuleIndexer
  * - JSASTAnalyzer
  * - InstanceOfResolver (enrichment)
+ * - FetchAnalyzer (enrichment)
+ * - ImportExportLinker (enrichment)
  */
 
 import { Orchestrator } from '@grafema/core';
 import { JSModuleIndexer } from '@grafema/core';
 import { JSASTAnalyzer } from '@grafema/core';
 import { InstanceOfResolver } from '@grafema/core';
+import { FetchAnalyzer } from '@grafema/core';
+import { ImportExportLinker } from '@grafema/core';
 
 /**
  * Создать Orchestrator для тестов
@@ -39,6 +43,8 @@ export function createTestOrchestrator(backend, options = {}) {
   // Enrichment плагины
   if (!options.skipEnrichment) {
     plugins.push(new InstanceOfResolver());
+    plugins.push(new FetchAnalyzer());
+    plugins.push(new ImportExportLinker());
   }
 
   // Дополнительные плагины

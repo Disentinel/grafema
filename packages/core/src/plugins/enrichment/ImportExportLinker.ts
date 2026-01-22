@@ -42,7 +42,7 @@ export class ImportExportLinker extends Plugin {
       priority: 90, // Run early in enrichment, after analysis
       creates: {
         nodes: [],
-        edges: ['IMPORTS_FROM']
+        edges: ['IMPORTS', 'IMPORTS_FROM']
       },
       dependencies: ['JSASTAnalyzer'] // Requires IMPORT and EXPORT nodes
     };
@@ -123,6 +123,18 @@ export class ImportExportLinker extends Plugin {
       if (!targetFile || !targetExports) {
         notFound++;
         continue;
+      }
+
+      // Create MODULE -> IMPORTS -> MODULE edge for relative imports
+      const sourceModule = modulesByFile.get(imp.file!);
+      const targetModule = modulesByFile.get(targetFile);
+      if (sourceModule && targetModule) {
+        await graph.addEdge({
+          type: 'IMPORTS',
+          src: sourceModule.id,
+          dst: targetModule.id
+        });
+        edgesCreated++;
       }
 
       // Find matching export based on import type
