@@ -126,7 +126,6 @@ export class TypeScriptVisitor extends ASTVisitor {
         if (!node.id) return;
 
         const interfaceName = node.id.name;
-        const interfaceId = `${module.file}:INTERFACE:${interfaceName}:${node.loc!.start.line}`;
 
         // Generate semantic ID if scopeTracker available
         let interfaceSemanticId: string | undefined;
@@ -173,7 +172,6 @@ export class TypeScriptVisitor extends ASTVisitor {
         }
 
         (interfaces as InterfaceDeclarationInfo[]).push({
-          id: interfaceId,
           semanticId: interfaceSemanticId,
           type: 'INTERFACE',
           name: interfaceName,
@@ -190,7 +188,6 @@ export class TypeScriptVisitor extends ASTVisitor {
         if (!node.id) return;
 
         const typeName = node.id.name;
-        const typeId = `TYPE#${typeName}#${module.file}#${node.loc!.start.line}`;
 
         // Generate semantic ID if scopeTracker available
         let typeSemanticId: string | undefined;
@@ -202,7 +199,6 @@ export class TypeScriptVisitor extends ASTVisitor {
         const aliasOf = typeNodeToString(node.typeAnnotation);
 
         (typeAliases as TypeAliasInfo[]).push({
-          id: typeId,
           semanticId: typeSemanticId,
           type: 'TYPE',
           name: typeName,
@@ -218,7 +214,6 @@ export class TypeScriptVisitor extends ASTVisitor {
         if (!node.id) return;
 
         const enumName = node.id.name;
-        const enumId = `ENUM#${enumName}#${module.file}#${node.loc!.start.line}`;
 
         // Generate semantic ID if scopeTracker available
         let enumSemanticId: string | undefined;
@@ -251,7 +246,6 @@ export class TypeScriptVisitor extends ASTVisitor {
         }
 
         (enums as EnumDeclarationInfo[]).push({
-          id: enumId,
           semanticId: enumSemanticId,
           type: 'ENUM',
           name: enumName,

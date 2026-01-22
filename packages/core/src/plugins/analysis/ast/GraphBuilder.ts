@@ -1212,10 +1212,13 @@ export class GraphBuilder {
           // Try to find the interface in the same file
           const iface = interfaces.find(i => i.name === ifaceName);
           if (iface) {
+            // Compute interface ID using same formula as InterfaceNode.create()
+            // Format: {file}:INTERFACE:{name}:{line}
+            const interfaceId = `${iface.file}:INTERFACE:${iface.name}:${iface.line}`;
             this._bufferEdge({
               type: 'IMPLEMENTS',
               src: classDecl.id,
-              dst: iface.id
+              dst: interfaceId
             });
           } else {
             // External interface - create a reference node
