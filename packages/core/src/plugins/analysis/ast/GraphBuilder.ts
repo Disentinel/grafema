@@ -34,6 +34,7 @@ import type {
   EnumDeclarationInfo,
   DecoratorInfo,
   ArrayMutationInfo,
+  ObjectMutationInfo,
   ObjectLiteralInfo,
   ArrayLiteralInfo,
   ASTCollections,
@@ -120,6 +121,8 @@ export class GraphBuilder {
       decorators = [],
       // Array mutation tracking for FLOWS_INTO edges
       arrayMutations = [],
+      // Object mutation tracking for FLOWS_INTO edges
+      objectMutations = [],
       // Object/Array literal tracking
       objectLiterals = [],
       arrayLiterals = []
@@ -235,10 +238,13 @@ export class GraphBuilder {
     // 26. Buffer FLOWS_INTO edges for array mutations (push, unshift, splice, indexed assignment)
     this.bufferArrayMutationEdges(arrayMutations, variableDeclarations);
 
-    // 27. Buffer OBJECT_LITERAL nodes
+    // 27. Buffer FLOWS_INTO edges for object mutations (property assignment, Object.assign)
+    this.bufferObjectMutationEdges(objectMutations, variableDeclarations, parameters, functions);
+
+    // 28. Buffer OBJECT_LITERAL nodes
     this.bufferObjectLiteralNodes(objectLiterals);
 
-    // 28. Buffer ARRAY_LITERAL nodes
+    // 29. Buffer ARRAY_LITERAL nodes
     this.bufferArrayLiteralNodes(arrayLiterals);
 
     // FLUSH: Write all nodes first, then edges in single batch calls
@@ -1278,6 +1284,64 @@ export class GraphBuilder {
         // For literals, object literals, etc. - we could create edges from LITERAL nodes
         // but for now we just track variable -> array flows
       }
+    }
+  }
+
+  /**
+   * Buffer FLOWS_INTO edges for object mutations (property assignment, Object.assign)
+   * Creates edges from source values to the object variable being mutated
+   */
+  private bufferObjectMutationEdges(
+    objectMutations: ObjectMutationInfo[],
+    variableDeclarations: VariableDeclarationInfo[],
+    parameters: ParameterInfo[],
+    functions: FunctionInfo[]
+  ): void {
+    for (const mutation of objectMutations) {
+      const { objectName, propertyName, mutationType, value, file } = mutation;
+
+      // Find the object variable or parameter in the same file
+      // Skip 'this' - it's not a variable node, but we still create edges FROM source values
+      let objectNodeId: string | null = null;
+      if (objectName !== 'this') {
+        const objectVar = variableDeclarations.find(v => v.name === objectName && v.file === file);
+        const objectParam = !objectVar ? parameters.find(p => p.name === objectName && p.file === file) : null;
+        objectNodeId = objectVar?.id ?? objectParam?.id ?? null;
+        if (!objectNodeId) continue;
+      }
+
+      // Create FLOWS_INTO edge for VARIABLE value type
+      if (value.valueType === 'VARIABLE' && value.valueName) {
+        // Find the source: can be variable, parameter, or function (arrow functions assigned to const)
+        const sourceVar = variableDeclarations.find(v => v.name === value.valueName && v.file === file);
+        const sourceParam = !sourceVar ? parameters.find(p => p.name === value.valueName && p.file === file) : null;
+        const sourceFunc = !sourceVar && !sourceParam ? functions.find(f => f.name === value.valueName && f.file === file) : null;
+        const sourceNodeId = sourceVar?.id ?? sourceParam?.id ?? sourceFunc?.id;
+
+        if (sourceNodeId) {
+          // For 'this.prop = value', we still create an edge even though 'this' isn't a variable
+          // In this case, objectNodeId is null but we create edge with special handling
+          if (objectNodeId) {
+            const edgeData: GraphEdge = {
+              type: 'FLOWS_INTO',
+              src: sourceNodeId,
+              dst: objectNodeId,
+              mutationType,
+              propertyName
+            };
+            if (value.argIndex !== undefined) {
+              edgeData.argIndex = value.argIndex;
+            }
+            if (value.isSpread) {
+              edgeData.isSpread = true;
+            }
+            this._bufferEdge(edgeData);
+          }
+          // Note: For 'this.prop = value', we skip creating edge since 'this' has no node
+          // Future enhancement: create a special MUTATES_THIS edge or use class node as target
+        }
+      }
+      // For literals, object literals, etc. - we just track variable -> object flows for now
     }
   }
 

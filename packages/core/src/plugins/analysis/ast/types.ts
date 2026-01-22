@@ -399,6 +399,36 @@ export interface ArrayMutationArgument {
   callColumn?: number;
 }
 
+// === OBJECT MUTATION INFO ===
+/**
+ * Tracks object property mutations for FLOWS_INTO edge creation in GraphBuilder.
+ * Handles: obj.prop = value, obj['prop'] = value, Object.assign(), spread in object literals.
+ *
+ * IMPORTANT: This type is defined ONLY here. Import from this file everywhere.
+ */
+export interface ObjectMutationInfo {
+  id?: string;                   // Semantic ID for the mutation (optional for backward compatibility)
+  objectName: string;            // Name of the object being mutated ('config', 'this', etc.)
+  objectLine?: number;           // Line where object is referenced (for scope resolution)
+  propertyName: string;          // Property name or '<computed>' for obj[x] or '<assign>' for Object.assign
+  mutationType: 'property' | 'computed' | 'assign' | 'spread';
+  file: string;
+  line: number;
+  column: number;
+  value: ObjectMutationValue;
+}
+
+export interface ObjectMutationValue {
+  valueType: 'LITERAL' | 'VARIABLE' | 'CALL' | 'EXPRESSION' | 'OBJECT_LITERAL' | 'ARRAY_LITERAL';
+  valueName?: string;            // For VARIABLE type - name of the variable
+  valueNodeId?: string;          // For LITERAL, OBJECT_LITERAL, ARRAY_LITERAL - node ID
+  literalValue?: unknown;        // For LITERAL type
+  callLine?: number;             // For CALL type
+  callColumn?: number;
+  isSpread?: boolean;            // For Object.assign with spread: Object.assign(target, ...sources)
+  argIndex?: number;             // For Object.assign - which source argument (0, 1, 2, ...)
+}
+
 // === VARIABLE ASSIGNMENT INFO ===
 export interface VariableAssignmentInfo {
   variableId: string;
@@ -474,6 +504,8 @@ export interface ASTCollections {
   arrayElements?: ArrayElementInfo[];
   // Array mutation tracking for FLOWS_INTO edges
   arrayMutations?: ArrayMutationInfo[];
+  // Object mutation tracking for FLOWS_INTO edges
+  objectMutations?: ObjectMutationInfo[];
   // TypeScript-specific collections
   interfaces?: InterfaceDeclarationInfo[];
   typeAliases?: TypeAliasInfo[];
@@ -530,6 +562,9 @@ export interface GraphEdge {
   mutationMethod?: string;
   argIndex?: number;
   isSpread?: boolean;
+  // For FLOWS_INTO edges (object mutations)
+  mutationType?: 'property' | 'computed' | 'assign' | 'spread';
+  propertyName?: string;
   metadata?: Record<string, unknown>;
 }
 

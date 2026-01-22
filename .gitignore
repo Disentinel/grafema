@@ -30,7 +30,6 @@ npm-debug.log*
 .mcp.json
 .claude/
 .grafema/
-_tasks
 
 # Local project data
 projects/
