@@ -43,7 +43,7 @@ interface ParameterInfo {
  */
 interface FunctionInfo {
   id: string;
-  stableId: string;
+  stableId?: string;  // Deprecated: id now contains semantic ID
   type: 'FUNCTION';
   name: string;
   file: string;
@@ -281,14 +281,13 @@ export class FunctionVisitor extends ASTVisitor {
         const node = path.node as FunctionDeclaration;
         if (!node.id) return; // Skip anonymous function declarations
 
-        const functionId = `FUNCTION#${node.id.name}#${module.file}#${node.loc!.start.line}`;
+        const legacyId = `FUNCTION#${node.id.name}#${module.file}#${node.loc!.start.line}`;
         const isAsync = node.async || false;
 
-        // Generate semantic ID if scopeTracker available
-        let stableId = functionId;
-        if (scopeTracker) {
-          stableId = computeSemanticId('FUNCTION', node.id.name, scopeTracker.getContext());
-        }
+        // Use semantic ID as primary ID when scopeTracker available
+        const functionId = scopeTracker
+          ? computeSemanticId('FUNCTION', node.id.name, scopeTracker.getContext())
+          : legacyId;
 
         // Extract type info
         const { names: paramNames, types: paramTypes } = extractParamInfo(node.params);
@@ -298,7 +297,6 @@ export class FunctionVisitor extends ASTVisitor {
 
         (functions as FunctionInfo[]).push({
           id: functionId,
-          stableId,
           type: 'FUNCTION',
           name: node.id.name,
           file: module.file,
@@ -366,13 +364,12 @@ export class FunctionVisitor extends ASTVisitor {
           }
         }
 
-        const functionId = `FUNCTION#${functionName}#${module.file}#${line}:${column}:${functionCounterRef.value++}`;
+        const legacyId = `FUNCTION#${functionName}#${module.file}#${line}:${column}:${functionCounterRef.value++}`;
 
-        // Generate semantic ID if scopeTracker available
-        let stableId = functionId;
-        if (scopeTracker) {
-          stableId = computeSemanticId('FUNCTION', functionName, scopeTracker.getContext());
-        }
+        // Use semantic ID as primary ID when scopeTracker available
+        const functionId = scopeTracker
+          ? computeSemanticId('FUNCTION', functionName, scopeTracker.getContext())
+          : legacyId;
 
         // Extract type info
         const { names: paramNames, types: paramTypes } = extractParamInfo(node.params);
@@ -382,7 +379,6 @@ export class FunctionVisitor extends ASTVisitor {
 
         (functions as FunctionInfo[]).push({
           id: functionId,
-          stableId,
           type: 'FUNCTION',
           name: functionName,
           file: module.file,

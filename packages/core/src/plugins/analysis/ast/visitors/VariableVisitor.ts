@@ -17,6 +17,8 @@ import type {
 import type { NodePath } from '@babel/traverse';
 import { ASTVisitor, type VisitorModule, type VisitorCollections, type VisitorHandlers, type CounterRef } from './ASTVisitor.js';
 import { ExpressionEvaluator } from '../ExpressionEvaluator.js';
+import { ScopeTracker } from '../../../../core/ScopeTracker.js';
+import { computeSemanticId } from '../../../../core/SemanticId.js';
 
 /**
  * Variable info extracted from pattern
@@ -100,22 +102,26 @@ interface VariableAssignmentInfo {
 export class VariableVisitor extends ASTVisitor {
   private extractVariableNamesFromPattern: ExtractVariableNamesCallback;
   private trackVariableAssignment: TrackVariableAssignmentCallback;
+  private scopeTracker?: ScopeTracker;
 
   /**
    * @param module - Current module being analyzed
    * @param collections - Must contain arrays and counter refs
    * @param extractVariableNamesFromPattern - Helper for destructuring
    * @param trackVariableAssignment - Helper for data flow tracking
+   * @param scopeTracker - Optional ScopeTracker for semantic ID generation
    */
   constructor(
     module: VisitorModule,
     collections: VisitorCollections,
     extractVariableNamesFromPattern: ExtractVariableNamesCallback,
-    trackVariableAssignment: TrackVariableAssignmentCallback
+    trackVariableAssignment: TrackVariableAssignmentCallback,
+    scopeTracker?: ScopeTracker
   ) {
     super(module, collections);
     this.extractVariableNamesFromPattern = extractVariableNamesFromPattern;
     this.trackVariableAssignment = trackVariableAssignment;
+    this.scopeTracker = scopeTracker;
   }
 
   getHandlers(): VisitorHandlers {
@@ -126,6 +132,7 @@ export class VariableVisitor extends ASTVisitor {
     const variableAssignments = this.collections.variableAssignments ?? [];
     const varDeclCounterRef = (this.collections.varDeclCounterRef ?? { value: 0 }) as CounterRef;
     const literalCounterRef = (this.collections.literalCounterRef ?? { value: 0 }) as CounterRef;
+    const scopeTracker = this.scopeTracker;
 
     const extractVariableNamesFromPattern = this.extractVariableNamesFromPattern;
     const trackVariableAssignment = this.trackVariableAssignment;
@@ -151,9 +158,14 @@ export class VariableVisitor extends ASTVisitor {
               // For everything else - VARIABLE
               const shouldBeConstant = isConst && (isLiteral || isNewExpression);
 
-              const varId = shouldBeConstant
-                ? `CONSTANT#${varInfo.name}#${module.file}#${varInfo.loc.start.line}:${varInfo.loc.start.column}:${(varDeclCounterRef as CounterRef).value++}`
-                : `VARIABLE#${varInfo.name}#${module.file}#${varInfo.loc.start.line}:${varInfo.loc.start.column}:${(varDeclCounterRef as CounterRef).value++}`;
+              const nodeType = shouldBeConstant ? 'CONSTANT' : 'VARIABLE';
+
+              // Generate semantic ID (primary) and legacy ID (fallback)
+              const legacyId = `${nodeType}#${varInfo.name}#${module.file}#${varInfo.loc.start.line}:${varInfo.loc.start.column}:${(varDeclCounterRef as CounterRef).value++}`;
+
+              const varId = scopeTracker
+                ? computeSemanticId(nodeType, varInfo.name, scopeTracker.getContext())
+                : legacyId;
 
               if (shouldBeConstant) {
                 // CONSTANT node

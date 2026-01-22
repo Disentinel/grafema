@@ -13,6 +13,8 @@ import type { NodePath } from '@babel/traverse';
 import { ASTVisitor, type VisitorModule, type VisitorCollections, type VisitorHandlers, type CounterRef } from './ASTVisitor.js';
 import { ExpressionEvaluator } from '../ExpressionEvaluator.js';
 import type { ArrayMutationInfo, ArrayMutationArgument } from '../types.js';
+import { ScopeTracker } from '../../../../core/ScopeTracker.js';
+import { computeSemanticId } from '../../../../core/SemanticId.js';
 
 /**
  * Object literal info for OBJECT_LITERAL nodes
@@ -178,8 +180,16 @@ interface LiteralInfo {
 }
 
 export class CallExpressionVisitor extends ASTVisitor {
-  constructor(module: VisitorModule, collections: VisitorCollections) {
+  private scopeTracker?: ScopeTracker;
+
+  /**
+   * @param module - Current module being analyzed
+   * @param collections - Must contain arrays and counter refs
+   * @param scopeTracker - Optional ScopeTracker for semantic ID generation
+   */
+  constructor(module: VisitorModule, collections: VisitorCollections, scopeTracker?: ScopeTracker) {
     super(module, collections);
+    this.scopeTracker = scopeTracker;
   }
 
   /**
@@ -828,7 +838,16 @@ export class CallExpressionVisitor extends ASTVisitor {
       const line = callNode.loc?.start.line ?? 0;
       const column = callNode.loc?.start.column ?? 0;
 
+      // Generate semantic ID for array mutation if scopeTracker available
+      const scopeTracker = this.scopeTracker;
+      let mutationId: string | undefined;
+      if (scopeTracker) {
+        const discriminator = scopeTracker.getItemCounter(`ARRAY_MUTATION:${arrayName}.${method}`);
+        mutationId = computeSemanticId('ARRAY_MUTATION', `${arrayName}.${method}`, scopeTracker.getContext(), { discriminator });
+      }
+
       arrayMutations.push({
+        id: mutationId,
         arrayName,
         mutationMethod: method,
         file: module.file,
@@ -881,18 +900,32 @@ export class CallExpressionVisitor extends ASTVisitor {
     const callSiteCounterRef = (this.collections.callSiteCounterRef ?? { value: 0 }) as CounterRef;
     const literalCounterRef = (this.collections.literalCounterRef ?? { value: 0 }) as CounterRef;
     const processedNodes = this.collections.processedNodes ?? { callSites: new Set(), methodCalls: new Set(), eventListeners: new Set() };
+    const scopeTracker = this.scopeTracker;
 
     return {
       CallExpression: (path: NodePath) => {
         const callNode = path.node as CallExpression;
         const functionParent = path.getFunctionParent();
+
         // Determine parent scope - if inside a function, use function's scope, otherwise module
         const parentScopeId = functionParent ? this.getFunctionScopeId(functionParent, module) : module.id;
 
         // Identifier calls (direct function calls)
+        // Skip if inside function - they will be processed by analyzeFunctionBody with proper scope tracking
           if (callNode.callee.type === 'Identifier') {
+            if (functionParent) {
+              return;
+            }
             const callee = callNode.callee as Identifier;
-            const callId = `CALL#${callee.name}#${module.file}#${callNode.loc!.start.line}:${callNode.loc!.start.column}:${callSiteCounterRef.value++}`;
+
+            // Generate semantic ID with discriminator for same-named calls
+            const legacyId = `CALL#${callee.name}#${module.file}#${callNode.loc!.start.line}:${callNode.loc!.start.column}:${callSiteCounterRef.value++}`;
+
+            let callId = legacyId;
+            if (scopeTracker) {
+              const discriminator = scopeTracker.getItemCounter(`CALL:${callee.name}`);
+              callId = computeSemanticId('CALL', callee.name, scopeTracker.getContext(), { discriminator });
+            }
 
             (callSites as CallSiteInfo[]).push({
               id: callId,
@@ -917,8 +950,12 @@ export class CallExpressionVisitor extends ASTVisitor {
               );
             }
           }
-          // MemberExpression calls (method calls at module level)
+          // MemberExpression calls (method calls)
+          // Skip if inside function - they will be processed by analyzeFunctionBody with proper scope tracking
           else if (callNode.callee.type === 'MemberExpression') {
+            if (functionParent) {
+              return;
+            }
             const memberCallee = callNode.callee as MemberExpression;
             const object = memberCallee.object;
             const property = memberCallee.property;
@@ -965,7 +1002,15 @@ export class CallExpressionVisitor extends ASTVisitor {
                 processedNodes.methodCalls.add(nodeKey);
 
                 const fullName = `${objectName}.${methodName}`;
-                const methodCallId = `CALL#${fullName}#${module.file}#${callNode.loc!.start.line}:${callNode.loc!.start.column}:${callSiteCounterRef.value++}`;
+
+                // Generate semantic ID with discriminator for same-named calls
+                const legacyId = `CALL#${fullName}#${module.file}#${callNode.loc!.start.line}:${callNode.loc!.start.column}:${callSiteCounterRef.value++}`;
+
+                let methodCallId = legacyId;
+                if (scopeTracker) {
+                  const discriminator = scopeTracker.getItemCounter(`CALL:${fullName}`);
+                  methodCallId = computeSemanticId('CALL', fullName, scopeTracker.getContext(), { discriminator });
+                }
 
                 (methodCalls as MethodCallInfo[]).push({
                   id: methodCallId,
@@ -1021,10 +1066,17 @@ export class CallExpressionVisitor extends ASTVisitor {
       },
 
       // NewExpression: new Foo(), new Function(), new Map(), etc.
+      // Skip if inside function - they will be processed by analyzeFunctionBody with proper scope tracking
       NewExpression: (path: NodePath) => {
         const newNode = path.node as NewExpression;
         const functionParent = path.getFunctionParent();
-        const parentScopeId = functionParent ? this.getFunctionScopeId(functionParent, module) : module.id;
+
+        // Skip if inside function - handled by analyzeFunctionBody
+        if (functionParent) {
+          return;
+        }
+
+        const parentScopeId = module.id;
 
         // Dedup check
         const nodeKey = `new:${newNode.start}:${newNode.end}`;
@@ -1038,8 +1090,17 @@ export class CallExpressionVisitor extends ASTVisitor {
           const callee = newNode.callee as Identifier;
           const constructorName = callee.name;
 
+          // Generate semantic ID for constructor call
+          const legacyId = `CALL#new:${constructorName}#${module.file}#${newNode.loc!.start.line}:${newNode.loc!.start.column}:${callSiteCounterRef.value++}`;
+
+          let newCallId = legacyId;
+          if (scopeTracker) {
+            const discriminator = scopeTracker.getItemCounter(`CALL:new:${constructorName}`);
+            newCallId = computeSemanticId('CALL', `new:${constructorName}`, scopeTracker.getContext(), { discriminator });
+          }
+
           (callSites as CallSiteInfo[]).push({
-            id: `CALL#new:${constructorName}#${module.file}#${newNode.loc!.start.line}:${newNode.loc!.start.column}:${callSiteCounterRef.value++}`,
+            id: newCallId,
             type: 'CALL',
             name: constructorName,
             file: module.file,
@@ -1061,8 +1122,17 @@ export class CallExpressionVisitor extends ASTVisitor {
             const constructorName = (property as Identifier).name;
             const fullName = `${objectName}.${constructorName}`;
 
+            // Generate semantic ID for method-style constructor call
+            const legacyId = `CALL#new:${fullName}#${module.file}#${newNode.loc!.start.line}:${newNode.loc!.start.column}:${callSiteCounterRef.value++}`;
+
+            let newMethodCallId = legacyId;
+            if (scopeTracker) {
+              const discriminator = scopeTracker.getItemCounter(`CALL:new:${fullName}`);
+              newMethodCallId = computeSemanticId('CALL', `new:${fullName}`, scopeTracker.getContext(), { discriminator });
+            }
+
             (methodCalls as MethodCallInfo[]).push({
-              id: `CALL#new:${fullName}#${module.file}#${newNode.loc!.start.line}:${newNode.loc!.start.column}:${callSiteCounterRef.value++}`,
+              id: newMethodCallId,
               type: 'CALL',
               name: fullName,
               object: objectName,

@@ -19,7 +19,7 @@ export interface ModuleNode {
 // === FUNCTION INFO ===
 export interface FunctionInfo {
   id: string;
-  stableId: string;
+  stableId?: string;  // Deprecated: use id (now contains semantic ID)
   type: 'FUNCTION';
   name: string;
   file: string;
@@ -99,6 +99,8 @@ export interface MethodCallInfo {
   name: string;
   object: string;
   method: string;
+  computed?: boolean;             // Whether method was accessed via computed property [x]
+  computedPropertyVar?: string | null;  // Variable name used in obj[x]() calls
   file: string;
   line: number;
   column?: number;
@@ -364,6 +366,7 @@ export interface ArrayElementInfo {
  * IMPORTANT: This type is defined ONLY here. Import from this file everywhere.
  */
 export interface ArrayMutationInfo {
+  id?: string;                 // Semantic ID for the mutation (optional for backward compatibility)
   arrayName: string;           // Name of the array variable being mutated
   arrayLine?: number;          // Line where array is referenced (for scope resolution)
   mutationMethod: 'push' | 'unshift' | 'splice' | 'indexed';
@@ -474,6 +477,8 @@ export interface ASTCollections {
   objectLiteralCounterRef?: CounterRef;
   arrayLiteralCounterRef?: CounterRef;
   processedNodes?: ProcessedNodes;
+  // ScopeTracker for semantic ID generation
+  scopeTracker?: import('../../../core/ScopeTracker.js').ScopeTracker;
 }
 
 // === EXTRACTED VARIABLE ===
@@ -508,6 +513,10 @@ export interface GraphEdge {
   src: string;
   dst: string;
   index?: number;
+  // For FLOWS_INTO edges (array mutations)
+  mutationMethod?: string;
+  argIndex?: number;
+  isSpread?: boolean;
   metadata?: Record<string, unknown>;
 }
 

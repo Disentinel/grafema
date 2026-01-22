@@ -29,6 +29,7 @@ import type {
   TypeAliasInfo,
   EnumDeclarationInfo,
   DecoratorInfo,
+  ArrayMutationInfo,
   ASTCollections,
   GraphNode,
   GraphEdge,
@@ -110,7 +111,9 @@ export class GraphBuilder {
       interfaces = [],
       typeAliases = [],
       enums = [],
-      decorators = []
+      decorators = [],
+      // Array mutation tracking for FLOWS_INTO edges
+      arrayMutations = []
     } = data;
 
     // Reset buffers for this build
@@ -219,6 +222,9 @@ export class GraphBuilder {
 
     // 25. Buffer IMPLEMENTS edges (CLASS -> INTERFACE)
     this.bufferImplementsEdges(classDeclarations, interfaces);
+
+    // 26. Buffer FLOWS_INTO edges for array mutations (push, unshift, splice, indexed assignment)
+    this.bufferArrayMutationEdges(arrayMutations, variableDeclarations);
 
     // FLUSH: Write all nodes first, then edges in single batch calls
     const nodesCreated = await this._flushNodes(graph);
@@ -1214,6 +1220,46 @@ export class GraphBuilder {
             });
           }
         }
+      }
+    }
+  }
+
+  /**
+   * Buffer FLOWS_INTO edges for array mutations (push, unshift, splice, indexed assignment)
+   * Creates edges from inserted values to the array variable
+   */
+  private bufferArrayMutationEdges(
+    arrayMutations: ArrayMutationInfo[],
+    variableDeclarations: VariableDeclarationInfo[]
+  ): void {
+    for (const mutation of arrayMutations) {
+      const { arrayName, mutationMethod, insertedValues, file } = mutation;
+
+      // Find the array variable in the same file
+      const arrayVar = variableDeclarations.find(v => v.name === arrayName && v.file === file);
+      if (!arrayVar) continue;
+
+      // Create FLOWS_INTO edges for each inserted value
+      for (const arg of insertedValues) {
+        if (arg.valueType === 'VARIABLE' && arg.valueName) {
+          // Find the source variable
+          const sourceVar = variableDeclarations.find(v => v.name === arg.valueName && v.file === file);
+          if (sourceVar) {
+            const edgeData: GraphEdge = {
+              type: 'FLOWS_INTO',
+              src: sourceVar.id,
+              dst: arrayVar.id,
+              mutationMethod,
+              argIndex: arg.argIndex
+            };
+            if (arg.isSpread) {
+              edgeData.isSpread = true;
+            }
+            this._bufferEdge(edgeData);
+          }
+        }
+        // For literals, object literals, etc. - we could create edges from LITERAL nodes
+        // but for now we just track variable -> array flows
       }
     }
   }
