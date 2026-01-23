@@ -69,6 +69,9 @@ export const EDGE_TYPE = {
   GOVERNS: 'GOVERNS',
   VIOLATES: 'VIOLATES',
 
+  // Issues
+  AFFECTS: 'AFFECTS',
+
   // Unknown/fallback
   UNKNOWN: 'UNKNOWN',
 } as const;

@@ -13,8 +13,10 @@ import { Profiler } from './core/Profiler.js';
 import { AnalysisQueue } from './core/AnalysisQueue.js';
 import { DiagnosticCollector } from './diagnostics/DiagnosticCollector.js';
 import type { Plugin, PluginContext } from './plugins/Plugin.js';
-import type { GraphBackend, PluginPhase, Logger, LogLevel } from '@grafema/types';
+import type { GraphBackend, PluginPhase, Logger, LogLevel, IssueSpec } from '@grafema/types';
 import { createLogger } from './logging/Logger.js';
+import { NodeFactory } from './core/NodeFactory.js';
+import type { IssueSeverity } from './core/nodes/IssueNode.js';
 
 /**
  * Progress callback info
@@ -523,6 +525,31 @@ export class Orchestrator {
         forceAnalysis: this.forceAnalysis,
         logger: this.logger,
       };
+
+      // Add reportIssue for VALIDATION phase
+      if (phaseName === 'VALIDATION') {
+        pluginContext.reportIssue = async (issue: IssueSpec): Promise<string> => {
+          const node = NodeFactory.createIssue(
+            issue.category,
+            issue.severity as IssueSeverity,
+            issue.message,
+            plugin.metadata.name,
+            issue.file,
+            issue.line,
+            issue.column || 0,
+            { context: issue.context }
+          );
+          await context.graph.addNode(node);
+          if (issue.targetNodeId) {
+            await context.graph.addEdge({
+              src: node.id,
+              dst: issue.targetNodeId,
+              type: 'AFFECTS',
+            });
+          }
+          return node.id;
+        };
+      }
 
       try {
         const result = await plugin.execute(pluginContext);

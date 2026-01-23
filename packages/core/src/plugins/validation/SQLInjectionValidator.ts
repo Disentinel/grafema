@@ -104,8 +104,8 @@ export class SQLInjectionValidator extends Plugin {
       phase: 'VALIDATION',
       priority: 90, // After ValueDomainAnalyzer (65)
       creates: {
-        nodes: [],
-        edges: []
+        nodes: ['issue:security'],
+        edges: ['AFFECTS']
       }
     };
   }
@@ -117,6 +117,8 @@ export class SQLInjectionValidator extends Plugin {
     logger.info('Starting SQL injection vulnerability check');
 
     const issues: SQLInjectionIssue[] = [];
+    let issueNodeCount = 0;
+    let affectsEdgeCount = 0;
 
     // 1. Find all CALL nodes that look like SQL queries
     const sqlCalls: CallNode[] = [];
@@ -134,7 +136,7 @@ export class SQLInjectionValidator extends Plugin {
     for (const call of sqlCalls) {
       const result = await this.analyzeQueryCall(call, graph);
       if (result.isVulnerable) {
-        issues.push({
+        const issue: SQLInjectionIssue = {
           type: 'SQL_INJECTION',
           severity: 'ERROR',
           message: `Potential SQL injection at ${call.file}:${call.line || '?'} - ${result.reason}`,
@@ -143,7 +145,28 @@ export class SQLInjectionValidator extends Plugin {
           line: call.line as number | undefined,
           reason: result.reason!,
           nondeterministicSources: result.sources
-        });
+        };
+        issues.push(issue);
+
+        // Persist issue to graph if reportIssue is available
+        if (context.reportIssue) {
+          await context.reportIssue({
+            category: 'security',
+            severity: 'error',
+            message: issue.message,
+            file: call.file || '',
+            line: call.line || 0,
+            column: call.column || 0,
+            targetNodeId: call.id,
+            context: {
+              type: 'SQL_INJECTION',
+              reason: result.reason,
+              nondeterministicSources: result.sources
+            }
+          });
+          issueNodeCount++;
+          affectsEdgeCount++;
+        }
       }
     }
 
@@ -153,12 +176,33 @@ export class SQLInjectionValidator extends Plugin {
       // Avoid duplicates
       if (!issues.find(i => i.nodeId === violation.nodeId)) {
         issues.push(violation);
+
+        // Persist issue to graph if reportIssue is available
+        if (context.reportIssue) {
+          await context.reportIssue({
+            category: 'security',
+            severity: 'error',
+            message: violation.message,
+            file: violation.file || '',
+            line: violation.line || 0,
+            targetNodeId: violation.nodeId,
+            context: {
+              type: 'SQL_INJECTION',
+              reason: violation.reason,
+              nondeterministicSources: violation.nondeterministicSources
+            }
+          });
+          issueNodeCount++;
+          affectsEdgeCount++;
+        }
       }
     }
 
     const summary = {
       sqlCallsChecked: sqlCalls.length,
-      vulnerabilitiesFound: issues.length
+      vulnerabilitiesFound: issues.length,
+      issueNodesCreated: issueNodeCount,
+      affectsEdgesCreated: affectsEdgeCount
     };
 
     logger.info('Validation complete', summary);
@@ -173,7 +217,7 @@ export class SQLInjectionValidator extends Plugin {
     }
 
     return createSuccessResult(
-      { nodes: 0, edges: 0 },
+      { nodes: issueNodeCount, edges: affectsEdgeCount },
       { summary, issues }
     );
   }

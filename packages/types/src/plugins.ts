@@ -48,6 +48,30 @@ export interface PluginMetadata {
   dependencies?: string[];
 }
 
+// === ISSUE SPEC ===
+/**
+ * Specification for creating an issue node via reportIssue().
+ * Used by validation plugins to persist detected problems in the graph.
+ */
+export interface IssueSpec {
+  /** Issue category (e.g., 'security', 'performance', 'style', 'smell') */
+  category: string;
+  /** Severity level */
+  severity: 'error' | 'warning' | 'info';
+  /** Human-readable description of the issue */
+  message: string;
+  /** File where the issue was detected */
+  file: string;
+  /** Line number */
+  line: number;
+  /** Column number (optional, defaults to 0) */
+  column?: number;
+  /** ID of the node that this issue affects (creates AFFECTS edge) */
+  targetNodeId?: string;
+  /** Additional context data for the issue */
+  context?: Record<string, unknown>;
+}
+
 // === PLUGIN CONTEXT ===
 // Manifest varies by phase (UnitManifest, DiscoveryManifest, or full Manifest)
 // Using unknown to allow all manifest types
@@ -71,6 +95,12 @@ export interface PluginContext {
    * Use this instead of console.log for controllable verbosity via CLI flags.
    */
   logger?: Logger;
+  /**
+   * Report an issue to persist in the graph (VALIDATION phase only).
+   * Creates an issue:* node and optionally an AFFECTS edge to targetNodeId.
+   * @returns The ID of the created issue node
+   */
+  reportIssue?(issue: IssueSpec): Promise<string>;
 }
 
 // === PLUGIN RESULT ===
