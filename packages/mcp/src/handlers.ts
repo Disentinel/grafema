@@ -4,7 +4,7 @@
 
 import { join } from 'path';
 import { ensureAnalyzed } from './analysis.js';
-import { getProjectPath, getAnalysisStatus, setIsAnalyzed, getOrCreateBackend, getGuaranteeManager, getGuaranteeAPI } from './state.js';
+import { getProjectPath, getAnalysisStatus, getOrCreateBackend, getGuaranteeManager, getGuaranteeAPI, isAnalysisRunning } from './state.js';
 import {
   normalizeLimit,
   formatPaginationInfo,
@@ -423,16 +423,24 @@ export async function handleCheckInvariant(args: CheckInvariantArgs): Promise<To
 export async function handleAnalyzeProject(args: AnalyzeProjectArgs): Promise<ToolResult> {
   const { service, force } = args;
 
-  if (force) {
-    setIsAnalyzed(false);
+  // Early check: return error for force=true if analysis is already running
+  // This provides immediate feedback instead of waiting or causing corruption
+  if (force && isAnalysisRunning()) {
+    return errorResult(
+      'Cannot force re-analysis: analysis is already in progress. ' +
+        'Use get_analysis_status to check current status, or wait for completion.'
+    );
   }
 
+  // Note: setIsAnalyzed(false) is now handled inside ensureAnalyzed() within the lock
+  // to prevent race conditions where multiple calls could both clear the database
+
   try {
-    await ensureAnalyzed(service || null);
+    await ensureAnalyzed(service || null, force || false);
     const status = getAnalysisStatus();
 
     return textResult(
-      `✅ Analysis complete!\n` +
+      `Analysis complete!\n` +
         `- Services discovered: ${status.servicesDiscovered}\n` +
         `- Services analyzed: ${status.servicesAnalyzed}\n` +
         `- Total time: ${status.timings.total || 'N/A'}s`

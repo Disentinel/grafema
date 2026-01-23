@@ -10,20 +10,65 @@ import {
   setIsAnalyzed,
   getAnalysisStatus,
   setAnalysisStatus,
+  isAnalysisRunning,
+  acquireAnalysisLock,
 } from './state.js';
 import { loadConfig, loadCustomPlugins, BUILTIN_PLUGINS } from './config.js';
 import { log } from './utils.js';
 import type { GraphBackend } from '@grafema/types';
 
 /**
- * Ensure project is analyzed, optionally filtering to a single service
+ * Ensure project is analyzed, optionally filtering to a single service.
+ *
+ * CONCURRENCY: This function is protected by a global mutex.
+ * - Only one analysis can run at a time
+ * - Concurrent calls wait for the current analysis to complete
+ * - force=true while analysis is running returns an error immediately
+ *
+ * @param serviceName - Optional service to analyze (null = all)
+ * @param force - If true, clear DB and re-analyze even if already analyzed.
+ *                ERROR if another analysis is already running.
+ * @throws Error if force=true and analysis is already running
  */
-export async function ensureAnalyzed(serviceName: string | null = null): Promise<GraphBackend> {
+export async function ensureAnalyzed(
+  serviceName: string | null = null,
+  force: boolean = false
+): Promise<GraphBackend> {
   const db = await getOrCreateBackend();
   const projectPath = getProjectPath();
-  const isAnalyzed = getIsAnalyzed();
 
-  if (!isAnalyzed || serviceName) {
+  // CONCURRENCY CHECK: If force=true and analysis is running, error immediately
+  // This check is BEFORE acquiring lock to fail fast
+  if (force && isAnalysisRunning()) {
+    throw new Error(
+      'Analysis is already in progress. Cannot force re-analysis while another analysis is running. ' +
+        'Wait for the current analysis to complete or check status with get_analysis_status.'
+    );
+  }
+
+  // Skip if already analyzed (and not forcing, and no service filter)
+  if (getIsAnalyzed() && !serviceName && !force) {
+    return db;
+  }
+
+  // Acquire lock (waits if another analysis is running)
+  const releaseLock = await acquireAnalysisLock();
+
+  try {
+    // Double-check after acquiring lock (another call might have completed analysis while we waited)
+    if (getIsAnalyzed() && !serviceName && !force) {
+      return db;
+    }
+
+    // Clear DB inside lock, BEFORE running analysis
+    // This is critical for worker coordination: MCP server clears DB here,
+    // worker does NOT call db.clear() (see analysis-worker.ts)
+    if (force || !getIsAnalyzed()) {
+      log('[Grafema MCP] Clearing database before analysis...');
+      await db.clear();
+      setIsAnalyzed(false);
+    }
+
     log(
       `[Grafema MCP] Analyzing project: ${projectPath}${serviceName ? ` (service: ${serviceName})` : ''}`
     );
@@ -105,10 +150,13 @@ export async function ensureAnalyzed(serviceName: string | null = null): Promise
       },
     });
 
-    log(`[Grafema MCP] ✅ Analysis complete in ${totalTime}s`);
-  }
+    log(`[Grafema MCP] Analysis complete in ${totalTime}s`);
 
-  return db;
+    return db;
+  } finally {
+    // ALWAYS release the lock, even on error
+    releaseLock();
+  }
 }
 
 /**

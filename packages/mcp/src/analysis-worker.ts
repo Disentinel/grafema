@@ -213,7 +213,12 @@ async function run(): Promise<void> {
     console.log(`[Worker] Connecting to RFDB server: socket=${socketPath}, db=${dbPath}`);
     db = new RFDBServerBackend({ socketPath, dbPath });
     await db.connect();
-    await db.clear();
+
+    // NOTE: db.clear() is NOT called here.
+    // MCP server clears DB INSIDE the analysis lock BEFORE spawning this worker.
+    // This prevents race conditions where concurrent analysis calls could both
+    // clear the database. Worker assumes DB is already clean.
+    // See: REG-159 implementation, Phase 2.5 (Worker Clear Coordination)
 
     sendProgress({ phase: 'discovery', message: 'Starting analysis...' });
 

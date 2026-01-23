@@ -25,7 +25,9 @@
   "scripts": {
     "build": "tsc",
     "clean": "rm -rf dist",
-    "start": "node dist/server.js"
+    "start": "node dist/server.js",
+    "test": "node --import tsx --test test/*.test.ts",
+    "test:watch": "node --import tsx --test --watch test/*.test.ts"
   },
   "keywords": [
     "grafema",
@@ -48,6 +50,7 @@
   },
   "devDependencies": {
     "@types/node": "^25.0.8",
+    "tsx": "^4.19.2",
     "typescript": "^5.9.3"
   }
 }

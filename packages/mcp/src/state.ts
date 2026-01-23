@@ -40,6 +40,53 @@ let analysisStatus: AnalysisStatus = {
   },
 };
 
+// === ANALYSIS LOCK ===
+//
+// Promise-based mutex for analysis serialization.
+//
+// Why not a simple boolean flag?
+// - Boolean can indicate "analysis is running" but cannot make callers wait
+// - Promise allows awaiting until analysis completes
+//
+// Pattern:
+// - null = no analysis running, lock available
+// - Promise = analysis running, await it to wait for completion
+//
+// Behavior on force=true during analysis:
+// - Returns error immediately (does NOT wait)
+// - Rationale: force=true implies "clear DB and re-analyze"
+// - Clearing DB while another analysis writes = corruption
+// - Better UX: immediate feedback vs mysterious wait
+//
+// Scope: Global Lock (not per-service) because:
+// - Single RFDB backend instance
+// - db.clear() affects entire database
+// - Simpler reasoning about state
+//
+// Process Death Behavior:
+// - Lock is in-memory - next process starts with fresh state (no deadlock)
+// - RFDB may have partial data from incomplete analysis
+// - isAnalyzed resets to false - next call will re-analyze
+// - RFDB is append-only - partial data won't corrupt existing data
+//
+// Worker Process Coordination:
+// - Worker is SEPARATE process from MCP server
+// - MCP server calls db.clear() INSIDE the lock, BEFORE spawning worker
+// - Worker assumes DB is already clean and does NOT call clear()
+//
+// Timeout:
+// - Lock acquisition times out after 10 minutes
+// - Matches project's execution guard policy (see CLAUDE.md)
+//
+let analysisLock: Promise<void> | null = null;
+let analysisLockResolve: (() => void) | null = null;
+
+/**
+ * Lock timeout in milliseconds (10 minutes).
+ * Matches project's execution guard policy - max 10 minutes for any operation.
+ */
+const LOCK_TIMEOUT_MS = 10 * 60 * 1000;
+
 // === GETTERS ===
 export function getProjectPath(): string {
   return projectPath;
@@ -84,6 +131,86 @@ export function setBackgroundPid(pid: number | null): void {
 
 export function updateAnalysisTimings(timings: Partial<AnalysisStatus['timings']>): void {
   analysisStatus.timings = { ...analysisStatus.timings, ...timings };
+}
+
+// === ANALYSIS LOCK FUNCTIONS ===
+
+/**
+ * Check if analysis is currently running.
+ *
+ * Use this to check status before attempting operations that conflict
+ * with analysis (e.g., force re-analysis while analysis is in progress).
+ *
+ * @returns true if analysis is in progress, false otherwise
+ */
+export function isAnalysisRunning(): boolean {
+  return analysisLock !== null;
+}
+
+/**
+ * Acquire the analysis lock.
+ *
+ * This function implements a Promise-based mutex for serializing analysis operations.
+ * Only one analysis can run at a time. If another analysis is running, this function
+ * waits for it to complete (up to LOCK_TIMEOUT_MS).
+ *
+ * Usage:
+ * ```typescript
+ * const releaseLock = await acquireAnalysisLock();
+ * try {
+ *   // ... perform analysis ...
+ * } finally {
+ *   releaseLock();
+ * }
+ * ```
+ *
+ * @returns A release function to call when analysis is complete
+ * @throws Error if timeout (10 minutes) expires while waiting for existing analysis
+ */
+export async function acquireAnalysisLock(): Promise<() => void> {
+  const start = Date.now();
+
+  // Wait for any existing analysis to complete (with timeout)
+  while (analysisLock !== null) {
+    if (Date.now() - start > LOCK_TIMEOUT_MS) {
+      throw new Error(
+        'Analysis lock timeout (10 minutes). Previous analysis may have failed. ' +
+          'Check .grafema/mcp.log for errors or restart MCP server.'
+      );
+    }
+    await analysisLock;
+  }
+
+  // Create new lock - a Promise that will be resolved when analysis completes
+  analysisLock = new Promise<void>((resolve) => {
+    analysisLockResolve = resolve;
+  });
+
+  // Update status to reflect that analysis is running
+  setAnalysisStatus({ running: true });
+
+  // Return release function
+  return () => {
+    setAnalysisStatus({ running: false });
+    const resolve = analysisLockResolve;
+    analysisLock = null;
+    analysisLockResolve = null;
+    resolve?.();
+  };
+}
+
+/**
+ * Wait for any running analysis to complete without acquiring the lock.
+ *
+ * Use this when you need to wait for analysis completion but don't need
+ * to start a new analysis yourself.
+ *
+ * @returns Promise that resolves when no analysis is running
+ */
+export async function waitForAnalysis(): Promise<void> {
+  if (analysisLock) {
+    await analysisLock;
+  }
 }
 
 // === BACKEND ===
