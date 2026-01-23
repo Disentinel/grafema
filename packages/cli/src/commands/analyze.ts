@@ -11,6 +11,7 @@ import {
   Plugin,
   DiagnosticReporter,
   DiagnosticWriter,
+  createLogger,
   // Indexing
   JSModuleIndexer,
   RustModuleIndexer,
@@ -42,6 +43,7 @@ import {
   DataFlowValidator,
   TypeScriptDeadCodeValidator,
 } from '@grafema/core';
+import type { LogLevel } from '@grafema/types';
 
 interface PluginConfig {
   indexing?: string[];
@@ -149,6 +151,22 @@ function createPlugins(config: PluginConfig): Plugin[] {
   return plugins;
 }
 
+/**
+ * Determine log level from CLI options.
+ * Priority: --log-level > --quiet > --verbose > default ('info')
+ */
+function getLogLevel(options: { quiet?: boolean; verbose?: boolean; logLevel?: string }): LogLevel {
+  if (options.logLevel) {
+    const validLevels: LogLevel[] = ['silent', 'errors', 'warnings', 'info', 'debug'];
+    if (validLevels.includes(options.logLevel as LogLevel)) {
+      return options.logLevel as LogLevel;
+    }
+  }
+  if (options.quiet) return 'silent';
+  if (options.verbose) return 'debug';
+  return 'info';
+}
+
 export const analyzeCommand = new Command('analyze')
   .description('Run project analysis')
   .argument('[path]', 'Project path to analyze', '.')
@@ -157,7 +175,7 @@ export const analyzeCommand = new Command('analyze')
   .option('-q, --quiet', 'Suppress progress output')
   .option('-v, --verbose', 'Show verbose logging')
   .option('--debug', 'Enable debug mode (writes diagnostics.log)')
-  .option('--log-level <level>', 'Set log level (debug, info, warn, error)', 'info')
+  .option('--log-level <level>', 'Set log level (silent, errors, warnings, info, debug)')
   .action(async (path: string, options: { service?: string; clear?: boolean; quiet?: boolean; verbose?: boolean; debug?: boolean; logLevel?: string }) => {
     const projectPath = resolve(path);
     const grafemaDir = join(projectPath, '.grafema');
@@ -168,6 +186,10 @@ export const analyzeCommand = new Command('analyze')
     }
 
     const log = options.quiet ? () => {} : console.log;
+
+    // Create logger based on CLI flags
+    const logLevel = getLogLevel(options);
+    const logger = createLogger(logLevel);
 
     log(`Analyzing project: ${projectPath}`);
 
@@ -191,6 +213,7 @@ export const analyzeCommand = new Command('analyze')
       plugins,
       serviceFilter: options.service || null,
       forceAnalysis: options.clear || false,
+      logger,
       onProgress: (progress) => {
         if (options.verbose) {
           log(`[${progress.phase}] ${progress.message}`);

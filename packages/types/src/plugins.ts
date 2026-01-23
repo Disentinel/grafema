@@ -5,6 +5,26 @@
 import type { NodeType, NodeRecord } from './nodes.js';
 import type { EdgeType, EdgeRecord } from './edges.js';
 
+// === LOG LEVEL ===
+/**
+ * Log level for controlling verbosity.
+ * Levels are ordered by verbosity: silent < errors < warnings < info < debug
+ */
+export type LogLevel = 'silent' | 'errors' | 'warnings' | 'info' | 'debug';
+
+// === LOGGER INTERFACE ===
+/**
+ * Logger interface for structured logging.
+ * Plugins should use context.logger instead of console.log for controllable output.
+ */
+export interface Logger {
+  error(message: string, context?: Record<string, unknown>): void;
+  warn(message: string, context?: Record<string, unknown>): void;
+  info(message: string, context?: Record<string, unknown>): void;
+  debug(message: string, context?: Record<string, unknown>): void;
+  trace(message: string, context?: Record<string, unknown>): void;
+}
+
 // === PLUGIN PHASES ===
 export const PLUGIN_PHASE = {
   DISCOVERY: 'DISCOVERY',
@@ -46,6 +66,11 @@ export interface PluginContext {
    * subsequent touches are no-ops. Only populated when forceAnalysis=true.
    */
   touchedFiles?: Set<string>;
+  /**
+   * Logger instance for structured logging.
+   * Use this instead of console.log for controllable verbosity via CLI flags.
+   */
+  logger?: Logger;
 }
 
 // === PLUGIN RESULT ===
@@ -90,6 +115,11 @@ export interface OrchestratorConfig {
   parallel?: boolean;
   maxWorkers?: number;
   verbose?: boolean;
+  /**
+   * Log level for controlling verbosity.
+   * Defaults to 'info'. Use 'silent' to suppress all output, 'debug' for verbose.
+   */
+  logLevel?: LogLevel;
 }
 
 // === GRAPH BACKEND INTERFACE ===

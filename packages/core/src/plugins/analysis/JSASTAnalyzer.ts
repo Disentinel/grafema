@@ -1244,6 +1244,111 @@ export class JSASTAnalyzer extends Plugin {
    * @param scopeCounterRef - Counter for unique scope IDs
    * @param scopeTracker - Tracker for semantic ID generation
    */
+
+  /**
+   * Handles VariableDeclaration nodes within function bodies.
+   *
+   * Extracts variable names from patterns (including destructuring), determines
+   * if the variable should be CONSTANT or VARIABLE, generates semantic or legacy IDs,
+   * and tracks class instantiations and variable assignments.
+   *
+   * @param varPath - The NodePath for the VariableDeclaration
+   * @param parentScopeId - Parent scope ID for the variable
+   * @param module - Module context with file info
+   * @param variableDeclarations - Collection to push variable declarations to
+   * @param classInstantiations - Collection to push class instantiations to
+   * @param literals - Collection for literal tracking
+   * @param variableAssignments - Collection for variable assignment tracking
+   * @param varDeclCounterRef - Counter for unique variable declaration IDs
+   * @param literalCounterRef - Counter for unique literal IDs
+   * @param scopeTracker - Tracker for semantic ID generation
+   * @param parentScopeVariables - Set to track variables for closure analysis
+   */
+  private handleVariableDeclaration(
+    varPath: NodePath<t.VariableDeclaration>,
+    parentScopeId: string,
+    module: VisitorModule,
+    variableDeclarations: VariableDeclarationInfo[],
+    classInstantiations: ClassInstantiationInfo[],
+    literals: LiteralInfo[],
+    variableAssignments: VariableAssignmentInfo[],
+    varDeclCounterRef: CounterRef,
+    literalCounterRef: CounterRef,
+    scopeTracker: ScopeTracker | undefined,
+    parentScopeVariables: Set<{ name: string; id: string; scopeId: string }>
+  ): void {
+    const varNode = varPath.node;
+    const isConst = varNode.kind === 'const';
+
+    varNode.declarations.forEach(declarator => {
+      const variables = this.extractVariableNamesFromPattern(declarator.id);
+
+      variables.forEach(varInfo => {
+        const literalValue = declarator.init ? ExpressionEvaluator.extractLiteralValue(declarator.init) : null;
+        const isLiteral = literalValue !== null;
+        const isNewExpression = declarator.init && declarator.init.type === 'NewExpression';
+
+        const shouldBeConstant = isConst && (isLiteral || isNewExpression);
+        const nodeType = shouldBeConstant ? 'CONSTANT' : 'VARIABLE';
+
+        // Generate semantic ID (primary) or legacy ID (fallback)
+        const legacyId = `${nodeType}#${varInfo.name}#${module.file}#${varInfo.loc.start.line}:${varInfo.loc.start.column}:${varDeclCounterRef.value++}`;
+
+        const varId = scopeTracker
+          ? computeSemanticId(nodeType, varInfo.name, scopeTracker.getContext())
+          : legacyId;
+
+        parentScopeVariables.add({
+          name: varInfo.name,
+          id: varId,
+          scopeId: parentScopeId
+        });
+
+        if (shouldBeConstant) {
+          const constantData: VariableDeclarationInfo = {
+            id: varId,
+            type: 'CONSTANT',
+            name: varInfo.name,
+            file: module.file,
+            line: varInfo.loc.start.line,
+            parentScopeId
+          };
+
+          if (isLiteral) {
+            constantData.value = literalValue;
+          }
+
+          variableDeclarations.push(constantData);
+
+          const init = declarator.init;
+          if (isNewExpression && t.isNewExpression(init) && t.isIdentifier(init.callee)) {
+            const className = init.callee.name;
+            classInstantiations.push({
+              variableId: varId,
+              variableName: varInfo.name,
+              className: className,
+              line: varInfo.loc.start.line,
+              parentScopeId
+            });
+          }
+        } else {
+          variableDeclarations.push({
+            id: varId,
+            type: 'VARIABLE',
+            name: varInfo.name,
+            file: module.file,
+            line: varInfo.loc.start.line,
+            parentScopeId
+          });
+        }
+
+        if (declarator.init) {
+          this.trackVariableAssignment(declarator.init, varId, varInfo.name, module, varInfo.loc.start.line, literals, variableAssignments, literalCounterRef);
+        }
+      });
+    });
+  }
+
   private createLoopScopeHandler(
     trackerScopeType: string,
     scopeType: string,
@@ -1277,6 +1382,129 @@ export class JSASTAnalyzer extends Plugin {
         // Exit scope
         if (scopeTracker) {
           scopeTracker.exitScope();
+        }
+      }
+    };
+  }
+
+  /**
+   * Factory method to create IfStatement handler.
+   * Creates if scope with condition parsing and optional else scope.
+   * Tracks if/else scope transitions via ifElseScopeMap.
+   *
+   * @param parentScopeId - Parent scope ID for the scope nodes
+   * @param module - Module context
+   * @param scopes - Collection to push scope nodes to
+   * @param ifScopeCounterRef - Counter for unique if scope IDs
+   * @param scopeTracker - Tracker for semantic ID generation
+   * @param sourceCode - Source code for extracting condition text
+   * @param ifElseScopeMap - Map to track if/else scope transitions
+   */
+  private createIfStatementHandler(
+    parentScopeId: string,
+    module: VisitorModule,
+    scopes: ScopeInfo[],
+    ifScopeCounterRef: CounterRef,
+    scopeTracker: ScopeTracker | undefined,
+    sourceCode: string,
+    ifElseScopeMap: Map<t.IfStatement, { inElse: boolean; hasElse: boolean }>
+  ): { enter: (ifPath: NodePath<t.IfStatement>) => void; exit: (ifPath: NodePath<t.IfStatement>) => void } {
+    return {
+      enter: (ifPath: NodePath<t.IfStatement>) => {
+        const ifNode = ifPath.node;
+        const condition = sourceCode.substring(ifNode.test.start!, ifNode.test.end!) || 'condition';
+        const counterId = ifScopeCounterRef.value++;
+        const ifScopeId = `SCOPE#if#${module.file}#${ifNode.loc!.start.line}:${ifNode.loc!.start.column}:${counterId}`;
+
+        // Parse condition to extract constraints
+        const constraints = ConditionParser.parse(ifNode.test);
+        const ifSemanticId = this.generateSemanticId('if_statement', scopeTracker);
+
+        scopes.push({
+          id: ifScopeId,
+          type: 'SCOPE',
+          scopeType: 'if_statement',
+          name: `if:${ifNode.loc!.start.line}:${ifNode.loc!.start.column}:${counterId}`,
+          semanticId: ifSemanticId,
+          conditional: true,
+          condition,
+          constraints: constraints.length > 0 ? constraints : undefined,
+          file: module.file,
+          line: ifNode.loc!.start.line,
+          parentScopeId
+        });
+
+        // Enter scope for semantic ID generation
+        if (scopeTracker) {
+          scopeTracker.enterCountedScope('if');
+        }
+
+        // Handle else branch if present
+        if (ifNode.alternate && !t.isIfStatement(ifNode.alternate)) {
+          // Only create else scope for actual else block, not else-if
+          const elseCounterId = ifScopeCounterRef.value++;
+          const elseScopeId = `SCOPE#else#${module.file}#${ifNode.alternate.loc!.start.line}:${ifNode.alternate.loc!.start.column}:${elseCounterId}`;
+
+          const negatedConstraints = constraints.length > 0 ? ConditionParser.negate(constraints) : undefined;
+          const elseSemanticId = this.generateSemanticId('else_statement', scopeTracker);
+
+          scopes.push({
+            id: elseScopeId,
+            type: 'SCOPE',
+            scopeType: 'else_statement',
+            name: `else:${ifNode.alternate.loc!.start.line}:${ifNode.alternate.loc!.start.column}:${elseCounterId}`,
+            semanticId: elseSemanticId,
+            conditional: true,
+            constraints: negatedConstraints,
+            file: module.file,
+            line: ifNode.alternate.loc!.start.line,
+            parentScopeId
+          });
+
+          // Store info to switch to else scope when we enter alternate
+          ifElseScopeMap.set(ifNode, { inElse: false, hasElse: true });
+        } else {
+          ifElseScopeMap.set(ifNode, { inElse: false, hasElse: false });
+        }
+      },
+      exit: (ifPath: NodePath<t.IfStatement>) => {
+        const ifNode = ifPath.node;
+
+        // Exit the current scope (either if or else)
+        if (scopeTracker) {
+          scopeTracker.exitScope();
+        }
+
+        // If we were in else, we already exited else scope
+        // If we only had if, we exit if scope (done above)
+        ifElseScopeMap.delete(ifNode);
+      }
+    };
+  }
+
+  /**
+   * Factory method to create BlockStatement handler for tracking if/else transitions.
+   * When entering an else block, switches scope from if to else.
+   *
+   * @param scopeTracker - Tracker for semantic ID generation
+   * @param ifElseScopeMap - Map to track if/else scope transitions
+   */
+  private createIfElseBlockStatementHandler(
+    scopeTracker: ScopeTracker | undefined,
+    ifElseScopeMap: Map<t.IfStatement, { inElse: boolean; hasElse: boolean }>
+  ): { enter: (blockPath: NodePath<t.BlockStatement>) => void } {
+    return {
+      enter: (blockPath: NodePath<t.BlockStatement>) => {
+        // Check if this block is the alternate of an IfStatement
+        const parent = blockPath.parent;
+        if (t.isIfStatement(parent) && parent.alternate === blockPath.node) {
+          const scopeInfo = ifElseScopeMap.get(parent);
+          if (scopeInfo && scopeInfo.hasElse && !scopeInfo.inElse && scopeTracker) {
+            // Exit if scope, enter else scope
+            scopeTracker.exitScope();
+            scopeTracker.enterCountedScope('else');
+            scopeInfo.inElse = true;
+          }
         }
       }
     };
@@ -1337,76 +1565,19 @@ export class JSASTAnalyzer extends Plugin {
 
     funcPath.traverse({
       VariableDeclaration: (varPath: NodePath<t.VariableDeclaration>) => {
-        const varNode = varPath.node;
-        const isConst = varNode.kind === 'const';
-
-        varNode.declarations.forEach(declarator => {
-          const variables = this.extractVariableNamesFromPattern(declarator.id);
-
-          variables.forEach(varInfo => {
-            const literalValue = declarator.init ? ExpressionEvaluator.extractLiteralValue(declarator.init) : null;
-            const isLiteral = literalValue !== null;
-            const isNewExpression = declarator.init && declarator.init.type === 'NewExpression';
-
-            const shouldBeConstant = isConst && (isLiteral || isNewExpression);
-            const nodeType = shouldBeConstant ? 'CONSTANT' : 'VARIABLE';
-
-            // Generate semantic ID (primary) or legacy ID (fallback)
-            const legacyId = `${nodeType}#${varInfo.name}#${module.file}#${varInfo.loc.start.line}:${varInfo.loc.start.column}:${varDeclCounterRef.value++}`;
-
-            const varId = scopeTracker
-              ? computeSemanticId(nodeType, varInfo.name, scopeTracker.getContext())
-              : legacyId;
-
-            parentScopeVariables.add({
-              name: varInfo.name,
-              id: varId,
-              scopeId: parentScopeId
-            });
-
-            if (shouldBeConstant) {
-              const constantData: VariableDeclarationInfo = {
-                id: varId,
-                type: 'CONSTANT',
-                name: varInfo.name,
-                file: module.file,
-                line: varInfo.loc.start.line,
-                parentScopeId
-              };
-
-              if (isLiteral) {
-                constantData.value = literalValue;
-              }
-
-              variableDeclarations.push(constantData);
-
-              const init = declarator.init;
-              if (isNewExpression && t.isNewExpression(init) && t.isIdentifier(init.callee)) {
-                const className = init.callee.name;
-                classInstantiations.push({
-                  variableId: varId,
-                  variableName: varInfo.name,
-                  className: className,
-                  line: varInfo.loc.start.line,
-                  parentScopeId
-                });
-              }
-            } else {
-              variableDeclarations.push({
-                id: varId,
-                type: 'VARIABLE',
-                name: varInfo.name,
-                file: module.file,
-                line: varInfo.loc.start.line,
-                parentScopeId
-              });
-            }
-
-            if (declarator.init) {
-              this.trackVariableAssignment(declarator.init, varId, varInfo.name, module, varInfo.loc.start.line, literals, variableAssignments, literalCounterRef);
-            }
-          });
-        });
+        this.handleVariableDeclaration(
+          varPath,
+          parentScopeId,
+          module,
+          variableDeclarations,
+          classInstantiations,
+          literals,
+          variableAssignments,
+          varDeclCounterRef,
+          literalCounterRef,
+          scopeTracker,
+          parentScopeVariables
+        );
       },
 
       // Detect indexed array assignments: arr[i] = value
@@ -1804,96 +1975,18 @@ export class JSASTAnalyzer extends Plugin {
       },
 
       // IF statements - создаём условные scope и обходим содержимое для CALL узлов
-      IfStatement: {
-        enter: (ifPath: NodePath<t.IfStatement>) => {
-          const ifNode = ifPath.node;
-          const sourceCode = collections.code ?? '';
-          const condition = sourceCode.substring(ifNode.test.start!, ifNode.test.end!) || 'condition';
-          const counterId = ifScopeCounterRef.value++;
-          const ifScopeId = `SCOPE#if#${module.file}#${ifNode.loc!.start.line}:${ifNode.loc!.start.column}:${counterId}`;
-
-          // Parse condition to extract constraints
-          const constraints = ConditionParser.parse(ifNode.test);
-          const ifSemanticId = this.generateSemanticId('if_statement', scopeTracker);
-
-          scopes.push({
-            id: ifScopeId,
-            type: 'SCOPE',
-            scopeType: 'if_statement',
-            name: `if:${ifNode.loc!.start.line}:${ifNode.loc!.start.column}:${counterId}`,
-            semanticId: ifSemanticId,
-            conditional: true,
-            condition,
-            constraints: constraints.length > 0 ? constraints : undefined,
-            file: module.file,
-            line: ifNode.loc!.start.line,
-            parentScopeId
-          });
-
-          // Enter scope for semantic ID generation
-          if (scopeTracker) {
-            scopeTracker.enterCountedScope('if');
-          }
-
-          // Handle else branch if present
-          if (ifNode.alternate && !t.isIfStatement(ifNode.alternate)) {
-            // Only create else scope for actual else block, not else-if
-            const elseCounterId = ifScopeCounterRef.value++;
-            const elseScopeId = `SCOPE#else#${module.file}#${ifNode.alternate.loc!.start.line}:${ifNode.alternate.loc!.start.column}:${elseCounterId}`;
-
-            const negatedConstraints = constraints.length > 0 ? ConditionParser.negate(constraints) : undefined;
-            const elseSemanticId = this.generateSemanticId('else_statement', scopeTracker);
-
-            scopes.push({
-              id: elseScopeId,
-              type: 'SCOPE',
-              scopeType: 'else_statement',
-              name: `else:${ifNode.alternate.loc!.start.line}:${ifNode.alternate.loc!.start.column}:${elseCounterId}`,
-              semanticId: elseSemanticId,
-              conditional: true,
-              constraints: negatedConstraints,
-              file: module.file,
-              line: ifNode.alternate.loc!.start.line,
-              parentScopeId
-            });
-
-            // Store info to switch to else scope when we enter alternate
-            ifElseScopeMap.set(ifNode, { inElse: false, hasElse: true });
-          } else {
-            ifElseScopeMap.set(ifNode, { inElse: false, hasElse: false });
-          }
-        },
-        exit: (ifPath: NodePath<t.IfStatement>) => {
-          const ifNode = ifPath.node;
-          const scopeInfo = ifElseScopeMap.get(ifNode);
-
-          // Exit the current scope (either if or else)
-          if (scopeTracker) {
-            scopeTracker.exitScope();
-          }
-
-          // If we were in else, we already exited else scope
-          // If we only had if, we exit if scope (done above)
-          ifElseScopeMap.delete(ifNode);
-        }
-      },
+      IfStatement: this.createIfStatementHandler(
+        parentScopeId,
+        module,
+        scopes,
+        ifScopeCounterRef,
+        scopeTracker,
+        collections.code ?? '',
+        ifElseScopeMap
+      ),
 
       // Track when we enter the alternate (else) block of an IfStatement
-      BlockStatement: {
-        enter: (blockPath: NodePath<t.BlockStatement>) => {
-          // Check if this block is the alternate of an IfStatement
-          const parent = blockPath.parent;
-          if (t.isIfStatement(parent) && parent.alternate === blockPath.node) {
-            const scopeInfo = ifElseScopeMap.get(parent);
-            if (scopeInfo && scopeInfo.hasElse && !scopeInfo.inElse && scopeTracker) {
-              // Exit if scope, enter else scope
-              scopeTracker.exitScope();
-              scopeTracker.enterCountedScope('else');
-              scopeInfo.inElse = true;
-            }
-          }
-        }
-      },
+      BlockStatement: this.createIfElseBlockStatementHandler(scopeTracker, ifElseScopeMap),
 
       // Function call expressions
       CallExpression: (callPath: NodePath<t.CallExpression>) => {
@@ -2321,6 +2414,7 @@ export class JSASTAnalyzer extends Plugin {
     // Get property name
     let propertyName: string;
     let mutationType: 'property' | 'computed';
+    let computedPropertyVar: string | undefined;
 
     if (!memberExpr.computed) {
       // obj.prop
@@ -2338,6 +2432,10 @@ export class JSASTAnalyzer extends Plugin {
       } else {
         propertyName = '<computed>';
         mutationType = 'computed';
+        // Capture variable name for later resolution in enrichment phase
+        if (memberExpr.property.type === 'Identifier') {
+          computedPropertyVar = memberExpr.property.name;
+        }
       }
     }
 
@@ -2361,6 +2459,7 @@ export class JSASTAnalyzer extends Plugin {
       objectName,
       propertyName,
       mutationType,
+      computedPropertyVar,
       file: module.file,
       line,
       column,

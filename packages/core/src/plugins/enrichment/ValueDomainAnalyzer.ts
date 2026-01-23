@@ -101,6 +101,7 @@ interface Graph {
   getOutgoingEdges(nodeId: string): Promise<EdgeRecord[]>;
   getIncomingEdges(nodeId: string): Promise<EdgeRecord[]>;
   addEdge(edge: { src: string; dst: string; type: string; metadata?: Record<string, unknown> }): Promise<void> | void;
+  deleteEdge?(src: string, dst: string, type: string): Promise<void>;  // Optional for edge updates
 }
 
 interface ProgressCallback {
@@ -154,7 +155,7 @@ export class ValueDomainAnalyzer extends Plugin {
       priority: 65, // After AliasTracker (60)
       creates: {
         nodes: [],
-        edges: ['CALLS']
+        edges: ['CALLS', 'FLOWS_INTO']  // Added FLOWS_INTO (modifies existing)
       }
     };
   }
@@ -249,18 +250,24 @@ export class ValueDomainAnalyzer extends Plugin {
       }
     }
 
+    // 5. Resolve computed property mutations in FLOWS_INTO edges
+    console.log('[ValueDomainAnalyzer] Resolving computed property mutations...');
+    const mutationStats = await this.resolveComputedMutations(graphTyped);
+    console.log('[ValueDomainAnalyzer] Mutation resolution stats:', mutationStats);
+
     const summary = {
       callsProcessed,
       callsResolved,
       edgesCreated,
       conditionalCalls,
-      partialCalls
+      partialCalls,
+      computedMutations: mutationStats
     };
 
     console.log('[ValueDomainAnalyzer] Summary:', summary);
 
     return createSuccessResult(
-      { nodes: 0, edges: edgesCreated },
+      { nodes: 0, edges: edgesCreated + mutationStats.resolved + mutationStats.conditional },
       summary
     );
   }
@@ -676,6 +683,126 @@ export class ValueDomainAnalyzer extends Plugin {
     }
 
     return null;
+  }
+
+  /**
+   * Resolve computed property names for object mutations.
+   * Finds FLOWS_INTO edges with mutationType: 'computed' and resolves
+   * the property name using value set tracing.
+   *
+   * @param graph - Graph backend with edge operations
+   * @returns Statistics about resolution
+   */
+  async resolveComputedMutations(graph: Graph): Promise<{
+    resolved: number;
+    conditional: number;
+    unknownParameter: number;
+    unknownRuntime: number;
+    deferredCrossFile: number;
+    total: number;
+  }> {
+    const stats = {
+      resolved: 0,
+      conditional: 0,
+      unknownParameter: 0,
+      unknownRuntime: 0,
+      deferredCrossFile: 0,
+      total: 0
+    };
+
+    // Process edges by finding all VARIABLE and CONSTANT nodes and checking their outgoing edges
+    const processedEdges = new Set<string>();
+
+    // Helper to process a node's outgoing edges
+    const processNodeEdges = async (node: NodeRecord): Promise<void> => {
+      const outgoing = await graph.getOutgoingEdges(node.id);
+
+      for (const edge of outgoing) {
+        const edgeType = (edge as { edgeType?: string; edge_type?: string; type?: string }).edgeType ||
+                         (edge as { edge_type?: string }).edge_type ||
+                         (edge as { type?: string }).type;
+
+        if (edgeType !== 'FLOWS_INTO') continue;
+
+        const edgeKey = `${edge.src}->${edge.dst}:FLOWS_INTO`;
+        if (processedEdges.has(edgeKey)) continue;
+        processedEdges.add(edgeKey);
+
+        const mutationType = (edge as { mutationType?: string }).mutationType;
+        const computedPropertyVar = (edge as { computedPropertyVar?: string }).computedPropertyVar;
+
+        if (mutationType !== 'computed' || !computedPropertyVar) continue;
+
+        stats.total++;
+
+        // Get file from source node
+        const sourceNode = await graph.getNode(edge.src);
+        const file = (sourceNode as { file?: string })?.file;
+        if (!file) continue;
+
+        // Resolve the computed property variable using existing getValueSet
+        const valueSet = await this.getValueSet(computedPropertyVar, file, graph);
+
+        // Determine resolution status based on value set
+        let resolutionStatus: string;
+        let resolvedPropertyNames: string[] = [];
+
+        if (valueSet.values.length === 0 && valueSet.hasUnknown) {
+          // Completely nondeterministic - could be parameter or runtime
+          resolutionStatus = 'UNKNOWN_RUNTIME';
+          stats.unknownRuntime++;
+          // Don't update edge for completely unknown values - keep original
+          continue;
+        } else if (valueSet.values.length === 0) {
+          // No values found at all
+          resolutionStatus = 'UNKNOWN_PARAMETER';
+          stats.unknownParameter++;
+          continue;
+        } else if (valueSet.values.length === 1 && !valueSet.hasUnknown) {
+          // Single deterministic value
+          resolutionStatus = 'RESOLVED';
+          resolvedPropertyNames = valueSet.values.map(v => String(v));
+          stats.resolved++;
+        } else {
+          // Multiple values (conditional) or partial resolution
+          resolutionStatus = 'RESOLVED_CONDITIONAL';
+          resolvedPropertyNames = valueSet.values.map(v => String(v));
+          stats.conditional++;
+        }
+
+        // Update edge: delete old, create new with resolved data
+        // Following the same pattern as InstanceOfResolver
+        if (graph.deleteEdge) {
+          await graph.deleteEdge(edge.src, edge.dst, 'FLOWS_INTO');
+        }
+
+        // Preserve original edge data and add resolution info
+        await graph.addEdge({
+          src: edge.src,
+          dst: edge.dst,
+          type: 'FLOWS_INTO',
+          metadata: {
+            mutationType,
+            propertyName: resolvedPropertyNames[0] || '<computed>',
+            computedPropertyVar,
+            resolvedPropertyNames,
+            resolutionStatus
+          }
+        });
+      }
+    };
+
+    // Process VARIABLE nodes
+    for await (const node of graph.queryNodes({ nodeType: 'VARIABLE' })) {
+      await processNodeEdges(node);
+    }
+
+    // Process CONSTANT nodes
+    for await (const node of graph.queryNodes({ nodeType: 'CONSTANT' })) {
+      await processNodeEdges(node);
+    }
+
+    return stats;
   }
 }
 

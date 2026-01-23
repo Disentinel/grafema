@@ -13,7 +13,8 @@ import { Profiler } from './core/Profiler.js';
 import { AnalysisQueue } from './core/AnalysisQueue.js';
 import { DiagnosticCollector } from './diagnostics/DiagnosticCollector.js';
 import type { Plugin, PluginContext } from './plugins/Plugin.js';
-import type { GraphBackend, PluginPhase } from '@grafema/types';
+import type { GraphBackend, PluginPhase, Logger, LogLevel } from '@grafema/types';
+import { createLogger } from './logging/Logger.js';
 
 /**
  * Progress callback info
@@ -53,6 +54,10 @@ export interface OrchestratorOptions {
   serviceFilter?: string | null;
   indexOnly?: boolean;
   parallel?: ParallelConfig | null;
+  /** Logger instance for structured logging. */
+  logger?: Logger;
+  /** Log level for the default logger. Ignored if logger is provided. */
+  logLevel?: LogLevel;
 }
 
 /**
@@ -133,6 +138,7 @@ export class Orchestrator {
   private rfdbServerProcess: ChildProcess | null;
   private _serverWasExternal: boolean;
   private diagnosticCollector: DiagnosticCollector;
+  private logger: Logger;
 
   constructor(options: OrchestratorOptions = {}) {
     this.graph = options.graph!;
@@ -154,6 +160,9 @@ export class Orchestrator {
     // Initialize diagnostic collector
     this.diagnosticCollector = new DiagnosticCollector();
 
+    // Initialize logger (use provided or create default)
+    this.logger = options.logger ?? createLogger(options.logLevel ?? 'info');
+
     // Auto-add default discovery if no discovery plugins provided
     const hasDiscovery = this.plugins.some(p => p.metadata?.phase === 'DISCOVERY');
     if (!hasDiscovery) {
@@ -172,9 +181,9 @@ export class Orchestrator {
 
     // RADICAL SIMPLIFICATION: Clear entire graph once at the start if forceAnalysis
     if (this.forceAnalysis && this.graph.clear) {
-      console.log('[Orchestrator] Clearing entire graph (forceAnalysis=true)...');
+      this.logger.info('Clearing entire graph (forceAnalysis=true)');
       await this.graph.clear();
-      console.log('[Orchestrator] Graph cleared successfully');
+      this.logger.info('Graph cleared successfully');
     }
 
     this.onProgress({ phase: 'discovery', currentPlugin: 'Starting discovery...', message: 'Discovering services...', totalFiles: 0, processedFiles: 0 });
@@ -193,7 +202,7 @@ export class Orchestrator {
       totalFiles: 0,
       processedFiles: 0
     });
-    console.log(`[Orchestrator] Discovery: ${svcCount} services, ${epCount} entrypoints`);
+    this.logger.info('Discovery complete', { services: svcCount, entrypoints: epCount });
 
     // Build unified list of indexing units from services AND entrypoints
     const indexingUnits = this.buildIndexingUnits(manifest);
@@ -207,13 +216,12 @@ export class Orchestrator {
         u.name.includes(this.serviceFilter!) ||
         u.path.includes(this.serviceFilter!)
       );
-      console.log(`[Orchestrator] Filtering: ${this.serviceFilter} (found ${unitsToProcess.length} of ${indexingUnits.length})`);
+      this.logger.info('Filtering services', { filter: this.serviceFilter, found: unitsToProcess.length, total: indexingUnits.length });
     } else {
       unitsToProcess = indexingUnits;
     }
 
-    console.log(`[Orchestrator] Processing ${unitsToProcess.length} indexing units (services + entrypoints)`);
-    console.log(`[Orchestrator] Strategy: Phase-by-phase with DFS dependency tree per entrypoint`);
+    this.logger.info('Processing indexing units', { count: unitsToProcess.length, strategy: 'Phase-by-phase with DFS' });
 
     // PHASE 1: INDEXING - каждый сервис строит своё дерево зависимостей от entrypoint
     const indexingStart = Date.now();
@@ -262,7 +270,7 @@ export class Orchestrator {
           workerCount: 1,
         });
         const unitTime = ((Date.now() - unitStart) / 1000).toFixed(2);
-        console.log(`[Orchestrator] ⏱️ INDEXING ${unit.name}: ${unitTime}s`);
+        this.logger.debug('INDEXING complete', { unit: unit.name, duration: unitTime });
 
         this.onProgress({
           phase: 'indexing',
@@ -277,13 +285,12 @@ export class Orchestrator {
       processedUnits += batch.length;
     }
     this.profiler.end('INDEXING');
-    console.log(`[Orchestrator] ⏱️ INDEXING phase total: ${((Date.now() - indexingStart) / 1000).toFixed(2)}s`);
+    this.logger.info('INDEXING phase complete', { duration: ((Date.now() - indexingStart) / 1000).toFixed(2) });
 
     // Skip remaining phases if indexOnly mode (for coverage)
     if (this.indexOnly) {
       const totalTime = ((Date.now() - totalStartTime) / 1000).toFixed(2);
-      console.log(`[Orchestrator] ⏱️ indexOnly mode - skipping ANALYSIS/ENRICHMENT/VALIDATION`);
-      console.log(`[Orchestrator] ⏱️ Total time: ${totalTime}s for ${unitsToProcess.length} units`);
+      this.logger.info('indexOnly mode - skipping remaining phases', { duration: totalTime, units: unitsToProcess.length });
       return manifest;
     }
 
@@ -336,7 +343,7 @@ export class Orchestrator {
           workerCount: 1,
         });
           const unitTime = ((Date.now() - unitStart) / 1000).toFixed(2);
-          console.log(`[Orchestrator] ⏱️ ANALYSIS ${unit.name}: ${unitTime}s`);
+          this.logger.debug('ANALYSIS complete', { unit: unit.name, duration: unitTime });
 
           this.onProgress({
             phase: 'analysis',
@@ -353,7 +360,7 @@ export class Orchestrator {
     }
 
     this.profiler.end('ANALYSIS');
-    console.log(`[Orchestrator] ⏱️ ANALYSIS phase total: ${((Date.now() - analysisStart) / 1000).toFixed(2)}s`);
+    this.logger.info('ANALYSIS phase complete', { duration: ((Date.now() - analysisStart) / 1000).toFixed(2) });
 
     // PHASE 3: ENRICHMENT - post-processing, граф traversal, вычисления (глобально)
     const enrichmentStart = Date.now();
@@ -361,7 +368,7 @@ export class Orchestrator {
     this.onProgress({ phase: 'enrichment', currentPlugin: 'Starting enrichment...', message: 'Enriching graph data...', totalFiles: 0, processedFiles: 0 });
     await this.runPhase('ENRICHMENT', { manifest, graph: this.graph, workerCount: this.workerCount });
     this.profiler.end('ENRICHMENT');
-    console.log(`[Orchestrator] ⏱️ ENRICHMENT phase: ${((Date.now() - enrichmentStart) / 1000).toFixed(2)}s`);
+    this.logger.info('ENRICHMENT phase complete', { duration: ((Date.now() - enrichmentStart) / 1000).toFixed(2) });
 
     // PHASE 4: VALIDATION - проверка корректности графа (глобально)
     const validationStart = Date.now();
@@ -369,7 +376,7 @@ export class Orchestrator {
     this.onProgress({ phase: 'validation', currentPlugin: 'Starting validation...', message: 'Validating graph structure...', totalFiles: 0, processedFiles: 0 });
     await this.runPhase('VALIDATION', { manifest, graph: this.graph, workerCount: this.workerCount });
     this.profiler.end('VALIDATION');
-    console.log(`[Orchestrator] ⏱️ VALIDATION phase: ${((Date.now() - validationStart) / 1000).toFixed(2)}s`);
+    this.logger.info('VALIDATION phase complete', { duration: ((Date.now() - validationStart) / 1000).toFixed(2) });
 
     // Flush graph to ensure all edges are persisted and queryable
     if (this.graph.flush) {
@@ -377,7 +384,7 @@ export class Orchestrator {
     }
 
     const totalTime = ((Date.now() - totalStartTime) / 1000).toFixed(2);
-    console.log(`[Orchestrator] ⏱️ Total time: ${totalTime}s for ${unitsToProcess.length} units`);
+    this.logger.info('Analysis complete', { duration: totalTime, units: unitsToProcess.length });
 
     // Print profiling summary
     this.profiler.printSummary();
@@ -437,7 +444,8 @@ export class Orchestrator {
       projectPath,
       graph: this.graph,
       config: this.config,
-      phase: 'DISCOVERY'
+      phase: 'DISCOVERY',
+      logger: this.logger,
     };
 
     // Фильтруем плагины для фазы DISCOVERY
@@ -512,7 +520,8 @@ export class Orchestrator {
       const pluginContext: PluginContext = {
         ...context,
         onProgress: this.onProgress as unknown as PluginContext['onProgress'],
-        forceAnalysis: this.forceAnalysis
+        forceAnalysis: this.forceAnalysis,
+        logger: this.logger,
       };
 
       try {

@@ -177,17 +177,30 @@ export class RFDBClient extends EventEmitter implements IRFDBClient {
 
   /**
    * Add edges to the graph
+   * Extra properties beyond src/dst/type are merged into metadata
    */
   async addEdges(
-    edges: Array<Partial<WireEdge> & { src: string; dst: string; type?: string; edge_type?: string; edgeType?: string }>,
+    edges: WireEdge[],
     skipValidation: boolean = false
   ): Promise<RFDBResponse> {
-    const wireEdges: WireEdge[] = edges.map(e => ({
-      src: String(e.src),
-      dst: String(e.dst),
-      edgeType: (e.edge_type || e.edgeType || e.type || 'UNKNOWN') as EdgeType,
-      metadata: typeof e.metadata === 'string' ? e.metadata : JSON.stringify(e.metadata || {}),
-    }));
+    const wireEdges: WireEdge[] = edges.map(e => {
+      // Cast to unknown first then to Record to allow extra properties
+      const edge = e as unknown as Record<string, unknown>;
+
+      // Extract known fields, rest goes to metadata
+      const { src, dst, type, edge_type, edgeType, metadata, ...rest } = edge;
+
+      // Merge explicit metadata with extra properties
+      const existingMeta = typeof metadata === 'string' ? JSON.parse(metadata as string) : (metadata || {});
+      const combinedMeta = { ...existingMeta, ...rest };
+
+      return {
+        src: String(src),
+        dst: String(dst),
+        edgeType: (edge_type || edgeType || type || e.edgeType || 'UNKNOWN') as EdgeType,
+        metadata: JSON.stringify(combinedMeta),
+      };
+    });
 
     return this._send('addEdges', { edges: wireEdges, skipValidation });
   }
@@ -305,24 +318,48 @@ export class RFDBClient extends EventEmitter implements IRFDBClient {
 
   /**
    * Get outgoing edges from a node
+   * Parses metadata JSON and spreads it onto the edge object for convenience
    */
-  async getOutgoingEdges(id: string, edgeTypes: EdgeType[] | null = null): Promise<WireEdge[]> {
+  async getOutgoingEdges(id: string, edgeTypes: EdgeType[] | null = null): Promise<(WireEdge & Record<string, unknown>)[]> {
     const response = await this._send('getOutgoingEdges', {
       id: String(id),
       edgeTypes
     });
-    return (response as { edges?: WireEdge[] }).edges || [];
+    const edges = (response as { edges?: WireEdge[] }).edges || [];
+
+    // Parse metadata and spread onto edge for convenience
+    return edges.map(e => {
+      let meta = {};
+      try {
+        meta = e.metadata ? JSON.parse(e.metadata) : {};
+      } catch {
+        // Keep empty metadata on parse error
+      }
+      return { ...e, type: e.edgeType, ...meta };
+    });
   }
 
   /**
    * Get incoming edges to a node
+   * Parses metadata JSON and spreads it onto the edge object for convenience
    */
-  async getIncomingEdges(id: string, edgeTypes: EdgeType[] | null = null): Promise<WireEdge[]> {
+  async getIncomingEdges(id: string, edgeTypes: EdgeType[] | null = null): Promise<(WireEdge & Record<string, unknown>)[]> {
     const response = await this._send('getIncomingEdges', {
       id: String(id),
       edgeTypes
     });
-    return (response as { edges?: WireEdge[] }).edges || [];
+    const edges = (response as { edges?: WireEdge[] }).edges || [];
+
+    // Parse metadata and spread onto edge for convenience
+    return edges.map(e => {
+      let meta = {};
+      try {
+        meta = e.metadata ? JSON.parse(e.metadata) : {};
+      } catch {
+        // Keep empty metadata on parse error
+      }
+      return { ...e, type: e.edgeType, ...meta };
+    });
   }
 
   // ===========================================================================
@@ -422,10 +459,22 @@ export class RFDBClient extends EventEmitter implements IRFDBClient {
 
   /**
    * Get all edges
+   * Parses metadata JSON and spreads it onto the edge object for convenience
    */
-  async getAllEdges(): Promise<WireEdge[]> {
+  async getAllEdges(): Promise<(WireEdge & Record<string, unknown>)[]> {
     const response = await this._send('getAllEdges');
-    return (response as { edges?: WireEdge[] }).edges || [];
+    const edges = (response as { edges?: WireEdge[] }).edges || [];
+
+    // Parse metadata and spread onto edge for convenience
+    return edges.map(e => {
+      let meta = {};
+      try {
+        meta = e.metadata ? JSON.parse(e.metadata) : {};
+      } catch {
+        // Keep empty metadata on parse error
+      }
+      return { ...e, type: e.edgeType, ...meta };
+    });
   }
 
   // ===========================================================================
