@@ -1388,6 +1388,232 @@ export class JSASTAnalyzer extends Plugin {
   }
 
   /**
+   * Process VariableDeclarations within a try/catch/finally block.
+   * This is a simplified version that doesn't track parentScopeVariables or class instantiations.
+   *
+   * @param blockPath - The NodePath for the block to process
+   * @param blockScopeId - The scope ID for variables in this block
+   * @param module - Module context
+   * @param variableDeclarations - Collection to push variable declarations to
+   * @param literals - Collection for literal tracking
+   * @param variableAssignments - Collection for variable assignment tracking
+   * @param varDeclCounterRef - Counter for unique variable declaration IDs
+   * @param literalCounterRef - Counter for unique literal IDs
+   * @param scopeTracker - Tracker for semantic ID generation
+   */
+  private processBlockVariables(
+    blockPath: NodePath,
+    blockScopeId: string,
+    module: VisitorModule,
+    variableDeclarations: VariableDeclarationInfo[],
+    literals: LiteralInfo[],
+    variableAssignments: VariableAssignmentInfo[],
+    varDeclCounterRef: CounterRef,
+    literalCounterRef: CounterRef,
+    scopeTracker: ScopeTracker | undefined
+  ): void {
+    blockPath.traverse({
+      VariableDeclaration: (varPath: NodePath<t.VariableDeclaration>) => {
+        const varNode = varPath.node;
+        const isConst = varNode.kind === 'const';
+
+        varNode.declarations.forEach(declarator => {
+          const variables = this.extractVariableNamesFromPattern(declarator.id);
+
+          variables.forEach(varInfo => {
+            const literalValue = declarator.init ? ExpressionEvaluator.extractLiteralValue(declarator.init) : null;
+            const isLiteral = literalValue !== null;
+            const isNewExpression = declarator.init && declarator.init.type === 'NewExpression';
+            const shouldBeConstant = isConst && (isLiteral || isNewExpression);
+            const nodeType = shouldBeConstant ? 'CONSTANT' : 'VARIABLE';
+
+            const legacyId = `${nodeType}#${varInfo.name}#${module.file}#${varInfo.loc.start.line}:${varInfo.loc.start.column}:${varDeclCounterRef.value++}`;
+            const varId = scopeTracker
+              ? computeSemanticId(nodeType, varInfo.name, scopeTracker.getContext())
+              : legacyId;
+
+            variableDeclarations.push({
+              id: varId,
+              type: nodeType,
+              name: varInfo.name,
+              file: module.file,
+              line: varInfo.loc.start.line,
+              parentScopeId: blockScopeId
+            });
+
+            if (declarator.init) {
+              this.trackVariableAssignment(declarator.init, varId, varInfo.name, module, varInfo.loc.start.line, literals, variableAssignments, literalCounterRef);
+            }
+          });
+        });
+      }
+    });
+  }
+
+  /**
+   * Handles TryStatement nodes within function bodies.
+   * Creates try, catch (with optional error parameter), and finally scopes,
+   * and processes variable declarations within each block.
+   *
+   * @param tryPath - The NodePath for the TryStatement
+   * @param parentScopeId - Parent scope ID for the scope nodes
+   * @param module - Module context
+   * @param scopes - Collection to push scope nodes to
+   * @param variableDeclarations - Collection to push variable declarations to
+   * @param literals - Collection for literal tracking
+   * @param variableAssignments - Collection for variable assignment tracking
+   * @param scopeCounterRef - Counter for unique scope IDs
+   * @param varDeclCounterRef - Counter for unique variable declaration IDs
+   * @param literalCounterRef - Counter for unique literal IDs
+   * @param scopeTracker - Tracker for semantic ID generation
+   */
+  private handleTryStatement(
+    tryPath: NodePath<t.TryStatement>,
+    parentScopeId: string,
+    module: VisitorModule,
+    scopes: ScopeInfo[],
+    variableDeclarations: VariableDeclarationInfo[],
+    literals: LiteralInfo[],
+    variableAssignments: VariableAssignmentInfo[],
+    scopeCounterRef: CounterRef,
+    varDeclCounterRef: CounterRef,
+    literalCounterRef: CounterRef,
+    scopeTracker: ScopeTracker | undefined
+  ): void {
+    const tryNode = tryPath.node;
+
+    // Create and process try block
+    const tryScopeId = `SCOPE#try-block#${module.file}#${tryNode.loc!.start.line}:${scopeCounterRef.value++}`;
+    const trySemanticId = this.generateSemanticId('try-block', scopeTracker);
+    scopes.push({
+      id: tryScopeId,
+      type: 'SCOPE',
+      scopeType: 'try-block',
+      semanticId: trySemanticId,
+      file: module.file,
+      line: tryNode.loc!.start.line,
+      parentScopeId
+    });
+
+    if (scopeTracker) {
+      scopeTracker.enterCountedScope('try');
+    }
+    this.processBlockVariables(
+      tryPath.get('block'),
+      tryScopeId,
+      module,
+      variableDeclarations,
+      literals,
+      variableAssignments,
+      varDeclCounterRef,
+      literalCounterRef,
+      scopeTracker
+    );
+    if (scopeTracker) {
+      scopeTracker.exitScope();
+    }
+
+    // Create and process catch block if present
+    if (tryNode.handler) {
+      const catchBlock = tryNode.handler;
+      const catchScopeId = `SCOPE#catch-block#${module.file}#${catchBlock.loc!.start.line}:${scopeCounterRef.value++}`;
+      const catchSemanticId = this.generateSemanticId('catch-block', scopeTracker);
+
+      scopes.push({
+        id: catchScopeId,
+        type: 'SCOPE',
+        scopeType: 'catch-block',
+        semanticId: catchSemanticId,
+        file: module.file,
+        line: catchBlock.loc!.start.line,
+        parentScopeId
+      });
+
+      if (scopeTracker) {
+        scopeTracker.enterCountedScope('catch');
+      }
+
+      // Handle catch parameter (e.g., catch (e))
+      if (catchBlock.param) {
+        const errorVarInfo = this.extractVariableNamesFromPattern(catchBlock.param);
+
+        errorVarInfo.forEach(varInfo => {
+          const legacyId = `VARIABLE#${varInfo.name}#${module.file}#${varInfo.loc.start.line}:${varInfo.loc.start.column}:${varDeclCounterRef.value++}`;
+          const varId = scopeTracker
+            ? computeSemanticId('VARIABLE', varInfo.name, scopeTracker.getContext())
+            : legacyId;
+
+          variableDeclarations.push({
+            id: varId,
+            type: 'VARIABLE',
+            name: varInfo.name,
+            file: module.file,
+            line: varInfo.loc.start.line,
+            parentScopeId: catchScopeId
+          });
+        });
+      }
+
+      this.processBlockVariables(
+        tryPath.get('handler.body'),
+        catchScopeId,
+        module,
+        variableDeclarations,
+        literals,
+        variableAssignments,
+        varDeclCounterRef,
+        literalCounterRef,
+        scopeTracker
+      );
+
+      if (scopeTracker) {
+        scopeTracker.exitScope();
+      }
+    }
+
+    // Create and process finally block if present
+    if (tryNode.finalizer) {
+      const finallyScopeId = `SCOPE#finally-block#${module.file}#${tryNode.finalizer.loc!.start.line}:${scopeCounterRef.value++}`;
+      const finallySemanticId = this.generateSemanticId('finally-block', scopeTracker);
+
+      scopes.push({
+        id: finallyScopeId,
+        type: 'SCOPE',
+        scopeType: 'finally-block',
+        semanticId: finallySemanticId,
+        file: module.file,
+        line: tryNode.finalizer.loc!.start.line,
+        parentScopeId
+      });
+
+      if (scopeTracker) {
+        scopeTracker.enterCountedScope('finally');
+      }
+
+      const finalizerPath = tryPath.get('finalizer');
+      if (finalizerPath.node) {
+        this.processBlockVariables(
+          finalizerPath as NodePath,
+          finallyScopeId,
+          module,
+          variableDeclarations,
+          literals,
+          variableAssignments,
+          varDeclCounterRef,
+          literalCounterRef,
+          scopeTracker
+        );
+      }
+
+      if (scopeTracker) {
+        scopeTracker.exitScope();
+      }
+    }
+
+    tryPath.skip();
+  }
+
+  /**
    * Factory method to create IfStatement handler.
    * Creates if scope with condition parsing and optional else scope.
    * Tracks if/else scope transitions via ifElseScopeMap.
@@ -1610,217 +1836,19 @@ export class JSASTAnalyzer extends Plugin {
       DoWhileStatement: this.createLoopScopeHandler('do-while', 'do-while-loop', parentScopeId, module, scopes, scopeCounterRef, scopeTracker),
 
       TryStatement: (tryPath: NodePath<t.TryStatement>) => {
-        const tryNode = tryPath.node;
-
-        const tryScopeId = `SCOPE#try-block#${module.file}#${tryNode.loc!.start.line}:${scopeCounterRef.value++}`;
-        const trySemanticId = this.generateSemanticId('try-block', scopeTracker);
-        scopes.push({
-          id: tryScopeId,
-          type: 'SCOPE',
-          scopeType: 'try-block',
-          semanticId: trySemanticId,
-          file: module.file,
-          line: tryNode.loc!.start.line,
-          parentScopeId
-        });
-
-        // Enter try scope for semantic ID generation
-        if (scopeTracker) {
-          scopeTracker.enterCountedScope('try');
-        }
-
-        // Process try block
-        tryPath.get('block').traverse({
-          VariableDeclaration: (varPath: NodePath<t.VariableDeclaration>) => {
-            const varNode = varPath.node;
-            const isConst = varNode.kind === 'const';
-
-            varNode.declarations.forEach(declarator => {
-              const variables = this.extractVariableNamesFromPattern(declarator.id);
-
-              variables.forEach(varInfo => {
-                const literalValue = declarator.init ? ExpressionEvaluator.extractLiteralValue(declarator.init) : null;
-                const isLiteral = literalValue !== null;
-                const isNewExpression = declarator.init && declarator.init.type === 'NewExpression';
-                const shouldBeConstant = isConst && (isLiteral || isNewExpression);
-                const nodeType = shouldBeConstant ? 'CONSTANT' : 'VARIABLE';
-
-                const legacyId = `${nodeType}#${varInfo.name}#${module.file}#${varInfo.loc.start.line}:${varInfo.loc.start.column}:${varDeclCounterRef.value++}`;
-                const varId = scopeTracker
-                  ? computeSemanticId(nodeType, varInfo.name, scopeTracker.getContext())
-                  : legacyId;
-
-                variableDeclarations.push({
-                  id: varId,
-                  type: nodeType,
-                  name: varInfo.name,
-                  file: module.file,
-                  line: varInfo.loc.start.line,
-                  parentScopeId: tryScopeId
-                });
-
-                if (declarator.init) {
-                  this.trackVariableAssignment(declarator.init, varId, varInfo.name, module, varInfo.loc.start.line, literals, variableAssignments, literalCounterRef);
-                }
-              });
-            });
-          }
-        });
-
-        // Exit try scope
-        if (scopeTracker) {
-          scopeTracker.exitScope();
-        }
-
-        if (tryNode.handler) {
-          const catchBlock = tryNode.handler;
-          const catchScopeId = `SCOPE#catch-block#${module.file}#${catchBlock.loc!.start.line}:${scopeCounterRef.value++}`;
-          const catchSemanticId = this.generateSemanticId('catch-block', scopeTracker);
-
-          scopes.push({
-            id: catchScopeId,
-            type: 'SCOPE',
-            scopeType: 'catch-block',
-            semanticId: catchSemanticId,
-            file: module.file,
-            line: catchBlock.loc!.start.line,
-            parentScopeId
-          });
-
-          // Enter catch scope for semantic ID generation
-          if (scopeTracker) {
-            scopeTracker.enterCountedScope('catch');
-          }
-
-          // Handle catch parameter (e.g., catch (e))
-          if (catchBlock.param) {
-            const errorVarInfo = this.extractVariableNamesFromPattern(catchBlock.param);
-
-            errorVarInfo.forEach(varInfo => {
-              const legacyId = `VARIABLE#${varInfo.name}#${module.file}#${varInfo.loc.start.line}:${varInfo.loc.start.column}:${varDeclCounterRef.value++}`;
-              const varId = scopeTracker
-                ? computeSemanticId('VARIABLE', varInfo.name, scopeTracker.getContext())
-                : legacyId;
-
-              variableDeclarations.push({
-                id: varId,
-                type: 'VARIABLE',
-                name: varInfo.name,
-                file: module.file,
-                line: varInfo.loc.start.line,
-                parentScopeId: catchScopeId
-              });
-            });
-          }
-
-          // Process catch block body
-          tryPath.get('handler.body').traverse({
-            VariableDeclaration: (varPath: NodePath<t.VariableDeclaration>) => {
-              const varNode = varPath.node;
-              const isConst = varNode.kind === 'const';
-
-              varNode.declarations.forEach(declarator => {
-                const variables = this.extractVariableNamesFromPattern(declarator.id);
-
-                variables.forEach(varInfo => {
-                  const literalValue = declarator.init ? ExpressionEvaluator.extractLiteralValue(declarator.init) : null;
-                  const isLiteral = literalValue !== null;
-                  const isNewExpression = declarator.init && declarator.init.type === 'NewExpression';
-                  const shouldBeConstant = isConst && (isLiteral || isNewExpression);
-                  const nodeType = shouldBeConstant ? 'CONSTANT' : 'VARIABLE';
-
-                  const legacyId = `${nodeType}#${varInfo.name}#${module.file}#${varInfo.loc.start.line}:${varInfo.loc.start.column}:${varDeclCounterRef.value++}`;
-                  const varId = scopeTracker
-                    ? computeSemanticId(nodeType, varInfo.name, scopeTracker.getContext())
-                    : legacyId;
-
-                  variableDeclarations.push({
-                    id: varId,
-                    type: nodeType,
-                    name: varInfo.name,
-                    file: module.file,
-                    line: varInfo.loc.start.line,
-                    parentScopeId: catchScopeId
-                  });
-
-                  if (declarator.init) {
-                    this.trackVariableAssignment(declarator.init, varId, varInfo.name, module, varInfo.loc.start.line, literals, variableAssignments, literalCounterRef);
-                  }
-                });
-              });
-            }
-          });
-
-          // Exit catch scope
-          if (scopeTracker) {
-            scopeTracker.exitScope();
-          }
-        }
-
-        if (tryNode.finalizer) {
-          const finallyScopeId = `SCOPE#finally-block#${module.file}#${tryNode.finalizer.loc!.start.line}:${scopeCounterRef.value++}`;
-          const finallySemanticId = this.generateSemanticId('finally-block', scopeTracker);
-
-          scopes.push({
-            id: finallyScopeId,
-            type: 'SCOPE',
-            scopeType: 'finally-block',
-            semanticId: finallySemanticId,
-            file: module.file,
-            line: tryNode.finalizer.loc!.start.line,
-            parentScopeId
-          });
-
-          // Enter finally scope for semantic ID generation
-          if (scopeTracker) {
-            scopeTracker.enterCountedScope('finally');
-          }
-
-          // Process finally block body
-          tryPath.get('finalizer').traverse({
-            VariableDeclaration: (varPath: NodePath<t.VariableDeclaration>) => {
-              const varNode = varPath.node;
-              const isConst = varNode.kind === 'const';
-
-              varNode.declarations.forEach(declarator => {
-                const variables = this.extractVariableNamesFromPattern(declarator.id);
-
-                variables.forEach(varInfo => {
-                  const literalValue = declarator.init ? ExpressionEvaluator.extractLiteralValue(declarator.init) : null;
-                  const isLiteral = literalValue !== null;
-                  const isNewExpression = declarator.init && declarator.init.type === 'NewExpression';
-                  const shouldBeConstant = isConst && (isLiteral || isNewExpression);
-                  const nodeType = shouldBeConstant ? 'CONSTANT' : 'VARIABLE';
-
-                  const legacyId = `${nodeType}#${varInfo.name}#${module.file}#${varInfo.loc.start.line}:${varInfo.loc.start.column}:${varDeclCounterRef.value++}`;
-                  const varId = scopeTracker
-                    ? computeSemanticId(nodeType, varInfo.name, scopeTracker.getContext())
-                    : legacyId;
-
-                  variableDeclarations.push({
-                    id: varId,
-                    type: nodeType,
-                    name: varInfo.name,
-                    file: module.file,
-                    line: varInfo.loc.start.line,
-                    parentScopeId: finallyScopeId
-                  });
-
-                  if (declarator.init) {
-                    this.trackVariableAssignment(declarator.init, varId, varInfo.name, module, varInfo.loc.start.line, literals, variableAssignments, literalCounterRef);
-                  }
-                });
-              });
-            }
-          });
-
-          // Exit finally scope
-          if (scopeTracker) {
-            scopeTracker.exitScope();
-          }
-        }
-
-        tryPath.skip();
+        this.handleTryStatement(
+          tryPath,
+          parentScopeId,
+          module,
+          scopes,
+          variableDeclarations,
+          literals,
+          variableAssignments,
+          scopeCounterRef,
+          varDeclCounterRef,
+          literalCounterRef,
+          scopeTracker
+        );
       },
 
       SwitchStatement: (switchPath: NodePath<t.SwitchStatement>) => {

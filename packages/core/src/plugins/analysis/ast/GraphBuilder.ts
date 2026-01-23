@@ -783,8 +783,10 @@ export class GraphBuilder {
       }
       // VARIABLE by name
       else if (sourceType === 'VARIABLE' && sourceName) {
-        const varIdParts = variableId.split('#');
-        const varFile = varIdParts.length >= 3 ? varIdParts[2] : null;
+        // Find the current variable's file by looking it up in variableDeclarations
+        // (semantic IDs don't have predictable file positions like old hash-based IDs)
+        const currentVar = variableDeclarations.find(v => v.id === variableId);
+        const varFile = currentVar?.file ?? null;
         const sourceVariable = variableDeclarations.find(v =>
           v.name === sourceName && v.file === varFile
         );

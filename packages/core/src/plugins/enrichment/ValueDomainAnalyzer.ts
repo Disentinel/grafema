@@ -743,21 +743,34 @@ export class ValueDomainAnalyzer extends Plugin {
         // Resolve the computed property variable using existing getValueSet
         const valueSet = await this.getValueSet(computedPropertyVar, file, graph);
 
+        // Check if the variable is a PARAMETER node
+        let isParameter = false;
+        for await (const node of graph.queryNodes({ nodeType: 'PARAMETER' })) {
+          const paramNode = node as { name?: string; file?: string; attrs?: { name?: string; file?: string } };
+          const nodeName = paramNode.name || paramNode.attrs?.name;
+          const nodeFile = paramNode.file || paramNode.attrs?.file;
+          if (nodeName === computedPropertyVar && nodeFile === file) {
+            isParameter = true;
+            break;
+          }
+        }
+
         // Determine resolution status based on value set
         let resolutionStatus: string;
         let resolvedPropertyNames: string[] = [];
 
-        if (valueSet.values.length === 0 && valueSet.hasUnknown) {
-          // Completely nondeterministic - could be parameter or runtime
-          resolutionStatus = 'UNKNOWN_RUNTIME';
-          stats.unknownRuntime++;
-          // Don't update edge for completely unknown values - keep original
-          continue;
-        } else if (valueSet.values.length === 0) {
-          // No values found at all
+        if (valueSet.values.length === 0 && isParameter) {
+          // Variable is a function parameter - cannot be statically resolved
           resolutionStatus = 'UNKNOWN_PARAMETER';
           stats.unknownParameter++;
-          continue;
+        } else if (valueSet.values.length === 0 && valueSet.hasUnknown) {
+          // Completely nondeterministic - runtime value (function call result, etc.)
+          resolutionStatus = 'UNKNOWN_RUNTIME';
+          stats.unknownRuntime++;
+        } else if (valueSet.values.length === 0) {
+          // No values found at all - treat as unknown
+          resolutionStatus = 'UNKNOWN_RUNTIME';
+          stats.unknownRuntime++;
         } else if (valueSet.values.length === 1 && !valueSet.hasUnknown) {
           // Single deterministic value
           resolutionStatus = 'RESOLVED';
@@ -777,6 +790,7 @@ export class ValueDomainAnalyzer extends Plugin {
         }
 
         // Preserve original edge data and add resolution info
+        // For UNKNOWN cases, keep propertyName as '<computed>' and resolvedPropertyNames empty
         await graph.addEdge({
           src: edge.src,
           dst: edge.dst,
