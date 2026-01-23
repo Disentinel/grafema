@@ -1250,23 +1250,31 @@ export class GraphBuilder {
   /**
    * Buffer FLOWS_INTO edges for array mutations (push, unshift, splice, indexed assignment)
    * Creates edges from inserted values to the array variable
+   *
+   * OPTIMIZED: Uses Map-based lookup cache for O(1) variable lookups instead of O(n) find()
    */
   private bufferArrayMutationEdges(
     arrayMutations: ArrayMutationInfo[],
     variableDeclarations: VariableDeclarationInfo[]
   ): void {
+    // Build lookup cache once: O(n) instead of O(n*m) with find() per mutation
+    const varLookup = new Map<string, VariableDeclarationInfo>();
+    for (const v of variableDeclarations) {
+      varLookup.set(`${v.file}:${v.name}`, v);
+    }
+
     for (const mutation of arrayMutations) {
       const { arrayName, mutationMethod, insertedValues, file } = mutation;
 
-      // Find the array variable in the same file
-      const arrayVar = variableDeclarations.find(v => v.name === arrayName && v.file === file);
+      // O(1) lookup instead of O(n) find
+      const arrayVar = varLookup.get(`${file}:${arrayName}`);
       if (!arrayVar) continue;
 
       // Create FLOWS_INTO edges for each inserted value
       for (const arg of insertedValues) {
         if (arg.valueType === 'VARIABLE' && arg.valueName) {
-          // Find the source variable
-          const sourceVar = variableDeclarations.find(v => v.name === arg.valueName && v.file === file);
+          // O(1) lookup instead of O(n) find
+          const sourceVar = varLookup.get(`${file}:${arg.valueName}`);
           if (sourceVar) {
             const edgeData: GraphEdge = {
               type: 'FLOWS_INTO',
@@ -1298,7 +1306,7 @@ export class GraphBuilder {
     functions: FunctionInfo[]
   ): void {
     for (const mutation of objectMutations) {
-      const { objectName, propertyName, mutationType, value, file } = mutation;
+      const { objectName, propertyName, mutationType, computedPropertyVar, value, file } = mutation;
 
       // Find the object variable or parameter in the same file
       // Skip 'this' - it's not a variable node, but we still create edges FROM source values
@@ -1327,7 +1335,8 @@ export class GraphBuilder {
               src: sourceNodeId,
               dst: objectNodeId,
               mutationType,
-              propertyName
+              propertyName,
+              computedPropertyVar  // For enrichment phase resolution
             };
             if (value.argIndex !== undefined) {
               edgeData.argIndex = value.argIndex;
