@@ -6,11 +6,12 @@
 import { readFileSync, existsSync } from 'fs';
 import { join, resolve, dirname, relative, basename } from 'path';
 import { createHash } from 'crypto';
-import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
+import { Plugin, createErrorResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 // @ts-expect-error - no type declarations for node-source-walk
 import Walker from 'node-source-walk';
 import { NodeFactory } from '../../core/NodeFactory.js';
+import { LanguageError } from '../../errors/GrafemaError.js';
 
 /**
  * Manifest with service info
@@ -216,6 +217,9 @@ export class JSModuleIndexer extends Plugin {
       const projectPath = manifest?.projectPath ?? '';
       const service = manifest?.service ?? { id: '', name: '', path: '' };
 
+      // Collect parse errors to report (REG-147)
+      const parseErrors: Error[] = [];
+
       // Check config for test file marking
       if ((config as { analysis?: { tests?: { markTestFiles?: boolean } } })?.analysis?.tests?.markTestFiles === false) {
         this.markTestFiles = false;
@@ -276,6 +280,18 @@ export class JSModuleIndexer extends Plugin {
 
         if (deps instanceof Error) {
           if (!deps.message.includes('ENOENT')) {
+            const relativePath = relative(projectPath, currentFile) || basename(currentFile);
+            const error = new LanguageError(
+              `Failed to parse ${relativePath}: ${deps.message}`,
+              'ERR_PARSE_FAILURE',
+              {
+                filePath: currentFile,
+                phase: 'INDEXING',
+                plugin: 'JSModuleIndexer',
+              },
+              'Check file syntax or ensure the file is a supported JavaScript/TypeScript file'
+            );
+            parseErrors.push(error);
             console.log(`[JSModuleIndexer] Error parsing ${currentFile}: ${deps.message}`);
           }
           continue;
@@ -370,10 +386,14 @@ export class JSModuleIndexer extends Plugin {
 
       console.log(`[JSModuleIndexer] ${service.name}: ${nodesCreated} modules, ${visited.size} total in tree`);
 
-      return createSuccessResult(
-        { nodes: nodesCreated, edges: edgesCreated },
-        { totalModules: visited.size }
-      );
+      // Return result with parse errors (REG-147)
+      return {
+        success: true,
+        created: { nodes: nodesCreated, edges: edgesCreated },
+        errors: parseErrors,
+        warnings: [],
+        metadata: { totalModules: visited.size },
+      };
 
     } catch (error) {
       console.error(`[JSModuleIndexer] Error:`, error);
