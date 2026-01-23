@@ -11,8 +11,9 @@ import { setTimeout as sleep } from 'timers/promises';
 import { SimpleProjectDiscovery } from './plugins/discovery/SimpleProjectDiscovery.js';
 import { Profiler } from './core/Profiler.js';
 import { AnalysisQueue } from './core/AnalysisQueue.js';
+import { DiagnosticCollector } from './diagnostics/DiagnosticCollector.js';
 import type { Plugin, PluginContext } from './plugins/Plugin.js';
-import type { GraphBackend } from '@grafema/types';
+import type { GraphBackend, PluginPhase } from '@grafema/types';
 
 /**
  * Progress callback info
@@ -131,6 +132,7 @@ export class Orchestrator {
   private analysisQueue: AnalysisQueue | null;
   private rfdbServerProcess: ChildProcess | null;
   private _serverWasExternal: boolean;
+  private diagnosticCollector: DiagnosticCollector;
 
   constructor(options: OrchestratorOptions = {}) {
     this.graph = options.graph!;
@@ -148,6 +150,9 @@ export class Orchestrator {
     this.analysisQueue = null;
     this.rfdbServerProcess = null;
     this._serverWasExternal = false;
+
+    // Initialize diagnostic collector
+    this.diagnosticCollector = new DiagnosticCollector();
 
     // Auto-add default discovery if no discovery plugins provided
     const hasDiscovery = this.plugins.some(p => p.metadata?.phase === 'DISCOVERY');
@@ -509,7 +514,47 @@ export class Orchestrator {
         onProgress: this.onProgress as unknown as PluginContext['onProgress'],
         forceAnalysis: this.forceAnalysis
       };
-      await plugin.execute(pluginContext);
+
+      try {
+        const result = await plugin.execute(pluginContext);
+
+        // Collect errors into diagnostics
+        this.diagnosticCollector.addFromPluginResult(
+          phaseName as PluginPhase,
+          plugin.metadata.name,
+          result
+        );
+
+        // Log plugin completion with warning if errors occurred
+        if (!result.success) {
+          console.warn(`[Orchestrator] Plugin ${plugin.metadata.name} reported failure`, {
+            errors: result.errors.length,
+            warnings: result.warnings.length,
+          });
+        }
+
+        // Check for fatal errors - STOP immediately
+        if (this.diagnosticCollector.hasFatal()) {
+          const allDiagnostics = this.diagnosticCollector.getAll();
+          const fatal = allDiagnostics.find(d => d.severity === 'fatal');
+          throw new Error(`Fatal error in ${plugin.metadata.name}: ${fatal?.message || 'Unknown fatal error'}`);
+        }
+      } catch (e) {
+        // Plugin threw an exception (not just returned errors)
+        const error = e instanceof Error ? e : new Error(String(e));
+
+        // Don't re-add if this was already a fatal error we threw
+        if (!this.diagnosticCollector.hasFatal()) {
+          this.diagnosticCollector.add({
+            code: 'ERR_PLUGIN_THREW',
+            severity: 'fatal',
+            message: error.message,
+            phase: phaseName as PluginPhase,
+            plugin: plugin.metadata.name,
+          });
+        }
+        throw error; // Re-throw to stop analysis
+      }
 
       // Send completion for this plugin
       this.onProgress({
@@ -518,6 +563,13 @@ export class Orchestrator {
         message: `✓ ${plugin.metadata.name} complete`
       });
     }
+  }
+
+  /**
+   * Get the diagnostic collector for retrieving all collected diagnostics
+   */
+  getDiagnostics(): DiagnosticCollector {
+    return this.diagnosticCollector;
   }
 
   /**

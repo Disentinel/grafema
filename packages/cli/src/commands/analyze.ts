@@ -9,6 +9,8 @@ import {
   Orchestrator,
   RFDBServerBackend,
   Plugin,
+  DiagnosticReporter,
+  DiagnosticWriter,
   // Indexing
   JSModuleIndexer,
   RustModuleIndexer,
@@ -153,7 +155,10 @@ export const analyzeCommand = new Command('analyze')
   .option('-s, --service <name>', 'Analyze only a specific service')
   .option('-c, --clear', 'Clear existing database before analysis')
   .option('-q, --quiet', 'Suppress progress output')
-  .action(async (path: string, options: { service?: string; clear?: boolean; quiet?: boolean }) => {
+  .option('-v, --verbose', 'Show verbose logging')
+  .option('--debug', 'Enable debug mode (writes diagnostics.log)')
+  .option('--log-level <level>', 'Set log level (debug, info, warn, error)', 'info')
+  .action(async (path: string, options: { service?: string; clear?: boolean; quiet?: boolean; verbose?: boolean; debug?: boolean; logLevel?: string }) => {
     const projectPath = resolve(path);
     const grafemaDir = join(projectPath, '.grafema');
     const dbPath = join(grafemaDir, 'graph.rfdb');
@@ -187,20 +192,87 @@ export const analyzeCommand = new Command('analyze')
       serviceFilter: options.service || null,
       forceAnalysis: options.clear || false,
       onProgress: (progress) => {
-        log(`[${progress.phase}] ${progress.message}`);
+        if (options.verbose) {
+          log(`[${progress.phase}] ${progress.message}`);
+        }
       },
     });
 
-    await orchestrator.run(projectPath);
-    await backend.flush();
+    let exitCode = 0;
 
-    const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
-    const stats = await backend.getStats();
+    try {
+      await orchestrator.run(projectPath);
+      await backend.flush();
 
-    log('');
-    log(`Analysis complete in ${elapsed}s`);
-    log(`  Nodes: ${stats.nodeCount}`);
-    log(`  Edges: ${stats.edgeCount}`);
+      const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
+      const stats = await backend.getStats();
+
+      log('');
+      log(`Analysis complete in ${elapsed}s`);
+      log(`  Nodes: ${stats.nodeCount}`);
+      log(`  Edges: ${stats.edgeCount}`);
+
+      // Get diagnostics and report summary
+      const diagnostics = orchestrator.getDiagnostics();
+      const reporter = new DiagnosticReporter(diagnostics);
+
+      // Print summary if there are any issues
+      if (diagnostics.count() > 0) {
+        log('');
+        log(reporter.summary());
+
+        // In verbose mode, print full report
+        if (options.verbose) {
+          log('');
+          log(reporter.report({ format: 'text', includeSummary: false }));
+        }
+      }
+
+      // Write diagnostics.log in debug mode
+      if (options.debug) {
+        const writer = new DiagnosticWriter();
+        await writer.write(diagnostics, grafemaDir);
+        log(`Diagnostics written to ${writer.getLogPath(grafemaDir)}`);
+      }
+
+      // Determine exit code based on severity
+      if (diagnostics.hasFatal()) {
+        exitCode = 1;
+      } else if (diagnostics.hasErrors()) {
+        exitCode = 2; // Completed with errors
+      } else {
+        exitCode = 0; // Success (maybe warnings)
+      }
+    } catch (e) {
+      // Orchestrator threw (fatal error stopped analysis)
+      const error = e instanceof Error ? e : new Error(String(e));
+      const diagnostics = orchestrator.getDiagnostics();
+      const reporter = new DiagnosticReporter(diagnostics);
+
+      console.error('');
+      console.error('Analysis failed with fatal error:');
+      console.error(`  ${error.message}`);
+
+      if (diagnostics.count() > 0) {
+        console.error('');
+        console.error(reporter.report({ format: 'text', includeSummary: true }));
+      }
+
+      // Write diagnostics.log in debug mode even on failure
+      if (options.debug) {
+        const writer = new DiagnosticWriter();
+        await writer.write(diagnostics, grafemaDir);
+        console.error(`Diagnostics written to ${writer.getLogPath(grafemaDir)}`);
+      }
+
+      exitCode = 1;
+    }
 
     await backend.close();
+
+    // Exit with appropriate code
+    // 0 = success, 1 = fatal, 2 = errors
+    if (exitCode !== 0) {
+      process.exit(exitCode);
+    }
   });

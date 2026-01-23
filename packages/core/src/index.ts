@@ -2,6 +2,26 @@
  * @grafema/core - Core analysis engine for GraphDD
  */
 
+// Error types
+export {
+  GrafemaError,
+  ConfigError,
+  FileAccessError,
+  LanguageError,
+  DatabaseError,
+  PluginError,
+  AnalysisError,
+} from './errors/GrafemaError.js';
+export type { ErrorContext, GrafemaErrorJSON } from './errors/GrafemaError.js';
+
+// Logging
+export { Logger, ConsoleLogger, createLogger } from './logging/Logger.js';
+export type { LogLevel } from './logging/Logger.js';
+
+// Diagnostics
+export { DiagnosticCollector, DiagnosticReporter, DiagnosticWriter } from './diagnostics/index.js';
+export type { Diagnostic, DiagnosticInput, ReportOptions, SummaryStats } from './diagnostics/index.js';
+
 // Main orchestrator
 export { Orchestrator } from './Orchestrator.js';
 export type {
@@ -45,9 +65,19 @@ export type {
 export { ScopeTracker } from './core/ScopeTracker.js';
 export type { ScopeEntry, CountedScopeResult } from './core/ScopeTracker.js';
 export { AnalysisQueue } from './core/AnalysisQueue.js';
+export { ASTWorkerPool, type ModuleInfo as ASTModuleInfo, type ParseResult, type ASTWorkerPoolStats } from './core/ASTWorkerPool.js';
 export { GuaranteeManager } from './core/GuaranteeManager.js';
 export type { GuaranteeGraph } from './core/GuaranteeManager.js';
 export { clearFileNodesIfNeeded, clearServiceNodeIfExists } from './core/FileNodeManager.js';
+
+// Hash utilities
+export { calculateFileHash, calculateFileHashAsync, calculateContentHash } from './core/HashUtils.js';
+
+// Freshness checking and incremental reanalysis
+export { GraphFreshnessChecker } from './core/GraphFreshnessChecker.js';
+export type { FreshnessGraph, FreshnessResult, StaleModule } from './core/GraphFreshnessChecker.js';
+export { IncrementalReanalyzer } from './core/IncrementalReanalyzer.js';
+export type { ReanalysisOptions, ReanalysisProgress, ReanalysisResult } from './core/IncrementalReanalyzer.js';
 
 // API
 export { GraphAPI } from './api/GraphAPI.js';
