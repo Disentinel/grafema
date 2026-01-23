@@ -18,7 +18,7 @@ import type { NodePath } from '@babel/traverse';
 import { ASTVisitor, type VisitorModule, type VisitorCollections, type VisitorHandlers, type CounterRef } from './ASTVisitor.js';
 import { ExpressionEvaluator } from '../ExpressionEvaluator.js';
 import { ScopeTracker } from '../../../../core/ScopeTracker.js';
-import { computeSemanticId } from '../../../../core/SemanticId.js';
+import { IdGenerator } from '../IdGenerator.js';
 import { NodeFactory } from '../../../../core/NodeFactory.js';
 
 /**
@@ -161,12 +161,16 @@ export class VariableVisitor extends ASTVisitor {
 
               const nodeType = shouldBeConstant ? 'CONSTANT' : 'VARIABLE';
 
-              // Generate semantic ID (primary) and legacy ID (fallback)
-              const legacyId = `${nodeType}#${varInfo.name}#${module.file}#${varInfo.loc.start.line}:${varInfo.loc.start.column}:${(varDeclCounterRef as CounterRef).value++}`;
-
-              const varId = scopeTracker
-                ? computeSemanticId(nodeType, varInfo.name, scopeTracker.getContext())
-                : legacyId;
+              // Generate ID using centralized IdGenerator
+              const idGenerator = new IdGenerator(scopeTracker);
+              const varId = idGenerator.generate(
+                nodeType,
+                varInfo.name,
+                module.file,
+                varInfo.loc.start.line,
+                varInfo.loc.start.column,
+                varDeclCounterRef as CounterRef
+              );
 
               if (shouldBeConstant) {
                 // CONSTANT node

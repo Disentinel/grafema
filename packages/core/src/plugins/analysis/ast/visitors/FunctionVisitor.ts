@@ -21,7 +21,7 @@ import type { NodePath } from '@babel/traverse';
 import { ASTVisitor, type VisitorModule, type VisitorCollections, type VisitorHandlers, type CounterRef } from './ASTVisitor.js';
 import { typeNodeToString } from './TypeScriptVisitor.js';
 import { ScopeTracker } from '../../../../core/ScopeTracker.js';
-import { computeSemanticId } from '../../../../core/SemanticId.js';
+import { IdGenerator } from '../IdGenerator.js';
 
 /**
  * Parameter node info
@@ -281,13 +281,11 @@ export class FunctionVisitor extends ASTVisitor {
         const node = path.node as FunctionDeclaration;
         if (!node.id) return; // Skip anonymous function declarations
 
-        const legacyId = `FUNCTION#${node.id.name}#${module.file}#${node.loc!.start.line}`;
         const isAsync = node.async || false;
 
-        // Use semantic ID as primary ID when scopeTracker available
-        const functionId = scopeTracker
-          ? computeSemanticId('FUNCTION', node.id.name, scopeTracker.getContext())
-          : legacyId;
+        // Generate ID using centralized IdGenerator
+        const idGenerator = new IdGenerator(scopeTracker);
+        const functionId = idGenerator.generateSimple('FUNCTION', node.id.name, module.file, node.loc!.start.line);
 
         // Extract type info
         const { names: paramNames, types: paramTypes } = extractParamInfo(node.params);
@@ -319,9 +317,7 @@ export class FunctionVisitor extends ASTVisitor {
         }
 
         // Create SCOPE for function body
-        const functionBodyScopeId = scopeTracker
-          ? computeSemanticId('SCOPE', 'body', scopeTracker.getContext())
-          : `SCOPE#${node.id.name}:body#${module.file}#${node.loc!.start.line}`;
+        const functionBodyScopeId = idGenerator.generateScope('body', `${node.id.name}:body`, module.file, node.loc!.start.line);
         (scopes as ScopeInfo[]).push({
           id: functionBodyScopeId,
           type: 'SCOPE',
@@ -364,12 +360,9 @@ export class FunctionVisitor extends ASTVisitor {
           }
         }
 
-        const legacyId = `FUNCTION#${functionName}#${module.file}#${line}:${column}:${functionCounterRef.value++}`;
-
-        // Use semantic ID as primary ID when scopeTracker available
-        const functionId = scopeTracker
-          ? computeSemanticId('FUNCTION', functionName, scopeTracker.getContext())
-          : legacyId;
+        // Generate ID using centralized IdGenerator
+        const idGenerator = new IdGenerator(scopeTracker);
+        const functionId = idGenerator.generate('FUNCTION', functionName, module.file, line, column, functionCounterRef);
 
         // Extract type info
         const { names: paramNames, types: paramTypes } = extractParamInfo(node.params);
@@ -402,9 +395,7 @@ export class FunctionVisitor extends ASTVisitor {
         }
 
         // Create SCOPE for arrow function body
-        const bodyScope = scopeTracker
-          ? computeSemanticId('SCOPE', 'body', scopeTracker.getContext())
-          : `SCOPE#${functionName}:body#${module.file}#${line}:${column}`;
+        const bodyScope = idGenerator.generateScope('body', `${functionName}:body`, module.file, line, column);
         (scopes as ScopeInfo[]).push({
           id: bodyScope,
           type: 'SCOPE',

@@ -15,6 +15,7 @@ import { ExpressionEvaluator } from '../ExpressionEvaluator.js';
 import type { ArrayMutationInfo, ArrayMutationArgument, ObjectMutationInfo, ObjectMutationValue } from '../types.js';
 import { ScopeTracker } from '../../../../core/ScopeTracker.js';
 import { computeSemanticId } from '../../../../core/SemanticId.js';
+import { IdGenerator } from '../IdGenerator.js';
 import { NodeFactory } from '../../../../core/NodeFactory.js';
 import { ObjectLiteralNode } from '../../../../core/nodes/ObjectLiteralNode.js';
 import { ArrayLiteralNode } from '../../../../core/nodes/ArrayLiteralNode.js';
@@ -1062,14 +1063,14 @@ export class CallExpressionVisitor extends ASTVisitor {
             }
             const callee = callNode.callee as Identifier;
 
-            // Generate semantic ID with discriminator for same-named calls
-            const legacyId = `CALL#${callee.name}#${module.file}#${callNode.loc!.start.line}:${callNode.loc!.start.column}:${callSiteCounterRef.value++}`;
-
-            let callId = legacyId;
-            if (scopeTracker) {
-              const discriminator = scopeTracker.getItemCounter(`CALL:${callee.name}`);
-              callId = computeSemanticId('CALL', callee.name, scopeTracker.getContext(), { discriminator });
-            }
+            // Generate ID using centralized IdGenerator
+            const idGenerator = new IdGenerator(scopeTracker);
+            const callId = idGenerator.generate(
+              'CALL', callee.name, module.file,
+              callNode.loc!.start.line, callNode.loc!.start.column,
+              callSiteCounterRef,
+              { useDiscriminator: true, discriminatorKey: `CALL:${callee.name}` }
+            );
 
             (callSites as CallSiteInfo[]).push({
               id: callId,
@@ -1147,14 +1148,14 @@ export class CallExpressionVisitor extends ASTVisitor {
 
                 const fullName = `${objectName}.${methodName}`;
 
-                // Generate semantic ID with discriminator for same-named calls
-                const legacyId = `CALL#${fullName}#${module.file}#${callNode.loc!.start.line}:${callNode.loc!.start.column}:${callSiteCounterRef.value++}`;
-
-                let methodCallId = legacyId;
-                if (scopeTracker) {
-                  const discriminator = scopeTracker.getItemCounter(`CALL:${fullName}`);
-                  methodCallId = computeSemanticId('CALL', fullName, scopeTracker.getContext(), { discriminator });
-                }
+                // Generate ID using centralized IdGenerator
+                const idGenerator = new IdGenerator(scopeTracker);
+                const methodCallId = idGenerator.generate(
+                  'CALL', fullName, module.file,
+                  callNode.loc!.start.line, callNode.loc!.start.column,
+                  callSiteCounterRef,
+                  { useDiscriminator: true, discriminatorKey: `CALL:${fullName}` }
+                );
 
                 (methodCalls as MethodCallInfo[]).push({
                   id: methodCallId,
@@ -1239,14 +1240,14 @@ export class CallExpressionVisitor extends ASTVisitor {
           const callee = newNode.callee as Identifier;
           const constructorName = callee.name;
 
-          // Generate semantic ID for constructor call
-          const legacyId = `CALL#new:${constructorName}#${module.file}#${newNode.loc!.start.line}:${newNode.loc!.start.column}:${callSiteCounterRef.value++}`;
-
-          let newCallId = legacyId;
-          if (scopeTracker) {
-            const discriminator = scopeTracker.getItemCounter(`CALL:new:${constructorName}`);
-            newCallId = computeSemanticId('CALL', `new:${constructorName}`, scopeTracker.getContext(), { discriminator });
-          }
+          // Generate ID using centralized IdGenerator
+          const idGenerator = new IdGenerator(scopeTracker);
+          const newCallId = idGenerator.generate(
+            'CALL', `new:${constructorName}`, module.file,
+            newNode.loc!.start.line, newNode.loc!.start.column,
+            callSiteCounterRef,
+            { useDiscriminator: true, discriminatorKey: `CALL:new:${constructorName}` }
+          );
 
           (callSites as CallSiteInfo[]).push({
             id: newCallId,
@@ -1271,14 +1272,14 @@ export class CallExpressionVisitor extends ASTVisitor {
             const constructorName = (property as Identifier).name;
             const fullName = `${objectName}.${constructorName}`;
 
-            // Generate semantic ID for method-style constructor call
-            const legacyId = `CALL#new:${fullName}#${module.file}#${newNode.loc!.start.line}:${newNode.loc!.start.column}:${callSiteCounterRef.value++}`;
-
-            let newMethodCallId = legacyId;
-            if (scopeTracker) {
-              const discriminator = scopeTracker.getItemCounter(`CALL:new:${fullName}`);
-              newMethodCallId = computeSemanticId('CALL', `new:${fullName}`, scopeTracker.getContext(), { discriminator });
-            }
+            // Generate ID using centralized IdGenerator
+            const idGenerator = new IdGenerator(scopeTracker);
+            const newMethodCallId = idGenerator.generate(
+              'CALL', `new:${fullName}`, module.file,
+              newNode.loc!.start.line, newNode.loc!.start.column,
+              callSiteCounterRef,
+              { useDiscriminator: true, discriminatorKey: `CALL:new:${fullName}` }
+            );
 
             (methodCalls as MethodCallInfo[]).push({
               id: newMethodCallId,
