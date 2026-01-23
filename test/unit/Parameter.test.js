@@ -179,4 +179,71 @@ describe('PARAMETER nodes', () => {
       assert.ok(greetParams.length >= 2, `greet should have at least 2 parameters, got ${greetParams.length}`);
     });
   });
+
+  // REG-134: Class constructor/method parameters should create PARAMETER nodes
+  describe('Class parameters', () => {
+    const CLASS_FIXTURE_PATH = join(process.cwd(), 'test/fixtures/class-parameters');
+
+    it('should create PARAMETER nodes for constructor parameters', async () => {
+      const orchestrator = createTestOrchestrator(backend);
+      await orchestrator.run(CLASS_FIXTURE_PATH);
+
+      // Find constructor parameters: config, options (default param)
+      const configParam = await backend.checkGuarantee(`
+        violation(X) :- node(X, "PARAMETER"), attr(X, "name", "config").
+      `);
+      const optionsParam = await backend.checkGuarantee(`
+        violation(X) :- node(X, "PARAMETER"), attr(X, "name", "options").
+      `);
+
+      assert.ok(configParam.length >= 1, 'Should have "config" parameter from constructor');
+      assert.ok(optionsParam.length >= 1, 'Should have "options" default parameter from constructor');
+    });
+
+    it('should create PARAMETER nodes for class method parameters', async () => {
+      const orchestrator = createTestOrchestrator(backend);
+      await orchestrator.run(CLASS_FIXTURE_PATH);
+
+      // Find method parameters: data, extras (rest param)
+      const dataParam = await backend.checkGuarantee(`
+        violation(X) :- node(X, "PARAMETER"), attr(X, "name", "data").
+      `);
+      const extrasParam = await backend.checkGuarantee(`
+        violation(X) :- node(X, "PARAMETER"), attr(X, "name", "extras").
+      `);
+
+      assert.ok(dataParam.length >= 1, 'Should have "data" parameter from process method');
+      assert.ok(extrasParam.length >= 1, 'Should have "extras" rest parameter from process method');
+    });
+
+    it('should create PARAMETER nodes for arrow function property', async () => {
+      const orchestrator = createTestOrchestrator(backend);
+      await orchestrator.run(CLASS_FIXTURE_PATH);
+
+      // Find arrow function property parameter: event
+      const eventParam = await backend.checkGuarantee(`
+        violation(X) :- node(X, "PARAMETER"), attr(X, "name", "event").
+      `);
+
+      assert.ok(eventParam.length >= 1, 'Should have "event" parameter from handler arrow property');
+    });
+
+    it('should link constructor PARAMETER to parent FUNCTION via HAS_PARAMETER edge', async () => {
+      const orchestrator = createTestOrchestrator(backend);
+      await orchestrator.run(CLASS_FIXTURE_PATH);
+
+      // Find constructor
+      const constructor = await backend.checkGuarantee(`
+        violation(X) :- node(X, "FUNCTION"), attr(X, "name", "constructor").
+      `);
+      assert.ok(constructor.length >= 1, 'Should have constructor');
+
+      const funcId = constructor[0].bindings.find(b => b.name === 'X')?.value;
+      const constructorParams = await backend.checkGuarantee(`
+        violation(P) :- edge("${funcId}", P, "HAS_PARAMETER").
+      `);
+
+      assert.ok(constructorParams.length >= 2, `Constructor should have at least 2 parameters, got ${constructorParams.length}`);
+    });
+  });
 });

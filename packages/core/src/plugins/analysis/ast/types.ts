@@ -42,7 +42,9 @@ export interface ParameterInfo {
   file: string;
   line: number;
   index?: number;
-  functionId: string;
+  hasDefault?: boolean;  // Has default value (e.g., function(a = 1))
+  isRest?: boolean;      // Rest parameter (e.g., function(...args))
+  functionId?: string;   // Legacy field - prefer parentFunctionId
   parentFunctionId?: string;
 }
 
@@ -386,6 +388,9 @@ export interface ArrayMutationInfo {
   line: number;
   column: number;
   insertedValues: ArrayMutationArgument[];  // What's being added to the array
+  isNested?: boolean;          // REG-117: true if receiver is MemberExpression
+  baseObjectName?: string;     // REG-117: "obj" from obj.arr.push()
+  propertyName?: string;       // REG-117: "arr" - the array property name
 }
 
 export interface ArrayMutationArgument {
@@ -580,6 +585,7 @@ export interface GraphEdge {
   mutationMethod?: string;
   argIndex?: number;
   isSpread?: boolean;
+  nestedProperty?: string;  // REG-117: Property name for nested mutations (obj.arr.push -> "arr")
   // For FLOWS_INTO edges (object mutations)
   mutationType?: 'property' | 'computed' | 'assign' | 'spread';
   propertyName?: string;

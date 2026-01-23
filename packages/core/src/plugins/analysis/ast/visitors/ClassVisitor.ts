@@ -22,8 +22,9 @@ import type {
 import type { NodePath } from '@babel/traverse';
 import { ASTVisitor, type VisitorModule, type VisitorCollections, type VisitorHandlers } from './ASTVisitor.js';
 import type { AnalyzeFunctionBodyCallback } from './FunctionVisitor.js';
-import type { DecoratorInfo } from '../types.js';
+import type { DecoratorInfo, ParameterInfo } from '../types.js';
 import { ExpressionEvaluator } from '../ExpressionEvaluator.js';
+import { createParameterNodes } from '../utils/createParameterNodes.js';
 import { ScopeTracker } from '../../../../core/ScopeTracker.js';
 import { ClassNode, type ClassNodeRecord } from '../../../../core/nodes/ClassNode.js';
 import { computeSemanticId } from '../../../../core/SemanticId.js';
@@ -41,7 +42,6 @@ interface ClassInfo extends ClassNodeRecord {
  */
 interface ClassFunctionInfo {
   id: string;
-  stableId: string;
   type: 'FUNCTION';
   name: string;
   file: string;
@@ -147,7 +147,8 @@ export class ClassVisitor extends ASTVisitor {
       functions,
       scopes,
       classDeclarations,
-      decorators
+      decorators,
+      parameters
     } = this.collections;
 
     const analyzeFunctionBody = this.analyzeFunctionBody;
@@ -252,7 +253,6 @@ export class ClassVisitor extends ASTVisitor {
 
               (functions as ClassFunctionInfo[]).push({
                 id: functionId,
-                stableId: functionId,
                 type: 'FUNCTION',
                 name: propName,
                 file: module.file,
@@ -268,6 +268,11 @@ export class ClassVisitor extends ASTVisitor {
 
               // Enter method scope for tracking
               scopeTracker.enterScope(propName, 'FUNCTION');
+
+              // Create PARAMETER nodes for class property function parameters (REG-134)
+              if (parameters) {
+                createParameterNodes(funcNode.params, functionId, module.file, propNode.loc!.start.line, parameters as ParameterInfo[]);
+              }
 
               // Create SCOPE for property function body
               const propBodyScopeId = `SCOPE#${className}.${propName}:body#${module.file}#${propNode.loc!.start.line}`;
@@ -312,7 +317,6 @@ export class ClassVisitor extends ASTVisitor {
 
             const funcData: ClassFunctionInfo = {
               id: functionId,
-              stableId: functionId,
               type: 'FUNCTION',
               name: methodName,
               file: module.file,
@@ -340,6 +344,11 @@ export class ClassVisitor extends ASTVisitor {
 
             // Enter method scope for tracking
             scopeTracker.enterScope(methodName, 'FUNCTION');
+
+            // Create PARAMETER nodes for class method parameters (REG-134)
+            if (parameters) {
+              createParameterNodes(methodNode.params, functionId, module.file, methodNode.loc!.start.line, parameters as ParameterInfo[]);
+            }
 
             // Create SCOPE for method body
             const methodBodyScopeId = `SCOPE#${className}.${methodName}:body#${module.file}#${methodNode.loc!.start.line}`;
