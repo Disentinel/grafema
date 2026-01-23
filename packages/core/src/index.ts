@@ -174,5 +174,17 @@ export { SimpleProjectDiscovery } from './plugins/discovery/SimpleProjectDiscove
 export { DiscoveryPlugin } from './plugins/discovery/DiscoveryPlugin.js';
 export { MonorepoServiceDiscovery } from './plugins/discovery/MonorepoServiceDiscovery.js';
 
+// VCS plugins
+export { GitPlugin } from './plugins/vcs/GitPlugin.js';
+export { VCSPlugin, VCSPluginFactory, FileStatus } from './plugins/vcs/VCSPlugin.js';
+export type {
+  VCSConfig,
+  VCSPluginMetadata,
+  ChangedFile,
+  FileDiff,
+  DiffHunk,
+} from './plugins/vcs/VCSPlugin.js';
+export type { CommitInfo } from './plugins/vcs/GitPlugin.js';
+
 // Re-export types for convenience
 export type * from '@grafema/types';
