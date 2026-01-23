@@ -47,6 +47,7 @@ import {
 import { Task } from '../../core/Task.js';
 import { PriorityQueue } from '../../core/PriorityQueue.js';
 import { WorkerPool } from '../../core/WorkerPool.js';
+import { ASTWorkerPool, type ModuleInfo as ASTModuleInfo, type ParseResult } from '../../core/ASTWorkerPool.js';
 import { ConditionParser } from './ast/ConditionParser.js';
 import { Profiler } from '../../core/Profiler.js';
 import { ScopeTracker } from '../../core/ScopeTracker.js';
@@ -165,6 +166,8 @@ interface AnalyzeContext extends PluginContext {
   manifest?: AnalysisManifest;
   forceAnalysis?: boolean;
   workerCount?: number;
+  /** Enable parallel parsing using ASTWorkerPool (worker_threads) */
+  parallelParsing?: boolean;
   // Use base onProgress type for compatibility
   onProgress?: (info: Record<string, unknown>) => void;
 }
@@ -284,11 +287,16 @@ export class JSASTAnalyzer extends Plugin {
         }
       }
 
-      console.log(`[JSASTAnalyzer] Starting parallel analysis of ${modulesToAnalyze.length} modules (${skippedCount} cached)...`);
+      console.log(`[JSASTAnalyzer] Starting analysis of ${modulesToAnalyze.length} modules (${skippedCount} cached)...`);
 
       if (modulesToAnalyze.length === 0) {
         console.log(`[JSASTAnalyzer] All modules are up-to-date, skipping analysis`);
         return createSuccessResult({ nodes: 0, edges: 0 });
+      }
+
+      // Use ASTWorkerPool for true parallel parsing with worker_threads if enabled
+      if (context.parallelParsing) {
+        return await this.executeParallel(modulesToAnalyze, graph, projectPath, context);
       }
 
       const queue = new PriorityQueue();
@@ -375,6 +383,98 @@ export class JSASTAnalyzer extends Plugin {
       console.error(`[JSASTAnalyzer] Error:`, error);
       const err = error instanceof Error ? error : new Error(String(error));
       return createErrorResult(err);
+    }
+  }
+
+  /**
+   * Execute parallel analysis using ASTWorkerPool (worker_threads).
+   *
+   * This method uses actual OS threads for true parallel CPU-intensive parsing.
+   * Workers generate semantic IDs using ScopeTracker, matching sequential behavior.
+   *
+   * @param modules - Modules to analyze
+   * @param graph - Graph backend for writing results
+   * @param projectPath - Project root path
+   * @param context - Analysis context with options
+   * @returns Plugin result with node/edge counts
+   */
+  private async executeParallel(
+    modules: ModuleNode[],
+    graph: GraphBackend,
+    projectPath: string,
+    context: AnalyzeContext
+  ): Promise<PluginResult> {
+    const workerCount = context.workerCount || 4;
+    const pool = new ASTWorkerPool(workerCount);
+
+    console.log(`[JSASTAnalyzer] Starting parallel parsing with ${workerCount} workers...`);
+
+    try {
+      await pool.init();
+
+      // Convert ModuleNode to ASTModuleInfo format
+      const moduleInfos: ASTModuleInfo[] = modules.map(m => ({
+        id: m.id,
+        file: m.file,
+        name: m.name
+      }));
+
+      // Parse all modules in parallel using worker threads
+      const results: ParseResult[] = await pool.parseModules(moduleInfos);
+
+      let nodesCreated = 0;
+      let edgesCreated = 0;
+      let errors = 0;
+
+      // Process results - collections already have semantic IDs from workers
+      for (const result of results) {
+        if (result.error) {
+          console.error(`[JSASTAnalyzer] Error parsing ${result.module.file}:`, result.error.message);
+          errors++;
+          continue;
+        }
+
+        if (result.collections) {
+          // Find original module for metadata
+          const module = modules.find(m => m.id === result.module.id);
+          if (!module) continue;
+
+          // Pass collections directly to GraphBuilder - IDs already semantic
+          // Cast is safe because ASTWorker.ASTCollections is structurally compatible
+          // with ast/types.ASTCollections (METHOD extends FUNCTION semantically)
+          const buildResult = await this.graphBuilder.build(
+            module,
+            graph,
+            projectPath,
+            result.collections as unknown as ASTCollections
+          );
+
+          if (typeof buildResult === 'object' && buildResult !== null) {
+            nodesCreated += (buildResult as { nodes: number }).nodes || 0;
+            edgesCreated += (buildResult as { edges: number }).edges || 0;
+          }
+        }
+
+        // Report progress
+        if (context.onProgress) {
+          context.onProgress({
+            phase: 'analysis',
+            currentPlugin: 'JSASTAnalyzer',
+            message: `Processed ${result.module.file.replace(projectPath, '')}`,
+            totalFiles: modules.length,
+            processedFiles: results.indexOf(result) + 1
+          });
+        }
+      }
+
+      console.log(`[JSASTAnalyzer] Parallel parsing complete: ${nodesCreated} nodes, ${edgesCreated} edges, ${errors} errors`);
+
+      return createSuccessResult(
+        { nodes: nodesCreated, edges: edgesCreated },
+        { modulesAnalyzed: modules.length - errors, parallelParsing: true }
+      );
+    } finally {
+      await pool.terminate();
     }
   }
 

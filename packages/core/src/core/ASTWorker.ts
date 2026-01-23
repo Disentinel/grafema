@@ -3,10 +3,14 @@
  *
  * Receives: { filePath, moduleId, moduleName }
  * Returns: { collections } - extracted AST data for GraphBuilder
+ *
+ * Uses ScopeTracker for semantic ID generation (REG-133).
+ * IDs are stable and don't change when unrelated code is added/removed.
  */
 
 import { parentPort } from 'worker_threads';
 import { readFileSync } from 'fs';
+import { basename } from 'path';
 import { parse, ParserPlugin } from '@babel/parser';
 import traverseModule from '@babel/traverse';
 import type { Node, ImportDeclaration, ExportNamedDeclaration, ExportDefaultDeclaration, VariableDeclaration, FunctionDeclaration, ClassDeclaration, CallExpression, Identifier, ExportSpecifier } from '@babel/types';
@@ -14,6 +18,8 @@ import type { NodePath, Visitor } from '@babel/traverse';
 import { ClassNode, type ClassNodeRecord } from './nodes/ClassNode.js';
 import { ImportNode, type ImportNodeRecord } from './nodes/ImportNode.js';
 import { ExportNode, type ExportNodeRecord } from './nodes/ExportNode.js';
+import { ScopeTracker } from './ScopeTracker.js';
+import { computeSemanticId } from './SemanticId.js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const traverse = (traverseModule as any).default || traverseModule;
@@ -144,6 +150,7 @@ export interface ASTCollections {
 
 /**
  * Counters for unique IDs
+ * @deprecated Use ScopeTracker.getItemCounter() instead
  */
 interface Counters {
   ifScope: number;
@@ -176,6 +183,9 @@ interface ModuleInfo {
 
 /**
  * Parse a single module and extract all collections
+ *
+ * Uses ScopeTracker for semantic ID generation - IDs are stable
+ * and don't change when unrelated code is added/removed.
  */
 function parseModule(filePath: string, moduleId: string, moduleName: string): ASTCollections {
   const code = readFileSync(filePath, 'utf-8');
@@ -184,6 +194,10 @@ function parseModule(filePath: string, moduleId: string, moduleName: string): AS
     sourceType: 'module',
     plugins: ['jsx', 'typescript'] as ParserPlugin[]
   });
+
+  // Create ScopeTracker for semantic ID generation
+  // Use basename for shorter, more readable IDs
+  const scopeTracker = new ScopeTracker(basename(filePath));
 
   // Collections to extract
   const collections: ASTCollections = {
@@ -205,18 +219,7 @@ function parseModule(filePath: string, moduleId: string, moduleName: string): AS
     variableAssignments: []
   };
 
-  // Counters for unique IDs
-  const counters: Counters = {
-    ifScope: 0,
-    scope: 0,
-    varDecl: 0,
-    callSite: 0,
-    function: 0,
-    httpRequest: 0,
-    literal: 0
-  };
-
-  // Processed nodes tracking
+  // Processed nodes tracking (still needed for deduplication)
   const processed: ProcessedNodes = {
     callSites: new Set(),
     methodCalls: new Set(),
@@ -261,38 +264,35 @@ function parseModule(filePath: string, moduleId: string, moduleName: string): AS
     }
   });
 
-  // Extract exports
+  // Extract exports using semantic IDs (via createWithContext)
   traverse(ast, {
     ExportNamedDeclaration(path: NodePath<ExportNamedDeclaration>) {
       const node = path.node;
 
       if (node.declaration) {
         if (node.declaration.type === 'FunctionDeclaration' && node.declaration.id) {
-          const exportNode = ExportNode.create(
+          const exportNode = ExportNode.createWithContext(
             node.declaration.id.name,
-            filePath,
-            node.loc!.start.line,
-            0,
+            scopeTracker.getContext(),
+            { line: node.loc!.start.line, column: 0 },
             { exportType: 'named' }
           );
           collections.exports.push(exportNode);
         } else if (node.declaration.type === 'ClassDeclaration' && node.declaration.id) {
-          const exportNode = ExportNode.create(
+          const exportNode = ExportNode.createWithContext(
             node.declaration.id.name,
-            filePath,
-            node.loc!.start.line,
-            0,
+            scopeTracker.getContext(),
+            { line: node.loc!.start.line, column: 0 },
             { exportType: 'named' }
           );
           collections.exports.push(exportNode);
         } else if (node.declaration.type === 'VariableDeclaration') {
           node.declaration.declarations.forEach(decl => {
             if (decl.id.type === 'Identifier') {
-              const exportNode = ExportNode.create(
+              const exportNode = ExportNode.createWithContext(
                 decl.id.name,
-                filePath,
-                node.loc!.start.line,
-                0,
+                scopeTracker.getContext(),
+                { line: node.loc!.start.line, column: 0 },
                 { exportType: 'named' }
               );
               collections.exports.push(exportNode);
@@ -305,11 +305,10 @@ function parseModule(filePath: string, moduleId: string, moduleName: string): AS
         node.specifiers.forEach(spec => {
           if (spec.type !== 'ExportSpecifier') return;
           const exportedName = spec.exported.type === 'Identifier' ? spec.exported.name : spec.exported.value;
-          const exportNode = ExportNode.create(
+          const exportNode = ExportNode.createWithContext(
             exportedName,
-            filePath,
-            node.loc!.start.line,
-            0,
+            scopeTracker.getContext(),
+            { line: node.loc!.start.line, column: 0 },
             {
               local: (spec as ExportSpecifier).local.name,
               exportType: 'named'
@@ -330,11 +329,10 @@ function parseModule(filePath: string, moduleId: string, moduleName: string): AS
         localName = (node.declaration.id as Identifier).name;
       }
 
-      const exportNode = ExportNode.create(
+      const exportNode = ExportNode.createWithContext(
         'default',
-        filePath,
-        node.loc!.start.line,
-        0,
+        scopeTracker.getContext(),
+        { line: node.loc!.start.line, column: 0 },
         {
           local: localName,
           default: true,
@@ -345,7 +343,7 @@ function parseModule(filePath: string, moduleId: string, moduleName: string): AS
     }
   });
 
-  // Extract top-level variables
+  // Extract top-level variables using semantic IDs
   traverse(ast, {
     VariableDeclaration(path: NodePath<VariableDeclaration>) {
       if (path.getFunctionParent()) return;
@@ -357,16 +355,15 @@ function parseModule(filePath: string, moduleId: string, moduleName: string): AS
         if (decl.id.type === 'Identifier') {
           const varName = decl.id.name;
           const line = decl.id.loc!.start.line;
-          const column = decl.id.loc!.start.column;
 
           const literalValue = ExpressionEvaluator.extractLiteralValue(decl.init);
           const isLiteral = literalValue !== null;
           const isNewExpr = decl.init?.type === 'NewExpression';
           const shouldBeConstant = isConst && (isLiteral || isNewExpr);
 
-          const varId = shouldBeConstant
-            ? `CONSTANT#${varName}#${filePath}#${line}:${column}:${counters.varDecl++}`
-            : `VARIABLE#${varName}#${filePath}#${line}:${column}:${counters.varDecl++}`;
+          // Generate semantic ID using ScopeTracker
+          const nodeType = shouldBeConstant ? 'CONSTANT' : 'VARIABLE';
+          const varId = computeSemanticId(nodeType, varName, scopeTracker.getContext());
 
           collections.variableDeclarations.push({
             id: varId,
@@ -392,7 +389,7 @@ function parseModule(filePath: string, moduleId: string, moduleName: string): AS
     }
   });
 
-  // Extract functions and classes
+  // Extract functions and classes using semantic IDs
   traverse(ast, {
     FunctionDeclaration(path: NodePath<FunctionDeclaration>) {
       if (path.getFunctionParent()) return;
@@ -401,7 +398,8 @@ function parseModule(filePath: string, moduleId: string, moduleName: string): AS
       if (!node.id) return;
 
       const funcName = node.id.name;
-      const functionId = `FUNCTION#${funcName}#${filePath}#${node.loc!.start.line}:${node.loc!.start.column}`;
+      // Generate semantic ID using ScopeTracker
+      const functionId = computeSemanticId('FUNCTION', funcName, scopeTracker.getContext());
 
       collections.functions.push({
         id: functionId,
@@ -416,11 +414,15 @@ function parseModule(filePath: string, moduleId: string, moduleName: string): AS
         exported: path.parent?.type === 'ExportNamedDeclaration' || path.parent?.type === 'ExportDefaultDeclaration'
       });
 
-      // Extract parameters
+      // Enter function scope for parameter extraction
+      scopeTracker.enterScope(funcName, 'FUNCTION');
+
+      // Extract parameters with semantic IDs
       node.params.forEach((param, index) => {
         if (param.type === 'Identifier') {
+          const paramId = computeSemanticId('PARAMETER', param.name, scopeTracker.getContext(), { discriminator: index });
           collections.parameters.push({
-            id: `PARAMETER#${param.name}#${functionId}#${index}`,
+            id: paramId,
             type: 'PARAMETER',
             name: param.name,
             index,
@@ -430,6 +432,9 @@ function parseModule(filePath: string, moduleId: string, moduleName: string): AS
           });
         }
       });
+
+      // Exit function scope
+      scopeTracker.exitScope();
     },
 
     ClassDeclaration(path: NodePath<ClassDeclaration>) {
@@ -445,22 +450,25 @@ function parseModule(filePath: string, moduleId: string, moduleName: string): AS
         ? (node.superClass as Identifier).name
         : null;
 
-      // Create CLASS node using ClassNode.create() (legacy format for workers)
-      const classRecord = ClassNode.create(
+      // Create CLASS node using ClassNode.createWithContext() for semantic IDs
+      const classRecord = ClassNode.createWithContext(
         className,
-        filePath,
-        node.loc!.start.line,
-        node.loc!.start.column || 0,
+        scopeTracker.getContext(),
+        { line: node.loc!.start.line, column: node.loc!.start.column || 0 },
         { superClass: superClassName || undefined }
       );
 
       collections.classDeclarations.push(classRecord);
 
-      // Extract methods
+      // Enter class scope for method extraction
+      scopeTracker.enterScope(className, 'CLASS');
+
+      // Extract methods with semantic IDs (including class scope)
       node.body.body.forEach(member => {
         if (member.type === 'ClassMethod' && member.key.type === 'Identifier') {
           const methodName = member.key.name;
-          const methodId = `METHOD#${className}.${methodName}#${filePath}#${member.loc!.start.line}`;
+          // Method ID includes class scope: file->ClassName->FUNCTION->methodName
+          const methodId = computeSemanticId('FUNCTION', methodName, scopeTracker.getContext());
 
           collections.functions.push({
             id: methodId,
@@ -479,10 +487,13 @@ function parseModule(filePath: string, moduleId: string, moduleName: string): AS
           });
         }
       });
+
+      // Exit class scope
+      scopeTracker.exitScope();
     }
   });
 
-  // Extract call expressions at module level
+  // Extract call expressions at module level using semantic IDs with discriminators
   traverse(ast, {
     CallExpression(path: NodePath<CallExpression>) {
       if (path.getFunctionParent()) return;
@@ -494,14 +505,19 @@ function parseModule(filePath: string, moduleId: string, moduleName: string): AS
         if (processed.callSites.has(nodeKey)) return;
         processed.callSites.add(nodeKey);
 
+        // Get discriminator for same-named calls in current scope
+        const calleeName = node.callee.name;
+        const discriminator = scopeTracker.getItemCounter(`CALL:${calleeName}`);
+        const callId = computeSemanticId('CALL', calleeName, scopeTracker.getContext(), { discriminator });
+
         collections.callSites.push({
-          id: `CALL#${node.callee.name}#${filePath}#${node.loc!.start.line}:${node.loc!.start.column}:${counters.callSite++}`,
+          id: callId,
           type: 'CALL',
-          name: node.callee.name,
+          name: calleeName,
           file: filePath,
           line: node.loc!.start.line,
           parentScopeId: moduleId,
-          targetFunctionName: node.callee.name
+          targetFunctionName: calleeName
         });
       } else if (node.callee.type === 'MemberExpression') {
         const obj = node.callee.object;
@@ -515,8 +531,12 @@ function parseModule(filePath: string, moduleId: string, moduleName: string): AS
           const methodName = prop.name;
           const fullName = `${objectName}.${methodName}`;
 
+          // Get discriminator for same-named method calls
+          const discriminator = scopeTracker.getItemCounter(`CALL:${fullName}`);
+          const callId = computeSemanticId('CALL', fullName, scopeTracker.getContext(), { discriminator });
+
           collections.methodCalls.push({
-            id: `CALL#${fullName}#${filePath}#${node.loc!.start.line}:${node.loc!.start.column}:${counters.callSite++}`,
+            id: callId,
             type: 'CALL',
             name: fullName,
             object: objectName,

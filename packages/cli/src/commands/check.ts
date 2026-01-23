@@ -9,7 +9,13 @@
 import { Command } from 'commander';
 import { resolve, join } from 'path';
 import { existsSync, readFileSync } from 'fs';
-import { RFDBServerBackend, GuaranteeManager, NodeCreationValidator } from '@grafema/core';
+import {
+  RFDBServerBackend,
+  GuaranteeManager,
+  NodeCreationValidator,
+  GraphFreshnessChecker,
+  IncrementalReanalyzer
+} from '@grafema/core';
 import type { GuaranteeGraph } from '@grafema/core';
 import type { GraphBackend } from '@grafema/types';
 
@@ -40,10 +46,21 @@ export const checkCommand = new Command('check')
   .option('-j, --json', 'Output results as JSON')
   .option('-q, --quiet', 'Only output failures')
   .option('--list-guarantees', 'List available built-in guarantees')
+  .option('--skip-reanalysis', 'Skip automatic reanalysis of stale modules')
+  .option('--fail-on-stale', 'Exit with error if stale modules found (CI mode)')
   .action(
     async (
       rule: string | undefined,
-      options: { project: string; file?: string; guarantee?: string; json?: boolean; quiet?: boolean; listGuarantees?: boolean }
+      options: {
+        project: string;
+        file?: string;
+        guarantee?: string;
+        json?: boolean;
+        quiet?: boolean;
+        listGuarantees?: boolean;
+        skipReanalysis?: boolean;
+        failOnStale?: boolean;
+      }
     ) => {
       // List available guarantees
       if (options.listGuarantees) {
@@ -70,7 +87,12 @@ export const checkCommand = new Command('check')
           process.exit(1);
         }
 
-        await runBuiltInValidator(options.guarantee, options.project, options);
+        await runBuiltInValidator(options.guarantee, options.project, {
+          json: options.json,
+          quiet: options.quiet,
+          skipReanalysis: options.skipReanalysis,
+          failOnStale: options.failOnStale
+        });
         return;
       }
       const projectPath = resolve(options.project);
@@ -85,6 +107,44 @@ export const checkCommand = new Command('check')
 
       const backend = new RFDBServerBackend({ dbPath });
       await backend.connect();
+
+      // Check graph freshness
+      const freshnessChecker = new GraphFreshnessChecker();
+      const freshness = await freshnessChecker.checkFreshness(backend);
+
+      if (!freshness.isFresh) {
+        if (options.failOnStale) {
+          console.error(`Error: Graph is stale (${freshness.staleCount} module(s) changed)`);
+          for (const stale of freshness.staleModules.slice(0, 5)) {
+            console.error(`  - ${stale.file} (${stale.reason})`);
+          }
+          if (freshness.staleModules.length > 5) {
+            console.error(`  ... and ${freshness.staleModules.length - 5} more`);
+          }
+          await backend.close();
+          process.exit(1);
+        }
+
+        if (!options.skipReanalysis) {
+          console.log(`Reanalyzing ${freshness.staleCount} stale module(s)...`);
+          const reanalyzer = new IncrementalReanalyzer(backend, projectPath);
+          const result = await reanalyzer.reanalyze(freshness.staleModules);
+          console.log(`Reanalyzed ${result.modulesReanalyzed} module(s) in ${result.durationMs}ms`);
+          console.log('');
+        } else {
+          console.warn(`Warning: ${freshness.staleCount} stale module(s) detected. Use --skip-reanalysis to suppress.`);
+          for (const stale of freshness.staleModules.slice(0, 5)) {
+            console.warn(`  - ${stale.file} (${stale.reason})`);
+          }
+          if (freshness.staleModules.length > 5) {
+            console.warn(`  ... and ${freshness.staleModules.length - 5} more`);
+          }
+          console.log('');
+        }
+      } else if (!options.quiet) {
+        console.log('Graph is fresh');
+        console.log('');
+      }
 
       try {
         const guaranteeGraph = backend as unknown as GuaranteeGraph;
@@ -190,7 +250,7 @@ export const checkCommand = new Command('check')
 async function runBuiltInValidator(
   guaranteeName: string,
   projectPath: string,
-  options: { json?: boolean; quiet?: boolean }
+  options: { json?: boolean; quiet?: boolean; skipReanalysis?: boolean; failOnStale?: boolean }
 ): Promise<void> {
   const resolvedPath = resolve(projectPath);
   const grafemaDir = join(resolvedPath, '.grafema');
@@ -204,6 +264,44 @@ async function runBuiltInValidator(
 
   const backend = new RFDBServerBackend({ dbPath });
   await backend.connect();
+
+  // Check graph freshness
+  const freshnessChecker = new GraphFreshnessChecker();
+  const freshness = await freshnessChecker.checkFreshness(backend);
+
+  if (!freshness.isFresh) {
+    if (options.failOnStale) {
+      console.error(`Error: Graph is stale (${freshness.staleCount} module(s) changed)`);
+      for (const stale of freshness.staleModules.slice(0, 5)) {
+        console.error(`  - ${stale.file} (${stale.reason})`);
+      }
+      if (freshness.staleModules.length > 5) {
+        console.error(`  ... and ${freshness.staleModules.length - 5} more`);
+      }
+      await backend.close();
+      process.exit(1);
+    }
+
+    if (!options.skipReanalysis) {
+      console.log(`Reanalyzing ${freshness.staleCount} stale module(s)...`);
+      const reanalyzer = new IncrementalReanalyzer(backend, resolvedPath);
+      const result = await reanalyzer.reanalyze(freshness.staleModules);
+      console.log(`Reanalyzed ${result.modulesReanalyzed} module(s) in ${result.durationMs}ms`);
+      console.log('');
+    } else {
+      console.warn(`Warning: ${freshness.staleCount} stale module(s) detected. Use --skip-reanalysis to suppress.`);
+      for (const stale of freshness.staleModules.slice(0, 5)) {
+        console.warn(`  - ${stale.file} (${stale.reason})`);
+      }
+      if (freshness.staleModules.length > 5) {
+        console.warn(`  ... and ${freshness.staleModules.length - 5} more`);
+      }
+      console.log('');
+    }
+  } else if (!options.quiet) {
+    console.log('Graph is fresh');
+    console.log('');
+  }
 
   try {
     let validator;

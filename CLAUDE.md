@@ -108,6 +108,45 @@ All implementation happens through subagents. Top-level agent only coordinates.
 
 Whether task is not require deep hardcore reasoning - use Sonnet/Haiku for subagents (if possible).
 
+### Lens Selection (When to Use Which Team Configuration)
+
+Not every task needs full MLA. Match team size to task complexity.
+
+**Decision Tree:**
+
+```
+START
+ ├─ Is production broken? → YES → Single agent (Rob) + post-mortem MLA later
+ └─ NO
+     ├─ Is this well-understood? (clear requirements, single module, <100 LOC)
+     │   → YES → Single agent (Rob)
+     └─ NO
+         ├─ Does it change core architecture? (affects multiple systems, long-term impact)
+         │   → YES → Full MLA (all personas)
+         └─ NO → Mini-MLA (Don, Rob, Linus)
+```
+
+**Configurations:**
+
+| Config | Team | When to Use |
+|--------|------|-------------|
+| **Single Agent** | Rob | Trivial changes, hotfixes, well-defined tasks |
+| **Mini-MLA** | Don → Rob → Linus | Medium complexity, local scope, clear boundaries |
+| **Full MLA** | All personas | Architectural decisions, complex debugging, ambiguous requirements |
+
+**Stopping Condition:**
+
+After each expert contribution, ask: "Did this add new information?"
+- If NO for 2 consecutive experts → stop, signal saturation reached
+- Diminishing returns after 5-7 experts
+
+**ROI Guidelines:**
+
+- Simple task (extract helper, fix typo): Single agent. Full MLA = -80% ROI (waste)
+- Complex task (architecture change): Full MLA = +113% ROI (worth it)
+
+See `_ai/mla-patterns.md` for detailed methodology.
+
 ## Execution Guards
 
 **Any command: max 10 minutes.** No exceptions.
