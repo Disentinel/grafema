@@ -52,7 +52,7 @@ export interface ScopeInfo {
   type: 'SCOPE';
   scopeType: string;
   name?: string;
-  semanticId?: string;  // Stable ID for diff comparison (e.g., "MyClass.myMethod:if_statement[0]")
+  semanticId?: string;  // Stable ID for diff comparison (e.g., "MyClass->myMethod:if_statement[0]")
   conditional?: boolean;
   condition?: string;
   constraints?: unknown[];
@@ -412,6 +412,7 @@ export interface ObjectMutationInfo {
   objectLine?: number;           // Line where object is referenced (for scope resolution)
   propertyName: string;          // Property name or '<computed>' for obj[x] or '<assign>' for Object.assign
   mutationType: 'property' | 'computed' | 'assign' | 'spread';
+  computedPropertyVar?: string;  // Variable name in obj[key] = value (for computed mutation type)
   file: string;
   line: number;
   column: number;
@@ -428,6 +429,23 @@ export interface ObjectMutationValue {
   isSpread?: boolean;            // For Object.assign with spread: Object.assign(target, ...sources)
   argIndex?: number;             // For Object.assign - which source argument (0, 1, 2, ...)
 }
+
+/**
+ * Resolution status for computed property names.
+ * Used in FLOWS_INTO edge metadata to indicate how property name was determined.
+ *
+ * - RESOLVED: Single deterministic value traced from literals
+ * - RESOLVED_CONDITIONAL: Multiple possible values (ternary, logical OR, etc.)
+ * - UNKNOWN_PARAMETER: Variable traces to function parameter
+ * - UNKNOWN_RUNTIME: Variable traces to function call result
+ * - DEFERRED_CROSS_FILE: Variable traces to import (requires cross-file analysis)
+ */
+export type ResolutionStatus =
+  | 'RESOLVED'
+  | 'RESOLVED_CONDITIONAL'
+  | 'UNKNOWN_PARAMETER'
+  | 'UNKNOWN_RUNTIME'
+  | 'DEFERRED_CROSS_FILE';
 
 // === VARIABLE ASSIGNMENT INFO ===
 export interface VariableAssignmentInfo {
@@ -565,6 +583,10 @@ export interface GraphEdge {
   // For FLOWS_INTO edges (object mutations)
   mutationType?: 'property' | 'computed' | 'assign' | 'spread';
   propertyName?: string;
+  // For computed property resolution (enrichment phase)
+  computedPropertyVar?: string;           // Variable name for obj[key] patterns
+  resolvedPropertyNames?: string[];       // Resolved names after enrichment
+  resolutionStatus?: ResolutionStatus;    // How resolution was determined
   metadata?: Record<string, unknown>;
 }
 

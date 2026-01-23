@@ -92,14 +92,8 @@ import type {
 
 // === LOCAL TYPES ===
 
-/**
- * Context for tracking semantic IDs within a scope hierarchy.
- * Used to generate stable, line-number-independent IDs for SCOPE nodes.
- */
-interface ScopeContext {
-  semanticPath: string;                    // "ClassName.method" or "funcName"
-  siblingCounters: Map<string, number>;    // scopeType → count for this level
-}
+// Note: Legacy ScopeContext interface removed in REG-141
+// Semantic ID generation now uses ScopeTracker exclusively
 
 // Internal Collections with required fields (ASTCollections has optional for GraphBuilder)
 interface Collections {
@@ -144,7 +138,6 @@ interface Collections {
   literalCounterRef: CounterRef;
   anonymousFunctionCounterRef: CounterRef;
   processedNodes: ProcessedNodes;
-  moduleScopeCtx?: ScopeContext;
   code?: string;
   // VisitorCollections compatibility
   classes: ClassDeclarationInfo[];
@@ -932,12 +925,6 @@ export class JSASTAnalyzer extends Plugin {
       traverse(ast, variableVisitor.getHandlers());
       this.profiler.end('traverse_variables');
 
-      // Module-level scope context for consistent anonymous naming
-      const moduleScopeCtx: ScopeContext = {
-        semanticPath: module.name!,
-        siblingCounters: new Map()
-      };
-
       const allCollections: Collections = {
         functions, parameters, scopes, variableDeclarations, callSites, methodCalls,
         eventListeners, methodCallbacks, callArguments, classInstantiations, classDeclarations,
@@ -954,7 +941,7 @@ export class JSASTAnalyzer extends Plugin {
         ifScopeCounterRef, scopeCounterRef, varDeclCounterRef,
         callSiteCounterRef, functionCounterRef, httpRequestCounterRef,
         literalCounterRef, anonymousFunctionCounterRef, processedNodes,
-        imports, exports, moduleScopeCtx, code,
+        imports, exports, code,
         // VisitorCollections compatibility
         classes: classDeclarations,
         methods: [],
@@ -1029,12 +1016,10 @@ export class JSASTAnalyzer extends Plugin {
             });
 
             const funcPath = assignPath.get('right') as NodePath<t.FunctionExpression | t.ArrowFunctionExpression>;
-            // Create scope context for analyzing the function body
-            const funcScopeCtx: ScopeContext = {
-              semanticPath: functionName,
-              siblingCounters: new Map()
-            };
-            this.analyzeFunctionBody(funcPath, funcBodyScopeId, module, allCollections, funcScopeCtx);
+            // Enter function scope for semantic ID generation and analyze
+            scopeTracker.enterScope(functionName, 'function');
+            this.analyzeFunctionBody(funcPath, funcBodyScopeId, module, allCollections);
+            scopeTracker.exitScope();
           }
 
           // Check for indexed array assignment at module level: arr[i] = value
@@ -1072,7 +1057,7 @@ export class JSASTAnalyzer extends Plugin {
           if (functionParent) return;
 
           if (funcPath.parent && funcPath.parent.type === 'CallExpression') {
-            const funcName = funcNode.id ? funcNode.id.name : this.generateAnonymousName(moduleScopeCtx);
+            const funcName = funcNode.id ? funcNode.id.name : this.generateAnonymousName(scopeTracker);
             // Use semantic ID as primary ID (matching FunctionVisitor pattern)
             const functionId = computeSemanticId('FUNCTION', funcName, scopeTracker.getContext());
 
@@ -1103,12 +1088,10 @@ export class JSASTAnalyzer extends Plugin {
               parentFunctionId: functionId
             });
 
-            // Create scope context for analyzing the callback body
-            const callbackScopeCtx: ScopeContext = {
-              semanticPath: funcName,
-              siblingCounters: new Map()
-            };
-            this.analyzeFunctionBody(funcPath, callbackScopeId, module, allCollections, callbackScopeCtx);
+            // Enter callback scope for semantic ID generation and analyze
+            scopeTracker.enterScope(funcName, 'callback');
+            this.analyzeFunctionBody(funcPath, callbackScopeId, module, allCollections);
+            scopeTracker.exitScope();
             funcPath.skip();
           }
         }
@@ -1134,7 +1117,7 @@ export class JSASTAnalyzer extends Plugin {
           const ifScopeId = `SCOPE#if#${module.file}#${ifNode.loc!.start.line}:${ifNode.loc!.start.column}:${counterId}`;
 
           const constraints = ConditionParser.parse(ifNode.test);
-          const ifSemanticId = this.generateSemanticId('if_statement', moduleScopeCtx);
+          const ifSemanticId = this.generateSemanticId('if_statement', scopeTracker);
 
           scopes.push({
             id: ifScopeId,
@@ -1155,7 +1138,7 @@ export class JSASTAnalyzer extends Plugin {
             const elseScopeId = `SCOPE#else#${module.file}#${ifNode.alternate.loc!.start.line}:${ifNode.alternate.loc!.start.column}:${elseCounterId}`;
 
             const negatedConstraints = constraints.length > 0 ? ConditionParser.negate(constraints) : undefined;
-            const elseSemanticId = this.generateSemanticId('else_statement', moduleScopeCtx);
+            const elseSemanticId = this.generateSemanticId('else_statement', scopeTracker);
 
             scopes.push({
               id: elseScopeId,
@@ -1221,50 +1204,93 @@ export class JSASTAnalyzer extends Plugin {
   }
 
   /**
-   * Helper to generate semantic ID for a scope and update counters
+   * Helper to generate semantic ID for a scope using ScopeTracker.
+   * Format: "scopePath:scopeType[index]" e.g. "MyClass->myMethod:if_statement[0]"
    */
   private generateSemanticId(
     scopeType: string,
-    scopeCtx: ScopeContext | undefined
+    scopeTracker: ScopeTracker | undefined
   ): string | undefined {
-    if (!scopeCtx) return undefined;
+    if (!scopeTracker) return undefined;
 
-    const siblingIndex = scopeCtx.siblingCounters.get(scopeType) || 0;
-    scopeCtx.siblingCounters.set(scopeType, siblingIndex + 1);
-    return `${scopeCtx.semanticPath}:${scopeType}[${siblingIndex}]`;
+    const scopePath = scopeTracker.getScopePath();
+    const siblingIndex = scopeTracker.getItemCounter(`semanticId:${scopeType}`);
+    return `${scopePath}:${scopeType}[${siblingIndex}]`;
   }
 
   /**
-   * Helper to create child scope context from a semantic ID
+   * Generate a unique anonymous function name within the current scope.
+   * Uses ScopeTracker.getSiblingIndex() for stable naming.
    */
-  private createChildScopeContext(semanticId: string | undefined): ScopeContext | undefined {
-    if (!semanticId) return undefined;
-    return {
-      semanticPath: semanticId,
-      siblingCounters: new Map()
-    };
-  }
-
-  /**
-   * Generate a unique anonymous function name within the current scope
-   * Uses scopeCtx.siblingCounters to ensure stability across JS/TS versions
-   */
-  private generateAnonymousName(scopeCtx: ScopeContext | undefined): string {
-    if (!scopeCtx) return 'anonymous';
-    const index = scopeCtx.siblingCounters.get('anonymous') || 0;
-    scopeCtx.siblingCounters.set('anonymous', index + 1);
+  private generateAnonymousName(scopeTracker: ScopeTracker | undefined): string {
+    if (!scopeTracker) return 'anonymous';
+    const index = scopeTracker.getSiblingIndex('anonymous');
     return `anonymous[${index}]`;
   }
 
   /**
-   * Анализирует тело функции и извлекает переменные, вызовы, условные блоки
+   * Factory method to create loop scope handlers.
+   * All loop statements (for, for-in, for-of, while, do-while) follow the same pattern:
+   * 1. Create scope with SCOPE#<scopeType>#file#line:counter
+   * 2. Generate semantic ID
+   * 3. Push to scopes array
+   * 4. Enter/exit scope tracker
+   *
+   * @param trackerScopeType - Scope type for ScopeTracker (e.g., 'for', 'for-in', 'while')
+   * @param scopeType - Scope type for the graph node (e.g., 'for-loop', 'for-in-loop')
+   * @param parentScopeId - Parent scope ID for the scope node
+   * @param module - Module context
+   * @param scopes - Collection to push scope nodes to
+   * @param scopeCounterRef - Counter for unique scope IDs
+   * @param scopeTracker - Tracker for semantic ID generation
+   */
+  private createLoopScopeHandler(
+    trackerScopeType: string,
+    scopeType: string,
+    parentScopeId: string,
+    module: VisitorModule,
+    scopes: ScopeInfo[],
+    scopeCounterRef: CounterRef,
+    scopeTracker: ScopeTracker | undefined
+  ): { enter: (path: NodePath<t.Loop>) => void; exit: () => void } {
+    return {
+      enter: (path: NodePath<t.Loop>) => {
+        const node = path.node;
+        const scopeId = `SCOPE#${scopeType}#${module.file}#${node.loc!.start.line}:${scopeCounterRef.value++}`;
+        const semanticId = this.generateSemanticId(scopeType, scopeTracker);
+        scopes.push({
+          id: scopeId,
+          type: 'SCOPE',
+          scopeType,
+          semanticId,
+          file: module.file,
+          line: node.loc!.start.line,
+          parentScopeId
+        });
+
+        // Enter scope for semantic ID generation
+        if (scopeTracker) {
+          scopeTracker.enterCountedScope(trackerScopeType);
+        }
+      },
+      exit: () => {
+        // Exit scope
+        if (scopeTracker) {
+          scopeTracker.exitScope();
+        }
+      }
+    };
+  }
+
+  /**
+   * Анализирует тело функции и извлекает переменные, вызовы, условные блоки.
+   * Uses ScopeTracker from collections for semantic ID generation.
    */
   analyzeFunctionBody(
     funcPath: NodePath<t.Function>,
     parentScopeId: string,
     module: VisitorModule,
-    collections: VisitorCollections,
-    scopeCtx?: ScopeContext
+    collections: VisitorCollections
   ): void {
     // Extract with defaults for optional properties
     const functions = (collections.functions ?? []) as FunctionInfo[];
@@ -1406,147 +1432,17 @@ export class JSASTAnalyzer extends Plugin {
         this.detectObjectPropertyAssignment(assignNode, module, objectMutations, scopeTracker);
       },
 
-      ForStatement: {
-        enter: (forPath: NodePath<t.ForStatement>) => {
-          const forNode = forPath.node;
-          const scopeId = `SCOPE#for-loop#${module.file}#${forNode.loc!.start.line}:${scopeCounterRef.value++}`;
-          const semanticId = this.generateSemanticId('for-loop', scopeCtx);
-          scopes.push({
-            id: scopeId,
-            type: 'SCOPE',
-            scopeType: 'for-loop',
-            semanticId,
-            file: module.file,
-            line: forNode.loc!.start.line,
-            parentScopeId
-          });
-
-          // Enter scope for semantic ID generation
-          if (scopeTracker) {
-            scopeTracker.enterCountedScope('for');
-          }
-        },
-        exit: () => {
-          // Exit scope
-          if (scopeTracker) {
-            scopeTracker.exitScope();
-          }
-        }
-      },
-
-      ForInStatement: {
-        enter: (forPath: NodePath<t.ForInStatement>) => {
-          const forNode = forPath.node;
-          const scopeId = `SCOPE#for-in-loop#${module.file}#${forNode.loc!.start.line}:${scopeCounterRef.value++}`;
-          const semanticId = this.generateSemanticId('for-in-loop', scopeCtx);
-          scopes.push({
-            id: scopeId,
-            type: 'SCOPE',
-            scopeType: 'for-in-loop',
-            semanticId,
-            file: module.file,
-            line: forNode.loc!.start.line,
-            parentScopeId
-          });
-
-          // Enter scope for semantic ID generation
-          if (scopeTracker) {
-            scopeTracker.enterCountedScope('for-in');
-          }
-        },
-        exit: () => {
-          if (scopeTracker) {
-            scopeTracker.exitScope();
-          }
-        }
-      },
-
-      ForOfStatement: {
-        enter: (forPath: NodePath<t.ForOfStatement>) => {
-          const forNode = forPath.node;
-          const scopeId = `SCOPE#for-of-loop#${module.file}#${forNode.loc!.start.line}:${scopeCounterRef.value++}`;
-          const semanticId = this.generateSemanticId('for-of-loop', scopeCtx);
-          scopes.push({
-            id: scopeId,
-            type: 'SCOPE',
-            scopeType: 'for-of-loop',
-            semanticId,
-            file: module.file,
-            line: forNode.loc!.start.line,
-            parentScopeId
-          });
-
-          // Enter scope for semantic ID generation
-          if (scopeTracker) {
-            scopeTracker.enterCountedScope('for-of');
-          }
-        },
-        exit: () => {
-          if (scopeTracker) {
-            scopeTracker.exitScope();
-          }
-        }
-      },
-
-      WhileStatement: {
-        enter: (whilePath: NodePath<t.WhileStatement>) => {
-          const whileNode = whilePath.node;
-          const scopeId = `SCOPE#while-loop#${module.file}#${whileNode.loc!.start.line}:${scopeCounterRef.value++}`;
-          const semanticId = this.generateSemanticId('while-loop', scopeCtx);
-          scopes.push({
-            id: scopeId,
-            type: 'SCOPE',
-            scopeType: 'while-loop',
-            semanticId,
-            file: module.file,
-            line: whileNode.loc!.start.line,
-            parentScopeId
-          });
-
-          // Enter scope for semantic ID generation
-          if (scopeTracker) {
-            scopeTracker.enterCountedScope('while');
-          }
-        },
-        exit: () => {
-          if (scopeTracker) {
-            scopeTracker.exitScope();
-          }
-        }
-      },
-
-      DoWhileStatement: {
-        enter: (doPath: NodePath<t.DoWhileStatement>) => {
-          const doNode = doPath.node;
-          const scopeId = `SCOPE#do-while-loop#${module.file}#${doNode.loc!.start.line}:${scopeCounterRef.value++}`;
-          const semanticId = this.generateSemanticId('do-while-loop', scopeCtx);
-          scopes.push({
-            id: scopeId,
-            type: 'SCOPE',
-            scopeType: 'do-while-loop',
-            semanticId,
-            file: module.file,
-            line: doNode.loc!.start.line,
-            parentScopeId
-          });
-
-          // Enter scope for semantic ID generation
-          if (scopeTracker) {
-            scopeTracker.enterCountedScope('do-while');
-          }
-        },
-        exit: () => {
-          if (scopeTracker) {
-            scopeTracker.exitScope();
-          }
-        }
-      },
+      ForStatement: this.createLoopScopeHandler('for', 'for-loop', parentScopeId, module, scopes, scopeCounterRef, scopeTracker),
+      ForInStatement: this.createLoopScopeHandler('for-in', 'for-in-loop', parentScopeId, module, scopes, scopeCounterRef, scopeTracker),
+      ForOfStatement: this.createLoopScopeHandler('for-of', 'for-of-loop', parentScopeId, module, scopes, scopeCounterRef, scopeTracker),
+      WhileStatement: this.createLoopScopeHandler('while', 'while-loop', parentScopeId, module, scopes, scopeCounterRef, scopeTracker),
+      DoWhileStatement: this.createLoopScopeHandler('do-while', 'do-while-loop', parentScopeId, module, scopes, scopeCounterRef, scopeTracker),
 
       TryStatement: (tryPath: NodePath<t.TryStatement>) => {
         const tryNode = tryPath.node;
 
         const tryScopeId = `SCOPE#try-block#${module.file}#${tryNode.loc!.start.line}:${scopeCounterRef.value++}`;
-        const trySemanticId = this.generateSemanticId('try-block', scopeCtx);
+        const trySemanticId = this.generateSemanticId('try-block', scopeTracker);
         scopes.push({
           id: tryScopeId,
           type: 'SCOPE',
@@ -1608,7 +1504,7 @@ export class JSASTAnalyzer extends Plugin {
         if (tryNode.handler) {
           const catchBlock = tryNode.handler;
           const catchScopeId = `SCOPE#catch-block#${module.file}#${catchBlock.loc!.start.line}:${scopeCounterRef.value++}`;
-          const catchSemanticId = this.generateSemanticId('catch-block', scopeCtx);
+          const catchSemanticId = this.generateSemanticId('catch-block', scopeTracker);
 
           scopes.push({
             id: catchScopeId,
@@ -1692,7 +1588,7 @@ export class JSASTAnalyzer extends Plugin {
 
         if (tryNode.finalizer) {
           const finallyScopeId = `SCOPE#finally-block#${module.file}#${tryNode.finalizer.loc!.start.line}:${scopeCounterRef.value++}`;
-          const finallySemanticId = this.generateSemanticId('finally-block', scopeCtx);
+          const finallySemanticId = this.generateSemanticId('finally-block', scopeTracker);
 
           scopes.push({
             id: finallyScopeId,
@@ -1759,7 +1655,7 @@ export class JSASTAnalyzer extends Plugin {
       SwitchStatement: (switchPath: NodePath<t.SwitchStatement>) => {
         const switchNode = switchPath.node;
         const scopeId = `SCOPE#switch-case#${module.file}#${switchNode.loc!.start.line}:${scopeCounterRef.value++}`;
-        const semanticId = this.generateSemanticId('switch-case', scopeCtx);
+        const semanticId = this.generateSemanticId('switch-case', scopeTracker);
 
         scopes.push({
           id: scopeId,
@@ -1774,7 +1670,7 @@ export class JSASTAnalyzer extends Plugin {
 
       FunctionExpression: (funcPath: NodePath<t.FunctionExpression>) => {
         const node = funcPath.node;
-        const funcName = node.id ? node.id.name : this.generateAnonymousName(scopeCtx);
+        const funcName = node.id ? node.id.name : this.generateAnonymousName(scopeTracker);
         // Use semantic ID as primary ID when scopeTracker available
         const legacyId = `FUNCTION#${funcName}#${module.file}#${node.loc!.start.line}:${node.loc!.start.column}:${functionCounterRef.value++}`;
         const functionId = scopeTracker
@@ -1795,7 +1691,7 @@ export class JSASTAnalyzer extends Plugin {
         });
 
         const nestedScopeId = `SCOPE#${funcName}:body#${module.file}#${node.loc!.start.line}`;
-        const closureSemanticId = this.generateSemanticId('closure', scopeCtx);
+        const closureSemanticId = this.generateSemanticId('closure', scopeTracker);
         scopes.push({
           id: nestedScopeId,
           type: 'SCOPE',
@@ -1809,12 +1705,14 @@ export class JSASTAnalyzer extends Plugin {
           capturesFrom: parentScopeId
         });
 
-        // For nested function, create new context with function name as semantic path
-        const nestedFuncCtx: ScopeContext = {
-          semanticPath: scopeCtx ? `${scopeCtx.semanticPath}.${funcName}` : funcName,
-          siblingCounters: new Map()
-        };
-        this.analyzeFunctionBody(funcPath, nestedScopeId, module, collections, nestedFuncCtx);
+        // Enter nested function scope for semantic ID generation
+        if (scopeTracker) {
+          scopeTracker.enterScope(funcName, 'function');
+        }
+        this.analyzeFunctionBody(funcPath, nestedScopeId, module, collections);
+        if (scopeTracker) {
+          scopeTracker.exitScope();
+        }
         funcPath.skip();
       },
 
@@ -1830,7 +1728,7 @@ export class JSASTAnalyzer extends Plugin {
           funcName = parent.id.name;
         } else {
           // Используем scope-level счётчик для стабильного semanticId
-          funcName = this.generateAnonymousName(scopeCtx);
+          funcName = this.generateAnonymousName(scopeTracker);
         }
 
         // Use semantic ID as primary ID when scopeTracker available
@@ -1854,7 +1752,7 @@ export class JSASTAnalyzer extends Plugin {
 
         if (node.body.type === 'BlockStatement') {
           const nestedScopeId = `SCOPE#${funcName}:body#${module.file}#${line}`;
-          const arrowSemanticId = this.generateSemanticId('arrow_body', scopeCtx);
+          const arrowSemanticId = this.generateSemanticId('arrow_body', scopeTracker);
           scopes.push({
             id: nestedScopeId,
             type: 'SCOPE',
@@ -1868,12 +1766,14 @@ export class JSASTAnalyzer extends Plugin {
             capturesFrom: parentScopeId
           });
 
-          // For arrow function, create new context with function name as semantic path
-          const arrowFuncCtx: ScopeContext = {
-            semanticPath: scopeCtx ? `${scopeCtx.semanticPath}.${funcName}` : funcName,
-            siblingCounters: new Map()
-          };
-          this.analyzeFunctionBody(arrowPath, nestedScopeId, module, collections, arrowFuncCtx);
+          // Enter arrow function scope for semantic ID generation
+          if (scopeTracker) {
+            scopeTracker.enterScope(funcName, 'arrow');
+          }
+          this.analyzeFunctionBody(arrowPath, nestedScopeId, module, collections);
+          if (scopeTracker) {
+            scopeTracker.exitScope();
+          }
         }
 
         arrowPath.skip();
@@ -1914,7 +1814,7 @@ export class JSASTAnalyzer extends Plugin {
 
           // Parse condition to extract constraints
           const constraints = ConditionParser.parse(ifNode.test);
-          const ifSemanticId = this.generateSemanticId('if_statement', scopeCtx);
+          const ifSemanticId = this.generateSemanticId('if_statement', scopeTracker);
 
           scopes.push({
             id: ifScopeId,
@@ -1942,7 +1842,7 @@ export class JSASTAnalyzer extends Plugin {
             const elseScopeId = `SCOPE#else#${module.file}#${ifNode.alternate.loc!.start.line}:${ifNode.alternate.loc!.start.column}:${elseCounterId}`;
 
             const negatedConstraints = constraints.length > 0 ? ConditionParser.negate(constraints) : undefined;
-            const elseSemanticId = this.generateSemanticId('else_statement', scopeCtx);
+            const elseSemanticId = this.generateSemanticId('else_statement', scopeTracker);
 
             scopes.push({
               id: elseScopeId,
@@ -1997,111 +1897,18 @@ export class JSASTAnalyzer extends Plugin {
 
       // Function call expressions
       CallExpression: (callPath: NodePath<t.CallExpression>) => {
-        const callNode = callPath.node;
-
-        // Handle direct function calls (greet(), main())
-        if (callNode.callee.type === 'Identifier') {
-          const nodeKey = `${callNode.start}:${callNode.end}`;
-          if (processedCallSites.has(nodeKey)) {
-            return;
-          }
-          processedCallSites.add(nodeKey);
-
-          // Generate semantic ID (primary) or legacy ID (fallback)
-          const calleeName = callNode.callee.name;
-          const legacyId = `CALL#${calleeName}#${module.file}#${callNode.loc!.start.line}:${callNode.loc!.start.column}:${callSiteCounterRef.value++}`;
-
-          let callId = legacyId;
-          if (scopeTracker) {
-            const discriminator = scopeTracker.getItemCounter(`CALL:${calleeName}`);
-            callId = computeSemanticId('CALL', calleeName, scopeTracker.getContext(), { discriminator });
-          }
-
-          callSites.push({
-            id: callId,
-            type: 'CALL',
-            name: calleeName,
-            file: module.file,
-            line: callNode.loc!.start.line,
-            parentScopeId,
-            targetFunctionName: calleeName
-          });
-        }
-        // Handle method calls (obj.method(), data.process())
-        else if (callNode.callee.type === 'MemberExpression') {
-          const memberCallee = callNode.callee;
-          const object = memberCallee.object;
-          const property = memberCallee.property;
-          const isComputed = memberCallee.computed;
-
-          if ((object.type === 'Identifier' || object.type === 'ThisExpression') && property.type === 'Identifier') {
-            const nodeKey = `${callNode.start}:${callNode.end}`;
-            if (processedMethodCalls.has(nodeKey)) {
-              return;
-            }
-            processedMethodCalls.add(nodeKey);
-
-            const objectName = object.type === 'Identifier' ? object.name : 'this';
-            const methodName = isComputed ? '<computed>' : property.name;
-            const fullName = `${objectName}.${methodName}`;
-
-            // Generate semantic ID (primary) or legacy ID (fallback)
-            const legacyId = `CALL#${fullName}#${module.file}#${callNode.loc!.start.line}:${callNode.loc!.start.column}:${callSiteCounterRef.value++}`;
-
-            let methodCallId = legacyId;
-            if (scopeTracker) {
-              const discriminator = scopeTracker.getItemCounter(`CALL:${fullName}`);
-              methodCallId = computeSemanticId('CALL', fullName, scopeTracker.getContext(), { discriminator });
-            }
-
-            methodCalls.push({
-              id: methodCallId,
-              type: 'CALL',
-              name: fullName,
-              object: objectName,
-              method: methodName,
-              computed: isComputed,
-              computedPropertyVar: isComputed ? property.name : null,
-              file: module.file,
-              line: callNode.loc!.start.line,
-              column: callNode.loc!.start.column,
-              parentScopeId
-            });
-
-            // Check for array mutation methods (push, unshift, splice)
-            const ARRAY_MUTATION_METHODS = ['push', 'unshift', 'splice'];
-            if (ARRAY_MUTATION_METHODS.includes(methodName)) {
-              // Initialize collection if not exists
-              if (!collections.arrayMutations) {
-                collections.arrayMutations = [];
-              }
-              const arrayMutations = collections.arrayMutations as ArrayMutationInfo[];
-              this.detectArrayMutationInFunction(
-                callNode,
-                objectName,
-                methodName as 'push' | 'unshift' | 'splice',
-                module,
-                arrayMutations,
-                scopeTracker
-              );
-            }
-
-            // Check for Object.assign() calls
-            if (objectName === 'Object' && methodName === 'assign') {
-              // Initialize collection if not exists
-              if (!collections.objectMutations) {
-                collections.objectMutations = [];
-              }
-              const objectMutations = collections.objectMutations as ObjectMutationInfo[];
-              this.detectObjectAssignInFunction(
-                callNode,
-                module,
-                objectMutations,
-                scopeTracker
-              );
-            }
-          }
-        }
+        this.handleCallExpression(
+          callPath.node,
+          processedCallSites,
+          processedMethodCalls,
+          callSites,
+          methodCalls,
+          module,
+          callSiteCounterRef,
+          scopeTracker,
+          parentScopeId,
+          collections
+        );
       },
 
       // NewExpression (constructor calls)
@@ -2179,6 +1986,144 @@ export class JSASTAnalyzer extends Plugin {
         }
       }
     });
+  }
+
+  /**
+   * Handle CallExpression nodes: direct function calls (greet(), main())
+   * and method calls (obj.method(), data.process()).
+   *
+   * Handles:
+   * - Direct function calls (Identifier callee) → callSites collection
+   * - Method calls (MemberExpression callee) → methodCalls collection
+   * - Array mutation detection (push, unshift, splice)
+   * - Object.assign() detection
+   *
+   * @param callNode - The call expression AST node
+   * @param processedCallSites - Set of already processed call site keys to avoid duplicates
+   * @param processedMethodCalls - Set of already processed method call keys to avoid duplicates
+   * @param callSites - Collection for direct function calls
+   * @param methodCalls - Collection for method calls
+   * @param module - Current module being analyzed
+   * @param callSiteCounterRef - Counter for legacy ID generation
+   * @param scopeTracker - Optional scope tracker for semantic ID generation
+   * @param parentScopeId - ID of the parent scope containing this call
+   * @param collections - Full collections object for array/object mutations
+   */
+  private handleCallExpression(
+    callNode: t.CallExpression,
+    processedCallSites: Set<string>,
+    processedMethodCalls: Set<string>,
+    callSites: CallSiteInfo[],
+    methodCalls: MethodCallInfo[],
+    module: VisitorModule,
+    callSiteCounterRef: CounterRef,
+    scopeTracker: ScopeTracker | undefined,
+    parentScopeId: string,
+    collections: VisitorCollections
+  ): void {
+    // Handle direct function calls (greet(), main())
+    if (callNode.callee.type === 'Identifier') {
+      const nodeKey = `${callNode.start}:${callNode.end}`;
+      if (processedCallSites.has(nodeKey)) {
+        return;
+      }
+      processedCallSites.add(nodeKey);
+
+      // Generate semantic ID (primary) or legacy ID (fallback)
+      const calleeName = callNode.callee.name;
+      const legacyId = `CALL#${calleeName}#${module.file}#${callNode.loc!.start.line}:${callNode.loc!.start.column}:${callSiteCounterRef.value++}`;
+
+      let callId = legacyId;
+      if (scopeTracker) {
+        const discriminator = scopeTracker.getItemCounter(`CALL:${calleeName}`);
+        callId = computeSemanticId('CALL', calleeName, scopeTracker.getContext(), { discriminator });
+      }
+
+      callSites.push({
+        id: callId,
+        type: 'CALL',
+        name: calleeName,
+        file: module.file,
+        line: callNode.loc!.start.line,
+        parentScopeId,
+        targetFunctionName: calleeName
+      });
+    }
+    // Handle method calls (obj.method(), data.process())
+    else if (callNode.callee.type === 'MemberExpression') {
+      const memberCallee = callNode.callee;
+      const object = memberCallee.object;
+      const property = memberCallee.property;
+      const isComputed = memberCallee.computed;
+
+      if ((object.type === 'Identifier' || object.type === 'ThisExpression') && property.type === 'Identifier') {
+        const nodeKey = `${callNode.start}:${callNode.end}`;
+        if (processedMethodCalls.has(nodeKey)) {
+          return;
+        }
+        processedMethodCalls.add(nodeKey);
+
+        const objectName = object.type === 'Identifier' ? object.name : 'this';
+        const methodName = isComputed ? '<computed>' : property.name;
+        const fullName = `${objectName}.${methodName}`;
+
+        // Generate semantic ID (primary) or legacy ID (fallback)
+        const legacyId = `CALL#${fullName}#${module.file}#${callNode.loc!.start.line}:${callNode.loc!.start.column}:${callSiteCounterRef.value++}`;
+
+        let methodCallId = legacyId;
+        if (scopeTracker) {
+          const discriminator = scopeTracker.getItemCounter(`CALL:${fullName}`);
+          methodCallId = computeSemanticId('CALL', fullName, scopeTracker.getContext(), { discriminator });
+        }
+
+        methodCalls.push({
+          id: methodCallId,
+          type: 'CALL',
+          name: fullName,
+          object: objectName,
+          method: methodName,
+          computed: isComputed,
+          computedPropertyVar: isComputed ? property.name : null,
+          file: module.file,
+          line: callNode.loc!.start.line,
+          column: callNode.loc!.start.column,
+          parentScopeId
+        });
+
+        // Check for array mutation methods (push, unshift, splice)
+        const ARRAY_MUTATION_METHODS = ['push', 'unshift', 'splice'];
+        if (ARRAY_MUTATION_METHODS.includes(methodName)) {
+          // Initialize collection if not exists
+          if (!collections.arrayMutations) {
+            collections.arrayMutations = [];
+          }
+          const arrayMutations = collections.arrayMutations as ArrayMutationInfo[];
+          this.detectArrayMutationInFunction(
+            callNode,
+            objectName,
+            methodName as 'push' | 'unshift' | 'splice',
+            module,
+            arrayMutations,
+            scopeTracker
+          );
+        }
+
+        // Check for Object.assign() calls
+        if (objectName === 'Object' && methodName === 'assign') {
+          // Initialize collection if not exists
+          if (!collections.objectMutations) {
+            collections.objectMutations = [];
+          }
+          const objectMutations = collections.objectMutations as ObjectMutationInfo[];
+          this.detectObjectAssignInFunction(
+            callNode,
+            module,
+            objectMutations,
+            scopeTracker
+          );
+        }
+      }
+    }
   }
 
   /**
