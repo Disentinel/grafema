@@ -58,14 +58,15 @@ export class TypeScriptDeadCodeValidator extends Plugin {
 
   async execute(context: PluginContext): Promise<PluginResult> {
     const { graph } = context;
+    const logger = this.log(context);
 
-    console.log('[TypeScriptDeadCodeValidator] Checking for dead TypeScript code...');
+    logger.info('Starting TypeScript dead code analysis');
     const startTime = Date.now();
 
     const issues: DeadCodeIssue[] = [];
 
     // Collect all interfaces
-    console.log('[TypeScriptDeadCodeValidator] Collecting interfaces...');
+    logger.debug('Collecting interfaces');
     const interfaces: Map<string, { id: string; name: string; file?: string; line?: number; properties?: unknown[] }> = new Map();
 
     for await (const node of graph.queryNodes({ nodeType: 'INTERFACE' })) {
@@ -80,10 +81,10 @@ export class TypeScriptDeadCodeValidator extends Plugin {
         properties: (node as { properties?: unknown[] }).properties
       });
     }
-    console.log(`[TypeScriptDeadCodeValidator] Found ${interfaces.size} interfaces`);
+    logger.debug('Interfaces collected', { count: interfaces.size });
 
     // Find interfaces with IMPLEMENTS or EXTENDS edges
-    console.log('[TypeScriptDeadCodeValidator] Checking implementations...');
+    logger.debug('Checking implementations');
     const implementedInterfaces: Map<string, number> = new Map();
 
     // Get all edges and filter by type (no queryEdges in GraphBackend yet)
@@ -168,31 +169,31 @@ export class TypeScriptDeadCodeValidator extends Plugin {
       timeSeconds: totalTime
     };
 
-    console.log('[TypeScriptDeadCodeValidator] Summary:', summary);
+    logger.info('Analysis complete', { ...summary });
 
     // Report issues
     const warnings = issues.filter(i => i.severity === 'WARNING');
     const infos = issues.filter(i => i.severity === 'INFO');
 
     if (warnings.length > 0) {
-      console.log(`[TypeScriptDeadCodeValidator] ⚠️  ${warnings.length} warning(s):`);
+      logger.warn('Warnings found', { count: warnings.length });
       for (const issue of warnings) {
-        console.log(`  ⚠️  ${issue.message}`);
+        logger.warn(issue.message);
       }
     }
 
     if (infos.length > 0) {
-      console.log(`[TypeScriptDeadCodeValidator] ℹ️  ${infos.length} info(s):`);
+      logger.info('Info messages', { count: infos.length });
       for (const issue of infos.slice(0, 5)) { // Limit to first 5
-        console.log(`  ℹ️  ${issue.message}`);
+        logger.info(issue.message);
       }
       if (infos.length > 5) {
-        console.log(`  ... and ${infos.length - 5} more`);
+        logger.debug(`... and ${infos.length - 5} more`);
       }
     }
 
     if (issues.length === 0) {
-      console.log('[TypeScriptDeadCodeValidator] ✅ No dead TypeScript code detected');
+      logger.info('No dead TypeScript code detected');
     }
 
     return createSuccessResult(

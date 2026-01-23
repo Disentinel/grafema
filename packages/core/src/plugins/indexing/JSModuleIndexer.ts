@@ -211,6 +211,7 @@ export class JSModuleIndexer extends Plugin {
   }
 
   async execute(context: PluginContext): Promise<PluginResult> {
+    const logger = this.log(context);
     try {
       const { graph, onProgress, config } = context;
       const manifest = context.manifest as IndexerManifest | undefined;
@@ -233,7 +234,7 @@ export class JSModuleIndexer extends Plugin {
         ? entrypoint
         : join(projectPath, entrypoint);
 
-      console.log(`[JSModuleIndexer] Building dependency tree from ${service.name}`);
+      logger.info('Building dependency tree', { service: service.name });
 
       // DFS через стек (как в file2host.js)
       const visited = new Set<string>();
@@ -267,16 +268,16 @@ export class JSModuleIndexer extends Plugin {
           lastProgressReport = visited.size;
         }
 
-        console.log(`[JSModuleIndexer] Processing: ${currentFile.replace(projectPath, '')} (depth ${depth})`);
+        logger.debug('Processing file', { file: currentFile.replace(projectPath, ''), depth });
 
         if (depth > MAX_DEPTH) {
-          console.log(`[JSModuleIndexer] Max depth ${MAX_DEPTH} reached at ${currentFile}`);
+          logger.warn('Max depth reached', { maxDepth: MAX_DEPTH, file: currentFile });
           continue;
         }
 
         // Парсим зависимости
         const deps = this.processFile(currentFile, projectPath);
-        console.log(`[JSModuleIndexer] Found ${deps instanceof Error ? 0 : deps.length} dependencies in ${currentFile.replace(projectPath, '')}`);
+        logger.debug('Found dependencies', { file: currentFile.replace(projectPath, ''), count: deps instanceof Error ? 0 : deps.length });
 
         if (deps instanceof Error) {
           if (!deps.message.includes('ENOENT')) {
@@ -292,7 +293,7 @@ export class JSModuleIndexer extends Plugin {
               'Check file syntax or ensure the file is a supported JavaScript/TypeScript file'
             );
             parseErrors.push(error);
-            console.log(`[JSModuleIndexer] Error parsing ${currentFile}: ${deps.message}`);
+            logger.debug('Parse error', { file: currentFile, error: deps.message });
           }
           continue;
         }
@@ -315,7 +316,7 @@ export class JSModuleIndexer extends Plugin {
         };
         const moduleId = moduleNode.id;
 
-        console.log(`[JSModuleIndexer] Creating MODULE node: ${moduleNode.id}`);
+        logger.debug('Creating MODULE node', { moduleId: moduleNode.id });
         await graph.addNode(moduleNode);
         nodesCreated++;
 
@@ -330,20 +331,20 @@ export class JSModuleIndexer extends Plugin {
         for (const dep of deps) {
           if (dep.startsWith('package::')) {
             // npm пакет - игнорируем пока
-            console.log(`[JSModuleIndexer]   Skipping npm package: ${dep}`);
+            logger.debug('Skipping npm package', { package: dep });
             continue;
           }
 
           const resolvedDep = this.resolveModulePath(dep);
-          console.log(`[JSModuleIndexer]   Resolved: ${dep} -> ${resolvedDep.replace(projectPath, '')}`);
+          logger.debug('Resolved dependency', { from: dep, to: resolvedDep.replace(projectPath, '') });
 
           // Добавляем в стек если ещё не посещали
           if (!visited.has(resolvedDep)) {
             visited.add(resolvedDep);
             stack.push({ file: resolvedDep, depth: depth + 1 });
-            console.log(`[JSModuleIndexer]   Added to stack (depth ${depth + 1})`);
+            logger.debug('Added to stack', { depth: depth + 1 });
           } else {
-            console.log(`[JSModuleIndexer]   Already visited, skipping`);
+            logger.debug('Already visited, skipping', { file: resolvedDep });
           }
 
           // Queue DEPENDS_ON edges for later (after all nodes exist)
@@ -367,9 +368,11 @@ export class JSModuleIndexer extends Plugin {
 
       // Warning if hit MAX_MODULES limit
       if (visited.size >= MAX_MODULES) {
-        console.warn(`[JSModuleIndexer] ⚠️  ${service.name} hit MAX_MODULES limit (${MAX_MODULES})!`);
-        console.warn(`[JSModuleIndexer]    This service may be pulling in too many dependencies.`);
-        console.warn(`[JSModuleIndexer]    Unprocessed files in stack: ${stack.length}`);
+        logger.warn('Hit MAX_MODULES limit', {
+          service: service.name,
+          limit: MAX_MODULES,
+          unprocessedInStack: stack.length
+        });
       }
 
       // Final progress report
@@ -384,7 +387,11 @@ export class JSModuleIndexer extends Plugin {
         });
       }
 
-      console.log(`[JSModuleIndexer] ${service.name}: ${nodesCreated} modules, ${visited.size} total in tree`);
+      logger.info('Indexing complete', {
+        service: service.name,
+        modulesCreated: nodesCreated,
+        totalInTree: visited.size
+      });
 
       // Return result with parse errors (REG-147)
       return {
@@ -396,7 +403,7 @@ export class JSModuleIndexer extends Plugin {
       };
 
     } catch (error) {
-      console.error(`[JSModuleIndexer] Error:`, error);
+      logger.error('Indexing failed', { error });
       return createErrorResult(error as Error);
     }
   }

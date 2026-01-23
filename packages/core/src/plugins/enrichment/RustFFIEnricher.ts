@@ -40,20 +40,21 @@ export class RustFFIEnricher extends Plugin {
 
   async execute(context: PluginContext): Promise<PluginResult> {
     const { graph } = context;
+    const logger = this.log(context);
 
     // 1. Build index of NAPI-exported Rust functions/methods
     const napiIndex = await this.buildNapiIndex(graph);
 
     if (napiIndex.size === 0) {
-      console.log('[RustFFIEnricher] No NAPI exports found, skipping');
+      logger.info('No NAPI exports found, skipping');
       return createSuccessResult({ nodes: 0, edges: 0 }, { skipped: true, reason: 'No NAPI exports' });
     }
 
-    console.log(`[RustFFIEnricher] Indexed ${napiIndex.size} NAPI exports`);
+    logger.debug('Indexed NAPI exports', { count: napiIndex.size });
 
     // 2. Find JS CALL nodes that target Rust
     const jsCalls = await this.findRustCallingJsCalls(graph);
-    console.log(`[RustFFIEnricher] Found ${jsCalls.length} candidate JS calls`);
+    logger.debug('Found candidate JS calls', { count: jsCalls.length });
 
     // 3. Match and create FFI_CALLS edges
     let edgesCreated = 0;
@@ -78,10 +79,10 @@ export class RustFFIEnricher extends Plugin {
     }
 
     if (unmatched.length > 0 && unmatched.length <= 20) {
-      console.log(`[RustFFIEnricher] Unmatched calls:`, unmatched.slice(0, 10));
+      logger.debug('Unmatched calls', { calls: unmatched.slice(0, 10) });
     }
 
-    console.log(`[RustFFIEnricher] Created ${edgesCreated} FFI_CALLS edges`);
+    logger.info('Created FFI_CALLS edges', { count: edgesCreated, unmatched: unmatched.length });
     return createSuccessResult({ nodes: 0, edges: edgesCreated }, { unmatched: unmatched.length });
   }
 

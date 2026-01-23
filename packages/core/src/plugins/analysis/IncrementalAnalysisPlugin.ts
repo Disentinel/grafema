@@ -88,26 +88,29 @@ export class IncrementalAnalysisPlugin extends Plugin {
   }
 
   async initialize(context: PluginContext): Promise<void> {
-    // Инициализируем VCS плагин
+    const logger = this.log(context);
+    // Initialize VCS plugin
     const manifest = context.manifest as AnalysisManifest | undefined;
     this.vcsPlugin = await VCSPluginFactory.detect({
       rootPath: manifest?.projectPath
-    });
+    }, logger);
 
     if (!this.vcsPlugin) {
-      console.log('[IncrementalAnalysis] No VCS detected, skipping incremental analysis');
+      logger.warn('No VCS detected, skipping incremental analysis');
     } else {
-      console.log(`[IncrementalAnalysis] Using VCS: ${this.vcsPlugin.metadata.name}`);
+      logger.info('VCS detected', { vcs: this.vcsPlugin.metadata.name });
     }
   }
 
   async execute(context: PluginContext): Promise<PluginResult> {
+    const logger = this.log(context);
+
     try {
       const { graph } = context;
       const manifest = context.manifest as AnalysisManifest | undefined;
       const projectPath = manifest?.projectPath ?? '';
 
-      // Если нет VCS - пропускаем инкрементальный анализ
+      // Skip if no VCS detected
       if (!this.vcsPlugin) {
         return createSuccessResult(
           { nodes: 0, edges: 0 },
@@ -118,10 +121,10 @@ export class IncrementalAnalysisPlugin extends Plugin {
         );
       }
 
-      // Проверяем наличие uncommitted изменений
+      // Check for uncommitted changes
       const hasChanges = await this.vcsPlugin.hasUncommittedChanges();
       if (!hasChanges) {
-        console.log('[IncrementalAnalysis] No uncommitted changes detected');
+        logger.info('No uncommitted changes detected');
         return createSuccessResult(
           { nodes: 0, edges: 0 },
           {
@@ -131,12 +134,9 @@ export class IncrementalAnalysisPlugin extends Plugin {
         );
       }
 
-      // Получаем список изменённых файлов
+      // Get list of changed files
       const changedFiles = (await this.vcsPlugin.getChangedFiles()) as ChangedFileInfo[];
-      console.log(
-        `[IncrementalAnalysis] All changed files:`,
-        changedFiles.map(f => f.path)
-      );
+      logger.debug('Changed files detected', { count: changedFiles.length, files: changedFiles.map(f => f.path) });
 
       const jsFiles = changedFiles.filter(
         file =>
@@ -144,7 +144,7 @@ export class IncrementalAnalysisPlugin extends Plugin {
       );
 
       if (jsFiles.length === 0) {
-        console.log('[IncrementalAnalysis] No JavaScript files changed');
+        logger.info('No JavaScript files changed');
         return createSuccessResult(
           { nodes: 0, edges: 0 },
           {
@@ -154,28 +154,27 @@ export class IncrementalAnalysisPlugin extends Plugin {
         );
       }
 
-      console.log(
-        `[IncrementalAnalysis] Found ${jsFiles.length} changed JS files:`,
-        jsFiles.map(f => f.path)
-      );
+      logger.info('Processing changed JS files', { count: jsFiles.length });
+      for (const f of jsFiles) {
+        logger.debug('Changed file', { path: f.path, status: f.status });
+      }
 
       let totalNodesCreated = 0;
       let totalEdgesCreated = 0;
 
-      // Обрабатываем каждый изменённый файл
+      // Process each changed file
       for (const fileInfo of jsFiles) {
         const result = await this.processChangedFile(
           fileInfo,
           projectPath,
-          graph as unknown as VersionAwareGraph
+          graph as unknown as VersionAwareGraph,
+          logger
         );
         totalNodesCreated += result.nodesCreated;
         totalEdgesCreated += result.edgesCreated;
       }
 
-      console.log(
-        `[IncrementalAnalysis] Created ${totalNodesCreated} __local nodes, ${totalEdgesCreated} edges`
-      );
+      logger.info('Incremental analysis complete', { nodesCreated: totalNodesCreated, edgesCreated: totalEdgesCreated });
 
       return createSuccessResult(
         { nodes: totalNodesCreated, edges: totalEdgesCreated },
@@ -185,37 +184,41 @@ export class IncrementalAnalysisPlugin extends Plugin {
         }
       );
     } catch (error) {
-      console.error('[IncrementalAnalysis] Error:', error);
+      logger.error('Incremental analysis failed', { error: error instanceof Error ? error.message : String(error) });
       return createErrorResult(error as Error);
     }
   }
 
   /**
-   * Обработать один изменённый файл
+   * Process a single changed file
    */
   private async processChangedFile(
     fileInfo: ChangedFileInfo,
     projectPath: string,
-    graph: VersionAwareGraph
+    graph: VersionAwareGraph,
+    logger: ReturnType<typeof this.log>
   ): Promise<{ nodesCreated: number; edgesCreated: number }> {
     const { path: relativePath, status } = fileInfo;
-    // relativePath может начинаться с / или быть относительным
+    // relativePath can start with / or be relative
     const fullPath = relativePath.startsWith('/') ? relativePath : `${projectPath}/${relativePath}`;
 
-    console.log(`[IncrementalAnalysis] Processing ${relativePath} (${status})`);
+    logger.debug('Processing file', { path: relativePath, status });
 
-    // Если файл удалён - ничего не делаем (main версия остаётся, __local не создаём)
+    // If file is deleted - do nothing (main version remains, no __local)
     if (status === 'deleted') {
-      console.log(`  → File deleted, keeping main version only`);
+      logger.debug('File deleted, keeping main version only');
       return { nodesCreated: 0, edgesCreated: 0 };
     }
 
-    // Выполняем fine-grained merge
-    const result = await this.finegrainedMerge(fullPath, graph);
+    // Execute fine-grained merge
+    const result = await this.finegrainedMerge(fullPath, graph, logger);
 
-    console.log(
-      `  → Added: ${result.added}, Modified: ${result.modified}, Unchanged: ${result.unchanged}, Deleted: ${result.deleted}`
-    );
+    logger.debug('Merge result', {
+      added: result.added,
+      modified: result.modified,
+      unchanged: result.unchanged,
+      deleted: result.deleted
+    });
 
     return {
       nodesCreated: result.added + result.modified,
@@ -224,11 +227,12 @@ export class IncrementalAnalysisPlugin extends Plugin {
   }
 
   /**
-   * Fine-grained merge - ключевая функция инкрементального анализа
+   * Fine-grained merge - key function for incremental analysis
    */
   private async finegrainedMerge(
     filePath: string,
-    graph: VersionAwareGraph
+    graph: VersionAwareGraph,
+    logger: ReturnType<typeof this.log>
   ): Promise<{
     added: number;
     modified: number;
@@ -236,13 +240,13 @@ export class IncrementalAnalysisPlugin extends Plugin {
     deleted: number;
     edgesCreated: number;
   }> {
-    // 1. Парсим новое содержимое файла
+    // 1. Parse new file content
     const newContent = await readFile(filePath, 'utf-8');
     const newNodes = await this.extractTopLevelNodes(newContent, filePath);
 
-    console.log(`  → Parsed ${newNodes.length} nodes from new content`);
+    logger.debug('Parsed new content', { nodesCount: newNodes.length });
 
-    // 2. Получаем существующие main ноды для этого файла
+    // 2. Get existing main nodes for this file
     const mainNodes = await graph.getNodesByVersion('main', {
       file: filePath
     });
@@ -251,25 +255,28 @@ export class IncrementalAnalysisPlugin extends Plugin {
       ['FUNCTION', 'CLASS', 'VARIABLE_DECLARATION', 'MODULE'].includes(node.type!)
     );
 
-    console.log(`  → Found ${mainTopLevel.length} existing main nodes`);
+    logger.debug('Existing main nodes', { count: mainTopLevel.length });
 
-    // 3. Классифицируем изменения
+    // 3. Classify changes
     const changes = versionManager.classifyChanges(mainTopLevel, newNodes);
 
-    console.log(
-      `  → Classification: +${changes.added.length} ~${changes.modified.length} =${changes.unchanged.length} -${changes.deleted.length}`
-    );
+    logger.debug('Change classification', {
+      added: changes.added.length,
+      modified: changes.modified.length,
+      unchanged: changes.unchanged.length,
+      deleted: changes.deleted.length
+    });
 
-    // 4. Создаём __local версии для added/modified нод
+    // 4. Create __local versions for added/modified nodes
     let edgesCreated = 0;
 
-    // 4a. ADDED nodes - просто создаём с версией __local
+    // 4a. ADDED nodes - create with __local version
     for (const node of changes.added) {
       const enrichedNode = versionManager.enrichNodeWithVersion(node, '__local');
       await graph.addNode(enrichedNode as unknown as NodeRecord);
     }
 
-    // 4b. MODIFIED nodes - создаём __local версию + REPLACES ребро
+    // 4b. MODIFIED nodes - create __local version + REPLACES edge
     for (const { old: oldNode, new: newNode } of changes.modified) {
       const mainNodeId = versionManager.generateVersionedId(oldNode, 'main');
       const enrichedNode = versionManager.enrichNodeWithVersion(newNode, '__local', {
@@ -278,9 +285,9 @@ export class IncrementalAnalysisPlugin extends Plugin {
 
       await graph.addNode(enrichedNode as unknown as NodeRecord);
 
-      // Создаём REPLACES ребро
+      // Create REPLACES edge
       const replacesEdge = versionManager.createReplacesEdge(enrichedNode.id!, mainNodeId);
-      console.log(`    [REPLACES] ${newNode.name}: ${enrichedNode.id} → ${mainNodeId}`);
+      logger.debug('Node replacement', { name: newNode.name, from: enrichedNode.id, to: mainNodeId });
       await graph.addEdge({
         type: replacesEdge.type,
         src: replacesEdge.fromId,
@@ -289,14 +296,14 @@ export class IncrementalAnalysisPlugin extends Plugin {
       edgesCreated++;
     }
 
-    // 4c. UNCHANGED nodes - не создаём __local версию (используется main)
-    // 4d. DELETED nodes - не создаём __local версию (main остаётся, показывая что было удалено)
+    // 4c. UNCHANGED nodes - no __local version (main is used)
+    // 4d. DELETED nodes - no __local version (main remains, showing what was deleted)
 
-    // 5. Переанализируем изменённые ноды для создания связей (CALLS, USES)
+    // 5. Reanalyze changed nodes to create relationships (CALLS, USES)
     const nodesToReanalyze = [...changes.added, ...changes.modified.map(m => m.new)];
 
     if (nodesToReanalyze.length > 0) {
-      const reanalyzeResult = await this.reanalyzeNodes(nodesToReanalyze, filePath, '__local', graph);
+      const reanalyzeResult = await this.reanalyzeNodes(nodesToReanalyze, filePath, '__local', graph, logger);
       edgesCreated += reanalyzeResult.edgesCreated;
     }
 
@@ -434,8 +441,8 @@ export class IncrementalAnalysisPlugin extends Plugin {
           }
         }
       });
-    } catch (error) {
-      console.error(`  ✗ Failed to parse ${filePath}:`, (error as Error).message);
+    } catch {
+      // Parse error - return empty nodes array
     }
 
     return nodes;
@@ -480,27 +487,28 @@ export class IncrementalAnalysisPlugin extends Plugin {
   }
 
   /**
-   * Переанализировать ноды для создания CALLS/USES edges
+   * Reanalyze nodes to create CALLS/USES edges
    */
   private async reanalyzeNodes(
     nodes: VersionedNode[],
     filePath: string,
     version: string,
-    graph: VersionAwareGraph
+    graph: VersionAwareGraph,
+    logger: ReturnType<typeof this.log>
   ): Promise<{ edgesCreated: number }> {
     let edgesCreated = 0;
 
     try {
-      // Читаем файл заново
+      // Read file again
       const content = await readFile(filePath, 'utf-8');
 
-      // Парсим AST
+      // Parse AST
       const ast = parse(content, {
         sourceType: 'module',
         plugins: ['jsx', 'typescript', 'decorators-legacy'] as ParserPlugin[]
       });
 
-      // Для каждой ноды ищем её в AST и анализируем
+      // For each node, find it in AST and analyze
       for (const node of nodes) {
         if (node.type === 'FUNCTION') {
           const functionEdges = await this.analyzeFunctionCalls(node, ast, version, graph);
@@ -511,11 +519,11 @@ export class IncrementalAnalysisPlugin extends Plugin {
         }
       }
 
-      console.log(`  → Reanalyzed ${nodes.length} nodes, created ${edgesCreated} edges`);
+      logger.debug('Reanalyzed nodes', { nodesCount: nodes.length, edgesCreated });
 
       return { edgesCreated };
-    } catch (error) {
-      console.error(`[IncrementalAnalysis] Error reanalyzing nodes:`, error);
+    } catch {
+      // Error reanalyzing nodes - silently return empty result
       return { edgesCreated: 0 };
     }
   }
@@ -617,12 +625,12 @@ export class IncrementalAnalysisPlugin extends Plugin {
       const calleeName = callSite.callee.split('.')[0]; // Для method calls берём объект
       const calleeStableId = `FUNCTION:${calleeName}:${functionNode.file}`;
 
-      // Ищем callee в базе
+      // Find callee and create edge
       try {
         const created = await this.findCalleeAndCreateEdge(callerId, calleeStableId, version, graph);
         if (created) edgesCreated++;
-      } catch (err) {
-        console.error(`[IncrementalAnalysis] Error creating CALLS edge:`, err);
+      } catch {
+        // Error creating CALLS edge - skip silently
       }
     }
 
@@ -656,7 +664,7 @@ export class IncrementalAnalysisPlugin extends Plugin {
         return false;
       }
 
-      // Создаём CALLS edge
+      // Create CALLS edge
       await graph.addEdge({
         type: 'CALLS',
         src: callerId,
@@ -664,8 +672,8 @@ export class IncrementalAnalysisPlugin extends Plugin {
       });
 
       return true;
-    } catch (error) {
-      console.error(`[IncrementalAnalysis] Error finding callee:`, error);
+    } catch {
+      // Error finding callee - return false
       return false;
     }
   }

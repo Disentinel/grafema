@@ -116,8 +116,9 @@ export class NodeCreationValidator extends Plugin {
 
   async execute(context: PluginContext): Promise<PluginResult> {
     const { graph } = context;
+    const logger = this.log(context);
 
-    console.log('[NodeCreationValidator] Checking NodeFactory usage...');
+    logger.info('Starting NodeFactory usage validation');
     const startTime = Date.now();
 
     const issues: NodeCreationIssue[] = [];
@@ -129,7 +130,7 @@ export class NodeCreationValidator extends Plugin {
 
     // Check if graph supports required methods
     if (!graph.getAllEdges || !graph.getAllNodes) {
-      console.log('[NodeCreationValidator] Graph does not support getAllEdges/getAllNodes, skipping validation');
+      logger.debug('Graph does not support getAllEdges/getAllNodes, skipping validation');
       return createSuccessResult({ nodes: 0, edges: 0 }, { skipped: true });
     }
 
@@ -152,7 +153,7 @@ export class NodeCreationValidator extends Plugin {
     }
 
     // 1. Find all calls to addNode and addNodes
-    console.log('[NodeCreationValidator] Searching for addNode/addNodes calls...');
+    logger.debug('Searching for addNode/addNodes calls');
 
     for (const node of allNodes) {
       if (node.type !== 'CALL') continue;
@@ -205,19 +206,18 @@ export class NodeCreationValidator extends Plugin {
       timeSeconds: totalTime
     };
 
-    console.log('[NodeCreationValidator] Summary:', summary);
+    logger.info('Validation complete', { ...summary });
 
     if (issues.length > 0) {
-      console.log('[NodeCreationValidator] ❌ NodeFactory violations found:');
+      logger.warn('NodeFactory violations found', { count: issues.length });
       for (const issue of issues.slice(0, 10)) {  // Limit output
-        console.log(`  🚫 [${issue.type}] ${issue.message}`);
-        console.log(`     Suggestion: ${issue.suggestion}`);
+        logger.warn(`[${issue.type}] ${issue.message}`, { suggestion: issue.suggestion });
       }
       if (issues.length > 10) {
-        console.log(`  ... and ${issues.length - 10} more violations`);
+        logger.debug(`... and ${issues.length - 10} more violations`);
       }
     } else {
-      console.log('[NodeCreationValidator] ✅ All nodes created through NodeFactory');
+      logger.info('All nodes created through NodeFactory');
     }
 
     return createSuccessResult(

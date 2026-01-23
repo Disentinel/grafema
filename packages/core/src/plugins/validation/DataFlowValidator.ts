@@ -72,12 +72,13 @@ export class DataFlowValidator extends Plugin {
 
   async execute(context: PluginContext): Promise<PluginResult> {
     const { graph } = context;
+    const logger = this.log(context);
 
-    console.log('[DataFlowValidator] Starting data flow validation...');
+    logger.info('Starting data flow validation');
 
     // Check if graph supports getAllEdges
     if (!graph.getAllEdges) {
-      console.log('[DataFlowValidator] Graph does not support getAllEdges, skipping validation');
+      logger.debug('Graph does not support getAllEdges, skipping validation');
       return createSuccessResult({ nodes: 0, edges: 0 }, { skipped: true });
     }
 
@@ -89,7 +90,7 @@ export class DataFlowValidator extends Plugin {
       n.type === 'VARIABLE_DECLARATION' || n.type === 'CONSTANT'
     );
 
-    console.log(`[DataFlowValidator] Found ${variables.length} variables to validate`);
+    logger.debug('Variables collected', { count: variables.length });
 
     const issues: DataFlowIssue[] = [];
     const leafTypes = new Set([
@@ -167,14 +168,17 @@ export class DataFlowValidator extends Plugin {
       summary.byType[issue.type]++;
     }
 
-    console.log('[DataFlowValidator] Summary:', summary);
+    logger.info('Validation complete', { ...summary });
 
     // Выводим issues
     if (issues.length > 0) {
-      console.log(`[DataFlowValidator] Found ${issues.length} issues:`);
+      logger.warn('Data flow issues found', { count: issues.length });
       for (const issue of issues) {
-        const level = issue.severity === 'ERROR' ? '❌' : '⚠️';
-        console.log(`  ${level} [${issue.type}] ${issue.message}`);
+        if (issue.severity === 'ERROR') {
+          logger.error(`[${issue.type}] ${issue.message}`);
+        } else {
+          logger.warn(`[${issue.type}] ${issue.message}`);
+        }
       }
     }
 

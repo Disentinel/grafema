@@ -48,8 +48,9 @@ export class MethodCallResolver extends Plugin {
 
   async execute(context: PluginContext): Promise<PluginResult> {
     const { graph, onProgress } = context;
+    const logger = this.log(context);
 
-    console.log('[MethodCallResolver] Starting method call resolution...');
+    logger.info('Starting method call resolution');
 
     let methodCallsProcessed = 0;
     let edgesCreated = 0;
@@ -64,14 +65,14 @@ export class MethodCallResolver extends Plugin {
       }
     }
 
-    console.log(`[MethodCallResolver] Found ${methodCalls.length} method calls to resolve`);
+    logger.info('Found method calls to resolve', { count: methodCalls.length });
 
     // Собираем все классы и их методы для быстрого поиска
-    const classMethodIndex = await this.buildClassMethodIndex(graph);
-    console.log(`[MethodCallResolver] Indexed ${classMethodIndex.size} classes`);
+    const classMethodIndex = await this.buildClassMethodIndex(graph, logger);
+    logger.info('Indexed classes', { count: classMethodIndex.size });
 
     // Собираем переменные и их типы (если известны)
-    const variableTypes = await this.buildVariableTypeIndex(graph);
+    const variableTypes = await this.buildVariableTypeIndex(graph, logger);
 
     const startTime = Date.now();
 
@@ -94,7 +95,12 @@ export class MethodCallResolver extends Plugin {
       if (methodCallsProcessed % 10 === 0) {
         const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
         const avgTime = ((Date.now() - startTime) / methodCallsProcessed).toFixed(0);
-        console.log(`[MethodCallResolver] Progress: ${methodCallsProcessed}/${methodCalls.length} (${elapsed}s, avg ${avgTime}ms/call)`);
+        logger.debug('Progress', {
+          processed: methodCallsProcessed,
+          total: methodCalls.length,
+          elapsed: `${elapsed}s`,
+          avgTime: `${avgTime}ms/call`
+        });
       }
 
       // Пропускаем внешние методы (console, Array.prototype, etc.)
@@ -135,7 +141,7 @@ export class MethodCallResolver extends Plugin {
       classesIndexed: classMethodIndex.size
     };
 
-    console.log('[MethodCallResolver] Summary:', summary);
+    logger.info('Summary', summary);
 
     return createSuccessResult({ nodes: 0, edges: edgesCreated }, summary);
   }
@@ -143,7 +149,7 @@ export class MethodCallResolver extends Plugin {
   /**
    * Строит индекс классов и их методов
    */
-  private async buildClassMethodIndex(graph: PluginContext['graph']): Promise<Map<string, ClassEntry>> {
+  private async buildClassMethodIndex(graph: PluginContext['graph'], logger: ReturnType<typeof this.log>): Promise<Map<string, ClassEntry>> {
     const index = new Map<string, ClassEntry>();
     const startTime = Date.now();
     let classCount = 0;
@@ -151,7 +157,7 @@ export class MethodCallResolver extends Plugin {
     for await (const classNode of graph.queryNodes({ nodeType: 'CLASS' })) {
       classCount++;
       if (classCount % 50 === 0) {
-        console.log(`[MethodCallResolver] Indexing classes: ${classCount}...`);
+        logger.debug('Indexing classes', { count: classCount });
       }
 
       const className = classNode.name as string;
@@ -180,7 +186,7 @@ export class MethodCallResolver extends Plugin {
     }
 
     const totalTime = ((Date.now() - startTime) / 1000).toFixed(1);
-    console.log(`[MethodCallResolver] Indexed ${index.size} class entries in ${totalTime}s`);
+    logger.debug('Indexed class entries', { count: index.size, time: `${totalTime}s` });
 
     return index;
   }
@@ -188,7 +194,7 @@ export class MethodCallResolver extends Plugin {
   /**
    * Строит индекс переменных и их типов (из INSTANCE_OF рёбер)
    */
-  private async buildVariableTypeIndex(graph: PluginContext['graph']): Promise<Map<string, string>> {
+  private async buildVariableTypeIndex(graph: PluginContext['graph'], logger: ReturnType<typeof this.log>): Promise<Map<string, string>> {
     const startTime = Date.now();
     const index = new Map<string, string>();
 
@@ -202,7 +208,7 @@ export class MethodCallResolver extends Plugin {
     }
 
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-    console.log(`[MethodCallResolver] Built variable type index: ${index.size} entries in ${elapsed}s`);
+    logger.debug('Built variable type index', { entries: index.size, time: `${elapsed}s` });
     return index;
   }
 

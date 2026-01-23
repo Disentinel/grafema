@@ -19,6 +19,11 @@ interface DetectorContext {
   graph: {
     addNode(node: NodeRecord): Promise<void>;
   };
+  logger?: {
+    info(message: string, data?: Record<string, unknown>): void;
+    debug(message: string, data?: Record<string, unknown>): void;
+    warn(message: string, data?: Record<string, unknown>): void;
+  };
 }
 
 /**
@@ -57,10 +62,10 @@ export class ServiceDetector {
    * Анализирует проект и создаёт SERVICE ноды
    */
   async analyze(context: DetectorContext): Promise<DetectorContext> {
-    const { projectPath, graph } = context;
+    const { projectPath, graph, logger } = context;
     const services: ServiceInfo[] = [];
 
-    console.log(`[${this.name}] Detecting services in: ${projectPath}`);
+    logger?.info('Detecting services', { projectPath });
 
     // Паттерн 1: Монорепо структура (apps/, packages/, services/)
     const monorepoPatterns = ['apps', 'packages', 'services'];
@@ -69,14 +74,14 @@ export class ServiceDetector {
       const monorepoDir = join(projectPath, pattern);
 
       if (existsSync(monorepoDir)) {
-        const detected = this.detectServicesInDir(monorepoDir, projectPath);
+        const detected = this.detectServicesInDir(monorepoDir, projectPath, logger);
         services.push(...detected);
       }
     }
 
     // Паттерн 2: Корневой проект (если нет монорепо)
     if (services.length === 0) {
-      const rootService = this.detectRootService(projectPath);
+      const rootService = this.detectRootService(projectPath, logger);
       if (rootService) {
         services.push(rootService);
       }
@@ -97,8 +102,8 @@ export class ServiceDetector {
       } as unknown as NodeRecord);
     }
 
-    console.log(`[${this.name}] Detected ${services.length} services`);
-    services.forEach(s => console.log(`  - ${s.name} (${s.path})`));
+    logger?.info('Services detected', { count: services.length });
+    services.forEach(s => logger?.debug('Service found', { name: s.name, path: s.path }));
 
     return context;
   }
@@ -106,7 +111,7 @@ export class ServiceDetector {
   /**
    * Обнаруживает сервисы в директории монорепо
    */
-  private detectServicesInDir(dir: string, projectPath: string): ServiceInfo[] {
+  private detectServicesInDir(dir: string, projectPath: string, logger?: DetectorContext['logger']): ServiceInfo[] {
     const services: ServiceInfo[] = [];
 
     try {
@@ -125,14 +130,14 @@ export class ServiceDetector {
         const hasPackageJson = existsSync(packageJsonPath);
 
         if (hasPackageJson) {
-          const service = this.createServiceFromDir(fullPath, entry, projectPath);
+          const service = this.createServiceFromDir(fullPath, entry, projectPath, logger);
           if (service) {
             services.push(service);
           }
         }
       }
     } catch (error) {
-      console.warn(`[${this.name}] Error scanning ${dir}:`, (error as Error).message);
+      logger?.warn('Error scanning directory', { dir, error: (error as Error).message });
     }
 
     return services;
@@ -141,7 +146,7 @@ export class ServiceDetector {
   /**
    * Обнаруживает корневой сервис (не монорепо)
    */
-  private detectRootService(projectPath: string): ServiceInfo | null {
+  private detectRootService(projectPath: string, logger?: DetectorContext['logger']): ServiceInfo | null {
     const packageJsonPath = join(projectPath, 'package.json');
 
     if (!existsSync(packageJsonPath)) {
@@ -149,7 +154,7 @@ export class ServiceDetector {
     }
 
     const projectName = basename(projectPath);
-    return this.createServiceFromDir(projectPath, projectName, projectPath);
+    return this.createServiceFromDir(projectPath, projectName, projectPath, logger);
   }
 
   /**
@@ -158,7 +163,8 @@ export class ServiceDetector {
   private createServiceFromDir(
     servicePath: string,
     serviceName: string,
-    projectPath: string
+    projectPath: string,
+    logger?: DetectorContext['logger']
   ): ServiceInfo | null {
     try {
       const packageJsonPath = join(servicePath, 'package.json');
@@ -189,7 +195,7 @@ export class ServiceDetector {
         hasDockerfile
       };
     } catch (error) {
-      console.warn(`[${this.name}] Error creating service from ${servicePath}:`, (error as Error).message);
+      logger?.warn('Error creating service', { servicePath, error: (error as Error).message });
       return null;
     }
   }

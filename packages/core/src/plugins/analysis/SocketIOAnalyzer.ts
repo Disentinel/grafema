@@ -93,12 +93,14 @@ export class SocketIOAnalyzer extends Plugin {
   }
 
   async execute(context: PluginContext): Promise<PluginResult> {
+    const logger = this.log(context);
+
     try {
       const { graph } = context;
 
       // Получаем все модули
       const modules = await this.getModules(graph);
-      console.log(`[SocketIOAnalyzer] Processing ${modules.length} modules...`);
+      logger.info('Processing modules', { count: modules.length });
 
       let emitsCount = 0;
       let listenersCount = 0;
@@ -116,15 +118,16 @@ export class SocketIOAnalyzer extends Plugin {
         if ((i + 1) % 20 === 0 || i === modules.length - 1) {
           const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
           const avgTime = ((Date.now() - startTime) / (i + 1)).toFixed(0);
-          console.log(
-            `[SocketIOAnalyzer] Progress: ${i + 1}/${modules.length} (${elapsed}s, avg ${avgTime}ms/module)`
-          );
+          logger.debug('Progress', {
+            current: i + 1,
+            total: modules.length,
+            elapsed: `${elapsed}s`,
+            avgTime: `${avgTime}ms/module`
+          });
         }
       }
 
-      console.log(
-        `[SocketIOAnalyzer] Found ${emitsCount} emits, ${listenersCount} listeners, ${roomsCount} rooms`
-      );
+      logger.info('Analysis complete', { emitsCount, listenersCount, roomsCount });
 
       return createSuccessResult(
         {
@@ -134,7 +137,7 @@ export class SocketIOAnalyzer extends Plugin {
         { emitsCount, listenersCount, roomsCount }
       );
     } catch (error) {
-      console.error('[SocketIOAnalyzer] Error:', error);
+      logger.error('Analysis failed', { error });
       return createErrorResult(error as Error);
     }
   }
@@ -346,10 +349,7 @@ export class SocketIOAnalyzer extends Plugin {
         rooms: rooms.length
       };
     } catch (error) {
-      console.error(
-        `[SocketIOAnalyzer] Error analyzing ${module.file}:`,
-        (error as Error).message
-      );
+      // Silent - per-module errors shouldn't spam logs
       return { emits: 0, listeners: 0, rooms: 0 };
     }
   }

@@ -56,6 +56,7 @@ export class HTTPConnectionEnricher extends Plugin {
 
   async execute(context: PluginContext): Promise<PluginResult> {
     const { graph } = context;
+    const logger = this.log(context);
 
     try {
       // Собираем все http:route (backend endpoints)
@@ -70,13 +71,19 @@ export class HTTPConnectionEnricher extends Plugin {
         requests.push(node as HTTPRequestNode);
       }
 
-      console.log(`[HTTPConnectionEnricher] Found ${routes.length} routes, ${requests.length} requests`);
+      logger.debug('Found routes and requests', {
+        routes: routes.length,
+        requests: requests.length
+      });
 
       // Дедуплицируем по ID (из-за multi-service анализа)
       const uniqueRoutes = this.deduplicateById(routes);
       const uniqueRequests = this.deduplicateById(requests);
 
-      console.log(`[HTTPConnectionEnricher] Unique: ${uniqueRoutes.length} routes, ${uniqueRequests.length} requests`);
+      logger.info('Unique routes and requests', {
+        routes: uniqueRoutes.length,
+        requests: uniqueRequests.length
+      });
 
       let edgesCreated = 0;
       const connections: ConnectionInfo[] = [];
@@ -120,10 +127,10 @@ export class HTTPConnectionEnricher extends Plugin {
 
       // Логируем найденные связи
       if (connections.length > 0) {
-        console.log(`[HTTPConnectionEnricher] Connections found:`);
-        for (const conn of connections) {
-          console.log(`  ${conn.request} → ${conn.route}`);
-        }
+        logger.info('Connections found', {
+          count: connections.length,
+          examples: connections.slice(0, 5).map(c => `${c.request} → ${c.route}`)
+        });
       }
 
       return createSuccessResult(
@@ -136,7 +143,7 @@ export class HTTPConnectionEnricher extends Plugin {
       );
 
     } catch (error) {
-      console.error(`[HTTPConnectionEnricher] Error:`, error);
+      logger.error('Error in HTTPConnectionEnricher', { error });
       return createErrorResult(error instanceof Error ? error : new Error(String(error)));
     }
   }

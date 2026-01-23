@@ -52,6 +52,7 @@ export class MountPointResolver extends Plugin {
   async execute(context: PluginContext): Promise<PluginResult> {
     try {
       const { graph } = context;
+      const logger = this.log(context);
 
       let endpointsUpdated = 0;
       let mountPointsProcessed = 0;
@@ -60,7 +61,7 @@ export class MountPointResolver extends Plugin {
       const allNodes = await graph.getAllNodes();
       const mountPoints = allNodes.filter(node => node.type === 'MOUNT_POINT') as MountPointNode[];
 
-      console.log(`[MountPointResolver] Found ${mountPoints.length} mount points`);
+      logger.info('Found mount points', { count: mountPoints.length });
 
       // For each top-level mount point (from app.use in index.js)
       // apply recursive resolver
@@ -129,7 +130,10 @@ export class MountPointResolver extends Plugin {
         mountPointsProcessed++;
       }
 
-      console.log(`[MountPointResolver] Updated ${endpointsUpdated} endpoints from ${mountPointsProcessed} mount points`);
+      logger.info('Updated endpoints', {
+        endpoints: endpointsUpdated,
+        mountPoints: mountPointsProcessed
+      });
 
       return createSuccessResult(
         { nodes: 0, edges: 0 },
@@ -137,7 +141,8 @@ export class MountPointResolver extends Plugin {
       );
 
     } catch (error) {
-      console.error(`[MountPointResolver] Error:`, error);
+      const logger = this.log(context);
+      logger.error('Error in MountPointResolver', { error });
       return createErrorResult(error as Error);
     }
   }

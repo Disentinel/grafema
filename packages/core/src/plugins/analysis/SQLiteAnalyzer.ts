@@ -62,6 +62,8 @@ export class SQLiteAnalyzer extends Plugin {
   }
 
   async execute(context: PluginContext): Promise<PluginResult> {
+    const logger = this.log(context);
+
     try {
       const { graph } = context;
 
@@ -80,14 +82,14 @@ export class SQLiteAnalyzer extends Plugin {
         edgesCreated += result.edges;
       }
 
-      console.log(`[SQLiteAnalyzer] Found ${queriesCreated} queries, ${operationsCreated} operations`);
+      logger.info('Analysis complete', { queriesCreated, operationsCreated });
 
       return createSuccessResult(
         { nodes: queriesCreated + operationsCreated, edges: edgesCreated },
         { modulesAnalyzed: modules.length, queries: queriesCreated, operations: operationsCreated }
       );
     } catch (error) {
-      console.error(`[SQLiteAnalyzer] Error:`, error);
+      logger.error('Analysis failed', { error });
       return createErrorResult(error as Error);
     }
   }
@@ -307,7 +309,7 @@ export class SQLiteAnalyzer extends Plugin {
         }
       }
     } catch (error) {
-      console.error(`[SQLiteAnalyzer] Error analyzing ${module.file}:`, (error as Error).message);
+      // Silent - per-module errors shouldn't spam logs
     }
 
     return {

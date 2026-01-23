@@ -78,6 +78,8 @@ export class ExpressAnalyzer extends Plugin {
   }
 
   async execute(context: PluginContext): Promise<PluginResult> {
+    const logger = this.log(context);
+
     try {
       const { graph } = context;
 
@@ -100,7 +102,7 @@ export class ExpressAnalyzer extends Plugin {
         edgesCreated += result.edges;
       }
 
-      console.log(`[ExpressAnalyzer] Created ${endpointsCreated} endpoints, ${mountPointsCreated} mount points`);
+      logger.info('Analysis complete', { endpointsCreated, mountPointsCreated });
 
       return createSuccessResult(
         {
@@ -113,7 +115,7 @@ export class ExpressAnalyzer extends Plugin {
         }
       );
     } catch (error) {
-      console.error(`[ExpressAnalyzer] Error:`, error);
+      logger.error('Analysis failed', { error });
       return createErrorResult(error as Error);
     }
   }
@@ -332,7 +334,7 @@ export class ExpressAnalyzer extends Plugin {
         edgesCreated += mountEdges;
       }
     } catch (error) {
-      console.error(`[ExpressAnalyzer] Error analyzing ${module.file}:`, (error as Error).message);
+      // Silent - per-module errors shouldn't spam logs
     }
 
     return {

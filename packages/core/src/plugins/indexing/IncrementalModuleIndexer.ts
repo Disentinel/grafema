@@ -151,12 +151,13 @@ export class IncrementalModuleIndexer extends Plugin {
 
       return imports;
     } catch (err) {
-      console.error(`   ⚠️  Failed to parse imports from ${relative(projectRoot, filePath)}: ${(err as Error).message}`);
+      // Parse error will be logged by execute() when it needs logger context
       return [];
     }
   }
 
   async execute(context: PluginContext): Promise<PluginResult> {
+    const logger = this.log(context);
     try {
       const { manifest, graph } = context;
       // Cast manifest to expected shape
@@ -175,7 +176,7 @@ export class IncrementalModuleIndexer extends Plugin {
       let totalImportsParsed = 0;
       let unresolvedImports = 0;
 
-      console.log(`📦 Starting incremental indexing from: ${relative(projectPath, entryFile)}\n`);
+      logger.info('Starting incremental indexing', { entryFile: relative(projectPath, entryFile) });
 
       while (queue.length > 0) {
         const file = queue.shift()!;
@@ -254,14 +255,16 @@ export class IncrementalModuleIndexer extends Plugin {
         }
 
         if (processed.size % 10 === 0) {
-          process.stdout.write(`\r   📦 Indexed ${processed.size} modules (${queue.length} in queue)...`);
+          logger.debug('Indexing progress', { indexed: processed.size, queueLength: queue.length });
         }
       }
 
-      console.log(`\r   ✅ Indexed ${processed.size} modules\n`);
-      console.log(`   📥 Parsed ${totalImportsParsed} import specifiers (unresolved: ${unresolvedImports})`);
-      console.log(`   🔗 Pending IMPORTS edges to create: ${pendingImports.length}\n`);
-      console.log(`   📊 Creating IMPORTS edges...\n`);
+      logger.info('Modules indexed', { count: processed.size });
+      logger.debug('Import statistics', {
+        totalImportsParsed,
+        unresolvedImports,
+        pendingEdges: pendingImports.length
+      });
 
       // Now create all IMPORTS edges after all MODULE nodes exist
       for (const { src, dst } of pendingImports) {
@@ -274,8 +277,11 @@ export class IncrementalModuleIndexer extends Plugin {
         edgesCreated++;
       }
 
-      console.log(`   📊 Created ${nodesCreated} MODULE nodes and ${edgesCreated} edges`);
-      console.log(`   📈 IMPORTS edges created: ${pendingImports.length}\n`);
+      logger.info('Indexing complete', {
+        nodesCreated,
+        edgesCreated,
+        importsEdgesCreated: pendingImports.length
+      });
 
       return createSuccessResult(
         { nodes: nodesCreated, edges: edgesCreated },
@@ -283,7 +289,7 @@ export class IncrementalModuleIndexer extends Plugin {
       );
 
     } catch (error) {
-      console.error(`[IncrementalModuleIndexer] Error:`, error);
+      logger.error('Indexing failed', { error });
       return createErrorResult(error as Error);
     }
   }

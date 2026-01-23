@@ -99,12 +99,14 @@ export class ServiceLayerAnalyzer extends Plugin {
   }
 
   async execute(context: PluginContext): Promise<PluginResult> {
+    const logger = this.log(context);
+
     try {
       const { graph } = context;
 
       // Получаем все модули
       const modules = await this.getModules(graph);
-      console.log(`[ServiceLayerAnalyzer] Processing ${modules.length} modules...`);
+      logger.info('Processing modules', { count: modules.length });
 
       let classesCount = 0;
       let instancesCount = 0;
@@ -124,15 +126,21 @@ export class ServiceLayerAnalyzer extends Plugin {
         if ((i + 1) % 20 === 0 || i === modules.length - 1) {
           const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
           const avgTime = ((Date.now() - startTime) / (i + 1)).toFixed(0);
-          console.log(
-            `[ServiceLayerAnalyzer] Progress: ${i + 1}/${modules.length} (${elapsed}s, avg ${avgTime}ms/module)`
-          );
+          logger.debug('Progress', {
+            current: i + 1,
+            total: modules.length,
+            elapsed: `${elapsed}s`,
+            avgTime: `${avgTime}ms/module`
+          });
         }
       }
 
-      console.log(
-        `[ServiceLayerAnalyzer] Found ${classesCount} service classes, ${instancesCount} instances, ${registrationsCount} registrations, ${usagesCount} usages`
-      );
+      logger.info('Analysis complete', {
+        classesCount,
+        instancesCount,
+        registrationsCount,
+        usagesCount
+      });
 
       return createSuccessResult(
         {
@@ -147,7 +155,7 @@ export class ServiceLayerAnalyzer extends Plugin {
         }
       );
     } catch (error) {
-      console.error('[ServiceLayerAnalyzer] Error:', error);
+      logger.error('Analysis failed', { error });
       return createErrorResult(error as Error);
     }
   }
@@ -358,10 +366,7 @@ export class ServiceLayerAnalyzer extends Plugin {
         usages: serviceUsages.length
       };
     } catch (error) {
-      console.error(
-        `[ServiceLayerAnalyzer] Error analyzing ${module.file}:`,
-        (error as Error).message
-      );
+      // Silent - per-module errors shouldn't spam logs
       return { classes: 0, instances: 0, registrations: 0, usages: 0 };
     }
   }

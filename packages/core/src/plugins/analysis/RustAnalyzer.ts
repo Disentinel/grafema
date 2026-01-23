@@ -152,8 +152,8 @@ try {
     const require = createRequire(import.meta.url);
     const nativeBinding = require('../../../../../rust-engine/grafema-graph-engine.node');
     parseRustFile = nativeBinding.parseRustFile;
-  } catch (e2) {
-    console.warn('[RustAnalyzer] Native binding not available:', (e2 as Error).message);
+  } catch {
+    // Silent - will be reported during execute if needed
   }
 }
 
@@ -180,9 +180,10 @@ export class RustAnalyzer extends Plugin {
 
   async execute(context: PluginContext): Promise<PluginResult> {
     const { graph, onProgress } = context;
+    const logger = this.log(context);
 
     if (!parseRustFile) {
-      console.log('[RustAnalyzer] Skipping - native binding not available');
+      logger.info('Skipping - native binding not available');
       return createSuccessResult(
         { nodes: 0, edges: 0 },
         { skipped: true, reason: 'Native binding not available' }
@@ -196,11 +197,11 @@ export class RustAnalyzer extends Plugin {
     }
 
     if (modules.length === 0) {
-      console.log('[RustAnalyzer] No RUST_MODULE nodes found, skipping');
+      logger.info('No RUST_MODULE nodes found, skipping');
       return createSuccessResult({ nodes: 0, edges: 0 }, { skipped: true, reason: 'No modules' });
     }
 
-    console.log(`[RustAnalyzer] Analyzing ${modules.length} Rust modules...`);
+    logger.info('Analyzing Rust modules', { count: modules.length });
 
     const stats: AnalysisStats = {
       functions: 0,
@@ -239,15 +240,18 @@ export class RustAnalyzer extends Plugin {
         }
       } catch (err) {
         errors.push({ file: module.file!, error: (err as Error).message });
-        console.error(`[RustAnalyzer] Error parsing ${module.file}:`, (err as Error).message);
+        logger.warn('Error parsing module', {
+          file: module.file,
+          error: (err as Error).message
+        });
       }
     }
 
     if (errors.length > 0) {
-      console.warn(`[RustAnalyzer] ${errors.length} errors during analysis`);
+      logger.warn('Analysis completed with errors', { errorCount: errors.length });
     }
 
-    console.log(`[RustAnalyzer] Created: ${JSON.stringify(stats)}`);
+    logger.info('Analysis complete', { ...stats });
     return createSuccessResult(
       { nodes: stats.functions + stats.structs + stats.impls + stats.methods + stats.traits + stats.calls, edges: stats.edges },
       { ...stats, errors: errors.length }

@@ -112,8 +112,9 @@ export class SQLInjectionValidator extends Plugin {
 
   async execute(context: PluginContext): Promise<PluginResult> {
     const { graph } = context;
+    const logger = this.log(context);
 
-    console.log('[SQLInjectionValidator] Checking for SQL injection vulnerabilities...');
+    logger.info('Starting SQL injection vulnerability check');
 
     const issues: SQLInjectionIssue[] = [];
 
@@ -127,7 +128,7 @@ export class SQLInjectionValidator extends Plugin {
       }
     }
 
-    console.log(`[SQLInjectionValidator] Found ${sqlCalls.length} potential SQL calls`);
+    logger.debug('SQL calls collected', { count: sqlCalls.length });
 
     // 2. For each SQL call, analyze the query argument
     for (const call of sqlCalls) {
@@ -147,7 +148,7 @@ export class SQLInjectionValidator extends Plugin {
     }
 
     // 3. Also check via graph pattern - CALL nodes that have ARGUMENT -> PARAMETER paths
-    const patternViolations = await this.checkViaGraphPattern(graph, sqlCalls);
+    const patternViolations = await this.checkViaGraphPattern(graph, logger, sqlCalls);
     for (const violation of patternViolations) {
       // Avoid duplicates
       if (!issues.find(i => i.nodeId === violation.nodeId)) {
@@ -160,15 +161,15 @@ export class SQLInjectionValidator extends Plugin {
       vulnerabilitiesFound: issues.length
     };
 
-    console.log('[SQLInjectionValidator] Summary:', summary);
+    logger.info('Validation complete', summary);
 
     if (issues.length > 0) {
-      console.log('[SQLInjectionValidator] ❌ SQL injection vulnerabilities found:');
+      logger.warn('SQL injection vulnerabilities found', { count: issues.length });
       for (const issue of issues) {
-        console.log(`  🚫 ${issue.message}`);
+        logger.warn(issue.message);
       }
     } else {
-      console.log('[SQLInjectionValidator] ✅ No SQL injection vulnerabilities detected');
+      logger.info('No SQL injection vulnerabilities detected');
     }
 
     return createSuccessResult(
@@ -307,6 +308,7 @@ export class SQLInjectionValidator extends Plugin {
    */
   private async checkViaGraphPattern(
     graph: PluginContext['graph'],
+    logger: ReturnType<typeof this.log>,
     excludeCalls: CallNode[] = []
   ): Promise<SQLInjectionIssue[]> {
     const issues: SQLInjectionIssue[] = [];
@@ -316,7 +318,7 @@ export class SQLInjectionValidator extends Plugin {
     try {
       // Check if graph supports checkGuarantee
       if (!graph.checkGuarantee) {
-        console.log('[SQLInjectionValidator] Graph does not support checkGuarantee, skipping pattern-based check');
+        logger.debug('Graph does not support checkGuarantee, skipping pattern-based check');
         return issues;
       }
 
@@ -353,7 +355,7 @@ export class SQLInjectionValidator extends Plugin {
       }
     } catch (err) {
       // Datalog query might fail if backend doesn't support it
-      console.log('[SQLInjectionValidator] Datalog check skipped:', (err as Error).message);
+      logger.debug('Datalog check skipped', { error: (err as Error).message });
     }
 
     return issues;

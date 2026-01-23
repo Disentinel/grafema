@@ -93,6 +93,7 @@ export class RustModuleIndexer extends Plugin {
   }
 
   async execute(context: PluginContext): Promise<PluginResult> {
+    const logger = this.log(context);
     const { manifest, graph, onProgress } = context;
     // Cast manifest to expected shape
     const typedManifest = manifest as { projectPath: string } | undefined;
@@ -102,14 +103,14 @@ export class RustModuleIndexer extends Plugin {
     const rustRoot = resolve(projectPath, 'rust-engine/src');
 
     if (!existsSync(rustRoot)) {
-      console.log('[RustModuleIndexer] rust-engine/src not found, skipping');
+      logger.info('rust-engine/src not found, skipping');
       return createSuccessResult({ nodes: 0, edges: 0 }, { skipped: true });
     }
 
     // Discover all .rs files recursively
     const rsFiles = this.findRustFiles(rustRoot);
 
-    console.log(`[RustModuleIndexer] Found ${rsFiles.length} .rs files`);
+    logger.info('Found Rust files', { count: rsFiles.length });
 
     let nodesCreated = 0;
     const errors: Array<{ file: string; error: string }> = [];
@@ -151,10 +152,10 @@ export class RustModuleIndexer extends Plugin {
     }
 
     if (errors.length > 0) {
-      console.warn(`[RustModuleIndexer] ${errors.length} errors during indexing`);
+      logger.warn('Errors during indexing', { errorCount: errors.length });
     }
 
-    console.log(`[RustModuleIndexer] Indexed ${nodesCreated} Rust modules`);
+    logger.info('Rust modules indexed', { count: nodesCreated });
     return createSuccessResult({ nodes: nodesCreated, edges: 0 }, { errors: errors.length });
   }
 }

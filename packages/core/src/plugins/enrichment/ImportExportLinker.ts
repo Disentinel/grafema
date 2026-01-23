@@ -50,26 +50,27 @@ export class ImportExportLinker extends Plugin {
 
   async execute(context: PluginContext): Promise<PluginResult> {
     const { graph, onProgress } = context;
+    const logger = this.log(context);
 
-    console.log('[ImportExportLinker] Starting import-export linking...');
+    logger.info('Starting import-export linking');
 
     const startTime = Date.now();
 
     // Step 1: Build EXPORT index - Map<file, Map<exportKey, exportNode>>
     const exportIndex = await this.buildExportIndex(graph);
     const indexTime = Date.now() - startTime;
-    console.log(`[ImportExportLinker] Indexed exports from ${exportIndex.size} files in ${indexTime}ms`);
+    logger.debug('Indexed exports', { files: exportIndex.size, time: `${indexTime}ms` });
 
     // Step 2: Build MODULE lookup - Map<file, moduleNode>
     const modulesByFile = await this.buildModuleLookup(graph);
-    console.log(`[ImportExportLinker] Indexed ${modulesByFile.size} modules`);
+    logger.debug('Indexed modules', { count: modulesByFile.size });
 
     // Step 3: Process all IMPORT nodes
     const imports: ImportNode[] = [];
     for await (const node of graph.queryNodes({ nodeType: 'IMPORT' })) {
       imports.push(node as ImportNode);
     }
-    console.log(`[ImportExportLinker] Found ${imports.length} imports to link`);
+    logger.info('Found imports to link', { count: imports.length });
 
     let edgesCreated = 0;
     let skipped = 0;
@@ -167,7 +168,12 @@ export class ImportExportLinker extends Plugin {
     }
 
     const totalTime = ((Date.now() - startTime) / 1000).toFixed(2);
-    console.log(`[ImportExportLinker] Complete: ${edgesCreated} edges created, ${skipped} skipped, ${notFound} not found (${totalTime}s)`);
+    logger.info('Complete', {
+      edgesCreated,
+      skipped,
+      notFound,
+      time: `${totalTime}s`
+    });
 
     return createSuccessResult(
       { nodes: 0, edges: edgesCreated },

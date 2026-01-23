@@ -12,6 +12,8 @@
  * - Perforce
  */
 
+import type { Logger } from '../../logging/Logger.js';
+
 /**
  * VCS Plugin configuration
  */
@@ -154,13 +156,13 @@ export class VCSPluginFactory {
   /**
    * Автоматически определить и создать подходящий VCS плагин
    */
-  static async detect(config: VCSConfig = {}): Promise<VCSPlugin | null> {
+  static async detect(config: VCSConfig = {}, logger?: Logger): Promise<VCSPlugin | null> {
     for (const PluginClass of this.availablePlugins) {
       const plugin = new PluginClass(config);
 
       try {
         if (await plugin.isAvailable()) {
-          console.log(`[VCS] Detected ${plugin.metadata.name}`);
+          logger?.info('VCS detected', { name: plugin.metadata.name });
           return plugin;
         }
       } catch {
@@ -168,20 +170,20 @@ export class VCSPluginFactory {
       }
     }
 
-    console.warn('[VCS] No VCS system detected');
+    logger?.warn('No VCS system detected');
     return null;
   }
 
   /**
    * Создать плагин по имени
    */
-  static create(name: string, config: VCSConfig = {}): VCSPlugin | null {
+  static create(name: string, config: VCSConfig = {}, logger?: Logger): VCSPlugin | null {
     const PluginClass = this.availablePlugins.find(
       Plugin => new Plugin(config).metadata.name === name
     );
 
     if (!PluginClass) {
-      console.error(`[VCS] Plugin "${name}" not found`);
+      logger?.error('VCS plugin not found', { name });
       return null;
     }
 

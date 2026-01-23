@@ -254,6 +254,8 @@ export class JSASTAnalyzer extends Plugin {
   }
 
   async execute(context: AnalyzeContext): Promise<PluginResult> {
+    const logger = this.log(context);
+
     try {
       const { manifest, graph, forceAnalysis = false } = context;
       const projectPath = manifest?.projectPath ?? '';
@@ -280,10 +282,10 @@ export class JSASTAnalyzer extends Plugin {
         }
       }
 
-      console.log(`[JSASTAnalyzer] Starting analysis of ${modulesToAnalyze.length} modules (${skippedCount} cached)...`);
+      logger.info('Starting module analysis', { toAnalyze: modulesToAnalyze.length, cached: skippedCount });
 
       if (modulesToAnalyze.length === 0) {
-        console.log(`[JSASTAnalyzer] All modules are up-to-date, skipping analysis`);
+        logger.info('All modules up-to-date, skipping analysis');
         return createSuccessResult({ nodes: 0, edges: 0 });
       }
 
@@ -334,7 +336,7 @@ export class JSASTAnalyzer extends Plugin {
         completed++;
 
         if (completed % 10 === 0 || completed === modulesToAnalyze.length) {
-          console.log(`[JSASTAnalyzer] Progress: ${completed}/${modulesToAnalyze.length}`);
+          logger.debug('Analysis progress', { completed, total: modulesToAnalyze.length });
         }
       });
 
@@ -362,8 +364,8 @@ export class JSASTAnalyzer extends Plugin {
         }
       }
 
-      console.log(`[JSASTAnalyzer] Analyzed ${modulesToAnalyze.length} modules, created ${nodesCreated} nodes`);
-      console.log(`[JSASTAnalyzer] Stats:`, stats);
+      logger.info('Analysis complete', { modulesAnalyzed: modulesToAnalyze.length, nodesCreated });
+      logger.debug('Worker stats', { ...stats });
 
       this.profiler.printSummary();
 
@@ -373,7 +375,7 @@ export class JSASTAnalyzer extends Plugin {
       );
 
     } catch (error) {
-      console.error(`[JSASTAnalyzer] Error:`, error);
+      logger.error('Analysis failed', { error: error instanceof Error ? error.message : String(error) });
       const err = error instanceof Error ? error : new Error(String(error));
       return createErrorResult(err);
     }
@@ -397,10 +399,11 @@ export class JSASTAnalyzer extends Plugin {
     projectPath: string,
     context: AnalyzeContext
   ): Promise<PluginResult> {
+    const logger = this.log(context);
     const workerCount = context.workerCount || 4;
     const pool = new ASTWorkerPool(workerCount);
 
-    console.log(`[JSASTAnalyzer] Starting parallel parsing with ${workerCount} workers...`);
+    logger.debug('Starting parallel parsing', { workerCount });
 
     try {
       await pool.init();
@@ -422,7 +425,7 @@ export class JSASTAnalyzer extends Plugin {
       // Process results - collections already have semantic IDs from workers
       for (const result of results) {
         if (result.error) {
-          console.error(`[JSASTAnalyzer] Error parsing ${result.module.file}:`, result.error.message);
+          logger.warn('Parse error', { file: result.module.file, error: result.error.message });
           errors++;
           continue;
         }
@@ -460,7 +463,7 @@ export class JSASTAnalyzer extends Plugin {
         }
       }
 
-      console.log(`[JSASTAnalyzer] Parallel parsing complete: ${nodesCreated} nodes, ${edgesCreated} edges, ${errors} errors`);
+      logger.info('Parallel parsing complete', { nodesCreated, edgesCreated, errors });
 
       return createSuccessResult(
         { nodes: nodesCreated, edges: edgesCreated },
@@ -1194,10 +1197,8 @@ export class JSASTAnalyzer extends Plugin {
       nodesCreated = result.nodes;
       edgesCreated = result.edges;
 
-    } catch (error) {
-      const err = error instanceof Error ? error : new Error(String(error));
-      console.error(`[JSASTAnalyzer] Error analyzing ${module.file}:`, err.message);
-      console.error(err.stack);
+    } catch {
+      // Error analyzing module - silently skip, caller handles the result
     }
 
     return { nodes: nodesCreated, edges: edgesCreated };

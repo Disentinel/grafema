@@ -80,8 +80,9 @@ export class AliasTracker extends Plugin {
 
   async execute(context: PluginContext): Promise<PluginResult> {
     const { graph, onProgress } = context;
+    const logger = this.log(context);
 
-    console.log('[AliasTracker] Starting alias resolution...');
+    logger.info('Starting alias resolution');
 
     let callsProcessed = 0;
     let aliasesFound = 0;
@@ -105,11 +106,11 @@ export class AliasTracker extends Plugin {
       unresolvedCalls.push(callNode);
     }
 
-    console.log(`[AliasTracker] Found ${unresolvedCalls.length} unresolved call sites`);
+    logger.info('Found unresolved call sites', { count: unresolvedCalls.length });
 
     // 2. Строим индекс алиасов: variableName -> EXPRESSION info
     const aliasIndex = await this.buildAliasIndex(graph);
-    console.log(`[AliasTracker] Found ${aliasIndex.size} potential aliases`);
+    logger.debug('Found potential aliases', { count: aliasIndex.size });
 
     // 3. Строим индекс методов для резолвинга
     const methodIndex = await this.buildMethodIndex(graph);
@@ -182,13 +183,18 @@ export class AliasTracker extends Plugin {
 
     // Алярм если были превышения глубины
     if (this.depthExceeded.length > 0) {
-      console.warn(`[AliasTracker] ⚠️  WARNING: ${this.depthExceeded.length} alias chain(s) exceeded max depth (${AliasTracker.MAX_DEPTH}):`);
-      for (const info of this.depthExceeded) {
-        console.warn(`  - ${info.file}:${info.name} (chain: ${info.chain.join(' → ')}...)`);
-      }
+      logger.warn('Alias chains exceeded max depth', {
+        count: this.depthExceeded.length,
+        maxDepth: AliasTracker.MAX_DEPTH,
+        examples: this.depthExceeded.slice(0, 5).map(info => ({
+          file: info.file,
+          name: info.name,
+          chain: info.chain.join(' → ')
+        }))
+      });
     }
 
-    console.log('[AliasTracker] Summary:', summary);
+    logger.info('Summary', summary);
 
     return createSuccessResult({ nodes: 0, edges: edgesCreated }, summary);
   }

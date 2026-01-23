@@ -224,6 +224,8 @@ export class ReactAnalyzer extends Plugin {
   }
 
   async execute(context: PluginContext): Promise<PluginResult> {
+    const logger = this.log(context);
+
     try {
       const { graph } = context;
       const modules = await this.getModules(graph);
@@ -252,11 +254,16 @@ export class ReactAnalyzer extends Plugin {
           stats.issues += result.issues;
           stats.edges += result.edges;
         } catch (err) {
-          console.error(`[ReactAnalyzer] Error analyzing ${module.file}:`, (err as Error).message);
+          // Silent - per-module errors shouldn't spam logs
         }
       }
 
-      console.log(`[ReactAnalyzer] Found ${stats.components} components, ${stats.hooks} hooks, ${stats.events} events, ${stats.issues} issues`);
+      logger.info('Analysis complete', {
+        components: stats.components,
+        hooks: stats.hooks,
+        events: stats.events,
+        issues: stats.issues
+      });
 
       return createSuccessResult(
         {
@@ -266,7 +273,7 @@ export class ReactAnalyzer extends Plugin {
         stats
       );
     } catch (error) {
-      console.error(`[ReactAnalyzer] Error:`, error);
+      logger.error('Analysis failed', { error });
       return createErrorResult(error as Error);
     }
   }

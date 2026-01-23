@@ -70,8 +70,9 @@ export class ShadowingDetector extends Plugin {
 
   async execute(context: PluginContext): Promise<PluginResult> {
     const { graph } = context;
+    const logger = this.log(context);
 
-    console.log('[ShadowingDetector] Checking for variable shadowing...');
+    logger.info('Starting variable shadowing detection');
 
     const issues: ShadowingIssue[] = [];
 
@@ -154,15 +155,15 @@ export class ShadowingDetector extends Plugin {
       totalIssues: issues.length
     };
 
-    console.log('[ShadowingDetector] Summary:', summary);
+    logger.info('Detection complete', { ...summary });
 
     if (issues.length > 0) {
-      console.log('[ShadowingDetector] Shadowing issues found:');
+      logger.warn('Shadowing issues found', { count: issues.length });
       for (const issue of issues) {
-        console.log(`  ${issue.type === 'CROSS_FILE_SHADOW' ? '📁' : '🔒'} ${issue.message}`);
+        logger.warn(issue.message, { type: issue.type });
       }
     } else {
-      console.log('[ShadowingDetector] No shadowing issues detected');
+      logger.info('No shadowing issues detected');
     }
 
     return createSuccessResult(

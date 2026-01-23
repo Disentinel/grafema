@@ -162,10 +162,11 @@ export class ValueDomainAnalyzer extends Plugin {
 
   async execute(context: PluginContext): Promise<PluginResult> {
     const { graph } = context;
+    const logger = this.log(context);
     const onProgress = (context as unknown as { onProgress?: ProgressCallback }).onProgress;
     const graphTyped = graph as unknown as Graph;
 
-    console.log('[ValueDomainAnalyzer] Starting value domain analysis...');
+    logger.info('Starting value domain analysis');
 
     let callsProcessed = 0;
     let callsResolved = 0;
@@ -183,7 +184,7 @@ export class ValueDomainAnalyzer extends Plugin {
       }
     }
 
-    console.log(`[ValueDomainAnalyzer] Found ${computedCalls.length} computed member calls`);
+    logger.info('Found computed member calls', { count: computedCalls.length });
 
     // 2. For each computed call get value set
     for (const call of computedCalls) {
@@ -251,9 +252,9 @@ export class ValueDomainAnalyzer extends Plugin {
     }
 
     // 5. Resolve computed property mutations in FLOWS_INTO edges
-    console.log('[ValueDomainAnalyzer] Resolving computed property mutations...');
-    const mutationStats = await this.resolveComputedMutations(graphTyped);
-    console.log('[ValueDomainAnalyzer] Mutation resolution stats:', mutationStats);
+    logger.debug('Resolving computed property mutations');
+    const mutationStats = await this.resolveComputedMutations(graphTyped, logger);
+    logger.debug('Mutation resolution stats', mutationStats);
 
     const summary = {
       callsProcessed,
@@ -264,7 +265,7 @@ export class ValueDomainAnalyzer extends Plugin {
       computedMutations: mutationStats
     };
 
-    console.log('[ValueDomainAnalyzer] Summary:', summary);
+    logger.info('Summary', summary);
 
     return createSuccessResult(
       { nodes: 0, edges: edgesCreated + mutationStats.resolved + mutationStats.conditional },
@@ -301,12 +302,9 @@ export class ValueDomainAnalyzer extends Plugin {
     }
 
     if (variables.length === 0) {
-      console.log(`[ValueDomainAnalyzer] No variable found for ${variableName} in ${file}`);
       result.hasUnknown = true;
       return result;
     }
-
-    console.log(`[ValueDomainAnalyzer] Found ${variables.length} variable(s) for ${variableName}`);
 
     // Trace ASSIGNED_FROM to LITERAL or nondeterministic sources
     const visited = new Set<string>();
@@ -693,7 +691,7 @@ export class ValueDomainAnalyzer extends Plugin {
    * @param graph - Graph backend with edge operations
    * @returns Statistics about resolution
    */
-  async resolveComputedMutations(graph: Graph): Promise<{
+  async resolveComputedMutations(graph: Graph, logger: ReturnType<typeof this.log>): Promise<{
     resolved: number;
     conditional: number;
     unknownParameter: number;

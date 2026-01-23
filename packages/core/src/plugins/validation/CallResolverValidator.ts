@@ -70,12 +70,13 @@ export class CallResolverValidator extends Plugin {
 
   async execute(context: PluginContext): Promise<PluginResult> {
     const { graph } = context;
+    const logger = this.log(context);
 
-    console.log('[CallResolverValidator] Starting call resolution validation using Datalog...');
+    logger.info('Starting call resolution validation using Datalog');
 
     // Check if graph supports checkGuarantee
     if (!graph.checkGuarantee) {
-      console.log('[CallResolverValidator] Graph does not support checkGuarantee, skipping validation');
+      logger.debug('Graph does not support checkGuarantee, skipping validation');
       return createSuccessResult({ nodes: 0, edges: 0 }, { skipped: true });
     }
 
@@ -88,7 +89,7 @@ export class CallResolverValidator extends Plugin {
     const issues: CallResolverIssue[] = [];
 
     if (violations.length > 0) {
-      console.log(`[CallResolverValidator] Found ${violations.length} unresolved function calls`);
+      logger.debug('Unresolved function calls found', { count: violations.length });
 
       for (const v of violations) {
         const nodeId = v.bindings.find(b => b.name === 'X')?.value;
@@ -121,15 +122,15 @@ export class CallResolverValidator extends Plugin {
       issues: issues.length
     };
 
-    console.log('[CallResolverValidator] Summary:', summary);
+    logger.info('Validation complete', { ...summary });
 
     if (issues.length > 0) {
-      console.log(`[CallResolverValidator] Unresolved calls:`);
+      logger.warn('Unresolved calls detected', { count: issues.length });
       for (const issue of issues.slice(0, 10)) { // Show first 10
-        console.log(`  ⚠️ ${issue.message}`);
+        logger.warn(issue.message);
       }
       if (issues.length > 10) {
-        console.log(`  ... and ${issues.length - 10} more`);
+        logger.debug(`... and ${issues.length - 10} more`);
       }
     }
 

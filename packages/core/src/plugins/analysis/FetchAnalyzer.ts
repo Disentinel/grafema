@@ -61,6 +61,8 @@ export class FetchAnalyzer extends Plugin {
   }
 
   async execute(context: PluginContext): Promise<PluginResult> {
+    const logger = this.log(context);
+
     try {
       const { graph } = context;
 
@@ -71,7 +73,7 @@ export class FetchAnalyzer extends Plugin {
 
       // Получаем все модули
       const modules = await this.getModules(graph);
-      console.log(`[FetchAnalyzer] Processing ${modules.length} modules...`);
+      logger.info('Processing modules', { count: modules.length });
 
       let requestsCount = 0;
       let apisCount = 0;
@@ -87,13 +89,16 @@ export class FetchAnalyzer extends Plugin {
         if ((i + 1) % 20 === 0 || i === modules.length - 1) {
           const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
           const avgTime = ((Date.now() - startTime) / (i + 1)).toFixed(0);
-          console.log(
-            `[FetchAnalyzer] Progress: ${i + 1}/${modules.length} (${elapsed}s, avg ${avgTime}ms/module)`
-          );
+          logger.debug('Progress', {
+            current: i + 1,
+            total: modules.length,
+            elapsed: `${elapsed}s`,
+            avgTime: `${avgTime}ms/module`
+          });
         }
       }
 
-      console.log(`[FetchAnalyzer] Found ${requestsCount} HTTP requests, ${apisCount} external APIs`);
+      logger.info('Analysis complete', { requestsCount, apisCount });
 
       return createSuccessResult(
         {
@@ -107,7 +112,7 @@ export class FetchAnalyzer extends Plugin {
         }
       );
     } catch (error) {
-      console.error('[FetchAnalyzer] Error:', error);
+      logger.error('Analysis failed', { error });
       return createErrorResult(error as Error);
     }
   }
@@ -356,7 +361,7 @@ export class FetchAnalyzer extends Plugin {
         apis: externalAPIs.size
       };
     } catch (error) {
-      console.error(`[FetchAnalyzer] Error analyzing ${module.file}:`, (error as Error).message);
+      // Silent - per-module errors shouldn't spam logs
       return { requests: 0, apis: 0 };
     }
   }

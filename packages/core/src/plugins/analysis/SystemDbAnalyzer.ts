@@ -58,6 +58,8 @@ export class SystemDbAnalyzer extends Plugin {
   }
 
   async execute(context: PluginContext): Promise<PluginResult> {
+    const logger = this.log(context);
+
     try {
       const { graph } = context;
 
@@ -67,9 +69,7 @@ export class SystemDbAnalyzer extends Plugin {
       // Get all MODULE nodes
       const modules = await this.getModules(graph);
 
-      console.log(
-        `[SystemDbAnalyzer] Analyzing ${modules.length} modules for system_db patterns...\n`
-      );
+      logger.info('Analyzing modules for system_db patterns', { count: modules.length });
 
       for (const module of modules) {
         if (!module.file) continue;
@@ -169,9 +169,13 @@ export class SystemDbAnalyzer extends Plugin {
           for (const reg of registrations) {
             const nodeId = `${module.file}:SYSTEM_DB_VIEW_REGISTRATION:${reg.viewName}:${reg.line}`;
 
-            console.log(
-              `   📌 Found: ${reg.type}('${reg.viewName}', '${reg.serverName}') at ${module.file!.split('/').pop()}:${reg.line}`
-            );
+            logger.debug('Found registration', {
+              type: reg.type,
+              viewName: reg.viewName,
+              serverName: reg.serverName,
+              file: module.file!.split('/').pop(),
+              line: reg.line
+            });
 
             await graph.addNode({
               id: nodeId,
@@ -221,21 +225,22 @@ export class SystemDbAnalyzer extends Plugin {
         } catch (err) {
           // Skip files that can't be parsed
           if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
-            console.error(`   ⚠️  Failed to analyze ${module.file}: ${(err as Error).message}`);
+            logger.warn('Failed to analyze module', {
+              file: module.file,
+              error: (err as Error).message
+            });
           }
         }
       }
 
-      console.log(
-        `[SystemDbAnalyzer] Created ${nodesCreated} system_db nodes, ${edgesCreated} edges\n`
-      );
+      logger.info('Analysis complete', { nodesCreated, edgesCreated });
 
       return createSuccessResult(
         { nodes: nodesCreated, edges: edgesCreated },
         { modulesAnalyzed: modules.length }
       );
     } catch (error) {
-      console.error(`[SystemDbAnalyzer] Error:`, error);
+      logger.error('Analysis failed', { error });
       return createErrorResult(error as Error);
     }
   }

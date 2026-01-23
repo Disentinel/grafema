@@ -57,10 +57,11 @@ export class MonorepoServiceDiscovery extends DiscoveryPlugin {
   }
 
   async execute(context: PluginContext): Promise<PluginResult> {
+    const logger = this.log(context);
     const { projectPath, graph } = context;
     const servicesPath = join(projectPath!, this.servicesDir);
 
-    console.log(`[MonorepoServiceDiscovery] Looking for services in: ${servicesPath}`);
+    logger.debug('Looking for services', { servicesPath });
 
     if (!existsSync(servicesPath)) {
       return createErrorResult(
@@ -71,7 +72,7 @@ export class MonorepoServiceDiscovery extends DiscoveryPlugin {
     try {
       const services: ServiceInfo[] = [];
       const entries = readdirSync(servicesPath);
-      console.log(`[MonorepoServiceDiscovery] Found ${entries.length} entries`);
+      logger.debug('Found entries', { count: entries.length });
 
       for (const entry of entries) {
         const fullPath = join(servicesPath, entry);

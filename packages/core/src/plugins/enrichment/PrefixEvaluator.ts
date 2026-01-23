@@ -94,6 +94,7 @@ export class PrefixEvaluator extends Plugin {
   async execute(context: PluginContext): Promise<PluginResult> {
     try {
       const { graph } = context;
+      const logger = this.log(context);
       const graphTyped = graph as unknown as Graph;
 
       let mountPointsEvaluated = 0;
@@ -112,7 +113,7 @@ export class PrefixEvaluator extends Plugin {
         }
       }
 
-      console.log(`[PrefixEvaluator] Found ${mountPoints.length} mount points with placeholders`);
+      logger.info('Found mount points with placeholders', { count: mountPoints.length });
 
       // For each mount point try to evaluate prefix
       for (const mountPoint of mountPoints) {
@@ -125,7 +126,7 @@ export class PrefixEvaluator extends Plugin {
         });
 
         if (definesEdges.length === 0) {
-          console.log(`[PrefixEvaluator] No DEFINES edge for mount point ${mountPoint.id}`);
+          logger.debug('No DEFINES edge for mount point', { mountPointId: mountPoint.id });
           continue;
         }
 
@@ -133,7 +134,7 @@ export class PrefixEvaluator extends Plugin {
         const module = (graphTyped.nodes as Map<string, NodeRecord>).get(moduleId) as ModuleNode | undefined;
 
         if (!module || module.type !== 'MODULE') {
-          console.log(`[PrefixEvaluator] Module not found for ${mountPoint.id}`);
+          logger.debug('Module not found for mount point', { mountPointId: mountPoint.id });
           continue;
         }
 
@@ -147,7 +148,7 @@ export class PrefixEvaluator extends Plugin {
           });
         } catch (error) {
           const err = error as Error;
-          console.log(`[PrefixEvaluator] Failed to parse ${module.file}:`, err.message);
+          logger.debug('Failed to parse file', { file: module.file, error: err.message });
           continue;
         }
 
@@ -163,11 +164,18 @@ export class PrefixEvaluator extends Plugin {
           mountPoint.prefix = evaluatedPrefix;
           mountPoint.evaluated = true;
           successfulEvaluations++;
-          console.log(`[PrefixEvaluator] Resolved ${mountPoint.file}:${mountPoint.line}: ${evaluatedPrefix}`);
+          logger.debug('Resolved prefix', {
+            file: mountPoint.file,
+            line: mountPoint.line,
+            prefix: evaluatedPrefix
+          });
         }
       }
 
-      console.log(`[PrefixEvaluator] Evaluated ${successfulEvaluations}/${mountPointsEvaluated} mount points`);
+      logger.info('Evaluated mount points', {
+        successful: successfulEvaluations,
+        total: mountPointsEvaluated
+      });
 
       return createSuccessResult(
         { nodes: 0, edges: 0 },
@@ -175,7 +183,8 @@ export class PrefixEvaluator extends Plugin {
       );
 
     } catch (error) {
-      console.error(`[PrefixEvaluator] Error:`, error);
+      const logger = this.log(context);
+      logger.error('Error in PrefixEvaluator', { error });
       return createErrorResult(error as Error);
     }
   }

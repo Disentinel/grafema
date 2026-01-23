@@ -69,17 +69,18 @@ export class EvalBanValidator extends Plugin {
 
   async execute(context: PluginContext): Promise<PluginResult> {
     const { graph } = context;
+    const logger = this.log(context);
 
-    console.log('[EvalBanValidator] Checking for eval/Function usage...');
+    logger.info('Starting eval/Function usage validation');
     const startTime = Date.now();
 
     const issues: EvalBanIssue[] = [];
 
-    // ОПТИМИЗАЦИЯ: вместо Datalog (медленный full scan), используем прямые graph queries
-    // Datalog зависает на больших графах из-за отсутствия индексов
+    // OPTIMIZATION: use direct graph queries instead of Datalog (slow full scan)
+    // Datalog hangs on large graphs due to lack of indexes
 
-    // 1. Прямой вызов eval("code") - ищем все CALL ноды с name="eval"
-    console.log('[EvalBanValidator] Searching for eval() calls...');
+    // 1. Direct eval("code") call - find all CALL nodes with name="eval"
+    logger.debug('Searching for eval() calls');
     const evalStart = Date.now();
     let evalCount = 0;
 
@@ -96,10 +97,10 @@ export class EvalBanValidator extends Plugin {
         });
       }
     }
-    console.log(`[EvalBanValidator] eval() search took ${Date.now() - evalStart}ms, found ${evalCount} violations`);
+    logger.debug('eval() search complete', { timeMs: Date.now() - evalStart, count: evalCount });
 
-    // 2. Вызов Function("code") или new Function("code")
-    console.log('[EvalBanValidator] Searching for Function() calls...');
+    // 2. Function("code") or new Function("code") call
+    logger.debug('Searching for Function() calls');
     const funcStart = Date.now();
     let funcCount = 0;
 
@@ -116,11 +117,11 @@ export class EvalBanValidator extends Plugin {
         });
       }
     }
-    console.log(`[EvalBanValidator] Function() search took ${Date.now() - funcStart}ms, found ${funcCount} violations`);
+    logger.debug('Function() search complete', { timeMs: Date.now() - funcStart, count: funcCount });
 
     // 3. Method call: window.eval, globalThis.eval, this.eval
     // Note: METHOD_CALL was merged into CALL - method calls have 'method' attribute
-    console.log('[EvalBanValidator] Searching for method eval() calls...');
+    logger.debug('Searching for method eval() calls');
     const methodStart = Date.now();
     let methodCount = 0;
 
@@ -141,10 +142,10 @@ export class EvalBanValidator extends Plugin {
         });
       }
     }
-    console.log(`[EvalBanValidator] method eval() search took ${Date.now() - methodStart}ms, found ${methodCount} violations`);
+    logger.debug('Method eval() search complete', { timeMs: Date.now() - methodStart, count: methodCount });
 
     // 4. Aliased eval - SKIP for now (complex Datalog query causes OOM)
-    console.log('[EvalBanValidator] Skipping aliased eval detection (requires optimized implementation)');
+    logger.debug('Skipping aliased eval detection', { reason: 'requires optimized implementation' });
 
     const totalTime = ((Date.now() - startTime) / 1000).toFixed(1);
     const summary: ValidationSummary = {
@@ -156,15 +157,15 @@ export class EvalBanValidator extends Plugin {
       timeSeconds: totalTime
     };
 
-    console.log('[EvalBanValidator] Summary:', summary);
+    logger.info('Validation summary', { ...summary });
 
     if (issues.length > 0) {
-      console.log('[EvalBanValidator] ❌ Security violations found:');
+      logger.info('Security violations found', { count: issues.length });
       for (const issue of issues) {
-        console.log(`  🚫 ${issue.message}`);
+        logger.warn('Violation', { message: issue.message, type: issue.type, file: issue.file, line: issue.line });
       }
     } else {
-      console.log('[EvalBanValidator] ✅ No eval/Function usage detected');
+      logger.info('Validation passed: no eval/Function usage detected');
     }
 
     return createSuccessResult(
