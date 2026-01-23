@@ -11,6 +11,7 @@ import { resolve, join } from 'path';
 import { existsSync } from 'fs';
 import { RFDBServerBackend } from '@grafema/core';
 import { formatNodeDisplay, formatNodeInline } from '../utils/formatNode.js';
+import { exitWithError } from '../utils/errorFormatter.js';
 
 interface TraceOptions {
   project: string;
@@ -45,9 +46,7 @@ export const traceCommand = new Command('trace')
     const dbPath = join(grafemaDir, 'graph.rfdb');
 
     if (!existsSync(dbPath)) {
-      console.error('✗ No graph database found');
-      console.error('  → Run "grafema analyze" first');
-      process.exit(1);
+      exitWithError('No graph database found', ['Run: grafema analyze']);
     }
 
     const backend = new RFDBServerBackend({ dbPath });

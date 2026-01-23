@@ -273,8 +273,9 @@ export const analyzeCommand = new Command('analyze')
       const reporter = new DiagnosticReporter(diagnostics);
 
       console.error('');
-      console.error('Analysis failed with fatal error:');
-      console.error(`  ${error.message}`);
+      console.error(`✗ Analysis failed: ${error.message}`);
+      console.error('');
+      console.error('→ Run with --debug for detailed diagnostics');
 
       if (diagnostics.count() > 0) {
         console.error('');

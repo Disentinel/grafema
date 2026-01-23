@@ -6,6 +6,7 @@ import { Command } from 'commander';
 import { resolve, join } from 'path';
 import { existsSync } from 'fs';
 import { RFDBServerBackend } from '@grafema/core';
+import { exitWithError } from '../utils/errorFormatter.js';
 
 export const statsCommand = new Command('stats')
   .description('Show project statistics')
@@ -18,9 +19,7 @@ export const statsCommand = new Command('stats')
     const dbPath = join(grafemaDir, 'graph.rfdb');
 
     if (!existsSync(dbPath)) {
-      console.error(`Error: No database found at ${dbPath}`);
-      console.error('Run "grafema analyze" first to create the database.');
-      process.exit(1);
+      exitWithError('No graph database found', ['Run: grafema analyze']);
     }
 
     const backend = new RFDBServerBackend({ dbPath });

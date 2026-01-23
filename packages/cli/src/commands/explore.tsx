@@ -10,6 +10,7 @@ import React, { useState, useEffect } from 'react';
 import { render, Box, Text, useInput, useApp } from 'ink';
 import { RFDBServerBackend } from '@grafema/core';
 import { getCodePreview, formatCodePreview } from '../utils/codePreview.js';
+import { exitWithError } from '../utils/errorFormatter.js';
 
 // Types
 interface NodeInfo {
@@ -1030,9 +1031,7 @@ export const exploreCommand = new Command('explore')
     const dbPath = join(grafemaDir, 'graph.rfdb');
 
     if (!existsSync(dbPath)) {
-      console.error('✗ No graph database found');
-      console.error('  → Run "grafema analyze" first');
-      process.exit(1);
+      exitWithError('No graph database found', ['Run: grafema analyze']);
     }
 
     const backend = new RFDBServerBackend({ dbPath });

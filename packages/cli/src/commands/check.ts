@@ -18,6 +18,7 @@ import {
 } from '@grafema/core';
 import type { GuaranteeGraph } from '@grafema/core';
 import type { GraphBackend } from '@grafema/types';
+import { exitWithError } from '../utils/errorFormatter.js';
 
 interface GuaranteeFile {
   guarantees: Array<{
@@ -78,13 +79,10 @@ export const checkCommand = new Command('check')
       if (options.guarantee) {
         const validatorInfo = BUILT_IN_VALIDATORS[options.guarantee];
         if (!validatorInfo) {
-          console.error(`Error: Unknown guarantee "${options.guarantee}"`);
-          console.error('');
-          console.error('Available guarantees:');
-          for (const key of Object.keys(BUILT_IN_VALIDATORS)) {
-            console.error(`  - ${key}`);
-          }
-          process.exit(1);
+          const available = Object.keys(BUILT_IN_VALIDATORS).join(', ');
+          exitWithError(`Unknown guarantee: ${options.guarantee}`, [
+            `Available: ${available}`
+          ]);
         }
 
         await runBuiltInValidator(options.guarantee, options.project, {
@@ -100,9 +98,7 @@ export const checkCommand = new Command('check')
       const dbPath = join(grafemaDir, 'graph.rfdb');
 
       if (!existsSync(dbPath)) {
-        console.error(`Error: No database found at ${dbPath}`);
-        console.error('Run "grafema analyze" first to create the database.');
-        process.exit(1);
+        exitWithError('No graph database found', ['Run: grafema analyze']);
       }
 
       const backend = new RFDBServerBackend({ dbPath });
@@ -114,13 +110,15 @@ export const checkCommand = new Command('check')
 
       if (!freshness.isFresh) {
         if (options.failOnStale) {
-          console.error(`Error: Graph is stale (${freshness.staleCount} module(s) changed)`);
+          console.error(`✗ Graph is stale: ${freshness.staleCount} module(s) changed`);
           for (const stale of freshness.staleModules.slice(0, 5)) {
-            console.error(`  - ${stale.file} (${stale.reason})`);
+            console.error(`  ${stale.file} (${stale.reason})`);
           }
           if (freshness.staleModules.length > 5) {
             console.error(`  ... and ${freshness.staleModules.length - 5} more`);
           }
+          console.error('');
+          console.error('→ Run: grafema analyze');
           await backend.close();
           process.exit(1);
         }
@@ -173,12 +171,10 @@ export const checkCommand = new Command('check')
             : guarantees;
 
         if (toCheck.length === 0 && rule) {
-          console.error(`Error: Guarantee "${rule}" not found.`);
-          console.error('Available guarantees:');
-          for (const g of guarantees) {
-            console.error(`  - ${g.id}: ${g.name}`);
-          }
-          process.exit(1);
+          const available = guarantees.map((g) => g.id).join(', ');
+          exitWithError(`Guarantee not found: ${rule}`, [
+            `Available: ${available}`
+          ]);
         }
 
         // Check all matching guarantees
@@ -257,9 +253,7 @@ async function runBuiltInValidator(
   const dbPath = join(grafemaDir, 'graph.rfdb');
 
   if (!existsSync(dbPath)) {
-    console.error(`Error: No database found at ${dbPath}`);
-    console.error('Run "grafema analyze" first to create the database.');
-    process.exit(1);
+    exitWithError('No graph database found', ['Run: grafema analyze']);
   }
 
   const backend = new RFDBServerBackend({ dbPath });
@@ -271,13 +265,15 @@ async function runBuiltInValidator(
 
   if (!freshness.isFresh) {
     if (options.failOnStale) {
-      console.error(`Error: Graph is stale (${freshness.staleCount} module(s) changed)`);
+      console.error(`✗ Graph is stale: ${freshness.staleCount} module(s) changed`);
       for (const stale of freshness.staleModules.slice(0, 5)) {
-        console.error(`  - ${stale.file} (${stale.reason})`);
+        console.error(`  ${stale.file} (${stale.reason})`);
       }
       if (freshness.staleModules.length > 5) {
         console.error(`  ... and ${freshness.staleModules.length - 5} more`);
       }
+      console.error('');
+      console.error('→ Run: grafema analyze');
       await backend.close();
       process.exit(1);
     }
@@ -313,8 +309,9 @@ async function runBuiltInValidator(
         validatorName = 'NodeCreationValidator';
         break;
       default:
-        console.error(`Unknown guarantee: ${guaranteeName}`);
-        process.exit(1);
+        exitWithError(`Unknown guarantee: ${guaranteeName}`, [
+          'Use --list-guarantees to see available options'
+        ]);
     }
 
     if (!options.quiet) {

@@ -5,6 +5,7 @@
 import { Command } from 'commander';
 import { resolve, join } from 'path';
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
+import { exitWithError } from '../utils/errorFormatter.js';
 
 const DEFAULT_CONFIG = `# Grafema configuration
 include:
@@ -40,10 +41,10 @@ export const initCommand = new Command('init')
 
     // Check package.json
     if (!existsSync(packageJsonPath)) {
-      console.error('✗ No package.json found');
-      console.error('  → Are you in a JavaScript/TypeScript project?');
-      console.error('  → Run "npm init" to create one');
-      process.exit(1);
+      exitWithError('No package.json found', [
+        'Initialize a project: npm init',
+        'Or check you are in the right directory'
+      ]);
     }
     console.log('✓ Found package.json');
 
