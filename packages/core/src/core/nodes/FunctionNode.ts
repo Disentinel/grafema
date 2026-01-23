@@ -66,7 +66,6 @@ export class FunctionNode {
 
     return {
       id,
-      stableId: id,
       type: this.TYPE,
       name,
       file,
@@ -144,7 +143,6 @@ export class FunctionNode {
 
     return {
       id,
-      stableId: id,
       type: this.TYPE,
       name,
       file: context.file,

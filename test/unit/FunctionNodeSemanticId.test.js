@@ -383,19 +383,6 @@ describe('FunctionNode with Semantic ID', () => {
     });
   });
 
-  describe('stableId field', () => {
-    it('should set stableId equal to id', () => {
-      const tracker = new ScopeTracker('src/app.js');
-
-      const node = FunctionNode.createWithContext(
-        'myFn',
-        tracker.getContext(),
-        { line: 1, column: 0 }
-      );
-
-      assert.strictEqual(node.stableId, node.id);
-    });
-  });
 
   describe('validation', () => {
     it('should pass validation for valid function node', () => {

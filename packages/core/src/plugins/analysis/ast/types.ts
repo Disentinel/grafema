@@ -19,7 +19,6 @@ export interface ModuleNode {
 // === FUNCTION INFO ===
 export interface FunctionInfo {
   id: string;
-  stableId?: string;  // Deprecated: use id (now contains semantic ID)
   type: 'FUNCTION';
   name: string;
   file: string;

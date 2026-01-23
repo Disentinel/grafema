@@ -65,7 +65,6 @@ interface ScopeNode {
   file?: string;
   line?: number;
   originalId?: string;
-  stableId?: string;
   parentScopeId?: string;
   constraints?: Constraint[];
 }
@@ -382,8 +381,7 @@ export class ValueDomainAnalyzer extends Plugin {
       for await (const s of graph.queryNodes({ nodeType: 'SCOPE' })) {
         const scopeNode = s as ScopeNode;
         if (scopeNode.id === currentScopeId ||
-            scopeNode.originalId === currentScopeId ||
-            scopeNode.stableId === currentScopeId) {
+            scopeNode.originalId === currentScopeId) {
           scope = scopeNode;
           break;
         }

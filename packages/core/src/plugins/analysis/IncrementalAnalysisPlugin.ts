@@ -68,7 +68,6 @@ interface VersionAwareGraph extends GraphBackend {
     version: string,
     filter: { file: string }
   ): Promise<VersionedNode[]>;
-  getNodesByStableId(stableId: string): Promise<VersionedNode[]>;
 }
 
 export class IncrementalAnalysisPlugin extends Plugin {
@@ -639,43 +638,19 @@ export class IncrementalAnalysisPlugin extends Plugin {
 
   /**
    * Найти callee и создать CALLS edge
+   * TODO: Implement using existing graph.queryNodes() method
+   * This method was disabled as part of stableId removal (REG-140).
+   * The getNodesByStableId method never existed on GraphBackend.
    */
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   private async findCalleeAndCreateEdge(
-    callerId: string,
-    calleeStableId: string,
-    version: string,
-    graph: VersionAwareGraph
+    _callerId: string,
+    _calleeStableId: string,
+    _version: string,
+    _graph: VersionAwareGraph
   ): Promise<boolean> {
-    try {
-      // Ищем callee сначала в __local, потом в main
-      const calleeVersions = await graph.getNodesByStableId(calleeStableId);
-
-      if (calleeVersions.length === 0) {
-        // Callee не найден - возможно это external функция
-        return false;
-      }
-
-      // Предпочитаем __local версию, если есть
-      const calleeNode =
-        calleeVersions.find(n => n.version === '__local') ||
-        calleeVersions.find(n => n.version === 'main');
-
-      if (!calleeNode) {
-        return false;
-      }
-
-      // Create CALLS edge
-      await graph.addEdge({
-        type: 'CALLS',
-        src: callerId,
-        dst: calleeNode.id!
-      });
-
-      return true;
-    } catch {
-      // Error finding callee - return false
-      return false;
-    }
+    // Disabled - needs implementation using graph.queryNodes()
+    return false;
   }
 
   /**

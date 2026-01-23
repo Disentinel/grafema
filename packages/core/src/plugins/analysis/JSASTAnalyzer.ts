@@ -994,7 +994,6 @@ export class JSASTAnalyzer extends Plugin {
 
             functions.push({
               id: functionId,
-              stableId: functionId,
               type: 'FUNCTION',
               name: functionName,
               file: module.file,
@@ -1066,7 +1065,6 @@ export class JSASTAnalyzer extends Plugin {
 
             functions.push({
               id: functionId,
-              stableId: functionId,
               type: 'FUNCTION',
               name: funcName,
               file: module.file,
@@ -1879,7 +1877,6 @@ export class JSASTAnalyzer extends Plugin {
 
         functions.push({
           id: functionId,
-          stableId: functionId,
           type: 'FUNCTION',
           name: funcName,
           file: module.file,
@@ -1939,7 +1936,6 @@ export class JSASTAnalyzer extends Plugin {
 
         functions.push({
           id: functionId,
-          stableId: functionId,
           type: 'FUNCTION',
           name: funcName,
           file: module.file,

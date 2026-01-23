@@ -74,7 +74,6 @@ interface ClassInstantiationInfo {
  */
 interface FunctionNode {
   id: string;
-  stableId: string;
   type: 'FUNCTION' | 'METHOD';
   name: string;
   file: string;
@@ -403,7 +402,6 @@ function parseModule(filePath: string, moduleId: string, moduleName: string): AS
 
       collections.functions.push({
         id: functionId,
-        stableId: functionId,
         type: 'FUNCTION',
         name: funcName,
         file: filePath,
@@ -472,7 +470,6 @@ function parseModule(filePath: string, moduleId: string, moduleName: string): AS
 
           collections.functions.push({
             id: methodId,
-            stableId: methodId,
             type: 'METHOD',
             name: methodName,
             className,

@@ -81,7 +81,6 @@ export type NodeType = BaseNodeType | NamespacedNodeType | string;
 // Base interface for all nodes
 export interface BaseNodeRecord {
   id: string;
-  stableId?: string;
   type: NodeType;
   name: string;
   file: string;
