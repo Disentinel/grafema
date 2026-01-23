@@ -236,7 +236,7 @@ export class GraphBuilder {
     this.bufferImplementsEdges(classDeclarations, interfaces);
 
     // 26. Buffer FLOWS_INTO edges for array mutations (push, unshift, splice, indexed assignment)
-    this.bufferArrayMutationEdges(arrayMutations, variableDeclarations);
+    this.bufferArrayMutationEdges(arrayMutations, variableDeclarations, parameters);
 
     // 27. Buffer FLOWS_INTO edges for object mutations (property assignment, Object.assign)
     this.bufferObjectMutationEdges(objectMutations, variableDeclarations, parameters, functions);
@@ -1253,11 +1253,16 @@ export class GraphBuilder {
    * Buffer FLOWS_INTO edges for array mutations (push, unshift, splice, indexed assignment)
    * Creates edges from inserted values to the array variable
    *
+   * REG-117: Now handles nested mutations like obj.arr.push(item):
+   * - For nested mutations, falls back to base object if array property not found
+   * - Adds nestedProperty metadata for tracking
+   *
    * OPTIMIZED: Uses Map-based lookup cache for O(1) variable lookups instead of O(n) find()
    */
   private bufferArrayMutationEdges(
     arrayMutations: ArrayMutationInfo[],
-    variableDeclarations: VariableDeclarationInfo[]
+    variableDeclarations: VariableDeclarationInfo[],
+    parameters: ParameterInfo[]
   ): void {
     // Build lookup cache once: O(n) instead of O(n*m) with find() per mutation
     const varLookup = new Map<string, VariableDeclarationInfo>();
@@ -1265,28 +1270,60 @@ export class GraphBuilder {
       varLookup.set(`${v.file}:${v.name}`, v);
     }
 
-    for (const mutation of arrayMutations) {
-      const { arrayName, mutationMethod, insertedValues, file } = mutation;
+    // Build parameter lookup cache for function-level mutations
+    const paramLookup = new Map<string, ParameterInfo>();
+    for (const p of parameters) {
+      paramLookup.set(`${p.file}:${p.name}`, p);
+    }
 
-      // O(1) lookup instead of O(n) find
-      const arrayVar = varLookup.get(`${file}:${arrayName}`);
-      if (!arrayVar) continue;
+    for (const mutation of arrayMutations) {
+      const { arrayName, mutationMethod, insertedValues, file, isNested, baseObjectName, propertyName } = mutation;
+
+      // REG-117: For nested mutations (obj.arr.push), resolve target node
+      // First try direct lookup, then fallback to base object
+      let targetNodeId: string | null = null;
+      let nestedProperty: string | undefined;
+
+      if (isNested && baseObjectName) {
+        // Skip 'this.items.push' - 'this' is not a variable node
+        if (baseObjectName === 'this') continue;
+
+        // Nested mutation: try base object lookup
+        const baseVar = varLookup.get(`${file}:${baseObjectName}`);
+        const baseParam = !baseVar ? paramLookup.get(`${file}:${baseObjectName}`) : null;
+        targetNodeId = baseVar?.id ?? baseParam?.id ?? null;
+        nestedProperty = propertyName;
+      } else {
+        // Direct mutation: arr.push()
+        const arrayVar = varLookup.get(`${file}:${arrayName}`);
+        const arrayParam = !arrayVar ? paramLookup.get(`${file}:${arrayName}`) : null;
+        targetNodeId = arrayVar?.id ?? arrayParam?.id ?? null;
+      }
+
+      if (!targetNodeId) continue;
 
       // Create FLOWS_INTO edges for each inserted value
       for (const arg of insertedValues) {
         if (arg.valueType === 'VARIABLE' && arg.valueName) {
           // O(1) lookup instead of O(n) find
           const sourceVar = varLookup.get(`${file}:${arg.valueName}`);
-          if (sourceVar) {
+          const sourceParam = !sourceVar ? paramLookup.get(`${file}:${arg.valueName}`) : null;
+          const sourceNodeId = sourceVar?.id ?? sourceParam?.id;
+
+          if (sourceNodeId) {
             const edgeData: GraphEdge = {
               type: 'FLOWS_INTO',
-              src: sourceVar.id,
-              dst: arrayVar.id,
+              src: sourceNodeId,
+              dst: targetNodeId,
               mutationMethod,
               argIndex: arg.argIndex
             };
             if (arg.isSpread) {
               edgeData.isSpread = true;
+            }
+            // REG-117: Add nested property metadata
+            if (nestedProperty) {
+              edgeData.nestedProperty = nestedProperty;
             }
             this._bufferEdge(edgeData);
           }

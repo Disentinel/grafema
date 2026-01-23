@@ -809,12 +809,17 @@ export class CallExpressionVisitor extends ASTVisitor {
   /**
    * Detect array mutation calls (push, unshift, splice) and collect mutation info
    * for later FLOWS_INTO edge creation in GraphBuilder
+   *
+   * REG-117: Added isNested, baseObjectName, propertyName for nested mutations
    */
   private detectArrayMutation(
     callNode: CallExpression,
     arrayName: string,
     method: 'push' | 'unshift' | 'splice',
-    module: VisitorModule
+    module: VisitorModule,
+    isNested?: boolean,
+    baseObjectName?: string,
+    propertyName?: string
   ): void {
     // Initialize collection if not exists
     if (!this.collections.arrayMutations) {
@@ -882,7 +887,11 @@ export class CallExpressionVisitor extends ASTVisitor {
         file: module.file,
         line,
         column,
-        insertedValues: mutationArgs
+        insertedValues: mutationArgs,
+        // REG-117: Nested mutation fields
+        isNested,
+        baseObjectName,
+        propertyName
       });
     }
   }
@@ -1209,6 +1218,37 @@ export class CallExpressionVisitor extends ASTVisitor {
                       });
                     }
                   });
+                }
+              }
+            }
+            // REG-117: Nested array mutations like obj.arr.push(item)
+            // object is MemberExpression, property is the method name
+            else if (object.type === 'MemberExpression' && property.type === 'Identifier') {
+              const nestedMember = object as MemberExpression;
+              const methodName = (property as Identifier).name;
+              const ARRAY_MUTATION_METHODS = ['push', 'unshift', 'splice'];
+
+              if (ARRAY_MUTATION_METHODS.includes(methodName)) {
+                // Extract base object and property from nested MemberExpression
+                const base = nestedMember.object;
+                const prop = nestedMember.property;
+
+                // Only handle single-level nesting: obj.arr.push() or this.items.push()
+                if ((base.type === 'Identifier' || base.type === 'ThisExpression') &&
+                    !nestedMember.computed &&
+                    prop.type === 'Identifier') {
+                  const baseObjectName = base.type === 'Identifier' ? (base as Identifier).name : 'this';
+                  const propertyName = (prop as Identifier).name;
+
+                  this.detectArrayMutation(
+                    callNode,
+                    `${baseObjectName}.${propertyName}`,  // arrayName for ID purposes
+                    methodName as 'push' | 'unshift' | 'splice',
+                    module,
+                    true,          // isNested
+                    baseObjectName,
+                    propertyName
+                  );
                 }
               }
             }

@@ -2244,6 +2244,45 @@ export class JSASTAnalyzer extends Plugin {
           );
         }
       }
+      // REG-117: Nested array mutations like obj.arr.push(item)
+      // object is MemberExpression, property is the method name
+      else if (object.type === 'MemberExpression' && property.type === 'Identifier') {
+        const nestedMember = object;
+        const methodName = property.name;
+        const ARRAY_MUTATION_METHODS = ['push', 'unshift', 'splice'];
+
+        if (ARRAY_MUTATION_METHODS.includes(methodName)) {
+          // Extract base object and property from nested MemberExpression
+          const base = nestedMember.object;
+          const prop = nestedMember.property;
+
+          // Only handle single-level nesting: obj.arr.push() or this.items.push()
+          if ((base.type === 'Identifier' || base.type === 'ThisExpression') &&
+              !nestedMember.computed &&
+              prop.type === 'Identifier') {
+            const baseObjectName = base.type === 'Identifier' ? base.name : 'this';
+            const propertyName = prop.name;
+
+            // Initialize collection if not exists
+            if (!collections.arrayMutations) {
+              collections.arrayMutations = [];
+            }
+            const arrayMutations = collections.arrayMutations as ArrayMutationInfo[];
+
+            this.detectArrayMutationInFunction(
+              callNode,
+              `${baseObjectName}.${propertyName}`,  // arrayName for ID purposes
+              methodName as 'push' | 'unshift' | 'splice',
+              module,
+              arrayMutations,
+              scopeTracker,
+              true,          // isNested
+              baseObjectName,
+              propertyName
+            );
+          }
+        }
+      }
     }
   }
 
@@ -2251,12 +2290,17 @@ export class JSASTAnalyzer extends Plugin {
    * Detect array mutation calls (push, unshift, splice) inside functions
    * and collect mutation info for FLOWS_INTO edge creation in GraphBuilder
    *
+   * REG-117: Added isNested, baseObjectName, propertyName for nested mutations
+   *
    * @param callNode - The call expression node
    * @param arrayName - Name of the array being mutated
    * @param method - The mutation method (push, unshift, splice)
    * @param module - Current module being analyzed
    * @param arrayMutations - Collection to push mutation info into
    * @param scopeTracker - Optional scope tracker for semantic IDs
+   * @param isNested - REG-117: true if this is a nested mutation (obj.arr.push)
+   * @param baseObjectName - REG-117: base object name for nested mutations
+   * @param propertyName - REG-117: property name for nested mutations
    */
   private detectArrayMutationInFunction(
     callNode: t.CallExpression,
@@ -2264,7 +2308,10 @@ export class JSASTAnalyzer extends Plugin {
     method: 'push' | 'unshift' | 'splice',
     module: VisitorModule,
     arrayMutations: ArrayMutationInfo[],
-    scopeTracker?: ScopeTracker
+    scopeTracker?: ScopeTracker,
+    isNested?: boolean,
+    baseObjectName?: string,
+    propertyName?: string
   ): void {
     const mutationArgs: ArrayMutationArgument[] = [];
 
@@ -2325,7 +2372,11 @@ export class JSASTAnalyzer extends Plugin {
         file: module.file,
         line,
         column,
-        insertedValues: mutationArgs
+        insertedValues: mutationArgs,
+        // REG-117: Nested mutation fields
+        isNested,
+        baseObjectName,
+        propertyName
       });
     }
   }
