@@ -20,40 +20,17 @@
 
 import { describe, it, after, beforeEach } from 'node:test';
 import assert from 'node:assert';
-import { join } from 'path';
-import { writeFileSync, mkdirSync } from 'fs';
-import { tmpdir } from 'os';
 
 import { createTestBackend } from '../helpers/TestRFDB.js';
-import { createTestOrchestrator } from '../helpers/createTestOrchestrator.js';
+import { setupSemanticTest } from '../helpers/setupSemanticTest.js';
 
-let testCounter = 0;
+const TEST_LABEL = 'var-semantic';
 
 /**
  * Helper to create a test project with given files
  */
 async function setupTest(backend, files) {
-  const testDir = join(tmpdir(), `grafema-test-var-semantic-${Date.now()}-${testCounter++}`);
-  mkdirSync(testDir, { recursive: true });
-
-  // package.json
-  writeFileSync(
-    join(testDir, 'package.json'),
-    JSON.stringify({
-      name: `test-var-semantic-${testCounter}`,
-      type: 'module'
-    })
-  );
-
-  // Create test files
-  for (const [filename, content] of Object.entries(files)) {
-    writeFileSync(join(testDir, filename), content);
-  }
-
-  const orchestrator = createTestOrchestrator(backend);
-  await orchestrator.run(testDir);
-
-  return { testDir };
+  return setupSemanticTest(backend, files, { testLabel: TEST_LABEL });
 }
 
 describe('VariableVisitor semantic ID integration', () => {
