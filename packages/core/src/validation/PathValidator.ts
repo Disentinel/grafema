@@ -50,7 +50,7 @@ export interface PathValidationResult {
 /**
  * Endpoint diff info
  */
-interface EndpointDiff {
+export interface EndpointDiff {
   type: string;
   name: string;
   reason: string;

@@ -46,6 +46,9 @@ export { DatabaseQueryNode, type DatabaseQueryNodeRecord } from './DatabaseQuery
 // Guarantee nodes (contract-based)
 export { GuaranteeNode, type GuaranteeNodeRecord, type GuaranteePriority, type GuaranteeStatus, type GuaranteeType } from './GuaranteeNode.js';
 
+// Issue nodes (detected problems)
+export { IssueNode, type IssueNodeRecord, type IssueSeverity, type IssueType } from './IssueNode.js';
+
 // Node type constants and helpers
 export {
   NODE_TYPE,

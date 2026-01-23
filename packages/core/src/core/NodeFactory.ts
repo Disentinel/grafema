@@ -40,11 +40,13 @@ import {
   DecoratorNode,
   ExpressionNode,
   ArgumentExpressionNode,
+  IssueNode,
   type EntrypointType,
   type EntrypointTrigger,
   type DecoratorTargetType,
   type InterfacePropertyRecord,
   type EnumMemberRecord,
+  type IssueSeverity,
 } from './nodes/index.js';
 
 import type { BaseNodeRecord } from '@grafema/types';
@@ -572,6 +574,34 @@ export class NodeFactory {
   }
 
   /**
+   * Create ISSUE node
+   *
+   * Issues represent detected problems in the codebase.
+   * Used by validation plugins to persist findings in the graph.
+   *
+   * @param category - Issue category (security, performance, style, smell)
+   * @param severity - error | warning | info
+   * @param message - Human-readable description
+   * @param plugin - Name of the plugin that detected this issue
+   * @param file - File path where issue was detected
+   * @param line - Line number
+   * @param column - Column number (optional)
+   * @param options - Optional context data
+   */
+  static createIssue(
+    category: string,
+    severity: IssueSeverity,
+    message: string,
+    plugin: string,
+    file: string,
+    line: number,
+    column: number = 0,
+    options: { context?: Record<string, unknown> } = {}
+  ) {
+    return IssueNode.create(category, severity, message, plugin, file, line, column, options);
+  }
+
+  /**
    * Validate node by its type
    */
   static validate(node: BaseNodeRecord): string[] {
@@ -603,6 +633,11 @@ export class NodeFactory {
       'DECORATOR': DecoratorNode,
       'EXPRESSION': ExpressionNode
     };
+
+    // Handle issue:* types dynamically
+    if (IssueNode.isIssueType(node.type)) {
+      return IssueNode.validate(node as Parameters<typeof IssueNode.validate>[0]);
+    }
 
     const validator = validators[node.type];
     if (!validator) {

@@ -73,6 +73,20 @@ export { clearFileNodesIfNeeded, clearServiceNodeIfExists } from './core/FileNod
 // Hash utilities
 export { calculateFileHash, calculateFileHashAsync, calculateContentHash } from './core/HashUtils.js';
 
+// Type validation and path validation
+export {
+  levenshtein,
+  checkTypoAgainstKnownTypes,
+  resetKnownNodeTypes,
+  getKnownNodeTypes
+} from './storage/backends/typeValidation.js';
+export { PathValidator } from './validation/PathValidator.js';
+export type { PathValidationResult, EndpointDiff } from './validation/PathValidator.js';
+
+// Version management
+export { VersionManager, versionManager } from './core/VersionManager.js';
+export type { VersionedNode, VersionConstants, EnrichOptions, ModifiedNodeInfo, ChangesSummary, ClassifyChangesResult } from './core/VersionManager.js';
+
 // Freshness checking and incremental reanalysis
 export { GraphFreshnessChecker } from './core/GraphFreshnessChecker.js';
 export type { FreshnessGraph, FreshnessResult, StaleModule } from './core/GraphFreshnessChecker.js';
@@ -86,6 +100,9 @@ export type { GuaranteeGraphBackend } from './api/GuaranteeAPI.js';
 
 // Node kinds
 export { isGuaranteeType } from './core/nodes/NodeKind.js';
+
+// Issue nodes (detected problems)
+export { IssueNode, type IssueNodeRecord, type IssueSeverity, type IssueType } from './core/nodes/IssueNode.js';
 
 // Node contracts
 export { FunctionNode } from './core/nodes/FunctionNode.js';
