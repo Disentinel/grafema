@@ -248,7 +248,7 @@ export async function handleFindNodes(args: FindNodesArgs): Promise<ToolResult> 
 
 export async function handleTraceAlias(args: TraceAliasArgs): Promise<ToolResult> {
   const db = await ensureAnalyzed();
-  const { identifier: variableName, file } = args;
+  const { variableName, file } = args;
   const projectPath = getProjectPath();
 
   let varNode: GraphNode | null = null;
