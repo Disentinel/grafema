@@ -128,14 +128,14 @@ async function findTarget(
 
   for (const nodeType of searchTypes) {
     for await (const node of backend.queryNodes({ nodeType: nodeType as any })) {
-      const nodeName = (node as any).name || '';
+      const nodeName = node.name || '';
       if (nodeName.toLowerCase() === name.toLowerCase()) {
         return {
           id: node.id,
-          type: (node as any).type || nodeType,
+          type: node.type || nodeType,
           name: nodeName,
-          file: (node as any).file || '',
-          line: (node as any).line,
+          file: node.file || '',
+          line: node.line,
         };
       }
     }
@@ -245,10 +245,10 @@ async function findCallsToNode(
       if (callNode) {
         calls.push({
           id: callNode.id,
-          type: (callNode as any).type || 'CALL',
-          name: (callNode as any).name || '',
-          file: (callNode as any).file || '',
-          line: (callNode as any).line,
+          type: callNode.type || 'CALL',
+          name: callNode.name || '',
+          file: callNode.file || '',
+          line: callNode.line,
         });
       }
     }
@@ -291,16 +291,16 @@ async function findContainingFunction(
         const parent = await backend.getNode(edge.src);
         if (!parent || visited.has(parent.id)) continue;
 
-        const parentType = (parent as any).type || (parent as any).nodeType;
+        const parentType = parent.type;
 
         // FUNCTION, CLASS, or MODULE (for top-level calls)
         if (parentType === 'FUNCTION' || parentType === 'CLASS' || parentType === 'MODULE') {
           return {
             id: parent.id,
             type: parentType,
-            name: (parent as any).name || '',
-            file: (parent as any).file || '',
-            line: (parent as any).line,
+            name: parent.name || '',
+            file: parent.file || '',
+            line: parent.line,
           };
         }
 

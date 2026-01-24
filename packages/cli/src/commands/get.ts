@@ -112,10 +112,10 @@ async function outputJSON(
   const result = {
     node: {
       id: node.id,
-      type: (node as any).type || (node as any).nodeType || 'UNKNOWN',
-      name: (node as any).name || '',
-      file: (node as any).file || '',
-      line: (node as any).line,
+      type: node.type || 'UNKNOWN',
+      name: node.name || '',
+      file: node.file || '',
+      line: node.line,
       ...getMetadataFields(node),
     },
     edges: {
@@ -143,10 +143,10 @@ async function outputText(
 ): Promise<void> {
   const nodeInfo: NodeInfo = {
     id: node.id,
-    type: (node as any).type || (node as any).nodeType || 'UNKNOWN',
-    name: (node as any).name || '',
-    file: (node as any).file || '',
-    line: (node as any).line,
+    type: node.type || 'UNKNOWN',
+    name: node.name || '',
+    file: node.file || '',
+    line: node.line,
   };
 
   // Display node details
@@ -237,7 +237,7 @@ async function getNodeName(backend: RFDBServerBackend, nodeId: string): Promise<
   try {
     const node = await backend.getNode(nodeId);
     if (node) {
-      return (node as any).name || '';
+      return node.name || '';
     }
   } catch {
     // Ignore errors
