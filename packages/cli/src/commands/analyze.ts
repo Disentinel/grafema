@@ -4,7 +4,7 @@
 
 import { Command } from 'commander';
 import { resolve, join } from 'path';
-import { existsSync, mkdirSync, readFileSync } from 'fs';
+import { existsSync, mkdirSync } from 'fs';
 import {
   Orchestrator,
   RFDBServerBackend,
@@ -12,6 +12,8 @@ import {
   DiagnosticReporter,
   DiagnosticWriter,
   createLogger,
+  loadConfig,
+  type GrafemaConfig,
   // Indexing
   JSModuleIndexer,
   RustModuleIndexer,
@@ -44,17 +46,6 @@ import {
   TypeScriptDeadCodeValidator,
 } from '@grafema/core';
 import type { LogLevel } from '@grafema/types';
-
-interface PluginConfig {
-  indexing?: string[];
-  analysis?: string[];
-  enrichment?: string[];
-  validation?: string[];
-}
-
-interface ProjectConfig {
-  plugins?: PluginConfig;
-}
 
 const BUILTIN_PLUGINS: Record<string, () => Plugin> = {
   // Indexing
@@ -89,52 +80,9 @@ const BUILTIN_PLUGINS: Record<string, () => Plugin> = {
   TypeScriptDeadCodeValidator: () => new TypeScriptDeadCodeValidator() as Plugin,
 };
 
-const DEFAULT_PLUGINS: PluginConfig = {
-  indexing: ['JSModuleIndexer'],
-  analysis: [
-    'JSASTAnalyzer',
-    'ExpressRouteAnalyzer',
-    'SocketIOAnalyzer',
-    'DatabaseAnalyzer',
-    'FetchAnalyzer',
-    'ServiceLayerAnalyzer',
-  ],
-  enrichment: [
-    'MethodCallResolver',
-    'AliasTracker',
-    'ValueDomainAnalyzer',
-    'MountPointResolver',
-    'PrefixEvaluator',
-    'ImportExportLinker',
-    'HTTPConnectionEnricher',
-  ],
-  validation: [
-    'CallResolverValidator',
-    'EvalBanValidator',
-    'SQLInjectionValidator',
-    'ShadowingDetector',
-    'GraphConnectivityValidator',
-    'DataFlowValidator',
-    'TypeScriptDeadCodeValidator',
-  ],
-};
-
-function loadConfig(projectPath: string): ProjectConfig {
-  const configPath = join(projectPath, '.grafema', 'config.json');
-  if (!existsSync(configPath)) {
-    return { plugins: DEFAULT_PLUGINS };
-  }
-  try {
-    const content = readFileSync(configPath, 'utf-8');
-    return JSON.parse(content);
-  } catch {
-    return { plugins: DEFAULT_PLUGINS };
-  }
-}
-
-function createPlugins(config: PluginConfig): Plugin[] {
+function createPlugins(config: GrafemaConfig['plugins']): Plugin[] {
   const plugins: Plugin[] = [];
-  const phases: (keyof PluginConfig)[] = ['indexing', 'analysis', 'enrichment', 'validation'];
+  const phases: (keyof GrafemaConfig['plugins'])[] = ['indexing', 'analysis', 'enrichment', 'validation'];
 
   for (const phase of phases) {
     const names = config[phase] || [];
@@ -201,8 +149,8 @@ export const analyzeCommand = new Command('analyze')
       await backend.clear();
     }
 
-    const config = loadConfig(projectPath);
-    const plugins = createPlugins(config.plugins || DEFAULT_PLUGINS);
+    const config = loadConfig(projectPath, logger);
+    const plugins = createPlugins(config.plugins);
 
     log(`Loaded ${plugins.length} plugins`);
 

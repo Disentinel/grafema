@@ -3,10 +3,10 @@
  */
 
 import { join } from 'path';
-import { existsSync, readFileSync, writeFileSync, readdirSync } from 'fs';
+import { existsSync, readdirSync } from 'fs';
 import { pathToFileURL } from 'url';
 import { log } from './utils.js';
-import type { GrafemaConfig } from './types.js';
+import { loadConfig as loadConfigFromCore, type GrafemaConfig } from '@grafema/core';
 
 // === PLUGIN IMPORTS ===
 import {
@@ -41,18 +41,12 @@ import {
   TypeScriptDeadCodeValidator,
 } from '@grafema/core';
 
-// === DEFAULT CONFIG ===
-export interface PluginConfig {
-  indexing: string[];
-  analysis: string[];
-  enrichment: string[];
-  validation: string[];
-  discovery?: string[];
-}
-
-export interface ProjectConfig {
-  plugins: PluginConfig;
-  discovery: {
+// === MCP-SPECIFIC CONFIG ===
+/**
+ * MCP-specific configuration extends GrafemaConfig with additional fields.
+ */
+export interface MCPConfig extends GrafemaConfig {
+  discovery?: {
     enabled: boolean;
     customOnly: boolean;
   };
@@ -63,35 +57,7 @@ export interface ProjectConfig {
   rfdb_socket?: string;
 }
 
-export const DEFAULT_CONFIG: ProjectConfig = {
-  plugins: {
-    indexing: ['JSModuleIndexer'],
-    analysis: [
-      'JSASTAnalyzer',
-      'ExpressRouteAnalyzer',
-      'SocketIOAnalyzer',
-      'DatabaseAnalyzer',
-      'FetchAnalyzer',
-      'ServiceLayerAnalyzer',
-    ],
-    enrichment: [
-      'MethodCallResolver',
-      'AliasTracker',
-      'ValueDomainAnalyzer',
-      'MountPointResolver',
-      'PrefixEvaluator',
-      'HTTPConnectionEnricher',
-    ],
-    validation: [
-      'CallResolverValidator',
-      'EvalBanValidator',
-      'SQLInjectionValidator',
-      'ShadowingDetector',
-      'GraphConnectivityValidator',
-      'DataFlowValidator',
-      'TypeScriptDeadCodeValidator',
-    ],
-  },
+const MCP_DEFAULTS: Pick<MCPConfig, 'discovery'> = {
   discovery: {
     enabled: true,
     customOnly: false,
@@ -137,33 +103,21 @@ export const BUILTIN_PLUGINS: Record<string, PluginFactory> = {
 };
 
 // === CONFIG LOADING ===
-export function loadConfig(projectPath: string): ProjectConfig {
-  const configPath = join(projectPath, '.grafema', 'config.json');
+/**
+ * Load MCP configuration (extends base GrafemaConfig).
+ * Uses shared ConfigLoader but adds MCP-specific defaults.
+ */
+export function loadConfig(projectPath: string): MCPConfig {
+  // Use shared loader (handles YAML/JSON, deprecation warnings)
+  const baseConfig = loadConfigFromCore(projectPath, {
+    warn: (msg) => log(`[Grafema MCP] ${msg}`),
+  });
 
-  if (!existsSync(configPath)) {
-    try {
-      const grafemaDir = join(projectPath, '.grafema');
-      if (!existsSync(grafemaDir)) {
-        const { mkdirSync } = require('fs');
-        mkdirSync(grafemaDir, { recursive: true });
-      }
-      writeFileSync(configPath, JSON.stringify(DEFAULT_CONFIG, null, 2));
-      log(`[Grafema MCP] Created default config: ${configPath}`);
-    } catch (err) {
-      log(`[Grafema MCP] Failed to create config: ${(err as Error).message}`);
-    }
-    return DEFAULT_CONFIG;
-  }
-
-  try {
-    const configContent = readFileSync(configPath, 'utf-8');
-    const config = JSON.parse(configContent) as Partial<ProjectConfig>;
-    log(`[Grafema MCP] Loaded config from ${configPath}`);
-    return { ...DEFAULT_CONFIG, ...config };
-  } catch (err) {
-    log(`[Grafema MCP] Failed to load config: ${(err as Error).message}, using defaults`);
-    return DEFAULT_CONFIG;
-  }
+  // Add MCP-specific defaults
+  return {
+    ...baseConfig,
+    ...MCP_DEFAULTS,
+  };
 }
 
 // === CUSTOM PLUGINS ===
@@ -212,9 +166,16 @@ export async function loadCustomPlugins(projectPath: string): Promise<CustomPlug
 
 // === PLUGIN INSTANTIATION ===
 export function createPlugins(
-  pluginNames: string[],
+  config: GrafemaConfig['plugins'],
   customPluginMap: Record<string, new () => unknown> = {}
 ): unknown[] {
+  const pluginNames = [
+    ...config.indexing,
+    ...config.analysis,
+    ...config.enrichment,
+    ...config.validation,
+  ];
+
   const plugins: unknown[] = [];
   const availablePlugins: Record<string, PluginFactory> = {
     ...BUILTIN_PLUGINS,

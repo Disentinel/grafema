@@ -36,13 +36,8 @@ export interface PaginationParams {
 }
 
 // === CONFIG ===
-export interface GrafemaConfig {
-  project_path?: string;
-  backend?: 'local' | 'rfdb';
-  rfdb_socket?: string;
-  plugins?: string[];
-  ignore_patterns?: string[];
-}
+export type { GrafemaConfig } from '@grafema/core';
+export type { MCPConfig } from './config.js';
 
 // === TOOL ARGUMENTS ===
 export interface QueryGraphArgs {
@@ -60,7 +55,7 @@ export interface FindCallsArgs {
 }
 
 export interface TraceAliasArgs {
-  identifier: string;
+  variableName: string;
   file?: string;
   max_depth?: number;
 }

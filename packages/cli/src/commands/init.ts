@@ -6,23 +6,41 @@ import { Command } from 'commander';
 import { resolve, join } from 'path';
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
 import { exitWithError } from '../utils/errorFormatter.js';
+import { stringify as stringifyYAML } from 'yaml';
+import { DEFAULT_CONFIG } from '@grafema/core';
 
-const DEFAULT_CONFIG = `# Grafema configuration
-include:
-  - "src/**/*.{ts,js,tsx,jsx}"
+/**
+ * Generate config.yaml content with commented future features.
+ * Only includes implemented features (plugins).
+ */
+function generateConfigYAML(): string {
+  // Start with working default config
+  const config = {
+    // Plugin list (fully implemented)
+    plugins: DEFAULT_CONFIG.plugins,
+  };
 
-exclude:
-  - "**/*.test.ts"
-  - "**/*.spec.ts"
-  - "**/__tests__/**"
-  - "node_modules/**"
-  - "dist/**"
-  - "build/**"
+  // Convert to YAML
+  const yaml = stringifyYAML(config, {
+    lineWidth: 0, // Don't wrap long lines
+  });
 
-analysis:
-  maxFileSize: 1MB
-  timeout: 30s
+  // Add header comment
+  return `# Grafema Configuration
+# Documentation: https://github.com/grafema/grafema#configuration
+
+${yaml}
+# Future: File discovery patterns (not yet implemented)
+# Grafema currently uses entrypoint-based discovery (follows imports from package.json main field)
+# Glob-based include/exclude patterns will be added in a future release
+#
+# include:
+#   - "src/**/*.{ts,js,tsx,jsx}"
+# exclude:
+#   - "**/*.test.ts"
+#   - "node_modules/**"
 `;
+}
 
 interface InitOptions {
   force?: boolean;
@@ -71,27 +89,9 @@ export const initCommand = new Command('init')
       mkdirSync(grafemaDir, { recursive: true });
     }
 
-    // Detect project structure and customize config
-    let config = DEFAULT_CONFIG;
-
-    // Check for common patterns
-    const srcExists = existsSync(join(projectPath, 'src'));
-    const libExists = existsSync(join(projectPath, 'lib'));
-    const packagesExists = existsSync(join(projectPath, 'packages'));
-
-    if (packagesExists) {
-      // Monorepo
-      config = config.replace(
-        'src/**/*.{ts,js,tsx,jsx}',
-        'packages/*/src/**/*.{ts,js,tsx,jsx}'
-      );
-      console.log('✓ Detected monorepo structure');
-    } else if (!srcExists && libExists) {
-      config = config.replace('src/**', 'lib/**');
-    }
-
     // Write config
-    writeFileSync(configPath, config);
+    const configContent = generateConfigYAML();
+    writeFileSync(configPath, configContent);
     console.log('✓ Created .grafema/config.yaml');
 
     // Add to .gitignore if exists

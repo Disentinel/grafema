@@ -13,7 +13,7 @@ import {
   isAnalysisRunning,
   acquireAnalysisLock,
 } from './state.js';
-import { loadConfig, loadCustomPlugins, BUILTIN_PLUGINS } from './config.js';
+import { loadConfig, loadCustomPlugins, createPlugins } from './config.js';
 import { log } from './utils.js';
 import type { GraphBackend } from '@grafema/types';
 
@@ -76,30 +76,8 @@ export async function ensureAnalyzed(
     const config = loadConfig(projectPath);
     const { pluginMap: customPluginMap } = await loadCustomPlugins(projectPath);
 
-    // Merge builtin and custom plugins
-    const availablePlugins: Record<string, () => unknown> = {
-      ...BUILTIN_PLUGINS,
-      ...Object.fromEntries(
-        Object.entries(customPluginMap).map(([name, PluginClass]) => [
-          name,
-          () => new PluginClass(),
-        ])
-      ),
-    };
-
-    // Build plugin list from config
-    const plugins: unknown[] = [];
-    for (const [phase, pluginNames] of Object.entries(config.plugins || {})) {
-      for (const name of pluginNames as string[]) {
-        const factory = availablePlugins[name];
-        if (factory) {
-          plugins.push(factory());
-          log(`[Grafema MCP] Enabled plugin: ${name} (${phase})`);
-        } else {
-          log(`[Grafema MCP] Warning: Unknown plugin ${name} in config`);
-        }
-      }
-    }
+    // Create plugins from config
+    const plugins = createPlugins(config.plugins, customPluginMap);
 
     log(`[Grafema MCP] Total plugins: ${plugins.length}`);
 
