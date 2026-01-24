@@ -76,6 +76,9 @@ async function isServerRunning(socketPath: string): Promise<{ running: boolean; 
   }
 
   const client = new RFDBClient(socketPath);
+  // Suppress error events (we handle via try/catch)
+  client.on('error', () => {});
+
   try {
     await client.connect();
     const version = await client.ping();
@@ -220,6 +223,9 @@ serverCommand
 
     // Send shutdown command
     const client = new RFDBClient(socketPath);
+    // Suppress error events (server closes connection on shutdown)
+    client.on('error', () => {});
+
     try {
       await client.connect();
       await client.shutdown();
@@ -273,6 +279,8 @@ serverCommand
     let edgeCount: number | undefined;
     if (status.running) {
       const client = new RFDBClient(socketPath);
+      client.on('error', () => {}); // Suppress error events
+
       try {
         await client.connect();
         nodeCount = await client.nodeCount();
