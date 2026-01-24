@@ -199,10 +199,10 @@ export interface GraphBackend {
   runDatalogQuery?(query: string): Promise<unknown[]>;
   checkGuarantee?(query: string): unknown[] | Promise<unknown[]>;
 
-  // Optional delete methods
+  // Delete methods
   deleteNode?(id: string): Promise<void>;
   deleteEdge?(src: string, dst: string, type: string): Promise<void>;
-  clear?(): Promise<void>;
+  clear(): Promise<void>;
 
   // Optional persistence
   flush?(): Promise<void>;

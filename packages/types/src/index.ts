@@ -5,6 +5,9 @@
 // Node types
 export * from './nodes.js';
 
+// Branded node types (type-safe node creation)
+export * from './branded.js';
+
 // Edge types
 export * from './edges.js';
 
