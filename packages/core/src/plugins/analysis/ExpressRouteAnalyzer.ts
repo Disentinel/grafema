@@ -16,6 +16,7 @@ import type { NodePath } from '@babel/traverse';
 import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { NodeRecord } from '@grafema/types';
+import { getLine } from './ast/utils/location.js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const traverse = (traverseModule as any).default || traverseModule;
@@ -219,7 +220,7 @@ export class ExpressRouteAnalyzer extends Plugin {
                   const middlewareHandlers = handlers.slice(0, -1);
 
                   // Создаём http:route
-                  const endpointId = `http:route#${method.toUpperCase()}:${routePath}#${module.file}#${node.loc!.start.line}`;
+                  const endpointId = `http:route#${method.toUpperCase()}:${routePath}#${module.file}#${getLine(node)}`;
 
                   endpoints.push({
                     id: endpointId,
@@ -227,11 +228,11 @@ export class ExpressRouteAnalyzer extends Plugin {
                     method: method.toUpperCase(),
                     path: routePath,
                     file: module.file!,
-                    line: node.loc!.start.line,
+                    line: getLine(node),
                     routerName: objectName,
                     handlerLine: (mainHandler as Node).loc
-                      ? (mainHandler as Node).loc!.start.line
-                      : node.loc!.start.line
+                      ? getLine(mainHandler as Node)
+                      : getLine(node)
                   });
 
                   // Обрабатываем middleware
@@ -252,18 +253,18 @@ export class ExpressRouteAnalyzer extends Plugin {
                       mwNode.type === 'ArrowFunctionExpression' ||
                       mwNode.type === 'FunctionExpression'
                     ) {
-                      middlewareName = `inline:${mwNode.loc!.start.line}`;
+                      middlewareName = `inline:${getLine(mwNode)}`;
                     }
 
                     if (middlewareName) {
-                      const middlewareId = `express:middleware#${middlewareName}#${module.file}#${mwNode.loc!.start.line}`;
+                      const middlewareId = `express:middleware#${middlewareName}#${module.file}#${getLine(mwNode)}`;
 
                       middlewares.push({
                         id: middlewareId,
                         type: 'express:middleware',
                         name: middlewareName,
                         file: module.file!,
-                        line: mwNode.loc ? mwNode.loc.start.line : node.loc!.start.line,
+                        line: mwNode.loc ? getLine(mwNode) : getLine(node),
                         endpointId: endpointId,
                         order: index // Порядок в цепочке
                       });
@@ -300,14 +301,14 @@ export class ExpressRouteAnalyzer extends Plugin {
                   }
 
                   if (middlewareName) {
-                    const middlewareId = `express:middleware#${middlewareName}#${module.file}#${node.loc!.start.line}`;
+                    const middlewareId = `express:middleware#${middlewareName}#${module.file}#${getLine(node)}`;
 
                     middlewares.push({
                       id: middlewareId,
                       type: 'express:middleware',
                       name: middlewareName,
                       file: module.file!,
-                      line: node.loc!.start.line,
+                      line: getLine(node),
                       mountPath: mountPath,
                       isGlobal: mountPath === '/' // Global middleware если нет path
                     });

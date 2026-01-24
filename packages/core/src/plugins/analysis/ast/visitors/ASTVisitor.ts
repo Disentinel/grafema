@@ -3,6 +3,7 @@
  * Each visitor handles specific AST node types and collects relevant data
  */
 import type { Node, SourceLocation } from '@babel/types';
+import { getNodeLocation, type NodeLocation } from '../utils/location.js';
 import type { NodePath } from '@babel/traverse';
 import type {
   FunctionInfo,
@@ -84,11 +85,13 @@ export interface VisitorCollections {
 }
 
 /**
- * Location info extracted from AST node
+ * Location info extracted from AST node.
+ * Both line and column are guaranteed to be numbers (not undefined).
+ * Convention: 0:0 means "unknown location".
  */
 export interface LocationInfo {
-  line: number | undefined;
-  column: number | undefined;
+  line: number;
+  column: number;
 }
 
 /**
@@ -126,12 +129,12 @@ export abstract class ASTVisitor {
   abstract getHandlers(): VisitorHandlers;
 
   /**
-   * Utility to get source location info
+   * Utility to get source location info.
+   * Returns { line: 0, column: 0 } if location is unavailable.
+   *
+   * @deprecated Prefer using getLine() or getNodeLocation() directly from utils/location.js
    */
   protected getLoc(node: Node): LocationInfo {
-    return {
-      line: node.loc?.start?.line,
-      column: node.loc?.start?.column
-    };
+    return getNodeLocation(node);
   }
 }

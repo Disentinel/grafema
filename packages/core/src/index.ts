@@ -147,6 +147,16 @@ export type {
   AnalyzeFunctionBodyCallback
 } from './plugins/analysis/ast/visitors/index.js';
 
+// AST Location utilities (REG-122)
+export {
+  getNodeLocation,
+  getLine,
+  getColumn,
+  getEndLocation,
+  UNKNOWN_LOCATION
+} from './plugins/analysis/ast/utils/location.js';
+export type { NodeLocation } from './plugins/analysis/ast/utils/location.js';
+
 // === PLUGINS ===
 
 // Indexing plugins

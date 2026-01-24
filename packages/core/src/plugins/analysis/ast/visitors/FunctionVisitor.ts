@@ -22,6 +22,7 @@ import { ASTVisitor, type VisitorModule, type VisitorCollections, type VisitorHa
 import { typeNodeToString } from './TypeScriptVisitor.js';
 import { ScopeTracker } from '../../../../core/ScopeTracker.js';
 import { IdGenerator } from '../IdGenerator.js';
+import { getLine, getColumn } from '../utils/location.js';
 
 /**
  * Parameter node info
@@ -282,9 +283,11 @@ export class FunctionVisitor extends ASTVisitor {
 
         const isAsync = node.async || false;
 
+        const line = getLine(node);
+
         // Generate ID using centralized IdGenerator
         const idGenerator = new IdGenerator(scopeTracker);
-        const functionId = idGenerator.generateSimple('FUNCTION', node.id.name, module.file, node.loc!.start.line);
+        const functionId = idGenerator.generateSimple('FUNCTION', node.id.name, module.file, line);
 
         // Extract type info
         const { names: paramNames, types: paramTypes } = extractParamInfo(node.params);
@@ -297,7 +300,7 @@ export class FunctionVisitor extends ASTVisitor {
           type: 'FUNCTION',
           name: node.id.name,
           file: module.file,
-          line: node.loc!.start.line,
+          line,
           async: isAsync,
           generator: node.generator || false,
           params: paramNames,
@@ -308,7 +311,7 @@ export class FunctionVisitor extends ASTVisitor {
         });
 
         // Create PARAMETER nodes for function parameters
-        createParameterNodes(node.params, functionId, module.file, node.loc!.start.line);
+        createParameterNodes(node.params, functionId, module.file, line);
 
         // Enter function scope for tracking
         if (scopeTracker) {
@@ -316,7 +319,7 @@ export class FunctionVisitor extends ASTVisitor {
         }
 
         // Create SCOPE for function body
-        const functionBodyScopeId = idGenerator.generateScope('body', `${node.id.name}:body`, module.file, node.loc!.start.line);
+        const functionBodyScopeId = idGenerator.generateScope('body', `${node.id.name}:body`, module.file, line);
         (scopes as ScopeInfo[]).push({
           id: functionBodyScopeId,
           type: 'SCOPE',
@@ -324,7 +327,7 @@ export class FunctionVisitor extends ASTVisitor {
           name: `${node.id.name}:body`,
           conditional: false,
           file: module.file,
-          line: node.loc!.start.line,
+          line,
           parentFunctionId: functionId
         });
 
@@ -343,8 +346,8 @@ export class FunctionVisitor extends ASTVisitor {
       // Arrow functions (module-level, assigned to variables or as callbacks)
       ArrowFunctionExpression: (path: NodePath) => {
         const node = path.node as ArrowFunctionExpression;
-        const line = node.loc!.start.line;
-        const column = node.loc!.start.column;
+        const line = getLine(node);
+        const column = getColumn(node);
         const isAsync = node.async || false;
 
         // Determine arrow function name (use scope-level counter for stable semanticId)

@@ -26,6 +26,7 @@ import type {
 import type { NodePath } from '@babel/traverse';
 import { ASTVisitor, type VisitorModule, type VisitorCollections, type VisitorHandlers } from './ASTVisitor.js';
 import type { VariableInfo } from './VariableVisitor.js';
+import { getLine, getColumn } from '../utils/location.js';
 
 /**
  * Callback type for extracting variable names from patterns
@@ -128,8 +129,8 @@ export class ImportExportVisitor extends ASTVisitor {
         (imports as ImportInfo[]).push({
           source,
           specifiers,
-          line: node.loc!.start.line,
-          column: node.loc!.start.column
+          line: getLine(node),
+          column: getColumn(node)
         });
       }
     };
@@ -145,13 +146,14 @@ export class ImportExportVisitor extends ASTVisitor {
 
         (exports as ExportInfo[]).push({
           type: 'default',
-          line: node.loc!.start.line,
+          line: getLine(node),
           declaration: node.declaration
         });
       },
 
       ExportNamedDeclaration: (path: NodePath) => {
         const node = path.node as ExportNamedDeclaration;
+        const exportLine = getLine(node);
 
         // export { foo, bar } from './module'
         if (node.source) {
@@ -171,7 +173,7 @@ export class ImportExportVisitor extends ASTVisitor {
 
           (exports as ExportInfo[]).push({
             type: 'named',
-            line: node.loc!.start.line,
+            line: exportLine,
             specifiers,
             source: node.source.value
           });
@@ -191,7 +193,7 @@ export class ImportExportVisitor extends ASTVisitor {
 
           (exports as ExportInfo[]).push({
             type: 'named',
-            line: node.loc!.start.line,
+            line: exportLine,
             specifiers
           });
         }
@@ -205,7 +207,7 @@ export class ImportExportVisitor extends ASTVisitor {
             if (funcDecl.id) {
               (exports as ExportInfo[]).push({
                 type: 'named',
-                line: node.loc!.start.line,
+                line: exportLine,
                 name: funcDecl.id.name
               });
             }
@@ -219,7 +221,7 @@ export class ImportExportVisitor extends ASTVisitor {
               variables.forEach((varInfo: VariableInfo) => {
                 (exports as ExportInfo[]).push({
                   type: 'named',
-                  line: node.loc!.start.line,
+                  line: exportLine,
                   name: varInfo.name
                 });
               });
@@ -231,7 +233,7 @@ export class ImportExportVisitor extends ASTVisitor {
             if (classDecl.id) {
               (exports as ExportInfo[]).push({
                 type: 'named',
-                line: node.loc!.start.line,
+                line: exportLine,
                 name: classDecl.id.name
               });
             }
@@ -245,7 +247,7 @@ export class ImportExportVisitor extends ASTVisitor {
         // export * from './module'
         (exports as ExportInfo[]).push({
           type: 'all',
-          line: node.loc!.start.line,
+          line: getLine(node),
           source: node.source.value
         });
       }

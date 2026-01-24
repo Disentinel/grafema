@@ -18,6 +18,7 @@ import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { NodeRecord } from '@grafema/types';
 import { NetworkRequestNode } from '../../core/nodes/NetworkRequestNode.js';
+import { getLine } from './ast/utils/location.js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const traverse = (traverseModule as any).default || traverseModule;
@@ -153,7 +154,7 @@ export class FetchAnalyzer extends Plugin {
             const urlArg = node.arguments[0];
             const url = this.extractURL(urlArg);
             const method = this.extractMethod(node.arguments[1]) || 'GET';
-            const line = node.loc!.start.line;
+            const line = getLine(node);
 
             const request: HttpRequestNode = {
               id: `http:request#${method}:${url}#${module.file}#${line}`,
@@ -184,7 +185,7 @@ export class FetchAnalyzer extends Plugin {
             const method = ((callee as MemberExpression).property as Identifier).name.toUpperCase();
             const urlArg = node.arguments[0];
             const url = this.extractURL(urlArg);
-            const line = node.loc!.start.line;
+            const line = getLine(node);
 
             const request: HttpRequestNode = {
               id: `http:request#${method}:${url}#${module.file}#${line}`,
@@ -228,7 +229,7 @@ export class FetchAnalyzer extends Plugin {
               const method = methodProp
                 ? this.extractString((methodProp as { value: Node }).value) || 'GET'
                 : 'GET';
-              const line = node.loc!.start.line;
+              const line = getLine(node);
 
               const request: HttpRequestNode = {
                 id: `http:request#${method.toUpperCase()}:${url}#${module.file}#${line}`,
@@ -260,7 +261,7 @@ export class FetchAnalyzer extends Plugin {
               const urlArg = node.arguments[0];
               const url = this.extractURL(urlArg);
               const method = this.extractMethod(node.arguments[1]) || 'GET';
-              const line = node.loc!.start.line;
+              const line = getLine(node);
 
               const request: HttpRequestNode = {
                 id: `http:request#${method}:${url}#${module.file}#${line}`,

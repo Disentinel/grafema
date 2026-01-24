@@ -28,6 +28,7 @@ import type {
 } from '../types.js';
 import { ScopeTracker } from '../../../../core/ScopeTracker.js';
 import { computeSemanticId } from '../../../../core/SemanticId.js';
+import { getLine, getColumn } from '../utils/location.js';
 
 /**
  * Extracts a string representation of a TypeScript type node
@@ -176,8 +177,8 @@ export class TypeScriptVisitor extends ASTVisitor {
           type: 'INTERFACE',
           name: interfaceName,
           file: module.file,
-          line: node.loc!.start.line,
-          column: node.loc!.start.column,
+          line: getLine(node),
+          column: getColumn(node),
           extends: extendsNames.length > 0 ? extendsNames : undefined,
           properties
         });
@@ -203,8 +204,8 @@ export class TypeScriptVisitor extends ASTVisitor {
           type: 'TYPE',
           name: typeName,
           file: module.file,
-          line: node.loc!.start.line,
-          column: node.loc!.start.column,
+          line: getLine(node),
+          column: getColumn(node),
           aliasOf
         });
       },
@@ -250,8 +251,8 @@ export class TypeScriptVisitor extends ASTVisitor {
           type: 'ENUM',
           name: enumName,
           file: module.file,
-          line: node.loc!.start.line,
-          column: node.loc!.start.column,
+          line: getLine(node),
+          column: getColumn(node),
           isConst: node.const || false,
           members
         });

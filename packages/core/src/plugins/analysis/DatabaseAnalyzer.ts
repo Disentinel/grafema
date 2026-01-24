@@ -11,6 +11,7 @@ import type { NodePath } from '@babel/traverse';
 import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { NodeRecord } from '@grafema/types';
+import { getLine } from './ast/utils/location.js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const traverse = (traverseModule as any).default || traverseModule;
@@ -223,7 +224,7 @@ export class DatabaseAnalyzer extends Plugin {
                   object: objectName,
                   method: methodName,
                   file: module.file!,
-                  line: node.loc!.start.line
+                  line: getLine(node)
                 });
               }
             }
