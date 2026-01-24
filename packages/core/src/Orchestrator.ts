@@ -54,6 +54,8 @@ export interface OrchestratorOptions {
   onProgress?: ProgressCallback;
   forceAnalysis?: boolean;
   serviceFilter?: string | null;
+  /** Override entrypoint, bypasses auto-detection. Path relative to project root. */
+  entrypoint?: string;
   indexOnly?: boolean;
   parallel?: ParallelConfig | null;
   /** Logger instance for structured logging. */
@@ -133,6 +135,7 @@ export class Orchestrator {
   private onProgress: ProgressCallback;
   private forceAnalysis: boolean;
   private serviceFilter: string | null;
+  private entrypoint: string | undefined;
   private indexOnly: boolean;
   private profiler: Profiler;
   private parallelConfig: ParallelConfig | null;
@@ -150,6 +153,7 @@ export class Orchestrator {
     this.onProgress = options.onProgress || (() => {}); // Callback для прогресса
     this.forceAnalysis = options.forceAnalysis || false; // Флаг для игнорирования кэша
     this.serviceFilter = options.serviceFilter || null; // Фильтр для одного сервиса
+    this.entrypoint = options.entrypoint; // Override entrypoint, bypasses discovery
     this.indexOnly = options.indexOnly || false; // Только DISCOVERY + INDEXING (для coverage)
     this.profiler = new Profiler('Orchestrator');
 
@@ -190,9 +194,29 @@ export class Orchestrator {
 
     this.onProgress({ phase: 'discovery', currentPlugin: 'Starting discovery...', message: 'Discovering services...', totalFiles: 0, processedFiles: 0 });
 
-    // PHASE 0: DISCOVERY - запуск плагинов фазы DISCOVERY
+    // PHASE 0: DISCOVERY - запуск плагинов фазы DISCOVERY (or use entrypoint override)
     this.profiler.start('DISCOVERY');
-    const manifest = await this.discover(absoluteProjectPath);
+    let manifest: DiscoveryManifest;
+    if (this.entrypoint) {
+      // Skip discovery, create synthetic manifest with single service
+      const entrypointPath = this.entrypoint.startsWith('/')
+        ? this.entrypoint
+        : join(absoluteProjectPath, this.entrypoint);
+      const serviceName = this.entrypoint.split('/').pop()?.replace(/\.[^.]+$/, '') || 'main';
+      manifest = {
+        services: [{
+          id: `service:${serviceName}`,
+          name: serviceName,
+          path: entrypointPath,
+          metadata: { entrypoint: entrypointPath }
+        }],
+        entrypoints: [],
+        projectPath: absoluteProjectPath
+      };
+      this.logger.info('Using entrypoint override', { entrypoint: this.entrypoint, resolved: entrypointPath });
+    } else {
+      manifest = await this.discover(absoluteProjectPath);
+    }
     this.profiler.end('DISCOVERY');
 
     const epCount = manifest.entrypoints?.length || 0;
