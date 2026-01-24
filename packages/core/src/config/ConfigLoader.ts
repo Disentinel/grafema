@@ -13,6 +13,7 @@ export interface GrafemaConfig {
     analysis: string[];
     enrichment: string[];
     validation: string[];
+    discovery?: string[];
   };
 }
 
@@ -136,6 +137,7 @@ function mergeConfig(
       analysis: user.plugins?.analysis ?? defaults.plugins.analysis,
       enrichment: user.plugins?.enrichment ?? defaults.plugins.enrichment,
       validation: user.plugins?.validation ?? defaults.plugins.validation,
+      discovery: user.plugins?.discovery ?? defaults.plugins.discovery,
     },
   };
 }

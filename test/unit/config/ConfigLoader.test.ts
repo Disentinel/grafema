@@ -153,7 +153,10 @@ describe('ConfigLoader', () => {
       const logger = createLoggerMock();
       const config = loadConfig(testDir, logger);
 
-      assert.deepStrictEqual(config.plugins, json.plugins);
+      assert.deepStrictEqual(config.plugins.indexing, json.plugins.indexing);
+      assert.deepStrictEqual(config.plugins.analysis, json.plugins.analysis);
+      assert.deepStrictEqual(config.plugins.enrichment, json.plugins.enrichment);
+      assert.deepStrictEqual(config.plugins.validation, json.plugins.validation);
       assert.ok(logger.warnings.some(w => w.includes('deprecated')), 'should warn about deprecated JSON');
       assert.ok(logger.warnings.some(w => w.includes('grafema init --force')), 'should mention migration command');
     });
