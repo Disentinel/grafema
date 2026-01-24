@@ -8,11 +8,13 @@ import { initCommand } from './commands/init.js';
 import { analyzeCommand } from './commands/analyze.js';
 import { overviewCommand } from './commands/overview.js';
 import { queryCommand } from './commands/query.js';
+import { getCommand } from './commands/get.js';
 import { traceCommand } from './commands/trace.js';
 import { impactCommand } from './commands/impact.js';
 import { exploreCommand } from './commands/explore.js';
 import { statsCommand } from './commands/stats.js';
 import { checkCommand } from './commands/check.js';
+import { serverCommand } from './commands/server.js';
 
 const program = new Command();
 
@@ -26,10 +28,12 @@ program.addCommand(initCommand);
 program.addCommand(analyzeCommand);
 program.addCommand(overviewCommand);
 program.addCommand(queryCommand);
+program.addCommand(getCommand);
 program.addCommand(traceCommand);
 program.addCommand(impactCommand);
 program.addCommand(exploreCommand);
 program.addCommand(statsCommand);  // Keep for backwards compat
 program.addCommand(checkCommand);
+program.addCommand(serverCommand);
 
 program.parse();

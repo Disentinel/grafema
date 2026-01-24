@@ -22,6 +22,10 @@ export type { LogLevel } from './logging/Logger.js';
 export { DiagnosticCollector, DiagnosticReporter, DiagnosticWriter } from './diagnostics/index.js';
 export type { Diagnostic, DiagnosticInput, ReportOptions, SummaryStats } from './diagnostics/index.js';
 
+// Config
+export { loadConfig, DEFAULT_CONFIG } from './config/index.js';
+export type { GrafemaConfig } from './config/index.js';
+
 // Main orchestrator
 export { Orchestrator } from './Orchestrator.js';
 export type {
@@ -190,8 +194,24 @@ export { NodeCreationValidator } from './plugins/validation/NodeCreationValidato
 export { SimpleProjectDiscovery } from './plugins/discovery/SimpleProjectDiscovery.js';
 export { DiscoveryPlugin } from './plugins/discovery/DiscoveryPlugin.js';
 export { MonorepoServiceDiscovery } from './plugins/discovery/MonorepoServiceDiscovery.js';
+export { WorkspaceDiscovery } from './plugins/discovery/WorkspaceDiscovery.js';
 export { resolveSourceEntrypoint } from './plugins/discovery/resolveSourceEntrypoint.js';
 export type { PackageJsonForResolution } from './plugins/discovery/resolveSourceEntrypoint.js';
+
+// Workspace detection utilities
+export {
+  detectWorkspaceType,
+  parsePnpmWorkspace,
+  parseNpmWorkspace,
+  parseLernaConfig,
+  resolveWorkspacePackages
+} from './plugins/discovery/workspaces/index.js';
+export type {
+  WorkspaceType,
+  WorkspaceDetectionResult,
+  WorkspaceConfig,
+  WorkspacePackage
+} from './plugins/discovery/workspaces/index.js';
 
 // VCS plugins
 export { GitPlugin } from './plugins/vcs/GitPlugin.js';
