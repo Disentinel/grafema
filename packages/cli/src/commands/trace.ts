@@ -9,7 +9,7 @@
 import { Command } from 'commander';
 import { resolve, join } from 'path';
 import { existsSync } from 'fs';
-import { RFDBServerBackend } from '@grafema/core';
+import { RFDBServerBackend, parseSemanticId } from '@grafema/core';
 import { formatNodeDisplay, formatNodeInline } from '../utils/formatNode.js';
 import { exitWithError } from '../utils/errorFormatter.js';
 
@@ -143,6 +143,7 @@ async function findVariables(
   scopeName: string | null
 ): Promise<NodeInfo[]> {
   const results: NodeInfo[] = [];
+  const lowerScopeName = scopeName ? scopeName.toLowerCase() : null;
 
   // Search VARIABLE, CONSTANT, PARAMETER
   for (const nodeType of ['VARIABLE', 'CONSTANT', 'PARAMETER']) {
@@ -151,9 +152,11 @@ async function findVariables(
       if (name.toLowerCase() === varName.toLowerCase()) {
         // If scope specified, check if variable is in that scope
         if (scopeName) {
-          const file = (node as any).file || '';
-          // Simple heuristic: check if function name is in file path or nearby
-          if (!file.toLowerCase().includes(scopeName.toLowerCase())) {
+          const parsed = parseSemanticId(node.id);
+          if (!parsed) continue; // Skip nodes with invalid IDs
+
+          // Check if scopeName appears anywhere in the scope chain
+          if (!parsed.scopePath.some(s => s.toLowerCase() === lowerScopeName)) {
             continue;
           }
         }
