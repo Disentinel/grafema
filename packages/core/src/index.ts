@@ -153,7 +153,6 @@ export type {
 export { JSModuleIndexer } from './plugins/indexing/JSModuleIndexer.js';
 export { IncrementalModuleIndexer } from './plugins/indexing/IncrementalModuleIndexer.js';
 export { RustModuleIndexer } from './plugins/indexing/RustModuleIndexer.js';
-export { ServiceDetector } from './plugins/indexing/ServiceDetector.js';
 
 // Analysis plugins
 export { JSASTAnalyzer } from './plugins/analysis/JSASTAnalyzer.js';

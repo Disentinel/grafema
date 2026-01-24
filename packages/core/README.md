@@ -52,7 +52,6 @@ The orchestrator runs analysis in 5 phases:
 ### Indexing
 - `JSModuleIndexer` - JavaScript/TypeScript module resolution
 - `RustModuleIndexer` - Rust crate analysis
-- `ServiceDetector` - Monorepo service discovery
 
 ### Analysis
 - `JSASTAnalyzer` - Core JS/TS AST analysis
