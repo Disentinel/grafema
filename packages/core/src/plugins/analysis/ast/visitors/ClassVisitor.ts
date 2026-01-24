@@ -271,7 +271,7 @@ export class ClassVisitor extends ASTVisitor {
 
               // Create PARAMETER nodes for class property function parameters (REG-134)
               if (parameters) {
-                createParameterNodes(funcNode.params, functionId, module.file, propNode.loc!.start.line, parameters as ParameterInfo[]);
+                createParameterNodes(funcNode.params, functionId, module.file, propNode.loc!.start.line, parameters as ParameterInfo[], scopeTracker);
               }
 
               // Create SCOPE for property function body
@@ -347,7 +347,7 @@ export class ClassVisitor extends ASTVisitor {
 
             // Create PARAMETER nodes for class method parameters (REG-134)
             if (parameters) {
-              createParameterNodes(methodNode.params, functionId, module.file, methodNode.loc!.start.line, parameters as ParameterInfo[]);
+              createParameterNodes(methodNode.params, functionId, module.file, methodNode.loc!.start.line, parameters as ParameterInfo[], scopeTracker);
             }
 
             // Create SCOPE for method body
