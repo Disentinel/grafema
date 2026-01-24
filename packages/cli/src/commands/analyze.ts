@@ -14,6 +14,10 @@ import {
   createLogger,
   loadConfig,
   type GrafemaConfig,
+  // Discovery
+  SimpleProjectDiscovery,
+  MonorepoServiceDiscovery,
+  WorkspaceDiscovery,
   // Indexing
   JSModuleIndexer,
   RustModuleIndexer,
@@ -48,6 +52,10 @@ import {
 import type { LogLevel } from '@grafema/types';
 
 const BUILTIN_PLUGINS: Record<string, () => Plugin> = {
+  // Discovery
+  SimpleProjectDiscovery: () => new SimpleProjectDiscovery() as Plugin,
+  MonorepoServiceDiscovery: () => new MonorepoServiceDiscovery() as Plugin,
+  WorkspaceDiscovery: () => new WorkspaceDiscovery() as Plugin,
   // Indexing
   JSModuleIndexer: () => new JSModuleIndexer() as Plugin,
   RustModuleIndexer: () => new RustModuleIndexer() as Plugin,
@@ -82,7 +90,7 @@ const BUILTIN_PLUGINS: Record<string, () => Plugin> = {
 
 function createPlugins(config: GrafemaConfig['plugins']): Plugin[] {
   const plugins: Plugin[] = [];
-  const phases: (keyof GrafemaConfig['plugins'])[] = ['indexing', 'analysis', 'enrichment', 'validation'];
+  const phases: (keyof GrafemaConfig['plugins'])[] = ['discovery', 'indexing', 'analysis', 'enrichment', 'validation'];
 
   for (const phase of phases) {
     const names = config[phase] || [];
