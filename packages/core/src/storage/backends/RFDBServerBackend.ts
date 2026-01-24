@@ -283,20 +283,26 @@ export class RFDBServerBackend {
   }
 
   /**
-   * Close connection and stop server if we started it
+   * Close client connection. Server continues running to serve other clients.
    */
   async close(): Promise<void> {
+    // Request server flush before disconnecting
     if (this.client) {
+      try {
+        await this.client.flush();
+      } catch {
+        // Ignore flush errors on close - best effort
+      }
       await this.client.close();
       this.client = null;
     }
     this.connected = false;
 
-    // Kill server process if we started it
-    if (this.serverProcess) {
-      this.serverProcess.kill('SIGTERM');
-      this.serverProcess = null;
-    }
+    // NOTE: We intentionally do NOT kill the server process.
+    // The server continues running to serve other clients (MCP, other CLI invocations).
+    // This is by design for multi-client architecture.
+    // Server lifecycle is managed separately (system process, or manual grafema server stop).
+    this.serverProcess = null;
   }
 
   /**
