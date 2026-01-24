@@ -119,12 +119,13 @@ export const analyzeCommand = new Command('analyze')
   .description('Run project analysis')
   .argument('[path]', 'Project path to analyze', '.')
   .option('-s, --service <name>', 'Analyze only a specific service')
+  .option('-e, --entrypoint <path>', 'Override entrypoint (bypasses auto-detection)')
   .option('-c, --clear', 'Clear existing database before analysis')
   .option('-q, --quiet', 'Suppress progress output')
   .option('-v, --verbose', 'Show verbose logging')
   .option('--debug', 'Enable debug mode (writes diagnostics.log)')
   .option('--log-level <level>', 'Set log level (silent, errors, warnings, info, debug)')
-  .action(async (path: string, options: { service?: string; clear?: boolean; quiet?: boolean; verbose?: boolean; debug?: boolean; logLevel?: string }) => {
+  .action(async (path: string, options: { service?: string; entrypoint?: string; clear?: boolean; quiet?: boolean; verbose?: boolean; debug?: boolean; logLevel?: string }) => {
     const projectPath = resolve(path);
     const grafemaDir = join(projectPath, '.grafema');
     const dbPath = join(grafemaDir, 'graph.rfdb');
@@ -160,6 +161,7 @@ export const analyzeCommand = new Command('analyze')
       graph: backend as unknown as import('@grafema/types').GraphBackend,
       plugins,
       serviceFilter: options.service || null,
+      entrypoint: options.entrypoint,
       forceAnalysis: options.clear || false,
       logger,
       onProgress: (progress) => {
