@@ -10,6 +10,7 @@
 import { readFileSync, existsSync, readdirSync, statSync } from 'fs';
 import { join, basename } from 'path';
 import type { NodeRecord } from '@grafema/types';
+import { resolveSourceEntrypoint } from '../discovery/resolveSourceEntrypoint.js';
 
 /**
  * Context for ServiceDetector
@@ -32,6 +33,7 @@ interface DetectorContext {
 interface PackageJson {
   name?: string;
   main?: string;
+  source?: string;
   [key: string]: unknown;
 }
 
@@ -202,14 +204,27 @@ export class ServiceDetector {
 
   /**
    * Находит entry point сервиса
+   *
+   * Resolution priority:
+   * 1. TypeScript source (via resolveSourceEntrypoint)
+   * 2. package.json main field
+   * 3. Standard fallback candidates
    */
   private findEntryPoint(servicePath: string, packageJson: PackageJson | null): string | null {
-    // 1. Из package.json main
+    // 1. Try TypeScript source first (prefers src/ over dist/)
+    if (packageJson) {
+      const tsSource = resolveSourceEntrypoint(servicePath, packageJson);
+      if (tsSource) {
+        return tsSource;
+      }
+    }
+
+    // 2. Fallback to package.json main (for JS projects or when source not found)
     if (packageJson?.main) {
       return packageJson.main;
     }
 
-    // 2. Стандартные entry points
+    // 3. Standard fallback candidates
     const candidates = [
       'src/index.js',
       'src/index.ts',

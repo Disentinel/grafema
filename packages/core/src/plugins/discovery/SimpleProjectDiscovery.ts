@@ -11,6 +11,7 @@ import { join } from 'path';
 import { NodeFactory } from '../../core/NodeFactory.js';
 import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
+import { resolveSourceEntrypoint } from './resolveSourceEntrypoint.js';
 
 /**
  * Service info returned in metadata
@@ -33,6 +34,7 @@ interface PackageJson {
   name?: string;
   version?: string;
   main?: string;
+  source?: string;
   description?: string;
   dependencies?: Record<string, string>;
 }
@@ -70,7 +72,10 @@ export class SimpleProjectDiscovery extends Plugin {
     try {
       const packageJson: PackageJson = JSON.parse(readFileSync(packageJsonPath, 'utf-8'));
       const serviceName = packageJson.name || 'unnamed-service';
-      const entrypoint = packageJson.main || 'index.js';
+      // Prefer TypeScript source over compiled output
+      const entrypoint = resolveSourceEntrypoint(projectPath, packageJson)
+        ?? packageJson.main
+        ?? 'index.js';
 
       // Используем NodeFactory для создания SERVICE ноды
       const serviceNode = NodeFactory.createService(serviceName, projectPath, {

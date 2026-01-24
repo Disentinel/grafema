@@ -190,6 +190,8 @@ export { NodeCreationValidator } from './plugins/validation/NodeCreationValidato
 export { SimpleProjectDiscovery } from './plugins/discovery/SimpleProjectDiscovery.js';
 export { DiscoveryPlugin } from './plugins/discovery/DiscoveryPlugin.js';
 export { MonorepoServiceDiscovery } from './plugins/discovery/MonorepoServiceDiscovery.js';
+export { resolveSourceEntrypoint } from './plugins/discovery/resolveSourceEntrypoint.js';
+export type { PackageJsonForResolution } from './plugins/discovery/resolveSourceEntrypoint.js';
 
 // VCS plugins
 export { GitPlugin } from './plugins/vcs/GitPlugin.js';
