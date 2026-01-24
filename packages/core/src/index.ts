@@ -73,6 +73,8 @@ export { ASTWorkerPool, type ModuleInfo as ASTModuleInfo, type ParseResult, type
 export { GuaranteeManager } from './core/GuaranteeManager.js';
 export type { GuaranteeGraph } from './core/GuaranteeManager.js';
 export { clearFileNodesIfNeeded, clearServiceNodeIfExists } from './core/FileNodeManager.js';
+export { CoverageAnalyzer } from './core/CoverageAnalyzer.js';
+export type { CoverageResult } from './core/CoverageAnalyzer.js';
 
 // Hash utilities
 export { calculateFileHash, calculateFileHashAsync, calculateContentHash } from './core/HashUtils.js';
