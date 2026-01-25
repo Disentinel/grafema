@@ -54,6 +54,7 @@ import { Profiler } from '../../core/Profiler.js';
 import { ScopeTracker } from '../../core/ScopeTracker.js';
 import { computeSemanticId } from '../../core/SemanticId.js';
 import { ExpressionNode } from '../../core/nodes/ExpressionNode.js';
+import { ConstructorCallNode } from '../../core/nodes/ConstructorCallNode.js';
 import type { PluginContext, PluginResult, PluginMetadata, GraphBackend } from '@grafema/types';
 import type {
   ModuleNode,
@@ -65,6 +66,7 @@ import type {
   MethodCallInfo,
   EventListenerInfo,
   ClassInstantiationInfo,
+  ConstructorCallInfo,
   ClassDeclarationInfo,
   MethodCallbackInfo,
   CallArgumentInfo,
@@ -665,17 +667,32 @@ export class JSASTAnalyzer extends Plugin {
       return;
     }
 
-    // 5. NewExpression
+    // 5. NewExpression -> CONSTRUCTOR_CALL
     if (initExpression.type === 'NewExpression') {
       const callee = initExpression.callee;
+      let className: string;
+
       if (callee.type === 'Identifier') {
-        variableAssignments.push({
-          variableId,
-          sourceType: 'CLASS',
-          className: callee.name,
-          line: line
-        });
+        className = callee.name;
+      } else if (callee.type === 'MemberExpression' && callee.property.type === 'Identifier') {
+        // Handle: new module.ClassName()
+        className = callee.property.name;
+      } else {
+        // Unknown callee type, skip
+        return;
       }
+
+      const callLine = initExpression.loc?.start.line ?? line;
+      const callColumn = initExpression.loc?.start.column ?? 0;
+
+      variableAssignments.push({
+        variableId,
+        sourceType: 'CONSTRUCTOR_CALL',
+        className,
+        file: module.file,
+        line: callLine,
+        column: callColumn
+      });
       return;
     }
 
@@ -860,6 +877,7 @@ export class JSASTAnalyzer extends Plugin {
       const methodCalls: MethodCallInfo[] = [];
       const eventListeners: EventListenerInfo[] = [];
       const classInstantiations: ClassInstantiationInfo[] = [];
+      const constructorCalls: ConstructorCallInfo[] = [];
       const classDeclarations: ClassDeclarationInfo[] = [];
       const methodCallbacks: MethodCallbackInfo[] = [];
       const callArguments: CallArgumentInfo[] = [];
@@ -931,7 +949,7 @@ export class JSASTAnalyzer extends Plugin {
 
       const allCollections: Collections = {
         functions, parameters, scopes, variableDeclarations, callSites, methodCalls,
-        eventListeners, methodCallbacks, callArguments, classInstantiations, classDeclarations,
+        eventListeners, methodCallbacks, callArguments, classInstantiations, constructorCalls, classDeclarations,
         httpRequests, literals, variableAssignments,
         // TypeScript-specific collections
         interfaces, typeAliases, enums, decorators,
@@ -1106,6 +1124,47 @@ export class JSASTAnalyzer extends Plugin {
       traverse(ast, callExpressionVisitor.getHandlers());
       this.profiler.end('traverse_calls');
 
+      // Module-level NewExpression (constructor calls)
+      // This handles top-level code like `const x = new Date()` that's not inside a function
+      this.profiler.start('traverse_new');
+      const processedConstructorCalls = new Set<string>();
+      traverse(ast, {
+        NewExpression: (newPath: NodePath<t.NewExpression>) => {
+          const newNode = newPath.node;
+          const nodeKey = `constructor:new:${newNode.start}:${newNode.end}`;
+          if (processedConstructorCalls.has(nodeKey)) {
+            return;
+          }
+          processedConstructorCalls.add(nodeKey);
+
+          // Determine className from callee
+          let className: string | null = null;
+          if (newNode.callee.type === 'Identifier') {
+            className = newNode.callee.name;
+          } else if (newNode.callee.type === 'MemberExpression' && newNode.callee.property.type === 'Identifier') {
+            className = newNode.callee.property.name;
+          }
+
+          if (className) {
+            const line = getLine(newNode);
+            const column = getColumn(newNode);
+            const constructorCallId = ConstructorCallNode.generateId(className, module.file, line, column);
+            const isBuiltin = ConstructorCallNode.isBuiltinConstructor(className);
+
+            constructorCalls.push({
+              id: constructorCallId,
+              type: 'CONSTRUCTOR_CALL',
+              className,
+              isBuiltin,
+              file: module.file,
+              line,
+              column
+            });
+          }
+        }
+      });
+      this.profiler.end('traverse_new');
+
       // Module-level IfStatements
       this.profiler.start('traverse_ifs');
       traverse(ast, {
@@ -1169,6 +1228,7 @@ export class JSASTAnalyzer extends Plugin {
         methodCalls,
         eventListeners,
         classInstantiations,
+        constructorCalls,
         classDeclarations,
         methodCallbacks,
         callArguments,
@@ -1755,6 +1815,7 @@ export class JSASTAnalyzer extends Plugin {
     const eventListeners = (collections.eventListeners ?? []) as EventListenerInfo[];
     const methodCallbacks = (collections.methodCallbacks ?? []) as MethodCallbackInfo[];
     const classInstantiations = (collections.classInstantiations ?? []) as ClassInstantiationInfo[];
+    const constructorCalls = (collections.constructorCalls ?? []) as ConstructorCallInfo[];
     const httpRequests = (collections.httpRequests ?? []) as HttpRequestInfo[];
     const literals = (collections.literals ?? []) as LiteralInfo[];
     const variableAssignments = (collections.variableAssignments ?? []) as VariableAssignmentInfo[];
@@ -2033,10 +2094,41 @@ export class JSASTAnalyzer extends Plugin {
       // NewExpression (constructor calls)
       NewExpression: (newPath: NodePath<t.NewExpression>) => {
         const newNode = newPath.node;
+        const nodeKey = `new:${newNode.start}:${newNode.end}`;
+
+        // Determine className from callee
+        let className: string | null = null;
+        if (newNode.callee.type === 'Identifier') {
+          className = newNode.callee.name;
+        } else if (newNode.callee.type === 'MemberExpression' && newNode.callee.property.type === 'Identifier') {
+          className = newNode.callee.property.name;
+        }
+
+        // Create CONSTRUCTOR_CALL node (always, for all NewExpressions)
+        if (className) {
+          const constructorKey = `constructor:${nodeKey}`;
+          if (!processedCallSites.has(constructorKey)) {
+            processedCallSites.add(constructorKey);
+
+            const line = getLine(newNode);
+            const column = getColumn(newNode);
+            const constructorCallId = ConstructorCallNode.generateId(className, module.file, line, column);
+            const isBuiltin = ConstructorCallNode.isBuiltinConstructor(className);
+
+            constructorCalls.push({
+              id: constructorCallId,
+              type: 'CONSTRUCTOR_CALL',
+              className,
+              isBuiltin,
+              file: module.file,
+              line,
+              column
+            });
+          }
+        }
 
         // Handle simple constructor: new Foo()
         if (newNode.callee.type === 'Identifier') {
-          const nodeKey = `new:${newNode.start}:${newNode.end}`;
           if (processedCallSites.has(nodeKey)) {
             return;
           }
@@ -2070,7 +2162,6 @@ export class JSASTAnalyzer extends Plugin {
           const property = memberCallee.property;
 
           if (object.type === 'Identifier' && property.type === 'Identifier') {
-            const nodeKey = `new:${newNode.start}:${newNode.end}`;
             if (processedMethodCalls.has(nodeKey)) {
               return;
             }

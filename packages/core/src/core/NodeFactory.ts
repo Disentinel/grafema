@@ -20,6 +20,7 @@ import {
   ScopeNode,
   CallSiteNode,
   MethodCallNode,
+  ConstructorCallNode,
   VariableDeclarationNode,
   ConstantNode,
   LiteralNode,
@@ -114,6 +115,10 @@ interface CallSiteOptions {
 interface MethodCallOptions {
   parentScopeId?: string;
   args?: unknown[];
+  counter?: number;
+}
+
+interface ConstructorCallOptions {
   counter?: number;
 }
 
@@ -297,6 +302,39 @@ export class NodeFactory {
    */
   static createMethodCall(objectName: string | undefined, methodName: string, file: string, line: number, column: number, options: MethodCallOptions = {}) {
     return brandNode(MethodCallNode.create(objectName, methodName, file, line, column, options));
+  }
+
+  /**
+   * Create CONSTRUCTOR_CALL node
+   *
+   * Represents a `new ClassName()` expression.
+   * Used for data flow: VARIABLE --ASSIGNED_FROM--> CONSTRUCTOR_CALL
+   *
+   * @param className - Name of the constructor (e.g., 'Date', 'MyClass')
+   * @param file - File path
+   * @param line - Line number
+   * @param column - Column position
+   * @param options - Optional counter for disambiguation
+   */
+  static createConstructorCall(className: string, file: string, line: number, column: number, options: ConstructorCallOptions = {}) {
+    return brandNode(ConstructorCallNode.create(className, file, line, column, options));
+  }
+
+  /**
+   * Generate CONSTRUCTOR_CALL node ID without creating the full node
+   *
+   * Used by JSASTAnalyzer when creating assignment metadata.
+   * The full node is created later by GraphBuilder.
+   */
+  static generateConstructorCallId(className: string, file: string, line: number, column: number, options: ConstructorCallOptions = {}): string {
+    return ConstructorCallNode.generateId(className, file, line, column, options);
+  }
+
+  /**
+   * Check if a class name is a built-in JavaScript constructor
+   */
+  static isBuiltinConstructor(className: string): boolean {
+    return ConstructorCallNode.isBuiltinConstructor(className);
   }
 
   /**
@@ -614,6 +652,7 @@ export class NodeFactory {
       'SCOPE': ScopeNode,
       'CALL_SITE': CallSiteNode,
       'METHOD_CALL': MethodCallNode,
+      'CONSTRUCTOR_CALL': ConstructorCallNode,
       'VARIABLE_DECLARATION': VariableDeclarationNode,
       'CONSTANT': ConstantNode,
       'LITERAL': LiteralNode,

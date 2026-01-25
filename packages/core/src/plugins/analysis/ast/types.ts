@@ -132,6 +132,17 @@ export interface ClassInstantiationInfo {
   parentScopeId?: string;
 }
 
+// === CONSTRUCTOR CALL INFO ===
+export interface ConstructorCallInfo {
+  id: string;
+  type: 'CONSTRUCTOR_CALL';
+  className: string;
+  isBuiltin: boolean;
+  file: string;
+  line: number;
+  column: number;
+}
+
 // === CLASS DECLARATION INFO ===
 export interface ClassDeclarationInfo {
   id: string;
@@ -512,6 +523,7 @@ export interface ASTCollections {
   methodCalls?: MethodCallInfo[];
   eventListeners?: EventListenerInfo[];
   classInstantiations?: ClassInstantiationInfo[];
+  constructorCalls?: ConstructorCallInfo[];
   classDeclarations?: ClassDeclarationInfo[];
   methodCallbacks?: MethodCallbackInfo[];
   callArguments?: CallArgumentInfo[];

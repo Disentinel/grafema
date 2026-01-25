@@ -15,6 +15,7 @@ export { ScopeNode, type ScopeNodeRecord } from './ScopeNode.js';
 // Call/reference nodes
 export { CallSiteNode, type CallSiteNodeRecord } from './CallSiteNode.js';
 export { MethodCallNode, type MethodCallNodeRecord } from './MethodCallNode.js';
+export { ConstructorCallNode, type ConstructorCallNodeRecord } from './ConstructorCallNode.js';
 export { VariableDeclarationNode, type VariableDeclarationNodeRecord } from './VariableDeclarationNode.js';
 export { ConstantNode, type ConstantNodeRecord } from './ConstantNode.js';
 export { LiteralNode, type LiteralNodeRecord } from './LiteralNode.js';
