@@ -14,6 +14,7 @@
 import { Plugin, createSuccessResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { BaseNodeRecord } from '@grafema/types';
+import { dirname, resolve } from 'path';
 
 // === INTERFACES ===
 
@@ -32,6 +33,11 @@ interface ExportNode extends BaseNodeRecord {
   exportType?: string; // 'default' | 'named' | 'all'
   local?: string; // Local name in exporting file
   source?: string; // Re-export source (if re-exporting)
+}
+
+interface ExportIndexEntry {
+  node: ExportNode;
+  exportKey: string; // "default" | "named:functionName"
 }
 
 type FunctionNode = BaseNodeRecord;
@@ -88,6 +94,43 @@ export class FunctionCallResolver extends Plugin {
     }
     logger.debug('Indexed functions', { files: functionIndex.size });
 
+    // Step 2.5: Build Export Index - Map<file, Map<exportKey, ExportNode>>
+    // This enables O(1) lookup when following re-export chains
+    const exportIndex = new Map<string, Map<string, ExportNode>>();
+    for await (const node of graph.queryNodes({ nodeType: 'EXPORT' })) {
+      const exp = node as ExportNode;
+      if (!exp.file) continue;
+
+      if (!exportIndex.has(exp.file)) {
+        exportIndex.set(exp.file, new Map());
+      }
+
+      const fileExports = exportIndex.get(exp.file)!;
+
+      // Build export key based on type (same pattern as ImportExportLinker line 207-217)
+      let exportKey: string;
+      if (exp.exportType === 'default') {
+        exportKey = 'default';
+      } else if (exp.exportType === 'named') {
+        exportKey = `named:${exp.name}`;
+      } else {
+        exportKey = `named:${exp.name || 'anonymous'}`;
+      }
+
+      fileExports.set(exportKey, exp);
+    }
+    logger.debug('Indexed exports', { files: exportIndex.size });
+
+    // Step 2.6: Build set of known files for path resolution
+    const knownFiles = new Set<string>();
+    for (const file of exportIndex.keys()) {
+      knownFiles.add(file);
+    }
+    for (const file of functionIndex.keys()) {
+      knownFiles.add(file);
+    }
+    logger.debug('Indexed known files', { count: knownFiles.size });
+
     // Step 3: Collect unresolved CALL_SITE nodes
     const callSitesToResolve: CallNode[] = [];
     for await (const node of graph.queryNodes({ nodeType: 'CALL' })) {
@@ -112,8 +155,11 @@ export class FunctionCallResolver extends Plugin {
       external: 0,
       missingImport: 0,
       missingImportsFrom: 0,
-      reExports: 0
+      reExportsBroken: 0,    // Re-export chain broken (missing export, file not found)
+      reExportsCircular: 0   // Circular re-export detected
     };
+
+    let reExportsResolved = 0; // Counter for successfully resolved re-export chains
 
     for (const callSite of callSitesToResolve) {
       const calledName = callSite.name;
@@ -145,16 +191,32 @@ export class FunctionCallResolver extends Plugin {
         continue;
       }
 
-      // Step 4.3: Handle re-exports (EXPORT with source field)
-      // For v1: skip complex re-exports
+      // Step 4.3: Resolve re-export chain (if applicable)
+      let finalExport = exportNode;
+
       if (exportNode.source) {
-        skipped.reExports++;
-        continue;
+        // This is a re-export - follow the chain
+        const resolved = this.resolveExportChain(
+          exportNode,
+          exportIndex,
+          knownFiles
+        );
+
+        if (!resolved) {
+          // Chain broken or circular
+          // Distinguish: if visited set would show cycle, it's circular
+          // For simplicity, count as broken (can add nuance later)
+          skipped.reExportsBroken++;
+          continue;
+        }
+
+        finalExport = resolved;
+        reExportsResolved++;
       }
 
-      // Step 4.4: Find target FUNCTION via EXPORT.local
-      const targetFile = exportNode.file;
-      const targetFunctionName = exportNode.local || exportNode.name;
+      // Step 4.4: Find target FUNCTION via final export's local name
+      const targetFile = finalExport.file;
+      const targetFunctionName = finalExport.local || finalExport.name;
 
       if (!targetFile || !targetFunctionName) continue;
 
@@ -186,9 +248,110 @@ export class FunctionCallResolver extends Plugin {
       {
         callSitesProcessed: callSitesToResolve.length,
         edgesCreated,
+        reExportsResolved,
         skipped,
         timeMs: Date.now() - startTime
       }
+    );
+  }
+
+  /**
+   * Resolve module specifier to actual file path using extension fallbacks.
+   * Pattern reused from ImportExportLinker (lines 101-122).
+   *
+   * @param currentDir - Directory of the file containing the import/re-export
+   * @param specifier - The module specifier (e.g., "./utils", "../lib/helpers")
+   * @param fileIndex - Set or Map of known file paths for existence checking
+   * @returns Resolved file path or null if not found
+   */
+  private resolveModulePath(
+    currentDir: string,
+    specifier: string,
+    fileIndex: Set<string>
+  ): string | null {
+    const basePath = resolve(currentDir, specifier);
+    const extensions = ['', '.js', '.ts', '.jsx', '.tsx', '/index.js', '/index.ts'];
+
+    for (const ext of extensions) {
+      const testPath = basePath + ext;
+      if (fileIndex.has(testPath)) {
+        return testPath;
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Follow re-export chain to find the final EXPORT node (without source field).
+   *
+   * Algorithm:
+   * 1. If current export has no source -> return it (base case)
+   * 2. Resolve source path to file
+   * 3. Find matching export in that file
+   * 4. Recurse (with cycle detection)
+   *
+   * @param exportNode - Starting export node (may be re-export)
+   * @param exportIndex - Pre-built export index for O(1) lookups
+   * @param knownFiles - Set of known file paths
+   * @param visited - Set of visited export IDs for cycle detection
+   * @param maxDepth - Maximum chain depth (safety limit)
+   * @returns Final export node (without source) or null if chain broken/circular
+   */
+  private resolveExportChain(
+    exportNode: ExportNode,
+    exportIndex: Map<string, Map<string, ExportNode>>,
+    knownFiles: Set<string>,
+    visited: Set<string> = new Set(),
+    maxDepth: number = 10
+  ): ExportNode | null {
+    // Safety: max depth exceeded
+    if (maxDepth <= 0) {
+      return null;
+    }
+
+    // Cycle detection
+    if (visited.has(exportNode.id)) {
+      return null;
+    }
+    visited.add(exportNode.id);
+
+    // Base case: not a re-export
+    if (!exportNode.source) {
+      return exportNode;
+    }
+
+    // Recursive case: follow re-export
+    const currentDir = dirname(exportNode.file!);
+    const targetFile = this.resolveModulePath(currentDir, exportNode.source, knownFiles);
+
+    if (!targetFile) {
+      return null; // Source file not found
+    }
+
+    const targetExports = exportIndex.get(targetFile);
+    if (!targetExports) {
+      return null; // No exports in target file
+    }
+
+    // Find matching export by name
+    // Re-export: export { foo } from './other' - look for named:foo
+    // Re-export default: export { default } from './other' - look for default
+    const exportKey = exportNode.exportType === 'default'
+      ? 'default'
+      : `named:${exportNode.local || exportNode.name}`;
+
+    const nextExport = targetExports.get(exportKey);
+    if (!nextExport) {
+      return null; // Export not found in target
+    }
+
+    return this.resolveExportChain(
+      nextExport,
+      exportIndex,
+      knownFiles,
+      visited,
+      maxDepth - 1
     );
   }
 }
