@@ -150,6 +150,16 @@ export const analyzeCommand = new Command('analyze')
     }
 
     const config = loadConfig(projectPath, logger);
+
+    // Extract services from config (REG-174)
+    if (config.services.length > 0) {
+      log(`Loaded ${config.services.length} service(s) from config`);
+      for (const svc of config.services) {
+        const entry = svc.entryPoint ? ` (entry: ${svc.entryPoint})` : '';
+        log(`  - ${svc.name}: ${svc.path}${entry}`);
+      }
+    }
+
     const plugins = createPlugins(config.plugins);
 
     log(`Loaded ${plugins.length} plugins`);
@@ -162,6 +172,7 @@ export const analyzeCommand = new Command('analyze')
       serviceFilter: options.service || null,
       forceAnalysis: options.clear || false,
       logger,
+      services: config.services.length > 0 ? config.services : undefined,  // Pass config services (REG-174)
       onProgress: (progress) => {
         if (options.verbose) {
           log(`[${progress.phase}] ${progress.message}`);

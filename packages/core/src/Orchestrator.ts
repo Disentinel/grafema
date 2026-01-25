@@ -9,11 +9,12 @@ import { fileURLToPath } from 'url';
 import { spawn, execSync, ChildProcess } from 'child_process';
 import { setTimeout as sleep } from 'timers/promises';
 import { SimpleProjectDiscovery } from './plugins/discovery/SimpleProjectDiscovery.js';
+import { resolveSourceEntrypoint } from './plugins/discovery/resolveSourceEntrypoint.js';
 import { Profiler } from './core/Profiler.js';
 import { AnalysisQueue } from './core/AnalysisQueue.js';
 import { DiagnosticCollector } from './diagnostics/DiagnosticCollector.js';
 import type { Plugin, PluginContext } from './plugins/Plugin.js';
-import type { GraphBackend, PluginPhase, Logger, LogLevel, IssueSpec } from '@grafema/types';
+import type { GraphBackend, PluginPhase, Logger, LogLevel, IssueSpec, ServiceDefinition } from '@grafema/types';
 import { createLogger } from './logging/Logger.js';
 import { NodeFactory } from './core/NodeFactory.js';
 import type { IssueSeverity } from './core/nodes/IssueNode.js';
@@ -60,6 +61,11 @@ export interface OrchestratorOptions {
   logger?: Logger;
   /** Log level for the default logger. Ignored if logger is provided. */
   logLevel?: LogLevel;
+  /**
+   * Config-provided services (REG-174).
+   * If provided and non-empty, discovery plugins are skipped.
+   */
+  services?: ServiceDefinition[];
 }
 
 /**
@@ -141,6 +147,8 @@ export class Orchestrator {
   private _serverWasExternal: boolean;
   private diagnosticCollector: DiagnosticCollector;
   private logger: Logger;
+  /** Config-provided services (REG-174) */
+  private configServices: ServiceDefinition[] | undefined;
 
   constructor(options: OrchestratorOptions = {}) {
     this.graph = options.graph!;
@@ -165,9 +173,15 @@ export class Orchestrator {
     // Initialize logger (use provided or create default)
     this.logger = options.logger ?? createLogger(options.logLevel ?? 'info');
 
-    // Auto-add default discovery if no discovery plugins provided
+    // Store config-provided services (REG-174)
+    this.configServices = options.services;
+
+    // Modified auto-add logic: SKIP auto-add if config services provided (REG-174)
     const hasDiscovery = this.plugins.some(p => p.metadata?.phase === 'DISCOVERY');
-    if (!hasDiscovery) {
+    const hasConfigServices = this.configServices && this.configServices.length > 0;
+
+    if (!hasDiscovery && !hasConfigServices) {
+      // Only auto-add if NO discovery plugins AND NO config services
       this.plugins.unshift(new SimpleProjectDiscovery());
     }
   }
@@ -439,9 +453,80 @@ export class Orchestrator {
   }
 
   /**
-   * PHASE 0: Discovery - запуск плагинов DISCOVERY фазы
+   * PHASE 0: Discovery - запуск плагинов DISCOVERY фазы.
+   * If config services are provided, they take precedence and plugins are skipped.
    */
   async discover(projectPath: string): Promise<DiscoveryManifest> {
+    // REG-174: If config provided services, use them directly instead of running discovery plugins
+    if (this.configServices && this.configServices.length > 0) {
+      this.logger.info('Using config-provided services (skipping discovery plugins)', {
+        serviceCount: this.configServices.length
+      });
+
+      const services: ServiceInfo[] = [];
+      // For each config service:
+      // 1. Resolve path relative to project root (validation ensures paths are relative)
+      // 2. Auto-detect entrypoint from package.json if not specified
+      // 3. Fall back to 'index.js' if detection fails
+      for (const configSvc of this.configServices) {
+        // All paths are relative (absolute paths rejected by ConfigLoader validation)
+        const servicePath = join(projectPath, configSvc.path);
+
+        // Resolve entrypoint
+        let entrypoint: string;
+        if (configSvc.entryPoint) {
+          entrypoint = configSvc.entryPoint;
+        } else {
+          // Auto-detect if not provided
+          const packageJsonPath = join(servicePath, 'package.json');
+          if (existsSync(packageJsonPath)) {
+            try {
+              const pkg = JSON.parse(readFileSync(packageJsonPath, 'utf-8'));
+              entrypoint = resolveSourceEntrypoint(servicePath, pkg) ?? pkg.main ?? 'index.js';
+            } catch (e) {
+              this.logger.warn('Failed to read package.json for auto-detection', {
+                service: configSvc.name,
+                path: packageJsonPath,
+                error: (e as Error).message
+              });
+              entrypoint = 'index.js';
+            }
+          } else {
+            entrypoint = 'index.js';
+          }
+        }
+
+        // Create SERVICE node
+        const serviceNode = NodeFactory.createService(configSvc.name, servicePath, {
+          discoveryMethod: 'config',
+          entrypoint: entrypoint,
+        });
+        await this.graph.addNode(serviceNode);
+
+        services.push({
+          id: serviceNode.id,
+          name: configSvc.name,
+          path: servicePath,
+          metadata: {
+            entrypoint: join(servicePath, entrypoint),
+          },
+        });
+
+        this.logger.info('Registered config service', {
+          name: configSvc.name,
+          path: servicePath,
+          entrypoint: entrypoint
+        });
+      }
+
+      return {
+        services,
+        entrypoints: [],  // Config services don't provide entrypoints
+        projectPath: projectPath
+      };
+    }
+
+    // ORIGINAL CODE: Run discovery plugins if no config services
     const context = {
       projectPath,
       graph: this.graph,

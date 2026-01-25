@@ -150,6 +150,38 @@ export interface OrchestratorConfig {
    * Defaults to 'info'. Use 'silent' to suppress all output, 'debug' for verbose.
    */
   logLevel?: LogLevel;
+  /**
+   * Optional explicit service definitions to bypass auto-discovery.
+   * If provided and non-empty, discovery plugins are skipped.
+   * Services are resolved relative to projectPath.
+   */
+  services?: ServiceDefinition[];
+}
+
+/**
+ * Explicit service definition for configuration.
+ * Allows users to manually specify services when auto-discovery doesn't work.
+ *
+ * @example
+ * ```yaml
+ * services:
+ *   - name: "backend"
+ *     path: "apps/backend"
+ *     entryPoint: "src/index.ts"
+ * ```
+ */
+export interface ServiceDefinition {
+  /** Unique service identifier (used for graph node ID) */
+  name: string;
+
+  /** Service directory path relative to project root */
+  path: string;
+
+  /**
+   * Optional entry point file path relative to service path.
+   * If omitted, auto-detected via resolveSourceEntrypoint() or package.json.main
+   */
+  entryPoint?: string;
 }
 
 // === GRAPH BACKEND INTERFACE ===

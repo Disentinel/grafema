@@ -463,4 +463,466 @@ plugins:
       assert.ok(DEFAULT_CONFIG.plugins.validation.includes('EvalBanValidator'));
     });
   });
+
+  // ===========================================================================
+  // TESTS: Services configuration (REG-174)
+  // ===========================================================================
+
+  describe('Services configuration', () => {
+    // -------------------------------------------------------------------------
+    // Valid services loading
+    // -------------------------------------------------------------------------
+
+    it('should load services from YAML config', () => {
+      // Create service directories that the config references
+      mkdirSync(join(testDir, 'apps', 'backend'), { recursive: true });
+      mkdirSync(join(testDir, 'apps', 'frontend'), { recursive: true });
+
+      const yaml = `plugins:
+  indexing:
+    - JSModuleIndexer
+  analysis:
+    - JSASTAnalyzer
+  enrichment:
+    - MethodCallResolver
+  validation:
+    - EvalBanValidator
+
+services:
+  - name: "backend"
+    path: "apps/backend"
+    entryPoint: "src/index.ts"
+  - name: "frontend"
+    path: "apps/frontend"
+    entryPoint: "src/main.tsx"
+`;
+      writeFileSync(join(grafemaDir, 'config.yaml'), yaml);
+
+      const config = loadConfig(testDir);
+
+      assert.ok(config.services, 'should have services');
+      assert.strictEqual(config.services.length, 2);
+      assert.deepStrictEqual(config.services[0], {
+        name: 'backend',
+        path: 'apps/backend',
+        entryPoint: 'src/index.ts',
+      });
+      assert.deepStrictEqual(config.services[1], {
+        name: 'frontend',
+        path: 'apps/frontend',
+        entryPoint: 'src/main.tsx',
+      });
+    });
+
+    it('should handle services without entryPoint (optional field)', () => {
+      mkdirSync(join(testDir, 'apps', 'service1'), { recursive: true });
+
+      const yaml = `services:
+  - name: "service1"
+    path: "apps/service1"
+`;
+      writeFileSync(join(grafemaDir, 'config.yaml'), yaml);
+
+      const config = loadConfig(testDir);
+
+      assert.ok(config.services, 'should have services');
+      assert.strictEqual(config.services.length, 1);
+      assert.strictEqual(config.services[0].name, 'service1');
+      assert.strictEqual(config.services[0].path, 'apps/service1');
+      assert.strictEqual(config.services[0].entryPoint, undefined);
+    });
+
+    it('should default to empty services when not specified', () => {
+      const yaml = `plugins:
+  indexing:
+    - JSModuleIndexer
+`;
+      writeFileSync(join(grafemaDir, 'config.yaml'), yaml);
+
+      const config = loadConfig(testDir);
+
+      assert.ok(Array.isArray(config.services), 'services should be an array');
+      assert.strictEqual(config.services.length, 0, 'services should be empty by default');
+    });
+
+    it('should handle empty services array', () => {
+      const yaml = `services: []
+`;
+      writeFileSync(join(grafemaDir, 'config.yaml'), yaml);
+
+      const config = loadConfig(testDir);
+
+      assert.ok(Array.isArray(config.services));
+      assert.strictEqual(config.services.length, 0);
+    });
+
+    it('should merge services with plugins config', () => {
+      mkdirSync(join(testDir, 'apps', 'api'), { recursive: true });
+
+      const yaml = `plugins:
+  indexing:
+    - CustomIndexer
+services:
+  - name: "api"
+    path: "apps/api"
+`;
+      writeFileSync(join(grafemaDir, 'config.yaml'), yaml);
+
+      const config = loadConfig(testDir);
+
+      // Plugins should be merged
+      assert.deepStrictEqual(config.plugins.indexing, ['CustomIndexer']);
+      // Other plugin phases should use defaults
+      assert.deepStrictEqual(config.plugins.analysis, DEFAULT_CONFIG.plugins.analysis);
+
+      // Services should be loaded
+      assert.ok(config.services, 'should have services');
+      assert.strictEqual(config.services.length, 1);
+      assert.strictEqual(config.services[0].name, 'api');
+    });
+
+    // -------------------------------------------------------------------------
+    // Validation: Fail loudly on invalid services (per Linus review)
+    // -------------------------------------------------------------------------
+
+    it('should throw error when services is not an array', () => {
+      const yaml = `services: "not an array"
+`;
+      writeFileSync(join(grafemaDir, 'config.yaml'), yaml);
+
+      assert.throws(
+        () => loadConfig(testDir),
+        /services must be an array/,
+        'should throw when services is not an array'
+      );
+    });
+
+    it('should throw error when service is missing name field', () => {
+      mkdirSync(join(testDir, 'apps', 'myservice'), { recursive: true });
+
+      const yaml = `services:
+  - path: "apps/myservice"
+`;
+      writeFileSync(join(grafemaDir, 'config.yaml'), yaml);
+
+      assert.throws(
+        () => loadConfig(testDir),
+        /services\[0\]\.name must be a string, got undefined/,
+        'should throw when service name is missing'
+      );
+    });
+
+    it('should throw error when service name is empty string', () => {
+      mkdirSync(join(testDir, 'apps', 'myservice'), { recursive: true });
+
+      const yaml = `services:
+  - name: ""
+    path: "apps/myservice"
+`;
+      writeFileSync(join(grafemaDir, 'config.yaml'), yaml);
+
+      assert.throws(
+        () => loadConfig(testDir),
+        /services\[0\]\.name cannot be empty or whitespace-only/,
+        'should throw when service name is empty'
+      );
+    });
+
+    it('should throw error when service name is whitespace only', () => {
+      mkdirSync(join(testDir, 'apps', 'myservice'), { recursive: true });
+
+      const yaml = `services:
+  - name: "   "
+    path: "apps/myservice"
+`;
+      writeFileSync(join(grafemaDir, 'config.yaml'), yaml);
+
+      assert.throws(
+        () => loadConfig(testDir),
+        /services\[0\]\.name cannot be empty or whitespace-only/,
+        'should throw when service name is whitespace only'
+      );
+    });
+
+    it('should throw error when service is missing path field', () => {
+      const yaml = `services:
+  - name: "backend"
+`;
+      writeFileSync(join(grafemaDir, 'config.yaml'), yaml);
+
+      assert.throws(
+        () => loadConfig(testDir),
+        /services\[0\]\.path must be a string, got undefined/,
+        'should throw when service path is missing'
+      );
+    });
+
+    it('should throw error when service path is empty string', () => {
+      const yaml = `services:
+  - name: "backend"
+    path: ""
+`;
+      writeFileSync(join(grafemaDir, 'config.yaml'), yaml);
+
+      assert.throws(
+        () => loadConfig(testDir),
+        /services\[0\]\.path cannot be empty or whitespace-only/,
+        'should throw when service path is empty'
+      );
+    });
+
+    it('should throw error when service entry in array is not an object', () => {
+      const yaml = `services:
+  - "just a string"
+`;
+      writeFileSync(join(grafemaDir, 'config.yaml'), yaml);
+
+      assert.throws(
+        () => loadConfig(testDir),
+        /services\[0\] must be an object/,
+        'should throw when service entry is not an object'
+      );
+    });
+
+    it('should throw error when entryPoint is not a string', () => {
+      mkdirSync(join(testDir, 'apps', 'backend'), { recursive: true });
+
+      const yaml = `services:
+  - name: "backend"
+    path: "apps/backend"
+    entryPoint: 123
+`;
+      writeFileSync(join(grafemaDir, 'config.yaml'), yaml);
+
+      assert.throws(
+        () => loadConfig(testDir),
+        /services\[0\]\.entryPoint must be a string, got number/,
+        'should throw when entryPoint is not a string'
+      );
+    });
+
+    it('should throw error when entryPoint is empty string', () => {
+      mkdirSync(join(testDir, 'apps', 'backend'), { recursive: true });
+
+      const yaml = `services:
+  - name: "backend"
+    path: "apps/backend"
+    entryPoint: ""
+`;
+      writeFileSync(join(grafemaDir, 'config.yaml'), yaml);
+
+      assert.throws(
+        () => loadConfig(testDir),
+        /services\[0\]\.entryPoint cannot be empty or whitespace-only/
+      );
+    });
+
+    it('should throw error when entryPoint is whitespace-only', () => {
+      mkdirSync(join(testDir, 'apps', 'backend'), { recursive: true });
+
+      const yaml = `services:
+  - name: "backend"
+    path: "apps/backend"
+    entryPoint: "   "
+`;
+      writeFileSync(join(grafemaDir, 'config.yaml'), yaml);
+
+      assert.throws(
+        () => loadConfig(testDir),
+        /services\[0\]\.entryPoint cannot be empty or whitespace-only/
+      );
+    });
+
+    it('should report correct index for validation errors', () => {
+      mkdirSync(join(testDir, 'apps', 'valid'), { recursive: true });
+
+      const yaml = `services:
+  - name: "valid"
+    path: "apps/valid"
+  - name: "invalid"
+`;
+      writeFileSync(join(grafemaDir, 'config.yaml'), yaml);
+
+      assert.throws(
+        () => loadConfig(testDir),
+        /services\[1\]\.path must be a string, got undefined/,
+        'should report correct array index in error'
+      );
+    });
+
+    // -------------------------------------------------------------------------
+    // Validation: Reject absolute paths (per Linus review)
+    // -------------------------------------------------------------------------
+
+    it('should throw error when service path is absolute (Unix-style)', () => {
+      const yaml = `services:
+  - name: "backend"
+    path: "/absolute/path/to/backend"
+`;
+      writeFileSync(join(grafemaDir, 'config.yaml'), yaml);
+
+      assert.throws(
+        () => loadConfig(testDir),
+        /services\[0\]\.path must be relative to project root.*got "\/absolute\/path/,
+        'should reject absolute Unix paths'
+      );
+    });
+
+    it('should throw error when service path starts with ~/ (home directory)', () => {
+      const yaml = `services:
+  - name: "backend"
+    path: "~/projects/backend"
+`;
+      writeFileSync(join(grafemaDir, 'config.yaml'), yaml);
+
+      assert.throws(
+        () => loadConfig(testDir),
+        /services\[0\]\.path must be relative to project root/,
+        'should reject home directory paths'
+      );
+    });
+
+    // -------------------------------------------------------------------------
+    // Validation: Service paths must exist (per Linus review)
+    // -------------------------------------------------------------------------
+
+    it('should throw error when service path does not exist', () => {
+      const yaml = `services:
+  - name: "backend"
+    path: "apps/nonexistent"
+`;
+      writeFileSync(join(grafemaDir, 'config.yaml'), yaml);
+
+      assert.throws(
+        () => loadConfig(testDir),
+        /services\[0\]\.path "apps\/nonexistent" does not exist/,
+        'should throw when service path does not exist'
+      );
+    });
+
+    it('should throw error when service path exists but is a file, not directory', () => {
+      // Create a file (not directory) at the path
+      writeFileSync(join(testDir, 'not-a-directory'), 'file content');
+
+      const yaml = `services:
+  - name: "backend"
+    path: "not-a-directory"
+`;
+      writeFileSync(join(grafemaDir, 'config.yaml'), yaml);
+
+      assert.throws(
+        () => loadConfig(testDir),
+        /services\[0\]\.path "not-a-directory" must be a directory/,
+        'should throw when service path is a file'
+      );
+    });
+
+    it('should validate all services paths exist', () => {
+      mkdirSync(join(testDir, 'apps', 'valid'), { recursive: true });
+      // Note: apps/missing does NOT exist
+
+      const yaml = `services:
+  - name: "valid"
+    path: "apps/valid"
+  - name: "missing"
+    path: "apps/missing"
+`;
+      writeFileSync(join(grafemaDir, 'config.yaml'), yaml);
+
+      assert.throws(
+        () => loadConfig(testDir),
+        /services\[1\]\.path "apps\/missing" does not exist/,
+        'should validate path exists for each service'
+      );
+    });
+
+    // -------------------------------------------------------------------------
+    // Valid edge cases
+    // -------------------------------------------------------------------------
+
+    it('should accept nested relative paths', () => {
+      mkdirSync(join(testDir, 'packages', 'apps', 'backend', 'src'), { recursive: true });
+
+      const yaml = `services:
+  - name: "backend"
+    path: "packages/apps/backend"
+`;
+      writeFileSync(join(grafemaDir, 'config.yaml'), yaml);
+
+      const config = loadConfig(testDir);
+
+      assert.strictEqual(config.services[0].path, 'packages/apps/backend');
+    });
+
+    it('should accept relative path with ./ prefix', () => {
+      mkdirSync(join(testDir, 'apps', 'backend'), { recursive: true });
+
+      const yaml = `services:
+  - name: "backend"
+    path: "./apps/backend"
+`;
+      writeFileSync(join(grafemaDir, 'config.yaml'), yaml);
+
+      const config = loadConfig(testDir);
+
+      assert.strictEqual(config.services[0].path, './apps/backend');
+    });
+
+    it('should accept path at project root', () => {
+      // Project root itself - represented by "."
+      const yaml = `services:
+  - name: "monolith"
+    path: "."
+`;
+      writeFileSync(join(grafemaDir, 'config.yaml'), yaml);
+
+      const config = loadConfig(testDir);
+
+      assert.strictEqual(config.services[0].path, '.');
+    });
+
+    it('should accept service with all optional fields', () => {
+      mkdirSync(join(testDir, 'apps', 'backend'), { recursive: true });
+
+      const yaml = `services:
+  - name: "backend"
+    path: "apps/backend"
+    entryPoint: "src/server.ts"
+`;
+      writeFileSync(join(grafemaDir, 'config.yaml'), yaml);
+
+      const config = loadConfig(testDir);
+
+      assert.deepStrictEqual(config.services[0], {
+        name: 'backend',
+        path: 'apps/backend',
+        entryPoint: 'src/server.ts',
+      });
+    });
+
+    it('should accept multiple services with mixed entryPoint presence', () => {
+      mkdirSync(join(testDir, 'apps', 'api'), { recursive: true });
+      mkdirSync(join(testDir, 'apps', 'web'), { recursive: true });
+      mkdirSync(join(testDir, 'packages', 'shared'), { recursive: true });
+
+      const yaml = `services:
+  - name: "api"
+    path: "apps/api"
+    entryPoint: "src/index.ts"
+  - name: "web"
+    path: "apps/web"
+  - name: "shared"
+    path: "packages/shared"
+    entryPoint: "index.ts"
+`;
+      writeFileSync(join(grafemaDir, 'config.yaml'), yaml);
+
+      const config = loadConfig(testDir);
+
+      assert.strictEqual(config.services.length, 3);
+      assert.strictEqual(config.services[0].entryPoint, 'src/index.ts');
+      assert.strictEqual(config.services[1].entryPoint, undefined);
+      assert.strictEqual(config.services[2].entryPoint, 'index.ts');
+    });
+  });
 });
