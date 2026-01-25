@@ -237,9 +237,7 @@ export class SQLInjectionValidator extends Plugin {
 
     // Check if this call has PASSES_ARGUMENT edges
     const outgoing = await graph.getOutgoingEdges(call.id) as unknown as EdgeRecord[];
-    const argEdges = outgoing.filter(e =>
-      (e.edgeType || e.edge_type) === 'PASSES_ARGUMENT'
-    );
+    const argEdges = outgoing.filter(e => e.type === 'PASSES_ARGUMENT');
 
     if (argEdges.length === 0) {
       // No tracked arguments - check via queryArgName attribute if available
@@ -317,8 +315,7 @@ export class SQLInjectionValidator extends Plugin {
     // Check DERIVES_FROM edges
     const outgoing = await graph.getOutgoingEdges(exprNode.id) as unknown as EdgeRecord[];
     const derivesFromEdges = outgoing.filter(e =>
-      (e.edgeType || e.edge_type) === 'DERIVES_FROM' ||
-      (e.edgeType || e.edge_type) === 'ASSIGNED_FROM'
+      e.type === 'DERIVES_FROM' || e.type === 'ASSIGNED_FROM'
     );
 
     for (const edge of derivesFromEdges) {

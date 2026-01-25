@@ -30,8 +30,7 @@ interface NodeInfo {
 interface Edge {
   src: string;
   dst: string;
-  edgeType: string;
-  type?: string;
+  type: string;
 }
 
 interface EdgeWithName {
@@ -102,7 +101,7 @@ async function outputJSON(
   // Fetch target node names for all edges
   const incomingWithNames = await Promise.all(
     incomingEdges.map(async (edge) => ({
-      edgeType: edge.edgeType || edge.type || 'UNKNOWN',
+      edgeType: edge.type || 'UNKNOWN',
       targetId: edge.src,
       targetName: await getNodeName(backend, edge.src),
     }))
@@ -110,7 +109,7 @@ async function outputJSON(
 
   const outgoingWithNames = await Promise.all(
     outgoingEdges.map(async (edge) => ({
-      edgeType: edge.edgeType || edge.type || 'UNKNOWN',
+      edgeType: edge.type || 'UNKNOWN',
       targetId: edge.dst,
       targetName: await getNodeName(backend, edge.dst),
     }))
@@ -197,7 +196,7 @@ async function displayEdges(
   const byType = new Map<string, EdgeWithName[]>();
 
   for (const edge of edges) {
-    const edgeType = edge.edgeType || edge.type || 'UNKNOWN';
+    const edgeType = edge.type || 'UNKNOWN';
     const targetId = getTargetId(edge);
     const targetName = await getNodeName(backend, targetId);
 

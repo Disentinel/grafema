@@ -291,7 +291,7 @@ async function traceBackward(
 
         trace.push({
           node: nodeInfo,
-          edgeType: edge.edgeType || edge.type,
+          edgeType: edge.type,
           depth: depth + 1,
         });
 
@@ -349,7 +349,7 @@ async function traceForward(
 
         trace.push({
           node: nodeInfo,
-          edgeType: edge.edgeType || edge.type,
+          edgeType: edge.type,
           depth: depth + 1,
         });
 
@@ -534,7 +534,7 @@ export async function extractArgument(
 
   for (const edge of edges) {
     // argIndex is stored in edge metadata
-    const edgeArgIndex = (edge as any).argIndex;
+    const edgeArgIndex = edge.metadata?.argIndex as number | undefined;
     if (edgeArgIndex === argIndex) {
       return edge.dst;
     }
@@ -564,7 +564,7 @@ async function extractProperty(
   if (nodeType === 'OBJECT_LITERAL') {
     const edges = await backend.getOutgoingEdges(nodeId, ['HAS_PROPERTY' as any]);
     for (const edge of edges) {
-      if ((edge as any).propertyName === propertyName) {
+      if (edge.metadata?.propertyName === propertyName) {
         return edge.dst;
       }
     }
