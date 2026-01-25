@@ -842,7 +842,12 @@ export class GraphBuilder {
           alternateSourceName,
           file: exprFile,
           line: exprLine,
-          column: exprColumn
+          column: exprColumn,
+          // Destructuring support (REG-201)
+          path,
+          baseName,
+          propertyPath,
+          arrayIndex
         } = assignment;
 
         // Create node from upstream metadata using factory
@@ -857,7 +862,12 @@ export class GraphBuilder {
             property,
             computed,
             computedPropertyVar: computedPropertyVar ?? undefined,
-            operator
+            operator,
+            // Destructuring support (REG-201)
+            path,
+            baseName,
+            propertyPath,
+            arrayIndex
           }
         );
 
