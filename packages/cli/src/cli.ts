@@ -17,6 +17,7 @@ import { checkCommand } from './commands/check.js';
 import { serverCommand } from './commands/server.js';
 import { coverageCommand } from './commands/coverage.js';
 import { doctorCommand } from './commands/doctor.js';
+import { schemaCommand } from './commands/schema.js';
 
 const program = new Command();
 
@@ -39,5 +40,6 @@ program.addCommand(coverageCommand);
 program.addCommand(checkCommand);
 program.addCommand(serverCommand);
 program.addCommand(doctorCommand);
+program.addCommand(schemaCommand);
 
 program.parse();

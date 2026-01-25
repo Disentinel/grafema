@@ -244,5 +244,9 @@ export type {
 } from './plugins/vcs/VCSPlugin.js';
 export type { CommitInfo } from './plugins/vcs/GitPlugin.js';
 
+// Schema extraction
+export { InterfaceSchemaExtractor } from './schema/index.js';
+export type { InterfaceSchema, PropertySchema, ExtractOptions } from './schema/index.js';
+
 // Re-export types for convenience
 export type * from '@grafema/types';
