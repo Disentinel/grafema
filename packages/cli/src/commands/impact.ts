@@ -159,10 +159,21 @@ async function analyzeImpact(
   const callChains: string[][] = [];
   const visited = new Set<string>();
 
+  // If target is a CLASS, aggregate callers from all methods
+  let targetIds: string[];
+  if (target.type === 'CLASS') {
+    const methodIds = await getClassMethods(backend, target.id);
+    targetIds = [target.id, ...methodIds];
+  } else {
+    targetIds = [target.id];
+  }
+
   // BFS to find all callers
-  const queue: Array<{ id: string; depth: number; chain: string[] }> = [
-    { id: target.id, depth: 0, chain: [target.name] }
-  ];
+  const queue: Array<{ id: string; depth: number; chain: string[] }> = targetIds.map(id => ({
+    id,
+    depth: 0,
+    chain: [target.name]
+  }));
 
   while (queue.length > 0) {
     const { id, depth, chain } = queue.shift()!;
@@ -182,6 +193,11 @@ async function analyzeImpact(
         const container = await findContainingFunction(backend, callNode.id);
 
         if (container && !visited.has(container.id)) {
+          // Filter out internal callers (methods of the same class)
+          if (target.type === 'CLASS' && targetIds.includes(container.id)) {
+            continue;
+          }
+
           const caller: NodeInfo = {
             id: container.id,
             type: container.type,
@@ -225,6 +241,31 @@ async function analyzeImpact(
     affectedModules,
     callChains,
   };
+}
+
+/**
+ * Get method IDs for a class
+ */
+async function getClassMethods(
+  backend: RFDBServerBackend,
+  classId: string
+): Promise<string[]> {
+  const methods: string[] = [];
+
+  try {
+    const edges = await backend.getOutgoingEdges(classId, ['CONTAINS']);
+
+    for (const edge of edges) {
+      const node = await backend.getNode(edge.dst);
+      if (node && node.type === 'FUNCTION') {
+        methods.push(node.id);
+      }
+    }
+  } catch {
+    // Ignore errors
+  }
+
+  return methods;
 }
 
 /**
