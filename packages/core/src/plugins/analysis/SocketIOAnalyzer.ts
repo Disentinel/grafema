@@ -71,6 +71,18 @@ interface SocketRoomNode {
 }
 
 /**
+ * Socket event channel node - represents a single event across all emitters/listeners
+ */
+interface SocketEventNode {
+  id: string;
+  type: 'socketio:event';
+  name: string;        // Event name (e.g., "slot:booked")
+  event: string;       // Same as name, for consistency
+  file?: string;       // Not applicable - event is global
+  line?: number;       // Not applicable
+}
+
+/**
  * Analysis result
  */
 interface AnalysisResult {
@@ -86,8 +98,8 @@ export class SocketIOAnalyzer extends Plugin {
       phase: 'ANALYSIS',
       priority: 75, // После JSASTAnalyzer (80)
       creates: {
-        nodes: ['socketio:emit', 'socketio:on', 'socketio:room'],
-        edges: ['CONTAINS', 'EMITS_EVENT', 'LISTENS_TO', 'JOINS_ROOM']
+        nodes: ['socketio:emit', 'socketio:on', 'socketio:room', 'socketio:event'],
+        edges: ['CONTAINS', 'EMITS_EVENT', 'LISTENS_TO', 'JOINS_ROOM', 'LISTENED_BY']
       },
       dependencies: ['JSModuleIndexer', 'JSASTAnalyzer']
     };
@@ -108,6 +120,7 @@ export class SocketIOAnalyzer extends Plugin {
       let roomsCount = 0;
       const startTime = Date.now();
 
+      // PHASE 1: Analyze modules and create emit/listener/room nodes
       for (let i = 0; i < modules.length; i++) {
         const module = modules[i];
         const result = await this.analyzeModule(module, graph);
@@ -128,18 +141,115 @@ export class SocketIOAnalyzer extends Plugin {
         }
       }
 
-      logger.info('Analysis complete', { emitsCount, listenersCount, roomsCount });
+      // PHASE 2: Create event channel nodes and edges
+      const eventCount = await this.createEventChannels(graph, logger);
+
+      logger.info('Analysis complete', {
+        emitsCount,
+        listenersCount,
+        roomsCount,
+        eventCount
+      });
 
       return createSuccessResult(
         {
-          nodes: emitsCount + listenersCount + roomsCount,
+          nodes: emitsCount + listenersCount + roomsCount + eventCount,
           edges: 0
         },
-        { emitsCount, listenersCount, roomsCount }
+        { emitsCount, listenersCount, roomsCount, eventCount }
       );
     } catch (error) {
       logger.error('Analysis failed', { error });
       return createErrorResult(error as Error);
+    }
+  }
+
+  /**
+   * Create event channel nodes and connect them to emits/listeners
+   *
+   * This runs AFTER all modules are analyzed, so all emit/listener nodes exist.
+   * Creates one socketio:event node per unique event name, then connects:
+   * - socketio:emit → EMITS_EVENT → socketio:event
+   * - socketio:event → LISTENED_BY → socketio:on
+   */
+  private async createEventChannels(
+    graph: PluginContext['graph'],
+    logger: ReturnType<typeof this.log>
+  ): Promise<number> {
+    try {
+      // Step 1: Get all emit and listener nodes
+      const allEmits = await graph.getAllNodes({ type: 'socketio:emit' });
+      const allListeners = await graph.getAllNodes({ type: 'socketio:on' });
+
+      logger.debug('Creating event channels', {
+        emits: allEmits.length,
+        listeners: allListeners.length
+      });
+
+      // Step 2: Extract unique event names
+      const eventNames = new Set<string>();
+
+      for (const emit of allEmits) {
+        if (emit.event && typeof emit.event === 'string') {
+          eventNames.add(emit.event);
+        }
+      }
+
+      for (const listener of allListeners) {
+        if (listener.event && typeof listener.event === 'string') {
+          eventNames.add(listener.event);
+        }
+      }
+
+      logger.debug('Unique events found', { count: eventNames.size });
+
+      // Step 3: Create event channel node for each unique event
+      let createdCount = 0;
+      for (const eventName of eventNames) {
+        const eventNodeId = `socketio:event#${eventName}`;
+
+        // Create event channel node
+        const eventNode: SocketEventNode = {
+          id: eventNodeId,
+          type: 'socketio:event',
+          name: eventName,
+          event: eventName
+        };
+
+        await graph.addNode(eventNode as unknown as NodeRecord);
+        createdCount++;
+
+        // Step 4: Connect all emits of this event to the channel
+        const matchingEmits = allEmits.filter(e => e.event === eventName);
+        for (const emit of matchingEmits) {
+          await graph.addEdge({
+            type: 'EMITS_EVENT',
+            src: emit.id,
+            dst: eventNodeId
+          });
+        }
+
+        // Step 5: Connect event channel to all listeners of this event
+        const matchingListeners = allListeners.filter(l => l.event === eventName);
+        for (const listener of matchingListeners) {
+          await graph.addEdge({
+            type: 'LISTENED_BY',
+            src: eventNodeId,
+            dst: listener.id
+          });
+        }
+
+        logger.debug('Created event channel', {
+          event: eventName,
+          emits: matchingEmits.length,
+          listeners: matchingListeners.length
+        });
+      }
+
+      return createdCount;
+    } catch (error) {
+      logger.error('Failed to create event channels', { error });
+      return 0;
     }
   }
 

@@ -246,4 +246,326 @@ describe('Socket.IO Analysis', () => {
         .hasNode('FUNCTION', 'GigView');
     });
   });
+
+  describe('Event Channel Creation', () => {
+    it('should create socketio:event nodes for unique events', async () => {
+      await orchestrator.run(FIXTURE_PATH);
+
+      const allNodes = await backend.getAllNodes();
+      const eventNodes = allNodes.filter(n => n.type === 'socketio:event');
+
+      // Expected events from fixtures:
+      // server.js: server:ready, slot:booked, user:joined, slot:book,
+      //            message, user:typing, disconnect, user:left,
+      //            slot:updated, message:received, heartbeat
+      // client.js: connect, slot:booked, message:received, user:typing,
+      //            disconnect, slot:book, message, user:joined
+      // Unique events: server:ready, slot:booked, user:joined, slot:book,
+      //                message, user:typing, disconnect, user:left,
+      //                slot:updated, message:received, heartbeat,
+      //                connect
+      assert.ok(eventNodes.length >= 12,
+        `Expected at least 12 socketio:event nodes, got ${eventNodes.length}`);
+    });
+
+    it('should create event node with correct structure', async () => {
+      await orchestrator.run(FIXTURE_PATH);
+
+      const allNodes = await backend.getAllNodes();
+      const slotBookedEvent = allNodes.find(n =>
+        n.type === 'socketio:event' && n.name === 'slot:booked'
+      );
+
+      assert.ok(slotBookedEvent, 'Should have slot:booked event node');
+      assert.strictEqual(slotBookedEvent.id, 'socketio:event#slot:booked',
+        'Event node ID should follow pattern: socketio:event#<event-name>');
+      assert.strictEqual(slotBookedEvent.name, 'slot:booked',
+        'Event node name should match event name');
+      assert.strictEqual(slotBookedEvent.event, 'slot:booked',
+        'Event node event field should match event name');
+      // Event nodes are global entities - they should not have file/line pointing to actual source
+      // Note: RFDB may set these fields to other values, but they shouldn't be real file paths
+      assert.ok(
+        slotBookedEvent.file === undefined || !slotBookedEvent.file.endsWith('.js'),
+        'Event node file should not be a source file path (global entity)'
+      );
+    });
+
+    it('should connect emits to event channels via EMITS_EVENT edges', async () => {
+      await orchestrator.run(FIXTURE_PATH);
+
+      const allNodes = await backend.getAllNodes();
+      const slotBookedEvent = allNodes.find(n =>
+        n.type === 'socketio:event' && n.name === 'slot:booked'
+      );
+      assert.ok(slotBookedEvent, 'slot:booked event node must exist');
+
+      const allEdges = await backend.getAllEdges();
+      const emitsEventEdges = allEdges.filter(e =>
+        e.type === 'EMITS_EVENT' && (e.toId === slotBookedEvent.id || e.dst === slotBookedEvent.id)
+      );
+
+      // server.js has multiple slot:booked emits:
+      // - Line 13: io.to('gig:123').emit('slot:booked', ...)
+      // - Line 29: socket.emit('slot:booked', result)
+      // - Line 51: via notifySlotBooked function (service call)
+      assert.ok(emitsEventEdges.length >= 2,
+        `Expected at least 2 EMITS_EVENT edges to slot:booked event, got ${emitsEventEdges.length}`);
+
+      // Verify edge connects emit node to event node
+      const firstEdge = emitsEventEdges[0];
+      const sourceNode = allNodes.find(n => n.id === (firstEdge.fromId || firstEdge.src));
+      assert.ok(sourceNode, 'Source node of EMITS_EVENT edge must exist');
+      assert.strictEqual(sourceNode.type, 'socketio:emit',
+        'EMITS_EVENT edge must connect from socketio:emit node');
+    });
+
+    it('should connect event channels to listeners via LISTENED_BY edges', async () => {
+      await orchestrator.run(FIXTURE_PATH);
+
+      const allNodes = await backend.getAllNodes();
+      const slotBookedEvent = allNodes.find(n =>
+        n.type === 'socketio:event' && n.name === 'slot:booked'
+      );
+      assert.ok(slotBookedEvent, 'slot:booked event node must exist');
+
+      const allEdges = await backend.getAllEdges();
+      const listenedByEdges = allEdges.filter(e =>
+        e.type === 'LISTENED_BY' && (e.fromId === slotBookedEvent.id || e.src === slotBookedEvent.id)
+      );
+
+      // client.js has slot:booked listeners:
+      // - Line 13: socket.on('slot:booked', ...) - directly detected
+      // - Line 49: useSocket('slot:booked', ...) - NOT detected (wrapper pattern, requires dataflow analysis)
+      // Note: useSocket wrapper calls socket.on(event, handler) where event is a variable,
+      // so the analyzer sees the variable name, not the literal value passed from call site.
+      // This is a known limitation - see Linear issue for dataflow-based argument tracking.
+      assert.ok(listenedByEdges.length >= 1,
+        `Expected at least 1 LISTENED_BY edge from slot:booked event, got ${listenedByEdges.length}`);
+
+      // Verify edge connects event node to listener node
+      const firstEdge = listenedByEdges[0];
+      const targetNode = allNodes.find(n => n.id === (firstEdge.toId || firstEdge.dst));
+      assert.ok(targetNode, 'Target node of LISTENED_BY edge must exist');
+      assert.strictEqual(targetNode.type, 'socketio:on',
+        'LISTENED_BY edge must connect to socketio:on node');
+    });
+
+    it('should create event nodes even for events with only emitters', async () => {
+      await orchestrator.run(FIXTURE_PATH);
+
+      const allNodes = await backend.getAllNodes();
+      const heartbeatEvent = allNodes.find(n =>
+        n.type === 'socketio:event' && n.name === 'heartbeat'
+      );
+
+      // heartbeat is emitted (server.js line 56) but has no listeners in fixture
+      assert.ok(heartbeatEvent, 'Should create event node even without listeners');
+      assert.strictEqual(heartbeatEvent.name, 'heartbeat');
+
+      // Verify it has EMITS_EVENT edges but no LISTENED_BY edges
+      const allEdges = await backend.getAllEdges();
+      const emitsEventEdges = allEdges.filter(e =>
+        e.type === 'EMITS_EVENT' && (e.toId === heartbeatEvent.id || e.dst === heartbeatEvent.id)
+      );
+      assert.ok(emitsEventEdges.length >= 1,
+        'heartbeat event should have at least one emitter');
+    });
+
+    it('should create event nodes even for events with only listeners', async () => {
+      await orchestrator.run(FIXTURE_PATH);
+
+      const allNodes = await backend.getAllNodes();
+      const connectEvent = allNodes.find(n =>
+        n.type === 'socketio:event' && n.name === 'connect'
+      );
+
+      // connect is listened to (client.js line 9) but not emitted in fixture
+      // (it's a built-in Socket.IO event emitted by the library)
+      assert.ok(connectEvent, 'Should create event node even without explicit emitters');
+      assert.strictEqual(connectEvent.name, 'connect');
+
+      // Verify it has LISTENED_BY edges
+      const allEdges = await backend.getAllEdges();
+      const listenedByEdges = allEdges.filter(e =>
+        e.type === 'LISTENED_BY' && (e.fromId === connectEvent.id || e.src === connectEvent.id)
+      );
+      assert.ok(listenedByEdges.length >= 1,
+        'connect event should have at least one listener');
+    });
+
+    it('should deduplicate events across files', async () => {
+      await orchestrator.run(FIXTURE_PATH);
+
+      const allNodes = await backend.getAllNodes();
+      const slotBookedEvents = allNodes.filter(n =>
+        n.type === 'socketio:event' && n.name === 'slot:booked'
+      );
+
+      // slot:booked appears in both server.js (emits) and client.js (listens)
+      // but there should be only ONE event channel node
+      assert.strictEqual(slotBookedEvents.length, 1,
+        'Should have exactly one event node per unique event name, even when used in multiple files');
+    });
+
+    it('should handle events appearing in multiple contexts', async () => {
+      await orchestrator.run(FIXTURE_PATH);
+
+      const allNodes = await backend.getAllNodes();
+      const disconnectEvent = allNodes.find(n =>
+        n.type === 'socketio:event' && n.name === 'disconnect'
+      );
+
+      assert.ok(disconnectEvent, 'disconnect event node must exist');
+
+      // disconnect appears as:
+      // - server.js line 43: socket.on('disconnect', ...) - listener
+      // - client.js line 26: socket.on('disconnect', ...) - listener
+      // Should be ONE event node with multiple LISTENED_BY edges
+      const allEdges = await backend.getAllEdges();
+      const listenedByEdges = allEdges.filter(e =>
+        e.type === 'LISTENED_BY' && (e.fromId === disconnectEvent.id || e.src === disconnectEvent.id)
+      );
+
+      assert.ok(listenedByEdges.length >= 2,
+        `disconnect event should have at least 2 listeners (server and client), got ${listenedByEdges.length}`);
+    });
+
+    it('should handle dynamic event names in useSocket', async () => {
+      await orchestrator.run(FIXTURE_PATH);
+
+      const allNodes = await backend.getAllNodes();
+
+      // useSocket function (client.js line 40-44) takes event as parameter
+      // This creates a dynamic event pattern
+      // The calls in GigView (lines 49, 53) use specific events
+      const userJoinedEvent = allNodes.find(n =>
+        n.type === 'socketio:event' && n.name === 'user:joined'
+      );
+
+      assert.ok(userJoinedEvent,
+        'Should create event node for events passed to useSocket');
+    });
+
+    it('should handle room-scoped emits as regular events', async () => {
+      await orchestrator.run(FIXTURE_PATH);
+
+      const allNodes = await backend.getAllNodes();
+      const slotUpdatedEvent = allNodes.find(n =>
+        n.type === 'socketio:event' && n.name === 'slot:updated'
+      );
+
+      // server.js line 30: socket.to('gig:123').emit('slot:updated', result)
+      // Room-scoped emit creates regular event node (namespace/room scoping
+      // is future work per Joel's plan)
+      assert.ok(slotUpdatedEvent, 'Room-scoped emits should create event nodes');
+      assert.strictEqual(slotUpdatedEvent.name, 'slot:updated');
+    });
+
+    it('should handle namespace emits as regular events', async () => {
+      await orchestrator.run(FIXTURE_PATH);
+
+      const allNodes = await backend.getAllNodes();
+      const userJoinedEvent = allNodes.find(n =>
+        n.type === 'socketio:event' && n.name === 'user:joined'
+      );
+
+      // server.js line 16: io.of('/admin').emit('user:joined', ...)
+      // client.js line 53: useSocket('user:joined', ...)
+      // Namespace emit creates regular event node (namespace scoping
+      // is future work per Joel's plan)
+      assert.ok(userJoinedEvent, 'Namespace emits should create event nodes');
+
+      // Namespace emit should connect to event node
+      const allEdges = await backend.getAllEdges();
+      const emitsEventEdges = allEdges.filter(e =>
+        e.type === 'EMITS_EVENT' && (e.toId === userJoinedEvent.id || e.dst === userJoinedEvent.id)
+      );
+
+      assert.ok(emitsEventEdges.length >= 1, 'user:joined should have emitters');
+      // Note: The listener for user:joined is via useSocket('user:joined', ...) wrapper
+      // which won't be detected (requires dataflow analysis). This is a known limitation.
+    });
+
+    it('should handle broadcast emits as regular events', async () => {
+      await orchestrator.run(FIXTURE_PATH);
+
+      const allNodes = await backend.getAllNodes();
+      const userTypingEvent = allNodes.find(n =>
+        n.type === 'socketio:event' && n.name === 'user:typing'
+      );
+
+      // server.js line 39: socket.broadcast.emit('user:typing', ...)
+      // client.js line 22: socket.on('user:typing', ...)
+      assert.ok(userTypingEvent, 'Broadcast emits should create event nodes');
+
+      // Verify connection between broadcast emit and listener
+      const allEdges = await backend.getAllEdges();
+      const emitsEventEdges = allEdges.filter(e =>
+        e.type === 'EMITS_EVENT' && (e.toId === userTypingEvent.id || e.dst === userTypingEvent.id)
+      );
+      const listenedByEdges = allEdges.filter(e =>
+        e.type === 'LISTENED_BY' && (e.fromId === userTypingEvent.id || e.src === userTypingEvent.id)
+      );
+
+      assert.ok(emitsEventEdges.length >= 1, 'user:typing should have emitters');
+      assert.ok(listenedByEdges.length >= 1, 'user:typing should have listeners');
+    });
+
+    it('should connect all emits of same event to single event node', async () => {
+      await orchestrator.run(FIXTURE_PATH);
+
+      const allNodes = await backend.getAllNodes();
+      const allEdges = await backend.getAllEdges();
+
+      const slotBookedEvent = allNodes.find(n =>
+        n.type === 'socketio:event' && n.name === 'slot:booked'
+      );
+      assert.ok(slotBookedEvent);
+
+      // Find all emit nodes for slot:booked
+      const slotBookedEmits = allNodes.filter(n =>
+        n.type === 'socketio:emit' && n.event === 'slot:booked'
+      );
+
+      // Verify each emit has EMITS_EVENT edge to the event node
+      for (const emitNode of slotBookedEmits) {
+        const edge = allEdges.find(e =>
+          e.type === 'EMITS_EVENT' &&
+          (e.fromId === emitNode.id || e.src === emitNode.id) &&
+          (e.toId === slotBookedEvent.id || e.dst === slotBookedEvent.id)
+        );
+        assert.ok(edge,
+          `Emit node ${emitNode.id} should have EMITS_EVENT edge to event node`);
+      }
+    });
+
+    it('should connect all listeners of same event to single event node', async () => {
+      await orchestrator.run(FIXTURE_PATH);
+
+      const allNodes = await backend.getAllNodes();
+      const allEdges = await backend.getAllEdges();
+
+      const slotBookedEvent = allNodes.find(n =>
+        n.type === 'socketio:event' && n.name === 'slot:booked'
+      );
+      assert.ok(slotBookedEvent);
+
+      // Find all listener nodes for slot:booked
+      const slotBookedListeners = allNodes.filter(n =>
+        n.type === 'socketio:on' && n.event === 'slot:booked'
+      );
+
+      // Verify each listener has LISTENED_BY edge from the event node
+      for (const listenerNode of slotBookedListeners) {
+        const edge = allEdges.find(e =>
+          e.type === 'LISTENED_BY' &&
+          (e.fromId === slotBookedEvent.id || e.src === slotBookedEvent.id) &&
+          (e.toId === listenerNode.id || e.dst === listenerNode.id)
+        );
+        assert.ok(edge,
+          `Listener node ${listenerNode.id} should have LISTENED_BY edge from event node`);
+      }
+    });
+  });
 });

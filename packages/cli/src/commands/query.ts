@@ -13,7 +13,7 @@ import { Command } from 'commander';
 import { resolve, join, relative } from 'path';
 import { existsSync } from 'fs';
 import { RFDBServerBackend } from '@grafema/core';
-import { formatNodeDisplay, formatNodeInline } from '../utils/formatNode.js';
+import { formatNodeDisplay, formatNodeInline, formatLocation } from '../utils/formatNode.js';
 import { exitWithError } from '../utils/errorFormatter.js';
 
 interface QueryOptions {
@@ -31,6 +31,12 @@ interface NodeInfo {
   line?: number;
   method?: string;  // For http:route
   path?: string;    // For http:route
+  event?: string;   // For socketio:emit, socketio:on, socketio:event
+  room?: string;    // For socketio:emit
+  namespace?: string; // For socketio:emit
+  broadcast?: boolean; // For socketio:emit
+  objectName?: string; // For socketio:emit, socketio:on
+  handlerName?: string; // For socketio:on
   [key: string]: unknown;
 }
 
@@ -106,7 +112,7 @@ Examples:
       // Display results
       for (const node of nodes) {
         console.log('');
-        displayNode(node, projectPath);
+        await displayNode(node, projectPath, backend);
 
         // Show callers and callees for functions
         if (node.type === 'FUNCTION' || node.type === 'CLASS') {
@@ -165,6 +171,11 @@ function parsePattern(pattern: string): { type: string | null; name: string } {
       route: 'http:route',
       endpoint: 'http:route',
       http: 'http:route',
+      // Socket.IO aliases
+      event: 'socketio:event',
+      emit: 'socketio:emit',
+      on: 'socketio:on',
+      listener: 'socketio:on',
     };
 
     if (typeMap[typeWord]) {
@@ -180,13 +191,23 @@ function parsePattern(pattern: string): { type: string | null; name: string } {
  *
  * Different node types have different searchable fields:
  * - http:route: search method and path fields
+ * - socketio:event: search name field (standard)
+ * - socketio:emit/on: search event field
  * - Default: search name field
  */
 function matchesSearchPattern(
-  node: { name?: string; method?: string; path?: string; [key: string]: unknown },
+  node: {
+    name?: string;
+    method?: string;
+    path?: string;
+    event?: string;
+    [key: string]: unknown
+  },
   nodeType: string,
   pattern: string
 ): boolean {
+  const lowerPattern = pattern.toLowerCase();
+
   // HTTP routes: search method and path
   if (nodeType === 'http:route') {
     const method = (node.method || '').toLowerCase();
@@ -213,8 +234,19 @@ function matchesSearchPattern(
     }
   }
 
+  // Socket.IO event channels: search name field (standard)
+  if (nodeType === 'socketio:event') {
+    const nodeName = (node.name || '').toLowerCase();
+    return nodeName.includes(lowerPattern);
+  }
+
+  // Socket.IO emit/on: search event field
+  if (nodeType === 'socketio:emit' || nodeType === 'socketio:on') {
+    const eventName = (node.event || '').toLowerCase();
+    return eventName.includes(lowerPattern);
+  }
+
   // Default: search name field
-  const lowerPattern = pattern.toLowerCase();
   const nodeName = (node.name || '').toLowerCase();
   return nodeName.includes(lowerPattern);
 }
@@ -231,7 +263,17 @@ async function findNodes(
   const results: NodeInfo[] = [];
   const searchTypes = type
     ? [type]
-    : ['FUNCTION', 'CLASS', 'MODULE', 'VARIABLE', 'CONSTANT', 'http:route'];
+    : [
+        'FUNCTION',
+        'CLASS',
+        'MODULE',
+        'VARIABLE',
+        'CONSTANT',
+        'http:route',
+        'socketio:event',
+        'socketio:emit',
+        'socketio:on'
+      ];
 
   for (const nodeType of searchTypes) {
     for await (const node of backend.queryNodes({ nodeType: nodeType as any })) {
@@ -246,11 +288,32 @@ async function findNodes(
           file: node.file || '',
           line: node.line,
         };
+
         // Include method and path for http:route nodes
         if (nodeType === 'http:route') {
           nodeInfo.method = node.method as string | undefined;
           nodeInfo.path = node.path as string | undefined;
         }
+
+        // Include event field for Socket.IO nodes
+        if (nodeType === 'socketio:event' || nodeType === 'socketio:emit' || nodeType === 'socketio:on') {
+          nodeInfo.event = node.event as string | undefined;
+        }
+
+        // Include emit-specific fields
+        if (nodeType === 'socketio:emit') {
+          nodeInfo.room = node.room as string | undefined;
+          nodeInfo.namespace = node.namespace as string | undefined;
+          nodeInfo.broadcast = node.broadcast as boolean | undefined;
+          nodeInfo.objectName = node.objectName as string | undefined;
+        }
+
+        // Include listener-specific fields
+        if (nodeType === 'socketio:on') {
+          nodeInfo.objectName = node.objectName as string | undefined;
+          nodeInfo.handlerName = node.handlerName as string | undefined;
+        }
+
         results.push(nodeInfo);
         if (results.length >= limit) break;
       }
@@ -465,12 +528,25 @@ async function findCallsInFunction(
 /**
  * Display a node with semantic ID as primary identifier
  */
-function displayNode(node: NodeInfo, projectPath: string): void {
+async function displayNode(node: NodeInfo, projectPath: string, backend: RFDBServerBackend): Promise<void> {
   // Special formatting for HTTP routes
   if (node.type === 'http:route' && node.method && node.path) {
     console.log(formatHttpRouteDisplay(node, projectPath));
     return;
   }
+
+  // Special formatting for Socket.IO event channels
+  if (node.type === 'socketio:event') {
+    console.log(await formatSocketEventDisplay(node, projectPath, backend));
+    return;
+  }
+
+  // Special formatting for Socket.IO emit/on
+  if (node.type === 'socketio:emit' || node.type === 'socketio:on') {
+    console.log(formatSocketIONodeDisplay(node, projectPath));
+    return;
+  }
+
   console.log(formatNodeDisplay(node, { projectPath }));
 }
 
@@ -492,6 +568,103 @@ function formatHttpRouteDisplay(node: NodeInfo, projectPath: string): string {
     const relPath = relative(projectPath, node.file);
     const loc = node.line ? `${relPath}:${node.line}` : relPath;
     lines.push(`  Location: ${loc}`);
+  }
+
+  return lines.join('\n');
+}
+
+/**
+ * Format Socket.IO event channel for display
+ *
+ * Output:
+ *   [socketio:event] slot:booked
+ *     ID: socketio:event#slot:booked
+ *     Emitted by: 3 locations
+ *     Listened by: 5 locations
+ */
+async function formatSocketEventDisplay(
+  node: NodeInfo,
+  projectPath: string,
+  backend: RFDBServerBackend
+): Promise<string> {
+  const lines: string[] = [];
+
+  // Line 1: [type] event_name
+  lines.push(`[${node.type}] ${node.name}`);
+
+  // Line 2: ID
+  lines.push(`  ID: ${node.id}`);
+
+  // Query edges to get emitter and listener counts
+  try {
+    const incomingEdges = await backend.getIncomingEdges(node.id, ['EMITS_EVENT']);
+    const outgoingEdges = await backend.getOutgoingEdges(node.id, ['LISTENED_BY']);
+
+    if (incomingEdges.length > 0) {
+      lines.push(`  Emitted by: ${incomingEdges.length} location${incomingEdges.length !== 1 ? 's' : ''}`);
+    }
+
+    if (outgoingEdges.length > 0) {
+      lines.push(`  Listened by: ${outgoingEdges.length} location${outgoingEdges.length !== 1 ? 's' : ''}`);
+    }
+  } catch {
+    // If edge queries fail, just show the basic info
+  }
+
+  return lines.join('\n');
+}
+
+/**
+ * Format Socket.IO emit/on for display
+ *
+ * Output for emit:
+ *   [socketio:emit] slot:booked
+ *     ID: socketio:emit#slot:booked#server.js#28
+ *     Location: server.js:28
+ *     Room: gig:123 (if applicable)
+ *     Namespace: /admin (if applicable)
+ *     Broadcast: true (if applicable)
+ *
+ * Output for on:
+ *   [socketio:on] slot:booked
+ *     ID: socketio:on#slot:booked#client.js#13
+ *     Location: client.js:13
+ *     Handler: anonymous:27
+ */
+function formatSocketIONodeDisplay(node: NodeInfo, projectPath: string): string {
+  const lines: string[] = [];
+
+  // Line 1: [type] event_name
+  const eventName = node.event || node.name || 'unknown';
+  lines.push(`[${node.type}] ${eventName}`);
+
+  // Line 2: ID
+  lines.push(`  ID: ${node.id}`);
+
+  // Line 3: Location (if applicable)
+  if (node.file) {
+    const loc = formatLocation(node.file, node.line, projectPath);
+    if (loc) {
+      lines.push(`  Location: ${loc}`);
+    }
+  }
+
+  // Emit-specific fields
+  if (node.type === 'socketio:emit') {
+    if (node.room) {
+      lines.push(`  Room: ${node.room}`);
+    }
+    if (node.namespace) {
+      lines.push(`  Namespace: ${node.namespace}`);
+    }
+    if (node.broadcast) {
+      lines.push(`  Broadcast: true`);
+    }
+  }
+
+  // Listener-specific fields
+  if (node.type === 'socketio:on' && node.handlerName) {
+    lines.push(`  Handler: ${node.handlerName}`);
   }
 
   return lines.join('\n');
