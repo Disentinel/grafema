@@ -61,20 +61,27 @@ export const overviewCommand = new Command('overview')
       console.log('External Interactions:');
       const httpRoutes = stats.nodesByType['http:route'] || 0;
       const dbQueries = stats.nodesByType['db:query'] || 0;
+      const socketEvents = stats.nodesByType['socketio:event'] || 0;
       const socketEmit = stats.nodesByType['socketio:emit'] || 0;
       const socketOn = stats.nodesByType['socketio:on'] || 0;
       const events = stats.nodesByType['event:listener'] || 0;
 
       if (httpRoutes > 0) console.log(`├─ HTTP routes: ${httpRoutes}`);
       if (dbQueries > 0) console.log(`├─ Database queries: ${dbQueries}`);
-      if (socketEmit + socketOn > 0) console.log(`├─ Socket.IO: ${socketEmit} emit, ${socketOn} listeners`);
+      if (socketEvents > 0) {
+        // New format showing event count prominently
+        console.log(`├─ Socket.IO: ${socketEvents} events (${socketEmit} emit, ${socketOn} listeners)`);
+      } else if (socketEmit + socketOn > 0) {
+        // Fallback for graphs analyzed before REG-209
+        console.log(`├─ Socket.IO: ${socketEmit} emit, ${socketOn} listeners`);
+      }
       if (events > 0) console.log(`├─ Event listeners: ${events}`);
 
       // Check for external module refs
       const externalModules = stats.nodesByType['EXTERNAL_MODULE'] || 0;
       if (externalModules > 0) console.log(`└─ External modules: ${externalModules}`);
 
-      if (httpRoutes + dbQueries + socketEmit + socketOn + events + externalModules === 0) {
+      if (httpRoutes + dbQueries + socketEvents + socketEmit + socketOn + events + externalModules === 0) {
         console.log('└─ (none detected)');
       }
       console.log('');
