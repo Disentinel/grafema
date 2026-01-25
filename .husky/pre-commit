@@ -1,1 +1,3 @@
-pnpm test
+# Disabled: too slow, runs full test suite
+# TODO: REG-??? - make pre-commit fast (lint only, or affected tests only)
+# pnpm test

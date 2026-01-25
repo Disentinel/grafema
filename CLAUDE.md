@@ -349,9 +349,11 @@ git checkout -b task/REG-XXX
 
 **IMPORTANT:** Git operations (fetch, checkout, branch creation) are safe and require NO user confirmation.
 
-**After branch created:**
-1. Update Linear → **In Progress**
+**CRITICAL — After branch created, IMMEDIATELY:**
+1. **Update Linear → In Progress** (use `mcp__linear__update_issue` with `state: "In Progress"`)
 2. Save task description to `_tasks/REG-XXX/001-user-request.md`
+
+Do NOT start coding until Linear status is updated.
 
 ### Finishing Task
 
