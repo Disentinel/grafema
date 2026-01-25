@@ -65,7 +65,9 @@ export async function ensureAnalyzed(
     // worker does NOT call db.clear() (see analysis-worker.ts)
     if (force || !getIsAnalyzed()) {
       log('[Grafema MCP] Clearing database before analysis...');
-      await db.clear();
+      if (db.clear) {
+        await db.clear();
+      }
       setIsAnalyzed(false);
     }
 
@@ -159,7 +161,7 @@ export async function discoverServices(): Promise<unknown[]> {
   };
 
   const plugins: unknown[] = [];
-  const discoveryPluginNames = (config.plugins as any)?.discovery || [];
+  const discoveryPluginNames = config.plugins.discovery ?? [];
 
   for (const name of discoveryPluginNames) {
     const factory = availablePlugins[name];
