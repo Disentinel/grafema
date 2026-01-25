@@ -50,6 +50,12 @@ export const initCommand = new Command('init')
   .description('Initialize Grafema in current project')
   .argument('[path]', 'Project path', '.')
   .option('-f, --force', 'Overwrite existing config')
+  .addHelpText('after', `
+Examples:
+  grafema init                   Initialize in current directory
+  grafema init ./my-project      Initialize in specific directory
+  grafema init --force           Overwrite existing configuration
+`)
   .action(async (path: string, options: InitOptions) => {
     const projectPath = resolve(path);
     const grafemaDir = join(projectPath, '.grafema');

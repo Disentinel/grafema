@@ -45,6 +45,13 @@ export const getCommand = new Command('get')
   .argument('<semantic-id>', 'Semantic ID of the node (e.g., "file.js->scope->TYPE->name")')
   .option('-p, --project <path>', 'Project path', '.')
   .option('-j, --json', 'Output as JSON')
+  .addHelpText('after', `
+Examples:
+  grafema get "src/auth.js->authenticate->FUNCTION"      Get function node
+  grafema get "src/models/User.js->User->CLASS"          Get class node
+  grafema get "src/api.js->config->VARIABLE"             Get variable node
+  grafema get "src/auth.js->authenticate->FUNCTION" -j   Output as JSON with edges
+`)
   .action(async (semanticId: string, options: GetOptions) => {
     const projectPath = resolve(options.project);
     const grafemaDir = join(projectPath, '.grafema');

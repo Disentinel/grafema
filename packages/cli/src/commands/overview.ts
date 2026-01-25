@@ -17,6 +17,12 @@ export const overviewCommand = new Command('overview')
   .description('Show project overview and statistics')
   .option('-p, --project <path>', 'Project path', '.')
   .option('-j, --json', 'Output as JSON')
+  .addHelpText('after', `
+Examples:
+  grafema overview               Show project dashboard
+  grafema overview --json        Output statistics as JSON
+  grafema overview -p ./app      Overview for specific project
+`)
   .action(async (options: { project: string; json?: boolean }) => {
     const projectPath = resolve(options.project);
     const grafemaDir = join(projectPath, '.grafema');

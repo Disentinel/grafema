@@ -57,6 +57,17 @@ Examples:
   grafema query --raw 'type(X, "FUNCTION"), attr(X, "name", "main")'
   grafema query --raw 'edge(X, Y, "CALLS")'`
   )
+  .addHelpText('after', `
+Examples:
+  grafema query "auth"                 Search by name (partial match)
+  grafema query "function login"       Search functions only
+  grafema query "class UserService"    Search classes only
+  grafema query "route /api/users"     Search HTTP routes by path
+  grafema query "POST /users"          Search routes by method + path
+  grafema query -l 20 "fetch"          Return up to 20 results
+  grafema query --json "config"        Output results as JSON
+  grafema query --raw 'type(X, "FUNCTION")'   Raw Datalog query
+`)
   .action(async (pattern: string, options: QueryOptions) => {
     const projectPath = resolve(options.project);
     const grafemaDir = join(projectPath, '.grafema');

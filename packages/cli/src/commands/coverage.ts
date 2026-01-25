@@ -18,6 +18,13 @@ export const coverageCommand = new Command('coverage')
   .option('-p, --project <path>', 'Project path', '.')
   .option('-j, --json', 'Output as JSON')
   .option('-v, --verbose', 'Show detailed file lists')
+  .addHelpText('after', `
+Examples:
+  grafema coverage               Show coverage summary
+  grafema coverage --verbose     Show detailed file lists
+  grafema coverage --json        Output coverage as JSON
+  grafema coverage -p ./app      Coverage for specific project
+`)
   .action(async (options: { project: string; json?: boolean; verbose?: boolean }) => {
     const projectPath = resolve(options.project);
     const grafemaDir = join(projectPath, '.grafema');

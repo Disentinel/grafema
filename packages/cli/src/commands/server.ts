@@ -103,7 +103,14 @@ function getProjectPaths(projectPath: string) {
 
 // Create main server command with subcommands
 export const serverCommand = new Command('server')
-  .description('Manage RFDB server lifecycle');
+  .description('Manage RFDB server lifecycle')
+  .addHelpText('after', `
+Examples:
+  grafema server start           Start the RFDB server (detached)
+  grafema server stop            Stop the running server
+  grafema server status          Check if server is running
+  grafema server status --json   Server status as JSON
+`);
 
 // grafema server start
 serverCommand

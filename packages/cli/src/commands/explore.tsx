@@ -1211,6 +1211,16 @@ export const exploreCommand = new Command('explore')
   .option('-d, --depth <n>', 'Batch: traversal depth', '3')
   .option('-j, --json', 'Output as JSON (default for batch mode)')
   .option('--format <type>', 'Output format: json or text')
+  .addHelpText('after', `
+Examples:
+  grafema explore                        Interactive TUI mode
+  grafema explore "authenticate"         Start TUI at specific function
+  grafema explore --query "User"         Batch: search for nodes
+  grafema explore --callers "login"      Batch: show who calls login
+  grafema explore --callees "main"       Batch: show what main calls
+  grafema explore --callers "auth" -d 5  Batch: callers with depth 5
+  grafema explore --query "api" --format text   Batch: text output
+`)
   .action(async (start: string | undefined, options: ExploreOptions) => {
     const projectPath = resolve(options.project);
     const grafemaDir = join(projectPath, '.grafema');

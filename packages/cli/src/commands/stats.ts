@@ -13,6 +13,13 @@ export const statsCommand = new Command('stats')
   .option('-p, --project <path>', 'Project path', '.')
   .option('-j, --json', 'Output as JSON')
   .option('-t, --types', 'Show breakdown by type')
+  .addHelpText('after', `
+Examples:
+  grafema stats                  Show basic graph statistics
+  grafema stats --types          Show breakdown by node/edge types
+  grafema stats --json           Output statistics as JSON
+  grafema stats -p ./app         Statistics for specific project
+`)
   .action(async (options: { project: string; json?: boolean; types?: boolean }) => {
     const projectPath = resolve(options.project);
     const grafemaDir = join(projectPath, '.grafema');

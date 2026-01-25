@@ -35,6 +35,13 @@ export const doctorCommand = new Command('doctor')
   .option('-j, --json', 'Output as JSON')
   .option('-q, --quiet', 'Only show failures')
   .option('-v, --verbose', 'Show detailed diagnostics')
+  .addHelpText('after', `
+Examples:
+  grafema doctor                 Run all diagnostic checks
+  grafema doctor --verbose       Show detailed diagnostics
+  grafema doctor --quiet         Only show failures
+  grafema doctor --json          Output diagnostics as JSON
+`)
   .action(async (options: DoctorOptions) => {
     const projectPath = resolve(options.project);
     const checks: DoctorCheckResult[] = [];

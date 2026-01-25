@@ -40,6 +40,13 @@ export const traceCommand = new Command('trace')
   .option('-p, --project <path>', 'Project path', '.')
   .option('-j, --json', 'Output as JSON')
   .option('-d, --depth <n>', 'Max trace depth', '10')
+  .addHelpText('after', `
+Examples:
+  grafema trace "userId"                     Trace all variables named "userId"
+  grafema trace "userId from authenticate"   Trace userId within authenticate function
+  grafema trace "config" --depth 5           Limit trace depth to 5 levels
+  grafema trace "apiKey" --json              Output trace as JSON
+`)
   .action(async (pattern: string, options: TraceOptions) => {
     const projectPath = resolve(options.project);
     const grafemaDir = join(projectPath, '.grafema');
