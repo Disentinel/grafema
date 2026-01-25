@@ -497,6 +497,15 @@ export interface VariableAssignmentInfo {
   baseName?: string;           // Base object name, e.g., "req"
   propertyPath?: string[];     // Property path array, e.g., ["headers", "contentType"]
   arrayIndex?: number;         // Array index for array destructuring, e.g., 0 for first element
+
+  // Call-based destructuring support (REG-223)
+  callSourceLine?: number;     // Line of the CallExpression
+  callSourceColumn?: number;   // Column of the CallExpression
+  callSourceFile?: string;     // File containing the call
+  callSourceName?: string;     // Function name (for lookup disambiguation)
+  sourceMetadata?: {
+    sourceType: 'call' | 'variable' | 'method-call';
+  };
 }
 
 // === COUNTER REF ===

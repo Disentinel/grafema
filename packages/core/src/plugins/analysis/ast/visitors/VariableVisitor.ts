@@ -101,10 +101,81 @@ interface VariableAssignmentInfo {
   file?: string;
 }
 
+/**
+ * Call info extracted from CallExpression (REG-223)
+ */
+interface CallInfo {
+  line: number;
+  column: number;
+  name: string;
+  isMethodCall: boolean;
+}
+
 export class VariableVisitor extends ASTVisitor {
   private extractVariableNamesFromPattern: ExtractVariableNamesCallback;
   private trackVariableAssignment: TrackVariableAssignmentCallback;
   private scopeTracker?: ScopeTracker;
+
+  /**
+   * Recursively unwrap AwaitExpression to get the underlying expression.
+   * await await fetch() -> fetch() (REG-223)
+   */
+  private unwrapAwaitExpression(node: Node): Node {
+    if (node.type === 'AwaitExpression' && (node as { argument?: Node }).argument) {
+      return this.unwrapAwaitExpression((node as { argument: Node }).argument);
+    }
+    return node;
+  }
+
+  /**
+   * Check if expression is CallExpression or AwaitExpression wrapping a call. (REG-223)
+   */
+  private isCallOrAwaitExpression(node: Node): boolean {
+    const unwrapped = this.unwrapAwaitExpression(node);
+    return unwrapped.type === 'CallExpression';
+  }
+
+  /**
+   * Extract call site information from CallExpression. (REG-223)
+   * Returns null if not a valid CallExpression.
+   */
+  private extractCallInfo(node: Node): CallInfo | null {
+    if (node.type !== 'CallExpression') {
+      return null;
+    }
+
+    const callExpr = node as { callee: Node; loc?: { start: { line: number; column: number } } };
+    const callee = callExpr.callee;
+    let name: string;
+    let isMethodCall = false;
+
+    // Direct call: fetchUser()
+    if (callee.type === 'Identifier') {
+      name = (callee as Identifier).name;
+    }
+    // Method call: obj.fetchUser() or arr.map()
+    else if (callee.type === 'MemberExpression') {
+      isMethodCall = true;
+      const memberExpr = callee as { object: Node; property: Node };
+      const objectName = memberExpr.object.type === 'Identifier'
+        ? (memberExpr.object as Identifier).name
+        : (memberExpr.object.type === 'ThisExpression' ? 'this' : 'unknown');
+      const methodName = memberExpr.property.type === 'Identifier'
+        ? (memberExpr.property as Identifier).name
+        : 'unknown';
+      name = `${objectName}.${methodName}`;
+    }
+    else {
+      return null;
+    }
+
+    return {
+      line: callExpr.loc?.start.line ?? 0,
+      column: callExpr.loc?.start.column ?? 0,
+      name,
+      isMethodCall
+    };
+  }
 
   /**
    * @param module - Current module being analyzed
@@ -219,65 +290,139 @@ export class VariableVisitor extends ASTVisitor {
               if (declarator.init) {
                 // Handle destructuring - create EXPRESSION for property path
                 if (varInfo.propertyPath || varInfo.arrayIndex !== undefined || varInfo.isRest) {
-                  // Phase 1: Only handle simple Identifier init expressions
-                  if (declarator.init.type !== 'Identifier') {
-                    // Skip complex init expressions (CallExpression, MemberExpression, etc.)
-                    return;
-                  }
+                  // Phase 1: Simple Identifier init expressions (REG-201)
+                  if (declarator.init.type === 'Identifier') {
+                    const sourceBaseName = (declarator.init as Identifier).name;
+                    const expressionLine = varInfo.loc.start.line;
 
-                  const sourceBaseName = (declarator.init as Identifier).name;
-                  const expressionLine = varInfo.loc.start.line;
+                    // Handle rest elements specially - create edge to whole source
+                    if (varInfo.isRest) {
+                      (variableAssignments as unknown[]).push({
+                        variableId: varId,
+                        sourceType: 'VARIABLE',
+                        sourceName: sourceBaseName,
+                        line: expressionLine
+                      });
+                      return;
+                    }
 
-                  // Handle rest elements specially - create edge to whole source
-                  if (varInfo.isRest) {
+                    const expressionColumn = varInfo.loc.start.column;
+
+                    // Build property path string
+                    let fullPath = sourceBaseName;
+                    if (varInfo.propertyPath && varInfo.propertyPath.length > 0) {
+                      fullPath = `${sourceBaseName}.${varInfo.propertyPath.join('.')}`;
+                    }
+
+                    // Generate expression ID (matches GraphBuilder expectations)
+                    const expressionId = `${module.file}:EXPRESSION:MemberExpression:${expressionLine}:${expressionColumn}`;
+
+                    // Determine property for display
+                    let property: string;
+                    if (varInfo.propertyPath && varInfo.propertyPath.length > 0) {
+                      property = varInfo.propertyPath[varInfo.propertyPath.length - 1];
+                    } else if (varInfo.arrayIndex !== undefined) {
+                      property = String(varInfo.arrayIndex);
+                    } else {
+                      property = '';
+                    }
+
+                    // Push assignment with full metadata for GraphBuilder (REG-201)
+                    // GraphBuilder will create the EXPRESSION node from this metadata
                     (variableAssignments as unknown[]).push({
                       variableId: varId,
-                      sourceType: 'VARIABLE',
-                      sourceName: sourceBaseName,
-                      line: expressionLine
+                      sourceId: expressionId,
+                      sourceType: 'EXPRESSION',
+                      expressionType: 'MemberExpression',
+                      object: sourceBaseName,
+                      property: property,
+                      computed: varInfo.arrayIndex !== undefined,
+                      path: fullPath,
+                      objectSourceName: sourceBaseName, // Use objectSourceName for DERIVES_FROM edge creation
+                      propertyPath: varInfo.propertyPath || undefined,
+                      arrayIndex: varInfo.arrayIndex,
+                      file: module.file,
+                      line: expressionLine,
+                      column: expressionColumn
                     });
-                    return;
                   }
+                  // Phase 2: CallExpression or AwaitExpression (REG-223)
+                  else if (this.isCallOrAwaitExpression(declarator.init)) {
+                    const unwrapped = this.unwrapAwaitExpression(declarator.init);
+                    const callInfo = this.extractCallInfo(unwrapped);
 
-                  const expressionColumn = varInfo.loc.start.column;
+                    if (!callInfo) {
+                      // Unsupported call pattern (computed callee, etc.)
+                      return;
+                    }
 
-                  // Build property path string
-                  let fullPath = sourceBaseName;
-                  if (varInfo.propertyPath && varInfo.propertyPath.length > 0) {
-                    fullPath = `${sourceBaseName}.${varInfo.propertyPath.join('.')}`;
+                    const callRepresentation = `${callInfo.name}()`;
+                    const expressionLine = varInfo.loc.start.line;
+                    const expressionColumn = varInfo.loc.start.column;
+
+                    // Handle rest elements - create direct CALL_SITE assignment
+                    if (varInfo.isRest) {
+                      (variableAssignments as unknown[]).push({
+                        variableId: varId,
+                        sourceType: 'CALL_SITE',
+                        callName: callInfo.name,
+                        callLine: callInfo.line,
+                        callColumn: callInfo.column,
+                        callSourceLine: callInfo.line,
+                        callSourceColumn: callInfo.column,
+                        callSourceFile: module.file,
+                        callSourceName: callInfo.name,
+                        line: expressionLine
+                      });
+                      return;
+                    }
+
+                    // Generate expression ID (matches GraphBuilder expectations)
+                    const expressionId = `${module.file}:EXPRESSION:MemberExpression:${expressionLine}:${expressionColumn}`;
+
+                    // Determine property for display
+                    let property: string;
+                    if (varInfo.propertyPath && varInfo.propertyPath.length > 0) {
+                      property = varInfo.propertyPath[varInfo.propertyPath.length - 1];
+                    } else if (varInfo.arrayIndex !== undefined) {
+                      property = String(varInfo.arrayIndex);
+                    } else {
+                      property = '';
+                    }
+
+                    // Build property path string: "fetchUser().data" or "fetchUser().user.name"
+                    let fullPath = callRepresentation;
+                    if (varInfo.propertyPath && varInfo.propertyPath.length > 0) {
+                      fullPath = `${callRepresentation}.${varInfo.propertyPath.join('.')}`;
+                    }
+
+                    // Push assignment with call source metadata for GraphBuilder (REG-223)
+                    (variableAssignments as unknown[]).push({
+                      variableId: varId,
+                      sourceId: expressionId,
+                      sourceType: 'EXPRESSION',
+                      expressionType: 'MemberExpression',
+                      object: callRepresentation,          // "fetchUser()" - display name
+                      property: property,
+                      computed: varInfo.arrayIndex !== undefined,
+                      path: fullPath,
+                      propertyPath: varInfo.propertyPath || undefined,
+                      arrayIndex: varInfo.arrayIndex,
+                      // Call source for DERIVES_FROM lookup (REG-223)
+                      callSourceLine: callInfo.line,
+                      callSourceColumn: callInfo.column,
+                      callSourceFile: module.file,
+                      callSourceName: callInfo.name,
+                      sourceMetadata: {
+                        sourceType: callInfo.isMethodCall ? 'method-call' : 'call'
+                      },
+                      file: module.file,
+                      line: expressionLine,
+                      column: expressionColumn
+                    });
                   }
-
-                  // Generate expression ID (matches GraphBuilder expectations)
-                  const expressionId = `${module.file}:EXPRESSION:MemberExpression:${expressionLine}:${expressionColumn}`;
-
-                  // Determine property for display
-                  let property: string;
-                  if (varInfo.propertyPath && varInfo.propertyPath.length > 0) {
-                    property = varInfo.propertyPath[varInfo.propertyPath.length - 1];
-                  } else if (varInfo.arrayIndex !== undefined) {
-                    property = String(varInfo.arrayIndex);
-                  } else {
-                    property = '';
-                  }
-
-                  // Push assignment with full metadata for GraphBuilder (REG-201)
-                  // GraphBuilder will create the EXPRESSION node from this metadata
-                  (variableAssignments as unknown[]).push({
-                    variableId: varId,
-                    sourceId: expressionId,
-                    sourceType: 'EXPRESSION',
-                    expressionType: 'MemberExpression',
-                    object: sourceBaseName,
-                    property: property,
-                    computed: varInfo.arrayIndex !== undefined,
-                    path: fullPath,
-                    objectSourceName: sourceBaseName, // Use objectSourceName for DERIVES_FROM edge creation
-                    propertyPath: varInfo.propertyPath || undefined,
-                    arrayIndex: varInfo.arrayIndex,
-                    file: module.file,
-                    line: expressionLine,
-                    column: expressionColumn
-                  });
+                  // Unsupported init type (MemberExpression without call, etc.)
+                  // Skip silently
                 } else {
                   // Normal assignment tracking
                   trackVariableAssignment(
