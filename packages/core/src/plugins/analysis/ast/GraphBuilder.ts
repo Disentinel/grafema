@@ -940,6 +940,50 @@ export class GraphBuilder {
             });
           }
         }
+        // Call-based source lookup (REG-223)
+        else if (expressionType === 'MemberExpression' && assignment.callSourceLine !== undefined) {
+          const { callSourceLine, callSourceColumn, callSourceName, callSourceFile } = assignment;
+
+          // Try CALL_SITE first (direct function calls)
+          const callSite = callSites.find(cs =>
+            cs.line === callSourceLine &&
+            cs.column === callSourceColumn &&
+            (callSourceName ? cs.name === callSourceName : true)
+          );
+
+          if (callSite) {
+            this._bufferEdge({
+              type: 'DERIVES_FROM',
+              src: sourceId,
+              dst: callSite.id
+            });
+          }
+          // Fall back to methodCalls (arr.map(), obj.getConfig())
+          else {
+            const methodCall = methodCalls.find(mc =>
+              mc.line === callSourceLine &&
+              mc.column === callSourceColumn &&
+              (callSourceName ? mc.name === callSourceName : true)
+            );
+
+            if (methodCall) {
+              this._bufferEdge({
+                type: 'DERIVES_FROM',
+                src: sourceId,
+                dst: methodCall.id
+              });
+            }
+            // Log warning when lookup fails (per Linus review - no silent failures)
+            else {
+              console.warn(
+                `[REG-223] DERIVES_FROM lookup failed for EXPRESSION(${assignment.object}.${assignment.property}) ` +
+                `at ${callSourceFile}:${callSourceLine}:${callSourceColumn}. ` +
+                `Expected CALL_SITE or methodCall for "${callSourceName}". ` +
+                `This indicates a coordinate mismatch or missing call node.`
+              );
+            }
+          }
+        }
 
         if ((expressionType === 'BinaryExpression' || expressionType === 'LogicalExpression')) {
           if (leftSourceName) {
