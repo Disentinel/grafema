@@ -172,3 +172,37 @@ export class AnalysisError extends GrafemaError {
     this.code = code;
   }
 }
+
+/**
+ * Validation error - issues found by validators during VALIDATION phase
+ *
+ * Unlike other error classes, ValidationError has CONFIGURABLE severity because
+ * validators report issues of varying importance:
+ * - warning: informational issues (unresolved calls, missing assignments)
+ * - error: problems that may indicate bugs (broken references)
+ * - fatal: critical issues that should fail the analysis
+ *
+ * Codes:
+ * - ERR_UNRESOLVED_CALL: function call doesn't resolve to definition
+ * - ERR_DISCONNECTED_NODES: graph nodes not connected to root
+ * - ERR_DISCONNECTED_NODE: individual disconnected node
+ * - ERR_MISSING_ASSIGNMENT: variable has no ASSIGNED_FROM edge
+ * - ERR_BROKEN_REFERENCE: reference to non-existent node
+ * - ERR_NO_LEAF_NODE: data flow doesn't reach leaf node
+ */
+export class ValidationError extends GrafemaError {
+  readonly code: string;
+  readonly severity: 'fatal' | 'error' | 'warning';
+
+  constructor(
+    message: string,
+    code: string,
+    context: ErrorContext = {},
+    suggestion?: string,
+    severity: 'fatal' | 'error' | 'warning' = 'warning'
+  ) {
+    super(message, context, suggestion);
+    this.code = code;
+    this.severity = severity;
+  }
+}

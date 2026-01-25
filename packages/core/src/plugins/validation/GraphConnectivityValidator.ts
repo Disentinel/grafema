@@ -6,6 +6,7 @@
 import { Plugin, createSuccessResult } from '../Plugin.js';
 import type { PluginContext, PluginMetadata, PluginResult } from '../Plugin.js';
 import type { NodeRecord } from '@grafema/types';
+import { ValidationError } from '../../errors/GrafemaError.js';
 
 /**
  * Edge structure
@@ -130,6 +131,7 @@ export class GraphConnectivityValidator extends Plugin {
 
     // Находим недостижимые узлы
     const unreachable = allNodes.filter(n => !reachable.has(n.id));
+    const errors: ValidationError[] = [];
 
     if (unreachable.length > 0) {
       const percentage = ((unreachable.length / allNodes.length) * 100).toFixed(1);
@@ -179,6 +181,41 @@ export class GraphConnectivityValidator extends Plugin {
       manifestWithValidation.validation.unreachableByType = Object.fromEntries(
         Object.entries(byType).map(([type, nodes]) => [type, nodes.length])
       );
+
+      // Create summary error for disconnected nodes
+      errors.push(new ValidationError(
+        `Found ${unreachable.length} unreachable nodes (${percentage}% of total)`,
+        'ERR_DISCONNECTED_NODES',
+        {
+          phase: 'VALIDATION',
+          plugin: 'GraphConnectivityValidator',
+          totalNodes: allNodes.length,
+          reachableNodes: reachable.size,
+          unreachableCount: unreachable.length,
+          unreachableByType: Object.fromEntries(
+            Object.entries(byType).map(([type, nodes]) => [type, nodes.length])
+          ),
+        },
+        'Fix analysis plugins to ensure all nodes are connected'
+      ));
+
+      // Create individual errors for each disconnected node (limit to 50)
+      const maxIndividualErrors = 50;
+      for (const node of unreachable.slice(0, maxIndividualErrors)) {
+        errors.push(new ValidationError(
+          `Node "${node.name || node.id}" (type: ${node.type}) is not connected to the main graph`,
+          'ERR_DISCONNECTED_NODE',
+          {
+            filePath: node.file,
+            lineNumber: node.line as number | undefined,
+            phase: 'VALIDATION',
+            plugin: 'GraphConnectivityValidator',
+            nodeId: node.id,
+            nodeType: node.type,
+            nodeName: node.name,
+          }
+        ));
+      }
     } else {
       logger.info('All nodes are reachable from root nodes');
       if (!manifestWithValidation.validation) manifestWithValidation.validation = {} as ValidationResult;
@@ -191,7 +228,8 @@ export class GraphConnectivityValidator extends Plugin {
 
     return createSuccessResult(
       { nodes: 0, edges: 0 },
-      { totalNodes: allNodes.length, reachableNodes: reachable.size }
+      { totalNodes: allNodes.length, reachableNodes: reachable.size },
+      errors
     );
   }
 }

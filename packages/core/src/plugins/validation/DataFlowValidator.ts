@@ -15,6 +15,7 @@
 import { Plugin, createSuccessResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { NodeRecord } from '@grafema/types';
+import { ValidationError } from '../../errors/GrafemaError.js';
 
 /**
  * Edge structure
@@ -24,19 +25,6 @@ interface EdgeRecord {
   src: string;
   dst: string;
   [key: string]: unknown;
-}
-
-/**
- * Data flow issue
- */
-interface DataFlowIssue {
-  type: string;
-  severity: string;
-  message: string;
-  variable: string;
-  file?: string;
-  line?: number;
-  chain?: string[];
 }
 
 /**
@@ -92,7 +80,7 @@ export class DataFlowValidator extends Plugin {
 
     logger.debug('Variables collected', { count: variables.length });
 
-    const issues: DataFlowIssue[] = [];
+    const errors: ValidationError[] = [];
     const leafTypes = new Set([
       'LITERAL',
       'net:stdio',
@@ -113,78 +101,96 @@ export class DataFlowValidator extends Plugin {
       );
 
       if (!assignment) {
-        issues.push({
-          type: 'MISSING_ASSIGNMENT',
-          severity: 'WARNING',
-          message: `Variable "${variable.name}" (${variable.file}:${variable.line}) has no ASSIGNED_FROM edge`,
-          variable: variable.name as string,
-          file: variable.file,
-          line: variable.line as number | undefined
-        });
+        errors.push(new ValidationError(
+          `Variable "${variable.name}" (${variable.file}:${variable.line}) has no ASSIGNED_FROM edge`,
+          'ERR_MISSING_ASSIGNMENT',
+          {
+            filePath: variable.file,
+            lineNumber: variable.line as number | undefined,
+            phase: 'VALIDATION',
+            plugin: 'DataFlowValidator',
+            variable: variable.name as string,
+          },
+          undefined,
+          'warning'
+        ));
         continue;
       }
 
       // Проверяем что источник существует
       const source = allNodes.find(n => n.id === assignment.dst);
       if (!source) {
-        issues.push({
-          type: 'BROKEN_REFERENCE',
-          severity: 'ERROR',
-          message: `Variable "${variable.name}" references non-existent node ${assignment.dst}`,
-          variable: variable.name as string,
-          file: variable.file,
-          line: variable.line as number | undefined
-        });
+        errors.push(new ValidationError(
+          `Variable "${variable.name}" references non-existent node ${assignment.dst}`,
+          'ERR_BROKEN_REFERENCE',
+          {
+            filePath: variable.file,
+            lineNumber: variable.line as number | undefined,
+            phase: 'VALIDATION',
+            plugin: 'DataFlowValidator',
+            variable: variable.name as string,
+            targetNodeId: assignment.dst,
+          },
+          undefined,
+          'error'
+        ));
         continue;
       }
 
       // Проверяем путь до листового узла
       const path = this.findPathToLeaf(variable, allNodes, allEdges, leafTypes);
       if (!path.found) {
-        issues.push({
-          type: 'NO_LEAF_NODE',
-          severity: 'WARNING',
-          message: `Variable "${variable.name}" (${variable.file}:${variable.line}) does not trace to a leaf node. Chain: ${path.chain.join(' -> ')}`,
-          variable: variable.name as string,
-          file: variable.file,
-          line: variable.line as number | undefined,
-          chain: path.chain
-        });
+        errors.push(new ValidationError(
+          `Variable "${variable.name}" (${variable.file}:${variable.line}) does not trace to a leaf node. Chain: ${path.chain.join(' -> ')}`,
+          'ERR_NO_LEAF_NODE',
+          {
+            filePath: variable.file,
+            lineNumber: variable.line as number | undefined,
+            phase: 'VALIDATION',
+            plugin: 'DataFlowValidator',
+            variable: variable.name as string,
+            chain: path.chain,
+          },
+          undefined,
+          'warning'
+        ));
       }
     }
 
-    // Группируем issues по типу
+    // Группируем errors по коду
+    const byCode: Record<string, number> = {};
+    for (const error of errors) {
+      if (!byCode[error.code]) {
+        byCode[error.code] = 0;
+      }
+      byCode[error.code]++;
+    }
+
     const summary: ValidationSummary = {
       total: variables.length,
-      validated: variables.length - issues.length,
-      issues: issues.length,
-      byType: {}
+      validated: variables.length - errors.length,
+      issues: errors.length,
+      byType: byCode
     };
-
-    for (const issue of issues) {
-      if (!summary.byType[issue.type]) {
-        summary.byType[issue.type] = 0;
-      }
-      summary.byType[issue.type]++;
-    }
 
     logger.info('Validation complete', { ...summary });
 
-    // Выводим issues
-    if (issues.length > 0) {
-      logger.warn('Data flow issues found', { count: issues.length });
-      for (const issue of issues) {
-        if (issue.severity === 'ERROR') {
-          logger.error(`[${issue.type}] ${issue.message}`);
+    // Выводим errors
+    if (errors.length > 0) {
+      logger.warn('Data flow issues found', { count: errors.length });
+      for (const error of errors) {
+        if (error.severity === 'error') {
+          logger.error(`[${error.code}] ${error.message}`);
         } else {
-          logger.warn(`[${issue.type}] ${issue.message}`);
+          logger.warn(`[${error.code}] ${error.message}`);
         }
       }
     }
 
     return createSuccessResult(
       { nodes: 0, edges: 0 },
-      { summary, issues }
+      { summary },
+      errors
     );
   }
 

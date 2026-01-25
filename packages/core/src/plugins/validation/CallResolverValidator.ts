@@ -14,19 +14,7 @@
 import { Plugin, createSuccessResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { NodeRecord } from '@grafema/types';
-
-/**
- * Call resolver issue
- */
-interface CallResolverIssue {
-  type: string;
-  severity: string;
-  message: string;
-  callName: string;
-  nodeId: string;
-  file?: string;
-  line?: number;
-}
+import { ValidationError } from '../../errors/GrafemaError.js';
 
 /**
  * Method call statistics
@@ -86,7 +74,7 @@ export class CallResolverValidator extends Plugin {
       violation(X) :- node(X, "CALL"), \\+ attr(X, "object", _), \\+ edge(X, _, "CALLS").
     `) as DatalogViolation[];
 
-    const issues: CallResolverIssue[] = [];
+    const errors: ValidationError[] = [];
 
     if (violations.length > 0) {
       logger.debug('Unresolved function calls found', { count: violations.length });
@@ -96,15 +84,19 @@ export class CallResolverValidator extends Plugin {
         if (nodeId) {
           const node = await graph.getNode(nodeId);
           if (node) {
-            issues.push({
-              type: 'UNRESOLVED_FUNCTION_CALL',
-              severity: 'WARNING',
-              message: `Call to "${node.name}" at ${node.file}:${node.line || '?'} does not resolve to a function definition`,
-              callName: node.name as string,
-              nodeId: nodeId,
-              file: node.file,
-              line: node.line as number | undefined
-            });
+            errors.push(new ValidationError(
+              `Call to "${node.name}" at ${node.file}:${node.line || '?'} does not resolve to a function definition`,
+              'ERR_UNRESOLVED_CALL',
+              {
+                filePath: node.file,
+                lineNumber: node.line as number | undefined,
+                phase: 'VALIDATION',
+                plugin: 'CallResolverValidator',
+                nodeId,
+                callName: node.name as string,
+              },
+              'Ensure the function is defined and exported'
+            ));
           }
         }
       }
@@ -117,26 +109,27 @@ export class CallResolverValidator extends Plugin {
     const summary: ValidationSummary = {
       totalCalls: methodCallStats.total,
       resolvedInternalCalls: methodCallStats.resolved,
-      unresolvedInternalCalls: issues.length,
+      unresolvedInternalCalls: errors.length,
       externalMethodCalls: methodCallStats.external,
-      issues: issues.length
+      issues: errors.length
     };
 
     logger.info('Validation complete', { ...summary });
 
-    if (issues.length > 0) {
-      logger.warn('Unresolved calls detected', { count: issues.length });
-      for (const issue of issues.slice(0, 10)) { // Show first 10
-        logger.warn(issue.message);
+    if (errors.length > 0) {
+      logger.warn('Unresolved calls detected', { count: errors.length });
+      for (const error of errors.slice(0, 10)) { // Show first 10
+        logger.warn(error.message);
       }
-      if (issues.length > 10) {
-        logger.debug(`... and ${issues.length - 10} more`);
+      if (errors.length > 10) {
+        logger.debug(`... and ${errors.length - 10} more`);
       }
     }
 
     return createSuccessResult(
       { nodes: 0, edges: 0 },
-      { summary, issues }
+      { summary },
+      errors
     );
   }
 

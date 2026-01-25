@@ -11,6 +11,6 @@ export { DiagnosticCollector } from './DiagnosticCollector.js';
 export type { Diagnostic, DiagnosticInput } from './DiagnosticCollector.js';
 
 export { DiagnosticReporter } from './DiagnosticReporter.js';
-export type { ReportOptions, SummaryStats } from './DiagnosticReporter.js';
+export type { ReportOptions, SummaryStats, CategoryCount, CategorizedSummaryStats } from './DiagnosticReporter.js';
 
 export { DiagnosticWriter } from './DiagnosticWriter.js';

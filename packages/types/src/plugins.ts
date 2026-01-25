@@ -261,12 +261,13 @@ export interface IPlugin {
 // === HELPER FUNCTIONS ===
 export function createSuccessResult(
   created: { nodes: number; edges: number } = { nodes: 0, edges: 0 },
-  metadata: Record<string, unknown> = {}
+  metadata: Record<string, unknown> = {},
+  errors: Error[] = []
 ): PluginResult {
   return {
     success: true,
     created,
-    errors: [],
+    errors,
     warnings: [],
     metadata,
   };
