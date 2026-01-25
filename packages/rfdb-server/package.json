@@ -1,0 +1,46 @@
+{
+  "name": "@grafema/rfdb",
+  "version": "0.1.1-alpha",
+  "description": "High-performance disk-backed graph database server for Grafema",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "bin": {
+    "rfdb-server": "./bin/rfdb-server.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Disentinel/rfdb.git"
+  },
+  "keywords": [
+    "graph",
+    "database",
+    "semantic-analysis",
+    "code-analysis",
+    "rust"
+  ],
+  "author": "Vadim Reshetnikov",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">= 16"
+  },
+  "os": [
+    "darwin",
+    "linux"
+  ],
+  "cpu": [
+    "x64",
+    "arm64"
+  ],
+  "scripts": {
+    "build": "cargo build --release",
+    "test": "cargo test",
+    "postinstall": "node scripts/postinstall.js"
+  },
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "bin/",
+    "scripts/",
+    "prebuilt/"
+  ]
+}

@@ -136,21 +136,21 @@ interface EdgeToAdd {
   [key: string]: unknown;
 }
 
-// NAPI binding - will be exported from rust-engine after build
+// NAPI binding - will be exported from packages/rfdb-server after build
 let parseRustFile: ((code: string) => RustParseResult) | undefined;
 
 // Try to load the native binding
-// Path: from dist/plugins/analysis/ go up 5 levels to reach project root, then rust-engine/
+// Path: from dist/plugins/analysis/ go up 5 levels to reach project root, then packages/rfdb-server/
 try {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const nativeBinding = await import('../../../../../rust-engine/grafema-graph-engine.node' as any);
+  const nativeBinding = await import('../../../../../packages/rfdb-server/grafema-graph-engine.node' as any);
   parseRustFile = nativeBinding.parseRustFile;
 } catch {
   // Fallback: try require
   try {
     const { createRequire } = await import('module');
     const require = createRequire(import.meta.url);
-    const nativeBinding = require('../../../../../rust-engine/grafema-graph-engine.node');
+    const nativeBinding = require('../../../../../packages/rfdb-server/grafema-graph-engine.node');
     parseRustFile = nativeBinding.parseRustFile;
   } catch {
     // Silent - will be reported during execute if needed

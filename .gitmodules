@@ -1,3 +1,0 @@
-[submodule "rust-engine"]
-	path = rust-engine
-	url = git@github.com:Disentinel/rfdb.git

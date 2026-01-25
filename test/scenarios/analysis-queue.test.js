@@ -38,7 +38,7 @@ const __dirname = dirname(__filename);
 
 const TEST_DB_PATH = '/tmp/rfdb-queue-test';
 const TEST_SOCKET_PATH = '/tmp/rfdb-queue.sock';
-const SERVER_BINARY = join(__dirname, '../../rust-engine/target/debug/rfdb-server');
+const SERVER_BINARY = join(__dirname, '../../packages/rfdb-server/target/debug/rfdb-server');
 const FIXTURE_PATH = join(__dirname, '../fixtures/03-complex-async');
 
 describe('AnalysisQueue', () => {
@@ -59,7 +59,7 @@ describe('AnalysisQueue', () => {
       console.log('Building rfdb-server...');
       const { execSync } = await import('child_process');
       execSync('cargo build --bin rfdb-server', {
-        cwd: join(__dirname, '../../rust-engine'),
+        cwd: join(__dirname, '../../packages/rfdb-server'),
         stdio: 'inherit'
       });
     }

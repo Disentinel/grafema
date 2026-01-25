@@ -166,8 +166,8 @@ export class RFDBServerBackend {
   /**
    * Find RFDB server binary in order of preference:
    * 1. @grafema/rfdb npm package
-   * 2. rust-engine/target/release (monorepo development)
-   * 3. rust-engine/target/debug
+   * 2. packages/rfdb-server/target/release (monorepo development)
+   * 3. packages/rfdb-server/target/debug
    */
   private _findServerBinary(): string | null {
     // 1. Check @grafema/rfdb npm package
@@ -196,16 +196,16 @@ export class RFDBServerBackend {
       // @grafema/rfdb not installed
     }
 
-    // 2. Check rust-engine in monorepo
+    // 2. Check packages/rfdb-server in monorepo
     const projectRoot = join(__dirname, '../../../../..');
-    const releaseBinary = join(projectRoot, 'rust-engine/target/release/rfdb-server');
+    const releaseBinary = join(projectRoot, 'packages/rfdb-server/target/release/rfdb-server');
     if (existsSync(releaseBinary)) {
       console.log(`[RFDBServerBackend] Found release binary: ${releaseBinary}`);
       return releaseBinary;
     }
 
     // 3. Check debug build
-    const debugBinary = join(projectRoot, 'rust-engine/target/debug/rfdb-server');
+    const debugBinary = join(projectRoot, 'packages/rfdb-server/target/debug/rfdb-server');
     if (existsSync(debugBinary)) {
       console.log(`[RFDBServerBackend] Found debug binary: ${debugBinary}`);
       return debugBinary;

@@ -22,7 +22,7 @@ Grafema is NOT competing with TypeScript or static type checkers. It's for codeb
 
 - **Plugin-based, modular architecture**
 - Modules: `types`, `core`, `cli`, `mcp`, `gui`
-- Rust engine (`rust-engine/`) — client-server architecture via unix-socket, NO FFI
+- RFDB server (`packages/rfdb-server/`) — Rust graph database, client-server architecture via unix-socket
 
 ## Core Principles
 

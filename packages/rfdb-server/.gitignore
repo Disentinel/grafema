@@ -1,0 +1,24 @@
+# Rust
+/target/
+
+# Build artifacts (compiled separately for each platform)
+*.node
+*.dylib
+*.so
+*.dll
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test databases
+*.rfdb/
+
+# Node
+node_modules/

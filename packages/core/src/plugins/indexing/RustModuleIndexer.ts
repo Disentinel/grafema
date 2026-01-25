@@ -1,6 +1,6 @@
 /**
  * RustModuleIndexer - plugin for indexing Rust modules
- * Discovers .rs files in rust-engine/src/ directory
+ * Discovers .rs files in packages/rfdb-server/src/ directory
  */
 
 import { readFileSync, existsSync, readdirSync, statSync } from 'fs';
@@ -99,11 +99,11 @@ export class RustModuleIndexer extends Plugin {
     const typedManifest = manifest as { projectPath: string } | undefined;
     const { projectPath } = typedManifest!;
 
-    // Find rust-engine/src directory
-    const rustRoot = resolve(projectPath, 'rust-engine/src');
+    // Find packages/rfdb-server/src directory
+    const rustRoot = resolve(projectPath, 'packages/rfdb-server/src');
 
     if (!existsSync(rustRoot)) {
-      logger.info('rust-engine/src not found, skipping');
+      logger.info('packages/rfdb-server/src not found, skipping');
       return createSuccessResult({ nodes: 0, edges: 0 }, { skipped: true });
     }
 

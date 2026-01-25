@@ -1,6 +1,6 @@
 // JS code that calls Rust NAPI functions
 
-const { GraphEngine, computeHash } = require('../rust-engine/navi.node');
+const { GraphEngine, computeHash } = require('../../../../packages/rfdb-server/navi.node');
 
 // Create engine instance
 const engine = new GraphEngine();

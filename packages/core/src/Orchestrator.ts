@@ -825,15 +825,15 @@ export class Orchestrator {
 
     // Check if server binary exists
     const projectRoot = join(dirname(fileURLToPath(import.meta.url)), '../..');
-    const serverBinary = join(projectRoot, 'rust-engine/target/release/rfdb-server');
-    const debugBinary = join(projectRoot, 'rust-engine/target/debug/rfdb-server');
+    const serverBinary = join(projectRoot, 'packages/rfdb-server/target/release/rfdb-server');
+    const debugBinary = join(projectRoot, 'packages/rfdb-server/target/debug/rfdb-server');
 
     let binaryPath = existsSync(serverBinary) ? serverBinary : debugBinary;
 
     if (!existsSync(binaryPath)) {
       console.log(`[Orchestrator] RFDB server binary not found at ${binaryPath}, building...`);
       execSync('cargo build --bin rfdb-server', {
-        cwd: join(projectRoot, 'rust-engine'),
+        cwd: join(projectRoot, 'packages/rfdb-server'),
         stdio: 'inherit',
       });
       binaryPath = debugBinary;
