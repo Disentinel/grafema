@@ -29,6 +29,8 @@ interface NodeInfo {
   name: string;
   file: string;
   line?: number;
+  method?: string;  // For http:route
+  path?: string;    // For http:route
   [key: string]: unknown;
 }
 
@@ -143,6 +145,10 @@ function parsePattern(pattern: string): { type: string | null; name: string } {
       var: 'VARIABLE',
       const: 'CONSTANT',
       constant: 'CONSTANT',
+      // HTTP route aliases
+      route: 'http:route',
+      endpoint: 'http:route',
+      http: 'http:route',
     };
 
     if (typeMap[typeWord]) {
@@ -151,6 +157,50 @@ function parsePattern(pattern: string): { type: string | null; name: string } {
   }
 
   return { type: null, name: pattern.trim() };
+}
+
+/**
+ * Check if a node matches the search pattern based on its type.
+ *
+ * Different node types have different searchable fields:
+ * - http:route: search method and path fields
+ * - Default: search name field
+ */
+function matchesSearchPattern(
+  node: { name?: string; method?: string; path?: string; [key: string]: unknown },
+  nodeType: string,
+  pattern: string
+): boolean {
+  // HTTP routes: search method and path
+  if (nodeType === 'http:route') {
+    const method = (node.method || '').toLowerCase();
+    const path = (node.path || '').toLowerCase();
+
+    // Pattern could be: "POST", "/api/users", "POST /api", etc.
+    const patternParts = pattern.trim().split(/\s+/);
+
+    if (patternParts.length === 1) {
+      // Single term: match method OR path
+      const term = patternParts[0].toLowerCase();
+      return method === term || path.includes(term);
+    } else {
+      // Multiple terms: first is method, rest is path pattern
+      const methodPattern = patternParts[0].toLowerCase();
+      const pathPattern = patternParts.slice(1).join(' ').toLowerCase();
+
+      // Method must match exactly (GET, POST, etc.)
+      const methodMatches = method === methodPattern;
+      // Path must contain the pattern
+      const pathMatches = path.includes(pathPattern);
+
+      return methodMatches && pathMatches;
+    }
+  }
+
+  // Default: search name field
+  const lowerPattern = pattern.toLowerCase();
+  const nodeName = (node.name || '').toLowerCase();
+  return nodeName.includes(lowerPattern);
 }
 
 /**
@@ -165,20 +215,27 @@ async function findNodes(
   const results: NodeInfo[] = [];
   const searchTypes = type
     ? [type]
-    : ['FUNCTION', 'CLASS', 'MODULE', 'VARIABLE', 'CONSTANT'];
+    : ['FUNCTION', 'CLASS', 'MODULE', 'VARIABLE', 'CONSTANT', 'http:route'];
 
   for (const nodeType of searchTypes) {
     for await (const node of backend.queryNodes({ nodeType: nodeType as any })) {
-      const nodeName = node.name || '';
-      // Case-insensitive partial match
-      if (nodeName.toLowerCase().includes(name.toLowerCase())) {
-        results.push({
+      // Type-aware field matching
+      const matches = matchesSearchPattern(node, nodeType, name);
+
+      if (matches) {
+        const nodeInfo: NodeInfo = {
           id: node.id,
           type: node.type || nodeType,
-          name: nodeName,
+          name: node.name || '',
           file: node.file || '',
           line: node.line,
-        });
+        };
+        // Include method and path for http:route nodes
+        if (nodeType === 'http:route') {
+          nodeInfo.method = node.method as string | undefined;
+          nodeInfo.path = node.path as string | undefined;
+        }
+        results.push(nodeInfo);
         if (results.length >= limit) break;
       }
     }
@@ -393,7 +450,35 @@ async function findCallsInFunction(
  * Display a node with semantic ID as primary identifier
  */
 function displayNode(node: NodeInfo, projectPath: string): void {
+  // Special formatting for HTTP routes
+  if (node.type === 'http:route' && node.method && node.path) {
+    console.log(formatHttpRouteDisplay(node, projectPath));
+    return;
+  }
   console.log(formatNodeDisplay(node, { projectPath }));
+}
+
+/**
+ * Format HTTP route for display
+ *
+ * Output:
+ *   [http:route] POST /api/users
+ *     Location: src/routes/users.js:15
+ */
+function formatHttpRouteDisplay(node: NodeInfo, projectPath: string): string {
+  const lines: string[] = [];
+
+  // Line 1: [type] METHOD PATH
+  lines.push(`[${node.type}] ${node.method} ${node.path}`);
+
+  // Line 2: Location
+  if (node.file) {
+    const relPath = relative(projectPath, node.file);
+    const loc = node.line ? `${relPath}:${node.line}` : relPath;
+    lines.push(`  Location: ${loc}`);
+  }
+
+  return lines.join('\n');
 }
 
 /**
