@@ -144,8 +144,7 @@ export class FunctionCallResolver extends Plugin {
       external: 0,
       missingImport: 0,
       missingImportsFrom: 0,
-      reExportsBroken: 0,    // Re-export chain broken (missing export, file not found)
-      reExportsCircular: 0   // Circular re-export detected
+      reExportsBroken: 0     // Re-export chain broken (missing export, file not found, or circular)
     };
 
     let reExportsResolved = 0; // Counter for successfully resolved re-export chains

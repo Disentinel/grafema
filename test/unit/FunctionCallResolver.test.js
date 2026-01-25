@@ -797,11 +797,10 @@ describe('FunctionCallResolver', () => {
         const edges = await backend.getOutgoingEdges('main-call-foo', ['CALLS']);
         assert.strictEqual(edges.length, 0, 'Should not create edge for circular re-export');
 
-        // Should report as broken/circular
+        // Should report as broken (circular chains are treated as broken)
         assert.ok(
-          result.metadata.skipped.reExportsBroken > 0 ||
-          result.metadata.skipped.reExportsCircular > 0,
-          'Should report circular/broken chain in skipped counters'
+          result.metadata.skipped.reExportsBroken > 0,
+          'Should report circular chain as broken in skipped counters'
         );
 
         console.log('Circular re-export chain handled gracefully');
