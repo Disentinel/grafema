@@ -21,6 +21,7 @@ import type {
   MethodCallInfo,
   EventListenerInfo,
   ClassInstantiationInfo,
+  ConstructorCallInfo,
   ClassDeclarationInfo,
   MethodCallbackInfo,
   CallArgumentInfo,
@@ -106,6 +107,7 @@ export class GraphBuilder {
       methodCalls = [],
       eventListeners = [],
       classInstantiations = [],
+      constructorCalls = [],
       classDeclarations = [],
       methodCallbacks = [],
       callArguments = [],
@@ -170,6 +172,20 @@ export class GraphBuilder {
     for (const callSite of callSites) {
       const { parentScopeId, targetFunctionName, ...callData } = callSite;
       this._bufferNode(callData as GraphNode);
+    }
+
+    // 4.5 Buffer CONSTRUCTOR_CALL nodes
+    for (const constructorCall of constructorCalls) {
+      this._bufferNode({
+        id: constructorCall.id,
+        type: constructorCall.type,
+        name: `new ${constructorCall.className}()`,
+        className: constructorCall.className,
+        isBuiltin: constructorCall.isBuiltin,
+        file: constructorCall.file,
+        line: constructorCall.line,
+        column: constructorCall.column
+      } as GraphNode);
     }
 
     // 5. Buffer edges for functions
@@ -728,11 +744,35 @@ export class GraphBuilder {
         sourceFile,
         functionName,
         line,
+        column,
         className
       } = assignment;
 
       // Skip CLASS sourceType - handled async in createClassAssignmentEdges
       if (sourceType === 'CLASS') {
+        continue;
+      }
+
+      // CONSTRUCTOR_CALL: create ASSIGNED_FROM edge to existing node
+      // Note: CONSTRUCTOR_CALL nodes are already created from constructorCalls collection in step 4.5
+      if (sourceType === 'CONSTRUCTOR_CALL' && className) {
+        const constructorLine = line ?? 0;
+        const constructorColumn = column ?? 0;
+        const constructorFile = assignment.file ?? '';
+
+        // Generate ID matching the one created in NewExpression visitor
+        const constructorCallId = NodeFactory.generateConstructorCallId(
+          className,
+          constructorFile,
+          constructorLine,
+          constructorColumn
+        );
+
+        this._bufferEdge({
+          type: 'ASSIGNED_FROM',
+          src: variableId,
+          dst: constructorCallId
+        });
         continue;
       }
 
