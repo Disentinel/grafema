@@ -76,6 +76,19 @@ export const checkCommand = new Command('check')
   .option('--list-categories', 'List available diagnostic categories')
   .option('--skip-reanalysis', 'Skip automatic reanalysis of stale modules')
   .option('--fail-on-stale', 'Exit with error if stale modules found (CI mode)')
+  .addHelpText('after', `
+Examples:
+  grafema check                          Run all guarantee checks
+  grafema check connectivity             Check graph connectivity
+  grafema check calls                    Check call resolution
+  grafema check dataflow                 Check data flow integrity
+  grafema check all                      Run all diagnostic categories
+  grafema check --guarantee node-creation    Run built-in validator
+  grafema check --list-categories        List available categories
+  grafema check --list-guarantees        List built-in guarantees
+  grafema check --fail-on-stale          CI mode: fail if graph is stale
+  grafema check -q                       Only show failures (quiet mode)
+`)
   .action(
     async (
       rule: string | undefined,

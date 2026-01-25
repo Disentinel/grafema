@@ -42,6 +42,14 @@ export const impactCommand = new Command('impact')
   .option('-p, --project <path>', 'Project path', '.')
   .option('-j, --json', 'Output as JSON')
   .option('-d, --depth <n>', 'Max traversal depth', '10')
+  .addHelpText('after', `
+Examples:
+  grafema impact "authenticate"          Analyze impact of changing authenticate
+  grafema impact "function login"        Impact of specific function
+  grafema impact "class UserService"     Impact of class changes
+  grafema impact "validate" -d 3         Limit analysis depth to 3 levels
+  grafema impact "auth" --json           Output impact analysis as JSON
+`)
   .action(async (pattern: string, options: ImpactOptions) => {
     const projectPath = resolve(options.project);
     const grafemaDir = join(projectPath, '.grafema');

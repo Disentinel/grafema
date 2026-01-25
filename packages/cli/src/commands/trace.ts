@@ -94,6 +94,14 @@ export const traceCommand = new Command('trace')
   .option('-j, --json', 'Output as JSON')
   .option('-d, --depth <n>', 'Max trace depth', '10')
   .option('-t, --to <sink>', 'Sink point: "fn#argIndex.property" (e.g., "addNode#0.type")')
+  .addHelpText('after', `
+Examples:
+  grafema trace "userId"                     Trace all variables named "userId"
+  grafema trace "userId from authenticate"   Trace userId within authenticate function
+  grafema trace "config" --depth 5           Limit trace depth to 5 levels
+  grafema trace "apiKey" --json              Output trace as JSON
+  grafema trace --to "addNode#0.type"        Trace values reaching sink point
+`)
   .action(async (pattern: string | undefined, options: TraceOptions) => {
     const projectPath = resolve(options.project);
     const grafemaDir = join(projectPath, '.grafema');

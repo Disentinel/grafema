@@ -137,6 +137,15 @@ export const analyzeCommand = new Command('analyze')
   .option('-v, --verbose', 'Show verbose logging')
   .option('--debug', 'Enable debug mode (writes diagnostics.log)')
   .option('--log-level <level>', 'Set log level (silent, errors, warnings, info, debug)')
+  .addHelpText('after', `
+Examples:
+  grafema analyze                Analyze current project
+  grafema analyze ./my-project   Analyze specific directory
+  grafema analyze --clear        Clear database and rebuild from scratch
+  grafema analyze -s api         Analyze only "api" service (monorepo)
+  grafema analyze -v             Verbose output with progress details
+  grafema analyze --debug        Write diagnostics.log for debugging
+`)
   .action(async (path: string, options: { service?: string; entrypoint?: string; clear?: boolean; quiet?: boolean; verbose?: boolean; debug?: boolean; logLevel?: string }) => {
     const projectPath = resolve(path);
     const grafemaDir = join(projectPath, '.grafema');
