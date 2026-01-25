@@ -47,6 +47,7 @@ interface AnalysisResult {
 
 export class FetchAnalyzer extends Plugin {
   private networkNodeCreated = false;
+  private networkNodeId: string | null = null;
 
   get metadata(): PluginMetadata {
     return {
@@ -67,10 +68,7 @@ export class FetchAnalyzer extends Plugin {
     try {
       const { graph } = context;
 
-      // Create net:request singleton (GraphBackend handles deduplication)
-      const networkNode = NetworkRequestNode.create();
-      await graph.addNode(networkNode);
-      this.networkNodeCreated = true;
+      // net:request singleton created lazily in analyzeModule when first request found
 
       // Получаем все модули
       const modules = await this.getModules(graph);
@@ -82,7 +80,7 @@ export class FetchAnalyzer extends Plugin {
 
       for (let i = 0; i < modules.length; i++) {
         const module = modules[i];
-        const result = await this.analyzeModule(module, graph, networkNode.id);
+        const result = await this.analyzeModule(module, graph);
         requestsCount += result.requests;
         apisCount += result.apis;
 
@@ -118,10 +116,23 @@ export class FetchAnalyzer extends Plugin {
     }
   }
 
+  /**
+   * Ensures net:request singleton exists, creating it if necessary.
+   * Called lazily when first HTTP request is detected.
+   */
+  private async ensureNetworkNode(graph: PluginContext['graph']): Promise<string> {
+    if (!this.networkNodeId) {
+      const networkNode = NetworkRequestNode.create();
+      await graph.addNode(networkNode);
+      this.networkNodeCreated = true;
+      this.networkNodeId = networkNode.id;
+    }
+    return this.networkNodeId;
+  }
+
   private async analyzeModule(
     module: NodeRecord,
-    graph: PluginContext['graph'],
-    networkId: string
+    graph: PluginContext['graph']
   ): Promise<AnalysisResult> {
     try {
       const code = readFileSync(module.file!, 'utf-8');
@@ -295,7 +306,8 @@ export class FetchAnalyzer extends Plugin {
           dst: request.id
         });
 
-        // http:request --CALLS--> net:request singleton
+        // http:request --CALLS--> net:request singleton (created lazily)
+        const networkId = await this.ensureNetworkNode(graph);
         await graph.addEdge({
           type: 'CALLS',
           src: request.id,
