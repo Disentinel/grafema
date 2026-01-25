@@ -374,8 +374,10 @@ async function getCallers(
         });
       }
     }
-  } catch {
-    // Ignore errors
+  } catch (error) {
+    if (process.env.DEBUG) {
+      console.error('[query] Error in getCallers:', error);
+    }
   }
 
   return callers;
@@ -428,8 +430,10 @@ async function findContainingFunction(
         // Continue searching from this parent
         queue.push({ id: parentNode.id, depth: depth + 1 });
       }
-    } catch {
-      // Ignore errors
+    } catch (error) {
+      if (process.env.DEBUG) {
+        console.error('[query] Error in findContainingFunction:', error);
+      }
     }
   }
 
@@ -476,8 +480,10 @@ async function getCallees(
         });
       }
     }
-  } catch {
-    // Ignore errors
+  } catch (error) {
+    if (process.env.DEBUG) {
+      console.error('[query] Error in getCallees:', error);
+    }
   }
 
   return callees;
@@ -526,8 +532,10 @@ async function findCallsInFunction(
           queue.push({ id: child.id, depth: depth + 1 });
         }
       }
-    } catch {
-      // Ignore
+    } catch (error) {
+      if (process.env.DEBUG) {
+        console.error('[query] Error in findCallsInFunction:', error);
+      }
     }
   }
 
@@ -616,8 +624,10 @@ async function formatSocketEventDisplay(
     if (outgoingEdges.length > 0) {
       lines.push(`  Listened by: ${outgoingEdges.length} location${outgoingEdges.length !== 1 ? 's' : ''}`);
     }
-  } catch {
-    // If edge queries fail, just show the basic info
+  } catch (error) {
+    if (process.env.DEBUG) {
+      console.error('[query] Error in formatSocketEventDisplay:', error);
+    }
   }
 
   return lines.join('\n');
