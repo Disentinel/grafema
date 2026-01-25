@@ -766,20 +766,8 @@ module.exports = { hello };
       const initResult = runCli(['init'], tempDir);
       assert.strictEqual(initResult.status, 0, `init failed: ${initResult.stderr}`);
 
-      // Override config to exclude GraphConnectivityValidator (creates disconnected nodes on simple fixtures)
-      writeFileSync(
-        join(tempDir, '.grafema', 'config.yaml'),
-        `plugins:
-  indexing:
-    - JSModuleIndexer
-  analysis:
-    - JSASTAnalyzer
-  enrichment:
-    - MethodCallResolver
-  validation:
-    - EvalBanValidator
-`
-      );
+      // REG-233: FetchAnalyzer now lazily creates net:request singleton only when
+      // HTTP requests exist, so GraphConnectivityValidator passes on simple fixtures
 
       // Run analyze (longer timeout for server startup)
       // Note: analyze may return null status because RFDB server runs in background
