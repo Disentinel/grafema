@@ -49,6 +49,7 @@ import { PriorityQueue } from '../../core/PriorityQueue.js';
 import { WorkerPool } from '../../core/WorkerPool.js';
 import { ASTWorkerPool, type ModuleInfo as ASTModuleInfo, type ParseResult } from '../../core/ASTWorkerPool.js';
 import { ConditionParser } from './ast/ConditionParser.js';
+import { getLine, getColumn } from './ast/utils/location.js';
 import { Profiler } from '../../core/Profiler.js';
 import { ScopeTracker } from '../../core/ScopeTracker.js';
 import { computeSemanticId } from '../../core/SemanticId.js';
@@ -591,8 +592,8 @@ export class JSASTAnalyzer extends Plugin {
         sourceId: null,
         sourceType: 'CALL_SITE',
         callName: initExpression.callee.name,
-        callLine: initExpression.loc!.start.line,
-        callColumn: initExpression.loc!.start.column
+        callLine: getLine(initExpression),
+        callColumn: getColumn(initExpression)
       });
       return;
     }
@@ -604,7 +605,7 @@ export class JSASTAnalyzer extends Plugin {
       const methodName = callee.property.type === 'Identifier' ? callee.property.name : 'unknown';
 
       const fullName = `${objectName}.${methodName}`;
-      const methodCallId = `CALL#${fullName}#${module.file}#${initExpression.loc!.start.line}:${initExpression.loc!.start.column}:inline`;
+      const methodCallId = `CALL#${fullName}#${module.file}#${getLine(initExpression)}:${getColumn(initExpression)}:inline`;
 
       const existing = variableAssignments.find(a => a.sourceId === methodCallId);
       if (!existing) {
@@ -613,15 +614,15 @@ export class JSASTAnalyzer extends Plugin {
           if (arg.type !== 'SpreadElement') {
             const argLiteralValue = ExpressionEvaluator.extractLiteralValue(arg);
             if (argLiteralValue !== null) {
-              const literalId = `LITERAL#arg${index}#${module.file}#${initExpression.loc!.start.line}:${initExpression.loc!.start.column}:${literalCounterRef.value++}`;
+              const literalId = `LITERAL#arg${index}#${module.file}#${getLine(initExpression)}:${getColumn(initExpression)}:${literalCounterRef.value++}`;
               literals.push({
                 id: literalId,
                 type: 'LITERAL',
                 value: argLiteralValue,
                 valueType: typeof argLiteralValue,
                 file: module.file,
-                line: arg.loc?.start.line || initExpression.loc!.start.line,
-                column: arg.loc?.start.column || initExpression.loc!.start.column,
+                line: arg.loc?.start.line || getLine(initExpression),
+                column: arg.loc?.start.column || getColumn(initExpression),
                 parentCallId: methodCallId,
                 argIndex: index
               });
@@ -640,8 +641,8 @@ export class JSASTAnalyzer extends Plugin {
           method: methodName,
           file: module.file,
           arguments: extractedArgs,
-          line: initExpression.loc!.start.line,
-          column: initExpression.loc!.start.column
+          line: getLine(initExpression),
+          column: getColumn(initExpression)
         });
       }
 
@@ -997,14 +998,14 @@ export class JSASTAnalyzer extends Plugin {
               type: 'FUNCTION',
               name: functionName,
               file: module.file,
-              line: assignNode.loc!.start.line,
-              column: assignNode.loc!.start.column,
+              line: getLine(assignNode),
+              column: getColumn(assignNode),
               async: funcNode.async || false,
               generator: funcNode.type === 'FunctionExpression' ? funcNode.generator : false,
               isAssignment: true
             });
 
-            const funcBodyScopeId = `SCOPE#${functionName}:body#${module.file}#${assignNode.loc!.start.line}`;
+            const funcBodyScopeId = `SCOPE#${functionName}:body#${module.file}#${getLine(assignNode)}`;
             scopes.push({
               id: funcBodyScopeId,
               type: 'SCOPE',
@@ -1013,7 +1014,7 @@ export class JSASTAnalyzer extends Plugin {
               semanticId: `${functionName}:function_body[0]`,
               conditional: false,
               file: module.file,
-              line: assignNode.loc!.start.line,
+              line: getLine(assignNode),
               parentFunctionId: functionId
             });
 
@@ -1068,15 +1069,15 @@ export class JSASTAnalyzer extends Plugin {
               type: 'FUNCTION',
               name: funcName,
               file: module.file,
-              line: funcNode.loc!.start.line,
-              column: funcNode.loc!.start.column,
+              line: getLine(funcNode),
+              column: getColumn(funcNode),
               async: funcNode.async || false,
               generator: funcNode.generator || false,
               isCallback: true,
               parentScopeId: module.id
             });
 
-            const callbackScopeId = `SCOPE#${funcName}:body#${module.file}#${funcNode.loc!.start.line}`;
+            const callbackScopeId = `SCOPE#${funcName}:body#${module.file}#${getLine(funcNode)}`;
             scopes.push({
               id: callbackScopeId,
               type: 'SCOPE',
@@ -1085,7 +1086,7 @@ export class JSASTAnalyzer extends Plugin {
               semanticId: `${funcName}:callback_body[0]`,
               conditional: false,
               file: module.file,
-              line: funcNode.loc!.start.line,
+              line: getLine(funcNode),
               parentFunctionId: functionId
             });
 
@@ -1115,7 +1116,7 @@ export class JSASTAnalyzer extends Plugin {
           const ifNode = ifPath.node;
           const condition = code.substring(ifNode.test.start!, ifNode.test.end!) || 'condition';
           const counterId = ifScopeCounterRef.value++;
-          const ifScopeId = `SCOPE#if#${module.file}#${ifNode.loc!.start.line}:${ifNode.loc!.start.column}:${counterId}`;
+          const ifScopeId = `SCOPE#if#${module.file}#${getLine(ifNode)}:${getColumn(ifNode)}:${counterId}`;
 
           const constraints = ConditionParser.parse(ifNode.test);
           const ifSemanticId = this.generateSemanticId('if_statement', scopeTracker);
@@ -1124,19 +1125,19 @@ export class JSASTAnalyzer extends Plugin {
             id: ifScopeId,
             type: 'SCOPE',
             scopeType: 'if_statement',
-            name: `if:${ifNode.loc!.start.line}:${ifNode.loc!.start.column}:${counterId}`,
+            name: `if:${getLine(ifNode)}:${getColumn(ifNode)}:${counterId}`,
             semanticId: ifSemanticId,
             conditional: true,
             condition,
             constraints: constraints.length > 0 ? constraints : undefined,
             file: module.file,
-            line: ifNode.loc!.start.line,
+            line: getLine(ifNode),
             parentScopeId: module.id
           });
 
           if (ifNode.alternate && ifNode.alternate.type !== 'IfStatement') {
             const elseCounterId = ifScopeCounterRef.value++;
-            const elseScopeId = `SCOPE#else#${module.file}#${ifNode.alternate.loc!.start.line}:${ifNode.alternate.loc!.start.column}:${elseCounterId}`;
+            const elseScopeId = `SCOPE#else#${module.file}#${getLine(ifNode.alternate)}:${getColumn(ifNode.alternate)}:${elseCounterId}`;
 
             const negatedConstraints = constraints.length > 0 ? ConditionParser.negate(constraints) : undefined;
             const elseSemanticId = this.generateSemanticId('else_statement', scopeTracker);
@@ -1145,12 +1146,12 @@ export class JSASTAnalyzer extends Plugin {
               id: elseScopeId,
               type: 'SCOPE',
               scopeType: 'else_statement',
-              name: `else:${ifNode.alternate.loc!.start.line}:${ifNode.alternate.loc!.start.column}:${elseCounterId}`,
+              name: `else:${getLine(ifNode.alternate)}:${getColumn(ifNode.alternate)}:${elseCounterId}`,
               semanticId: elseSemanticId,
               conditional: true,
               constraints: negatedConstraints,
               file: module.file,
-              line: ifNode.alternate.loc!.start.line,
+              line: getLine(ifNode.alternate),
               parentScopeId: module.id
             });
           }
@@ -1360,7 +1361,7 @@ export class JSASTAnalyzer extends Plugin {
     return {
       enter: (path: NodePath<t.Loop>) => {
         const node = path.node;
-        const scopeId = `SCOPE#${scopeType}#${module.file}#${node.loc!.start.line}:${scopeCounterRef.value++}`;
+        const scopeId = `SCOPE#${scopeType}#${module.file}#${getLine(node)}:${scopeCounterRef.value++}`;
         const semanticId = this.generateSemanticId(scopeType, scopeTracker);
         scopes.push({
           id: scopeId,
@@ -1368,7 +1369,7 @@ export class JSASTAnalyzer extends Plugin {
           scopeType,
           semanticId,
           file: module.file,
-          line: node.loc!.start.line,
+          line: getLine(node),
           parentScopeId
         });
 
@@ -1482,7 +1483,7 @@ export class JSASTAnalyzer extends Plugin {
     const tryNode = tryPath.node;
 
     // Create and process try block
-    const tryScopeId = `SCOPE#try-block#${module.file}#${tryNode.loc!.start.line}:${scopeCounterRef.value++}`;
+    const tryScopeId = `SCOPE#try-block#${module.file}#${getLine(tryNode)}:${scopeCounterRef.value++}`;
     const trySemanticId = this.generateSemanticId('try-block', scopeTracker);
     scopes.push({
       id: tryScopeId,
@@ -1490,7 +1491,7 @@ export class JSASTAnalyzer extends Plugin {
       scopeType: 'try-block',
       semanticId: trySemanticId,
       file: module.file,
-      line: tryNode.loc!.start.line,
+      line: getLine(tryNode),
       parentScopeId
     });
 
@@ -1515,7 +1516,7 @@ export class JSASTAnalyzer extends Plugin {
     // Create and process catch block if present
     if (tryNode.handler) {
       const catchBlock = tryNode.handler;
-      const catchScopeId = `SCOPE#catch-block#${module.file}#${catchBlock.loc!.start.line}:${scopeCounterRef.value++}`;
+      const catchScopeId = `SCOPE#catch-block#${module.file}#${getLine(catchBlock)}:${scopeCounterRef.value++}`;
       const catchSemanticId = this.generateSemanticId('catch-block', scopeTracker);
 
       scopes.push({
@@ -1524,7 +1525,7 @@ export class JSASTAnalyzer extends Plugin {
         scopeType: 'catch-block',
         semanticId: catchSemanticId,
         file: module.file,
-        line: catchBlock.loc!.start.line,
+        line: getLine(catchBlock),
         parentScopeId
       });
 
@@ -1572,7 +1573,7 @@ export class JSASTAnalyzer extends Plugin {
 
     // Create and process finally block if present
     if (tryNode.finalizer) {
-      const finallyScopeId = `SCOPE#finally-block#${module.file}#${tryNode.finalizer.loc!.start.line}:${scopeCounterRef.value++}`;
+      const finallyScopeId = `SCOPE#finally-block#${module.file}#${getLine(tryNode.finalizer)}:${scopeCounterRef.value++}`;
       const finallySemanticId = this.generateSemanticId('finally-block', scopeTracker);
 
       scopes.push({
@@ -1581,7 +1582,7 @@ export class JSASTAnalyzer extends Plugin {
         scopeType: 'finally-block',
         semanticId: finallySemanticId,
         file: module.file,
-        line: tryNode.finalizer.loc!.start.line,
+        line: getLine(tryNode.finalizer),
         parentScopeId
       });
 
@@ -1639,7 +1640,7 @@ export class JSASTAnalyzer extends Plugin {
         const ifNode = ifPath.node;
         const condition = sourceCode.substring(ifNode.test.start!, ifNode.test.end!) || 'condition';
         const counterId = ifScopeCounterRef.value++;
-        const ifScopeId = `SCOPE#if#${module.file}#${ifNode.loc!.start.line}:${ifNode.loc!.start.column}:${counterId}`;
+        const ifScopeId = `SCOPE#if#${module.file}#${getLine(ifNode)}:${getColumn(ifNode)}:${counterId}`;
 
         // Parse condition to extract constraints
         const constraints = ConditionParser.parse(ifNode.test);
@@ -1649,13 +1650,13 @@ export class JSASTAnalyzer extends Plugin {
           id: ifScopeId,
           type: 'SCOPE',
           scopeType: 'if_statement',
-          name: `if:${ifNode.loc!.start.line}:${ifNode.loc!.start.column}:${counterId}`,
+          name: `if:${getLine(ifNode)}:${getColumn(ifNode)}:${counterId}`,
           semanticId: ifSemanticId,
           conditional: true,
           condition,
           constraints: constraints.length > 0 ? constraints : undefined,
           file: module.file,
-          line: ifNode.loc!.start.line,
+          line: getLine(ifNode),
           parentScopeId
         });
 
@@ -1668,7 +1669,7 @@ export class JSASTAnalyzer extends Plugin {
         if (ifNode.alternate && !t.isIfStatement(ifNode.alternate)) {
           // Only create else scope for actual else block, not else-if
           const elseCounterId = ifScopeCounterRef.value++;
-          const elseScopeId = `SCOPE#else#${module.file}#${ifNode.alternate.loc!.start.line}:${ifNode.alternate.loc!.start.column}:${elseCounterId}`;
+          const elseScopeId = `SCOPE#else#${module.file}#${getLine(ifNode.alternate)}:${getColumn(ifNode.alternate)}:${elseCounterId}`;
 
           const negatedConstraints = constraints.length > 0 ? ConditionParser.negate(constraints) : undefined;
           const elseSemanticId = this.generateSemanticId('else_statement', scopeTracker);
@@ -1677,12 +1678,12 @@ export class JSASTAnalyzer extends Plugin {
             id: elseScopeId,
             type: 'SCOPE',
             scopeType: 'else_statement',
-            name: `else:${ifNode.alternate.loc!.start.line}:${ifNode.alternate.loc!.start.column}:${elseCounterId}`,
+            name: `else:${getLine(ifNode.alternate)}:${getColumn(ifNode.alternate)}:${elseCounterId}`,
             semanticId: elseSemanticId,
             conditional: true,
             constraints: negatedConstraints,
             file: module.file,
-            line: ifNode.alternate.loc!.start.line,
+            line: getLine(ifNode.alternate),
             parentScopeId
           });
 
@@ -1852,7 +1853,7 @@ export class JSASTAnalyzer extends Plugin {
 
       SwitchStatement: (switchPath: NodePath<t.SwitchStatement>) => {
         const switchNode = switchPath.node;
-        const scopeId = `SCOPE#switch-case#${module.file}#${switchNode.loc!.start.line}:${scopeCounterRef.value++}`;
+        const scopeId = `SCOPE#switch-case#${module.file}#${getLine(switchNode)}:${scopeCounterRef.value++}`;
         const semanticId = this.generateSemanticId('switch-case', scopeTracker);
 
         scopes.push({
@@ -1861,7 +1862,7 @@ export class JSASTAnalyzer extends Plugin {
           scopeType: 'switch-case',
           semanticId,
           file: module.file,
-          line: switchNode.loc!.start.line,
+          line: getLine(switchNode),
           parentScopeId
         });
       },
@@ -1870,7 +1871,7 @@ export class JSASTAnalyzer extends Plugin {
         const node = funcPath.node;
         const funcName = node.id ? node.id.name : this.generateAnonymousName(scopeTracker);
         // Use semantic ID as primary ID when scopeTracker available
-        const legacyId = `FUNCTION#${funcName}#${module.file}#${node.loc!.start.line}:${node.loc!.start.column}:${functionCounterRef.value++}`;
+        const legacyId = `FUNCTION#${funcName}#${module.file}#${getLine(node)}:${getColumn(node)}:${functionCounterRef.value++}`;
         const functionId = scopeTracker
           ? computeSemanticId('FUNCTION', funcName, scopeTracker.getContext())
           : legacyId;
@@ -1880,14 +1881,14 @@ export class JSASTAnalyzer extends Plugin {
           type: 'FUNCTION',
           name: funcName,
           file: module.file,
-          line: node.loc!.start.line,
-          column: node.loc!.start.column,
+          line: getLine(node),
+          column: getColumn(node),
           async: node.async || false,
           generator: node.generator || false,
           parentScopeId
         });
 
-        const nestedScopeId = `SCOPE#${funcName}:body#${module.file}#${node.loc!.start.line}`;
+        const nestedScopeId = `SCOPE#${funcName}:body#${module.file}#${getLine(node)}`;
         const closureSemanticId = this.generateSemanticId('closure', scopeTracker);
         scopes.push({
           id: nestedScopeId,
@@ -1897,7 +1898,7 @@ export class JSASTAnalyzer extends Plugin {
           semanticId: closureSemanticId,
           conditional: false,
           file: module.file,
-          line: node.loc!.start.line,
+          line: getLine(node),
           parentFunctionId: functionId,
           capturesFrom: parentScopeId
         });
@@ -1915,8 +1916,8 @@ export class JSASTAnalyzer extends Plugin {
 
       ArrowFunctionExpression: (arrowPath: NodePath<t.ArrowFunctionExpression>) => {
         const node = arrowPath.node;
-        const line = node.loc!.start.line;
-        const column = node.loc!.start.column;
+        const line = getLine(node);
+        const column = getColumn(node);
 
         // Определяем имя (anonymous если не присвоено переменной)
         const parent = arrowPath.parent;
@@ -1992,7 +1993,7 @@ export class JSASTAnalyzer extends Plugin {
               scope.modifies.push({
                 variableId: variable.id,
                 variableName: varName,
-                line: updateNode.loc!.start.line
+                line: getLine(updateNode)
               });
             }
           }
@@ -2043,7 +2044,7 @@ export class JSASTAnalyzer extends Plugin {
 
           // Generate semantic ID (primary) or legacy ID (fallback)
           const constructorName = newNode.callee.name;
-          const legacyId = `CALL#new:${constructorName}#${module.file}#${newNode.loc!.start.line}:${newNode.loc!.start.column}:${callSiteCounterRef.value++}`;
+          const legacyId = `CALL#new:${constructorName}#${module.file}#${getLine(newNode)}:${getColumn(newNode)}:${callSiteCounterRef.value++}`;
 
           let newCallId = legacyId;
           if (scopeTracker) {
@@ -2056,7 +2057,7 @@ export class JSASTAnalyzer extends Plugin {
             type: 'CALL',
             name: constructorName,
             file: module.file,
-            line: newNode.loc!.start.line,
+            line: getLine(newNode),
             parentScopeId,
             targetFunctionName: constructorName,
             isNew: true
@@ -2080,7 +2081,7 @@ export class JSASTAnalyzer extends Plugin {
             const fullName = `${objectName}.${constructorName}`;
 
             // Generate semantic ID for method-style constructor call
-            const legacyId = `CALL#new:${fullName}#${module.file}#${newNode.loc!.start.line}:${newNode.loc!.start.column}:${callSiteCounterRef.value++}`;
+            const legacyId = `CALL#new:${fullName}#${module.file}#${getLine(newNode)}:${getColumn(newNode)}:${callSiteCounterRef.value++}`;
 
             let newMethodCallId = legacyId;
             if (scopeTracker) {
@@ -2095,8 +2096,8 @@ export class JSASTAnalyzer extends Plugin {
               object: objectName,
               method: constructorName,
               file: module.file,
-              line: newNode.loc!.start.line,
-              column: newNode.loc!.start.column,
+              line: getLine(newNode),
+              column: getColumn(newNode),
               parentScopeId,
               isNew: true
             });
@@ -2149,7 +2150,7 @@ export class JSASTAnalyzer extends Plugin {
 
       // Generate semantic ID (primary) or legacy ID (fallback)
       const calleeName = callNode.callee.name;
-      const legacyId = `CALL#${calleeName}#${module.file}#${callNode.loc!.start.line}:${callNode.loc!.start.column}:${callSiteCounterRef.value++}`;
+      const legacyId = `CALL#${calleeName}#${module.file}#${getLine(callNode)}:${getColumn(callNode)}:${callSiteCounterRef.value++}`;
 
       let callId = legacyId;
       if (scopeTracker) {
@@ -2162,7 +2163,7 @@ export class JSASTAnalyzer extends Plugin {
         type: 'CALL',
         name: calleeName,
         file: module.file,
-        line: callNode.loc!.start.line,
+        line: getLine(callNode),
         parentScopeId,
         targetFunctionName: calleeName
       });
@@ -2186,7 +2187,7 @@ export class JSASTAnalyzer extends Plugin {
         const fullName = `${objectName}.${methodName}`;
 
         // Generate semantic ID (primary) or legacy ID (fallback)
-        const legacyId = `CALL#${fullName}#${module.file}#${callNode.loc!.start.line}:${callNode.loc!.start.column}:${callSiteCounterRef.value++}`;
+        const legacyId = `CALL#${fullName}#${module.file}#${getLine(callNode)}:${getColumn(callNode)}:${callSiteCounterRef.value++}`;
 
         let methodCallId = legacyId;
         if (scopeTracker) {
@@ -2203,8 +2204,8 @@ export class JSASTAnalyzer extends Plugin {
           computed: isComputed,
           computedPropertyVar: isComputed ? property.name : null,
           file: module.file,
-          line: callNode.loc!.start.line,
-          column: callNode.loc!.start.column,
+          line: getLine(callNode),
+          column: getColumn(callNode),
           parentScopeId
         });
 

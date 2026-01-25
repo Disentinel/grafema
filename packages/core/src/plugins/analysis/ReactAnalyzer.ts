@@ -18,6 +18,7 @@ import type { Node, CallExpression, JSXElement, JSXAttribute, VariableDeclarator
 import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { NodeRecord } from '@grafema/types';
+import { getLine, getColumn } from './ast/utils/location.js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const traverse = (traverseModule as any).default || traverseModule;
@@ -335,14 +336,13 @@ export class ReactAnalyzer extends Plugin {
         if (this.isReactComponent(path)) {
           const node = path.node;
           const name = (node.id as { name: string }).name;
-          const loc = node.loc!;
           const component: ComponentNode = {
-            id: `react:component#${name}#${filePath}:${loc.start.line}`,
+            id: `react:component#${name}#${filePath}:${getLine(node)}`,
             type: 'react:component',
             name,
             file: filePath,
-            line: loc.start.line,
-            column: loc.start.column,
+            line: getLine(node),
+            column: getColumn(node),
             kind: 'arrow'
           };
           analysis.components.push(component);
@@ -355,14 +355,13 @@ export class ReactAnalyzer extends Plugin {
           const name = path.node.id?.name;
           if (!name) return;
 
-          const loc = path.node.loc!;
           const component: ComponentNode = {
-            id: `react:component#${name}#${filePath}:${loc.start.line}`,
+            id: `react:component#${name}#${filePath}:${getLine(path.node)}`,
             type: 'react:component',
             name,
             file: filePath,
-            line: loc.start.line,
-            column: loc.start.column,
+            line: getLine(path.node),
+            column: getColumn(path.node),
             kind: 'function'
           };
           analysis.components.push(component);
@@ -466,13 +465,12 @@ export class ReactAnalyzer extends Plugin {
   private analyzeHook(path: NodePath<CallExpression>, filePath: string): HookNode | null {
     const callee = path.node.callee as { name: string };
     const hookName = callee.name;
-    const loc = path.node.loc!;
     const args = path.node.arguments;
 
     const hookBase = {
       file: filePath,
-      line: loc.start.line,
-      column: loc.start.column,
+      line: getLine(path.node),
+      column: getColumn(path.node),
       hookName
     };
 
@@ -488,7 +486,7 @@ export class ReactAnalyzer extends Plugin {
           const initialValue = args[0];
 
           return {
-            id: `react:state#${stateName}#${filePath}:${loc.start.line}`,
+            id: `react:state#${stateName}#${filePath}:${hookBase.line}`,
             type: 'react:state',
             ...hookBase,
             stateName,
@@ -513,7 +511,7 @@ export class ReactAnalyzer extends Plugin {
                           'react:insertion-effect';
 
         return {
-          id: `${effectType}#${filePath}:${loc.start.line}`,
+          id: `${effectType}#${filePath}:${hookBase.line}`,
           type: effectType,
           ...hookBase,
           deps,
@@ -530,7 +528,7 @@ export class ReactAnalyzer extends Plugin {
         const deps = this.extractDeps(depsArg as Node);
 
         return {
-          id: `react:callback#${callbackName || 'anonymous'}#${filePath}:${loc.start.line}`,
+          id: `react:callback#${callbackName || 'anonymous'}#${filePath}:${hookBase.line}`,
           type: 'react:callback',
           ...hookBase,
           callbackName,
@@ -546,7 +544,7 @@ export class ReactAnalyzer extends Plugin {
         const deps = this.extractDeps(depsArg as Node);
 
         return {
-          id: `react:memo#${memoName || 'anonymous'}#${filePath}:${loc.start.line}`,
+          id: `react:memo#${memoName || 'anonymous'}#${filePath}:${hookBase.line}`,
           type: 'react:memo',
           ...hookBase,
           memoName,
@@ -561,7 +559,7 @@ export class ReactAnalyzer extends Plugin {
         const initialValue = args[0];
 
         return {
-          id: `react:ref#${refName || 'anonymous'}#${filePath}:${loc.start.line}`,
+          id: `react:ref#${refName || 'anonymous'}#${filePath}:${hookBase.line}`,
           type: 'react:ref',
           ...hookBase,
           refName,
@@ -581,7 +579,7 @@ export class ReactAnalyzer extends Plugin {
           const reducerName = reducerArg?.type === 'Identifier' ? (reducerArg as { name: string }).name : null;
 
           return {
-            id: `react:reducer#${stateName}#${filePath}:${loc.start.line}`,
+            id: `react:reducer#${stateName}#${filePath}:${hookBase.line}`,
             type: 'react:reducer',
             ...hookBase,
             stateName,
@@ -600,7 +598,7 @@ export class ReactAnalyzer extends Plugin {
         const contextName = contextArg?.type === 'Identifier' ? (contextArg as { name: string }).name : null;
 
         return {
-          id: `react:context-use#${contextName || 'unknown'}#${filePath}:${loc.start.line}`,
+          id: `react:context-use#${contextName || 'unknown'}#${filePath}:${hookBase.line}`,
           type: 'react:context-use',
           ...hookBase,
           valueName,
@@ -630,7 +628,7 @@ export class ReactAnalyzer extends Plugin {
         }
 
         return {
-          id: `react:imperative-handle#${filePath}:${loc.start.line}`,
+          id: `react:imperative-handle#${filePath}:${hookBase.line}`,
           type: 'react:imperative-handle',
           ...hookBase,
           refName,
@@ -970,7 +968,6 @@ export class ReactAnalyzer extends Plugin {
     }
 
     // This is a React component being rendered
-    const loc = openingElement.loc!;
 
     // Find parent component
     let parentComponent: string | null = null;
@@ -995,7 +992,7 @@ export class ReactAnalyzer extends Plugin {
         src: `react:component#${parentComponent}`,
         dst: `react:component#${elementName}`,
         file: filePath,
-        line: loc.start.line
+        line: getLine(openingElement)
       });
     }
   }
@@ -1033,7 +1030,6 @@ export class ReactAnalyzer extends Plugin {
     if (!attr.name || attr.name.type !== 'JSXIdentifier') return;
 
     const attrName = attr.name.name;
-    const loc = attr.loc!;
 
     // Get parent JSX element info first
     const jsxOpeningElement = path.parent as { type: string; name?: Node };
@@ -1061,13 +1057,13 @@ export class ReactAnalyzer extends Plugin {
       }
 
       const event: EventNode = {
-        id: `dom:event#${eventType}#${filePath}:${loc.start.line}`,
+        id: `dom:event#${eventType}#${filePath}:${getLine(attr)}`,
         type: 'dom:event',
         eventType,
         reactProp: attrName,
         handler: handlerName,
         file: filePath,
-        line: loc.start.line
+        line: getLine(attr)
       };
       analysis.events.push(event);
     }
@@ -1112,7 +1108,7 @@ export class ReactAnalyzer extends Plugin {
           propName: attrName,
           propValue,
           file: filePath,
-          line: loc.start.line
+          line: getLine(attr)
         });
       }
     }
@@ -1122,18 +1118,17 @@ export class ReactAnalyzer extends Plugin {
    * Analyze forwardRef usage
    */
   private analyzeForwardRef(path: NodePath<CallExpression>, filePath: string, analysis: AnalysisResult): void {
-    const loc = path.node.loc!;
     const parent = path.parent as { type: string; id?: { name: string } };
     const componentName = parent.type === 'VariableDeclarator' ? parent.id?.name : null;
 
     if (componentName) {
       analysis.components.push({
-        id: `react:component#${componentName}#${filePath}:${loc.start.line}`,
+        id: `react:component#${componentName}#${filePath}:${getLine(path.node)}`,
         type: 'react:component',
         name: componentName,
         file: filePath,
-        line: loc.start.line,
-        column: loc.start.column,
+        line: getLine(path.node),
+        column: getColumn(path.node),
         kind: 'forwardRef'
       });
     }
@@ -1143,19 +1138,18 @@ export class ReactAnalyzer extends Plugin {
    * Analyze createContext usage
    */
   private analyzeCreateContext(path: NodePath<CallExpression>, filePath: string, analysis: AnalysisResult): void {
-    const loc = path.node.loc!;
     const parent = path.parent as { type: string; id?: { name: string } };
     const contextName = parent.type === 'VariableDeclarator' ? parent.id?.name : null;
 
     if (contextName) {
       const defaultValue = path.node.arguments[0];
       analysis.hooks.push({
-        id: `react:context#${contextName}#${filePath}:${loc.start.line}`,
+        id: `react:context#${contextName}#${filePath}:${getLine(path.node)}`,
         type: 'react:context',
         contextName,
         file: filePath,
-        line: loc.start.line,
-        column: loc.start.column,
+        line: getLine(path.node),
+        column: getColumn(path.node),
         hookName: 'createContext',
         defaultValue: this.getExpressionValue(defaultValue as Node)
       });
@@ -1167,7 +1161,6 @@ export class ReactAnalyzer extends Plugin {
    */
   private analyzeBrowserAPI(path: NodePath<CallExpression>, filePath: string, analysis: AnalysisResult): void {
     const callee = path.node.callee;
-    const loc = path.node.loc!;
 
     // Direct function call: setTimeout, fetch, alert
     if (callee.type === 'Identifier') {
@@ -1176,11 +1169,11 @@ export class ReactAnalyzer extends Plugin {
       // Timers
       if (BROWSER_APIS.timers.includes(name)) {
         analysis.browserAPIs.push({
-          id: `browser:timer#${name}#${filePath}:${loc.start.line}`,
+          id: `browser:timer#${name}#${filePath}:${getLine(path.node)}`,
           type: 'browser:timer',
           api: name,
           file: filePath,
-          line: loc.start.line
+          line: getLine(path.node)
         });
         return;
       }
@@ -1188,11 +1181,11 @@ export class ReactAnalyzer extends Plugin {
       // Blocking APIs
       if (BROWSER_APIS.blocking.includes(name)) {
         analysis.browserAPIs.push({
-          id: `browser:blocking#${name}#${filePath}:${loc.start.line}`,
+          id: `browser:blocking#${name}#${filePath}:${getLine(path.node)}`,
           type: 'browser:blocking',
           api: name,
           file: filePath,
-          line: loc.start.line
+          line: getLine(path.node)
         });
         return;
       }
@@ -1200,11 +1193,11 @@ export class ReactAnalyzer extends Plugin {
       // Fetch
       if (name === 'fetch') {
         analysis.browserAPIs.push({
-          id: `browser:async#fetch#${filePath}:${loc.start.line}`,
+          id: `browser:async#fetch#${filePath}:${getLine(path.node)}`,
           type: 'browser:async',
           api: 'fetch',
           file: filePath,
-          line: loc.start.line
+          line: getLine(path.node)
         });
         return;
       }
@@ -1222,12 +1215,12 @@ export class ReactAnalyzer extends Plugin {
                          method === 'removeItem' ? 'delete' : method;
 
         analysis.browserAPIs.push({
-          id: `browser:storage#${storage}:${operation}#${filePath}:${loc.start.line}`,
+          id: `browser:storage#${storage}:${operation}#${filePath}:${getLine(path.node)}`,
           type: 'browser:storage',
           storage,
           operation,
           file: filePath,
-          line: loc.start.line
+          line: getLine(path.node)
         });
         return;
       }
@@ -1236,12 +1229,12 @@ export class ReactAnalyzer extends Plugin {
       if (fullName.startsWith('document.') &&
           (fullName.includes('querySelector') || fullName.includes('getElementById'))) {
         analysis.browserAPIs.push({
-          id: `browser:dom#query#${filePath}:${loc.start.line}`,
+          id: `browser:dom#query#${filePath}:${getLine(path.node)}`,
           type: 'browser:dom',
           operation: 'query',
           api: fullName,
           file: filePath,
-          line: loc.start.line
+          line: getLine(path.node)
         });
         return;
       }
@@ -1249,11 +1242,11 @@ export class ReactAnalyzer extends Plugin {
       // History API
       if (fullName.startsWith('history.') || fullName.startsWith('window.history.')) {
         analysis.browserAPIs.push({
-          id: `browser:history#${filePath}:${loc.start.line}`,
+          id: `browser:history#${filePath}:${getLine(path.node)}`,
           type: 'browser:history',
           api: fullName,
           file: filePath,
-          line: loc.start.line
+          line: getLine(path.node)
         });
         return;
       }
@@ -1261,11 +1254,11 @@ export class ReactAnalyzer extends Plugin {
       // Clipboard API
       if (fullName.includes('clipboard')) {
         analysis.browserAPIs.push({
-          id: `browser:clipboard#${filePath}:${loc.start.line}`,
+          id: `browser:clipboard#${filePath}:${getLine(path.node)}`,
           type: 'browser:clipboard',
           api: fullName,
           file: filePath,
-          line: loc.start.line
+          line: getLine(path.node)
         });
         return;
       }
@@ -1273,11 +1266,11 @@ export class ReactAnalyzer extends Plugin {
       // Geolocation
       if (fullName.includes('geolocation')) {
         analysis.browserAPIs.push({
-          id: `browser:geolocation#${filePath}:${loc.start.line}`,
+          id: `browser:geolocation#${filePath}:${getLine(path.node)}`,
           type: 'browser:geolocation',
           api: fullName,
           file: filePath,
-          line: loc.start.line
+          line: getLine(path.node)
         });
         return;
       }
@@ -1286,11 +1279,11 @@ export class ReactAnalyzer extends Plugin {
       if (fullName.match(/\.(fillRect|strokeRect|fillText|strokeText|beginPath|closePath|moveTo|lineTo|arc|fill|stroke|clearRect|drawImage|save|restore|translate|rotate|scale)$/)) {
         const method = fullName.split('.').pop();
         analysis.browserAPIs.push({
-          id: `canvas:draw#${method}#${filePath}:${loc.start.line}`,
+          id: `canvas:draw#${method}#${filePath}:${getLine(path.node)}`,
           type: 'canvas:draw',
           method,
           file: filePath,
-          line: loc.start.line
+          line: getLine(path.node)
         });
         return;
       }
@@ -1298,11 +1291,11 @@ export class ReactAnalyzer extends Plugin {
       // matchMedia
       if (fullName === 'window.matchMedia' || fullName === 'matchMedia') {
         analysis.browserAPIs.push({
-          id: `browser:media-query#${filePath}:${loc.start.line}`,
+          id: `browser:media-query#${filePath}:${getLine(path.node)}`,
           type: 'browser:media-query',
           api: 'matchMedia',
           file: filePath,
-          line: loc.start.line
+          line: getLine(path.node)
         });
         return;
       }
