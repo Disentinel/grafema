@@ -1364,6 +1364,7 @@ export class JSASTAnalyzer extends Plugin {
         objectMutations,
         // Object/Array literal tracking - use allCollections refs as visitors may have created new arrays
         objectLiterals: allCollections.objectLiterals || objectLiterals,
+        objectProperties: allCollections.objectProperties || objectProperties,
         arrayLiterals: allCollections.arrayLiterals || arrayLiterals
       });
       this.profiler.end('graph_build');

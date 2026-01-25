@@ -610,7 +610,8 @@ export class CallExpressionVisitor extends ASTVisitor {
         // Literal value (primitives only - objects/arrays handled above)
         else {
           const literalValue = ExpressionEvaluator.extractLiteralValue(value);
-          if (literalValue !== null) {
+          // Handle both non-null literals AND explicit null literals (NullLiteral)
+          if (literalValue !== null || value.type === 'NullLiteral') {
             const literalId = `LITERAL#${propertyName}#${module.file}#${propLine}:${propColumn}:${literalCounterRef.value++}`;
             literals.push({
               id: literalId,
