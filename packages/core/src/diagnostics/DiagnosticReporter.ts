@@ -15,6 +15,21 @@
 import type { Diagnostic, DiagnosticCollector } from './DiagnosticCollector.js';
 
 /**
+ * Mapping from diagnostic codes to category information
+ */
+const DIAGNOSTIC_CODE_CATEGORIES: Record<string, { name: string; checkCommand: string }> = {
+  'ERR_DISCONNECTED_NODES': { name: 'disconnected nodes', checkCommand: 'grafema check connectivity' },
+  'ERR_DISCONNECTED_NODE': { name: 'disconnected nodes', checkCommand: 'grafema check connectivity' },
+  'ERR_UNRESOLVED_CALL': { name: 'unresolved calls', checkCommand: 'grafema check calls' },
+  'ERR_MISSING_ASSIGNMENT': { name: 'missing assignments', checkCommand: 'grafema check dataflow' },
+  'ERR_BROKEN_REFERENCE': { name: 'broken references', checkCommand: 'grafema check dataflow' },
+  'ERR_NO_LEAF_NODE': { name: 'incomplete traces', checkCommand: 'grafema check dataflow' },
+  'DISCONNECTED_NODES': { name: 'disconnected nodes', checkCommand: 'grafema check connectivity' },
+  'UNRESOLVED_FUNCTION_CALL': { name: 'unresolved calls', checkCommand: 'grafema check calls' },
+  'MISSING_ASSIGNMENT': { name: 'missing assignments', checkCommand: 'grafema check dataflow' },
+};
+
+/**
  * Report output options
  */
 export interface ReportOptions {
@@ -32,6 +47,23 @@ export interface SummaryStats {
   errors: number;
   warnings: number;
   info: number;
+}
+
+/**
+ * Category count with metadata
+ */
+export interface CategoryCount {
+  code: string;
+  count: number;
+  name: string;
+  checkCommand: string;
+}
+
+/**
+ * Summary statistics with category breakdown
+ */
+export interface CategorizedSummaryStats extends SummaryStats {
+  byCode: CategoryCount[];
 }
 
 /**
@@ -81,6 +113,51 @@ export class DiagnosticReporter {
   }
 
   /**
+   * Generate a categorized summary with actionable commands.
+   */
+  categorizedSummary(): string {
+    const stats = this.getCategorizedStats();
+
+    if (stats.total === 0) {
+      return 'No issues found.';
+    }
+
+    const lines: string[] = [];
+
+    // Severity totals (same format as summary())
+    const severityParts: string[] = [];
+    if (stats.fatal > 0) {
+      severityParts.push(`Fatal: ${stats.fatal}`);
+    }
+    if (stats.errors > 0) {
+      severityParts.push(`Errors: ${stats.errors}`);
+    }
+    if (stats.warnings > 0) {
+      severityParts.push(`Warnings: ${stats.warnings}`);
+    }
+    lines.push(severityParts.join(', '));
+
+    // Top 5 categories
+    const topCategories = stats.byCode.slice(0, 5);
+    for (const category of topCategories) {
+      lines.push(`  - ${category.count} ${category.name} (run \`${category.checkCommand}\`)`);
+    }
+
+    // "Other issues" if more than 5 categories
+    if (stats.byCode.length > 5) {
+      const remainingCount = stats.byCode.slice(5).reduce((sum, cat) => sum + cat.count, 0);
+      const issueWord = remainingCount === 1 ? 'other issue' : 'other issues';
+      lines.push(`  - ${remainingCount} ${issueWord}`);
+    }
+
+    // Footer
+    lines.push('');
+    lines.push('Run `grafema check --all` for full diagnostics.');
+
+    return lines.join('\n');
+  }
+
+  /**
    * Get diagnostic statistics by severity.
    */
   getStats(): SummaryStats {
@@ -91,6 +168,49 @@ export class DiagnosticReporter {
       errors: diagnostics.filter(d => d.severity === 'error').length,
       warnings: diagnostics.filter(d => d.severity === 'warning').length,
       info: diagnostics.filter(d => d.severity === 'info').length,
+    };
+  }
+
+  /**
+   * Get diagnostic statistics grouped by category.
+   */
+  getCategorizedStats(): CategorizedSummaryStats {
+    const diagnostics = this.collector.getAll();
+
+    // Get severity stats
+    const severityStats: SummaryStats = {
+      total: diagnostics.length,
+      fatal: diagnostics.filter(d => d.severity === 'fatal').length,
+      errors: diagnostics.filter(d => d.severity === 'error').length,
+      warnings: diagnostics.filter(d => d.severity === 'warning').length,
+      info: diagnostics.filter(d => d.severity === 'info').length,
+    };
+
+    // Group by code
+    const codeMap = new Map<string, number>();
+    for (const diag of diagnostics) {
+      const count = codeMap.get(diag.code) || 0;
+      codeMap.set(diag.code, count + 1);
+    }
+
+    // Convert to CategoryCount array with metadata
+    const byCode: CategoryCount[] = [];
+    for (const [code, count] of codeMap.entries()) {
+      const category = DIAGNOSTIC_CODE_CATEGORIES[code];
+      byCode.push({
+        code,
+        count,
+        name: category?.name || code,
+        checkCommand: category?.checkCommand || 'grafema check --all',
+      });
+    }
+
+    // Sort by count descending
+    byCode.sort((a, b) => b.count - a.count);
+
+    return {
+      ...severityStats,
+      byCode,
     };
   }
 

@@ -530,6 +530,356 @@ describe('DiagnosticReporter', () => {
   });
 
   // ===========================================================================
+  // TESTS: getCategorizedStats()
+  // ===========================================================================
+
+  describe('getCategorizedStats()', () => {
+    it('should return empty array when no diagnostics', () => {
+      const collector = createCollectorWithDiagnostics([]);
+      const reporter = new DiagnosticReporter(collector);
+
+      const stats = reporter.getCategorizedStats();
+
+      assert.strictEqual(stats.total, 0);
+      assert.strictEqual(stats.fatal, 0);
+      assert.strictEqual(stats.errors, 0);
+      assert.strictEqual(stats.warnings, 0);
+      assert.strictEqual(stats.info, 0);
+      assert.strictEqual(stats.byCode.length, 0);
+    });
+
+    it('should group diagnostics by code', () => {
+      const collector = createCollectorWithDiagnostics([
+        createDiagnostic({ code: 'DISCONNECTED_NODES', severity: 'warning' }),
+        createDiagnostic({ code: 'DISCONNECTED_NODES', severity: 'warning' }),
+        createDiagnostic({ code: 'DISCONNECTED_NODES', severity: 'warning' }),
+        createDiagnostic({ code: 'UNRESOLVED_FUNCTION_CALL', severity: 'warning' }),
+        createDiagnostic({ code: 'UNRESOLVED_FUNCTION_CALL', severity: 'warning' }),
+      ]);
+      const reporter = new DiagnosticReporter(collector);
+
+      const stats = reporter.getCategorizedStats();
+
+      assert.strictEqual(stats.byCode.length, 2);
+
+      const disconnected = stats.byCode.find(c => c.code === 'DISCONNECTED_NODES');
+      assert.ok(disconnected, 'Should have DISCONNECTED_NODES category');
+      assert.strictEqual(disconnected.count, 3);
+
+      const unresolved = stats.byCode.find(c => c.code === 'UNRESOLVED_FUNCTION_CALL');
+      assert.ok(unresolved, 'Should have UNRESOLVED_FUNCTION_CALL category');
+      assert.strictEqual(unresolved.count, 2);
+    });
+
+    it('should sort categories by count descending', () => {
+      const collector = createCollectorWithDiagnostics([
+        createDiagnostic({ code: 'DISCONNECTED_NODES', severity: 'warning' }),
+        createDiagnostic({ code: 'DISCONNECTED_NODES', severity: 'warning' }),
+        createDiagnostic({ code: 'DISCONNECTED_NODES', severity: 'warning' }),
+        createDiagnostic({ code: 'UNRESOLVED_FUNCTION_CALL', severity: 'warning' }),
+        createDiagnostic({ code: 'UNRESOLVED_FUNCTION_CALL', severity: 'warning' }),
+        createDiagnostic({ code: 'UNRESOLVED_FUNCTION_CALL', severity: 'warning' }),
+        createDiagnostic({ code: 'UNRESOLVED_FUNCTION_CALL', severity: 'warning' }),
+        createDiagnostic({ code: 'UNRESOLVED_FUNCTION_CALL', severity: 'warning' }),
+        createDiagnostic({ code: 'MISSING_ASSIGNMENT', severity: 'warning' }),
+      ]);
+      const reporter = new DiagnosticReporter(collector);
+
+      const stats = reporter.getCategorizedStats();
+
+      assert.strictEqual(stats.byCode.length, 3);
+      // Should be sorted descending: 5, 3, 1
+      assert.strictEqual(stats.byCode[0].code, 'UNRESOLVED_FUNCTION_CALL');
+      assert.strictEqual(stats.byCode[0].count, 5);
+      assert.strictEqual(stats.byCode[1].code, 'DISCONNECTED_NODES');
+      assert.strictEqual(stats.byCode[1].count, 3);
+      assert.strictEqual(stats.byCode[2].code, 'MISSING_ASSIGNMENT');
+      assert.strictEqual(stats.byCode[2].count, 1);
+    });
+
+    it('should include category name for known codes', () => {
+      const collector = createCollectorWithDiagnostics([
+        createDiagnostic({ code: 'DISCONNECTED_NODES', severity: 'warning' }),
+      ]);
+      const reporter = new DiagnosticReporter(collector);
+
+      const stats = reporter.getCategorizedStats();
+
+      assert.strictEqual(stats.byCode.length, 1);
+      assert.strictEqual(stats.byCode[0].name, 'disconnected nodes');
+    });
+
+    it('should include check command for known codes', () => {
+      const collector = createCollectorWithDiagnostics([
+        createDiagnostic({ code: 'DISCONNECTED_NODES', severity: 'warning' }),
+      ]);
+      const reporter = new DiagnosticReporter(collector);
+
+      const stats = reporter.getCategorizedStats();
+
+      assert.strictEqual(stats.byCode.length, 1);
+      assert.strictEqual(stats.byCode[0].checkCommand, 'grafema check connectivity');
+    });
+
+    it('should handle unknown diagnostic codes', () => {
+      const collector = createCollectorWithDiagnostics([
+        createDiagnostic({ code: 'UNKNOWN_CODE_XYZ', severity: 'warning' }),
+      ]);
+      const reporter = new DiagnosticReporter(collector);
+
+      const stats = reporter.getCategorizedStats();
+
+      assert.strictEqual(stats.byCode.length, 1);
+      assert.strictEqual(stats.byCode[0].code, 'UNKNOWN_CODE_XYZ');
+      // Should have fallback values
+      assert.ok(stats.byCode[0].name);
+      assert.ok(stats.byCode[0].checkCommand);
+    });
+
+    it('should include severity totals', () => {
+      const collector = createCollectorWithDiagnostics([
+        createDiagnostic({ code: 'DISCONNECTED_NODES', severity: 'warning' }),
+        createDiagnostic({ code: 'DISCONNECTED_NODES', severity: 'warning' }),
+        createDiagnostic({ code: 'UNRESOLVED_FUNCTION_CALL', severity: 'error' }),
+      ]);
+      const reporter = new DiagnosticReporter(collector);
+
+      const stats = reporter.getCategorizedStats();
+
+      assert.strictEqual(stats.total, 3);
+      assert.strictEqual(stats.warnings, 2);
+      assert.strictEqual(stats.errors, 1);
+    });
+  });
+
+  // ===========================================================================
+  // TESTS: categorizedSummary()
+  // ===========================================================================
+
+  describe('categorizedSummary()', () => {
+    it('should return "No issues found" when empty', () => {
+      const collector = createCollectorWithDiagnostics([]);
+      const reporter = new DiagnosticReporter(collector);
+
+      const summary = reporter.categorizedSummary();
+
+      assert.ok(
+        summary.includes('No issues') || summary === 'No issues found.',
+        'Should indicate no issues'
+      );
+    });
+
+    it('should show severity totals', () => {
+      const collector = createCollectorWithDiagnostics([
+        createDiagnostic({ code: 'DISCONNECTED_NODES', severity: 'warning' }),
+        createDiagnostic({ code: 'DISCONNECTED_NODES', severity: 'warning' }),
+        createDiagnostic({ code: 'UNRESOLVED_FUNCTION_CALL', severity: 'warning' }),
+      ]);
+      const reporter = new DiagnosticReporter(collector);
+
+      const summary = reporter.categorizedSummary();
+
+      assert.ok(summary.includes('Warnings: 3'), 'Should show warning count');
+    });
+
+    it('should show category counts with friendly names', () => {
+      const collector = createCollectorWithDiagnostics([
+        createDiagnostic({ code: 'DISCONNECTED_NODES', severity: 'warning' }),
+        createDiagnostic({ code: 'DISCONNECTED_NODES', severity: 'warning' }),
+        createDiagnostic({ code: 'DISCONNECTED_NODES', severity: 'warning' }),
+        createDiagnostic({ code: 'UNRESOLVED_FUNCTION_CALL', severity: 'warning' }),
+        createDiagnostic({ code: 'UNRESOLVED_FUNCTION_CALL', severity: 'warning' }),
+      ]);
+      const reporter = new DiagnosticReporter(collector);
+
+      const summary = reporter.categorizedSummary();
+
+      assert.ok(summary.includes('3 disconnected nodes'), 'Should show disconnected nodes count');
+      assert.ok(summary.includes('2 unresolved calls'), 'Should show unresolved calls count');
+    });
+
+    it('should show check commands for each category', () => {
+      const collector = createCollectorWithDiagnostics([
+        createDiagnostic({ code: 'DISCONNECTED_NODES', severity: 'warning' }),
+        createDiagnostic({ code: 'UNRESOLVED_FUNCTION_CALL', severity: 'warning' }),
+      ]);
+      const reporter = new DiagnosticReporter(collector);
+
+      const summary = reporter.categorizedSummary();
+
+      assert.ok(
+        summary.includes('grafema check connectivity'),
+        'Should show connectivity check command'
+      );
+      assert.ok(summary.includes('grafema check calls'), 'Should show calls check command');
+    });
+
+    it('should show footer with --all command', () => {
+      const collector = createCollectorWithDiagnostics([
+        createDiagnostic({ code: 'DISCONNECTED_NODES', severity: 'warning' }),
+      ]);
+      const reporter = new DiagnosticReporter(collector);
+
+      const summary = reporter.categorizedSummary();
+
+      assert.ok(
+        summary.includes('grafema check --all'),
+        'Should show --all command in footer'
+      );
+    });
+
+    it('should limit to top 5 categories by default', () => {
+      const collector = createCollectorWithDiagnostics([
+        createDiagnostic({ code: 'CODE_A', severity: 'warning' }),
+        createDiagnostic({ code: 'CODE_A', severity: 'warning' }),
+        createDiagnostic({ code: 'CODE_A', severity: 'warning' }),
+        createDiagnostic({ code: 'CODE_A', severity: 'warning' }),
+        createDiagnostic({ code: 'CODE_A', severity: 'warning' }),
+        createDiagnostic({ code: 'CODE_A', severity: 'warning' }),
+        createDiagnostic({ code: 'CODE_B', severity: 'warning' }),
+        createDiagnostic({ code: 'CODE_B', severity: 'warning' }),
+        createDiagnostic({ code: 'CODE_B', severity: 'warning' }),
+        createDiagnostic({ code: 'CODE_B', severity: 'warning' }),
+        createDiagnostic({ code: 'CODE_B', severity: 'warning' }),
+        createDiagnostic({ code: 'CODE_C', severity: 'warning' }),
+        createDiagnostic({ code: 'CODE_C', severity: 'warning' }),
+        createDiagnostic({ code: 'CODE_C', severity: 'warning' }),
+        createDiagnostic({ code: 'CODE_C', severity: 'warning' }),
+        createDiagnostic({ code: 'CODE_D', severity: 'warning' }),
+        createDiagnostic({ code: 'CODE_D', severity: 'warning' }),
+        createDiagnostic({ code: 'CODE_D', severity: 'warning' }),
+        createDiagnostic({ code: 'CODE_E', severity: 'warning' }),
+        createDiagnostic({ code: 'CODE_E', severity: 'warning' }),
+        createDiagnostic({ code: 'CODE_F', severity: 'warning' }),
+        createDiagnostic({ code: 'CODE_G', severity: 'warning' }),
+      ]);
+      const reporter = new DiagnosticReporter(collector);
+
+      const summary = reporter.categorizedSummary();
+
+      // Should show top 5 categories (CODE_A through CODE_E)
+      assert.ok(summary.includes('CODE_A'), 'Should show CODE_A');
+      assert.ok(summary.includes('CODE_B'), 'Should show CODE_B');
+      assert.ok(summary.includes('CODE_C'), 'Should show CODE_C');
+      assert.ok(summary.includes('CODE_D'), 'Should show CODE_D');
+      assert.ok(summary.includes('CODE_E'), 'Should show CODE_E');
+
+      // Should NOT show CODE_F and CODE_G in individual lines
+      // They should be in "other issues" summary
+      const lines = summary.split('\n');
+      const categoryLines = lines.filter(line => line.includes('CODE_'));
+      assert.ok(categoryLines.length <= 5, 'Should limit to 5 category lines');
+    });
+
+    it('should show "other issues" when more than 5 categories', () => {
+      const collector = createCollectorWithDiagnostics([
+        createDiagnostic({ code: 'CODE_A', severity: 'warning' }),
+        createDiagnostic({ code: 'CODE_B', severity: 'warning' }),
+        createDiagnostic({ code: 'CODE_C', severity: 'warning' }),
+        createDiagnostic({ code: 'CODE_D', severity: 'warning' }),
+        createDiagnostic({ code: 'CODE_E', severity: 'warning' }),
+        createDiagnostic({ code: 'CODE_F', severity: 'warning' }),
+        createDiagnostic({ code: 'CODE_G', severity: 'warning' }),
+      ]);
+      const reporter = new DiagnosticReporter(collector);
+
+      const summary = reporter.categorizedSummary();
+
+      assert.ok(
+        summary.includes('2 other issue') || summary.includes('other'),
+        'Should indicate other issues exist'
+      );
+    });
+
+    it('should handle mixed severities correctly', () => {
+      const collector = createCollectorWithDiagnostics([
+        createDiagnostic({ code: 'DISCONNECTED_NODES', severity: 'warning' }),
+        createDiagnostic({ code: 'DISCONNECTED_NODES', severity: 'warning' }),
+        createDiagnostic({ code: 'UNRESOLVED_FUNCTION_CALL', severity: 'error' }),
+      ]);
+      const reporter = new DiagnosticReporter(collector);
+
+      const summary = reporter.categorizedSummary();
+
+      assert.ok(summary.includes('Warnings: 2'), 'Should count warnings');
+      assert.ok(summary.includes('Errors: 1'), 'Should count errors');
+    });
+
+    it('should format output with proper indentation', () => {
+      const collector = createCollectorWithDiagnostics([
+        createDiagnostic({ code: 'DISCONNECTED_NODES', severity: 'warning' }),
+        createDiagnostic({ code: 'DISCONNECTED_NODES', severity: 'warning' }),
+      ]);
+      const reporter = new DiagnosticReporter(collector);
+
+      const summary = reporter.categorizedSummary();
+
+      // Categories should be indented under severity totals
+      const lines = summary.split('\n');
+      const categoryLine = lines.find(line => line.includes('disconnected nodes'));
+      assert.ok(categoryLine, 'Should have category line');
+      assert.ok(
+        categoryLine.startsWith('  ') || categoryLine.startsWith('\t'),
+        'Category line should be indented'
+      );
+    });
+
+    it('should handle single category gracefully', () => {
+      const collector = createCollectorWithDiagnostics([
+        createDiagnostic({ code: 'DISCONNECTED_NODES', severity: 'warning' }),
+        createDiagnostic({ code: 'DISCONNECTED_NODES', severity: 'warning' }),
+      ]);
+      const reporter = new DiagnosticReporter(collector);
+
+      const summary = reporter.categorizedSummary();
+
+      assert.ok(summary.includes('2 disconnected nodes'), 'Should show single category');
+      assert.ok(
+        !summary.includes('other issue'),
+        'Should not mention other issues when only one category'
+      );
+    });
+
+    it('should match expected output format from spec', () => {
+      const collector = createCollectorWithDiagnostics([
+        createDiagnostic({ code: 'DISCONNECTED_NODES', severity: 'warning' }),
+        createDiagnostic({ code: 'DISCONNECTED_NODES', severity: 'warning' }),
+        createDiagnostic({ code: 'UNRESOLVED_FUNCTION_CALL', severity: 'warning' }),
+        createDiagnostic({ code: 'UNRESOLVED_FUNCTION_CALL', severity: 'warning' }),
+        createDiagnostic({ code: 'UNRESOLVED_FUNCTION_CALL', severity: 'warning' }),
+        createDiagnostic({ code: 'UNRESOLVED_FUNCTION_CALL', severity: 'warning' }),
+        createDiagnostic({ code: 'UNRESOLVED_FUNCTION_CALL', severity: 'warning' }),
+        createDiagnostic({ code: 'MISSING_ASSIGNMENT', severity: 'warning' }),
+      ]);
+      const reporter = new DiagnosticReporter(collector);
+
+      const summary = reporter.categorizedSummary();
+
+      // Should have:
+      // - "Warnings: 8"
+      // - Categories with counts and commands
+      // - Footer with --all command
+      assert.ok(summary.includes('Warnings: 8'), 'Should show total warnings');
+      assert.ok(
+        summary.includes('5 unresolved calls'),
+        'Should show unresolved calls count'
+      );
+      assert.ok(
+        summary.includes('2 disconnected nodes'),
+        'Should show disconnected nodes count'
+      );
+      assert.ok(
+        summary.includes('1 missing assignment'),
+        'Should show missing assignment count'
+      );
+      assert.ok(summary.includes('grafema check calls'), 'Should show calls command');
+      assert.ok(summary.includes('grafema check connectivity'), 'Should show connectivity command');
+      assert.ok(summary.includes('grafema check dataflow'), 'Should show dataflow command');
+      assert.ok(summary.includes('grafema check --all'), 'Should show --all command');
+    });
+  });
+
+  // ===========================================================================
   // TESTS: Real-world scenarios
   // ===========================================================================
 

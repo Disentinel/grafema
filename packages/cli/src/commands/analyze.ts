@@ -211,7 +211,7 @@ export const analyzeCommand = new Command('analyze')
       // Print summary if there are any issues
       if (diagnostics.count() > 0) {
         log('');
-        log(reporter.summary());
+        log(reporter.categorizedSummary());
 
         // In verbose mode, print full report
         if (options.verbose) {
@@ -220,10 +220,10 @@ export const analyzeCommand = new Command('analyze')
         }
       }
 
-      // Write diagnostics.log in debug mode
+      // Always write diagnostics.log (required for `grafema check` command)
+      const writer = new DiagnosticWriter();
+      await writer.write(diagnostics, grafemaDir);
       if (options.debug) {
-        const writer = new DiagnosticWriter();
-        await writer.write(diagnostics, grafemaDir);
         log(`Diagnostics written to ${writer.getLogPath(grafemaDir)}`);
       }
 

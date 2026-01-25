@@ -38,6 +38,32 @@ const BUILT_IN_VALIDATORS: Record<string, { name: string; description: string }>
   }
 };
 
+// Category definition for diagnostic filtering
+export interface DiagnosticCheckCategory {
+  name: string;
+  description: string;
+  codes: string[];
+}
+
+// Available diagnostic categories
+export const CHECK_CATEGORIES: Record<string, DiagnosticCheckCategory> = {
+  'connectivity': {
+    name: 'Graph Connectivity',
+    description: 'Check for disconnected nodes in the graph',
+    codes: ['ERR_DISCONNECTED_NODES', 'ERR_DISCONNECTED_NODE'],
+  },
+  'calls': {
+    name: 'Call Resolution',
+    description: 'Check for unresolved function calls',
+    codes: ['ERR_UNRESOLVED_CALL'],
+  },
+  'dataflow': {
+    name: 'Data Flow',
+    description: 'Check for missing assignments and broken references',
+    codes: ['ERR_MISSING_ASSIGNMENT', 'ERR_BROKEN_REFERENCE', 'ERR_NO_LEAF_NODE'],
+  },
+};
+
 export const checkCommand = new Command('check')
   .description('Check invariants/guarantees')
   .argument('[rule]', 'Specific rule ID to check (or "all" for all rules)')
@@ -47,6 +73,7 @@ export const checkCommand = new Command('check')
   .option('-j, --json', 'Output results as JSON')
   .option('-q, --quiet', 'Only output failures')
   .option('--list-guarantees', 'List available built-in guarantees')
+  .option('--list-categories', 'List available diagnostic categories')
   .option('--skip-reanalysis', 'Skip automatic reanalysis of stale modules')
   .option('--fail-on-stale', 'Exit with error if stale modules found (CI mode)')
   .action(
@@ -59,10 +86,25 @@ export const checkCommand = new Command('check')
         json?: boolean;
         quiet?: boolean;
         listGuarantees?: boolean;
+        listCategories?: boolean;
         skipReanalysis?: boolean;
         failOnStale?: boolean;
       }
     ) => {
+      // List available categories
+      if (options.listCategories) {
+        console.log('Available diagnostic categories:');
+        console.log('');
+        for (const [key, category] of Object.entries(CHECK_CATEGORIES)) {
+          console.log(`  ${key}`);
+          console.log(`    ${category.name}`);
+          console.log(`    ${category.description}`);
+          console.log(`    Usage: grafema check ${key}`);
+          console.log('');
+        }
+        return;
+      }
+
       // List available guarantees
       if (options.listGuarantees) {
         console.log('Available built-in guarantees:');
@@ -72,6 +114,12 @@ export const checkCommand = new Command('check')
           console.log(`    ${info.description}`);
           console.log('');
         }
+        return;
+      }
+
+      // Check if rule argument is a category name
+      if (rule && (rule in CHECK_CATEGORIES || rule === 'all')) {
+        await runCategoryCheck(rule, options);
         return;
       }
 
@@ -375,5 +423,140 @@ async function runBuiltInValidator(
     }
   } finally {
     await backend.close();
+  }
+}
+
+/**
+ * Run category-based diagnostic check
+ */
+async function runCategoryCheck(
+  category: string,
+  options: { project: string; json?: boolean; quiet?: boolean }
+): Promise<void> {
+  const resolvedPath = resolve(options.project);
+  const grafemaDir = join(resolvedPath, '.grafema');
+  const diagnosticsLogPath = join(grafemaDir, 'diagnostics.log');
+
+  if (!existsSync(diagnosticsLogPath)) {
+    exitWithError('No diagnostics found', [
+      'Run: grafema analyze',
+      'Diagnostics are collected during analysis'
+    ]);
+  }
+
+  // Read diagnostics from log file (JSON lines format)
+  const diagnosticsContent = readFileSync(diagnosticsLogPath, 'utf-8');
+  const allDiagnostics = diagnosticsContent
+    .split('\n')
+    .filter(line => line.trim())
+    .map(line => {
+      try {
+        return JSON.parse(line);
+      } catch (e) {
+        return null;
+      }
+    })
+    .filter(Boolean);
+
+  // Filter diagnostics by category codes
+  let filteredDiagnostics = allDiagnostics;
+  if (category !== 'all') {
+    const categoryInfo = CHECK_CATEGORIES[category];
+    if (!categoryInfo) {
+      exitWithError(`Unknown category: ${category}`, [
+        'Use --list-categories to see available options'
+      ]);
+    }
+    filteredDiagnostics = allDiagnostics.filter((d: any) =>
+      categoryInfo.codes.includes(d.code)
+    );
+  }
+
+  if (options.json) {
+    console.log(JSON.stringify({
+      category: category,
+      total: filteredDiagnostics.length,
+      diagnostics: filteredDiagnostics
+    }, null, 2));
+  } else {
+    const categoryName = category === 'all'
+      ? 'All Categories'
+      : CHECK_CATEGORIES[category].name;
+
+    if (!options.quiet) {
+      console.log(`Checking ${categoryName}...`);
+      console.log('');
+    }
+
+    if (filteredDiagnostics.length === 0) {
+      console.log('\x1b[32m✓\x1b[0m No issues found');
+    } else {
+      console.log(`\x1b[33m⚠\x1b[0m Found ${filteredDiagnostics.length} diagnostic(s):`);
+      console.log('');
+
+      // Group by severity
+      const errors = filteredDiagnostics.filter((d: any) => d.severity === 'error' || d.severity === 'fatal');
+      const warnings = filteredDiagnostics.filter((d: any) => d.severity === 'warning');
+      const infos = filteredDiagnostics.filter((d: any) => d.severity === 'info');
+
+      // Display errors first
+      if (errors.length > 0) {
+        console.log(`\x1b[31mErrors (${errors.length}):\x1b[0m`);
+        for (const diag of errors.slice(0, 10)) {
+          const location = diag.file ? `${diag.file}${diag.line ? `:${diag.line}` : ''}` : '';
+          console.log(`  \x1b[31m•\x1b[0m [${diag.code}] ${diag.message}`);
+          if (location) {
+            console.log(`    ${location}`);
+          }
+          if (diag.suggestion && !options.quiet) {
+            console.log(`    Suggestion: ${diag.suggestion}`);
+          }
+        }
+        if (errors.length > 10) {
+          console.log(`  ... and ${errors.length - 10} more errors`);
+        }
+        console.log('');
+      }
+
+      // Display warnings
+      if (warnings.length > 0) {
+        console.log(`\x1b[33mWarnings (${warnings.length}):\x1b[0m`);
+        for (const diag of warnings.slice(0, 10)) {
+          const location = diag.file ? `${diag.file}${diag.line ? `:${diag.line}` : ''}` : '';
+          console.log(`  \x1b[33m•\x1b[0m [${diag.code}] ${diag.message}`);
+          if (location) {
+            console.log(`    ${location}`);
+          }
+          if (diag.suggestion && !options.quiet) {
+            console.log(`    Suggestion: ${diag.suggestion}`);
+          }
+        }
+        if (warnings.length > 10) {
+          console.log(`  ... and ${warnings.length - 10} more warnings`);
+        }
+        console.log('');
+      }
+
+      // Display infos
+      if (infos.length > 0 && !options.quiet) {
+        console.log(`\x1b[36mInfo (${infos.length}):\x1b[0m`);
+        for (const diag of infos.slice(0, 5)) {
+          const location = diag.file ? `${diag.file}${diag.line ? `:${diag.line}` : ''}` : '';
+          console.log(`  \x1b[36m•\x1b[0m [${diag.code}] ${diag.message}`);
+          if (location) {
+            console.log(`    ${location}`);
+          }
+        }
+        if (infos.length > 5) {
+          console.log(`  ... and ${infos.length - 5} more info messages`);
+        }
+        console.log('');
+      }
+    }
+
+    console.log('');
+    if (filteredDiagnostics.some((d: any) => d.severity === 'error' || d.severity === 'fatal')) {
+      process.exit(1);
+    }
   }
 }
