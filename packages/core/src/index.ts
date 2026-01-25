@@ -183,6 +183,7 @@ export { IncrementalAnalysisPlugin } from './plugins/analysis/IncrementalAnalysi
 
 // Enrichment plugins
 export { MethodCallResolver } from './plugins/enrichment/MethodCallResolver.js';
+export { ArgumentParameterLinker } from './plugins/enrichment/ArgumentParameterLinker.js';
 export { AliasTracker } from './plugins/enrichment/AliasTracker.js';
 export { ValueDomainAnalyzer } from './plugins/enrichment/ValueDomainAnalyzer.js';
 export { MountPointResolver } from './plugins/enrichment/MountPointResolver.js';

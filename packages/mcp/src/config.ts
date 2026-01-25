@@ -24,6 +24,7 @@ import {
   RustAnalyzer,
   // Enrichment
   MethodCallResolver,
+  ArgumentParameterLinker,
   AliasTracker,
   ValueDomainAnalyzer,
   MountPointResolver,
@@ -84,6 +85,7 @@ export const BUILTIN_PLUGINS: Record<string, PluginFactory> = {
 
   // Enrichment
   MethodCallResolver: () => new MethodCallResolver(),
+  ArgumentParameterLinker: () => new ArgumentParameterLinker(),
   AliasTracker: () => new AliasTracker(),
   ValueDomainAnalyzer: () => new ValueDomainAnalyzer(),
   MountPointResolver: () => new MountPointResolver(),

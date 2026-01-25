@@ -26,6 +26,7 @@ import {
   ReactAnalyzer,
   // Enrichment
   MethodCallResolver,
+  ArgumentParameterLinker,
   AliasTracker,
   ValueDomainAnalyzer,
   MountPointResolver,
@@ -163,6 +164,7 @@ async function run(): Promise<void> {
       ServiceLayerAnalyzer: () => new ServiceLayerAnalyzer(),
       ReactAnalyzer: () => new ReactAnalyzer(),
       MethodCallResolver: () => new MethodCallResolver(),
+      ArgumentParameterLinker: () => new ArgumentParameterLinker(),
       AliasTracker: () => new AliasTracker(),
       ValueDomainAnalyzer: () => new ValueDomainAnalyzer(),
       MountPointResolver: () => new MountPointResolver(),
