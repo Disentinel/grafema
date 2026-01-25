@@ -106,18 +106,7 @@ export class FunctionCallResolver extends Plugin {
       }
 
       const fileExports = exportIndex.get(exp.file)!;
-
-      // Build export key based on type (same pattern as ImportExportLinker line 207-217)
-      let exportKey: string;
-      if (exp.exportType === 'default') {
-        exportKey = 'default';
-      } else if (exp.exportType === 'named') {
-        exportKey = `named:${exp.name}`;
-      } else {
-        exportKey = `named:${exp.name || 'anonymous'}`;
-      }
-
-      fileExports.set(exportKey, exp);
+      fileExports.set(this.buildExportKey(exp), exp);
     }
     logger.debug('Indexed exports', { files: exportIndex.size });
 
@@ -256,6 +245,19 @@ export class FunctionCallResolver extends Plugin {
   }
 
   /**
+   * Build a key string for export index lookup.
+   *
+   * @param exp - Export node to build key for
+   * @returns Key in format "default" or "named:name"
+   */
+  private buildExportKey(exp: ExportNode): string {
+    if (exp.exportType === 'default') {
+      return 'default';
+    }
+    return `named:${exp.name || exp.local || 'anonymous'}`;
+  }
+
+  /**
    * Resolve module specifier to actual file path using extension fallbacks.
    * Pattern reused from ImportExportLinker (lines 101-122).
    *
@@ -337,11 +339,7 @@ export class FunctionCallResolver extends Plugin {
     // Find matching export by name
     // Re-export: export { foo } from './other' - look for named:foo
     // Re-export default: export { default } from './other' - look for default
-    const exportKey = exportNode.exportType === 'default'
-      ? 'default'
-      : `named:${exportNode.local || exportNode.name}`;
-
-    const nextExport = targetExports.get(exportKey);
+    const nextExport = targetExports.get(this.buildExportKey(exportNode));
     if (!nextExport) {
       return null; // Export not found in target
     }
