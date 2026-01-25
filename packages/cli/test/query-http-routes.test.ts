@@ -138,9 +138,10 @@ module.exports = { app, postMessage, getMessage };
       const result = runCli(['query', 'route /api'], tempDir);
 
       assert.strictEqual(result.status, 0, `query failed: ${result.stderr}`);
+      // Verify output format: [http:route] METHOD PATH
       assert.ok(
-        result.stdout.includes('/api') || result.stdout.includes('http:route'),
-        `Should find routes with /api. Got: ${result.stdout}`
+        result.stdout.includes('[http:route]') && result.stdout.includes('/api'),
+        `Should display as [http:route] METHOD /api. Got: ${result.stdout}`
       );
     });
 
@@ -150,9 +151,10 @@ module.exports = { app, postMessage, getMessage };
       const result = runCli(['query', 'endpoint /api'], tempDir);
 
       assert.strictEqual(result.status, 0, `query failed: ${result.stderr}`);
+      // Verify output format: [http:route] METHOD PATH
       assert.ok(
-        result.stdout.includes('/api') || result.stdout.includes('http:route'),
-        `Should find routes with /api. Got: ${result.stdout}`
+        result.stdout.includes('[http:route]') && result.stdout.includes('/api'),
+        `Should display as [http:route] METHOD /api. Got: ${result.stdout}`
       );
     });
 
@@ -162,9 +164,10 @@ module.exports = { app, postMessage, getMessage };
       const result = runCli(['query', 'http /users'], tempDir);
 
       assert.strictEqual(result.status, 0, `query failed: ${result.stderr}`);
+      // Verify output format: [http:route] METHOD PATH
       assert.ok(
-        result.stdout.includes('/users') || result.stdout.includes('http:route'),
-        `Should find routes with /users. Got: ${result.stdout}`
+        result.stdout.includes('[http:route]') && result.stdout.includes('/users'),
+        `Should display as [http:route] METHOD /users. Got: ${result.stdout}`
       );
     });
   });
@@ -180,10 +183,10 @@ module.exports = { app, postMessage, getMessage };
       const result = runCli(['query', 'route POST'], tempDir);
 
       assert.strictEqual(result.status, 0, `query failed: ${result.stderr}`);
-      // Should find POST route(s)
+      // Verify output format: [http:route] POST PATH
       assert.ok(
-        result.stdout.includes('POST') || result.stdout.includes('http:route'),
-        `Should find POST routes. Got: ${result.stdout}`
+        result.stdout.includes('[http:route] POST'),
+        `Should display as [http:route] POST /path. Got: ${result.stdout}`
       );
     });
 
@@ -193,10 +196,10 @@ module.exports = { app, postMessage, getMessage };
       const result = runCli(['query', 'route GET'], tempDir);
 
       assert.strictEqual(result.status, 0, `query failed: ${result.stderr}`);
-      // Should find GET route(s)
+      // Verify output format: [http:route] GET PATH
       assert.ok(
-        result.stdout.includes('GET') || result.stdout.includes('http:route'),
-        `Should find GET routes. Got: ${result.stdout}`
+        result.stdout.includes('[http:route] GET'),
+        `Should display as [http:route] GET /path. Got: ${result.stdout}`
       );
     });
 
@@ -206,10 +209,10 @@ module.exports = { app, postMessage, getMessage };
       const result = runCli(['query', 'route DELETE'], tempDir);
 
       assert.strictEqual(result.status, 0, `query failed: ${result.stderr}`);
-      // Should find DELETE route(s)
+      // Verify output format: [http:route] DELETE PATH
       assert.ok(
-        result.stdout.includes('DELETE') || result.stdout.includes('http:route'),
-        `Should find DELETE routes. Got: ${result.stdout}`
+        result.stdout.includes('[http:route] DELETE'),
+        `Should display as [http:route] DELETE /path. Got: ${result.stdout}`
       );
     });
 
@@ -219,10 +222,10 @@ module.exports = { app, postMessage, getMessage };
       const result = runCli(['query', 'route post'], tempDir);
 
       assert.strictEqual(result.status, 0, `query failed: ${result.stderr}`);
-      // Should find POST route(s) even with lowercase
+      // Verify output format: [http:route] POST PATH (even with lowercase input)
       assert.ok(
-        result.stdout.includes('POST') || result.stdout.includes('http:route'),
-        `Should find POST routes with lowercase. Got: ${result.stdout}`
+        result.stdout.includes('[http:route] POST'),
+        `Should display as [http:route] POST /path. Got: ${result.stdout}`
       );
     });
   });
@@ -238,9 +241,10 @@ module.exports = { app, postMessage, getMessage };
       const result = runCli(['query', 'route /users'], tempDir);
 
       assert.strictEqual(result.status, 0, `query failed: ${result.stderr}`);
+      // Verify output format: [http:route] METHOD /users...
       assert.ok(
-        result.stdout.includes('/users') || result.stdout.includes('http:route'),
-        `Should find /users routes. Got: ${result.stdout}`
+        result.stdout.includes('[http:route]') && result.stdout.includes('/users'),
+        `Should display as [http:route] METHOD /users. Got: ${result.stdout}`
       );
     });
 
@@ -250,10 +254,10 @@ module.exports = { app, postMessage, getMessage };
       const result = runCli(['query', 'route /api'], tempDir);
 
       assert.strictEqual(result.status, 0, `query failed: ${result.stderr}`);
-      // Should find multiple routes under /api
+      // Verify output format: [http:route] METHOD /api...
       assert.ok(
-        result.stdout.includes('/api') || result.stdout.includes('http:route'),
-        `Should find /api routes. Got: ${result.stdout}`
+        result.stdout.includes('[http:route]') && result.stdout.includes('/api'),
+        `Should display as [http:route] METHOD /api... Got: ${result.stdout}`
       );
     });
   });
@@ -269,11 +273,10 @@ module.exports = { app, postMessage, getMessage };
       const result = runCli(['query', 'route GET /api/users'], tempDir);
 
       assert.strictEqual(result.status, 0, `query failed: ${result.stderr}`);
-      // Should find exactly the GET /api/users route
+      // Verify output format: [http:route] GET /api/users
       assert.ok(
-        (result.stdout.includes('GET') && result.stdout.includes('/api/users')) ||
-        result.stdout.includes('http:route'),
-        `Should find GET /api/users route. Got: ${result.stdout}`
+        result.stdout.includes('[http:route] GET /api/users'),
+        `Should display as [http:route] GET /api/users. Got: ${result.stdout}`
       );
     });
 
@@ -283,10 +286,10 @@ module.exports = { app, postMessage, getMessage };
       const result = runCli(['query', 'route POST /api/users'], tempDir);
 
       assert.strictEqual(result.status, 0, `query failed: ${result.stderr}`);
+      // Verify output format: [http:route] POST /api/users
       assert.ok(
-        (result.stdout.includes('POST') && result.stdout.includes('/api/users')) ||
-        result.stdout.includes('http:route'),
-        `Should find POST /api/users route. Got: ${result.stdout}`
+        result.stdout.includes('[http:route] POST /api/users'),
+        `Should display as [http:route] POST /api/users. Got: ${result.stdout}`
       );
     });
 
@@ -333,11 +336,10 @@ module.exports = { app, postMessage, getMessage };
       const result = runCli(['query', 'route /api/users'], tempDir);
 
       assert.strictEqual(result.status, 0, `query failed: ${result.stderr}`);
-      // Check format: [http:route] GET /api/users or similar
+      // Verify output format: [http:route] METHOD PATH
       assert.ok(
-        result.stdout.includes('[http:route]') ||
-        result.stdout.includes('http:route'),
-        `Should display with [http:route] type. Got: ${result.stdout}`
+        result.stdout.includes('[http:route]') && result.stdout.includes('/api/users'),
+        `Should display as [http:route] METHOD /api/users. Got: ${result.stdout}`
       );
     });
 
@@ -347,10 +349,10 @@ module.exports = { app, postMessage, getMessage };
       const result = runCli(['query', 'route /api/users'], tempDir);
 
       assert.strictEqual(result.status, 0, `query failed: ${result.stderr}`);
-      // Should show file location
+      // Verify location line: Location: src/app.js:LINE
       assert.ok(
-        result.stdout.includes('src/app.js') || result.stdout.includes('Location'),
-        `Should show file path. Got: ${result.stdout}`
+        result.stdout.includes('Location:') && result.stdout.includes('src/app.js'),
+        `Should display Location: src/app.js:LINE. Got: ${result.stdout}`
       );
     });
   });
@@ -403,9 +405,10 @@ module.exports = { app, postMessage, getMessage };
       const result = runCli(['query', 'route PUT /nonexistent'], tempDir);
 
       assert.strictEqual(result.status, 0, 'Should exit with code 0');
+      // Verify "No results" message and absence of route output
       assert.ok(
-        result.stdout.includes('No results') || result.stdout.includes('No'),
-        `Should show no results message. Got: ${result.stdout}`
+        result.stdout.includes('No results') && !result.stdout.includes('[http:route]'),
+        `Should show "No results" message. Got: ${result.stdout}`
       );
     });
 
@@ -430,10 +433,10 @@ module.exports = { app, postMessage, getMessage };
       const result = runCli(['query', '/api'], tempDir);
 
       assert.strictEqual(result.status, 0, `query failed: ${result.stderr}`);
-      // Should find http:route nodes in general search
+      // Verify http:route nodes appear in general search with proper format
       assert.ok(
-        result.stdout.includes('http:route') || result.stdout.includes('/api'),
-        `Should find HTTP routes in general search. Got: ${result.stdout}`
+        result.stdout.includes('[http:route]') && result.stdout.includes('/api'),
+        `Should display as [http:route] METHOD /api in general search. Got: ${result.stdout}`
       );
     });
   });
@@ -516,10 +519,10 @@ module.exports = { app, postMessage, getMessage };
 
       assert.strictEqual(result.status, 0, `query failed: ${result.stderr}`);
 
-      // Function search should still find postMessage
+      // Verify function output format: [FUNCTION] postMessage
       assert.ok(
-        result.stdout.includes('postMessage') || result.stdout.includes('FUNCTION'),
-        `Function search should find postMessage. Got: ${result.stdout}`
+        result.stdout.includes('[FUNCTION] postMessage'),
+        `Should display as [FUNCTION] postMessage. Got: ${result.stdout}`
       );
     });
   });
