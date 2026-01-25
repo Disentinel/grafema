@@ -95,6 +95,23 @@ export class ScopeTracker {
     return this.scopeStack.map(s => s.name).join('->');
   }
 
+  /**
+   * Get the innermost enclosing scope of a specific type.
+   * Searches from innermost to outermost.
+   *
+   * @param scopeType - Type to search for ('CLASS', 'FUNCTION', etc.)
+   * @returns The scope entry name if found, undefined otherwise
+   */
+  getEnclosingScope(scopeType: string): string | undefined {
+    // Search from end (innermost) to start (outermost)
+    for (let i = this.scopeStack.length - 1; i >= 0; i--) {
+      if (this.scopeStack[i].type === scopeType) {
+        return this.scopeStack[i].name;
+      }
+    }
+    return undefined;
+  }
+
   // === Counter Management ===
 
   /**

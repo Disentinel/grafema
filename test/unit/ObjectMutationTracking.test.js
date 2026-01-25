@@ -238,15 +238,13 @@ config[key] = value;
 
   // ============================================================================
   // this.prop = value (in class methods/constructors)
-  // LIMITATION: Class constructor/method parameters are not created as PARAMETER nodes
-  // in the current implementation. This is a pre-existing architectural limitation
-  // (not introduced by REG-114) that should be addressed in a separate issue.
-  // These tests document the expected behavior once that limitation is fixed.
+  // REG-152: FLOWS_INTO edges for this.prop = value patterns
+  // The destination is the CLASS node (not a variable), with metadata:
+  //   - mutationType: 'this_property'
+  //   - propertyName: the property being assigned
   // ============================================================================
   describe('this.prop = value', () => {
-    it.skip('should track this.prop = value in constructor with objectName "this"', async () => {
-      // SKIPPED: Class constructor parameters are not created as PARAMETER nodes.
-      // See limitation note above. Create a Linear issue to track this.
+    it('should track this.prop = value in constructor as FLOWS_INTO to CLASS', async () => {
       await setupTest(backend, {
         'index.js': `
 class Config {
@@ -260,33 +258,36 @@ class Config {
       const allNodes = await backend.getAllNodes();
       const allEdges = await backend.getAllEdges();
 
-      // Find the handler parameter variable inside the constructor
-      const handlerParam = allNodes.find(n =>
-        n.name === 'handler' && (n.type === 'VARIABLE' || n.type === 'PARAMETER')
+      // Find the CLASS node
+      const classNode = allNodes.find(n =>
+        n.type === 'CLASS' && n.name === 'Config'
       );
-      assert.ok(handlerParam, 'Parameter "handler" not found');
+      assert.ok(classNode, 'CLASS "Config" not found');
 
-      // Find FLOWS_INTO edge with mutationType indicating 'this' context
-      // Note: We can't find 'this' as a variable since it's a keyword,
-      // but the edge metadata should indicate objectName: 'this'
+      // Find the handler parameter
+      const handlerParam = allNodes.find(n =>
+        n.name === 'handler' && n.type === 'PARAMETER'
+      );
+      assert.ok(handlerParam, 'PARAMETER "handler" not found');
+
+      // Find FLOWS_INTO edge from handler PARAMETER to CLASS
       const flowsInto = allEdges.find(e =>
         e.type === 'FLOWS_INTO' &&
         e.src === handlerParam.id &&
-        e.mutationType === 'property' &&
-        e.propertyName === 'handler'
+        e.dst === classNode.id
       );
 
-      // Even if we can't verify dst (since 'this' isn't a variable),
-      // we should have metadata indicating this is a 'this' mutation
       assert.ok(
         flowsInto,
-        `Expected FLOWS_INTO edge from handler parameter. Found: ${JSON.stringify(allEdges.filter(e => e.type === 'FLOWS_INTO'))}`
+        `Expected FLOWS_INTO edge from handler to Config class. Found: ${JSON.stringify(allEdges.filter(e => e.type === 'FLOWS_INTO'))}`
       );
+
+      // Verify metadata
+      assert.strictEqual(flowsInto.mutationType, 'this_property', 'Edge should have mutationType: this_property');
+      assert.strictEqual(flowsInto.propertyName, 'handler', 'Edge should have propertyName: handler');
     });
 
-    it.skip('should track this.prop = value in class methods', async () => {
-      // SKIPPED: Class method parameters are not created as PARAMETER nodes.
-      // See limitation note above. Create a Linear issue to track this.
+    it('should track this.prop = value in class methods as FLOWS_INTO to CLASS', async () => {
       await setupTest(backend, {
         'index.js': `
 class Service {
@@ -300,19 +301,194 @@ class Service {
       const allNodes = await backend.getAllNodes();
       const allEdges = await backend.getAllEdges();
 
+      // Find the CLASS node
+      const classNode = allNodes.find(n =>
+        n.type === 'CLASS' && n.name === 'Service'
+      );
+      assert.ok(classNode, 'CLASS "Service" not found');
+
       // Find the h parameter
       const hParam = allNodes.find(n =>
-        n.name === 'h' && (n.type === 'VARIABLE' || n.type === 'PARAMETER')
+        n.name === 'h' && n.type === 'PARAMETER'
       );
-      assert.ok(hParam, 'Parameter "h" not found');
+      assert.ok(hParam, 'PARAMETER "h" not found');
 
+      // Find FLOWS_INTO edge from h PARAMETER to CLASS
       const flowsInto = allEdges.find(e =>
         e.type === 'FLOWS_INTO' &&
         e.src === hParam.id &&
-        e.propertyName === 'handler'
+        e.dst === classNode.id
       );
 
-      assert.ok(flowsInto, 'Expected FLOWS_INTO edge from parameter "h"');
+      assert.ok(flowsInto, 'Expected FLOWS_INTO edge from parameter "h" to Service class');
+      assert.strictEqual(flowsInto.mutationType, 'this_property', 'Edge should have mutationType: this_property');
+      assert.strictEqual(flowsInto.propertyName, 'handler', 'Edge should have propertyName: handler');
+    });
+
+    it('should handle multiple this.prop assignments in constructor', async () => {
+      await setupTest(backend, {
+        'index.js': `
+class Config {
+  constructor(a, b, c) {
+    this.propA = a;
+    this.propB = b;
+    this.propC = c;
+  }
+}
+        `
+      });
+
+      const allNodes = await backend.getAllNodes();
+      const allEdges = await backend.getAllEdges();
+
+      const classNode = allNodes.find(n => n.type === 'CLASS' && n.name === 'Config');
+      assert.ok(classNode, 'CLASS "Config" not found');
+
+      // Find all FLOWS_INTO edges to the class with mutationType: this_property
+      const flowsIntoEdges = allEdges.filter(e =>
+        e.type === 'FLOWS_INTO' &&
+        e.dst === classNode.id &&
+        e.mutationType === 'this_property'
+      );
+
+      assert.strictEqual(flowsIntoEdges.length, 3, 'Expected 3 FLOWS_INTO edges');
+
+      const propertyNames = flowsIntoEdges.map(e => e.propertyName).sort();
+      assert.deepStrictEqual(propertyNames, ['propA', 'propB', 'propC'], 'Should have all three property names');
+    });
+
+    it('should track local variable assignment to this.prop', async () => {
+      await setupTest(backend, {
+        'index.js': `
+class Service {
+  init() {
+    const helper = () => {};
+    this.helper = helper;
+  }
+}
+        `
+      });
+
+      const allNodes = await backend.getAllNodes();
+      const allEdges = await backend.getAllEdges();
+
+      const classNode = allNodes.find(n => n.type === 'CLASS' && n.name === 'Service');
+      assert.ok(classNode, 'CLASS "Service" not found');
+
+      const helperVar = allNodes.find(n =>
+        n.name === 'helper' && (n.type === 'VARIABLE' || n.type === 'CONSTANT')
+      );
+      assert.ok(helperVar, 'Variable "helper" not found');
+
+      const flowsInto = allEdges.find(e =>
+        e.type === 'FLOWS_INTO' &&
+        e.src === helperVar.id &&
+        e.dst === classNode.id &&
+        e.mutationType === 'this_property'
+      );
+
+      assert.ok(flowsInto, 'Expected FLOWS_INTO edge from helper variable to Service class');
+      assert.strictEqual(flowsInto.propertyName, 'helper', 'Edge should have propertyName: helper');
+    });
+
+    it('should NOT create FLOWS_INTO edge for this.prop = literal', async () => {
+      await setupTest(backend, {
+        'index.js': `
+class Config {
+  constructor() {
+    this.port = 3000;
+    this.host = 'localhost';
+  }
+}
+        `
+      });
+
+      const allNodes = await backend.getAllNodes();
+      const allEdges = await backend.getAllEdges();
+
+      const classNode = allNodes.find(n => n.type === 'CLASS' && n.name === 'Config');
+      assert.ok(classNode, 'CLASS "Config" not found');
+
+      // Literals should not create FLOWS_INTO edges (matching existing behavior)
+      const flowsIntoEdges = allEdges.filter(e =>
+        e.type === 'FLOWS_INTO' &&
+        e.dst === classNode.id &&
+        e.mutationType === 'this_property'
+      );
+
+      assert.strictEqual(flowsIntoEdges.length, 0, 'Literal values should not create FLOWS_INTO edges');
+    });
+
+    it('should handle nested classes correctly - edge goes to Inner, not Outer', async () => {
+      await setupTest(backend, {
+        'index.js': `
+class Outer {
+  method() {
+    class Inner {
+      constructor(val) {
+        this.val = val;
+      }
+    }
+    return Inner;
+  }
+}
+        `
+      });
+
+      const allNodes = await backend.getAllNodes();
+      const allEdges = await backend.getAllEdges();
+
+      // Find both class nodes
+      const outerClass = allNodes.find(n => n.type === 'CLASS' && n.name === 'Outer');
+      const innerClass = allNodes.find(n => n.type === 'CLASS' && n.name === 'Inner');
+
+      assert.ok(outerClass, 'CLASS "Outer" not found');
+      assert.ok(innerClass, 'CLASS "Inner" not found');
+
+      // Find the val parameter
+      const valParam = allNodes.find(n =>
+        n.name === 'val' && n.type === 'PARAMETER'
+      );
+      assert.ok(valParam, 'PARAMETER "val" not found');
+
+      // The FLOWS_INTO edge should go to Inner, not Outer
+      const flowsInto = allEdges.find(e =>
+        e.type === 'FLOWS_INTO' &&
+        e.src === valParam.id &&
+        e.mutationType === 'this_property'
+      );
+
+      assert.ok(flowsInto, 'Expected FLOWS_INTO edge from val parameter');
+      assert.strictEqual(flowsInto.dst, innerClass.id, 'Edge should point to Inner class, not Outer');
+      assert.strictEqual(flowsInto.propertyName, 'val', 'Edge should have propertyName: val');
+    });
+
+    it('should NOT create edge for this.prop outside class context', async () => {
+      await setupTest(backend, {
+        'index.js': `
+function standalone(x) {
+  this.x = x;
+}
+
+const arrowFn = (y) => {
+  this.y = y;
+};
+        `
+      });
+
+      const allEdges = await backend.getAllEdges();
+
+      // No FLOWS_INTO edges with mutationType: this_property should exist
+      // because there's no class context
+      const thisPropertyEdges = allEdges.filter(e =>
+        e.type === 'FLOWS_INTO' &&
+        e.mutationType === 'this_property'
+      );
+
+      assert.strictEqual(
+        thisPropertyEdges.length, 0,
+        `Should NOT create this_property edges outside class context. Found: ${JSON.stringify(thisPropertyEdges)}`
+      );
     });
   });
 

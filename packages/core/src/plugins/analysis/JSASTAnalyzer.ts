@@ -2475,12 +2475,18 @@ export class JSASTAnalyzer extends Plugin {
       return; // Let array mutation handler deal with this
     }
 
-    // Get object name
+    // Get object name and enclosing class context for 'this'
     let objectName: string;
+    let enclosingClassName: string | undefined;
+
     if (memberExpr.object.type === 'Identifier') {
       objectName = memberExpr.object.name;
     } else if (memberExpr.object.type === 'ThisExpression') {
       objectName = 'this';
+      // REG-152: Extract enclosing class name from scope context
+      if (scopeTracker) {
+        enclosingClassName = scopeTracker.getEnclosingScope('CLASS');
+      }
     } else {
       // Complex expressions like obj.nested.prop = value
       // For now, skip these (documented limitation)
@@ -2533,6 +2539,7 @@ export class JSASTAnalyzer extends Plugin {
     objectMutations.push({
       id: mutationId,
       objectName,
+      enclosingClassName,  // REG-152: Class name for 'this' mutations
       propertyName,
       mutationType,
       computedPropertyVar,

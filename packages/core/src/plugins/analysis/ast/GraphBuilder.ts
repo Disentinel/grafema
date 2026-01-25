@@ -3,7 +3,7 @@
  * OPTIMIZED: Uses batched writes to reduce FFI overhead
  */
 
-import { dirname, resolve } from 'path';
+import { dirname, resolve, basename } from 'path';
 import type { GraphBackend } from '@grafema/types';
 import { ImportNode } from '../../../core/nodes/ImportNode.js';
 import { InterfaceNode, type InterfaceNodeRecord } from '../../../core/nodes/InterfaceNode.js';
@@ -239,7 +239,8 @@ export class GraphBuilder {
     this.bufferArrayMutationEdges(arrayMutations, variableDeclarations, parameters);
 
     // 27. Buffer FLOWS_INTO edges for object mutations (property assignment, Object.assign)
-    this.bufferObjectMutationEdges(objectMutations, variableDeclarations, parameters, functions);
+    // REG-152: Now includes classDeclarations for this.prop = value patterns
+    this.bufferObjectMutationEdges(objectMutations, variableDeclarations, parameters, functions, classDeclarations);
 
     // 28. Buffer OBJECT_LITERAL nodes
     this.bufferObjectLiteralNodes(objectLiterals);
@@ -1336,25 +1337,45 @@ export class GraphBuilder {
 
   /**
    * Buffer FLOWS_INTO edges for object mutations (property assignment, Object.assign)
-   * Creates edges from source values to the object variable being mutated
+   * Creates edges from source values to the object variable being mutated.
+   *
+   * REG-152: For 'this.prop = value' patterns inside classes, creates edges
+   * to the CLASS node with mutationType: 'this_property'.
    */
   private bufferObjectMutationEdges(
     objectMutations: ObjectMutationInfo[],
     variableDeclarations: VariableDeclarationInfo[],
     parameters: ParameterInfo[],
-    functions: FunctionInfo[]
+    functions: FunctionInfo[],
+    classDeclarations: ClassDeclarationInfo[]
   ): void {
     for (const mutation of objectMutations) {
-      const { objectName, propertyName, mutationType, computedPropertyVar, value, file } = mutation;
+      const { objectName, propertyName, mutationType, computedPropertyVar, value, file, enclosingClassName } = mutation;
 
-      // Find the object variable or parameter in the same file
-      // Skip 'this' - it's not a variable node, but we still create edges FROM source values
+      // Find the target node (object variable, parameter, or class for 'this')
       let objectNodeId: string | null = null;
+      let effectiveMutationType: 'property' | 'computed' | 'assign' | 'spread' | 'this_property' = mutationType;
+
       if (objectName !== 'this') {
+        // Regular object - find variable or parameter
         const objectVar = variableDeclarations.find(v => v.name === objectName && v.file === file);
         const objectParam = !objectVar ? parameters.find(p => p.name === objectName && p.file === file) : null;
         objectNodeId = objectVar?.id ?? objectParam?.id ?? null;
         if (!objectNodeId) continue;
+      } else {
+        // REG-152: 'this' mutations - find the CLASS node
+        if (!enclosingClassName) continue;  // Skip if no class context (e.g., standalone function)
+
+        // Compare using basename since classes use scopeTracker.file (basename)
+        // but mutations use module.file (full path)
+        const fileBasename = basename(file);
+        const classDecl = classDeclarations.find(c => c.name === enclosingClassName && c.file === fileBasename);
+        objectNodeId = classDecl?.id ?? null;
+
+        if (!objectNodeId) continue;  // Skip if class not found
+
+        // Use special mutation type to distinguish from regular property mutations
+        effectiveMutationType = 'this_property';
       }
 
       // Create FLOWS_INTO edge for VARIABLE value type
@@ -1365,28 +1386,22 @@ export class GraphBuilder {
         const sourceFunc = !sourceVar && !sourceParam ? functions.find(f => f.name === value.valueName && f.file === file) : null;
         const sourceNodeId = sourceVar?.id ?? sourceParam?.id ?? sourceFunc?.id;
 
-        if (sourceNodeId) {
-          // For 'this.prop = value', we still create an edge even though 'this' isn't a variable
-          // In this case, objectNodeId is null but we create edge with special handling
-          if (objectNodeId) {
-            const edgeData: GraphEdge = {
-              type: 'FLOWS_INTO',
-              src: sourceNodeId,
-              dst: objectNodeId,
-              mutationType,
-              propertyName,
-              computedPropertyVar  // For enrichment phase resolution
-            };
-            if (value.argIndex !== undefined) {
-              edgeData.argIndex = value.argIndex;
-            }
-            if (value.isSpread) {
-              edgeData.isSpread = true;
-            }
-            this._bufferEdge(edgeData);
+        if (sourceNodeId && objectNodeId) {
+          const edgeData: GraphEdge = {
+            type: 'FLOWS_INTO',
+            src: sourceNodeId,
+            dst: objectNodeId,
+            mutationType: effectiveMutationType,
+            propertyName,
+            computedPropertyVar  // For enrichment phase resolution
+          };
+          if (value.argIndex !== undefined) {
+            edgeData.argIndex = value.argIndex;
           }
-          // Note: For 'this.prop = value', we skip creating edge since 'this' has no node
-          // Future enhancement: create a special MUTATES_THIS edge or use class node as target
+          if (value.isSpread) {
+            edgeData.isSpread = true;
+          }
+          this._bufferEdge(edgeData);
         }
       }
       // For literals, object literals, etc. - we just track variable -> object flows for now

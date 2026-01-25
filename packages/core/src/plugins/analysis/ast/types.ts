@@ -414,6 +414,7 @@ export interface ObjectMutationInfo {
   id?: string;                   // Semantic ID for the mutation (optional for backward compatibility)
   objectName: string;            // Name of the object being mutated ('config', 'this', etc.)
   objectLine?: number;           // Line where object is referenced (for scope resolution)
+  enclosingClassName?: string;   // Class name when objectName === 'this' (REG-152)
   propertyName: string;          // Property name or '<computed>' for obj[x] or '<assign>' for Object.assign
   mutationType: 'property' | 'computed' | 'assign' | 'spread';
   computedPropertyVar?: string;  // Variable name in obj[key] = value (for computed mutation type)
@@ -586,7 +587,7 @@ export interface GraphEdge {
   isSpread?: boolean;
   nestedProperty?: string;  // REG-117: Property name for nested mutations (obj.arr.push -> "arr")
   // For FLOWS_INTO edges (object mutations)
-  mutationType?: 'property' | 'computed' | 'assign' | 'spread';
+  mutationType?: 'property' | 'computed' | 'assign' | 'spread' | 'this_property';
   propertyName?: string;
   // For computed property resolution (enrichment phase)
   computedPropertyVar?: string;           // Variable name for obj[key] patterns
