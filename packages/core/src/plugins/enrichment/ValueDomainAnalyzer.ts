@@ -600,12 +600,9 @@ export class ValueDomainAnalyzer extends Plugin {
     // Follow ASSIGNED_FROM and DERIVES_FROM edges
     // DERIVES_FROM is used for template literals and other composite expressions
     const outgoing = await graph.getOutgoingEdges(node.id);
-    // edgeType (from getOutgoingEdges) or edge_type (from other APIs)
-    const dataFlowEdges = outgoing.filter(e => {
-      const edgeType = (e as { edgeType?: string; edge_type?: string }).edgeType ||
-                       (e as { edge_type?: string }).edge_type;
-      return edgeType === 'ASSIGNED_FROM' || edgeType === 'DERIVES_FROM';
-    });
+    const dataFlowEdges = outgoing.filter(e =>
+      e.type === 'ASSIGNED_FROM' || e.type === 'DERIVES_FROM'
+    );
 
     if (dataFlowEdges.length === 0) {
       // No sources - unknown
@@ -655,11 +652,7 @@ export class ValueDomainAnalyzer extends Plugin {
         // Check if this is a method of the right object
         // Simplified: check via incoming CONTAINS edges from CLASS
         const incoming = await graph.getIncomingEdges(node.id);
-        const containsEdges = incoming.filter(e => {
-          const edgeType = (e as { edgeType?: string; edge_type?: string }).edgeType ||
-                           (e as { edge_type?: string }).edge_type;
-          return edgeType === 'CONTAINS';
-        });
+        const containsEdges = incoming.filter(e => e.type === 'CONTAINS');
 
         for (const edge of containsEdges) {
           const sourceId = (edge as { src?: string; source_id?: string }).src ||
@@ -714,18 +707,14 @@ export class ValueDomainAnalyzer extends Plugin {
       const outgoing = await graph.getOutgoingEdges(node.id);
 
       for (const edge of outgoing) {
-        const edgeType = (edge as { edgeType?: string; edge_type?: string; type?: string }).edgeType ||
-                         (edge as { edge_type?: string }).edge_type ||
-                         (edge as { type?: string }).type;
-
-        if (edgeType !== 'FLOWS_INTO') continue;
+        if (edge.type !== 'FLOWS_INTO') continue;
 
         const edgeKey = `${edge.src}->${edge.dst}:FLOWS_INTO`;
         if (processedEdges.has(edgeKey)) continue;
         processedEdges.add(edgeKey);
 
-        const mutationType = (edge as { mutationType?: string }).mutationType;
-        const computedPropertyVar = (edge as { computedPropertyVar?: string }).computedPropertyVar;
+        const mutationType = edge.metadata?.mutationType as string | undefined;
+        const computedPropertyVar = edge.metadata?.computedPropertyVar as string | undefined;
 
         if (mutationType !== 'computed' || !computedPropertyVar) continue;
 

@@ -28,7 +28,7 @@ import { setTimeout as sleep } from 'timers/promises';
 
 import type { WireNode, WireEdge } from '@grafema/types';
 import type { NodeType, EdgeType } from '@grafema/types';
-import type { BaseNodeRecord } from '@grafema/types';
+import type { BaseNodeRecord, EdgeRecord } from '@grafema/types';
 import type { AttrQuery, GraphStats, GraphExport } from '../../core/GraphBackend.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -40,17 +40,6 @@ const __dirname = dirname(__filename);
 export interface RFDBServerBackendOptions {
   socketPath?: string;
   dbPath?: string;
-}
-
-/**
- * Edge as returned from the backend
- */
-export interface BackendEdge {
-  src: string;
-  dst: string;
-  type: string;
-  edgeType: string;
-  [key: string]: unknown;
 }
 
 /**
@@ -454,6 +443,21 @@ export class RFDBServerBackend {
   }
 
   /**
+   * Parse an edge from wire format to EdgeRecord
+   */
+  private _parseEdge(wireEdge: WireEdge): EdgeRecord {
+    const meta: Record<string, unknown> = wireEdge.metadata ? JSON.parse(wireEdge.metadata) : {};
+    // Use original string IDs if stored, otherwise use wire IDs
+    const { _origSrc, _origDst, ...rest } = meta;
+    return {
+      src: (_origSrc as string) || wireEdge.src,
+      dst: (_origDst as string) || wireEdge.dst,
+      type: wireEdge.edgeType,
+      metadata: Object.keys(rest).length > 0 ? rest : undefined,
+    };
+  }
+
+  /**
    * Async generator for querying nodes
    */
   async *queryNodes(query: NodeQuery): AsyncGenerator<BaseNodeRecord, void, unknown> {
@@ -508,66 +512,35 @@ export class RFDBServerBackend {
   /**
    * Get all edges
    */
-  async getAllEdges(): Promise<BackendEdge[]> {
+  async getAllEdges(): Promise<EdgeRecord[]> {
     return this.getAllEdgesAsync();
   }
 
   /**
    * Get all edges (async version)
    */
-  async getAllEdgesAsync(): Promise<BackendEdge[]> {
+  async getAllEdgesAsync(): Promise<EdgeRecord[]> {
     if (!this.client) throw new Error('Not connected');
     const edges = await this.client.getAllEdges();
-    return edges.map(e => {
-      const meta = JSON.parse(e.metadata || '{}');
-      // Use original string IDs if stored, otherwise use numeric IDs
-      const { _origSrc, _origDst, ...rest } = meta;
-      return {
-        src: _origSrc || e.src,
-        dst: _origDst || e.dst,
-        type: e.edgeType,
-        edgeType: e.edgeType,
-        ...rest,
-      };
-    });
+    return edges.map(e => this._parseEdge(e));
   }
 
   /**
    * Get outgoing edges from a node
    */
-  async getOutgoingEdges(nodeId: string, edgeTypes: EdgeType[] | null = null): Promise<BackendEdge[]> {
+  async getOutgoingEdges(nodeId: string, edgeTypes: EdgeType[] | null = null): Promise<EdgeRecord[]> {
     if (!this.client) throw new Error('Not connected');
     const edges = await this.client.getOutgoingEdges(nodeId, edgeTypes || undefined);
-    return edges.map(e => {
-      const meta = JSON.parse(e.metadata || '{}');
-      const { _origSrc, _origDst, ...rest } = meta;
-      return {
-        src: _origSrc || e.src,
-        dst: _origDst || e.dst,
-        type: e.edgeType,
-        edgeType: e.edgeType,
-        ...rest,
-      };
-    });
+    return edges.map(e => this._parseEdge(e));
   }
 
   /**
    * Get incoming edges to a node
    */
-  async getIncomingEdges(nodeId: string, edgeTypes: EdgeType[] | null = null): Promise<BackendEdge[]> {
+  async getIncomingEdges(nodeId: string, edgeTypes: EdgeType[] | null = null): Promise<EdgeRecord[]> {
     if (!this.client) throw new Error('Not connected');
     const edges = await this.client.getIncomingEdges(nodeId, edgeTypes || undefined);
-    return edges.map(e => {
-      const meta = JSON.parse(e.metadata || '{}');
-      const { _origSrc, _origDst, ...rest } = meta;
-      return {
-        src: _origSrc || e.src,
-        dst: _origDst || e.dst,
-        type: e.edgeType,
-        edgeType: e.edgeType,
-        ...rest,
-      };
-    });
+    return edges.map(e => this._parseEdge(e));
   }
 
   // ===========================================================================

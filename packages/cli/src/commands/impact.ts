@@ -332,10 +332,8 @@ async function findContainingFunction(
       const edges = await backend.getIncomingEdges(id, null);
 
       for (const edge of edges) {
-        const edgeType = (edge as any).edgeType || (edge as any).type;
-
         // Only follow structural edges
-        if (!['CONTAINS', 'HAS_SCOPE', 'DECLARES'].includes(edgeType)) continue;
+        if (!['CONTAINS', 'HAS_SCOPE', 'DECLARES'].includes(edge.type)) continue;
 
         const parent = await backend.getNode(edge.src);
         if (!parent || visited.has(parent.id)) continue;
