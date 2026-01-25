@@ -16,6 +16,7 @@ import { statsCommand } from './commands/stats.js';
 import { checkCommand } from './commands/check.js';
 import { serverCommand } from './commands/server.js';
 import { coverageCommand } from './commands/coverage.js';
+import { doctorCommand } from './commands/doctor.js';
 
 const program = new Command();
 
@@ -37,5 +38,6 @@ program.addCommand(statsCommand);  // Keep for backwards compat
 program.addCommand(coverageCommand);
 program.addCommand(checkCommand);
 program.addCommand(serverCommand);
+program.addCommand(doctorCommand);
 
 program.parse();
