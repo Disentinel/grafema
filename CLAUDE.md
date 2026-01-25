@@ -272,9 +272,154 @@ Focus on code quality:
 
 When creating issues:
 - Team: **Reginaflow**
+- Project: **Grafema**
 - Format: Markdown
 - Include: goal, acceptance criteria, context
-- Labels: Feature / Improvement / Bug / Research
+
+### Labels (REQUIRED)
+
+**Type labels** (one required):
+- `Bug` — broken functionality
+- `Feature` — new capability
+- `Improvement` — enhancement to existing
+- `Research` — investigation, analysis
+
+**Version labels** (one required):
+- `v0.1.x` — bugs and polish for current release
+- `v0.2` — Early Access prep, Data Flow, Tech Debt
+- `v0.3` — stability, onboarding, infrastructure
+- `v0.5+` — strategic (GUI, Systema, Research)
+
+### Version Assignment Criteria
+
+| Version | Criteria |
+|---------|----------|
+| `v0.1.x` | Blocks current usage, critical bugs, CLI/MCP polish |
+| `v0.2` | Early Access blockers, data flow features, parallelizable tech debt |
+| `v0.3` | Release workflow, onboarding UX, performance optimization |
+| `v0.5+` | GUI visualization, Systema automation, research/articles |
+
+### When Completing Tasks
+
+Linear workflow with worktrees:
+1. Code ready in worktree → **In Review**
+2. After merge to main → **Done**
+3. Remove worktree after merge
+4. If tech debt discovered → create new issue with appropriate version label
+5. If limitation documented → create issue for future fix
+
+Available statuses:
+- **Backlog** / **Todo** → ready to start
+- **In Progress** → working in worktree
+- **In Review** → code ready, waiting for merge
+- **Done** → merged to main, worktree removed
+- **Canceled** / **Duplicate** → cancelled tasks
+
+## Git Worktree Workflow
+
+**CRITICAL: Worker Slots Pattern**
+
+Fixed number of worktree "slots" for parallel work. Each slot runs persistent Claude Code instance.
+
+### Initial Setup (done once)
+
+```bash
+cd /Users/vadimr/grafema
+git worktree add ../grafema-worker-1
+git worktree add ../grafema-worker-2
+...
+git worktree add ../grafema-worker-8
+```
+
+Each worker runs Claude Code in its own terminal. Workers persist across tasks.
+
+### Starting New Task in a Worker
+
+User will tell Claude which task to work on. Claude then:
+
+```bash
+# Pull latest changes
+git fetch origin
+git checkout main
+git pull
+
+# Create task branch
+git checkout -b task/REG-XXX
+```
+
+**IMPORTANT:** Git operations (fetch, checkout, branch creation) are safe and require NO user confirmation.
+
+**After branch created:**
+1. Update Linear → **In Progress**
+2. Save task description to `_tasks/REG-XXX/001-user-request.md`
+
+### Finishing Task
+
+1. Code ready → Linear status → **In Review**
+2. Report: "Ready for Linus review"
+3. User will `/clear` and start next task in same worker
+
+### Merge Process
+
+**CRITICAL: Review and merge is Linus's responsibility.**
+
+Claude Code workflow stops at **In Review**:
+- Code is ready
+- Tests pass
+- Commits are clean
+- Status: In Review
+
+User manually invokes Linus Torvalds agent:
+1. Linus performs high-level review
+2. If approved → Linus merges to main (from main repo)
+3. Linus updates Linear → **Done**
+
+Linus must verify:
+- Did we do the right thing?
+- Does it align with vision?
+- No hacks or shortcuts?
+- Tests actually test what they claim?
+
+After merge, task branch can be deleted (optional cleanup).
+
+### Directory Structure
+
+```
+/Users/vadimr/
+├── grafema/              # Main repo (for Linus merge operations)
+├── grafema-worker-1/     # Worker slot 1 (persistent)
+├── grafema-worker-2/     # Worker slot 2 (persistent)
+...
+├── grafema-worker-8/     # Worker slot 8 (persistent)
+```
+
+### Rules
+
+1. **Never work in main repo** — only in worker slots
+2. **Workers persist across tasks** — no need to recreate
+3. **One worker = one terminal = one CC instance** — stays running
+4. **Task switching within worker:**
+   ```bash
+   # After /clear
+   git checkout main
+   git pull
+   git checkout -b task/REG-YYY
+   ```
+5. **Commit often** — branches are in git, safe even if worker reset
+
+### Managing Workers
+
+Check active workers:
+```bash
+cd /Users/vadimr/grafema
+git worktree list
+```
+
+If worker gets corrupted, recreate it:
+```bash
+git worktree remove ../grafema-worker-N --force
+git worktree add ../grafema-worker-N
+```
 
 ## Commands
 

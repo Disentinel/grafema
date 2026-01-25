@@ -1,6 +1,6 @@
 {
   "name": "@grafema/core",
-  "version": "0.1.0-alpha.5",
+  "version": "0.1.1-alpha",
   "description": "Core analysis engine for Grafema code analysis toolkit",
   "type": "module",
   "main": "./dist/index.js",
