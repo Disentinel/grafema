@@ -5,10 +5,10 @@
  * with computed IDs instead of creating placeholder CLASS nodes.
  *
  * Verifies:
- * 1. DERIVES_FROM edge has dst ID format: {file}:CLASS:{superClass}:0
+ * 1. DERIVES_FROM edge has dst ID format: {file}->global->CLASS->{superClass} (semantic ID)
  * 2. NO placeholder CLASS nodes created for superclasses
- * 3. INSTANCE_OF edge for external class has computed ID
- * 4. Line 0 indicates unknown location (honest about missing data)
+ * 3. INSTANCE_OF edge for external class has computed semantic ID
+ * 4. Semantic IDs are stable across line number changes
  *
  * TDD: Tests written first per Kent Beck's methodology.
  * These tests will FAIL initially - implementation comes after.
@@ -99,24 +99,24 @@ class Admin extends User {
 
       assert.ok(derivesFromEdge, 'DERIVES_FROM edge not found');
 
-      // dst should be computed ID with format: {file}:CLASS:{superClass}:0
+      // dst should be computed semantic ID with format: {file}->global->CLASS->{superClass}
       assert.ok(
-        derivesFromEdge.dst.includes(':CLASS:'),
-        'dst should have :CLASS: format'
+        derivesFromEdge.dst.includes('->CLASS->'),
+        'dst should have ->CLASS-> format (semantic ID)'
       );
       assert.ok(
         derivesFromEdge.dst.includes('User'),
         'dst should reference User class'
       );
       assert.ok(
-        derivesFromEdge.dst.endsWith(':0'),
-        'dst should end with :0 (unknown location)'
+        derivesFromEdge.dst.endsWith('->User'),
+        'dst should end with class name (semantic ID format)'
       );
 
-      // Verify pattern: {path}/index.js:CLASS:User:0
+      // Verify pattern: {path}/index.js->global->CLASS->User
       assert.ok(
-        /index\.js:CLASS:User:0$/.test(derivesFromEdge.dst),
-        `DERIVES_FROM dst should match pattern. Got: ${derivesFromEdge.dst}`
+        /index\.js->global->CLASS->User$/.test(derivesFromEdge.dst),
+        `DERIVES_FROM dst should match semantic ID pattern. Got: ${derivesFromEdge.dst}`
       );
     });
 
@@ -241,16 +241,16 @@ class Derived extends Base {
 
       assert.ok(derivesFromEdge, 'DERIVES_FROM edge should exist');
 
-      // dst should have line 0 (unknown location)
+      // dst should use semantic ID format (no line numbers)
       assert.ok(
-        derivesFromEdge.dst.endsWith(':0'),
-        'dst should use :0 for unknown line'
+        derivesFromEdge.dst.includes('->CLASS->'),
+        'dst should use ->CLASS-> semantic ID format'
       );
 
-      // Verify pattern: {path}/index.js:CLASS:Base:0
+      // Verify pattern: {path}/index.js->global->CLASS->Base
       assert.ok(
-        /index\.js:CLASS:Base:0$/.test(derivesFromEdge.dst),
-        `dst should match pattern. Got: ${derivesFromEdge.dst}`
+        /index\.js->global->CLASS->Base$/.test(derivesFromEdge.dst),
+        `dst should match semantic ID pattern. Got: ${derivesFromEdge.dst}`
       );
     });
   });
@@ -314,18 +314,18 @@ const instance = new ExternalService();
 
       assert.ok(instanceOfEdge, 'INSTANCE_OF edge should exist');
 
-      // dst should be computed ID with line 0
+      // dst should be computed semantic ID
       assert.ok(
-        instanceOfEdge.dst.includes(':CLASS:'),
-        'dst should have :CLASS: format'
+        instanceOfEdge.dst.includes('->CLASS->'),
+        'dst should have ->CLASS-> format (semantic ID)'
       );
       assert.ok(
         instanceOfEdge.dst.includes('ExternalService'),
         'dst should reference ExternalService'
       );
       assert.ok(
-        instanceOfEdge.dst.endsWith(':0'),
-        'dst should end with :0 for unknown location'
+        instanceOfEdge.dst.endsWith('->ExternalService'),
+        'dst should end with class name (semantic ID format)'
       );
     });
 
@@ -343,16 +343,77 @@ const service = new ServiceClass();
 
       assert.ok(instanceOfEdge, 'INSTANCE_OF edge should exist');
 
-      // Computed ID should reference same file (full path ends with index.js)
+      // Computed ID should reference same file (basename in semantic ID)
       assert.ok(
-        instanceOfEdge.dst.includes('index.js:CLASS:'),
+        instanceOfEdge.dst.includes('index.js->'),
         'dst should use same file as instantiation'
       );
 
-      // Verify pattern: {path}/index.js:CLASS:ServiceClass:0
+      // Verify pattern: index.js->global->CLASS->ServiceClass
       assert.ok(
-        /index\.js:CLASS:ServiceClass:0$/.test(instanceOfEdge.dst),
-        `dst should match pattern. Got: ${instanceOfEdge.dst}`
+        /index\.js->global->CLASS->ServiceClass$/.test(instanceOfEdge.dst),
+        `dst should match semantic ID pattern. Got: ${instanceOfEdge.dst}`
+      );
+    });
+  });
+
+  // ===========================================================================
+  // INSTANCE_OF semantic IDs (REG-205)
+  // ===========================================================================
+
+  describe('INSTANCE_OF semantic IDs', () => {
+    it('should create INSTANCE_OF edge with semantic ID for external class', async () => {
+      await setupTest(backend, {
+        'index.js': `
+const service = new ExternalService();
+        `
+      });
+
+      const allEdges = await backend.getAllEdges();
+      const instanceOfEdge = allEdges.find(e => e.type === 'INSTANCE_OF');
+
+      assert.ok(instanceOfEdge, 'INSTANCE_OF edge should exist');
+
+      // SEMANTIC ID format: {file}->global->CLASS->{name}
+      // NOT legacy format: {file}:CLASS:{name}:0
+      assert.ok(
+        instanceOfEdge.dst.includes('->global->CLASS->'),
+        `dst should use semantic ID format with ->global->CLASS->. Got: ${instanceOfEdge.dst}`
+      );
+      assert.ok(
+        instanceOfEdge.dst.includes('ExternalService'),
+        'dst should reference ExternalService'
+      );
+      assert.ok(
+        !instanceOfEdge.dst.includes(':CLASS:'),
+        'dst should NOT use legacy :CLASS: separator'
+      );
+    });
+
+    it('should match actual CLASS node ID when class is defined', async () => {
+      await setupTest(backend, {
+        'index.js': `
+class SocketService {
+  connect() {}
+}
+const service = new SocketService();
+        `
+      });
+
+      const allNodes = await backend.getAllNodes();
+      const allEdges = await backend.getAllEdges();
+
+      const classNode = allNodes.find(n => n.type === 'CLASS' && n.name === 'SocketService');
+      const instanceOfEdge = allEdges.find(e => e.type === 'INSTANCE_OF');
+
+      assert.ok(classNode, 'SocketService CLASS node should exist');
+      assert.ok(instanceOfEdge, 'INSTANCE_OF edge should exist');
+
+      // CRITICAL: Edge destination must match actual CLASS node ID
+      assert.strictEqual(
+        instanceOfEdge.dst,
+        classNode.id,
+        'INSTANCE_OF edge dst should match CLASS node id exactly'
       );
     });
   });
@@ -457,10 +518,10 @@ class Derived extends Base {}
         'dst should NOT use legacy CLASS# format'
       );
 
-      // Should use new format with :CLASS:
+      // Should use semantic ID format with ->CLASS->
       assert.ok(
-        derivesFromEdge.dst.includes(':CLASS:'),
-        'dst should use :CLASS: separator'
+        derivesFromEdge.dst.includes('->CLASS->'),
+        'dst should use ->CLASS-> separator (semantic ID)'
       );
     });
 
@@ -479,16 +540,16 @@ const x = new C();
       assert.ok(derivesFromEdge, 'DERIVES_FROM edge should exist');
       assert.ok(instanceOfEdge, 'INSTANCE_OF edge should exist');
 
-      // Both should use same ID format pattern
-      const dstPattern = /^[^:]+:CLASS:[^:]+:0$/;
+      // Both should use semantic ID format pattern: {file}->global->CLASS->{name}
+      const dstPattern = /^[^->]+->global->CLASS->[^->]+$/;
 
       assert.ok(
         dstPattern.test(derivesFromEdge.dst),
-        `DERIVES_FROM dst should match pattern {file}:CLASS:{name}:0. Got: ${derivesFromEdge.dst}`
+        `DERIVES_FROM dst should match semantic ID pattern {file}->global->CLASS->{name}. Got: ${derivesFromEdge.dst}`
       );
       assert.ok(
         dstPattern.test(instanceOfEdge.dst),
-        `INSTANCE_OF dst should match pattern {file}:CLASS:{name}:0. Got: ${instanceOfEdge.dst}`
+        `INSTANCE_OF dst should match semantic ID pattern {file}->global->CLASS->{name}. Got: ${instanceOfEdge.dst}`
       );
     });
   });
@@ -522,8 +583,8 @@ class Derived extends Middle {}
       );
       assert.ok(middleToBase, 'Middle -> Base edge should exist');
       assert.ok(
-        /index\.js:CLASS:Base:0$/.test(middleToBase.dst),
-        `Middle -> Base dst should match pattern. Got: ${middleToBase.dst}`
+        /index\.js->global->CLASS->Base$/.test(middleToBase.dst),
+        `Middle -> Base dst should match semantic ID pattern. Got: ${middleToBase.dst}`
       );
 
       // Derived -> Middle
@@ -532,8 +593,8 @@ class Derived extends Middle {}
       );
       assert.ok(derivedToMiddle, 'Derived -> Middle edge should exist');
       assert.ok(
-        /index\.js:CLASS:Middle:0$/.test(derivedToMiddle.dst),
-        `Derived -> Middle dst should match pattern. Got: ${derivedToMiddle.dst}`
+        /index\.js->global->CLASS->Middle$/.test(derivedToMiddle.dst),
+        `Derived -> Middle dst should match semantic ID pattern. Got: ${derivedToMiddle.dst}`
       );
     });
 
@@ -557,10 +618,10 @@ const instance = new Service();
       assert.ok(derivesFromEdge, 'DERIVES_FROM edge should exist');
       assert.ok(instanceOfEdge, 'INSTANCE_OF edge should exist');
 
-      // DERIVES_FROM: Service -> Base (computed)
+      // DERIVES_FROM: Service -> Base (computed semantic ID)
       assert.ok(
-        /index\.js:CLASS:Base:0$/.test(derivesFromEdge.dst),
-        `DERIVES_FROM dst should match pattern. Got: ${derivesFromEdge.dst}`
+        /index\.js->global->CLASS->Base$/.test(derivesFromEdge.dst),
+        `DERIVES_FROM dst should match semantic ID pattern. Got: ${derivesFromEdge.dst}`
       );
 
       // INSTANCE_OF: instance -> Service
