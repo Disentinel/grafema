@@ -492,6 +492,11 @@ export interface VariableAssignmentInfo {
   alternateSourceName?: string | null;
   expressionSourceNames?: string[];
   file?: string;
+  // Destructuring support (REG-201)
+  path?: string;               // Full property path string, e.g., "req.headers.contentType"
+  baseName?: string;           // Base object name, e.g., "req"
+  propertyPath?: string[];     // Property path array, e.g., ["headers", "contentType"]
+  arrayIndex?: number;         // Array index for array destructuring, e.g., 0 for first element
 }
 
 // === COUNTER REF ===

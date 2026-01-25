@@ -836,6 +836,121 @@ export class JSASTAnalyzer extends Plugin {
   }
 
   /**
+   * Tracks destructuring assignments for data flow analysis.
+   *
+   * For ObjectPattern: creates EXPRESSION nodes representing source.property
+   * For ArrayPattern: creates EXPRESSION nodes representing source[index]
+   *
+   * Phase 1 limitation: Only handles simple Identifier init expressions.
+   * Complex init (CallExpression, MemberExpression) will be skipped.
+   *
+   * @param pattern - The destructuring pattern (ObjectPattern or ArrayPattern)
+   * @param initNode - The init expression (right-hand side)
+   * @param variables - Extracted variables with propertyPath/arrayIndex metadata and IDs
+   * @param module - Module context
+   * @param variableAssignments - Collection to push assignment info to
+   */
+  private trackDestructuringAssignment(
+    pattern: t.ObjectPattern | t.ArrayPattern,
+    initNode: t.Expression | null | undefined,
+    variables: Array<ExtractedVariable & { id: string }>,
+    module: VisitorModule,
+    variableAssignments: VariableAssignmentInfo[]
+  ): void {
+    if (!initNode) return;
+
+    // Phase 1: Only handle simple Identifier init expressions
+    // Examples: const { x } = obj, const [a] = arr
+    if (!t.isIdentifier(initNode)) {
+      // TODO: Phase 2 - handle CallExpression, MemberExpression, etc.
+      return;
+    }
+
+    const sourceBaseName = initNode.name;
+
+    // Process each extracted variable
+    for (const varInfo of variables) {
+      const variableId = varInfo.id;
+
+      // Handle rest elements specially - create edge to whole source
+      if (varInfo.isRest) {
+        variableAssignments.push({
+          variableId,
+          sourceType: 'VARIABLE',
+          sourceName: sourceBaseName,
+          line: varInfo.loc.start.line
+        });
+        continue;
+      }
+
+      // ObjectPattern: const { headers } = req → headers ASSIGNED_FROM req.headers
+      if (t.isObjectPattern(pattern) && varInfo.propertyPath && varInfo.propertyPath.length > 0) {
+        const propertyPath = varInfo.propertyPath;
+        const expressionLine = varInfo.loc.start.line;
+        const expressionColumn = varInfo.loc.start.column;
+
+        // Build property path string (e.g., "req.headers.contentType" for nested)
+        const fullPath = [sourceBaseName, ...propertyPath].join('.');
+
+        const expressionId = ExpressionNode.generateId(
+          'MemberExpression',
+          module.file,
+          expressionLine,
+          expressionColumn
+        );
+
+        variableAssignments.push({
+          variableId,
+          sourceType: 'EXPRESSION',
+          sourceId: expressionId,
+          expressionType: 'MemberExpression',
+          object: sourceBaseName,
+          property: propertyPath[propertyPath.length - 1], // Last property for simple display
+          computed: false,
+          path: fullPath,
+          objectSourceName: sourceBaseName, // Use objectSourceName for DERIVES_FROM edge creation
+          propertyPath: propertyPath,
+          file: module.file,
+          line: expressionLine,
+          column: expressionColumn
+        });
+      }
+      // ArrayPattern: const [first, second] = arr → first ASSIGNED_FROM arr[0]
+      else if (t.isArrayPattern(pattern) && varInfo.arrayIndex !== undefined) {
+        const arrayIndex = varInfo.arrayIndex;
+        const expressionLine = varInfo.loc.start.line;
+        const expressionColumn = varInfo.loc.start.column;
+
+        // Check if we also have propertyPath (mixed destructuring: { items: [first] } = data)
+        const hasPropertyPath = varInfo.propertyPath && varInfo.propertyPath.length > 0;
+
+        const expressionId = ExpressionNode.generateId(
+          'MemberExpression',
+          module.file,
+          expressionLine,
+          expressionColumn
+        );
+
+        variableAssignments.push({
+          variableId,
+          sourceType: 'EXPRESSION',
+          sourceId: expressionId,
+          expressionType: 'MemberExpression',
+          object: sourceBaseName,
+          property: String(arrayIndex),
+          computed: true,
+          objectSourceName: sourceBaseName, // Use objectSourceName for DERIVES_FROM edge creation
+          arrayIndex: arrayIndex,
+          propertyPath: hasPropertyPath ? varInfo.propertyPath : undefined,
+          file: module.file,
+          line: expressionLine,
+          column: expressionColumn
+        });
+      }
+    }
+  }
+
+  /**
    * Получить все MODULE ноды из графа
    */
   private async getModuleNodes(graph: GraphBackend): Promise<ModuleNode[]> {
@@ -1342,6 +1457,7 @@ export class JSASTAnalyzer extends Plugin {
 
     varNode.declarations.forEach(declarator => {
       const variables = this.extractVariableNamesFromPattern(declarator.id);
+      const variablesWithIds: Array<ExtractedVariable & { id: string }> = [];
 
       variables.forEach(varInfo => {
         const literalValue = declarator.init ? ExpressionEvaluator.extractLiteralValue(declarator.init) : null;
@@ -1357,6 +1473,9 @@ export class JSASTAnalyzer extends Plugin {
         const varId = scopeTracker
           ? computeSemanticId(nodeType, varInfo.name, scopeTracker.getContext())
           : legacyId;
+
+        // Collect variable info with ID for destructuring tracking
+        variablesWithIds.push({ ...varInfo, id: varId });
 
         parentScopeVariables.add({
           name: varInfo.name,
@@ -1401,11 +1520,34 @@ export class JSASTAnalyzer extends Plugin {
             parentScopeId
           });
         }
-
-        if (declarator.init) {
-          this.trackVariableAssignment(declarator.init, varId, varInfo.name, module, varInfo.loc.start.line, literals, variableAssignments, literalCounterRef);
-        }
       });
+
+      // Track assignments after all variables are created
+      if (declarator.init) {
+        if (t.isObjectPattern(declarator.id) || t.isArrayPattern(declarator.id)) {
+          // Destructuring: use specialized tracking
+          this.trackDestructuringAssignment(
+            declarator.id,
+            declarator.init,
+            variablesWithIds,
+            module,
+            variableAssignments
+          );
+        } else {
+          // Simple assignment: use existing tracking
+          const varInfo = variablesWithIds[0];
+          this.trackVariableAssignment(
+            declarator.init,
+            varInfo.id,
+            varInfo.name,
+            module,
+            varInfo.loc.start.line,
+            literals,
+            variableAssignments,
+            literalCounterRef
+          );
+        }
+      }
     });
   }
 
@@ -1479,6 +1621,7 @@ export class JSASTAnalyzer extends Plugin {
 
         varNode.declarations.forEach(declarator => {
           const variables = this.extractVariableNamesFromPattern(declarator.id);
+          const variablesWithIds: Array<ExtractedVariable & { id: string }> = [];
 
           variables.forEach(varInfo => {
             const literalValue = declarator.init ? ExpressionEvaluator.extractLiteralValue(declarator.init) : null;
@@ -1492,6 +1635,9 @@ export class JSASTAnalyzer extends Plugin {
               ? computeSemanticId(nodeType, varInfo.name, scopeTracker.getContext())
               : legacyId;
 
+            // Collect variable info with ID for destructuring tracking
+            variablesWithIds.push({ ...varInfo, id: varId });
+
             variableDeclarations.push({
               id: varId,
               type: nodeType,
@@ -1500,11 +1646,34 @@ export class JSASTAnalyzer extends Plugin {
               line: varInfo.loc.start.line,
               parentScopeId: blockScopeId
             });
-
-            if (declarator.init) {
-              this.trackVariableAssignment(declarator.init, varId, varInfo.name, module, varInfo.loc.start.line, literals, variableAssignments, literalCounterRef);
-            }
           });
+
+          // Track assignments after all variables are created
+          if (declarator.init) {
+            if (t.isObjectPattern(declarator.id) || t.isArrayPattern(declarator.id)) {
+              // Destructuring: use specialized tracking
+              this.trackDestructuringAssignment(
+                declarator.id,
+                declarator.init,
+                variablesWithIds,
+                module,
+                variableAssignments
+              );
+            } else {
+              // Simple assignment: use existing tracking
+              const varInfo = variablesWithIds[0];
+              this.trackVariableAssignment(
+                declarator.init,
+                varInfo.id,
+                varInfo.name,
+                module,
+                varInfo.loc.start.line,
+                literals,
+                variableAssignments,
+                literalCounterRef
+              );
+            }
+          }
         });
       }
     });
