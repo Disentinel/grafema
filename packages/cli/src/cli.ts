@@ -15,6 +15,7 @@ import { exploreCommand } from './commands/explore.js';
 import { statsCommand } from './commands/stats.js';
 import { checkCommand } from './commands/check.js';
 import { serverCommand } from './commands/server.js';
+import { coverageCommand } from './commands/coverage.js';
 
 const program = new Command();
 
@@ -33,6 +34,7 @@ program.addCommand(traceCommand);
 program.addCommand(impactCommand);
 program.addCommand(exploreCommand);
 program.addCommand(statsCommand);  // Keep for backwards compat
+program.addCommand(coverageCommand);
 program.addCommand(checkCommand);
 program.addCommand(serverCommand);
 

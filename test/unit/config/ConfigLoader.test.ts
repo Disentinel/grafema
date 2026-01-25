@@ -157,6 +157,7 @@ describe('ConfigLoader', () => {
       assert.deepStrictEqual(config.plugins.analysis, json.plugins.analysis);
       assert.deepStrictEqual(config.plugins.enrichment, json.plugins.enrichment);
       assert.deepStrictEqual(config.plugins.validation, json.plugins.validation);
+      assert.deepStrictEqual(config.plugins.discovery, [], 'discovery defaults to empty array');
       assert.ok(logger.warnings.some(w => w.includes('deprecated')), 'should warn about deprecated JSON');
       assert.ok(logger.warnings.some(w => w.includes('grafema init --force')), 'should mention migration command');
     });
@@ -436,6 +437,44 @@ plugins:
       assert.ok(logger.warnings[0].includes('Failed to parse config.yaml:'));
       // Error message should be included
       assert.ok(logger.warnings[0].length > 'Failed to parse config.yaml: '.length);
+    });
+  });
+
+  // ===========================================================================
+  // TESTS: Discovery phase
+  // ===========================================================================
+
+  describe('Discovery phase', () => {
+    it('should parse discovery plugins from YAML', () => {
+      const yaml = `plugins:
+  discovery:
+    - WorkspaceDiscovery
+    - MonorepoServiceDiscovery
+  indexing:
+    - JSModuleIndexer
+`;
+      writeFileSync(join(grafemaDir, 'config.yaml'), yaml);
+
+      const config = loadConfig(testDir);
+
+      assert.deepStrictEqual(config.plugins.discovery, ['WorkspaceDiscovery', 'MonorepoServiceDiscovery']);
+    });
+
+    it('should use empty array as default for discovery', () => {
+      const yaml = `plugins:
+  indexing:
+    - JSModuleIndexer
+`;
+      writeFileSync(join(grafemaDir, 'config.yaml'), yaml);
+
+      const config = loadConfig(testDir);
+
+      assert.deepStrictEqual(config.plugins.discovery, []);
+    });
+
+    it('DEFAULT_CONFIG should have discovery field', () => {
+      assert.ok(Array.isArray(DEFAULT_CONFIG.plugins.discovery));
+      assert.deepStrictEqual(DEFAULT_CONFIG.plugins.discovery, []);
     });
   });
 
