@@ -189,6 +189,7 @@ export { PrefixEvaluator } from './plugins/enrichment/PrefixEvaluator.js';
 export { InstanceOfResolver } from './plugins/enrichment/InstanceOfResolver.js';
 export { HTTPConnectionEnricher } from './plugins/enrichment/HTTPConnectionEnricher.js';
 export { ImportExportLinker } from './plugins/enrichment/ImportExportLinker.js';
+export { FunctionCallResolver } from './plugins/enrichment/FunctionCallResolver.js';
 export { RustFFIEnricher } from './plugins/enrichment/RustFFIEnricher.js';
 
 // Validation plugins

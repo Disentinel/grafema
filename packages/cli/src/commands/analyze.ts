@@ -38,6 +38,7 @@ import {
   PrefixEvaluator,
   InstanceOfResolver,
   ImportExportLinker,
+  FunctionCallResolver,
   HTTPConnectionEnricher,
   RustFFIEnricher,
   // Validation
@@ -76,6 +77,7 @@ const BUILTIN_PLUGINS: Record<string, () => Plugin> = {
   PrefixEvaluator: () => new PrefixEvaluator() as Plugin,
   InstanceOfResolver: () => new InstanceOfResolver() as Plugin,
   ImportExportLinker: () => new ImportExportLinker() as Plugin,
+  FunctionCallResolver: () => new FunctionCallResolver() as Plugin,
   HTTPConnectionEnricher: () => new HTTPConnectionEnricher() as Plugin,
   RustFFIEnricher: () => new RustFFIEnricher() as Plugin,
   // Validation
