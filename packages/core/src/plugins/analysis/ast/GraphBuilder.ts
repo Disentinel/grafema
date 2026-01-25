@@ -38,6 +38,7 @@ import type {
   ArrayMutationInfo,
   ObjectMutationInfo,
   ObjectLiteralInfo,
+  ObjectPropertyInfo,
   ArrayLiteralInfo,
   ASTCollections,
   GraphNode,
@@ -128,6 +129,7 @@ export class GraphBuilder {
       objectMutations = [],
       // Object/Array literal tracking
       objectLiterals = [],
+      objectProperties = [],
       arrayLiterals = []
     } = data;
 
@@ -236,6 +238,9 @@ export class GraphBuilder {
 
     // 18.6. Buffer ARRAY_LITERAL nodes (moved before bufferArgumentEdges)
     this.bufferArrayLiteralNodes(arrayLiterals);
+
+    // 18.7. Buffer HAS_PROPERTY edges (OBJECT_LITERAL -> property values)
+    this.bufferObjectPropertyEdges(objectProperties);
 
     // 19. Buffer ASSIGNED_FROM edges for data flow (some need to create EXPRESSION nodes)
     this.bufferAssignmentEdges(variableAssignments, variableDeclarations, callSites, methodCalls, functions, classInstantiations, parameters);
@@ -1548,6 +1553,24 @@ export class GraphBuilder {
         parentCallId: arr.parentCallId,
         argIndex: arr.argIndex
       } as GraphNode);
+    }
+  }
+
+  /**
+   * Buffer HAS_PROPERTY edges connecting OBJECT_LITERAL nodes to their property values.
+   * Creates edges from object literal to its property value nodes (LITERAL, nested OBJECT_LITERAL, ARRAY_LITERAL, etc.)
+   */
+  private bufferObjectPropertyEdges(objectProperties: ObjectPropertyInfo[]): void {
+    for (const prop of objectProperties) {
+      // Only create edge if we have a destination node ID
+      if (prop.valueNodeId) {
+        this._bufferEdge({
+          type: 'HAS_PROPERTY',
+          src: prop.objectId,
+          dst: prop.valueNodeId,
+          propertyName: prop.propertyName
+        });
+      }
     }
   }
 
