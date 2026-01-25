@@ -16,6 +16,7 @@ import { JSASTAnalyzer } from '@grafema/core';
 import { InstanceOfResolver } from '@grafema/core';
 import { FetchAnalyzer } from '@grafema/core';
 import { ImportExportLinker } from '@grafema/core';
+import { NodejsBuiltinsResolver } from '@grafema/core';
 
 /**
  * Создать Orchestrator для тестов
@@ -45,6 +46,7 @@ export function createTestOrchestrator(backend, options = {}) {
     plugins.push(new InstanceOfResolver());
     plugins.push(new FetchAnalyzer());
     plugins.push(new ImportExportLinker());
+    plugins.push(new NodejsBuiltinsResolver());
   }
 
   // Дополнительные плагины
