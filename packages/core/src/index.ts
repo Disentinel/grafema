@@ -73,6 +73,8 @@ export { ASTWorkerPool, type ModuleInfo as ASTModuleInfo, type ParseResult, type
 export { GuaranteeManager } from './core/GuaranteeManager.js';
 export type { GuaranteeGraph } from './core/GuaranteeManager.js';
 export { clearFileNodesIfNeeded, clearServiceNodeIfExists } from './core/FileNodeManager.js';
+export { CoverageAnalyzer } from './core/CoverageAnalyzer.js';
+export type { CoverageResult } from './core/CoverageAnalyzer.js';
 
 // Hash utilities
 export { calculateFileHash, calculateFileHashAsync, calculateContentHash } from './core/HashUtils.js';
@@ -163,7 +165,6 @@ export type { NodeLocation } from './plugins/analysis/ast/utils/location.js';
 export { JSModuleIndexer } from './plugins/indexing/JSModuleIndexer.js';
 export { IncrementalModuleIndexer } from './plugins/indexing/IncrementalModuleIndexer.js';
 export { RustModuleIndexer } from './plugins/indexing/RustModuleIndexer.js';
-export { ServiceDetector } from './plugins/indexing/ServiceDetector.js';
 
 // Analysis plugins
 export { JSASTAnalyzer } from './plugins/analysis/JSASTAnalyzer.js';

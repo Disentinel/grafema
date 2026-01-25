@@ -148,7 +148,7 @@ async function findVariables(
   // Search VARIABLE, CONSTANT, PARAMETER
   for (const nodeType of ['VARIABLE', 'CONSTANT', 'PARAMETER']) {
     for await (const node of backend.queryNodes({ nodeType: nodeType as any })) {
-      const name = (node as any).name || '';
+      const name = node.name || '';
       if (name.toLowerCase() === varName.toLowerCase()) {
         // If scope specified, check if variable is in that scope
         if (scopeName) {
@@ -163,10 +163,10 @@ async function findVariables(
 
         results.push({
           id: node.id,
-          type: (node as any).type || nodeType,
+          type: node.type || nodeType,
           name: name,
-          file: (node as any).file || '',
-          line: (node as any).line,
+          file: node.file || '',
+          line: node.line,
         });
 
         if (results.length >= 5) break;
@@ -205,11 +205,11 @@ async function traceBackward(
 
         const nodeInfo: NodeInfo = {
           id: targetNode.id,
-          type: (targetNode as any).type || (targetNode as any).nodeType || 'UNKNOWN',
-          name: (targetNode as any).name || '',
-          file: (targetNode as any).file || '',
-          line: (targetNode as any).line,
-          value: (targetNode as any).value,
+          type: targetNode.type || 'UNKNOWN',
+          name: targetNode.name || '',
+          file: targetNode.file || '',
+          line: targetNode.line,
+          value: targetNode.value,
         };
 
         trace.push({
@@ -260,10 +260,10 @@ async function traceForward(
 
         const nodeInfo: NodeInfo = {
           id: sourceNode.id,
-          type: (sourceNode as any).type || (sourceNode as any).nodeType || 'UNKNOWN',
-          name: (sourceNode as any).name || '',
-          file: (sourceNode as any).file || '',
-          line: (sourceNode as any).line,
+          type: sourceNode.type || 'UNKNOWN',
+          name: sourceNode.name || '',
+          file: sourceNode.file || '',
+          line: sourceNode.line,
         };
 
         trace.push({
@@ -302,11 +302,11 @@ async function getValueSources(
       if (node) {
         sources.push({
           id: node.id,
-          type: (node as any).type || (node as any).nodeType || 'UNKNOWN',
-          name: (node as any).name || '',
-          file: (node as any).file || '',
-          line: (node as any).line,
-          value: (node as any).value,
+          type: node.type || 'UNKNOWN',
+          name: node.name || '',
+          file: node.file || '',
+          line: node.line,
+          value: node.value,
         });
       }
     }
