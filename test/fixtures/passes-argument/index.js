@@ -53,6 +53,11 @@ const user = { name: 'John', age: 30 };
 processObject(user);
 processObject({ inline: true });
 
+function processArray(arr) {
+  return arr.length;
+}
+processArray([1, 2, 3]);
+
 // 8. Spread argument
 function sum(...numbers) {
   return numbers.reduce((a, b) => a + b, 0);

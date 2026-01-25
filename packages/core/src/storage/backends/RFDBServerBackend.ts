@@ -23,6 +23,7 @@ import { existsSync, unlinkSync } from 'fs';
 import { spawn, type ChildProcess } from 'child_process';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { createRequire } from 'module';
 import { setTimeout as sleep } from 'timers/promises';
 
 import type { WireNode, WireEdge } from '@grafema/types';
@@ -171,6 +172,7 @@ export class RFDBServerBackend {
   private _findServerBinary(): string | null {
     // 1. Check @grafema/rfdb npm package
     try {
+      const require = createRequire(import.meta.url);
       const rfdbPkg = require.resolve('@grafema/rfdb');
       const rfdbDir = dirname(rfdbPkg);
       const platform = process.platform;
