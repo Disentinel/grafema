@@ -22,6 +22,10 @@ interface IndexerManifest {
     id: string;
     name: string;
     path: string;
+    metadata?: {
+      entrypoint?: string;
+      [key: string]: unknown;
+    };
   };
 }
 
@@ -226,8 +230,8 @@ export class JSModuleIndexer extends Plugin {
         this.markTestFiles = false;
       }
 
-      const entrypoint = service.path;
-      // const pkgPath = join(projectPath, 'pkg');
+      // Use metadata.entrypoint if available (from config services), otherwise fall back to path
+      const entrypoint = service.metadata?.entrypoint || service.path;
 
       // Резолвим entrypoint относительно projectPath
       const absoluteEntrypoint = entrypoint.startsWith('/')
