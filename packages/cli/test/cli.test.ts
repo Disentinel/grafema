@@ -131,6 +131,83 @@ module.exports = { hello };
       assert.ok(stderr.includes('No database found'));
     });
   });
+
+  describe('init', () => {
+    const initTestDir = join(fixturesDir, 'init-test');
+
+    before(() => {
+      if (existsSync(initTestDir)) {
+        rmSync(initTestDir, { recursive: true });
+      }
+      mkdirSync(initTestDir, { recursive: true });
+      writeFileSync(join(initTestDir, 'package.json'), '{"name":"init-test"}');
+    });
+
+    after(() => {
+      if (existsSync(initTestDir)) {
+        rmSync(initTestDir, { recursive: true });
+      }
+    });
+
+    function runInitCli(args: string[]): Promise<{ stdout: string; stderr: string; code: number | null }> {
+      return new Promise((resolve, reject) => {
+        const proc = spawn('node', [cliPath, ...args], {
+          cwd: initTestDir,
+          env: { ...process.env, NO_COLOR: '1' },
+        });
+        let stdout = '';
+        let stderr = '';
+        proc.stdout.on('data', (data) => { stdout += data.toString(); });
+        proc.stderr.on('data', (data) => { stderr += data.toString(); });
+        proc.on('error', reject);
+        proc.on('close', (code) => resolve({ stdout, stderr, code }));
+      });
+    }
+
+    it('should show init help with --yes flag', async () => {
+      const { stdout, code } = await runInitCli(['init', '--help']);
+      assert.strictEqual(code, 0);
+      assert.ok(stdout.includes('Initialize Grafema'), 'help should describe init');
+      assert.ok(stdout.includes('-y, --yes'), 'help should show --yes flag');
+    });
+
+    it('should show next steps after init', async () => {
+      // Clean up from previous run
+      if (existsSync(join(initTestDir, '.grafema'))) {
+        rmSync(join(initTestDir, '.grafema'), { recursive: true });
+      }
+
+      const { stdout, code } = await runInitCli(['init', '--yes']);
+      assert.strictEqual(code, 0);
+      assert.ok(stdout.includes('Created .grafema/config.yaml'), 'should confirm config creation');
+      assert.ok(stdout.includes('Next steps:'), 'should show next steps header');
+      assert.ok(stdout.includes('Review config:'), 'should show review config step');
+      assert.ok(stdout.includes('Build graph:'), 'should show build graph step');
+      assert.ok(stdout.includes('grafema analyze'), 'should mention analyze command');
+      assert.ok(stdout.includes('grafema overview'), 'should mention overview command');
+    });
+
+    it('should show next steps when already initialized', async () => {
+      // Run init again without --force
+      const { stdout, code } = await runInitCli(['init', '--yes']);
+      assert.strictEqual(code, 0);
+      assert.ok(stdout.includes('already initialized'), 'should indicate already initialized');
+      assert.ok(stdout.includes('Next steps:'), 'should still show next steps');
+      assert.ok(stdout.includes('grafema analyze'), 'should still mention analyze');
+    });
+
+    it('should skip prompt with --yes flag (non-interactive mode)', async () => {
+      // Clean up for fresh init
+      if (existsSync(join(initTestDir, '.grafema'))) {
+        rmSync(join(initTestDir, '.grafema'), { recursive: true });
+      }
+
+      const { stdout, code } = await runInitCli(['init', '--yes']);
+      assert.strictEqual(code, 0);
+      // If prompt was shown, process would hang. Success means prompt was skipped.
+      assert.ok(!stdout.includes('Run analysis now?'), 'should not show prompt with --yes');
+    });
+  });
 });
 
 /**
