@@ -298,26 +298,25 @@ module.exports = { app, postMessage, getMessage };
       assert.strictEqual(result.status, 0, `query failed: ${result.stderr}`);
 
       // Parse JSON output to verify only GET routes are returned
-      try {
-        const jsonStart = result.stdout.indexOf('[');
-        const jsonEnd = result.stdout.lastIndexOf(']');
+      const jsonStart = result.stdout.indexOf('[');
+      const jsonEnd = result.stdout.lastIndexOf(']');
 
-        if (jsonStart !== -1 && jsonEnd > jsonStart) {
-          const parsed = JSON.parse(result.stdout.slice(jsonStart, jsonEnd + 1));
+      if (jsonStart === -1 || jsonEnd <= jsonStart) {
+        assert.fail(`Should have JSON array output. Got: ${result.stdout}`);
+      }
 
-          // If we have results, verify they are all GET
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            const hasPost = parsed.some((r: { method?: string }) =>
-              r.method?.toUpperCase() === 'POST'
-            );
-            assert.ok(
-              !hasPost,
-              'Should NOT include POST routes when searching for GET'
-            );
-          }
-        }
-      } catch {
-        // If JSON parsing fails, feature may not be implemented yet - that's expected
+      const parsed = JSON.parse(result.stdout.slice(jsonStart, jsonEnd + 1));
+      assert.ok(Array.isArray(parsed), 'Should be valid JSON array');
+
+      // If we have results, verify they are all GET
+      if (parsed.length > 0) {
+        const hasPost = parsed.some((r: { method?: string }) =>
+          r.method?.toUpperCase() === 'POST'
+        );
+        assert.ok(
+          !hasPost,
+          'Should NOT include POST routes when searching for GET'
+        );
       }
     });
   });
@@ -463,27 +462,27 @@ module.exports = { app, postMessage, getMessage };
         `Should NOT match postMessage function when searching for POST routes. Got: ${output}`
       );
 
-      // Should find actual POST routes if any exist
-      if (output.includes('[')) {
-        try {
-          const jsonStart = output.indexOf('[');
-          const jsonEnd = output.lastIndexOf(']');
-          const parsed = JSON.parse(output.slice(jsonStart, jsonEnd + 1));
+      // Parse JSON output to verify no functions matched
+      const jsonStart = output.indexOf('[');
+      const jsonEnd = output.lastIndexOf(']');
 
-          // Verify none of the results are the postMessage function
-          if (Array.isArray(parsed)) {
-            const hasPostMessageFunc = parsed.some(
-              (r: { name?: string; type?: string }) =>
-                r.name === 'postMessage' && r.type === 'FUNCTION'
-            );
-            assert.ok(
-              !hasPostMessageFunc,
-              'Results should not include postMessage function'
-            );
-          }
-        } catch {
-          // JSON parsing may fail if feature not implemented - that's OK
-        }
+      if (jsonStart === -1 || jsonEnd <= jsonStart) {
+        assert.fail(`Should have JSON array output. Got: ${output}`);
+      }
+
+      const parsed = JSON.parse(output.slice(jsonStart, jsonEnd + 1));
+      assert.ok(Array.isArray(parsed), 'Should be valid JSON array');
+
+      // Verify none of the results are the postMessage function
+      if (parsed.length > 0) {
+        const hasPostMessageFunc = parsed.some(
+          (r: { name?: string; type?: string }) =>
+            r.name === 'postMessage' && r.type === 'FUNCTION'
+        );
+        assert.ok(
+          !hasPostMessageFunc,
+          'Results should not include postMessage function'
+        );
       }
     });
 
