@@ -5,32 +5,42 @@
  *   grafema schema export --interface ConfigSchema
  *   grafema schema export --interface ConfigSchema --format yaml
  *   grafema schema export --interface ConfigSchema --file src/config/types.ts
- *   grafema schema export --interface ConfigSchema -o schema.json
+ *   grafema schema export --graph
+ *   grafema schema export --graph --format yaml
  */
 
 import { Command } from 'commander';
 import { resolve, join, relative } from 'path';
 import { existsSync, writeFileSync } from 'fs';
-import { RFDBServerBackend, InterfaceSchemaExtractor, type InterfaceSchema } from '@grafema/core';
+import {
+  RFDBServerBackend,
+  InterfaceSchemaExtractor,
+  GraphSchemaExtractor,
+  type InterfaceSchema,
+  type GraphSchema,
+  type NodeTypeSchema,
+  type EdgeTypeSchema,
+} from '@grafema/core';
 import { exitWithError } from '../utils/errorFormatter.js';
 
 interface ExportOptions {
   project: string;
-  interface: string;
+  interface?: string;
+  graph?: boolean;
   file?: string;
   format: 'json' | 'yaml' | 'markdown';
   output?: string;
 }
 
 // ============================================================================
-// Formatters
+// Interface Schema Formatters
 // ============================================================================
 
-function formatJson(schema: InterfaceSchema): string {
+function formatInterfaceJson(schema: InterfaceSchema): string {
   return JSON.stringify(schema, null, 2);
 }
 
-function formatYaml(schema: InterfaceSchema): string {
+function formatInterfaceYaml(schema: InterfaceSchema): string {
   const lines: string[] = [];
 
   lines.push(`$schema: ${schema.$schema}`);
@@ -69,7 +79,7 @@ function formatYaml(schema: InterfaceSchema): string {
   return lines.join('\n');
 }
 
-function formatMarkdown(schema: InterfaceSchema, projectPath: string): string {
+function formatInterfaceMarkdown(schema: InterfaceSchema, projectPath: string): string {
   const lines: string[] = [];
   const relPath = relative(projectPath, schema.source.file);
 
@@ -117,17 +127,130 @@ function hasMethodProperties(schema: InterfaceSchema): boolean {
 }
 
 // ============================================================================
+// Graph Schema Formatters
+// ============================================================================
+
+function formatGraphJson(schema: GraphSchema): string {
+  return JSON.stringify(schema, null, 2);
+}
+
+function formatGraphYaml(schema: GraphSchema): string {
+  const lines: string[] = [];
+
+  lines.push(`$schema: ${schema.$schema}`);
+  lines.push(`extractedAt: ${schema.extractedAt}`);
+  lines.push('');
+
+  lines.push('statistics:');
+  lines.push(`  totalNodes: ${schema.statistics.totalNodes}`);
+  lines.push(`  totalEdges: ${schema.statistics.totalEdges}`);
+  lines.push(`  nodeTypeCount: ${schema.statistics.nodeTypeCount}`);
+  lines.push(`  edgeTypeCount: ${schema.statistics.edgeTypeCount}`);
+  lines.push('');
+
+  lines.push('nodeTypes:');
+  for (const [type, info] of Object.entries(schema.nodeTypes) as [string, NodeTypeSchema][]) {
+    if (info.count > 0) {
+      lines.push(`  ${type}:`);
+      lines.push(`    category: ${info.category}`);
+      if (info.namespace) {
+        lines.push(`    namespace: ${info.namespace}`);
+      }
+      lines.push(`    count: ${info.count}`);
+    }
+  }
+  lines.push('');
+
+  lines.push('edgeTypes:');
+  for (const [type, info] of Object.entries(schema.edgeTypes) as [string, EdgeTypeSchema][]) {
+    if (info.count > 0) {
+      lines.push(`  ${type}:`);
+      lines.push(`    count: ${info.count}`);
+    }
+  }
+  lines.push('');
+
+  lines.push(`checksum: ${schema.checksum}`);
+
+  return lines.join('\n');
+}
+
+function formatGraphMarkdown(schema: GraphSchema): string {
+  const lines: string[] = [];
+
+  lines.push('# Graph Schema');
+  lines.push('');
+  lines.push(`**Extracted:** ${schema.extractedAt}`);
+  lines.push('');
+
+  lines.push('## Statistics');
+  lines.push('');
+  lines.push(`- Total Nodes: ${schema.statistics.totalNodes}`);
+  lines.push(`- Total Edges: ${schema.statistics.totalEdges}`);
+  lines.push(`- Node Types: ${schema.statistics.nodeTypeCount}`);
+  lines.push(`- Edge Types: ${schema.statistics.edgeTypeCount}`);
+  lines.push('');
+
+  lines.push('## Node Types');
+  lines.push('');
+  lines.push('| Type | Category | Count |');
+  lines.push('|------|----------|-------|');
+
+  for (const [type, info] of Object.entries(schema.nodeTypes) as [string, NodeTypeSchema][]) {
+    if (info.count > 0) {
+      const cat = info.namespace ? `${info.category} (${info.namespace})` : info.category;
+      lines.push(`| \`${type}\` | ${cat} | ${info.count} |`);
+    }
+  }
+  lines.push('');
+
+  lines.push('## Edge Types');
+  lines.push('');
+  lines.push('| Type | Count |');
+  lines.push('|------|-------|');
+
+  for (const [type, info] of Object.entries(schema.edgeTypes) as [string, EdgeTypeSchema][]) {
+    if (info.count > 0) {
+      lines.push(`| \`${type}\` | ${info.count} |`);
+    }
+  }
+  lines.push('');
+
+  lines.push('---');
+  lines.push('');
+  lines.push(`*Checksum: \`${schema.checksum}\`*`);
+
+  return lines.join('\n');
+}
+
+// ============================================================================
 // Command
 // ============================================================================
 
 const exportSubcommand = new Command('export')
-  .description('Export interface schema')
-  .requiredOption('--interface <name>', 'Interface name to export (required)')
+  .description('Export interface or graph schema')
+  .option('--interface <name>', 'Interface name to export')
+  .option('--graph', 'Export graph node/edge type schema')
   .option('--file <path>', 'File path filter (for multiple interfaces with same name)')
   .option('-f, --format <type>', 'Output format: json, yaml, markdown', 'json')
   .option('-p, --project <path>', 'Project path', '.')
   .option('-o, --output <file>', 'Output file (default: stdout)')
   .action(async (options: ExportOptions) => {
+    // Validate: must have either --interface or --graph
+    if (!options.interface && !options.graph) {
+      exitWithError('Must specify either --interface <name> or --graph', [
+        'Examples:',
+        '  grafema schema export --interface ConfigSchema',
+        '  grafema schema export --graph',
+      ]);
+    }
+
+    if (options.interface && options.graph) {
+      exitWithError('Cannot specify both --interface and --graph', [
+        'Use one at a time.',
+      ]);
+    }
+
     const projectPath = resolve(options.project);
     const grafemaDir = join(projectPath, '.grafema');
     const dbPath = join(grafemaDir, 'graph.rfdb');
@@ -140,48 +263,71 @@ const exportSubcommand = new Command('export')
     await backend.connect();
 
     try {
-      const extractor = new InterfaceSchemaExtractor(backend);
+      if (options.graph) {
+        // Graph schema export
+        const extractor = new GraphSchemaExtractor(backend);
+        const schema = await extractor.extract();
 
-      const schema = await extractor.extract(options.interface, {
-        file: options.file
-      });
+        let output: string;
+        switch (options.format) {
+          case 'yaml':
+            output = formatGraphYaml(schema);
+            break;
+          case 'markdown':
+            output = formatGraphMarkdown(schema);
+            break;
+          case 'json':
+          default:
+            output = formatGraphJson(schema);
+        }
 
-      if (!schema) {
-        exitWithError(`Interface not found: ${options.interface}`, [
-          'Use "grafema query interface <name>" to search'
-        ]);
-      }
-
-      // Phase 1 limitation warning for methods
-      if (hasMethodProperties(schema)) {
-        console.warn(
-          'Note: Method signatures are shown as "function" type. ' +
-          'Full signatures planned for v2.'
-        );
-      }
-
-      // Format output
-      let output: string;
-      switch (options.format) {
-        case 'yaml':
-          output = formatYaml(schema);
-          break;
-        case 'markdown':
-          output = formatMarkdown(schema, projectPath);
-          break;
-        case 'json':
-        default:
-          output = formatJson(schema);
-      }
-
-      // Write or print
-      if (options.output) {
-        writeFileSync(resolve(options.output), output + '\n');
-        console.log(`Schema written to ${options.output}`);
+        if (options.output) {
+          writeFileSync(resolve(options.output), output + '\n');
+          console.log(`Graph schema written to ${options.output}`);
+        } else {
+          console.log(output);
+        }
       } else {
-        console.log(output);
-      }
+        // Interface schema export
+        const extractor = new InterfaceSchemaExtractor(backend);
+        const schema = await extractor.extract(options.interface!, {
+          file: options.file,
+        });
 
+        if (!schema) {
+          exitWithError(`Interface not found: ${options.interface}`, [
+            'Use "grafema query interface <name>" to search',
+          ]);
+        }
+
+        // Phase 1 limitation warning for methods
+        if (hasMethodProperties(schema)) {
+          console.warn(
+            'Note: Method signatures are shown as "function" type. ' +
+              'Full signatures planned for v2.'
+          );
+        }
+
+        let output: string;
+        switch (options.format) {
+          case 'yaml':
+            output = formatInterfaceYaml(schema);
+            break;
+          case 'markdown':
+            output = formatInterfaceMarkdown(schema, projectPath);
+            break;
+          case 'json':
+          default:
+            output = formatInterfaceJson(schema);
+        }
+
+        if (options.output) {
+          writeFileSync(resolve(options.output), output + '\n');
+          console.log(`Schema written to ${options.output}`);
+        } else {
+          console.log(output);
+        }
+      }
     } catch (error) {
       if (error instanceof Error) {
         exitWithError(error.message);
