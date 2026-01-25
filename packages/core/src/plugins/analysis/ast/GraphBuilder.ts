@@ -214,6 +214,12 @@ export class GraphBuilder {
     // 18. Buffer LITERAL nodes
     this.bufferLiterals(literals);
 
+    // 18.5. Buffer OBJECT_LITERAL nodes (moved before bufferArgumentEdges)
+    this.bufferObjectLiteralNodes(objectLiterals);
+
+    // 18.6. Buffer ARRAY_LITERAL nodes (moved before bufferArgumentEdges)
+    this.bufferArrayLiteralNodes(arrayLiterals);
+
     // 19. Buffer ASSIGNED_FROM edges for data flow (some need to create EXPRESSION nodes)
     this.bufferAssignmentEdges(variableAssignments, variableDeclarations, callSites, methodCalls, functions, classInstantiations, parameters);
 
@@ -241,12 +247,6 @@ export class GraphBuilder {
     // 27. Buffer FLOWS_INTO edges for object mutations (property assignment, Object.assign)
     // REG-152: Now includes classDeclarations for this.prop = value patterns
     this.bufferObjectMutationEdges(objectMutations, variableDeclarations, parameters, functions, classDeclarations);
-
-    // 28. Buffer OBJECT_LITERAL nodes
-    this.bufferObjectLiteralNodes(objectLiterals);
-
-    // 29. Buffer ARRAY_LITERAL nodes
-    this.bufferArrayLiteralNodes(arrayLiterals);
 
     // FLUSH: Write all nodes first, then edges in single batch calls
     const nodesCreated = await this._flushNodes(graph);
@@ -1040,6 +1040,12 @@ export class GraphBuilder {
         if (nestedCall) {
           targetNodeId = nestedCall.id;
         }
+      }
+      else if (targetType === 'LITERAL' ||
+               targetType === 'OBJECT_LITERAL' ||
+               targetType === 'ARRAY_LITERAL') {
+        // targetId is already set by CallExpressionVisitor
+        targetNodeId = targetId;
       }
 
       if (targetNodeId) {
