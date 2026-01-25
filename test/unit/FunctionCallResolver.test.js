@@ -558,21 +558,18 @@ describe('FunctionCallResolver', () => {
   });
 
   // ============================================================================
-  // RE-EXPORTS (Skip Complex Cases for v1)
+  // RE-EXPORT CHAIN RESOLUTION
   // ============================================================================
 
-  describe('Re-exports (skip for v1)', () => {
-    it('should skip re-export chains for v1', async () => {
+  describe('Re-export chain resolution', () => {
+    it('should resolve single-hop re-export chain', async () => {
       const { backend } = await setupBackend();
 
       try {
         const resolver = new FunctionCallResolver();
 
-        // Setup: export { foo } from './other';
-        // This is a re-export - EXPORT node has 'source' field
-
         await backend.addNodes([
-          // The actual function is in other.js
+          // Function in other.js
           {
             id: 'other-foo-func',
             type: 'FUNCTION',
@@ -580,12 +577,22 @@ describe('FunctionCallResolver', () => {
             file: '/project/other.js',
             line: 1
           },
-          // Re-export in utils.js (export { foo } from './other')
+          // Export in other.js (local export)
           {
-            id: 'utils-reexport-foo',
+            id: 'other-export-foo',
             type: 'EXPORT',
             name: 'foo',
-            file: '/project/utils.js',
+            file: '/project/other.js',
+            line: 1,
+            exportType: 'named',
+            local: 'foo'
+          },
+          // Re-export in index.js (barrel file)
+          {
+            id: 'index-reexport-foo',
+            type: 'EXPORT',
+            name: 'foo',
+            file: '/project/index.js',
             line: 1,
             exportType: 'named',
             local: 'foo',
@@ -598,7 +605,7 @@ describe('FunctionCallResolver', () => {
             name: 'foo',
             file: '/project/main.js',
             line: 1,
-            source: './utils',
+            source: './index',
             importType: 'named',
             imported: 'foo',
             local: 'foo'
@@ -613,23 +620,339 @@ describe('FunctionCallResolver', () => {
           }
         ]);
 
-        // IMPORT -> IMPORTS_FROM -> re-exporting EXPORT
+        // Pre-existing edge from ImportExportLinker
         await backend.addEdge({
           type: 'IMPORTS_FROM',
           src: 'main-import-foo',
-          dst: 'utils-reexport-foo'
+          dst: 'index-reexport-foo'
         });
 
         await backend.flush();
 
         const result = await resolver.execute({ graph: backend });
 
-        // For v1, we skip re-exports (EXPORT with source field)
+        // Should create CALLS edge through re-export chain
+        const edges = await backend.getOutgoingEdges('main-call-foo', ['CALLS']);
+        assert.strictEqual(edges.length, 1, 'Should create one CALLS edge');
+        assert.strictEqual(edges[0].dst, 'other-foo-func',
+          'Should resolve through re-export to actual function');
+
+        assert.strictEqual(result.success, true);
+        assert.strictEqual(result.created.edges, 1);
+        assert.strictEqual(result.metadata.reExportsResolved, 1,
+          'Should report 1 re-export resolved');
+
+        console.log('Single-hop re-export chain resolution works');
+      } finally {
+        await backend.close();
+      }
+    });
+
+    it('should resolve multi-hop re-export chain (2 hops)', async () => {
+      const { backend } = await setupBackend();
+
+      try {
+        const resolver = new FunctionCallResolver();
+
+        await backend.addNodes([
+          // Actual function in impl.js
+          {
+            id: 'impl-helper-func',
+            type: 'FUNCTION',
+            name: 'helper',
+            file: '/project/impl.js',
+            line: 1
+          },
+          // Export in impl.js
+          {
+            id: 'impl-export-helper',
+            type: 'EXPORT',
+            name: 'helper',
+            file: '/project/impl.js',
+            exportType: 'named',
+            local: 'helper'
+          },
+          // Re-export in internal.js (hop 1)
+          {
+            id: 'internal-reexport-helper',
+            type: 'EXPORT',
+            name: 'helper',
+            file: '/project/internal.js',
+            exportType: 'named',
+            local: 'helper',
+            source: './impl'
+          },
+          // Re-export in index.js (hop 2)
+          {
+            id: 'index-reexport-helper',
+            type: 'EXPORT',
+            name: 'helper',
+            file: '/project/index.js',
+            exportType: 'named',
+            local: 'helper',
+            source: './internal'
+          },
+          // Import in app.js
+          {
+            id: 'app-import-helper',
+            type: 'IMPORT',
+            name: 'helper',
+            file: '/project/app.js',
+            source: './index',
+            importType: 'named',
+            imported: 'helper',
+            local: 'helper'
+          },
+          // Call in app.js
+          {
+            id: 'app-call-helper',
+            type: 'CALL',
+            name: 'helper',
+            file: '/project/app.js',
+            line: 3
+          }
+        ]);
+
+        await backend.addEdge({
+          type: 'IMPORTS_FROM',
+          src: 'app-import-helper',
+          dst: 'index-reexport-helper'
+        });
+
+        await backend.flush();
+
+        const result = await resolver.execute({ graph: backend });
+
+        const edges = await backend.getOutgoingEdges('app-call-helper', ['CALLS']);
+        assert.strictEqual(edges.length, 1);
+        assert.strictEqual(edges[0].dst, 'impl-helper-func',
+          'Should resolve through 2-hop re-export chain');
+
+        console.log('Multi-hop re-export chain (2 hops) resolution works');
+      } finally {
+        await backend.close();
+      }
+    });
+
+    it('should handle circular re-export chains gracefully', async () => {
+      const { backend } = await setupBackend();
+
+      try {
+        const resolver = new FunctionCallResolver();
+
+        await backend.addNodes([
+          // Circular re-export: a.js -> b.js -> a.js
+          {
+            id: 'a-reexport-foo',
+            type: 'EXPORT',
+            name: 'foo',
+            file: '/project/a.js',
+            exportType: 'named',
+            local: 'foo',
+            source: './b'
+          },
+          {
+            id: 'b-reexport-foo',
+            type: 'EXPORT',
+            name: 'foo',
+            file: '/project/b.js',
+            exportType: 'named',
+            local: 'foo',
+            source: './a'
+          },
+          // Import and call
+          {
+            id: 'main-import-foo',
+            type: 'IMPORT',
+            name: 'foo',
+            file: '/project/main.js',
+            source: './a',
+            importType: 'named',
+            imported: 'foo',
+            local: 'foo'
+          },
+          {
+            id: 'main-call-foo',
+            type: 'CALL',
+            name: 'foo',
+            file: '/project/main.js',
+            line: 3
+          }
+        ]);
+
+        await backend.addEdge({
+          type: 'IMPORTS_FROM',
+          src: 'main-import-foo',
+          dst: 'a-reexport-foo'
+        });
+
+        await backend.flush();
+
+        // Should not crash
+        const result = await resolver.execute({ graph: backend });
+
+        assert.strictEqual(result.success, true, 'Should succeed without crashing');
+
         // No edge should be created
         const edges = await backend.getOutgoingEdges('main-call-foo', ['CALLS']);
-        assert.strictEqual(edges.length, 0, 'Should skip re-export chains for v1');
+        assert.strictEqual(edges.length, 0, 'Should not create edge for circular re-export');
 
-        console.log('Re-export chains correctly skipped for v1');
+        // Should report as broken/circular
+        assert.ok(
+          result.metadata.skipped.reExportsBroken > 0 ||
+          result.metadata.skipped.reExportsCircular > 0,
+          'Should report circular/broken chain in skipped counters'
+        );
+
+        console.log('Circular re-export chain handled gracefully');
+      } finally {
+        await backend.close();
+      }
+    });
+
+    it('should handle broken re-export chain (missing export)', async () => {
+      const { backend } = await setupBackend();
+
+      try {
+        const resolver = new FunctionCallResolver();
+
+        await backend.addNodes([
+          // Re-export in index.js pointing to missing export
+          {
+            id: 'index-reexport-foo',
+            type: 'EXPORT',
+            name: 'foo',
+            file: '/project/index.js',
+            exportType: 'named',
+            local: 'foo',
+            source: './other'  // other.js has no 'foo' export
+          },
+          // Need a placeholder for other.js to exist in knownFiles
+          // But it won't have the 'foo' export
+          {
+            id: 'other-bar-export',
+            type: 'EXPORT',
+            name: 'bar',
+            file: '/project/other.js',
+            exportType: 'named',
+            local: 'bar'
+            // Note: No 'foo' export here!
+          },
+          // Import and call
+          {
+            id: 'main-import-foo',
+            type: 'IMPORT',
+            name: 'foo',
+            file: '/project/main.js',
+            source: './index',
+            importType: 'named',
+            imported: 'foo',
+            local: 'foo'
+          },
+          {
+            id: 'main-call-foo',
+            type: 'CALL',
+            name: 'foo',
+            file: '/project/main.js',
+            line: 3
+          }
+        ]);
+
+        await backend.addEdge({
+          type: 'IMPORTS_FROM',
+          src: 'main-import-foo',
+          dst: 'index-reexport-foo'
+        });
+
+        await backend.flush();
+
+        const result = await resolver.execute({ graph: backend });
+
+        assert.strictEqual(result.success, true, 'Should succeed without crashing');
+
+        const edges = await backend.getOutgoingEdges('main-call-foo', ['CALLS']);
+        assert.strictEqual(edges.length, 0, 'Should not create edge for broken chain');
+
+        assert.ok(result.metadata.skipped.reExportsBroken > 0,
+          'Should report broken chain in skipped counters');
+
+        console.log('Broken re-export chain handled gracefully');
+      } finally {
+        await backend.close();
+      }
+    });
+
+    it('should resolve default re-export chain', async () => {
+      const { backend } = await setupBackend();
+
+      try {
+        const resolver = new FunctionCallResolver();
+
+        await backend.addNodes([
+          // Function in utils.js
+          {
+            id: 'utils-formatDate-func',
+            type: 'FUNCTION',
+            name: 'formatDate',
+            file: '/project/utils.js',
+            line: 1
+          },
+          // Default export in utils.js
+          {
+            id: 'utils-export-default',
+            type: 'EXPORT',
+            name: 'default',
+            file: '/project/utils.js',
+            exportType: 'default',
+            local: 'formatDate'
+          },
+          // Re-export default in index.js
+          {
+            id: 'index-reexport-default',
+            type: 'EXPORT',
+            name: 'default',
+            file: '/project/index.js',
+            exportType: 'default',
+            local: 'default',
+            source: './utils'
+          },
+          // Import default in main.js as 'fmt'
+          {
+            id: 'main-import-fmt',
+            type: 'IMPORT',
+            name: 'fmt',
+            file: '/project/main.js',
+            source: './index',
+            importType: 'default',
+            imported: 'default',
+            local: 'fmt'
+          },
+          // Call fmt()
+          {
+            id: 'main-call-fmt',
+            type: 'CALL',
+            name: 'fmt',
+            file: '/project/main.js',
+            line: 3
+          }
+        ]);
+
+        await backend.addEdge({
+          type: 'IMPORTS_FROM',
+          src: 'main-import-fmt',
+          dst: 'index-reexport-default'
+        });
+
+        await backend.flush();
+
+        const result = await resolver.execute({ graph: backend });
+
+        const edges = await backend.getOutgoingEdges('main-call-fmt', ['CALLS']);
+        assert.strictEqual(edges.length, 1);
+        assert.strictEqual(edges[0].dst, 'utils-formatDate-func',
+          'Should resolve default re-export to actual function');
+
+        console.log('Default re-export chain resolution works');
       } finally {
         await backend.close();
       }
