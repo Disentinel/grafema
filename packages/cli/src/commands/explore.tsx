@@ -1,5 +1,11 @@
 /**
- * Explore command - Interactive TUI for graph navigation
+ * Explore command - Interactive TUI or batch mode for graph navigation
+ *
+ * Interactive mode: grafema explore [start]
+ * Batch mode:
+ *   grafema explore --query "functionName"
+ *   grafema explore --callers "functionName"
+ *   grafema explore --callees "functionName"
  */
 
 import { Command } from 'commander';
@@ -13,6 +19,17 @@ import { getCodePreview, formatCodePreview } from '../utils/codePreview.js';
 import { exitWithError } from '../utils/errorFormatter.js';
 
 // Types
+interface ExploreOptions {
+  project: string;
+  // Batch mode flags
+  query?: string;
+  callers?: string;
+  callees?: string;
+  depth?: string;
+  json?: boolean;
+  format?: 'json' | 'text';
+}
+
 interface NodeInfo {
   id: string;
   type: string;
@@ -1020,24 +1037,216 @@ async function findStartNode(backend: RFDBServerBackend, startName: string | nul
   return bestNode;
 }
 
-// Command
+// =============================================================================
+// Batch Mode Implementation
+// =============================================================================
+
+/**
+ * Run explore in batch mode - for AI agents, CI, and scripts
+ */
+async function runBatchExplore(
+  backend: RFDBServerBackend,
+  options: ExploreOptions,
+  projectPath: string
+): Promise<void> {
+  const depth = parseInt(options.depth || '3', 10) || 3;
+  const useJson = options.json || options.format === 'json' || options.format !== 'text';
+
+  try {
+    if (options.query) {
+      // Search mode
+      const results = await searchNodes(backend, options.query, 20);
+      outputResults(results, 'search', useJson, projectPath);
+    } else if (options.callers) {
+      // Callers mode
+      const target = await searchNode(backend, options.callers);
+      if (!target) {
+        exitWithError(`Function "${options.callers}" not found`, [
+          'Try: grafema query "partial-name"',
+        ]);
+      }
+      const callers = await getCallersRecursive(backend, target.id, depth);
+      outputResults(callers, 'callers', useJson, projectPath, target);
+    } else if (options.callees) {
+      // Callees mode
+      const target = await searchNode(backend, options.callees);
+      if (!target) {
+        exitWithError(`Function "${options.callees}" not found`, [
+          'Try: grafema query "partial-name"',
+        ]);
+      }
+      const callees = await getCalleesRecursive(backend, target.id, depth);
+      outputResults(callees, 'callees', useJson, projectPath, target);
+    }
+  } catch (err) {
+    exitWithError(`Explore failed: ${(err as Error).message}`);
+  }
+}
+
+/**
+ * Output results in JSON or text format
+ */
+function outputResults(
+  nodes: NodeInfo[],
+  mode: 'search' | 'callers' | 'callees',
+  useJson: boolean,
+  projectPath: string,
+  target?: NodeInfo
+): void {
+  if (useJson) {
+    const output = {
+      mode,
+      target: target ? formatNodeForJson(target, projectPath) : undefined,
+      count: nodes.length,
+      results: nodes.map(n => formatNodeForJson(n, projectPath)),
+    };
+    console.log(JSON.stringify(output, null, 2));
+  } else {
+    // Text format
+    if (target) {
+      console.log(`${mode === 'callers' ? 'Callers of' : 'Callees of'}: ${target.name}`);
+      console.log(`File: ${relative(projectPath, target.file)}${target.line ? `:${target.line}` : ''}`);
+      console.log('');
+    }
+
+    if (nodes.length === 0) {
+      console.log(`  (no ${mode} found)`);
+    } else {
+      for (const node of nodes) {
+        const loc = relative(projectPath, node.file);
+        console.log(`  ${node.type} ${node.name} (${loc}${node.line ? `:${node.line}` : ''})`);
+      }
+    }
+
+    console.log('');
+    console.log(`Total: ${nodes.length}`);
+  }
+}
+
+function formatNodeForJson(node: NodeInfo, projectPath: string): object {
+  return {
+    id: node.id,
+    type: node.type,
+    name: node.name,
+    file: relative(projectPath, node.file),
+    line: node.line,
+    async: node.async,
+    exported: node.exported,
+  };
+}
+
+/**
+ * Get callers recursively up to specified depth
+ */
+async function getCallersRecursive(
+  backend: RFDBServerBackend,
+  nodeId: string,
+  maxDepth: number
+): Promise<NodeInfo[]> {
+  const results: NodeInfo[] = [];
+  const visited = new Set<string>();
+  const queue: Array<{ id: string; depth: number }> = [{ id: nodeId, depth: 0 }];
+
+  while (queue.length > 0) {
+    const { id, depth } = queue.shift()!;
+    if (visited.has(id) || depth > maxDepth) continue;
+    visited.add(id);
+
+    const callers = await getCallers(backend, id, 50);
+    for (const caller of callers) {
+      if (!visited.has(caller.id)) {
+        results.push(caller);
+        if (depth < maxDepth) {
+          queue.push({ id: caller.id, depth: depth + 1 });
+        }
+      }
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Get callees recursively up to specified depth
+ */
+async function getCalleesRecursive(
+  backend: RFDBServerBackend,
+  nodeId: string,
+  maxDepth: number
+): Promise<NodeInfo[]> {
+  const results: NodeInfo[] = [];
+  const visited = new Set<string>();
+  const queue: Array<{ id: string; depth: number }> = [{ id: nodeId, depth: 0 }];
+
+  while (queue.length > 0) {
+    const { id, depth } = queue.shift()!;
+    if (visited.has(id) || depth > maxDepth) continue;
+    visited.add(id);
+
+    const callees = await getCallees(backend, id, 50);
+    for (const callee of callees) {
+      if (!visited.has(callee.id)) {
+        results.push(callee);
+        if (depth < maxDepth) {
+          queue.push({ id: callee.id, depth: depth + 1 });
+        }
+      }
+    }
+  }
+
+  return results;
+}
+
+// =============================================================================
+// Command Definition
+// =============================================================================
+
 export const exploreCommand = new Command('explore')
-  .description('Interactive graph navigation')
-  .argument('[start]', 'Starting function name')
+  .description('Interactive graph navigation (TUI) or batch query mode')
+  .argument('[start]', 'Starting function name (for interactive mode)')
   .option('-p, --project <path>', 'Project path', '.')
-  .action(async (start: string | undefined, options: { project: string }) => {
+  .option('-q, --query <name>', 'Batch: search for nodes by name')
+  .option('--callers <name>', 'Batch: show callers of function')
+  .option('--callees <name>', 'Batch: show callees of function')
+  .option('-d, --depth <n>', 'Batch: traversal depth', '3')
+  .option('-j, --json', 'Output as JSON (default for batch mode)')
+  .option('--format <type>', 'Output format: json or text')
+  .action(async (start: string | undefined, options: ExploreOptions) => {
     const projectPath = resolve(options.project);
     const grafemaDir = join(projectPath, '.grafema');
     const dbPath = join(grafemaDir, 'graph.rfdb');
 
     if (!existsSync(dbPath)) {
-      exitWithError('No graph database found', ['Run: grafema analyze']);
+      exitWithError('No database found', [
+        'Run: grafema analyze',
+      ]);
     }
 
     const backend = new RFDBServerBackend({ dbPath });
 
     try {
       await backend.connect();
+
+      // Detect batch mode
+      const isBatchMode = !!(options.query || options.callers || options.callees);
+
+      if (isBatchMode) {
+        await runBatchExplore(backend, options, projectPath);
+        return;
+      }
+
+      // Interactive mode - check TTY
+      const isTTY = process.stdin.isTTY && process.stdout.isTTY;
+
+      if (!isTTY) {
+        exitWithError('Interactive mode requires a terminal', [
+          'Batch mode: grafema explore --query "functionName"',
+          'Batch mode: grafema explore --callers "functionName"',
+          'Batch mode: grafema explore --callees "functionName"',
+          'Alternative: grafema query "functionName"',
+          'Alternative: grafema impact "functionName"',
+        ]);
+      }
 
       const startNode = await findStartNode(backend, start || null);
 
