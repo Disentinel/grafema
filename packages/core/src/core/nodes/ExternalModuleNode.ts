@@ -23,16 +23,25 @@ export class ExternalModuleNode {
   /**
    * Create EXTERNAL_MODULE node
    *
+   * Normalizes node: prefix for Node.js builtins:
+   * - 'node:fs' -> 'fs'
+   * - 'node:path' -> 'path'
+   *
    * @param source - Module name (e.g., 'lodash', '@tanstack/react-query', 'node:fs')
    * @returns ExternalModuleNodeRecord
    */
   static create(source: string): ExternalModuleNodeRecord {
     if (!source) throw new Error('ExternalModuleNode.create: source is required');
 
+    // Normalize node: prefix for Node.js builtins
+    const normalizedSource = source.startsWith('node:')
+      ? source.slice(5)
+      : source;
+
     return {
-      id: `EXTERNAL_MODULE:${source}`,
+      id: `EXTERNAL_MODULE:${normalizedSource}`,
       type: this.TYPE,
-      name: source,
+      name: normalizedSource,
       file: '',
       line: 0
     };

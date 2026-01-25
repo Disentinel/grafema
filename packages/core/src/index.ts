@@ -190,6 +190,11 @@ export { InstanceOfResolver } from './plugins/enrichment/InstanceOfResolver.js';
 export { HTTPConnectionEnricher } from './plugins/enrichment/HTTPConnectionEnricher.js';
 export { ImportExportLinker } from './plugins/enrichment/ImportExportLinker.js';
 export { RustFFIEnricher } from './plugins/enrichment/RustFFIEnricher.js';
+export { NodejsBuiltinsResolver } from './plugins/enrichment/NodejsBuiltinsResolver.js';
+
+// Builtin registry
+export { BuiltinRegistry } from './data/builtins/index.js';
+export type { BuiltinFunctionDef, BuiltinModuleDef, SecurityCategory } from './data/builtins/index.js';
 
 // Validation plugins
 export { CallResolverValidator } from './plugins/validation/CallResolverValidator.js';
