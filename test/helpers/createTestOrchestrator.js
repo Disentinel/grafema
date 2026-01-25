@@ -5,6 +5,8 @@
  * - SimpleProjectDiscovery (добавляется автоматически Orchestrator'ом)
  * - JSModuleIndexer
  * - JSASTAnalyzer
+ * - MethodCallResolver (enrichment) - creates CALLS edges for method calls
+ * - ArgumentParameterLinker (enrichment) - creates RECEIVES_ARGUMENT edges
  * - InstanceOfResolver (enrichment)
  * - FetchAnalyzer (enrichment)
  * - ImportExportLinker (enrichment)
@@ -13,6 +15,8 @@
 import { Orchestrator } from '@grafema/core';
 import { JSModuleIndexer } from '@grafema/core';
 import { JSASTAnalyzer } from '@grafema/core';
+import { MethodCallResolver } from '@grafema/core';
+import { ArgumentParameterLinker } from '@grafema/core';
 import { InstanceOfResolver } from '@grafema/core';
 import { FetchAnalyzer } from '@grafema/core';
 import { ImportExportLinker } from '@grafema/core';
@@ -42,6 +46,8 @@ export function createTestOrchestrator(backend, options = {}) {
 
   // Enrichment плагины
   if (!options.skipEnrichment) {
+    plugins.push(new MethodCallResolver());
+    plugins.push(new ArgumentParameterLinker());
     plugins.push(new InstanceOfResolver());
     plugins.push(new FetchAnalyzer());
     plugins.push(new ImportExportLinker());
