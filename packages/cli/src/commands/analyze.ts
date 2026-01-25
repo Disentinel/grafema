@@ -14,6 +14,10 @@ import {
   createLogger,
   loadConfig,
   type GrafemaConfig,
+  // Discovery
+  SimpleProjectDiscovery,
+  MonorepoServiceDiscovery,
+  WorkspaceDiscovery,
   // Indexing
   JSModuleIndexer,
   RustModuleIndexer,
@@ -48,6 +52,10 @@ import {
 import type { LogLevel } from '@grafema/types';
 
 const BUILTIN_PLUGINS: Record<string, () => Plugin> = {
+  // Discovery
+  SimpleProjectDiscovery: () => new SimpleProjectDiscovery() as Plugin,
+  MonorepoServiceDiscovery: () => new MonorepoServiceDiscovery() as Plugin,
+  WorkspaceDiscovery: () => new WorkspaceDiscovery() as Plugin,
   // Indexing
   JSModuleIndexer: () => new JSModuleIndexer() as Plugin,
   RustModuleIndexer: () => new RustModuleIndexer() as Plugin,
@@ -82,7 +90,7 @@ const BUILTIN_PLUGINS: Record<string, () => Plugin> = {
 
 function createPlugins(config: GrafemaConfig['plugins']): Plugin[] {
   const plugins: Plugin[] = [];
-  const phases: (keyof GrafemaConfig['plugins'])[] = ['indexing', 'analysis', 'enrichment', 'validation'];
+  const phases: (keyof GrafemaConfig['plugins'])[] = ['discovery', 'indexing', 'analysis', 'enrichment', 'validation'];
 
   for (const phase of phases) {
     const names = config[phase] || [];
@@ -119,12 +127,13 @@ export const analyzeCommand = new Command('analyze')
   .description('Run project analysis')
   .argument('[path]', 'Project path to analyze', '.')
   .option('-s, --service <name>', 'Analyze only a specific service')
+  .option('-e, --entrypoint <path>', 'Override entrypoint (bypasses auto-detection)')
   .option('-c, --clear', 'Clear existing database before analysis')
   .option('-q, --quiet', 'Suppress progress output')
   .option('-v, --verbose', 'Show verbose logging')
   .option('--debug', 'Enable debug mode (writes diagnostics.log)')
   .option('--log-level <level>', 'Set log level (silent, errors, warnings, info, debug)')
-  .action(async (path: string, options: { service?: string; clear?: boolean; quiet?: boolean; verbose?: boolean; debug?: boolean; logLevel?: string }) => {
+  .action(async (path: string, options: { service?: string; entrypoint?: string; clear?: boolean; quiet?: boolean; verbose?: boolean; debug?: boolean; logLevel?: string }) => {
     const projectPath = resolve(path);
     const grafemaDir = join(projectPath, '.grafema');
     const dbPath = join(grafemaDir, 'graph.rfdb');
@@ -150,6 +159,16 @@ export const analyzeCommand = new Command('analyze')
     }
 
     const config = loadConfig(projectPath, logger);
+
+    // Extract services from config (REG-174)
+    if (config.services.length > 0) {
+      log(`Loaded ${config.services.length} service(s) from config`);
+      for (const svc of config.services) {
+        const entry = svc.entryPoint ? ` (entry: ${svc.entryPoint})` : '';
+        log(`  - ${svc.name}: ${svc.path}${entry}`);
+      }
+    }
+
     const plugins = createPlugins(config.plugins);
 
     log(`Loaded ${plugins.length} plugins`);
@@ -160,8 +179,10 @@ export const analyzeCommand = new Command('analyze')
       graph: backend as unknown as import('@grafema/types').GraphBackend,
       plugins,
       serviceFilter: options.service || null,
+      entrypoint: options.entrypoint,
       forceAnalysis: options.clear || false,
       logger,
+      services: config.services.length > 0 ? config.services : undefined,  // Pass config services (REG-174)
       onProgress: (progress) => {
         if (options.verbose) {
           log(`[${progress.phase}] ${progress.message}`);

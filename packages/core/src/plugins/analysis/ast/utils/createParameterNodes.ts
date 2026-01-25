@@ -3,6 +3,9 @@
  *
  * Used by FunctionVisitor and ClassVisitor to create PARAMETER nodes
  * for function/method parameters with consistent behavior.
+ *
+ * Uses semantic IDs for stable, scope-based identification that doesn't
+ * change when lines are added/removed above the function.
  */
 
 import type {
@@ -12,6 +15,8 @@ import type {
   RestElement
 } from '@babel/types';
 import type { ParameterInfo } from '../types.js';
+import { ScopeTracker } from '../../../../core/ScopeTracker.js';
+import { computeSemanticId } from '../../../../core/SemanticId.js';
 
 /**
  * Create PARAMETER nodes for function parameters
@@ -28,26 +33,30 @@ import type { ParameterInfo } from '../types.js';
  * @param params - AST nodes for function parameters
  * @param functionId - ID of the parent function (for parentFunctionId field)
  * @param file - File path
- * @param line - Line number of the function (used for legacy ID generation)
+ * @param line - Line number of the function (for ParameterInfo.line fallback)
  * @param parameters - Array to push ParameterInfo objects into
+ * @param scopeTracker - REQUIRED for semantic ID generation
  */
 export function createParameterNodes(
   params: Node[],
   functionId: string,
   file: string,
   line: number,
-  parameters: ParameterInfo[]
+  parameters: ParameterInfo[],
+  scopeTracker: ScopeTracker
 ): void {
   if (!parameters) return; // Guard for backward compatibility
 
   params.forEach((param, index) => {
     // Handle different parameter types
     if (param.type === 'Identifier') {
-      const paramId = `PARAMETER#${(param as Identifier).name}#${file}#${line}:${index}`;
+      const name = (param as Identifier).name;
+      const paramId = computeSemanticId('PARAMETER', name, scopeTracker.getContext(), { discriminator: index });
       parameters.push({
         id: paramId,
+        semanticId: paramId,
         type: 'PARAMETER',
-        name: (param as Identifier).name,
+        name,
         file: file,
         line: param.loc?.start.line || line,
         index: index,
@@ -57,11 +66,13 @@ export function createParameterNodes(
       // Default parameter: function(a = 1)
       const assignmentParam = param as AssignmentPattern;
       if (assignmentParam.left.type === 'Identifier') {
-        const paramId = `PARAMETER#${assignmentParam.left.name}#${file}#${line}:${index}`;
+        const name = assignmentParam.left.name;
+        const paramId = computeSemanticId('PARAMETER', name, scopeTracker.getContext(), { discriminator: index });
         parameters.push({
           id: paramId,
+          semanticId: paramId,
           type: 'PARAMETER',
-          name: assignmentParam.left.name,
+          name,
           file: file,
           line: assignmentParam.left.loc?.start.line || line,
           index: index,
@@ -73,11 +84,13 @@ export function createParameterNodes(
       // Rest parameter: function(...args)
       const restParam = param as unknown as RestElement;
       if (restParam.argument.type === 'Identifier') {
-        const paramId = `PARAMETER#${restParam.argument.name}#${file}#${line}:${index}`;
+        const name = restParam.argument.name;
+        const paramId = computeSemanticId('PARAMETER', name, scopeTracker.getContext(), { discriminator: index });
         parameters.push({
           id: paramId,
+          semanticId: paramId,
           type: 'PARAMETER',
-          name: restParam.argument.name,
+          name,
           file: file,
           line: restParam.argument.loc?.start.line || line,
           index: index,

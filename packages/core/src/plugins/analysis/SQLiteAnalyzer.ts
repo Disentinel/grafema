@@ -16,6 +16,7 @@ import type { NodePath } from '@babel/traverse';
 import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { NodeRecord } from '@grafema/types';
+import { getLine } from './ast/utils/location.js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const traverse = (traverseModule as any).default || traverseModule;
@@ -169,7 +170,7 @@ export class SQLiteAnalyzer extends Plugin {
                 const operationType = this.detectOperationType(query);
                 const tableName = this.extractTableName(query, operationType);
 
-                const queryId = `${module.file}:DATABASE_QUERY:${method}:${node.loc!.start.line}`;
+                const queryId = `${module.file}:DATABASE_QUERY:${method}:${getLine(node)}`;
 
                 queries.push({
                   id: queryId,
@@ -180,7 +181,7 @@ export class SQLiteAnalyzer extends Plugin {
                   operationType: operationType,
                   tableName: tableName,
                   file: module.file!,
-                  line: node.loc!.start.line
+                  line: getLine(node)
                 });
               }
             }
@@ -241,7 +242,7 @@ export class SQLiteAnalyzer extends Plugin {
                         const operationType = this.detectOperationType(query);
                         const tableName = this.extractTableName(query, operationType);
 
-                        const queryId = `${module.file}:DATABASE_QUERY:${method}:${innerNode.loc!.start.line}`;
+                        const queryId = `${module.file}:DATABASE_QUERY:${method}:${getLine(innerNode)}`;
 
                         queries.push({
                           id: queryId,
@@ -252,7 +253,7 @@ export class SQLiteAnalyzer extends Plugin {
                           operationType: operationType,
                           tableName: tableName,
                           file: module.file!,
-                          line: innerNode.loc!.start.line,
+                          line: getLine(innerNode),
                           promiseWrapped: true
                         });
                       }
