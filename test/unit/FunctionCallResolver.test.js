@@ -956,6 +956,102 @@ describe('FunctionCallResolver', () => {
         await backend.close();
       }
     });
+
+    it('should skip re-export chain exceeding maxDepth (11 hops)', async () => {
+      const { backend } = await setupBackend();
+
+      try {
+        const resolver = new FunctionCallResolver();
+
+        // Create 11-hop re-export chain (exceeds maxDepth=10 limit)
+        // file0.js -> file1.js -> ... -> file10.js -> file11.js (actual function)
+
+        const nodes = [];
+
+        // Actual function in file11.js (end of chain)
+        nodes.push({
+          id: 'file11-foo-func',
+          type: 'FUNCTION',
+          name: 'foo',
+          file: '/project/file11.js',
+          line: 1
+        });
+
+        // Export in file11.js (no source - terminal)
+        nodes.push({
+          id: 'file11-export-foo',
+          type: 'EXPORT',
+          name: 'foo',
+          file: '/project/file11.js',
+          exportType: 'named',
+          local: 'foo'
+        });
+
+        // Re-exports in file10.js down to file0.js (11 hops)
+        for (let i = 10; i >= 0; i--) {
+          nodes.push({
+            id: `file${i}-reexport-foo`,
+            type: 'EXPORT',
+            name: 'foo',
+            file: `/project/file${i}.js`,
+            exportType: 'named',
+            local: 'foo',
+            source: `./file${i + 1}`
+          });
+        }
+
+        // Import in main.js from file0.js
+        nodes.push({
+          id: 'main-import-foo',
+          type: 'IMPORT',
+          name: 'foo',
+          file: '/project/main.js',
+          source: './file0',
+          importType: 'named',
+          imported: 'foo',
+          local: 'foo'
+        });
+
+        // Call in main.js
+        nodes.push({
+          id: 'main-call-foo',
+          type: 'CALL',
+          name: 'foo',
+          file: '/project/main.js',
+          line: 3
+        });
+
+        await backend.addNodes(nodes);
+
+        // IMPORTS_FROM edge from main's import to file0's re-export
+        await backend.addEdge({
+          type: 'IMPORTS_FROM',
+          src: 'main-import-foo',
+          dst: 'file0-reexport-foo'
+        });
+
+        await backend.flush();
+
+        // Should NOT crash or infinite loop
+        const result = await resolver.execute({ graph: backend });
+
+        assert.strictEqual(result.success, true, 'Should succeed without crashing');
+
+        // Chain exceeds maxDepth=10, so no CALLS edge should be created
+        const edges = await backend.getOutgoingEdges('main-call-foo', ['CALLS']);
+        assert.strictEqual(edges.length, 0, 'Should NOT create CALLS edge for chain exceeding maxDepth');
+
+        // Should be counted as broken (maxDepth exceeded returns null same as broken)
+        assert.ok(
+          result.metadata.skipped.reExportsBroken > 0,
+          'Should report chain as broken (maxDepth exceeded)'
+        );
+
+        console.log('Re-export chain exceeding maxDepth (11 hops) correctly skipped');
+      } finally {
+        await backend.close();
+      }
+    });
   });
 
   // ============================================================================
