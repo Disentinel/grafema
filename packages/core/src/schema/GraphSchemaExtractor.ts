@@ -47,13 +47,21 @@ export interface GraphSchema {
 // Extractor
 // ============================================================================
 
+export interface GraphExtractOptions {
+  /** Include all defined types, not just used ones (default: false) */
+  includeAll?: boolean;
+}
+
 export class GraphSchemaExtractor {
   constructor(private backend: RFDBServerBackend) {}
 
   /**
    * Extract graph schema from current database
+   *
+   * @param options.includeAll - If true, include all defined types even with count=0
    */
-  async extract(): Promise<GraphSchema> {
+  async extract(options?: GraphExtractOptions): Promise<GraphSchema> {
+    const includeAll = options?.includeAll ?? false;
     // Get actual counts from graph
     const nodeCounts = await this.backend.countNodesByType();
     const edgeCounts = await this.backend.countEdgesByType();
@@ -111,11 +119,26 @@ export class GraphSchemaExtractor {
     const totalNodes = Object.values(nodeCounts).reduce((sum, n) => sum + n, 0);
     const totalEdges = Object.values(edgeCounts).reduce((sum, n) => sum + n, 0);
 
-    // Sort for deterministic output
-    const sortedNodeTypes = this.sortObject(nodeTypes);
-    const sortedEdgeTypes = this.sortObject(edgeTypes);
+    // Filter out types with count=0 unless includeAll is true
+    const filteredNodeTypes: Record<string, NodeTypeSchema> = {};
+    for (const [type, info] of Object.entries(nodeTypes)) {
+      if (includeAll || info.count > 0) {
+        filteredNodeTypes[type] = info;
+      }
+    }
 
-    // Compute checksum from normalized content
+    const filteredEdgeTypes: Record<string, EdgeTypeSchema> = {};
+    for (const [type, info] of Object.entries(edgeTypes)) {
+      if (includeAll || info.count > 0) {
+        filteredEdgeTypes[type] = info;
+      }
+    }
+
+    // Sort for deterministic output
+    const sortedNodeTypes = this.sortObject(filteredNodeTypes);
+    const sortedEdgeTypes = this.sortObject(filteredEdgeTypes);
+
+    // Compute checksum from normalized content (based on filtered types)
     const checksumContent = {
       nodeTypes: Object.keys(sortedNodeTypes).sort(),
       edgeTypes: Object.keys(sortedEdgeTypes).sort(),

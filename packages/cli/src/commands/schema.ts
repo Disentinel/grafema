@@ -27,6 +27,7 @@ interface ExportOptions {
   project: string;
   interface?: string;
   graph?: boolean;
+  all?: boolean;
   file?: string;
   format: 'json' | 'yaml' | 'markdown';
   output?: string;
@@ -231,6 +232,7 @@ const exportSubcommand = new Command('export')
   .description('Export interface or graph schema')
   .option('--interface <name>', 'Interface name to export')
   .option('--graph', 'Export graph node/edge type schema')
+  .option('--all', 'Include all defined types, not just used ones (with --graph)')
   .option('--file <path>', 'File path filter (for multiple interfaces with same name)')
   .option('-f, --format <type>', 'Output format: json, yaml, markdown', 'json')
   .option('-p, --project <path>', 'Project path', '.')
@@ -266,7 +268,7 @@ const exportSubcommand = new Command('export')
       if (options.graph) {
         // Graph schema export
         const extractor = new GraphSchemaExtractor(backend);
-        const schema = await extractor.extract();
+        const schema = await extractor.extract({ includeAll: options.all });
 
         let output: string;
         switch (options.format) {

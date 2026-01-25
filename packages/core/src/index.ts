@@ -253,6 +253,7 @@ export type {
   GraphSchema,
   NodeTypeSchema,
   EdgeTypeSchema,
+  GraphExtractOptions,
 } from './schema/index.js';
 
 // Re-export types for convenience
