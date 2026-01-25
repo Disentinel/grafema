@@ -11,6 +11,7 @@ import { EnumNode, type EnumNodeRecord } from '../../../core/nodes/EnumNode.js';
 import { DecoratorNode } from '../../../core/nodes/DecoratorNode.js';
 import { NetworkRequestNode } from '../../../core/nodes/NetworkRequestNode.js';
 import { NodeFactory } from '../../../core/NodeFactory.js';
+import { computeSemanticId } from '../../../core/SemanticId.js';
 import type {
   ModuleNode,
   FunctionInfo,
@@ -448,10 +449,11 @@ export class GraphBuilder {
 
       // If superClass, buffer DERIVES_FROM edge with computed ID
       if (superClass) {
-        // Compute superclass ID using same format as ClassNode (line 0 = unknown location)
-        // Assume superclass is in same file (most common case)
+        // Compute superclass ID using semantic ID format
+        // Assume superclass is in same file at global scope (most common case)
         // When superclass is in different file, edge will be dangling until that file analyzed
-        const superClassId = `${file}:CLASS:${superClass}:0`;
+        const globalContext = { file, scopePath: [] as string[] };
+        const superClassId = computeSemanticId('CLASS', superClass, globalContext);
 
         this._bufferEdge({
           type: 'DERIVES_FROM',
@@ -464,9 +466,11 @@ export class GraphBuilder {
 
   private bufferClassNodes(module: ModuleNode, classInstantiations: ClassInstantiationInfo[], classDeclarations: ClassDeclarationInfo[]): void {
     // Create lookup map: className → declaration ID
+    // Use basename for comparison because CLASS nodes use scopeTracker.file (basename)
+    const moduleBasename = basename(module.file);
     const declarationMap = new Map<string, string>();
     for (const decl of classDeclarations) {
-      if (decl.file === module.file) {
+      if (decl.file === moduleBasename) {
         declarationMap.set(decl.name, decl.id);
       }
     }
@@ -477,10 +481,11 @@ export class GraphBuilder {
       let classId = declarationMap.get(className);
 
       if (!classId) {
-        // External class - compute ID using ClassNode format (line 0 = unknown location)
-        // Assume class is in same file (most common case)
+        // External class - compute semantic ID
+        // Use basename to match CLASS node format (scopeTracker uses basename)
         // When class is in different file, edge will be dangling until that file analyzed
-        classId = `${module.file}:CLASS:${className}:0`;
+        const globalContext = { file: moduleBasename, scopePath: [] as string[] };
+        classId = computeSemanticId('CLASS', className, globalContext);
 
         // NO node creation - node will exist when class file analyzed
       }
