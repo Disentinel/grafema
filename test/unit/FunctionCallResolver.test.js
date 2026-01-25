@@ -1,0 +1,1052 @@
+/**
+ * FunctionCallResolver Tests
+ *
+ * Tests the enrichment plugin that creates CALLS edges for imported function calls.
+ *
+ * Pattern: import { foo } from './utils'; foo();
+ * Result: CALL_SITE -> CALLS -> FUNCTION
+ *
+ * This plugin runs AFTER ImportExportLinker (which creates IMPORTS_FROM edges)
+ * and uses those edges to resolve function calls to their definitions.
+ */
+
+import { describe, it } from 'node:test';
+import assert from 'node:assert';
+import { RFDBServerBackend } from '@grafema/core';
+import { FunctionCallResolver } from '@grafema/core';
+import { mkdirSync } from 'fs';
+import { join } from 'path';
+import { tmpdir } from 'os';
+
+describe('FunctionCallResolver', () => {
+  let testCounter = 0;
+
+  async function setupBackend() {
+    const testDir = join(tmpdir(), `grafema-test-funcresolver-${Date.now()}-${testCounter++}`);
+    mkdirSync(testDir, { recursive: true });
+
+    const backend = new RFDBServerBackend({ dbPath: join(testDir, 'test.db') });
+    await backend.connect();
+
+    return { backend, testDir };
+  }
+
+  // ============================================================================
+  // NAMED IMPORTS
+  // ============================================================================
+
+  describe('Named imports', () => {
+    it('should resolve named import function call', async () => {
+      const { backend } = await setupBackend();
+
+      try {
+        const resolver = new FunctionCallResolver();
+
+        // Setup: utils.js exports foo, main.js imports and calls it
+        // import { foo } from './utils'; foo();
+
+        await backend.addNodes([
+          // FUNCTION in utils.js
+          {
+            id: 'utils-foo-func',
+            type: 'FUNCTION',
+            name: 'foo',
+            file: '/project/utils.js',
+            line: 1
+          },
+          // EXPORT in utils.js (named export)
+          {
+            id: 'utils-export-foo',
+            type: 'EXPORT',
+            name: 'foo',
+            file: '/project/utils.js',
+            line: 1,
+            exportType: 'named',
+            local: 'foo'
+          },
+          // IMPORT in main.js
+          {
+            id: 'main-import-foo',
+            type: 'IMPORT',
+            name: 'foo',
+            file: '/project/main.js',
+            line: 1,
+            source: './utils',
+            importType: 'named',
+            imported: 'foo',
+            local: 'foo'
+          },
+          // CALL in main.js (no object = function call, not method call)
+          {
+            id: 'main-call-foo',
+            type: 'CALL',
+            name: 'foo',
+            file: '/project/main.js',
+            line: 3
+            // Note: no 'object' field - this is a CALL_SITE, not METHOD_CALL
+          }
+        ]);
+
+        // Pre-existing edge (from ImportExportLinker):
+        // IMPORT -> IMPORTS_FROM -> EXPORT
+        await backend.addEdge({
+          type: 'IMPORTS_FROM',
+          src: 'main-import-foo',
+          dst: 'utils-export-foo'
+        });
+
+        await backend.flush();
+
+        // Run FunctionCallResolver
+        const result = await resolver.execute({ graph: backend });
+
+        // Assert: CALLS edge created from CALL to FUNCTION
+        const edges = await backend.getOutgoingEdges('main-call-foo', ['CALLS']);
+        assert.strictEqual(edges.length, 1, 'Should create one CALLS edge');
+        assert.strictEqual(edges[0].dst, 'utils-foo-func', 'Should point to the function');
+
+        assert.strictEqual(result.success, true, 'Plugin should succeed');
+        assert.strictEqual(result.created.edges, 1, 'Should report 1 edge created');
+
+        console.log('Named import function call resolution works');
+      } finally {
+        await backend.close();
+      }
+    });
+  });
+
+  // ============================================================================
+  // DEFAULT IMPORTS
+  // ============================================================================
+
+  describe('Default imports', () => {
+    it('should resolve default import function call', async () => {
+      const { backend } = await setupBackend();
+
+      try {
+        const resolver = new FunctionCallResolver();
+
+        // Setup: utils.js has default export, main.js imports and calls it
+        // export default function formatDate() {}
+        // import fmt from './utils'; fmt();
+
+        await backend.addNodes([
+          // FUNCTION in utils.js (the actual function)
+          {
+            id: 'utils-formatDate-func',
+            type: 'FUNCTION',
+            name: 'formatDate',
+            file: '/project/utils.js',
+            line: 1
+          },
+          // EXPORT (default) in utils.js
+          {
+            id: 'utils-export-default',
+            type: 'EXPORT',
+            name: 'default',
+            file: '/project/utils.js',
+            line: 1,
+            exportType: 'default',
+            local: 'formatDate'  // The local name in the source file
+          },
+          // IMPORT (default) in main.js - imported as 'fmt'
+          {
+            id: 'main-import-fmt',
+            type: 'IMPORT',
+            name: 'fmt',
+            file: '/project/main.js',
+            line: 1,
+            source: './utils',
+            importType: 'default',
+            imported: 'default',
+            local: 'fmt'  // Local binding name
+          },
+          // CALL in main.js - calls 'fmt()'
+          {
+            id: 'main-call-fmt',
+            type: 'CALL',
+            name: 'fmt',
+            file: '/project/main.js',
+            line: 3
+            // No 'object' field
+          }
+        ]);
+
+        // Pre-existing edge from ImportExportLinker
+        await backend.addEdge({
+          type: 'IMPORTS_FROM',
+          src: 'main-import-fmt',
+          dst: 'utils-export-default'
+        });
+
+        await backend.flush();
+
+        const result = await resolver.execute({ graph: backend });
+
+        const edges = await backend.getOutgoingEdges('main-call-fmt', ['CALLS']);
+        assert.strictEqual(edges.length, 1, 'Should create one CALLS edge');
+        assert.strictEqual(edges[0].dst, 'utils-formatDate-func', 'Should point to formatDate function');
+
+        console.log('Default import function call resolution works');
+      } finally {
+        await backend.close();
+      }
+    });
+  });
+
+  // ============================================================================
+  // ALIASED IMPORTS
+  // ============================================================================
+
+  describe('Aliased named imports', () => {
+    it('should resolve aliased named import function call', async () => {
+      const { backend } = await setupBackend();
+
+      try {
+        const resolver = new FunctionCallResolver();
+
+        // Setup: import { foo as bar } from './utils'; bar();
+
+        await backend.addNodes([
+          // FUNCTION in utils.js
+          {
+            id: 'utils-foo-func',
+            type: 'FUNCTION',
+            name: 'foo',
+            file: '/project/utils.js',
+            line: 1
+          },
+          // EXPORT in utils.js
+          {
+            id: 'utils-export-foo',
+            type: 'EXPORT',
+            name: 'foo',
+            file: '/project/utils.js',
+            line: 1,
+            exportType: 'named',
+            local: 'foo'
+          },
+          // IMPORT with alias: { foo as bar }
+          {
+            id: 'main-import-bar',
+            type: 'IMPORT',
+            name: 'bar',
+            file: '/project/main.js',
+            line: 1,
+            source: './utils',
+            importType: 'named',
+            imported: 'foo',  // Original name in source
+            local: 'bar'      // Aliased local name
+          },
+          // CALL uses the aliased name: bar()
+          {
+            id: 'main-call-bar',
+            type: 'CALL',
+            name: 'bar',
+            file: '/project/main.js',
+            line: 3
+          }
+        ]);
+
+        // IMPORT -> IMPORTS_FROM -> EXPORT
+        await backend.addEdge({
+          type: 'IMPORTS_FROM',
+          src: 'main-import-bar',
+          dst: 'utils-export-foo'
+        });
+
+        await backend.flush();
+
+        const result = await resolver.execute({ graph: backend });
+
+        const edges = await backend.getOutgoingEdges('main-call-bar', ['CALLS']);
+        assert.strictEqual(edges.length, 1, 'Should create one CALLS edge');
+        assert.strictEqual(edges[0].dst, 'utils-foo-func', 'Should point to foo function');
+
+        console.log('Aliased import function call resolution works');
+      } finally {
+        await backend.close();
+      }
+    });
+  });
+
+  // ============================================================================
+  // NAMESPACE IMPORTS (Skip Case)
+  // ============================================================================
+
+  describe('Namespace imports (skip case)', () => {
+    it('should skip namespace import method calls', async () => {
+      const { backend } = await setupBackend();
+
+      try {
+        const resolver = new FunctionCallResolver();
+
+        // Setup: import * as utils from './utils'; utils.foo();
+        // This creates a METHOD_CALL (has object attribute), not CALL_SITE
+
+        await backend.addNodes([
+          // FUNCTION in utils.js
+          {
+            id: 'utils-foo-func',
+            type: 'FUNCTION',
+            name: 'foo',
+            file: '/project/utils.js',
+            line: 1
+          },
+          // IMPORT (namespace)
+          {
+            id: 'main-import-utils',
+            type: 'IMPORT',
+            name: 'utils',
+            file: '/project/main.js',
+            line: 1,
+            source: './utils',
+            importType: 'namespace',
+            imported: '*',
+            local: 'utils'
+          },
+          // CALL with object = 'utils' (METHOD_CALL pattern)
+          {
+            id: 'main-call-utils-foo',
+            type: 'CALL',
+            name: 'utils.foo',
+            file: '/project/main.js',
+            line: 3,
+            object: 'utils',  // <-- Has object attribute = method call
+            method: 'foo'
+          }
+        ]);
+
+        await backend.flush();
+
+        const result = await resolver.execute({ graph: backend });
+
+        // Should NOT create CALLS edge (has object attribute = method call)
+        const edges = await backend.getOutgoingEdges('main-call-utils-foo', ['CALLS']);
+        assert.strictEqual(edges.length, 0, 'Should not create CALLS edge for namespace method call');
+
+        console.log('Namespace import method calls correctly skipped');
+      } finally {
+        await backend.close();
+      }
+    });
+  });
+
+  // ============================================================================
+  // ALREADY RESOLVED (Skip Case)
+  // ============================================================================
+
+  describe('Already resolved calls (skip case)', () => {
+    it('should not create duplicate CALLS edges', async () => {
+      const { backend } = await setupBackend();
+
+      try {
+        const resolver = new FunctionCallResolver();
+
+        await backend.addNodes([
+          {
+            id: 'utils-foo-func',
+            type: 'FUNCTION',
+            name: 'foo',
+            file: '/project/utils.js',
+            line: 1
+          },
+          {
+            id: 'utils-export-foo',
+            type: 'EXPORT',
+            name: 'foo',
+            file: '/project/utils.js',
+            line: 1,
+            exportType: 'named',
+            local: 'foo'
+          },
+          {
+            id: 'main-import-foo',
+            type: 'IMPORT',
+            name: 'foo',
+            file: '/project/main.js',
+            line: 1,
+            source: './utils',
+            importType: 'named',
+            imported: 'foo',
+            local: 'foo'
+          },
+          {
+            id: 'main-call-foo',
+            type: 'CALL',
+            name: 'foo',
+            file: '/project/main.js',
+            line: 3
+          }
+        ]);
+
+        // Pre-existing edges
+        await backend.addEdge({
+          type: 'IMPORTS_FROM',
+          src: 'main-import-foo',
+          dst: 'utils-export-foo'
+        });
+
+        // CALL already has CALLS edge (simulates already resolved)
+        await backend.addEdge({
+          type: 'CALLS',
+          src: 'main-call-foo',
+          dst: 'utils-foo-func'
+        });
+
+        await backend.flush();
+
+        const result = await resolver.execute({ graph: backend });
+
+        // Should not create another edge
+        const edges = await backend.getOutgoingEdges('main-call-foo', ['CALLS']);
+        assert.strictEqual(edges.length, 1, 'Should still have only one CALLS edge');
+        assert.strictEqual(result.created.edges, 0, 'Should report 0 edges created');
+
+        console.log('Duplicate prevention works');
+      } finally {
+        await backend.close();
+      }
+    });
+  });
+
+  // ============================================================================
+  // EXTERNAL IMPORTS (Skip Case)
+  // ============================================================================
+
+  describe('External imports (skip case)', () => {
+    it('should skip external module imports', async () => {
+      const { backend } = await setupBackend();
+
+      try {
+        const resolver = new FunctionCallResolver();
+
+        // Setup: import lodash from 'lodash'; lodash();
+        // External import (non-relative path)
+
+        await backend.addNodes([
+          // IMPORT from external module (lodash)
+          {
+            id: 'main-import-lodash',
+            type: 'IMPORT',
+            name: '_',
+            file: '/project/main.js',
+            line: 1,
+            source: 'lodash',  // <-- Non-relative! External module
+            importType: 'default',
+            imported: 'default',
+            local: '_'
+          },
+          // CALL to _()
+          {
+            id: 'main-call-lodash',
+            type: 'CALL',
+            name: '_',
+            file: '/project/main.js',
+            line: 3
+          }
+        ]);
+
+        await backend.flush();
+
+        const result = await resolver.execute({ graph: backend });
+
+        // Should NOT create CALLS edge (external import)
+        const edges = await backend.getOutgoingEdges('main-call-lodash', ['CALLS']);
+        assert.strictEqual(edges.length, 0, 'Should not create CALLS edge for external import');
+
+        console.log('External imports correctly skipped');
+      } finally {
+        await backend.close();
+      }
+    });
+
+    it('should skip scoped package imports', async () => {
+      const { backend } = await setupBackend();
+
+      try {
+        const resolver = new FunctionCallResolver();
+
+        await backend.addNodes([
+          {
+            id: 'main-import-query',
+            type: 'IMPORT',
+            name: 'useQuery',
+            file: '/project/main.js',
+            line: 1,
+            source: '@tanstack/react-query',  // Scoped package
+            importType: 'named',
+            imported: 'useQuery',
+            local: 'useQuery'
+          },
+          {
+            id: 'main-call-query',
+            type: 'CALL',
+            name: 'useQuery',
+            file: '/project/main.js',
+            line: 5
+          }
+        ]);
+
+        await backend.flush();
+
+        const result = await resolver.execute({ graph: backend });
+
+        const edges = await backend.getOutgoingEdges('main-call-query', ['CALLS']);
+        assert.strictEqual(edges.length, 0, 'Should not create CALLS edge for scoped package');
+
+        console.log('Scoped package imports correctly skipped');
+      } finally {
+        await backend.close();
+      }
+    });
+  });
+
+  // ============================================================================
+  // MISSING IMPORTS_FROM EDGE (Graceful Handling)
+  // ============================================================================
+
+  describe('Missing IMPORTS_FROM edge (graceful handling)', () => {
+    it('should handle missing IMPORTS_FROM edge gracefully', async () => {
+      const { backend } = await setupBackend();
+
+      try {
+        const resolver = new FunctionCallResolver();
+
+        // Setup: IMPORT exists but no IMPORTS_FROM edge
+        // (file not analyzed or import resolution failed)
+
+        await backend.addNodes([
+          {
+            id: 'main-import-foo',
+            type: 'IMPORT',
+            name: 'foo',
+            file: '/project/main.js',
+            line: 1,
+            source: './utils',  // Relative, but no IMPORTS_FROM edge
+            importType: 'named',
+            imported: 'foo',
+            local: 'foo'
+          },
+          {
+            id: 'main-call-foo',
+            type: 'CALL',
+            name: 'foo',
+            file: '/project/main.js',
+            line: 3
+          }
+        ]);
+
+        // Note: NO IMPORTS_FROM edge created
+
+        await backend.flush();
+
+        const result = await resolver.execute({ graph: backend });
+
+        // Should not crash, should report success
+        assert.strictEqual(result.success, true, 'Plugin should succeed');
+
+        // No edge should be created
+        const edges = await backend.getOutgoingEdges('main-call-foo', ['CALLS']);
+        assert.strictEqual(edges.length, 0, 'Should not create edge without IMPORTS_FROM');
+
+        console.log('Missing IMPORTS_FROM edge handled gracefully');
+      } finally {
+        await backend.close();
+      }
+    });
+  });
+
+  // ============================================================================
+  // RE-EXPORTS (Skip Complex Cases for v1)
+  // ============================================================================
+
+  describe('Re-exports (skip for v1)', () => {
+    it('should skip re-export chains for v1', async () => {
+      const { backend } = await setupBackend();
+
+      try {
+        const resolver = new FunctionCallResolver();
+
+        // Setup: export { foo } from './other';
+        // This is a re-export - EXPORT node has 'source' field
+
+        await backend.addNodes([
+          // The actual function is in other.js
+          {
+            id: 'other-foo-func',
+            type: 'FUNCTION',
+            name: 'foo',
+            file: '/project/other.js',
+            line: 1
+          },
+          // Re-export in utils.js (export { foo } from './other')
+          {
+            id: 'utils-reexport-foo',
+            type: 'EXPORT',
+            name: 'foo',
+            file: '/project/utils.js',
+            line: 1,
+            exportType: 'named',
+            local: 'foo',
+            source: './other'  // <-- Re-export indicator
+          },
+          // Import in main.js
+          {
+            id: 'main-import-foo',
+            type: 'IMPORT',
+            name: 'foo',
+            file: '/project/main.js',
+            line: 1,
+            source: './utils',
+            importType: 'named',
+            imported: 'foo',
+            local: 'foo'
+          },
+          // Call in main.js
+          {
+            id: 'main-call-foo',
+            type: 'CALL',
+            name: 'foo',
+            file: '/project/main.js',
+            line: 3
+          }
+        ]);
+
+        // IMPORT -> IMPORTS_FROM -> re-exporting EXPORT
+        await backend.addEdge({
+          type: 'IMPORTS_FROM',
+          src: 'main-import-foo',
+          dst: 'utils-reexport-foo'
+        });
+
+        await backend.flush();
+
+        const result = await resolver.execute({ graph: backend });
+
+        // For v1, we skip re-exports (EXPORT with source field)
+        // No edge should be created
+        const edges = await backend.getOutgoingEdges('main-call-foo', ['CALLS']);
+        assert.strictEqual(edges.length, 0, 'Should skip re-export chains for v1');
+
+        console.log('Re-export chains correctly skipped for v1');
+      } finally {
+        await backend.close();
+      }
+    });
+  });
+
+  // ============================================================================
+  // ARROW FUNCTION EXPORTS
+  // ============================================================================
+
+  describe('Arrow function exports', () => {
+    it('should resolve calls to exported arrow functions', async () => {
+      const { backend } = await setupBackend();
+
+      try {
+        const resolver = new FunctionCallResolver();
+
+        // Setup: const foo = () => {}; export { foo };
+        // foo(); in main.js
+
+        await backend.addNodes([
+          // Arrow function in utils.js
+          {
+            id: 'utils-foo-arrow',
+            type: 'FUNCTION',
+            name: 'foo',
+            file: '/project/utils.js',
+            line: 1,
+            kind: 'arrow'  // Arrow function
+          },
+          // Named export
+          {
+            id: 'utils-export-foo',
+            type: 'EXPORT',
+            name: 'foo',
+            file: '/project/utils.js',
+            line: 2,
+            exportType: 'named',
+            local: 'foo'
+          },
+          // Import
+          {
+            id: 'main-import-foo',
+            type: 'IMPORT',
+            name: 'foo',
+            file: '/project/main.js',
+            line: 1,
+            source: './utils',
+            importType: 'named',
+            imported: 'foo',
+            local: 'foo'
+          },
+          // Call
+          {
+            id: 'main-call-foo',
+            type: 'CALL',
+            name: 'foo',
+            file: '/project/main.js',
+            line: 3
+          }
+        ]);
+
+        await backend.addEdge({
+          type: 'IMPORTS_FROM',
+          src: 'main-import-foo',
+          dst: 'utils-export-foo'
+        });
+
+        await backend.flush();
+
+        const result = await resolver.execute({ graph: backend });
+
+        const edges = await backend.getOutgoingEdges('main-call-foo', ['CALLS']);
+        assert.strictEqual(edges.length, 1, 'Should create CALLS edge');
+        assert.strictEqual(edges[0].dst, 'utils-foo-arrow', 'Should point to arrow function');
+
+        console.log('Arrow function export resolution works');
+      } finally {
+        await backend.close();
+      }
+    });
+  });
+
+  // ============================================================================
+  // MULTIPLE CALLS TO SAME IMPORTED FUNCTION
+  // ============================================================================
+
+  describe('Multiple calls to same imported function', () => {
+    it('should resolve multiple calls to the same imported function', async () => {
+      const { backend } = await setupBackend();
+
+      try {
+        const resolver = new FunctionCallResolver();
+
+        await backend.addNodes([
+          {
+            id: 'utils-foo-func',
+            type: 'FUNCTION',
+            name: 'foo',
+            file: '/project/utils.js',
+            line: 1
+          },
+          {
+            id: 'utils-export-foo',
+            type: 'EXPORT',
+            name: 'foo',
+            file: '/project/utils.js',
+            line: 1,
+            exportType: 'named',
+            local: 'foo'
+          },
+          {
+            id: 'main-import-foo',
+            type: 'IMPORT',
+            name: 'foo',
+            file: '/project/main.js',
+            line: 1,
+            source: './utils',
+            importType: 'named',
+            imported: 'foo',
+            local: 'foo'
+          },
+          // Multiple calls to foo()
+          {
+            id: 'main-call-foo-1',
+            type: 'CALL',
+            name: 'foo',
+            file: '/project/main.js',
+            line: 3
+          },
+          {
+            id: 'main-call-foo-2',
+            type: 'CALL',
+            name: 'foo',
+            file: '/project/main.js',
+            line: 5
+          },
+          {
+            id: 'main-call-foo-3',
+            type: 'CALL',
+            name: 'foo',
+            file: '/project/main.js',
+            line: 7
+          }
+        ]);
+
+        await backend.addEdge({
+          type: 'IMPORTS_FROM',
+          src: 'main-import-foo',
+          dst: 'utils-export-foo'
+        });
+
+        await backend.flush();
+
+        const result = await resolver.execute({ graph: backend });
+
+        // All calls should be resolved
+        const edges1 = await backend.getOutgoingEdges('main-call-foo-1', ['CALLS']);
+        const edges2 = await backend.getOutgoingEdges('main-call-foo-2', ['CALLS']);
+        const edges3 = await backend.getOutgoingEdges('main-call-foo-3', ['CALLS']);
+
+        assert.strictEqual(edges1.length, 1, 'Call 1 should have CALLS edge');
+        assert.strictEqual(edges2.length, 1, 'Call 2 should have CALLS edge');
+        assert.strictEqual(edges3.length, 1, 'Call 3 should have CALLS edge');
+
+        assert.strictEqual(edges1[0].dst, 'utils-foo-func');
+        assert.strictEqual(edges2[0].dst, 'utils-foo-func');
+        assert.strictEqual(edges3[0].dst, 'utils-foo-func');
+
+        assert.strictEqual(result.created.edges, 3, 'Should create 3 edges');
+
+        console.log('Multiple calls to same function resolved correctly');
+      } finally {
+        await backend.close();
+      }
+    });
+  });
+
+  // ============================================================================
+  // MULTIPLE IMPORTS FROM SAME FILE
+  // ============================================================================
+
+  describe('Multiple imports from same file', () => {
+    it('should resolve calls to multiple functions from same source', async () => {
+      const { backend } = await setupBackend();
+
+      try {
+        const resolver = new FunctionCallResolver();
+
+        // import { foo, bar, baz } from './utils';
+
+        await backend.addNodes([
+          // Functions
+          {
+            id: 'utils-foo-func',
+            type: 'FUNCTION',
+            name: 'foo',
+            file: '/project/utils.js',
+            line: 1
+          },
+          {
+            id: 'utils-bar-func',
+            type: 'FUNCTION',
+            name: 'bar',
+            file: '/project/utils.js',
+            line: 5
+          },
+          {
+            id: 'utils-baz-func',
+            type: 'FUNCTION',
+            name: 'baz',
+            file: '/project/utils.js',
+            line: 10
+          },
+          // Exports
+          {
+            id: 'utils-export-foo',
+            type: 'EXPORT',
+            name: 'foo',
+            file: '/project/utils.js',
+            exportType: 'named',
+            local: 'foo'
+          },
+          {
+            id: 'utils-export-bar',
+            type: 'EXPORT',
+            name: 'bar',
+            file: '/project/utils.js',
+            exportType: 'named',
+            local: 'bar'
+          },
+          {
+            id: 'utils-export-baz',
+            type: 'EXPORT',
+            name: 'baz',
+            file: '/project/utils.js',
+            exportType: 'named',
+            local: 'baz'
+          },
+          // Imports
+          {
+            id: 'main-import-foo',
+            type: 'IMPORT',
+            name: 'foo',
+            file: '/project/main.js',
+            source: './utils',
+            importType: 'named',
+            imported: 'foo',
+            local: 'foo'
+          },
+          {
+            id: 'main-import-bar',
+            type: 'IMPORT',
+            name: 'bar',
+            file: '/project/main.js',
+            source: './utils',
+            importType: 'named',
+            imported: 'bar',
+            local: 'bar'
+          },
+          {
+            id: 'main-import-baz',
+            type: 'IMPORT',
+            name: 'baz',
+            file: '/project/main.js',
+            source: './utils',
+            importType: 'named',
+            imported: 'baz',
+            local: 'baz'
+          },
+          // Calls
+          {
+            id: 'main-call-foo',
+            type: 'CALL',
+            name: 'foo',
+            file: '/project/main.js',
+            line: 5
+          },
+          {
+            id: 'main-call-bar',
+            type: 'CALL',
+            name: 'bar',
+            file: '/project/main.js',
+            line: 6
+          },
+          {
+            id: 'main-call-baz',
+            type: 'CALL',
+            name: 'baz',
+            file: '/project/main.js',
+            line: 7
+          }
+        ]);
+
+        // IMPORTS_FROM edges
+        await backend.addEdge({ type: 'IMPORTS_FROM', src: 'main-import-foo', dst: 'utils-export-foo' });
+        await backend.addEdge({ type: 'IMPORTS_FROM', src: 'main-import-bar', dst: 'utils-export-bar' });
+        await backend.addEdge({ type: 'IMPORTS_FROM', src: 'main-import-baz', dst: 'utils-export-baz' });
+
+        await backend.flush();
+
+        const result = await resolver.execute({ graph: backend });
+
+        const edgesFoo = await backend.getOutgoingEdges('main-call-foo', ['CALLS']);
+        const edgesBar = await backend.getOutgoingEdges('main-call-bar', ['CALLS']);
+        const edgesBaz = await backend.getOutgoingEdges('main-call-baz', ['CALLS']);
+
+        assert.strictEqual(edgesFoo[0].dst, 'utils-foo-func');
+        assert.strictEqual(edgesBar[0].dst, 'utils-bar-func');
+        assert.strictEqual(edgesBaz[0].dst, 'utils-baz-func');
+
+        assert.strictEqual(result.created.edges, 3, 'Should create 3 edges');
+
+        console.log('Multiple imports from same file resolved correctly');
+      } finally {
+        await backend.close();
+      }
+    });
+  });
+
+  // ============================================================================
+  // CALL TO NON-IMPORTED FUNCTION (Should not resolve)
+  // ============================================================================
+
+  describe('Call to non-imported function', () => {
+    it('should not resolve call to function that was not imported', async () => {
+      const { backend } = await setupBackend();
+
+      try {
+        const resolver = new FunctionCallResolver();
+
+        // Setup: Call to 'helper' but only 'foo' is imported
+
+        await backend.addNodes([
+          {
+            id: 'utils-foo-func',
+            type: 'FUNCTION',
+            name: 'foo',
+            file: '/project/utils.js',
+            line: 1
+          },
+          {
+            id: 'utils-export-foo',
+            type: 'EXPORT',
+            name: 'foo',
+            file: '/project/utils.js',
+            exportType: 'named',
+            local: 'foo'
+          },
+          {
+            id: 'main-import-foo',
+            type: 'IMPORT',
+            name: 'foo',
+            file: '/project/main.js',
+            source: './utils',
+            importType: 'named',
+            imported: 'foo',
+            local: 'foo'
+          },
+          // Call to foo - should resolve
+          {
+            id: 'main-call-foo',
+            type: 'CALL',
+            name: 'foo',
+            file: '/project/main.js',
+            line: 3
+          },
+          // Call to helper - NOT imported, should NOT resolve
+          {
+            id: 'main-call-helper',
+            type: 'CALL',
+            name: 'helper',
+            file: '/project/main.js',
+            line: 5
+          }
+        ]);
+
+        await backend.addEdge({
+          type: 'IMPORTS_FROM',
+          src: 'main-import-foo',
+          dst: 'utils-export-foo'
+        });
+
+        await backend.flush();
+
+        const result = await resolver.execute({ graph: backend });
+
+        const edgesFoo = await backend.getOutgoingEdges('main-call-foo', ['CALLS']);
+        const edgesHelper = await backend.getOutgoingEdges('main-call-helper', ['CALLS']);
+
+        assert.strictEqual(edgesFoo.length, 1, 'foo() should be resolved');
+        assert.strictEqual(edgesHelper.length, 0, 'helper() should NOT be resolved (not imported)');
+
+        console.log('Non-imported function calls correctly not resolved');
+      } finally {
+        await backend.close();
+      }
+    });
+  });
+
+  // ============================================================================
+  // PLUGIN METADATA
+  // ============================================================================
+
+  describe('Plugin metadata', () => {
+    it('should have correct metadata', async () => {
+      const resolver = new FunctionCallResolver();
+      const metadata = resolver.metadata;
+
+      assert.strictEqual(metadata.name, 'FunctionCallResolver');
+      assert.strictEqual(metadata.phase, 'ENRICHMENT');
+      assert.strictEqual(metadata.priority, 80, 'Priority should be 80 (after ImportExportLinker at 90)');
+      assert.deepStrictEqual(metadata.creates.edges, ['CALLS']);
+      assert.deepStrictEqual(metadata.creates.nodes, []);
+      assert.ok(metadata.dependencies.includes('ImportExportLinker'), 'Should depend on ImportExportLinker');
+
+      console.log('Plugin metadata is correct');
+    });
+  });
+});
