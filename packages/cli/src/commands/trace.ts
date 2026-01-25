@@ -188,6 +188,7 @@ async function traceBackward(
 ): Promise<TraceStep[]> {
   const trace: TraceStep[] = [];
   const visited = new Set<string>();
+  const seenNodes = new Set<string>();
   const queue: Array<{ id: string; depth: number }> = [{ id: startId, depth: 0 }];
 
   while (queue.length > 0) {
@@ -202,6 +203,9 @@ async function traceBackward(
       for (const edge of edges) {
         const targetNode = await backend.getNode(edge.dst);
         if (!targetNode) continue;
+
+        if (seenNodes.has(targetNode.id)) continue;
+        seenNodes.add(targetNode.id);
 
         const nodeInfo: NodeInfo = {
           id: targetNode.id,
@@ -242,6 +246,7 @@ async function traceForward(
 ): Promise<TraceStep[]> {
   const trace: TraceStep[] = [];
   const visited = new Set<string>();
+  const seenNodes = new Set<string>();
   const queue: Array<{ id: string; depth: number }> = [{ id: startId, depth: 0 }];
 
   while (queue.length > 0) {
@@ -257,6 +262,9 @@ async function traceForward(
       for (const edge of edges) {
         const sourceNode = await backend.getNode(edge.src);
         if (!sourceNode) continue;
+
+        if (seenNodes.has(sourceNode.id)) continue;
+        seenNodes.add(sourceNode.id);
 
         const nodeInfo: NodeInfo = {
           id: sourceNode.id,
