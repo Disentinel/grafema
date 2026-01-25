@@ -5,7 +5,6 @@
 import { Command } from 'commander';
 import { resolve, join } from 'path';
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
-import { exitWithError } from '../utils/errorFormatter.js';
 import { stringify as stringifyYAML } from 'yaml';
 import { DEFAULT_CONFIG } from '@grafema/core';
 
@@ -65,10 +64,15 @@ Examples:
 
     // Check package.json
     if (!existsSync(packageJsonPath)) {
-      exitWithError('No package.json found', [
-        'Initialize a project: npm init',
-        'Or check you are in the right directory'
-      ]);
+      console.error('✗ Grafema currently supports JavaScript/TypeScript projects only.');
+      console.error(`  No package.json found in ${projectPath}`);
+      console.error('');
+      console.error('  Supported: Node.js, React, Express, Next.js, Vue, Angular, etc.');
+      console.error('  Coming soon: Python, Go, Rust');
+      console.error('');
+      console.error('  If this IS a JS/TS project, create package.json first:');
+      console.error('    npm init -y');
+      process.exit(1);
     }
     console.log('✓ Found package.json');
 
