@@ -20,6 +20,7 @@ import { ImportNode, type ImportNodeRecord } from './nodes/ImportNode.js';
 import { ExportNode, type ExportNodeRecord } from './nodes/ExportNode.js';
 import { ScopeTracker } from './ScopeTracker.js';
 import { computeSemanticId } from './SemanticId.js';
+import { getLine, getColumn } from '../plugins/analysis/ast/utils/location.js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const traverse = (traverseModule as any).default || traverseModule;
@@ -253,7 +254,7 @@ function parseModule(filePath: string, moduleId: string, moduleName: string): AS
         const importNode = ImportNode.create(
           localName,      // name
           filePath,       // file
-          node.loc!.start.line,  // line (non-null - Babel guarantees location)
+          getLine(node),  // line (non-null - Babel guarantees location)
           0,              // column (not available in this worker)
           source,         // source
           { imported: importedName, local: localName }
@@ -273,7 +274,7 @@ function parseModule(filePath: string, moduleId: string, moduleName: string): AS
           const exportNode = ExportNode.createWithContext(
             node.declaration.id.name,
             scopeTracker.getContext(),
-            { line: node.loc!.start.line, column: 0 },
+            { line: getLine(node), column: 0 },
             { exportType: 'named' }
           );
           collections.exports.push(exportNode);
@@ -281,7 +282,7 @@ function parseModule(filePath: string, moduleId: string, moduleName: string): AS
           const exportNode = ExportNode.createWithContext(
             node.declaration.id.name,
             scopeTracker.getContext(),
-            { line: node.loc!.start.line, column: 0 },
+            { line: getLine(node), column: 0 },
             { exportType: 'named' }
           );
           collections.exports.push(exportNode);
@@ -291,7 +292,7 @@ function parseModule(filePath: string, moduleId: string, moduleName: string): AS
               const exportNode = ExportNode.createWithContext(
                 decl.id.name,
                 scopeTracker.getContext(),
-                { line: node.loc!.start.line, column: 0 },
+                { line: getLine(node), column: 0 },
                 { exportType: 'named' }
               );
               collections.exports.push(exportNode);
@@ -307,7 +308,7 @@ function parseModule(filePath: string, moduleId: string, moduleName: string): AS
           const exportNode = ExportNode.createWithContext(
             exportedName,
             scopeTracker.getContext(),
-            { line: node.loc!.start.line, column: 0 },
+            { line: getLine(node), column: 0 },
             {
               local: (spec as ExportSpecifier).local.name,
               exportType: 'named'
@@ -331,7 +332,7 @@ function parseModule(filePath: string, moduleId: string, moduleName: string): AS
       const exportNode = ExportNode.createWithContext(
         'default',
         scopeTracker.getContext(),
-        { line: node.loc!.start.line, column: 0 },
+        { line: getLine(node), column: 0 },
         {
           local: localName,
           default: true,
@@ -353,7 +354,7 @@ function parseModule(filePath: string, moduleId: string, moduleName: string): AS
       node.declarations.forEach(decl => {
         if (decl.id.type === 'Identifier') {
           const varName = decl.id.name;
-          const line = decl.id.loc!.start.line;
+          const line = getLine(decl.id);
 
           const literalValue = ExpressionEvaluator.extractLiteralValue(decl.init);
           const isLiteral = literalValue !== null;
@@ -405,8 +406,8 @@ function parseModule(filePath: string, moduleId: string, moduleName: string): AS
         type: 'FUNCTION',
         name: funcName,
         file: filePath,
-        line: node.loc!.start.line,
-        column: node.loc!.start.column,
+        line: getLine(node),
+        column: getColumn(node),
         async: node.async || false,
         generator: node.generator || false,
         exported: path.parent?.type === 'ExportNamedDeclaration' || path.parent?.type === 'ExportDefaultDeclaration'
@@ -426,7 +427,7 @@ function parseModule(filePath: string, moduleId: string, moduleName: string): AS
             index,
             functionId,
             file: filePath,
-            line: param.loc!.start.line
+            line: getLine(param)
           });
         }
       });
@@ -452,7 +453,7 @@ function parseModule(filePath: string, moduleId: string, moduleName: string): AS
       const classRecord = ClassNode.createWithContext(
         className,
         scopeTracker.getContext(),
-        { line: node.loc!.start.line, column: node.loc!.start.column || 0 },
+        { line: getLine(node), column: getColumn(node) },
         { superClass: superClassName || undefined }
       );
 
@@ -475,8 +476,8 @@ function parseModule(filePath: string, moduleId: string, moduleName: string): AS
             className,
             classId: classRecord.id,
             file: filePath,
-            line: member.loc!.start.line,
-            column: member.loc!.start.column,
+            line: getLine(member),
+            column: getColumn(member),
             async: member.async || false,
             isClassMethod: true,
             isConstructor: member.kind === 'constructor',
@@ -512,7 +513,7 @@ function parseModule(filePath: string, moduleId: string, moduleName: string): AS
           type: 'CALL',
           name: calleeName,
           file: filePath,
-          line: node.loc!.start.line,
+          line: getLine(node),
           parentScopeId: moduleId,
           targetFunctionName: calleeName
         });
@@ -539,7 +540,7 @@ function parseModule(filePath: string, moduleId: string, moduleName: string): AS
             object: objectName,
             method: methodName,
             file: filePath,
-            line: node.loc!.start.line,
+            line: getLine(node),
             parentScopeId: moduleId
           });
         }

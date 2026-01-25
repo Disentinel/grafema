@@ -28,6 +28,7 @@ import { createParameterNodes } from '../utils/createParameterNodes.js';
 import { ScopeTracker } from '../../../../core/ScopeTracker.js';
 import { ClassNode, type ClassNodeRecord } from '../../../../core/nodes/ClassNode.js';
 import { computeSemanticId } from '../../../../core/SemanticId.js';
+import { getLine, getColumn } from '../utils/location.js';
 
 /**
  * Class declaration info
@@ -126,15 +127,17 @@ export class ClassVisitor extends ASTVisitor {
       return null;  // Unsupported decorator type
     }
 
-    const decoratorId = `DECORATOR#${decoratorName}#${module.file}#${decorator.loc!.start.line}:${decorator.loc!.start.column}`;
+    const decoratorLine = getLine(decorator);
+    const decoratorColumn = getColumn(decorator);
+    const decoratorId = `DECORATOR#${decoratorName}#${module.file}#${decoratorLine}:${decoratorColumn}`;
 
     return {
       id: decoratorId,
       type: 'DECORATOR',
       name: decoratorName,
       file: module.file,
-      line: decorator.loc!.start.line,
-      column: decorator.loc!.start.column,
+      line: decoratorLine,
+      column: decoratorColumn,
       arguments: decoratorArgs,
       targetId,
       targetType
@@ -167,11 +170,14 @@ export class ClassVisitor extends ASTVisitor {
           ? (classNode.superClass as Identifier).name
           : null;
 
+        const classLine = getLine(classNode);
+        const classColumn = getColumn(classNode);
+
         // Create CLASS node using NodeFactory with semantic ID
         const classRecord = ClassNode.createWithContext(
           className,
           scopeTracker.getContext(),
-          { line: classNode.loc!.start.line, column: classNode.loc!.start.column },
+          { line: classLine, column: classColumn },
           { superClass: superClassName || undefined }
         );
 
@@ -224,11 +230,14 @@ export class ClassVisitor extends ASTVisitor {
               ? propNode.key.name
               : (propNode.key as { value?: string }).value || 'anonymous';
 
+            const propLine = getLine(propNode);
+            const propColumn = getColumn(propNode);
+
             // Extract property decorators (even for non-function properties)
             const propNodeWithDecorators = propNode as ClassProperty & { decorators?: Decorator[] };
             if (propNodeWithDecorators.decorators && propNodeWithDecorators.decorators.length > 0 && decorators) {
               // For function properties, target will be set later; for regular properties, create a target ID
-              const propertyTargetId = `PROPERTY#${className}.${propName}#${module.file}#${propNode.loc!.start.line}`;
+              const propertyTargetId = `PROPERTY#${className}.${propName}#${module.file}#${propLine}`;
               for (const decorator of propNodeWithDecorators.decorators) {
                 const decoratorInfo = this.extractDecoratorInfo(decorator, propertyTargetId, 'PROPERTY', module);
                 if (decoratorInfo) {
@@ -245,7 +254,7 @@ export class ClassVisitor extends ASTVisitor {
               const funcNode = propNode.value as ArrowFunctionExpression | FunctionExpression;
 
               // Use semantic ID as primary ID (matching FunctionVisitor pattern)
-              const legacyId = `FUNCTION#${className}.${propName}#${module.file}#${propNode.loc!.start.line}:${propNode.loc!.start.column}`;
+              const legacyId = `FUNCTION#${className}.${propName}#${module.file}#${propLine}:${propColumn}`;
               const functionId = computeSemanticId('FUNCTION', propName, scopeTracker.getContext());
 
               // Add method to class methods list for CONTAINS edges
@@ -256,8 +265,8 @@ export class ClassVisitor extends ASTVisitor {
                 type: 'FUNCTION',
                 name: propName,
                 file: module.file,
-                line: propNode.loc!.start.line,
-                column: propNode.loc!.start.column,
+                line: propLine,
+                column: propColumn,
                 async: funcNode.async || false,
                 generator: funcNode.type === 'FunctionExpression' ? funcNode.generator || false : false,
                 arrowFunction: funcNode.type === 'ArrowFunctionExpression',
@@ -271,11 +280,11 @@ export class ClassVisitor extends ASTVisitor {
 
               // Create PARAMETER nodes for class property function parameters (REG-134)
               if (parameters) {
-                createParameterNodes(funcNode.params, functionId, module.file, propNode.loc!.start.line, parameters as ParameterInfo[]);
+                createParameterNodes(funcNode.params, functionId, module.file, propLine, parameters as ParameterInfo[], scopeTracker);
               }
 
               // Create SCOPE for property function body
-              const propBodyScopeId = `SCOPE#${className}.${propName}:body#${module.file}#${propNode.loc!.start.line}`;
+              const propBodyScopeId = `SCOPE#${className}.${propName}:body#${module.file}#${propLine}`;
               const propBodySemanticId = computeSemanticId('SCOPE', 'body', scopeTracker.getContext());
               (scopes as ScopeInfo[]).push({
                 id: propBodyScopeId,
@@ -285,7 +294,7 @@ export class ClassVisitor extends ASTVisitor {
                 name: `${className}.${propName}:body`,
                 conditional: false,
                 file: module.file,
-                line: propNode.loc!.start.line,
+                line: propLine,
                 parentFunctionId: functionId
               });
 
@@ -308,8 +317,11 @@ export class ClassVisitor extends ASTVisitor {
               return;
             }
 
+            const methodLine = getLine(methodNode);
+            const methodColumn = getColumn(methodNode);
+
             // Use semantic ID as primary ID (matching FunctionVisitor pattern)
-            const legacyId = `FUNCTION#${className}.${methodName}#${module.file}#${methodNode.loc!.start.line}:${methodNode.loc!.start.column}`;
+            const legacyId = `FUNCTION#${className}.${methodName}#${module.file}#${methodLine}:${methodColumn}`;
             const functionId = computeSemanticId('FUNCTION', methodName, scopeTracker.getContext());
 
             // Add method to class methods list for CONTAINS edges
@@ -320,8 +332,8 @@ export class ClassVisitor extends ASTVisitor {
               type: 'FUNCTION',
               name: methodName,
               file: module.file,
-              line: methodNode.loc!.start.line,
-              column: methodNode.loc!.start.column,
+              line: methodLine,
+              column: methodColumn,
               async: methodNode.async || false,
               generator: methodNode.generator || false,
               isClassMethod: true,
@@ -347,11 +359,11 @@ export class ClassVisitor extends ASTVisitor {
 
             // Create PARAMETER nodes for class method parameters (REG-134)
             if (parameters) {
-              createParameterNodes(methodNode.params, functionId, module.file, methodNode.loc!.start.line, parameters as ParameterInfo[]);
+              createParameterNodes(methodNode.params, functionId, module.file, methodLine, parameters as ParameterInfo[], scopeTracker);
             }
 
             // Create SCOPE for method body
-            const methodBodyScopeId = `SCOPE#${className}.${methodName}:body#${module.file}#${methodNode.loc!.start.line}`;
+            const methodBodyScopeId = `SCOPE#${className}.${methodName}:body#${module.file}#${methodLine}`;
             const methodBodySemanticId = computeSemanticId('SCOPE', 'body', scopeTracker.getContext());
             (scopes as ScopeInfo[]).push({
               id: methodBodyScopeId,
@@ -361,7 +373,7 @@ export class ClassVisitor extends ASTVisitor {
               name: `${className}.${methodName}:body`,
               conditional: false,
               file: module.file,
-              line: methodNode.loc!.start.line,
+              line: methodLine,
               parentFunctionId: functionId
             });
 

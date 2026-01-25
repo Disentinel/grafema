@@ -169,15 +169,15 @@ async function findNodes(
 
   for (const nodeType of searchTypes) {
     for await (const node of backend.queryNodes({ nodeType: nodeType as any })) {
-      const nodeName = (node as any).name || '';
+      const nodeName = node.name || '';
       // Case-insensitive partial match
       if (nodeName.toLowerCase().includes(name.toLowerCase())) {
         results.push({
           id: node.id,
-          type: (node as any).type || nodeType,
+          type: node.type || nodeType,
           name: nodeName,
-          file: (node as any).file || '',
-          line: (node as any).line,
+          file: node.file || '',
+          line: node.line,
         });
         if (results.length >= limit) break;
       }
@@ -220,10 +220,10 @@ async function getCallers(
         seen.add(containingFunc.id);
         callers.push({
           id: containingFunc.id,
-          type: (containingFunc as any).type || 'FUNCTION',
-          name: (containingFunc as any).name || '<anonymous>',
-          file: (containingFunc as any).file || '',
-          line: (containingFunc as any).line,
+          type: containingFunc.type || 'FUNCTION',
+          name: containingFunc.name || '<anonymous>',
+          file: containingFunc.file || '',
+          line: containingFunc.line,
         });
       }
     }
@@ -267,16 +267,16 @@ async function findContainingFunction(
         const parentNode = await backend.getNode(edge.src);
         if (!parentNode || visited.has(parentNode.id)) continue;
 
-        const parentType = (parentNode as any).type || (parentNode as any).nodeType;
+        const parentType = parentNode.type;
 
         // FUNCTION, CLASS, or MODULE (for top-level calls)
         if (parentType === 'FUNCTION' || parentType === 'CLASS' || parentType === 'MODULE') {
           return {
             id: parentNode.id,
             type: parentType,
-            name: (parentNode as any).name || '<anonymous>',
-            file: (parentNode as any).file || '',
-            line: (parentNode as any).line,
+            name: parentNode.name || '<anonymous>',
+            file: parentNode.file || '',
+            line: parentNode.line,
           };
         }
 
@@ -324,10 +324,10 @@ async function getCallees(
         seen.add(targetNode.id);
         callees.push({
           id: targetNode.id,
-          type: (targetNode as any).type || (targetNode as any).nodeType || 'UNKNOWN',
-          name: (targetNode as any).name || '<anonymous>',
-          file: (targetNode as any).file || '',
-          line: (targetNode as any).line,
+          type: targetNode.type || 'UNKNOWN',
+          name: targetNode.name || '<anonymous>',
+          file: targetNode.file || '',
+          line: targetNode.line,
         });
       }
     }
@@ -364,15 +364,15 @@ async function findCallsInFunction(
         const child = await backend.getNode(edge.dst);
         if (!child) continue;
 
-        const childType = (child as any).type || (child as any).nodeType;
+        const childType = child.type;
 
         if (childType === 'CALL') {
           calls.push({
             id: child.id,
             type: 'CALL',
-            name: (child as any).name || '',
-            file: (child as any).file || '',
-            line: (child as any).line,
+            name: child.name || '',
+            file: child.file || '',
+            line: child.line,
           });
         }
 

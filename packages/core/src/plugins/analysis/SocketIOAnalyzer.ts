@@ -23,6 +23,7 @@ import type { NodePath } from '@babel/traverse';
 import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { NodeRecord } from '@grafema/types';
+import { getLine, getColumn } from './ast/utils/location.js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const traverse = (traverseModule as any).default || traverseModule;
@@ -181,8 +182,8 @@ export class SocketIOAnalyzer extends Plugin {
           ) {
             const objectName = this.getObjectName(callee.object);
             const event = this.extractStringArg(node.arguments[0]);
-            const line = node.loc!.start.line;
-            const column = node.loc!.start.column;
+            const line = getLine(node);
+            const column = getColumn(node);
 
             // io.to('room').emit() - room-based emit
             let room: string | null = null;
@@ -235,7 +236,7 @@ export class SocketIOAnalyzer extends Plugin {
           ) {
             const objectName = this.getObjectName(callee.object);
             const event = this.extractStringArg(node.arguments[0]);
-            const line = node.loc!.start.line;
+            const line = getLine(node);
             const handler = node.arguments[1];
 
             // Извлекаем имя handler функции
@@ -246,8 +247,8 @@ export class SocketIOAnalyzer extends Plugin {
                 handler.type === 'FunctionExpression' ||
                 handler.type === 'ArrowFunctionExpression'
               ) {
-                handlerName = `anonymous:${handler.loc!.start.line}`;
-                handlerLine = handler.loc!.start.line;
+                handlerName = `anonymous:${getLine(handler)}`;
+                handlerLine = getLine(handler);
               } else if (handler.type === 'Identifier') {
                 handlerName = (handler as Identifier).name;
               }
@@ -273,7 +274,7 @@ export class SocketIOAnalyzer extends Plugin {
           ) {
             const objectName = this.getObjectName(callee.object);
             const roomName = this.extractStringArg(node.arguments[0]);
-            const line = node.loc!.start.line;
+            const line = getLine(node);
 
             if (objectName === 'socket') {
               rooms.push({

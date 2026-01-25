@@ -13,6 +13,7 @@ import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { NodeRecord } from '@grafema/types';
 import { NetworkRequestNode } from '../../core/nodes/NetworkRequestNode.js';
+import { getLine } from './ast/utils/location.js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const traverse = (traverseModule as any).default || traverseModule;
@@ -167,7 +168,7 @@ export class ExpressAnalyzer extends Plugin {
           imports.push({
             source,
             specifiers,
-            line: importNode.loc!.start.line
+            line: getLine(importNode)
           });
         }
       });
@@ -202,13 +203,13 @@ export class ExpressAnalyzer extends Plugin {
               if (routePath) {
                 const method = methodName.toUpperCase();
                 endpoints.push({
-                  id: `http:route#${method}:${routePath}#${module.file}#${node.loc!.start.line}`,
+                  id: `http:route#${method}:${routePath}#${module.file}#${getLine(node)}`,
                   type: 'http:route',
                   method: method,
                   path: routePath,
                   localPath: routePath,
                   file: module.file!,
-                  line: node.loc!.start.line,
+                  line: getLine(node),
                   mountedOn: objectName
                 });
               }
@@ -279,13 +280,13 @@ export class ExpressAnalyzer extends Plugin {
               // Создаём mount point
               if ((targetFunction || targetVariable) && prefix) {
                 mountPoints.push({
-                  id: `express:mount#${prefix}#${module.file}#${node.loc!.start.line}`,
+                  id: `express:mount#${prefix}#${module.file}#${getLine(node)}`,
                   type: 'express:mount',
                   prefix: prefix,
                   targetFunction: targetFunction,
                   targetVariable: targetVariable,
                   file: module.file!,
-                  line: node.loc!.start.line,
+                  line: getLine(node),
                   mountedOn: objectName
                 });
               }

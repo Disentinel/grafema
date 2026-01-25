@@ -37,6 +37,7 @@ import type { ServiceDefinition } from '@grafema/types';
  */
 export interface GrafemaConfig {
   plugins: {
+    discovery?: string[];
     indexing: string[];
     analysis: string[];
     enrichment: string[];
@@ -55,6 +56,7 @@ export interface GrafemaConfig {
  */
 export const DEFAULT_CONFIG: GrafemaConfig = {
   plugins: {
+    discovery: [],
     indexing: ['JSModuleIndexer'],
     analysis: [
       'JSASTAnalyzer',
@@ -120,7 +122,7 @@ export function loadConfig(
 
       // Validate structure - ensure plugins sections are arrays if they exist
       if (parsed.plugins) {
-        for (const phase of ['indexing', 'analysis', 'enrichment', 'validation'] as const) {
+        for (const phase of ['discovery', 'indexing', 'analysis', 'enrichment', 'validation'] as const) {
           const value = parsed.plugins[phase];
           if (value !== undefined && value !== null && !Array.isArray(value)) {
             throw new Error(`plugins.${phase} must be an array, got ${typeof value}`);
@@ -250,6 +252,7 @@ function mergeConfig(
 ): GrafemaConfig {
   return {
     plugins: {
+      discovery: user.plugins?.discovery ?? defaults.plugins.discovery,
       indexing: user.plugins?.indexing ?? defaults.plugins.indexing,
       analysis: user.plugins?.analysis ?? defaults.plugins.analysis,
       enrichment: user.plugins?.enrichment ?? defaults.plugins.enrichment,

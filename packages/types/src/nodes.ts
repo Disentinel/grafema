@@ -84,6 +84,7 @@ export interface BaseNodeRecord {
   type: NodeType;
   name: string;
   file: string;
+  exported?: boolean;  // Optional - some nodes may not have export status
   line?: number;  // Optional - not always available
   column?: number;
   metadata?: Record<string, unknown>;

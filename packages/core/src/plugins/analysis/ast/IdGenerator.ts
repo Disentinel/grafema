@@ -140,7 +140,10 @@ export class IdGenerator {
   /**
    * Generate legacy-only ID (no semantic version).
    *
-   * Used for: LITERAL (arguments), PARAMETER, DECORATOR, PROPERTY
+   * Used for: LITERAL (arguments), DECORATOR, PROPERTY
+   *
+   * NOTE: PARAMETER nodes use computeSemanticId() for stable, semantic identifiers.
+   * See createParameterNodes.ts for the implementation.
    *
    * @param includeSuffix - Additional suffix after line:column (counter or index)
    */

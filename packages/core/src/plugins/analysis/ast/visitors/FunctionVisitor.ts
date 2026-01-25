@@ -22,21 +22,9 @@ import { ASTVisitor, type VisitorModule, type VisitorCollections, type VisitorHa
 import { typeNodeToString } from './TypeScriptVisitor.js';
 import { ScopeTracker } from '../../../../core/ScopeTracker.js';
 import { IdGenerator } from '../IdGenerator.js';
-
-/**
- * Parameter node info
- */
-interface ParameterInfo {
-  id: string;
-  type: 'PARAMETER';
-  name: string;
-  file: string;
-  line: number;
-  index: number;
-  hasDefault?: boolean;
-  isRest?: boolean;
-  parentFunctionId: string;
-}
+import { createParameterNodes } from '../utils/createParameterNodes.js';
+import { getLine, getColumn } from '../utils/location.js';
+import type { ParameterInfo } from '../types.js';
 
 /**
  * Function node info
@@ -84,19 +72,19 @@ export type AnalyzeFunctionBodyCallback = (
 
 export class FunctionVisitor extends ASTVisitor {
   private analyzeFunctionBody: AnalyzeFunctionBodyCallback;
-  private scopeTracker?: ScopeTracker;
+  private scopeTracker: ScopeTracker;
 
   /**
    * @param module - Current module being analyzed
    * @param collections - Must contain arrays and counter refs
    * @param analyzeFunctionBody - Callback to analyze function internals
-   * @param scopeTracker - Optional ScopeTracker for semantic ID generation
+   * @param scopeTracker - REQUIRED for semantic ID generation
    */
   constructor(
     module: VisitorModule,
     collections: VisitorCollections,
     analyzeFunctionBody: AnalyzeFunctionBodyCallback,
-    scopeTracker?: ScopeTracker
+    scopeTracker: ScopeTracker
   ) {
     super(module, collections);
     this.analyzeFunctionBody = analyzeFunctionBody;
@@ -116,7 +104,6 @@ export class FunctionVisitor extends ASTVisitor {
 
     // Helper function to generate stable anonymous function name
     const generateAnonymousName = (): string => {
-      if (!scopeTracker) return 'anonymous';
       const index = scopeTracker.getSiblingIndex('anonymous');
       return `anonymous[${index}]`;
     };
@@ -215,65 +202,6 @@ export class FunctionVisitor extends ASTVisitor {
       return `${paramsStr} => ${retStr}`;
     };
 
-    // Helper function to create PARAMETER nodes for function params
-    const createParameterNodes = (
-      params: Node[],
-      functionId: string,
-      file: string,
-      line: number
-    ): void => {
-      if (!parameters) return; // Guard for backward compatibility
-
-      params.forEach((param, index) => {
-        // Handle different parameter types
-        if (param.type === 'Identifier') {
-          const paramId = `PARAMETER#${param.name}#${file}#${line}:${index}`;
-          (parameters as ParameterInfo[]).push({
-            id: paramId,
-            type: 'PARAMETER',
-            name: param.name,
-            file: file,
-            line: param.loc?.start.line || line,
-            index: index,
-            parentFunctionId: functionId
-          });
-        } else if (param.type === 'AssignmentPattern') {
-          // Default parameter: function(a = 1)
-          const assignmentParam = param as AssignmentPattern;
-          if (assignmentParam.left.type === 'Identifier') {
-            const paramId = `PARAMETER#${assignmentParam.left.name}#${file}#${line}:${index}`;
-            (parameters as ParameterInfo[]).push({
-              id: paramId,
-              type: 'PARAMETER',
-              name: assignmentParam.left.name,
-              file: file,
-              line: assignmentParam.left.loc?.start.line || line,
-              index: index,
-              hasDefault: true,
-              parentFunctionId: functionId
-            });
-          }
-        } else if ((param as Node).type === 'RestElement') {
-          // Rest parameter: function(...args)
-          const restParam = param as unknown as RestElement;
-          if (restParam.argument.type === 'Identifier') {
-            const paramId = `PARAMETER#${restParam.argument.name}#${file}#${line}:${index}`;
-            (parameters as ParameterInfo[]).push({
-              id: paramId,
-              type: 'PARAMETER',
-              name: restParam.argument.name,
-              file: file,
-              line: restParam.argument.loc?.start.line || line,
-              index: index,
-              isRest: true,
-              parentFunctionId: functionId
-            });
-          }
-        }
-        // ObjectPattern and ArrayPattern (destructuring parameters) can be added later
-      });
-    };
-
     return {
       // Regular function declarations
       FunctionDeclaration: (path: NodePath) => {
@@ -282,9 +210,11 @@ export class FunctionVisitor extends ASTVisitor {
 
         const isAsync = node.async || false;
 
+        const line = getLine(node);
+
         // Generate ID using centralized IdGenerator
         const idGenerator = new IdGenerator(scopeTracker);
-        const functionId = idGenerator.generateSimple('FUNCTION', node.id.name, module.file, node.loc!.start.line);
+        const functionId = idGenerator.generateSimple('FUNCTION', node.id.name, module.file, line);
 
         // Extract type info
         const { names: paramNames, types: paramTypes } = extractParamInfo(node.params);
@@ -297,7 +227,7 @@ export class FunctionVisitor extends ASTVisitor {
           type: 'FUNCTION',
           name: node.id.name,
           file: module.file,
-          line: node.loc!.start.line,
+          line,
           async: isAsync,
           generator: node.generator || false,
           params: paramNames,
@@ -307,16 +237,14 @@ export class FunctionVisitor extends ASTVisitor {
           jsdocSummary
         });
 
-        // Create PARAMETER nodes for function parameters
-        createParameterNodes(node.params, functionId, module.file, node.loc!.start.line);
+        // Enter function scope BEFORE creating parameters (semantic IDs need function context)
+        scopeTracker.enterScope(node.id.name, 'FUNCTION');
 
-        // Enter function scope for tracking
-        if (scopeTracker) {
-          scopeTracker.enterScope(node.id.name, 'FUNCTION');
-        }
+        // Create PARAMETER nodes for function parameters
+        createParameterNodes(node.params, functionId, module.file, getLine(node), parameters as ParameterInfo[], scopeTracker);
 
         // Create SCOPE for function body
-        const functionBodyScopeId = idGenerator.generateScope('body', `${node.id.name}:body`, module.file, node.loc!.start.line);
+        const functionBodyScopeId = idGenerator.generateScope('body', `${node.id.name}:body`, module.file, line);
         (scopes as ScopeInfo[]).push({
           id: functionBodyScopeId,
           type: 'SCOPE',
@@ -324,7 +252,7 @@ export class FunctionVisitor extends ASTVisitor {
           name: `${node.id.name}:body`,
           conditional: false,
           file: module.file,
-          line: node.loc!.start.line,
+          line,
           parentFunctionId: functionId
         });
 
@@ -332,9 +260,7 @@ export class FunctionVisitor extends ASTVisitor {
         analyzeFunctionBody(path as NodePath<FunctionDeclaration>, functionBodyScopeId, module, collections);
 
         // Exit function scope
-        if (scopeTracker) {
-          scopeTracker.exitScope();
-        }
+        scopeTracker.exitScope();
 
         // Stop traversal - analyzeFunctionBody already processed contents
         path.skip();
@@ -343,8 +269,8 @@ export class FunctionVisitor extends ASTVisitor {
       // Arrow functions (module-level, assigned to variables or as callbacks)
       ArrowFunctionExpression: (path: NodePath) => {
         const node = path.node as ArrowFunctionExpression;
-        const line = node.loc!.start.line;
-        const column = node.loc!.start.column;
+        const line = getLine(node);
+        const column = getColumn(node);
         const isAsync = node.async || false;
 
         // Determine arrow function name (use scope-level counter for stable semanticId)
@@ -385,13 +311,11 @@ export class FunctionVisitor extends ASTVisitor {
           jsdocSummary
         });
 
-        // Create PARAMETER nodes for arrow function parameters
-        createParameterNodes(node.params, functionId, module.file, line);
+        // Enter function scope BEFORE creating parameters (semantic IDs need function context)
+        scopeTracker.enterScope(functionName, 'FUNCTION');
 
-        // Enter function scope for tracking
-        if (scopeTracker) {
-          scopeTracker.enterScope(functionName, 'FUNCTION');
-        }
+        // Create PARAMETER nodes for arrow function parameters
+        createParameterNodes(node.params, functionId, module.file, line, parameters as ParameterInfo[], scopeTracker);
 
         // Create SCOPE for arrow function body
         const bodyScope = idGenerator.generateScope('body', `${functionName}:body`, module.file, line, column);
@@ -408,9 +332,7 @@ export class FunctionVisitor extends ASTVisitor {
         analyzeFunctionBody(path as NodePath<ArrowFunctionExpression>, bodyScope, module, collections);
 
         // Exit function scope
-        if (scopeTracker) {
-          scopeTracker.exitScope();
-        }
+        scopeTracker.exitScope();
       }
     };
   }

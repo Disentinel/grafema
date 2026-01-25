@@ -24,6 +24,7 @@ import type { NodePath } from '@babel/traverse';
 import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { NodeRecord } from '@grafema/types';
+import { getLine } from './ast/utils/location.js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const traverse = (traverseModule as any).default || traverseModule;
@@ -194,7 +195,7 @@ export class ServiceLayerAnalyzer extends Plugin {
           const className = node.id?.name;
 
           if (className && this.isServiceClass(className)) {
-            const line = node.loc!.start.line;
+            const line = getLine(node);
 
             // Извлекаем методы сервиса
             const methods = node.body.body
@@ -221,7 +222,7 @@ export class ServiceLayerAnalyzer extends Plugin {
             const className = (callee as Identifier).name;
 
             if (this.isServiceClass(className)) {
-              const line = node.loc!.start.line;
+              const line = getLine(node);
 
               serviceInstances.push({
                 id: `${module.file}:SERVICE_INSTANCE:${className}:${line}`,
@@ -248,7 +249,7 @@ export class ServiceLayerAnalyzer extends Plugin {
             const objectName = this.getObjectName(callee.object);
             if (objectName === 'app' && node.arguments.length >= 2) {
               const serviceName = this.extractStringArg(node.arguments[0]);
-              const line = node.loc!.start.line;
+              const line = getLine(node);
 
               // Проверяем что это похоже на service (имя содержит 'service' или '*Service')
               if (
@@ -281,7 +282,7 @@ export class ServiceLayerAnalyzer extends Plugin {
             ) {
               if (node.arguments.length >= 1) {
                 const serviceName = this.extractStringArg(node.arguments[0]);
-                const line = node.loc!.start.line;
+                const line = getLine(node);
 
                 // Проверяем что это похоже на service
                 if (

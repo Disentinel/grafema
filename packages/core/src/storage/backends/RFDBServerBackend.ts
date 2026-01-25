@@ -27,6 +27,7 @@ import { setTimeout as sleep } from 'timers/promises';
 
 import type { WireNode, WireEdge } from '@grafema/types';
 import type { NodeType, EdgeType } from '@grafema/types';
+import type { BaseNodeRecord } from '@grafema/types';
 import type { AttrQuery, GraphStats, GraphExport } from '../../core/GraphBackend.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -38,19 +39,6 @@ const __dirname = dirname(__filename);
 export interface RFDBServerBackendOptions {
   socketPath?: string;
   dbPath?: string;
-}
-
-/**
- * Node as returned from the backend
- */
-export interface BackendNode {
-  id: string;
-  type: string;
-  nodeType: string;
-  name: string;
-  file: string;
-  exported: boolean;
-  [key: string]: unknown;
 }
 
 /**
@@ -402,7 +390,7 @@ export class RFDBServerBackend {
   /**
    * Get a node by ID
    */
-  async getNode(id: string): Promise<BackendNode | null> {
+  async getNode(id: string): Promise<BaseNodeRecord | null> {
     if (!this.client) throw new Error('Not connected');
     const node = await this.client.getNode(String(id));
     if (!node) return null;
@@ -437,7 +425,7 @@ export class RFDBServerBackend {
   /**
    * Parse a node from wire format to JS format
    */
-  private _parseNode(wireNode: WireNode): BackendNode {
+  private _parseNode(wireNode: WireNode): BaseNodeRecord {
     const metadata: Record<string, unknown> = wireNode.metadata ? JSON.parse(wireNode.metadata) : {};
 
     // Parse nested JSON strings
@@ -455,7 +443,6 @@ export class RFDBServerBackend {
 
     return {
       id: humanId,
-      nodeType: wireNode.nodeType,
       type: wireNode.nodeType,
       name: wireNode.name,
       file: wireNode.file,
@@ -467,7 +454,7 @@ export class RFDBServerBackend {
   /**
    * Async generator for querying nodes
    */
-  async *queryNodes(query: NodeQuery): AsyncGenerator<BackendNode, void, unknown> {
+  async *queryNodes(query: NodeQuery): AsyncGenerator<BaseNodeRecord, void, unknown> {
     if (!this.client) throw new Error('Not connected');
 
     // Build query for server
@@ -496,8 +483,8 @@ export class RFDBServerBackend {
   /**
    * Get ALL nodes matching query (collects from queryNodes into array)
    */
-  async getAllNodes(query: NodeQuery = {}): Promise<BackendNode[]> {
-    const nodes: BackendNode[] = [];
+  async getAllNodes(query: NodeQuery = {}): Promise<BaseNodeRecord[]> {
+    const nodes: BaseNodeRecord[] = [];
     for await (const node of this.queryNodes(query)) {
       nodes.push(node);
     }
@@ -740,7 +727,7 @@ export class RFDBServerBackend {
   /**
    * Find nodes by predicate (for compatibility)
    */
-  async findNodes(predicate: (node: BackendNode) => boolean): Promise<BackendNode[]> {
+  async findNodes(predicate: (node: BaseNodeRecord) => boolean): Promise<BaseNodeRecord[]> {
     const allNodes = await this.getAllNodes();
     return allNodes.filter(predicate);
   }

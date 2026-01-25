@@ -246,4 +246,195 @@ describe('PARAMETER nodes', () => {
       assert.ok(constructorParams.length >= 2, `Constructor should have at least 2 parameters, got ${constructorParams.length}`);
     });
   });
+
+  // REG-153: PARAMETER nodes should use semantic ID format
+  describe('PARAMETER semantic ID format (REG-153)', () => {
+    /**
+     * Check if an ID has legacy PARAMETER# format
+     */
+    function hasLegacyParameterFormat(id) {
+      if (!id || typeof id !== 'string') return false;
+      return id.startsWith('PARAMETER#');
+    }
+
+    /**
+     * Check if an ID is in semantic format for PARAMETER
+     * Semantic format: file->scope->PARAMETER->name#index
+     */
+    function isSemanticParameterId(id) {
+      if (!id || typeof id !== 'string') return false;
+
+      // Legacy format starts with PARAMETER#
+      if (hasLegacyParameterFormat(id)) return false;
+
+      // Semantic format uses -> as separator and includes PARAMETER
+      return id.includes('->PARAMETER->');
+    }
+
+    it('should produce semantic ID for function parameters', async () => {
+      const orchestrator = createTestOrchestrator(backend);
+      await orchestrator.run(FIXTURE_PATH);
+
+      // Find PARAMETER nodes
+      const paramNodes = [];
+      for await (const node of backend.queryNodes({ type: 'PARAMETER' })) {
+        paramNodes.push(node);
+      }
+
+      assert.ok(paramNodes.length >= 1, 'Should have at least one PARAMETER node');
+
+      // Check at least one parameter has semantic ID format
+      const nameParam = paramNodes.find(p => p.name === 'name');
+      assert.ok(nameParam, '"name" parameter should exist');
+
+      // Should have semantic ID format
+      assert.ok(
+        isSemanticParameterId(nameParam.id),
+        `PARAMETER should have semantic ID format (containing "->PARAMETER->"). Got: ${nameParam.id}`
+      );
+
+      // Should NOT start with PARAMETER#
+      assert.ok(
+        !hasLegacyParameterFormat(nameParam.id),
+        `PARAMETER ID should NOT start with "PARAMETER#". Got: ${nameParam.id}`
+      );
+    });
+
+    it('should produce semantic IDs for all PARAMETER nodes - no legacy format allowed', async () => {
+      const orchestrator = createTestOrchestrator(backend);
+      await orchestrator.run(FIXTURE_PATH);
+
+      // Find all PARAMETER nodes
+      const paramNodes = [];
+      for await (const node of backend.queryNodes({ type: 'PARAMETER' })) {
+        paramNodes.push(node);
+      }
+
+      assert.ok(paramNodes.length >= 8, `Expected at least 8 PARAMETER nodes, got ${paramNodes.length}`);
+
+      // NONE should have legacy PARAMETER# format
+      const legacyNodes = paramNodes.filter(n => hasLegacyParameterFormat(n.id));
+
+      assert.strictEqual(
+        legacyNodes.length,
+        0,
+        `Found ${legacyNodes.length} parameters with legacy PARAMETER# format:\n${legacyNodes.map(n => `  - ${n.name}: ${n.id}`).join('\n')}`
+      );
+
+      // ALL should have semantic format
+      paramNodes.forEach(node => {
+        assert.ok(
+          isSemanticParameterId(node.id),
+          `PARAMETER "${node.name}" should have semantic ID format (containing "->PARAMETER->"). Got: ${node.id}`
+        );
+      });
+    });
+
+    it('should include function scope in PARAMETER semantic ID', async () => {
+      const orchestrator = createTestOrchestrator(backend);
+      await orchestrator.run(FIXTURE_PATH);
+
+      // Find "name" parameter from greet function
+      const paramNodes = [];
+      for await (const node of backend.queryNodes({ type: 'PARAMETER' })) {
+        paramNodes.push(node);
+      }
+
+      const nameParam = paramNodes.find(p => p.name === 'name');
+      assert.ok(nameParam, '"name" parameter should exist');
+
+      // Semantic ID should include function name "greet" in scope
+      // Expected format: index.js->global->greet->PARAMETER->name#0
+      assert.ok(
+        nameParam.id.includes('greet'),
+        `PARAMETER ID should include parent function name "greet" in scope. Got: ${nameParam.id}`
+      );
+    });
+
+    it('should use index suffix for disambiguation in semantic ID', async () => {
+      const orchestrator = createTestOrchestrator(backend);
+      await orchestrator.run(FIXTURE_PATH);
+
+      // Find parameters from greet function (name, greeting)
+      const paramNodes = [];
+      for await (const node of backend.queryNodes({ type: 'PARAMETER' })) {
+        paramNodes.push(node);
+      }
+
+      const nameParam = paramNodes.find(p => p.name === 'name');
+      const greetingParam = paramNodes.find(p => p.name === 'greeting');
+
+      assert.ok(nameParam, '"name" parameter should exist');
+      assert.ok(greetingParam, '"greeting" parameter should exist');
+
+      // IDs should be different (different index suffixes)
+      assert.notStrictEqual(
+        nameParam.id,
+        greetingParam.id,
+        'Parameters in same function should have different IDs'
+      );
+
+      // IDs should end with #index pattern
+      // Expected: ...->PARAMETER->name#0 and ...->PARAMETER->greeting#1
+      assert.ok(
+        nameParam.id.match(/#\d+$/),
+        `PARAMETER ID should end with #index pattern. Got: ${nameParam.id}`
+      );
+      assert.ok(
+        greetingParam.id.match(/#\d+$/),
+        `PARAMETER ID should end with #index pattern. Got: ${greetingParam.id}`
+      );
+    });
+
+    it('should produce semantic IDs for class method parameters', async () => {
+      const CLASS_FIXTURE_PATH = join(process.cwd(), 'test/fixtures/class-parameters');
+      const orchestrator = createTestOrchestrator(backend);
+      await orchestrator.run(CLASS_FIXTURE_PATH);
+
+      // Find all PARAMETER nodes
+      const paramNodes = [];
+      for await (const node of backend.queryNodes({ type: 'PARAMETER' })) {
+        paramNodes.push(node);
+      }
+
+      // All should have semantic format
+      const legacyNodes = paramNodes.filter(n => hasLegacyParameterFormat(n.id));
+
+      assert.strictEqual(
+        legacyNodes.length,
+        0,
+        `Class parameters should have semantic IDs. Found ${legacyNodes.length} with legacy format:\n${legacyNodes.map(n => `  - ${n.name}: ${n.id}`).join('\n')}`
+      );
+
+      // Verify all use semantic format
+      paramNodes.forEach(node => {
+        assert.ok(
+          isSemanticParameterId(node.id),
+          `Class PARAMETER "${node.name}" should have semantic ID format. Got: ${node.id}`
+        );
+      });
+    });
+
+    it('should include class name in scope for class method parameters', async () => {
+      const CLASS_FIXTURE_PATH = join(process.cwd(), 'test/fixtures/class-parameters');
+      const orchestrator = createTestOrchestrator(backend);
+      await orchestrator.run(CLASS_FIXTURE_PATH);
+
+      // Find config parameter from constructor
+      const paramNodes = [];
+      for await (const node of backend.queryNodes({ type: 'PARAMETER' })) {
+        paramNodes.push(node);
+      }
+
+      const configParam = paramNodes.find(p => p.name === 'config');
+      assert.ok(configParam, '"config" parameter should exist');
+
+      // Semantic ID should include class name in scope
+      // Expected format: index.js->Processor->constructor->PARAMETER->config#0
+      assert.ok(
+        configParam.id.includes('Processor'),
+        `Class PARAMETER ID should include class name in scope. Got: ${configParam.id}`
+      );
+    });
+  });
 });

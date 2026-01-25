@@ -73,6 +73,8 @@ export { ASTWorkerPool, type ModuleInfo as ASTModuleInfo, type ParseResult, type
 export { GuaranteeManager } from './core/GuaranteeManager.js';
 export type { GuaranteeGraph } from './core/GuaranteeManager.js';
 export { clearFileNodesIfNeeded, clearServiceNodeIfExists } from './core/FileNodeManager.js';
+export { CoverageAnalyzer } from './core/CoverageAnalyzer.js';
+export type { CoverageResult } from './core/CoverageAnalyzer.js';
 
 // Hash utilities
 export { calculateFileHash, calculateFileHashAsync, calculateContentHash } from './core/HashUtils.js';
@@ -147,13 +149,22 @@ export type {
   AnalyzeFunctionBodyCallback
 } from './plugins/analysis/ast/visitors/index.js';
 
+// AST Location utilities (REG-122)
+export {
+  getNodeLocation,
+  getLine,
+  getColumn,
+  getEndLocation,
+  UNKNOWN_LOCATION
+} from './plugins/analysis/ast/utils/location.js';
+export type { NodeLocation } from './plugins/analysis/ast/utils/location.js';
+
 // === PLUGINS ===
 
 // Indexing plugins
 export { JSModuleIndexer } from './plugins/indexing/JSModuleIndexer.js';
 export { IncrementalModuleIndexer } from './plugins/indexing/IncrementalModuleIndexer.js';
 export { RustModuleIndexer } from './plugins/indexing/RustModuleIndexer.js';
-export { ServiceDetector } from './plugins/indexing/ServiceDetector.js';
 
 // Analysis plugins
 export { JSASTAnalyzer } from './plugins/analysis/JSASTAnalyzer.js';

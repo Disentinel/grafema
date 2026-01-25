@@ -19,6 +19,7 @@ import { IdGenerator } from '../IdGenerator.js';
 import { NodeFactory } from '../../../../core/NodeFactory.js';
 import { ObjectLiteralNode } from '../../../../core/nodes/ObjectLiteralNode.js';
 import { ArrayLiteralNode } from '../../../../core/nodes/ArrayLiteralNode.js';
+import { getLine, getColumn } from '../utils/location.js';
 
 /**
  * Object literal info for OBJECT_LITERAL nodes
@@ -1072,11 +1073,14 @@ export class CallExpressionVisitor extends ASTVisitor {
             }
             const callee = callNode.callee as Identifier;
 
+            const line = getLine(callNode);
+            const column = getColumn(callNode);
+
             // Generate ID using centralized IdGenerator
             const idGenerator = new IdGenerator(scopeTracker);
             const callId = idGenerator.generate(
               'CALL', callee.name, module.file,
-              callNode.loc!.start.line, callNode.loc!.start.column,
+              line, column,
               callSiteCounterRef,
               { useDiscriminator: true, discriminatorKey: `CALL:${callee.name}` }
             );
@@ -1086,8 +1090,8 @@ export class CallExpressionVisitor extends ASTVisitor {
               type: 'CALL',
               name: callee.name,
               file: module.file,
-              line: callNode.loc!.start.line,
-              column: callNode.loc!.start.column,
+              line,
+              column,
               parentScopeId,
               targetFunctionName: callee.name
             });
@@ -1136,13 +1140,16 @@ export class CallExpressionVisitor extends ASTVisitor {
                   }
                   processedNodes.eventListeners.add(nodeKey);
 
+                  const eventLine = getLine(callNode);
+                  const eventColumn = getColumn(callNode);
+
                   (eventListeners as EventListenerInfo[]).push({
-                    id: `event:listener#${eventName}#${module.file}#${callNode.loc!.start.line}:${callNode.loc!.start.column}:${callSiteCounterRef.value++}`,
+                    id: `event:listener#${eventName}#${module.file}#${eventLine}:${eventColumn}:${callSiteCounterRef.value++}`,
                     type: 'event:listener',
                     name: eventName,
                     object: objectName,
                     file: module.file,
-                    line: callNode.loc!.start.line,
+                    line: eventLine,
                     parentScopeId,
                     callbackArg: secondArg
                   });
@@ -1156,12 +1163,14 @@ export class CallExpressionVisitor extends ASTVisitor {
                 processedNodes.methodCalls.add(nodeKey);
 
                 const fullName = `${objectName}.${methodName}`;
+                const methodLine = getLine(callNode);
+                const methodColumn = getColumn(callNode);
 
                 // Generate ID using centralized IdGenerator
                 const idGenerator = new IdGenerator(scopeTracker);
                 const methodCallId = idGenerator.generate(
                   'CALL', fullName, module.file,
-                  callNode.loc!.start.line, callNode.loc!.start.column,
+                  methodLine, methodColumn,
                   callSiteCounterRef,
                   { useDiscriminator: true, discriminatorKey: `CALL:${fullName}` }
                 );
@@ -1175,8 +1184,8 @@ export class CallExpressionVisitor extends ASTVisitor {
                   computed: isComputed,
                   computedPropertyVar,  // Variable name used in obj[x]() calls
                   file: module.file,
-                  line: callNode.loc!.start.line,
-                  column: callNode.loc!.start.column,
+                  line: methodLine,
+                  column: methodColumn,
                   parentScopeId
                 });
 
@@ -1212,8 +1221,8 @@ export class CallExpressionVisitor extends ASTVisitor {
                     if (arg.type === 'ArrowFunctionExpression' || arg.type === 'FunctionExpression') {
                       (methodCallbacks as MethodCallbackInfo[]).push({
                         methodCallId,
-                        callbackLine: arg.loc!.start.line,
-                        callbackColumn: arg.loc!.start.column,
+                        callbackLine: getLine(arg),
+                        callbackColumn: getColumn(arg),
                         callbackType: arg.type
                       });
                     }
@@ -1279,12 +1288,14 @@ export class CallExpressionVisitor extends ASTVisitor {
         if (newNode.callee.type === 'Identifier') {
           const callee = newNode.callee as Identifier;
           const constructorName = callee.name;
+          const newLine = getLine(newNode);
+          const newColumn = getColumn(newNode);
 
           // Generate ID using centralized IdGenerator
           const idGenerator = new IdGenerator(scopeTracker);
           const newCallId = idGenerator.generate(
             'CALL', `new:${constructorName}`, module.file,
-            newNode.loc!.start.line, newNode.loc!.start.column,
+            newLine, newColumn,
             callSiteCounterRef,
             { useDiscriminator: true, discriminatorKey: `CALL:new:${constructorName}` }
           );
@@ -1294,8 +1305,8 @@ export class CallExpressionVisitor extends ASTVisitor {
             type: 'CALL',
             name: constructorName,
             file: module.file,
-            line: newNode.loc!.start.line,
-            column: newNode.loc!.start.column,
+            line: newLine,
+            column: newColumn,
             parentScopeId,
             targetFunctionName: constructorName,
             isNew: true  // Mark as constructor call
@@ -1311,12 +1322,14 @@ export class CallExpressionVisitor extends ASTVisitor {
             const objectName = (object as Identifier).name;
             const constructorName = (property as Identifier).name;
             const fullName = `${objectName}.${constructorName}`;
+            const memberNewLine = getLine(newNode);
+            const memberNewColumn = getColumn(newNode);
 
             // Generate ID using centralized IdGenerator
             const idGenerator = new IdGenerator(scopeTracker);
             const newMethodCallId = idGenerator.generate(
               'CALL', `new:${fullName}`, module.file,
-              newNode.loc!.start.line, newNode.loc!.start.column,
+              memberNewLine, memberNewColumn,
               callSiteCounterRef,
               { useDiscriminator: true, discriminatorKey: `CALL:new:${fullName}` }
             );
@@ -1328,8 +1341,8 @@ export class CallExpressionVisitor extends ASTVisitor {
               object: objectName,
               method: constructorName,
               file: module.file,
-              line: newNode.loc!.start.line,
-              column: newNode.loc!.start.column,
+              line: memberNewLine,
+              column: memberNewColumn,
               parentScopeId,
               isNew: true  // Mark as constructor call
             });
