@@ -29,8 +29,9 @@ interface NodeInfo {
   name: string;
   file: string;
   line?: number;
-  method?: string;  // For http:route
+  method?: string;  // For http:route, http:request
   path?: string;    // For http:route
+  url?: string;     // For http:request
   event?: string;   // For socketio:emit, socketio:on, socketio:event
   room?: string;    // For socketio:emit
   namespace?: string; // For socketio:emit
@@ -69,6 +70,7 @@ Examples:
   grafema query "function login"       Search functions only
   grafema query "class UserService"    Search classes only
   grafema query "route /api/users"     Search HTTP routes by path
+  grafema query "request /api"         Search HTTP requests (fetch/axios) by URL
   grafema query "POST /users"          Search routes by method + path
   grafema query -l 20 "fetch"          Return up to 20 results
   grafema query --json "config"        Output results as JSON
@@ -181,7 +183,10 @@ function parsePattern(pattern: string): { type: string | null; name: string } {
       // HTTP route aliases
       route: 'http:route',
       endpoint: 'http:route',
-      http: 'http:route',
+      // HTTP request aliases
+      request: 'http:request',
+      fetch: 'http:request',
+      api: 'http:request',
       // Socket.IO aliases
       event: 'socketio:event',
       emit: 'socketio:emit',
@@ -202,6 +207,7 @@ function parsePattern(pattern: string): { type: string | null; name: string } {
  *
  * Different node types have different searchable fields:
  * - http:route: search method and path fields
+ * - http:request: search method and url fields
  * - socketio:event: search name field (standard)
  * - socketio:emit/on: search event field
  * - Default: search name field
@@ -211,6 +217,7 @@ function matchesSearchPattern(
     name?: string;
     method?: string;
     path?: string;
+    url?: string;
     event?: string;
     [key: string]: unknown
   },
@@ -242,6 +249,32 @@ function matchesSearchPattern(
       const pathMatches = path.includes(pathPattern);
 
       return methodMatches && pathMatches;
+    }
+  }
+
+  // HTTP requests: search method and url
+  if (nodeType === 'http:request') {
+    const method = (node.method || '').toLowerCase();
+    const url = (node.url || '').toLowerCase();
+
+    // Pattern could be: "POST", "/api/users", "POST /api", etc.
+    const patternParts = pattern.trim().split(/\s+/);
+
+    if (patternParts.length === 1) {
+      // Single term: match method OR url
+      const term = patternParts[0].toLowerCase();
+      return method === term || url.includes(term);
+    } else {
+      // Multiple terms: first is method, rest is url pattern
+      const methodPattern = patternParts[0].toLowerCase();
+      const urlPattern = patternParts.slice(1).join(' ').toLowerCase();
+
+      // Method must match exactly (GET, POST, etc.)
+      const methodMatches = method === methodPattern;
+      // URL must contain the pattern
+      const urlMatches = url.includes(urlPattern);
+
+      return methodMatches && urlMatches;
     }
   }
 
@@ -281,6 +314,7 @@ async function findNodes(
         'VARIABLE',
         'CONSTANT',
         'http:route',
+        'http:request',
         'socketio:event',
         'socketio:emit',
         'socketio:on'
@@ -304,6 +338,12 @@ async function findNodes(
         if (nodeType === 'http:route') {
           nodeInfo.method = node.method as string | undefined;
           nodeInfo.path = node.path as string | undefined;
+        }
+
+        // Include method and url for http:request nodes
+        if (nodeType === 'http:request') {
+          nodeInfo.method = node.method as string | undefined;
+          nodeInfo.url = node.url as string | undefined;
         }
 
         // Include event field for Socket.IO nodes
@@ -552,6 +592,12 @@ async function displayNode(node: NodeInfo, projectPath: string, backend: RFDBSer
     return;
   }
 
+  // Special formatting for HTTP requests
+  if (node.type === 'http:request') {
+    console.log(formatHttpRequestDisplay(node, projectPath));
+    return;
+  }
+
   // Special formatting for Socket.IO event channels
   if (node.type === 'socketio:event') {
     console.log(await formatSocketEventDisplay(node, projectPath, backend));
@@ -579,6 +625,31 @@ function formatHttpRouteDisplay(node: NodeInfo, projectPath: string): string {
 
   // Line 1: [type] METHOD PATH
   lines.push(`[${node.type}] ${node.method} ${node.path}`);
+
+  // Line 2: Location
+  if (node.file) {
+    const relPath = relative(projectPath, node.file);
+    const loc = node.line ? `${relPath}:${node.line}` : relPath;
+    lines.push(`  Location: ${loc}`);
+  }
+
+  return lines.join('\n');
+}
+
+/**
+ * Format HTTP request for display
+ *
+ * Output:
+ *   [http:request] GET /api/users
+ *     Location: src/pages/Users.tsx:42
+ */
+function formatHttpRequestDisplay(node: NodeInfo, projectPath: string): string {
+  const lines: string[] = [];
+
+  // Line 1: [type] METHOD URL
+  const method = node.method || 'GET';
+  const url = node.url || 'dynamic';
+  lines.push(`[${node.type}] ${method} ${url}`);
 
   // Line 2: Location
   if (node.file) {
