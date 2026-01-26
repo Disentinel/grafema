@@ -21,7 +21,9 @@ import type {
   FunctionDeclaration,
   ClassDeclaration,
   Identifier,
-  Node
+  Node,
+  CallExpression,
+  TemplateLiteral
 } from '@babel/types';
 import type { NodePath } from '@babel/traverse';
 import { ASTVisitor, type VisitorModule, type VisitorCollections, type VisitorHandlers } from './ASTVisitor.js';
@@ -49,6 +51,9 @@ interface ImportInfo {
   specifiers: ImportSpecifierInfo[];
   line: number;
   column?: number;
+  isDynamic?: boolean;         // true for dynamic import() expressions
+  isResolvable?: boolean;      // true if path is a string literal (statically analyzable)
+  dynamicPath?: string;        // original expression for template/variable paths
 }
 
 /**
@@ -132,8 +137,114 @@ export class ImportExportVisitor extends ASTVisitor {
           line: getLine(node),
           column: getColumn(node)
         });
+      },
+
+      /**
+       * Handle dynamic import() expressions
+       * Examples:
+       * - import('./module.js')                    -> isResolvable: true
+       * - import(`./plugins/${name}.js`)           -> isResolvable: false, source: './plugins/'
+       * - import(modulePath)                       -> isResolvable: false, source: '<dynamic>'
+       */
+      CallExpression: (path: NodePath) => {
+        const node = path.node as CallExpression;
+
+        // Check if this is an import() call
+        if (node.callee.type !== 'Import') {
+          return;
+        }
+
+        const arg = node.arguments[0];
+        if (!arg) return;
+
+        let source: string;
+        let isResolvable: boolean;
+        let dynamicPath: string | undefined;
+
+        if (arg.type === 'StringLiteral') {
+          // import('./module.js') - literal path, fully resolvable
+          source = arg.value;
+          isResolvable = true;
+        } else if (arg.type === 'TemplateLiteral') {
+          // import(`./plugins/${name}.js`) - template literal
+          const templateArg = arg as TemplateLiteral;
+          const firstQuasi = templateArg.quasis[0];
+
+          // Extract static prefix (part before first expression)
+          const prefix = firstQuasi?.value?.raw || '';
+
+          if (prefix) {
+            source = prefix;
+          } else {
+            // No static prefix - e.g., import(`${baseDir}/loader.js`)
+            source = '<dynamic>';
+          }
+
+          isResolvable = false;
+          // Capture the original template for debugging/analysis
+          dynamicPath = this.templateLiteralToString(templateArg);
+        } else if (arg.type === 'Identifier') {
+          // import(modulePath) - variable path
+          source = '<dynamic>';
+          isResolvable = false;
+          dynamicPath = (arg as Identifier).name;
+        } else {
+          // Other expressions (e.g., function calls, member expressions)
+          source = '<dynamic>';
+          isResolvable = false;
+        }
+
+        // Find the receiving variable name from parent
+        // Patterns: const mod = await import(...) or const mod = import(...)
+        let localName = '*';  // Default for side-effect imports
+        const parent = path.parent;
+
+        if (parent?.type === 'AwaitExpression') {
+          // const mod = await import(...)
+          const awaitParent = path.parentPath?.parent;
+          if (awaitParent?.type === 'VariableDeclarator' &&
+              awaitParent.id?.type === 'Identifier') {
+            localName = awaitParent.id.name;
+          }
+        } else if (parent?.type === 'VariableDeclarator' &&
+                   parent.id?.type === 'Identifier') {
+          // const mod = import(...) (without await)
+          localName = parent.id.name;
+        }
+
+        (imports as ImportInfo[]).push({
+          source,
+          specifiers: [{
+            imported: '*',  // Dynamic imports are always namespace imports
+            local: localName
+          }],
+          line: getLine(node),
+          column: getColumn(node),
+          isDynamic: true,
+          isResolvable,
+          dynamicPath
+        });
       }
     };
+  }
+
+  /**
+   * Convert a TemplateLiteral to a string representation for debugging
+   */
+  private templateLiteralToString(template: TemplateLiteral): string {
+    let result = '';
+    for (let i = 0; i < template.quasis.length; i++) {
+      result += template.quasis[i].value.raw;
+      if (i < template.expressions.length) {
+        const expr = template.expressions[i];
+        if (expr.type === 'Identifier') {
+          result += `\${${expr.name}}`;
+        } else {
+          result += '${...}';
+        }
+      }
+    }
+    return result;
   }
 
   getExportHandlers(): VisitorHandlers {

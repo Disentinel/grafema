@@ -15,6 +15,9 @@ interface ImportNodeRecord extends BaseNodeRecord {
   importBinding: ImportBinding; // RENAMED: WHAT is imported (semantics)
   imported: string;
   local: string;
+  isDynamic?: boolean;         // true for dynamic import() expressions
+  isResolvable?: boolean;      // true if path is a string literal (statically analyzable)
+  dynamicPath?: string;        // original expression for template/variable paths
 }
 
 interface ImportNodeOptions {
@@ -22,6 +25,9 @@ interface ImportNodeOptions {
   importBinding?: ImportBinding;
   imported?: string;            // Used for auto-detection if importType not provided
   local?: string;
+  isDynamic?: boolean;          // true for dynamic import() expressions
+  isResolvable?: boolean;       // true if path is a string literal (statically analyzable)
+  dynamicPath?: string;         // original expression for template/variable paths
 }
 
 export class ImportNode {
@@ -61,7 +67,7 @@ export class ImportNode {
                    options.imported === '*' ? 'namespace' : 'named';
     }
 
-    return {
+    const record: ImportNodeRecord = {
       id: `${file}:IMPORT:${source}:${name}`,  // SEMANTIC ID: no line number
       type: this.TYPE,
       name,
@@ -74,6 +80,19 @@ export class ImportNode {
       imported: options.imported || name,
       local: options.local || name
     };
+
+    // Add dynamic import fields if provided
+    if (options.isDynamic !== undefined) {
+      record.isDynamic = options.isDynamic;
+    }
+    if (options.isResolvable !== undefined) {
+      record.isResolvable = options.isResolvable;
+    }
+    if (options.dynamicPath !== undefined) {
+      record.dynamicPath = options.dynamicPath;
+    }
+
+    return record;
   }
 
   static validate(node: ImportNodeRecord): string[] {
