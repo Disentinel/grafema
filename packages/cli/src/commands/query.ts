@@ -21,6 +21,7 @@ interface QueryOptions {
   json?: boolean;
   limit: string;
   raw?: boolean;
+  type?: string;  // Explicit node type (bypasses type aliases)
 }
 
 interface NodeInfo {
@@ -64,6 +65,20 @@ Examples:
   grafema query --raw 'type(X, "FUNCTION"), attr(X, "name", "main")'
   grafema query --raw 'edge(X, Y, "CALLS")'`
   )
+  .option(
+    '-t, --type <nodeType>',
+    `Filter by exact node type (bypasses type aliases)
+
+Use this when:
+- Searching custom node types (jsx:component, redis:cache)
+- You need exact type match without alias resolution
+- Discovering nodes from plugins or custom analyzers
+
+Examples:
+  grafema query --type http:request "/api"
+  grafema query --type FUNCTION "auth"
+  grafema query -t socketio:event "connect"`
+  )
   .addHelpText('after', `
 Examples:
   grafema query "auth"                 Search by name (partial match)
@@ -74,6 +89,8 @@ Examples:
   grafema query "POST /users"          Search routes by method + path
   grafema query -l 20 "fetch"          Return up to 20 results
   grafema query --json "config"        Output results as JSON
+  grafema query --type FUNCTION "auth" Explicit type (no alias resolution)
+  grafema query -t http:request "/api" Search custom node types
   grafema query --raw 'type(X, "FUNCTION")'   Raw Datalog query
 `)
   .action(async (pattern: string, options: QueryOptions) => {
@@ -95,17 +112,30 @@ Examples:
         return;
       }
 
-      // Parse pattern
-      const { type, name } = parsePattern(pattern);
+      // Determine type: explicit --type flag takes precedence
+      let searchType: string | null;
+      let searchName: string;
+
+      if (options.type) {
+        // Explicit --type bypasses pattern parsing for type
+        searchType = options.type;
+        searchName = pattern;
+      } else {
+        // Use pattern parsing for type aliases
+        const parsed = parsePattern(pattern);
+        searchType = parsed.type;
+        searchName = parsed.name;
+      }
+
       const limit = parseInt(options.limit, 10);
 
       // Find matching nodes
-      const nodes = await findNodes(backend, type, name, limit);
+      const nodes = await findNodes(backend, searchType, searchName, limit);
 
       if (nodes.length === 0) {
         console.log(`No results for "${pattern}"`);
-        if (type) {
-          console.log(`  → Try: grafema query "${name}" (search all types)`);
+        if (searchType) {
+          console.log(`  → Try: grafema query "${searchName}" (search all types)`);
         }
         return;
       }
