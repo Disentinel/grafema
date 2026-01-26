@@ -194,6 +194,7 @@ export { ImportExportLinker } from './plugins/enrichment/ImportExportLinker.js';
 export { FunctionCallResolver } from './plugins/enrichment/FunctionCallResolver.js';
 export { RustFFIEnricher } from './plugins/enrichment/RustFFIEnricher.js';
 export { NodejsBuiltinsResolver } from './plugins/enrichment/NodejsBuiltinsResolver.js';
+export { ExternalCallResolver } from './plugins/enrichment/ExternalCallResolver.js';
 
 // Builtin registry
 export { BuiltinRegistry } from './data/builtins/index.js';
