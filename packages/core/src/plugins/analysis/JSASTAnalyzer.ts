@@ -89,6 +89,7 @@ import type {
   ArrayMutationArgument,
   ObjectMutationInfo,
   ObjectMutationValue,
+  ReturnStatementInfo,
   CounterRef,
   ProcessedNodes,
   ASTCollections,
@@ -135,6 +136,8 @@ interface Collections {
   arrayMutations: ArrayMutationInfo[];
   // Object mutation tracking for FLOWS_INTO edges
   objectMutations: ObjectMutationInfo[];
+  // Return statement tracking for RETURNS edges
+  returnStatements: ReturnStatementInfo[];
   objectLiteralCounterRef: CounterRef;
   arrayLiteralCounterRef: CounterRef;
   ifScopeCounterRef: CounterRef;
@@ -1201,6 +1204,8 @@ export class JSASTAnalyzer extends Plugin {
       const arrayMutations: ArrayMutationInfo[] = [];
       // Object mutation tracking for FLOWS_INTO edges
       const objectMutations: ObjectMutationInfo[] = [];
+      // Return statement tracking for RETURNS edges
+      const returnStatements: ReturnStatementInfo[] = [];
 
       const ifScopeCounterRef: CounterRef = { value: 0 };
       const scopeCounterRef: CounterRef = { value: 0 };
@@ -1265,6 +1270,8 @@ export class JSASTAnalyzer extends Plugin {
         arrayMutations,
         // Object mutation tracking
         objectMutations,
+        // Return statement tracking
+        returnStatements,
         objectLiteralCounterRef, arrayLiteralCounterRef,
         ifScopeCounterRef, scopeCounterRef, varDeclCounterRef,
         callSiteCounterRef, functionCounterRef, httpRequestCounterRef,
@@ -1558,6 +1565,8 @@ export class JSASTAnalyzer extends Plugin {
         arrayMutations,
         // Object mutation tracking
         objectMutations,
+        // Return statement tracking
+        returnStatements,
         // Object/Array literal tracking - use allCollections refs as visitors may have created new arrays
         objectLiterals: allCollections.objectLiterals || objectLiterals,
         objectProperties: allCollections.objectProperties || objectProperties,
@@ -2499,6 +2508,8 @@ export class JSASTAnalyzer extends Plugin {
     const literalCounterRef = (collections.literalCounterRef ?? { value: 0 }) as CounterRef;
     const anonymousFunctionCounterRef = (collections.anonymousFunctionCounterRef ?? { value: 0 }) as CounterRef;
     const scopeTracker = collections.scopeTracker as ScopeTracker | undefined;
+    const returnStatements = (collections.returnStatements ?? []) as ReturnStatementInfo[];
+    const parameters = (collections.parameters ?? []) as ParameterInfo[];
     const processedNodes = collections.processedNodes ?? {
       functions: new Set<string>(),
       classes: new Set<string>(),
@@ -2520,6 +2531,81 @@ export class JSASTAnalyzer extends Plugin {
 
     // Track if/else scope transitions
     const ifElseScopeMap = new Map<t.IfStatement, { inElse: boolean; hasElse: boolean }>();
+
+    // Determine the ID of the function we're analyzing for RETURNS edges
+    // Find by matching file/line/column in functions collection (it was just added by the visitor)
+    const funcNode = funcPath.node;
+    const funcLine = getLine(funcNode);
+    const funcColumn = getColumn(funcNode);
+    let currentFunctionId: string | null = null;
+
+    const matchingFunction = functions.find(f =>
+      f.file === module.file &&
+      f.line === funcLine &&
+      (f.column === undefined || f.column === funcColumn)
+    );
+    if (matchingFunction) {
+      currentFunctionId = matchingFunction.id;
+    }
+
+    // Handle implicit return for THIS arrow function if it has an expression body
+    // e.g., `const double = x => x * 2;` - the function we're analyzing IS an arrow with expression body
+    if (t.isArrowFunctionExpression(funcNode) && !t.isBlockStatement(funcNode.body) && currentFunctionId) {
+      const bodyExpr = funcNode.body;
+      const bodyLine = getLine(bodyExpr);
+      const bodyColumn = getColumn(bodyExpr);
+
+      const returnInfo: ReturnStatementInfo = {
+        parentFunctionId: currentFunctionId,
+        file: module.file,
+        line: bodyLine,
+        column: bodyColumn,
+        returnValueType: 'NONE',
+        isImplicitReturn: true
+      };
+
+      // Apply type detection logic for the implicit return
+      if (t.isIdentifier(bodyExpr)) {
+        returnInfo.returnValueType = 'VARIABLE';
+        returnInfo.returnValueName = bodyExpr.name;
+      }
+      else if (t.isLiteral(bodyExpr)) {
+        returnInfo.returnValueType = 'LITERAL';
+        const literalId = `LITERAL#implicit_return#${module.file}#${funcLine}:${funcColumn}:${literalCounterRef.value++}`;
+        returnInfo.returnValueId = literalId;
+        literals.push({
+          id: literalId,
+          type: 'LITERAL',
+          value: ExpressionEvaluator.extractLiteralValue(bodyExpr),
+          valueType: typeof ExpressionEvaluator.extractLiteralValue(bodyExpr),
+          file: module.file,
+          line: bodyLine,
+          column: bodyColumn
+        });
+      }
+      else if (t.isCallExpression(bodyExpr) && t.isIdentifier(bodyExpr.callee)) {
+        returnInfo.returnValueType = 'CALL_SITE';
+        returnInfo.returnValueLine = getLine(bodyExpr);
+        returnInfo.returnValueColumn = getColumn(bodyExpr);
+        returnInfo.returnValueCallName = bodyExpr.callee.name;
+      }
+      else if (t.isCallExpression(bodyExpr) && t.isMemberExpression(bodyExpr.callee)) {
+        returnInfo.returnValueType = 'METHOD_CALL';
+        returnInfo.returnValueLine = getLine(bodyExpr);
+        returnInfo.returnValueColumn = getColumn(bodyExpr);
+        if (t.isIdentifier(bodyExpr.callee.property)) {
+          returnInfo.returnValueCallName = bodyExpr.callee.property.name;
+        }
+      }
+      else {
+        returnInfo.returnValueType = 'EXPRESSION';
+        returnInfo.expressionType = bodyExpr.type;
+        returnInfo.returnValueLine = getLine(bodyExpr);
+        returnInfo.returnValueColumn = getColumn(bodyExpr);
+      }
+
+      returnStatements.push(returnInfo);
+    }
 
     funcPath.traverse({
       VariableDeclaration: (varPath: NodePath<t.VariableDeclaration>) => {
@@ -2559,6 +2645,116 @@ export class JSASTAnalyzer extends Plugin {
 
         // Check for object property assignment: obj.prop = value
         this.detectObjectPropertyAssignment(assignNode, module, objectMutations, scopeTracker);
+      },
+
+      // Handle return statements for RETURNS edges
+      ReturnStatement: (returnPath: NodePath<t.ReturnStatement>) => {
+        // Skip if we couldn't determine the function ID
+        if (!currentFunctionId) return;
+
+        // Skip if this return is inside a nested function (not the function we're analyzing)
+        // Check if there's a function ancestor between us and funcPath.node
+        let parent: NodePath | null = returnPath.parentPath;
+        while (parent) {
+          if (t.isFunction(parent.node) && parent.node !== funcNode) {
+            // This return is inside a nested function - skip it
+            return;
+          }
+          parent = parent.parentPath;
+        }
+
+        const returnNode = returnPath.node;
+        const returnLine = getLine(returnNode);
+        const returnColumn = getColumn(returnNode);
+
+        // Handle bare return; (no value)
+        if (!returnNode.argument) {
+          // Skip - no data flow value
+          return;
+        }
+
+        const arg = returnNode.argument;
+
+        // Determine return value type and extract relevant info
+        const returnInfo: ReturnStatementInfo = {
+          parentFunctionId: currentFunctionId,
+          file: module.file,
+          line: returnLine,
+          column: returnColumn,
+          returnValueType: 'NONE'
+        };
+
+        // Identifier (variable reference)
+        if (t.isIdentifier(arg)) {
+          returnInfo.returnValueType = 'VARIABLE';
+          returnInfo.returnValueName = arg.name;
+        }
+        // Literal values
+        else if (t.isLiteral(arg)) {
+          returnInfo.returnValueType = 'LITERAL';
+          // Create a LITERAL node ID for this return value
+          const literalId = `LITERAL#return#${module.file}#${returnLine}:${returnColumn}:${literalCounterRef.value++}`;
+          returnInfo.returnValueId = literalId;
+
+          // Also add to literals collection for node creation
+          literals.push({
+            id: literalId,
+            type: 'LITERAL',
+            value: ExpressionEvaluator.extractLiteralValue(arg),
+            valueType: typeof ExpressionEvaluator.extractLiteralValue(arg),
+            file: module.file,
+            line: returnLine,
+            column: returnColumn
+          });
+        }
+        // Direct function call: return foo()
+        else if (t.isCallExpression(arg) && t.isIdentifier(arg.callee)) {
+          returnInfo.returnValueType = 'CALL_SITE';
+          returnInfo.returnValueLine = getLine(arg);
+          returnInfo.returnValueColumn = getColumn(arg);
+          returnInfo.returnValueCallName = arg.callee.name;
+        }
+        // Method call: return obj.method()
+        else if (t.isCallExpression(arg) && t.isMemberExpression(arg.callee)) {
+          returnInfo.returnValueType = 'METHOD_CALL';
+          returnInfo.returnValueLine = getLine(arg);
+          returnInfo.returnValueColumn = getColumn(arg);
+          // Extract method name for lookup
+          if (t.isIdentifier(arg.callee.property)) {
+            returnInfo.returnValueCallName = arg.callee.property.name;
+          }
+        }
+        // Complex expressions (BinaryExpression, ConditionalExpression, etc.)
+        else if (t.isBinaryExpression(arg) || t.isConditionalExpression(arg) ||
+                 t.isLogicalExpression(arg) || t.isUnaryExpression(arg)) {
+          returnInfo.returnValueType = 'EXPRESSION';
+          returnInfo.expressionType = arg.type;
+          returnInfo.returnValueLine = getLine(arg);
+          returnInfo.returnValueColumn = getColumn(arg);
+        }
+        // MemberExpression (property access): return obj.prop
+        else if (t.isMemberExpression(arg)) {
+          returnInfo.returnValueType = 'EXPRESSION';
+          returnInfo.expressionType = 'MemberExpression';
+          returnInfo.returnValueLine = getLine(arg);
+          returnInfo.returnValueColumn = getColumn(arg);
+        }
+        // NewExpression: return new Foo()
+        else if (t.isNewExpression(arg)) {
+          returnInfo.returnValueType = 'EXPRESSION';
+          returnInfo.expressionType = 'NewExpression';
+          returnInfo.returnValueLine = getLine(arg);
+          returnInfo.returnValueColumn = getColumn(arg);
+        }
+        // Fallback for other expression types
+        else {
+          returnInfo.returnValueType = 'EXPRESSION';
+          returnInfo.expressionType = arg.type;
+          returnInfo.returnValueLine = getLine(arg);
+          returnInfo.returnValueColumn = getColumn(arg);
+        }
+
+        returnStatements.push(returnInfo);
       },
 
       ForStatement: this.createLoopScopeHandler('for', 'for-loop', parentScopeId, module, scopes, scopeCounterRef, scopeTracker),
@@ -2697,6 +2893,63 @@ export class JSASTAnalyzer extends Plugin {
           if (scopeTracker) {
             scopeTracker.exitScope();
           }
+        } else {
+          // Arrow function with expression body (implicit return)
+          // e.g., x => x * 2, () => 42
+          const bodyExpr = node.body;
+          const bodyLine = getLine(bodyExpr);
+          const bodyColumn = getColumn(bodyExpr);
+
+          const returnInfo: ReturnStatementInfo = {
+            parentFunctionId: functionId,
+            file: module.file,
+            line: bodyLine,
+            column: bodyColumn,
+            returnValueType: 'NONE',
+            isImplicitReturn: true
+          };
+
+          // Apply same type detection logic as ReturnStatement handler
+          if (t.isIdentifier(bodyExpr)) {
+            returnInfo.returnValueType = 'VARIABLE';
+            returnInfo.returnValueName = bodyExpr.name;
+          }
+          else if (t.isLiteral(bodyExpr)) {
+            returnInfo.returnValueType = 'LITERAL';
+            const literalId = `LITERAL#implicit_return#${module.file}#${line}:${column}:${literalCounterRef.value++}`;
+            returnInfo.returnValueId = literalId;
+            literals.push({
+              id: literalId,
+              type: 'LITERAL',
+              value: ExpressionEvaluator.extractLiteralValue(bodyExpr),
+              valueType: typeof ExpressionEvaluator.extractLiteralValue(bodyExpr),
+              file: module.file,
+              line: bodyLine,
+              column: bodyColumn
+            });
+          }
+          else if (t.isCallExpression(bodyExpr) && t.isIdentifier(bodyExpr.callee)) {
+            returnInfo.returnValueType = 'CALL_SITE';
+            returnInfo.returnValueLine = getLine(bodyExpr);
+            returnInfo.returnValueColumn = getColumn(bodyExpr);
+            returnInfo.returnValueCallName = bodyExpr.callee.name;
+          }
+          else if (t.isCallExpression(bodyExpr) && t.isMemberExpression(bodyExpr.callee)) {
+            returnInfo.returnValueType = 'METHOD_CALL';
+            returnInfo.returnValueLine = getLine(bodyExpr);
+            returnInfo.returnValueColumn = getColumn(bodyExpr);
+            if (t.isIdentifier(bodyExpr.callee.property)) {
+              returnInfo.returnValueCallName = bodyExpr.callee.property.name;
+            }
+          }
+          else {
+            returnInfo.returnValueType = 'EXPRESSION';
+            returnInfo.expressionType = bodyExpr.type;
+            returnInfo.returnValueLine = getLine(bodyExpr);
+            returnInfo.returnValueColumn = getColumn(bodyExpr);
+          }
+
+          returnStatements.push(returnInfo);
         }
 
         arrowPath.skip();
