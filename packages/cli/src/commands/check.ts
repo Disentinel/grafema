@@ -62,6 +62,11 @@ export const CHECK_CATEGORIES: Record<string, DiagnosticCheckCategory> = {
     description: 'Check for missing assignments and broken references',
     codes: ['ERR_MISSING_ASSIGNMENT', 'ERR_BROKEN_REFERENCE', 'ERR_NO_LEAF_NODE'],
   },
+  'imports': {
+    name: 'Import Validation',
+    description: 'Check for broken imports and undefined symbols',
+    codes: ['ERR_BROKEN_IMPORT', 'ERR_UNDEFINED_SYMBOL'],
+  },
 };
 
 export const checkCommand = new Command('check')

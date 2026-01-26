@@ -78,13 +78,14 @@ export const DEFAULT_CONFIG: GrafemaConfig = {
       'HTTPConnectionEnricher',
     ],
     validation: [
-      'CallResolverValidator',
-      'EvalBanValidator',
-      'SQLInjectionValidator',
-      'ShadowingDetector',
       'GraphConnectivityValidator',
       'DataFlowValidator',
+      'EvalBanValidator',
+      'CallResolverValidator',
+      'SQLInjectionValidator',
+      'ShadowingDetector',
       'TypeScriptDeadCodeValidator',
+      'BrokenImportValidator',
     ],
   },
   services: [], // Empty by default (uses auto-discovery)
