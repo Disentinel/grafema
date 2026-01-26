@@ -10,6 +10,8 @@ import type {
   ClassDeclarationInfo,
   ClassInstantiationInfo,
   ScopeInfo,
+  BranchInfo,
+  CaseInfo,
   VariableDeclarationInfo,
   CallSiteInfo,
   MethodCallInfo,
@@ -66,6 +68,10 @@ export interface VisitorCollections {
   sideEffects?: unknown[];  // TODO: define SideEffectInfo type
   code?: string;  // Source code for condition extraction
 
+  // Branching (REG-275)
+  branches?: BranchInfo[];
+  cases?: CaseInfo[];
+
   // Counters - optional
   functionCounterRef?: CounterRef;
   callSiteCounterRef?: CounterRef;
@@ -76,6 +82,8 @@ export interface VisitorCollections {
   varDeclCounterRef?: CounterRef;
   httpRequestCounterRef?: CounterRef;
   anonymousFunctionCounterRef?: CounterRef;
+  branchCounterRef?: CounterRef;
+  caseCounterRef?: CounterRef;
 
   // Deduplication - optional
   processedNodes?: ProcessedNodes;

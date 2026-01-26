@@ -18,6 +18,8 @@ import {
   ModuleNode,
   FunctionNode,
   ScopeNode,
+  BranchNode,
+  CaseNode,
   CallSiteNode,
   MethodCallNode,
   ConstructorCallNode,
@@ -288,6 +290,28 @@ export class NodeFactory {
    */
   static createScope(scopeType: string, file: string, line: number, options: ScopeOptions = {}) {
     return brandNode(ScopeNode.create(scopeType, file, line, options));
+  }
+
+  /**
+   * Create BRANCH node
+   */
+  static createBranch(branchType: 'switch' | 'if' | 'ternary', file: string, line: number, options: { parentScopeId?: string; counter?: number } = {}) {
+    return brandNode(BranchNode.create(branchType, file, line, options));
+  }
+
+  /**
+   * Create CASE node
+   */
+  static createCase(
+    value: unknown,
+    isDefault: boolean,
+    fallsThrough: boolean,
+    isEmpty: boolean,
+    file: string,
+    line: number,
+    options: { parentBranchId?: string; counter?: number } = {}
+  ) {
+    return brandNode(CaseNode.create(value, isDefault, fallsThrough, isEmpty, file, line, options));
   }
 
   /**
@@ -650,6 +674,8 @@ export class NodeFactory {
       'MODULE': ModuleNode,
       'FUNCTION': FunctionNode,
       'SCOPE': ScopeNode,
+      'BRANCH': BranchNode,
+      'CASE': CaseNode,
       'CALL_SITE': CallSiteNode,
       'METHOD_CALL': MethodCallNode,
       'CONSTRUCTOR_CALL': ConstructorCallNode,

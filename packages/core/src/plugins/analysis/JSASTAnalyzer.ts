@@ -61,6 +61,8 @@ import type {
   FunctionInfo,
   ParameterInfo,
   ScopeInfo,
+  BranchInfo,
+  CaseInfo,
   VariableDeclarationInfo,
   CallSiteInfo,
   MethodCallInfo,
@@ -103,6 +105,9 @@ interface Collections {
   functions: FunctionInfo[];
   parameters: ParameterInfo[];
   scopes: ScopeInfo[];
+  // Branching (switch statements)
+  branches: BranchInfo[];
+  cases: CaseInfo[];
   variableDeclarations: VariableDeclarationInfo[];
   callSites: CallSiteInfo[];
   methodCalls: MethodCallInfo[];
@@ -140,6 +145,8 @@ interface Collections {
   httpRequestCounterRef: CounterRef;
   literalCounterRef: CounterRef;
   anonymousFunctionCounterRef: CounterRef;
+  branchCounterRef: CounterRef;
+  caseCounterRef: CounterRef;
   processedNodes: ProcessedNodes;
   code?: string;
   // VisitorCollections compatibility
@@ -1163,6 +1170,9 @@ export class JSASTAnalyzer extends Plugin {
       const functions: FunctionInfo[] = [];
       const parameters: ParameterInfo[] = [];
       const scopes: ScopeInfo[] = [];
+      // Branching (switch statements)
+      const branches: BranchInfo[] = [];
+      const cases: CaseInfo[] = [];
       const variableDeclarations: VariableDeclarationInfo[] = [];
       const callSites: CallSiteInfo[] = [];
       const methodCalls: MethodCallInfo[] = [];
@@ -1202,6 +1212,8 @@ export class JSASTAnalyzer extends Plugin {
       const anonymousFunctionCounterRef: CounterRef = { value: 0 };
       const objectLiteralCounterRef: CounterRef = { value: 0 };
       const arrayLiteralCounterRef: CounterRef = { value: 0 };
+      const branchCounterRef: CounterRef = { value: 0 };
+      const caseCounterRef: CounterRef = { value: 0 };
 
       const processedNodes: ProcessedNodes = {
         functions: new Set(),
@@ -1239,7 +1251,10 @@ export class JSASTAnalyzer extends Plugin {
       this.profiler.end('traverse_variables');
 
       const allCollections: Collections = {
-        functions, parameters, scopes, variableDeclarations, callSites, methodCalls,
+        functions, parameters, scopes,
+        // Branching (switch statements)
+        branches, cases,
+        variableDeclarations, callSites, methodCalls,
         eventListeners, methodCallbacks, callArguments, classInstantiations, constructorCalls, classDeclarations,
         httpRequests, literals, variableAssignments,
         // TypeScript-specific collections
@@ -1253,7 +1268,9 @@ export class JSASTAnalyzer extends Plugin {
         objectLiteralCounterRef, arrayLiteralCounterRef,
         ifScopeCounterRef, scopeCounterRef, varDeclCounterRef,
         callSiteCounterRef, functionCounterRef, httpRequestCounterRef,
-        literalCounterRef, anonymousFunctionCounterRef, processedNodes,
+        literalCounterRef, anonymousFunctionCounterRef,
+        branchCounterRef, caseCounterRef,
+        processedNodes,
         imports, exports, code,
         // VisitorCollections compatibility
         classes: classDeclarations,
@@ -1514,6 +1531,9 @@ export class JSASTAnalyzer extends Plugin {
       const result = await this.graphBuilder.build(module, graph, projectPath, {
         functions,
         scopes,
+        // Branching (switch statements) - use allCollections refs as they're populated by analyzeFunctionBody
+        branches: allCollections.branches || branches,
+        cases: allCollections.cases || cases,
         variableDeclarations,
         callSites,
         methodCalls,
@@ -2020,6 +2040,263 @@ export class JSASTAnalyzer extends Plugin {
   }
 
   /**
+   * Handles SwitchStatement nodes.
+   * Creates BRANCH node for switch, CASE nodes for each case clause,
+   * and EXPRESSION node for discriminant.
+   *
+   * @param switchPath - The NodePath for the SwitchStatement
+   * @param parentScopeId - Parent scope ID
+   * @param module - Module context
+   * @param collections - AST collections
+   * @param scopeTracker - Tracker for semantic ID generation
+   */
+  private handleSwitchStatement(
+    switchPath: NodePath<t.SwitchStatement>,
+    parentScopeId: string,
+    module: VisitorModule,
+    collections: VisitorCollections,
+    scopeTracker: ScopeTracker | undefined
+  ): void {
+    const switchNode = switchPath.node;
+
+    // Initialize collections if not exist
+    if (!collections.branches) {
+      collections.branches = [];
+    }
+    if (!collections.cases) {
+      collections.cases = [];
+    }
+    if (!collections.branchCounterRef) {
+      collections.branchCounterRef = { value: 0 };
+    }
+    if (!collections.caseCounterRef) {
+      collections.caseCounterRef = { value: 0 };
+    }
+
+    const branches = collections.branches as BranchInfo[];
+    const cases = collections.cases as CaseInfo[];
+    const branchCounterRef = collections.branchCounterRef as CounterRef;
+    const caseCounterRef = collections.caseCounterRef as CounterRef;
+
+    // Create BRANCH node
+    const branchCounter = branchCounterRef.value++;
+    const legacyBranchId = `${module.file}:BRANCH:switch:${getLine(switchNode)}:${branchCounter}`;
+    const branchId = scopeTracker
+      ? computeSemanticId('BRANCH', 'switch', scopeTracker.getContext(), { discriminator: branchCounter })
+      : legacyBranchId;
+
+    // Handle discriminant expression - store metadata directly (Linus improvement)
+    let discriminantExpressionId: string | undefined;
+    let discriminantExpressionType: string | undefined;
+    let discriminantLine: number | undefined;
+    let discriminantColumn: number | undefined;
+
+    if (switchNode.discriminant) {
+      const discResult = this.extractDiscriminantExpression(
+        switchNode.discriminant,
+        module
+      );
+      discriminantExpressionId = discResult.id;
+      discriminantExpressionType = discResult.expressionType;
+      discriminantLine = discResult.line;
+      discriminantColumn = discResult.column;
+    }
+
+    branches.push({
+      id: branchId,
+      semanticId: branchId,
+      type: 'BRANCH',
+      branchType: 'switch',
+      file: module.file,
+      line: getLine(switchNode),
+      parentScopeId,
+      discriminantExpressionId,
+      discriminantExpressionType,
+      discriminantLine,
+      discriminantColumn
+    });
+
+    // Process each case clause
+    for (let i = 0; i < switchNode.cases.length; i++) {
+      const caseNode = switchNode.cases[i];
+      const isDefault = caseNode.test === null;
+      const isEmpty = caseNode.consequent.length === 0;
+
+      // Detect fall-through: no break/return/throw at end of consequent
+      const fallsThrough = isEmpty || !this.caseTerminates(caseNode);
+
+      // Extract case value
+      const value = isDefault ? null : this.extractCaseValue(caseNode.test ?? null);
+
+      const caseCounter = caseCounterRef.value++;
+      const valueName = isDefault ? 'default' : String(value);
+      const legacyCaseId = `${module.file}:CASE:${valueName}:${getLine(caseNode)}:${caseCounter}`;
+      const caseId = scopeTracker
+        ? computeSemanticId('CASE', valueName, scopeTracker.getContext(), { discriminator: caseCounter })
+        : legacyCaseId;
+
+      cases.push({
+        id: caseId,
+        semanticId: caseId,
+        type: 'CASE',
+        value,
+        isDefault,
+        fallsThrough,
+        isEmpty,
+        file: module.file,
+        line: getLine(caseNode),
+        parentBranchId: branchId
+      });
+    }
+  }
+
+  /**
+   * Extract EXPRESSION node ID and metadata for switch discriminant
+   */
+  private extractDiscriminantExpression(
+    discriminant: t.Expression,
+    module: VisitorModule
+  ): { id: string; expressionType: string; line: number; column: number } {
+    const line = getLine(discriminant);
+    const column = getColumn(discriminant);
+
+    if (t.isIdentifier(discriminant)) {
+      // Simple identifier: switch(x) - create EXPRESSION node
+      return {
+        id: ExpressionNode.generateId('Identifier', module.file, line, column),
+        expressionType: 'Identifier',
+        line,
+        column
+      };
+    } else if (t.isMemberExpression(discriminant)) {
+      // Member expression: switch(action.type)
+      return {
+        id: ExpressionNode.generateId('MemberExpression', module.file, line, column),
+        expressionType: 'MemberExpression',
+        line,
+        column
+      };
+    } else if (t.isCallExpression(discriminant)) {
+      // Call expression: switch(getType())
+      const callee = t.isIdentifier(discriminant.callee) ? discriminant.callee.name : '<complex>';
+      // Return CALL node ID instead of EXPRESSION (reuse existing call tracking)
+      return {
+        id: `${module.file}:CALL:${callee}:${line}:${column}`,
+        expressionType: 'CallExpression',
+        line,
+        column
+      };
+    }
+
+    // Default: create generic EXPRESSION
+    return {
+      id: ExpressionNode.generateId(discriminant.type, module.file, line, column),
+      expressionType: discriminant.type,
+      line,
+      column
+    };
+  }
+
+  /**
+   * Extract case test value as a primitive
+   */
+  private extractCaseValue(test: t.Expression | null): unknown {
+    if (!test) return null;
+
+    if (t.isStringLiteral(test)) {
+      return test.value;
+    } else if (t.isNumericLiteral(test)) {
+      return test.value;
+    } else if (t.isBooleanLiteral(test)) {
+      return test.value;
+    } else if (t.isNullLiteral(test)) {
+      return null;
+    } else if (t.isIdentifier(test)) {
+      // Constant reference: case CONSTANTS.ADD
+      return test.name;
+    } else if (t.isMemberExpression(test)) {
+      // Member expression: case Action.ADD
+      return this.memberExpressionToString(test);
+    }
+
+    return '<complex>';
+  }
+
+  /**
+   * Check if case clause terminates (has break, return, throw)
+   */
+  private caseTerminates(caseNode: t.SwitchCase): boolean {
+    const statements = caseNode.consequent;
+    if (statements.length === 0) return false;
+
+    // Check last statement (or any statement for early returns)
+    for (const stmt of statements) {
+      if (t.isBreakStatement(stmt)) return true;
+      if (t.isReturnStatement(stmt)) return true;
+      if (t.isThrowStatement(stmt)) return true;
+      if (t.isContinueStatement(stmt)) return true;  // In switch inside loop
+
+      // Check for nested blocks (if last statement is block, check inside)
+      if (t.isBlockStatement(stmt)) {
+        const lastInBlock = stmt.body[stmt.body.length - 1];
+        if (lastInBlock && (
+          t.isBreakStatement(lastInBlock) ||
+          t.isReturnStatement(lastInBlock) ||
+          t.isThrowStatement(lastInBlock)
+        )) {
+          return true;
+        }
+      }
+
+      // Check for if-else where both branches terminate
+      if (t.isIfStatement(stmt) && stmt.alternate) {
+        const ifTerminates = this.blockTerminates(stmt.consequent);
+        const elseTerminates = this.blockTerminates(stmt.alternate);
+        if (ifTerminates && elseTerminates) return true;
+      }
+    }
+
+    return false;
+  }
+
+  /**
+   * Check if a block/statement terminates
+   */
+  private blockTerminates(node: t.Statement): boolean {
+    if (t.isBreakStatement(node)) return true;
+    if (t.isReturnStatement(node)) return true;
+    if (t.isThrowStatement(node)) return true;
+    if (t.isBlockStatement(node)) {
+      const last = node.body[node.body.length - 1];
+      return last ? this.blockTerminates(last) : false;
+    }
+    return false;
+  }
+
+  /**
+   * Convert MemberExpression to string representation
+   */
+  private memberExpressionToString(expr: t.MemberExpression): string {
+    const parts: string[] = [];
+
+    let current: t.Expression = expr;
+    while (t.isMemberExpression(current)) {
+      if (t.isIdentifier(current.property)) {
+        parts.unshift(current.property.name);
+      } else {
+        parts.unshift('<computed>');
+      }
+      current = current.object;
+    }
+
+    if (t.isIdentifier(current)) {
+      parts.unshift(current.name);
+    }
+
+    return parts.join('.');
+  }
+
+  /**
    * Factory method to create IfStatement handler.
    * Creates if scope with condition parsing and optional else scope.
    * Tracks if/else scope transitions via ifElseScopeMap.
@@ -2259,19 +2536,13 @@ export class JSASTAnalyzer extends Plugin {
       },
 
       SwitchStatement: (switchPath: NodePath<t.SwitchStatement>) => {
-        const switchNode = switchPath.node;
-        const scopeId = `SCOPE#switch-case#${module.file}#${getLine(switchNode)}:${scopeCounterRef.value++}`;
-        const semanticId = this.generateSemanticId('switch-case', scopeTracker);
-
-        scopes.push({
-          id: scopeId,
-          type: 'SCOPE',
-          scopeType: 'switch-case',
-          semanticId,
-          file: module.file,
-          line: getLine(switchNode),
-          parentScopeId
-        });
+        this.handleSwitchStatement(
+          switchPath,
+          parentScopeId,
+          module,
+          collections,
+          scopeTracker
+        );
       },
 
       FunctionExpression: (funcPath: NodePath<t.FunctionExpression>) => {

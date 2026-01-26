@@ -65,6 +65,36 @@ export interface ScopeInfo {
   modifies?: Array<{ variableId: string; variableName: string; line: number }>;
 }
 
+// === BRANCH INFO ===
+export interface BranchInfo {
+  id: string;
+  semanticId?: string;
+  type: 'BRANCH';
+  branchType: 'switch' | 'if' | 'ternary';
+  file: string;
+  line: number;
+  parentScopeId?: string;
+  discriminantExpressionId?: string;  // ID of EXPRESSION node for discriminant
+  // Linus improvement: store discriminant metadata directly instead of parsing from ID
+  discriminantExpressionType?: string;
+  discriminantLine?: number;
+  discriminantColumn?: number;
+}
+
+// === CASE INFO ===
+export interface CaseInfo {
+  id: string;
+  semanticId?: string;
+  type: 'CASE';
+  value: unknown;
+  isDefault: boolean;
+  fallsThrough: boolean;
+  isEmpty: boolean;
+  file: string;
+  line: number;
+  parentBranchId: string;
+}
+
 // === VARIABLE DECLARATION INFO ===
 export interface VariableDeclarationInfo {
   id: string;
@@ -532,6 +562,9 @@ export interface ASTCollections {
   functions: FunctionInfo[];
   parameters?: ParameterInfo[];
   scopes: ScopeInfo[];
+  // Branching
+  branches?: BranchInfo[];
+  cases?: CaseInfo[];
   variableDeclarations: VariableDeclarationInfo[];
   callSites: CallSiteInfo[];
   methodCalls?: MethodCallInfo[];
@@ -570,6 +603,8 @@ export interface ASTCollections {
   literalCounterRef?: CounterRef;
   objectLiteralCounterRef?: CounterRef;
   arrayLiteralCounterRef?: CounterRef;
+  branchCounterRef?: CounterRef;
+  caseCounterRef?: CounterRef;
   processedNodes?: ProcessedNodes;
   // ScopeTracker for semantic ID generation
   scopeTracker?: import('../../../core/ScopeTracker.js').ScopeTracker;

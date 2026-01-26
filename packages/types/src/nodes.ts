@@ -28,6 +28,10 @@ export const NODE_TYPE = {
   FILE: 'FILE',
   SCOPE: 'SCOPE',
 
+  // Branching
+  BRANCH: 'BRANCH',
+  CASE: 'CASE',
+
   // External dependencies
   EXTERNAL: 'EXTERNAL',
   EXTERNAL_MODULE: 'EXTERNAL_MODULE',
@@ -186,6 +190,22 @@ export interface ScopeNodeRecord extends BaseNodeRecord {
   parentScopeId?: string;
 }
 
+// Branch node (switch, future: if/ternary)
+export interface BranchNodeRecord extends BaseNodeRecord {
+  type: 'BRANCH';
+  branchType: 'switch' | 'if' | 'ternary';  // For future expansion
+  parentScopeId?: string;
+}
+
+// Case node (switch case clause)
+export interface CaseNodeRecord extends BaseNodeRecord {
+  type: 'CASE';
+  value: unknown;         // Case test value ('ADD', 1, etc.) or null for default
+  isDefault: boolean;     // true for default case
+  fallsThrough: boolean;  // true if no break/return
+  isEmpty: boolean;       // true if case has no statements (intentional fall-through)
+}
+
 // HTTP Route node
 export interface HttpRouteNodeRecord extends BaseNodeRecord {
   type: 'http:route';
@@ -239,6 +259,8 @@ export type NodeRecord =
   | CallNodeRecord
   | ServiceNodeRecord
   | ScopeNodeRecord
+  | BranchNodeRecord
+  | CaseNodeRecord
   | HttpRouteNodeRecord
   | DbQueryNodeRecord
   | EventListenerNodeRecord
