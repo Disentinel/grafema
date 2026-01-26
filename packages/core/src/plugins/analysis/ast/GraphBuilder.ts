@@ -524,7 +524,7 @@ export class GraphBuilder {
 
   private bufferImportNodes(module: ModuleNode, imports: ImportInfo[]): void {
     for (const imp of imports) {
-      const { source, specifiers, line, column } = imp;
+      const { source, specifiers, line, column, isDynamic, isResolvable, dynamicPath } = imp;
 
       for (const spec of specifiers) {
         // Use ImportNode factory for proper semantic IDs and field population
@@ -536,8 +536,12 @@ export class GraphBuilder {
           source,               // source module
           {
             imported: spec.imported,
-            local: spec.local
+            local: spec.local,
             // importType is auto-detected from imported field
+            // Dynamic import fields
+            isDynamic,
+            isResolvable,
+            dynamicPath
           }
         );
 
