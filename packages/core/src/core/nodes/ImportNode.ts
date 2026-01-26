@@ -18,6 +18,7 @@ interface ImportNodeRecord extends BaseNodeRecord {
   isDynamic?: boolean;         // true for dynamic import() expressions
   isResolvable?: boolean;      // true if path is a string literal (statically analyzable)
   dynamicPath?: string;        // original expression for template/variable paths
+  sideEffect?: boolean;        // REG-273: true for side-effect-only imports
 }
 
 interface ImportNodeOptions {
@@ -28,13 +29,14 @@ interface ImportNodeOptions {
   isDynamic?: boolean;          // true for dynamic import() expressions
   isResolvable?: boolean;       // true if path is a string literal (statically analyzable)
   dynamicPath?: string;         // original expression for template/variable paths
+  sideEffect?: boolean;         // REG-273: true for side-effect-only imports
 }
 
 export class ImportNode {
   static readonly TYPE = 'IMPORT' as const;
 
   static readonly REQUIRED = ['name', 'file', 'line', 'source'] as const;
-  static readonly OPTIONAL = ['column', 'importType', 'importBinding', 'imported', 'local'] as const;
+  static readonly OPTIONAL = ['column', 'importType', 'importBinding', 'imported', 'local', 'isDynamic', 'isResolvable', 'dynamicPath', 'sideEffect'] as const;
 
   /**
    * Create IMPORT node
@@ -90,6 +92,11 @@ export class ImportNode {
     }
     if (options.dynamicPath !== undefined) {
       record.dynamicPath = options.dynamicPath;
+    }
+
+    // REG-273: Add sideEffect field if provided
+    if (options.sideEffect !== undefined) {
+      record.sideEffect = options.sideEffect;
     }
 
     return record;

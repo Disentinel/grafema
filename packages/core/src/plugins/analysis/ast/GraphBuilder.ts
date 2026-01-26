@@ -565,22 +565,19 @@ export class GraphBuilder {
     for (const imp of imports) {
       const { source, specifiers, line, column, isDynamic, isResolvable, dynamicPath } = imp;
 
-      for (const spec of specifiers) {
-        // Use ImportNode factory for proper semantic IDs and field population
+      // REG-273: Handle side-effect-only imports (no specifiers)
+      if (specifiers.length === 0) {
+        // Side-effect import: import './polyfill.js'
         const importNode = ImportNode.create(
-          spec.local,           // name = local binding
+          source,               // name = source (no local binding)
           module.file,          // file
           line,                 // line (stored as field, not in ID)
           column || 0,          // column
           source,               // source module
           {
-            imported: spec.imported,
-            local: spec.local,
-            // importType is auto-detected from imported field
-            // Dynamic import fields
-            isDynamic,
-            isResolvable,
-            dynamicPath
+            imported: '*',      // no specific export
+            local: source,      // source becomes local
+            sideEffect: true    // mark as side-effect import
           }
         );
 
@@ -609,6 +606,55 @@ export class GraphBuilder {
             src: module.id,
             dst: externalModule.id
           });
+        }
+      } else {
+        // Regular imports with specifiers
+        for (const spec of specifiers) {
+          // Use ImportNode factory for proper semantic IDs and field population
+          const importNode = ImportNode.create(
+            spec.local,           // name = local binding
+            module.file,          // file
+            line,                 // line (stored as field, not in ID)
+            column || 0,          // column
+            source,               // source module
+            {
+              imported: spec.imported,
+              local: spec.local,
+              sideEffect: false,  // regular imports are not side-effects
+              // importType is auto-detected from imported field
+              // Dynamic import fields
+              isDynamic,
+              isResolvable,
+              dynamicPath
+            }
+          );
+
+          this._bufferNode(importNode as unknown as GraphNode);
+
+          // MODULE -> CONTAINS -> IMPORT
+          this._bufferEdge({
+            type: 'CONTAINS',
+            src: module.id,
+            dst: importNode.id
+          });
+
+          // Create EXTERNAL_MODULE node for external modules
+          const isRelative = source.startsWith('./') || source.startsWith('../');
+          if (!isRelative) {
+            const externalModule = NodeFactory.createExternalModule(source);
+
+            // Avoid duplicate EXTERNAL_MODULE nodes
+            if (!this._createdSingletons.has(externalModule.id)) {
+              this._bufferNode(externalModule as unknown as GraphNode);
+              this._createdSingletons.add(externalModule.id);
+            }
+
+            this._bufferEdge({
+              type: 'IMPORTS',
+              src: module.id,
+              dst: externalModule.id
+            });
+          }
         }
       }
     }
