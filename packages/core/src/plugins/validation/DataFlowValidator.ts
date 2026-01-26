@@ -218,6 +218,17 @@ export class DataFlowValidator extends Plugin {
       return { found: true, chain };
     }
 
+    // REG-262: Check if variable is used by a method call (incoming USES edge)
+    // If something USES this variable, the variable is not dead
+    const usedByCall = allEdges.find(e =>
+      e.type === 'USES' && e.dst === startNode.id
+    );
+    if (usedByCall) {
+      const callNode = allNodes.find(n => n.id === usedByCall.src);
+      const callName = callNode?.name ?? usedByCall.src;
+      return { found: true, chain: [...chain, `(used by ${callName})`] };
+    }
+
     // Ищем ASSIGNED_FROM ребро
     const assignment = allEdges.find(e =>
       e.type === 'ASSIGNED_FROM' && e.src === startNode.id

@@ -203,8 +203,8 @@ export class GraphBuilder {
     // 8. Buffer edges for CALL_SITE
     this.bufferCallSiteEdges(callSites, functions);
 
-    // 9. Buffer METHOD_CALL nodes and CONTAINS edges
-    this.bufferMethodCalls(methodCalls);
+    // 9. Buffer METHOD_CALL nodes, CONTAINS edges, and USES edges (REG-262)
+    this.bufferMethodCalls(methodCalls, variableDeclarations, parameters);
 
     // 10. Buffer net:stdio and WRITES_TO edges for console.log/error
     this.bufferStdioNodes(methodCalls);
@@ -387,7 +387,11 @@ export class GraphBuilder {
     }
   }
 
-  private bufferMethodCalls(methodCalls: MethodCallInfo[]): void {
+  private bufferMethodCalls(
+    methodCalls: MethodCallInfo[],
+    variableDeclarations: VariableDeclarationInfo[],
+    parameters: ParameterInfo[]
+  ): void {
     for (const methodCall of methodCalls) {
       const { parentScopeId, ...methodData } = methodCall;
 
@@ -400,6 +404,41 @@ export class GraphBuilder {
         src: parentScopeId as string,
         dst: methodData.id
       });
+
+      // REG-262: Create USES edge from METHOD_CALL to receiver variable
+      // Skip 'this' - it's not a variable node
+      if (methodCall.object && methodCall.object !== 'this') {
+        // Handle nested member expressions: obj.nested.method() -> use base 'obj'
+        const receiverName = methodCall.object.includes('.')
+          ? methodCall.object.split('.')[0]
+          : methodCall.object;
+
+        // Find receiver variable in current file
+        const receiverVar = variableDeclarations.find(v =>
+          v.name === receiverName && v.file === methodCall.file
+        );
+
+        if (receiverVar) {
+          this._bufferEdge({
+            type: 'USES',
+            src: methodData.id,
+            dst: receiverVar.id
+          });
+        } else {
+          // Check parameters (function arguments)
+          const receiverParam = parameters.find(p =>
+            p.name === receiverName && p.file === methodCall.file
+          );
+
+          if (receiverParam) {
+            this._bufferEdge({
+              type: 'USES',
+              src: methodData.id,
+              dst: receiverParam.id
+            });
+          }
+        }
+      }
     }
   }
 
