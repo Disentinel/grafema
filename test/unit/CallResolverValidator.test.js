@@ -393,30 +393,38 @@ const result = foo();
       }
     });
 
-    it('should flag eval/Function constructor calls', async () => {
-      const { backend } = await setupTest({
+    it('should handle eval as builtin but flag Function constructor', async () => {
+      const { backend, testDir } = await setupTest({
         'index.js': `// Empty`
       });
 
       try {
-        // eval("someFunction()") - the inner call is unresolvable!
-        // Function("return x")() - also unresolvable
         await backend.addNodes([
-          // eval is a CALL_SITE (global function)
+          // eval is a builtin - should NOT be flagged
           { id: 'eval-call', type: 'CALL', name: 'eval', file: 'app.js' },
-          // Function constructor is a CALL_SITE
+          // Function constructor is NOT a builtin - should be flagged
           { id: 'func-ctor', type: 'CALL', name: 'Function', file: 'app.js' }
         ]);
 
         await backend.flush();
 
-        const violations = await backend.checkGuarantee(`
-          violation(X) :- node(X, "CALL"), \\+ attr(X, "object", _), \\+ edge(X, _, "CALLS").
-        `);
+        const { CallResolverValidator } = await import('@grafema/core');
+        const validator = new CallResolverValidator();
+        const result = await validator.execute({
+          graph: backend,
+          config: {},
+          rootDir: testDir
+        });
 
-        // Both should be flagged as unresolved CALL_SITE
-        assert.strictEqual(violations.length, 2, 'eval and Function should be flagged');
-        console.log('Dynamic evaluation calls detected');
+        // Only Function should be flagged (eval is builtin)
+        assert.strictEqual(result.errors?.length ?? 0, 1, 'Only Function should be flagged');
+        assert.ok(result.errors[0].message.includes('Function'), 'Should flag Function');
+
+        const summary = result.metadata?.summary;
+        assert.strictEqual(summary.resolvedBuiltin, 1, 'eval should be builtin');
+        assert.strictEqual(summary.unresolvedCalls, 1, 'Function should be unresolved');
+
+        console.log('eval recognized as builtin, Function flagged');
       } finally {
         await backend.close();
       }
@@ -819,6 +827,177 @@ const result = foo();
 
         assert.strictEqual(violations.length, 5, 'Should find exactly 5 unresolved calls');
         console.log('Large number of calls handled correctly');
+      } finally {
+        await backend.close();
+      }
+    });
+  });
+
+  // ==========================================================================
+  // REG-227: CallResolverValidator Resolution Categories
+  // ==========================================================================
+
+  describe('REG-227: Resolution Type Categorization', () => {
+    it('should NOT flag JavaScript built-in function calls', async () => {
+      const { backend, testDir } = await setupTest({
+        'index.js': `// Empty`
+      });
+
+      try {
+        // Add built-in function calls
+        await backend.addNodes([
+          { id: 'parseInt-call', type: 'CALL', name: 'parseInt', file: 'app.js' },
+          { id: 'setTimeout-call', type: 'CALL', name: 'setTimeout', file: 'app.js' },
+          { id: 'require-call', type: 'CALL', name: 'require', file: 'app.js' }
+        ]);
+
+        await backend.flush();
+
+        // Run validator directly
+        const { CallResolverValidator } = await import('@grafema/core');
+        const validator = new CallResolverValidator();
+        const result = await validator.execute({
+          graph: backend,
+          config: {},
+          rootDir: testDir
+        });
+
+        // Should have no warnings
+        assert.strictEqual(result.errors?.length ?? 0, 0, 'Built-in calls should not be flagged');
+
+        // Summary should show built-ins resolved
+        const summary = result.metadata?.summary;
+        assert.strictEqual(summary.resolvedBuiltin, 3, 'Should count 3 built-in calls');
+        assert.strictEqual(summary.unresolvedCalls, 0, 'Should have no unresolved calls');
+
+        console.log('Built-in function calls correctly recognized');
+      } finally {
+        await backend.close();
+      }
+    });
+
+    it('should NOT flag external package calls with CALLS edges', async () => {
+      const { backend, testDir } = await setupTest({
+        'index.js': `// Empty`
+      });
+
+      try {
+        await backend.addNodes([
+          { id: 'ext-module', type: 'EXTERNAL_MODULE', name: 'lodash', file: '' },
+          { id: 'map-call', type: 'CALL', name: 'map', file: 'app.js' }
+        ]);
+
+        await backend.addEdge({
+          src: 'map-call',
+          dst: 'ext-module',
+          type: 'CALLS'
+        });
+
+        await backend.flush();
+
+        const { CallResolverValidator } = await import('@grafema/core');
+        const validator = new CallResolverValidator();
+        const result = await validator.execute({
+          graph: backend,
+          config: {},
+          rootDir: testDir
+        });
+
+        assert.strictEqual(result.errors?.length ?? 0, 0, 'External calls should not be flagged');
+
+        const summary = result.metadata?.summary;
+        assert.strictEqual(summary.resolvedExternal, 1, 'Should count 1 external call');
+
+        console.log('External package calls correctly recognized');
+      } finally {
+        await backend.close();
+      }
+    });
+
+    it('should flag truly unresolved calls as warnings (not errors)', async () => {
+      const { backend, testDir } = await setupTest({
+        'index.js': `// Empty`
+      });
+
+      try {
+        await backend.addNodes([
+          { id: 'unknown-call', type: 'CALL', name: 'unknownFunction', file: 'app.js', line: 42 }
+        ]);
+
+        await backend.flush();
+
+        const { CallResolverValidator } = await import('@grafema/core');
+        const validator = new CallResolverValidator();
+        const result = await validator.execute({
+          graph: backend,
+          config: {},
+          rootDir: testDir
+        });
+
+        // Should have exactly 1 warning
+        assert.strictEqual(result.errors?.length ?? 0, 1, 'Should report 1 warning');
+
+        const warning = result.errors[0];
+        assert.strictEqual(warning.severity, 'warning', 'Should be a warning, not error');
+        assert.strictEqual(warning.code, 'WARN_UNRESOLVED_CALL');
+        assert.ok(warning.message.includes('unknownFunction'), 'Message should include function name');
+
+        const summary = result.metadata?.summary;
+        assert.strictEqual(summary.unresolvedCalls, 1, 'Should count 1 unresolved call');
+        assert.strictEqual(summary.warnings, 1, 'Should show 1 warning');
+
+        console.log('Unresolved calls correctly reported as warnings');
+      } finally {
+        await backend.close();
+      }
+    });
+
+    it('should correctly categorize mixed resolution types in summary', async () => {
+      const { backend, testDir } = await setupTest({
+        'index.js': `// Empty`
+      });
+
+      try {
+        await backend.addNodes([
+          // Internal resolved
+          { id: 'fn-def', type: 'FUNCTION', name: 'helper', file: 'app.js' },
+          { id: 'internal-call', type: 'CALL', name: 'helper', file: 'app.js' },
+
+          // External resolved
+          { id: 'lodash-module', type: 'EXTERNAL_MODULE', name: 'lodash', file: '' },
+          { id: 'external-call', type: 'CALL', name: 'map', file: 'app.js' },
+
+          // Built-in
+          { id: 'builtin-call', type: 'CALL', name: 'parseInt', file: 'app.js' },
+
+          // Method call
+          { id: 'method-call', type: 'CALL', name: 'arr.filter', file: 'app.js', object: 'arr', method: 'filter' },
+
+          // Unresolved
+          { id: 'unresolved-call', type: 'CALL', name: 'unknownFunc', file: 'app.js' }
+        ]);
+
+        await backend.addEdge({ src: 'internal-call', dst: 'fn-def', type: 'CALLS' });
+        await backend.addEdge({ src: 'external-call', dst: 'lodash-module', type: 'CALLS' });
+        await backend.flush();
+
+        const { CallResolverValidator } = await import('@grafema/core');
+        const validator = new CallResolverValidator();
+        const result = await validator.execute({
+          graph: backend,
+          config: {},
+          rootDir: testDir
+        });
+
+        const summary = result.metadata?.summary;
+        assert.strictEqual(summary.totalCalls, 5, 'Should count 5 total calls');
+        assert.strictEqual(summary.resolvedInternal, 1, 'Should count 1 internal');
+        assert.strictEqual(summary.resolvedExternal, 1, 'Should count 1 external');
+        assert.strictEqual(summary.resolvedBuiltin, 1, 'Should count 1 builtin');
+        assert.strictEqual(summary.methodCalls, 1, 'Should count 1 method call');
+        assert.strictEqual(summary.unresolvedCalls, 1, 'Should count 1 unresolved');
+
+        console.log('Mixed resolution types categorized correctly');
       } finally {
         await backend.close();
       }

@@ -24,6 +24,7 @@
 import { Plugin, createSuccessResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { BaseNodeRecord } from '@grafema/types';
+import { JS_GLOBAL_FUNCTIONS } from '../../data/builtins/index.js';
 
 // === INTERFACES ===
 
@@ -38,34 +39,6 @@ interface ImportNode extends BaseNodeRecord {
   imported?: string; // Original name in source file
   local?: string; // Local binding name
 }
-
-/**
- * JavaScript built-in global functions.
- *
- * These are functions intrinsic to the JS runtime that don't need CALLS edges.
- * They're available in all JS environments (browser, Node.js, etc.) and aren't
- * "callable definitions" in the code sense.
- *
- * What is NOT included:
- * - Constructors (Array, Object, Error) - handled as constructor calls
- * - Objects with methods (Math, JSON) - method calls go through MethodCallResolver
- * - Environment globals (window, document) - not functions, they're objects
- *
- * Note: CallResolverValidator (REG-227) will recognize these by name and mark
- * as resolved without requiring CALLS edges.
- */
-const JS_BUILTINS = new Set([
-  // Global functions (truly called as standalone functions)
-  'parseInt', 'parseFloat', 'isNaN', 'isFinite', 'eval',
-  'encodeURI', 'decodeURI', 'encodeURIComponent', 'decodeURIComponent',
-
-  // Timers (global functions in browser & Node.js)
-  'setTimeout', 'setInterval', 'setImmediate',
-  'clearTimeout', 'clearInterval', 'clearImmediate',
-
-  // CommonJS (special case - global in CJS environments)
-  'require'
-]);
 
 // === PLUGIN CLASS ===
 
@@ -166,7 +139,7 @@ export class ExternalCallResolver extends Plugin {
       }
 
       // Step 4.1: Check if this is a JS builtin
-      if (JS_BUILTINS.has(calledName)) {
+      if (JS_GLOBAL_FUNCTIONS.has(calledName)) {
         builtinResolved++;
         continue; // No edge needed, just count it
       }
