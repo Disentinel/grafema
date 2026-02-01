@@ -1,38 +1,48 @@
 /**
  * MountPointResolver - ENRICHMENT plugin for resolving mount points
  *
- * Updates ENDPOINT nodes by adding fullPath based on MOUNT_POINT prefixes.
+ * REG-248 Fix: Now works with ExpressRouteAnalyzer's node types:
+ * - express:middleware (with mountPath) instead of MOUNT_POINT
+ * - http:route instead of ENDPOINT
  *
- * Graph traversal:
- * MOUNT_POINT --MOUNTS--> MODULE --EXPOSES--> ENDPOINT
+ * Algorithm:
+ * 1. Find express:middleware nodes with mountPath
+ * 2. Get the MODULE node for the file containing the mount
+ * 3. Follow IMPORTS edges to find imported modules
+ * 4. Find http:route nodes in those modules
+ * 5. Update routes with fullPath = mountPath + route.path
  *
- * Updates:
- * endpoint.fullPath = mountPoint.prefix + endpoint.localPath
+ * Note: This applies mount prefixes to ALL routes in imported modules.
+ * This matches how Express router mounting typically works.
  */
 
 import { Plugin } from '../Plugin.js';
 import { createSuccessResult, createErrorResult } from '@grafema/types';
-import type { PluginMetadata, PluginContext, PluginResult, GraphBackend } from '@grafema/types';
+import type { PluginMetadata, PluginContext, PluginResult } from '@grafema/types';
 import type { BaseNodeRecord } from '@grafema/types';
-import type { EdgeRecord } from '@grafema/types';
 
-interface EdgeCriteria {
-  type?: string;
-  src?: string;
-  dst?: string;
+interface MountNode {
+  id: string;
+  type: string;
+  mountPath?: string;
+  prefix?: string;  // Alternative field used by express:mount
+  name?: string;    // The imported router variable name
+  file?: string;
+  [key: string]: unknown;
 }
 
-interface MountPointNode extends BaseNodeRecord {
-  prefix: string;
-}
-
-interface EndpointNode extends BaseNodeRecord {
-  localPath?: string;
+interface RouteNode {
+  id: string;
+  type: string;
   path?: string;
+  fullPath?: string;
+  localPath?: string;
+  mountPrefix?: string;
   mountPrefixes?: string[];
   fullPaths?: string[];
-  mountPrefix?: string;
-  fullPath?: string;
+  file?: string;
+  routerName?: string;
+  [key: string]: unknown;
 }
 
 export class MountPointResolver extends Plugin {
@@ -42,10 +52,10 @@ export class MountPointResolver extends Plugin {
       phase: 'ENRICHMENT',
       priority: 90,  // High priority - one of first enrichment plugins
       creates: {
-        nodes: [],  // Doesn't create new nodes
-        edges: []   // Doesn't create new edges
+        nodes: [],  // Updates existing nodes
+        edges: []   // Doesn't create edges
       },
-      dependencies: ['JSModuleIndexer', 'JSASTAnalyzer']
+      dependencies: ['JSModuleIndexer', 'JSASTAnalyzer', 'ExpressRouteAnalyzer']
     };
   }
 
@@ -54,90 +64,161 @@ export class MountPointResolver extends Plugin {
       const { graph } = context;
       const logger = this.log(context);
 
-      let endpointsUpdated = 0;
+      let routesUpdated = 0;
       let mountPointsProcessed = 0;
 
-      // Find all MOUNT_POINT nodes
-      const allNodes = await graph.getAllNodes();
-      const mountPoints = allNodes.filter(node => node.type === 'MOUNT_POINT') as MountPointNode[];
+      // Step 1: Find all mount points (express:middleware with mountPath)
+      const mountNodes: MountNode[] = [];
+      for await (const node of graph.queryNodes({ type: 'express:middleware' })) {
+        const mount = node as MountNode;
+        // Only include mounts with a meaningful path (not global middleware)
+        if (mount.mountPath && mount.mountPath !== '/' && mount.name) {
+          mountNodes.push(mount);
+        }
+      }
 
-      logger.info('Found mount points', { count: mountPoints.length });
+      // Also check for express:mount (from ExpressAnalyzer, if enabled)
+      for await (const node of graph.queryNodes({ type: 'express:mount' })) {
+        const mount = node as MountNode;
+        if (mount.mountPath || (mount as { prefix?: string }).prefix) {
+          // express:mount uses 'prefix' field
+          const prefix = mount.mountPath || (mount as { prefix?: string }).prefix;
+          if (prefix && prefix !== '/') {
+            mountNodes.push({
+              ...mount,
+              mountPath: prefix
+            });
+          }
+        }
+      }
 
-      // For each top-level mount point (from app.use in index.js)
-      // apply recursive resolver
-      const processedMountPoints = new Set<string>();
+      logger.info('Found mount points', { count: mountNodes.length });
 
-      for (const mountPoint of mountPoints) {
-        if (!processedMountPoints.has(mountPoint.id)) {
-          const updated = await this.resolveMountPoint(graph, mountPoint, '', processedMountPoints);
-          endpointsUpdated += updated;
+      // Debug: log mount point details
+      for (const mount of mountNodes) {
+        logger.debug('Mount point details', {
+          id: mount.id,
+          mountPath: mount.mountPath,
+          name: mount.name,
+          file: mount.file
+        });
+      }
+
+      if (mountNodes.length === 0) {
+        return createSuccessResult(
+          { nodes: 0, edges: 0 },
+          { routesUpdated: 0, mountPointsProcessed: 0 }
+        );
+      }
+
+      // Step 2: Build module import relationships using DEPENDS_ON edges
+      // JSModuleIndexer creates DEPENDS_ON edges between MODULE nodes
+      // Map<sourceModuleFile, Set<importedModuleFile>>
+      const moduleImports = new Map<string, Set<string>>();
+
+      // First, build MODULE file lookup
+      const moduleFiles = new Map<string, string>(); // moduleId -> file
+      for await (const node of graph.queryNodes({ type: 'MODULE' })) {
+        const mod = node as { id: string; file?: string };
+        if (mod.file) {
+          moduleFiles.set(mod.id, mod.file);
+        }
+      }
+
+      logger.debug('MODULE nodes indexed', { count: moduleFiles.size });
+
+      // Then, get all DEPENDS_ON edges to build the relationship
+      if (graph.getAllEdges) {
+        const edges = await graph.getAllEdges();
+        for (const edge of edges) {
+          if (edge.type === 'DEPENDS_ON') {
+            const srcFile = moduleFiles.get(edge.src);
+            const dstFile = moduleFiles.get(edge.dst);
+            if (srcFile && dstFile) {
+              if (!moduleImports.has(srcFile)) {
+                moduleImports.set(srcFile, new Set());
+              }
+              moduleImports.get(srcFile)!.add(dstFile);
+              logger.debug('Found module dependency', { from: srcFile, to: dstFile });
+            }
+          }
+        }
+      }
+      logger.debug('Module imports built', { files: moduleImports.size });
+
+      // Step 3: Collect all routes by file
+      const routesByFile = new Map<string, RouteNode[]>();
+      for await (const node of graph.queryNodes({ type: 'http:route' })) {
+        const route = node as RouteNode;
+        if (route.file) {
+          if (!routesByFile.has(route.file)) {
+            routesByFile.set(route.file, []);
+          }
+          routesByFile.get(route.file)!.push(route);
+        }
+      }
+
+      // Step 4: For each mount point, find and update routes
+      for (const mount of mountNodes) {
+        if (!mount.file || !mount.mountPath) continue;
+
+        // Get all modules imported by this file
+        const importedFiles = moduleImports.get(mount.file);
+        if (!importedFiles || importedFiles.size === 0) {
+          logger.debug('No imports found for mount', { file: mount.file, name: mount.name });
+          continue;
+        }
+
+        // For each imported module, check if it has routes
+        for (const importedFile of importedFiles) {
+          const routes = routesByFile.get(importedFile);
+          if (!routes || routes.length === 0) continue;
+
+          logger.debug('Found routes in imported module', {
+            mountFile: mount.file,
+            importedFile,
+            routeCount: routes.length
+          });
+
+          // Update routes with fullPath
+          for (const route of routes) {
+            const localPath = route.localPath || route.path || '';
+            const fullPath = mount.mountPath + localPath;
+
+            // Support multiple mount points
+            const mountPrefixes = route.mountPrefixes || [];
+            const fullPaths = route.fullPaths || [];
+
+            if (!mountPrefixes.includes(mount.mountPath)) {
+              mountPrefixes.push(mount.mountPath);
+              fullPaths.push(fullPath);
+            }
+
+            // Update route node
+            const updatedRoute: RouteNode = {
+              ...route,
+              mountPrefixes,
+              fullPaths,
+              mountPrefix: route.mountPrefix || mount.mountPath,
+              fullPath: route.fullPath || fullPath
+            };
+
+            await graph.addNode(updatedRoute as BaseNodeRecord);
+            routesUpdated++;
+          }
+
           mountPointsProcessed++;
         }
       }
 
-      // Fallback: process mount points without recursion (old logic for compatibility)
-      for (const mountPoint of mountPoints) {
-        if (processedMountPoints.has(mountPoint.id)) continue;
-        // Find MOUNT_POINT --MOUNTS--> MODULE edge
-        const mountsEdges = await this.findEdges(graph, {
-          type: 'MOUNTS',
-          src: mountPoint.id
-        });
-
-        for (const mountsEdge of mountsEdges) {
-          const targetModuleId = mountsEdge.dst;
-
-          // Find MODULE --EXPOSES--> ENDPOINT edges
-          const exposesEdges = await this.findEdges(graph, {
-            type: 'EXPOSES',
-            src: targetModuleId
-          });
-
-          for (const exposesEdge of exposesEdges) {
-            const endpointId = exposesEdge.dst;
-            const endpoint = await graph.getNode(endpointId) as EndpointNode | null;
-
-            if (endpoint && endpoint.type === 'ENDPOINT') {
-              // Support multiple mount points for one endpoint
-              // Store all prefixes and fullPaths in arrays
-              const mountPrefixes = endpoint.mountPrefixes || [];
-              const fullPaths = endpoint.fullPaths || [];
-
-              const prefix = mountPoint.prefix;
-              const fullPath = prefix + (endpoint.localPath || endpoint.path || '');
-
-              // Only add if not already added (avoid duplicates)
-              if (!mountPrefixes.includes(prefix)) {
-                mountPrefixes.push(prefix);
-                fullPaths.push(fullPath);
-              }
-
-              // Update endpoint node
-              const updatedEndpoint: EndpointNode = {
-                ...endpoint,
-                mountPrefixes,
-                fullPaths,
-                mountPrefix: endpoint.mountPrefix || prefix,
-                fullPath: endpoint.fullPath || fullPath
-              };
-
-              await graph.addNode(updatedEndpoint);
-              endpointsUpdated++;
-            }
-          }
-        }
-
-        mountPointsProcessed++;
-      }
-
-      logger.info('Updated endpoints', {
-        endpoints: endpointsUpdated,
+      logger.info('Updated routes with mount prefixes', {
+        routes: routesUpdated,
         mountPoints: mountPointsProcessed
       });
 
       return createSuccessResult(
         { nodes: 0, edges: 0 },
-        { endpointsUpdated, mountPointsProcessed }
+        { routesUpdated, mountPointsProcessed }
       );
 
     } catch (error) {
@@ -145,125 +226,5 @@ export class MountPointResolver extends Plugin {
       logger.error('Error in MountPointResolver', { error });
       return createErrorResult(error as Error);
     }
-  }
-
-  /**
-   * Recursively resolve mount point and all nested mount points
-   */
-  private async resolveMountPoint(
-    graph: GraphBackend,
-    mountPoint: MountPointNode,
-    parentPrefix: string,
-    processedMountPoints: Set<string>
-  ): Promise<number> {
-    let endpointsUpdated = 0;
-
-    // Mark as processed
-    processedMountPoints.add(mountPoint.id);
-
-    // Calculate full prefix (parent + current)
-    const fullPrefix = parentPrefix + mountPoint.prefix;
-
-    // Find MOUNT_POINT --MOUNTS--> MODULE edge
-    const mountsEdges = await this.findEdges(graph, {
-      type: 'MOUNTS',
-      src: mountPoint.id
-    });
-
-    for (const mountsEdge of mountsEdges) {
-      const targetModuleId = mountsEdge.dst;
-
-      // 1. Process ENDPOINT in this module
-      const exposesEdges = await this.findEdges(graph, {
-        type: 'EXPOSES',
-        src: targetModuleId
-      });
-
-      for (const exposesEdge of exposesEdges) {
-        const endpointId = exposesEdge.dst;
-        const endpoint = await graph.getNode(endpointId) as EndpointNode | null;
-
-        if (endpoint && endpoint.type === 'ENDPOINT') {
-          // Support multiple mount points
-          const mountPrefixes = endpoint.mountPrefixes || [];
-          const fullPaths = endpoint.fullPaths || [];
-
-          const fullPath = fullPrefix + (endpoint.localPath || endpoint.path || '');
-
-          // Only add if not already added
-          if (!mountPrefixes.includes(fullPrefix)) {
-            mountPrefixes.push(fullPrefix);
-            fullPaths.push(fullPath);
-          }
-
-          // Update endpoint node with new data
-          const updatedEndpoint: EndpointNode = {
-            ...endpoint,
-            mountPrefixes,
-            fullPaths,
-            mountPrefix: endpoint.mountPrefix || fullPrefix,
-            fullPath: endpoint.fullPath || fullPath
-          };
-
-          await graph.addNode(updatedEndpoint);
-          endpointsUpdated++;
-        }
-      }
-
-      // 2. Recursively process nested MOUNT_POINT in this module
-      const definesEdges = await this.findEdges(graph, {
-        type: 'DEFINES',
-        src: targetModuleId
-      });
-
-      for (const definesEdge of definesEdges) {
-        const nestedMountPointId = definesEdge.dst;
-        const nestedMountPoint = await graph.getNode(nestedMountPointId) as MountPointNode | null;
-
-        if (nestedMountPoint && nestedMountPoint.type === 'MOUNT_POINT' &&
-            !processedMountPoints.has(nestedMountPointId)) {
-          // Recursively process nested mount point
-          endpointsUpdated += await this.resolveMountPoint(
-            graph,
-            nestedMountPoint,
-            fullPrefix,  // Pass accumulated prefix
-            processedMountPoints
-          );
-        }
-      }
-    }
-
-    return endpointsUpdated;
-  }
-
-  /**
-   * Helper method for finding edges by criteria
-   */
-  private async findEdges(graph: GraphBackend, criteria: EdgeCriteria): Promise<EdgeRecord[]> {
-    const result: EdgeRecord[] = [];
-
-    // Get all edges using RFDBServerBackend API
-    if (!graph.getAllEdges) {
-      return result;
-    }
-    const allEdges = await graph.getAllEdges();
-
-    for (const edge of allEdges) {
-      let matches = true;
-
-      for (const [key, value] of Object.entries(criteria)) {
-        const edgeRecord = edge as unknown as Record<string, unknown>;
-        if (edgeRecord[key] !== value) {
-          matches = false;
-          break;
-        }
-      }
-
-      if (matches) {
-        result.push(edge);
-      }
-    }
-
-    return result;
   }
 }
