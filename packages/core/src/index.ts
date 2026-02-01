@@ -262,5 +262,9 @@ export type {
   GraphExtractOptions,
 } from './schema/index.js';
 
+// Graph Query Utilities
+export { findCallsInFunction, findContainingFunction } from './queries/index.js';
+export type { CallInfo, CallerInfo, FindCallsOptions } from './queries/index.js';
+
 // Re-export types for convenience
 export type * from '@grafema/types';

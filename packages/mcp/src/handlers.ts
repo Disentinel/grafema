@@ -5,7 +5,8 @@
 import { join } from 'path';
 import { ensureAnalyzed } from './analysis.js';
 import { getProjectPath, getAnalysisStatus, getOrCreateBackend, getGuaranteeManager, getGuaranteeAPI, isAnalysisRunning } from './state.js';
-import { CoverageAnalyzer } from '@grafema/core';
+import { CoverageAnalyzer, findCallsInFunction, findContainingFunction } from '@grafema/core';
+import type { CallInfo, CallerInfo } from '@grafema/core';
 import {
   normalizeLimit,
   formatPaginationInfo,
@@ -32,6 +33,7 @@ import type {
   GetDocumentationArgs,
   FindGuardsArgs,
   GuardInfo,
+  GetFunctionDetailsArgs,
   GraphBackend,
   GraphNode,
 } from './types.js';
@@ -966,6 +968,145 @@ export async function handleFindGuards(args: FindGuardsArgs): Promise<ToolResult
     `\n\n` +
     JSON.stringify(serializeBigInt(guards), null, 2)
   );
+}
+
+// === GET FUNCTION DETAILS (REG-254) ===
+
+/**
+ * Get comprehensive function details including calls made and callers.
+ *
+ * Graph structure:
+ * ```
+ * FUNCTION -[HAS_SCOPE]-> SCOPE -[CONTAINS]-> CALL/METHOD_CALL
+ *                         SCOPE -[CONTAINS]-> SCOPE (nested blocks)
+ * CALL -[CALLS]-> FUNCTION (target)
+ * ```
+ *
+ * This is the core tool for understanding function behavior.
+ * Use transitive=true to follow call chains (A -> B -> C).
+ */
+export async function handleGetFunctionDetails(
+  args: GetFunctionDetailsArgs
+): Promise<ToolResult> {
+  const db = await ensureAnalyzed();
+  const { name, file, transitive = false } = args;
+
+  // Step 1: Find the function
+  const candidates: GraphNode[] = [];
+  for await (const node of db.queryNodes({ type: 'FUNCTION' })) {
+    if (node.name !== name) continue;
+    if (file && !node.file?.includes(file)) continue;
+    candidates.push(node);
+  }
+
+  if (candidates.length === 0) {
+    return errorResult(
+      `Function "${name}" not found.` +
+      (file ? ` (searched in files matching "${file}")` : '')
+    );
+  }
+
+  if (candidates.length > 1 && !file) {
+    const locations = candidates.map(f => `${f.file}:${f.line}`).join(', ');
+    return errorResult(
+      `Multiple functions named "${name}" found: ${locations}. ` +
+      `Use the "file" parameter to disambiguate.`
+    );
+  }
+
+  const targetFunction = candidates[0];
+
+  // Step 2: Find calls using shared utility
+  const calls = await findCallsInFunction(db, targetFunction.id, {
+    transitive,
+    transitiveDepth: 5,
+  });
+
+  // Step 3: Find callers
+  const calledBy: CallerInfo[] = [];
+  const incomingCalls = await db.getIncomingEdges(targetFunction.id, ['CALLS']);
+  const seenCallers = new Set<string>();
+
+  for (const edge of incomingCalls) {
+    const caller = await findContainingFunction(db, edge.src);
+    if (caller && !seenCallers.has(caller.id)) {
+      seenCallers.add(caller.id);
+      calledBy.push(caller);
+    }
+  }
+
+  // Step 4: Build result
+  const result = {
+    id: targetFunction.id,
+    name: targetFunction.name,
+    file: targetFunction.file,
+    line: targetFunction.line as number | undefined,
+    async: targetFunction.async as boolean | undefined,
+    calls,
+    calledBy,
+  };
+
+  // Format output
+  const summary = [
+    `Function: ${result.name}`,
+    `File: ${result.file || 'unknown'}:${result.line || '?'}`,
+    `Async: ${result.async || false}`,
+    `Transitive: ${transitive}`,
+    '',
+    `Calls (${calls.length}):`,
+    ...formatCallsForDisplay(calls),
+    '',
+    `Called by (${calledBy.length}):`,
+    ...calledBy.map(c => `  - ${c.name} (${c.file}:${c.line})`),
+  ].join('\n');
+
+  return textResult(
+    summary + '\n\n' +
+    JSON.stringify(serializeBigInt(result), null, 2)
+  );
+}
+
+/**
+ * Format calls for display, grouped by depth if transitive
+ */
+function formatCallsForDisplay(calls: CallInfo[]): string[] {
+  const directCalls = calls.filter(c => (c.depth || 0) === 0);
+  const transitiveCalls = calls.filter(c => (c.depth || 0) > 0);
+
+  const lines: string[] = [];
+
+  // Direct calls
+  for (const c of directCalls) {
+    const target = c.resolved
+      ? ` -> ${c.target?.name} (${c.target?.file}:${c.target?.line})`
+      : ' (unresolved)';
+    const prefix = c.type === 'METHOD_CALL' ? `${c.object}.` : '';
+    lines.push(`  - ${prefix}${c.name}()${target}`);
+  }
+
+  // Transitive calls (grouped by depth)
+  if (transitiveCalls.length > 0) {
+    lines.push('');
+    lines.push('  Transitive calls:');
+
+    const byDepth = new Map<number, CallInfo[]>();
+    for (const c of transitiveCalls) {
+      const depth = c.depth || 1;
+      if (!byDepth.has(depth)) byDepth.set(depth, []);
+      byDepth.get(depth)!.push(c);
+    }
+
+    for (const [depth, depthCalls] of Array.from(byDepth.entries()).sort((a, b) => a[0] - b[0])) {
+      for (const c of depthCalls) {
+        const indent = '  '.repeat(depth + 1);
+        const prefix = c.type === 'METHOD_CALL' ? `${c.object}.` : '';
+        const target = c.resolved ? ` -> ${c.target?.name}` : '';
+        lines.push(`${indent}[depth=${depth}] ${prefix}${c.name}()${target}`);
+      }
+    }
+  }
+
+  return lines;
 }
 
 // === BUG REPORTING ===
