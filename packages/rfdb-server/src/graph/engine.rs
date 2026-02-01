@@ -1767,4 +1767,186 @@ mod tests {
         assert_eq!(result.len(), 1);
         assert!(result.contains(&999));
     }
+
+    // ============================================================
+    // REG-308: File Filtering in find_by_attr Tests
+    // ============================================================
+
+    #[test]
+    fn test_find_by_attr_file_filter_delta() {
+        // Test: find_by_attr with file filter works for delta (unflushed) nodes
+        use tempfile::tempdir;
+
+        let temp_dir = tempdir().unwrap();
+        let mut engine = GraphEngine::create(temp_dir.path().join("test")).unwrap();
+
+        // Create nodes in different files
+        engine.add_nodes(vec![
+            make_test_node(1, "funcA", "FUNCTION"),
+            make_test_node(2, "funcB", "FUNCTION"),
+            make_test_node(3, "funcC", "FUNCTION"),
+        ]);
+
+        // Manually set different files for testing
+        if let Some(node) = engine.delta_nodes.get_mut(&1) {
+            node.file = Some("src/utils.js".to_string());
+        }
+        if let Some(node) = engine.delta_nodes.get_mut(&2) {
+            node.file = Some("src/utils.js".to_string());
+        }
+        if let Some(node) = engine.delta_nodes.get_mut(&3) {
+            node.file = Some("src/other.js".to_string());
+        }
+
+        // Query for nodes in src/utils.js
+        let query = AttrQuery {
+            file: Some("src/utils.js".to_string()),
+            ..Default::default()
+        };
+        let result = engine.find_by_attr(&query);
+
+        assert_eq!(result.len(), 2, "Should find exactly 2 nodes in src/utils.js");
+        assert!(result.contains(&1));
+        assert!(result.contains(&2));
+        assert!(!result.contains(&3), "Node 3 is in a different file");
+    }
+
+    #[test]
+    fn test_find_by_attr_file_filter_segment() {
+        // Test: find_by_attr with file filter works for persisted (segment) nodes
+        use tempfile::tempdir;
+
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("test");
+
+        // Create and flush nodes
+        {
+            let mut engine = GraphEngine::create(&db_path).unwrap();
+
+            engine.add_nodes(vec![
+                NodeRecord {
+                    id: 1,
+                    node_type: Some("FUNCTION".to_string()),
+                    file_id: 0,
+                    name_offset: 0,
+                    version: "main".to_string(),
+                    exported: false,
+                    replaces: None,
+                    deleted: false,
+                    name: Some("funcA".to_string()),
+                    file: Some("src/utils.js".to_string()),
+                    metadata: None,
+                },
+                NodeRecord {
+                    id: 2,
+                    node_type: Some("FUNCTION".to_string()),
+                    file_id: 0,
+                    name_offset: 0,
+                    version: "main".to_string(),
+                    exported: false,
+                    replaces: None,
+                    deleted: false,
+                    name: Some("funcB".to_string()),
+                    file: Some("src/utils.js".to_string()),
+                    metadata: None,
+                },
+                NodeRecord {
+                    id: 3,
+                    node_type: Some("FUNCTION".to_string()),
+                    file_id: 0,
+                    name_offset: 0,
+                    version: "main".to_string(),
+                    exported: false,
+                    replaces: None,
+                    deleted: false,
+                    name: Some("funcC".to_string()),
+                    file: Some("src/other.js".to_string()),
+                    metadata: None,
+                },
+            ]);
+
+            engine.flush().unwrap();
+        }
+
+        // Reopen and test file filtering on segment data
+        {
+            let engine = GraphEngine::open(&db_path).unwrap();
+
+            // Query for nodes in src/utils.js
+            let query = AttrQuery {
+                file: Some("src/utils.js".to_string()),
+                ..Default::default()
+            };
+            let result = engine.find_by_attr(&query);
+
+            assert_eq!(result.len(), 2, "Should find exactly 2 nodes in src/utils.js from segment");
+            assert!(result.contains(&1));
+            assert!(result.contains(&2));
+            assert!(!result.contains(&3), "Node 3 is in a different file");
+        }
+    }
+
+    #[test]
+    fn test_find_by_attr_file_and_type_combined() {
+        // Test: find_by_attr with both file and type filters
+        use tempfile::tempdir;
+
+        let temp_dir = tempdir().unwrap();
+        let mut engine = GraphEngine::create(temp_dir.path().join("test")).unwrap();
+
+        engine.add_nodes(vec![
+            NodeRecord {
+                id: 1,
+                node_type: Some("FUNCTION".to_string()),
+                file_id: 0,
+                name_offset: 0,
+                version: "main".to_string(),
+                exported: false,
+                replaces: None,
+                deleted: false,
+                name: Some("funcA".to_string()),
+                file: Some("src/utils.js".to_string()),
+                metadata: None,
+            },
+            NodeRecord {
+                id: 2,
+                node_type: Some("CLASS".to_string()),
+                file_id: 0,
+                name_offset: 0,
+                version: "main".to_string(),
+                exported: false,
+                replaces: None,
+                deleted: false,
+                name: Some("ClassB".to_string()),
+                file: Some("src/utils.js".to_string()),
+                metadata: None,
+            },
+            NodeRecord {
+                id: 3,
+                node_type: Some("FUNCTION".to_string()),
+                file_id: 0,
+                name_offset: 0,
+                version: "main".to_string(),
+                exported: false,
+                replaces: None,
+                deleted: false,
+                name: Some("funcC".to_string()),
+                file: Some("src/other.js".to_string()),
+                metadata: None,
+            },
+        ]);
+
+        // Query for FUNCTION nodes in src/utils.js
+        let query = AttrQuery {
+            node_type: Some("FUNCTION".to_string()),
+            file: Some("src/utils.js".to_string()),
+            ..Default::default()
+        };
+        let result = engine.find_by_attr(&query);
+
+        assert_eq!(result.len(), 1, "Should find exactly 1 FUNCTION in src/utils.js");
+        assert!(result.contains(&1));
+        assert!(!result.contains(&2), "Node 2 is CLASS, not FUNCTION");
+        assert!(!result.contains(&3), "Node 3 is in different file");
+    }
 }

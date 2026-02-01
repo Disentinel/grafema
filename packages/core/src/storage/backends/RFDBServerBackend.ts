@@ -154,12 +154,27 @@ export class RFDBServerBackend {
 
   /**
    * Find RFDB server binary in order of preference:
-   * 1. @grafema/rfdb npm package
-   * 2. packages/rfdb-server/target/release (monorepo development)
-   * 3. packages/rfdb-server/target/debug
+   * 1. packages/rfdb-server/target/release (monorepo development - prioritized for dev)
+   * 2. packages/rfdb-server/target/debug
+   * 3. @grafema/rfdb npm package (fallback for production)
    */
   private _findServerBinary(): string | null {
-    // 1. Check @grafema/rfdb npm package
+    // 1. Check packages/rfdb-server in monorepo (prioritized for development)
+    const projectRoot = join(__dirname, '../../../../..');
+    const releaseBinary = join(projectRoot, 'packages/rfdb-server/target/release/rfdb-server');
+    if (existsSync(releaseBinary)) {
+      console.log(`[RFDBServerBackend] Found release binary: ${releaseBinary}`);
+      return releaseBinary;
+    }
+
+    // 2. Check debug build
+    const debugBinary = join(projectRoot, 'packages/rfdb-server/target/debug/rfdb-server');
+    if (existsSync(debugBinary)) {
+      console.log(`[RFDBServerBackend] Found debug binary: ${debugBinary}`);
+      return debugBinary;
+    }
+
+    // 3. Check @grafema/rfdb npm package (fallback)
     try {
       const require = createRequire(import.meta.url);
       const rfdbPkg = require.resolve('@grafema/rfdb');
@@ -183,21 +198,6 @@ export class RFDBServerBackend {
       }
     } catch {
       // @grafema/rfdb not installed
-    }
-
-    // 2. Check packages/rfdb-server in monorepo
-    const projectRoot = join(__dirname, '../../../../..');
-    const releaseBinary = join(projectRoot, 'packages/rfdb-server/target/release/rfdb-server');
-    if (existsSync(releaseBinary)) {
-      console.log(`[RFDBServerBackend] Found release binary: ${releaseBinary}`);
-      return releaseBinary;
-    }
-
-    // 3. Check debug build
-    const debugBinary = join(projectRoot, 'packages/rfdb-server/target/debug/rfdb-server');
-    if (existsSync(debugBinary)) {
-      console.log(`[RFDBServerBackend] Found debug binary: ${debugBinary}`);
-      return debugBinary;
     }
 
     return null;
