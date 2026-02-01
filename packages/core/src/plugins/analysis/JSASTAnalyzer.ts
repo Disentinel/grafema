@@ -153,6 +153,17 @@ interface Collections {
   [key: string]: unknown;
 }
 
+/**
+ * Tracks try/catch/finally scope transitions during traversal.
+ * Used by createTryStatementHandler and createBlockStatementHandler.
+ */
+interface TryScopeInfo {
+  tryScopeId: string;
+  catchScopeId: string | null;
+  finallyScopeId: string | null;
+  currentBlock: 'try' | 'catch' | 'finally';
+}
+
 interface AnalysisManifest {
   projectPath: string;
   [key: string]: unknown;
@@ -1735,7 +1746,8 @@ export class JSASTAnalyzer extends Plugin {
     module: VisitorModule,
     scopes: ScopeInfo[],
     scopeCounterRef: CounterRef,
-    scopeTracker: ScopeTracker | undefined
+    scopeTracker: ScopeTracker | undefined,
+    scopeIdStack?: string[]
   ): { enter: (path: NodePath<t.Loop>) => void; exit: () => void } {
     return {
       enter: (path: NodePath<t.Loop>) => {
@@ -1752,12 +1764,22 @@ export class JSASTAnalyzer extends Plugin {
           parentScopeId
         });
 
+        // Push loop scope onto stack for CONTAINS edges
+        if (scopeIdStack) {
+          scopeIdStack.push(scopeId);
+        }
+
         // Enter scope for semantic ID generation
         if (scopeTracker) {
           scopeTracker.enterCountedScope(trackerScopeType);
         }
       },
       exit: () => {
+        // Pop loop scope from stack
+        if (scopeIdStack) {
+          scopeIdStack.pop();
+        }
+
         // Exit scope
         if (scopeTracker) {
           scopeTracker.exitScope();
@@ -1767,256 +1789,183 @@ export class JSASTAnalyzer extends Plugin {
   }
 
   /**
-   * Process VariableDeclarations within a try/catch/finally block.
-   * This is a simplified version that doesn't track parentScopeVariables or class instantiations.
+   * Factory method to create TryStatement handler.
+   * Creates try, catch, and finally scopes with proper scope tracking.
+   * Does NOT use skip() - allows normal traversal for CallExpression/NewExpression visitors.
    *
-   * @param blockPath - The NodePath for the block to process
-   * @param blockScopeId - The scope ID for variables in this block
-   * @param module - Module context
-   * @param variableDeclarations - Collection to push variable declarations to
-   * @param literals - Collection for literal tracking
-   * @param variableAssignments - Collection for variable assignment tracking
-   * @param varDeclCounterRef - Counter for unique variable declaration IDs
-   * @param literalCounterRef - Counter for unique literal IDs
-   * @param scopeTracker - Tracker for semantic ID generation
-   */
-  private processBlockVariables(
-    blockPath: NodePath,
-    blockScopeId: string,
-    module: VisitorModule,
-    variableDeclarations: VariableDeclarationInfo[],
-    literals: LiteralInfo[],
-    variableAssignments: VariableAssignmentInfo[],
-    varDeclCounterRef: CounterRef,
-    literalCounterRef: CounterRef,
-    scopeTracker: ScopeTracker | undefined
-  ): void {
-    blockPath.traverse({
-      VariableDeclaration: (varPath: NodePath<t.VariableDeclaration>) => {
-        const varNode = varPath.node;
-        const isConst = varNode.kind === 'const';
-
-        varNode.declarations.forEach(declarator => {
-          const variables = this.extractVariableNamesFromPattern(declarator.id);
-          const variablesWithIds: Array<ExtractedVariable & { id: string }> = [];
-
-          variables.forEach(varInfo => {
-            const literalValue = declarator.init ? ExpressionEvaluator.extractLiteralValue(declarator.init) : null;
-            const isLiteral = literalValue !== null;
-            const isNewExpression = declarator.init && declarator.init.type === 'NewExpression';
-            const shouldBeConstant = isConst && (isLiteral || isNewExpression);
-            const nodeType = shouldBeConstant ? 'CONSTANT' : 'VARIABLE';
-
-            const legacyId = `${nodeType}#${varInfo.name}#${module.file}#${varInfo.loc.start.line}:${varInfo.loc.start.column}:${varDeclCounterRef.value++}`;
-            const varId = scopeTracker
-              ? computeSemanticId(nodeType, varInfo.name, scopeTracker.getContext())
-              : legacyId;
-
-            // Collect variable info with ID for destructuring tracking
-            variablesWithIds.push({ ...varInfo, id: varId });
-
-            variableDeclarations.push({
-              id: varId,
-              type: nodeType,
-              name: varInfo.name,
-              file: module.file,
-              line: varInfo.loc.start.line,
-              parentScopeId: blockScopeId
-            });
-          });
-
-          // Track assignments after all variables are created
-          if (declarator.init) {
-            if (t.isObjectPattern(declarator.id) || t.isArrayPattern(declarator.id)) {
-              // Destructuring: use specialized tracking
-              this.trackDestructuringAssignment(
-                declarator.id,
-                declarator.init,
-                variablesWithIds,
-                module,
-                variableAssignments
-              );
-            } else {
-              // Simple assignment: use existing tracking
-              const varInfo = variablesWithIds[0];
-              this.trackVariableAssignment(
-                declarator.init,
-                varInfo.id,
-                varInfo.name,
-                module,
-                varInfo.loc.start.line,
-                literals,
-                variableAssignments,
-                literalCounterRef
-              );
-            }
-          }
-        });
-      }
-    });
-  }
-
-  /**
-   * Handles TryStatement nodes within function bodies.
-   * Creates try, catch (with optional error parameter), and finally scopes,
-   * and processes variable declarations within each block.
-   *
-   * @param tryPath - The NodePath for the TryStatement
    * @param parentScopeId - Parent scope ID for the scope nodes
    * @param module - Module context
    * @param scopes - Collection to push scope nodes to
-   * @param variableDeclarations - Collection to push variable declarations to
-   * @param literals - Collection for literal tracking
-   * @param variableAssignments - Collection for variable assignment tracking
    * @param scopeCounterRef - Counter for unique scope IDs
-   * @param varDeclCounterRef - Counter for unique variable declaration IDs
-   * @param literalCounterRef - Counter for unique literal IDs
    * @param scopeTracker - Tracker for semantic ID generation
+   * @param tryScopeMap - Map to track try/catch/finally scope transitions
+   * @param scopeIdStack - Stack for tracking current scope ID for CONTAINS edges
    */
-  private handleTryStatement(
-    tryPath: NodePath<t.TryStatement>,
+  private createTryStatementHandler(
     parentScopeId: string,
     module: VisitorModule,
     scopes: ScopeInfo[],
-    variableDeclarations: VariableDeclarationInfo[],
-    literals: LiteralInfo[],
-    variableAssignments: VariableAssignmentInfo[],
     scopeCounterRef: CounterRef,
-    varDeclCounterRef: CounterRef,
-    literalCounterRef: CounterRef,
-    scopeTracker: ScopeTracker | undefined
-  ): void {
-    const tryNode = tryPath.node;
+    scopeTracker: ScopeTracker | undefined,
+    tryScopeMap: Map<t.TryStatement, TryScopeInfo>,
+    scopeIdStack?: string[]
+  ): { enter: (tryPath: NodePath<t.TryStatement>) => void; exit: (tryPath: NodePath<t.TryStatement>) => void } {
+    return {
+      enter: (tryPath: NodePath<t.TryStatement>) => {
+        const tryNode = tryPath.node;
 
-    // Create and process try block
-    const tryScopeId = `SCOPE#try-block#${module.file}#${getLine(tryNode)}:${scopeCounterRef.value++}`;
-    const trySemanticId = this.generateSemanticId('try-block', scopeTracker);
-    scopes.push({
-      id: tryScopeId,
-      type: 'SCOPE',
-      scopeType: 'try-block',
-      semanticId: trySemanticId,
-      file: module.file,
-      line: getLine(tryNode),
-      parentScopeId
-    });
-
-    if (scopeTracker) {
-      scopeTracker.enterCountedScope('try');
-    }
-    this.processBlockVariables(
-      tryPath.get('block'),
-      tryScopeId,
-      module,
-      variableDeclarations,
-      literals,
-      variableAssignments,
-      varDeclCounterRef,
-      literalCounterRef,
-      scopeTracker
-    );
-    if (scopeTracker) {
-      scopeTracker.exitScope();
-    }
-
-    // Create and process catch block if present
-    if (tryNode.handler) {
-      const catchBlock = tryNode.handler;
-      const catchScopeId = `SCOPE#catch-block#${module.file}#${getLine(catchBlock)}:${scopeCounterRef.value++}`;
-      const catchSemanticId = this.generateSemanticId('catch-block', scopeTracker);
-
-      scopes.push({
-        id: catchScopeId,
-        type: 'SCOPE',
-        scopeType: 'catch-block',
-        semanticId: catchSemanticId,
-        file: module.file,
-        line: getLine(catchBlock),
-        parentScopeId
-      });
-
-      if (scopeTracker) {
-        scopeTracker.enterCountedScope('catch');
-      }
-
-      // Handle catch parameter (e.g., catch (e))
-      if (catchBlock.param) {
-        const errorVarInfo = this.extractVariableNamesFromPattern(catchBlock.param);
-
-        errorVarInfo.forEach(varInfo => {
-          const legacyId = `VARIABLE#${varInfo.name}#${module.file}#${varInfo.loc.start.line}:${varInfo.loc.start.column}:${varDeclCounterRef.value++}`;
-          const varId = scopeTracker
-            ? computeSemanticId('VARIABLE', varInfo.name, scopeTracker.getContext())
-            : legacyId;
-
-          variableDeclarations.push({
-            id: varId,
-            type: 'VARIABLE',
-            name: varInfo.name,
-            file: module.file,
-            line: varInfo.loc.start.line,
-            parentScopeId: catchScopeId
-          });
+        // Create try-block scope
+        const tryScopeId = `SCOPE#try-block#${module.file}#${getLine(tryNode)}:${scopeCounterRef.value++}`;
+        const trySemanticId = this.generateSemanticId('try-block', scopeTracker);
+        scopes.push({
+          id: tryScopeId,
+          type: 'SCOPE',
+          scopeType: 'try-block',
+          semanticId: trySemanticId,
+          file: module.file,
+          line: getLine(tryNode),
+          parentScopeId
         });
-      }
 
-      this.processBlockVariables(
-        tryPath.get('handler.body'),
-        catchScopeId,
-        module,
-        variableDeclarations,
-        literals,
-        variableAssignments,
-        varDeclCounterRef,
-        literalCounterRef,
-        scopeTracker
-      );
+        // Pre-create catch scope if present
+        let catchScopeId: string | null = null;
+        if (tryNode.handler) {
+          const catchBlock = tryNode.handler;
+          catchScopeId = `SCOPE#catch-block#${module.file}#${getLine(catchBlock)}:${scopeCounterRef.value++}`;
+          const catchSemanticId = this.generateSemanticId('catch-block', scopeTracker);
+          scopes.push({
+            id: catchScopeId,
+            type: 'SCOPE',
+            scopeType: 'catch-block',
+            semanticId: catchSemanticId,
+            file: module.file,
+            line: getLine(catchBlock),
+            parentScopeId
+          });
+        }
 
-      if (scopeTracker) {
-        scopeTracker.exitScope();
-      }
-    }
+        // Pre-create finally scope if present
+        let finallyScopeId: string | null = null;
+        if (tryNode.finalizer) {
+          finallyScopeId = `SCOPE#finally-block#${module.file}#${getLine(tryNode.finalizer)}:${scopeCounterRef.value++}`;
+          const finallySemanticId = this.generateSemanticId('finally-block', scopeTracker);
+          scopes.push({
+            id: finallyScopeId,
+            type: 'SCOPE',
+            scopeType: 'finally-block',
+            semanticId: finallySemanticId,
+            file: module.file,
+            line: getLine(tryNode.finalizer),
+            parentScopeId
+          });
+        }
 
-    // Create and process finally block if present
-    if (tryNode.finalizer) {
-      const finallyScopeId = `SCOPE#finally-block#${module.file}#${getLine(tryNode.finalizer)}:${scopeCounterRef.value++}`;
-      const finallySemanticId = this.generateSemanticId('finally-block', scopeTracker);
+        // Push try scope onto stack for CONTAINS edges
+        if (scopeIdStack) {
+          scopeIdStack.push(tryScopeId);
+        }
 
-      scopes.push({
-        id: finallyScopeId,
-        type: 'SCOPE',
-        scopeType: 'finally-block',
-        semanticId: finallySemanticId,
-        file: module.file,
-        line: getLine(tryNode.finalizer),
-        parentScopeId
-      });
+        // Enter try scope for semantic ID generation
+        if (scopeTracker) {
+          scopeTracker.enterCountedScope('try');
+        }
 
-      if (scopeTracker) {
-        scopeTracker.enterCountedScope('finally');
-      }
-
-      const finalizerPath = tryPath.get('finalizer');
-      if (finalizerPath.node) {
-        this.processBlockVariables(
-          finalizerPath as NodePath,
+        // Store scope info for catch/finally transitions
+        tryScopeMap.set(tryNode, {
+          tryScopeId,
+          catchScopeId,
           finallyScopeId,
-          module,
-          variableDeclarations,
-          literals,
-          variableAssignments,
-          varDeclCounterRef,
-          literalCounterRef,
-          scopeTracker
-        );
-      }
+          currentBlock: 'try'
+        });
+      },
+      exit: (tryPath: NodePath<t.TryStatement>) => {
+        const tryNode = tryPath.node;
+        const scopeInfo = tryScopeMap.get(tryNode);
 
-      if (scopeTracker) {
-        scopeTracker.exitScope();
-      }
-    }
+        // Pop the current scope from stack (could be try, catch, or finally)
+        if (scopeIdStack) {
+          scopeIdStack.pop();
+        }
 
-    tryPath.skip();
+        // Exit the current scope
+        if (scopeTracker) {
+          scopeTracker.exitScope();
+        }
+
+        // Clean up
+        tryScopeMap.delete(tryNode);
+      }
+    };
+  }
+
+  /**
+   * Factory method to create CatchClause handler.
+   * Handles scope transition from try to catch and processes catch parameter.
+   *
+   * @param module - Module context
+   * @param variableDeclarations - Collection to push variable declarations to
+   * @param varDeclCounterRef - Counter for unique variable declaration IDs
+   * @param scopeTracker - Tracker for semantic ID generation
+   * @param tryScopeMap - Map to track try/catch/finally scope transitions
+   * @param scopeIdStack - Stack for tracking current scope ID for CONTAINS edges
+   */
+  private createCatchClauseHandler(
+    module: VisitorModule,
+    variableDeclarations: VariableDeclarationInfo[],
+    varDeclCounterRef: CounterRef,
+    scopeTracker: ScopeTracker | undefined,
+    tryScopeMap: Map<t.TryStatement, TryScopeInfo>,
+    scopeIdStack?: string[]
+  ): { enter: (catchPath: NodePath<t.CatchClause>) => void } {
+    return {
+      enter: (catchPath: NodePath<t.CatchClause>) => {
+        const catchNode = catchPath.node;
+        const parent = catchPath.parent;
+
+        if (!t.isTryStatement(parent)) return;
+
+        const scopeInfo = tryScopeMap.get(parent);
+        if (!scopeInfo || !scopeInfo.catchScopeId) return;
+
+        // Transition from try scope to catch scope
+        if (scopeInfo.currentBlock === 'try') {
+          // Pop try scope, push catch scope
+          if (scopeIdStack) {
+            scopeIdStack.pop();
+            scopeIdStack.push(scopeInfo.catchScopeId);
+          }
+
+          // Exit try scope, enter catch scope for semantic ID
+          if (scopeTracker) {
+            scopeTracker.exitScope();
+            scopeTracker.enterCountedScope('catch');
+          }
+
+          scopeInfo.currentBlock = 'catch';
+        }
+
+        // Handle catch parameter (e.g., catch (e) or catch ({ message }))
+        if (catchNode.param) {
+          const errorVarInfo = this.extractVariableNamesFromPattern(catchNode.param);
+
+          errorVarInfo.forEach(varInfo => {
+            const legacyId = `VARIABLE#${varInfo.name}#${module.file}#${varInfo.loc.start.line}:${varInfo.loc.start.column}:${varDeclCounterRef.value++}`;
+            const varId = scopeTracker
+              ? computeSemanticId('VARIABLE', varInfo.name, scopeTracker.getContext())
+              : legacyId;
+
+            variableDeclarations.push({
+              id: varId,
+              type: 'VARIABLE',
+              name: varInfo.name,
+              file: module.file,
+              line: varInfo.loc.start.line,
+              parentScopeId: scopeInfo.catchScopeId!
+            });
+          });
+        }
+      }
+    };
   }
 
   /**
@@ -2039,7 +1988,8 @@ export class JSASTAnalyzer extends Plugin {
     ifScopeCounterRef: CounterRef,
     scopeTracker: ScopeTracker | undefined,
     sourceCode: string,
-    ifElseScopeMap: Map<t.IfStatement, { inElse: boolean; hasElse: boolean }>
+    ifElseScopeMap: Map<t.IfStatement, { inElse: boolean; hasElse: boolean; ifScopeId: string; elseScopeId: string | null }>,
+    scopeIdStack?: string[]
   ): { enter: (ifPath: NodePath<t.IfStatement>) => void; exit: (ifPath: NodePath<t.IfStatement>) => void } {
     return {
       enter: (ifPath: NodePath<t.IfStatement>) => {
@@ -2066,16 +2016,22 @@ export class JSASTAnalyzer extends Plugin {
           parentScopeId
         });
 
+        // Push if scope onto stack for CONTAINS edges
+        if (scopeIdStack) {
+          scopeIdStack.push(ifScopeId);
+        }
+
         // Enter scope for semantic ID generation
         if (scopeTracker) {
           scopeTracker.enterCountedScope('if');
         }
 
         // Handle else branch if present
+        let elseScopeId: string | null = null;
         if (ifNode.alternate && !t.isIfStatement(ifNode.alternate)) {
           // Only create else scope for actual else block, not else-if
           const elseCounterId = ifScopeCounterRef.value++;
-          const elseScopeId = `SCOPE#else#${module.file}#${getLine(ifNode.alternate)}:${getColumn(ifNode.alternate)}:${elseCounterId}`;
+          elseScopeId = `SCOPE#else#${module.file}#${getLine(ifNode.alternate)}:${getColumn(ifNode.alternate)}:${elseCounterId}`;
 
           const negatedConstraints = constraints.length > 0 ? ConditionParser.negate(constraints) : undefined;
           const elseSemanticId = this.generateSemanticId('else_statement', scopeTracker);
@@ -2094,13 +2050,18 @@ export class JSASTAnalyzer extends Plugin {
           });
 
           // Store info to switch to else scope when we enter alternate
-          ifElseScopeMap.set(ifNode, { inElse: false, hasElse: true });
+          ifElseScopeMap.set(ifNode, { inElse: false, hasElse: true, ifScopeId, elseScopeId });
         } else {
-          ifElseScopeMap.set(ifNode, { inElse: false, hasElse: false });
+          ifElseScopeMap.set(ifNode, { inElse: false, hasElse: false, ifScopeId, elseScopeId: null });
         }
       },
       exit: (ifPath: NodePath<t.IfStatement>) => {
         const ifNode = ifPath.node;
+
+        // Pop scope from stack (either if or else, depending on what we're exiting)
+        if (scopeIdStack) {
+          scopeIdStack.pop();
+        }
 
         // Exit the current scope (either if or else)
         if (scopeTracker) {
@@ -2115,27 +2076,60 @@ export class JSASTAnalyzer extends Plugin {
   }
 
   /**
-   * Factory method to create BlockStatement handler for tracking if/else transitions.
+   * Factory method to create BlockStatement handler for tracking if/else and try/finally transitions.
    * When entering an else block, switches scope from if to else.
+   * When entering a finally block, switches scope from try/catch to finally.
    *
    * @param scopeTracker - Tracker for semantic ID generation
    * @param ifElseScopeMap - Map to track if/else scope transitions
+   * @param tryScopeMap - Map to track try/catch/finally scope transitions
+   * @param scopeIdStack - Stack for tracking current scope ID for CONTAINS edges
    */
-  private createIfElseBlockStatementHandler(
+  private createBlockStatementHandler(
     scopeTracker: ScopeTracker | undefined,
-    ifElseScopeMap: Map<t.IfStatement, { inElse: boolean; hasElse: boolean }>
+    ifElseScopeMap: Map<t.IfStatement, { inElse: boolean; hasElse: boolean; ifScopeId: string; elseScopeId: string | null }>,
+    tryScopeMap: Map<t.TryStatement, TryScopeInfo>,
+    scopeIdStack?: string[]
   ): { enter: (blockPath: NodePath<t.BlockStatement>) => void } {
     return {
       enter: (blockPath: NodePath<t.BlockStatement>) => {
-        // Check if this block is the alternate of an IfStatement
         const parent = blockPath.parent;
+
+        // Check if this block is the alternate of an IfStatement
         if (t.isIfStatement(parent) && parent.alternate === blockPath.node) {
           const scopeInfo = ifElseScopeMap.get(parent);
-          if (scopeInfo && scopeInfo.hasElse && !scopeInfo.inElse && scopeTracker) {
-            // Exit if scope, enter else scope
-            scopeTracker.exitScope();
-            scopeTracker.enterCountedScope('else');
+          if (scopeInfo && scopeInfo.hasElse && !scopeInfo.inElse) {
+            // Swap if-scope for else-scope on the stack
+            if (scopeIdStack && scopeInfo.elseScopeId) {
+              scopeIdStack.pop(); // Remove if-scope
+              scopeIdStack.push(scopeInfo.elseScopeId); // Push else-scope
+            }
+
+            // Exit if scope, enter else scope for semantic ID tracking
+            if (scopeTracker) {
+              scopeTracker.exitScope();
+              scopeTracker.enterCountedScope('else');
+            }
             scopeInfo.inElse = true;
+          }
+        }
+
+        // Check if this block is the finalizer of a TryStatement
+        if (t.isTryStatement(parent) && parent.finalizer === blockPath.node) {
+          const scopeInfo = tryScopeMap.get(parent);
+          if (scopeInfo && scopeInfo.finallyScopeId && scopeInfo.currentBlock !== 'finally') {
+            // Pop current scope (try or catch), push finally scope
+            if (scopeIdStack) {
+              scopeIdStack.pop();
+              scopeIdStack.push(scopeInfo.finallyScopeId);
+            }
+
+            // Exit current scope, enter finally scope for semantic ID tracking
+            if (scopeTracker) {
+              scopeTracker.exitScope();
+              scopeTracker.enterCountedScope('finally');
+            }
+            scopeInfo.currentBlock = 'finally';
           }
         }
       }
@@ -2194,13 +2188,21 @@ export class JSASTAnalyzer extends Plugin {
     const processedEventListeners = processedNodes.eventListeners;
 
     // Track if/else scope transitions
-    const ifElseScopeMap = new Map<t.IfStatement, { inElse: boolean; hasElse: boolean }>();
+    const ifElseScopeMap = new Map<t.IfStatement, { inElse: boolean; hasElse: boolean; ifScopeId: string; elseScopeId: string | null }>();
+
+    // Track try/catch/finally scope transitions
+    const tryScopeMap = new Map<t.TryStatement, TryScopeInfo>();
+
+    // Dynamic scope ID stack for CONTAINS edges
+    // Starts with the function body scope, gets updated as we enter/exit conditional scopes
+    const scopeIdStack: string[] = [parentScopeId];
+    const getCurrentScopeId = (): string => scopeIdStack[scopeIdStack.length - 1];
 
     funcPath.traverse({
       VariableDeclaration: (varPath: NodePath<t.VariableDeclaration>) => {
         this.handleVariableDeclaration(
           varPath,
-          parentScopeId,
+          getCurrentScopeId(),
           module,
           variableDeclarations,
           classInstantiations,
@@ -2236,27 +2238,30 @@ export class JSASTAnalyzer extends Plugin {
         this.detectObjectPropertyAssignment(assignNode, module, objectMutations, scopeTracker);
       },
 
-      ForStatement: this.createLoopScopeHandler('for', 'for-loop', parentScopeId, module, scopes, scopeCounterRef, scopeTracker),
-      ForInStatement: this.createLoopScopeHandler('for-in', 'for-in-loop', parentScopeId, module, scopes, scopeCounterRef, scopeTracker),
-      ForOfStatement: this.createLoopScopeHandler('for-of', 'for-of-loop', parentScopeId, module, scopes, scopeCounterRef, scopeTracker),
-      WhileStatement: this.createLoopScopeHandler('while', 'while-loop', parentScopeId, module, scopes, scopeCounterRef, scopeTracker),
-      DoWhileStatement: this.createLoopScopeHandler('do-while', 'do-while-loop', parentScopeId, module, scopes, scopeCounterRef, scopeTracker),
+      ForStatement: this.createLoopScopeHandler('for', 'for-loop', parentScopeId, module, scopes, scopeCounterRef, scopeTracker, scopeIdStack),
+      ForInStatement: this.createLoopScopeHandler('for-in', 'for-in-loop', parentScopeId, module, scopes, scopeCounterRef, scopeTracker, scopeIdStack),
+      ForOfStatement: this.createLoopScopeHandler('for-of', 'for-of-loop', parentScopeId, module, scopes, scopeCounterRef, scopeTracker, scopeIdStack),
+      WhileStatement: this.createLoopScopeHandler('while', 'while-loop', parentScopeId, module, scopes, scopeCounterRef, scopeTracker, scopeIdStack),
+      DoWhileStatement: this.createLoopScopeHandler('do-while', 'do-while-loop', parentScopeId, module, scopes, scopeCounterRef, scopeTracker, scopeIdStack),
 
-      TryStatement: (tryPath: NodePath<t.TryStatement>) => {
-        this.handleTryStatement(
-          tryPath,
-          parentScopeId,
-          module,
-          scopes,
-          variableDeclarations,
-          literals,
-          variableAssignments,
-          scopeCounterRef,
-          varDeclCounterRef,
-          literalCounterRef,
-          scopeTracker
-        );
-      },
+      TryStatement: this.createTryStatementHandler(
+        parentScopeId,
+        module,
+        scopes,
+        scopeCounterRef,
+        scopeTracker,
+        tryScopeMap,
+        scopeIdStack
+      ),
+
+      CatchClause: this.createCatchClauseHandler(
+        module,
+        variableDeclarations,
+        varDeclCounterRef,
+        scopeTracker,
+        tryScopeMap,
+        scopeIdStack
+      ),
 
       SwitchStatement: (switchPath: NodePath<t.SwitchStatement>) => {
         const switchNode = switchPath.node;
@@ -2415,11 +2420,12 @@ export class JSASTAnalyzer extends Plugin {
         ifScopeCounterRef,
         scopeTracker,
         collections.code ?? '',
-        ifElseScopeMap
+        ifElseScopeMap,
+        scopeIdStack
       ),
 
       // Track when we enter the alternate (else) block of an IfStatement
-      BlockStatement: this.createIfElseBlockStatementHandler(scopeTracker, ifElseScopeMap),
+      BlockStatement: this.createBlockStatementHandler(scopeTracker, ifElseScopeMap, tryScopeMap, scopeIdStack),
 
       // Function call expressions
       CallExpression: (callPath: NodePath<t.CallExpression>) => {
@@ -2432,7 +2438,7 @@ export class JSASTAnalyzer extends Plugin {
           module,
           callSiteCounterRef,
           scopeTracker,
-          parentScopeId,
+          getCurrentScopeId(),
           collections
         );
       },
@@ -2496,7 +2502,7 @@ export class JSASTAnalyzer extends Plugin {
             name: constructorName,
             file: module.file,
             line: getLine(newNode),
-            parentScopeId,
+            parentScopeId: getCurrentScopeId(),
             targetFunctionName: constructorName,
             isNew: true
           });
@@ -2535,7 +2541,7 @@ export class JSASTAnalyzer extends Plugin {
               file: module.file,
               line: getLine(newNode),
               column: getColumn(newNode),
-              parentScopeId,
+              parentScopeId: getCurrentScopeId(),
               isNew: true
             });
           }

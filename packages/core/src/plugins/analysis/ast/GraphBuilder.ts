@@ -149,10 +149,9 @@ export class GraphBuilder {
       this._bufferNode(scopeData as GraphNode);
     }
 
-    // 3. Buffer variables
+    // 3. Buffer variables (keep parentScopeId on node for queries)
     for (const varDecl of variableDeclarations) {
-      const { parentScopeId, ...varData } = varDecl;
-      this._bufferNode(varData as GraphNode);
+      this._bufferNode(varDecl as unknown as GraphNode);
     }
 
     // 3.5. Buffer PARAMETER nodes and HAS_PARAMETER edges
@@ -171,9 +170,9 @@ export class GraphBuilder {
       }
     }
 
-    // 4. Buffer CALL_SITE
+    // 4. Buffer CALL_SITE (keep parentScopeId on node for queries)
     for (const callSite of callSites) {
-      const { parentScopeId, targetFunctionName, ...callData } = callSite;
+      const { targetFunctionName, ...callData } = callSite;
       this._bufferNode(callData as GraphNode);
     }
 
@@ -389,16 +388,14 @@ export class GraphBuilder {
 
   private bufferMethodCalls(methodCalls: MethodCallInfo[]): void {
     for (const methodCall of methodCalls) {
-      const { parentScopeId, ...methodData } = methodCall;
-
-      // Buffer METHOD_CALL node
-      this._bufferNode(methodData as GraphNode);
+      // Keep parentScopeId on node for queries
+      this._bufferNode(methodCall as unknown as GraphNode);
 
       // SCOPE -> CONTAINS -> METHOD_CALL
       this._bufferEdge({
         type: 'CONTAINS',
-        src: parentScopeId as string,
-        dst: methodData.id
+        src: methodCall.parentScopeId as string,
+        dst: methodCall.id
       });
     }
   }

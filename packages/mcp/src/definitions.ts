@@ -435,4 +435,33 @@ Include relevant context: error messages, file paths, query used, etc.`,
       required: ['title', 'description'],
     },
   },
+  {
+    name: 'find_guards',
+    description: `Find conditional guards protecting a node.
+
+Returns all SCOPE nodes that guard the given node, walking from inner to outer scope.
+Useful for answering "what conditions must be true for this code to execute?"
+
+Each guard includes:
+- scopeId: The SCOPE node ID
+- scopeType: Type of conditional (if_statement, else_statement, etc.)
+- condition: Raw condition text (e.g., "user !== null")
+- constraints: Parsed constraints (if available)
+- file/line: Location in source
+
+Example use cases:
+- "What conditions guard this API call?"
+- "Is this code protected by a null check?"
+- "What's the full guard chain for this function call?"`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        nodeId: {
+          type: 'string',
+          description: 'ID of the node to find guards for (e.g., CALL, VARIABLE)',
+        },
+      },
+      required: ['nodeId'],
+    },
+  },
 ];

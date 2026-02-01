@@ -161,16 +161,29 @@ export class RFDBClient extends EventEmitter implements IRFDBClient {
 
   /**
    * Add nodes to the graph
+   * Extra properties beyond id/type/name/file/exported/metadata are merged into metadata
    */
   async addNodes(nodes: Array<Partial<WireNode> & { id: string; type?: string; node_type?: string; nodeType?: string }>): Promise<RFDBResponse> {
-    const wireNodes: WireNode[] = nodes.map(n => ({
-      id: String(n.id),
-      nodeType: (n.node_type || n.nodeType || n.type || 'UNKNOWN') as NodeType,
-      name: n.name || '',
-      file: n.file || '',
-      exported: n.exported || false,
-      metadata: typeof n.metadata === 'string' ? n.metadata : JSON.stringify(n.metadata || {}),
-    }));
+    const wireNodes: WireNode[] = nodes.map(n => {
+      // Cast to Record to allow iteration over extra properties
+      const nodeRecord = n as Record<string, unknown>;
+
+      // Extract known wire format fields, rest goes to metadata
+      const { id, type, node_type, nodeType, name, file, exported, metadata, ...rest } = nodeRecord;
+
+      // Merge explicit metadata with extra properties
+      const existingMeta = typeof metadata === 'string' ? JSON.parse(metadata as string) : (metadata || {});
+      const combinedMeta = { ...existingMeta, ...rest };
+
+      return {
+        id: String(id),
+        nodeType: (node_type || nodeType || type || 'UNKNOWN') as NodeType,
+        name: (name as string) || '',
+        file: (file as string) || '',
+        exported: (exported as boolean) || false,
+        metadata: JSON.stringify(combinedMeta),
+      };
+    });
 
     return this._send('addNodes', { nodes: wireNodes });
   }
