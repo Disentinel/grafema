@@ -10,9 +10,9 @@
  */
 
 import { Command } from 'commander';
-import { resolve, join, relative } from 'path';
+import { resolve, join, relative, basename } from 'path';
 import { existsSync } from 'fs';
-import { RFDBServerBackend, findCallsInFunction as findCallsInFunctionCore, findContainingFunction as findContainingFunctionCore } from '@grafema/core';
+import { RFDBServerBackend, parseSemanticId, findCallsInFunction as findCallsInFunctionCore, findContainingFunction as findContainingFunctionCore } from '@grafema/core';
 import { formatNodeDisplay, formatNodeInline, formatLocation } from '../utils/formatNode.js';
 import { exitWithError } from '../utils/errorFormatter.js';
 
@@ -39,7 +39,30 @@ interface NodeInfo {
   broadcast?: boolean; // For socketio:emit
   objectName?: string; // For socketio:emit, socketio:on
   handlerName?: string; // For socketio:on
+  /** Human-readable scope context */
+  scopeContext?: string | null;
   [key: string]: unknown;
+}
+
+/**
+ * Parsed query with optional scope constraints.
+ *
+ * Supports patterns like:
+ *   "response" -> { name: "response" }
+ *   "variable response" -> { type: "VARIABLE", name: "response" }
+ *   "response in fetchData" -> { name: "response", scopes: ["fetchData"] }
+ *   "response in src/app.ts" -> { name: "response", file: "src/app.ts" }
+ *   "response in catch in fetchData" -> { name: "response", scopes: ["fetchData", "catch"] }
+ */
+export interface ParsedQuery {
+  /** Node type (e.g., "FUNCTION", "VARIABLE") or null for any */
+  type: string | null;
+  /** Node name to search (partial match) */
+  name: string;
+  /** File scope - filter to nodes in this file */
+  file: string | null;
+  /** Scope chain - filter to nodes inside these scopes (function/class/block names) */
+  scopes: string[];
 }
 
 export const queryCommand = new Command('query')
@@ -81,17 +104,19 @@ Examples:
   )
   .addHelpText('after', `
 Examples:
-  grafema query "auth"                 Search by name (partial match)
-  grafema query "function login"       Search functions only
-  grafema query "class UserService"    Search classes only
-  grafema query "route /api/users"     Search HTTP routes by path
-  grafema query "request /api"         Search HTTP requests (fetch/axios) by URL
-  grafema query "POST /users"          Search routes by method + path
-  grafema query -l 20 "fetch"          Return up to 20 results
-  grafema query --json "config"        Output results as JSON
-  grafema query --type FUNCTION "auth" Explicit type (no alias resolution)
-  grafema query -t http:request "/api" Search custom node types
-  grafema query --raw 'type(X, "FUNCTION")'   Raw Datalog query
+  grafema query "auth"                         Search by name (partial match)
+  grafema query "function login"               Search functions only
+  grafema query "class UserService"            Search classes only
+  grafema query "route /api/users"             Search HTTP routes by path
+  grafema query "response in fetchData"        Search in specific function scope
+  grafema query "error in catch in fetchData"  Search in nested scopes
+  grafema query "token in src/auth.ts"         Search in specific file
+  grafema query "variable x in foo in app.ts"  Combine type, name, and scopes
+  grafema query -l 20 "fetch"                  Return up to 20 results
+  grafema query --json "config"                Output results as JSON
+  grafema query --type FUNCTION "auth"         Explicit type (no alias resolution)
+  grafema query -t http:request "/api"         Search custom node types
+  grafema query --raw 'type(X, "FUNCTION")'    Raw Datalog query
 `)
   .action(async (pattern: string, options: QueryOptions) => {
     const projectPath = resolve(options.project);
@@ -112,30 +137,37 @@ Examples:
         return;
       }
 
-      // Determine type: explicit --type flag takes precedence
-      let searchType: string | null;
-      let searchName: string;
+      const limit = parseInt(options.limit, 10);
+
+      // Parse query with scope support
+      let query: ParsedQuery;
 
       if (options.type) {
         // Explicit --type bypasses pattern parsing for type
-        searchType = options.type;
-        searchName = pattern;
+        // But we still parse for scope support
+        const scopeParsed = parseQuery(pattern);
+        query = {
+          type: options.type,
+          name: scopeParsed.name,
+          file: scopeParsed.file,
+          scopes: scopeParsed.scopes,
+        };
       } else {
-        // Use pattern parsing for type aliases
-        const parsed = parsePattern(pattern);
-        searchType = parsed.type;
-        searchName = parsed.name;
+        query = parseQuery(pattern);
       }
 
-      const limit = parseInt(options.limit, 10);
-
       // Find matching nodes
-      const nodes = await findNodes(backend, searchType, searchName, limit);
+      const nodes = await findNodes(backend, query, limit);
+
+      // Check if query has scope constraints for suggestion
+      const hasScope = query.file !== null || query.scopes.length > 0;
 
       if (nodes.length === 0) {
         console.log(`No results for "${pattern}"`);
-        if (searchType) {
-          console.log(`  → Try: grafema query "${searchName}" (search all types)`);
+        if (hasScope) {
+          console.log(`  Try: grafema query "${query.name}" (search all scopes)`);
+        } else if (query.type) {
+          console.log(`  Try: grafema query "${query.name}" (search all types)`);
         }
         return;
       }
@@ -233,6 +265,179 @@ function parsePattern(pattern: string): { type: string | null; name: string } {
 }
 
 /**
+ * Parse search pattern with scope support.
+ *
+ * Grammar:
+ *   query := [type] name [" in " scope]*
+ *   type  := "function" | "class" | "variable" | etc.
+ *   scope := <filename> | <functionName>
+ *
+ * File scope detection: contains "/" or ends with .ts/.js/.tsx/.jsx
+ * Function scope detection: anything else
+ *
+ * IMPORTANT: Only split on " in " (space-padded) to avoid matching names like "signin"
+ *
+ * Examples:
+ *   "response" -> { type: null, name: "response", file: null, scopes: [] }
+ *   "variable response in fetchData" -> { type: "VARIABLE", name: "response", file: null, scopes: ["fetchData"] }
+ *   "response in src/app.ts" -> { type: null, name: "response", file: "src/app.ts", scopes: [] }
+ *   "error in catch in fetchData in src/app.ts" -> { type: null, name: "error", file: "src/app.ts", scopes: ["fetchData", "catch"] }
+ */
+export function parseQuery(pattern: string): ParsedQuery {
+  // Split on " in " (space-padded) to get clauses
+  const clauses = pattern.split(/ in /);
+
+  // First clause is [type] name - use existing parsePattern logic
+  const firstClause = clauses[0];
+  const { type, name } = parsePattern(firstClause);
+
+  // Remaining clauses are scopes
+  let file: string | null = null;
+  const scopes: string[] = [];
+
+  for (let i = 1; i < clauses.length; i++) {
+    const scope = clauses[i].trim();
+    if (scope === '') continue; // Skip empty clauses from trailing whitespace
+    if (isFileScope(scope)) {
+      file = scope;
+    } else {
+      scopes.push(scope);
+    }
+  }
+
+  return { type, name, file, scopes };
+}
+
+/**
+ * Detect if a scope string looks like a file path.
+ *
+ * Heuristics:
+ * - Contains "/" -> file path
+ * - Ends with .ts, .js, .tsx, .jsx, .mjs, .cjs -> file path
+ *
+ * Examples:
+ *   "src/app.ts" -> true
+ *   "app.js" -> true
+ *   "fetchData" -> false
+ *   "UserService" -> false
+ *   "catch" -> false
+ */
+export function isFileScope(scope: string): boolean {
+  // Contains path separator
+  if (scope.includes('/')) return true;
+
+  // Ends with common JS/TS extensions
+  const fileExtensions = /\.(ts|js|tsx|jsx|mjs|cjs)$/i;
+  if (fileExtensions.test(scope)) return true;
+
+  return false;
+}
+
+/**
+ * Check if a semantic ID matches the given scope constraints.
+ *
+ * Uses parseSemanticId from @grafema/core for robust ID parsing.
+ *
+ * Scope matching rules:
+ * - File scope: semantic ID must match the file path (full or basename)
+ * - Function/class scope: semantic ID must contain the scope in its scopePath
+ * - Multiple scopes: ALL must match (AND logic)
+ * - Scope order: independent - all scopes just need to be present
+ *
+ * Examples:
+ *   ID: "src/app.ts->fetchData->try#0->VARIABLE->response"
+ *   Matches: scopes=["fetchData"] -> true
+ *   Matches: scopes=["try"] -> true (matches "try#0")
+ *   Matches: scopes=["fetchData", "try"] -> true (both present)
+ *   Matches: scopes=["processData"] -> false (not in ID)
+ *
+ * @param semanticId - The full semantic ID to check
+ * @param file - File scope (null for any file)
+ * @param scopes - Array of scope names to match
+ * @returns true if ID matches all constraints
+ */
+export function matchesScope(semanticId: string, file: string | null, scopes: string[]): boolean {
+  const parsed = parseSemanticId(semanticId);
+  if (!parsed) return false;
+
+  // File scope check
+  if (file !== null) {
+    // Full path match
+    if (parsed.file === file) {
+      // Exact match - OK
+    }
+    // Basename match: "app.ts" matches "src/app.ts"
+    else if (parsed.file.endsWith('/' + file)) {
+      // Partial path match - OK
+    }
+    // Also try if parsed.file ends with the file name (e.g., file is basename)
+    else if (basename(parsed.file) === file) {
+      // Basename exact match - OK
+    }
+    else {
+      return false;
+    }
+  }
+
+  // Function/class/block scope check
+  for (const scope of scopes) {
+    // Check if scope appears in the scopePath
+    // Handle numbered scopes: "try" matches "try#0"
+    const matches = parsed.scopePath.some(s =>
+      s === scope || s.startsWith(scope + '#')
+    );
+    if (!matches) return false;
+  }
+
+  return true;
+}
+
+/**
+ * Extract human-readable scope context from a semantic ID.
+ *
+ * Parses the ID and returns a description of the scope chain.
+ *
+ * Examples:
+ *   "src/app.ts->fetchData->try#0->VARIABLE->response"
+ *   -> "inside fetchData, inside try block"
+ *
+ *   "src/app.ts->UserService->login->VARIABLE->token"
+ *   -> "inside UserService, inside login"
+ *
+ *   "src/app.ts->global->FUNCTION->main"
+ *   -> null (no interesting scope)
+ *
+ * @param semanticId - The semantic ID to parse
+ * @returns Human-readable scope context or null
+ */
+export function extractScopeContext(semanticId: string): string | null {
+  const parsed = parseSemanticId(semanticId);
+  if (!parsed) return null;
+
+  // Filter out "global" and format remaining scopes
+  const meaningfulScopes = parsed.scopePath.filter(s => s !== 'global');
+  if (meaningfulScopes.length === 0) return null;
+
+  // Format each scope with context
+  const formatted = meaningfulScopes.map(scope => {
+    // Handle numbered scopes: "try#0" -> "try block"
+    if (scope.match(/^try#\d+$/)) return 'try block';
+    if (scope.match(/^catch#\d+$/)) return 'catch block';
+    if (scope.match(/^if#\d+$/)) return 'conditional';
+    if (scope.match(/^else#\d+$/)) return 'else block';
+    if (scope.match(/^for#\d+$/)) return 'loop';
+    if (scope.match(/^while#\d+$/)) return 'loop';
+    if (scope.match(/^switch#\d+$/)) return 'switch';
+
+    // Regular scope: function or class name
+    return scope;
+  });
+
+  // Build "inside X, inside Y" string
+  return 'inside ' + formatted.join(', inside ');
+}
+
+/**
  * Check if a node matches the search pattern based on its type.
  *
  * Different node types have different searchable fields:
@@ -326,17 +531,16 @@ function matchesSearchPattern(
 }
 
 /**
- * Find nodes by type and name
+ * Find nodes by query (type, name, file scope, function scopes)
  */
 async function findNodes(
   backend: RFDBServerBackend,
-  type: string | null,
-  name: string,
+  query: ParsedQuery,
   limit: number
 ): Promise<NodeInfo[]> {
   const results: NodeInfo[] = [];
-  const searchTypes = type
-    ? [type]
+  const searchTypes = query.type
+    ? [query.type]
     : [
         'FUNCTION',
         'CLASS',
@@ -352,52 +556,58 @@ async function findNodes(
 
   for (const nodeType of searchTypes) {
     for await (const node of backend.queryNodes({ nodeType: nodeType as any })) {
-      // Type-aware field matching
-      const matches = matchesSearchPattern(node, nodeType, name);
+      // Type-aware field matching (name)
+      const nameMatches = matchesSearchPattern(node, nodeType, query.name);
+      if (!nameMatches) continue;
 
-      if (matches) {
-        const nodeInfo: NodeInfo = {
-          id: node.id,
-          type: node.type || nodeType,
-          name: node.name || '',
-          file: node.file || '',
-          line: node.line,
-        };
+      // Scope matching (file and function scopes)
+      const scopeMatches = matchesScope(node.id, query.file, query.scopes);
+      if (!scopeMatches) continue;
 
-        // Include method and path for http:route nodes
-        if (nodeType === 'http:route') {
-          nodeInfo.method = node.method as string | undefined;
-          nodeInfo.path = node.path as string | undefined;
-        }
+      const nodeInfo: NodeInfo = {
+        id: node.id,
+        type: node.type || nodeType,
+        name: node.name || '',
+        file: node.file || '',
+        line: node.line,
+      };
 
-        // Include method and url for http:request nodes
-        if (nodeType === 'http:request') {
-          nodeInfo.method = node.method as string | undefined;
-          nodeInfo.url = node.url as string | undefined;
-        }
+      // Add scope context for display
+      nodeInfo.scopeContext = extractScopeContext(node.id);
 
-        // Include event field for Socket.IO nodes
-        if (nodeType === 'socketio:event' || nodeType === 'socketio:emit' || nodeType === 'socketio:on') {
-          nodeInfo.event = node.event as string | undefined;
-        }
-
-        // Include emit-specific fields
-        if (nodeType === 'socketio:emit') {
-          nodeInfo.room = node.room as string | undefined;
-          nodeInfo.namespace = node.namespace as string | undefined;
-          nodeInfo.broadcast = node.broadcast as boolean | undefined;
-          nodeInfo.objectName = node.objectName as string | undefined;
-        }
-
-        // Include listener-specific fields
-        if (nodeType === 'socketio:on') {
-          nodeInfo.objectName = node.objectName as string | undefined;
-          nodeInfo.handlerName = node.handlerName as string | undefined;
-        }
-
-        results.push(nodeInfo);
-        if (results.length >= limit) break;
+      // Include method and path for http:route nodes
+      if (nodeType === 'http:route') {
+        nodeInfo.method = node.method as string | undefined;
+        nodeInfo.path = node.path as string | undefined;
       }
+
+      // Include method and url for http:request nodes
+      if (nodeType === 'http:request') {
+        nodeInfo.method = node.method as string | undefined;
+        nodeInfo.url = node.url as string | undefined;
+      }
+
+      // Include event field for Socket.IO nodes
+      if (nodeType === 'socketio:event' || nodeType === 'socketio:emit' || nodeType === 'socketio:on') {
+        nodeInfo.event = node.event as string | undefined;
+      }
+
+      // Include emit-specific fields
+      if (nodeType === 'socketio:emit') {
+        nodeInfo.room = node.room as string | undefined;
+        nodeInfo.namespace = node.namespace as string | undefined;
+        nodeInfo.broadcast = node.broadcast as boolean | undefined;
+        nodeInfo.objectName = node.objectName as string | undefined;
+      }
+
+      // Include listener-specific fields
+      if (nodeType === 'socketio:on') {
+        nodeInfo.objectName = node.objectName as string | undefined;
+        nodeInfo.handlerName = node.handlerName as string | undefined;
+      }
+
+      results.push(nodeInfo);
+      if (results.length >= limit) break;
     }
     if (results.length >= limit) break;
   }
@@ -526,6 +736,11 @@ async function displayNode(node: NodeInfo, projectPath: string, backend: RFDBSer
   }
 
   console.log(formatNodeDisplay(node, { projectPath }));
+
+  // Add scope context if present
+  if (node.scopeContext) {
+    console.log(`  Scope: ${node.scopeContext}`);
+  }
 }
 
 /**
