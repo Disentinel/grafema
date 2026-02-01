@@ -1230,7 +1230,7 @@ export class JSASTAnalyzer extends Plugin {
       this.profiler.start('traverse_variables');
       const variableVisitor = new VariableVisitor(
         module,
-        { variableDeclarations, classInstantiations, literals, variableAssignments, varDeclCounterRef, literalCounterRef },
+        { variableDeclarations, classInstantiations, literals, variableAssignments, varDeclCounterRef, literalCounterRef, scopes, scopeCounterRef },
         this.extractVariableNamesFromPattern.bind(this),
         this.trackVariableAssignment.bind(this) as TrackVariableAssignmentCallback,
         scopeTracker  // Pass ScopeTracker for semantic ID generation
@@ -1632,6 +1632,10 @@ export class JSASTAnalyzer extends Plugin {
     const varNode = varPath.node;
     const isConst = varNode.kind === 'const';
 
+    // Check if this is a loop variable (for...of or for...in)
+    const parent = varPath.parent;
+    const isLoopVariable = (t.isForOfStatement(parent) || t.isForInStatement(parent)) && parent.left === varNode;
+
     varNode.declarations.forEach(declarator => {
       const variables = this.extractVariableNamesFromPattern(declarator.id);
       const variablesWithIds: Array<ExtractedVariable & { id: string }> = [];
@@ -1641,7 +1645,9 @@ export class JSASTAnalyzer extends Plugin {
         const isLiteral = literalValue !== null;
         const isNewExpression = declarator.init && declarator.init.type === 'NewExpression';
 
-        const shouldBeConstant = isConst && (isLiteral || isNewExpression);
+        // Loop variables with const should be CONSTANT (they can't be reassigned in loop body)
+        // Regular variables with const are CONSTANT only if initialized with literal or new expression
+        const shouldBeConstant = isConst && (isLoopVariable || isLiteral || isNewExpression);
         const nodeType = shouldBeConstant ? 'CONSTANT' : 'VARIABLE';
 
         // Generate semantic ID (primary) or legacy ID (fallback)
@@ -1700,7 +1706,49 @@ export class JSASTAnalyzer extends Plugin {
       });
 
       // Track assignments after all variables are created
-      if (declarator.init) {
+      if (isLoopVariable) {
+        // For loop variables, track assignment from the source collection (right side of for...of/for...in)
+        const loopParent = parent as t.ForOfStatement | t.ForInStatement;
+        const sourceExpression = loopParent.right;
+
+        if (t.isObjectPattern(declarator.id) || t.isArrayPattern(declarator.id)) {
+          // Destructuring in loop: track each variable separately
+          this.trackDestructuringAssignment(
+            declarator.id,
+            sourceExpression,
+            variablesWithIds,
+            module,
+            variableAssignments
+          );
+        } else {
+          // Simple loop variable: create DERIVES_FROM edges (not ASSIGNED_FROM)
+          // Loop variables derive their values from the collection (semantic difference)
+          variablesWithIds.forEach(varInfo => {
+            if (t.isIdentifier(sourceExpression)) {
+              variableAssignments.push({
+                variableId: varInfo.id,
+                sourceType: 'DERIVES_FROM_VARIABLE',
+                sourceName: sourceExpression.name,
+                file: module.file,
+                line: varInfo.loc.start.line
+              });
+            } else {
+              // Fallback to regular tracking for non-identifier expressions
+              this.trackVariableAssignment(
+                sourceExpression,
+                varInfo.id,
+                varInfo.name,
+                module,
+                varInfo.loc.start.line,
+                literals,
+                variableAssignments,
+                literalCounterRef
+              );
+            }
+          });
+        }
+      } else if (declarator.init) {
+        // Regular variable declaration with initializer
         if (t.isObjectPattern(declarator.id) || t.isArrayPattern(declarator.id)) {
           // Destructuring: use specialized tracking
           this.trackDestructuringAssignment(
