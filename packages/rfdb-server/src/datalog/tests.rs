@@ -1057,4 +1057,76 @@ mod eval_tests {
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].get("X"), Some(&Value::Id(1)));
     }
+
+    #[test]
+    fn test_eval_edge_variable_source() {
+        let engine = setup_test_graph();
+        let evaluator = Evaluator::new(&engine);
+
+        // edge(X, Y, "CALLS") - find all CALLS edges
+        let query = Atom::new("edge", vec![
+            Term::var("X"),
+            Term::var("Y"),
+            Term::constant("CALLS"),
+        ]);
+
+        let results = evaluator.eval_atom(&query);
+        // Graph has 2 CALLS edges: 1->4 and 4->2
+        assert_eq!(results.len(), 2);
+
+        // Check that we got both edges
+        let edges: Vec<(u128, u128)> = results.iter()
+            .filter_map(|b| {
+                match (b.get("X"), b.get("Y")) {
+                    (Some(Value::Id(x)), Some(Value::Id(y))) => Some((*x, *y)),
+                    _ => None,
+                }
+            })
+            .collect();
+        assert!(edges.contains(&(1, 4)));
+        assert!(edges.contains(&(4, 2)));
+    }
+
+    #[test]
+    fn test_eval_edge_variable_source_constant_dest() {
+        let engine = setup_test_graph();
+        let evaluator = Evaluator::new(&engine);
+
+        // edge(X, 4, T) - find edges TO node 4
+        let query = Atom::new("edge", vec![
+            Term::var("X"),
+            Term::constant("4"),
+            Term::var("T"),
+        ]);
+
+        let results = evaluator.eval_atom(&query);
+        // Only edge 1->4 points to node 4
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].get("X"), Some(&Value::Id(1)));
+        assert_eq!(results[0].get("T"), Some(&Value::Str("CALLS".to_string())));
+    }
+
+    #[test]
+    fn test_eval_edge_all_variables() {
+        let engine = setup_test_graph();
+        let evaluator = Evaluator::new(&engine);
+
+        // edge(X, Y, T) - enumerate all edges
+        let query = Atom::new("edge", vec![
+            Term::var("X"),
+            Term::var("Y"),
+            Term::var("T"),
+        ]);
+
+        let results = evaluator.eval_atom(&query);
+        // Graph has 2 edges total
+        assert_eq!(results.len(), 2);
+
+        // All results should have X, Y, and T bound
+        for result in &results {
+            assert!(matches!(result.get("X"), Some(Value::Id(_))));
+            assert!(matches!(result.get("Y"), Some(Value::Id(_))));
+            assert!(matches!(result.get("T"), Some(Value::Str(_))));
+        }
+    }
 }
