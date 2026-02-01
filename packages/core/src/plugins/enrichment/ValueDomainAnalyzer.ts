@@ -17,6 +17,15 @@ import { Plugin, createSuccessResult } from '../Plugin.js';
 import type { PluginMetadata, PluginContext, PluginResult } from '../Plugin.js';
 import type { NodeRecord } from '@grafema/types';
 import type { EdgeRecord } from '@grafema/types';
+import {
+  traceValues,
+  aggregateValues,
+  NONDETERMINISTIC_PATTERNS,
+  NONDETERMINISTIC_OBJECTS,
+} from '../../queries/traceValues.js';
+
+// Re-export for backward compatibility
+export { NONDETERMINISTIC_PATTERNS, NONDETERMINISTIC_OBJECTS };
 
 interface ComputedCallNode {
   id: string;
@@ -40,22 +49,6 @@ interface VariableNode {
     file?: string;
   };
   [key: string]: unknown;
-}
-
-interface ExpressionNode {
-  id: string;
-  type: string;
-  name?: string;
-  file?: string;
-  line?: number;
-  expressionType?: string;
-  object?: string;
-  property?: string;
-  attrs?: {
-    expressionType?: string;
-    object?: string;
-    property?: string;
-  };
 }
 
 interface ScopeNode {
@@ -89,11 +82,6 @@ interface ValueSetAtNodeResult extends ValueSetResult {
   globalHasUnknown: boolean;
 }
 
-interface NondeterministicPattern {
-  object: string;
-  property: string;
-}
-
 interface Graph {
   queryNodes(filter: { nodeType: string }): AsyncIterable<NodeRecord>;
   getNode(id: string): Promise<NodeRecord | null>;
@@ -115,37 +103,6 @@ interface ProgressCallback {
 
 export class ValueDomainAnalyzer extends Plugin {
   static MAX_DEPTH = 10; // Maximum depth for tracing
-
-  // Nondeterministic MemberExpression patterns
-  // object.property patterns that are external/user input
-  static NONDETERMINISTIC_PATTERNS: NondeterministicPattern[] = [
-    // Environment variables
-    { object: 'process', property: 'env' },
-    // HTTP request data (Express.js patterns)
-    { object: 'req', property: 'body' },
-    { object: 'req', property: 'query' },
-    { object: 'req', property: 'params' },
-    { object: 'req', property: 'headers' },
-    { object: 'req', property: 'cookies' },
-    { object: 'request', property: 'body' },
-    { object: 'request', property: 'query' },
-    { object: 'request', property: 'params' },
-    // Context patterns (Koa, etc.)
-    { object: 'ctx', property: 'request' },
-    { object: 'ctx', property: 'body' },
-    { object: 'ctx', property: 'query' },
-    { object: 'ctx', property: 'params' },
-  ];
-
-  // Nondeterministic object prefixes (any property access is nondeterministic)
-  static NONDETERMINISTIC_OBJECTS: string[] = [
-    'process.env',  // process.env.ANY_VAR
-    'req.body',     // req.body.userId
-    'req.query',    // req.query.filter
-    'req.params',   // req.params.id
-    'request.body',
-    'ctx.request',
-  ];
 
   get metadata(): PluginMetadata {
     return {
@@ -508,132 +465,55 @@ export class ValueDomainAnalyzer extends Plugin {
   }
 
   /**
-   * Check if an EXPRESSION node represents a nondeterministic source
-   */
-  isNondeterministicExpression(node: ExpressionNode): boolean {
-    const expressionType = node.expressionType || node.attrs?.expressionType;
-    if (expressionType !== 'MemberExpression') {
-      return false;
-    }
-
-    const object = node.object || node.attrs?.object;
-    const property = node.property || node.attrs?.property;
-
-    if (!object || !property) {
-      return false;
-    }
-
-    // Check exact patterns (object.property)
-    for (const pattern of ValueDomainAnalyzer.NONDETERMINISTIC_PATTERNS) {
-      if (object === pattern.object && property === pattern.property) {
-        return true;
-      }
-    }
-
-    // Check if object is a known nondeterministic prefix
-    // e.g., process.env.VAR where object is 'process.env'
-    for (const prefix of ValueDomainAnalyzer.NONDETERMINISTIC_OBJECTS) {
-      if (object === prefix || object.startsWith(prefix + '.')) {
-        return true;
-      }
-    }
-
-    return false;
-  }
-
-  /**
-   * Recursive value set tracing through ASSIGNED_FROM edges
+   * Recursive value set tracing through ASSIGNED_FROM edges.
+   * Delegates to shared traceValues utility (REG-244).
    */
   async traceValueSet(
     node: NodeRecord,
     graph: Graph,
-    visited: Set<string>,
+    _visited: Set<string>,
     depth: number
   ): Promise<ValueSetResult> {
-    const result: ValueSetResult = { values: [], hasUnknown: false };
+    // Create adapter from Graph interface to TraceValuesGraphBackend
+    const backend = {
+      getNode: async (id: string) => {
+        const n = await graph.getNode(id);
+        if (!n) return null;
+        return {
+          id: n.id,
+          type: (n as { type?: string }).type,
+          nodeType: (n as { nodeType?: string }).nodeType,
+          value: (n as { value?: unknown }).value,
+          file: (n as { file?: string }).file,
+          line: (n as { line?: number }).line,
+          expressionType: (n as { expressionType?: string }).expressionType,
+          object: (n as { object?: string }).object,
+          property: (n as { property?: string }).property,
+        };
+      },
+      getOutgoingEdges: async (nodeId: string, edgeTypes: string[] | null) => {
+        const edges = await graph.getOutgoingEdges(nodeId);
+        const filtered = edgeTypes === null
+          ? edges
+          : edges.filter(e => edgeTypes.includes(e.type));
+        return filtered.map(e => ({
+          src: (e as { src?: string; source_id?: string }).src ||
+               (e as { source_id?: string }).source_id || '',
+          dst: (e as { dst?: string; target_id?: string }).dst ||
+               (e as { target_id?: string }).target_id || '',
+          type: e.type,
+        }));
+      },
+    };
 
-    // Cycle protection
-    if (visited.has(node.id)) {
-      return result;
-    }
-    visited.add(node.id);
+    // Use shared utility
+    const traced = await traceValues(backend, node.id, {
+      maxDepth: ValueDomainAnalyzer.MAX_DEPTH - depth,
+      followDerivesFrom: true,
+      detectNondeterministic: true,
+    });
 
-    // Depth protection
-    if (depth > ValueDomainAnalyzer.MAX_DEPTH) {
-      result.hasUnknown = true;
-      return result;
-    }
-
-    // Support both fields: nodeType (from getNode) and type (alias)
-    const nodeType = (node as { nodeType?: string; type?: string }).nodeType ||
-                     (node as { type?: string }).type;
-
-    // If it's a LITERAL - add value
-    if (nodeType === 'LITERAL') {
-      const value = (node as { value?: unknown }).value;
-      if (value !== undefined && value !== null) {
-        result.values.push(value);
-      }
-      return result;
-    }
-
-    // If it's a PARAMETER or nondeterministic source
-    if (nodeType === 'PARAMETER') {
-      result.hasUnknown = true;
-      return result;
-    }
-
-    // If it's a CALL - consider nondeterministic (for now)
-    if (nodeType === 'CALL') {
-      result.hasUnknown = true;
-      return result;
-    }
-
-    // If it's an EXPRESSION - check nondeterministic patterns
-    if (nodeType === 'EXPRESSION') {
-      if (this.isNondeterministicExpression(node as ExpressionNode)) {
-        result.hasUnknown = true;
-        return result;
-      }
-    }
-
-    // Follow ASSIGNED_FROM and DERIVES_FROM edges
-    // DERIVES_FROM is used for template literals and other composite expressions
-    const outgoing = await graph.getOutgoingEdges(node.id);
-    const dataFlowEdges = outgoing.filter(e =>
-      e.type === 'ASSIGNED_FROM' || e.type === 'DERIVES_FROM'
-    );
-
-    if (dataFlowEdges.length === 0) {
-      // No sources - unknown
-      result.hasUnknown = true;
-      return result;
-    }
-
-    // Recursively trace each source
-    for (const edge of dataFlowEdges) {
-      // dst (from getOutgoingEdges) or target_id (from other APIs)
-      const targetId = (edge as { dst?: string; target_id?: string }).dst ||
-                       (edge as { target_id?: string }).target_id;
-      if (!targetId) continue;
-
-      const sourceNode = await graph.getNode(targetId);
-      if (!sourceNode) continue;
-
-      const sourceResult = await this.traceValueSet(
-        sourceNode,
-        graph,
-        visited,
-        depth + 1
-      );
-
-      sourceResult.values.forEach(v => result.values.push(v));
-      if (sourceResult.hasUnknown) {
-        result.hasUnknown = true;
-      }
-    }
-
-    return result;
+    return aggregateValues(traced);
   }
 
   /**
