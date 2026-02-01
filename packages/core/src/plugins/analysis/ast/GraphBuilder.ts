@@ -39,6 +39,7 @@ import type {
   DecoratorInfo,
   ArrayMutationInfo,
   ObjectMutationInfo,
+  VariableReassignmentInfo,
   ReturnStatementInfo,
   ObjectLiteralInfo,
   ObjectPropertyInfo,
@@ -133,6 +134,8 @@ export class GraphBuilder {
       arrayMutations = [],
       // Object mutation tracking for FLOWS_INTO edges
       objectMutations = [],
+      // Variable reassignment tracking for FLOWS_INTO edges (REG-290)
+      variableReassignments = [],
       // Return statement tracking for RETURNS edges
       returnStatements = [],
       // Object/Array literal tracking
@@ -299,7 +302,10 @@ export class GraphBuilder {
     // REG-152: Now includes classDeclarations for this.prop = value patterns
     this.bufferObjectMutationEdges(objectMutations, variableDeclarations, parameters, functions, classDeclarations);
 
-    // 28. Buffer RETURNS edges for return statements
+    // 28. Buffer FLOWS_INTO edges for variable reassignments (REG-290)
+    this.bufferVariableReassignmentEdges(variableReassignments, variableDeclarations, callSites, methodCalls, parameters);
+
+    // 29. Buffer RETURNS edges for return statements
     this.bufferReturnEdges(returnStatements, callSites, methodCalls, variableDeclarations, parameters);
 
     // FLUSH: Write all nodes first, then edges in single batch calls
@@ -1723,6 +1729,149 @@ export class GraphBuilder {
         }
       }
       // For literals, object literals, etc. - we just track variable -> object flows for now
+    }
+  }
+
+  /**
+   * Buffer FLOWS_INTO edges for variable reassignments.
+   * Handles: x = y, x += y (when x is already declared, not initialization)
+   *
+   * Edge patterns:
+   * - Simple assignment (=): source --FLOWS_INTO--> variable
+   * - Compound operators (+=, -=, etc.):
+   *   - source --FLOWS_INTO--> variable (write new value)
+   *   - variable --READS_FROM--> variable (self-loop: reads current value before write)
+   *
+   * CURRENT LIMITATION (REG-XXX): Uses file-level variable lookup, not scope-aware.
+   * Shadowed variables in nested scopes will incorrectly resolve to outer scope variable.
+   *
+   * This matches existing mutation handler behavior (array/object mutations).
+   * Will be fixed in future scope-aware lookup refactoring.
+   *
+   * REG-290: Complete implementation with inline node creation (no continue statements).
+   */
+  private bufferVariableReassignmentEdges(
+    variableReassignments: VariableReassignmentInfo[],
+    variableDeclarations: VariableDeclarationInfo[],
+    callSites: CallSiteInfo[],
+    methodCalls: MethodCallInfo[],
+    parameters: ParameterInfo[]
+  ): void {
+    // Build lookup cache: O(n) instead of O(n*m)
+    const varLookup = new Map<string, VariableDeclarationInfo>();
+    for (const v of variableDeclarations) {
+      varLookup.set(`${v.file}:${v.name}`, v);
+    }
+
+    const paramLookup = new Map<string, ParameterInfo>();
+    for (const p of parameters) {
+      paramLookup.set(`${p.file}:${p.name}`, p);
+    }
+
+    for (const reassignment of variableReassignments) {
+      const {
+        variableName,
+        valueType,
+        valueName,
+        valueId,
+        callLine,
+        callColumn,
+        operator,
+        literalValue,
+        expressionType,
+        expressionMetadata,
+        file,
+        line,
+        column
+      } = reassignment;
+
+      // Find target variable node
+      const targetVar = varLookup.get(`${file}:${variableName}`);
+      const targetParam = !targetVar ? paramLookup.get(`${file}:${variableName}`) : null;
+      const targetNodeId = targetVar?.id ?? targetParam?.id;
+
+      if (!targetNodeId) {
+        // Variable not found - could be module-level or external reference
+        continue;
+      }
+
+      // Resolve source node based on value type
+      let sourceNodeId: string | null = null;
+
+      // LITERAL: Create node inline (NO CONTINUE STATEMENT)
+      if (valueType === 'LITERAL' && valueId) {
+        // Create LITERAL node
+        this._bufferNode({
+          type: 'LITERAL',
+          id: valueId,
+          value: literalValue,
+          file,
+          line,
+          column
+        });
+        sourceNodeId = valueId;
+      }
+      // VARIABLE: Look up existing variable/parameter node
+      else if (valueType === 'VARIABLE' && valueName) {
+        const sourceVar = varLookup.get(`${file}:${valueName}`);
+        const sourceParam = !sourceVar ? paramLookup.get(`${file}:${valueName}`) : null;
+        sourceNodeId = sourceVar?.id ?? sourceParam?.id ?? null;
+      }
+      // CALL_SITE: Look up existing call node
+      else if (valueType === 'CALL_SITE' && callLine && callColumn) {
+        const callSite = callSites.find(cs =>
+          cs.line === callLine && cs.column === callColumn && cs.file === file
+        );
+        sourceNodeId = callSite?.id ?? null;
+      }
+      // METHOD_CALL: Look up existing method call node
+      else if (valueType === 'METHOD_CALL' && callLine && callColumn) {
+        const methodCall = methodCalls.find(mc =>
+          mc.line === callLine && mc.column === callColumn && mc.file === file
+        );
+        sourceNodeId = methodCall?.id ?? null;
+      }
+      // EXPRESSION: Create node inline (NO CONTINUE STATEMENT)
+      else if (valueType === 'EXPRESSION' && valueId && expressionType) {
+        // Create EXPRESSION node using NodeFactory
+        const expressionNode = NodeFactory.createExpressionFromMetadata(
+          expressionType,
+          file,
+          line,
+          column,
+          {
+            id: valueId,  // ID from JSASTAnalyzer
+            object: expressionMetadata?.object,
+            property: expressionMetadata?.property,
+            computed: expressionMetadata?.computed,
+            computedPropertyVar: expressionMetadata?.computedPropertyVar ?? undefined,
+            operator: expressionMetadata?.operator
+          }
+        );
+
+        this._bufferNode(expressionNode);
+        sourceNodeId = valueId;
+      }
+
+      // Create edges if source found
+      if (sourceNodeId && targetNodeId) {
+        // For compound operators (operator !== '='), LHS reads its own current value
+        // Create READS_FROM self-loop (Linus requirement)
+        if (operator !== '=') {
+          this._bufferEdge({
+            type: 'READS_FROM',
+            src: targetNodeId,  // Variable reads from...
+            dst: targetNodeId   // ...itself (self-loop)
+          });
+        }
+
+        // RHS flows into LHS (write side)
+        this._bufferEdge({
+          type: 'FLOWS_INTO',
+          src: sourceNodeId,
+          dst: targetNodeId
+        });
+      }
     }
   }
 

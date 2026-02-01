@@ -594,6 +594,64 @@ export interface VariableAssignmentInfo {
   };
 }
 
+// === VARIABLE REASSIGNMENT INFO ===
+/**
+ * Tracks variable reassignments for FLOWS_INTO edge creation.
+ * Used when a variable is assigned AFTER its declaration: x = y (not const x = y).
+ *
+ * Edge direction: value --FLOWS_INTO--> variable
+ *
+ * Supports:
+ * - Simple assignment: x = y
+ * - Compound operators: x += y, x -= y, x *= y, x /= y, x %= y, x **= y
+ * - Bitwise operators: x &= y, x |= y, x ^= y, x <<= y, x >>= y, x >>>= y
+ * - Logical operators: x &&= y, x ||= y, x ??= y
+ *
+ * For compound operators (operator !== '='), creates TWO edges:
+ * - READS_FROM: variable --READS_FROM--> variable (self-loop, reads current value)
+ * - FLOWS_INTO: source --FLOWS_INTO--> variable (writes new value)
+ *
+ * Distinction from VariableAssignmentInfo:
+ * - VariableAssignmentInfo: initialization (const x = y) -> ASSIGNED_FROM edge
+ * - VariableReassignmentInfo: mutation (x = y, x += y) -> FLOWS_INTO edge
+ */
+export interface VariableReassignmentInfo {
+  variableName: string;           // Name of variable being reassigned
+  variableLine: number;           // Line where variable is referenced on LHS
+  valueType: 'VARIABLE' | 'CALL_SITE' | 'METHOD_CALL' | 'LITERAL' | 'EXPRESSION';
+  valueName?: string;             // For VARIABLE, CALL_SITE types
+  valueId?: string | null;        // For LITERAL, EXPRESSION types
+  callLine?: number;              // For CALL_SITE, METHOD_CALL types
+  callColumn?: number;
+  operator: string;               // '=', '+=', '-=', '*=', etc.
+
+  // For LITERAL type - complete metadata for node creation
+  literalValue?: unknown;         // Actual literal value (number, string, boolean, null)
+
+  // For EXPRESSION type - complete metadata for node creation
+  expressionType?: string;        // 'MemberExpression', 'BinaryExpression', 'ConditionalExpression', etc.
+  expressionMetadata?: {          // Type-specific metadata (matches VariableAssignmentInfo pattern)
+    // MemberExpression
+    object?: string;
+    property?: string;
+    computed?: boolean;
+    computedPropertyVar?: string | null;
+
+    // BinaryExpression, LogicalExpression
+    operator?: string;
+    leftSourceName?: string;
+    rightSourceName?: string;
+
+    // ConditionalExpression
+    consequentSourceName?: string;
+    alternateSourceName?: string;
+  };
+
+  file: string;
+  line: number;                   // Line of assignment statement
+  column: number;
+}
+
 // === COUNTER REF ===
 export interface CounterRef {
   value: number;
@@ -644,6 +702,8 @@ export interface ASTCollections {
   arrayMutations?: ArrayMutationInfo[];
   // Object mutation tracking for FLOWS_INTO edges
   objectMutations?: ObjectMutationInfo[];
+  // Variable reassignment tracking for FLOWS_INTO edges (REG-290)
+  variableReassignments?: VariableReassignmentInfo[];
   // Return statement tracking for RETURNS edges
   returnStatements?: ReturnStatementInfo[];
   // TypeScript-specific collections

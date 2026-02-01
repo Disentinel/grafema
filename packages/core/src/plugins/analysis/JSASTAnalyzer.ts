@@ -90,6 +90,7 @@ import type {
   ArrayMutationArgument,
   ObjectMutationInfo,
   ObjectMutationValue,
+  VariableReassignmentInfo,
   ReturnStatementInfo,
   CounterRef,
   ProcessedNodes,
@@ -137,6 +138,8 @@ interface Collections {
   arrayMutations: ArrayMutationInfo[];
   // Object mutation tracking for FLOWS_INTO edges
   objectMutations: ObjectMutationInfo[];
+  // Variable reassignment tracking for FLOWS_INTO edges (REG-290)
+  variableReassignments: VariableReassignmentInfo[];
   // Return statement tracking for RETURNS edges
   returnStatements: ReturnStatementInfo[];
   objectLiteralCounterRef: CounterRef;
@@ -1216,6 +1219,8 @@ export class JSASTAnalyzer extends Plugin {
       const arrayMutations: ArrayMutationInfo[] = [];
       // Object mutation tracking for FLOWS_INTO edges
       const objectMutations: ObjectMutationInfo[] = [];
+      // Variable reassignment tracking for FLOWS_INTO edges (REG-290)
+      const variableReassignments: VariableReassignmentInfo[] = [];
       // Return statement tracking for RETURNS edges
       const returnStatements: ReturnStatementInfo[] = [];
 
@@ -1282,6 +1287,8 @@ export class JSASTAnalyzer extends Plugin {
         arrayMutations,
         // Object mutation tracking
         objectMutations,
+        // Variable reassignment tracking (REG-290)
+        variableReassignments,
         // Return statement tracking
         returnStatements,
         objectLiteralCounterRef, arrayLiteralCounterRef,
@@ -1369,6 +1376,20 @@ export class JSASTAnalyzer extends Plugin {
             this.analyzeFunctionBody(funcPath, funcBodyScopeId, module, allCollections);
             scopeTracker.exitScope();
           }
+
+          // === VARIABLE REASSIGNMENT (REG-290) ===
+          // Check if LHS is simple identifier (not obj.prop, not arr[i])
+          // Must be checked at module level too
+          if (assignNode.left.type === 'Identifier') {
+            // Initialize collection if not exists
+            if (!allCollections.variableReassignments) {
+              allCollections.variableReassignments = [];
+            }
+            const variableReassignments = allCollections.variableReassignments as VariableReassignmentInfo[];
+
+            this.detectVariableReassignment(assignNode, module, variableReassignments);
+          }
+          // === END VARIABLE REASSIGNMENT ===
 
           // Check for indexed array assignment at module level: arr[i] = value
           this.detectIndexedArrayAssignment(assignNode, module, arrayMutations);
@@ -1577,6 +1598,8 @@ export class JSASTAnalyzer extends Plugin {
         arrayMutations,
         // Object mutation tracking
         objectMutations,
+        // Variable reassignment tracking (REG-290)
+        variableReassignments,
         // Return statement tracking
         returnStatements,
         // Object/Array literal tracking - use allCollections refs as visitors may have created new arrays
@@ -2711,6 +2734,20 @@ export class JSASTAnalyzer extends Plugin {
       // Detect indexed array assignments: arr[i] = value
       AssignmentExpression: (assignPath: NodePath<t.AssignmentExpression>) => {
         const assignNode = assignPath.node;
+
+        // === VARIABLE REASSIGNMENT (REG-290) ===
+        // Check if LHS is simple identifier (not obj.prop, not arr[i])
+        // Must be checked FIRST before array/object mutation handlers
+        if (assignNode.left.type === 'Identifier') {
+          // Initialize collection if not exists
+          if (!collections.variableReassignments) {
+            collections.variableReassignments = [];
+          }
+          const variableReassignments = collections.variableReassignments as VariableReassignmentInfo[];
+
+          this.detectVariableReassignment(assignNode, module, variableReassignments);
+        }
+        // === END VARIABLE REASSIGNMENT ===
 
         // Initialize collection if not exists
         if (!collections.arrayMutations) {
@@ -3863,6 +3900,128 @@ export class JSASTAnalyzer extends Plugin {
       line,
       column,
       value: valueInfo
+    });
+  }
+
+  /**
+   * Detect variable reassignment for FLOWS_INTO edge creation.
+   * Handles all assignment operators: =, +=, -=, *=, /=, etc.
+   *
+   * Captures COMPLETE metadata for:
+   * - LITERAL values (literalValue field)
+   * - EXPRESSION nodes (expressionType, expressionMetadata fields)
+   * - VARIABLE, CALL_SITE, METHOD_CALL references
+   *
+   * REG-290: No deferred functionality - all value types captured.
+   */
+  private detectVariableReassignment(
+    assignNode: t.AssignmentExpression,
+    module: VisitorModule,
+    variableReassignments: VariableReassignmentInfo[]
+  ): void {
+    // LHS must be simple identifier (checked by caller)
+    const leftId = assignNode.left as t.Identifier;
+    const variableName = leftId.name;
+    const operator = assignNode.operator;  // '=', '+=', '-=', etc.
+
+    // Get RHS value info
+    const rightExpr = assignNode.right;
+    const line = getLine(assignNode);
+    const column = getColumn(assignNode);
+
+    // Extract value source (similar to VariableVisitor pattern)
+    let valueType: 'VARIABLE' | 'CALL_SITE' | 'METHOD_CALL' | 'LITERAL' | 'EXPRESSION';
+    let valueName: string | undefined;
+    let valueId: string | null = null;
+    let callLine: number | undefined;
+    let callColumn: number | undefined;
+
+    // Complete metadata for node creation
+    let literalValue: unknown;
+    let expressionType: string | undefined;
+    let expressionMetadata: VariableReassignmentInfo['expressionMetadata'];
+
+    // 1. Literal value
+    const extractedLiteralValue = ExpressionEvaluator.extractLiteralValue(rightExpr);
+    if (extractedLiteralValue !== null) {
+      valueType = 'LITERAL';
+      valueId = `LITERAL#${line}:${rightExpr.start}#${module.file}`;
+      literalValue = extractedLiteralValue;  // Store for GraphBuilder
+    }
+    // 2. Simple identifier (variable reference)
+    else if (rightExpr.type === 'Identifier') {
+      valueType = 'VARIABLE';
+      valueName = rightExpr.name;
+    }
+    // 3. CallExpression (function call)
+    else if (rightExpr.type === 'CallExpression' && rightExpr.callee.type === 'Identifier') {
+      valueType = 'CALL_SITE';
+      valueName = rightExpr.callee.name;
+      callLine = getLine(rightExpr);
+      callColumn = getColumn(rightExpr);
+    }
+    // 4. MemberExpression (method call: obj.method())
+    else if (rightExpr.type === 'CallExpression' && rightExpr.callee.type === 'MemberExpression') {
+      valueType = 'METHOD_CALL';
+      callLine = getLine(rightExpr);
+      callColumn = getColumn(rightExpr);
+    }
+    // 5. Everything else is EXPRESSION
+    else {
+      valueType = 'EXPRESSION';
+      expressionType = rightExpr.type;  // Store AST node type
+      // Use correct EXPRESSION ID format: {file}:EXPRESSION:{type}:{line}:{column}
+      valueId = `${module.file}:EXPRESSION:${expressionType}:${line}:${column}`;
+
+      // Extract type-specific metadata (matches VariableAssignmentInfo pattern)
+      expressionMetadata = {};
+
+      // MemberExpression: obj.prop or obj[key]
+      if (rightExpr.type === 'MemberExpression') {
+        const objName = rightExpr.object.type === 'Identifier' ? rightExpr.object.name : undefined;
+        const propName = rightExpr.property.type === 'Identifier' ? rightExpr.property.name : undefined;
+        const computed = rightExpr.computed;
+
+        expressionMetadata.object = objName;
+        expressionMetadata.property = propName;
+        expressionMetadata.computed = computed;
+
+        // Computed property variable: obj[varName]
+        if (computed && rightExpr.property.type === 'Identifier') {
+          expressionMetadata.computedPropertyVar = rightExpr.property.name;
+        }
+      }
+      // BinaryExpression: a + b, a - b, etc.
+      else if (rightExpr.type === 'BinaryExpression' || rightExpr.type === 'LogicalExpression') {
+        expressionMetadata.operator = rightExpr.operator;
+        expressionMetadata.leftSourceName = rightExpr.left.type === 'Identifier' ? rightExpr.left.name : undefined;
+        expressionMetadata.rightSourceName = rightExpr.right.type === 'Identifier' ? rightExpr.right.name : undefined;
+      }
+      // ConditionalExpression: condition ? a : b
+      else if (rightExpr.type === 'ConditionalExpression') {
+        expressionMetadata.consequentSourceName = rightExpr.consequent.type === 'Identifier' ? rightExpr.consequent.name : undefined;
+        expressionMetadata.alternateSourceName = rightExpr.alternate.type === 'Identifier' ? rightExpr.alternate.name : undefined;
+      }
+      // Add more expression types as needed
+    }
+
+    // Push reassignment info to collection
+    variableReassignments.push({
+      variableName,
+      variableLine: getLine(leftId),
+      valueType,
+      valueName,
+      valueId,
+      callLine,
+      callColumn,
+      operator,
+      // Complete metadata
+      literalValue,
+      expressionType,
+      expressionMetadata,
+      file: module.file,
+      line,
+      column
     });
   }
 
