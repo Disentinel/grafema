@@ -10,7 +10,7 @@ import { Command } from 'commander';
 import { resolve, join, dirname } from 'path';
 import { relative } from 'path';
 import { existsSync } from 'fs';
-import { RFDBServerBackend } from '@grafema/core';
+import { RFDBServerBackend, findContainingFunction as findContainingFunctionCore, type CallerInfo } from '@grafema/core';
 import { formatNodeDisplay, formatNodeInline } from '../utils/formatNode.js';
 import { exitWithError } from '../utils/errorFormatter.js';
 
@@ -198,7 +198,7 @@ async function analyzeImpact(
 
       for (const callNode of containingCalls) {
         // Find the function containing this call
-        const container = await findContainingFunction(backend, callNode.id);
+        const container = await findContainingFunctionCore(backend, callNode.id);
 
         if (container && !visited.has(container.id)) {
           // Filter out internal callers (methods of the same class)
@@ -210,7 +210,7 @@ async function analyzeImpact(
             id: container.id,
             type: container.type,
             name: container.name,
-            file: container.file,
+            file: container.file || '',
             line: container.line,
           };
 
@@ -306,59 +306,6 @@ async function findCallsToNode(
   }
 
   return calls;
-}
-
-/**
- * Find the function that contains a call node
- *
- * Path: CALL → CONTAINS → SCOPE → CONTAINS → SCOPE → HAS_SCOPE → FUNCTION
- */
-async function findContainingFunction(
-  backend: RFDBServerBackend,
-  nodeId: string,
-  maxDepth: number = 15
-): Promise<NodeInfo | null> {
-  const visited = new Set<string>();
-  const queue: Array<{ id: string; depth: number }> = [{ id: nodeId, depth: 0 }];
-
-  while (queue.length > 0) {
-    const { id, depth } = queue.shift()!;
-
-    if (visited.has(id) || depth > maxDepth) continue;
-    visited.add(id);
-
-    try {
-      // Get incoming edges: CONTAINS, HAS_SCOPE
-      const edges = await backend.getIncomingEdges(id, null);
-
-      for (const edge of edges) {
-        // Only follow structural edges
-        if (!['CONTAINS', 'HAS_SCOPE', 'DECLARES'].includes(edge.type)) continue;
-
-        const parent = await backend.getNode(edge.src);
-        if (!parent || visited.has(parent.id)) continue;
-
-        const parentType = parent.type;
-
-        // FUNCTION, CLASS, or MODULE (for top-level calls)
-        if (parentType === 'FUNCTION' || parentType === 'CLASS' || parentType === 'MODULE') {
-          return {
-            id: parent.id,
-            type: parentType,
-            name: parent.name || '',
-            file: parent.file || '',
-            line: parent.line,
-          };
-        }
-
-        queue.push({ id: parent.id, depth: depth + 1 });
-      }
-    } catch {
-      // Ignore
-    }
-  }
-
-  return null;
 }
 
 /**

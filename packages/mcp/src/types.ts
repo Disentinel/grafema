@@ -248,6 +248,23 @@ export interface FindGuardsArgs {
   nodeId: string;  // ID of any node (CALL, VARIABLE, etc.)
 }
 
+// === GET FUNCTION DETAILS (REG-254) ===
+
+/**
+ * Arguments for get_function_details tool
+ */
+export interface GetFunctionDetailsArgs {
+  /** Function name to look up */
+  name: string;
+  /** Optional: file path to disambiguate if multiple functions have same name */
+  file?: string;
+  /** Follow call chains recursively (A -> B -> C) */
+  transitive?: boolean;
+}
+
+// Re-export types from core for convenience
+export type { CallInfo, CallerInfo, FindCallsOptions } from '@grafema/core';
+
 /**
  * Information about a conditional guard (SCOPE node)
  */

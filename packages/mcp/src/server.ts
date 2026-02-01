@@ -35,8 +35,9 @@ import {
   handleGetDocumentation,
   handleFindGuards,
   handleReportIssue,
+  handleGetFunctionDetails,
 } from './handlers.js';
-import type { ToolResult, ReportIssueArgs, GetDocumentationArgs } from './types.js';
+import type { ToolResult, ReportIssueArgs, GetDocumentationArgs, GetFunctionDetailsArgs } from './types.js';
 
 // Initialize from command line args
 initializeFromArgs();
@@ -151,6 +152,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
 
       case 'report_issue':
         result = await handleReportIssue(args as unknown as ReportIssueArgs);
+        break;
+
+      case 'get_function_details':
+        result = await handleGetFunctionDetails(args as unknown as GetFunctionDetailsArgs);
         break;
 
       default:

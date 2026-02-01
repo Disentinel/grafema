@@ -12,7 +12,7 @@
 import { Command } from 'commander';
 import { resolve, join, relative } from 'path';
 import { existsSync } from 'fs';
-import { RFDBServerBackend } from '@grafema/core';
+import { RFDBServerBackend, findCallsInFunction as findCallsInFunctionCore, findContainingFunction as findContainingFunctionCore } from '@grafema/core';
 import { formatNodeDisplay, formatNodeInline, formatLocation } from '../utils/formatNode.js';
 import { exitWithError } from '../utils/errorFormatter.js';
 
@@ -430,8 +430,8 @@ async function getCallers(
       const callNode = await backend.getNode(edge.src);
       if (!callNode) continue;
 
-      // Find the FUNCTION that contains this CALL
-      const containingFunc = await findContainingFunction(backend, callNode.id);
+      // Find the FUNCTION that contains this CALL (use shared utility from @grafema/core)
+      const containingFunc = await findContainingFunctionCore(backend, callNode.id);
 
       if (containingFunc && !seen.has(containingFunc.id)) {
         seen.add(containingFunc.id);
@@ -454,67 +454,12 @@ async function getCallers(
 }
 
 /**
- * Find the FUNCTION or CLASS that contains a node
- *
- * Path can be: CALL → CONTAINS → SCOPE → CONTAINS → SCOPE → HAS_SCOPE → FUNCTION
- * So we need to follow both CONTAINS and HAS_SCOPE edges
- */
-async function findContainingFunction(
-  backend: RFDBServerBackend,
-  nodeId: string,
-  maxDepth: number = 15
-): Promise<NodeInfo | null> {
-  const visited = new Set<string>();
-  const queue: Array<{ id: string; depth: number }> = [{ id: nodeId, depth: 0 }];
-
-  while (queue.length > 0) {
-    const { id, depth } = queue.shift()!;
-
-    if (visited.has(id) || depth > maxDepth) continue;
-    visited.add(id);
-
-    try {
-      // Get incoming edges: CONTAINS, HAS_SCOPE, and DECLARES (for variables in functions)
-      const edges = await backend.getIncomingEdges(id, null);
-
-      for (const edge of edges) {
-        // Only follow structural edges
-        if (!['CONTAINS', 'HAS_SCOPE', 'DECLARES'].includes(edge.type)) continue;
-
-        const parentNode = await backend.getNode(edge.src);
-        if (!parentNode || visited.has(parentNode.id)) continue;
-
-        const parentType = parentNode.type;
-
-        // FUNCTION, CLASS, or MODULE (for top-level calls)
-        if (parentType === 'FUNCTION' || parentType === 'CLASS' || parentType === 'MODULE') {
-          return {
-            id: parentNode.id,
-            type: parentType,
-            name: parentNode.name || '<anonymous>',
-            file: parentNode.file || '',
-            line: parentNode.line,
-          };
-        }
-
-        // Continue searching from this parent
-        queue.push({ id: parentNode.id, depth: depth + 1 });
-      }
-    } catch (error) {
-      if (process.env.DEBUG) {
-        console.error('[query] Error in findContainingFunction:', error);
-      }
-    }
-  }
-
-  return null;
-}
-
-/**
  * Get functions that this node calls
  *
- * Logic: FUNCTION → CONTAINS → CALL → CALLS → TARGET
- * Find all CALL nodes inside this function, then find what they call
+ * Uses shared utility from @grafema/core which:
+ * - Follows HAS_SCOPE -> SCOPE -> CONTAINS pattern correctly
+ * - Finds both CALL and METHOD_CALL nodes
+ * - Only returns resolved calls (those with CALLS edges to targets)
  */
 async function getCallees(
   backend: RFDBServerBackend,
@@ -525,28 +470,21 @@ async function getCallees(
   const seen = new Set<string>();
 
   try {
-    // Find all CALL nodes inside this function (via CONTAINS)
-    const callNodes = await findCallsInFunction(backend, nodeId);
+    // Use shared utility (now includes METHOD_CALL and correct graph traversal)
+    const calls = await findCallsInFunctionCore(backend, nodeId);
 
-    for (const callNode of callNodes) {
+    for (const call of calls) {
       if (callees.length >= limit) break;
 
-      // Find what this CALL calls
-      const callEdges = await backend.getOutgoingEdges(callNode.id, ['CALLS']);
-
-      for (const edge of callEdges) {
-        if (callees.length >= limit) break;
-
-        const targetNode = await backend.getNode(edge.dst);
-        if (!targetNode || seen.has(targetNode.id)) continue;
-
-        seen.add(targetNode.id);
+      // Only include resolved calls with targets
+      if (call.resolved && call.target && !seen.has(call.target.id)) {
+        seen.add(call.target.id);
         callees.push({
-          id: targetNode.id,
-          type: targetNode.type || 'UNKNOWN',
-          name: targetNode.name || '<anonymous>',
-          file: targetNode.file || '',
-          line: targetNode.line,
+          id: call.target.id,
+          type: 'FUNCTION',
+          name: call.target.name || '<anonymous>',
+          file: call.target.file || '',
+          line: call.target.line,
         });
       }
     }
@@ -557,59 +495,6 @@ async function getCallees(
   }
 
   return callees;
-}
-
-/**
- * Find all CALL nodes inside a function (recursively via CONTAINS)
- */
-async function findCallsInFunction(
-  backend: RFDBServerBackend,
-  nodeId: string,
-  maxDepth: number = 10
-): Promise<NodeInfo[]> {
-  const calls: NodeInfo[] = [];
-  const visited = new Set<string>();
-  const queue: Array<{ id: string; depth: number }> = [{ id: nodeId, depth: 0 }];
-
-  while (queue.length > 0) {
-    const { id, depth } = queue.shift()!;
-
-    if (visited.has(id) || depth > maxDepth) continue;
-    visited.add(id);
-
-    try {
-      // Get children via CONTAINS
-      const edges = await backend.getOutgoingEdges(id, ['CONTAINS']);
-
-      for (const edge of edges) {
-        const child = await backend.getNode(edge.dst);
-        if (!child) continue;
-
-        const childType = child.type;
-
-        if (childType === 'CALL') {
-          calls.push({
-            id: child.id,
-            type: 'CALL',
-            name: child.name || '',
-            file: child.file || '',
-            line: child.line,
-          });
-        }
-
-        // Continue searching in children (but not into nested functions)
-        if (childType !== 'FUNCTION' && childType !== 'CLASS') {
-          queue.push({ id: child.id, depth: depth + 1 });
-        }
-      }
-    } catch (error) {
-      if (process.env.DEBUG) {
-        console.error('[query] Error in findCallsInFunction:', error);
-      }
-    }
-  }
-
-  return calls;
 }
 
 /**

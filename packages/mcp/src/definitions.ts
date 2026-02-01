@@ -464,4 +464,45 @@ Example use cases:
       required: ['nodeId'],
     },
   },
+  {
+    name: 'get_function_details',
+    description: `Get comprehensive details about a function, including what it calls and who calls it.
+
+Graph structure:
+  FUNCTION -[HAS_SCOPE]-> SCOPE -[CONTAINS]-> CALL/METHOD_CALL
+  CALL -[CALLS]-> FUNCTION (target)
+
+Returns:
+- Function metadata (name, file, line, async)
+- calls: What functions/methods this function calls
+- calledBy: What functions call this one
+
+For calls array:
+- resolved=true means target function was found
+- resolved=false means unknown target (external/dynamic)
+- type='CALL' for function calls like foo()
+- type='METHOD_CALL' for method calls like obj.method()
+- depth field shows transitive level (0=direct, 1+=indirect)
+
+Use transitive=true to follow call chains (A calls B calls C).
+Max transitive depth is 5 to prevent explosion.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: {
+          type: 'string',
+          description: 'Function name to look up',
+        },
+        file: {
+          type: 'string',
+          description: 'Optional: file path to disambiguate (partial match)',
+        },
+        transitive: {
+          type: 'boolean',
+          description: 'Follow call chains recursively (default: false)',
+        },
+      },
+      required: ['name'],
+    },
+  },
 ];
