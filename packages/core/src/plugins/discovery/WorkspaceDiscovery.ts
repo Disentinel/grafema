@@ -10,6 +10,8 @@
  * - lerna.json
  */
 
+import { join } from 'path';
+
 import { DiscoveryPlugin } from './DiscoveryPlugin.js';
 import { createSuccessResult, createErrorResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
@@ -124,7 +126,7 @@ export class WorkspaceDiscovery extends DiscoveryPlugin {
         metadata: {
           workspaceType: detection.type!,
           relativePath: pkg.relativePath,
-          entrypoint: serviceNode.entrypoint,
+          entrypoint: (serviceNode.metadata?.entrypoint as string | null) ?? null,
           packageJson: pkg.packageJson as Record<string, unknown>
         }
       });
@@ -146,13 +148,18 @@ export class WorkspaceDiscovery extends DiscoveryPlugin {
    */
   private createServiceNode(pkg: WorkspacePackage, workspaceType: string, _projectPath: string) {
     // Resolve entrypoint (prefer TypeScript source)
-    const entrypoint = resolveSourceEntrypoint(pkg.path, pkg.packageJson)
+    const relativeEntrypoint = resolveSourceEntrypoint(pkg.path, pkg.packageJson)
       ?? (pkg.packageJson.main as string | undefined)
       ?? null;
 
+    // Convert to absolute path (REG-247: JSModuleIndexer expects absolute paths)
+    const absoluteEntrypoint = relativeEntrypoint
+      ? join(pkg.path, relativeEntrypoint)
+      : null;
+
     const serviceNode = NodeFactory.createService(pkg.name, pkg.path, {
       discoveryMethod: 'workspace',
-      entrypoint: entrypoint ?? undefined,
+      entrypoint: absoluteEntrypoint ?? undefined,
       version: pkg.packageJson.version as string | undefined,
       description: pkg.packageJson.description as string | undefined,
       dependencies: Object.keys(pkg.packageJson.dependencies || {})
@@ -169,7 +176,7 @@ export class WorkspaceDiscovery extends DiscoveryPlugin {
       description: pkg.packageJson.description as string | undefined,
       private: pkg.packageJson.private as boolean | undefined,
       dependencies: Object.keys(pkg.packageJson.dependencies || {}),
-      entrypoint: entrypoint
+      entrypoint: absoluteEntrypoint
     };
 
     return nodeWithMetadata;
