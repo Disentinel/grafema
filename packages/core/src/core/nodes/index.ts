@@ -11,6 +11,8 @@ export { ClassNode, type ClassNodeRecord } from './ClassNode.js';
 export { MethodNode, type MethodNodeRecord, type MethodKind } from './MethodNode.js';
 export { ParameterNode, type ParameterNodeRecord } from './ParameterNode.js';
 export { ScopeNode, type ScopeNodeRecord } from './ScopeNode.js';
+export { BranchNode, type BranchNodeRecord } from './BranchNode.js';
+export { CaseNode, type CaseNodeRecord } from './CaseNode.js';
 
 // Call/reference nodes
 export { CallSiteNode, type CallSiteNodeRecord } from './CallSiteNode.js';

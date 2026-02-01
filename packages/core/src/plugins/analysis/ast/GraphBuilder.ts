@@ -17,6 +17,8 @@ import type {
   FunctionInfo,
   ParameterInfo,
   ScopeInfo,
+  BranchInfo,
+  CaseInfo,
   VariableDeclarationInfo,
   CallSiteInfo,
   MethodCallInfo,
@@ -104,6 +106,9 @@ export class GraphBuilder {
       functions,
       parameters = [],
       scopes,
+      // Branching
+      branches = [],
+      cases = [],
       variableDeclarations,
       callSites,
       methodCalls = [],
@@ -147,6 +152,19 @@ export class GraphBuilder {
     for (const scope of scopes) {
       const { parentFunctionId, parentScopeId, capturesFrom, modifies, ...scopeData } = scope;
       this._bufferNode(scopeData as GraphNode);
+    }
+
+    // 2.5. Buffer BRANCH nodes
+    // Note: parentScopeId is kept on node for query support (REG-275 test requirement)
+    for (const branch of branches) {
+      const { discriminantExpressionId, discriminantExpressionType, discriminantLine, discriminantColumn, ...branchData } = branch;
+      this._bufferNode(branchData as GraphNode);
+    }
+
+    // 2.6. Buffer CASE nodes
+    for (const caseInfo of cases) {
+      const { parentBranchId, ...caseData } = caseInfo;
+      this._bufferNode(caseData as GraphNode);
     }
 
     // 3. Buffer variables
@@ -196,6 +214,15 @@ export class GraphBuilder {
 
     // 6. Buffer edges for SCOPE
     this.bufferScopeEdges(scopes, variableDeclarations);
+
+    // 6.5. Buffer edges for BRANCH (needs callSites for CallExpression discriminant lookup)
+    this.bufferBranchEdges(branches, callSites);
+
+    // 6.6. Buffer edges for CASE
+    this.bufferCaseEdges(cases);
+
+    // 6.7. Buffer EXPRESSION nodes for switch discriminants (needs callSites for CallExpression)
+    this.bufferDiscriminantExpressions(branches, callSites);
 
     // 7. Buffer edges for variables
     this.bufferVariableEdges(variableDeclarations);
@@ -345,6 +372,95 @@ export class GraphBuilder {
             type: 'MODIFIES',
             src: scopeData.id,
             dst: mod.variableId
+          });
+        }
+      }
+    }
+  }
+
+  /**
+   * Buffer BRANCH edges (CONTAINS, HAS_CONDITION)
+   *
+   * REG-275: For CallExpression discriminants (switch(getType())), looks up the
+   * actual CALL_SITE node by coordinates since the CALL_SITE uses semantic IDs.
+   */
+  private bufferBranchEdges(branches: BranchInfo[], callSites: CallSiteInfo[]): void {
+    for (const branch of branches) {
+      // Parent SCOPE -> CONTAINS -> BRANCH
+      if (branch.parentScopeId) {
+        this._bufferEdge({
+          type: 'CONTAINS',
+          src: branch.parentScopeId,
+          dst: branch.id
+        });
+      }
+
+      // BRANCH -> HAS_CONDITION -> EXPRESSION/CALL (discriminant)
+      if (branch.discriminantExpressionId) {
+        let targetId = branch.discriminantExpressionId;
+
+        // For CallExpression discriminants, look up the actual CALL_SITE by coordinates
+        // because CALL_SITE uses semantic IDs that don't match the generated ID
+        if (branch.discriminantExpressionType === 'CallExpression' && branch.discriminantLine && branch.discriminantColumn !== undefined) {
+          const callSite = callSites.find(cs =>
+            cs.file === branch.file &&
+            cs.line === branch.discriminantLine &&
+            cs.column === branch.discriminantColumn
+          );
+          if (callSite) {
+            targetId = callSite.id;
+          }
+        }
+
+        this._bufferEdge({
+          type: 'HAS_CONDITION',
+          src: branch.id,
+          dst: targetId
+        });
+      }
+    }
+  }
+
+  /**
+   * Buffer CASE edges (HAS_CASE, HAS_DEFAULT)
+   */
+  private bufferCaseEdges(cases: CaseInfo[]): void {
+    for (const caseInfo of cases) {
+      // BRANCH -> HAS_CASE or HAS_DEFAULT -> CASE
+      const edgeType = caseInfo.isDefault ? 'HAS_DEFAULT' : 'HAS_CASE';
+      this._bufferEdge({
+        type: edgeType,
+        src: caseInfo.parentBranchId,
+        dst: caseInfo.id
+      });
+    }
+  }
+
+  /**
+   * Buffer EXPRESSION nodes for switch discriminants
+   * Uses stored metadata directly instead of parsing from ID (Linus improvement)
+   *
+   * REG-275: For CallExpression discriminants, we don't create nodes here since
+   * bufferBranchEdges links to the existing CALL_SITE node by coordinates.
+   */
+  private bufferDiscriminantExpressions(branches: BranchInfo[], callSites: CallSiteInfo[]): void {
+    for (const branch of branches) {
+      if (branch.discriminantExpressionId && branch.discriminantExpressionType) {
+        // Skip CallExpression - we link to existing CALL_SITE in bufferBranchEdges
+        if (branch.discriminantExpressionType === 'CallExpression') {
+          continue;
+        }
+
+        // Only create if it looks like an EXPRESSION ID
+        if (branch.discriminantExpressionId.includes(':EXPRESSION:')) {
+          this._bufferNode({
+            id: branch.discriminantExpressionId,
+            type: 'EXPRESSION',
+            name: branch.discriminantExpressionType,
+            file: branch.file,
+            line: branch.discriminantLine,
+            column: branch.discriminantColumn,
+            expressionType: branch.discriminantExpressionType
           });
         }
       }
