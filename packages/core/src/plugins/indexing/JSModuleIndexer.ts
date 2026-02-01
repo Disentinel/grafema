@@ -6,6 +6,7 @@
 import { readFileSync, existsSync } from 'fs';
 import { join, resolve, dirname, relative, basename } from 'path';
 import { createHash } from 'crypto';
+import { minimatch } from 'minimatch';
 import { Plugin, createErrorResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 // @ts-expect-error - no type declarations for node-source-walk
@@ -76,6 +77,10 @@ export class JSModuleIndexer extends Plugin {
   private cache: Map<string, string[] | Error>;
   private testPatterns: RegExp[];
   private markTestFiles: boolean;
+  // Include/exclude pattern filtering (REG-185)
+  private includePatterns?: string[];
+  private excludePatterns?: string[];
+  private projectPath: string = '';
 
   constructor() {
     super();
@@ -93,6 +98,43 @@ export class JSModuleIndexer extends Plugin {
   private isTestFile(filePath: string): boolean {
     if (!this.markTestFiles) return false;
     return this.testPatterns.some(pattern => pattern.test(filePath));
+  }
+
+  /**
+   * Check if a file should be skipped based on include/exclude patterns.
+   *
+   * Logic:
+   * 1. If file matches any exclude pattern -> SKIP
+   * 2. If include patterns specified AND file doesn't match any -> SKIP
+   * 3. Otherwise -> PROCESS
+   *
+   * @param absolutePath - Absolute path to the file
+   * @returns true if file should be skipped, false if it should be processed
+   */
+  private shouldSkipFile(absolutePath: string): boolean {
+    // Normalize to relative path for pattern matching
+    const relativePath = relative(this.projectPath, absolutePath).replace(/\\/g, '/');
+
+    // Check exclude patterns first (if any match, skip)
+    if (this.excludePatterns && this.excludePatterns.length > 0) {
+      for (const pattern of this.excludePatterns) {
+        if (minimatch(relativePath, pattern, { dot: true })) {
+          return true;  // Excluded
+        }
+      }
+    }
+
+    // Check include patterns (if specified, file must match at least one)
+    if (this.includePatterns && this.includePatterns.length > 0) {
+      for (const pattern of this.includePatterns) {
+        if (minimatch(relativePath, pattern, { dot: true })) {
+          return false;  // Included
+        }
+      }
+      return true;  // Include specified but file didn't match any
+    }
+
+    return false;  // No filtering, process file
   }
 
   get metadata(): PluginMetadata {
@@ -225,6 +267,22 @@ export class JSModuleIndexer extends Plugin {
       // Collect parse errors to report (REG-147)
       const parseErrors: Error[] = [];
 
+      // Store projectPath for shouldSkipFile()
+      this.projectPath = projectPath;
+
+      // Read include/exclude patterns from config (REG-185)
+      const orchConfig = config as { include?: string[]; exclude?: string[] } | undefined;
+      this.includePatterns = orchConfig?.include;
+      this.excludePatterns = orchConfig?.exclude;
+
+      // Log if patterns are configured
+      if (this.includePatterns || this.excludePatterns) {
+        logger.info('File filtering enabled', {
+          include: this.includePatterns?.length ?? 0,
+          exclude: this.excludePatterns?.length ?? 0,
+        });
+      }
+
       // Check config for test file marking
       if ((config as { analysis?: { tests?: { markTestFiles?: boolean } } })?.analysis?.tests?.markTestFiles === false) {
         this.markTestFiles = false;
@@ -259,6 +317,14 @@ export class JSModuleIndexer extends Plugin {
 
       while (stack.length > 0 && visited.size < MAX_MODULES) {
         const { file: currentFile, depth } = stack.pop()!;
+
+        // Check if file should be skipped based on include/exclude patterns (REG-185)
+        if (this.shouldSkipFile(currentFile)) {
+          logger.debug('Skipping file (filtered by patterns)', {
+            file: currentFile.replace(projectPath, '')
+          });
+          continue;  // Don't process, don't follow imports
+        }
 
         // Report progress every PROGRESS_INTERVAL files
         if (onProgress && visited.size - lastProgressReport >= PROGRESS_INTERVAL) {
