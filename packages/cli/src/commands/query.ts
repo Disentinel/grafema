@@ -12,7 +12,7 @@
 import { Command } from 'commander';
 import { resolve, join, relative } from 'path';
 import { existsSync } from 'fs';
-import { RFDBServerBackend, findCallsInFunction as findCallsInFunctionCore } from '@grafema/core';
+import { RFDBServerBackend, findCallsInFunction as findCallsInFunctionCore, findContainingFunction as findContainingFunctionCore } from '@grafema/core';
 import { formatNodeDisplay, formatNodeInline, formatLocation } from '../utils/formatNode.js';
 import { exitWithError } from '../utils/errorFormatter.js';
 
@@ -430,8 +430,8 @@ async function getCallers(
       const callNode = await backend.getNode(edge.src);
       if (!callNode) continue;
 
-      // Find the FUNCTION that contains this CALL
-      const containingFunc = await findContainingFunction(backend, callNode.id);
+      // Find the FUNCTION that contains this CALL (use shared utility from @grafema/core)
+      const containingFunc = await findContainingFunctionCore(backend, callNode.id);
 
       if (containingFunc && !seen.has(containingFunc.id)) {
         seen.add(containingFunc.id);
@@ -451,63 +451,6 @@ async function getCallers(
   }
 
   return callers;
-}
-
-/**
- * Find the FUNCTION or CLASS that contains a node
- *
- * Path can be: CALL → CONTAINS → SCOPE → CONTAINS → SCOPE → HAS_SCOPE → FUNCTION
- * So we need to follow both CONTAINS and HAS_SCOPE edges
- */
-async function findContainingFunction(
-  backend: RFDBServerBackend,
-  nodeId: string,
-  maxDepth: number = 15
-): Promise<NodeInfo | null> {
-  const visited = new Set<string>();
-  const queue: Array<{ id: string; depth: number }> = [{ id: nodeId, depth: 0 }];
-
-  while (queue.length > 0) {
-    const { id, depth } = queue.shift()!;
-
-    if (visited.has(id) || depth > maxDepth) continue;
-    visited.add(id);
-
-    try {
-      // Get incoming edges: CONTAINS, HAS_SCOPE, and DECLARES (for variables in functions)
-      const edges = await backend.getIncomingEdges(id, null);
-
-      for (const edge of edges) {
-        // Only follow structural edges
-        if (!['CONTAINS', 'HAS_SCOPE', 'DECLARES'].includes(edge.type)) continue;
-
-        const parentNode = await backend.getNode(edge.src);
-        if (!parentNode || visited.has(parentNode.id)) continue;
-
-        const parentType = parentNode.type;
-
-        // FUNCTION, CLASS, or MODULE (for top-level calls)
-        if (parentType === 'FUNCTION' || parentType === 'CLASS' || parentType === 'MODULE') {
-          return {
-            id: parentNode.id,
-            type: parentType,
-            name: parentNode.name || '<anonymous>',
-            file: parentNode.file || '',
-            line: parentNode.line,
-          };
-        }
-
-        // Continue searching from this parent
-        queue.push({ id: parentNode.id, depth: depth + 1 });
-      }
-    } catch (error) {
-      if (process.env.DEBUG) {
-        console.error('[query] Error in findContainingFunction:', error);
-      }
-    }
-  }
-
-  return null;
 }
 
 /**

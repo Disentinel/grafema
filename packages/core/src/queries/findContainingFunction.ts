@@ -4,10 +4,11 @@
  * Graph structure (backward traversal):
  * ```
  * CALL <- CONTAINS <- SCOPE <- ... <- SCOPE <- HAS_SCOPE <- FUNCTION
+ * VARIABLE <- DECLARES <- SCOPE <- ... <- SCOPE <- HAS_SCOPE <- FUNCTION
  * ```
  *
  * Algorithm:
- * 1. BFS up the containment tree via CONTAINS edges
+ * 1. BFS up the containment tree via CONTAINS and DECLARES edges
  * 2. Also follow HAS_SCOPE edges (connects FUNCTION to its body SCOPE)
  * 3. Stop when we find FUNCTION, CLASS, or MODULE
  *
@@ -55,8 +56,8 @@ export async function findContainingFunction(
     if (visited.has(id) || depth > maxDepth) continue;
     visited.add(id);
 
-    // Get incoming edges: CONTAINS and HAS_SCOPE
-    const edges = await backend.getIncomingEdges(id, ['CONTAINS', 'HAS_SCOPE']);
+    // Get incoming edges: CONTAINS, HAS_SCOPE, and DECLARES (for variables)
+    const edges = await backend.getIncomingEdges(id, ['CONTAINS', 'HAS_SCOPE', 'DECLARES']);
 
     for (const edge of edges) {
       const parentNode = await backend.getNode(edge.src);

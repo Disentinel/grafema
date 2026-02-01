@@ -14,7 +14,7 @@ import { existsSync } from 'fs';
 import { execSync } from 'child_process';
 import React, { useState, useEffect } from 'react';
 import { render, Box, Text, useInput, useApp } from 'ink';
-import { RFDBServerBackend } from '@grafema/core';
+import { RFDBServerBackend, findContainingFunction as findContainingFunctionCore, findCallsInFunction as findCallsInFunctionCore } from '@grafema/core';
 import { getCodePreview, formatCodePreview } from '../utils/codePreview.js';
 import { exitWithError } from '../utils/errorFormatter.js';
 
@@ -786,11 +786,17 @@ async function getCallers(backend: RFDBServerBackend, nodeId: string, limit: num
       const callNode = await backend.getNode(edge.src);
       if (!callNode) continue;
 
-      const containingFunc = await findContainingFunction(backend, callNode.id);
+      const containingFunc = await findContainingFunctionCore(backend, callNode.id);
 
       if (containingFunc && !seen.has(containingFunc.id)) {
         seen.add(containingFunc.id);
-        callers.push(containingFunc);
+        callers.push({
+          id: containingFunc.id,
+          type: containingFunc.type,
+          name: containingFunc.name,
+          file: containingFunc.file || '',
+          line: containingFunc.line,
+        });
       }
     }
   } catch {
@@ -805,21 +811,22 @@ async function getCallees(backend: RFDBServerBackend, nodeId: string, limit: num
   const seen = new Set<string>();
 
   try {
-    const callNodes = await findCallsInFunction(backend, nodeId);
+    // Use shared utility from @grafema/core
+    const calls = await findCallsInFunctionCore(backend, nodeId);
 
-    for (const callNode of callNodes) {
+    for (const call of calls) {
       if (callees.length >= limit) break;
 
-      const callEdges = await backend.getOutgoingEdges(callNode.id, ['CALLS']);
-
-      for (const edge of callEdges) {
-        if (callees.length >= limit) break;
-
-        const targetNode = await backend.getNode(edge.dst);
-        if (!targetNode || seen.has(targetNode.id)) continue;
-
-        seen.add(targetNode.id);
-        callees.push(extractNodeInfo(targetNode));
+      // Only include resolved calls with targets
+      if (call.resolved && call.target && !seen.has(call.target.id)) {
+        seen.add(call.target.id);
+        callees.push({
+          id: call.target.id,
+          type: 'FUNCTION',
+          name: call.target.name || '',
+          file: call.target.file || '',
+          line: call.target.line,
+        });
       }
     }
   } catch {
@@ -827,81 +834,6 @@ async function getCallees(backend: RFDBServerBackend, nodeId: string, limit: num
   }
 
   return callees;
-}
-
-async function findContainingFunction(backend: RFDBServerBackend, nodeId: string): Promise<NodeInfo | null> {
-  const visited = new Set<string>();
-  const queue: Array<{ id: string; depth: number }> = [{ id: nodeId, depth: 0 }];
-
-  while (queue.length > 0) {
-    const { id, depth } = queue.shift()!;
-    if (visited.has(id) || depth > 15) continue;
-    visited.add(id);
-
-    try {
-      const edges = await backend.getIncomingEdges(id, null);
-
-      for (const edge of edges) {
-        if (!['CONTAINS', 'HAS_SCOPE', 'DECLARES'].includes(edge.type)) continue;
-
-        const parent = await backend.getNode(edge.src);
-        if (!parent || visited.has(parent.id)) continue;
-
-        const parentType = (parent as any).type || (parent as any).nodeType;
-
-        if (parentType === 'FUNCTION' || parentType === 'CLASS' || parentType === 'MODULE') {
-          return extractNodeInfo(parent);
-        }
-
-        queue.push({ id: parent.id, depth: depth + 1 });
-      }
-    } catch {
-      // Ignore
-    }
-  }
-
-  return null;
-}
-
-async function findCallsInFunction(backend: RFDBServerBackend, nodeId: string): Promise<NodeInfo[]> {
-  const calls: NodeInfo[] = [];
-  const visited = new Set<string>();
-  const queue: Array<{ id: string; depth: number }> = [{ id: nodeId, depth: 0 }];
-
-  while (queue.length > 0) {
-    const { id, depth } = queue.shift()!;
-    if (visited.has(id) || depth > 10) continue;
-    visited.add(id);
-
-    try {
-      const edges = await backend.getOutgoingEdges(id, ['CONTAINS']);
-
-      for (const edge of edges) {
-        const child = await backend.getNode(edge.dst);
-        if (!child) continue;
-
-        const childType = (child as any).type || (child as any).nodeType;
-
-        if (childType === 'CALL') {
-          calls.push({
-            id: child.id,
-            type: 'CALL',
-            name: (child as any).name || '',
-            file: (child as any).file || '',
-            line: (child as any).line,
-          });
-        }
-
-        if (childType !== 'FUNCTION' && childType !== 'CLASS') {
-          queue.push({ id: child.id, depth: depth + 1 });
-        }
-      }
-    } catch {
-      // Ignore
-    }
-  }
-
-  return calls;
 }
 
 async function searchNode(backend: RFDBServerBackend, query: string): Promise<NodeInfo | null> {

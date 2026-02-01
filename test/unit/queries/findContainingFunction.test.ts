@@ -6,6 +6,7 @@
  * Graph structure (backward traversal):
  * ```
  * CALL <- CONTAINS <- SCOPE <- ... <- SCOPE <- HAS_SCOPE <- FUNCTION
+ * VARIABLE <- DECLARES <- SCOPE <- ... <- SCOPE <- HAS_SCOPE <- FUNCTION
  * ```
  *
  * TDD: Tests written first per Kent Beck's methodology.
@@ -388,6 +389,31 @@ describe('findContainingFunction', () => {
 
       assert.ok(container, 'Should find container for VARIABLE');
       assert.strictEqual(container.name, 'processor');
+    });
+
+    /**
+     * WHY: VARIABLE nodes are connected to SCOPE via DECLARES edge (not CONTAINS).
+     * Must follow DECLARES edges to find containing function.
+     *
+     * Graph structure:
+     * ```
+     * FUNCTION -[HAS_SCOPE]-> SCOPE -[DECLARES]-> VARIABLE
+     * ```
+     */
+    it('should find container for VARIABLE via DECLARES edge', async () => {
+      await backend.addNode({ id: 'func-1', type: 'FUNCTION', name: 'varHandler', file: 'file.js', line: 1 });
+      await backend.addNode({ id: 'scope-1', type: 'SCOPE', name: 'function_body', file: 'file.js', line: 1 });
+      await backend.addNode({ id: 'var-1', type: 'VARIABLE', name: 'declaredVar', file: 'file.js', line: 3 });
+
+      await backend.addEdge({ src: 'func-1', dst: 'scope-1', type: 'HAS_SCOPE' });
+      await backend.addEdge({ src: 'scope-1', dst: 'var-1', type: 'DECLARES' }); // Real graph structure
+
+      const container = await findContainingFunction(backend, 'var-1');
+
+      assert.ok(container, 'Should find container for VARIABLE via DECLARES edge');
+      assert.strictEqual(container.id, 'func-1');
+      assert.strictEqual(container.name, 'varHandler');
+      assert.strictEqual(container.type, 'FUNCTION');
     });
   });
 
