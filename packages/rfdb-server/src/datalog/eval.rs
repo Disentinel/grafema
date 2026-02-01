@@ -123,6 +123,52 @@ impl<'a> Evaluator<'a> {
         self.eval_atom(goal)
     }
 
+    /// Evaluate a query (conjunction of literals)
+    ///
+    /// Returns all bindings satisfying the conjunction.
+    /// This allows queries like `node(X, "type"), attr(X, "url", U)`.
+    pub fn eval_query(&self, literals: &[Literal]) -> Vec<Bindings> {
+        let mut current = vec![Bindings::new()];
+
+        for literal in literals {
+            let mut next = vec![];
+
+            for bindings in &current {
+                match literal {
+                    Literal::Positive(atom) => {
+                        // Substitute known bindings into atom
+                        let substituted = self.substitute_atom(atom, bindings);
+                        let results = self.eval_atom(&substituted);
+
+                        for result in results {
+                            if let Some(merged) = bindings.extend(&result) {
+                                next.push(merged);
+                            }
+                        }
+                    }
+                    Literal::Negative(atom) => {
+                        // Negation: check that atom has no solutions
+                        let substituted = self.substitute_atom(atom, bindings);
+                        let results = self.eval_atom(&substituted);
+
+                        if results.is_empty() {
+                            // Negation succeeds - keep current bindings
+                            next.push(bindings.clone());
+                        }
+                        // If results not empty, negation fails - drop bindings
+                    }
+                }
+            }
+
+            current = next;
+            if current.is_empty() {
+                break;
+            }
+        }
+
+        current
+    }
+
     /// Evaluate an atom (built-in or derived)
     pub fn eval_atom(&self, atom: &Atom) -> Vec<Bindings> {
         match atom.predicate() {

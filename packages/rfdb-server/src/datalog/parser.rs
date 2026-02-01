@@ -239,6 +239,27 @@ impl<'a> Parser<'a> {
 
         Ok(Program::new(rules))
     }
+
+    /// Parse a query (conjunction of literals without rule head)
+    /// Supports: single atom OR comma-separated atoms
+    /// Example: "node(X, \"type\"), attr(X, \"url\", U)"
+    fn parse_query(&mut self) -> Result<Vec<Literal>, ParseError> {
+        let mut body = Vec::new();
+
+        body.push(self.parse_literal()?);
+
+        loop {
+            self.skip_whitespace();
+            if self.peek() == Some(',') {
+                self.expect(",")?;
+                body.push(self.parse_literal()?);
+            } else {
+                break;
+            }
+        }
+
+        Ok(body)
+    }
 }
 
 // ============================================================================
@@ -273,4 +294,17 @@ pub fn parse_rule(input: &str) -> Result<Rule, ParseError> {
 pub fn parse_program(input: &str) -> Result<Program, ParseError> {
     let mut parser = Parser::new(input);
     parser.parse_program()
+}
+
+/// Parse a query (conjunction of literals)
+///
+/// Supports single atoms or comma-separated conjunctions:
+/// - `node(X, "type")` - single atom
+/// - `node(X, "type"), attr(X, "url", U)` - conjunction
+///
+/// Unlike `parse_atom`, this supports conjunctions without requiring
+/// a full rule definition.
+pub fn parse_query(input: &str) -> Result<Vec<Literal>, ParseError> {
+    let mut parser = Parser::new(input);
+    parser.parse_query()
 }
