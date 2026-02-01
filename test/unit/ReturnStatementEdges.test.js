@@ -488,10 +488,8 @@ const compute = (x) => {
   });
 
   describe('Arrow function implicit return', () => {
-    // NOTE: Expression returns (like x * 2) are documented as a gap - we don't track them
-    // because there's no single source node to create an edge from.
-    // See REG-263: EXPRESSION type is explicitly skipped in bufferReturnEdges.
-    it('should NOT create RETURNS edge for arrow function with expression body (documented gap)', async () => {
+    // NOTE: REG-276 implemented EXPRESSION returns - this test now expects edges
+    it('should create RETURNS edge for arrow function with expression body (REG-276)', async () => {
       const projectPath = await setupTest({
         'index.js': `
 const double = x => x * 2;
@@ -507,11 +505,26 @@ const double = x => x * 2;
       const func = allNodes.find(n => n.name === 'double' && n.type === 'FUNCTION');
       assert.ok(func, 'Function "double" should exist');
 
-      // Expression returns (BinaryExpression) don't create RETURNS edges - documented gap
+      // REG-276: Expression returns now create RETURNS edges
       const returnsEdge = allEdges.find(e =>
         e.type === 'RETURNS' && e.dst === func.id
       );
-      assert.strictEqual(returnsEdge, undefined, 'No RETURNS edge for expression return (documented gap)');
+      assert.ok(returnsEdge, 'RETURNS edge should exist for expression return (REG-276)');
+
+      // Source should be an EXPRESSION node
+      const source = allNodes.find(n => n.id === returnsEdge.src);
+      assert.ok(source, 'Source node should exist');
+      assert.strictEqual(source.type, 'EXPRESSION', `Expected EXPRESSION, got ${source.type}`);
+      assert.strictEqual(source.expressionType, 'BinaryExpression', 'Should be BinaryExpression');
+
+      // Should derive from parameter x
+      const derivesFromEdge = allEdges.find(e =>
+        e.type === 'DERIVES_FROM' && e.src === source.id
+      );
+      assert.ok(derivesFromEdge, 'Should have DERIVES_FROM edge');
+      const xParam = allNodes.find(n => n.name === 'x' && n.type === 'PARAMETER');
+      assert.ok(xParam, 'Parameter x should exist');
+      assert.strictEqual(derivesFromEdge.dst, xParam.id, 'Should derive from parameter x');
     });
 
     it('should create RETURNS edge for arrow function returning identifier', async () => {
@@ -1006,6 +1019,283 @@ function getValue() {
         count2, count1,
         `RETURNS edge count should not increase on re-run (was ${count1}, now ${count2})`
       );
+    });
+  });
+
+  /**
+   * Return expressions (REG-276)
+   *
+   * Tests for RETURNS edges from complex expressions (BinaryExpression,
+   * ConditionalExpression, MemberExpression, etc.) to containing functions.
+   *
+   * When a function returns a complex expression, we create:
+   * 1. An EXPRESSION node representing the return value
+   * 2. DERIVES_FROM edges connecting the EXPRESSION to its source variables/parameters
+   * 3. A RETURNS edge connecting the EXPRESSION to the function
+   */
+  describe('Return expressions (REG-276)', () => {
+    it('should create RETURNS edge for BinaryExpression return', async () => {
+      const projectPath = await setupTest({
+        'index.js': `
+function add(a, b) {
+  return a + b;
+}
+        `.trim()
+      });
+
+      const orchestrator = createTestOrchestrator(backend);
+      await orchestrator.run(projectPath);
+
+      const allNodes = await backend.getAllNodes();
+      const allEdges = await backend.getAllEdges();
+
+      const func = allNodes.find(n => n.name === 'add' && n.type === 'FUNCTION');
+      assert.ok(func, 'Function "add" should exist');
+
+      // RETURNS edge should exist
+      const returnsEdge = allEdges.find(e =>
+        e.type === 'RETURNS' && e.dst === func.id
+      );
+      assert.ok(returnsEdge, 'RETURNS edge should exist');
+
+      // Source should be an EXPRESSION node
+      const source = allNodes.find(n => n.id === returnsEdge.src);
+      assert.ok(source, 'Source node should exist');
+      assert.strictEqual(source.type, 'EXPRESSION', `Expected EXPRESSION, got ${source.type}`);
+      assert.strictEqual(source.expressionType, 'BinaryExpression', 'Should be BinaryExpression');
+
+      // DERIVES_FROM edges to parameters a and b
+      const derivesFromEdges = allEdges.filter(e =>
+        e.type === 'DERIVES_FROM' && e.src === source.id
+      );
+      assert.strictEqual(derivesFromEdges.length, 2, 'Should have 2 DERIVES_FROM edges');
+
+      const paramA = allNodes.find(n => n.name === 'a' && n.type === 'PARAMETER');
+      const paramB = allNodes.find(n => n.name === 'b' && n.type === 'PARAMETER');
+      assert.ok(paramA && paramB, 'Parameters a and b should exist');
+
+      const targetIds = derivesFromEdges.map(e => e.dst);
+      assert.ok(targetIds.includes(paramA.id), 'Should derive from parameter a');
+      assert.ok(targetIds.includes(paramB.id), 'Should derive from parameter b');
+    });
+
+    it('should create RETURNS edge for ConditionalExpression return', async () => {
+      const projectPath = await setupTest({
+        'index.js': `
+function pick(condition, x, y) {
+  return condition ? x : y;
+}
+        `.trim()
+      });
+
+      const orchestrator = createTestOrchestrator(backend);
+      await orchestrator.run(projectPath);
+
+      const allNodes = await backend.getAllNodes();
+      const allEdges = await backend.getAllEdges();
+
+      const func = allNodes.find(n => n.name === 'pick' && n.type === 'FUNCTION');
+      assert.ok(func, 'Function "pick" should exist');
+
+      const returnsEdge = allEdges.find(e =>
+        e.type === 'RETURNS' && e.dst === func.id
+      );
+      assert.ok(returnsEdge, 'RETURNS edge should exist');
+
+      const source = allNodes.find(n => n.id === returnsEdge.src);
+      assert.strictEqual(source.type, 'EXPRESSION');
+      assert.strictEqual(source.expressionType, 'ConditionalExpression');
+
+      // Should derive from x and y (consequent and alternate)
+      const derivesFromEdges = allEdges.filter(e =>
+        e.type === 'DERIVES_FROM' && e.src === source.id
+      );
+      assert.strictEqual(derivesFromEdges.length, 2, 'Should derive from x and y');
+    });
+
+    it('should create RETURNS edge for MemberExpression return', async () => {
+      const projectPath = await setupTest({
+        'index.js': `
+function getProp(obj) {
+  return obj.name;
+}
+        `.trim()
+      });
+
+      const orchestrator = createTestOrchestrator(backend);
+      await orchestrator.run(projectPath);
+
+      const allNodes = await backend.getAllNodes();
+      const allEdges = await backend.getAllEdges();
+
+      const func = allNodes.find(n => n.name === 'getProp' && n.type === 'FUNCTION');
+      const returnsEdge = allEdges.find(e =>
+        e.type === 'RETURNS' && e.dst === func.id
+      );
+      assert.ok(returnsEdge, 'RETURNS edge should exist');
+
+      const source = allNodes.find(n => n.id === returnsEdge.src);
+      assert.strictEqual(source.type, 'EXPRESSION');
+      assert.strictEqual(source.expressionType, 'MemberExpression');
+
+      // Should derive from obj parameter
+      const derivesFromEdge = allEdges.find(e =>
+        e.type === 'DERIVES_FROM' && e.src === source.id
+      );
+      assert.ok(derivesFromEdge, 'Should have DERIVES_FROM edge');
+
+      const objParam = allNodes.find(n => n.name === 'obj' && n.type === 'PARAMETER');
+      assert.strictEqual(derivesFromEdge.dst, objParam.id, 'Should derive from obj');
+    });
+
+    it('should create RETURNS edge for LogicalExpression return', async () => {
+      const projectPath = await setupTest({
+        'index.js': `
+function getDefault(value, fallback) {
+  return value || fallback;
+}
+        `.trim()
+      });
+
+      const orchestrator = createTestOrchestrator(backend);
+      await orchestrator.run(projectPath);
+
+      const allNodes = await backend.getAllNodes();
+      const allEdges = await backend.getAllEdges();
+
+      const func = allNodes.find(n => n.name === 'getDefault' && n.type === 'FUNCTION');
+      const returnsEdge = allEdges.find(e =>
+        e.type === 'RETURNS' && e.dst === func.id
+      );
+      assert.ok(returnsEdge, 'RETURNS edge should exist');
+
+      const source = allNodes.find(n => n.id === returnsEdge.src);
+      assert.strictEqual(source.expressionType, 'LogicalExpression');
+    });
+
+    it('should create RETURNS edge for UnaryExpression return', async () => {
+      const projectPath = await setupTest({
+        'index.js': `
+function negate(flag) {
+  return !flag;
+}
+        `.trim()
+      });
+
+      const orchestrator = createTestOrchestrator(backend);
+      await orchestrator.run(projectPath);
+
+      const allNodes = await backend.getAllNodes();
+      const allEdges = await backend.getAllEdges();
+
+      const func = allNodes.find(n => n.name === 'negate' && n.type === 'FUNCTION');
+      const returnsEdge = allEdges.find(e =>
+        e.type === 'RETURNS' && e.dst === func.id
+      );
+      assert.ok(returnsEdge, 'RETURNS edge should exist');
+
+      const source = allNodes.find(n => n.id === returnsEdge.src);
+      assert.strictEqual(source.expressionType, 'UnaryExpression');
+
+      // Should derive from flag parameter
+      const derivesFromEdge = allEdges.find(e =>
+        e.type === 'DERIVES_FROM' && e.src === source.id
+      );
+      const flagParam = allNodes.find(n => n.name === 'flag' && n.type === 'PARAMETER');
+      assert.strictEqual(derivesFromEdge.dst, flagParam.id);
+    });
+
+    it('should create RETURNS edge for arrow function implicit BinaryExpression', async () => {
+      const projectPath = await setupTest({
+        'index.js': `
+const double = x => x * 2;
+        `.trim()
+      });
+
+      const orchestrator = createTestOrchestrator(backend);
+      await orchestrator.run(projectPath);
+
+      const allNodes = await backend.getAllNodes();
+      const allEdges = await backend.getAllEdges();
+
+      const func = allNodes.find(n => n.name === 'double' && n.type === 'FUNCTION');
+      const returnsEdge = allEdges.find(e =>
+        e.type === 'RETURNS' && e.dst === func.id
+      );
+      assert.ok(returnsEdge, 'RETURNS edge should exist for implicit expression return');
+
+      const source = allNodes.find(n => n.id === returnsEdge.src);
+      assert.strictEqual(source.type, 'EXPRESSION');
+      assert.strictEqual(source.expressionType, 'BinaryExpression');
+
+      // Should derive from x parameter
+      const derivesFromEdge = allEdges.find(e =>
+        e.type === 'DERIVES_FROM' && e.src === source.id
+      );
+      const xParam = allNodes.find(n => n.name === 'x' && n.type === 'PARAMETER');
+      assert.strictEqual(derivesFromEdge.dst, xParam.id);
+    });
+
+    it('should create RETURNS edge for TemplateLiteral return', async () => {
+      const projectPath = await setupTest({
+        'index.js': `
+function greet(name, title) {
+  return \`Hello, \${title} \${name}!\`;
+}
+        `.trim()
+      });
+
+      const orchestrator = createTestOrchestrator(backend);
+      await orchestrator.run(projectPath);
+
+      const allNodes = await backend.getAllNodes();
+      const allEdges = await backend.getAllEdges();
+
+      const func = allNodes.find(n => n.name === 'greet' && n.type === 'FUNCTION');
+      const returnsEdge = allEdges.find(e =>
+        e.type === 'RETURNS' && e.dst === func.id
+      );
+      assert.ok(returnsEdge, 'RETURNS edge should exist');
+
+      const source = allNodes.find(n => n.id === returnsEdge.src);
+      assert.strictEqual(source.expressionType, 'TemplateLiteral');
+
+      // Should derive from both title and name
+      const derivesFromEdges = allEdges.filter(e =>
+        e.type === 'DERIVES_FROM' && e.src === source.id
+      );
+      assert.strictEqual(derivesFromEdges.length, 2);
+    });
+
+    it('should handle mixed expression types in return paths', async () => {
+      const projectPath = await setupTest({
+        'index.js': `
+function mixedReturns(a, b, flag) {
+  if (flag) {
+    return a + b;  // BinaryExpression
+  }
+  return a;  // Simple variable
+}
+        `.trim()
+      });
+
+      const orchestrator = createTestOrchestrator(backend);
+      await orchestrator.run(projectPath);
+
+      const allNodes = await backend.getAllNodes();
+      const allEdges = await backend.getAllEdges();
+
+      const func = allNodes.find(n => n.name === 'mixedReturns' && n.type === 'FUNCTION');
+      const returnsEdges = allEdges.filter(e =>
+        e.type === 'RETURNS' && e.dst === func.id
+      );
+      assert.strictEqual(returnsEdges.length, 2, 'Should have 2 RETURNS edges');
+
+      // One from EXPRESSION, one from PARAMETER
+      const sources = returnsEdges.map(e => allNodes.find(n => n.id === e.src));
+      const types = sources.map(s => s.type);
+      assert.ok(types.includes('EXPRESSION'), 'Should have EXPRESSION source');
+      assert.ok(types.includes('PARAMETER'), 'Should have PARAMETER source');
     });
   });
 });

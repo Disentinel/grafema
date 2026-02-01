@@ -55,6 +55,7 @@ import { ScopeTracker } from '../../core/ScopeTracker.js';
 import { computeSemanticId } from '../../core/SemanticId.js';
 import { ExpressionNode } from '../../core/nodes/ExpressionNode.js';
 import { ConstructorCallNode } from '../../core/nodes/ConstructorCallNode.js';
+import { NodeFactory } from '../../core/NodeFactory.js';
 import type { PluginContext, PluginResult, PluginMetadata, GraphBackend } from '@grafema/types';
 import type {
   ModuleNode,
@@ -2571,6 +2572,21 @@ export class JSASTAnalyzer extends Plugin {
         returnInfo.returnValueType = 'VARIABLE';
         returnInfo.returnValueName = bodyExpr.name;
       }
+      // TemplateLiteral must come BEFORE isLiteral (TemplateLiteral extends Literal)
+      else if (t.isTemplateLiteral(bodyExpr)) {
+        returnInfo.returnValueType = 'EXPRESSION';
+        returnInfo.expressionType = 'TemplateLiteral';
+        returnInfo.returnValueLine = getLine(bodyExpr);
+        returnInfo.returnValueColumn = getColumn(bodyExpr);
+        returnInfo.returnValueId = NodeFactory.generateExpressionId(
+          'TemplateLiteral', module.file, getLine(bodyExpr), getColumn(bodyExpr)
+        );
+        const sourceNames: string[] = [];
+        for (const expr of bodyExpr.expressions) {
+          if (t.isIdentifier(expr)) sourceNames.push(expr.name);
+        }
+        if (sourceNames.length > 0) returnInfo.expressionSourceNames = sourceNames;
+      }
       else if (t.isLiteral(bodyExpr)) {
         returnInfo.returnValueType = 'LITERAL';
         const literalId = `LITERAL#implicit_return#${module.file}#${funcLine}:${funcColumn}:${literalCounterRef.value++}`;
@@ -2599,11 +2615,77 @@ export class JSASTAnalyzer extends Plugin {
           returnInfo.returnValueCallName = bodyExpr.callee.property.name;
         }
       }
+      // REG-276: Detailed EXPRESSION handling for implicit arrow returns
+      else if (t.isBinaryExpression(bodyExpr)) {
+        returnInfo.returnValueType = 'EXPRESSION';
+        returnInfo.expressionType = 'BinaryExpression';
+        returnInfo.returnValueLine = getLine(bodyExpr);
+        returnInfo.returnValueColumn = getColumn(bodyExpr);
+        returnInfo.operator = bodyExpr.operator;
+        returnInfo.returnValueId = NodeFactory.generateExpressionId(
+          'BinaryExpression', module.file, getLine(bodyExpr), getColumn(bodyExpr)
+        );
+        if (t.isIdentifier(bodyExpr.left)) returnInfo.leftSourceName = bodyExpr.left.name;
+        if (t.isIdentifier(bodyExpr.right)) returnInfo.rightSourceName = bodyExpr.right.name;
+      }
+      else if (t.isLogicalExpression(bodyExpr)) {
+        returnInfo.returnValueType = 'EXPRESSION';
+        returnInfo.expressionType = 'LogicalExpression';
+        returnInfo.returnValueLine = getLine(bodyExpr);
+        returnInfo.returnValueColumn = getColumn(bodyExpr);
+        returnInfo.operator = bodyExpr.operator;
+        returnInfo.returnValueId = NodeFactory.generateExpressionId(
+          'LogicalExpression', module.file, getLine(bodyExpr), getColumn(bodyExpr)
+        );
+        if (t.isIdentifier(bodyExpr.left)) returnInfo.leftSourceName = bodyExpr.left.name;
+        if (t.isIdentifier(bodyExpr.right)) returnInfo.rightSourceName = bodyExpr.right.name;
+      }
+      else if (t.isConditionalExpression(bodyExpr)) {
+        returnInfo.returnValueType = 'EXPRESSION';
+        returnInfo.expressionType = 'ConditionalExpression';
+        returnInfo.returnValueLine = getLine(bodyExpr);
+        returnInfo.returnValueColumn = getColumn(bodyExpr);
+        returnInfo.returnValueId = NodeFactory.generateExpressionId(
+          'ConditionalExpression', module.file, getLine(bodyExpr), getColumn(bodyExpr)
+        );
+        if (t.isIdentifier(bodyExpr.consequent)) returnInfo.consequentSourceName = bodyExpr.consequent.name;
+        if (t.isIdentifier(bodyExpr.alternate)) returnInfo.alternateSourceName = bodyExpr.alternate.name;
+      }
+      else if (t.isUnaryExpression(bodyExpr)) {
+        returnInfo.returnValueType = 'EXPRESSION';
+        returnInfo.expressionType = 'UnaryExpression';
+        returnInfo.returnValueLine = getLine(bodyExpr);
+        returnInfo.returnValueColumn = getColumn(bodyExpr);
+        returnInfo.operator = bodyExpr.operator;
+        returnInfo.returnValueId = NodeFactory.generateExpressionId(
+          'UnaryExpression', module.file, getLine(bodyExpr), getColumn(bodyExpr)
+        );
+        if (t.isIdentifier(bodyExpr.argument)) returnInfo.unaryArgSourceName = bodyExpr.argument.name;
+      }
+      else if (t.isMemberExpression(bodyExpr)) {
+        returnInfo.returnValueType = 'EXPRESSION';
+        returnInfo.expressionType = 'MemberExpression';
+        returnInfo.returnValueLine = getLine(bodyExpr);
+        returnInfo.returnValueColumn = getColumn(bodyExpr);
+        returnInfo.returnValueId = NodeFactory.generateExpressionId(
+          'MemberExpression', module.file, getLine(bodyExpr), getColumn(bodyExpr)
+        );
+        if (t.isIdentifier(bodyExpr.object)) {
+          returnInfo.object = bodyExpr.object.name;
+          returnInfo.objectSourceName = bodyExpr.object.name;
+        }
+        if (t.isIdentifier(bodyExpr.property)) returnInfo.property = bodyExpr.property.name;
+        returnInfo.computed = bodyExpr.computed;
+      }
       else {
+        // Fallback: any other expression type
         returnInfo.returnValueType = 'EXPRESSION';
         returnInfo.expressionType = bodyExpr.type;
         returnInfo.returnValueLine = getLine(bodyExpr);
         returnInfo.returnValueColumn = getColumn(bodyExpr);
+        returnInfo.returnValueId = NodeFactory.generateExpressionId(
+          bodyExpr.type, module.file, getLine(bodyExpr), getColumn(bodyExpr)
+        );
       }
 
       returnStatements.push(returnInfo);
@@ -2691,7 +2773,32 @@ export class JSASTAnalyzer extends Plugin {
           returnInfo.returnValueType = 'VARIABLE';
           returnInfo.returnValueName = arg.name;
         }
-        // Literal values
+        // TemplateLiteral must come BEFORE isLiteral (TemplateLiteral extends Literal)
+        else if (t.isTemplateLiteral(arg)) {
+          returnInfo.returnValueType = 'EXPRESSION';
+          returnInfo.expressionType = 'TemplateLiteral';
+          returnInfo.returnValueLine = getLine(arg);
+          returnInfo.returnValueColumn = getColumn(arg);
+
+          returnInfo.returnValueId = NodeFactory.generateExpressionId(
+            'TemplateLiteral',
+            module.file,
+            getLine(arg),
+            getColumn(arg)
+          );
+
+          // Extract all embedded expression identifiers
+          const sourceNames: string[] = [];
+          for (const expr of arg.expressions) {
+            if (t.isIdentifier(expr)) {
+              sourceNames.push(expr.name);
+            }
+          }
+          if (sourceNames.length > 0) {
+            returnInfo.expressionSourceNames = sourceNames;
+          }
+        }
+        // Literal values (after TemplateLiteral check)
         else if (t.isLiteral(arg)) {
           returnInfo.returnValueType = 'LITERAL';
           // Create a LITERAL node ID for this return value
@@ -2726,13 +2833,94 @@ export class JSASTAnalyzer extends Plugin {
             returnInfo.returnValueCallName = arg.callee.property.name;
           }
         }
-        // Complex expressions (BinaryExpression, ConditionalExpression, etc.)
-        else if (t.isBinaryExpression(arg) || t.isConditionalExpression(arg) ||
-                 t.isLogicalExpression(arg) || t.isUnaryExpression(arg)) {
+        // BinaryExpression: return a + b
+        else if (t.isBinaryExpression(arg)) {
           returnInfo.returnValueType = 'EXPRESSION';
-          returnInfo.expressionType = arg.type;
+          returnInfo.expressionType = 'BinaryExpression';
           returnInfo.returnValueLine = getLine(arg);
           returnInfo.returnValueColumn = getColumn(arg);
+          returnInfo.operator = arg.operator;
+
+          // Generate stable ID for the EXPRESSION node
+          returnInfo.returnValueId = NodeFactory.generateExpressionId(
+            'BinaryExpression',
+            module.file,
+            getLine(arg),
+            getColumn(arg)
+          );
+
+          // Extract left operand source
+          if (t.isIdentifier(arg.left)) {
+            returnInfo.leftSourceName = arg.left.name;
+          }
+          // Extract right operand source
+          if (t.isIdentifier(arg.right)) {
+            returnInfo.rightSourceName = arg.right.name;
+          }
+        }
+        // LogicalExpression: return a && b, return a || b
+        else if (t.isLogicalExpression(arg)) {
+          returnInfo.returnValueType = 'EXPRESSION';
+          returnInfo.expressionType = 'LogicalExpression';
+          returnInfo.returnValueLine = getLine(arg);
+          returnInfo.returnValueColumn = getColumn(arg);
+          returnInfo.operator = arg.operator;
+
+          returnInfo.returnValueId = NodeFactory.generateExpressionId(
+            'LogicalExpression',
+            module.file,
+            getLine(arg),
+            getColumn(arg)
+          );
+
+          if (t.isIdentifier(arg.left)) {
+            returnInfo.leftSourceName = arg.left.name;
+          }
+          if (t.isIdentifier(arg.right)) {
+            returnInfo.rightSourceName = arg.right.name;
+          }
+        }
+        // ConditionalExpression: return condition ? a : b
+        else if (t.isConditionalExpression(arg)) {
+          returnInfo.returnValueType = 'EXPRESSION';
+          returnInfo.expressionType = 'ConditionalExpression';
+          returnInfo.returnValueLine = getLine(arg);
+          returnInfo.returnValueColumn = getColumn(arg);
+
+          returnInfo.returnValueId = NodeFactory.generateExpressionId(
+            'ConditionalExpression',
+            module.file,
+            getLine(arg),
+            getColumn(arg)
+          );
+
+          // Extract consequent (then branch) source
+          if (t.isIdentifier(arg.consequent)) {
+            returnInfo.consequentSourceName = arg.consequent.name;
+          }
+          // Extract alternate (else branch) source
+          if (t.isIdentifier(arg.alternate)) {
+            returnInfo.alternateSourceName = arg.alternate.name;
+          }
+        }
+        // UnaryExpression: return !x, return -x
+        else if (t.isUnaryExpression(arg)) {
+          returnInfo.returnValueType = 'EXPRESSION';
+          returnInfo.expressionType = 'UnaryExpression';
+          returnInfo.returnValueLine = getLine(arg);
+          returnInfo.returnValueColumn = getColumn(arg);
+          returnInfo.operator = arg.operator;
+
+          returnInfo.returnValueId = NodeFactory.generateExpressionId(
+            'UnaryExpression',
+            module.file,
+            getLine(arg),
+            getColumn(arg)
+          );
+
+          if (t.isIdentifier(arg.argument)) {
+            returnInfo.unaryArgSourceName = arg.argument.name;
+          }
         }
         // MemberExpression (property access): return obj.prop
         else if (t.isMemberExpression(arg)) {
@@ -2740,6 +2928,23 @@ export class JSASTAnalyzer extends Plugin {
           returnInfo.expressionType = 'MemberExpression';
           returnInfo.returnValueLine = getLine(arg);
           returnInfo.returnValueColumn = getColumn(arg);
+
+          returnInfo.returnValueId = NodeFactory.generateExpressionId(
+            'MemberExpression',
+            module.file,
+            getLine(arg),
+            getColumn(arg)
+          );
+
+          // Extract object.property info
+          if (t.isIdentifier(arg.object)) {
+            returnInfo.object = arg.object.name;
+            returnInfo.objectSourceName = arg.object.name;
+          }
+          if (t.isIdentifier(arg.property)) {
+            returnInfo.property = arg.property.name;
+          }
+          returnInfo.computed = arg.computed;
         }
         // NewExpression: return new Foo()
         else if (t.isNewExpression(arg)) {
@@ -2747,6 +2952,13 @@ export class JSASTAnalyzer extends Plugin {
           returnInfo.expressionType = 'NewExpression';
           returnInfo.returnValueLine = getLine(arg);
           returnInfo.returnValueColumn = getColumn(arg);
+
+          returnInfo.returnValueId = NodeFactory.generateExpressionId(
+            'NewExpression',
+            module.file,
+            getLine(arg),
+            getColumn(arg)
+          );
         }
         // Fallback for other expression types
         else {
@@ -2754,6 +2966,13 @@ export class JSASTAnalyzer extends Plugin {
           returnInfo.expressionType = arg.type;
           returnInfo.returnValueLine = getLine(arg);
           returnInfo.returnValueColumn = getColumn(arg);
+
+          returnInfo.returnValueId = NodeFactory.generateExpressionId(
+            arg.type,
+            module.file,
+            getLine(arg),
+            getColumn(arg)
+          );
         }
 
         returnStatements.push(returnInfo);
@@ -2919,6 +3138,21 @@ export class JSASTAnalyzer extends Plugin {
             returnInfo.returnValueType = 'VARIABLE';
             returnInfo.returnValueName = bodyExpr.name;
           }
+          // TemplateLiteral must come BEFORE isLiteral (TemplateLiteral extends Literal)
+          else if (t.isTemplateLiteral(bodyExpr)) {
+            returnInfo.returnValueType = 'EXPRESSION';
+            returnInfo.expressionType = 'TemplateLiteral';
+            returnInfo.returnValueLine = getLine(bodyExpr);
+            returnInfo.returnValueColumn = getColumn(bodyExpr);
+            returnInfo.returnValueId = NodeFactory.generateExpressionId(
+              'TemplateLiteral', module.file, getLine(bodyExpr), getColumn(bodyExpr)
+            );
+            const sourceNames: string[] = [];
+            for (const expr of bodyExpr.expressions) {
+              if (t.isIdentifier(expr)) sourceNames.push(expr.name);
+            }
+            if (sourceNames.length > 0) returnInfo.expressionSourceNames = sourceNames;
+          }
           else if (t.isLiteral(bodyExpr)) {
             returnInfo.returnValueType = 'LITERAL';
             const literalId = `LITERAL#implicit_return#${module.file}#${line}:${column}:${literalCounterRef.value++}`;
@@ -2947,11 +3181,76 @@ export class JSASTAnalyzer extends Plugin {
               returnInfo.returnValueCallName = bodyExpr.callee.property.name;
             }
           }
+          // REG-276: Detailed EXPRESSION handling for nested implicit arrow returns
+          else if (t.isBinaryExpression(bodyExpr)) {
+            returnInfo.returnValueType = 'EXPRESSION';
+            returnInfo.expressionType = 'BinaryExpression';
+            returnInfo.returnValueLine = getLine(bodyExpr);
+            returnInfo.returnValueColumn = getColumn(bodyExpr);
+            returnInfo.operator = bodyExpr.operator;
+            returnInfo.returnValueId = NodeFactory.generateExpressionId(
+              'BinaryExpression', module.file, getLine(bodyExpr), getColumn(bodyExpr)
+            );
+            if (t.isIdentifier(bodyExpr.left)) returnInfo.leftSourceName = bodyExpr.left.name;
+            if (t.isIdentifier(bodyExpr.right)) returnInfo.rightSourceName = bodyExpr.right.name;
+          }
+          else if (t.isLogicalExpression(bodyExpr)) {
+            returnInfo.returnValueType = 'EXPRESSION';
+            returnInfo.expressionType = 'LogicalExpression';
+            returnInfo.returnValueLine = getLine(bodyExpr);
+            returnInfo.returnValueColumn = getColumn(bodyExpr);
+            returnInfo.operator = bodyExpr.operator;
+            returnInfo.returnValueId = NodeFactory.generateExpressionId(
+              'LogicalExpression', module.file, getLine(bodyExpr), getColumn(bodyExpr)
+            );
+            if (t.isIdentifier(bodyExpr.left)) returnInfo.leftSourceName = bodyExpr.left.name;
+            if (t.isIdentifier(bodyExpr.right)) returnInfo.rightSourceName = bodyExpr.right.name;
+          }
+          else if (t.isConditionalExpression(bodyExpr)) {
+            returnInfo.returnValueType = 'EXPRESSION';
+            returnInfo.expressionType = 'ConditionalExpression';
+            returnInfo.returnValueLine = getLine(bodyExpr);
+            returnInfo.returnValueColumn = getColumn(bodyExpr);
+            returnInfo.returnValueId = NodeFactory.generateExpressionId(
+              'ConditionalExpression', module.file, getLine(bodyExpr), getColumn(bodyExpr)
+            );
+            if (t.isIdentifier(bodyExpr.consequent)) returnInfo.consequentSourceName = bodyExpr.consequent.name;
+            if (t.isIdentifier(bodyExpr.alternate)) returnInfo.alternateSourceName = bodyExpr.alternate.name;
+          }
+          else if (t.isUnaryExpression(bodyExpr)) {
+            returnInfo.returnValueType = 'EXPRESSION';
+            returnInfo.expressionType = 'UnaryExpression';
+            returnInfo.returnValueLine = getLine(bodyExpr);
+            returnInfo.returnValueColumn = getColumn(bodyExpr);
+            returnInfo.operator = bodyExpr.operator;
+            returnInfo.returnValueId = NodeFactory.generateExpressionId(
+              'UnaryExpression', module.file, getLine(bodyExpr), getColumn(bodyExpr)
+            );
+            if (t.isIdentifier(bodyExpr.argument)) returnInfo.unaryArgSourceName = bodyExpr.argument.name;
+          }
+          else if (t.isMemberExpression(bodyExpr)) {
+            returnInfo.returnValueType = 'EXPRESSION';
+            returnInfo.expressionType = 'MemberExpression';
+            returnInfo.returnValueLine = getLine(bodyExpr);
+            returnInfo.returnValueColumn = getColumn(bodyExpr);
+            returnInfo.returnValueId = NodeFactory.generateExpressionId(
+              'MemberExpression', module.file, getLine(bodyExpr), getColumn(bodyExpr)
+            );
+            if (t.isIdentifier(bodyExpr.object)) {
+              returnInfo.object = bodyExpr.object.name;
+              returnInfo.objectSourceName = bodyExpr.object.name;
+            }
+            if (t.isIdentifier(bodyExpr.property)) returnInfo.property = bodyExpr.property.name;
+            returnInfo.computed = bodyExpr.computed;
+          }
           else {
             returnInfo.returnValueType = 'EXPRESSION';
             returnInfo.expressionType = bodyExpr.type;
             returnInfo.returnValueLine = getLine(bodyExpr);
             returnInfo.returnValueColumn = getColumn(bodyExpr);
+            returnInfo.returnValueId = NodeFactory.generateExpressionId(
+              bodyExpr.type, module.file, getLine(bodyExpr), getColumn(bodyExpr)
+            );
           }
 
           returnStatements.push(returnInfo);

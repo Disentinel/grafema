@@ -503,6 +503,31 @@ export interface ReturnStatementInfo {
   returnValueCallName?: string;
   // For EXPRESSION type (BinaryExpression, ConditionalExpression, etc.)
   expressionType?: string;
+
+  // For EXPRESSION type - source variable extraction (REG-276)
+  // Mirrors VariableAssignmentInfo pattern for code reuse
+
+  // For BinaryExpression/LogicalExpression
+  operator?: string;
+  leftSourceName?: string;
+  rightSourceName?: string;
+
+  // For ConditionalExpression
+  consequentSourceName?: string;
+  alternateSourceName?: string;
+
+  // For MemberExpression
+  object?: string;
+  property?: string;
+  computed?: boolean;
+  objectSourceName?: string;
+
+  // For TemplateLiteral
+  expressionSourceNames?: string[];
+
+  // For UnaryExpression
+  unaryArgSourceName?: string;
+
   // For arrow function implicit returns
   isImplicitReturn?: boolean;
 }
