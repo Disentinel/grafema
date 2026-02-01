@@ -95,6 +95,69 @@ export interface CaseInfo {
   parentBranchId: string;
 }
 
+// === LOOP INFO ===
+export interface LoopInfo {
+  id: string;
+  semanticId?: string;
+  type: 'LOOP';
+  loopType: 'for' | 'for-in' | 'for-of' | 'while' | 'do-while';
+  file: string;
+  line: number;
+  column?: number;
+  parentScopeId?: string;
+  // For for-in/for-of: the collection being iterated
+  iteratesOverName?: string;      // Variable name (e.g., 'items')
+  iteratesOverLine?: number;      // Line of collection reference
+  iteratesOverColumn?: number;    // Column of collection reference
+}
+
+// === TRY BLOCK INFO ===
+export interface TryBlockInfo {
+  id: string;
+  semanticId?: string;
+  type: 'TRY_BLOCK';
+  file: string;
+  line: number;
+  column?: number;
+  parentScopeId?: string;
+}
+
+// === CATCH BLOCK INFO ===
+export interface CatchBlockInfo {
+  id: string;
+  semanticId?: string;
+  type: 'CATCH_BLOCK';
+  file: string;
+  line: number;
+  column?: number;
+  parentScopeId?: string;
+  parentTryBlockId: string;  // ID of parent TRY_BLOCK
+  parameterName?: string;     // Error parameter name
+}
+
+// === FINALLY BLOCK INFO ===
+export interface FinallyBlockInfo {
+  id: string;
+  semanticId?: string;
+  type: 'FINALLY_BLOCK';
+  file: string;
+  line: number;
+  column?: number;
+  parentScopeId?: string;
+  parentTryBlockId: string;  // ID of parent TRY_BLOCK
+}
+
+// === CONTROL FLOW METADATA ===
+// Attached to FUNCTION nodes
+export interface ControlFlowMetadata {
+  hasBranches: boolean;      // Has if/switch statements
+  hasLoops: boolean;         // Has any loop type
+  hasTryCatch: boolean;      // Has try/catch blocks
+  hasEarlyReturn: boolean;   // Has return before function end
+  hasThrow: boolean;         // Has throw statements
+  cyclomaticComplexity: number;  // McCabe cyclomatic complexity
+}
+
 // === VARIABLE DECLARATION INFO ===
 export interface VariableDeclarationInfo {
   id: string;
@@ -596,6 +659,11 @@ export interface ASTCollections {
   // Branching
   branches?: BranchInfo[];
   cases?: CaseInfo[];
+  // Control flow (new)
+  loops?: LoopInfo[];
+  tryBlocks?: TryBlockInfo[];
+  catchBlocks?: CatchBlockInfo[];
+  finallyBlocks?: FinallyBlockInfo[];
   variableDeclarations: VariableDeclarationInfo[];
   callSites: CallSiteInfo[];
   methodCalls?: MethodCallInfo[];
@@ -638,6 +706,11 @@ export interface ASTCollections {
   arrayLiteralCounterRef?: CounterRef;
   branchCounterRef?: CounterRef;
   caseCounterRef?: CounterRef;
+  // Counter refs for control flow (add)
+  loopCounterRef?: CounterRef;
+  tryBlockCounterRef?: CounterRef;
+  catchBlockCounterRef?: CounterRef;
+  finallyBlockCounterRef?: CounterRef;
   processedNodes?: ProcessedNodes;
   // ScopeTracker for semantic ID generation
   scopeTracker?: import('../../../core/ScopeTracker.js').ScopeTracker;

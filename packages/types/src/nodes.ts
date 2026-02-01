@@ -32,6 +32,12 @@ export const NODE_TYPE = {
   BRANCH: 'BRANCH',
   CASE: 'CASE',
 
+  // Control flow
+  LOOP: 'LOOP',
+  TRY_BLOCK: 'TRY_BLOCK',
+  CATCH_BLOCK: 'CATCH_BLOCK',
+  FINALLY_BLOCK: 'FINALLY_BLOCK',
+
   // External dependencies
   EXTERNAL: 'EXTERNAL',
   EXTERNAL_MODULE: 'EXTERNAL_MODULE',
@@ -206,6 +212,36 @@ export interface CaseNodeRecord extends BaseNodeRecord {
   isEmpty: boolean;       // true if case has no statements (intentional fall-through)
 }
 
+// Loop node (for, for-in, for-of, while, do-while)
+export interface LoopNodeRecord extends BaseNodeRecord {
+  type: 'LOOP';
+  loopType: 'for' | 'for-in' | 'for-of' | 'while' | 'do-while';
+  parentScopeId?: string;
+  bodyScopeId?: string;  // ID of SCOPE node containing loop body
+}
+
+// Try block node
+export interface TryBlockNodeRecord extends BaseNodeRecord {
+  type: 'TRY_BLOCK';
+  parentScopeId?: string;
+  bodyScopeId?: string;  // ID of SCOPE node containing try body
+}
+
+// Catch block node
+export interface CatchBlockNodeRecord extends BaseNodeRecord {
+  type: 'CATCH_BLOCK';
+  parentScopeId?: string;
+  parameterName?: string;  // Error parameter name (e.g., 'e' in catch(e))
+  bodyScopeId?: string;    // ID of SCOPE node containing catch body
+}
+
+// Finally block node
+export interface FinallyBlockNodeRecord extends BaseNodeRecord {
+  type: 'FINALLY_BLOCK';
+  parentScopeId?: string;
+  bodyScopeId?: string;  // ID of SCOPE node containing finally body
+}
+
 // HTTP Route node
 export interface HttpRouteNodeRecord extends BaseNodeRecord {
   type: 'http:route';
@@ -261,6 +297,10 @@ export type NodeRecord =
   | ScopeNodeRecord
   | BranchNodeRecord
   | CaseNodeRecord
+  | LoopNodeRecord
+  | TryBlockNodeRecord
+  | CatchBlockNodeRecord
+  | FinallyBlockNodeRecord
   | HttpRouteNodeRecord
   | DbQueryNodeRecord
   | EventListenerNodeRecord
