@@ -17,6 +17,8 @@ import type {
   FunctionInfo,
   ParameterInfo,
   ScopeInfo,
+  BranchInfo,
+  CaseInfo,
   VariableDeclarationInfo,
   CallSiteInfo,
   MethodCallInfo,
@@ -37,6 +39,7 @@ import type {
   DecoratorInfo,
   ArrayMutationInfo,
   ObjectMutationInfo,
+  ReturnStatementInfo,
   ObjectLiteralInfo,
   ObjectPropertyInfo,
   ArrayLiteralInfo,
@@ -104,6 +107,9 @@ export class GraphBuilder {
       functions,
       parameters = [],
       scopes,
+      // Branching
+      branches = [],
+      cases = [],
       variableDeclarations,
       callSites,
       methodCalls = [],
@@ -127,6 +133,8 @@ export class GraphBuilder {
       arrayMutations = [],
       // Object mutation tracking for FLOWS_INTO edges
       objectMutations = [],
+      // Return statement tracking for RETURNS edges
+      returnStatements = [],
       // Object/Array literal tracking
       objectLiterals = [],
       objectProperties = [],
@@ -147,6 +155,19 @@ export class GraphBuilder {
     for (const scope of scopes) {
       const { parentFunctionId, parentScopeId, capturesFrom, modifies, ...scopeData } = scope;
       this._bufferNode(scopeData as GraphNode);
+    }
+
+    // 2.5. Buffer BRANCH nodes
+    // Note: parentScopeId is kept on node for query support (REG-275 test requirement)
+    for (const branch of branches) {
+      const { discriminantExpressionId, discriminantExpressionType, discriminantLine, discriminantColumn, ...branchData } = branch;
+      this._bufferNode(branchData as GraphNode);
+    }
+
+    // 2.6. Buffer CASE nodes
+    for (const caseInfo of cases) {
+      const { parentBranchId, ...caseData } = caseInfo;
+      this._bufferNode(caseData as GraphNode);
     }
 
     // 3. Buffer variables
@@ -196,6 +217,15 @@ export class GraphBuilder {
 
     // 6. Buffer edges for SCOPE
     this.bufferScopeEdges(scopes, variableDeclarations);
+
+    // 6.5. Buffer edges for BRANCH (needs callSites for CallExpression discriminant lookup)
+    this.bufferBranchEdges(branches, callSites);
+
+    // 6.6. Buffer edges for CASE
+    this.bufferCaseEdges(cases);
+
+    // 6.7. Buffer EXPRESSION nodes for switch discriminants (needs callSites for CallExpression)
+    this.bufferDiscriminantExpressions(branches, callSites);
 
     // 7. Buffer edges for variables
     this.bufferVariableEdges(variableDeclarations);
@@ -269,6 +299,9 @@ export class GraphBuilder {
     // 27. Buffer FLOWS_INTO edges for object mutations (property assignment, Object.assign)
     // REG-152: Now includes classDeclarations for this.prop = value patterns
     this.bufferObjectMutationEdges(objectMutations, variableDeclarations, parameters, functions, classDeclarations);
+
+    // 28. Buffer RETURNS edges for return statements
+    this.bufferReturnEdges(returnStatements, callSites, methodCalls, variableDeclarations, parameters);
 
     // FLUSH: Write all nodes first, then edges in single batch calls
     const nodesCreated = await this._flushNodes(graph);
@@ -345,6 +378,95 @@ export class GraphBuilder {
             type: 'MODIFIES',
             src: scopeData.id,
             dst: mod.variableId
+          });
+        }
+      }
+    }
+  }
+
+  /**
+   * Buffer BRANCH edges (CONTAINS, HAS_CONDITION)
+   *
+   * REG-275: For CallExpression discriminants (switch(getType())), looks up the
+   * actual CALL_SITE node by coordinates since the CALL_SITE uses semantic IDs.
+   */
+  private bufferBranchEdges(branches: BranchInfo[], callSites: CallSiteInfo[]): void {
+    for (const branch of branches) {
+      // Parent SCOPE -> CONTAINS -> BRANCH
+      if (branch.parentScopeId) {
+        this._bufferEdge({
+          type: 'CONTAINS',
+          src: branch.parentScopeId,
+          dst: branch.id
+        });
+      }
+
+      // BRANCH -> HAS_CONDITION -> EXPRESSION/CALL (discriminant)
+      if (branch.discriminantExpressionId) {
+        let targetId = branch.discriminantExpressionId;
+
+        // For CallExpression discriminants, look up the actual CALL_SITE by coordinates
+        // because CALL_SITE uses semantic IDs that don't match the generated ID
+        if (branch.discriminantExpressionType === 'CallExpression' && branch.discriminantLine && branch.discriminantColumn !== undefined) {
+          const callSite = callSites.find(cs =>
+            cs.file === branch.file &&
+            cs.line === branch.discriminantLine &&
+            cs.column === branch.discriminantColumn
+          );
+          if (callSite) {
+            targetId = callSite.id;
+          }
+        }
+
+        this._bufferEdge({
+          type: 'HAS_CONDITION',
+          src: branch.id,
+          dst: targetId
+        });
+      }
+    }
+  }
+
+  /**
+   * Buffer CASE edges (HAS_CASE, HAS_DEFAULT)
+   */
+  private bufferCaseEdges(cases: CaseInfo[]): void {
+    for (const caseInfo of cases) {
+      // BRANCH -> HAS_CASE or HAS_DEFAULT -> CASE
+      const edgeType = caseInfo.isDefault ? 'HAS_DEFAULT' : 'HAS_CASE';
+      this._bufferEdge({
+        type: edgeType,
+        src: caseInfo.parentBranchId,
+        dst: caseInfo.id
+      });
+    }
+  }
+
+  /**
+   * Buffer EXPRESSION nodes for switch discriminants
+   * Uses stored metadata directly instead of parsing from ID (Linus improvement)
+   *
+   * REG-275: For CallExpression discriminants, we don't create nodes here since
+   * bufferBranchEdges links to the existing CALL_SITE node by coordinates.
+   */
+  private bufferDiscriminantExpressions(branches: BranchInfo[], callSites: CallSiteInfo[]): void {
+    for (const branch of branches) {
+      if (branch.discriminantExpressionId && branch.discriminantExpressionType) {
+        // Skip CallExpression - we link to existing CALL_SITE in bufferBranchEdges
+        if (branch.discriminantExpressionType === 'CallExpression') {
+          continue;
+        }
+
+        // Only create if it looks like an EXPRESSION ID
+        if (branch.discriminantExpressionId.includes(':EXPRESSION:')) {
+          this._bufferNode({
+            id: branch.discriminantExpressionId,
+            type: 'EXPRESSION',
+            name: branch.discriminantExpressionType,
+            file: branch.file,
+            line: branch.discriminantLine,
+            column: branch.discriminantColumn,
+            expressionType: branch.discriminantExpressionType
           });
         }
       }
@@ -563,7 +685,7 @@ export class GraphBuilder {
 
   private bufferImportNodes(module: ModuleNode, imports: ImportInfo[]): void {
     for (const imp of imports) {
-      const { source, specifiers, line, column } = imp;
+      const { source, specifiers, line, column, isDynamic, isResolvable, dynamicPath } = imp;
 
       for (const spec of specifiers) {
         // Use ImportNode factory for proper semantic IDs and field population
@@ -575,8 +697,12 @@ export class GraphBuilder {
           source,               // source module
           {
             imported: spec.imported,
-            local: spec.local
+            local: spec.local,
             // importType is auto-detected from imported field
+            // Dynamic import fields
+            isDynamic,
+            isResolvable,
+            dynamicPath
           }
         );
 
@@ -1554,6 +1680,111 @@ export class GraphBuilder {
         }
       }
       // For literals, object literals, etc. - we just track variable -> object flows for now
+    }
+  }
+
+  /**
+   * Buffer RETURNS edges connecting return expressions to their containing functions.
+   *
+   * Edge direction: returnExpression --RETURNS--> function
+   *
+   * This enables tracing data flow through function calls:
+   * - Query: "What does formatDate return?"
+   * - Answer: Follow RETURNS edges from function to see all possible return values
+   */
+  private bufferReturnEdges(
+    returnStatements: ReturnStatementInfo[],
+    callSites: CallSiteInfo[],
+    methodCalls: MethodCallInfo[],
+    variableDeclarations: VariableDeclarationInfo[],
+    parameters: ParameterInfo[]
+  ): void {
+    for (const ret of returnStatements) {
+      const { parentFunctionId, returnValueType, file } = ret;
+
+      // Skip if no value returned (bare return;)
+      if (returnValueType === 'NONE') {
+        continue;
+      }
+
+      let sourceNodeId: string | null = null;
+
+      switch (returnValueType) {
+        case 'LITERAL':
+          // Direct reference to literal node
+          sourceNodeId = ret.returnValueId ?? null;
+          break;
+
+        case 'VARIABLE': {
+          // Find variable declaration by name in same file
+          const varName = ret.returnValueName;
+          if (varName) {
+            const sourceVar = variableDeclarations.find(v =>
+              v.name === varName && v.file === file
+            );
+            if (sourceVar) {
+              sourceNodeId = sourceVar.id;
+            } else {
+              // Check parameters
+              const sourceParam = parameters.find(p =>
+                p.name === varName && p.file === file
+              );
+              if (sourceParam) {
+                sourceNodeId = sourceParam.id;
+              }
+            }
+          }
+          break;
+        }
+
+        case 'CALL_SITE': {
+          // Find call site by coordinates
+          const { returnValueLine, returnValueColumn, returnValueCallName } = ret;
+          if (returnValueLine && returnValueColumn) {
+            const callSite = callSites.find(cs =>
+              cs.line === returnValueLine &&
+              cs.column === returnValueColumn &&
+              (returnValueCallName ? cs.name === returnValueCallName : true)
+            );
+            if (callSite) {
+              sourceNodeId = callSite.id;
+            }
+          }
+          break;
+        }
+
+        case 'METHOD_CALL': {
+          // Find method call by coordinates and method name
+          const { returnValueLine, returnValueColumn, returnValueCallName } = ret;
+          if (returnValueLine && returnValueColumn) {
+            const methodCall = methodCalls.find(mc =>
+              mc.line === returnValueLine &&
+              mc.column === returnValueColumn &&
+              mc.file === file &&
+              (returnValueCallName ? mc.method === returnValueCallName : true)
+            );
+            if (methodCall) {
+              sourceNodeId = methodCall.id;
+            }
+          }
+          break;
+        }
+
+        case 'EXPRESSION': {
+          // For expressions, we skip complex expressions for now
+          // This matches how ASSIGNED_FROM handles expressions
+          break;
+        }
+      }
+
+      // Create RETURNS edge if we found a source node
+      if (sourceNodeId && parentFunctionId) {
+        this._bufferEdge({
+          type: 'RETURNS',
+          src: sourceNodeId,
+          dst: parentFunctionId
+        });
+      }
     }
   }
 

@@ -65,6 +65,36 @@ export interface ScopeInfo {
   modifies?: Array<{ variableId: string; variableName: string; line: number }>;
 }
 
+// === BRANCH INFO ===
+export interface BranchInfo {
+  id: string;
+  semanticId?: string;
+  type: 'BRANCH';
+  branchType: 'switch' | 'if' | 'ternary';
+  file: string;
+  line: number;
+  parentScopeId?: string;
+  discriminantExpressionId?: string;  // ID of EXPRESSION node for discriminant
+  // Linus improvement: store discriminant metadata directly instead of parsing from ID
+  discriminantExpressionType?: string;
+  discriminantLine?: number;
+  discriminantColumn?: number;
+}
+
+// === CASE INFO ===
+export interface CaseInfo {
+  id: string;
+  semanticId?: string;
+  type: 'CASE';
+  value: unknown;
+  isDefault: boolean;
+  fallsThrough: boolean;
+  isEmpty: boolean;
+  file: string;
+  line: number;
+  parentBranchId: string;
+}
+
 // === VARIABLE DECLARATION INFO ===
 export interface VariableDeclarationInfo {
   id: string;
@@ -267,6 +297,9 @@ export interface ImportInfo {
   line: number;
   column?: number;  // Column position for ImportNode
   specifiers: ImportSpecifier[];
+  isDynamic?: boolean;         // true for dynamic import() expressions
+  isResolvable?: boolean;      // true if path is a string literal (statically analyzable)
+  dynamicPath?: string;        // original expression for template/variable paths
 }
 
 export interface ImportSpecifier {
@@ -446,6 +479,34 @@ export interface ObjectMutationValue {
   argIndex?: number;             // For Object.assign - which source argument (0, 1, 2, ...)
 }
 
+// === RETURN STATEMENT INFO ===
+/**
+ * Tracks return statements for RETURNS edge creation in GraphBuilder.
+ * Used to connect returned expressions to their containing functions.
+ *
+ * Edge direction: returnExpression --RETURNS--> function
+ */
+export interface ReturnStatementInfo {
+  parentFunctionId: string;          // ID of the containing function
+  file: string;
+  line: number;
+  column: number;
+  // Return value type determines how to resolve the source node
+  returnValueType: 'VARIABLE' | 'CALL_SITE' | 'METHOD_CALL' | 'LITERAL' | 'EXPRESSION' | 'NONE';
+  // For VARIABLE type
+  returnValueName?: string;
+  // For LITERAL type - the literal node ID
+  returnValueId?: string;
+  // For CALL_SITE/METHOD_CALL type - coordinates for lookup
+  returnValueLine?: number;
+  returnValueColumn?: number;
+  returnValueCallName?: string;
+  // For EXPRESSION type (BinaryExpression, ConditionalExpression, etc.)
+  expressionType?: string;
+  // For arrow function implicit returns
+  isImplicitReturn?: boolean;
+}
+
 /**
  * Resolution status for computed property names.
  * Used in FLOWS_INTO edge metadata to indicate how property name was determined.
@@ -532,6 +593,9 @@ export interface ASTCollections {
   functions: FunctionInfo[];
   parameters?: ParameterInfo[];
   scopes: ScopeInfo[];
+  // Branching
+  branches?: BranchInfo[];
+  cases?: CaseInfo[];
   variableDeclarations: VariableDeclarationInfo[];
   callSites: CallSiteInfo[];
   methodCalls?: MethodCallInfo[];
@@ -555,6 +619,8 @@ export interface ASTCollections {
   arrayMutations?: ArrayMutationInfo[];
   // Object mutation tracking for FLOWS_INTO edges
   objectMutations?: ObjectMutationInfo[];
+  // Return statement tracking for RETURNS edges
+  returnStatements?: ReturnStatementInfo[];
   // TypeScript-specific collections
   interfaces?: InterfaceDeclarationInfo[];
   typeAliases?: TypeAliasInfo[];
@@ -570,6 +636,8 @@ export interface ASTCollections {
   literalCounterRef?: CounterRef;
   objectLiteralCounterRef?: CounterRef;
   arrayLiteralCounterRef?: CounterRef;
+  branchCounterRef?: CounterRef;
+  caseCounterRef?: CounterRef;
   processedNodes?: ProcessedNodes;
   // ScopeTracker for semantic ID generation
   scopeTracker?: import('../../../core/ScopeTracker.js').ScopeTracker;

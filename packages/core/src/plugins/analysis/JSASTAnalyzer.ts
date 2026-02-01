@@ -61,6 +61,8 @@ import type {
   FunctionInfo,
   ParameterInfo,
   ScopeInfo,
+  BranchInfo,
+  CaseInfo,
   VariableDeclarationInfo,
   CallSiteInfo,
   MethodCallInfo,
@@ -87,6 +89,7 @@ import type {
   ArrayMutationArgument,
   ObjectMutationInfo,
   ObjectMutationValue,
+  ReturnStatementInfo,
   CounterRef,
   ProcessedNodes,
   ASTCollections,
@@ -103,6 +106,9 @@ interface Collections {
   functions: FunctionInfo[];
   parameters: ParameterInfo[];
   scopes: ScopeInfo[];
+  // Branching (switch statements)
+  branches: BranchInfo[];
+  cases: CaseInfo[];
   variableDeclarations: VariableDeclarationInfo[];
   callSites: CallSiteInfo[];
   methodCalls: MethodCallInfo[];
@@ -130,6 +136,8 @@ interface Collections {
   arrayMutations: ArrayMutationInfo[];
   // Object mutation tracking for FLOWS_INTO edges
   objectMutations: ObjectMutationInfo[];
+  // Return statement tracking for RETURNS edges
+  returnStatements: ReturnStatementInfo[];
   objectLiteralCounterRef: CounterRef;
   arrayLiteralCounterRef: CounterRef;
   ifScopeCounterRef: CounterRef;
@@ -140,6 +148,8 @@ interface Collections {
   httpRequestCounterRef: CounterRef;
   literalCounterRef: CounterRef;
   anonymousFunctionCounterRef: CounterRef;
+  branchCounterRef: CounterRef;
+  caseCounterRef: CounterRef;
   processedNodes: ProcessedNodes;
   code?: string;
   // VisitorCollections compatibility
@@ -1163,6 +1173,9 @@ export class JSASTAnalyzer extends Plugin {
       const functions: FunctionInfo[] = [];
       const parameters: ParameterInfo[] = [];
       const scopes: ScopeInfo[] = [];
+      // Branching (switch statements)
+      const branches: BranchInfo[] = [];
+      const cases: CaseInfo[] = [];
       const variableDeclarations: VariableDeclarationInfo[] = [];
       const callSites: CallSiteInfo[] = [];
       const methodCalls: MethodCallInfo[] = [];
@@ -1191,6 +1204,8 @@ export class JSASTAnalyzer extends Plugin {
       const arrayMutations: ArrayMutationInfo[] = [];
       // Object mutation tracking for FLOWS_INTO edges
       const objectMutations: ObjectMutationInfo[] = [];
+      // Return statement tracking for RETURNS edges
+      const returnStatements: ReturnStatementInfo[] = [];
 
       const ifScopeCounterRef: CounterRef = { value: 0 };
       const scopeCounterRef: CounterRef = { value: 0 };
@@ -1202,6 +1217,8 @@ export class JSASTAnalyzer extends Plugin {
       const anonymousFunctionCounterRef: CounterRef = { value: 0 };
       const objectLiteralCounterRef: CounterRef = { value: 0 };
       const arrayLiteralCounterRef: CounterRef = { value: 0 };
+      const branchCounterRef: CounterRef = { value: 0 };
+      const caseCounterRef: CounterRef = { value: 0 };
 
       const processedNodes: ProcessedNodes = {
         functions: new Set(),
@@ -1230,7 +1247,7 @@ export class JSASTAnalyzer extends Plugin {
       this.profiler.start('traverse_variables');
       const variableVisitor = new VariableVisitor(
         module,
-        { variableDeclarations, classInstantiations, literals, variableAssignments, varDeclCounterRef, literalCounterRef },
+        { variableDeclarations, classInstantiations, literals, variableAssignments, varDeclCounterRef, literalCounterRef, scopes, scopeCounterRef },
         this.extractVariableNamesFromPattern.bind(this),
         this.trackVariableAssignment.bind(this) as TrackVariableAssignmentCallback,
         scopeTracker  // Pass ScopeTracker for semantic ID generation
@@ -1239,7 +1256,10 @@ export class JSASTAnalyzer extends Plugin {
       this.profiler.end('traverse_variables');
 
       const allCollections: Collections = {
-        functions, parameters, scopes, variableDeclarations, callSites, methodCalls,
+        functions, parameters, scopes,
+        // Branching (switch statements)
+        branches, cases,
+        variableDeclarations, callSites, methodCalls,
         eventListeners, methodCallbacks, callArguments, classInstantiations, constructorCalls, classDeclarations,
         httpRequests, literals, variableAssignments,
         // TypeScript-specific collections
@@ -1250,10 +1270,14 @@ export class JSASTAnalyzer extends Plugin {
         arrayMutations,
         // Object mutation tracking
         objectMutations,
+        // Return statement tracking
+        returnStatements,
         objectLiteralCounterRef, arrayLiteralCounterRef,
         ifScopeCounterRef, scopeCounterRef, varDeclCounterRef,
         callSiteCounterRef, functionCounterRef, httpRequestCounterRef,
-        literalCounterRef, anonymousFunctionCounterRef, processedNodes,
+        literalCounterRef, anonymousFunctionCounterRef,
+        branchCounterRef, caseCounterRef,
+        processedNodes,
         imports, exports, code,
         // VisitorCollections compatibility
         classes: classDeclarations,
@@ -1514,6 +1538,9 @@ export class JSASTAnalyzer extends Plugin {
       const result = await this.graphBuilder.build(module, graph, projectPath, {
         functions,
         scopes,
+        // Branching (switch statements) - use allCollections refs as they're populated by analyzeFunctionBody
+        branches: allCollections.branches || branches,
+        cases: allCollections.cases || cases,
         variableDeclarations,
         callSites,
         methodCalls,
@@ -1538,6 +1565,8 @@ export class JSASTAnalyzer extends Plugin {
         arrayMutations,
         // Object mutation tracking
         objectMutations,
+        // Return statement tracking
+        returnStatements,
         // Object/Array literal tracking - use allCollections refs as visitors may have created new arrays
         objectLiterals: allCollections.objectLiterals || objectLiterals,
         objectProperties: allCollections.objectProperties || objectProperties,
@@ -1632,6 +1661,10 @@ export class JSASTAnalyzer extends Plugin {
     const varNode = varPath.node;
     const isConst = varNode.kind === 'const';
 
+    // Check if this is a loop variable (for...of or for...in)
+    const parent = varPath.parent;
+    const isLoopVariable = (t.isForOfStatement(parent) || t.isForInStatement(parent)) && parent.left === varNode;
+
     varNode.declarations.forEach(declarator => {
       const variables = this.extractVariableNamesFromPattern(declarator.id);
       const variablesWithIds: Array<ExtractedVariable & { id: string }> = [];
@@ -1641,7 +1674,9 @@ export class JSASTAnalyzer extends Plugin {
         const isLiteral = literalValue !== null;
         const isNewExpression = declarator.init && declarator.init.type === 'NewExpression';
 
-        const shouldBeConstant = isConst && (isLiteral || isNewExpression);
+        // Loop variables with const should be CONSTANT (they can't be reassigned in loop body)
+        // Regular variables with const are CONSTANT only if initialized with literal or new expression
+        const shouldBeConstant = isConst && (isLoopVariable || isLiteral || isNewExpression);
         const nodeType = shouldBeConstant ? 'CONSTANT' : 'VARIABLE';
 
         // Generate semantic ID (primary) or legacy ID (fallback)
@@ -1700,7 +1735,49 @@ export class JSASTAnalyzer extends Plugin {
       });
 
       // Track assignments after all variables are created
-      if (declarator.init) {
+      if (isLoopVariable) {
+        // For loop variables, track assignment from the source collection (right side of for...of/for...in)
+        const loopParent = parent as t.ForOfStatement | t.ForInStatement;
+        const sourceExpression = loopParent.right;
+
+        if (t.isObjectPattern(declarator.id) || t.isArrayPattern(declarator.id)) {
+          // Destructuring in loop: track each variable separately
+          this.trackDestructuringAssignment(
+            declarator.id,
+            sourceExpression,
+            variablesWithIds,
+            module,
+            variableAssignments
+          );
+        } else {
+          // Simple loop variable: create DERIVES_FROM edges (not ASSIGNED_FROM)
+          // Loop variables derive their values from the collection (semantic difference)
+          variablesWithIds.forEach(varInfo => {
+            if (t.isIdentifier(sourceExpression)) {
+              variableAssignments.push({
+                variableId: varInfo.id,
+                sourceType: 'DERIVES_FROM_VARIABLE',
+                sourceName: sourceExpression.name,
+                file: module.file,
+                line: varInfo.loc.start.line
+              });
+            } else {
+              // Fallback to regular tracking for non-identifier expressions
+              this.trackVariableAssignment(
+                sourceExpression,
+                varInfo.id,
+                varInfo.name,
+                module,
+                varInfo.loc.start.line,
+                literals,
+                variableAssignments,
+                literalCounterRef
+              );
+            }
+          });
+        }
+      } else if (declarator.init) {
+        // Regular variable declaration with initializer
         if (t.isObjectPattern(declarator.id) || t.isArrayPattern(declarator.id)) {
           // Destructuring: use specialized tracking
           this.trackDestructuringAssignment(
@@ -2020,6 +2097,263 @@ export class JSASTAnalyzer extends Plugin {
   }
 
   /**
+   * Handles SwitchStatement nodes.
+   * Creates BRANCH node for switch, CASE nodes for each case clause,
+   * and EXPRESSION node for discriminant.
+   *
+   * @param switchPath - The NodePath for the SwitchStatement
+   * @param parentScopeId - Parent scope ID
+   * @param module - Module context
+   * @param collections - AST collections
+   * @param scopeTracker - Tracker for semantic ID generation
+   */
+  private handleSwitchStatement(
+    switchPath: NodePath<t.SwitchStatement>,
+    parentScopeId: string,
+    module: VisitorModule,
+    collections: VisitorCollections,
+    scopeTracker: ScopeTracker | undefined
+  ): void {
+    const switchNode = switchPath.node;
+
+    // Initialize collections if not exist
+    if (!collections.branches) {
+      collections.branches = [];
+    }
+    if (!collections.cases) {
+      collections.cases = [];
+    }
+    if (!collections.branchCounterRef) {
+      collections.branchCounterRef = { value: 0 };
+    }
+    if (!collections.caseCounterRef) {
+      collections.caseCounterRef = { value: 0 };
+    }
+
+    const branches = collections.branches as BranchInfo[];
+    const cases = collections.cases as CaseInfo[];
+    const branchCounterRef = collections.branchCounterRef as CounterRef;
+    const caseCounterRef = collections.caseCounterRef as CounterRef;
+
+    // Create BRANCH node
+    const branchCounter = branchCounterRef.value++;
+    const legacyBranchId = `${module.file}:BRANCH:switch:${getLine(switchNode)}:${branchCounter}`;
+    const branchId = scopeTracker
+      ? computeSemanticId('BRANCH', 'switch', scopeTracker.getContext(), { discriminator: branchCounter })
+      : legacyBranchId;
+
+    // Handle discriminant expression - store metadata directly (Linus improvement)
+    let discriminantExpressionId: string | undefined;
+    let discriminantExpressionType: string | undefined;
+    let discriminantLine: number | undefined;
+    let discriminantColumn: number | undefined;
+
+    if (switchNode.discriminant) {
+      const discResult = this.extractDiscriminantExpression(
+        switchNode.discriminant,
+        module
+      );
+      discriminantExpressionId = discResult.id;
+      discriminantExpressionType = discResult.expressionType;
+      discriminantLine = discResult.line;
+      discriminantColumn = discResult.column;
+    }
+
+    branches.push({
+      id: branchId,
+      semanticId: branchId,
+      type: 'BRANCH',
+      branchType: 'switch',
+      file: module.file,
+      line: getLine(switchNode),
+      parentScopeId,
+      discriminantExpressionId,
+      discriminantExpressionType,
+      discriminantLine,
+      discriminantColumn
+    });
+
+    // Process each case clause
+    for (let i = 0; i < switchNode.cases.length; i++) {
+      const caseNode = switchNode.cases[i];
+      const isDefault = caseNode.test === null;
+      const isEmpty = caseNode.consequent.length === 0;
+
+      // Detect fall-through: no break/return/throw at end of consequent
+      const fallsThrough = isEmpty || !this.caseTerminates(caseNode);
+
+      // Extract case value
+      const value = isDefault ? null : this.extractCaseValue(caseNode.test ?? null);
+
+      const caseCounter = caseCounterRef.value++;
+      const valueName = isDefault ? 'default' : String(value);
+      const legacyCaseId = `${module.file}:CASE:${valueName}:${getLine(caseNode)}:${caseCounter}`;
+      const caseId = scopeTracker
+        ? computeSemanticId('CASE', valueName, scopeTracker.getContext(), { discriminator: caseCounter })
+        : legacyCaseId;
+
+      cases.push({
+        id: caseId,
+        semanticId: caseId,
+        type: 'CASE',
+        value,
+        isDefault,
+        fallsThrough,
+        isEmpty,
+        file: module.file,
+        line: getLine(caseNode),
+        parentBranchId: branchId
+      });
+    }
+  }
+
+  /**
+   * Extract EXPRESSION node ID and metadata for switch discriminant
+   */
+  private extractDiscriminantExpression(
+    discriminant: t.Expression,
+    module: VisitorModule
+  ): { id: string; expressionType: string; line: number; column: number } {
+    const line = getLine(discriminant);
+    const column = getColumn(discriminant);
+
+    if (t.isIdentifier(discriminant)) {
+      // Simple identifier: switch(x) - create EXPRESSION node
+      return {
+        id: ExpressionNode.generateId('Identifier', module.file, line, column),
+        expressionType: 'Identifier',
+        line,
+        column
+      };
+    } else if (t.isMemberExpression(discriminant)) {
+      // Member expression: switch(action.type)
+      return {
+        id: ExpressionNode.generateId('MemberExpression', module.file, line, column),
+        expressionType: 'MemberExpression',
+        line,
+        column
+      };
+    } else if (t.isCallExpression(discriminant)) {
+      // Call expression: switch(getType())
+      const callee = t.isIdentifier(discriminant.callee) ? discriminant.callee.name : '<complex>';
+      // Return CALL node ID instead of EXPRESSION (reuse existing call tracking)
+      return {
+        id: `${module.file}:CALL:${callee}:${line}:${column}`,
+        expressionType: 'CallExpression',
+        line,
+        column
+      };
+    }
+
+    // Default: create generic EXPRESSION
+    return {
+      id: ExpressionNode.generateId(discriminant.type, module.file, line, column),
+      expressionType: discriminant.type,
+      line,
+      column
+    };
+  }
+
+  /**
+   * Extract case test value as a primitive
+   */
+  private extractCaseValue(test: t.Expression | null): unknown {
+    if (!test) return null;
+
+    if (t.isStringLiteral(test)) {
+      return test.value;
+    } else if (t.isNumericLiteral(test)) {
+      return test.value;
+    } else if (t.isBooleanLiteral(test)) {
+      return test.value;
+    } else if (t.isNullLiteral(test)) {
+      return null;
+    } else if (t.isIdentifier(test)) {
+      // Constant reference: case CONSTANTS.ADD
+      return test.name;
+    } else if (t.isMemberExpression(test)) {
+      // Member expression: case Action.ADD
+      return this.memberExpressionToString(test);
+    }
+
+    return '<complex>';
+  }
+
+  /**
+   * Check if case clause terminates (has break, return, throw)
+   */
+  private caseTerminates(caseNode: t.SwitchCase): boolean {
+    const statements = caseNode.consequent;
+    if (statements.length === 0) return false;
+
+    // Check last statement (or any statement for early returns)
+    for (const stmt of statements) {
+      if (t.isBreakStatement(stmt)) return true;
+      if (t.isReturnStatement(stmt)) return true;
+      if (t.isThrowStatement(stmt)) return true;
+      if (t.isContinueStatement(stmt)) return true;  // In switch inside loop
+
+      // Check for nested blocks (if last statement is block, check inside)
+      if (t.isBlockStatement(stmt)) {
+        const lastInBlock = stmt.body[stmt.body.length - 1];
+        if (lastInBlock && (
+          t.isBreakStatement(lastInBlock) ||
+          t.isReturnStatement(lastInBlock) ||
+          t.isThrowStatement(lastInBlock)
+        )) {
+          return true;
+        }
+      }
+
+      // Check for if-else where both branches terminate
+      if (t.isIfStatement(stmt) && stmt.alternate) {
+        const ifTerminates = this.blockTerminates(stmt.consequent);
+        const elseTerminates = this.blockTerminates(stmt.alternate);
+        if (ifTerminates && elseTerminates) return true;
+      }
+    }
+
+    return false;
+  }
+
+  /**
+   * Check if a block/statement terminates
+   */
+  private blockTerminates(node: t.Statement): boolean {
+    if (t.isBreakStatement(node)) return true;
+    if (t.isReturnStatement(node)) return true;
+    if (t.isThrowStatement(node)) return true;
+    if (t.isBlockStatement(node)) {
+      const last = node.body[node.body.length - 1];
+      return last ? this.blockTerminates(last) : false;
+    }
+    return false;
+  }
+
+  /**
+   * Convert MemberExpression to string representation
+   */
+  private memberExpressionToString(expr: t.MemberExpression): string {
+    const parts: string[] = [];
+
+    let current: t.Expression = expr;
+    while (t.isMemberExpression(current)) {
+      if (t.isIdentifier(current.property)) {
+        parts.unshift(current.property.name);
+      } else {
+        parts.unshift('<computed>');
+      }
+      current = current.object;
+    }
+
+    if (t.isIdentifier(current)) {
+      parts.unshift(current.name);
+    }
+
+    return parts.join('.');
+  }
+
+  /**
    * Factory method to create IfStatement handler.
    * Creates if scope with condition parsing and optional else scope.
    * Tracks if/else scope transitions via ifElseScopeMap.
@@ -2174,6 +2508,8 @@ export class JSASTAnalyzer extends Plugin {
     const literalCounterRef = (collections.literalCounterRef ?? { value: 0 }) as CounterRef;
     const anonymousFunctionCounterRef = (collections.anonymousFunctionCounterRef ?? { value: 0 }) as CounterRef;
     const scopeTracker = collections.scopeTracker as ScopeTracker | undefined;
+    const returnStatements = (collections.returnStatements ?? []) as ReturnStatementInfo[];
+    const parameters = (collections.parameters ?? []) as ParameterInfo[];
     const processedNodes = collections.processedNodes ?? {
       functions: new Set<string>(),
       classes: new Set<string>(),
@@ -2195,6 +2531,81 @@ export class JSASTAnalyzer extends Plugin {
 
     // Track if/else scope transitions
     const ifElseScopeMap = new Map<t.IfStatement, { inElse: boolean; hasElse: boolean }>();
+
+    // Determine the ID of the function we're analyzing for RETURNS edges
+    // Find by matching file/line/column in functions collection (it was just added by the visitor)
+    const funcNode = funcPath.node;
+    const funcLine = getLine(funcNode);
+    const funcColumn = getColumn(funcNode);
+    let currentFunctionId: string | null = null;
+
+    const matchingFunction = functions.find(f =>
+      f.file === module.file &&
+      f.line === funcLine &&
+      (f.column === undefined || f.column === funcColumn)
+    );
+    if (matchingFunction) {
+      currentFunctionId = matchingFunction.id;
+    }
+
+    // Handle implicit return for THIS arrow function if it has an expression body
+    // e.g., `const double = x => x * 2;` - the function we're analyzing IS an arrow with expression body
+    if (t.isArrowFunctionExpression(funcNode) && !t.isBlockStatement(funcNode.body) && currentFunctionId) {
+      const bodyExpr = funcNode.body;
+      const bodyLine = getLine(bodyExpr);
+      const bodyColumn = getColumn(bodyExpr);
+
+      const returnInfo: ReturnStatementInfo = {
+        parentFunctionId: currentFunctionId,
+        file: module.file,
+        line: bodyLine,
+        column: bodyColumn,
+        returnValueType: 'NONE',
+        isImplicitReturn: true
+      };
+
+      // Apply type detection logic for the implicit return
+      if (t.isIdentifier(bodyExpr)) {
+        returnInfo.returnValueType = 'VARIABLE';
+        returnInfo.returnValueName = bodyExpr.name;
+      }
+      else if (t.isLiteral(bodyExpr)) {
+        returnInfo.returnValueType = 'LITERAL';
+        const literalId = `LITERAL#implicit_return#${module.file}#${funcLine}:${funcColumn}:${literalCounterRef.value++}`;
+        returnInfo.returnValueId = literalId;
+        literals.push({
+          id: literalId,
+          type: 'LITERAL',
+          value: ExpressionEvaluator.extractLiteralValue(bodyExpr),
+          valueType: typeof ExpressionEvaluator.extractLiteralValue(bodyExpr),
+          file: module.file,
+          line: bodyLine,
+          column: bodyColumn
+        });
+      }
+      else if (t.isCallExpression(bodyExpr) && t.isIdentifier(bodyExpr.callee)) {
+        returnInfo.returnValueType = 'CALL_SITE';
+        returnInfo.returnValueLine = getLine(bodyExpr);
+        returnInfo.returnValueColumn = getColumn(bodyExpr);
+        returnInfo.returnValueCallName = bodyExpr.callee.name;
+      }
+      else if (t.isCallExpression(bodyExpr) && t.isMemberExpression(bodyExpr.callee)) {
+        returnInfo.returnValueType = 'METHOD_CALL';
+        returnInfo.returnValueLine = getLine(bodyExpr);
+        returnInfo.returnValueColumn = getColumn(bodyExpr);
+        if (t.isIdentifier(bodyExpr.callee.property)) {
+          returnInfo.returnValueCallName = bodyExpr.callee.property.name;
+        }
+      }
+      else {
+        returnInfo.returnValueType = 'EXPRESSION';
+        returnInfo.expressionType = bodyExpr.type;
+        returnInfo.returnValueLine = getLine(bodyExpr);
+        returnInfo.returnValueColumn = getColumn(bodyExpr);
+      }
+
+      returnStatements.push(returnInfo);
+    }
 
     funcPath.traverse({
       VariableDeclaration: (varPath: NodePath<t.VariableDeclaration>) => {
@@ -2236,6 +2647,116 @@ export class JSASTAnalyzer extends Plugin {
         this.detectObjectPropertyAssignment(assignNode, module, objectMutations, scopeTracker);
       },
 
+      // Handle return statements for RETURNS edges
+      ReturnStatement: (returnPath: NodePath<t.ReturnStatement>) => {
+        // Skip if we couldn't determine the function ID
+        if (!currentFunctionId) return;
+
+        // Skip if this return is inside a nested function (not the function we're analyzing)
+        // Check if there's a function ancestor between us and funcPath.node
+        let parent: NodePath | null = returnPath.parentPath;
+        while (parent) {
+          if (t.isFunction(parent.node) && parent.node !== funcNode) {
+            // This return is inside a nested function - skip it
+            return;
+          }
+          parent = parent.parentPath;
+        }
+
+        const returnNode = returnPath.node;
+        const returnLine = getLine(returnNode);
+        const returnColumn = getColumn(returnNode);
+
+        // Handle bare return; (no value)
+        if (!returnNode.argument) {
+          // Skip - no data flow value
+          return;
+        }
+
+        const arg = returnNode.argument;
+
+        // Determine return value type and extract relevant info
+        const returnInfo: ReturnStatementInfo = {
+          parentFunctionId: currentFunctionId,
+          file: module.file,
+          line: returnLine,
+          column: returnColumn,
+          returnValueType: 'NONE'
+        };
+
+        // Identifier (variable reference)
+        if (t.isIdentifier(arg)) {
+          returnInfo.returnValueType = 'VARIABLE';
+          returnInfo.returnValueName = arg.name;
+        }
+        // Literal values
+        else if (t.isLiteral(arg)) {
+          returnInfo.returnValueType = 'LITERAL';
+          // Create a LITERAL node ID for this return value
+          const literalId = `LITERAL#return#${module.file}#${returnLine}:${returnColumn}:${literalCounterRef.value++}`;
+          returnInfo.returnValueId = literalId;
+
+          // Also add to literals collection for node creation
+          literals.push({
+            id: literalId,
+            type: 'LITERAL',
+            value: ExpressionEvaluator.extractLiteralValue(arg),
+            valueType: typeof ExpressionEvaluator.extractLiteralValue(arg),
+            file: module.file,
+            line: returnLine,
+            column: returnColumn
+          });
+        }
+        // Direct function call: return foo()
+        else if (t.isCallExpression(arg) && t.isIdentifier(arg.callee)) {
+          returnInfo.returnValueType = 'CALL_SITE';
+          returnInfo.returnValueLine = getLine(arg);
+          returnInfo.returnValueColumn = getColumn(arg);
+          returnInfo.returnValueCallName = arg.callee.name;
+        }
+        // Method call: return obj.method()
+        else if (t.isCallExpression(arg) && t.isMemberExpression(arg.callee)) {
+          returnInfo.returnValueType = 'METHOD_CALL';
+          returnInfo.returnValueLine = getLine(arg);
+          returnInfo.returnValueColumn = getColumn(arg);
+          // Extract method name for lookup
+          if (t.isIdentifier(arg.callee.property)) {
+            returnInfo.returnValueCallName = arg.callee.property.name;
+          }
+        }
+        // Complex expressions (BinaryExpression, ConditionalExpression, etc.)
+        else if (t.isBinaryExpression(arg) || t.isConditionalExpression(arg) ||
+                 t.isLogicalExpression(arg) || t.isUnaryExpression(arg)) {
+          returnInfo.returnValueType = 'EXPRESSION';
+          returnInfo.expressionType = arg.type;
+          returnInfo.returnValueLine = getLine(arg);
+          returnInfo.returnValueColumn = getColumn(arg);
+        }
+        // MemberExpression (property access): return obj.prop
+        else if (t.isMemberExpression(arg)) {
+          returnInfo.returnValueType = 'EXPRESSION';
+          returnInfo.expressionType = 'MemberExpression';
+          returnInfo.returnValueLine = getLine(arg);
+          returnInfo.returnValueColumn = getColumn(arg);
+        }
+        // NewExpression: return new Foo()
+        else if (t.isNewExpression(arg)) {
+          returnInfo.returnValueType = 'EXPRESSION';
+          returnInfo.expressionType = 'NewExpression';
+          returnInfo.returnValueLine = getLine(arg);
+          returnInfo.returnValueColumn = getColumn(arg);
+        }
+        // Fallback for other expression types
+        else {
+          returnInfo.returnValueType = 'EXPRESSION';
+          returnInfo.expressionType = arg.type;
+          returnInfo.returnValueLine = getLine(arg);
+          returnInfo.returnValueColumn = getColumn(arg);
+        }
+
+        returnStatements.push(returnInfo);
+      },
+
       ForStatement: this.createLoopScopeHandler('for', 'for-loop', parentScopeId, module, scopes, scopeCounterRef, scopeTracker),
       ForInStatement: this.createLoopScopeHandler('for-in', 'for-in-loop', parentScopeId, module, scopes, scopeCounterRef, scopeTracker),
       ForOfStatement: this.createLoopScopeHandler('for-of', 'for-of-loop', parentScopeId, module, scopes, scopeCounterRef, scopeTracker),
@@ -2259,19 +2780,13 @@ export class JSASTAnalyzer extends Plugin {
       },
 
       SwitchStatement: (switchPath: NodePath<t.SwitchStatement>) => {
-        const switchNode = switchPath.node;
-        const scopeId = `SCOPE#switch-case#${module.file}#${getLine(switchNode)}:${scopeCounterRef.value++}`;
-        const semanticId = this.generateSemanticId('switch-case', scopeTracker);
-
-        scopes.push({
-          id: scopeId,
-          type: 'SCOPE',
-          scopeType: 'switch-case',
-          semanticId,
-          file: module.file,
-          line: getLine(switchNode),
-          parentScopeId
-        });
+        this.handleSwitchStatement(
+          switchPath,
+          parentScopeId,
+          module,
+          collections,
+          scopeTracker
+        );
       },
 
       FunctionExpression: (funcPath: NodePath<t.FunctionExpression>) => {
@@ -2378,6 +2893,63 @@ export class JSASTAnalyzer extends Plugin {
           if (scopeTracker) {
             scopeTracker.exitScope();
           }
+        } else {
+          // Arrow function with expression body (implicit return)
+          // e.g., x => x * 2, () => 42
+          const bodyExpr = node.body;
+          const bodyLine = getLine(bodyExpr);
+          const bodyColumn = getColumn(bodyExpr);
+
+          const returnInfo: ReturnStatementInfo = {
+            parentFunctionId: functionId,
+            file: module.file,
+            line: bodyLine,
+            column: bodyColumn,
+            returnValueType: 'NONE',
+            isImplicitReturn: true
+          };
+
+          // Apply same type detection logic as ReturnStatement handler
+          if (t.isIdentifier(bodyExpr)) {
+            returnInfo.returnValueType = 'VARIABLE';
+            returnInfo.returnValueName = bodyExpr.name;
+          }
+          else if (t.isLiteral(bodyExpr)) {
+            returnInfo.returnValueType = 'LITERAL';
+            const literalId = `LITERAL#implicit_return#${module.file}#${line}:${column}:${literalCounterRef.value++}`;
+            returnInfo.returnValueId = literalId;
+            literals.push({
+              id: literalId,
+              type: 'LITERAL',
+              value: ExpressionEvaluator.extractLiteralValue(bodyExpr),
+              valueType: typeof ExpressionEvaluator.extractLiteralValue(bodyExpr),
+              file: module.file,
+              line: bodyLine,
+              column: bodyColumn
+            });
+          }
+          else if (t.isCallExpression(bodyExpr) && t.isIdentifier(bodyExpr.callee)) {
+            returnInfo.returnValueType = 'CALL_SITE';
+            returnInfo.returnValueLine = getLine(bodyExpr);
+            returnInfo.returnValueColumn = getColumn(bodyExpr);
+            returnInfo.returnValueCallName = bodyExpr.callee.name;
+          }
+          else if (t.isCallExpression(bodyExpr) && t.isMemberExpression(bodyExpr.callee)) {
+            returnInfo.returnValueType = 'METHOD_CALL';
+            returnInfo.returnValueLine = getLine(bodyExpr);
+            returnInfo.returnValueColumn = getColumn(bodyExpr);
+            if (t.isIdentifier(bodyExpr.callee.property)) {
+              returnInfo.returnValueCallName = bodyExpr.callee.property.name;
+            }
+          }
+          else {
+            returnInfo.returnValueType = 'EXPRESSION';
+            returnInfo.expressionType = bodyExpr.type;
+            returnInfo.returnValueLine = getLine(bodyExpr);
+            returnInfo.returnValueColumn = getColumn(bodyExpr);
+          }
+
+          returnStatements.push(returnInfo);
         }
 
         arrowPath.skip();

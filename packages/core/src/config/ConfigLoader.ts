@@ -70,6 +70,7 @@ export const DEFAULT_CONFIG: GrafemaConfig = {
       'MethodCallResolver',
       'ArgumentParameterLinker',
       'AliasTracker',
+      'ClosureCaptureEnricher',
       'ValueDomainAnalyzer',
       'MountPointResolver',
       'PrefixEvaluator',

@@ -55,7 +55,7 @@ This document tracks which JavaScript/TypeScript AST nodes are handled by Navi's
 | `DoWhileStatement` | Handled | SCOPE node | Loop scope |
 | `TryStatement` | Handled | SCOPE node | Error handling scope |
 | `ThrowStatement` | Not Handled | - | Could create THROWS edge |
-| `ReturnStatement` | Not Handled | - | Could track return types |
+| `ReturnStatement` | Handled | RETURNS | Tracks return values for data flow |
 | `SwitchStatement` | Not Handled | - | Case analysis |
 | `BreakStatement` | N/A | - | Control flow |
 | `ContinueStatement` | N/A | - | Control flow |
@@ -175,3 +175,4 @@ ThisExpression           TemplateLiteral (partial)
 | INSTANCE_OF | NewExpression -> CLASS |
 | HAS_CALLBACK | CallExpression with function arg |
 | HANDLED_BY | Event listener pattern |
+| RETURNS | ReturnStatement (return value -> FUNCTION) |

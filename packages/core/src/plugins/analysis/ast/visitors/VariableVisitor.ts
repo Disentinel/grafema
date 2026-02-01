@@ -203,12 +203,17 @@ export class VariableVisitor extends ASTVisitor {
     const classInstantiations = this.collections.classInstantiations ?? [];
     const literals = (this.collections.literals ?? []) as unknown[];
     const variableAssignments = this.collections.variableAssignments ?? [];
+    const scopes = (this.collections.scopes ?? []) as unknown[];
     const varDeclCounterRef = (this.collections.varDeclCounterRef ?? { value: 0 }) as CounterRef;
     const literalCounterRef = (this.collections.literalCounterRef ?? { value: 0 }) as CounterRef;
+    const scopeCounterRef = (this.collections.scopeCounterRef ?? { value: 0 }) as CounterRef;
     const scopeTracker = this.scopeTracker;
 
     const extractVariableNamesFromPattern = this.extractVariableNamesFromPattern;
     const trackVariableAssignment = this.trackVariableAssignment;
+
+    // Track which loops we've already created scopes for
+    const processedLoops = new Set<unknown>();
 
     return {
       VariableDeclaration: (path: NodePath) => {
@@ -217,6 +222,41 @@ export class VariableVisitor extends ASTVisitor {
         if (!functionParent) {
           const varNode = path.node as VariableDeclaration;
           const isConst = varNode.kind === 'const';
+
+          // Check if this is a loop variable (for...of or for...in)
+          const parent = path.parent;
+          const isLoopVariable = (parent.type === 'ForOfStatement' || parent.type === 'ForInStatement')
+            && (parent as {left?: unknown}).left === varNode;
+
+          // If this is a loop variable, create the loop scope first (if not already created)
+          if (isLoopVariable && !processedLoops.has(parent)) {
+            processedLoops.add(parent);
+
+            const loopNode = parent as { type: string; loc?: { start: { line: number } } };
+            const line = loopNode.loc?.start.line ?? 0;
+            const scopeType = loopNode.type === 'ForOfStatement' ? 'for-of-loop' : 'for-in-loop';
+            const trackerType = loopNode.type === 'ForOfStatement' ? 'for-of' : 'for-in';
+            const scopeId = `SCOPE#${scopeType}#${module.file}#${line}:${scopeCounterRef.value++}`;
+
+            // Enter scope in tracker BEFORE generating semantic ID
+            if (scopeTracker) {
+              scopeTracker.enterCountedScope(trackerType);
+            }
+
+            const semanticId = scopeTracker
+              ? scopeTracker.getContext().scopePath.join('->')
+              : scopeId;
+
+            (scopes as { id: string; type: string; scopeType: string; semanticId: string; file: string; line: number; parentScopeId: string }[]).push({
+              id: scopeId,
+              type: 'SCOPE',
+              scopeType,
+              semanticId,
+              file: module.file,
+              line,
+              parentScopeId: module.id
+            });
+          }
 
           varNode.declarations.forEach((declarator: VariableDeclarator) => {
             // Extract all variable names from the pattern (handles destructuring)
@@ -227,9 +267,9 @@ export class VariableVisitor extends ASTVisitor {
               const isLiteral = literalValue !== null;
               const isNewExpression = declarator.init && declarator.init.type === 'NewExpression';
 
-              // For const with literal or NewExpression create CONSTANT
-              // For everything else - VARIABLE
-              const shouldBeConstant = isConst && (isLiteral || isNewExpression);
+              // Loop variables with const should be CONSTANT (they can't be reassigned in loop body)
+              // Regular variables with const are CONSTANT only if initialized with literal or new expression
+              const shouldBeConstant = isConst && (isLoopVariable || isLiteral || isNewExpression);
 
               const nodeType = shouldBeConstant ? 'CONSTANT' : 'VARIABLE';
 
@@ -287,12 +327,29 @@ export class VariableVisitor extends ASTVisitor {
               }
 
               // Track assignment for data flow analysis
-              if (declarator.init) {
+              // For loop variables, the "init" is the right side of for...of/for...in
+              const initExpression = isLoopVariable
+                ? (parent as {right?: Node}).right
+                : declarator.init;
+
+              if (initExpression) {
+                // For loop variables, create DERIVES_FROM edges instead of ASSIGNED_FROM
+                // Loop variables derive their values from the collection (semantic difference)
+                if (isLoopVariable && initExpression.type === 'Identifier') {
+                  const sourceName = (initExpression as Identifier).name;
+                  (variableAssignments as unknown[]).push({
+                    variableId: varId,
+                    sourceType: 'DERIVES_FROM_VARIABLE',
+                    sourceName,
+                    file: module.file,
+                    line: varInfo.loc.start.line
+                  });
+                }
                 // Handle destructuring - create EXPRESSION for property path
-                if (varInfo.propertyPath || varInfo.arrayIndex !== undefined || varInfo.isRest) {
+                else if (varInfo.propertyPath || varInfo.arrayIndex !== undefined || varInfo.isRest) {
                   // Phase 1: Simple Identifier init expressions (REG-201)
-                  if (declarator.init.type === 'Identifier') {
-                    const sourceBaseName = (declarator.init as Identifier).name;
+                  if (initExpression.type === 'Identifier') {
+                    const sourceBaseName = (initExpression as Identifier).name;
                     const expressionLine = varInfo.loc.start.line;
 
                     // Handle rest elements specially - create edge to whole source
@@ -347,8 +404,8 @@ export class VariableVisitor extends ASTVisitor {
                     });
                   }
                   // Phase 2: CallExpression or AwaitExpression (REG-223)
-                  else if (this.isCallOrAwaitExpression(declarator.init)) {
-                    const unwrapped = this.unwrapAwaitExpression(declarator.init);
+                  else if (this.isCallOrAwaitExpression(initExpression)) {
+                    const unwrapped = this.unwrapAwaitExpression(initExpression);
                     const callInfo = this.extractCallInfo(unwrapped);
 
                     if (!callInfo) {
@@ -426,7 +483,7 @@ export class VariableVisitor extends ASTVisitor {
                 } else {
                   // Normal assignment tracking
                   trackVariableAssignment(
-                    declarator.init,
+                    initExpression,
                     varId,
                     varInfo.name,
                     module,
