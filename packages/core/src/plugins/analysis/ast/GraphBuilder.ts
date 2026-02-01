@@ -1814,8 +1814,150 @@ export class GraphBuilder {
         }
 
         case 'EXPRESSION': {
-          // For expressions, we skip complex expressions for now
-          // This matches how ASSIGNED_FROM handles expressions
+          // REG-276: Create EXPRESSION node and DERIVES_FROM edges for return expressions
+          const {
+            expressionType,
+            returnValueId,
+            returnValueLine,
+            returnValueColumn,
+            operator,
+            object,
+            property,
+            computed,
+            objectSourceName,
+            leftSourceName,
+            rightSourceName,
+            consequentSourceName,
+            alternateSourceName,
+            expressionSourceNames,
+            unaryArgSourceName
+          } = ret;
+
+          // Skip if no expression ID was generated
+          if (!returnValueId) {
+            break;
+          }
+
+          // Create EXPRESSION node using NodeFactory
+          const expressionNode = NodeFactory.createExpressionFromMetadata(
+            expressionType || 'Unknown',
+            file,
+            returnValueLine || ret.line,
+            returnValueColumn || ret.column,
+            {
+              id: returnValueId,
+              object,
+              property,
+              computed,
+              operator
+            }
+          );
+
+          this._bufferNode(expressionNode);
+          sourceNodeId = returnValueId;
+
+          // Buffer DERIVES_FROM edges based on expression type
+          // Helper function to find source variable or parameter
+          const findSource = (name: string): string | null => {
+            const variable = variableDeclarations.find(v =>
+              v.name === name && v.file === file
+            );
+            if (variable) return variable.id;
+
+            const param = parameters.find(p =>
+              p.name === name && p.file === file
+            );
+            if (param) return param.id;
+
+            return null;
+          };
+
+          // MemberExpression: derives from the object
+          if (expressionType === 'MemberExpression' && objectSourceName) {
+            const sourceId = findSource(objectSourceName);
+            if (sourceId) {
+              this._bufferEdge({
+                type: 'DERIVES_FROM',
+                src: returnValueId,
+                dst: sourceId
+              });
+            }
+          }
+
+          // BinaryExpression / LogicalExpression: derives from left and right operands
+          if (expressionType === 'BinaryExpression' || expressionType === 'LogicalExpression') {
+            if (leftSourceName) {
+              const sourceId = findSource(leftSourceName);
+              if (sourceId) {
+                this._bufferEdge({
+                  type: 'DERIVES_FROM',
+                  src: returnValueId,
+                  dst: sourceId
+                });
+              }
+            }
+            if (rightSourceName) {
+              const sourceId = findSource(rightSourceName);
+              if (sourceId) {
+                this._bufferEdge({
+                  type: 'DERIVES_FROM',
+                  src: returnValueId,
+                  dst: sourceId
+                });
+              }
+            }
+          }
+
+          // ConditionalExpression: derives from consequent and alternate
+          if (expressionType === 'ConditionalExpression') {
+            if (consequentSourceName) {
+              const sourceId = findSource(consequentSourceName);
+              if (sourceId) {
+                this._bufferEdge({
+                  type: 'DERIVES_FROM',
+                  src: returnValueId,
+                  dst: sourceId
+                });
+              }
+            }
+            if (alternateSourceName) {
+              const sourceId = findSource(alternateSourceName);
+              if (sourceId) {
+                this._bufferEdge({
+                  type: 'DERIVES_FROM',
+                  src: returnValueId,
+                  dst: sourceId
+                });
+              }
+            }
+          }
+
+          // UnaryExpression: derives from the argument
+          if (expressionType === 'UnaryExpression' && unaryArgSourceName) {
+            const sourceId = findSource(unaryArgSourceName);
+            if (sourceId) {
+              this._bufferEdge({
+                type: 'DERIVES_FROM',
+                src: returnValueId,
+                dst: sourceId
+              });
+            }
+          }
+
+          // TemplateLiteral: derives from all embedded expressions
+          if (expressionType === 'TemplateLiteral' && expressionSourceNames && expressionSourceNames.length > 0) {
+            for (const sourceName of expressionSourceNames) {
+              const sourceId = findSource(sourceName);
+              if (sourceId) {
+                this._bufferEdge({
+                  type: 'DERIVES_FROM',
+                  src: returnValueId,
+                  dst: sourceId
+                });
+              }
+            }
+          }
+
           break;
         }
       }
