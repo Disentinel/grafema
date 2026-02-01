@@ -238,3 +238,24 @@ export interface ReportIssueArgs {
   context?: string;
   labels?: string[];
 }
+
+// === FIND GUARDS (REG-274) ===
+
+/**
+ * Arguments for find_guards tool
+ */
+export interface FindGuardsArgs {
+  nodeId: string;  // ID of any node (CALL, VARIABLE, etc.)
+}
+
+/**
+ * Information about a conditional guard (SCOPE node)
+ */
+export interface GuardInfo {
+  scopeId: string;
+  scopeType: string;          // 'if_statement' | 'else_statement' | etc.
+  condition?: string;         // Raw condition text
+  constraints?: unknown[];    // Parsed constraints
+  file: string;
+  line: number;
+}

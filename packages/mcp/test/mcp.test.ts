@@ -597,3 +597,438 @@ describe('Concurrency Protection (Post-Fix Verification)', () => {
     assert.strictEqual(finalStatus.running, false, 'Status should show running=false after completion');
   });
 });
+
+// ============================================================================
+// SECTION 6: find_guards Tool (REG-274)
+// ============================================================================
+
+describe('find_guards Tool', () => {
+  /**
+   * This section tests the find_guards MCP tool for REG-274.
+   *
+   * The tool finds conditional guards (SCOPE nodes) protecting a given node.
+   * It walks up the containment tree via CONTAINS edges and collects
+   * scopes that have constraints/conditions.
+   */
+
+  describe('MockBackend for find_guards', () => {
+    /**
+     * Extended MockBackend that supports SCOPE nodes with constraints
+     * and CONTAINS edge traversal needed for find_guards.
+     */
+    class FindGuardsMockBackend extends MockBackend {
+      private edges: Array<{ src: string; dst: string; type: string; metadata?: Record<string, unknown> }> = [];
+
+      async addEdge(edge: { src: string; dst: string; type: string; metadata?: Record<string, unknown> }): Promise<void> {
+        this.edges.push(edge);
+      }
+
+      override async getIncomingEdges(id: string, types?: string[]): Promise<Array<{ src: string; dst: string; type: string }>> {
+        return this.edges.filter(e =>
+          e.dst === id && (!types || types.includes(e.type))
+        );
+      }
+
+      override async getOutgoingEdges(id: string, types?: string[]): Promise<Array<{ src: string; dst: string; type: string }>> {
+        return this.edges.filter(e =>
+          e.src === id && (!types || types.includes(e.type))
+        );
+      }
+    }
+
+    let backend: FindGuardsMockBackend;
+
+    beforeEach(() => {
+      backend = new FindGuardsMockBackend();
+    });
+
+    /**
+     * WHY: The simplest case - a call inside a single if-statement.
+     * The find_guards tool should return that one guard with its condition.
+     */
+    it('should find single guard for call inside if-statement', async () => {
+      // Setup: SCOPE contains CALL
+      //   if (user !== null) {
+      //     doSomething();  // <-- target CALL
+      //   }
+      await backend.addNode({
+        id: 'SCOPE:file.js:5',
+        type: 'SCOPE',
+        name: 'if_branch',
+        file: 'file.js',
+        line: 5,
+        scopeType: 'if_statement',
+        conditional: true,
+        condition: 'user !== null',
+        constraints: JSON.stringify([{ variable: 'user', operator: '!==', value: 'null' }]),
+      });
+
+      await backend.addNode({
+        id: 'CALL:file.js:6->doSomething',
+        type: 'CALL',
+        name: 'doSomething',
+        file: 'file.js',
+        line: 6,
+      });
+
+      // Edge: SCOPE -[CONTAINS]-> CALL
+      await backend.addEdge({
+        src: 'SCOPE:file.js:5',
+        dst: 'CALL:file.js:6->doSomething',
+        type: 'CONTAINS',
+      });
+
+      // Simulate find_guards: walk up from CALL via incoming CONTAINS
+      const targetId = 'CALL:file.js:6->doSomething';
+      const guards: Array<{ scopeId: string; scopeType: string; condition?: string }> = [];
+
+      let currentId = targetId;
+      const visited = new Set<string>();
+
+      while (true) {
+        if (visited.has(currentId)) break;
+        visited.add(currentId);
+
+        const incomingEdges = await backend.getIncomingEdges(currentId, ['CONTAINS']);
+        if (incomingEdges.length === 0) break;
+
+        const parentId = incomingEdges[0].src;
+        const parentNode = await backend.getNode(parentId);
+
+        if (parentNode && parentNode.conditional) {
+          guards.push({
+            scopeId: parentNode.id,
+            scopeType: parentNode.scopeType as string,
+            condition: parentNode.condition as string,
+          });
+        }
+
+        currentId = parentId;
+      }
+
+      // Verify
+      assert.strictEqual(guards.length, 1, 'Should find one guard');
+      assert.strictEqual(guards[0].scopeId, 'SCOPE:file.js:5');
+      assert.strictEqual(guards[0].scopeType, 'if_statement');
+      assert.strictEqual(guards[0].condition, 'user !== null');
+    });
+
+    /**
+     * WHY: Unguarded code should return empty guards list.
+     * This is important to distinguish "protected by nothing" from errors.
+     */
+    it('should return empty list for unguarded node', async () => {
+      // Setup: MODULE contains CALL (no conditional scope)
+      await backend.addNode({
+        id: 'MODULE:file.js',
+        type: 'MODULE',
+        name: 'file.js',
+        file: 'file.js',
+      });
+
+      await backend.addNode({
+        id: 'CALL:file.js:1->doSomething',
+        type: 'CALL',
+        name: 'doSomething',
+        file: 'file.js',
+        line: 1,
+      });
+
+      await backend.addEdge({
+        src: 'MODULE:file.js',
+        dst: 'CALL:file.js:1->doSomething',
+        type: 'CONTAINS',
+      });
+
+      // Simulate find_guards
+      const targetId = 'CALL:file.js:1->doSomething';
+      const guards: Array<{ scopeId: string }> = [];
+
+      let currentId = targetId;
+      const visited = new Set<string>();
+
+      while (true) {
+        if (visited.has(currentId)) break;
+        visited.add(currentId);
+
+        const incomingEdges = await backend.getIncomingEdges(currentId, ['CONTAINS']);
+        if (incomingEdges.length === 0) break;
+
+        const parentId = incomingEdges[0].src;
+        const parentNode = await backend.getNode(parentId);
+
+        if (parentNode && parentNode.conditional) {
+          guards.push({ scopeId: parentNode.id });
+        }
+
+        currentId = parentId;
+      }
+
+      // Verify: no guards found
+      assert.strictEqual(guards.length, 0, 'Should find no guards');
+    });
+
+    /**
+     * WHY: Nested conditionals must be returned in inner-to-outer order.
+     * This allows agents to understand the full guard chain.
+     *
+     * Example:
+     *   if (user) {           // outer guard
+     *     if (user.isAdmin) { // inner guard
+     *       doSomething();    // target
+     *     }
+     *   }
+     *
+     * Expected: [inner_guard, outer_guard]
+     */
+    it('should return nested guards in inner-to-outer order', async () => {
+      // Setup: Outer SCOPE -> Inner SCOPE -> CALL
+      await backend.addNode({
+        id: 'MODULE:file.js',
+        type: 'MODULE',
+        name: 'file.js',
+        file: 'file.js',
+      });
+
+      await backend.addNode({
+        id: 'SCOPE:file.js:5',
+        type: 'SCOPE',
+        name: 'if_branch',
+        file: 'file.js',
+        line: 5,
+        scopeType: 'if_statement',
+        conditional: true,
+        condition: 'user !== null',
+      });
+
+      await backend.addNode({
+        id: 'SCOPE:file.js:7',
+        type: 'SCOPE',
+        name: 'if_branch',
+        file: 'file.js',
+        line: 7,
+        scopeType: 'if_statement',
+        conditional: true,
+        condition: 'user.isAdmin',
+      });
+
+      await backend.addNode({
+        id: 'CALL:file.js:8->doAdminAction',
+        type: 'CALL',
+        name: 'doAdminAction',
+        file: 'file.js',
+        line: 8,
+      });
+
+      // Edges: MODULE -> outer SCOPE -> inner SCOPE -> CALL
+      await backend.addEdge({
+        src: 'MODULE:file.js',
+        dst: 'SCOPE:file.js:5',
+        type: 'CONTAINS',
+      });
+      await backend.addEdge({
+        src: 'SCOPE:file.js:5',
+        dst: 'SCOPE:file.js:7',
+        type: 'CONTAINS',
+      });
+      await backend.addEdge({
+        src: 'SCOPE:file.js:7',
+        dst: 'CALL:file.js:8->doAdminAction',
+        type: 'CONTAINS',
+      });
+
+      // Simulate find_guards
+      const targetId = 'CALL:file.js:8->doAdminAction';
+      const guards: Array<{ scopeId: string; condition: string; line: number }> = [];
+
+      let currentId = targetId;
+      const visited = new Set<string>();
+
+      while (true) {
+        if (visited.has(currentId)) break;
+        visited.add(currentId);
+
+        const incomingEdges = await backend.getIncomingEdges(currentId, ['CONTAINS']);
+        if (incomingEdges.length === 0) break;
+
+        const parentId = incomingEdges[0].src;
+        const parentNode = await backend.getNode(parentId);
+
+        if (parentNode && parentNode.conditional) {
+          guards.push({
+            scopeId: parentNode.id,
+            condition: parentNode.condition as string,
+            line: parentNode.line as number,
+          });
+        }
+
+        currentId = parentId;
+      }
+
+      // Verify: inner guard first, then outer guard
+      assert.strictEqual(guards.length, 2, 'Should find two guards');
+
+      // First guard should be the inner one (line 7)
+      assert.strictEqual(guards[0].scopeId, 'SCOPE:file.js:7');
+      assert.strictEqual(guards[0].condition, 'user.isAdmin');
+      assert.strictEqual(guards[0].line, 7);
+
+      // Second guard should be the outer one (line 5)
+      assert.strictEqual(guards[1].scopeId, 'SCOPE:file.js:5');
+      assert.strictEqual(guards[1].condition, 'user !== null');
+      assert.strictEqual(guards[1].line, 5);
+    });
+
+    /**
+     * WHY: else-statement guards should also be detected.
+     * The condition in an else block is the negation of the if condition.
+     */
+    it('should find else-statement guards', async () => {
+      // Setup: else_branch SCOPE contains CALL
+      await backend.addNode({
+        id: 'SCOPE:file.js:10',
+        type: 'SCOPE',
+        name: 'else_branch',
+        file: 'file.js',
+        line: 10,
+        scopeType: 'else_statement',
+        conditional: true,
+        condition: '!(user !== null)', // Negated condition
+        constraints: JSON.stringify([{ variable: 'user', operator: '===', value: 'null' }]),
+      });
+
+      await backend.addNode({
+        id: 'CALL:file.js:11->handleAnonymous',
+        type: 'CALL',
+        name: 'handleAnonymous',
+        file: 'file.js',
+        line: 11,
+      });
+
+      await backend.addEdge({
+        src: 'SCOPE:file.js:10',
+        dst: 'CALL:file.js:11->handleAnonymous',
+        type: 'CONTAINS',
+      });
+
+      // Simulate find_guards
+      const targetId = 'CALL:file.js:11->handleAnonymous';
+      const guards: Array<{ scopeId: string; scopeType: string }> = [];
+
+      let currentId = targetId;
+      const visited = new Set<string>();
+
+      while (true) {
+        if (visited.has(currentId)) break;
+        visited.add(currentId);
+
+        const incomingEdges = await backend.getIncomingEdges(currentId, ['CONTAINS']);
+        if (incomingEdges.length === 0) break;
+
+        const parentId = incomingEdges[0].src;
+        const parentNode = await backend.getNode(parentId);
+
+        if (parentNode && parentNode.conditional) {
+          guards.push({
+            scopeId: parentNode.id,
+            scopeType: parentNode.scopeType as string,
+          });
+        }
+
+        currentId = parentId;
+      }
+
+      // Verify: else guard found
+      assert.strictEqual(guards.length, 1, 'Should find one guard');
+      assert.strictEqual(guards[0].scopeType, 'else_statement');
+    });
+
+    /**
+     * WHY: Guards mixed with non-conditional scopes (like function bodies)
+     * should only return the conditional scopes.
+     */
+    it('should skip non-conditional scopes', async () => {
+      // Setup: MODULE -> FUNCTION -> SCOPE (if) -> CALL
+      await backend.addNode({
+        id: 'MODULE:file.js',
+        type: 'MODULE',
+        name: 'file.js',
+        file: 'file.js',
+      });
+
+      await backend.addNode({
+        id: 'FUNCTION:file.js:processUser',
+        type: 'FUNCTION',
+        name: 'processUser',
+        file: 'file.js',
+        line: 1,
+        // NOT conditional - it's just a function body
+      });
+
+      await backend.addNode({
+        id: 'SCOPE:file.js:5',
+        type: 'SCOPE',
+        name: 'if_branch',
+        file: 'file.js',
+        line: 5,
+        scopeType: 'if_statement',
+        conditional: true,
+        condition: 'user.isActive',
+      });
+
+      await backend.addNode({
+        id: 'CALL:file.js:6->sendEmail',
+        type: 'CALL',
+        name: 'sendEmail',
+        file: 'file.js',
+        line: 6,
+      });
+
+      // Edges
+      await backend.addEdge({
+        src: 'MODULE:file.js',
+        dst: 'FUNCTION:file.js:processUser',
+        type: 'CONTAINS',
+      });
+      await backend.addEdge({
+        src: 'FUNCTION:file.js:processUser',
+        dst: 'SCOPE:file.js:5',
+        type: 'CONTAINS',
+      });
+      await backend.addEdge({
+        src: 'SCOPE:file.js:5',
+        dst: 'CALL:file.js:6->sendEmail',
+        type: 'CONTAINS',
+      });
+
+      // Simulate find_guards
+      const targetId = 'CALL:file.js:6->sendEmail';
+      const guards: Array<{ scopeId: string }> = [];
+
+      let currentId = targetId;
+      const visited = new Set<string>();
+
+      while (true) {
+        if (visited.has(currentId)) break;
+        visited.add(currentId);
+
+        const incomingEdges = await backend.getIncomingEdges(currentId, ['CONTAINS']);
+        if (incomingEdges.length === 0) break;
+
+        const parentId = incomingEdges[0].src;
+        const parentNode = await backend.getNode(parentId);
+
+        // Only collect conditional scopes
+        if (parentNode && parentNode.conditional) {
+          guards.push({ scopeId: parentNode.id });
+        }
+
+        currentId = parentId;
+      }
+
+      // Verify: only the if-statement guard, not the function
+      assert.strictEqual(guards.length, 1, 'Should find only conditional scopes');
+      assert.strictEqual(guards[0].scopeId, 'SCOPE:file.js:5');
+    });
+  });
+});

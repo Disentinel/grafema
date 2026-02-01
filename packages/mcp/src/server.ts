@@ -33,6 +33,7 @@ import {
   handleDeleteGuarantee,
   handleGetCoverage,
   handleGetDocumentation,
+  handleFindGuards,
   handleReportIssue,
 } from './handlers.js';
 import type { ToolResult, ReportIssueArgs, GetDocumentationArgs } from './types.js';
@@ -142,6 +143,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
 
       case 'get_documentation':
         result = await handleGetDocumentation(args as GetDocumentationArgs);
+        break;
+
+      case 'find_guards':
+        result = await handleFindGuards(args as any);
         break;
 
       case 'report_issue':
