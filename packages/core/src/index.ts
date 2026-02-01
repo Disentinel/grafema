@@ -76,6 +76,8 @@ export type { GuaranteeGraph } from './core/GuaranteeManager.js';
 export { clearFileNodesIfNeeded, clearServiceNodeIfExists } from './core/FileNodeManager.js';
 export { CoverageAnalyzer } from './core/CoverageAnalyzer.js';
 export type { CoverageResult } from './core/CoverageAnalyzer.js';
+export { FileExplainer } from './core/FileExplainer.js';
+export type { FileExplainResult, EnhancedNode } from './core/FileExplainer.js';
 
 // Hash utilities
 export { calculateFileHash, calculateFileHashAsync, calculateContentHash } from './core/HashUtils.js';
