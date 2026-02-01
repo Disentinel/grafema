@@ -19,6 +19,7 @@ import type {
   ScopeInfo,
   BranchInfo,
   CaseInfo,
+  LoopInfo,
   VariableDeclarationInfo,
   CallSiteInfo,
   MethodCallInfo,
@@ -110,6 +111,8 @@ export class GraphBuilder {
       // Branching
       branches = [],
       cases = [],
+      // Control flow (loops)
+      loops = [],
       variableDeclarations,
       callSites,
       methodCalls = [],
@@ -170,6 +173,12 @@ export class GraphBuilder {
       this._bufferNode(caseData as GraphNode);
     }
 
+    // 2.7. Buffer LOOP nodes
+    for (const loop of loops) {
+      const { iteratesOverName, iteratesOverLine, iteratesOverColumn, ...loopData } = loop;
+      this._bufferNode(loopData as GraphNode);
+    }
+
     // 3. Buffer variables (keep parentScopeId on node for queries)
     for (const varDecl of variableDeclarations) {
       this._bufferNode(varDecl as unknown as GraphNode);
@@ -216,6 +225,9 @@ export class GraphBuilder {
 
     // 6. Buffer edges for SCOPE
     this.bufferScopeEdges(scopes, variableDeclarations);
+
+    // 6.3. Buffer edges for LOOP (HAS_BODY, ITERATES_OVER, CONTAINS)
+    this.bufferLoopEdges(loops, scopes, variableDeclarations, parameters);
 
     // 6.5. Buffer edges for BRANCH (needs callSites for CallExpression discriminant lookup)
     this.bufferBranchEdges(branches, callSites);
@@ -378,6 +390,90 @@ export class GraphBuilder {
             src: scopeData.id,
             dst: mod.variableId
           });
+        }
+      }
+    }
+  }
+
+  /**
+   * Buffer LOOP edges (CONTAINS, HAS_BODY, ITERATES_OVER)
+   *
+   * Creates edges for:
+   * - Parent -> CONTAINS -> LOOP
+   * - LOOP -> HAS_BODY -> body SCOPE
+   * - LOOP -> ITERATES_OVER -> collection VARIABLE/PARAMETER (for for-in/for-of)
+   *
+   * Scope-aware variable lookup for ITERATES_OVER:
+   * For for-of/for-in, finds the iterated variable preferring:
+   * 1. Variables declared before the loop on same or earlier line (closest first)
+   * 2. Parameters (function arguments)
+   */
+  private bufferLoopEdges(
+    loops: LoopInfo[],
+    scopes: ScopeInfo[],
+    variableDeclarations: VariableDeclarationInfo[],
+    parameters: ParameterInfo[]
+  ): void {
+    for (const loop of loops) {
+      // Parent -> CONTAINS -> LOOP
+      if (loop.parentScopeId) {
+        this._bufferEdge({
+          type: 'CONTAINS',
+          src: loop.parentScopeId,
+          dst: loop.id
+        });
+      }
+
+      // LOOP -> HAS_BODY -> body SCOPE
+      // Find the body scope by matching parentScopeId to loop.id
+      const bodyScope = scopes.find(s => s.parentScopeId === loop.id);
+      if (bodyScope) {
+        this._bufferEdge({
+          type: 'HAS_BODY',
+          src: loop.id,
+          dst: bodyScope.id
+        });
+      }
+
+      // LOOP -> ITERATES_OVER -> collection VARIABLE/PARAMETER (for for-in/for-of)
+      if (loop.iteratesOverName && (loop.loopType === 'for-in' || loop.loopType === 'for-of')) {
+        // For MemberExpression iterables (obj.items), extract base object
+        const iterableName = loop.iteratesOverName.includes('.')
+          ? loop.iteratesOverName.split('.')[0]
+          : loop.iteratesOverName;
+
+        // Scope-aware lookup: prefer parameters over variables
+        // Parameters are function-local and shadow outer variables
+        const param = parameters.find(p =>
+          p.name === iterableName && p.file === loop.file
+        );
+
+        if (param) {
+          // Parameter found - most local binding
+          this._bufferEdge({
+            type: 'ITERATES_OVER',
+            src: loop.id,
+            dst: param.id
+          });
+        } else {
+          // Find variable by name and line proximity (scope-aware heuristic)
+          // Prefer variables declared before the loop in the same file
+          const candidateVars = variableDeclarations.filter(v =>
+            v.name === iterableName &&
+            v.file === loop.file &&
+            (v.line ?? 0) <= loop.line  // Declared before or on loop line
+          );
+
+          // Sort by line descending to find closest declaration
+          candidateVars.sort((a, b) => (b.line ?? 0) - (a.line ?? 0));
+
+          if (candidateVars.length > 0) {
+            this._bufferEdge({
+              type: 'ITERATES_OVER',
+              src: loop.id,
+              dst: candidateVars[0].id
+            });
+          }
         }
       }
     }

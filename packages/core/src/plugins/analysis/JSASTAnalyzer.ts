@@ -63,6 +63,7 @@ import type {
   ScopeInfo,
   BranchInfo,
   CaseInfo,
+  LoopInfo,
   VariableDeclarationInfo,
   CallSiteInfo,
   MethodCallInfo,
@@ -109,6 +110,8 @@ interface Collections {
   // Branching (switch statements)
   branches: BranchInfo[];
   cases: CaseInfo[];
+  // Control flow (loops)
+  loops: LoopInfo[];
   variableDeclarations: VariableDeclarationInfo[];
   callSites: CallSiteInfo[];
   methodCalls: MethodCallInfo[];
@@ -1187,6 +1190,8 @@ export class JSASTAnalyzer extends Plugin {
       // Branching (switch statements)
       const branches: BranchInfo[] = [];
       const cases: CaseInfo[] = [];
+      // Control flow (loops)
+      const loops: LoopInfo[] = [];
       const variableDeclarations: VariableDeclarationInfo[] = [];
       const callSites: CallSiteInfo[] = [];
       const methodCalls: MethodCallInfo[] = [];
@@ -1270,6 +1275,8 @@ export class JSASTAnalyzer extends Plugin {
         functions, parameters, scopes,
         // Branching (switch statements)
         branches, cases,
+        // Control flow (loops)
+        loops,
         variableDeclarations, callSites, methodCalls,
         eventListeners, methodCallbacks, callArguments, classInstantiations, constructorCalls, classDeclarations,
         httpRequests, literals, variableAssignments,
@@ -1552,6 +1559,8 @@ export class JSASTAnalyzer extends Plugin {
         // Branching (switch statements) - use allCollections refs as they're populated by analyzeFunctionBody
         branches: allCollections.branches || branches,
         cases: allCollections.cases || cases,
+        // Control flow (loops) - use allCollections refs as they're populated by analyzeFunctionBody
+        loops: allCollections.loops || loops,
         variableDeclarations,
         callSites,
         methodCalls,
@@ -1819,16 +1828,66 @@ export class JSASTAnalyzer extends Plugin {
   private createLoopScopeHandler(
     trackerScopeType: string,
     scopeType: string,
+    loopType: 'for' | 'for-in' | 'for-of' | 'while' | 'do-while',
     parentScopeId: string,
     module: VisitorModule,
     scopes: ScopeInfo[],
+    loops: LoopInfo[],
     scopeCounterRef: CounterRef,
+    loopCounterRef: CounterRef,
     scopeTracker: ScopeTracker | undefined,
     scopeIdStack?: string[]
   ): { enter: (path: NodePath<t.Loop>) => void; exit: () => void } {
     return {
       enter: (path: NodePath<t.Loop>) => {
         const node = path.node;
+
+        // 1. Create LOOP node
+        const loopCounter = loopCounterRef.value++;
+        const legacyLoopId = `${module.file}:LOOP:${loopType}:${getLine(node)}:${loopCounter}`;
+        const loopId = scopeTracker
+          ? computeSemanticId('LOOP', loopType, scopeTracker.getContext(), { discriminator: loopCounter })
+          : legacyLoopId;
+
+        // 2. Extract iteration target for for-in/for-of
+        let iteratesOverName: string | undefined;
+        let iteratesOverLine: number | undefined;
+        let iteratesOverColumn: number | undefined;
+
+        if (loopType === 'for-in' || loopType === 'for-of') {
+          const loopNode = node as t.ForInStatement | t.ForOfStatement;
+          if (t.isIdentifier(loopNode.right)) {
+            iteratesOverName = loopNode.right.name;
+            iteratesOverLine = getLine(loopNode.right);
+            iteratesOverColumn = getColumn(loopNode.right);
+          } else if (t.isMemberExpression(loopNode.right)) {
+            iteratesOverName = this.memberExpressionToString(loopNode.right);
+            iteratesOverLine = getLine(loopNode.right);
+            iteratesOverColumn = getColumn(loopNode.right);
+          }
+        }
+
+        // 3. Determine actual parent - use stack for nested loops, otherwise original parentScopeId
+        const actualParentScopeId = (scopeIdStack && scopeIdStack.length > 0)
+          ? scopeIdStack[scopeIdStack.length - 1]
+          : parentScopeId;
+
+        // 4. Push LOOP info
+        loops.push({
+          id: loopId,
+          semanticId: loopId,
+          type: 'LOOP',
+          loopType,
+          file: module.file,
+          line: getLine(node),
+          column: getColumn(node),
+          parentScopeId: actualParentScopeId,
+          iteratesOverName,
+          iteratesOverLine,
+          iteratesOverColumn
+        });
+
+        // 5. Create body SCOPE (backward compatibility)
         const scopeId = `SCOPE#${scopeType}#${module.file}#${getLine(node)}:${scopeCounterRef.value++}`;
         const semanticId = this.generateSemanticId(scopeType, scopeTracker);
         scopes.push({
@@ -1838,10 +1897,11 @@ export class JSASTAnalyzer extends Plugin {
           semanticId,
           file: module.file,
           line: getLine(node),
-          parentScopeId
+          parentScopeId: loopId  // Parent is LOOP, not original parentScopeId
         });
 
-        // Push loop scope onto stack for CONTAINS edges
+        // 6. Push body SCOPE to scopeIdStack (for CONTAINS edges to nested items)
+        // The body scope is the container for nested loops, not the LOOP itself
         if (scopeIdStack) {
           scopeIdStack.push(scopeId);
         }
@@ -2504,6 +2564,16 @@ export class JSASTAnalyzer extends Plugin {
     const scopeTracker = collections.scopeTracker as ScopeTracker | undefined;
     const returnStatements = (collections.returnStatements ?? []) as ReturnStatementInfo[];
     const parameters = (collections.parameters ?? []) as ParameterInfo[];
+    // Control flow collections (Phase 2: LOOP nodes)
+    // Initialize if not exist to ensure nested function calls share same arrays
+    if (!collections.loops) {
+      collections.loops = [];
+    }
+    if (!collections.loopCounterRef) {
+      collections.loopCounterRef = { value: 0 };
+    }
+    const loops = collections.loops as LoopInfo[];
+    const loopCounterRef = collections.loopCounterRef as CounterRef;
     const processedNodes = collections.processedNodes ?? {
       functions: new Set<string>(),
       classes: new Set<string>(),
@@ -2759,11 +2829,11 @@ export class JSASTAnalyzer extends Plugin {
         returnStatements.push(returnInfo);
       },
 
-      ForStatement: this.createLoopScopeHandler('for', 'for-loop', parentScopeId, module, scopes, scopeCounterRef, scopeTracker, scopeIdStack),
-      ForInStatement: this.createLoopScopeHandler('for-in', 'for-in-loop', parentScopeId, module, scopes, scopeCounterRef, scopeTracker, scopeIdStack),
-      ForOfStatement: this.createLoopScopeHandler('for-of', 'for-of-loop', parentScopeId, module, scopes, scopeCounterRef, scopeTracker, scopeIdStack),
-      WhileStatement: this.createLoopScopeHandler('while', 'while-loop', parentScopeId, module, scopes, scopeCounterRef, scopeTracker, scopeIdStack),
-      DoWhileStatement: this.createLoopScopeHandler('do-while', 'do-while-loop', parentScopeId, module, scopes, scopeCounterRef, scopeTracker, scopeIdStack),
+      ForStatement: this.createLoopScopeHandler('for', 'for-loop', 'for', parentScopeId, module, scopes, loops, scopeCounterRef, loopCounterRef, scopeTracker, scopeIdStack),
+      ForInStatement: this.createLoopScopeHandler('for-in', 'for-in-loop', 'for-in', parentScopeId, module, scopes, loops, scopeCounterRef, loopCounterRef, scopeTracker, scopeIdStack),
+      ForOfStatement: this.createLoopScopeHandler('for-of', 'for-of-loop', 'for-of', parentScopeId, module, scopes, loops, scopeCounterRef, loopCounterRef, scopeTracker, scopeIdStack),
+      WhileStatement: this.createLoopScopeHandler('while', 'while-loop', 'while', parentScopeId, module, scopes, loops, scopeCounterRef, loopCounterRef, scopeTracker, scopeIdStack),
+      DoWhileStatement: this.createLoopScopeHandler('do-while', 'do-while-loop', 'do-while', parentScopeId, module, scopes, loops, scopeCounterRef, loopCounterRef, scopeTracker, scopeIdStack),
 
       TryStatement: this.createTryStatementHandler(
         parentScopeId,
