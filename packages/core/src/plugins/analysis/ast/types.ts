@@ -62,7 +62,7 @@ export interface ScopeInfo {
   parentScopeId?: string;
   parentFunctionId?: string;
   capturesFrom?: string;
-  modifies?: Array<{ variableId: string; variableName: string; line: number }>;
+  // modifies field removed - REG-288: MODIFIES edges now come from UPDATE_EXPRESSION nodes
 }
 
 // === BRANCH INFO ===
@@ -652,6 +652,32 @@ export interface VariableReassignmentInfo {
   column: number;
 }
 
+// === UPDATE EXPRESSION INFO ===
+/**
+ * Tracks update expressions (i++, --count) for UPDATE_EXPRESSION node creation.
+ * Used to create MODIFIES edges and READS_FROM self-loops.
+ *
+ * Edge direction:
+ * - UPDATE_EXPRESSION --MODIFIES--> VARIABLE
+ * - VARIABLE --READS_FROM--> VARIABLE (self-loop)
+ *
+ * Distinction from VariableReassignmentInfo:
+ * - UpdateExpression: i++, --count -> UPDATE_EXPRESSION node
+ * - AssignmentExpression: x += 1 -> FLOWS_INTO edge (no dedicated node)
+ *
+ * Both are read+write operations and create READS_FROM self-loops.
+ */
+export interface UpdateExpressionInfo {
+  variableName: string;           // Name of variable being modified
+  variableLine: number;           // Line where variable is referenced
+  operator: '++' | '--';          // Increment or decrement
+  prefix: boolean;                // ++i (true) vs i++ (false)
+  file: string;
+  line: number;                   // Line of update expression
+  column: number;
+  parentScopeId?: string;         // Containing scope for CONTAINS edge
+}
+
 // === COUNTER REF ===
 export interface CounterRef {
   value: number;
@@ -704,6 +730,8 @@ export interface ASTCollections {
   objectMutations?: ObjectMutationInfo[];
   // Variable reassignment tracking for FLOWS_INTO edges (REG-290)
   variableReassignments?: VariableReassignmentInfo[];
+  // Update expression tracking for UPDATE_EXPRESSION nodes (REG-288)
+  updateExpressions?: UpdateExpressionInfo[];
   // Return statement tracking for RETURNS edges
   returnStatements?: ReturnStatementInfo[];
   // TypeScript-specific collections
