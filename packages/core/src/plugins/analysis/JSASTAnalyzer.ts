@@ -91,6 +91,7 @@ import type {
   ObjectMutationInfo,
   ObjectMutationValue,
   VariableReassignmentInfo,
+  UpdateExpressionInfo,
   ReturnStatementInfo,
   CounterRef,
   ProcessedNodes,
@@ -140,6 +141,8 @@ interface Collections {
   objectMutations: ObjectMutationInfo[];
   // Variable reassignment tracking for FLOWS_INTO edges (REG-290)
   variableReassignments: VariableReassignmentInfo[];
+  // Update expression tracking for UPDATE_EXPRESSION nodes (REG-288)
+  updateExpressions: UpdateExpressionInfo[];
   // Return statement tracking for RETURNS edges
   returnStatements: ReturnStatementInfo[];
   objectLiteralCounterRef: CounterRef;
@@ -1221,6 +1224,8 @@ export class JSASTAnalyzer extends Plugin {
       const objectMutations: ObjectMutationInfo[] = [];
       // Variable reassignment tracking for FLOWS_INTO edges (REG-290)
       const variableReassignments: VariableReassignmentInfo[] = [];
+      // Update expression tracking for UPDATE_EXPRESSION nodes (REG-288)
+      const updateExpressions: UpdateExpressionInfo[] = [];
       // Return statement tracking for RETURNS edges
       const returnStatements: ReturnStatementInfo[] = [];
 
@@ -1289,6 +1294,8 @@ export class JSASTAnalyzer extends Plugin {
         objectMutations,
         // Variable reassignment tracking (REG-290)
         variableReassignments,
+        // Update expression tracking (REG-288)
+        updateExpressions,
         // Return statement tracking
         returnStatements,
         objectLiteralCounterRef, arrayLiteralCounterRef,
@@ -1399,6 +1406,19 @@ export class JSASTAnalyzer extends Plugin {
         }
       });
       this.profiler.end('traverse_assignments');
+
+      // UpdateExpression (module-level: count++, --total)
+      this.profiler.start('traverse_updates');
+
+      traverse(ast, {
+        UpdateExpression: (updatePath: NodePath<t.UpdateExpression>) => {
+          const functionParent = updatePath.getFunctionParent();
+          if (functionParent) return;  // Skip function-level, handled elsewhere
+
+          this.collectUpdateExpression(updatePath.node, module, updateExpressions, undefined);
+        }
+      });
+      this.profiler.end('traverse_updates');
 
       // Classes
       this.profiler.start('traverse_classes');
@@ -1600,6 +1620,8 @@ export class JSASTAnalyzer extends Plugin {
         objectMutations,
         // Variable reassignment tracking (REG-290)
         variableReassignments,
+        // Update expression tracking (REG-288)
+        updateExpressions,
         // Return statement tracking
         returnStatements,
         // Object/Array literal tracking - use allCollections refs as visitors may have created new arrays
@@ -3297,27 +3319,11 @@ export class JSASTAnalyzer extends Plugin {
       },
 
       UpdateExpression: (updatePath: NodePath<t.UpdateExpression>) => {
-        const updateNode = updatePath.node;
-        if (updateNode.argument.type === 'Identifier') {
-          const varName = updateNode.argument.name;
+        // updateExpressions array is initialized in allCollections at the start of analyze()
+        const funcUpdateExpressions = collections.updateExpressions as UpdateExpressionInfo[];
 
-          // Find variable by name - could be from parent scope or declarations
-          const fromParentScope = Array.from(parentScopeVariables).find(v => v.name === varName);
-          const fromDeclarations = variableDeclarations.find(v => v.name === varName);
-          const variable = fromParentScope ?? fromDeclarations;
-
-          if (variable) {
-            const scope = scopes.find(s => s.id === parentScopeId);
-            if (scope) {
-              if (!scope.modifies) scope.modifies = [];
-              scope.modifies.push({
-                variableId: variable.id,
-                variableName: varName,
-                line: getLine(updateNode)
-              });
-            }
-          }
-        }
+        // Use current scope from stack (tracks if/else/loop/try scope transitions)
+        this.collectUpdateExpression(updatePath.node, module, funcUpdateExpressions, getCurrentScopeId());
       },
 
       // IF statements - создаём условные scope и обходим содержимое для CALL узлов
@@ -4022,6 +4028,44 @@ export class JSASTAnalyzer extends Plugin {
       file: module.file,
       line,
       column
+    });
+  }
+
+  /**
+   * Collect UpdateExpression metadata (i++, --count)
+   *
+   * Similar to detectVariableReassignment but creates UPDATE_EXPRESSION nodes instead of FLOWS_INTO edges.
+   * Both create READS_FROM self-loops since they read current value before modifying.
+   *
+   * REG-288: First-class graph representation for update expressions
+   */
+  private collectUpdateExpression(
+    updateNode: t.UpdateExpression,
+    module: VisitorModule,
+    updateExpressions: UpdateExpressionInfo[],
+    parentScopeId: string | undefined
+  ): void {
+    // Only handle simple identifiers (i++, --count)
+    // Ignore member expressions (obj.prop++, arr[i]++) - will be handled separately
+    if (updateNode.argument.type !== 'Identifier') {
+      return;
+    }
+
+    const variableName = updateNode.argument.name;
+    const operator = updateNode.operator as '++' | '--';
+    const prefix = updateNode.prefix;
+    const line = getLine(updateNode);
+    const column = getColumn(updateNode);
+
+    updateExpressions.push({
+      variableName,
+      variableLine: getLine(updateNode.argument),
+      operator,
+      prefix,
+      file: module.file,
+      line,
+      column,
+      parentScopeId
     });
   }
 
