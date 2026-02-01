@@ -44,6 +44,9 @@ import type {
   ObjectLiteralInfo,
   ObjectPropertyInfo,
   ArrayLiteralInfo,
+  TryBlockInfo,
+  CatchBlockInfo,
+  FinallyBlockInfo,
   ASTCollections,
   GraphNode,
   GraphEdge,
@@ -113,6 +116,10 @@ export class GraphBuilder {
       cases = [],
       // Control flow (loops)
       loops = [],
+      // Control flow (try/catch/finally) - Phase 4
+      tryBlocks = [],
+      catchBlocks = [],
+      finallyBlocks = [],
       variableDeclarations,
       callSites,
       methodCalls = [],
@@ -179,6 +186,23 @@ export class GraphBuilder {
       this._bufferNode(loopData as GraphNode);
     }
 
+    // 2.8. Buffer TRY_BLOCK nodes (Phase 4)
+    for (const tryBlock of tryBlocks) {
+      this._bufferNode(tryBlock as GraphNode);
+    }
+
+    // 2.9. Buffer CATCH_BLOCK nodes (Phase 4)
+    for (const catchBlock of catchBlocks) {
+      const { parentTryBlockId, ...catchData } = catchBlock;
+      this._bufferNode(catchData as GraphNode);
+    }
+
+    // 2.10. Buffer FINALLY_BLOCK nodes (Phase 4)
+    for (const finallyBlock of finallyBlocks) {
+      const { parentTryBlockId, ...finallyData } = finallyBlock;
+      this._bufferNode(finallyData as GraphNode);
+    }
+
     // 3. Buffer variables (keep parentScopeId on node for queries)
     for (const varDecl of variableDeclarations) {
       this._bufferNode(varDecl as unknown as GraphNode);
@@ -230,10 +254,14 @@ export class GraphBuilder {
     this.bufferLoopEdges(loops, scopes, variableDeclarations, parameters);
 
     // 6.5. Buffer edges for BRANCH (needs callSites for CallExpression discriminant lookup)
-    this.bufferBranchEdges(branches, callSites);
+    // Phase 3 (REG-267): Now includes scopes for if-branches HAS_CONSEQUENT/HAS_ALTERNATE
+    this.bufferBranchEdges(branches, callSites, scopes);
 
     // 6.6. Buffer edges for CASE
     this.bufferCaseEdges(cases);
+
+    // 6.65. Buffer edges for TRY_BLOCK, CATCH_BLOCK, FINALLY_BLOCK (Phase 4)
+    this.bufferTryCatchFinallyEdges(tryBlocks, catchBlocks, finallyBlocks);
 
     // 6.7. Buffer EXPRESSION nodes for switch discriminants (needs callSites for CallExpression)
     this.bufferDiscriminantExpressions(branches, callSites);
@@ -480,12 +508,15 @@ export class GraphBuilder {
   }
 
   /**
-   * Buffer BRANCH edges (CONTAINS, HAS_CONDITION)
+   * Buffer BRANCH edges (CONTAINS, HAS_CONDITION, HAS_CONSEQUENT, HAS_ALTERNATE)
    *
    * REG-275: For CallExpression discriminants (switch(getType())), looks up the
    * actual CALL_SITE node by coordinates since the CALL_SITE uses semantic IDs.
+   *
+   * Phase 3 (REG-267): For if-branches, creates HAS_CONSEQUENT and HAS_ALTERNATE edges
+   * pointing to the if-body and else-body SCOPEs.
    */
-  private bufferBranchEdges(branches: BranchInfo[], callSites: CallSiteInfo[]): void {
+  private bufferBranchEdges(branches: BranchInfo[], callSites: CallSiteInfo[], scopes: ScopeInfo[]): void {
     for (const branch of branches) {
       // Parent SCOPE -> CONTAINS -> BRANCH
       if (branch.parentScopeId) {
@@ -519,6 +550,45 @@ export class GraphBuilder {
           dst: targetId
         });
       }
+
+      // Phase 3: For if-branches, create HAS_CONSEQUENT and HAS_ALTERNATE edges
+      if (branch.branchType === 'if') {
+        // Find consequent (if-body) scope - parentScopeId matches branch.id, scopeType is 'if_statement'
+        const consequentScope = scopes.find(s =>
+          s.parentScopeId === branch.id && s.scopeType === 'if_statement'
+        );
+        if (consequentScope) {
+          this._bufferEdge({
+            type: 'HAS_CONSEQUENT',
+            src: branch.id,
+            dst: consequentScope.id
+          });
+        }
+
+        // Find alternate (else-body) scope - parentScopeId matches branch.id, scopeType is 'else_statement'
+        const alternateScope = scopes.find(s =>
+          s.parentScopeId === branch.id && s.scopeType === 'else_statement'
+        );
+        if (alternateScope) {
+          this._bufferEdge({
+            type: 'HAS_ALTERNATE',
+            src: branch.id,
+            dst: alternateScope.id
+          });
+        }
+
+        // For else-if chains: if this branch is the alternate of another branch
+        // This is handled differently - see below
+      }
+
+      // Phase 3: For else-if chains, create HAS_ALTERNATE from parent branch to this branch
+      if (branch.isAlternateOfBranchId) {
+        this._bufferEdge({
+          type: 'HAS_ALTERNATE',
+          src: branch.isAlternateOfBranchId,
+          dst: branch.id
+        });
+      }
     }
   }
 
@@ -533,6 +603,52 @@ export class GraphBuilder {
         type: edgeType,
         src: caseInfo.parentBranchId,
         dst: caseInfo.id
+      });
+    }
+  }
+
+  /**
+   * Buffer edges for TRY_BLOCK, CATCH_BLOCK, FINALLY_BLOCK nodes (Phase 4)
+   *
+   * Creates edges for:
+   * - Parent -> CONTAINS -> TRY_BLOCK
+   * - TRY_BLOCK -> HAS_CATCH -> CATCH_BLOCK
+   * - TRY_BLOCK -> HAS_FINALLY -> FINALLY_BLOCK
+   */
+  private bufferTryCatchFinallyEdges(
+    tryBlocks: TryBlockInfo[],
+    catchBlocks: CatchBlockInfo[],
+    finallyBlocks: FinallyBlockInfo[]
+  ): void {
+    // Buffer TRY_BLOCK edges
+    for (const tryBlock of tryBlocks) {
+      // Parent -> CONTAINS -> TRY_BLOCK
+      if (tryBlock.parentScopeId) {
+        this._bufferEdge({
+          type: 'CONTAINS',
+          src: tryBlock.parentScopeId,
+          dst: tryBlock.id
+        });
+      }
+    }
+
+    // Buffer CATCH_BLOCK edges (HAS_CATCH from TRY_BLOCK)
+    for (const catchBlock of catchBlocks) {
+      // TRY_BLOCK -> HAS_CATCH -> CATCH_BLOCK
+      this._bufferEdge({
+        type: 'HAS_CATCH',
+        src: catchBlock.parentTryBlockId,
+        dst: catchBlock.id
+      });
+    }
+
+    // Buffer FINALLY_BLOCK edges (HAS_FINALLY from TRY_BLOCK)
+    for (const finallyBlock of finallyBlocks) {
+      // TRY_BLOCK -> HAS_FINALLY -> FINALLY_BLOCK
+      this._bufferEdge({
+        type: 'HAS_FINALLY',
+        src: finallyBlock.parentTryBlockId,
+        dst: finallyBlock.id
       });
     }
   }

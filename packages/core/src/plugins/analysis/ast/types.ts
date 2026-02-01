@@ -30,6 +30,7 @@ export interface FunctionInfo {
   isAssignment?: boolean;
   isCallback?: boolean;
   parentScopeId?: string;
+  controlFlow?: ControlFlowMetadata;
 }
 
 // === PARAMETER INFO ===
@@ -79,6 +80,8 @@ export interface BranchInfo {
   discriminantExpressionType?: string;
   discriminantLine?: number;
   discriminantColumn?: number;
+  // For else-if chains: the parent BRANCH id whose alternate this branch is
+  isAlternateOfBranchId?: string;
 }
 
 // === CASE INFO ===
