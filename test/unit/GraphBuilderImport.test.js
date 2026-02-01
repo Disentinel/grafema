@@ -415,4 +415,182 @@ export const nested = {};`,
         'New importBinding field should exist');
     });
   });
+
+  describe('Side-effect-only imports (REG-273)', () => {
+    it('should create IMPORT node for side-effect imports', async () => {
+      await setupTest({
+        'index.js': `import './polyfill.js';`,
+        'polyfill.js': `// Side effect code\nwindow.polyfilled = true;`
+      });
+
+      const imports = await backend.getAllNodes({ type: 'IMPORT' });
+      const sideEffectImport = imports.find(i => i.source === './polyfill.js');
+
+      assert.ok(sideEffectImport,
+        'Should create IMPORT node for side-effect import');
+      assert.strictEqual(sideEffectImport.sideEffect, true,
+        'sideEffect field should be true');
+      assert.strictEqual(sideEffectImport.imported, '*',
+        'imported should be * (no specific export)');
+      assert.strictEqual(sideEffectImport.local, './polyfill.js',
+        'local should be source (no local binding)');
+    });
+
+    it('should mark regular imports with sideEffect: false', async () => {
+      await setupTest({
+        'index.js': `import { foo } from './lib';`,
+        'lib.js': `export const foo = 42;`
+      });
+
+      const imports = await backend.getAllNodes({ type: 'IMPORT' });
+      const regularImport = imports.find(i => i.source === './lib');
+
+      assert.ok(regularImport, 'Should have regular import');
+      assert.strictEqual(regularImport.sideEffect, false,
+        'sideEffect field should be false for regular imports');
+    });
+
+    it('should create MODULE -> CONTAINS -> IMPORT edge for side-effect imports', async () => {
+      await setupTest({
+        'index.js': `import './polyfill.js';`,
+        'polyfill.js': `window.polyfilled = true;`
+      });
+
+      const modules = await backend.getAllNodes({ type: 'MODULE' });
+      const indexModule = modules.find(m => m.file?.includes('index.js'));
+      assert.ok(indexModule, 'Should have index.js MODULE');
+
+      const edges = await backend.getOutgoingEdges(indexModule.id, ['CONTAINS']);
+      const containsSideEffectImport = edges.find(e =>
+        e.dst.includes(':IMPORT:') && e.dst.includes('./polyfill.js')
+      );
+
+      assert.ok(containsSideEffectImport,
+        'Should have MODULE -> CONTAINS -> IMPORT edge for side-effect import');
+    });
+
+    it('should create EXTERNAL_MODULE for external side-effect imports', async () => {
+      await setupTest({
+        'index.js': `import 'core-js/stable';`
+      });
+
+      const externalModules = await backend.getAllNodes({ type: 'EXTERNAL_MODULE' });
+      const coreJsModule = externalModules.find(m => m.name === 'core-js/stable');
+
+      assert.ok(coreJsModule,
+        'Should create EXTERNAL_MODULE for external side-effect import');
+
+      const imports = await backend.getAllNodes({ type: 'IMPORT' });
+      const sideEffectImport = imports.find(i => i.source === 'core-js/stable');
+
+      assert.ok(sideEffectImport,
+        'Should create IMPORT node for external side-effect import');
+      assert.strictEqual(sideEffectImport.sideEffect, true,
+        'External side-effect import should have sideEffect: true');
+    });
+
+    it('should create separate IMPORT nodes for multiple side-effect imports', async () => {
+      await setupTest({
+        'index.js': `
+          import './polyfill-1.js';
+          import './polyfill-2.js';
+          import 'core-js/stable';
+        `,
+        'polyfill-1.js': `window.polyfill1 = true;`,
+        'polyfill-2.js': `window.polyfill2 = true;`
+      });
+
+      const imports = await backend.getAllNodes({ type: 'IMPORT' });
+      const sideEffectImports = imports.filter(i => i.sideEffect === true);
+
+      assert.ok(sideEffectImports.length >= 3,
+        `Should have at least 3 side-effect imports, got ${sideEffectImports.length}`);
+
+      // Verify each has unique ID
+      const ids = new Set(sideEffectImports.map(i => i.id));
+      assert.strictEqual(ids.size, sideEffectImports.length,
+        'Each side-effect import should have unique ID');
+
+      // Verify sources
+      const sources = sideEffectImports.map(i => i.source).sort();
+      assert.ok(sources.includes('./polyfill-1.js'),
+        'Should have ./polyfill-1.js');
+      assert.ok(sources.includes('./polyfill-2.js'),
+        'Should have ./polyfill-2.js');
+      assert.ok(sources.includes('core-js/stable'),
+        'Should have core-js/stable');
+    });
+
+    it('should use source as name in semantic ID for side-effect imports', async () => {
+      await setupTest({
+        'index.js': `import './styles.css';`,
+        'styles.css': `body { margin: 0; }`
+      });
+
+      const imports = await backend.getAllNodes({ type: 'IMPORT' });
+      const cssImport = imports.find(i => i.source === './styles.css');
+
+      assert.ok(cssImport, 'Should have CSS side-effect import');
+
+      // Semantic ID should be: file:IMPORT:source:source
+      assert.ok(cssImport.id.includes(':IMPORT:'),
+        'ID should contain :IMPORT:');
+      assert.ok(cssImport.id.includes('./styles.css'),
+        'ID should contain source');
+
+      // Name should be source (since no local binding)
+      assert.strictEqual(cssImport.name, './styles.css',
+        'name should be source for side-effect imports');
+    });
+
+    it('should handle scoped package side-effect imports', async () => {
+      await setupTest({
+        'index.js': `import '@babel/polyfill';`
+      });
+
+      const imports = await backend.getAllNodes({ type: 'IMPORT' });
+      const polyfillImport = imports.find(i => i.source === '@babel/polyfill');
+
+      assert.ok(polyfillImport,
+        'Should create IMPORT for scoped package side-effect import');
+      assert.strictEqual(polyfillImport.sideEffect, true,
+        'Scoped package side-effect import should have sideEffect: true');
+      assert.strictEqual(polyfillImport.source, '@babel/polyfill');
+    });
+
+    it('should handle mixed regular and side-effect imports in same file', async () => {
+      await setupTest({
+        'index.js': `
+          import React from 'react';
+          import './polyfill.js';
+          import { useState } from 'react';
+          import './styles.css';
+        `,
+        'polyfill.js': `window.polyfilled = true;`,
+        'styles.css': `body { margin: 0; }`
+      });
+
+      const imports = await backend.getAllNodes({ type: 'IMPORT' });
+
+      const sideEffectImports = imports.filter(i => i.sideEffect === true);
+      const regularImports = imports.filter(i => i.sideEffect === false);
+
+      assert.ok(sideEffectImports.length >= 2,
+        `Should have at least 2 side-effect imports, got ${sideEffectImports.length}`);
+      assert.ok(regularImports.length >= 2,
+        `Should have at least 2 regular imports, got ${regularImports.length}`);
+
+      // Verify side-effect imports
+      const sideEffectSources = sideEffectImports.map(i => i.source);
+      assert.ok(sideEffectSources.includes('./polyfill.js'),
+        'Should have ./polyfill.js side-effect import');
+      assert.ok(sideEffectSources.includes('./styles.css'),
+        'Should have ./styles.css side-effect import');
+
+      // Verify regular imports
+      const regularSources = regularImports.map(i => i.source);
+      assert.ok(regularSources.includes('react'),
+        'Should have react regular imports');
+    });
+  });
 });
