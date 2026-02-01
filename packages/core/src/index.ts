@@ -201,6 +201,9 @@ export { ClosureCaptureEnricher } from './plugins/enrichment/ClosureCaptureEnric
 export { BuiltinRegistry } from './data/builtins/index.js';
 export type { BuiltinFunctionDef, BuiltinModuleDef, SecurityCategory } from './data/builtins/index.js';
 
+// Globals registry
+export { GlobalsRegistry, ALL_GLOBALS } from './data/globals/index.js';
+
 // Validation plugins
 export { CallResolverValidator } from './plugins/validation/CallResolverValidator.js';
 export { EvalBanValidator } from './plugins/validation/EvalBanValidator.js';
@@ -210,6 +213,7 @@ export { GraphConnectivityValidator } from './plugins/validation/GraphConnectivi
 export { DataFlowValidator } from './plugins/validation/DataFlowValidator.js';
 export { TypeScriptDeadCodeValidator } from './plugins/validation/TypeScriptDeadCodeValidator.js';
 export { NodeCreationValidator } from './plugins/validation/NodeCreationValidator.js';
+export { BrokenImportValidator } from './plugins/validation/BrokenImportValidator.js';
 
 // Discovery plugins
 export { SimpleProjectDiscovery } from './plugins/discovery/SimpleProjectDiscovery.js';

@@ -50,6 +50,7 @@ import {
   GraphConnectivityValidator,
   DataFlowValidator,
   TypeScriptDeadCodeValidator,
+  BrokenImportValidator,
 } from '@grafema/core';
 import type { LogLevel } from '@grafema/types';
 
@@ -90,6 +91,7 @@ const BUILTIN_PLUGINS: Record<string, () => Plugin> = {
   GraphConnectivityValidator: () => new GraphConnectivityValidator() as Plugin,
   DataFlowValidator: () => new DataFlowValidator() as Plugin,
   TypeScriptDeadCodeValidator: () => new TypeScriptDeadCodeValidator() as Plugin,
+  BrokenImportValidator: () => new BrokenImportValidator() as Plugin,
 };
 
 function createPlugins(config: GrafemaConfig['plugins']): Plugin[] {
