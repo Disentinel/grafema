@@ -19,6 +19,7 @@ import type { BaseNodeRecord } from '@grafema/types';
 interface HTTPRouteNode extends BaseNodeRecord {
   method?: string;
   path?: string;
+  fullPath?: string;  // Set by MountPointResolver for mounted routes
   url?: string;
 }
 
@@ -101,7 +102,8 @@ export class HTTPConnectionEnricher extends Plugin {
         // Ищем matching route
         for (const route of uniqueRoutes) {
           const routeMethod = (route.method || 'GET').toUpperCase();
-          const routePath = route.path;
+          // Use fullPath (from MountPointResolver) if available, fallback to local path
+          const routePath = route.fullPath || route.path;
 
           if (routePath && method === routeMethod && this.pathsMatch(url, routePath)) {
             // Создаём edge
