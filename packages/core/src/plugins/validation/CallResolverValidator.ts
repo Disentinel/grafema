@@ -1,46 +1,45 @@
 /**
- * CallResolverValidator - проверяет что все вызовы функций ссылаются на определения
+ * CallResolverValidator - validates function call resolution (REG-227)
  *
- * Использует Datalog для декларативной проверки гарантии:
- * "Все внутренние вызовы функций (CALL_SITE) должны иметь CALLS ребро к FUNCTION"
+ * Checks that all function calls are properly resolved:
+ * - Internal calls: CALLS edge to FUNCTION node
+ * - External calls: CALLS edge to EXTERNAL_MODULE node
+ * - Builtin calls: recognized by name (no edge needed)
+ * - Unresolved: no edge, not builtin -> WARNING
  *
- * ПРАВИЛО (Datalog):
- * violation(X) :- node(X, "CALL"), \+ attr(X, "object", _), \+ edge(X, _, "CALLS").
- *
- * Это находит CALL узлы без "object" метаданных (т.е. CALL_SITE, не METHOD_CALL),
- * которые не имеют CALLS ребра к определению функции.
+ * This validator runs AFTER FunctionCallResolver and ExternalCallResolver
+ * to verify resolution quality and report issues.
  */
 
 import { Plugin, createSuccessResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
-import type { NodeRecord } from '@grafema/types';
+import type { BaseNodeRecord } from '@grafema/types';
 import { ValidationError } from '../../errors/GrafemaError.js';
+import { JS_GLOBAL_FUNCTIONS } from '../../data/builtins/index.js';
 
 /**
- * Method call statistics
+ * Resolution type for a CALL node
  */
-interface MethodCallStats {
-  total: number;
-  resolved: number;
-  external: number;
+type ResolutionType = 'internal' | 'external' | 'builtin' | 'method' | 'unresolved';
+
+/**
+ * Call node with optional attributes
+ */
+interface CallNode extends BaseNodeRecord {
+  object?: string; // If present, this is a method call
 }
 
 /**
- * Validation summary
+ * Validation summary showing resolution breakdown
  */
 interface ValidationSummary {
   totalCalls: number;
-  resolvedInternalCalls: number;
-  unresolvedInternalCalls: number;
-  externalMethodCalls: number;
-  issues: number;
-}
-
-/**
- * Datalog violation result
- */
-interface DatalogViolation {
-  bindings: Array<{ name: string; value: string }>;
+  resolvedInternal: number;   // CALLS -> FUNCTION
+  resolvedExternal: number;   // CALLS -> EXTERNAL_MODULE
+  resolvedBuiltin: number;    // Name in JS_GLOBAL_FUNCTIONS
+  methodCalls: number;        // Has 'object' attribute (not validated)
+  unresolvedCalls: number;    // No edge, not builtin
+  warnings: number;           // = unresolvedCalls
 }
 
 export class CallResolverValidator extends Plugin {
@@ -52,7 +51,8 @@ export class CallResolverValidator extends Plugin {
       creates: {
         nodes: [],
         edges: []
-      }
+      },
+      dependencies: ['FunctionCallResolver', 'ExternalCallResolver']
     };
   }
 
@@ -60,105 +60,132 @@ export class CallResolverValidator extends Plugin {
     const { graph } = context;
     const logger = this.log(context);
 
-    logger.info('Starting call resolution validation using Datalog');
+    logger.info('Starting call resolution validation');
 
-    // Check if graph supports checkGuarantee
-    if (!graph.checkGuarantee) {
-      logger.debug('Graph does not support checkGuarantee, skipping validation');
-      return createSuccessResult({ nodes: 0, edges: 0 }, { skipped: true });
-    }
+    const warnings: ValidationError[] = [];
+    const summary: ValidationSummary = {
+      totalCalls: 0,
+      resolvedInternal: 0,
+      resolvedExternal: 0,
+      resolvedBuiltin: 0,
+      methodCalls: 0,
+      unresolvedCalls: 0,
+      warnings: 0
+    };
 
-    // Datalog гарантия:
-    // CALL без "object" (т.е. CALL_SITE) должен иметь CALLS ребро
-    const violations = await graph.checkGuarantee(`
-      violation(X) :- node(X, "CALL"), \\+ attr(X, "object", _), \\+ edge(X, _, "CALLS").
-    `) as DatalogViolation[];
+    // Process all CALL nodes
+    for await (const node of graph.queryNodes({ nodeType: 'CALL' })) {
+      summary.totalCalls++;
+      const callNode = node as CallNode;
 
-    const errors: ValidationError[] = [];
+      const resolutionType = await this.determineResolutionType(graph, callNode);
 
-    if (violations.length > 0) {
-      logger.debug('Unresolved function calls found', { count: violations.length });
-
-      for (const v of violations) {
-        const nodeId = v.bindings.find(b => b.name === 'X')?.value;
-        if (nodeId) {
-          const node = await graph.getNode(nodeId);
-          if (node) {
-            errors.push(new ValidationError(
-              `Call to "${node.name}" at ${node.file}:${node.line || '?'} does not resolve to a function definition`,
-              'ERR_UNRESOLVED_CALL',
-              {
-                filePath: node.file,
-                lineNumber: node.line as number | undefined,
-                phase: 'VALIDATION',
-                plugin: 'CallResolverValidator',
-                nodeId,
-                callName: node.name as string,
-              },
-              'Ensure the function is defined and exported'
-            ));
-          }
-        }
+      switch (resolutionType) {
+        case 'internal':
+          summary.resolvedInternal++;
+          break;
+        case 'external':
+          summary.resolvedExternal++;
+          break;
+        case 'builtin':
+          summary.resolvedBuiltin++;
+          break;
+        case 'method':
+          summary.methodCalls++;
+          break;
+        case 'unresolved':
+          summary.unresolvedCalls++;
+          summary.warnings++;
+          warnings.push(this.createWarning(callNode));
+          break;
       }
     }
-
-    // Также проверим METHOD_CALL на известные внешние методы
-    // (это информационно, не ошибка)
-    const methodCallStats = await this.countMethodCalls(graph);
-
-    const summary: ValidationSummary = {
-      totalCalls: methodCallStats.total,
-      resolvedInternalCalls: methodCallStats.resolved,
-      unresolvedInternalCalls: errors.length,
-      externalMethodCalls: methodCallStats.external,
-      issues: errors.length
-    };
 
     logger.info('Validation complete', { ...summary });
 
-    if (errors.length > 0) {
-      logger.warn('Unresolved calls detected', { count: errors.length });
-      for (const error of errors.slice(0, 10)) { // Show first 10
-        logger.warn(error.message);
+    if (warnings.length > 0) {
+      logger.warn('Unresolved calls detected', { count: warnings.length });
+      for (const warning of warnings.slice(0, 10)) {
+        logger.warn(warning.message);
       }
-      if (errors.length > 10) {
-        logger.debug(`... and ${errors.length - 10} more`);
+      if (warnings.length > 10) {
+        logger.debug(`... and ${warnings.length - 10} more`);
       }
     }
 
     return createSuccessResult(
       { nodes: 0, edges: 0 },
       { summary },
-      errors
+      warnings
     );
   }
 
   /**
-   * Подсчитывает статистику по вызовам
+   * Determine the resolution type for a CALL node.
+   *
+   * Resolution priority:
+   * 1. Method call (has 'object' attribute) -> 'method'
+   * 2. Has CALLS edge to FUNCTION -> 'internal'
+   * 3. Has CALLS edge to EXTERNAL_MODULE -> 'external'
+   * 4. Name in JS_GLOBAL_FUNCTIONS -> 'builtin'
+   * 5. Otherwise -> 'unresolved'
    */
-  private async countMethodCalls(graph: PluginContext['graph']): Promise<MethodCallStats> {
-    const stats: MethodCallStats = {
-      total: 0,
-      resolved: 0,
-      external: 0
-    };
-
-    // Подсчитываем все CALL узлы
-    for await (const node of graph.queryNodes({ nodeType: 'CALL' })) {
-      stats.total++;
-
-      // Проверяем наличие "object" в метаданных (METHOD_CALL)
-      if ((node as NodeRecord & { object?: string }).object) {
-        stats.external++;
-      } else {
-        // CALL_SITE - проверяем есть ли CALLS ребро
-        const edges = await graph.getOutgoingEdges(node.id, ['CALLS']);
-        if (edges.length > 0) {
-          stats.resolved++;
-        }
-      }
+  private async determineResolutionType(
+    graph: PluginContext['graph'],
+    callNode: CallNode
+  ): Promise<ResolutionType> {
+    // 1. Check if method call (has object attribute)
+    if (callNode.object) {
+      return 'method';
     }
 
-    return stats;
+    // 2. Check for CALLS edges
+    const edges = await graph.getOutgoingEdges(callNode.id, ['CALLS']);
+    if (edges.length > 0) {
+      // Determine destination type
+      const edge = edges[0];
+      const dstNode = await graph.getNode(edge.dst);
+
+      if (dstNode) {
+        if (dstNode.type === 'FUNCTION') {
+          return 'internal';
+        }
+        if (dstNode.type === 'EXTERNAL_MODULE') {
+          return 'external';
+        }
+      }
+
+      // Has edge but unknown destination type - treat as resolved
+      return 'internal';
+    }
+
+    // 3. Check if builtin
+    const calledName = callNode.name as string;
+    if (calledName && JS_GLOBAL_FUNCTIONS.has(calledName)) {
+      return 'builtin';
+    }
+
+    // 4. Unresolved
+    return 'unresolved';
+  }
+
+  /**
+   * Create a warning for an unresolved call.
+   */
+  private createWarning(callNode: CallNode): ValidationError {
+    return new ValidationError(
+      `Unresolved call to "${callNode.name}" at ${callNode.file}:${callNode.line || '?'}`,
+      'WARN_UNRESOLVED_CALL',
+      {
+        filePath: callNode.file,
+        lineNumber: callNode.line as number | undefined,
+        phase: 'VALIDATION',
+        plugin: 'CallResolverValidator',
+        nodeId: callNode.id,
+        callName: callNode.name as string,
+      },
+      'Ensure the function is defined, imported, or is a known global',
+      'warning' // Severity: warning (not error)
+    );
   }
 }
