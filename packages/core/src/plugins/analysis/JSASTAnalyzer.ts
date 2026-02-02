@@ -2882,6 +2882,96 @@ export class JSASTAnalyzer extends Plugin {
   }
 
   /**
+   * Factory method to create ConditionalExpression (ternary) handler.
+   * Creates BRANCH nodes with branchType='ternary' and increments branchCount for cyclomatic complexity.
+   *
+   * Key difference from IfStatement: ternary has EXPRESSIONS as branches, not SCOPE blocks.
+   * We store consequentExpressionId and alternateExpressionId in BranchInfo for HAS_CONSEQUENT/HAS_ALTERNATE edges.
+   *
+   * @param parentScopeId - Parent scope ID for the BRANCH node
+   * @param module - Module context
+   * @param branches - Collection to push BRANCH nodes to
+   * @param branchCounterRef - Counter for unique BRANCH IDs
+   * @param scopeTracker - Tracker for semantic ID generation
+   * @param scopeIdStack - Stack for tracking current scope ID for CONTAINS edges
+   * @param controlFlowState - State for tracking control flow metrics (complexity)
+   * @param countLogicalOperators - Function to count logical operators in condition
+   */
+  private createConditionalExpressionHandler(
+    parentScopeId: string,
+    module: VisitorModule,
+    branches: BranchInfo[],
+    branchCounterRef: CounterRef,
+    scopeTracker: ScopeTracker | undefined,
+    scopeIdStack?: string[],
+    controlFlowState?: { branchCount: number; logicalOpCount: number },
+    countLogicalOperators?: (node: t.Expression) => number
+  ): (condPath: NodePath<t.ConditionalExpression>) => void {
+    return (condPath: NodePath<t.ConditionalExpression>) => {
+      const condNode = condPath.node;
+
+      // Increment branch count for cyclomatic complexity
+      if (controlFlowState) {
+        controlFlowState.branchCount++;
+        // Count logical operators in the test condition (e.g., a && b ? x : y)
+        if (countLogicalOperators) {
+          controlFlowState.logicalOpCount += countLogicalOperators(condNode.test);
+        }
+      }
+
+      // Determine parent scope from stack or fallback
+      const actualParentScopeId = (scopeIdStack && scopeIdStack.length > 0)
+        ? scopeIdStack[scopeIdStack.length - 1]
+        : parentScopeId;
+
+      // Create BRANCH node with branchType='ternary'
+      const branchCounter = branchCounterRef.value++;
+      const legacyBranchId = `${module.file}:BRANCH:ternary:${getLine(condNode)}:${branchCounter}`;
+      const branchId = scopeTracker
+        ? computeSemanticId('BRANCH', 'ternary', scopeTracker.getContext(), { discriminator: branchCounter })
+        : legacyBranchId;
+
+      // Extract condition expression info for HAS_CONDITION edge
+      const conditionResult = this.extractDiscriminantExpression(condNode.test, module);
+
+      // Generate expression IDs for consequent and alternate
+      const consequentLine = getLine(condNode.consequent);
+      const consequentColumn = getColumn(condNode.consequent);
+      const consequentExpressionId = ExpressionNode.generateId(
+        condNode.consequent.type,
+        module.file,
+        consequentLine,
+        consequentColumn
+      );
+
+      const alternateLine = getLine(condNode.alternate);
+      const alternateColumn = getColumn(condNode.alternate);
+      const alternateExpressionId = ExpressionNode.generateId(
+        condNode.alternate.type,
+        module.file,
+        alternateLine,
+        alternateColumn
+      );
+
+      branches.push({
+        id: branchId,
+        semanticId: branchId,
+        type: 'BRANCH',
+        branchType: 'ternary',
+        file: module.file,
+        line: getLine(condNode),
+        parentScopeId: actualParentScopeId,
+        discriminantExpressionId: conditionResult.id,
+        discriminantExpressionType: conditionResult.expressionType,
+        discriminantLine: conditionResult.line,
+        discriminantColumn: conditionResult.column,
+        consequentExpressionId,
+        alternateExpressionId
+      });
+    };
+  }
+
+  /**
    * Factory method to create BlockStatement handler for tracking if/else and try/finally transitions.
    * When entering an else block, switches scope from if to else.
    * When entering a finally block, switches scope from try/catch to finally.
@@ -3887,6 +3977,18 @@ export class JSASTAnalyzer extends Plugin {
         scopeTracker,
         collections.code ?? '',
         ifElseScopeMap,
+        scopeIdStack,
+        controlFlowState,
+        this.countLogicalOperators.bind(this)
+      ),
+
+      // Ternary expressions (REG-287): Creates BRANCH nodes with branchType='ternary'
+      ConditionalExpression: this.createConditionalExpressionHandler(
+        parentScopeId,
+        module,
+        branches,
+        branchCounterRef,
+        scopeTracker,
         scopeIdStack,
         controlFlowState,
         this.countLogicalOperators.bind(this)

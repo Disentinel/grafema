@@ -82,6 +82,9 @@ export interface BranchInfo {
   discriminantColumn?: number;
   // For else-if chains: the parent BRANCH id whose alternate this branch is
   isAlternateOfBranchId?: string;
+  // For ternary: IDs of consequent and alternate expressions
+  consequentExpressionId?: string;
+  alternateExpressionId?: string;
 }
 
 // === CASE INFO ===
