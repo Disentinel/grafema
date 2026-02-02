@@ -40,6 +40,14 @@ interface ExportIndexEntry {
   exportKey: string; // "default" | "named:functionName"
 }
 
+interface ExternalModuleResult {
+  type: 'external';
+  packageName: string;
+  exportedName: string;
+}
+
+type ResolveChainResult = ExportNode | ExternalModuleResult | null;
+
 type FunctionNode = BaseNodeRecord;
 
 // === PLUGIN CLASS ===
@@ -51,7 +59,7 @@ export class FunctionCallResolver extends Plugin {
       phase: 'ENRICHMENT',
       priority: 80, // After ImportExportLinker (90)
       creates: {
-        nodes: [],
+        nodes: ['EXTERNAL_MODULE'],
         edges: ['CALLS']
       },
       dependencies: ['ImportExportLinker'] // Requires IMPORTS_FROM edges
@@ -198,7 +206,42 @@ export class FunctionCallResolver extends Plugin {
           continue;
         }
 
-        finalExport = resolved;
+        // Check if resolved to external module
+        if ('type' in resolved && resolved.type === 'external') {
+          // Type narrowing: resolved is ExternalModuleResult
+          const externalResult = resolved as ExternalModuleResult;
+
+          // Find or create EXTERNAL_MODULE node and create CALLS edge
+          const externalModuleId = `EXTERNAL_MODULE:${externalResult.packageName}`;
+
+          // Check if node exists
+          let externalNode = await graph.getNode(externalModuleId);
+          if (!externalNode) {
+            // Create EXTERNAL_MODULE node
+            await graph.addNode({
+              id: externalModuleId,
+              type: 'EXTERNAL_MODULE',
+              name: externalResult.packageName,
+              file: '',
+              line: 0
+            });
+          }
+
+          // Create CALLS edge with metadata
+          await graph.addEdge({
+            type: 'CALLS',
+            src: callSite.id,
+            dst: externalModuleId,
+            metadata: { exportedName: externalResult.exportedName }
+          });
+
+          edgesCreated++;
+          reExportsResolved++;
+          continue;
+        }
+
+        // At this point, resolved must be ExportNode (not external)
+        finalExport = resolved as ExportNode;
         reExportsResolved++;
       }
 
@@ -257,6 +300,30 @@ export class FunctionCallResolver extends Plugin {
   }
 
   /**
+   * Extract package name from import source.
+   * Handles: 'lodash', '@tanstack/react-query', 'lodash/map', '@scope/pkg/sub'
+   */
+  private extractPackageName(source: string): string | null {
+    if (!source) return null;
+
+    // Handle scoped packages (@scope/package)
+    if (source.startsWith('@')) {
+      const parts = source.split('/');
+      if (parts.length >= 2) {
+        return `${parts[0]}/${parts[1]}`;
+      }
+      return null;
+    }
+
+    // Non-scoped package: lodash or lodash/map
+    const slashIndex = source.indexOf('/');
+    if (slashIndex === -1) {
+      return source;
+    }
+    return source.substring(0, slashIndex);
+  }
+
+  /**
    * Resolve module specifier to actual file path using extension fallbacks.
    * Pattern reused from ImportExportLinker (lines 101-122).
    *
@@ -297,7 +364,7 @@ export class FunctionCallResolver extends Plugin {
    * @param knownFiles - Set of known file paths
    * @param visited - Set of visited export IDs for cycle detection
    * @param maxDepth - Maximum chain depth (safety limit)
-   * @returns Final export node (without source) or null if chain broken/circular
+   * @returns Final export node (without source), external module result, or null if chain broken/circular
    */
   private resolveExportChain(
     exportNode: ExportNode,
@@ -305,7 +372,7 @@ export class FunctionCallResolver extends Plugin {
     knownFiles: Set<string>,
     visited: Set<string> = new Set(),
     maxDepth: number = 10
-  ): ExportNode | null {
+  ): ResolveChainResult {
     // Safety: max depth exceeded
     if (maxDepth <= 0) {
       return null;
@@ -327,7 +394,21 @@ export class FunctionCallResolver extends Plugin {
     const targetFile = this.resolveModulePath(currentDir, exportNode.source, knownFiles);
 
     if (!targetFile) {
-      return null; // Source file not found
+      // Check if this is an external module (non-relative source)
+      const source = exportNode.source!;
+      const isExternal = !source.startsWith('./') && !source.startsWith('../');
+
+      if (isExternal) {
+        const packageName = this.extractPackageName(source);
+        if (packageName) {
+          return {
+            type: 'external',
+            packageName,
+            exportedName: exportNode.local || exportNode.name || ''
+          };
+        }
+      }
+      return null; // Source file not found and not external
     }
 
     const targetExports = exportIndex.get(targetFile);
