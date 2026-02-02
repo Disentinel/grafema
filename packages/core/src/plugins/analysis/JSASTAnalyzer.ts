@@ -64,6 +64,10 @@ import type {
   ScopeInfo,
   BranchInfo,
   CaseInfo,
+  LoopInfo,
+  TryBlockInfo,
+  CatchBlockInfo,
+  FinallyBlockInfo,
   VariableDeclarationInfo,
   CallSiteInfo,
   MethodCallInfo,
@@ -111,6 +115,15 @@ interface Collections {
   // Branching (switch statements)
   branches: BranchInfo[];
   cases: CaseInfo[];
+  // Control flow (loops)
+  loops: LoopInfo[];
+  // Control flow (try/catch/finally) - Phase 4
+  tryBlocks?: TryBlockInfo[];
+  catchBlocks?: CatchBlockInfo[];
+  finallyBlocks?: FinallyBlockInfo[];
+  tryBlockCounterRef?: CounterRef;
+  catchBlockCounterRef?: CounterRef;
+  finallyBlockCounterRef?: CounterRef;
   variableDeclarations: VariableDeclarationInfo[];
   callSites: CallSiteInfo[];
   methodCalls: MethodCallInfo[];
@@ -176,6 +189,24 @@ interface TryScopeInfo {
   catchScopeId: string | null;
   finallyScopeId: string | null;
   currentBlock: 'try' | 'catch' | 'finally';
+  // Phase 4: Control flow node IDs
+  tryBlockId: string;
+  catchBlockId: string | null;
+  finallyBlockId: string | null;
+}
+
+/**
+ * Tracks if/else scope transitions during traversal.
+ * Used by createIfStatementHandler and createBlockStatementHandler.
+ * Phase 3: Extended to include branchId for control flow BRANCH nodes.
+ */
+interface IfElseScopeInfo {
+  inElse: boolean;
+  hasElse: boolean;
+  ifScopeId: string;
+  elseScopeId: string | null;
+  // Phase 3: Control flow BRANCH node ID
+  branchId: string;
 }
 
 interface AnalysisManifest {
@@ -1191,6 +1222,8 @@ export class JSASTAnalyzer extends Plugin {
       // Branching (switch statements)
       const branches: BranchInfo[] = [];
       const cases: CaseInfo[] = [];
+      // Control flow (loops)
+      const loops: LoopInfo[] = [];
       const variableDeclarations: VariableDeclarationInfo[] = [];
       const callSites: CallSiteInfo[] = [];
       const methodCalls: MethodCallInfo[] = [];
@@ -1276,6 +1309,8 @@ export class JSASTAnalyzer extends Plugin {
         functions, parameters, scopes,
         // Branching (switch statements)
         branches, cases,
+        // Control flow (loops)
+        loops,
         variableDeclarations, callSites, methodCalls,
         eventListeners, methodCallbacks, callArguments, classInstantiations, constructorCalls, classDeclarations,
         httpRequests, literals, variableAssignments,
@@ -1574,6 +1609,12 @@ export class JSASTAnalyzer extends Plugin {
         // Branching (switch statements) - use allCollections refs as they're populated by analyzeFunctionBody
         branches: allCollections.branches || branches,
         cases: allCollections.cases || cases,
+        // Control flow (loops) - use allCollections refs as they're populated by analyzeFunctionBody
+        loops: allCollections.loops || loops,
+        // Control flow (try/catch/finally) - Phase 4
+        tryBlocks: allCollections.tryBlocks,
+        catchBlocks: allCollections.catchBlocks,
+        finallyBlocks: allCollections.finallyBlocks,
         variableDeclarations,
         callSites,
         methodCalls,
@@ -1843,16 +1884,72 @@ export class JSASTAnalyzer extends Plugin {
   private createLoopScopeHandler(
     trackerScopeType: string,
     scopeType: string,
+    loopType: 'for' | 'for-in' | 'for-of' | 'while' | 'do-while',
     parentScopeId: string,
     module: VisitorModule,
     scopes: ScopeInfo[],
+    loops: LoopInfo[],
     scopeCounterRef: CounterRef,
+    loopCounterRef: CounterRef,
     scopeTracker: ScopeTracker | undefined,
-    scopeIdStack?: string[]
+    scopeIdStack?: string[],
+    controlFlowState?: { loopCount: number }
   ): { enter: (path: NodePath<t.Loop>) => void; exit: () => void } {
     return {
       enter: (path: NodePath<t.Loop>) => {
         const node = path.node;
+
+        // Phase 6 (REG-267): Increment loop count for cyclomatic complexity
+        if (controlFlowState) {
+          controlFlowState.loopCount++;
+        }
+
+        // 1. Create LOOP node
+        const loopCounter = loopCounterRef.value++;
+        const legacyLoopId = `${module.file}:LOOP:${loopType}:${getLine(node)}:${loopCounter}`;
+        const loopId = scopeTracker
+          ? computeSemanticId('LOOP', loopType, scopeTracker.getContext(), { discriminator: loopCounter })
+          : legacyLoopId;
+
+        // 2. Extract iteration target for for-in/for-of
+        let iteratesOverName: string | undefined;
+        let iteratesOverLine: number | undefined;
+        let iteratesOverColumn: number | undefined;
+
+        if (loopType === 'for-in' || loopType === 'for-of') {
+          const loopNode = node as t.ForInStatement | t.ForOfStatement;
+          if (t.isIdentifier(loopNode.right)) {
+            iteratesOverName = loopNode.right.name;
+            iteratesOverLine = getLine(loopNode.right);
+            iteratesOverColumn = getColumn(loopNode.right);
+          } else if (t.isMemberExpression(loopNode.right)) {
+            iteratesOverName = this.memberExpressionToString(loopNode.right);
+            iteratesOverLine = getLine(loopNode.right);
+            iteratesOverColumn = getColumn(loopNode.right);
+          }
+        }
+
+        // 3. Determine actual parent - use stack for nested loops, otherwise original parentScopeId
+        const actualParentScopeId = (scopeIdStack && scopeIdStack.length > 0)
+          ? scopeIdStack[scopeIdStack.length - 1]
+          : parentScopeId;
+
+        // 4. Push LOOP info
+        loops.push({
+          id: loopId,
+          semanticId: loopId,
+          type: 'LOOP',
+          loopType,
+          file: module.file,
+          line: getLine(node),
+          column: getColumn(node),
+          parentScopeId: actualParentScopeId,
+          iteratesOverName,
+          iteratesOverLine,
+          iteratesOverColumn
+        });
+
+        // 5. Create body SCOPE (backward compatibility)
         const scopeId = `SCOPE#${scopeType}#${module.file}#${getLine(node)}:${scopeCounterRef.value++}`;
         const semanticId = this.generateSemanticId(scopeType, scopeTracker);
         scopes.push({
@@ -1862,10 +1959,11 @@ export class JSASTAnalyzer extends Plugin {
           semanticId,
           file: module.file,
           line: getLine(node),
-          parentScopeId
+          parentScopeId: loopId  // Parent is LOOP, not original parentScopeId
         });
 
-        // Push loop scope onto stack for CONTAINS edges
+        // 6. Push body SCOPE to scopeIdStack (for CONTAINS edges to nested items)
+        // The body scope is the container for nested loops, not the LOOP itself
         if (scopeIdStack) {
           scopeIdStack.push(scopeId);
         }
@@ -1891,13 +1989,21 @@ export class JSASTAnalyzer extends Plugin {
 
   /**
    * Factory method to create TryStatement handler.
-   * Creates try, catch, and finally scopes with proper scope tracking.
+   * Creates TRY_BLOCK, CATCH_BLOCK, FINALLY_BLOCK nodes and body SCOPEs.
    * Does NOT use skip() - allows normal traversal for CallExpression/NewExpression visitors.
+   *
+   * Phase 4 (REG-267): Creates control flow nodes with HAS_CATCH and HAS_FINALLY edges.
    *
    * @param parentScopeId - Parent scope ID for the scope nodes
    * @param module - Module context
    * @param scopes - Collection to push scope nodes to
+   * @param tryBlocks - Collection to push TRY_BLOCK nodes to
+   * @param catchBlocks - Collection to push CATCH_BLOCK nodes to
+   * @param finallyBlocks - Collection to push FINALLY_BLOCK nodes to
    * @param scopeCounterRef - Counter for unique scope IDs
+   * @param tryBlockCounterRef - Counter for unique TRY_BLOCK IDs
+   * @param catchBlockCounterRef - Counter for unique CATCH_BLOCK IDs
+   * @param finallyBlockCounterRef - Counter for unique FINALLY_BLOCK IDs
    * @param scopeTracker - Tracker for semantic ID generation
    * @param tryScopeMap - Map to track try/catch/finally scope transitions
    * @param scopeIdStack - Stack for tracking current scope ID for CONTAINS edges
@@ -1906,16 +2012,51 @@ export class JSASTAnalyzer extends Plugin {
     parentScopeId: string,
     module: VisitorModule,
     scopes: ScopeInfo[],
+    tryBlocks: TryBlockInfo[],
+    catchBlocks: CatchBlockInfo[],
+    finallyBlocks: FinallyBlockInfo[],
     scopeCounterRef: CounterRef,
+    tryBlockCounterRef: CounterRef,
+    catchBlockCounterRef: CounterRef,
+    finallyBlockCounterRef: CounterRef,
     scopeTracker: ScopeTracker | undefined,
     tryScopeMap: Map<t.TryStatement, TryScopeInfo>,
-    scopeIdStack?: string[]
+    scopeIdStack?: string[],
+    controlFlowState?: { hasTryCatch: boolean }
   ): { enter: (tryPath: NodePath<t.TryStatement>) => void; exit: (tryPath: NodePath<t.TryStatement>) => void } {
     return {
       enter: (tryPath: NodePath<t.TryStatement>) => {
         const tryNode = tryPath.node;
 
-        // Create try-block scope
+        // Phase 6 (REG-267): Mark that this function has try/catch
+        if (controlFlowState) {
+          controlFlowState.hasTryCatch = true;
+        }
+
+        // Determine actual parent - use stack for nested structures, otherwise original parentScopeId
+        const actualParentScopeId = (scopeIdStack && scopeIdStack.length > 0)
+          ? scopeIdStack[scopeIdStack.length - 1]
+          : parentScopeId;
+
+        // 1. Create TRY_BLOCK node
+        const tryBlockCounter = tryBlockCounterRef.value++;
+        const legacyTryBlockId = `${module.file}:TRY_BLOCK:${getLine(tryNode)}:${tryBlockCounter}`;
+        const tryBlockId = scopeTracker
+          ? computeSemanticId('TRY_BLOCK', 'try', scopeTracker.getContext(), { discriminator: tryBlockCounter })
+          : legacyTryBlockId;
+
+        tryBlocks.push({
+          id: tryBlockId,
+          semanticId: tryBlockId,
+          type: 'TRY_BLOCK',
+          file: module.file,
+          line: getLine(tryNode),
+          column: getColumn(tryNode),
+          parentScopeId: actualParentScopeId
+        });
+
+        // 2. Create try-body SCOPE (backward compatibility)
+        // Parent is now TRY_BLOCK, not original parentScopeId
         const tryScopeId = `SCOPE#try-block#${module.file}#${getLine(tryNode)}:${scopeCounterRef.value++}`;
         const trySemanticId = this.generateSemanticId('try-block', scopeTracker);
         scopes.push({
@@ -1925,14 +2066,40 @@ export class JSASTAnalyzer extends Plugin {
           semanticId: trySemanticId,
           file: module.file,
           line: getLine(tryNode),
-          parentScopeId
+          parentScopeId: tryBlockId  // Parent is TRY_BLOCK
         });
 
-        // Pre-create catch scope if present
+        // 3. Create CATCH_BLOCK and catch-body SCOPE if handler exists
+        let catchBlockId: string | null = null;
         let catchScopeId: string | null = null;
         if (tryNode.handler) {
-          const catchBlock = tryNode.handler;
-          catchScopeId = `SCOPE#catch-block#${module.file}#${getLine(catchBlock)}:${scopeCounterRef.value++}`;
+          const catchClause = tryNode.handler;
+          const catchBlockCounter = catchBlockCounterRef.value++;
+          const legacyCatchBlockId = `${module.file}:CATCH_BLOCK:${getLine(catchClause)}:${catchBlockCounter}`;
+          catchBlockId = scopeTracker
+            ? computeSemanticId('CATCH_BLOCK', 'catch', scopeTracker.getContext(), { discriminator: catchBlockCounter })
+            : legacyCatchBlockId;
+
+          // Extract parameter name if present
+          let parameterName: string | undefined;
+          if (catchClause.param && t.isIdentifier(catchClause.param)) {
+            parameterName = catchClause.param.name;
+          }
+
+          catchBlocks.push({
+            id: catchBlockId,
+            semanticId: catchBlockId,
+            type: 'CATCH_BLOCK',
+            file: module.file,
+            line: getLine(catchClause),
+            column: getColumn(catchClause),
+            parentScopeId,
+            parentTryBlockId: tryBlockId,
+            parameterName
+          });
+
+          // Create catch-body SCOPE (backward compatibility)
+          catchScopeId = `SCOPE#catch-block#${module.file}#${getLine(catchClause)}:${scopeCounterRef.value++}`;
           const catchSemanticId = this.generateSemanticId('catch-block', scopeTracker);
           scopes.push({
             id: catchScopeId,
@@ -1940,14 +2107,33 @@ export class JSASTAnalyzer extends Plugin {
             scopeType: 'catch-block',
             semanticId: catchSemanticId,
             file: module.file,
-            line: getLine(catchBlock),
-            parentScopeId
+            line: getLine(catchClause),
+            parentScopeId: catchBlockId  // Parent is CATCH_BLOCK
           });
         }
 
-        // Pre-create finally scope if present
+        // 4. Create FINALLY_BLOCK and finally-body SCOPE if finalizer exists
+        let finallyBlockId: string | null = null;
         let finallyScopeId: string | null = null;
         if (tryNode.finalizer) {
+          const finallyBlockCounter = finallyBlockCounterRef.value++;
+          const legacyFinallyBlockId = `${module.file}:FINALLY_BLOCK:${getLine(tryNode.finalizer)}:${finallyBlockCounter}`;
+          finallyBlockId = scopeTracker
+            ? computeSemanticId('FINALLY_BLOCK', 'finally', scopeTracker.getContext(), { discriminator: finallyBlockCounter })
+            : legacyFinallyBlockId;
+
+          finallyBlocks.push({
+            id: finallyBlockId,
+            semanticId: finallyBlockId,
+            type: 'FINALLY_BLOCK',
+            file: module.file,
+            line: getLine(tryNode.finalizer),
+            column: getColumn(tryNode.finalizer),
+            parentScopeId,
+            parentTryBlockId: tryBlockId
+          });
+
+          // Create finally-body SCOPE (backward compatibility)
           finallyScopeId = `SCOPE#finally-block#${module.file}#${getLine(tryNode.finalizer)}:${scopeCounterRef.value++}`;
           const finallySemanticId = this.generateSemanticId('finally-block', scopeTracker);
           scopes.push({
@@ -1957,11 +2143,11 @@ export class JSASTAnalyzer extends Plugin {
             semanticId: finallySemanticId,
             file: module.file,
             line: getLine(tryNode.finalizer),
-            parentScopeId
+            parentScopeId: finallyBlockId  // Parent is FINALLY_BLOCK
           });
         }
 
-        // Push try scope onto stack for CONTAINS edges
+        // 5. Push try scope onto stack for CONTAINS edges
         if (scopeIdStack) {
           scopeIdStack.push(tryScopeId);
         }
@@ -1971,12 +2157,15 @@ export class JSASTAnalyzer extends Plugin {
           scopeTracker.enterCountedScope('try');
         }
 
-        // Store scope info for catch/finally transitions
+        // 6. Store scope info for catch/finally transitions
         tryScopeMap.set(tryNode, {
           tryScopeId,
           catchScopeId,
           finallyScopeId,
-          currentBlock: 'try'
+          currentBlock: 'try',
+          tryBlockId,
+          catchBlockId,
+          finallyBlockId
         });
       },
       exit: (tryPath: NodePath<t.TryStatement>) => {
@@ -2085,9 +2274,21 @@ export class JSASTAnalyzer extends Plugin {
     parentScopeId: string,
     module: VisitorModule,
     collections: VisitorCollections,
-    scopeTracker: ScopeTracker | undefined
+    scopeTracker: ScopeTracker | undefined,
+    controlFlowState?: { branchCount: number; caseCount: number }
   ): void {
     const switchNode = switchPath.node;
+
+    // Phase 6 (REG-267): Count branch and non-default cases for cyclomatic complexity
+    if (controlFlowState) {
+      controlFlowState.branchCount++;  // switch itself is a branch
+      // Count non-default cases
+      for (const caseNode of switchNode.cases) {
+        if (caseNode.test !== null) {  // Not default case
+          controlFlowState.caseCount++;
+        }
+      }
+    }
 
     // Initialize collections if not exist
     if (!collections.branches) {
@@ -2304,6 +2505,47 @@ export class JSASTAnalyzer extends Plugin {
   }
 
   /**
+   * Count logical operators (&& and ||) in a condition expression.
+   * Used for cyclomatic complexity calculation (Phase 6 REG-267).
+   *
+   * @param node - The condition expression to analyze
+   * @returns Number of logical operators found
+   */
+  private countLogicalOperators(node: t.Expression): number {
+    let count = 0;
+
+    const traverse = (expr: t.Expression | t.Node): void => {
+      if (t.isLogicalExpression(expr)) {
+        // Count && and || operators
+        if (expr.operator === '&&' || expr.operator === '||') {
+          count++;
+        }
+        traverse(expr.left);
+        traverse(expr.right);
+      } else if (t.isConditionalExpression(expr)) {
+        // Handle ternary conditions: test ? consequent : alternate
+        traverse(expr.test);
+        traverse(expr.consequent);
+        traverse(expr.alternate);
+      } else if (t.isUnaryExpression(expr)) {
+        traverse(expr.argument);
+      } else if (t.isBinaryExpression(expr)) {
+        traverse(expr.left);
+        traverse(expr.right);
+      } else if (t.isSequenceExpression(expr)) {
+        for (const e of expr.expressions) {
+          traverse(e);
+        }
+      } else if (t.isParenthesizedExpression(expr)) {
+        traverse(expr.expression);
+      }
+    };
+
+    traverse(node);
+    return count;
+  }
+
+  /**
    * Convert MemberExpression to string representation
    */
   private memberExpressionToString(expr: t.MemberExpression): string {
@@ -2328,31 +2570,105 @@ export class JSASTAnalyzer extends Plugin {
 
   /**
    * Factory method to create IfStatement handler.
-   * Creates if scope with condition parsing and optional else scope.
+   * Creates BRANCH node for if statement and SCOPE nodes for if/else bodies.
    * Tracks if/else scope transitions via ifElseScopeMap.
+   *
+   * Phase 3 (REG-267): Creates BRANCH node with branchType='if' and
+   * HAS_CONSEQUENT/HAS_ALTERNATE edges to body SCOPEs.
    *
    * @param parentScopeId - Parent scope ID for the scope nodes
    * @param module - Module context
    * @param scopes - Collection to push scope nodes to
+   * @param branches - Collection to push BRANCH nodes to
    * @param ifScopeCounterRef - Counter for unique if scope IDs
+   * @param branchCounterRef - Counter for unique BRANCH IDs
    * @param scopeTracker - Tracker for semantic ID generation
    * @param sourceCode - Source code for extracting condition text
    * @param ifElseScopeMap - Map to track if/else scope transitions
+   * @param scopeIdStack - Stack for tracking current scope ID for CONTAINS edges
    */
   private createIfStatementHandler(
     parentScopeId: string,
     module: VisitorModule,
     scopes: ScopeInfo[],
+    branches: BranchInfo[],
     ifScopeCounterRef: CounterRef,
+    branchCounterRef: CounterRef,
     scopeTracker: ScopeTracker | undefined,
     sourceCode: string,
-    ifElseScopeMap: Map<t.IfStatement, { inElse: boolean; hasElse: boolean; ifScopeId: string; elseScopeId: string | null }>,
-    scopeIdStack?: string[]
+    ifElseScopeMap: Map<t.IfStatement, IfElseScopeInfo>,
+    scopeIdStack?: string[],
+    controlFlowState?: { branchCount: number; logicalOpCount: number },
+    countLogicalOperators?: (node: t.Expression) => number
   ): { enter: (ifPath: NodePath<t.IfStatement>) => void; exit: (ifPath: NodePath<t.IfStatement>) => void } {
     return {
       enter: (ifPath: NodePath<t.IfStatement>) => {
         const ifNode = ifPath.node;
         const condition = sourceCode.substring(ifNode.test.start!, ifNode.test.end!) || 'condition';
+
+        // Phase 6 (REG-267): Increment branch count and count logical operators
+        if (controlFlowState) {
+          controlFlowState.branchCount++;
+          if (countLogicalOperators) {
+            controlFlowState.logicalOpCount += countLogicalOperators(ifNode.test);
+          }
+        }
+
+        // Check if this if-statement is an else-if (alternate of parent IfStatement)
+        const isElseIf = t.isIfStatement(ifPath.parent) && ifPath.parentKey === 'alternate';
+
+        // Determine actual parent scope
+        let actualParentScopeId: string;
+        if (isElseIf) {
+          // For else-if, parent should be the outer BRANCH (stored in ifElseScopeMap)
+          const parentIfInfo = ifElseScopeMap.get(ifPath.parent as t.IfStatement);
+          if (parentIfInfo) {
+            actualParentScopeId = parentIfInfo.branchId;
+          } else {
+            // Fallback to stack
+            actualParentScopeId = (scopeIdStack && scopeIdStack.length > 0)
+              ? scopeIdStack[scopeIdStack.length - 1]
+              : parentScopeId;
+          }
+        } else {
+          // For regular if statements, use stack or original parentScopeId
+          actualParentScopeId = (scopeIdStack && scopeIdStack.length > 0)
+            ? scopeIdStack[scopeIdStack.length - 1]
+            : parentScopeId;
+        }
+
+        // 1. Create BRANCH node for if statement
+        const branchCounter = branchCounterRef.value++;
+        const legacyBranchId = `${module.file}:BRANCH:if:${getLine(ifNode)}:${branchCounter}`;
+        const branchId = scopeTracker
+          ? computeSemanticId('BRANCH', 'if', scopeTracker.getContext(), { discriminator: branchCounter })
+          : legacyBranchId;
+
+        // 2. Extract condition expression info for HAS_CONDITION edge
+        const conditionResult = this.extractDiscriminantExpression(ifNode.test, module);
+
+        // For else-if, get the parent branch ID
+        const isAlternateOfBranchId = isElseIf
+          ? ifElseScopeMap.get(ifPath.parent as t.IfStatement)?.branchId
+          : undefined;
+
+        branches.push({
+          id: branchId,
+          semanticId: branchId,
+          type: 'BRANCH',
+          branchType: 'if',
+          file: module.file,
+          line: getLine(ifNode),
+          parentScopeId: actualParentScopeId,
+          discriminantExpressionId: conditionResult.id,
+          discriminantExpressionType: conditionResult.expressionType,
+          discriminantLine: conditionResult.line,
+          discriminantColumn: conditionResult.column,
+          isAlternateOfBranchId
+        });
+
+        // 3. Create if-body SCOPE (backward compatibility)
+        // Parent is now BRANCH, not original parentScopeId
         const counterId = ifScopeCounterRef.value++;
         const ifScopeId = `SCOPE#if#${module.file}#${getLine(ifNode)}:${getColumn(ifNode)}:${counterId}`;
 
@@ -2371,10 +2687,10 @@ export class JSASTAnalyzer extends Plugin {
           constraints: constraints.length > 0 ? constraints : undefined,
           file: module.file,
           line: getLine(ifNode),
-          parentScopeId
+          parentScopeId: branchId  // Parent is BRANCH, not original parentScopeId
         });
 
-        // Push if scope onto stack for CONTAINS edges
+        // 4. Push if scope onto stack for CONTAINS edges
         if (scopeIdStack) {
           scopeIdStack.push(ifScopeId);
         }
@@ -2384,7 +2700,7 @@ export class JSASTAnalyzer extends Plugin {
           scopeTracker.enterCountedScope('if');
         }
 
-        // Handle else branch if present
+        // 5. Handle else branch if present
         let elseScopeId: string | null = null;
         if (ifNode.alternate && !t.isIfStatement(ifNode.alternate)) {
           // Only create else scope for actual else block, not else-if
@@ -2404,13 +2720,13 @@ export class JSASTAnalyzer extends Plugin {
             constraints: negatedConstraints,
             file: module.file,
             line: getLine(ifNode.alternate),
-            parentScopeId
+            parentScopeId: branchId  // Parent is BRANCH, not original parentScopeId
           });
 
           // Store info to switch to else scope when we enter alternate
-          ifElseScopeMap.set(ifNode, { inElse: false, hasElse: true, ifScopeId, elseScopeId });
+          ifElseScopeMap.set(ifNode, { inElse: false, hasElse: true, ifScopeId, elseScopeId, branchId });
         } else {
-          ifElseScopeMap.set(ifNode, { inElse: false, hasElse: false, ifScopeId, elseScopeId: null });
+          ifElseScopeMap.set(ifNode, { inElse: false, hasElse: false, ifScopeId, elseScopeId: null, branchId });
         }
       },
       exit: (ifPath: NodePath<t.IfStatement>) => {
@@ -2445,7 +2761,7 @@ export class JSASTAnalyzer extends Plugin {
    */
   private createBlockStatementHandler(
     scopeTracker: ScopeTracker | undefined,
-    ifElseScopeMap: Map<t.IfStatement, { inElse: boolean; hasElse: boolean; ifScopeId: string; elseScopeId: string | null }>,
+    ifElseScopeMap: Map<t.IfStatement, IfElseScopeInfo>,
     tryScopeMap: Map<t.TryStatement, TryScopeInfo>,
     scopeIdStack?: string[]
   ): { enter: (blockPath: NodePath<t.BlockStatement>) => void } {
@@ -2528,6 +2844,16 @@ export class JSASTAnalyzer extends Plugin {
     const scopeTracker = collections.scopeTracker as ScopeTracker | undefined;
     const returnStatements = (collections.returnStatements ?? []) as ReturnStatementInfo[];
     const parameters = (collections.parameters ?? []) as ParameterInfo[];
+    // Control flow collections (Phase 2: LOOP nodes)
+    // Initialize if not exist to ensure nested function calls share same arrays
+    if (!collections.loops) {
+      collections.loops = [];
+    }
+    if (!collections.loopCounterRef) {
+      collections.loopCounterRef = { value: 0 };
+    }
+    const loops = collections.loops as LoopInfo[];
+    const loopCounterRef = collections.loopCounterRef as CounterRef;
     const processedNodes = collections.processedNodes ?? {
       functions: new Set<string>(),
       classes: new Set<string>(),
@@ -2547,8 +2873,44 @@ export class JSASTAnalyzer extends Plugin {
     const processedMethodCalls = processedNodes.methodCalls;
     const processedEventListeners = processedNodes.eventListeners;
 
-    // Track if/else scope transitions
-    const ifElseScopeMap = new Map<t.IfStatement, { inElse: boolean; hasElse: boolean; ifScopeId: string; elseScopeId: string | null }>();
+    // Track if/else scope transitions (Phase 3: extended with branchId)
+    const ifElseScopeMap = new Map<t.IfStatement, IfElseScopeInfo>();
+
+    // Ensure branches and branchCounterRef are initialized (used by IfStatement and SwitchStatement)
+    if (!collections.branches) {
+      collections.branches = [];
+    }
+    if (!collections.branchCounterRef) {
+      collections.branchCounterRef = { value: 0 };
+    }
+    const branches = collections.branches as BranchInfo[];
+    const branchCounterRef = collections.branchCounterRef as CounterRef;
+
+    // Phase 4: Initialize try/catch/finally collections and counters
+    if (!collections.tryBlocks) {
+      collections.tryBlocks = [];
+    }
+    if (!collections.catchBlocks) {
+      collections.catchBlocks = [];
+    }
+    if (!collections.finallyBlocks) {
+      collections.finallyBlocks = [];
+    }
+    if (!collections.tryBlockCounterRef) {
+      collections.tryBlockCounterRef = { value: 0 };
+    }
+    if (!collections.catchBlockCounterRef) {
+      collections.catchBlockCounterRef = { value: 0 };
+    }
+    if (!collections.finallyBlockCounterRef) {
+      collections.finallyBlockCounterRef = { value: 0 };
+    }
+    const tryBlocks = collections.tryBlocks as TryBlockInfo[];
+    const catchBlocks = collections.catchBlocks as CatchBlockInfo[];
+    const finallyBlocks = collections.finallyBlocks as FinallyBlockInfo[];
+    const tryBlockCounterRef = collections.tryBlockCounterRef as CounterRef;
+    const catchBlockCounterRef = collections.catchBlockCounterRef as CounterRef;
+    const finallyBlockCounterRef = collections.finallyBlockCounterRef as CounterRef;
 
     // Track try/catch/finally scope transitions
     const tryScopeMap = new Map<t.TryStatement, TryScopeInfo>();
@@ -2573,6 +2935,19 @@ export class JSASTAnalyzer extends Plugin {
     if (matchingFunction) {
       currentFunctionId = matchingFunction.id;
     }
+
+    // Phase 6 (REG-267): Control flow tracking state for cyclomatic complexity
+    const controlFlowState = {
+      branchCount: 0,       // if/switch statements
+      loopCount: 0,         // for/while/do-while/for-in/for-of
+      caseCount: 0,         // switch cases (excluding default)
+      logicalOpCount: 0,    // && and || in conditions
+      hasTryCatch: false,
+      hasEarlyReturn: false,
+      hasThrow: false,
+      returnCount: 0,       // Track total return count for early return detection
+      totalStatements: 0    // Track if there are statements after returns
+    };
 
     // Handle implicit return for THIS arrow function if it has an expression body
     // e.g., `const double = x => x * 2;` - the function we're analyzing IS an arrow with expression body
@@ -2776,12 +3151,30 @@ export class JSASTAnalyzer extends Plugin {
         // Skip if this return is inside a nested function (not the function we're analyzing)
         // Check if there's a function ancestor between us and funcPath.node
         let parent: NodePath | null = returnPath.parentPath;
+        let isInsideConditional = false;
         while (parent) {
           if (t.isFunction(parent.node) && parent.node !== funcNode) {
             // This return is inside a nested function - skip it
             return;
           }
+          // Track if return is inside a conditional block (if/else, switch case, loop, try/catch)
+          if (t.isIfStatement(parent.node) ||
+              t.isSwitchCase(parent.node) ||
+              t.isLoop(parent.node) ||
+              t.isTryStatement(parent.node) ||
+              t.isCatchClause(parent.node)) {
+            isInsideConditional = true;
+          }
           parent = parent.parentPath;
+        }
+
+        // Phase 6 (REG-267): Track return count and early return detection
+        controlFlowState.returnCount++;
+
+        // A return is "early" if it's inside a conditional structure
+        // (More returns after this one indicate the function doesn't always end here)
+        if (isInsideConditional) {
+          controlFlowState.hasEarlyReturn = true;
         }
 
         const returnNode = returnPath.node;
@@ -3015,20 +3408,43 @@ export class JSASTAnalyzer extends Plugin {
         returnStatements.push(returnInfo);
       },
 
-      ForStatement: this.createLoopScopeHandler('for', 'for-loop', parentScopeId, module, scopes, scopeCounterRef, scopeTracker, scopeIdStack),
-      ForInStatement: this.createLoopScopeHandler('for-in', 'for-in-loop', parentScopeId, module, scopes, scopeCounterRef, scopeTracker, scopeIdStack),
-      ForOfStatement: this.createLoopScopeHandler('for-of', 'for-of-loop', parentScopeId, module, scopes, scopeCounterRef, scopeTracker, scopeIdStack),
-      WhileStatement: this.createLoopScopeHandler('while', 'while-loop', parentScopeId, module, scopes, scopeCounterRef, scopeTracker, scopeIdStack),
-      DoWhileStatement: this.createLoopScopeHandler('do-while', 'do-while-loop', parentScopeId, module, scopes, scopeCounterRef, scopeTracker, scopeIdStack),
+      // Phase 6 (REG-267): Track throw statements for control flow metadata
+      ThrowStatement: (throwPath: NodePath<t.ThrowStatement>) => {
+        // Skip if this throw is inside a nested function (not the function we're analyzing)
+        let parent: NodePath | null = throwPath.parentPath;
+        while (parent) {
+          if (t.isFunction(parent.node) && parent.node !== funcNode) {
+            // This throw is inside a nested function - skip it
+            return;
+          }
+          parent = parent.parentPath;
+        }
 
+        controlFlowState.hasThrow = true;
+      },
+
+      ForStatement: this.createLoopScopeHandler('for', 'for-loop', 'for', parentScopeId, module, scopes, loops, scopeCounterRef, loopCounterRef, scopeTracker, scopeIdStack, controlFlowState),
+      ForInStatement: this.createLoopScopeHandler('for-in', 'for-in-loop', 'for-in', parentScopeId, module, scopes, loops, scopeCounterRef, loopCounterRef, scopeTracker, scopeIdStack, controlFlowState),
+      ForOfStatement: this.createLoopScopeHandler('for-of', 'for-of-loop', 'for-of', parentScopeId, module, scopes, loops, scopeCounterRef, loopCounterRef, scopeTracker, scopeIdStack, controlFlowState),
+      WhileStatement: this.createLoopScopeHandler('while', 'while-loop', 'while', parentScopeId, module, scopes, loops, scopeCounterRef, loopCounterRef, scopeTracker, scopeIdStack, controlFlowState),
+      DoWhileStatement: this.createLoopScopeHandler('do-while', 'do-while-loop', 'do-while', parentScopeId, module, scopes, loops, scopeCounterRef, loopCounterRef, scopeTracker, scopeIdStack, controlFlowState),
+
+      // Phase 4 (REG-267): Now creates TRY_BLOCK, CATCH_BLOCK, FINALLY_BLOCK nodes
       TryStatement: this.createTryStatementHandler(
         parentScopeId,
         module,
         scopes,
+        tryBlocks,
+        catchBlocks,
+        finallyBlocks,
         scopeCounterRef,
+        tryBlockCounterRef,
+        catchBlockCounterRef,
+        finallyBlockCounterRef,
         scopeTracker,
         tryScopeMap,
-        scopeIdStack
+        scopeIdStack,
+        controlFlowState
       ),
 
       CatchClause: this.createCatchClauseHandler(
@@ -3046,7 +3462,8 @@ export class JSASTAnalyzer extends Plugin {
           parentScopeId,
           module,
           collections,
-          scopeTracker
+          scopeTracker,
+          controlFlowState
         );
       },
 
@@ -3321,15 +3738,20 @@ export class JSASTAnalyzer extends Plugin {
       },
 
       // IF statements - создаём условные scope и обходим содержимое для CALL узлов
+      // Phase 3 (REG-267): Now creates BRANCH nodes with branchType='if'
       IfStatement: this.createIfStatementHandler(
         parentScopeId,
         module,
         scopes,
+        branches,
         ifScopeCounterRef,
+        branchCounterRef,
         scopeTracker,
         collections.code ?? '',
         ifElseScopeMap,
-        scopeIdStack
+        scopeIdStack,
+        controlFlowState,
+        this.countLogicalOperators.bind(this)
       ),
 
       // Track when we enter the alternate (else) block of an IfStatement
@@ -3456,6 +3878,24 @@ export class JSASTAnalyzer extends Plugin {
         }
       }
     });
+
+    // Phase 6 (REG-267): Attach control flow metadata to the function node
+    if (matchingFunction) {
+      const cyclomaticComplexity = 1 +
+        controlFlowState.branchCount +
+        controlFlowState.loopCount +
+        controlFlowState.caseCount +
+        controlFlowState.logicalOpCount;
+
+      matchingFunction.controlFlow = {
+        hasBranches: controlFlowState.branchCount > 0,
+        hasLoops: controlFlowState.loopCount > 0,
+        hasTryCatch: controlFlowState.hasTryCatch,
+        hasEarlyReturn: controlFlowState.hasEarlyReturn,
+        hasThrow: controlFlowState.hasThrow,
+        cyclomaticComplexity
+      };
+    }
   }
 
   /**

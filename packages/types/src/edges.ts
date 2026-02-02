@@ -14,6 +14,18 @@ export const EDGE_TYPE = {
   HAS_CASE: 'HAS_CASE',
   HAS_DEFAULT: 'HAS_DEFAULT',
 
+  // Loop edges
+  HAS_BODY: 'HAS_BODY',           // LOOP -> body SCOPE
+  ITERATES_OVER: 'ITERATES_OVER', // LOOP -> collection VARIABLE (for-in/for-of)
+
+  // If statement edges
+  HAS_CONSEQUENT: 'HAS_CONSEQUENT', // BRANCH -> then SCOPE
+  HAS_ALTERNATE: 'HAS_ALTERNATE',   // BRANCH -> else SCOPE
+
+  // Try/catch/finally edges
+  HAS_CATCH: 'HAS_CATCH',     // TRY_BLOCK -> CATCH_BLOCK
+  HAS_FINALLY: 'HAS_FINALLY', // TRY_BLOCK -> FINALLY_BLOCK
+
   // Calls
   CALLS: 'CALLS',
   HAS_CALLBACK: 'HAS_CALLBACK',
