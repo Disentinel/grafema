@@ -11,6 +11,7 @@ mod types;
 mod parser;
 mod eval;
 mod eval_explain;
+mod utils;
 
 pub use types::*;
 pub use parser::*;
