@@ -658,6 +658,9 @@ async function processAsync(asyncItems) {
       );
       assert.ok(forOfLoop, 'for-await-of should be LOOP node with loopType="for-of"');
 
+      // Should have async: true for for-await-of
+      assert.strictEqual((forOfLoop as Record<string, unknown>).async, true, 'for-await-of should have async: true');
+
       // Should have ITERATES_OVER edge
       const iteratesOverEdges = await getEdgesByType(backend, 'ITERATES_OVER');
       const edgeFromLoop = iteratesOverEdges.find((e: EdgeRecord) => e.src === forOfLoop!.id);

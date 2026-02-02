@@ -218,6 +218,7 @@ export interface LoopNodeRecord extends BaseNodeRecord {
   loopType: 'for' | 'for-in' | 'for-of' | 'while' | 'do-while';
   parentScopeId?: string;
   bodyScopeId?: string;  // ID of SCOPE node containing loop body
+  async?: boolean;       // true for for-await-of loops
 }
 
 // Try block node

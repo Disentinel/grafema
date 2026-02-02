@@ -136,6 +136,9 @@ export interface LoopInfo {
   updateExpressionType?: string;  // 'UpdateExpression', 'AssignmentExpression', etc.
   updateLine?: number;
   updateColumn?: number;
+
+  // For for-await-of (REG-284)
+  async?: boolean;                // true for for-await-of loops
 }
 
 // === TRY BLOCK INFO ===
