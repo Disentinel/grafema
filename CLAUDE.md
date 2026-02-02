@@ -80,8 +80,8 @@ All implementation happens through subagents. Top-level agent only coordinates.
 ### The Team
 
 **Planning:**
-- **Don Melton** (Tech Lead) — "I don't care if it works, is it RIGHT?" Analyzes codebase, creates high-level plan, ensures alignment with vision
-- **Joel Spolsky** (Implementation Planner) — Expands Don's plan into detailed technical specs with specific steps
+- **Don Melton** (Tech Lead) — "I don't care if it works, is it RIGHT?" Analyzes codebase, creates high-level plan, ensures alignment with vision. **MUST use WebSearch** to find existing approaches, prior art, and tradeoffs before proposing solutions.
+- **Joel Spolsky** (Implementation Planner) — Expands Don's plan into detailed technical specs with specific steps. Must include Big-O complexity analysis for algorithms.
 
 **Implementation:**
 - **Kent Beck** (Test Engineer) — TDD discipline, tests communicate intent, no mocks in production paths
@@ -105,6 +105,8 @@ All implementation happens through subagents. Top-level agent only coordinates.
 - **Patrick Cousot** (Static Analysis) — Abstract interpretation, dataflow analysis, formal foundations
 - **Anders Hejlsberg** (Practical Type Systems) — Real-world type inference, pragmatic approach to static analysis
 - **Генрих Альтшуллер** (ТРИЗ) - Разбор архитектурных противоречий
+
+**IMPORTANT for Research agents:** Always use **WebSearch** to find existing tools, papers, and approaches before generating recommendations. Don't hallucinate — ground your analysis in real prior art. Brief search is enough, not deep research.
 
 Whether task is not require deep hardcore reasoning - use Sonnet/Haiku for subagents (if possible).
 
@@ -245,6 +247,12 @@ Focus on high-level only:
 - Is it at the right level of abstraction?
 - Do tests actually test what they claim?
 - Did we forget something from the original request?
+
+**Complexity checklist (CRITICAL):**
+- Does the solution iterate over ALL nodes of a broad type (CALL, VARIABLE, etc.)? → RED FLAG
+- Could iteration be narrowed to a specific subset?
+- What's the Big-O complexity? O(n) over WHAT n?
+- Are there nested iterations? What's the combined complexity?
 
 ### For Kevlin Henney (Review)
 Focus on code quality:
