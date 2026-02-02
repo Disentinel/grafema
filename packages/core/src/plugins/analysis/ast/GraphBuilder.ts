@@ -593,6 +593,24 @@ export class GraphBuilder {
         // This is handled differently - see below
       }
 
+      // REG-287: For ternary branches, create HAS_CONSEQUENT and HAS_ALTERNATE edges to expressions
+      if (branch.branchType === 'ternary') {
+        if (branch.consequentExpressionId) {
+          this._bufferEdge({
+            type: 'HAS_CONSEQUENT',
+            src: branch.id,
+            dst: branch.consequentExpressionId
+          });
+        }
+        if (branch.alternateExpressionId) {
+          this._bufferEdge({
+            type: 'HAS_ALTERNATE',
+            src: branch.id,
+            dst: branch.alternateExpressionId
+          });
+        }
+      }
+
       // Phase 3: For else-if chains, create HAS_ALTERNATE from parent branch to this branch
       if (branch.isAlternateOfBranchId) {
         this._bufferEdge({
