@@ -1275,4 +1275,190 @@ function process() {
       // This verifies backward compatibility with existing variable tracking
     });
   });
+
+  // ===========================================================================
+  // GROUP 11: For loop HAS_INIT, HAS_CONDITION, HAS_UPDATE edges (REG-282)
+  // ===========================================================================
+
+  describe('For loop HAS_INIT, HAS_CONDITION, HAS_UPDATE edges (REG-282)', () => {
+    it('should create HAS_INIT edge to loop variable', async () => {
+      await setupTest(backend, {
+        'index.js': `
+function process() {
+  for (let i = 0; i < 10; i++) {
+    console.log(i);
+  }
+}
+        `
+      });
+
+      const loopNodes = await getNodesByType(backend, 'LOOP');
+      const forLoop = loopNodes.find((n: NodeRecord) => (n as Record<string, unknown>).loopType === 'for');
+      assert.ok(forLoop, 'Should have for LOOP node');
+
+      const hasInitEdges = await getEdgesByType(backend, 'HAS_INIT');
+      const edgeFromLoop = hasInitEdges.find((e: EdgeRecord) => e.src === forLoop.id);
+      assert.ok(edgeFromLoop, 'Should have HAS_INIT edge from for loop');
+
+      // Destination should be the 'i' variable
+      const dstNode = await backend.getNode(edgeFromLoop!.dst);
+      assert.ok(dstNode, 'Destination node should exist');
+      assert.strictEqual(dstNode.name, 'i', 'HAS_INIT should point to loop variable');
+    });
+
+    it('should create HAS_CONDITION edge to test expression', async () => {
+      await setupTest(backend, {
+        'index.js': `
+function process() {
+  for (let i = 0; i < 10; i++) {
+    console.log(i);
+  }
+}
+        `
+      });
+
+      const loopNodes = await getNodesByType(backend, 'LOOP');
+      const forLoop = loopNodes.find((n: NodeRecord) => (n as Record<string, unknown>).loopType === 'for');
+      assert.ok(forLoop, 'Should have for LOOP node');
+
+      const hasConditionEdges = await getEdgesByType(backend, 'HAS_CONDITION');
+      const edgeFromLoop = hasConditionEdges.find((e: EdgeRecord) => e.src === forLoop.id);
+      assert.ok(edgeFromLoop, 'Should have HAS_CONDITION edge from for loop');
+
+      // Destination should be the BinaryExpression (i < 10)
+      const dstNode = await backend.getNode(edgeFromLoop!.dst);
+      assert.ok(dstNode, 'Destination node should exist');
+      assert.strictEqual(dstNode.type, 'EXPRESSION', 'HAS_CONDITION should point to EXPRESSION node');
+      assert.strictEqual(
+        (dstNode as Record<string, unknown>).expressionType,
+        'BinaryExpression',
+        'HAS_CONDITION should point to BinaryExpression'
+      );
+    });
+
+    it('should create HAS_UPDATE edge to update expression', async () => {
+      await setupTest(backend, {
+        'index.js': `
+function process() {
+  for (let i = 0; i < 10; i++) {
+    console.log(i);
+  }
+}
+        `
+      });
+
+      const loopNodes = await getNodesByType(backend, 'LOOP');
+      const forLoop = loopNodes.find((n: NodeRecord) => (n as Record<string, unknown>).loopType === 'for');
+      assert.ok(forLoop, 'Should have for LOOP node');
+
+      const hasUpdateEdges = await getEdgesByType(backend, 'HAS_UPDATE');
+      const edgeFromLoop = hasUpdateEdges.find((e: EdgeRecord) => e.src === forLoop.id);
+      assert.ok(edgeFromLoop, 'Should have HAS_UPDATE edge from for loop');
+
+      // Destination should be the UpdateExpression (i++)
+      const dstNode = await backend.getNode(edgeFromLoop!.dst);
+      assert.ok(dstNode, 'Destination node should exist');
+      assert.strictEqual(dstNode.type, 'EXPRESSION', 'HAS_UPDATE should point to EXPRESSION node');
+      assert.strictEqual(
+        (dstNode as Record<string, unknown>).expressionType,
+        'UpdateExpression',
+        'HAS_UPDATE should point to UpdateExpression'
+      );
+    });
+
+    it('should handle empty for loop: for (;;) {} - no HAS_INIT, HAS_CONDITION, HAS_UPDATE edges', async () => {
+      await setupTest(backend, {
+        'index.js': `
+function runForever() {
+  for (;;) {
+    // infinite loop
+  }
+}
+        `
+      });
+
+      const loopNodes = await getNodesByType(backend, 'LOOP');
+      const forLoop = loopNodes.find((n: NodeRecord) => (n as Record<string, unknown>).loopType === 'for');
+      assert.ok(forLoop, 'Should have for LOOP node for empty for loop');
+
+      // No HAS_INIT edge should exist for this loop
+      const hasInitEdges = await getEdgesByType(backend, 'HAS_INIT');
+      const initEdgeFromLoop = hasInitEdges.find((e: EdgeRecord) => e.src === forLoop.id);
+      assert.strictEqual(initEdgeFromLoop, undefined, 'Empty for loop should NOT have HAS_INIT edge');
+
+      // No HAS_CONDITION edge should exist for this loop
+      const hasConditionEdges = await getEdgesByType(backend, 'HAS_CONDITION');
+      const conditionEdgeFromLoop = hasConditionEdges.find((e: EdgeRecord) => e.src === forLoop.id);
+      assert.strictEqual(conditionEdgeFromLoop, undefined, 'Empty for loop should NOT have HAS_CONDITION edge');
+
+      // No HAS_UPDATE edge should exist for this loop
+      const hasUpdateEdges = await getEdgesByType(backend, 'HAS_UPDATE');
+      const updateEdgeFromLoop = hasUpdateEdges.find((e: EdgeRecord) => e.src === forLoop.id);
+      assert.strictEqual(updateEdgeFromLoop, undefined, 'Empty for loop should NOT have HAS_UPDATE edge');
+    });
+
+    it('should create HAS_CONDITION edge for while loop', async () => {
+      await setupTest(backend, {
+        'index.js': `
+function process() {
+  let i = 0;
+  while (i < 10) {
+    console.log(i);
+    i++;
+  }
+}
+        `
+      });
+
+      const loopNodes = await getNodesByType(backend, 'LOOP');
+      const whileLoop = loopNodes.find((n: NodeRecord) => (n as Record<string, unknown>).loopType === 'while');
+      assert.ok(whileLoop, 'Should have while LOOP node');
+
+      const hasConditionEdges = await getEdgesByType(backend, 'HAS_CONDITION');
+      const edgeFromLoop = hasConditionEdges.find((e: EdgeRecord) => e.src === whileLoop.id);
+      assert.ok(edgeFromLoop, 'Should have HAS_CONDITION edge from while loop');
+
+      // Destination should be the BinaryExpression (i < 10)
+      const dstNode = await backend.getNode(edgeFromLoop!.dst);
+      assert.ok(dstNode, 'Destination node should exist');
+      assert.strictEqual(dstNode.type, 'EXPRESSION', 'HAS_CONDITION should point to EXPRESSION node');
+      assert.strictEqual(
+        (dstNode as Record<string, unknown>).expressionType,
+        'BinaryExpression',
+        'HAS_CONDITION should point to BinaryExpression'
+      );
+    });
+
+    it('should create HAS_CONDITION edge for do-while loop', async () => {
+      await setupTest(backend, {
+        'index.js': `
+function process() {
+  let i = 0;
+  do {
+    console.log(i);
+    i++;
+  } while (i < 10);
+}
+        `
+      });
+
+      const loopNodes = await getNodesByType(backend, 'LOOP');
+      const doWhileLoop = loopNodes.find((n: NodeRecord) => (n as Record<string, unknown>).loopType === 'do-while');
+      assert.ok(doWhileLoop, 'Should have do-while LOOP node');
+
+      const hasConditionEdges = await getEdgesByType(backend, 'HAS_CONDITION');
+      const edgeFromLoop = hasConditionEdges.find((e: EdgeRecord) => e.src === doWhileLoop.id);
+      assert.ok(edgeFromLoop, 'Should have HAS_CONDITION edge from do-while loop');
+
+      // Destination should be the BinaryExpression (i < 10)
+      const dstNode = await backend.getNode(edgeFromLoop!.dst);
+      assert.ok(dstNode, 'Destination node should exist');
+      assert.strictEqual(dstNode.type, 'EXPRESSION', 'HAS_CONDITION should point to EXPRESSION node');
+      assert.strictEqual(
+        (dstNode as Record<string, unknown>).expressionType,
+        'BinaryExpression',
+        'HAS_CONDITION should point to BinaryExpression'
+      );
+    });
+  });
 });

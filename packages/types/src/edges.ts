@@ -17,6 +17,8 @@ export const EDGE_TYPE = {
   // Loop edges
   HAS_BODY: 'HAS_BODY',           // LOOP -> body SCOPE
   ITERATES_OVER: 'ITERATES_OVER', // LOOP -> collection VARIABLE (for-in/for-of)
+  HAS_INIT: 'HAS_INIT',           // LOOP (for) -> init VARIABLE (let i = 0)
+  HAS_UPDATE: 'HAS_UPDATE',       // LOOP (for) -> update EXPRESSION (i++)
 
   // If statement edges
   HAS_CONSEQUENT: 'HAS_CONSEQUENT', // BRANCH -> then SCOPE
