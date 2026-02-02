@@ -28,7 +28,8 @@ npm-debug.log*
 
 # Claude/MCP local configs
 .mcp.json
-.claude/
+.claude/*
+!.claude/skills/
 .grafema/
 
 # Local project data
