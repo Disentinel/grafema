@@ -177,6 +177,7 @@ impl<'a> Evaluator<'a> {
             "incoming" => self.eval_incoming(atom),
             "path" => self.eval_path(atom),
             "attr" => self.eval_attr(atom),
+            "attr_edge" => self.eval_attr_edge(atom),
             "neq" => self.eval_neq(atom),
             "starts_with" => self.eval_starts_with(atom),
             "not_starts_with" => self.eval_not_starts_with(atom),
@@ -491,6 +492,101 @@ impl<'a> Evaluator<'a> {
         };
 
         // Match against value term
+        match value_term {
+            Term::Var(var) => {
+                let mut b = Bindings::new();
+                b.set(var, Value::Str(attr_value));
+                vec![b]
+            }
+            Term::Const(expected) => {
+                if &attr_value == expected {
+                    vec![Bindings::new()] // Match succeeded
+                } else {
+                    vec![] // No match
+                }
+            }
+            Term::Wildcard => {
+                vec![Bindings::new()] // Wildcard always matches if attr exists
+            }
+        }
+    }
+
+    /// Evaluate attr_edge(Src, Dst, EdgeType, AttrName, Value) predicate - access edge metadata
+    ///
+    /// Extracts metadata values from edges. Supports nested path syntax (e.g., "cardinality.scale").
+    ///
+    /// All arguments except Value must be bound (constants or previously bound variables):
+    /// - Src: Source node ID
+    /// - Dst: Destination node ID
+    /// - EdgeType: Edge type string
+    /// - AttrName: Attribute name (supports nested paths like "foo.bar")
+    /// - Value: Variable to bind, constant to match, or wildcard
+    fn eval_attr_edge(&self, atom: &Atom) -> Vec<Bindings> {
+        let args = atom.args();
+        if args.len() < 5 {
+            return vec![];
+        }
+
+        let src_term = &args[0];
+        let dst_term = &args[1];
+        let type_term = &args[2];
+        let attr_term = &args[3];
+        let value_term = &args[4];
+
+        // 1. Need bound src ID
+        let src_id = match src_term {
+            Term::Const(s) => match s.parse::<u128>() {
+                Ok(id) => id,
+                Err(_) => return vec![],
+            },
+            _ => return vec![],
+        };
+
+        // 2. Need bound dst ID
+        let dst_id = match dst_term {
+            Term::Const(s) => match s.parse::<u128>() {
+                Ok(id) => id,
+                Err(_) => return vec![],
+            },
+            _ => return vec![],
+        };
+
+        // 3. Need constant edge type
+        let edge_type = match type_term {
+            Term::Const(s) => s.as_str(),
+            _ => return vec![],
+        };
+
+        // 4. Need constant attr name
+        let attr_name = match attr_term {
+            Term::Const(s) => s.as_str(),
+            _ => return vec![],
+        };
+
+        // 5. Find the edge
+        let edges = self.engine.get_outgoing_edges(src_id, Some(&[edge_type]));
+        let edge = match edges.into_iter().find(|e| e.dst == dst_id) {
+            Some(e) => e,
+            None => return vec![],
+        };
+
+        // 6. Parse metadata
+        let metadata_str = match edge.metadata.as_ref() {
+            Some(s) => s,
+            None => return vec![],
+        };
+        let metadata: serde_json::Value = match serde_json::from_str(metadata_str) {
+            Ok(m) => m,
+            Err(_) => return vec![],
+        };
+
+        // 7. Get attribute value using the shared helper (supports nested paths)
+        let attr_value = match crate::datalog::utils::get_metadata_value(&metadata, attr_name) {
+            Some(v) => v,
+            None => return vec![],
+        };
+
+        // 8. Match against value_term (same logic as eval_attr)
         match value_term {
             Term::Var(var) => {
                 let mut b = Bindings::new();

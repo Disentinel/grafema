@@ -1458,4 +1458,487 @@ mod eval_tests {
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].get("X"), Some(&Value::Id(3)));
     }
+
+    // ============================================================================
+    // attr_edge() Predicate Tests (REG-315)
+    // ============================================================================
+
+    #[test]
+    fn test_eval_attr_edge_basic() {
+        // Test basic edge metadata extraction
+        // attr_edge(Src, Dst, EdgeType, AttrName, Value)
+        let dir = tempdir().unwrap();
+        let mut engine = GraphEngine::create(dir.path()).unwrap();
+
+        engine.add_nodes(vec![
+            NodeRecord {
+                id: 1,
+                node_type: Some("LOOP".to_string()),
+                name: Some("for_loop".to_string()),
+                file: Some("test.js".to_string()),
+                file_id: 0,
+                name_offset: 0,
+                version: "main".into(),
+                exported: false,
+                replaces: None,
+                deleted: false,
+                metadata: None,
+            },
+            NodeRecord {
+                id: 2,
+                node_type: Some("VARIABLE".to_string()),
+                name: Some("items".to_string()),
+                file: Some("test.js".to_string()),
+                file_id: 0,
+                name_offset: 0,
+                version: "main".into(),
+                exported: false,
+                replaces: None,
+                deleted: false,
+                metadata: None,
+            },
+        ]);
+
+        // Add edge with metadata
+        engine.add_edges(vec![
+            EdgeRecord {
+                src: 1,
+                dst: 2,
+                edge_type: Some("ITERATES_OVER".to_string()),
+                version: "main".into(),
+                metadata: Some(r#"{"scale": "nodes", "reason": "array_iteration"}"#.to_string()),
+                deleted: false,
+            },
+        ], false);
+
+        let evaluator = Evaluator::new(&engine);
+
+        // attr_edge(1, 2, "ITERATES_OVER", "scale", X)
+        let query = Atom::new("attr_edge", vec![
+            Term::constant("1"),
+            Term::constant("2"),
+            Term::constant("ITERATES_OVER"),
+            Term::constant("scale"),
+            Term::var("X"),
+        ]);
+
+        let results = evaluator.eval_atom(&query);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].get("X"), Some(&Value::Str("nodes".to_string())));
+    }
+
+    #[test]
+    fn test_eval_attr_edge_nested_path() {
+        // Test nested path in edge metadata (e.g., "cardinality.scale")
+        let dir = tempdir().unwrap();
+        let mut engine = GraphEngine::create(dir.path()).unwrap();
+
+        engine.add_nodes(vec![
+            NodeRecord {
+                id: 10,
+                node_type: Some("LOOP".to_string()),
+                name: Some("while_loop".to_string()),
+                file: Some("test.js".to_string()),
+                file_id: 0,
+                name_offset: 0,
+                version: "main".into(),
+                exported: false,
+                replaces: None,
+                deleted: false,
+                metadata: None,
+            },
+            NodeRecord {
+                id: 20,
+                node_type: Some("VARIABLE".to_string()),
+                name: Some("data".to_string()),
+                file: Some("test.js".to_string()),
+                file_id: 0,
+                name_offset: 0,
+                version: "main".into(),
+                exported: false,
+                replaces: None,
+                deleted: false,
+                metadata: None,
+            },
+        ]);
+
+        engine.add_edges(vec![
+            EdgeRecord {
+                src: 10,
+                dst: 20,
+                edge_type: Some("ITERATES_OVER".to_string()),
+                version: "main".into(),
+                metadata: Some(r#"{"cardinality": {"scale": "unbounded", "reason": "recursive"}}"#.to_string()),
+                deleted: false,
+            },
+        ], false);
+
+        let evaluator = Evaluator::new(&engine);
+
+        // attr_edge(10, 20, "ITERATES_OVER", "cardinality.scale", X)
+        let query = Atom::new("attr_edge", vec![
+            Term::constant("10"),
+            Term::constant("20"),
+            Term::constant("ITERATES_OVER"),
+            Term::constant("cardinality.scale"),
+            Term::var("X"),
+        ]);
+
+        let results = evaluator.eval_atom(&query);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].get("X"), Some(&Value::Str("unbounded".to_string())));
+    }
+
+    #[test]
+    fn test_eval_attr_edge_constant_match() {
+        // Test matching against a constant value
+        let dir = tempdir().unwrap();
+        let mut engine = GraphEngine::create(dir.path()).unwrap();
+
+        engine.add_nodes(vec![
+            NodeRecord {
+                id: 100,
+                node_type: Some("LOOP".to_string()),
+                name: Some("loop1".to_string()),
+                file: Some("test.js".to_string()),
+                file_id: 0,
+                name_offset: 0,
+                version: "main".into(),
+                exported: false,
+                replaces: None,
+                deleted: false,
+                metadata: None,
+            },
+            NodeRecord {
+                id: 200,
+                node_type: Some("VARIABLE".to_string()),
+                name: Some("arr".to_string()),
+                file: Some("test.js".to_string()),
+                file_id: 0,
+                name_offset: 0,
+                version: "main".into(),
+                exported: false,
+                replaces: None,
+                deleted: false,
+                metadata: None,
+            },
+        ]);
+
+        engine.add_edges(vec![
+            EdgeRecord {
+                src: 100,
+                dst: 200,
+                edge_type: Some("ITERATES_OVER".to_string()),
+                version: "main".into(),
+                metadata: Some(r#"{"scale": "nodes"}"#.to_string()),
+                deleted: false,
+            },
+        ], false);
+
+        let evaluator = Evaluator::new(&engine);
+
+        // Match: attr_edge(100, 200, "ITERATES_OVER", "scale", "nodes")
+        let query_match = Atom::new("attr_edge", vec![
+            Term::constant("100"),
+            Term::constant("200"),
+            Term::constant("ITERATES_OVER"),
+            Term::constant("scale"),
+            Term::constant("nodes"),
+        ]);
+
+        let results = evaluator.eval_atom(&query_match);
+        assert_eq!(results.len(), 1); // Match succeeds
+
+        // No match: attr_edge(100, 200, "ITERATES_OVER", "scale", "constant")
+        let query_no_match = Atom::new("attr_edge", vec![
+            Term::constant("100"),
+            Term::constant("200"),
+            Term::constant("ITERATES_OVER"),
+            Term::constant("scale"),
+            Term::constant("constant"),
+        ]);
+
+        let results = evaluator.eval_atom(&query_no_match);
+        assert_eq!(results.len(), 0); // Match fails
+    }
+
+    #[test]
+    fn test_eval_attr_edge_no_metadata() {
+        // Edge without metadata should return empty
+        let dir = tempdir().unwrap();
+        let mut engine = GraphEngine::create(dir.path()).unwrap();
+
+        engine.add_nodes(vec![
+            NodeRecord {
+                id: 1,
+                node_type: Some("FUNCTION".to_string()),
+                name: Some("caller".to_string()),
+                file: Some("test.js".to_string()),
+                file_id: 0,
+                name_offset: 0,
+                version: "main".into(),
+                exported: false,
+                replaces: None,
+                deleted: false,
+                metadata: None,
+            },
+            NodeRecord {
+                id: 2,
+                node_type: Some("FUNCTION".to_string()),
+                name: Some("callee".to_string()),
+                file: Some("test.js".to_string()),
+                file_id: 0,
+                name_offset: 0,
+                version: "main".into(),
+                exported: false,
+                replaces: None,
+                deleted: false,
+                metadata: None,
+            },
+        ]);
+
+        // Edge without metadata
+        engine.add_edges(vec![
+            EdgeRecord {
+                src: 1,
+                dst: 2,
+                edge_type: Some("CALLS".to_string()),
+                version: "main".into(),
+                metadata: None, // No metadata
+                deleted: false,
+            },
+        ], false);
+
+        let evaluator = Evaluator::new(&engine);
+
+        // attr_edge(1, 2, "CALLS", "anyattr", X)
+        let query = Atom::new("attr_edge", vec![
+            Term::constant("1"),
+            Term::constant("2"),
+            Term::constant("CALLS"),
+            Term::constant("anyattr"),
+            Term::var("X"),
+        ]);
+
+        let results = evaluator.eval_atom(&query);
+        assert_eq!(results.len(), 0); // No metadata = no results
+    }
+
+    #[test]
+    fn test_eval_attr_edge_missing_attr() {
+        // Missing attribute in edge metadata should return empty
+        let dir = tempdir().unwrap();
+        let mut engine = GraphEngine::create(dir.path()).unwrap();
+
+        engine.add_nodes(vec![
+            NodeRecord {
+                id: 1,
+                node_type: Some("LOOP".to_string()),
+                name: Some("loop".to_string()),
+                file: Some("test.js".to_string()),
+                file_id: 0,
+                name_offset: 0,
+                version: "main".into(),
+                exported: false,
+                replaces: None,
+                deleted: false,
+                metadata: None,
+            },
+            NodeRecord {
+                id: 2,
+                node_type: Some("VARIABLE".to_string()),
+                name: Some("var".to_string()),
+                file: Some("test.js".to_string()),
+                file_id: 0,
+                name_offset: 0,
+                version: "main".into(),
+                exported: false,
+                replaces: None,
+                deleted: false,
+                metadata: None,
+            },
+        ]);
+
+        engine.add_edges(vec![
+            EdgeRecord {
+                src: 1,
+                dst: 2,
+                edge_type: Some("ITERATES_OVER".to_string()),
+                version: "main".into(),
+                metadata: Some(r#"{"scale": "nodes"}"#.to_string()),
+                deleted: false,
+            },
+        ], false);
+
+        let evaluator = Evaluator::new(&engine);
+
+        // attr_edge(1, 2, "ITERATES_OVER", "nonexistent", X)
+        let query = Atom::new("attr_edge", vec![
+            Term::constant("1"),
+            Term::constant("2"),
+            Term::constant("ITERATES_OVER"),
+            Term::constant("nonexistent"),
+            Term::var("X"),
+        ]);
+
+        let results = evaluator.eval_atom(&query);
+        assert_eq!(results.len(), 0); // Attribute doesn't exist
+    }
+
+    #[test]
+    fn test_eval_attr_edge_edge_not_found() {
+        // Non-existent edge should return empty
+        let dir = tempdir().unwrap();
+        let mut engine = GraphEngine::create(dir.path()).unwrap();
+
+        engine.add_nodes(vec![
+            NodeRecord {
+                id: 1,
+                node_type: Some("FUNCTION".to_string()),
+                name: Some("func".to_string()),
+                file: Some("test.js".to_string()),
+                file_id: 0,
+                name_offset: 0,
+                version: "main".into(),
+                exported: false,
+                replaces: None,
+                deleted: false,
+                metadata: None,
+            },
+            NodeRecord {
+                id: 2,
+                node_type: Some("FUNCTION".to_string()),
+                name: Some("func2".to_string()),
+                file: Some("test.js".to_string()),
+                file_id: 0,
+                name_offset: 0,
+                version: "main".into(),
+                exported: false,
+                replaces: None,
+                deleted: false,
+                metadata: None,
+            },
+        ]);
+
+        // No edges added
+
+        let evaluator = Evaluator::new(&engine);
+
+        // attr_edge(1, 2, "CALLS", "anyattr", X) - edge doesn't exist
+        let query = Atom::new("attr_edge", vec![
+            Term::constant("1"),
+            Term::constant("2"),
+            Term::constant("CALLS"),
+            Term::constant("anyattr"),
+            Term::var("X"),
+        ]);
+
+        let results = evaluator.eval_atom(&query);
+        assert_eq!(results.len(), 0); // Edge doesn't exist
+    }
+
+    #[test]
+    fn test_eval_attr_edge_in_rule() {
+        // Test attr_edge() used in a Datalog rule context
+        let dir = tempdir().unwrap();
+        let mut engine = GraphEngine::create(dir.path()).unwrap();
+
+        engine.add_nodes(vec![
+            NodeRecord {
+                id: 1,
+                node_type: Some("LOOP".to_string()),
+                name: Some("loop1".to_string()),
+                file: Some("api.js".to_string()),
+                file_id: 0,
+                name_offset: 0,
+                version: "main".into(),
+                exported: false,
+                replaces: None,
+                deleted: false,
+                metadata: None,
+            },
+            NodeRecord {
+                id: 2,
+                node_type: Some("LOOP".to_string()),
+                name: Some("loop2".to_string()),
+                file: Some("worker.js".to_string()),
+                file_id: 0,
+                name_offset: 0,
+                version: "main".into(),
+                exported: false,
+                replaces: None,
+                deleted: false,
+                metadata: None,
+            },
+            NodeRecord {
+                id: 10,
+                node_type: Some("VARIABLE".to_string()),
+                name: Some("users".to_string()),
+                file: Some("api.js".to_string()),
+                file_id: 0,
+                name_offset: 0,
+                version: "main".into(),
+                exported: false,
+                replaces: None,
+                deleted: false,
+                metadata: None,
+            },
+            NodeRecord {
+                id: 20,
+                node_type: Some("VARIABLE".to_string()),
+                name: Some("items".to_string()),
+                file: Some("worker.js".to_string()),
+                file_id: 0,
+                name_offset: 0,
+                version: "main".into(),
+                exported: false,
+                replaces: None,
+                deleted: false,
+                metadata: None,
+            },
+        ]);
+
+        engine.add_edges(vec![
+            // Loop 1 iterates over a large collection (nodes scale)
+            EdgeRecord {
+                src: 1,
+                dst: 10,
+                edge_type: Some("ITERATES_OVER".to_string()),
+                version: "main".into(),
+                metadata: Some(r#"{"scale": "nodes"}"#.to_string()),
+                deleted: false,
+            },
+            // Loop 2 iterates over a constant-size collection
+            EdgeRecord {
+                src: 2,
+                dst: 20,
+                edge_type: Some("ITERATES_OVER".to_string()),
+                version: "main".into(),
+                metadata: Some(r#"{"scale": "constant"}"#.to_string()),
+                deleted: false,
+            },
+        ], false);
+
+        let mut evaluator = Evaluator::new(&engine);
+
+        // Rule: Find loops that iterate over large collections
+        // large_iteration(Loop, Var, File) :-
+        //     node(Loop, "LOOP"),
+        //     edge(Loop, Var, "ITERATES_OVER"),
+        //     attr_edge(Loop, Var, "ITERATES_OVER", "scale", "nodes"),
+        //     attr(Loop, "file", File).
+        let rule = parse_rule(
+            r#"large_iteration(Loop, Var, File) :- node(Loop, "LOOP"), edge(Loop, Var, "ITERATES_OVER"), attr_edge(Loop, Var, "ITERATES_OVER", "scale", "nodes"), attr(Loop, "file", File)."#
+        ).unwrap();
+        evaluator.add_rule(rule);
+
+        let query = parse_atom("large_iteration(Loop, Var, File)").unwrap();
+        let results = evaluator.query(&query);
+
+        // Only loop 1 should match (scale = "nodes")
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].get("Loop"), Some(&Value::Id(1)));
+        assert_eq!(results[0].get("Var"), Some(&Value::Id(10)));
+        assert_eq!(results[0].get("File"), Some(&Value::Str("api.js".to_string())));
+    }
 }
