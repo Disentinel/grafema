@@ -1952,6 +1952,63 @@ export class JSASTAnalyzer extends Plugin {
           }
         }
 
+        // 2b. Extract init/test/update for classic for loops and test for while/do-while (REG-282)
+        let initVariableName: string | undefined;
+        let initLine: number | undefined;
+
+        let testExpressionId: string | undefined;
+        let testExpressionType: string | undefined;
+        let testLine: number | undefined;
+        let testColumn: number | undefined;
+
+        let updateExpressionId: string | undefined;
+        let updateExpressionType: string | undefined;
+        let updateLine: number | undefined;
+        let updateColumn: number | undefined;
+
+        if (loopType === 'for') {
+          const forNode = node as t.ForStatement;
+
+          // Extract init: let i = 0
+          if (forNode.init) {
+            initLine = getLine(forNode.init);
+            if (t.isVariableDeclaration(forNode.init)) {
+              // Get name of first declared variable
+              const firstDeclarator = forNode.init.declarations[0];
+              if (t.isIdentifier(firstDeclarator.id)) {
+                initVariableName = firstDeclarator.id.name;
+              }
+            }
+          }
+
+          // Extract test: i < 10
+          if (forNode.test) {
+            testLine = getLine(forNode.test);
+            testColumn = getColumn(forNode.test);
+            testExpressionType = forNode.test.type;
+            testExpressionId = ExpressionNode.generateId(forNode.test.type, module.file, testLine, testColumn);
+          }
+
+          // Extract update: i++
+          if (forNode.update) {
+            updateLine = getLine(forNode.update);
+            updateColumn = getColumn(forNode.update);
+            updateExpressionType = forNode.update.type;
+            updateExpressionId = ExpressionNode.generateId(forNode.update.type, module.file, updateLine, updateColumn);
+          }
+        }
+
+        // Extract test condition for while and do-while loops
+        if (loopType === 'while' || loopType === 'do-while') {
+          const condLoop = node as t.WhileStatement | t.DoWhileStatement;
+          if (condLoop.test) {
+            testLine = getLine(condLoop.test);
+            testColumn = getColumn(condLoop.test);
+            testExpressionType = condLoop.test.type;
+            testExpressionId = ExpressionNode.generateId(condLoop.test.type, module.file, testLine, testColumn);
+          }
+        }
+
         // 3. Determine actual parent - use stack for nested loops, otherwise original parentScopeId
         const actualParentScopeId = (scopeIdStack && scopeIdStack.length > 0)
           ? scopeIdStack[scopeIdStack.length - 1]
@@ -1969,7 +2026,18 @@ export class JSASTAnalyzer extends Plugin {
           parentScopeId: actualParentScopeId,
           iteratesOverName,
           iteratesOverLine,
-          iteratesOverColumn
+          iteratesOverColumn,
+          // REG-282: init/test/update for classic for loops and test for while/do-while
+          initVariableName,
+          initLine,
+          testExpressionId,
+          testExpressionType,
+          testLine,
+          testColumn,
+          updateExpressionId,
+          updateExpressionType,
+          updateLine,
+          updateColumn
         });
 
         // 5. Create body SCOPE (backward compatibility)

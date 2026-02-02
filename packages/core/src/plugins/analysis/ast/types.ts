@@ -112,6 +112,25 @@ export interface LoopInfo {
   iteratesOverName?: string;      // Variable name (e.g., 'items')
   iteratesOverLine?: number;      // Line of collection reference
   iteratesOverColumn?: number;    // Column of collection reference
+
+  // For classic for loop (REG-282): init, test, update expressions
+  // All three can be null (e.g., for (;;) {})
+
+  // Init: let i = 0 - points to VARIABLE node
+  initVariableName?: string;      // Variable name declared in init (e.g., 'i')
+  initLine?: number;              // Line of init declaration
+
+  // Test (condition): i < 10 - points to EXPRESSION node
+  testExpressionId?: string;      // ID of EXPRESSION node
+  testExpressionType?: string;    // 'BinaryExpression', 'Identifier', etc.
+  testLine?: number;
+  testColumn?: number;
+
+  // Update: i++ - points to EXPRESSION node
+  updateExpressionId?: string;    // ID of EXPRESSION node
+  updateExpressionType?: string;  // 'UpdateExpression', 'AssignmentExpression', etc.
+  updateLine?: number;
+  updateColumn?: number;
 }
 
 // === TRY BLOCK INFO ===

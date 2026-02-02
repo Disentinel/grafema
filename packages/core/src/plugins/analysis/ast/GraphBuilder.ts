@@ -516,6 +516,63 @@ export class GraphBuilder {
           }
         }
       }
+
+      // REG-282: LOOP (for) -> HAS_INIT -> VARIABLE (let i = 0)
+      if (loop.loopType === 'for' && loop.initVariableName && loop.initLine) {
+        // Find the variable declared in the init on this line
+        const initVar = variableDeclarations.find(v =>
+          v.name === loop.initVariableName &&
+          v.file === loop.file &&
+          v.line === loop.initLine
+        );
+        if (initVar) {
+          this._bufferEdge({
+            type: 'HAS_INIT',
+            src: loop.id,
+            dst: initVar.id
+          });
+        }
+      }
+
+      // REG-282: LOOP -> HAS_CONDITION -> EXPRESSION (i < 10 or condition for while/do-while)
+      if (loop.testExpressionId && loop.testExpressionType) {
+        // Create EXPRESSION node for the test
+        this._bufferNode({
+          id: loop.testExpressionId,
+          type: 'EXPRESSION',
+          name: loop.testExpressionType,
+          file: loop.file,
+          line: loop.testLine,
+          column: loop.testColumn,
+          expressionType: loop.testExpressionType
+        });
+
+        this._bufferEdge({
+          type: 'HAS_CONDITION',
+          src: loop.id,
+          dst: loop.testExpressionId
+        });
+      }
+
+      // REG-282: LOOP (for) -> HAS_UPDATE -> EXPRESSION (i++)
+      if (loop.loopType === 'for' && loop.updateExpressionId && loop.updateExpressionType) {
+        // Create EXPRESSION node for the update
+        this._bufferNode({
+          id: loop.updateExpressionId,
+          type: 'EXPRESSION',
+          name: loop.updateExpressionType,
+          file: loop.file,
+          line: loop.updateLine,
+          column: loop.updateColumn,
+          expressionType: loop.updateExpressionType
+        });
+
+        this._bufferEdge({
+          type: 'HAS_UPDATE',
+          src: loop.id,
+          dst: loop.updateExpressionId
+        });
+      }
     }
   }
 
