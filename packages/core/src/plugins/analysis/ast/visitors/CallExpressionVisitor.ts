@@ -877,6 +877,9 @@ export class CallExpressionVisitor extends ASTVisitor {
       // Generate semantic ID for array mutation if scopeTracker available
       const scopeTracker = this.scopeTracker;
       let mutationId: string | undefined;
+      // Capture scope path for scope-aware lookup (REG-309)
+      const scopePath = scopeTracker?.getContext().scopePath ?? [];
+
       if (scopeTracker) {
         const discriminator = scopeTracker.getItemCounter(`ARRAY_MUTATION:${arrayName}.${method}`);
         mutationId = computeSemanticId('ARRAY_MUTATION', `${arrayName}.${method}`, scopeTracker.getContext(), { discriminator });
@@ -885,6 +888,7 @@ export class CallExpressionVisitor extends ASTVisitor {
       arrayMutations.push({
         id: mutationId,
         arrayName,
+        mutationScopePath: scopePath,
         mutationMethod: method,
         file: module.file,
         line,
@@ -965,6 +969,9 @@ export class CallExpressionVisitor extends ASTVisitor {
         valueInfo.callColumn = arg.loc?.start.column;
       }
 
+      // Capture scope path for scope-aware lookup (REG-309)
+      const scopePath = this.scopeTracker?.getContext().scopePath ?? [];
+
       let mutationId: string | undefined;
       if (this.scopeTracker) {
         const discriminator = this.scopeTracker.getItemCounter(`OBJECT_MUTATION:Object.assign:${targetName}`);
@@ -974,6 +981,7 @@ export class CallExpressionVisitor extends ASTVisitor {
       objectMutations.push({
         id: mutationId,
         objectName: targetName,
+        mutationScopePath: scopePath,
         propertyName: '<assign>',
         mutationType: 'assign',
         file: module.file,

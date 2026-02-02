@@ -492,6 +492,7 @@ export interface ArrayMutationInfo {
   id?: string;                 // Semantic ID for the mutation (optional for backward compatibility)
   arrayName: string;           // Name of the array variable being mutated
   arrayLine?: number;          // Line where array is referenced (for scope resolution)
+  mutationScopePath?: string[];  // Scope path where mutation happens (from ScopeTracker)
   mutationMethod: 'push' | 'unshift' | 'splice' | 'indexed';
   file: string;
   line: number;
@@ -524,6 +525,7 @@ export interface ObjectMutationInfo {
   id?: string;                   // Semantic ID for the mutation (optional for backward compatibility)
   objectName: string;            // Name of the object being mutated ('config', 'this', etc.)
   objectLine?: number;           // Line where object is referenced (for scope resolution)
+  mutationScopePath?: string[];  // Scope path where mutation happens (from ScopeTracker)
   enclosingClassName?: string;   // Class name when objectName === 'this' (REG-152)
   propertyName: string;          // Property name or '<computed>' for obj[x] or '<assign>' for Object.assign
   mutationType: 'property' | 'computed' | 'assign' | 'spread';
@@ -684,6 +686,7 @@ export interface VariableAssignmentInfo {
 export interface VariableReassignmentInfo {
   variableName: string;           // Name of variable being reassigned
   variableLine: number;           // Line where variable is referenced on LHS
+  mutationScopePath?: string[];   // Scope path where mutation happens (from ScopeTracker)
   valueType: 'VARIABLE' | 'CALL_SITE' | 'METHOD_CALL' | 'LITERAL' | 'EXPRESSION';
   valueName?: string;             // For VARIABLE, CALL_SITE types
   valueId?: string | null;        // For LITERAL, EXPRESSION types

@@ -1429,12 +1429,12 @@ export class JSASTAnalyzer extends Plugin {
             }
             const variableReassignments = allCollections.variableReassignments as VariableReassignmentInfo[];
 
-            this.detectVariableReassignment(assignNode, module, variableReassignments);
+            this.detectVariableReassignment(assignNode, module, variableReassignments, scopeTracker);
           }
           // === END VARIABLE REASSIGNMENT ===
 
           // Check for indexed array assignment at module level: arr[i] = value
-          this.detectIndexedArrayAssignment(assignNode, module, arrayMutations);
+          this.detectIndexedArrayAssignment(assignNode, module, arrayMutations, scopeTracker);
 
           // Check for object property assignment at module level: obj.prop = value
           this.detectObjectPropertyAssignment(assignNode, module, objectMutations, scopeTracker);
@@ -3144,7 +3144,7 @@ export class JSASTAnalyzer extends Plugin {
           }
           const variableReassignments = collections.variableReassignments as VariableReassignmentInfo[];
 
-          this.detectVariableReassignment(assignNode, module, variableReassignments);
+          this.detectVariableReassignment(assignNode, module, variableReassignments, scopeTracker);
         }
         // === END VARIABLE REASSIGNMENT ===
 
@@ -3155,7 +3155,7 @@ export class JSASTAnalyzer extends Plugin {
         const arrayMutations = collections.arrayMutations as ArrayMutationInfo[];
 
         // Check for indexed array assignment: arr[i] = value
-        this.detectIndexedArrayAssignment(assignNode, module, arrayMutations);
+        this.detectIndexedArrayAssignment(assignNode, module, arrayMutations, scopeTracker);
 
         // Initialize object mutations collection if not exists
         if (!collections.objectMutations) {
@@ -4211,7 +4211,8 @@ export class JSASTAnalyzer extends Plugin {
   private detectIndexedArrayAssignment(
     assignNode: t.AssignmentExpression,
     module: VisitorModule,
-    arrayMutations: ArrayMutationInfo[]
+    arrayMutations: ArrayMutationInfo[],
+    scopeTracker?: ScopeTracker
   ): void {
     // Check for indexed array assignment: arr[i] = value
     if (assignNode.left.type === 'MemberExpression' && assignNode.left.computed) {
@@ -4258,8 +4259,12 @@ export class JSASTAnalyzer extends Plugin {
         const line = assignNode.loc?.start.line ?? 0;
         const column = assignNode.loc?.start.column ?? 0;
 
+        // Capture scope path for scope-aware lookup (REG-309)
+        const scopePath = scopeTracker?.getContext().scopePath ?? [];
+
         arrayMutations.push({
           arrayName,
+          mutationScopePath: scopePath,
           mutationMethod: 'indexed',
           file: module.file,
           line: line,
@@ -4351,6 +4356,9 @@ export class JSASTAnalyzer extends Plugin {
     const line = assignNode.loc?.start.line ?? 0;
     const column = assignNode.loc?.start.column ?? 0;
 
+    // Capture scope path for scope-aware lookup (REG-309)
+    const scopePath = scopeTracker?.getContext().scopePath ?? [];
+
     // Generate semantic ID if scopeTracker available
     let mutationId: string | undefined;
     if (scopeTracker) {
@@ -4361,6 +4369,7 @@ export class JSASTAnalyzer extends Plugin {
     objectMutations.push({
       id: mutationId,
       objectName,
+      mutationScopePath: scopePath,
       enclosingClassName,  // REG-152: Class name for 'this' mutations
       propertyName,
       mutationType,
@@ -4497,7 +4506,8 @@ export class JSASTAnalyzer extends Plugin {
   private detectVariableReassignment(
     assignNode: t.AssignmentExpression,
     module: VisitorModule,
-    variableReassignments: VariableReassignmentInfo[]
+    variableReassignments: VariableReassignmentInfo[],
+    scopeTracker?: ScopeTracker
   ): void {
     // LHS must be simple identifier (checked by caller)
     const leftId = assignNode.left as t.Identifier;
@@ -4585,10 +4595,14 @@ export class JSASTAnalyzer extends Plugin {
       // Add more expression types as needed
     }
 
+    // Capture scope path for scope-aware lookup (REG-309)
+    const scopePath = scopeTracker?.getContext().scopePath ?? [];
+
     // Push reassignment info to collection
     variableReassignments.push({
       variableName,
       variableLine: getLine(leftId),
+      mutationScopePath: scopePath,
       valueType,
       valueName,
       valueId,

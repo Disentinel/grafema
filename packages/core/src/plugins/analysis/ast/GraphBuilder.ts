@@ -11,7 +11,7 @@ import { EnumNode, type EnumNodeRecord } from '../../../core/nodes/EnumNode.js';
 import { DecoratorNode } from '../../../core/nodes/DecoratorNode.js';
 import { NetworkRequestNode } from '../../../core/nodes/NetworkRequestNode.js';
 import { NodeFactory } from '../../../core/NodeFactory.js';
-import { computeSemanticId } from '../../../core/SemanticId.js';
+import { computeSemanticId, parseSemanticId } from '../../../core/SemanticId.js';
 import type {
   ModuleNode,
   FunctionInfo,
@@ -1807,23 +1807,14 @@ export class GraphBuilder {
     variableDeclarations: VariableDeclarationInfo[],
     parameters: ParameterInfo[]
   ): void {
-    // Build lookup cache once: O(n) instead of O(n*m) with find() per mutation
-    const varLookup = new Map<string, VariableDeclarationInfo>();
-    for (const v of variableDeclarations) {
-      varLookup.set(`${v.file}:${v.name}`, v);
-    }
-
-    // Build parameter lookup cache for function-level mutations
-    const paramLookup = new Map<string, ParameterInfo>();
-    for (const p of parameters) {
-      paramLookup.set(`${p.file}:${p.name}`, p);
-    }
+    // Note: No longer using Map-based cache - scope-aware lookup requires scope chain walk
 
     for (const mutation of arrayMutations) {
-      const { arrayName, mutationMethod, insertedValues, file, isNested, baseObjectName, propertyName } = mutation;
+      const { arrayName, mutationScopePath, mutationMethod, insertedValues, file, isNested, baseObjectName, propertyName } = mutation;
+
+      const scopePath = mutationScopePath ?? [];
 
       // REG-117: For nested mutations (obj.arr.push), resolve target node
-      // First try direct lookup, then fallback to base object
       let targetNodeId: string | null = null;
       let nestedProperty: string | undefined;
 
@@ -1831,15 +1822,15 @@ export class GraphBuilder {
         // Skip 'this.items.push' - 'this' is not a variable node
         if (baseObjectName === 'this') continue;
 
-        // Nested mutation: try base object lookup
-        const baseVar = varLookup.get(`${file}:${baseObjectName}`);
-        const baseParam = !baseVar ? paramLookup.get(`${file}:${baseObjectName}`) : null;
+        // Nested mutation: try base object lookup with scope chain (REG-309)
+        const baseVar = this.resolveVariableInScope(baseObjectName, scopePath, file, variableDeclarations);
+        const baseParam = !baseVar ? this.resolveParameterInScope(baseObjectName, scopePath, file, parameters) : null;
         targetNodeId = baseVar?.id ?? baseParam?.id ?? null;
         nestedProperty = propertyName;
       } else {
-        // Direct mutation: arr.push()
-        const arrayVar = varLookup.get(`${file}:${arrayName}`);
-        const arrayParam = !arrayVar ? paramLookup.get(`${file}:${arrayName}`) : null;
+        // Direct mutation: arr.push() (REG-309)
+        const arrayVar = this.resolveVariableInScope(arrayName, scopePath, file, variableDeclarations);
+        const arrayParam = !arrayVar ? this.resolveParameterInScope(arrayName, scopePath, file, parameters) : null;
         targetNodeId = arrayVar?.id ?? arrayParam?.id ?? null;
       }
 
@@ -1848,9 +1839,9 @@ export class GraphBuilder {
       // Create FLOWS_INTO edges for each inserted value
       for (const arg of insertedValues) {
         if (arg.valueType === 'VARIABLE' && arg.valueName) {
-          // O(1) lookup instead of O(n) find
-          const sourceVar = varLookup.get(`${file}:${arg.valueName}`);
-          const sourceParam = !sourceVar ? paramLookup.get(`${file}:${arg.valueName}`) : null;
+          // Scope-aware lookup for source variable (REG-309)
+          const sourceVar = this.resolveVariableInScope(arg.valueName, scopePath, file, variableDeclarations);
+          const sourceParam = !sourceVar ? this.resolveParameterInScope(arg.valueName, scopePath, file, parameters) : null;
           const sourceNodeId = sourceVar?.id ?? sourceParam?.id;
 
           if (sourceNodeId) {
@@ -1892,17 +1883,20 @@ export class GraphBuilder {
     classDeclarations: ClassDeclarationInfo[]
   ): void {
     for (const mutation of objectMutations) {
-      const { objectName, propertyName, mutationType, computedPropertyVar, value, file, enclosingClassName } = mutation;
+      const { objectName, mutationScopePath, propertyName, mutationType, computedPropertyVar, value, file, enclosingClassName } = mutation;
+
+      const scopePath = mutationScopePath ?? [];
 
       // Find the target node (object variable, parameter, or class for 'this')
       let objectNodeId: string | null = null;
       let effectiveMutationType: 'property' | 'computed' | 'assign' | 'spread' | 'this_property' = mutationType;
 
       if (objectName !== 'this') {
-        // Regular object - find variable or parameter
-        const objectVar = variableDeclarations.find(v => v.name === objectName && v.file === file);
-        const objectParam = !objectVar ? parameters.find(p => p.name === objectName && p.file === file) : null;
-        objectNodeId = objectVar?.id ?? objectParam?.id ?? null;
+        // Regular object - find variable, parameter, or function using scope chain (REG-309)
+        const objectVar = this.resolveVariableInScope(objectName, scopePath, file, variableDeclarations);
+        const objectParam = !objectVar ? this.resolveParameterInScope(objectName, scopePath, file, parameters) : null;
+        const objectFunc = !objectVar && !objectParam ? functions.find(f => f.name === objectName && f.file === file) : null;
+        objectNodeId = objectVar?.id ?? objectParam?.id ?? objectFunc?.id ?? null;
         if (!objectNodeId) continue;
       } else {
         // REG-152: 'this' mutations - find the CLASS node
@@ -1922,9 +1916,9 @@ export class GraphBuilder {
 
       // Create FLOWS_INTO edge for VARIABLE value type
       if (value.valueType === 'VARIABLE' && value.valueName) {
-        // Find the source: can be variable, parameter, or function (arrow functions assigned to const)
-        const sourceVar = variableDeclarations.find(v => v.name === value.valueName && v.file === file);
-        const sourceParam = !sourceVar ? parameters.find(p => p.name === value.valueName && p.file === file) : null;
+        // Find the source: can be variable, parameter, or function using scope chain (REG-309)
+        const sourceVar = this.resolveVariableInScope(value.valueName, scopePath, file, variableDeclarations);
+        const sourceParam = !sourceVar ? this.resolveParameterInScope(value.valueName, scopePath, file, parameters) : null;
         const sourceFunc = !sourceVar && !sourceParam ? functions.find(f => f.name === value.valueName && f.file === file) : null;
         const sourceNodeId = sourceVar?.id ?? sourceParam?.id ?? sourceFunc?.id;
 
@@ -1951,6 +1945,108 @@ export class GraphBuilder {
   }
 
   /**
+   * Resolve variable by name using scope chain lookup (REG-309).
+   * Mirrors JavaScript lexical scoping: search current scope, then parent, then grandparent, etc.
+   *
+   * @param name - Variable name
+   * @param scopePath - Scope path where reference occurs (from ScopeTracker)
+   * @param file - File path
+   * @param variables - All variable declarations
+   * @returns Variable declaration or null if not found
+   */
+  private resolveVariableInScope(
+    name: string,
+    scopePath: string[],
+    file: string,
+    variables: VariableDeclarationInfo[]
+  ): VariableDeclarationInfo | null {
+    // Try current scope, then parent, then grandparent, etc.
+    for (let i = scopePath.length; i >= 0; i--) {
+      const searchScopePath = scopePath.slice(0, i);
+
+      const matchingVar = variables.find(v => {
+        if (v.name !== name || v.file !== file) return false;
+
+        // Variable ID IS the semantic ID (when scopeTracker was available during analysis)
+        // Format: file->scope1->scope2->TYPE->name
+        // Legacy format: VARIABLE#name#file#line:column:counter
+
+        // Try parsing as semantic ID
+        const parsed = parseSemanticId(v.id);
+        if (parsed && parsed.type === 'VARIABLE') {
+          // FIXED (REG-309): Handle module-level scope matching
+          // Empty search scope [] should match semantic ID scope ['global']
+          if (searchScopePath.length === 0) {
+            return parsed.scopePath.length === 1 && parsed.scopePath[0] === 'global';
+          }
+          // Non-empty scope: exact match
+          return this.scopePathsMatch(parsed.scopePath, searchScopePath);
+        }
+
+        // Legacy ID - assume module-level if no semantic ID
+        return searchScopePath.length === 0;
+      });
+
+      if (matchingVar) return matchingVar;
+    }
+
+    return null;
+  }
+
+  /**
+   * Resolve parameter by name using scope chain lookup (REG-309).
+   * Same semantics as resolveVariableInScope but for parameters.
+   *
+   * @param name - Parameter name
+   * @param scopePath - Scope path where reference occurs (from ScopeTracker)
+   * @param file - File path
+   * @param parameters - All parameter declarations
+   * @returns Parameter declaration or null if not found
+   */
+  private resolveParameterInScope(
+    name: string,
+    scopePath: string[],
+    file: string,
+    parameters: ParameterInfo[]
+  ): ParameterInfo | null {
+    // Parameters have semanticId field populated (unlike variables which use id field)
+    return parameters.find(p => {
+      if (p.name !== name || p.file !== file) return false;
+
+      if (p.semanticId) {
+        const parsed = parseSemanticId(p.semanticId);
+        if (parsed && parsed.type === 'PARAMETER') {
+          // Check if parameter's scope matches any scope in the chain
+          for (let i = scopePath.length; i >= 0; i--) {
+            const searchScopePath = scopePath.slice(0, i);
+
+            // FIXED (REG-309): Handle module-level scope matching for parameters
+            if (searchScopePath.length === 0) {
+              if (parsed.scopePath.length === 1 && parsed.scopePath[0] === 'global') {
+                return true;
+              }
+            } else {
+              if (this.scopePathsMatch(parsed.scopePath, searchScopePath)) {
+                return true;
+              }
+            }
+          }
+        }
+      }
+      return false;
+    }) ?? null;
+  }
+
+  /**
+   * Check if two scope paths match (REG-309).
+   * Handles: ['foo', 'if#0'] vs ['foo', 'if#0']
+   */
+  private scopePathsMatch(a: string[], b: string[]): boolean {
+    if (a.length !== b.length) return false;
+    return a.every((item, idx) => item === b[idx]);
+  }
+
+  /**
    * Buffer FLOWS_INTO edges for variable reassignments.
    * Handles: x = y, x += y (when x is already declared, not initialization)
    *
@@ -1960,11 +2056,7 @@ export class GraphBuilder {
    *   - source --FLOWS_INTO--> variable (write new value)
    *   - variable --READS_FROM--> variable (self-loop: reads current value before write)
    *
-   * CURRENT LIMITATION (REG-XXX): Uses file-level variable lookup, not scope-aware.
-   * Shadowed variables in nested scopes will incorrectly resolve to outer scope variable.
-   *
-   * This matches existing mutation handler behavior (array/object mutations).
-   * Will be fixed in future scope-aware lookup refactoring.
+   * REG-309: Uses scope-aware variable lookup via resolveVariableInScope().
    *
    * REG-290: Complete implementation with inline node creation (no continue statements).
    */
@@ -1975,20 +2067,13 @@ export class GraphBuilder {
     methodCalls: MethodCallInfo[],
     parameters: ParameterInfo[]
   ): void {
-    // Build lookup cache: O(n) instead of O(n*m)
-    const varLookup = new Map<string, VariableDeclarationInfo>();
-    for (const v of variableDeclarations) {
-      varLookup.set(`${v.file}:${v.name}`, v);
-    }
-
-    const paramLookup = new Map<string, ParameterInfo>();
-    for (const p of parameters) {
-      paramLookup.set(`${p.file}:${p.name}`, p);
-    }
+    // Note: No longer using Map-based cache - scope-aware lookup requires scope chain walk
+    // Performance: O(n*m*s) where s = scope depth (typically 2-3), acceptable for correctness
 
     for (const reassignment of variableReassignments) {
       const {
         variableName,
+        mutationScopePath,
         valueType,
         valueName,
         valueId,
@@ -2003,13 +2088,14 @@ export class GraphBuilder {
         column
       } = reassignment;
 
-      // Find target variable node
-      const targetVar = varLookup.get(`${file}:${variableName}`);
-      const targetParam = !targetVar ? paramLookup.get(`${file}:${variableName}`) : null;
+      // Find target variable node using scope chain resolution (REG-309)
+      const scopePath = mutationScopePath ?? [];
+      const targetVar = this.resolveVariableInScope(variableName, scopePath, file, variableDeclarations);
+      const targetParam = !targetVar ? this.resolveParameterInScope(variableName, scopePath, file, parameters) : null;
       const targetNodeId = targetVar?.id ?? targetParam?.id;
 
       if (!targetNodeId) {
-        // Variable not found - could be module-level or external reference
+        // Variable not found - could be external reference
         continue;
       }
 
@@ -2029,10 +2115,10 @@ export class GraphBuilder {
         });
         sourceNodeId = valueId;
       }
-      // VARIABLE: Look up existing variable/parameter node
+      // VARIABLE: Look up existing variable/parameter node using scope chain (REG-309)
       else if (valueType === 'VARIABLE' && valueName) {
-        const sourceVar = varLookup.get(`${file}:${valueName}`);
-        const sourceParam = !sourceVar ? paramLookup.get(`${file}:${valueName}`) : null;
+        const sourceVar = this.resolveVariableInScope(valueName, scopePath, file, variableDeclarations);
+        const sourceParam = !sourceVar ? this.resolveParameterInScope(valueName, scopePath, file, parameters) : null;
         sourceNodeId = sourceVar?.id ?? sourceParam?.id ?? null;
       }
       // CALL_SITE: Look up existing call node
