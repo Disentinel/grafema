@@ -1,513 +1,225 @@
-# Navi Roadmap: Реализация GDD
+# Grafema Roadmap
 
-Технический план реализации методологии Graph-Driven Development.
-
----
-
-## Текущее состояние
-
-### Готово (Core)
-
-- ✅ **ReginaFlowDB** — Rust graph database с колоночным хранилищем
-- ✅ **Граф кода** — FUNCTION, CLASS, MODULE, CALL, VARIABLE, PARAMETER
-- ✅ **Namespaced типы** — http:route, db:query, socketio:*, event:*
-- ✅ **String types** — node_type и edge_type как строки с Levenshtein валидацией
-- ✅ **NAPI bindings** — полная интеграция Rust ↔ Node.js
-- ✅ **Версионирование** — main / __local
-- ✅ **PathValidator** — прототип проверки reachability
-- ✅ **Orchestrator** — pipeline анализа с батчевой обработкой
-- ✅ **Плагины анализа** — JS AST, Express, Socket.IO, Database, Fetch
-
-### Готово (Call Resolution & Data Flow)
-
-- ✅ **AliasTracker** — транзитивное отслеживание алиасов (killer feature)
-- ✅ **ValueDomainAnalyzer** — abstract inference, value set analysis
-- ✅ **Path-Sensitive CFG** — constraints на SCOPE нодах, getValueSetAtNode()
-- ✅ **PARAMETER nodes** — параметры функций с HAS_PARAMETER, PASSES_ARGUMENT
-- ✅ **Edge metadata** — argIndex, isSpread и др. метаданные на рёбрах
-- ✅ **EvalBanValidator** — security инвариант запрета eval/Function
-- ✅ **ShadowingDetector** — детекция cross-file shadowing
-
-### Готово (MCP Server) — Фаза 5 ✅
-
-- ✅ **MCP Server** — stdio транспорт, автоматический анализ
-- ✅ **Core Tools**: query_graph, find_calls, trace_alias, check_invariant, analyze_project
-- ✅ **Value Analysis Tools**: get_value_set (path-sensitive), trace_data_flow, get_stats
-- ✅ **Discovery Tools**: discover_services, get_analysis_status
-- ✅ **Logging** — .rflow/mcp.log
-
-### Готово (Tests)
-
-- ✅ **296/297 tests pass** (1 skipped, occasional flaky)
-- ✅ **Cross-platform build** — macOS (.dylib) и Linux (.so)
+Graph-Driven Development: from code graph to system guarantees.
 
 ---
 
-## Фаза 1: Основа для гарантий
+## Current State (v0.1.0)
 
-**Цель:** Инфраструктура для хранения и проверки гарантий.
+### Core Infrastructure ✅
 
-### 1.1. Guarantee как тип узла
+- **RFDB Server** — Rust graph database, client-server via unix-socket
+- **Monorepo architecture** — `types`, `core`, `cli`, `mcp`, `gui`
+- **Datalog engine** — declarative queries over the graph
+- **GuaranteeManager** — rule-based invariant checking
 
-**Задача:** Добавить поддержку guarantee узлов в граф.
+### Analysis ✅
 
-```
-guarantee:queue#orders
-guarantee:api#users
-guarantee:permission#s3-write
-```
+- **JS/TS AST Analysis** — functions, classes, modules, variables, parameters
+- **Data Flow** — AliasTracker, ValueDomainAnalyzer, path-sensitive CFG
+- **Framework Plugins** — Express, Socket.IO, Database, Fetch
+- **Cross-file Resolution** — imports, exports, re-exports, call resolution
 
-**Файлы:**
-- `src/v2/core/nodes/NodeKind.js` — добавить guarantee:* типы
-- `src/v2/core/nodes/GuaranteeNode.js` — создать класс
-- `rust-engine/src/graph/engine.rs` — поддержка в find_by_type
+### CLI ✅
 
-**Поля guarantee узла:**
-- `priority`: critical | important | observed | tracked
-- `status`: discovered | reviewed | active | changing | deprecated
-- `owner`: string (team/person)
-- `schema`: JSON (для queue/api contracts)
-- `condition`: string (для rules)
+- `grafema analyze` — full project analysis
+- `grafema query` — natural language + Datalog queries
+- `grafema ls` — list nodes by type
+- `grafema types` — show available node types
+- `grafema show` — node details with edges
 
-### 1.2. Связь governs
+### MCP Server ✅
 
-**Задача:** Связь между гарантией и кодом который она покрывает.
-
-```
-guarantee:queue#orders --governs--> queue:publish#order-api#...
-guarantee:queue#orders --governs--> queue:consume#processor#...
-```
-
-**Файлы:**
-- `src/v2/storage/backends/ReginaFlowBackend.js` — добавить edge type `GOVERNS` в KNOWN_EDGE_TYPES
-- Или использовать namespaced `guarantee:governs`
-
-### 1.3. Guarantee storage API
-
-**Задача:** CRUD операции для гарантий.
-
-```javascript
-// Создание
-await graph.createGuarantee({
-  type: 'guarantee:queue',
-  name: 'orders',
-  priority: 'critical',
-  schema: { orderId: 'string', items: 'array' },
-  governs: ['queue:publish#...', 'queue:consume#...']
-});
-
-// Поиск
-const guarantees = await graph.findGuarantees({
-  type: 'guarantee:queue',
-  priority: 'critical'
-});
-
-// Проверка
-const violations = await graph.checkGuarantee('guarantee:queue#orders');
-```
-
-**Файлы:**
-- `src/v2/api/GuaranteeAPI.js` — новый файл
+- `query_graph`, `find_calls`, `trace_alias`, `check_invariant`
+- `get_value_set`, `trace_data_flow`, `get_stats`
+- `analyze_project`, `discover_services`, `get_analysis_status`
 
 ---
 
-## Фаза 2: Автоматический вывод гарантий
+## v0.1.x — Polish & Stability
 
-**Цель:** Плагины для обнаружения гарантий из кода.
+Bug fixes and improvements for current functionality.
 
-### 2.1. Queue Contract Discovery
+### AST Coverage Gaps
 
-**Задача:** Находить publish/consume и выводить схемы.
-
-**Анализ:**
-1. Найти все `channel.publish()`, `channel.sendToQueue()` → producers
-2. Найти все `channel.consume()` → consumers
-3. Извлечь имена очередей
-4. Связать producers ↔ consumers по имени очереди
-
-**Schema inference:**
-```javascript
-// Из кода:
-channel.sendToQueue('orders', JSON.stringify({ orderId, items, userId }));
-
-// Извлечь:
-schema: { orderId: 'unknown', items: 'unknown', userId: 'unknown' }
-```
-
-**Файлы:**
-- `src/v2/plugins/analysis/RabbitMQAnalyzer.js` — новый плагин
-- `src/v2/plugins/enrichment/QueueContractInference.js` — вывод контрактов
-
-### 2.2. Schema Inference из деструктуризации
-
-**Задача:** Извлекать ожидаемые поля из деструктуризации.
-
-```javascript
-// Consumer code:
-const { orderId, items, userId } = JSON.parse(msg.content);
-
-// Inference:
-expected_fields: ['orderId', 'items', 'userId']
-```
-
-**Расширенный inference через data flow:**
-```javascript
-if (typeof orderId !== 'string') throw new Error();
-// → orderId: string
-
-items.forEach(item => ...);
-// → items: array
-```
-
-**Файлы:**
-- `src/v2/plugins/enrichment/SchemaInference.js` — новый плагин
-- Использовать существующий data flow tracking
-
-### 2.3. API Contract Discovery
-
-**Задача:** Выводить контракты для HTTP endpoints.
-
-**Анализ:**
-1. Найти все http:route узлы
-2. Проверить наличие middleware (auth, validation)
-3. Извлечь request/response schemas (если есть validation)
-
-**Файлы:**
-- `src/v2/plugins/enrichment/APIContractInference.js` — новый плагин
-
-### 2.4. Permission Discovery
-
-**Задача:** Находить AWS/cloud API calls.
-
-**Анализ:**
-1. Найти вызовы AWS SDK: `s3.putObject()`, `sqs.sendMessage()`
-2. Извлечь action + resource (bucket name, queue name)
-3. Создать `aws:s3:putObject#bucket-name` узлы
-
-**Файлы:**
-- `src/v2/plugins/analysis/AWSSDKAnalyzer.js` — новый плагин
+- [ ] Track `import.meta` (REG-300)
+- [ ] Track `new.target` (REG-301)
+- [ ] Track transitive closure captures (REG-302)
+- [ ] Track type parameter constraints (REG-303)
+- [ ] Track conditional types (REG-304)
+- [ ] Track mapped types (REG-305)
+- [ ] Track top-level await (REG-297)
+- [ ] Track await in loops — performance flag (REG-298)
+- [ ] Track `YieldExpression` (REG-299)
+- [ ] Track side-effect-only imports (REG-296)
+- [ ] Track `ImportExpression` with options (REG-295)
+- [ ] Track getter/setter distinction (REG-293)
+- [ ] Track `PrivateName` (#fields) (REG-292)
+- [ ] Track `StaticBlock` (REG-291)
+- [ ] Track `SequenceExpression` side effects (REG-289)
 
 ---
 
-## Фаза 3: Инфраструктурный слой
+## v0.2 — Data Flow & Early Access
 
-**Цель:** Анализ Terraform/K8s для связи code ↔ infra.
+Features needed for production use on real codebases.
 
-### 3.1. Terraform Parser
+### Data Flow
 
-**Задача:** Парсить .tf файлы и строить граф ресурсов.
+- [ ] Async error patterns — `Promise.reject`, reject callback (REG-311)
+- [ ] Cardinality tracking — complexity guarantees via Datalog (REG-314)
+- [ ] Server-side scope filtering for query command (REG-310)
+- [x] Cross-service value tracing — frontend ↔ backend (REG-252) 🔄
+- [ ] Config-based cross-service routing rules (REG-256)
 
-**Типы узлов:**
-```
-terraform:resource#aws_iam_role.processor
-terraform:resource#aws_iam_role_policy.s3-access
-terraform:resource#aws_sqs_queue.orders
-```
+### Tech Debt
 
-**Связи:**
-```
-aws_iam_role_policy --attaches_to--> aws_iam_role
-aws_ecs_task_definition --uses_role--> aws_iam_role
-```
+- [ ] Extract shared expression handling in JSASTAnalyzer (REG-306)
 
-**Библиотеки:**
-- `@cdktf/hcl2json` — парсинг HCL в JSON
-- Или простой regex-based парсер для MVP
+### Package-Specific Analyzers
 
-**Файлы:**
-- `src/v2/plugins/infrastructure/TerraformParser.js` — новый плагин
-
-### 3.2. IAM Policy Analyzer
-
-**Задача:** Извлекать разрешения из IAM policies.
-
-```hcl
-resource "aws_iam_role_policy" "s3-access" {
-  policy = jsonencode({
-    Statement = [{
-      Action   = ["s3:PutObject"]
-      Resource = "arn:aws:s3:::reports-bucket/*"
-    }]
-  })
-}
-```
-
-**В граф:**
-```
-iam:policy#s3-access
-  └── allows: s3:PutObject on reports-bucket/*
-```
-
-**Файлы:**
-- `src/v2/plugins/infrastructure/IAMPolicyAnalyzer.js` — новый плагин
-
-### 3.3. Permission Path Tracer
-
-**Задача:** Трассировка от AWS call до IAM policy.
-
-```
-aws:s3:putObject (code)
-    ↓ belongs_to
-SERVICE
-    ↓ deployed_as (из Terraform)
-ECS Task / Lambda
-    ↓ assumes_role (из Terraform)
-IAM Role
-    ↓ has_policy (из Terraform)
-IAM Policy
-    ↓ allows
-s3:PutObject on bucket/*
-```
-
-**Реализация:** BFS по связям с фильтрацией по типам.
-
-**Файлы:**
-- `src/v2/validation/PermissionValidator.js` — новый валидатор
+- [ ] Architecture: plugin structure for npm/maven packages (REG-259)
+- [ ] `npm/sqlite3` analyzer (REG-260)
+- [ ] DatabaseAnalyzer: sqlite3 API support (REG-258)
 
 ---
 
-## Фаза 4: Приоритизация
+## v0.3 — Stability & Onboarding
 
-**Цель:** Автоматический расчёт приоритета гарантий.
+Making Grafema easy to adopt for new projects.
 
-### 4.1. Impact Score Calculator
+### AST Completeness
 
-**Задача:** Расчёт impact на основе достижимости.
+- [ ] Track class static blocks and private fields (REG-271)
+- [ ] Track generator function yields — YIELDS edge (REG-270)
 
-```javascript
-function calculateImpact(guaranteeId) {
-  const governed = graph.getGoverned(guaranteeId);
-  let maxScore = 0;
+### Query Languages
 
-  for (const node of governed) {
-    const reachable = graph.bfs(node, { edgeTypes: ['CALLS', 'WRITES'] });
-    for (const r of reachable) {
-      maxScore = Math.max(maxScore, getImpactScore(r.type));
-    }
-  }
+- [ ] Cypher query language support in RFDB (REG-255)
 
-  return maxScore;
-}
+### Research & Design
 
-const IMPACT_SCORES = {
-  'http:route': 100,
-  'db:query': 80,
-  'queue:publish': 60,
-  'FUNCTION': 10,
-};
-```
+- [ ] Design: Return value tracking — FUNCTION → RETURNS → value (REG-266)
+- [ ] Design: JSX support in Grafema graph (REG-264)
 
-**Файлы:**
-- `src/v2/plugins/enrichment/PriorityCalculator.js` — новый плагин
+### UX
 
-### 4.2. Monitoring Config Parser
-
-**Задача:** Парсить конфиг мониторинга для priority hints.
-
-```yaml
-# monitoring/alerts.yaml
-alerts:
-  - metric: payment_success_rate
-    pattern: "payment_*"
-    level: CRIT
-```
-
-**Маппинг:**
-- CRIT/URG → critical
-- ERR → important
-- WARN → observed
-
-**Файлы:**
-- `src/v2/plugins/infrastructure/MonitoringConfigParser.js` — новый плагин
-
-### 4.3. Priority Aggregator
-
-**Задача:** Комбинировать приоритеты из разных источников.
-
-```javascript
-function calculateFinalPriority(guaranteeId) {
-  return Math.max(
-    calculateImpact(guaranteeId),
-    getMonitoringPriority(guaranteeId),
-    getManualOverride(guaranteeId)
-  );
-}
-```
+- [ ] Project onboarding wizard
+- [ ] Better error messages and suggestions
+- [ ] Better duplicate node differentiation in `ls` (REG-279)
+- [ ] Improve `ls` error message when --type missing (REG-278)
+- [ ] Performance optimization for large codebases
 
 ---
 
-## Фаза 5: MCP Server ✅ DONE
+## v0.5+ — Strategic
 
-**Цель:** API для интеграции с Claude Code и другими агентами.
+Long-term vision features.
 
-### 5.1. MCP Server Setup ✅
+### Verification & Benchmarks
 
-- [x] `src/mcp/server.js` — MCP сервер с @modelcontextprotocol/sdk
-- [x] stdio транспорт для интеграции с Claude Code
-- [x] Автоматический анализ при подключении
-- [x] Поддержка существующей БД
+- [ ] SWE-bench Lite: ABBA runs (10× MCP vs 10× baseline) with token logging (REG-245)
+- [ ] Strategy: Token savings as hook, understanding as product (REG-246)
 
-### 5.2. Core Tools ✅
+### Research
 
-**Реализованные tools:**
+- [ ] Design: Expression tree granularity for data flow (REG-265)
+- [ ] Research: Auto-parse nginx.conf for cross-service routing (REG-257)
 
-| Tool | Описание |
-|------|----------|
-| `query_graph` | Выполнить Datalog запрос на графе кода |
-| `find_calls` | Найти все вызовы функции/метода |
-| `trace_alias` | Трассировка алиаса до источника |
-| `check_invariant` | Проверка инварианта через Datalog |
-| `analyze_project` | Анализ/переанализ проекта |
-| `get_value_set` | Анализ множества значений переменной (path-sensitive) |
-| `trace_data_flow` | Трассировка data flow от источника |
-| `get_stats` | Статистика проекта |
-| `discover_services` | Обнаружение сервисов в проекте |
-| `get_analysis_status` | Статус текущего анализа |
+### GUI ⭐
 
-**Конфиг для Claude Code:**
-```json
-{
-  "mcpServers": {
-    "navi": {
-      "command": "node",
-      "args": ["src/mcp/server.js", "--project", "/path/to/project"],
-      "cwd": "/path/to/navi"
-    }
-  }
-}
-```
+- [ ] Graph visualization dashboard
+- [ ] Interactive node explorer
+- [ ] Query builder UI
 
-### 5.3. Proactive Tools (TODO)
+### Contract Discovery ⭐
 
-**find_similar_patterns** — поиск похожих паттернов (для Guarantee система)
+- [ ] Queue Contract Discovery — RabbitMQ, Kafka, SQS
+- [ ] Schema inference from destructuring
+- [ ] API Contract Discovery — request/response schemas
+- [ ] AWS SDK Analyzer — cloud API calls
 
-**verify_no_regressions** — проверка регрессий (требует Guarantee инфраструктуру)
+### Infrastructure Layer ⭐
 
----
+- [ ] Terraform Parser — IAM roles, policies, resources
+- [ ] IAM Policy Analyzer — permission extraction
+- [ ] Permission Path Tracer — code → role → policy validation
+- [ ] K8s manifest analysis
 
-## Фаза 6: UI
+### Guarantee System ⭐
 
-**Цель:** Web интерфейс для управления гарантиями.
+- [ ] Guarantee nodes as first-class graph objects
+- [ ] GOVERNS edge type
+- [ ] Guarantee lifecycle: discovered → reviewed → active
+- [ ] Change Request workflow
+- [ ] Impact analysis
 
-### 6.1. Dashboard
+### Priority & Governance ⭐
 
-- Health overview: violations, warnings, healthy count
-- Filter by priority, status, owner
-- Search guarantees
+- [ ] Impact Score Calculator — auto-priority from graph reachability
+- [ ] Monitoring Config Parser — priority hints from alerts
+- [ ] Priority Aggregator — combine multiple sources
 
-### 6.2. Guarantee Detail View
+### Advanced MCP Tools ⭐
 
-- Schema visualization
-- Governed code locations
-- History of changes
-- Related guarantees
-
-### 6.3. Change Request Flow
-
-- Create change request form
-- Impact analysis display
-- Approval workflow
-- Migration progress tracking
-
-### 6.4. Discovery Review
-
-- List of discovered guarantees
-- Bulk actions: activate, dismiss, defer
-- Priority assignment
+- [ ] `find_similar_patterns` — pattern matching for guarantees
+- [ ] `verify_no_regressions` — pre-commit checks
+- [ ] `get_implementation_context` — proactive AI guidance
 
 ---
 
-## Приоритеты реализации
+## Version Philosophy
 
-### Готово ✅
+| Version | Focus | Timeline |
+|---------|-------|----------|
+| **v0.1.x** | Works correctly | Current |
+| **v0.2** | Works on real projects | Next |
+| **v0.3** | Easy to adopt | After v0.2 |
+| **v0.5+** | Full GDD vision | Future |
 
-- [x] **MCP Server** — query_graph, find_calls, trace_alias, check_invariant, get_value_set, trace_data_flow
-
-### MVP (минимум для демо) — NEXT
-
-1. **Guarantee узлы** — хранение в графе (Фаза 1)
-2. **Queue Contract Discovery** — RabbitMQ анализ (Фаза 2.1)
-3. **Schema Inference** — базовый из деструктуризации (Фаза 2.2)
-4. **MCP Tools для гарантий** — get_guarantees, check_guarantee (Фаза 5.3)
-
-### Следующий этап
-
-5. **Terraform Parser** — IAM policies
-6. **Permission Validator** — проверка paths
-7. **Priority Calculator** — автоматический
-
-### Полная версия
-
-8. **Monitoring Config** — priority из alerts
-9. **UI Dashboard** — управление гарантиями
-10. **Proactive Tools** — get_implementation_context
+⭐ = Planned for Grafema Pro (details TBA)
 
 ---
 
-## Зависимости
+## Success Metrics
 
-```
-Фаза 1 (Guarantee storage)
-    │
-    ├──► Фаза 2 (Discovery)
-    │        │
-    │        └──► Фаза 4 (Priority)
-    │
-    ├──► Фаза 3 (Infrastructure)
-    │        │
-    │        └──► Фаза 4 (Priority)
-    │
-    └──► Фаза 5 (MCP Server)
-             │
-             └──► Фаза 6 (UI)
-```
+### Quality
 
----
+- Analysis precision: >95% (nodes correctly represent code)
+- Query accuracy: >90% (Datalog returns expected results)
+- False positive rate: <5% for guarantees
 
-## Технический долг (текущий)
+### Performance
 
-**Текущий статус тестов:** 296/297 pass ✅ (1 skipped)
-
-### Закрыто
-
-- [x] Рефакторинг edge types на строки (как node types) ✅
-- [x] DataFlowTracking NewExpression test ✅
-- [x] Reexports DEPENDS_ON edges ✅
-- [x] PARAMETER nodes + HAS_PARAMETER edges ✅
-- [x] PASSES_ARGUMENT edges с metadata ✅
-- [x] Path-Sensitive CFG (ConditionParser, constraints) ✅
-- [x] Cross-file shadowing detection ✅
-- [x] Cross-platform Rust build (macOS/Linux) ✅
-
-### Известные ограничения
-
-- **Parameter usage inside function bodies**: `data.map()` не создаёт DERIVES_FROM → PARAMETER
-  - Требует расширения JSASTAnalyzer для трекинга внутри function bodies
-  - 1 тест пропущен в ParameterDataFlow.test.js
-
-- **Scope-aware shadowing**: требует parentScopeId для переменных внутри функций
-  - Текущая реализация детектит только cross-file shadowing
-
-- **Flaky test**: редкий race condition при cleanup между тестами
-
----
-
-## Метрики успеха
-
-### Качество
-
-- Precision: % выведенных гарантий которые реально полезны (target: >80%)
-- Recall: % реальных контрактов которые обнаружены (target: >70%)
-- False positive rate: < 20%
-
-### Производительность
-
-- Анализ 1000 файлов: < 30 секунд
-- Incremental check: < 5 секунд
-- MCP tool response: < 2 секунды
+- 1000 files: <30 seconds full analysis
+- Incremental: <5 seconds for changed files
+- MCP response: <2 seconds
 
 ### Adoption
 
-- Developers actively review discovered guarantees
-- Change requests created through system
-- AI agents use context tools
+- Can analyze any JS/TS project without configuration
+- AI agents prefer graph queries over reading code
+- Guarantee violations caught before merge
+
+---
+
+## Architecture Principles
+
+### Reuse Before Build
+
+Before proposing a new subsystem, check if existing infrastructure can be extended:
+
+| Need | Don't Build | Extend Instead |
+|------|-------------|----------------|
+| "Check property X" | New analysis engine | Datalog rule |
+| "Track metadata Y" | New node type | `metadata` field |
+| "Report issue Z" | New warning system | ISSUE nodes |
+| "Query pattern W" | Custom traversal | Datalog query |
+
+### Core = Graph + Datalog + Guarantees
+
+Most features should be: **enricher** (adds data) + **Datalog rules** (query it) + **GuaranteeManager** (report violations).
+
+---
+
+*Last updated: 2026-02-02*
