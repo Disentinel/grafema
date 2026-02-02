@@ -839,6 +839,153 @@ mod eval_tests {
     }
 
     #[test]
+    fn test_eval_attr_nested_path() {
+        // Test nested path resolution in attr() predicate
+        // attr(N, "config.port", V) should extract metadata["config"]["port"]
+        let dir = tempdir().unwrap();
+        let mut engine = GraphEngine::create(dir.path()).unwrap();
+
+        engine.add_nodes(vec![
+            NodeRecord {
+                id: 200,
+                node_type: Some("DATABASE".to_string()),
+                name: Some("postgres".to_string()),
+                file: Some("config.js".to_string()),
+                file_id: 0,
+                name_offset: 0,
+                version: "main".into(),
+                exported: false,
+                replaces: None,
+                deleted: false,
+                metadata: Some(r#"{"config": {"host": "localhost", "port": 5432}}"#.to_string()),
+            },
+        ]);
+
+        let evaluator = Evaluator::new(&engine);
+
+        // Query nested path: attr(200, "config.host", X)
+        let query = Atom::new("attr", vec![
+            Term::constant("200"),
+            Term::constant("config.host"),
+            Term::var("X"),
+        ]);
+
+        let results = evaluator.eval_atom(&query);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].get("X"), Some(&Value::Str("localhost".to_string())));
+    }
+
+    #[test]
+    fn test_eval_attr_nested_number() {
+        // Test nested number extraction - numbers should be converted to strings
+        let dir = tempdir().unwrap();
+        let mut engine = GraphEngine::create(dir.path()).unwrap();
+
+        engine.add_nodes(vec![
+            NodeRecord {
+                id: 300,
+                node_type: Some("SERVICE".to_string()),
+                name: Some("redis".to_string()),
+                file: Some("services.js".to_string()),
+                file_id: 0,
+                name_offset: 0,
+                version: "main".into(),
+                exported: false,
+                replaces: None,
+                deleted: false,
+                metadata: Some(r#"{"connection": {"timeout": 3000, "retries": 5}}"#.to_string()),
+            },
+        ]);
+
+        let evaluator = Evaluator::new(&engine);
+
+        // Query nested number: attr(300, "connection.timeout", X)
+        let query = Atom::new("attr", vec![
+            Term::constant("300"),
+            Term::constant("connection.timeout"),
+            Term::var("X"),
+        ]);
+
+        let results = evaluator.eval_atom(&query);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].get("X"), Some(&Value::Str("3000".to_string())));
+    }
+
+    #[test]
+    fn test_eval_attr_literal_key_with_dots() {
+        // Backward compatibility: literal keys containing dots should take precedence
+        // over nested path resolution
+        let dir = tempdir().unwrap();
+        let mut engine = GraphEngine::create(dir.path()).unwrap();
+
+        engine.add_nodes(vec![
+            NodeRecord {
+                id: 400,
+                node_type: Some("CONFIG".to_string()),
+                name: Some("settings".to_string()),
+                file: Some("config.js".to_string()),
+                file_id: 0,
+                name_offset: 0,
+                version: "main".into(),
+                exported: false,
+                replaces: None,
+                deleted: false,
+                // Both "app.name" as literal key AND "app": {"name": "..."} nested
+                metadata: Some(r#"{"app.name": "literal-value", "app": {"name": "nested-value"}}"#.to_string()),
+            },
+        ]);
+
+        let evaluator = Evaluator::new(&engine);
+
+        // Query "app.name" - should match literal key, not nested path
+        let query = Atom::new("attr", vec![
+            Term::constant("400"),
+            Term::constant("app.name"),
+            Term::var("X"),
+        ]);
+
+        let results = evaluator.eval_atom(&query);
+        assert_eq!(results.len(), 1);
+        // Literal key takes precedence
+        assert_eq!(results[0].get("X"), Some(&Value::Str("literal-value".to_string())));
+    }
+
+    #[test]
+    fn test_eval_attr_nested_path_not_found() {
+        // Missing nested path should return empty results
+        let dir = tempdir().unwrap();
+        let mut engine = GraphEngine::create(dir.path()).unwrap();
+
+        engine.add_nodes(vec![
+            NodeRecord {
+                id: 500,
+                node_type: Some("DATABASE".to_string()),
+                name: Some("mysql".to_string()),
+                file: Some("config.js".to_string()),
+                file_id: 0,
+                name_offset: 0,
+                version: "main".into(),
+                exported: false,
+                replaces: None,
+                deleted: false,
+                metadata: Some(r#"{"config": {"host": "localhost"}}"#.to_string()),
+            },
+        ]);
+
+        let evaluator = Evaluator::new(&engine);
+
+        // Query non-existent nested path: attr(500, "config.port", X)
+        let query = Atom::new("attr", vec![
+            Term::constant("500"),
+            Term::constant("config.port"),
+            Term::var("X"),
+        ]);
+
+        let results = evaluator.eval_atom(&query);
+        assert_eq!(results.len(), 0); // Path not found
+    }
+
+    #[test]
     fn test_guarantee_call_without_target() {
         // Test: Find CALL nodes without "object" that don't have CALLS edge
         // This represents internal function calls that don't resolve
