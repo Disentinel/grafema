@@ -58,6 +58,21 @@ If it takes longer — it takes longer. No shortcuts.
 - One logical change per commit
 - Tests must pass after each commit
 
+### Reuse Before Build
+
+Before proposing a new subsystem, check if existing Grafema infrastructure can be extended:
+
+| Need | Don't Build | Extend Instead |
+|------|-------------|----------------|
+| "Check property X of code" | New analysis engine | GuaranteeManager + Datalog rule |
+| "Track metadata Y on nodes" | New node type | `metadata` field on existing nodes |
+| "Report issue Z to user" | New warning system | ISSUE nodes + existing reporters |
+| "Query pattern W" | Custom traversal code | Datalog query |
+
+**Example:** Cardinality Tracking was initially designed as a 7-phase "Complexity Analysis Engine" (21-29 days). After architectural review, it became: CardinalityEnricher (adds metadata) + Datalog rules (checks it) + GuaranteeManager (reports violations). Scope reduced to 11-13 days.
+
+**Key insight:** Grafema's core is graph + Datalog + guarantees. Most features should be: enricher that adds data + Datalog rules that query it.
+
 ## Dogfooding
 
 **Use Grafema to work on Grafema.**
