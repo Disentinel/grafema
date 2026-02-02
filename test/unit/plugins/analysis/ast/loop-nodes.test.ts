@@ -286,6 +286,38 @@ function test(items) {
         'ITERATES_OVER should point to parameter "items", not outer variable'
       );
     });
+
+    it('should have iterates: values metadata on for-of ITERATES_OVER edge (REG-283)', async () => {
+      await setupTest(backend, {
+        'index.js': `
+function process() {
+  const items = [1, 2, 3];
+  for (const item of items) {
+    console.log(item);
+  }
+}
+        `
+      });
+
+      const loopNodes = await getNodesByType(backend, 'LOOP');
+      const forOfLoop = loopNodes.find(
+        (n: NodeRecord) => (n as Record<string, unknown>).loopType === 'for-of'
+      );
+      assert.ok(forOfLoop, 'Should have for-of LOOP node');
+
+      const iteratesOverEdges = await getEdgesByType(backend, 'ITERATES_OVER');
+      const edgeFromLoop = iteratesOverEdges.find((e: EdgeRecord) => e.src === forOfLoop!.id);
+      assert.ok(edgeFromLoop, 'ITERATES_OVER edge should exist');
+
+      // REG-283: for-of loops should have iterates: 'values' metadata
+      const metadata = (edgeFromLoop as Record<string, unknown>).metadata as { iterates?: string } | undefined;
+      assert.ok(metadata, 'ITERATES_OVER edge should have metadata');
+      assert.strictEqual(
+        metadata.iterates,
+        'values',
+        'for-of ITERATES_OVER should have iterates: "values" metadata'
+      );
+    });
   });
 
   // ===========================================================================
@@ -340,6 +372,38 @@ function process() {
       const dstNode = await backend.getNode(edgeFromLoop!.dst);
       assert.ok(dstNode, 'Destination node should exist');
       assert.strictEqual(dstNode.name, 'obj', 'ITERATES_OVER should point to obj variable');
+    });
+
+    it('should have iterates: keys metadata on for-in ITERATES_OVER edge (REG-283)', async () => {
+      await setupTest(backend, {
+        'index.js': `
+function process() {
+  const obj = { a: 1, b: 2 };
+  for (const key in obj) {
+    console.log(key);
+  }
+}
+        `
+      });
+
+      const loopNodes = await getNodesByType(backend, 'LOOP');
+      const forInLoop = loopNodes.find(
+        (n: NodeRecord) => (n as Record<string, unknown>).loopType === 'for-in'
+      );
+      assert.ok(forInLoop, 'Should have for-in LOOP node');
+
+      const iteratesOverEdges = await getEdgesByType(backend, 'ITERATES_OVER');
+      const edgeFromLoop = iteratesOverEdges.find((e: EdgeRecord) => e.src === forInLoop!.id);
+      assert.ok(edgeFromLoop, 'ITERATES_OVER edge should exist');
+
+      // REG-283: for-in loops should have iterates: 'keys' metadata
+      const metadata = (edgeFromLoop as Record<string, unknown>).metadata as { iterates?: string } | undefined;
+      assert.ok(metadata, 'ITERATES_OVER edge should have metadata');
+      assert.strictEqual(
+        metadata.iterates,
+        'keys',
+        'for-in ITERATES_OVER should have iterates: "keys" metadata'
+      );
     });
   });
 

@@ -488,12 +488,16 @@ export class GraphBuilder {
           p.name === iterableName && p.file === loop.file
         );
 
+        // Determine iteration type: for-in iterates keys, for-of iterates values
+        const iterates = loop.loopType === 'for-in' ? 'keys' : 'values';
+
         if (param) {
           // Parameter found - most local binding
           this._bufferEdge({
             type: 'ITERATES_OVER',
             src: loop.id,
-            dst: param.id
+            dst: param.id,
+            metadata: { iterates }
           });
         } else {
           // Find variable by name and line proximity (scope-aware heuristic)
@@ -511,7 +515,8 @@ export class GraphBuilder {
             this._bufferEdge({
               type: 'ITERATES_OVER',
               src: loop.id,
-              dst: candidateVars[0].id
+              dst: candidateVars[0].id,
+              metadata: { iterates }
             });
           }
         }
