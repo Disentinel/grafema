@@ -1952,6 +1952,13 @@ export class JSASTAnalyzer extends Plugin {
           }
         }
 
+        // Extract async flag for for-await-of
+        let isAsync: boolean | undefined;
+        if (loopType === 'for-of') {
+          const forOfNode = node as t.ForOfStatement;
+          isAsync = forOfNode.await === true ? true : undefined;
+        }
+
         // 3. Determine actual parent - use stack for nested loops, otherwise original parentScopeId
         const actualParentScopeId = (scopeIdStack && scopeIdStack.length > 0)
           ? scopeIdStack[scopeIdStack.length - 1]
@@ -1969,7 +1976,8 @@ export class JSASTAnalyzer extends Plugin {
           parentScopeId: actualParentScopeId,
           iteratesOverName,
           iteratesOverLine,
-          iteratesOverColumn
+          iteratesOverColumn,
+          async: isAsync
         });
 
         // 5. Create body SCOPE (backward compatibility)

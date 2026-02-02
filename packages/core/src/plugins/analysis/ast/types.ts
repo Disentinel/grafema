@@ -112,6 +112,7 @@ export interface LoopInfo {
   iteratesOverName?: string;      // Variable name (e.g., 'items')
   iteratesOverLine?: number;      // Line of collection reference
   iteratesOverColumn?: number;    // Column of collection reference
+  async?: boolean;                // true for for-await-of loops
 }
 
 // === TRY BLOCK INFO ===
