@@ -1957,6 +1957,34 @@ export class JSASTAnalyzer extends Plugin {
           ? scopeIdStack[scopeIdStack.length - 1]
           : parentScopeId;
 
+        // 3.5. Extract condition expression for while/do-while/for loops (REG-280)
+        // Note: for-in and for-of don't have test expressions (they use ITERATES_OVER instead)
+        let conditionExpressionId: string | undefined;
+        let conditionExpressionType: string | undefined;
+        let conditionLine: number | undefined;
+        let conditionColumn: number | undefined;
+
+        if (loopType === 'while' || loopType === 'do-while') {
+          const testNode = (node as t.WhileStatement | t.DoWhileStatement).test;
+          if (testNode) {
+            const condResult = this.extractDiscriminantExpression(testNode, module);
+            conditionExpressionId = condResult.id;
+            conditionExpressionType = condResult.expressionType;
+            conditionLine = condResult.line;
+            conditionColumn = condResult.column;
+          }
+        } else if (loopType === 'for') {
+          const forNode = node as t.ForStatement;
+          // for loop test may be null (infinite loop: for(;;))
+          if (forNode.test) {
+            const condResult = this.extractDiscriminantExpression(forNode.test, module);
+            conditionExpressionId = condResult.id;
+            conditionExpressionType = condResult.expressionType;
+            conditionLine = condResult.line;
+            conditionColumn = condResult.column;
+          }
+        }
+
         // 4. Push LOOP info
         loops.push({
           id: loopId,
@@ -1969,7 +1997,11 @@ export class JSASTAnalyzer extends Plugin {
           parentScopeId: actualParentScopeId,
           iteratesOverName,
           iteratesOverLine,
-          iteratesOverColumn
+          iteratesOverColumn,
+          conditionExpressionId,
+          conditionExpressionType,
+          conditionLine,
+          conditionColumn
         });
 
         // 5. Create body SCOPE (backward compatibility)
