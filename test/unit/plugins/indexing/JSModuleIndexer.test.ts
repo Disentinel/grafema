@@ -242,4 +242,303 @@ describe('JSModuleIndexer', () => {
       );
     });
   });
+
+  // ===========================================================================
+  // TESTS: Include/Exclude Pattern Filtering (REG-185)
+  // ===========================================================================
+
+  describe('Include/Exclude Pattern Filtering (REG-185)', () => {
+    /**
+     * Create context with include/exclude config
+     */
+    function createFilteringContext(
+      projectPath: string,
+      entryPath: string,
+      include?: string[],
+      exclude?: string[],
+      graph?: MockGraphBackend
+    ): PluginContext {
+      return {
+        graph: (graph ?? new MockGraphBackend()) as unknown as GraphBackend,
+        manifest: {
+          projectPath,
+          service: {
+            id: 'test-service',
+            name: 'TestService',
+            path: entryPath,
+          },
+        },
+        config: { include, exclude },
+        phase: 'INDEXING',
+      };
+    }
+
+    // -------------------------------------------------------------------------
+    // Exclude patterns
+    // -------------------------------------------------------------------------
+
+    it('should skip files matching exclude patterns', async () => {
+      // Setup: entry.js imports test.js and util.js
+      writeFileSync(join(tempDir, 'entry.js'), `
+        import './test.js';
+        import './util.js';
+      `);
+      writeFileSync(join(tempDir, 'test.js'), 'export const test = 1;');
+      writeFileSync(join(tempDir, 'util.js'), 'export const util = 2;');
+
+      const graph = new MockGraphBackend();
+      const indexer = new JSModuleIndexer();
+      const result = await indexer.execute(
+        createFilteringContext(tempDir, 'entry.js', undefined, ['**/*.test.js', '**/test.js'], graph)
+      );
+
+      // Verify: test.js skipped, util.js processed
+      assert.strictEqual(result.success, true);
+      const nodeIds = Array.from(graph.nodes.keys());
+
+      assert.ok(
+        nodeIds.some(id => id.includes('entry.js')),
+        'entry.js should be indexed'
+      );
+      assert.ok(
+        nodeIds.some(id => id.includes('util.js')),
+        'util.js should be indexed'
+      );
+      assert.ok(
+        !nodeIds.some(id => id.includes('test.js')),
+        'test.js should NOT be indexed (excluded)'
+      );
+    });
+
+    it('should skip entire directory with exclude pattern', async () => {
+      // Setup: entry.js imports from fixtures/
+      mkdirSync(join(tempDir, 'fixtures'), { recursive: true });
+
+      writeFileSync(join(tempDir, 'entry.js'), `
+        import './fixtures/data.js';
+        import './util.js';
+      `);
+      writeFileSync(join(tempDir, 'fixtures', 'data.js'), 'export const data = 1;');
+      writeFileSync(join(tempDir, 'util.js'), 'export const util = 2;');
+
+      const graph = new MockGraphBackend();
+      const indexer = new JSModuleIndexer();
+      const result = await indexer.execute(
+        createFilteringContext(tempDir, 'entry.js', undefined, ['**/fixtures/**'], graph)
+      );
+
+      // Verify: fixtures/data.js skipped
+      assert.strictEqual(result.success, true);
+      const nodeIds = Array.from(graph.nodes.keys());
+
+      assert.ok(!nodeIds.some(id => id.includes('fixtures')), 'fixtures/ should be excluded');
+      assert.ok(nodeIds.some(id => id.includes('util.js')), 'util.js should be indexed');
+    });
+
+    // -------------------------------------------------------------------------
+    // Include patterns
+    // -------------------------------------------------------------------------
+
+    it('should only process files matching include patterns', async () => {
+      // Setup: entry.js imports from src/ and lib/
+      mkdirSync(join(tempDir, 'src'), { recursive: true });
+      mkdirSync(join(tempDir, 'lib'), { recursive: true });
+
+      writeFileSync(join(tempDir, 'entry.js'), `
+        import './src/util.js';
+        import './lib/helper.js';
+      `);
+      writeFileSync(join(tempDir, 'src', 'util.js'), 'export const util = 1;');
+      writeFileSync(join(tempDir, 'lib', 'helper.js'), 'export const helper = 2;');
+
+      const graph = new MockGraphBackend();
+      const indexer = new JSModuleIndexer();
+      const result = await indexer.execute(
+        createFilteringContext(tempDir, 'entry.js', ['entry.js', 'src/**/*.js'], undefined, graph)
+      );
+
+      // Verify: only entry.js and src/util.js processed
+      assert.strictEqual(result.success, true);
+      const nodeIds = Array.from(graph.nodes.keys());
+
+      assert.ok(nodeIds.some(id => id.includes('entry.js')), 'entry.js should be indexed');
+      assert.ok(nodeIds.some(id => id.includes('src/util.js') || id.includes('src\\util.js')), 'src/util.js should be indexed');
+      assert.ok(!nodeIds.some(id => id.includes('lib/helper.js') || id.includes('lib\\helper.js')), 'lib/helper.js should NOT be indexed');
+    });
+
+    // -------------------------------------------------------------------------
+    // Combined include + exclude
+    // -------------------------------------------------------------------------
+
+    it('should apply exclude after include (exclude wins when both match)', async () => {
+      // Setup: Include src/, but exclude test files within src/
+      mkdirSync(join(tempDir, 'src'), { recursive: true });
+
+      writeFileSync(join(tempDir, 'entry.js'), `
+        import './src/util.js';
+        import './src/util.test.js';
+      `);
+      writeFileSync(join(tempDir, 'src', 'util.js'), 'export const util = 1;');
+      writeFileSync(join(tempDir, 'src', 'util.test.js'), 'export const test = 2;');
+
+      const graph = new MockGraphBackend();
+      const indexer = new JSModuleIndexer();
+      const result = await indexer.execute(
+        createFilteringContext(
+          tempDir,
+          'entry.js',
+          ['entry.js', 'src/**/*.js'],  // include src/
+          ['**/*.test.js'],              // but exclude .test.js
+          graph
+        )
+      );
+
+      // Verify: util.js included, util.test.js excluded
+      assert.strictEqual(result.success, true);
+      const nodeIds = Array.from(graph.nodes.keys());
+
+      assert.ok(nodeIds.some(id => id.includes('util.js') && !id.includes('.test')), 'util.js should be indexed');
+      assert.ok(!nodeIds.some(id => id.includes('util.test.js')), 'util.test.js should NOT be indexed');
+    });
+
+    // -------------------------------------------------------------------------
+    // No filtering (default behavior)
+    // -------------------------------------------------------------------------
+
+    it('should process all reachable files when no patterns specified', async () => {
+      writeFileSync(join(tempDir, 'entry.js'), `
+        import './a.js';
+        import './b.js';
+      `);
+      writeFileSync(join(tempDir, 'a.js'), 'export const a = 1;');
+      writeFileSync(join(tempDir, 'b.js'), 'export const b = 2;');
+
+      const graph = new MockGraphBackend();
+      const indexer = new JSModuleIndexer();
+      const result = await indexer.execute(
+        createFilteringContext(tempDir, 'entry.js', undefined, undefined, graph)
+      );
+
+      // Verify: all files processed
+      assert.strictEqual(result.success, true);
+      const nodeIds = Array.from(graph.nodes.keys());
+
+      assert.ok(nodeIds.length >= 3, 'should have at least 3 nodes');
+      assert.ok(nodeIds.some(id => id.includes('entry.js')));
+      assert.ok(nodeIds.some(id => id.includes('a.js')));
+      assert.ok(nodeIds.some(id => id.includes('b.js')));
+    });
+
+    // -------------------------------------------------------------------------
+    // Edge cases
+    // -------------------------------------------------------------------------
+
+    it('should handle brace expansion in patterns', async () => {
+      // Pattern: **/*.{ts,js}
+      writeFileSync(join(tempDir, 'entry.js'), `
+        import './util.ts';
+        import './helper.jsx';
+      `);
+      writeFileSync(join(tempDir, 'util.ts'), 'export const util = 1;');
+      writeFileSync(join(tempDir, 'helper.jsx'), 'export const helper = 2;');
+
+      const graph = new MockGraphBackend();
+      const indexer = new JSModuleIndexer();
+      const result = await indexer.execute(
+        createFilteringContext(tempDir, 'entry.js', ['**/*.{js,ts}'], undefined, graph)
+      );
+
+      // Verify: .js and .ts included, .jsx excluded
+      const nodeIds = Array.from(graph.nodes.keys());
+
+      assert.ok(nodeIds.some(id => id.includes('entry.js')));
+      assert.ok(nodeIds.some(id => id.includes('util.ts')));
+      assert.ok(!nodeIds.some(id => id.includes('helper.jsx')), '.jsx should not match {js,ts}');
+    });
+
+    it('should skip entrypoint itself if excluded', async () => {
+      // Edge case: what if entrypoint matches exclude?
+      // Behavior: entry should be skipped (it's filtered like any other file)
+      writeFileSync(join(tempDir, 'entry.test.js'), 'export const x = 1;');
+
+      const graph = new MockGraphBackend();
+      const indexer = new JSModuleIndexer();
+      const result = await indexer.execute(
+        createFilteringContext(tempDir, 'entry.test.js', undefined, ['**/*.test.js'], graph)
+      );
+
+      // The entrypoint IS skipped if it matches exclude - this is the documented behavior
+      const nodeIds = Array.from(graph.nodes.keys());
+
+      assert.strictEqual(nodeIds.length, 0, 'entrypoint matching exclude should be skipped');
+    });
+
+    it('should normalize Windows paths for pattern matching', async () => {
+      // This test ensures cross-platform compatibility
+      mkdirSync(join(tempDir, 'src'), { recursive: true });
+
+      writeFileSync(join(tempDir, 'entry.js'), 'import "./src/util.js";');
+      writeFileSync(join(tempDir, 'src', 'util.js'), 'export const util = 1;');
+
+      const graph = new MockGraphBackend();
+      const indexer = new JSModuleIndexer();
+
+      // Pattern uses forward slashes (standard glob syntax)
+      const result = await indexer.execute(
+        createFilteringContext(tempDir, 'entry.js', ['**/*.js'], undefined, graph)
+      );
+
+      assert.strictEqual(result.success, true);
+      const nodeIds = Array.from(graph.nodes.keys());
+      assert.ok(nodeIds.length >= 2, 'should process files regardless of OS path separators');
+    });
+
+    it('should match deeply nested paths correctly', async () => {
+      // Setup deeply nested structure
+      mkdirSync(join(tempDir, 'src', 'components', 'forms'), { recursive: true });
+
+      writeFileSync(join(tempDir, 'entry.js'), `
+        import './src/components/forms/input.js';
+        import './src/components/button.js';
+      `);
+      writeFileSync(join(tempDir, 'src', 'components', 'forms', 'input.js'), 'export const input = 1;');
+      writeFileSync(join(tempDir, 'src', 'components', 'button.js'), 'export const button = 2;');
+
+      const graph = new MockGraphBackend();
+      const indexer = new JSModuleIndexer();
+      const result = await indexer.execute(
+        createFilteringContext(tempDir, 'entry.js', undefined, ['**/forms/**'], graph)
+      );
+
+      // Verify: forms/ directory excluded, button.js included
+      assert.strictEqual(result.success, true);
+      const nodeIds = Array.from(graph.nodes.keys());
+
+      assert.ok(!nodeIds.some(id => id.includes('input.js')), 'forms/input.js should be excluded');
+      assert.ok(nodeIds.some(id => id.includes('button.js')), 'button.js should be indexed');
+    });
+
+    it('should work with dotfiles when dot option is enabled', async () => {
+      // Test matching dotfiles (e.g., .eslintrc.js)
+      writeFileSync(join(tempDir, 'entry.js'), `
+        import './.config.js';
+        import './util.js';
+      `);
+      writeFileSync(join(tempDir, '.config.js'), 'export const config = 1;');
+      writeFileSync(join(tempDir, 'util.js'), 'export const util = 2;');
+
+      const graph = new MockGraphBackend();
+      const indexer = new JSModuleIndexer();
+      const result = await indexer.execute(
+        createFilteringContext(tempDir, 'entry.js', undefined, ['**/.*'], graph)
+      );
+
+      // Verify: dotfiles excluded
+      assert.strictEqual(result.success, true);
+      const nodeIds = Array.from(graph.nodes.keys());
+
+      assert.ok(!nodeIds.some(id => id.includes('.config.js')), '.config.js should be excluded');
+      assert.ok(nodeIds.some(id => id.includes('util.js')), 'util.js should be indexed');
+    });
+  });
 });

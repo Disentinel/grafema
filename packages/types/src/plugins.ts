@@ -156,6 +156,28 @@ export interface OrchestratorConfig {
    * Services are resolved relative to projectPath.
    */
   services?: ServiceDefinition[];
+
+  /**
+   * Glob patterns for files to include during indexing.
+   * If specified, only files matching at least one pattern are processed.
+   * Patterns are matched against relative paths from project root.
+   * Uses minimatch syntax (e.g., "src/**.ts", "lib/**.js").
+   *
+   * Default: undefined (process all files reachable from entrypoint)
+   */
+  include?: string[];
+
+  /**
+   * Glob patterns for files to exclude during indexing.
+   * Files matching any pattern are skipped (not processed, imports not followed).
+   * Patterns are matched against relative paths from project root.
+   * Uses minimatch syntax.
+   *
+   * Default: undefined (no exclusions beyond npm packages)
+   *
+   * Note: node_modules is already excluded by default in JSModuleIndexer.
+   */
+  exclude?: string[];
 }
 
 /**

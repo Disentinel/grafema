@@ -967,4 +967,217 @@ services:
       assert.strictEqual(config.services[2].entryPoint, 'index.ts');
     });
   });
+
+  // ===========================================================================
+  // TESTS: Include/Exclude patterns (REG-185)
+  // ===========================================================================
+
+  describe('Include/Exclude patterns (REG-185)', () => {
+    // -------------------------------------------------------------------------
+    // Valid patterns loading
+    // -------------------------------------------------------------------------
+
+    it('should load include patterns from YAML', () => {
+      const yaml = `include:
+  - "src/**/*.ts"
+  - "lib/**/*.js"
+`;
+      writeFileSync(join(grafemaDir, 'config.yaml'), yaml);
+
+      const config = loadConfig(testDir);
+
+      assert.deepStrictEqual(config.include, ['src/**/*.ts', 'lib/**/*.js']);
+      assert.strictEqual(config.exclude, undefined);
+    });
+
+    it('should load exclude patterns from YAML', () => {
+      const yaml = `exclude:
+  - "**/*.test.ts"
+  - "**/fixtures/**"
+`;
+      writeFileSync(join(grafemaDir, 'config.yaml'), yaml);
+
+      const config = loadConfig(testDir);
+
+      assert.strictEqual(config.include, undefined);
+      assert.deepStrictEqual(config.exclude, ['**/*.test.ts', '**/fixtures/**']);
+    });
+
+    it('should load both include and exclude patterns', () => {
+      const yaml = `include:
+  - "src/**/*.ts"
+exclude:
+  - "**/*.test.ts"
+`;
+      writeFileSync(join(grafemaDir, 'config.yaml'), yaml);
+
+      const config = loadConfig(testDir);
+
+      assert.deepStrictEqual(config.include, ['src/**/*.ts']);
+      assert.deepStrictEqual(config.exclude, ['**/*.test.ts']);
+    });
+
+    it('should return undefined for include/exclude when not specified', () => {
+      const yaml = `plugins:
+  indexing:
+    - JSModuleIndexer
+`;
+      writeFileSync(join(grafemaDir, 'config.yaml'), yaml);
+
+      const config = loadConfig(testDir);
+
+      assert.strictEqual(config.include, undefined);
+      assert.strictEqual(config.exclude, undefined);
+    });
+
+    // -------------------------------------------------------------------------
+    // Validation errors (fail loudly per project convention)
+    // -------------------------------------------------------------------------
+
+    it('should throw error when include is not an array', () => {
+      const yaml = `include: "not an array"
+`;
+      writeFileSync(join(grafemaDir, 'config.yaml'), yaml);
+
+      assert.throws(
+        () => loadConfig(testDir),
+        /include must be an array/
+      );
+    });
+
+    it('should throw error when exclude is not an array', () => {
+      const yaml = `exclude: { not: "an array" }
+`;
+      writeFileSync(join(grafemaDir, 'config.yaml'), yaml);
+
+      assert.throws(
+        () => loadConfig(testDir),
+        /exclude must be an array/
+      );
+    });
+
+    it('should throw error when include pattern is not a string', () => {
+      const yaml = `include:
+  - "valid pattern"
+  - 123
+`;
+      writeFileSync(join(grafemaDir, 'config.yaml'), yaml);
+
+      assert.throws(
+        () => loadConfig(testDir),
+        /include\[1\] must be a string/
+      );
+    });
+
+    it('should throw error when exclude pattern is empty string', () => {
+      const yaml = `exclude:
+  - ""
+`;
+      writeFileSync(join(grafemaDir, 'config.yaml'), yaml);
+
+      assert.throws(
+        () => loadConfig(testDir),
+        /exclude\[0\] cannot be empty/
+      );
+    });
+
+    it('should throw error when include pattern is whitespace-only', () => {
+      const yaml = `include:
+  - "   "
+`;
+      writeFileSync(join(grafemaDir, 'config.yaml'), yaml);
+
+      assert.throws(
+        () => loadConfig(testDir),
+        /include\[0\] cannot be empty or whitespace-only/
+      );
+    });
+
+    // -------------------------------------------------------------------------
+    // Warning for empty include array
+    // -------------------------------------------------------------------------
+
+    it('should warn when include is empty array', () => {
+      const yaml = `include: []
+`;
+      writeFileSync(join(grafemaDir, 'config.yaml'), yaml);
+
+      const logger = createLoggerMock();
+      const config = loadConfig(testDir, logger);
+
+      assert.deepStrictEqual(config.include, []);
+      assert.ok(
+        logger.warnings.some(w => w.includes('empty array')),
+        'should warn about empty include array'
+      );
+    });
+
+    // -------------------------------------------------------------------------
+    // Edge cases
+    // -------------------------------------------------------------------------
+
+    it('should accept complex glob patterns', () => {
+      const yaml = `include:
+  - "src/**/*.{ts,tsx,js,jsx}"
+  - "packages/*/src/**"
+  - "!**/node_modules/**"
+exclude:
+  - "**/__tests__/**"
+  - "**/*.d.ts"
+`;
+      writeFileSync(join(grafemaDir, 'config.yaml'), yaml);
+
+      const config = loadConfig(testDir);
+
+      assert.strictEqual(config.include?.length, 3);
+      assert.strictEqual(config.exclude?.length, 2);
+    });
+
+    it('should merge patterns with plugins config', () => {
+      const yaml = `plugins:
+  indexing:
+    - CustomIndexer
+include:
+  - "src/**/*.ts"
+exclude:
+  - "**/*.test.ts"
+`;
+      writeFileSync(join(grafemaDir, 'config.yaml'), yaml);
+
+      const config = loadConfig(testDir);
+
+      // Plugins should be merged
+      assert.deepStrictEqual(config.plugins.indexing, ['CustomIndexer']);
+      // Patterns should be loaded
+      assert.deepStrictEqual(config.include, ['src/**/*.ts']);
+      assert.deepStrictEqual(config.exclude, ['**/*.test.ts']);
+    });
+
+    it('should handle inline array syntax for patterns', () => {
+      const yaml = `include: ["src/**/*.ts", "lib/**/*.js"]
+exclude: ["**/*.test.ts"]
+`;
+      writeFileSync(join(grafemaDir, 'config.yaml'), yaml);
+
+      const config = loadConfig(testDir);
+
+      assert.deepStrictEqual(config.include, ['src/**/*.ts', 'lib/**/*.js']);
+      assert.deepStrictEqual(config.exclude, ['**/*.test.ts']);
+    });
+
+    it('should preserve null/undefined distinction', () => {
+      // Test that explicit empty array is different from not specified
+      const yaml1 = `include: []
+exclude:
+`;
+      writeFileSync(join(grafemaDir, 'config.yaml'), yaml1);
+
+      const logger1 = createLoggerMock();
+      const config1 = loadConfig(testDir, logger1);
+
+      assert.deepStrictEqual(config1.include, []);
+      // Note: YAML null becomes undefined after merge
+      assert.strictEqual(config1.exclude, undefined);
+    });
+  });
 });

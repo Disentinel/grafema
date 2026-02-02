@@ -35,15 +35,17 @@ function generateConfigYAML(): string {
 # Documentation: https://github.com/grafema/grafema#configuration
 
 ${yaml}
-# Future: File discovery patterns (not yet implemented)
-# Grafema currently uses entrypoint-based discovery (follows imports from package.json main field)
-# Glob-based include/exclude patterns will be added in a future release
+# File filtering patterns (optional)
+# By default, Grafema follows imports from package.json entry points.
+# Use these patterns to control which files are analyzed:
 #
-# include:
+# include:  # Only analyze files matching these patterns
 #   - "src/**/*.{ts,js,tsx,jsx}"
-# exclude:
+#
+# exclude:  # Skip files matching these patterns (takes precedence over include)
 #   - "**/*.test.ts"
-#   - "node_modules/**"
+#   - "**/__tests__/**"
+#   - "**/node_modules/**"
 `;
 }
 

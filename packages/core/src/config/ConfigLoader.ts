@@ -48,6 +48,18 @@ export interface GrafemaConfig {
    * If provided and non-empty, auto-discovery is skipped.
    */
   services: ServiceDefinition[];
+
+  /**
+   * Glob patterns for files to include during indexing (optional).
+   * See OrchestratorConfig.include for documentation.
+   */
+  include?: string[];
+
+  /**
+   * Glob patterns for files to exclude during indexing (optional).
+   * See OrchestratorConfig.exclude for documentation.
+   */
+  exclude?: string[];
 }
 
 /**
@@ -143,6 +155,9 @@ export function loadConfig(
     // This is OUTSIDE try-catch - config errors MUST throw
     validateServices(parsed.services, projectPath);
 
+    // Validate include/exclude patterns (THROWS on error)
+    validatePatterns(parsed.include, parsed.exclude, logger);
+
     // Merge with defaults (user config may be partial)
     return mergeConfig(DEFAULT_CONFIG, parsed);
   }
@@ -166,6 +181,9 @@ export function loadConfig(
     // Validate services array if present (THROWS on error)
     // This is OUTSIDE try-catch - config errors MUST throw
     validateServices(parsed.services, projectPath);
+
+    // Validate include/exclude patterns (THROWS on error)
+    validatePatterns(parsed.include, parsed.exclude, logger);
 
     return mergeConfig(DEFAULT_CONFIG, parsed);
   }
@@ -246,6 +264,59 @@ function validateServices(services: unknown, projectPath: string): void {
 }
 
 /**
+ * Validate include/exclude patterns.
+ * THROWS on error (fail loudly per project convention).
+ *
+ * Validation rules:
+ * 1. Must be arrays if provided
+ * 2. Array elements must be non-empty strings
+ * 3. Warn (don't error) if include array is empty (would exclude everything)
+ *
+ * @param include - Parsed include patterns (may be undefined)
+ * @param exclude - Parsed exclude patterns (may be undefined)
+ * @param logger - Logger for warnings
+ */
+function validatePatterns(
+  include: unknown,
+  exclude: unknown,
+  logger: { warn: (msg: string) => void }
+): void {
+  // Validate include
+  if (include !== undefined && include !== null) {
+    if (!Array.isArray(include)) {
+      throw new Error(`Config error: include must be an array, got ${typeof include}`);
+    }
+    for (let i = 0; i < include.length; i++) {
+      if (typeof include[i] !== 'string') {
+        throw new Error(`Config error: include[${i}] must be a string, got ${typeof include[i]}`);
+      }
+      if (!include[i].trim()) {
+        throw new Error(`Config error: include[${i}] cannot be empty or whitespace-only`);
+      }
+    }
+    // Warn if empty array (would exclude everything)
+    if (include.length === 0) {
+      logger.warn('Warning: include is an empty array - no files will be processed');
+    }
+  }
+
+  // Validate exclude
+  if (exclude !== undefined && exclude !== null) {
+    if (!Array.isArray(exclude)) {
+      throw new Error(`Config error: exclude must be an array, got ${typeof exclude}`);
+    }
+    for (let i = 0; i < exclude.length; i++) {
+      if (typeof exclude[i] !== 'string') {
+        throw new Error(`Config error: exclude[${i}] must be a string, got ${typeof exclude[i]}`);
+      }
+      if (!exclude[i].trim()) {
+        throw new Error(`Config error: exclude[${i}] cannot be empty or whitespace-only`);
+      }
+    }
+  }
+}
+
+/**
  * Merge user config with defaults.
  * User config takes precedence, but missing sections use defaults.
  */
@@ -262,5 +333,10 @@ function mergeConfig(
       validation: user.plugins?.validation ?? defaults.plugins.validation,
     },
     services: user.services ?? defaults.services,
+    // Include/exclude patterns: pass through if specified, otherwise undefined
+    // (don't merge with defaults - undefined means "no filtering")
+    // Note: YAML null becomes undefined here (null ?? undefined = undefined)
+    include: user.include ?? undefined,
+    exclude: user.exclude ?? undefined,
   };
 }
