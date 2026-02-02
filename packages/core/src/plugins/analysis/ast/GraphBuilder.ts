@@ -188,7 +188,12 @@ export class GraphBuilder {
 
     // 2.7. Buffer LOOP nodes
     for (const loop of loops) {
-      const { iteratesOverName, iteratesOverLine, iteratesOverColumn, ...loopData } = loop;
+      // Exclude metadata used for edge creation (not stored on node)
+      const {
+        iteratesOverName, iteratesOverLine, iteratesOverColumn,
+        conditionExpressionId, conditionExpressionType, conditionLine, conditionColumn,
+        ...loopData
+      } = loop;
       this._bufferNode(loopData as GraphNode);
     }
 
@@ -258,6 +263,12 @@ export class GraphBuilder {
 
     // 6.3. Buffer edges for LOOP (HAS_BODY, ITERATES_OVER, CONTAINS)
     this.bufferLoopEdges(loops, scopes, variableDeclarations, parameters);
+
+    // 6.35. Buffer HAS_CONDITION edges for LOOP (REG-280)
+    this.bufferLoopConditionEdges(loops, callSites);
+
+    // 6.37. Buffer EXPRESSION nodes for loop conditions (REG-280)
+    this.bufferLoopConditionExpressions(loops);
 
     // 6.5. Buffer edges for BRANCH (needs callSites for CallExpression discriminant lookup)
     // Phase 3 (REG-267): Now includes scopes for if-branches HAS_CONSEQUENT/HAS_ALTERNATE
@@ -514,6 +525,87 @@ export class GraphBuilder {
               dst: candidateVars[0].id
             });
           }
+        }
+      }
+    }
+  }
+
+  /**
+   * Buffer HAS_CONDITION edges from LOOP to condition EXPRESSION/CALL nodes.
+   * Also creates EXPRESSION nodes for non-CallExpression conditions.
+   *
+   * REG-280: For while/do-while/for loops, creates HAS_CONDITION edge to the
+   * condition expression. For-in/for-of loops don't have conditions (use ITERATES_OVER).
+   *
+   * For CallExpression conditions, links to existing CALL_SITE node by coordinates.
+   */
+  private bufferLoopConditionEdges(loops: LoopInfo[], callSites: CallSiteInfo[]): void {
+    for (const loop of loops) {
+      // Skip for-in/for-of loops - they don't have test expressions
+      if (loop.loopType === 'for-in' || loop.loopType === 'for-of') {
+        continue;
+      }
+
+      // Skip if no condition (e.g., infinite for loop: for(;;))
+      if (!loop.conditionExpressionId) {
+        continue;
+      }
+
+      // LOOP -> HAS_CONDITION -> EXPRESSION/CALL
+      let targetId = loop.conditionExpressionId;
+
+      // For CallExpression conditions, look up the actual CALL_SITE by coordinates
+      // because CALL_SITE uses semantic IDs that don't match the generated ID
+      if (loop.conditionExpressionType === 'CallExpression' && loop.conditionLine && loop.conditionColumn !== undefined) {
+        const callSite = callSites.find(cs =>
+          cs.file === loop.file &&
+          cs.line === loop.conditionLine &&
+          cs.column === loop.conditionColumn
+        );
+        if (callSite) {
+          targetId = callSite.id;
+        }
+      }
+
+      this._bufferEdge({
+        type: 'HAS_CONDITION',
+        src: loop.id,
+        dst: targetId
+      });
+    }
+  }
+
+  /**
+   * Buffer EXPRESSION nodes for loop condition expressions (non-CallExpression).
+   * Similar to bufferDiscriminantExpressions but for loops.
+   *
+   * REG-280: Creates EXPRESSION nodes for while/do-while/for loop conditions.
+   * CallExpression conditions use existing CALL_SITE nodes (no EXPRESSION created).
+   */
+  private bufferLoopConditionExpressions(loops: LoopInfo[]): void {
+    for (const loop of loops) {
+      // Skip for-in/for-of loops - they don't have test expressions
+      if (loop.loopType === 'for-in' || loop.loopType === 'for-of') {
+        continue;
+      }
+
+      if (loop.conditionExpressionId && loop.conditionExpressionType) {
+        // Skip CallExpression - we link to existing CALL_SITE in bufferLoopConditionEdges
+        if (loop.conditionExpressionType === 'CallExpression') {
+          continue;
+        }
+
+        // Only create if it looks like an EXPRESSION ID
+        if (loop.conditionExpressionId.includes(':EXPRESSION:')) {
+          this._bufferNode({
+            id: loop.conditionExpressionId,
+            type: 'EXPRESSION',
+            name: loop.conditionExpressionType,
+            file: loop.file,
+            line: loop.conditionLine,
+            column: loop.conditionColumn,
+            expressionType: loop.conditionExpressionType
+          });
         }
       }
     }

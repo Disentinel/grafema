@@ -887,7 +887,354 @@ function process() {
   });
 
   // ===========================================================================
-  // GROUP 10: Loop variable declarations
+  // GROUP 10: HAS_CONDITION edge for loop conditions (REG-280)
+  // ===========================================================================
+
+  describe('HAS_CONDITION edge for loop conditions (REG-280)', () => {
+    it('should create HAS_CONDITION edge from while LOOP to condition expression', async () => {
+      await setupTest(backend, {
+        'index.js': `
+function process(queue) {
+  while (queue.length > 0) {
+    queue.pop();
+  }
+}
+        `
+      });
+
+      const loopNodes = await getNodesByType(backend, 'LOOP');
+      const whileLoop = loopNodes.find(
+        (n: NodeRecord) => (n as Record<string, unknown>).loopType === 'while'
+      );
+      assert.ok(whileLoop, 'Should have while LOOP node');
+
+      const hasConditionEdges = await getEdgesByType(backend, 'HAS_CONDITION');
+      const conditionEdge = hasConditionEdges.find((e: EdgeRecord) => e.src === whileLoop!.id);
+      assert.ok(conditionEdge, 'while LOOP should have HAS_CONDITION edge');
+
+      // Verify destination exists
+      const dstNode = await backend.getNode(conditionEdge!.dst);
+      assert.ok(dstNode, 'HAS_CONDITION destination should exist');
+    });
+
+    it('should create HAS_CONDITION edge from do-while LOOP to condition expression', async () => {
+      await setupTest(backend, {
+        'index.js': `
+function process() {
+  let i = 0;
+  do {
+    console.log(i);
+    i++;
+  } while (i < 10);
+}
+        `
+      });
+
+      const loopNodes = await getNodesByType(backend, 'LOOP');
+      const doWhileLoop = loopNodes.find(
+        (n: NodeRecord) => (n as Record<string, unknown>).loopType === 'do-while'
+      );
+      assert.ok(doWhileLoop, 'Should have do-while LOOP node');
+
+      const hasConditionEdges = await getEdgesByType(backend, 'HAS_CONDITION');
+      const conditionEdge = hasConditionEdges.find((e: EdgeRecord) => e.src === doWhileLoop!.id);
+      assert.ok(conditionEdge, 'do-while LOOP should have HAS_CONDITION edge');
+
+      // Verify destination exists
+      const dstNode = await backend.getNode(conditionEdge!.dst);
+      assert.ok(dstNode, 'HAS_CONDITION destination should exist');
+    });
+
+    it('should create HAS_CONDITION edge from for LOOP to test expression', async () => {
+      await setupTest(backend, {
+        'index.js': `
+function process() {
+  for (let i = 0; i < 10; i++) {
+    console.log(i);
+  }
+}
+        `
+      });
+
+      const loopNodes = await getNodesByType(backend, 'LOOP');
+      const forLoop = loopNodes.find(
+        (n: NodeRecord) => (n as Record<string, unknown>).loopType === 'for'
+      );
+      assert.ok(forLoop, 'Should have for LOOP node');
+
+      const hasConditionEdges = await getEdgesByType(backend, 'HAS_CONDITION');
+      const conditionEdge = hasConditionEdges.find((e: EdgeRecord) => e.src === forLoop!.id);
+      assert.ok(conditionEdge, 'for LOOP should have HAS_CONDITION edge');
+
+      // Verify destination exists
+      const dstNode = await backend.getNode(conditionEdge!.dst);
+      assert.ok(dstNode, 'HAS_CONDITION destination should exist');
+    });
+
+    it('should NOT create HAS_CONDITION edge for infinite for loop (;;)', async () => {
+      await setupTest(backend, {
+        'index.js': `
+function runForever() {
+  for (;;) {
+    // infinite loop, no condition
+  }
+}
+        `
+      });
+
+      const loopNodes = await getNodesByType(backend, 'LOOP');
+      const forLoop = loopNodes.find(
+        (n: NodeRecord) => (n as Record<string, unknown>).loopType === 'for'
+      );
+      assert.ok(forLoop, 'Should have for LOOP node');
+
+      const hasConditionEdges = await getEdgesByType(backend, 'HAS_CONDITION');
+      const conditionEdge = hasConditionEdges.find((e: EdgeRecord) => e.src === forLoop!.id);
+      assert.ok(
+        !conditionEdge,
+        'Infinite for loop (;;) should NOT have HAS_CONDITION edge (no test expression)'
+      );
+    });
+
+    it('should NOT create HAS_CONDITION edge for for-of loop (no test expression)', async () => {
+      await setupTest(backend, {
+        'index.js': `
+function process(items) {
+  for (const item of items) {
+    console.log(item);
+  }
+}
+        `
+      });
+
+      const loopNodes = await getNodesByType(backend, 'LOOP');
+      const forOfLoop = loopNodes.find(
+        (n: NodeRecord) => (n as Record<string, unknown>).loopType === 'for-of'
+      );
+      assert.ok(forOfLoop, 'Should have for-of LOOP node');
+
+      const hasConditionEdges = await getEdgesByType(backend, 'HAS_CONDITION');
+      const conditionEdge = hasConditionEdges.find((e: EdgeRecord) => e.src === forOfLoop!.id);
+      assert.ok(
+        !conditionEdge,
+        'for-of loop should NOT have HAS_CONDITION edge (uses ITERATES_OVER instead)'
+      );
+    });
+
+    it('should NOT create HAS_CONDITION edge for for-in loop (no test expression)', async () => {
+      await setupTest(backend, {
+        'index.js': `
+function process(obj) {
+  for (const key in obj) {
+    console.log(key);
+  }
+}
+        `
+      });
+
+      const loopNodes = await getNodesByType(backend, 'LOOP');
+      const forInLoop = loopNodes.find(
+        (n: NodeRecord) => (n as Record<string, unknown>).loopType === 'for-in'
+      );
+      assert.ok(forInLoop, 'Should have for-in LOOP node');
+
+      const hasConditionEdges = await getEdgesByType(backend, 'HAS_CONDITION');
+      const conditionEdge = hasConditionEdges.find((e: EdgeRecord) => e.src === forInLoop!.id);
+      assert.ok(
+        !conditionEdge,
+        'for-in loop should NOT have HAS_CONDITION edge (uses ITERATES_OVER instead)'
+      );
+    });
+
+    it('should handle simple Identifier as condition (while variable)', async () => {
+      await setupTest(backend, {
+        'index.js': `
+function process(condition) {
+  while (condition) {
+    doSomething();
+  }
+}
+        `
+      });
+
+      const loopNodes = await getNodesByType(backend, 'LOOP');
+      const whileLoop = loopNodes.find(
+        (n: NodeRecord) => (n as Record<string, unknown>).loopType === 'while'
+      );
+      assert.ok(whileLoop, 'Should have while LOOP node');
+
+      const hasConditionEdges = await getEdgesByType(backend, 'HAS_CONDITION');
+      const conditionEdge = hasConditionEdges.find((e: EdgeRecord) => e.src === whileLoop!.id);
+      assert.ok(conditionEdge, 'while loop with Identifier condition should have HAS_CONDITION edge');
+    });
+
+    it('should handle CallExpression as condition (while fn())', async () => {
+      await setupTest(backend, {
+        'index.js': `
+function process(iterator) {
+  while (hasNext(iterator)) {
+    processNext(iterator);
+  }
+}
+        `
+      });
+
+      const loopNodes = await getNodesByType(backend, 'LOOP');
+      const whileLoop = loopNodes.find(
+        (n: NodeRecord) => (n as Record<string, unknown>).loopType === 'while'
+      );
+      assert.ok(whileLoop, 'Should have while LOOP node');
+
+      const hasConditionEdges = await getEdgesByType(backend, 'HAS_CONDITION');
+      const conditionEdge = hasConditionEdges.find((e: EdgeRecord) => e.src === whileLoop!.id);
+      assert.ok(conditionEdge, 'while loop with CallExpression condition should have HAS_CONDITION edge');
+    });
+
+    it('should handle MemberExpression as condition (while obj.prop)', async () => {
+      await setupTest(backend, {
+        'index.js': `
+function process(state) {
+  while (state.isActive) {
+    state.tick();
+  }
+}
+        `
+      });
+
+      const loopNodes = await getNodesByType(backend, 'LOOP');
+      const whileLoop = loopNodes.find(
+        (n: NodeRecord) => (n as Record<string, unknown>).loopType === 'while'
+      );
+      assert.ok(whileLoop, 'Should have while LOOP node');
+
+      const hasConditionEdges = await getEdgesByType(backend, 'HAS_CONDITION');
+      const conditionEdge = hasConditionEdges.find((e: EdgeRecord) => e.src === whileLoop!.id);
+      assert.ok(conditionEdge, 'while loop with MemberExpression condition should have HAS_CONDITION edge');
+    });
+
+    it('should handle UnaryExpression (negation) as condition (while !done)', async () => {
+      await setupTest(backend, {
+        'index.js': `
+function process() {
+  let done = false;
+  while (!done) {
+    done = checkIfDone();
+  }
+}
+        `
+      });
+
+      const loopNodes = await getNodesByType(backend, 'LOOP');
+      const whileLoop = loopNodes.find(
+        (n: NodeRecord) => (n as Record<string, unknown>).loopType === 'while'
+      );
+      assert.ok(whileLoop, 'Should have while LOOP node');
+
+      const hasConditionEdges = await getEdgesByType(backend, 'HAS_CONDITION');
+      const conditionEdge = hasConditionEdges.find((e: EdgeRecord) => e.src === whileLoop!.id);
+      assert.ok(conditionEdge, 'while loop with UnaryExpression condition should have HAS_CONDITION edge');
+    });
+
+    it('should handle LogicalExpression as condition (while a && b)', async () => {
+      await setupTest(backend, {
+        'index.js': `
+function process(queue, limit) {
+  while (queue.length > 0 && limit > 0) {
+    queue.pop();
+    limit--;
+  }
+}
+        `
+      });
+
+      const loopNodes = await getNodesByType(backend, 'LOOP');
+      const whileLoop = loopNodes.find(
+        (n: NodeRecord) => (n as Record<string, unknown>).loopType === 'while'
+      );
+      assert.ok(whileLoop, 'Should have while LOOP node');
+
+      const hasConditionEdges = await getEdgesByType(backend, 'HAS_CONDITION');
+      const conditionEdge = hasConditionEdges.find((e: EdgeRecord) => e.src === whileLoop!.id);
+      assert.ok(conditionEdge, 'while loop with LogicalExpression condition should have HAS_CONDITION edge');
+    });
+
+    it('should create separate HAS_CONDITION edges for nested loops', async () => {
+      await setupTest(backend, {
+        'index.js': `
+function process() {
+  let i = 0;
+  while (i < 10) {
+    let j = 0;
+    while (j < 5) {
+      console.log(i, j);
+      j++;
+    }
+    i++;
+  }
+}
+        `
+      });
+
+      const loopNodes = await getNodesByType(backend, 'LOOP');
+      const whileLoops = loopNodes.filter(
+        (n: NodeRecord) => (n as Record<string, unknown>).loopType === 'while'
+      );
+      assert.ok(whileLoops.length >= 2, 'Should have at least 2 while LOOP nodes');
+
+      const hasConditionEdges = await getEdgesByType(backend, 'HAS_CONDITION');
+
+      // Each while loop should have its own HAS_CONDITION edge
+      for (const loop of whileLoops) {
+        const conditionEdge = hasConditionEdges.find((e: EdgeRecord) => e.src === loop.id);
+        assert.ok(conditionEdge, `while LOOP at line ${loop.line} should have HAS_CONDITION edge`);
+      }
+
+      // Verify distinct destinations (different condition expressions)
+      const conditionDsts = whileLoops.map(loop =>
+        hasConditionEdges.find((e: EdgeRecord) => e.src === loop.id)?.dst
+      ).filter(Boolean);
+      const uniqueDsts = new Set(conditionDsts);
+      assert.strictEqual(
+        uniqueDsts.size,
+        whileLoops.length,
+        'Each while loop should have a different condition expression node'
+      );
+    });
+
+    it('should have valid HAS_CONDITION edge connectivity', async () => {
+      await setupTest(backend, {
+        'index.js': `
+function countdown(n) {
+  while (n > 0) {
+    console.log(n);
+    n--;
+  }
+}
+        `
+      });
+
+      const loopNodes = await getNodesByType(backend, 'LOOP');
+      const whileLoop = loopNodes.find(
+        (n: NodeRecord) => (n as Record<string, unknown>).loopType === 'while'
+      );
+      assert.ok(whileLoop, 'Should have while LOOP node');
+
+      const hasConditionEdges = await getEdgesByType(backend, 'HAS_CONDITION');
+      const conditionEdge = hasConditionEdges.find((e: EdgeRecord) => e.src === whileLoop!.id);
+      assert.ok(conditionEdge, 'Should have HAS_CONDITION edge');
+
+      // Verify both src and dst exist
+      const srcNode = await backend.getNode(conditionEdge!.src);
+      const dstNode = await backend.getNode(conditionEdge!.dst);
+
+      assert.ok(srcNode, 'HAS_CONDITION source should exist');
+      assert.ok(dstNode, 'HAS_CONDITION destination should exist');
+      assert.strictEqual(srcNode.type, 'LOOP', 'HAS_CONDITION source should be LOOP');
+    });
+  });
+
+  // ===========================================================================
+  // GROUP 11: Loop variable declarations
   // ===========================================================================
 
   describe('Loop variable declarations', () => {

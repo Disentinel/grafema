@@ -112,6 +112,11 @@ export interface LoopInfo {
   iteratesOverName?: string;      // Variable name (e.g., 'items')
   iteratesOverLine?: number;      // Line of collection reference
   iteratesOverColumn?: number;    // Column of collection reference
+  // For while/do-while/for: condition expression (REG-280)
+  conditionExpressionId?: string;     // ID of EXPRESSION/CALL node for condition
+  conditionExpressionType?: string;   // 'Identifier', 'BinaryExpression', 'CallExpression', etc.
+  conditionLine?: number;             // Line of condition expression
+  conditionColumn?: number;           // Column of condition expression
 }
 
 // === TRY BLOCK INFO ===
