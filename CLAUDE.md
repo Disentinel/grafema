@@ -207,6 +207,7 @@ _tasks/
 - Update linear. Reported tech debt and current limitation MUST be added to backlog for future fix
 - If Grafema couldn't help during this task → discuss with user → possibly Linear issue
 - Check backlog, prioritize, offer next task
+- **IMPORTANT:** Task reports (`_tasks/REG-XXX/`) must be committed to main when merging the task branch. Don't forget to copy them from worker worktrees!
 
 **IMPORTANT:** PLAN step runs after EVERY execution cycle. Don must review after every agent.
 
