@@ -305,6 +305,36 @@ mod parser_tests {
         let result = parse_rule("invalid syntax here");
         assert!(result.is_err());
     }
+
+    #[test]
+    fn test_parse_query_single_atom() {
+        let literals = parse_query("node(X, \"FUNCTION\")").unwrap();
+        assert_eq!(literals.len(), 1);
+        assert!(literals[0].is_positive());
+        assert_eq!(literals[0].atom().predicate(), "node");
+    }
+
+    #[test]
+    fn test_parse_query_conjunction() {
+        let literals = parse_query("node(X, \"http:request\"), attr(X, \"url\", U)").unwrap();
+        assert_eq!(literals.len(), 2);
+        assert_eq!(literals[0].atom().predicate(), "node");
+        assert_eq!(literals[1].atom().predicate(), "attr");
+    }
+
+    #[test]
+    fn test_parse_query_with_negation() {
+        let literals = parse_query("node(X, \"type\"), \\+ path(X, _)").unwrap();
+        assert_eq!(literals.len(), 2);
+        assert!(literals[0].is_positive());
+        assert!(literals[1].is_negative());
+    }
+
+    #[test]
+    fn test_parse_query_three_atoms() {
+        let literals = parse_query("node(X, \"A\"), edge(X, Y, \"CALLS\"), node(Y, \"B\")").unwrap();
+        assert_eq!(literals.len(), 3);
+    }
 }
 
 // ============================================================================
@@ -1128,5 +1158,157 @@ mod eval_tests {
             assert!(matches!(result.get("Y"), Some(Value::Id(_))));
             assert!(matches!(result.get("T"), Some(Value::Str(_))));
         }
+    }
+
+    #[test]
+    fn test_eval_query_single_atom() {
+        let engine = setup_test_graph();
+        let evaluator = Evaluator::new(&engine);
+
+        // Single atom query
+        let literals = parse_query("node(X, \"queue:publish\")").unwrap();
+        let results = evaluator.eval_query(&literals);
+
+        // Should find nodes 1 and 3
+        assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    fn test_eval_query_conjunction() {
+        let engine = setup_test_graph();
+        let evaluator = Evaluator::new(&engine);
+
+        // Conjunction: find CALLS edges and bind source/dest
+        let literals = parse_query("edge(X, Y, \"CALLS\"), node(Y, T)").unwrap();
+        let results = evaluator.eval_query(&literals);
+
+        // Should find 2 edges, each with bound X, Y, and T
+        assert_eq!(results.len(), 2);
+        for result in &results {
+            assert!(result.get("X").is_some());
+            assert!(result.get("Y").is_some());
+            assert!(result.get("T").is_some());
+        }
+    }
+
+    #[test]
+    fn test_eval_query_attr_value_binding() {
+        // Setup graph with metadata
+        let dir = tempdir().unwrap();
+        let mut engine = GraphEngine::create(dir.path()).unwrap();
+
+        engine.add_nodes(vec![
+            NodeRecord {
+                id: 100,
+                node_type: Some("http:request".to_string()),
+                name: Some("GET /api/users".to_string()),
+                file: Some("routes.js".to_string()),
+                file_id: 0,
+                name_offset: 0,
+                version: "main".into(),
+                exported: false,
+                replaces: None,
+                deleted: false,
+                metadata: Some(r#"{"url": "/api/users", "method": "GET"}"#.to_string()),
+            },
+            NodeRecord {
+                id: 101,
+                node_type: Some("http:request".to_string()),
+                name: Some("POST /api/orders".to_string()),
+                file: Some("routes.js".to_string()),
+                file_id: 0,
+                name_offset: 0,
+                version: "main".into(),
+                exported: false,
+                replaces: None,
+                deleted: false,
+                metadata: Some(r#"{"url": "/api/orders", "method": "POST"}"#.to_string()),
+            },
+        ]);
+
+        let evaluator = Evaluator::new(&engine);
+
+        // Query: node(X, "http:request"), attr(X, "url", U)
+        // Should return both X (node ID) and U (url attribute value)
+        let literals = parse_query("node(X, \"http:request\"), attr(X, \"url\", U)").unwrap();
+        let results = evaluator.eval_query(&literals);
+
+        // Should find both http:request nodes
+        assert_eq!(results.len(), 2);
+
+        // Each result should have both X and U bound
+        for result in &results {
+            assert!(result.get("X").is_some(), "X should be bound");
+            assert!(result.get("U").is_some(), "U should be bound to URL value");
+        }
+
+        // Verify actual URL values are returned
+        let urls: Vec<String> = results.iter()
+            .filter_map(|r| r.get("U"))
+            .map(|v| v.as_str())
+            .collect();
+        assert!(urls.contains(&"/api/users".to_string()));
+        assert!(urls.contains(&"/api/orders".to_string()));
+    }
+
+    #[test]
+    fn test_eval_query_attr_with_filter() {
+        // Setup graph with metadata
+        let dir = tempdir().unwrap();
+        let mut engine = GraphEngine::create(dir.path()).unwrap();
+
+        engine.add_nodes(vec![
+            NodeRecord {
+                id: 200,
+                node_type: Some("http:request".to_string()),
+                name: Some("GET request".to_string()),
+                file: Some("routes.js".to_string()),
+                file_id: 0,
+                name_offset: 0,
+                version: "main".into(),
+                exported: false,
+                replaces: None,
+                deleted: false,
+                metadata: Some(r#"{"method": "GET"}"#.to_string()),
+            },
+            NodeRecord {
+                id: 201,
+                node_type: Some("http:request".to_string()),
+                name: Some("POST request".to_string()),
+                file: Some("routes.js".to_string()),
+                file_id: 0,
+                name_offset: 0,
+                version: "main".into(),
+                exported: false,
+                replaces: None,
+                deleted: false,
+                metadata: Some(r#"{"method": "POST"}"#.to_string()),
+            },
+        ]);
+
+        let evaluator = Evaluator::new(&engine);
+
+        // Query: filter by specific attribute value
+        let literals = parse_query("node(X, \"http:request\"), attr(X, \"method\", \"GET\")").unwrap();
+        let results = evaluator.eval_query(&literals);
+
+        // Should find only the GET request
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].get("X"), Some(&Value::Id(200)));
+    }
+
+    #[test]
+    fn test_eval_query_with_negation() {
+        let engine = setup_test_graph();
+        let evaluator = Evaluator::new(&engine);
+
+        // Find publishers without any outgoing path
+        // Node 3 is orphan (no edges)
+        let literals = parse_query("node(X, \"queue:publish\"), \\+ path(X, _)").unwrap();
+        let results = evaluator.eval_query(&literals);
+
+        // Should find node 3 (orphan publisher)
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].get("X"), Some(&Value::Id(3)));
     }
 }

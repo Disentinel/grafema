@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 // Import from library
 use rfdb::graph::{GraphEngine, GraphStore};
 use rfdb::storage::{NodeRecord, EdgeRecord, AttrQuery};
-use rfdb::datalog::{parse_program, parse_atom, Evaluator};
+use rfdb::datalog::{parse_program, parse_atom, parse_query, Evaluator};
 
 // ============================================================================
 // Wire Protocol Types
@@ -547,15 +547,15 @@ fn execute_datalog_query(
     engine: &GraphEngine,
     query_source: &str,
 ) -> std::result::Result<Vec<WireViolation>, String> {
-    // Parse the query atom
-    let query_atom = parse_atom(query_source)
+    // Parse the query (supports single atom or conjunction)
+    let literals = parse_query(query_source)
         .map_err(|e| format!("Datalog query parse error: {}", e))?;
 
     // Create evaluator
     let evaluator = Evaluator::new(engine);
 
-    // Execute query
-    let bindings = evaluator.query(&query_atom);
+    // Execute query using conjunction evaluation
+    let bindings = evaluator.eval_query(&literals);
 
     // Convert to wire format
     let results: Vec<WireViolation> = bindings.into_iter()
