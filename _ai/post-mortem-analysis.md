@@ -315,7 +315,7 @@ But both require knowing the invariant BEFORE the bug. The bug IS not knowing th
 
 When writing pattern-matching analyzers, always include negative test cases for similar-looking non-matches (console.log vs fetch, logger.info vs http.request, etc.).
 
-See: `_ai/skills/analyzer-negative-tests.md`
+See: `.claude/skills/analyzer-negative-tests.md`
 
 ### Honest Assessment
 
