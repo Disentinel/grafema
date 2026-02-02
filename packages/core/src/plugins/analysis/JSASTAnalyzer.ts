@@ -96,6 +96,7 @@ import type {
   ObjectMutationValue,
   VariableReassignmentInfo,
   ReturnStatementInfo,
+  UpdateExpressionInfo,
   CounterRef,
   ProcessedNodes,
   ASTCollections,
@@ -155,6 +156,8 @@ interface Collections {
   variableReassignments: VariableReassignmentInfo[];
   // Return statement tracking for RETURNS edges
   returnStatements: ReturnStatementInfo[];
+  // Update expression tracking for MODIFIES edges (REG-288, REG-312)
+  updateExpressions: UpdateExpressionInfo[];
   objectLiteralCounterRef: CounterRef;
   arrayLiteralCounterRef: CounterRef;
   ifScopeCounterRef: CounterRef;
@@ -1256,6 +1259,8 @@ export class JSASTAnalyzer extends Plugin {
       const variableReassignments: VariableReassignmentInfo[] = [];
       // Return statement tracking for RETURNS edges
       const returnStatements: ReturnStatementInfo[] = [];
+      // Update expression tracking for MODIFIES edges (REG-288, REG-312)
+      const updateExpressions: UpdateExpressionInfo[] = [];
 
       const ifScopeCounterRef: CounterRef = { value: 0 };
       const scopeCounterRef: CounterRef = { value: 0 };
@@ -1326,6 +1331,8 @@ export class JSASTAnalyzer extends Plugin {
         variableReassignments,
         // Return statement tracking
         returnStatements,
+        // Update expression tracking (REG-288, REG-312)
+        updateExpressions,
         objectLiteralCounterRef, arrayLiteralCounterRef,
         ifScopeCounterRef, scopeCounterRef, varDeclCounterRef,
         callSiteCounterRef, functionCounterRef, httpRequestCounterRef,
@@ -1434,6 +1441,20 @@ export class JSASTAnalyzer extends Plugin {
         }
       });
       this.profiler.end('traverse_assignments');
+
+      // Module-level UpdateExpression (obj.count++, arr[i]++, i++) - REG-288/REG-312
+      this.profiler.start('traverse_updates');
+      traverse(ast, {
+        UpdateExpression: (updatePath: NodePath<t.UpdateExpression>) => {
+          // Skip if inside a function - analyzeFunctionBody handles those
+          const functionParent = updatePath.getFunctionParent();
+          if (functionParent) return;
+
+          // Module-level update expression: no parentScopeId
+          this.collectUpdateExpression(updatePath.node, module, updateExpressions, undefined, scopeTracker);
+        }
+      });
+      this.profiler.end('traverse_updates');
 
       // Classes
       this.profiler.start('traverse_classes');
@@ -1643,6 +1664,8 @@ export class JSASTAnalyzer extends Plugin {
         variableReassignments,
         // Return statement tracking
         returnStatements,
+        // Update expression tracking (REG-288, REG-312)
+        updateExpressions,
         // Object/Array literal tracking - use allCollections refs as visitors may have created new arrays
         objectLiterals: allCollections.objectLiterals || objectLiterals,
         objectProperties: allCollections.objectProperties || objectProperties,
@@ -2854,6 +2877,7 @@ export class JSASTAnalyzer extends Plugin {
     }
     const loops = collections.loops as LoopInfo[];
     const loopCounterRef = collections.loopCounterRef as CounterRef;
+    const updateExpressions = (collections.updateExpressions ?? []) as UpdateExpressionInfo[];
     const processedNodes = collections.processedNodes ?? {
       functions: new Set<string>(),
       classes: new Set<string>(),
@@ -3715,6 +3739,11 @@ export class JSASTAnalyzer extends Plugin {
 
       UpdateExpression: (updatePath: NodePath<t.UpdateExpression>) => {
         const updateNode = updatePath.node;
+
+        // REG-288/REG-312: Collect update expression info for graph building
+        this.collectUpdateExpression(updateNode, module, updateExpressions, getCurrentScopeId(), scopeTracker);
+
+        // Legacy behavior: update scope.modifies for IDENTIFIER targets
         if (updateNode.argument.type === 'Identifier') {
           const varName = updateNode.argument.name;
 
@@ -4341,6 +4370,117 @@ export class JSASTAnalyzer extends Plugin {
       column,
       value: valueInfo
     });
+  }
+
+  /**
+   * Collect update expression info for graph building (i++, obj.prop++, arr[i]++).
+   *
+   * REG-288: Simple identifiers (i++, --count)
+   * REG-312: Member expressions (obj.prop++, arr[i]++, this.count++)
+   *
+   * Creates UpdateExpressionInfo entries that GraphBuilder uses to create:
+   * - UPDATE_EXPRESSION nodes
+   * - MODIFIES edges to target variables/objects
+   * - READS_FROM self-loops
+   * - CONTAINS edges for scope hierarchy
+   */
+  private collectUpdateExpression(
+    updateNode: t.UpdateExpression,
+    module: VisitorModule,
+    updateExpressions: UpdateExpressionInfo[],
+    parentScopeId: string | undefined,
+    scopeTracker?: ScopeTracker
+  ): void {
+    const operator = updateNode.operator as '++' | '--';
+    const prefix = updateNode.prefix;
+    const line = getLine(updateNode);
+    const column = getColumn(updateNode);
+
+    // CASE 1: Simple identifier (i++, --count) - REG-288 behavior
+    if (updateNode.argument.type === 'Identifier') {
+      const variableName = updateNode.argument.name;
+
+      updateExpressions.push({
+        targetType: 'IDENTIFIER',
+        variableName,
+        variableLine: getLine(updateNode.argument),
+        operator,
+        prefix,
+        file: module.file,
+        line,
+        column,
+        parentScopeId
+      });
+      return;
+    }
+
+    // CASE 2: Member expression (obj.prop++, arr[i]++) - REG-312 new
+    if (updateNode.argument.type === 'MemberExpression') {
+      const memberExpr = updateNode.argument;
+
+      // Extract object name (reuses detectObjectPropertyAssignment pattern)
+      let objectName: string;
+      let enclosingClassName: string | undefined;
+
+      if (memberExpr.object.type === 'Identifier') {
+        objectName = memberExpr.object.name;
+      } else if (memberExpr.object.type === 'ThisExpression') {
+        objectName = 'this';
+        // REG-152: Extract enclosing class name from scope context
+        if (scopeTracker) {
+          enclosingClassName = scopeTracker.getEnclosingScope('CLASS');
+        }
+      } else {
+        // Complex expressions: obj.nested.prop++, (obj || fallback).count++
+        // Skip for now (documented limitation, same as detectObjectPropertyAssignment)
+        return;
+      }
+
+      // Extract property name (reuses detectObjectPropertyAssignment pattern)
+      let propertyName: string;
+      let mutationType: 'property' | 'computed';
+      let computedPropertyVar: string | undefined;
+
+      if (!memberExpr.computed) {
+        // obj.prop++
+        if (memberExpr.property.type === 'Identifier') {
+          propertyName = memberExpr.property.name;
+          mutationType = 'property';
+        } else {
+          return; // Unexpected property type
+        }
+      } else {
+        // obj['prop']++ or obj[key]++
+        if (memberExpr.property.type === 'StringLiteral') {
+          // obj['prop']++ - static string
+          propertyName = memberExpr.property.value;
+          mutationType = 'property';
+        } else {
+          // obj[key]++, arr[i]++ - computed property
+          propertyName = '<computed>';
+          mutationType = 'computed';
+          if (memberExpr.property.type === 'Identifier') {
+            computedPropertyVar = memberExpr.property.name;
+          }
+        }
+      }
+
+      updateExpressions.push({
+        targetType: 'MEMBER_EXPRESSION',
+        objectName,
+        objectLine: getLine(memberExpr.object),
+        enclosingClassName,
+        propertyName,
+        mutationType,
+        computedPropertyVar,
+        operator,
+        prefix,
+        file: module.file,
+        line,
+        column,
+        parentScopeId
+      });
+    }
   }
 
   /**

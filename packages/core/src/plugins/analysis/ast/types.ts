@@ -718,6 +718,48 @@ export interface VariableReassignmentInfo {
   column: number;
 }
 
+// === UPDATE EXPRESSION INFO (i++, obj.prop++, arr[i]++) ===
+/**
+ * Information about update expressions (increment/decrement).
+ *
+ * Supports two target types:
+ * - IDENTIFIER: Simple variable (i++, --count)
+ * - MEMBER_EXPRESSION: Object property (obj.prop++, arr[i]++, this.count++)
+ *
+ * Creates:
+ * - UPDATE_EXPRESSION node with operator and target metadata
+ * - MODIFIES edge: UPDATE_EXPRESSION -> target (VARIABLE, PARAMETER, or CLASS)
+ * - READS_FROM self-loop: target -> target (reads current value before update)
+ * - CONTAINS edge: SCOPE -> UPDATE_EXPRESSION
+ *
+ * REG-288: Initial implementation for IDENTIFIER targets
+ * REG-312: Extended for MEMBER_EXPRESSION targets (obj.prop++, arr[i]++)
+ */
+export interface UpdateExpressionInfo {
+  // Common fields for all update expressions
+  operator: '++' | '--';          // Increment or decrement
+  prefix: boolean;                // ++i (true) vs i++ (false)
+  file: string;
+  line: number;                   // Line of update expression
+  column: number;
+  parentScopeId?: string;         // Containing scope for CONTAINS edge
+
+  // Discriminator: IDENTIFIER (i++) vs MEMBER_EXPRESSION (obj.prop++)
+  targetType: 'IDENTIFIER' | 'MEMBER_EXPRESSION';
+
+  // ===== IDENTIFIER fields (REG-288 behavior) =====
+  variableName?: string;          // Name of variable being modified (for i++)
+  variableLine?: number;          // Line where variable is referenced
+
+  // ===== MEMBER_EXPRESSION fields (REG-312 new) =====
+  objectName?: string;            // Object name ("obj" from obj.prop++, "this" from this.count++)
+  objectLine?: number;            // Line where object is referenced (for scope resolution)
+  enclosingClassName?: string;    // Class name when objectName === 'this' (follows REG-152 pattern)
+  propertyName?: string;          // Property name ("prop" from obj.prop++, "<computed>" for obj[key]++)
+  mutationType?: 'property' | 'computed';  // 'property' for obj.prop++, 'computed' for obj[key]++
+  computedPropertyVar?: string;   // Variable name for computed access: obj[i]++ -> "i"
+}
+
 // === COUNTER REF ===
 export interface CounterRef {
   value: number;
@@ -777,6 +819,8 @@ export interface ASTCollections {
   variableReassignments?: VariableReassignmentInfo[];
   // Return statement tracking for RETURNS edges
   returnStatements?: ReturnStatementInfo[];
+  // Update expression tracking (i++, obj.prop++, arr[i]++) for MODIFIES edges (REG-288, REG-312)
+  updateExpressions?: UpdateExpressionInfo[];
   // TypeScript-specific collections
   interfaces?: InterfaceDeclarationInfo[];
   typeAliases?: TypeAliasInfo[];
