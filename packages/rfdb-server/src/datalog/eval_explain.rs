@@ -517,18 +517,11 @@ impl<'a> EvaluatorExplain<'a> {
             "name" => node.name.clone(),
             "file" => node.file.clone(),
             "type" => node.node_type.clone(),
-            // "line" and other attributes are in metadata JSON
+            // Metadata JSON attributes (supports nested paths like "config.port")
             _ => {
                 if let Some(ref metadata_str) = node.metadata {
                     if let Ok(metadata) = serde_json::from_str::<serde_json::Value>(metadata_str) {
-                        metadata.get(attr_name).and_then(|v| {
-                            match v {
-                                serde_json::Value::String(s) => Some(s.clone()),
-                                serde_json::Value::Number(n) => Some(n.to_string()),
-                                serde_json::Value::Bool(b) => Some(b.to_string()),
-                                _ => None,
-                            }
-                        })
+                        crate::datalog::utils::get_metadata_value(&metadata, attr_name)
                     } else {
                         None
                     }
