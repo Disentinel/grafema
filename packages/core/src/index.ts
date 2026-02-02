@@ -265,8 +265,19 @@ export type {
 } from './schema/index.js';
 
 // Graph Query Utilities
-export { findCallsInFunction, findContainingFunction } from './queries/index.js';
-export type { CallInfo, CallerInfo, FindCallsOptions } from './queries/index.js';
+export { findCallsInFunction, findContainingFunction, traceValues, aggregateValues, NONDETERMINISTIC_PATTERNS, NONDETERMINISTIC_OBJECTS } from './queries/index.js';
+export type {
+  CallInfo,
+  CallerInfo,
+  FindCallsOptions,
+  TracedValue,
+  ValueSource,
+  UnknownReason,
+  TraceValuesOptions,
+  ValueSetResult,
+  TraceValuesGraphBackend,
+  NondeterministicPattern,
+} from './queries/index.js';
 
 // Re-export types for convenience
 export type * from '@grafema/types';

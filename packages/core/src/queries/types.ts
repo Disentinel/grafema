@@ -63,3 +63,100 @@ export interface FindCallsOptions {
   /** Maximum depth for transitive traversal (default: 5) */
   transitiveDepth?: number;
 }
+
+// =============================================================================
+// VALUE TRACING TYPES (REG-244)
+// =============================================================================
+
+/**
+ * Location of a value source in the graph
+ */
+export interface ValueSource {
+  /** Node ID in the graph */
+  id: string;
+  /** File path */
+  file: string;
+  /** Line number (1-based) */
+  line: number;
+}
+
+/**
+ * Reason why a value could not be determined statically.
+ * Used for debugging and user-facing messages.
+ */
+export type UnknownReason =
+  | 'parameter'           // Function parameter (runtime input)
+  | 'call_result'         // Return value from function call
+  | 'nondeterministic'    // process.env, req.body, etc.
+  | 'max_depth'           // Hit depth limit during traversal
+  | 'no_sources';         // No ASSIGNED_FROM/DERIVES_FROM edges found
+
+/**
+ * A single traced value from the graph.
+ * Represents either a concrete value (from LITERAL) or an unknown value
+ * (from PARAMETER, CALL, nondeterministic source, etc.)
+ */
+export interface TracedValue {
+  /** The literal value (undefined if unknown) */
+  value: unknown;
+  /** Source location in the codebase */
+  source: ValueSource;
+  /** Whether value could not be determined statically */
+  isUnknown: boolean;
+  /** Why the value is unknown (for debugging/display) */
+  reason?: UnknownReason;
+}
+
+/**
+ * Options for traceValues()
+ */
+export interface TraceValuesOptions {
+  /** Maximum traversal depth (default: 10) */
+  maxDepth?: number;
+  /** Follow DERIVES_FROM edges in addition to ASSIGNED_FROM (default: true) */
+  followDerivesFrom?: boolean;
+  /** Detect nondeterministic patterns like process.env (default: true) */
+  detectNondeterministic?: boolean;
+}
+
+/**
+ * Aggregated result from tracing.
+ * Convenience type for consumers who don't need individual sources.
+ */
+export interface ValueSetResult {
+  /** All unique concrete values found */
+  values: unknown[];
+  /** Whether any path led to unknown value */
+  hasUnknown: boolean;
+}
+
+/**
+ * Minimal graph backend interface for traceValues().
+ * Works with both RFDBServerBackend and internal Graph interface.
+ */
+export interface TraceValuesGraphBackend {
+  getNode(id: string): Promise<{
+    id: string;
+    type?: string;
+    nodeType?: string;
+    value?: unknown;
+    file?: string;
+    line?: number;
+    expressionType?: string;
+    object?: string;
+    property?: string;
+  } | null>;
+  getOutgoingEdges(
+    nodeId: string,
+    edgeTypes: string[] | null
+  ): Promise<Array<{ src: string; dst: string; type: string }>>;
+}
+
+/**
+ * Nondeterministic MemberExpression pattern.
+ * object.property combinations that represent external/user input.
+ */
+export interface NondeterministicPattern {
+  object: string;
+  property: string;
+}

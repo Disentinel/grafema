@@ -10,7 +10,7 @@
 import { Command } from 'commander';
 import { resolve, join } from 'path';
 import { existsSync } from 'fs';
-import { RFDBServerBackend, parseSemanticId } from '@grafema/core';
+import { RFDBServerBackend, parseSemanticId, traceValues, type ValueSource } from '@grafema/core';
 import { formatNodeDisplay, formatNodeInline } from '../utils/formatNode.js';
 import { exitWithError } from '../utils/errorFormatter.js';
 
@@ -41,15 +41,6 @@ export interface SinkSpec {
 export interface CallSiteInfo {
   id: string;
   calleeFunction: string;
-  file: string;
-  line: number;
-}
-
-/**
- * Source location for a value
- */
-export interface ValueSource {
-  id: string;
   file: string;
   line: number;
 }
@@ -584,85 +575,34 @@ async function extractProperty(
 }
 
 /**
- * Trace a node to its literal values
+ * Trace a node to its literal values.
+ * Uses shared traceValues utility from @grafema/core (REG-244).
  *
- * Follows ASSIGNED_FROM edges recursively until reaching LITERAL nodes
- * Returns array of {value, source} pairs
- *
- * Note: We don't use ValueDomainAnalyzer.getValueSet() here because:
- * 1. getValueSet() requires file + variableName parameters for lookup
- * 2. For sink tracing, we already have the node ID from extractArgument()
- * 3. This direct approach avoids re-searching for nodes we already found
- *
- * Tech debt: Consider extracting shared ValueTracer utility (see REG-244)
+ * @param backend - RFDBServerBackend for graph queries
+ * @param nodeId - Starting node ID
+ * @param _visited - Kept for API compatibility (internal cycle detection in shared utility)
+ * @param maxDepth - Maximum traversal depth
+ * @returns Array of traced values with sources
  */
 async function traceToLiterals(
   backend: RFDBServerBackend,
   nodeId: string,
-  visited: Set<string> = new Set(),
+  _visited: Set<string> = new Set(),
   maxDepth: number = 10
 ): Promise<{ value: unknown; source: ValueSource; isUnknown: boolean }[]> {
-  if (visited.has(nodeId) || maxDepth <= 0) {
-    return [];
-  }
-  visited.add(nodeId);
+  // RFDBServerBackend implements TraceValuesGraphBackend interface
+  const traced = await traceValues(backend, nodeId, {
+    maxDepth,
+    followDerivesFrom: true,
+    detectNondeterministic: true,
+  });
 
-  const node = await backend.getNode(nodeId);
-  if (!node) return [];
-
-  const nodeType = node.type || (node as any).nodeType;
-  const results: { value: unknown; source: ValueSource; isUnknown: boolean }[] = [];
-
-  // If LITERAL, return its value
-  if (nodeType === 'LITERAL') {
-    results.push({
-      value: (node as any).value,
-      source: {
-        id: node.id,
-        file: node.file || '',
-        line: (node as any).line || 0,
-      },
-      isUnknown: false,
-    });
-    return results;
-  }
-
-  // If PARAMETER, mark as unknown (runtime input)
-  if (nodeType === 'PARAMETER') {
-    results.push({
-      value: undefined,
-      source: {
-        id: node.id,
-        file: node.file || '',
-        line: (node as any).line || 0,
-      },
-      isUnknown: true,
-    });
-    return results;
-  }
-
-  // Follow ASSIGNED_FROM edges
-  const edges = await backend.getOutgoingEdges(nodeId, ['ASSIGNED_FROM' as any]);
-  if (edges.length === 0 && nodeType !== 'OBJECT_LITERAL') {
-    // No sources, unknown
-    results.push({
-      value: undefined,
-      source: {
-        id: node.id,
-        file: node.file || '',
-        line: (node as any).line || 0,
-      },
-      isUnknown: true,
-    });
-    return results;
-  }
-
-  for (const edge of edges) {
-    const subResults = await traceToLiterals(backend, edge.dst, visited, maxDepth - 1);
-    results.push(...subResults);
-  }
-
-  return results;
+  // Map to expected format (strip reason field)
+  return traced.map(t => ({
+    value: t.value,
+    source: t.source,
+    isUnknown: t.isUnknown,
+  }));
 }
 
 /**
