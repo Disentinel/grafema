@@ -157,3 +157,16 @@ export interface RouteEdge extends EdgeRecord {
   method?: string;
   path?: string;
 }
+
+/**
+ * Edge from LOOP to iterated collection (for-in/for-of loops)
+ * Source: LOOP node
+ * Destination: VARIABLE or PARAMETER being iterated
+ */
+export interface IteratesOverEdge extends EdgeRecord {
+  type: 'ITERATES_OVER';
+  metadata?: {
+    /** What the loop iterates over: 'keys' for for-in, 'values' for for-of */
+    iterates: 'keys' | 'values';
+  };
+}
