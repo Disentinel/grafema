@@ -19,6 +19,7 @@ import {
   // Analysis
   JSASTAnalyzer,
   ExpressRouteAnalyzer,
+  ExpressResponseAnalyzer,
   SocketIOAnalyzer,
   DatabaseAnalyzer,
   FetchAnalyzer,
@@ -158,6 +159,7 @@ async function run(): Promise<void> {
       JSModuleIndexer: () => new JSModuleIndexer(),
       JSASTAnalyzer: () => new JSASTAnalyzer(),
       ExpressRouteAnalyzer: () => new ExpressRouteAnalyzer(),
+      ExpressResponseAnalyzer: () => new ExpressResponseAnalyzer(),
       SocketIOAnalyzer: () => new SocketIOAnalyzer(),
       DatabaseAnalyzer: () => new DatabaseAnalyzer(),
       FetchAnalyzer: () => new FetchAnalyzer(),

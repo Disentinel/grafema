@@ -24,6 +24,7 @@ import {
   // Analysis
   JSASTAnalyzer,
   ExpressRouteAnalyzer,
+  ExpressResponseAnalyzer,
   SocketIOAnalyzer,
   DatabaseAnalyzer,
   FetchAnalyzer,
@@ -65,6 +66,7 @@ const BUILTIN_PLUGINS: Record<string, () => Plugin> = {
   // Analysis
   JSASTAnalyzer: () => new JSASTAnalyzer() as Plugin,
   ExpressRouteAnalyzer: () => new ExpressRouteAnalyzer() as Plugin,
+  ExpressResponseAnalyzer: () => new ExpressResponseAnalyzer() as Plugin,
   SocketIOAnalyzer: () => new SocketIOAnalyzer() as Plugin,
   DatabaseAnalyzer: () => new DatabaseAnalyzer() as Plugin,
   FetchAnalyzer: () => new FetchAnalyzer() as Plugin,
