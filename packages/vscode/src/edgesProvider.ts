@@ -26,6 +26,10 @@ export class EdgesProvider implements vscode.TreeDataProvider<GraphTreeItem> {
   private clientManager: GrafemaClientManager;
   private statusMessage: string | null = null;
 
+  // Navigation history - stack of previous root nodes (for back navigation)
+  private rootHistory: WireNode[] = [];
+  private static readonly MAX_HISTORY = 20;
+
   // Navigation path - tracks how we got to current root (for breadcrumb highlighting)
   private navigationPath: Set<string> = new Set();
 
@@ -40,8 +44,17 @@ export class EdgesProvider implements vscode.TreeDataProvider<GraphTreeItem> {
 
   /**
    * Set the root node and refresh the tree (clears navigation path)
+   * Saves previous root to history for back navigation
    */
   setRootNode(node: WireNode | null): void {
+    // Save current root to history (if different from new one)
+    if (this.rootNode && node && this.rootNode.id !== node.id) {
+      this.rootHistory.push(this.rootNode);
+      // Limit history size
+      if (this.rootHistory.length > EdgesProvider.MAX_HISTORY) {
+        this.rootHistory.shift();
+      }
+    }
     this.rootNode = node;
     this.statusMessage = null;
     this.navigationPath.clear();
@@ -61,10 +74,32 @@ export class EdgesProvider implements vscode.TreeDataProvider<GraphTreeItem> {
   }
 
   /**
-   * Go back in navigation history
+   * Check if can go back in history
    */
   canGoBack(): boolean {
-    return this.navigationPath.size > 0;
+    return this.rootHistory.length > 0;
+  }
+
+  /**
+   * Go back to previous root node
+   */
+  goBack(): boolean {
+    if (this.rootHistory.length === 0) {
+      return false;
+    }
+    const previousRoot = this.rootHistory.pop()!;
+    this.rootNode = previousRoot;
+    this.statusMessage = null;
+    this.navigationPath.clear();
+    this._onDidChangeTreeData.fire();
+    return true;
+  }
+
+  /**
+   * Get history length (for UI display)
+   */
+  getHistoryLength(): number {
+    return this.rootHistory.length;
   }
 
   /**
@@ -75,13 +110,27 @@ export class EdgesProvider implements vscode.TreeDataProvider<GraphTreeItem> {
   }
 
   /**
-   * Clear navigation and set fresh root
+   * Clear navigation and set fresh root (keeps history for back navigation)
    */
   clearAndSetRoot(node: WireNode | null): void {
+    // Save current root to history (if different from new one)
+    if (this.rootNode && node && this.rootNode.id !== node.id) {
+      this.rootHistory.push(this.rootNode);
+      if (this.rootHistory.length > EdgesProvider.MAX_HISTORY) {
+        this.rootHistory.shift();
+      }
+    }
     this.navigationPath.clear();
     this.rootNode = node;
     this.statusMessage = null;
     this._onDidChangeTreeData.fire();
+  }
+
+  /**
+   * Clear all history
+   */
+  clearHistory(): void {
+    this.rootHistory = [];
   }
 
   /**
@@ -106,7 +155,11 @@ export class EdgesProvider implements vscode.TreeDataProvider<GraphTreeItem> {
   getTreeItem(element: GraphTreeItem): vscode.TreeItem {
     if (element.kind === 'node') {
       const label = formatNodeLabel(element.node);
-      const item = new vscode.TreeItem(label, vscode.TreeItemCollapsibleState.Collapsed);
+      // Root node is expanded by default, others are collapsed
+      const collapsibleState = element.isRoot
+        ? vscode.TreeItemCollapsibleState.Expanded
+        : vscode.TreeItemCollapsibleState.Collapsed;
+      const item = new vscode.TreeItem(label, collapsibleState);
 
       item.tooltip = this.formatNodeTooltip(element.node, element.metadata);
       item.contextValue = 'grafemaNode';
@@ -136,29 +189,45 @@ export class EdgesProvider implements vscode.TreeDataProvider<GraphTreeItem> {
       const direction = element.direction;
       const targetId = direction === 'outgoing' ? edge.dst : edge.src;
       const targetNode = element.targetNode;
+      const visitedNodeIds = element.visitedNodeIds ?? new Set();
 
       // Check if this edge leads to a node on the path
       const isOnPath = element.isOnPath || this.isOnPath(targetId);
 
+      // Check if this edge leads to an already visited node (cycle)
+      const isCycle = visitedNodeIds.has(targetId);
+
       // Show target node info if available
+      // Format: "EDGE_TYPE → NODE_TYPE "name"" (horizontal arrow in text)
+      // Icon shows direction: ↓ outgoing = down to details, ↑ incoming = up to module
       const targetLabel = targetNode
         ? `${targetNode.nodeType} "${targetNode.name}"`
         : '(unresolved)';
-      const label = `${direction === 'outgoing' ? '\u2192' : '\u2190'} ${edge.edgeType}: ${targetLabel}`;
+      const label = `${edge.edgeType} \u2192 ${targetLabel}`;
 
-      const item = new vscode.TreeItem(label, vscode.TreeItemCollapsibleState.Collapsed);
+      // If cycle detected, don't allow expansion (None instead of Collapsed)
+      const collapsibleState = isCycle
+        ? vscode.TreeItemCollapsibleState.None
+        : vscode.TreeItemCollapsibleState.Collapsed;
+
+      const item = new vscode.TreeItem(label, collapsibleState);
 
       item.tooltip = targetNode
-        ? `${edge.edgeType}\n${direction === 'outgoing' ? 'To' : 'From'}: ${targetNode.nodeType} "${targetNode.name}"\nFile: ${targetNode.file}`
+        ? `${edge.edgeType}\n${direction === 'outgoing' ? 'To' : 'From'}: ${targetNode.nodeType} "${targetNode.name}"\nFile: ${targetNode.file}${isCycle ? '\n\n⟳ Cycle detected (already visited)' : ''}`
         : `${edge.edgeType}\nTarget node not found in graph`;
       item.contextValue = 'grafemaEdge';
 
-      // Highlight edges leading to nodes on path
-      if (isOnPath) {
-        item.iconPath = new vscode.ThemeIcon(direction === 'outgoing' ? 'arrow-right' : 'arrow-left', new vscode.ThemeColor('testing.iconPassed'));
+      // Visual indication for cycles
+      if (isCycle) {
+        item.iconPath = new vscode.ThemeIcon('sync', new vscode.ThemeColor('editorWarning.foreground'));
+        item.description = '⟳ cycle';
+      } else if (isOnPath) {
+        // Highlight edges leading to nodes on path
+        // ↓ outgoing = down to details, ↑ incoming = up to module
+        item.iconPath = new vscode.ThemeIcon(direction === 'outgoing' ? 'arrow-down' : 'arrow-up', new vscode.ThemeColor('testing.iconPassed'));
         item.description = '← path';
       } else {
-        item.iconPath = new vscode.ThemeIcon(direction === 'outgoing' ? 'arrow-right' : 'arrow-left');
+        item.iconPath = new vscode.ThemeIcon(direction === 'outgoing' ? 'arrow-down' : 'arrow-up');
       }
 
       return item;
@@ -200,7 +269,9 @@ export class EdgesProvider implements vscode.TreeDataProvider<GraphTreeItem> {
     if (!element) {
       if (this.rootNode) {
         const metadata = parseNodeMetadata(this.rootNode);
-        return [{ kind: 'node', node: this.rootNode, metadata }];
+        // Start with empty visited set for cycle detection
+        // Mark as root so it's expanded by default
+        return [{ kind: 'node', node: this.rootNode, metadata, visitedNodeIds: new Set(), isRoot: true }];
       }
       return [];
     }
@@ -211,22 +282,53 @@ export class EdgesProvider implements vscode.TreeDataProvider<GraphTreeItem> {
     if (element.kind === 'node') {
       const nodeId = element.node.id;
       const edges: GraphTreeItem[] = [];
+      const seenEdges = new Set<string>(); // For deduplication
+
+      // Track this node as visited for cycle detection
+      const visitedNodeIds = new Set(element.visitedNodeIds);
+      visitedNodeIds.add(nodeId);
 
       try {
         // Get outgoing edges
         const outgoing = await client.getOutgoingEdges(nodeId);
         for (const edge of outgoing) {
+          // Deduplicate by edgeType + targetId + direction
+          const edgeKey = `outgoing:${edge.edgeType}:${edge.dst}`;
+          if (seenEdges.has(edgeKey)) {
+            continue;
+          }
+          seenEdges.add(edgeKey);
+
           // Pre-fetch target node for better labels
           const targetNode = await client.getNode(edge.dst);
-          edges.push({ kind: 'edge', edge, direction: 'outgoing', targetNode: targetNode ?? undefined });
+          edges.push({
+            kind: 'edge',
+            edge,
+            direction: 'outgoing',
+            targetNode: targetNode ?? undefined,
+            visitedNodeIds,
+          });
         }
 
         // Get incoming edges
         const incoming = await client.getIncomingEdges(nodeId);
         for (const edge of incoming) {
+          // Deduplicate by edgeType + targetId + direction
+          const edgeKey = `incoming:${edge.edgeType}:${edge.src}`;
+          if (seenEdges.has(edgeKey)) {
+            continue;
+          }
+          seenEdges.add(edgeKey);
+
           // Pre-fetch source node for better labels
           const targetNode = await client.getNode(edge.src);
-          edges.push({ kind: 'edge', edge, direction: 'incoming', targetNode: targetNode ?? undefined });
+          edges.push({
+            kind: 'edge',
+            edge,
+            direction: 'incoming',
+            targetNode: targetNode ?? undefined,
+            visitedNodeIds,
+          });
         }
       } catch (err) {
         console.error('[grafema-explore] Error fetching edges:', err);
@@ -239,12 +341,20 @@ export class EdgesProvider implements vscode.TreeDataProvider<GraphTreeItem> {
     // Edge element - return target node
     if (element.kind === 'edge') {
       const targetId = element.direction === 'outgoing' ? element.edge.dst : element.edge.src;
+      const visitedNodeIds = element.visitedNodeIds ?? new Set();
+
+      // Cycle detection: if target node is already visited, don't expand
+      if (visitedNodeIds.has(targetId)) {
+        // Return empty - prevents infinite recursion
+        // The edge item itself shows the target info, just can't expand further
+        return [];
+      }
 
       try {
         const targetNode = await client.getNode(targetId);
         if (targetNode) {
           const metadata = parseNodeMetadata(targetNode);
-          return [{ kind: 'node', node: targetNode, metadata }];
+          return [{ kind: 'node', node: targetNode, metadata, visitedNodeIds }];
         }
       } catch (err) {
         console.error('[grafema-explore] Error fetching target node:', err);

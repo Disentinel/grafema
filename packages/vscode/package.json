@@ -34,6 +34,16 @@
         "icon": "$(search)"
       },
       {
+        "command": "grafema.toggleFollowCursor",
+        "title": "Grafema: Toggle Follow Cursor",
+        "icon": "$(lock)"
+      },
+      {
+        "command": "grafema.goBack",
+        "title": "Grafema: Go Back",
+        "icon": "$(arrow-left)"
+      },
+      {
         "command": "grafema.setAsRoot",
         "title": "Set as Root",
         "icon": "$(home)"
@@ -47,14 +57,24 @@
     "menus": {
       "view/title": [
         {
-          "command": "grafema.findAtCursor",
+          "command": "grafema.goBack",
           "when": "view == grafemaExplore",
           "group": "navigation@1"
         },
         {
-          "command": "grafema.refreshEdges",
+          "command": "grafema.toggleFollowCursor",
           "when": "view == grafemaExplore",
           "group": "navigation@2"
+        },
+        {
+          "command": "grafema.findAtCursor",
+          "when": "view == grafemaExplore",
+          "group": "navigation@3"
+        },
+        {
+          "command": "grafema.refreshEdges",
+          "when": "view == grafemaExplore",
+          "group": "navigation@4"
         }
       ],
       "view/item/context": [
@@ -84,7 +104,7 @@
     },
     "keybindings": [
       {
-        "command": "grafema.findAtCursor",
+        "command": "grafema.toggleFollowCursor",
         "key": "ctrl+shift+g",
         "mac": "cmd+shift+g",
         "when": "editorTextFocus"

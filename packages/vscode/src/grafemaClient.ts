@@ -6,7 +6,7 @@
  */
 
 import { spawn, ChildProcess } from 'child_process';
-import { existsSync, unlinkSync } from 'fs';
+import { existsSync, unlinkSync, watch, FSWatcher } from 'fs';
 import { join, dirname } from 'path';
 import { EventEmitter } from 'events';
 import { RFDBClient } from '@grafema/rfdb-client';
@@ -36,6 +36,8 @@ export class GrafemaClientManager extends EventEmitter {
   private client: RFDBClient | null = null;
   private serverProcess: ChildProcess | null = null;
   private _state: ConnectionState = { status: 'disconnected' };
+  private socketWatcher: FSWatcher | null = null;
+  private reconnecting = false;
 
   constructor(workspaceRoot: string) {
     super();
@@ -126,6 +128,9 @@ export class GrafemaClientManager extends EventEmitter {
 
     this.client = client;
     this.setState({ status: 'connected' });
+
+    // Start watching for changes
+    this.startWatching();
   }
 
   /**
@@ -238,6 +243,8 @@ export class GrafemaClientManager extends EventEmitter {
    * Disconnect from server
    */
   async disconnect(): Promise<void> {
+    this.stopWatching();
+
     if (this.client) {
       try {
         await this.client.close();
@@ -250,5 +257,122 @@ export class GrafemaClientManager extends EventEmitter {
 
     // Note: We don't kill the server process - it continues running for other clients
     this.serverProcess = null;
+  }
+
+  /**
+   * Attempt to reconnect after connection loss
+   * Emits 'reconnected' event on success (clients should clear caches)
+   */
+  async reconnect(): Promise<boolean> {
+    if (this.reconnecting) {
+      return false;
+    }
+
+    this.reconnecting = true;
+    console.log('[grafema-explore] Attempting reconnect...');
+
+    try {
+      // Close existing client if any
+      if (this.client) {
+        try {
+          await this.client.close();
+        } catch {
+          // Ignore
+        }
+        this.client = null;
+      }
+
+      // Try to connect
+      await this.connect();
+
+      if (this._state.status === 'connected') {
+        console.log('[grafema-explore] Reconnected successfully');
+        // Emit reconnected event - clients should clear their caches
+        this.emit('reconnected');
+        return true;
+      }
+    } catch (err) {
+      console.error('[grafema-explore] Reconnect failed:', err);
+    } finally {
+      this.reconnecting = false;
+    }
+
+    return false;
+  }
+
+  /**
+   * Execute a client operation with auto-reconnect on failure
+   */
+  async withReconnect<T>(operation: (client: RFDBClient) => Promise<T>): Promise<T | null> {
+    if (!this.client || this._state.status !== 'connected') {
+      // Try to reconnect first
+      const reconnected = await this.reconnect();
+      if (!reconnected || !this.client) {
+        return null;
+      }
+    }
+
+    try {
+      return await operation(this.client);
+    } catch (err) {
+      console.error('[grafema-explore] Operation failed, attempting reconnect:', err);
+
+      // Try reconnect once
+      const reconnected = await this.reconnect();
+      if (reconnected && this.client) {
+        try {
+          return await operation(this.client);
+        } catch (retryErr) {
+          console.error('[grafema-explore] Operation failed after reconnect:', retryErr);
+        }
+      }
+
+      return null;
+    }
+  }
+
+  /**
+   * Watch for socket file changes (indicates server restart/reanalysis)
+   */
+  private startWatching(): void {
+    this.stopWatching();
+
+    const grafemaDir = join(this.workspaceRoot, GRAFEMA_DIR);
+    if (!existsSync(grafemaDir)) {
+      return;
+    }
+
+    try {
+      this.socketWatcher = watch(grafemaDir, (eventType, filename) => {
+        if (filename === SOCKET_FILE || filename === DB_FILE) {
+          console.log(`[grafema-explore] Detected change: ${eventType} ${filename}`);
+          // Debounce reconnect
+          setTimeout(() => {
+            if (this._state.status === 'connected') {
+              // Check if socket still valid
+              this.client?.ping().catch(() => {
+                console.log('[grafema-explore] Socket invalid after change, reconnecting...');
+                this.reconnect();
+              });
+            } else {
+              // Try to connect if we weren't connected
+              this.connect();
+            }
+          }, 500);
+        }
+      });
+    } catch (err) {
+      console.error('[grafema-explore] Failed to start watcher:', err);
+    }
+  }
+
+  /**
+   * Stop watching for changes
+   */
+  private stopWatching(): void {
+    if (this.socketWatcher) {
+      this.socketWatcher.close();
+      this.socketWatcher = null;
+    }
   }
 }

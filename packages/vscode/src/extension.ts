@@ -15,6 +15,8 @@ import { parseNodeMetadata, GraphTreeItem } from './types';
 let clientManager: GrafemaClientManager | null = null;
 let edgesProvider: EdgesProvider | null = null;
 let treeView: vscode.TreeView<GraphTreeItem> | null = null;
+let followCursor = true; // Follow cursor mode (toggle with cmd+shift+g)
+let statusBarItem: vscode.StatusBarItem | null = null;
 
 /**
  * Extension activation
@@ -51,6 +53,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     } else if (treeView) {
       treeView.message = undefined;
     }
+  });
+
+  // Clear caches when reconnected (database may have changed)
+  clientManager.on('reconnected', () => {
+    console.log('[grafema-explore] Reconnected - clearing history');
+    edgesProvider?.clearHistory();
+    edgesProvider?.setRootNode(null);
+    vscode.window.showInformationMessage('Grafema: Reconnected to graph database');
   });
 
   // === COMMANDS ===
@@ -107,6 +117,43 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     edgesProvider?.refresh();
   });
 
+  // Go back to previous root
+  const goBackCommand = vscode.commands.registerCommand('grafema.goBack', () => {
+    if (edgesProvider?.canGoBack()) {
+      edgesProvider.goBack();
+    } else {
+      vscode.window.showInformationMessage('Grafema: No history to go back to');
+    }
+  });
+
+  // Toggle follow cursor mode
+  const toggleFollowCursorCommand = vscode.commands.registerCommand('grafema.toggleFollowCursor', () => {
+    followCursor = !followCursor;
+    updateStatusBar();
+    if (followCursor) {
+      // Immediately update to current cursor position
+      findAndSetRoot(false);
+      vscode.window.showInformationMessage('Grafema: Follow cursor enabled');
+    } else {
+      vscode.window.showInformationMessage('Grafema: Follow cursor disabled (locked)');
+    }
+  });
+
+  // Create status bar item
+  statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
+  statusBarItem.command = 'grafema.toggleFollowCursor';
+  updateStatusBar();
+  statusBarItem.show();
+
+  // Follow cursor on selection change
+  const selectionChangeListener = vscode.window.onDidChangeTextEditorSelection(
+    debounce(async (event: vscode.TextEditorSelectionChangeEvent) => {
+      if (followCursor && clientManager?.isConnected()) {
+        await findAndSetRoot(false);
+      }
+    }, 150) // Debounce to avoid too frequent updates
+  );
+
   // Connect to RFDB
   try {
     await clientManager.connect();
@@ -122,6 +169,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     findAtCursorCommand,
     setAsRootCommand,
     refreshCommand,
+    goBackCommand,
+    toggleFollowCursorCommand,
+    selectionChangeListener,
+    statusBarItem,
     {
       dispose: () => {
         clientManager?.disconnect();
@@ -174,6 +225,41 @@ async function findAndSetRoot(preserveHistory: boolean): Promise<void> {
     console.error('[grafema-explore] Error finding node:', err);
     edgesProvider.setStatusMessage('Error querying graph');
   }
+}
+
+/**
+ * Update status bar to show follow cursor state
+ */
+function updateStatusBar(): void {
+  if (!statusBarItem) return;
+
+  if (followCursor) {
+    statusBarItem.text = '$(eye) Grafema: Follow';
+    statusBarItem.tooltip = 'Grafema: Following cursor (click to lock)';
+  } else {
+    statusBarItem.text = '$(lock) Grafema: Locked';
+    statusBarItem.tooltip = 'Grafema: Locked (click to follow cursor)';
+  }
+}
+
+/**
+ * Simple debounce helper
+ */
+function debounce<T extends (...args: unknown[]) => unknown>(
+  fn: T,
+  delay: number
+): (...args: Parameters<T>) => void {
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+  return (...args: Parameters<T>) => {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+    timeoutId = setTimeout(() => {
+      fn(...args);
+      timeoutId = null;
+    }, delay);
+  };
 }
 
 /**

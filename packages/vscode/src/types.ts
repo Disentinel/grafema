@@ -17,10 +17,12 @@ export interface NodeMetadata {
 
 /**
  * Represents either a node or an edge in the graph tree
+ * visitedNodeIds tracks ancestors to detect cycles
+ * isRoot marks the root node (should be expanded by default)
  */
 export type GraphTreeItem =
-  | { kind: 'node'; node: WireNode; metadata: NodeMetadata; isOnPath?: boolean }
-  | { kind: 'edge'; edge: WireEdge & Record<string, unknown>; direction: 'outgoing' | 'incoming'; targetNode?: WireNode; isOnPath?: boolean };
+  | { kind: 'node'; node: WireNode; metadata: NodeMetadata; isOnPath?: boolean; visitedNodeIds?: Set<string>; isRoot?: boolean }
+  | { kind: 'edge'; edge: WireEdge & Record<string, unknown>; direction: 'outgoing' | 'incoming'; targetNode?: WireNode; isOnPath?: boolean; visitedNodeIds?: Set<string> };
 
 /**
  * Connection states for the RFDB client
@@ -64,17 +66,18 @@ export function formatNodeLabel(node: WireNode): string {
 
 /**
  * Format edge for display in tree view
+ * Format: "EDGE_TYPE → NODE_TYPE "name"" (horizontal arrow in text)
+ * Icon (separate) shows LOD direction: ↓ outgoing, ↑ incoming
  */
 export function formatEdgeLabel(
   edge: WireEdge & Record<string, unknown>,
   targetNode: WireNode | null,
   direction: 'outgoing' | 'incoming'
 ): string {
-  const arrow = direction === 'outgoing' ? '\u2192' : '\u2190';
   const targetLabel = targetNode
     ? `${targetNode.nodeType} "${targetNode.name}"`
     : direction === 'outgoing'
       ? edge.dst
       : edge.src;
-  return `${arrow} ${edge.edgeType}: ${targetLabel}`;
+  return `${edge.edgeType} \u2192 ${targetLabel}`;
 }
