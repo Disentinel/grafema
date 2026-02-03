@@ -1,5 +1,7 @@
 # Grafema Configuration Reference
 
+> **Configure Grafema to understand your codebase.** Tell it which plugins to use, which files to analyze, and which services make up your project. Most projects work with zero configuration — just run `grafema init` and go.
+
 This document describes the complete configuration format for Grafema.
 
 ## Quick Start

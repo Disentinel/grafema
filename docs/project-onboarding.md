@@ -1,52 +1,54 @@
 # Project Onboarding Guide
 
-Это руководство поможет внедрить Grafema в существующий проект и итеративно улучшать покрытие кода семантическим анализом.
+> **Your codebase has thousands of files.** Where does user data flow? Which endpoints call the database? Which functions are never called? Grafema answers these questions in seconds, not hours. Here's how to get started.
 
-## Обзор процесса
+This guide will help you integrate Grafema into an existing project and iteratively improve semantic code coverage.
+
+## Process Overview
 
 ```
 ┌─────────────┐     ┌─────────────┐     ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
 │   SETUP     │ →   │  ANALYZE    │ →   │   ASSESS    │ →   │ GUARANTEES  │ →   │    CI/CD    │
 ├─────────────┤     ├─────────────┤     ├─────────────┤     ├─────────────┤     ├─────────────┤
-│ Настройка   │     │ Первый      │     │ Оценка      │     │ Создание    │     │ Интеграция  │
-│ .grafema/   │     │ анализ      │     │ покрытия    │     │ инвариантов │     │ в pipeline  │
+│ Configure   │     │ First       │     │ Evaluate    │     │ Create      │     │ Integrate   │
+│ .grafema/   │     │ analysis    │     │ coverage    │     │ invariants  │     │ into CI     │
 └─────────────┘     └─────────────┘     └─────────────┘     └─────────────┘     └─────────────┘
 ```
 
-Все плагины включены по умолчанию ("batteries included"). Если используется библиотека для которой нет плагина — можно написать кастомный.
+All plugins are enabled by default ("batteries included"). Plugins that don't find relevant patterns simply do nothing.
 
-## Step 1: Начальная настройка
+## Step 1: Initial Setup
 
-### 1.1 Инициализация
+### 1.1 Initialize
 
-Самый простой способ начать:
+The simplest way to start:
 
 ```bash
 grafema init
 ```
 
-Это создаст `.grafema/config.yaml` с настройками по умолчанию.
+This creates `.grafema/config.yaml` with sensible defaults.
 
-### 1.2 Структура директории
+### 1.2 Directory Structure
 
-Grafema хранит конфигурацию и данные в `.grafema/`:
+Grafema stores configuration and data in `.grafema/`:
 
 ```
 your-project/
 ├── .grafema/
-│   ├── config.yaml       # Конфигурация плагинов (version controlled)
-│   ├── guarantees.yaml   # Гарантии (version controlled)
-│   └── graph.rfdb        # База графа (gitignore)
+│   ├── config.yaml       # Plugin configuration (version controlled)
+│   ├── guarantees.yaml   # Code guarantees (version controlled)
+│   └── graph.rfdb        # Graph database (gitignore)
 ├── src/
 └── ...
 ```
 
-### 1.3 Конфигурация
+### 1.3 Configuration
 
-По умолчанию Grafema использует все встроенные плагины — "batteries included".
-Плагины которые не находят релевантных паттернов просто ничего не делают.
+By default, Grafema uses all built-in plugins — "batteries included".
+Plugins that don't find relevant patterns simply do nothing.
 
-Пример минимальной конфигурации `.grafema/config.yaml`:
+Minimal `.grafema/config.yaml` example:
 
 ```yaml
 plugins:
@@ -61,30 +63,30 @@ plugins:
     - EvalBanValidator
 ```
 
-Полный справочник конфигурации: [configuration.md](configuration.md)
+Full configuration reference: [configuration.md](configuration.md)
 
-**Встроенные плагины:**
+**Built-in Plugins:**
 
-| Фаза | Плагины | Что делают |
-|------|---------|------------|
-| Indexing | JSModuleIndexer | Строит дерево зависимостей модулей |
-| Analysis | JSASTAnalyzer | Базовый AST: функции, классы, вызовы |
+| Phase | Plugins | What They Do |
+|-------|---------|--------------|
+| Indexing | JSModuleIndexer | Builds module dependency tree |
+| Analysis | JSASTAnalyzer | Core AST: functions, classes, calls |
 | | ExpressRouteAnalyzer | HTTP routes (Express) |
-| | SocketIOAnalyzer | WebSocket события |
-| | DatabaseAnalyzer | SQL/NoSQL запросы |
-| | FetchAnalyzer | HTTP клиентские запросы |
-| | ServiceLayerAnalyzer | Service layer паттерны |
-| Enrichment | MethodCallResolver | Разрешение method calls |
-| | AliasTracker | Отслеживание алиасов переменных |
-| | ValueDomainAnalyzer | Анализ возможных значений |
-| | MountPointResolver | Разрешение mount points (Express) |
-| | PrefixEvaluator | Вычисление префиксов путей |
-| | HTTPConnectionEnricher | Связь frontend requests с backend routes |
-| Validation | EvalBanValidator | Запрет eval() и Function() |
-| | SQLInjectionValidator | Детектирование SQL injection |
-| | CallResolverValidator | Проверка разрешения вызовов |
+| | SocketIOAnalyzer | WebSocket events |
+| | DatabaseAnalyzer | SQL/NoSQL queries |
+| | FetchAnalyzer | HTTP client requests |
+| | ServiceLayerAnalyzer | Service layer patterns |
+| Enrichment | MethodCallResolver | Resolves method calls |
+| | AliasTracker | Tracks variable aliases |
+| | ValueDomainAnalyzer | Analyzes possible values |
+| | MountPointResolver | Resolves mount points (Express) |
+| | PrefixEvaluator | Computes path prefixes |
+| | HTTPConnectionEnricher | Connects frontend requests to backend routes |
+| Validation | EvalBanValidator | Bans eval() and Function() |
+| | SQLInjectionValidator | Detects SQL injection |
+| | CallResolverValidator | Verifies call resolution |
 
-### 1.4 Добавьте в .gitignore
+### 1.4 Add to .gitignore
 
 ```gitignore
 # Grafema
@@ -92,180 +94,144 @@ plugins:
 .grafema/rfdb.sock
 ```
 
-`grafema init` автоматически добавляет эти строки в `.gitignore`.
+`grafema init` automatically adds these lines to `.gitignore`.
 
-## Step 2: Первый анализ
+## Step 2: First Analysis
 
-### 2.1 Запуск анализа
+### 2.1 Run Analysis
 
 ```bash
 grafema analyze
 ```
 
-Или через MCP:
+Or via MCP:
 ```javascript
 // MCP tool: analyze_project
 { "force": true }
 ```
 
-### 2.2 Проверка результатов
+### 2.2 Check Results
 
 ```bash
 grafema overview
 ```
 
-Или через MCP:
-```javascript
-// MCP tool: get_stats
-{}
-
-// Пример ответа:
-// Nodes: 1,234 total
-//   MODULE: 45
-//   FUNCTION: 234
-//   CALL: 567
-//   VARIABLE: 388
-// Edges: 2,456 total
-//   CONTAINS: 890
-//   CALLS: 123
-//   DEPENDS_ON: 44
+Example output:
+```
+Nodes: 1,234 total
+  MODULE: 45
+  FUNCTION: 234
+  CALL: 567
+  VARIABLE: 388
+Edges: 2,456 total
+  CONTAINS: 890
+  CALLS: 123
+  DEPENDS_ON: 44
 ```
 
-### 2.3 Проверка схемы
-
-```javascript
-// MCP tool: get_schema
-{}
-
-// Показывает все типы нод и edges в графе
-```
-
-## Step 3: Оценка покрытия
-
-### 3.1 Найти "слепые зоны"
-
-Запросы для поиска непокрытого кода:
-
-```javascript
-// Вызовы которые не разрешились (нет CALLS edge)
-// MCP tool: query_graph
-{
-  "query": "violation(X) :- node(X, \"CALL\"), \\+ edge(X, _, \"CALLS\")."
-}
-
-// Method calls которые не разрешились
-{
-  "query": "violation(X) :- node(X, \"METHOD_CALL\"), \\+ edge(X, _, \"CALLS\")."
-}
-```
-
-### 3.2 Анализ по файлам
-
-```javascript
-// Найти файлы с наибольшим количеством неразрешённых вызовов
-// MCP tool: query_graph
-{
-  "query": "violation(F) :- node(C, \"CALL\"), attr(C, \"file\", F), \\+ edge(C, _, \"CALLS\")."
-}
-```
-
-### 3.3 Проверить используемые зависимости
-
-Grafema определяет зависимости по импортам (надёжнее чем package.json):
-
-```javascript
-// MCP tool: query_graph
-// Найти все внешние зависимости (импорты не из проекта)
-{
-  "query": "violation(X) :- node(X, \"MODULE\"), attr(X, \"external\", \"true\")."
-}
-```
-
-## Step 4: Метрики покрытия
-
-Отслеживайте эти метрики:
-
-```javascript
-// 1. Call resolution rate
-// MCP tool: get_stats показывает общее количество
-
-// 2. Unresolved calls (должно уменьшаться)
-{
-  "query": "violation(X) :- node(X, \"CALL\"), \\+ edge(X, _, \"CALLS\")."
-}
-
-// 3. Semantic coverage (HTTP routes, DB queries, etc.)
-{
-  "query": "violation(X) :- node(X, \"http:route\")."  // Сколько routes найдено
-}
-```
-
-### 4.1 Когда писать кастомный плагин
-
-Если:
-- Используется библиотека для которой нет встроенного плагина (например Fastify, NestJS)
-- Есть project-specific паттерны (custom ORM, internal frameworks)
-- Нужна специфичная семантика
-
-См. [plugin-development.md](plugin-development.md) для гайда.
-
-## Step 5: Создание гарантий
-
-### 5.1 Начните с простых гарантий
-
-После достижения хорошего покрытия, создайте базовые гарантии:
-
-```javascript
-// Запрет eval()
-// MCP tool: create_guarantee
-{
-  "id": "no-eval",
-  "name": "No eval() usage",
-  "rule": "violation(X) :- node(X, \"CALL\"), attr(X, \"name\", \"eval\").",
-  "severity": "error"
-}
-
-// Запрет console.log в production
-{
-  "id": "no-console-log",
-  "name": "No console.log",
-  "rule": "violation(X) :- node(X, \"METHOD_CALL\"), attr(X, \"object\", \"console\"), attr(X, \"method\", \"log\").",
-  "severity": "warning",
-  "governs": ["src/**/*.js"]
-}
-```
-
-### 5.2 Проверьте гарантии
-
-```javascript
-// MCP tool: check_guarantees
-{}
-```
-
-### 5.3 Экспортируйте для version control
-
-```javascript
-// MCP tool: export_guarantees
-{}
-```
+### 2.3 Check Schema
 
 ```bash
+grafema schema
+```
+
+Shows all node types and edge types in the graph.
+
+## Step 3: Assess Coverage
+
+### 3.1 Find "Blind Spots"
+
+Use Datalog queries to find unanalyzed code. See [Datalog Cheat Sheet](datalog-cheat-sheet.md) for query syntax.
+
+```bash
+# Find unresolved function calls (no CALLS edge)
+grafema query 'violation(X) :- node(X, "CALL"), \+ edge(X, _, "CALLS").'
+
+# Find unresolved method calls
+grafema query 'violation(X) :- node(X, "METHOD_CALL"), \+ edge(X, _, "CALLS").'
+```
+
+### 3.2 Analysis by File
+
+```bash
+# Find files with the most unresolved calls
+grafema query 'violation(F) :- node(C, "CALL"), attr(C, "file", F), \+ edge(C, _, "CALLS").'
+```
+
+### 3.3 Check Dependencies
+
+Grafema determines dependencies by imports (more reliable than package.json):
+
+```bash
+# Find all external dependencies
+grafema query 'violation(X) :- node(X, "MODULE"), attr(X, "external", "true").'
+```
+
+## Step 4: Coverage Metrics
+
+Track these metrics:
+
+```bash
+# 1. Call resolution rate - grafema overview shows totals
+
+# 2. Unresolved calls (should decrease over time)
+grafema query 'violation(X) :- node(X, "CALL"), \+ edge(X, _, "CALLS").'
+
+# 3. Semantic coverage (HTTP routes, DB queries, etc.)
+grafema query 'violation(X) :- node(X, "http:route").'  # How many routes found
+```
+
+### 4.1 When to Write a Custom Plugin
+
+If:
+- You use a library without a built-in plugin (e.g., Fastify, NestJS)
+- You have project-specific patterns (custom ORM, internal frameworks)
+- You need specific semantics
+
+See [plugin-development.md](plugin-development.md) for the guide.
+
+## Step 5: Create Guarantees
+
+### 5.1 Start with Simple Guarantees
+
+After achieving good coverage, create basic guarantees:
+
+```bash
+# Ban eval()
+grafema guarantee add --id no-eval \
+  --name "No eval() usage" \
+  --rule 'violation(X) :- node(X, "CALL"), attr(X, "name", "eval").' \
+  --severity error
+
+# Ban console.log in production
+grafema guarantee add --id no-console-log \
+  --name "No console.log" \
+  --rule 'violation(X) :- node(X, "METHOD_CALL"), attr(X, "object", "console"), attr(X, "method", "log").' \
+  --severity warning \
+  --governs "src/**/*.js"
+```
+
+### 5.2 Check Guarantees
+
+```bash
+grafema check-guarantees
+```
+
+### 5.3 Export for Version Control
+
+```bash
+grafema guarantee export
 git add .grafema/guarantees.yaml
 git commit -m "Add code guarantees"
 ```
 
-### 5.4 Сложные гарантии
+### 5.4 Complex Guarantees
 
-Для сложных гарантий используйте workflow:
+For complex guarantees, see [guarantee-workflow.md](guarantee-workflow.md).
 
-```javascript
-// MCP tool: get_documentation
-{ "topic": "guarantee-workflow" }
-```
+## Step 6: CI/CD Integration
 
-## Step 6: CI/CD интеграция
-
-### 6.1 Проверка гарантий в CI
+### 6.1 Check Guarantees in CI
 
 ```yaml
 # .github/workflows/grafema.yml
@@ -283,7 +249,7 @@ jobs:
       - run: npx grafema check-guarantees --fail-on-violation
 ```
 
-### 6.2 Pre-commit hook
+### 6.2 Pre-commit Hook
 
 ```bash
 #!/bin/bash
@@ -292,40 +258,59 @@ jobs:
 npx grafema check-guarantees --fail-on-violation
 ```
 
-## Чеклист внедрения
+## Step 7: What's Next?
 
-- [ ] Выполнен `grafema init`
-- [ ] Настроен `.grafema/config.yaml` (при необходимости)
-- [ ] Добавлен `.grafema/graph.rfdb` в `.gitignore`
-- [ ] Первый анализ выполнен (`grafema analyze`)
-- [ ] Проверена схема графа (`get_schema`)
-- [ ] Проверены метрики покрытия (unresolved calls)
-- [ ] Созданы базовые гарантии
-- [ ] Гарантии экспортированы в YAML
-- [ ] Настроена CI/CD интеграция
+After CI/CD integration:
+
+1. **Expand coverage** — Write custom plugins for libraries specific to your project
+2. **Add more guarantees** — Enforce architectural decisions (e.g., "no direct DB access from controllers")
+3. **Track metrics over time** — Monitor call resolution rate, find regressions
+4. **Query the graph** — Use Grafema in code reviews to understand changes
+
+## Onboarding Checklist
+
+- [ ] Run `grafema init`
+- [ ] Configure `.grafema/config.yaml` (if needed)
+- [ ] Add `.grafema/graph.rfdb` to `.gitignore`
+- [ ] First analysis complete (`grafema analyze`)
+- [ ] Schema verified (`grafema schema`)
+- [ ] Coverage metrics checked (unresolved calls)
+- [ ] Basic guarantees created
+- [ ] Guarantees exported to YAML
+- [ ] CI/CD integration configured
 
 ## Troubleshooting
 
-### Анализ занимает слишком много времени
+### Analysis takes too long
 
-- Используйте `exclude` в конфигурации для исключения тестов и сгенерированного кода
-- Используйте `include` для ограничения анализа конкретными директориями
+- Use `exclude` in config to skip tests and generated code
+- Use `include` to limit analysis to specific directories
 
-### Много неразрешённых вызовов
+### Many unresolved calls
 
-- Проверьте что `MethodCallResolver` и `AliasTracker` включены в enrichment
-- Проверьте есть ли плагины для используемых библиотек
-- Некоторые динамические паттерны не могут быть разрешены статически
+- Verify `MethodCallResolver` and `AliasTracker` are enabled in enrichment
+- Check if plugins exist for libraries you use
+- Some dynamic patterns cannot be resolved statically
 
-### Плагин не находит паттерны
+### Plugin doesn't find patterns
 
-- Проверьте что плагин добавлен в правильную фазу (analysis vs enrichment)
-- Проверьте порядок плагинов — enrichers зависят от результатов analysis
-- Используйте `--log-level debug` для детальных логов
+- Verify the plugin is in the correct phase (analysis vs enrichment)
+- Check plugin order — enrichers depend on analysis results
+- Use `--log-level debug` for detailed logs
 
-## См. также
+### `grafema init` fails
 
-- [Configuration Reference](configuration.md) — полный справочник конфигурации
-- [Guarantee Workflow](guarantee-workflow.md) — создание гарантий
-- [Plugin Development](plugin-development.md) — написание плагинов
-- [Semantic Coverage](semantic-coverage.md) — покрытие семантикой
+- Ensure you have a `package.json` in the project root
+- Check write permissions for `.grafema/` directory
+
+## Glossary
+
+See [glossary.md](glossary.md) for definitions of terms like "enrichment", "semantic node", "Datalog", etc.
+
+## See Also
+
+- [Configuration Reference](configuration.md) — Full configuration reference
+- [Guarantee Workflow](guarantee-workflow.md) — Creating guarantees
+- [Plugin Development](plugin-development.md) — Writing plugins
+- [Datalog Cheat Sheet](datalog-cheat-sheet.md) — Common queries with explanations
+- [Glossary](glossary.md) — Term definitions

@@ -1,8 +1,8 @@
 # Plugin Development Guide
 
-Руководство по созданию плагинов для Grafema.
+> **Want to teach Grafema about your framework?** Plugins let you detect patterns specific to your codebase — custom ORMs, internal APIs, or any library Grafema doesn't support yet. A simple plugin takes 15 minutes to write.
 
-## Архитектура плагинов
+## Plugin Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
@@ -10,36 +10,68 @@
 ├──────────────┬──────────────┬──────────────┬──────────────┬─────────────┤
 │  DISCOVERY   │   INDEXING   │   ANALYSIS   │  ENRICHMENT  │  VALIDATION │
 ├──────────────┼──────────────┼──────────────┼──────────────┼─────────────┤
-│ Находит      │ Строит       │ Парсит AST,  │ Добавляет    │ Проверяет   │
-│ сервисы и    │ дерево       │ создаёт      │ семантические│ инварианты  │
-│ entry points │ зависимостей │ ноды         │ связи        │             │
+│ Finds        │ Builds       │ Parses AST,  │ Adds         │ Checks      │
+│ services &   │ dependency   │ creates      │ semantic     │ invariants  │
+│ entry points │ tree         │ nodes        │ relationships│             │
 └──────────────┴──────────────┴──────────────┴──────────────┴─────────────┘
 ```
 
-Каждый плагин:
-- Наследует от `Plugin` класса
-- Объявляет metadata (фаза, приоритет, создаваемые типы)
-- Реализует `execute(context)` метод
-- Возвращает `PluginResult`
+Each plugin:
+- Inherits from `Plugin` class
+- Declares metadata (phase, priority, created types)
+- Implements `execute(context)` method
+- Returns `PluginResult`
 
-## Типы плагинов
+## Your First Plugin: Hello World
 
-### Discovery Plugins
-**Когда использовать:** Проект имеет нестандартную структуру сервисов.
+Let's create the simplest possible plugin — one that just logs a message and counts functions:
 
 ```javascript
-// Находит entry points и сервисы
+import { Plugin, createSuccessResult } from '../Plugin.js';
+
+export class HelloWorldPlugin extends Plugin {
+  get metadata() {
+    return {
+      name: 'HelloWorldPlugin',
+      phase: 'VALIDATION',  // Runs after all analysis is done
+      priority: 10,
+    };
+  }
+
+  async execute(context) {
+    const { graph, logger } = context;
+
+    // Count all functions in the graph
+    let count = 0;
+    for await (const node of graph.queryNodes({ type: 'FUNCTION' })) {
+      count++;
+    }
+
+    logger.info(`Hello from my plugin! Found ${count} functions.`);
+
+    return createSuccessResult({ nodes: 0, edges: 0 });
+  }
+}
+```
+
+**That's it!** 15 lines. Add `HelloWorldPlugin` to your config and run `grafema analyze`.
+
+## Plugin Types
+
+### Discovery Plugins
+**When to use:** Project has non-standard service structure.
+
+```javascript
 {
   phase: 'DISCOVERY',
-  // Возвращает manifest с найденными сервисами
+  // Returns manifest with discovered services
 }
 ```
 
 ### Indexing Plugins
-**Когда использовать:** Нестандартная система модулей.
+**When to use:** Non-standard module system.
 
 ```javascript
-// Строит дерево зависимостей
 {
   phase: 'INDEXING',
   creates: { nodes: ['MODULE'], edges: ['DEPENDS_ON'] }
@@ -47,10 +79,9 @@
 ```
 
 ### Analysis Plugins
-**Когда использовать:** Нужно распознать паттерны специфичной библиотеки.
+**When to use:** Need to recognize patterns from a specific library.
 
 ```javascript
-// Парсит AST, создаёт семантические ноды
 {
   phase: 'ANALYSIS',
   creates: { nodes: ['http:route', 'db:query'], edges: ['CONTAINS'] }
@@ -58,10 +89,9 @@
 ```
 
 ### Enrichment Plugins
-**Когда использовать:** Нужно добавить связи между существующими нодами.
+**When to use:** Need to add relationships between existing nodes.
 
 ```javascript
-// Обогащает граф связями
 {
   phase: 'ENRICHMENT',
   creates: { nodes: [], edges: ['CALLS', 'INSTANCE_OF'] }
@@ -69,54 +99,53 @@
 ```
 
 ### Validation Plugins
-**Когда использовать:** Нужно проверить инварианты графа.
+**When to use:** Need to check graph invariants.
 
 ```javascript
-// Валидирует граф, находит проблемы
 {
   phase: 'VALIDATION',
-  // Возвращает warnings/errors
+  // Returns warnings/errors
 }
 ```
 
-## Структура плагина
+## Plugin Structure
 
 ```javascript
 import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 
 export class MyLibraryAnalyzer extends Plugin {
-  // 1. Метаданные плагина
+  // 1. Plugin metadata
   get metadata() {
     return {
       name: 'MyLibraryAnalyzer',
       phase: 'ANALYSIS',           // DISCOVERY | INDEXING | ANALYSIS | ENRICHMENT | VALIDATION
-      priority: 70,                // Выше = раньше в фазе (JSASTAnalyzer = 80)
+      priority: 70,                // Higher = runs earlier in phase (JSASTAnalyzer = 80)
       creates: {
-        nodes: ['mylib:endpoint'], // Типы нод которые создаёт
-        edges: ['HANDLES']         // Типы edges которые создаёт
+        nodes: ['mylib:endpoint'], // Node types this plugin creates
+        edges: ['HANDLES']         // Edge types this plugin creates
       },
-      dependencies: ['JSASTAnalyzer']  // Плагины которые должны выполниться раньше
+      dependencies: ['JSASTAnalyzer']  // Plugins that must run before this one
     };
   }
 
-  // 2. Инициализация (опционально)
+  // 2. Initialization (optional)
   async initialize(context) {
-    // Вызывается один раз перед первым execute
+    // Called once before first execute
   }
 
-  // 3. Основная логика
+  // 3. Main logic
   async execute(context) {
-    const { manifest, graph, config } = context;
+    const { manifest, graph, config, logger } = context;
 
     try {
-      // Получаем модули для анализа
+      // Get modules to analyze
       const modules = await this.getModules(graph);
 
       let nodesCreated = 0;
       let edgesCreated = 0;
 
       for (const module of modules) {
-        // Анализируем каждый модуль
+        // Analyze each module
         const result = await this.analyzeModule(module, graph);
         nodesCreated += result.nodes;
         edgesCreated += result.edges;
@@ -132,84 +161,141 @@ export class MyLibraryAnalyzer extends Plugin {
     }
   }
 
-  // 4. Очистка (опционально)
+  // 4. Cleanup (optional)
   async cleanup() {
-    // Освобождение ресурсов
+    // Release resources
   }
 
-  // 5. Вспомогательные методы
+  // 5. Helper methods
   async analyzeModule(module, graph) {
-    // Логика анализа
+    // Analysis logic
   }
 }
 ```
 
-## Работа с графом
+## Working with the Graph
 
-### Создание нод
+### Creating Nodes
 
 ```javascript
 await graph.addNode({
-  id: `mylib:endpoint:${uniqueId}`,  // Уникальный ID
-  type: 'mylib:endpoint',             // Тип ноды
-  name: 'GET /users',                 // Человекочитаемое имя
-  file: module.file,                  // Файл где найдено
-  line: node.loc.start.line,          // Строка
-  column: node.loc.start.column,      // Колонка
-  // ... любые другие атрибуты
+  id: `mylib:endpoint:${uniqueId}`,  // Unique ID
+  type: 'mylib:endpoint',             // Node type
+  name: 'GET /users',                 // Human-readable name
+  file: module.file,                  // Source file
+  line: node.loc.start.line,          // Line number
+  column: node.loc.start.column,      // Column number
+  // ... any other attributes
   method: 'GET',
   path: '/users'
 });
 ```
 
-### Создание edges
+### Creating Edges
 
 ```javascript
 await graph.addEdge({
   type: 'HANDLES',
   src: endpointNodeId,
   dst: handlerFunctionId,
-  // Опциональные атрибуты
+  // Optional attributes
   async: true
 });
 ```
 
-### Поиск нод
+### Querying Nodes
 
 ```javascript
-// По типу
+// By type
 for await (const node of graph.queryNodes({ type: 'FUNCTION' })) {
   // ...
 }
 
-// По атрибутам
+// By attributes
 for await (const node of graph.queryNodes({ type: 'CALL', name: 'express' })) {
   // ...
 }
 
-// По ID
+// By ID
 const node = await graph.getNode('MODULE:/src/index.js');
 ```
 
-### Поиск edges
+### Querying Edges
 
 ```javascript
-// Исходящие edges
+// Outgoing edges
 const edges = await graph.getOutgoingEdges(nodeId, ['CONTAINS', 'CALLS']);
 
-// Входящие edges
+// Incoming edges
 const edges = await graph.getIncomingEdges(nodeId, ['CALLS']);
 ```
 
-## Пример: Fastify Analyzer
+## Medium Example: Todo Detector
 
-Полный пример плагина для библиотеки Fastify:
+A plugin that finds TODO comments and creates nodes for them:
+
+```javascript
+import { readFileSync } from 'fs';
+import { Plugin, createSuccessResult } from '../Plugin.js';
+
+export class TodoDetector extends Plugin {
+  get metadata() {
+    return {
+      name: 'TodoDetector',
+      phase: 'ANALYSIS',
+      priority: 50,
+      creates: { nodes: ['code:todo'], edges: ['CONTAINS'] }
+    };
+  }
+
+  async execute(context) {
+    const { graph, logger } = context;
+    let todosFound = 0;
+
+    // Get all modules
+    for await (const module of graph.queryNodes({ type: 'MODULE' })) {
+      const code = readFileSync(module.file, 'utf-8');
+      const lines = code.split('\n');
+
+      lines.forEach((line, index) => {
+        const match = line.match(/\/\/\s*TODO:?\s*(.+)/i);
+        if (match) {
+          const todoId = `code:todo:${module.file}:${index + 1}`;
+
+          graph.addNode({
+            id: todoId,
+            type: 'code:todo',
+            name: match[1].trim(),
+            file: module.file,
+            line: index + 1,
+          });
+
+          graph.addEdge({
+            type: 'CONTAINS',
+            src: module.id,
+            dst: todoId,
+          });
+
+          todosFound++;
+        }
+      });
+    }
+
+    logger.info(`Found ${todosFound} TODOs`);
+    return createSuccessResult({ nodes: todosFound, edges: todosFound });
+  }
+}
+```
+
+## Full Example: Fastify Analyzer
+
+A complete plugin for detecting Fastify endpoints:
 
 ```javascript
 /**
- * FastifyRouteAnalyzer - детектит Fastify endpoints
+ * FastifyRouteAnalyzer - detects Fastify endpoints
  *
- * Паттерны:
+ * Patterns:
  * - fastify.get('/path', handler)
  * - fastify.route({ method: 'GET', url: '/path', handler })
  */
@@ -236,7 +322,7 @@ export class FastifyRouteAnalyzer extends Plugin {
   }
 
   async execute(context) {
-    const { graph } = context;
+    const { graph, logger } = context;
 
     try {
       const modules = await this.getModules(graph);
@@ -244,7 +330,7 @@ export class FastifyRouteAnalyzer extends Plugin {
       let edgesCreated = 0;
 
       for (const module of modules) {
-        // Проверяем есть ли импорт fastify
+        // Check if module imports fastify
         if (!await this.hasFastifyImport(module, graph)) {
           continue;
         }
@@ -254,7 +340,7 @@ export class FastifyRouteAnalyzer extends Plugin {
         edgesCreated += result.edges;
       }
 
-      console.log(`[FastifyRouteAnalyzer] Found ${routesCreated} routes`);
+      logger.info(`Found ${routesCreated} Fastify routes`);
       return createSuccessResult({ nodes: routesCreated, edges: edgesCreated });
 
     } catch (error) {
@@ -263,7 +349,6 @@ export class FastifyRouteAnalyzer extends Plugin {
   }
 
   async hasFastifyImport(module, graph) {
-    // Проверяем DEPENDS_ON edges на fastify
     const deps = await graph.getOutgoingEdges(module.id, ['DEPENDS_ON']);
     return deps.some(e => e.dst.includes('fastify'));
   }
@@ -283,7 +368,7 @@ export class FastifyRouteAnalyzer extends Plugin {
       CallExpression: (path) => {
         const { node } = path;
 
-        // Паттерн: fastify.get('/path', handler)
+        // Pattern: fastify.get('/path', handler)
         if (node.callee.type === 'MemberExpression' &&
             HTTP_METHODS.includes(node.callee.property?.name)) {
 
@@ -305,38 +390,6 @@ export class FastifyRouteAnalyzer extends Plugin {
               framework: 'fastify'
             });
 
-            // CONTAINS edge от модуля
-            graph.addEdge({
-              type: 'CONTAINS',
-              src: module.id,
-              dst: routeId
-            });
-
-            routes++;
-            edges++;
-          }
-        }
-
-        // Паттерн: fastify.route({ method: 'GET', url: '/path', handler })
-        if (node.callee.type === 'MemberExpression' &&
-            node.callee.property?.name === 'route' &&
-            node.arguments[0]?.type === 'ObjectExpression') {
-
-          const config = this.parseObjectLiteral(node.arguments[0]);
-          if (config.method && config.url) {
-            const routeId = `http:route:${module.file}:${node.loc.start.line}`;
-
-            graph.addNode({
-              id: routeId,
-              type: 'http:route',
-              name: `${config.method} ${config.url}`,
-              method: config.method,
-              path: config.url,
-              file: module.file,
-              line: node.loc.start.line,
-              framework: 'fastify'
-            });
-
             graph.addEdge({
               type: 'CONTAINS',
               src: module.id,
@@ -352,24 +405,12 @@ export class FastifyRouteAnalyzer extends Plugin {
 
     return { routes, edges };
   }
-
-  parseObjectLiteral(node) {
-    const result = {};
-    for (const prop of node.properties) {
-      if (prop.type === 'ObjectProperty' && prop.key.type === 'Identifier') {
-        if (prop.value.type === 'StringLiteral') {
-          result[prop.key.name] = prop.value.value;
-        }
-      }
-    }
-    return result;
-  }
 }
 ```
 
-## Регистрация плагина в конфигурации
+## Registering Plugins in Configuration
 
-Плагины регистрируются в `.grafema/config.yaml` по имени класса:
+Plugins are registered in `.grafema/config.yaml` by class name:
 
 ```yaml
 # .grafema/config.yaml
@@ -379,57 +420,55 @@ plugins:
     - JSModuleIndexer
 
   analysis:
-    - JSASTAnalyzer          # Базовый AST анализатор (всегда нужен)
-    - ExpressRouteAnalyzer   # Встроенный плагин
-    - FastifyRouteAnalyzer   # Ваш кастомный плагин
+    - JSASTAnalyzer          # Core AST analyzer (always needed)
+    - ExpressRouteAnalyzer   # Built-in plugin
+    - FastifyRouteAnalyzer   # Your custom plugin
 
   enrichment:
     - MethodCallResolver
 
   validation:
     - EvalBanValidator
+    - HelloWorldPlugin       # Your simple plugin
 ```
 
-### Порядок плагинов
+### Plugin Order
 
-1. Плагины выполняются в порядке фаз: DISCOVERY → INDEXING → ANALYSIS → ENRICHMENT → VALIDATION
-2. Внутри фазы плагины сортируются по `priority` (выше = раньше)
-3. Используйте `dependencies` для явных зависимостей между плагинами
+1. Plugins execute in phase order: DISCOVERY → INDEXING → ANALYSIS → ENRICHMENT → VALIDATION
+2. Within a phase, plugins are sorted by `priority` (higher = earlier)
+3. Use `dependencies` for explicit dependencies between plugins
 
-### Встроенный плагин
+### Adding a Built-in Plugin
 
-Для добавления плагина в кодовую базу Grafema:
+To add a plugin to the Grafema codebase:
 
-1. Создайте файл в соответствующей директории:
+1. Create the file in the appropriate directory:
    ```
    packages/core/src/plugins/analysis/FastifyRouteAnalyzer.ts
    ```
 
-2. Добавьте экспорт в `packages/core/src/index.ts`:
+2. Add export to `packages/core/src/index.ts`:
    ```typescript
    export { FastifyRouteAnalyzer } from './plugins/analysis/FastifyRouteAnalyzer.js';
    ```
 
-3. Добавьте в DEFAULT_CONFIG в `packages/core/src/config/ConfigLoader.ts` если плагин должен быть включен по умолчанию.
+3. Add to DEFAULT_CONFIG in `packages/core/src/config/ConfigLoader.ts` if it should be enabled by default.
 
-### Кастомный плагин в проекте (TODO)
+### Custom Plugins in Project (TODO)
 
-> **Note:** Кастомные плагины в директории проекта пока не реализованы.
-> Текущий способ: fork репозитория или создание npm пакета.
+> **Note:** Custom plugins in the project directory are not yet implemented.
+> Current approach: fork the repository or create an npm package.
 
-## Именование типов
+## Type Naming Conventions
 
-### Соглашения
-
-| Категория | Формат | Примеры |
-|-----------|--------|---------|
+| Category | Format | Examples |
+|----------|--------|----------|
 | Framework-specific | `framework:type` | `http:route`, `socketio:emit`, `db:query` |
 | Generic | `UPPERCASE` | `MODULE`, `FUNCTION`, `CALL`, `VARIABLE` |
 | Edges | `UPPERCASE` | `CONTAINS`, `CALLS`, `DEPENDS_ON` |
 
-### Существующие типы
+### Existing Node Types
 
-**Nodes:**
 - `MODULE`, `FUNCTION`, `CLASS`, `METHOD`, `VARIABLE`, `PARAMETER`
 - `CALL`, `METHOD_CALL`, `EXPRESSION`
 - `http:route`, `http:request`, `http:api`
@@ -438,16 +477,17 @@ plugins:
 - `react:component`, `react:hook`
 - `GUARANTEE`
 
-**Edges:**
+### Existing Edge Types
+
 - `CONTAINS`, `CALLS`, `DEPENDS_ON`
 - `ASSIGNED_FROM`, `DERIVES_FROM`
 - `INSTANCE_OF`, `PASSES_ARGUMENT`, `HAS_PARAMETER`
 - `USES_MIDDLEWARE`, `HANDLED_BY`
 - `GOVERNS`, `VIOLATES`
 
-## Тестирование плагина
+## Testing Your Plugin
 
-### Unit test структура
+### Unit Test Structure
 
 ```javascript
 // test/unit/FastifyRouteAnalyzer.test.js
@@ -474,7 +514,7 @@ describe('FastifyRouteAnalyzer', () => {
     const orchestrator = createTestOrchestrator(backend);
     await orchestrator.run(FIXTURE_PATH);
 
-    // Проверяем что routes найдены
+    // Verify routes were found
     const routes = [];
     for await (const node of backend.queryNodes({ type: 'http:route' })) {
       if (node.framework === 'fastify') {
@@ -487,7 +527,7 @@ describe('FastifyRouteAnalyzer', () => {
 });
 ```
 
-### Test fixture
+### Test Fixture
 
 ```javascript
 // test/fixtures/fastify-app/index.js
@@ -503,20 +543,18 @@ fastify.post('/users', async (request, reply) => {
   return { created: true };
 });
 
-fastify.route({
-  method: 'GET',
-  url: '/health',
-  handler: async () => ({ status: 'ok' })
-});
-
 export default fastify;
 ```
 
+**Expected output:**
+- 2 `http:route` nodes: `GET /users` and `POST /users`
+- 2 `CONTAINS` edges from the MODULE to each route
+
 ## Debugging
 
-### Логирование
+### Logging
 
-Используйте `context.logger` вместо `console.log`:
+Use `context.logger` instead of `console.log`:
 
 ```javascript
 async execute(context) {
@@ -527,42 +565,35 @@ async execute(context) {
 }
 ```
 
-Управляйте уровнем логирования через CLI:
+Control log level via CLI:
 ```bash
 grafema analyze --log-level debug
 ```
 
-### Проверка результатов
+### Common Problems
 
-```javascript
-// После анализа, проверьте через MCP:
-// get_stats() - количество нод по типам
-// query_graph({ query: "violation(X) :- node(X, \"http:route\")." })
-```
+| Problem | Solution |
+|---------|----------|
+| Plugin doesn't find patterns | Add `logger.debug(JSON.stringify(node, null, 2))` in traverse to see AST |
+| Nodes created but not visible | Check ID uniqueness |
+| Edges not created | Verify src and dst nodes exist |
+| Plugin runs too early | Decrease priority (lower = later) |
+| Plugin doesn't run at all | Verify class name is in config.yaml |
 
-### Распространённые проблемы
+## Plugin Development Checklist
 
-| Проблема | Решение |
-|----------|---------|
-| Плагин не находит паттерны | Добавьте `logger.debug(JSON.stringify(node, null, 2))` в traverse для просмотра AST |
-| Ноды создаются но не видны | Проверьте уникальность ID |
-| Edges не создаются | Проверьте что src и dst ноды существуют |
-| Плагин выполняется слишком рано | Уменьшите priority (меньше = позже) |
-| Плагин не запускается | Проверьте что имя класса добавлено в config.yaml |
+- [ ] Plugin type determined (analysis/enrichment/validation)
+- [ ] Metadata correct (phase, priority, creates, dependencies)
+- [ ] Execute returns PluginResult
+- [ ] Nodes have unique IDs
+- [ ] Nodes have file/line for navigation
+- [ ] Edges connect existing nodes
+- [ ] Tests written with fixture
+- [ ] Plugin added to config.yaml
 
-## Чеклист разработки плагина
+## See Also
 
-- [ ] Определён тип плагина (analysis/enrichment/validation)
-- [ ] Metadata корректны (phase, priority, creates, dependencies)
-- [ ] Execute возвращает PluginResult
-- [ ] Ноды имеют уникальные ID
-- [ ] Ноды имеют file/line для навигации
-- [ ] Edges связывают существующие ноды
-- [ ] Написаны тесты с fixture
-- [ ] Плагин добавлен в config.yaml
-
-## См. также
-
-- [Configuration Reference](configuration.md) — полный справочник конфигурации
-- [Project Onboarding](project-onboarding.md) — внедрение Grafema
-- [Guarantee Workflow](guarantee-workflow.md) — создание гарантий
+- [Configuration Reference](configuration.md) — Full configuration reference
+- [Project Onboarding](project-onboarding.md) — Getting started with Grafema
+- [Guarantee Workflow](guarantee-workflow.md) — Creating guarantees
+- [Glossary](glossary.md) — Term definitions
