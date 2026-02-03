@@ -16,7 +16,7 @@ import type { NodePath } from '@babel/traverse';
 import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { NodeRecord } from '@grafema/types';
-import { getLine } from './ast/utils/location.js';
+import { getLine, getColumn } from './ast/utils/location.js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const traverse = (traverseModule as any).default || traverseModule;
@@ -33,6 +33,7 @@ interface EndpointNode {
   line: number;
   routerName: string;
   handlerLine: number;
+  handlerColumn: number;
 }
 
 /**
@@ -232,7 +233,10 @@ export class ExpressRouteAnalyzer extends Plugin {
                     routerName: objectName,
                     handlerLine: (mainHandler as Node).loc
                       ? getLine(mainHandler as Node)
-                      : getLine(node)
+                      : getLine(node),
+                    handlerColumn: (mainHandler as Node).loc
+                      ? getColumn(mainHandler as Node)
+                      : getColumn(node)
                   });
 
                   // Обрабатываем middleware
@@ -322,10 +326,11 @@ export class ExpressRouteAnalyzer extends Plugin {
 
       // Создаём ENDPOINT ноды
       for (const endpoint of endpoints) {
-        // Сохраняем handlerLine ПЕРЕД destructuring
+        // Сохраняем handler location ПЕРЕД destructuring
         const handlerLine = endpoint.handlerLine;
+        const handlerColumn = endpoint.handlerColumn;
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        const { handlerLine: _, routerName, ...endpointData } = endpoint;
+        const { handlerLine: _hl, handlerColumn: _hc, routerName, ...endpointData } = endpoint;
 
         await graph.addNode(endpointData as unknown as NodeRecord);
         endpointsCreated++;
@@ -338,22 +343,24 @@ export class ExpressRouteAnalyzer extends Plugin {
         });
         edgesCreated++;
 
-        // Ищем FUNCTION ноду для handler (arrow function на той же строке)
+        // Ищем FUNCTION ноду для handler по line+column
+        // NOTE: queryNodes не поддерживает line/column фильтрацию, поэтому фильтруем вручную
         if (handlerLine) {
-          // Используем queryNodes вместо прямого доступа к graph.nodes
           for await (const fn of graph.queryNodes({
             type: 'FUNCTION',
-            file: module.file,
-            line: handlerLine
+            file: module.file
           })) {
-            // ENDPOINT -> HANDLED_BY -> FUNCTION
-            await graph.addEdge({
-              type: 'HANDLED_BY',
-              src: endpoint.id,
-              dst: fn.id
-            });
-            edgesCreated++;
-            break; // Берём только первую найденную функцию
+            // Проверяем точное совпадение line и column
+            if (fn.line === handlerLine && fn.column === handlerColumn) {
+              // ENDPOINT -> HANDLED_BY -> FUNCTION
+              await graph.addEdge({
+                type: 'HANDLED_BY',
+                src: endpoint.id,
+                dst: fn.id
+              });
+              edgesCreated++;
+              break;
+            }
           }
         }
       }
