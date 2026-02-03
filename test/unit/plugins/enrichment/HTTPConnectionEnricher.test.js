@@ -373,7 +373,6 @@ describe('HTTPConnectionEnricher - Mount Prefix Support', () => {
     });
   });
 });
-
 // =============================================================================
 // HTTP_RECEIVES EDGE TESTS (REG-252 Phase C)
 // =============================================================================
@@ -862,5 +861,492 @@ describe('HTTPConnectionEnricher - HTTP_RECEIVES Edges (REG-252 Phase C)', () =>
       assert.strictEqual(httpReceivesEdges.length, 1, 'Should create HTTP_RECEIVES for POST');
       assert.strictEqual(httpReceivesEdges[0].metadata.method, 'POST');
     });
+  });
+});
+
+// =============================================================================
+// TEMPLATE LITERAL MATCHING TESTS - REG-318
+// =============================================================================
+
+/**
+ * REG-318: URL normalization for template literal matching
+ *
+ * Problem: Template literals like `/api/users/${id}` don't match Express params like `:id`
+ * Solution: Normalize both to canonical form `{param}` before comparison
+ */
+
+/**
+ * Normalize URL to canonical form for comparison.
+ * Converts both Express params (:id) and template literals (${...}) to {param}.
+ */
+function normalizeUrl(url) {
+  return url
+    .replace(/:[^/]+/g, '{param}')      // :id -> {param}
+    .replace(/\$\{[^}]*\}/g, '{param}'); // ${...} -> {param}, ${userId} -> {param}
+}
+
+/**
+ * Check if URL has any parameter placeholders (after normalization)
+ */
+function hasParamsNormalized(normalizedUrl) {
+  return normalizedUrl.includes('{param}');
+}
+
+/**
+ * Check if path has parameters (for edge matchType metadata)
+ * Updated to handle both Express params and template literals
+ */
+function hasParamsNew(path) {
+  if (!path) return false;
+  return path.includes(':') || path.includes('${');
+}
+
+/**
+ * Check if request URL matches route path.
+ * Supports:
+ * - Exact match
+ * - Express params (:id)
+ * - Template literals (${...})
+ * - Concrete values matching params (/users/123 matches /users/:id)
+ */
+function pathsMatchNormalized(requestUrl, routePath) {
+  // Normalize both to canonical form
+  const normRequest = normalizeUrl(requestUrl);
+  const normRoute = normalizeUrl(routePath);
+
+  // If both normalize to same string, they match
+  if (normRequest === normRoute) {
+    return true;
+  }
+
+  // If route has no params after normalization, require exact match
+  if (!hasParamsNormalized(normRoute)) {
+    return false;
+  }
+
+  // Handle case where request has concrete value (e.g., '/users/123')
+  // and route has param (e.g., '/users/{param}')
+  const routeRegex = normRoute
+    .replace(/\{param\}/g, '[^/]+')  // {param} -> [^/]+
+    .replace(/\//g, '\\/');           // / -> \/
+
+  return new RegExp(`^${routeRegex}$`).test(normRequest);
+}
+
+/**
+ * Core matching logic WITH template literal support
+ */
+async function matchRequestsToRoutesNormalized(graph) {
+  const routes = [];
+  for await (const node of graph.queryNodes({ type: 'http:route' })) {
+    routes.push(node);
+  }
+
+  const requests = [];
+  for await (const node of graph.queryNodes({ type: 'http:request' })) {
+    requests.push(node);
+  }
+
+  // Deduplicate
+  const uniqueRoutes = [...new Map(routes.map(r => [r.id, r])).values()];
+  const uniqueRequests = [...new Map(requests.map(r => [r.id, r])).values()];
+
+  const edges = [];
+
+  for (const request of uniqueRequests) {
+    if (request.url === 'dynamic' || !request.url) continue;
+
+    const method = (request.method || 'GET').toUpperCase();
+    const url = request.url;
+
+    for (const route of uniqueRoutes) {
+      const routeMethod = (route.method || 'GET').toUpperCase();
+      const routePath = route.fullPath || route.path;
+
+      if (routePath && method === routeMethod && pathsMatchNormalized(url, routePath)) {
+        edges.push({
+          type: 'INTERACTS_WITH',
+          src: request.id,
+          dst: route.id,
+          matchType: hasParamsNew(routePath) || hasParamsNew(url) ? 'parametric' : 'exact'
+        });
+        break; // One request → one route
+      }
+    }
+  }
+
+  return edges;
+}
+
+describe('HTTPConnectionEnricher - Template Literal Matching (REG-318)', () => {
+
+  describe('Template literal ${...} matches Express :param', () => {
+
+    it('should match template literal ${...} to :param', async () => {
+      const graph = new MockGraphBackend();
+
+      graph.addNode({
+        id: 'route:users-by-id',
+        type: 'http:route',
+        method: 'GET',
+        fullPath: '/api/users/:id',
+      });
+
+      graph.addNode({
+        id: 'request:get-user',
+        type: 'http:request',
+        method: 'GET',
+        url: '/api/users/${...}',  // Template literal (unnamed)
+      });
+
+      const edges = await matchRequestsToRoutesNormalized(graph);
+
+      assert.strictEqual(edges.length, 1, 'Should match template literal to param');
+      assert.strictEqual(edges[0].matchType, 'parametric');
+    });
+
+    it('should match named template literal ${userId} to :id', async () => {
+      const graph = new MockGraphBackend();
+
+      graph.addNode({
+        id: 'route:users-by-id',
+        type: 'http:route',
+        method: 'GET',
+        fullPath: '/api/users/:id',
+      });
+
+      graph.addNode({
+        id: 'request:get-user',
+        type: 'http:request',
+        method: 'GET',
+        url: '/api/users/${userId}',  // Named template variable
+      });
+
+      const edges = await matchRequestsToRoutesNormalized(graph);
+
+      assert.strictEqual(edges.length, 1, 'Should match named template literal to param');
+      assert.strictEqual(edges[0].src, 'request:get-user');
+      assert.strictEqual(edges[0].dst, 'route:users-by-id');
+    });
+  });
+
+  describe('Multiple params in path', () => {
+
+    it('should match paths with multiple params', async () => {
+      const graph = new MockGraphBackend();
+
+      graph.addNode({
+        id: 'route:user-posts',
+        type: 'http:route',
+        method: 'GET',
+        fullPath: '/api/users/:userId/posts/:postId',
+      });
+
+      graph.addNode({
+        id: 'request:user-posts',
+        type: 'http:request',
+        method: 'GET',
+        url: '/api/users/${userId}/posts/${postId}',
+      });
+
+      const edges = await matchRequestsToRoutesNormalized(graph);
+
+      assert.strictEqual(edges.length, 1, 'Should match multiple params');
+      assert.strictEqual(edges[0].matchType, 'parametric');
+    });
+
+    it('should match mixed params (:id and ${value})', async () => {
+      const graph = new MockGraphBackend();
+
+      // Route uses Express params
+      graph.addNode({
+        id: 'route:nested',
+        type: 'http:route',
+        method: 'GET',
+        fullPath: '/api/:orgId/teams/:teamId',
+      });
+
+      // Request uses template literals
+      graph.addNode({
+        id: 'request:nested',
+        type: 'http:request',
+        method: 'GET',
+        url: '/api/${orgId}/teams/${teamId}',
+      });
+
+      const edges = await matchRequestsToRoutesNormalized(graph);
+
+      assert.strictEqual(edges.length, 1);
+    });
+  });
+
+  describe('Concrete value matches param', () => {
+
+    it('should match concrete value to :param', async () => {
+      const graph = new MockGraphBackend();
+
+      graph.addNode({
+        id: 'route:user-by-id',
+        type: 'http:route',
+        method: 'GET',
+        fullPath: '/api/users/:id',
+      });
+
+      graph.addNode({
+        id: 'request:user-123',
+        type: 'http:request',
+        method: 'GET',
+        url: '/api/users/123',  // Concrete value
+      });
+
+      const edges = await matchRequestsToRoutesNormalized(graph);
+
+      assert.strictEqual(edges.length, 1, 'Should match concrete value to param');
+      assert.strictEqual(edges[0].matchType, 'parametric');
+    });
+
+    it('should match concrete UUID to :param', async () => {
+      const graph = new MockGraphBackend();
+
+      graph.addNode({
+        id: 'route:resource',
+        type: 'http:route',
+        method: 'GET',
+        fullPath: '/api/resources/:resourceId',
+      });
+
+      graph.addNode({
+        id: 'request:resource-uuid',
+        type: 'http:request',
+        method: 'GET',
+        url: '/api/resources/550e8400-e29b-41d4-a716-446655440000',
+      });
+
+      const edges = await matchRequestsToRoutesNormalized(graph);
+
+      assert.strictEqual(edges.length, 1);
+    });
+
+    it('should match multiple concrete values to multiple params', async () => {
+      const graph = new MockGraphBackend();
+
+      graph.addNode({
+        id: 'route:user-post',
+        type: 'http:route',
+        method: 'GET',
+        fullPath: '/api/users/:userId/posts/:postId',
+      });
+
+      graph.addNode({
+        id: 'request:specific-post',
+        type: 'http:request',
+        method: 'GET',
+        url: '/api/users/42/posts/7',  // Two concrete values
+      });
+
+      const edges = await matchRequestsToRoutesNormalized(graph);
+
+      assert.strictEqual(edges.length, 1);
+      assert.strictEqual(edges[0].matchType, 'parametric');
+    });
+  });
+
+  describe('No false positives', () => {
+
+    it('should NOT match different base paths', async () => {
+      const graph = new MockGraphBackend();
+
+      graph.addNode({
+        id: 'route:users',
+        type: 'http:route',
+        method: 'GET',
+        fullPath: '/api/users',
+      });
+
+      graph.addNode({
+        id: 'request:posts',
+        type: 'http:request',
+        method: 'GET',
+        url: '/api/posts/${id}',
+      });
+
+      const edges = await matchRequestsToRoutesNormalized(graph);
+
+      assert.strictEqual(edges.length, 0, 'Different base paths should not match');
+    });
+
+    it('should NOT match different path structures', async () => {
+      const graph = new MockGraphBackend();
+
+      // Route: /api/users/:id
+      graph.addNode({
+        id: 'route:user-by-id',
+        type: 'http:route',
+        method: 'GET',
+        fullPath: '/api/users/:id',
+      });
+
+      // Request: /api/users/profile/settings (different structure)
+      graph.addNode({
+        id: 'request:settings',
+        type: 'http:request',
+        method: 'GET',
+        url: '/api/users/profile/settings',
+      });
+
+      const edges = await matchRequestsToRoutesNormalized(graph);
+
+      assert.strictEqual(edges.length, 0, 'Different path structures should not match');
+    });
+
+    it('should NOT match /api/users/:id with /api/users (missing param)', async () => {
+      const graph = new MockGraphBackend();
+
+      graph.addNode({
+        id: 'route:user-by-id',
+        type: 'http:route',
+        method: 'GET',
+        fullPath: '/api/users/:id',
+      });
+
+      graph.addNode({
+        id: 'request:list-users',
+        type: 'http:request',
+        method: 'GET',
+        url: '/api/users',  // No param value
+      });
+
+      const edges = await matchRequestsToRoutesNormalized(graph);
+
+      assert.strictEqual(edges.length, 0, 'Missing param segment should not match');
+    });
+
+    it('should NOT match when route has no params and paths differ', async () => {
+      const graph = new MockGraphBackend();
+
+      graph.addNode({
+        id: 'route:specific',
+        type: 'http:route',
+        method: 'GET',
+        fullPath: '/api/users/admin',  // No params
+      });
+
+      graph.addNode({
+        id: 'request:different',
+        type: 'http:request',
+        method: 'GET',
+        url: '/api/users/guest',  // Different concrete path
+      });
+
+      const edges = await matchRequestsToRoutesNormalized(graph);
+
+      assert.strictEqual(edges.length, 0, 'Different concrete paths should not match');
+    });
+  });
+
+  describe('Edge cases', () => {
+
+    it('should handle root path correctly', async () => {
+      const graph = new MockGraphBackend();
+
+      graph.addNode({
+        id: 'route:root',
+        type: 'http:route',
+        method: 'GET',
+        fullPath: '/',
+      });
+
+      graph.addNode({
+        id: 'request:root',
+        type: 'http:request',
+        method: 'GET',
+        url: '/',
+      });
+
+      const edges = await matchRequestsToRoutesNormalized(graph);
+
+      assert.strictEqual(edges.length, 1);
+      assert.strictEqual(edges[0].matchType, 'exact');
+    });
+
+    it('should handle empty template literal ${} correctly', async () => {
+      const graph = new MockGraphBackend();
+
+      graph.addNode({
+        id: 'route:param',
+        type: 'http:route',
+        method: 'GET',
+        fullPath: '/api/:id',
+      });
+
+      graph.addNode({
+        id: 'request:empty-template',
+        type: 'http:request',
+        method: 'GET',
+        url: '/api/${}',  // Empty template literal
+      });
+
+      const edges = await matchRequestsToRoutesNormalized(graph);
+
+      // ${} should normalize to {param} and match
+      assert.strictEqual(edges.length, 1);
+    });
+
+    it('should handle complex template expressions ${user.id} correctly', async () => {
+      const graph = new MockGraphBackend();
+
+      graph.addNode({
+        id: 'route:user',
+        type: 'http:route',
+        method: 'GET',
+        fullPath: '/api/users/:userId',
+      });
+
+      graph.addNode({
+        id: 'request:complex-template',
+        type: 'http:request',
+        method: 'GET',
+        url: '/api/users/${user.id}',  // Complex expression
+      });
+
+      const edges = await matchRequestsToRoutesNormalized(graph);
+
+      assert.strictEqual(edges.length, 1);
+    });
+  });
+});
+
+describe('URL Normalization Unit Tests', () => {
+
+  it('should normalize Express :param to {param}', () => {
+    assert.strictEqual(normalizeUrl('/api/users/:id'), '/api/users/{param}');
+    assert.strictEqual(normalizeUrl('/api/:org/teams/:team'), '/api/{param}/teams/{param}');
+  });
+
+  it('should normalize template literal ${...} to {param}', () => {
+    assert.strictEqual(normalizeUrl('/api/users/${id}'), '/api/users/{param}');
+    assert.strictEqual(normalizeUrl('/api/users/${userId}'), '/api/users/{param}');
+    assert.strictEqual(normalizeUrl('/api/users/${...}'), '/api/users/{param}');
+  });
+
+  it('should normalize mixed params to same form', () => {
+    const expressPath = normalizeUrl('/api/:orgId/teams/:teamId');
+    const templatePath = normalizeUrl('/api/${orgId}/teams/${teamId}');
+
+    assert.strictEqual(expressPath, templatePath);
+    assert.strictEqual(expressPath, '/api/{param}/teams/{param}');
+  });
+
+  it('should not modify paths without params', () => {
+    assert.strictEqual(normalizeUrl('/api/users'), '/api/users');
+    assert.strictEqual(normalizeUrl('/health'), '/health');
+    assert.strictEqual(normalizeUrl('/'), '/');
+  });
+
+  it('should detect params correctly', () => {
+    assert.strictEqual(hasParamsNew('/api/users/:id'), true);
+    assert.strictEqual(hasParamsNew('/api/users/${id}'), true);
+    assert.strictEqual(hasParamsNew('/api/users'), false);
+    assert.strictEqual(hasParamsNew('/api/users/123'), false);
   });
 });
