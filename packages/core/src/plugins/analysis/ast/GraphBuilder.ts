@@ -326,7 +326,8 @@ export class GraphBuilder {
     this.bufferArrayLiteralNodes(arrayLiterals);
 
     // 18.7. Buffer HAS_PROPERTY edges (OBJECT_LITERAL -> property values)
-    this.bufferObjectPropertyEdges(objectProperties);
+    // REG-329: Pass variableDeclarations and parameters for scope-aware variable resolution
+    this.bufferObjectPropertyEdges(objectProperties, variableDeclarations, parameters);
 
     // 19. Buffer ASSIGNED_FROM edges for data flow (some need to create EXPRESSION nodes)
     this.bufferAssignmentEdges(variableAssignments, variableDeclarations, callSites, methodCalls, functions, classInstantiations, parameters);
@@ -2145,7 +2146,8 @@ export class GraphBuilder {
 
         // Try parsing as semantic ID
         const parsed = parseSemanticId(v.id);
-        if (parsed && parsed.type === 'VARIABLE') {
+        // REG-329: Check for both VARIABLE and CONSTANT (const declarations)
+        if (parsed && (parsed.type === 'VARIABLE' || parsed.type === 'CONSTANT')) {
           // FIXED (REG-309): Handle module-level scope matching
           // Empty search scope [] should match semantic ID scope ['global']
           if (searchScopePath.length === 0) {
@@ -2869,10 +2871,43 @@ export class GraphBuilder {
   /**
    * Buffer HAS_PROPERTY edges connecting OBJECT_LITERAL nodes to their property values.
    * Creates edges from object literal to its property value nodes (LITERAL, nested OBJECT_LITERAL, ARRAY_LITERAL, etc.)
+   *
+   * REG-329: Adds scope-aware variable resolution for VARIABLE property values.
+   * Uses the same resolveVariableInScope infrastructure as mutation handlers.
    */
-  private bufferObjectPropertyEdges(objectProperties: ObjectPropertyInfo[]): void {
+  private bufferObjectPropertyEdges(
+    objectProperties: ObjectPropertyInfo[],
+    variableDeclarations: VariableDeclarationInfo[],
+    parameters: ParameterInfo[]
+  ): void {
     for (const prop of objectProperties) {
-      // Only create edge if we have a destination node ID
+      // REG-329: Handle VARIABLE value types with scope resolution
+      if (prop.valueType === 'VARIABLE' && prop.valueName) {
+        const scopePath = prop.valueScopePath ?? [];
+        const file = prop.file;
+
+        // Resolve variable using scope chain
+        const resolvedVar = this.resolveVariableInScope(
+          prop.valueName, scopePath, file, variableDeclarations
+        );
+        const resolvedParam = !resolvedVar
+          ? this.resolveParameterInScope(prop.valueName, scopePath, file, parameters)
+          : null;
+
+        const resolvedNodeId = resolvedVar?.id ?? resolvedParam?.semanticId ?? resolvedParam?.id;
+
+        if (resolvedNodeId) {
+          this._bufferEdge({
+            type: 'HAS_PROPERTY',
+            src: prop.objectId,
+            dst: resolvedNodeId,
+            propertyName: prop.propertyName
+          });
+        }
+        continue;
+      }
+
+      // Existing logic for non-VARIABLE types
       if (prop.valueNodeId) {
         this._bufferEdge({
           type: 'HAS_PROPERTY',

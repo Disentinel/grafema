@@ -478,6 +478,8 @@ export interface ObjectPropertyInfo {
   // For nested object/array
   nestedObjectId?: string;
   nestedArrayId?: string;
+  // For VARIABLE values - scope path for scope-aware lookup (REG-329)
+  valueScopePath?: string[];
 }
 
 // === ARRAY LITERAL INFO ===
