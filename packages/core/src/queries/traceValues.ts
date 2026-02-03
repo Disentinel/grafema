@@ -189,6 +189,27 @@ async function traceRecursive(
 
   // Terminal: CALL / METHOD_CALL - function return value
   if (nodeType === 'CALL' || nodeType === 'METHOD_CALL') {
+    // Check for HTTP_RECEIVES edges (cross-service data flow)
+    const httpEdges = await backend.getOutgoingEdges(nodeId, ['HTTP_RECEIVES']);
+
+    if (httpEdges.length > 0) {
+      // Follow HTTP boundary to backend response
+      for (const edge of httpEdges) {
+        await traceRecursive(
+          backend,
+          edge.dst,
+          visited,
+          depth + 1,
+          maxDepth,
+          followDerivesFrom,
+          detectNondeterministic,
+          results
+        );
+      }
+      return; // Traced through HTTP boundary, don't mark as unknown
+    }
+
+    // Original behavior - mark as unknown
     results.push({
       value: undefined,
       source,
@@ -211,6 +232,17 @@ async function traceRecursive(
     }
   }
 
+  // Terminal: OBJECT_LITERAL - a valid structured value
+  // OBJECT_LITERAL without edges is valid (e.g., {} or {key: value})
+  if (nodeType === 'OBJECT_LITERAL') {
+    results.push({
+      value: node.value,
+      source,
+      isUnknown: false,
+    });
+    return;
+  }
+
   // Get outgoing data flow edges
   const edgeTypes = ['ASSIGNED_FROM'];
   if (followDerivesFrom) {
@@ -219,8 +251,8 @@ async function traceRecursive(
 
   const edges = await backend.getOutgoingEdges(nodeId, edgeTypes);
 
-  // No edges case - unknown unless it's OBJECT_LITERAL
-  if (edges.length === 0 && nodeType !== 'OBJECT_LITERAL') {
+  // No edges case - unknown
+  if (edges.length === 0) {
     results.push({
       value: undefined,
       source,

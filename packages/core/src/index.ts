@@ -172,6 +172,7 @@ export { RustModuleIndexer } from './plugins/indexing/RustModuleIndexer.js';
 // Analysis plugins
 export { JSASTAnalyzer } from './plugins/analysis/JSASTAnalyzer.js';
 export { ExpressRouteAnalyzer } from './plugins/analysis/ExpressRouteAnalyzer.js';
+export { ExpressResponseAnalyzer } from './plugins/analysis/ExpressResponseAnalyzer.js';
 export { ExpressAnalyzer } from './plugins/analysis/ExpressAnalyzer.js';
 export { SocketIOAnalyzer } from './plugins/analysis/SocketIOAnalyzer.js';
 export { DatabaseAnalyzer } from './plugins/analysis/DatabaseAnalyzer.js';

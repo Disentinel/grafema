@@ -35,6 +35,20 @@ interface HttpRequestNode {
   file: string;
   line: number;
   staticUrl: 'yes' | 'no';
+  responseDataNode?: string | null;  // ID of CALL node for response.json(), response.text(), etc.
+}
+
+/**
+ * Response consumption methods for fetch API
+ */
+const RESPONSE_CONSUMPTION_METHODS = ['json', 'text', 'blob', 'arrayBuffer', 'formData'];
+
+/**
+ * Fetch call info with response variable name (for responseDataNode tracking)
+ */
+interface FetchCallInfo {
+  request: HttpRequestNode;
+  responseVarName: string | null;
 }
 
 /**
@@ -151,7 +165,7 @@ export class FetchAnalyzer extends Plugin {
         ] as ParserPlugin[]
       });
 
-      const httpRequests: HttpRequestNode[] = [];
+      const fetchCalls: FetchCallInfo[] = [];
       const externalAPIs = new Set<string>();
 
       // Детект HTTP request паттернов
@@ -178,7 +192,9 @@ export class FetchAnalyzer extends Plugin {
               staticUrl: url !== 'dynamic' && url !== 'unknown' ? 'yes' : 'no'
             };
 
-            httpRequests.push(request);
+            // Extract response variable name for responseDataNode tracking
+            const responseVarName = this.getResponseVariableName(path);
+            fetchCalls.push({ request, responseVarName });
 
             // Определяем внешний ли это API
             if (this.isExternalAPI(url)) {
@@ -209,7 +225,8 @@ export class FetchAnalyzer extends Plugin {
               staticUrl: url !== 'dynamic' && url !== 'unknown' ? 'yes' : 'no'
             };
 
-            httpRequests.push(request);
+            // Axios uses response.data, not response.json() - out of scope for v1.0
+            fetchCalls.push({ request, responseVarName: null });
 
             if (this.isExternalAPI(url)) {
               externalAPIs.add(this.extractDomain(url));
@@ -253,7 +270,8 @@ export class FetchAnalyzer extends Plugin {
                 staticUrl: url !== 'dynamic' && url !== 'unknown' ? 'yes' : 'no'
               };
 
-              httpRequests.push(request);
+              // Axios uses response.data, not response.json() - out of scope for v1.0
+              fetchCalls.push({ request, responseVarName: null });
 
               if (this.isExternalAPI(url)) {
                 externalAPIs.add(this.extractDomain(url));
@@ -285,7 +303,9 @@ export class FetchAnalyzer extends Plugin {
                 staticUrl: url !== 'dynamic' && url !== 'unknown' ? 'yes' : 'no'
               };
 
-              httpRequests.push(request);
+              // Custom wrappers may use fetch-like response.json() pattern
+              const responseVarName = this.getResponseVariableName(path);
+              fetchCalls.push({ request, responseVarName });
 
               if (this.isExternalAPI(url)) {
                 externalAPIs.add(this.extractDomain(url));
@@ -295,8 +315,25 @@ export class FetchAnalyzer extends Plugin {
         }
       });
 
+      // Extract httpRequests for external API handling
+      const httpRequests = fetchCalls.map(fc => fc.request);
+
       // Создаём HTTP_REQUEST ноды
-      for (const request of httpRequests) {
+      for (const fetchCall of fetchCalls) {
+        const request = fetchCall.request;
+
+        // Find responseDataNode if we have a response variable name
+        if (fetchCall.responseVarName) {
+          const responseDataNodeId = await this.findResponseJsonCall(
+            graph,
+            request.file,
+            fetchCall.responseVarName
+          );
+          if (responseDataNodeId) {
+            request.responseDataNode = responseDataNodeId;
+          }
+        }
+
         await graph.addNode(request as unknown as NodeRecord);
 
         // Создаём ребро от модуля к request
@@ -370,7 +407,7 @@ export class FetchAnalyzer extends Plugin {
       }
 
       return {
-        requests: httpRequests.length,
+        requests: fetchCalls.length,
         apis: externalAPIs.size
       };
     } catch (error) {
@@ -472,5 +509,77 @@ export class FetchAnalyzer extends Plugin {
       const match = url.match(/https?:\/\/([^\/\?]+)/);
       return match ? match[1] : url;
     }
+  }
+
+  /**
+   * Extracts the variable name that holds the fetch response.
+   * Handles patterns like:
+   * - const response = await fetch(url)
+   * - let res = await fetch(url)
+   * - response = await fetch(url)
+   *
+   * @param path - NodePath of the CallExpression
+   * @returns Variable name or null if not found
+   */
+  private getResponseVariableName(path: NodePath<CallExpression>): string | null {
+    // Walk up the AST to find the variable assignment
+    let current: NodePath | null = path.parentPath;
+
+    // Pattern: await fetch()
+    if (current && current.node.type === 'AwaitExpression') {
+      current = current.parentPath;
+    }
+
+    if (!current) return null;
+
+    // Pattern: const response = await fetch() / let response = await fetch()
+    if (current.node.type === 'VariableDeclarator') {
+      const declarator = current.node as { id: Node };
+      if (declarator.id.type === 'Identifier') {
+        return (declarator.id as Identifier).name;
+      }
+    }
+
+    // Pattern: response = await fetch() (reassignment)
+    if (current.node.type === 'AssignmentExpression') {
+      const assignment = current.node as { left: Node };
+      if (assignment.left.type === 'Identifier') {
+        return (assignment.left as Identifier).name;
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Finds the response consumption CALL node (response.json(), response.text(), etc.)
+   * by querying the graph for CALL nodes in the same file with matching object name.
+   *
+   * @param graph - Graph backend
+   * @param file - File path where fetch call is located
+   * @param responseVarName - Variable name holding the response
+   * @returns CALL node ID or null if not found
+   */
+  private async findResponseJsonCall(
+    graph: PluginContext['graph'],
+    file: string,
+    responseVarName: string
+  ): Promise<string | null> {
+    // Query for CALL nodes in the same file
+    for await (const node of graph.queryNodes({ type: 'CALL' })) {
+      // Check if it's in the same file
+      if (node.file !== file) continue;
+
+      // Check if object matches response variable name
+      const callNode = node as unknown as { object?: string; method?: string };
+      if (callNode.object !== responseVarName) continue;
+
+      // Check if method is a response consumption method
+      if (callNode.method && RESPONSE_CONSUMPTION_METHODS.includes(callNode.method)) {
+        return node.id;
+      }
+    }
+
+    return null;
   }
 }
