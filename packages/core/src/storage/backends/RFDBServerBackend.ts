@@ -432,13 +432,26 @@ export class RFDBServerBackend {
 
     const humanId = (metadata.originalId as string) || wireNode.id;
 
+    // Exclude standard fields from metadata to prevent overwriting wireNode values
+    // REG-325: Metadata spread was overwriting name with LITERAL node data
+    const {
+      id: _id,
+      type: _type,
+      name: _name,
+      file: _file,
+      exported: _exported,
+      nodeType: _nodeType,
+      originalId: _originalId,  // Already extracted above
+      ...safeMetadata
+    } = metadata;
+
     return {
       id: humanId,
       type: wireNode.nodeType,
       name: wireNode.name,
       file: wireNode.file,
       exported: wireNode.exported,
-      ...metadata,
+      ...safeMetadata,
     };
   }
 
