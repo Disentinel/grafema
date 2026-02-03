@@ -55,6 +55,7 @@ import { ScopeTracker } from '../../core/ScopeTracker.js';
 import { computeSemanticId } from '../../core/SemanticId.js';
 import { ExpressionNode } from '../../core/nodes/ExpressionNode.js';
 import { ConstructorCallNode } from '../../core/nodes/ConstructorCallNode.js';
+import { ObjectLiteralNode } from '../../core/nodes/ObjectLiteralNode.js';
 import { NodeFactory } from '../../core/NodeFactory.js';
 import type { PluginContext, PluginResult, PluginMetadata, GraphBackend } from '@grafema/types';
 import type {
@@ -614,7 +615,10 @@ export class JSASTAnalyzer extends Plugin {
     line: number,
     literals: LiteralInfo[],
     variableAssignments: VariableAssignmentInfo[],
-    literalCounterRef: CounterRef
+    literalCounterRef: CounterRef,
+    objectLiterals: ObjectLiteralInfo[],
+    objectProperties: ObjectPropertyInfo[],
+    objectLiteralCounterRef: CounterRef
   ): void {
     if (!initNode) return;
     // initNode is already typed as t.Expression
@@ -622,7 +626,41 @@ export class JSASTAnalyzer extends Plugin {
 
     // 0. AwaitExpression
     if (initExpression.type === 'AwaitExpression') {
-      return this.trackVariableAssignment(initExpression.argument, variableId, variableName, module, line, literals, variableAssignments, literalCounterRef);
+      return this.trackVariableAssignment(initExpression.argument, variableId, variableName, module, line, literals, variableAssignments, literalCounterRef, objectLiterals, objectProperties, objectLiteralCounterRef);
+    }
+
+    // 0.5. ObjectExpression (REG-328) - must be before literal check
+    if (initExpression.type === 'ObjectExpression') {
+      const column = initExpression.loc?.start.column ?? 0;
+      const objectNode = ObjectLiteralNode.create(
+        module.file,
+        line,
+        column,
+        { counter: objectLiteralCounterRef.value++ }
+      );
+
+      // Add to objectLiterals collection for GraphBuilder to create the node
+      objectLiterals.push(objectNode as unknown as ObjectLiteralInfo);
+
+      // Extract properties from the object literal
+      this.extractObjectProperties(
+        initExpression,
+        objectNode.id,
+        module,
+        objectProperties,
+        objectLiterals,
+        objectLiteralCounterRef,
+        literals,
+        literalCounterRef
+      );
+
+      // Create ASSIGNED_FROM edge: VARIABLE -> OBJECT_LITERAL
+      variableAssignments.push({
+        variableId,
+        sourceId: objectNode.id,
+        sourceType: 'OBJECT_LITERAL'
+      });
+      return;
     }
 
     // 1. Literal
@@ -836,8 +874,8 @@ export class JSASTAnalyzer extends Plugin {
         column: column
       });
 
-      this.trackVariableAssignment(initExpression.consequent, variableId, variableName, module, line, literals, variableAssignments, literalCounterRef);
-      this.trackVariableAssignment(initExpression.alternate, variableId, variableName, module, line, literals, variableAssignments, literalCounterRef);
+      this.trackVariableAssignment(initExpression.consequent, variableId, variableName, module, line, literals, variableAssignments, literalCounterRef, objectLiterals, objectProperties, objectLiteralCounterRef);
+      this.trackVariableAssignment(initExpression.alternate, variableId, variableName, module, line, literals, variableAssignments, literalCounterRef, objectLiterals, objectProperties, objectLiteralCounterRef);
       return;
     }
 
@@ -859,8 +897,8 @@ export class JSASTAnalyzer extends Plugin {
         column: column
       });
 
-      this.trackVariableAssignment(initExpression.left, variableId, variableName, module, line, literals, variableAssignments, literalCounterRef);
-      this.trackVariableAssignment(initExpression.right, variableId, variableName, module, line, literals, variableAssignments, literalCounterRef);
+      this.trackVariableAssignment(initExpression.left, variableId, variableName, module, line, literals, variableAssignments, literalCounterRef, objectLiterals, objectProperties, objectLiteralCounterRef);
+      this.trackVariableAssignment(initExpression.right, variableId, variableName, module, line, literals, variableAssignments, literalCounterRef, objectLiterals, objectProperties, objectLiteralCounterRef);
       return;
     }
 
@@ -887,10 +925,157 @@ export class JSASTAnalyzer extends Plugin {
       for (const expr of initExpression.expressions) {
         // Filter out TSType nodes (only in TypeScript code)
         if (t.isExpression(expr)) {
-          this.trackVariableAssignment(expr, variableId, variableName, module, line, literals, variableAssignments, literalCounterRef);
+          this.trackVariableAssignment(expr, variableId, variableName, module, line, literals, variableAssignments, literalCounterRef, objectLiterals, objectProperties, objectLiteralCounterRef);
         }
       }
       return;
+    }
+  }
+
+  /**
+   * Extract object properties and create ObjectPropertyInfo records.
+   * Handles nested object/array literals recursively. (REG-328)
+   */
+  private extractObjectProperties(
+    objectExpr: t.ObjectExpression,
+    objectId: string,
+    module: VisitorModule,
+    objectProperties: ObjectPropertyInfo[],
+    objectLiterals: ObjectLiteralInfo[],
+    objectLiteralCounterRef: CounterRef,
+    literals: LiteralInfo[],
+    literalCounterRef: CounterRef
+  ): void {
+    for (const prop of objectExpr.properties) {
+      const propLine = prop.loc?.start.line || 0;
+      const propColumn = prop.loc?.start.column || 0;
+
+      // Handle spread properties: { ...other }
+      if (prop.type === 'SpreadElement') {
+        const spreadArg = prop.argument;
+        const propertyInfo: ObjectPropertyInfo = {
+          objectId,
+          propertyName: '<spread>',
+          valueType: 'SPREAD',
+          file: module.file,
+          line: propLine,
+          column: propColumn
+        };
+
+        if (spreadArg.type === 'Identifier') {
+          propertyInfo.valueName = spreadArg.name;
+          propertyInfo.valueType = 'VARIABLE';
+        }
+
+        objectProperties.push(propertyInfo);
+        continue;
+      }
+
+      // Handle regular properties
+      if (prop.type === 'ObjectProperty') {
+        let propertyName: string;
+
+        // Get property name
+        if (prop.key.type === 'Identifier') {
+          propertyName = prop.key.name;
+        } else if (prop.key.type === 'StringLiteral') {
+          propertyName = prop.key.value;
+        } else if (prop.key.type === 'NumericLiteral') {
+          propertyName = String(prop.key.value);
+        } else {
+          propertyName = '<computed>';
+        }
+
+        const propertyInfo: ObjectPropertyInfo = {
+          objectId,
+          propertyName,
+          file: module.file,
+          line: propLine,
+          column: propColumn,
+          valueType: 'EXPRESSION'
+        };
+
+        const value = prop.value;
+
+        // Nested object literal - check BEFORE extractLiteralValue
+        if (value.type === 'ObjectExpression') {
+          const nestedObjectNode = ObjectLiteralNode.create(
+            module.file,
+            value.loc?.start.line || 0,
+            value.loc?.start.column || 0,
+            { counter: objectLiteralCounterRef.value++ }
+          );
+          objectLiterals.push(nestedObjectNode as unknown as ObjectLiteralInfo);
+          const nestedObjectId = nestedObjectNode.id;
+
+          // Recursively extract nested properties
+          this.extractObjectProperties(
+            value,
+            nestedObjectId,
+            module,
+            objectProperties,
+            objectLiterals,
+            objectLiteralCounterRef,
+            literals,
+            literalCounterRef
+          );
+
+          propertyInfo.valueType = 'OBJECT_LITERAL';
+          propertyInfo.nestedObjectId = nestedObjectId;
+          propertyInfo.valueNodeId = nestedObjectId;
+        }
+        // Literal value (primitives only - objects/arrays handled above)
+        else {
+          const literalValue = ExpressionEvaluator.extractLiteralValue(value);
+          // Handle both non-null literals AND explicit null literals (NullLiteral)
+          if (literalValue !== null || value.type === 'NullLiteral') {
+            const literalId = `LITERAL#${propertyName}#${module.file}#${propLine}:${propColumn}:${literalCounterRef.value++}`;
+            literals.push({
+              id: literalId,
+              type: 'LITERAL',
+              value: literalValue,
+              valueType: typeof literalValue,
+              file: module.file,
+              line: propLine,
+              column: propColumn,
+              parentCallId: objectId,
+              argIndex: 0
+            });
+            propertyInfo.valueType = 'LITERAL';
+            propertyInfo.valueNodeId = literalId;
+            propertyInfo.literalValue = literalValue;
+          }
+          // Variable reference
+          else if (value.type === 'Identifier') {
+            propertyInfo.valueType = 'VARIABLE';
+            propertyInfo.valueName = value.name;
+          }
+          // Call expression
+          else if (value.type === 'CallExpression') {
+            propertyInfo.valueType = 'CALL';
+            propertyInfo.callLine = value.loc?.start.line;
+            propertyInfo.callColumn = value.loc?.start.column;
+          }
+          // Other expressions
+          else {
+            propertyInfo.valueType = 'EXPRESSION';
+          }
+        }
+
+        objectProperties.push(propertyInfo);
+      }
+      // Handle object methods: { foo() {} }
+      else if (prop.type === 'ObjectMethod') {
+        const propertyName = prop.key.type === 'Identifier' ? prop.key.name : '<computed>';
+        objectProperties.push({
+          objectId,
+          propertyName,
+          valueType: 'EXPRESSION',
+          file: module.file,
+          line: propLine,
+          column: propColumn
+        });
+      }
     }
   }
 
@@ -1302,7 +1487,7 @@ export class JSASTAnalyzer extends Plugin {
       this.profiler.start('traverse_variables');
       const variableVisitor = new VariableVisitor(
         module,
-        { variableDeclarations, classInstantiations, literals, variableAssignments, varDeclCounterRef, literalCounterRef, scopes, scopeCounterRef },
+        { variableDeclarations, classInstantiations, literals, variableAssignments, varDeclCounterRef, literalCounterRef, scopes, scopeCounterRef, objectLiterals, objectProperties, objectLiteralCounterRef },
         this.extractVariableNamesFromPattern.bind(this),
         this.trackVariableAssignment.bind(this) as TrackVariableAssignmentCallback,
         scopeTracker  // Pass ScopeTracker for semantic ID generation
@@ -1743,6 +1928,9 @@ export class JSASTAnalyzer extends Plugin {
    * @param literalCounterRef - Counter for unique literal IDs
    * @param scopeTracker - Tracker for semantic ID generation
    * @param parentScopeVariables - Set to track variables for closure analysis
+   * @param objectLiterals - Collection for object literal nodes (REG-328)
+   * @param objectProperties - Collection for object property edges (REG-328)
+   * @param objectLiteralCounterRef - Counter for unique object literal IDs (REG-328)
    */
   private handleVariableDeclaration(
     varPath: NodePath<t.VariableDeclaration>,
@@ -1755,7 +1943,10 @@ export class JSASTAnalyzer extends Plugin {
     varDeclCounterRef: CounterRef,
     literalCounterRef: CounterRef,
     scopeTracker: ScopeTracker | undefined,
-    parentScopeVariables: Set<{ name: string; id: string; scopeId: string }>
+    parentScopeVariables: Set<{ name: string; id: string; scopeId: string }>,
+    objectLiterals: ObjectLiteralInfo[],
+    objectProperties: ObjectPropertyInfo[],
+    objectLiteralCounterRef: CounterRef
   ): void {
     const varNode = varPath.node;
     const isConst = varNode.kind === 'const';
@@ -1870,7 +2061,10 @@ export class JSASTAnalyzer extends Plugin {
                 varInfo.loc.start.line,
                 literals,
                 variableAssignments,
-                literalCounterRef
+                literalCounterRef,
+                objectLiterals,
+                objectProperties,
+                objectLiteralCounterRef
               );
             }
           });
@@ -1897,7 +2091,10 @@ export class JSASTAnalyzer extends Plugin {
             varInfo.loc.start.line,
             literals,
             variableAssignments,
-            literalCounterRef
+            literalCounterRef,
+            objectLiterals,
+            objectProperties,
+            objectLiteralCounterRef
           );
         }
       }
@@ -3064,6 +3261,19 @@ export class JSASTAnalyzer extends Plugin {
     const literalCounterRef = (collections.literalCounterRef ?? { value: 0 }) as CounterRef;
     const anonymousFunctionCounterRef = (collections.anonymousFunctionCounterRef ?? { value: 0 }) as CounterRef;
     const scopeTracker = collections.scopeTracker as ScopeTracker | undefined;
+    // Object literal tracking (REG-328)
+    if (!collections.objectLiterals) {
+      collections.objectLiterals = [];
+    }
+    if (!collections.objectProperties) {
+      collections.objectProperties = [];
+    }
+    if (!collections.objectLiteralCounterRef) {
+      collections.objectLiteralCounterRef = { value: 0 };
+    }
+    const objectLiterals = collections.objectLiterals as ObjectLiteralInfo[];
+    const objectProperties = collections.objectProperties as ObjectPropertyInfo[];
+    const objectLiteralCounterRef = collections.objectLiteralCounterRef as CounterRef;
     const returnStatements = (collections.returnStatements ?? []) as ReturnStatementInfo[];
     const parameters = (collections.parameters ?? []) as ParameterInfo[];
     // Control flow collections (Phase 2: LOOP nodes)
@@ -3325,7 +3535,10 @@ export class JSASTAnalyzer extends Plugin {
           varDeclCounterRef,
           literalCounterRef,
           scopeTracker,
-          parentScopeVariables
+          parentScopeVariables,
+          objectLiterals,
+          objectProperties,
+          objectLiteralCounterRef
         );
       },
 

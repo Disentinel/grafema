@@ -48,7 +48,10 @@ export type TrackVariableAssignmentCallback = (
   line: number,
   literals: unknown[],
   variableAssignments: unknown[],
-  literalCounterRef: CounterRef
+  literalCounterRef: CounterRef,
+  objectLiterals: unknown[],
+  objectProperties: unknown[],
+  objectLiteralCounterRef: CounterRef
 ) => void;
 
 /**
@@ -207,6 +210,10 @@ export class VariableVisitor extends ASTVisitor {
     const varDeclCounterRef = (this.collections.varDeclCounterRef ?? { value: 0 }) as CounterRef;
     const literalCounterRef = (this.collections.literalCounterRef ?? { value: 0 }) as CounterRef;
     const scopeCounterRef = (this.collections.scopeCounterRef ?? { value: 0 }) as CounterRef;
+    // Object literal tracking collections (REG-328)
+    const objectLiterals = (this.collections.objectLiterals ?? []) as unknown[];
+    const objectProperties = (this.collections.objectProperties ?? []) as unknown[];
+    const objectLiteralCounterRef = (this.collections.objectLiteralCounterRef ?? { value: 0 }) as CounterRef;
     const scopeTracker = this.scopeTracker;
 
     const extractVariableNamesFromPattern = this.extractVariableNamesFromPattern;
@@ -490,7 +497,10 @@ export class VariableVisitor extends ASTVisitor {
                     varInfo.loc.start.line,
                     literals,
                     variableAssignments,
-                    literalCounterRef as CounterRef
+                    literalCounterRef as CounterRef,
+                    objectLiterals,
+                    objectProperties,
+                    objectLiteralCounterRef
                   );
                 }
               }
