@@ -1,6 +1,6 @@
 # Plugin Development Guide
 
-Руководство по созданию плагинов для Navi.
+Руководство по созданию плагинов для Grafema.
 
 ## Архитектура плагинов
 
@@ -367,59 +367,55 @@ export class FastifyRouteAnalyzer extends Plugin {
 }
 ```
 
-## Регистрация плагина
+## Регистрация плагина в конфигурации
 
-### Способ 1: Встроенный плагин
+Плагины регистрируются в `.grafema/config.yaml` по имени класса:
 
-Добавьте в `src/v2/plugins/analysis/`:
+```yaml
+# .grafema/config.yaml
 
-```
-src/v2/plugins/analysis/
-├── JSASTAnalyzer.js
-├── ExpressRouteAnalyzer.js
-├── FastifyRouteAnalyzer.js    ← ваш плагин
-└── ...
-```
+plugins:
+  indexing:
+    - JSModuleIndexer
 
-Добавьте импорт в MCP server (`src/mcp/server.js`):
+  analysis:
+    - JSASTAnalyzer          # Базовый AST анализатор (всегда нужен)
+    - ExpressRouteAnalyzer   # Встроенный плагин
+    - FastifyRouteAnalyzer   # Ваш кастомный плагин
 
-```javascript
-import { FastifyRouteAnalyzer } from '../v2/plugins/analysis/FastifyRouteAnalyzer.js';
-```
+  enrichment:
+    - MethodCallResolver
 
-### Способ 2: Кастомный плагин в проекте
-
-Создайте `.rflow/plugins/`:
-
-```
-your-project/
-├── .rflow/
-│   ├── config.json
-│   └── plugins/
-│       └── MyCustomAnalyzer.mjs    ← ваш плагин
-└── ...
+  validation:
+    - EvalBanValidator
 ```
 
-```javascript
-// .rflow/plugins/MyCustomAnalyzer.mjs
-import { Plugin, createSuccessResult } from 'navi/plugins/Plugin.js';
+### Порядок плагинов
 
-export class MyCustomAnalyzer extends Plugin {
-  // ...
-}
+1. Плагины выполняются в порядке фаз: DISCOVERY → INDEXING → ANALYSIS → ENRICHMENT → VALIDATION
+2. Внутри фазы плагины сортируются по `priority` (выше = раньше)
+3. Используйте `dependencies` для явных зависимостей между плагинами
 
-export default MyCustomAnalyzer;
-```
+### Встроенный плагин
 
-Добавьте в `.rflow/config.json`:
+Для добавления плагина в кодовую базу Grafema:
 
-```json
-{
-  "plugins": {
-    "analysis": ["JSASTAnalyzer", "MyCustomAnalyzer"]
-  }
-}
-```
+1. Создайте файл в соответствующей директории:
+   ```
+   packages/core/src/plugins/analysis/FastifyRouteAnalyzer.ts
+   ```
+
+2. Добавьте экспорт в `packages/core/src/index.ts`:
+   ```typescript
+   export { FastifyRouteAnalyzer } from './plugins/analysis/FastifyRouteAnalyzer.js';
+   ```
+
+3. Добавьте в DEFAULT_CONFIG в `packages/core/src/config/ConfigLoader.ts` если плагин должен быть включен по умолчанию.
+
+### Кастомный плагин в проекте (TODO)
+
+> **Note:** Кастомные плагины в директории проекта пока не реализованы.
+> Текущий способ: fork репозитория или создание npm пакета.
 
 ## Именование типов
 
@@ -520,9 +516,20 @@ export default fastify;
 
 ### Логирование
 
+Используйте `context.logger` вместо `console.log`:
+
 ```javascript
-console.log(`[${this.metadata.name}] Processing ${modules.length} modules...`);
-console.log(`[${this.metadata.name}] Found pattern at ${file}:${line}`);
+async execute(context) {
+  const { logger } = context;
+
+  logger.info(`Processing ${modules.length} modules...`);
+  logger.debug(`Found pattern at ${file}:${line}`);
+}
+```
+
+Управляйте уровнем логирования через CLI:
+```bash
+grafema analyze --log-level debug
 ```
 
 ### Проверка результатов
@@ -537,10 +544,11 @@ console.log(`[${this.metadata.name}] Found pattern at ${file}:${line}`);
 
 | Проблема | Решение |
 |----------|---------|
-| Плагин не находит паттерны | Добавьте `console.log(JSON.stringify(node, null, 2))` в traverse для просмотра AST |
+| Плагин не находит паттерны | Добавьте `logger.debug(JSON.stringify(node, null, 2))` в traverse для просмотра AST |
 | Ноды создаются но не видны | Проверьте уникальность ID |
 | Edges не создаются | Проверьте что src и dst ноды существуют |
 | Плагин выполняется слишком рано | Уменьшите priority (меньше = позже) |
+| Плагин не запускается | Проверьте что имя класса добавлено в config.yaml |
 
 ## Чеклист разработки плагина
 
@@ -551,9 +559,10 @@ console.log(`[${this.metadata.name}] Found pattern at ${file}:${line}`);
 - [ ] Ноды имеют file/line для навигации
 - [ ] Edges связывают существующие ноды
 - [ ] Написаны тесты с fixture
-- [ ] Плагин зарегистрирован
+- [ ] Плагин добавлен в config.yaml
 
 ## См. также
 
-- `get_documentation({ topic: "project-onboarding" })` — внедрение Navi
-- `get_documentation({ topic: "guarantee-workflow" })` — создание гарантий
+- [Configuration Reference](configuration.md) — полный справочник конфигурации
+- [Project Onboarding](project-onboarding.md) — внедрение Grafema
+- [Guarantee Workflow](guarantee-workflow.md) — создание гарантий

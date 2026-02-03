@@ -1,6 +1,6 @@
 # Project Onboarding Guide
 
-Это руководство поможет внедрить Navi в существующий проект и итеративно улучшать покрытие кода семантическим анализом.
+Это руководство поможет внедрить Grafema в существующий проект и итеративно улучшать покрытие кода семантическим анализом.
 
 ## Обзор процесса
 
@@ -9,7 +9,7 @@
 │   SETUP     │ →   │  ANALYZE    │ →   │   ASSESS    │ →   │ GUARANTEES  │ →   │    CI/CD    │
 ├─────────────┤     ├─────────────┤     ├─────────────┤     ├─────────────┤     ├─────────────┤
 │ Настройка   │     │ Первый      │     │ Оценка      │     │ Создание    │     │ Интеграция  │
-│ .rflow/     │     │ анализ      │     │ покрытия    │     │ инвариантов │     │ в pipeline  │
+│ .grafema/   │     │ анализ      │     │ покрытия    │     │ инвариантов │     │ в pipeline  │
 └─────────────┘     └─────────────┘     └─────────────┘     └─────────────┘     └─────────────┘
 ```
 
@@ -17,36 +17,51 @@
 
 ## Step 1: Начальная настройка
 
-### 1.1 Структура директории
+### 1.1 Инициализация
 
-Navi хранит конфигурацию и данные в `.rflow/`:
+Самый простой способ начать:
+
+```bash
+grafema init
+```
+
+Это создаст `.grafema/config.yaml` с настройками по умолчанию.
+
+### 1.2 Структура директории
+
+Grafema хранит конфигурацию и данные в `.grafema/`:
 
 ```
 your-project/
-├── .rflow/
-│   ├── config.json        # Конфигурация плагинов
-│   ├── guarantees.yaml    # Гарантии (version controlled)
-│   └── graph.rfdb         # База графа (gitignore)
+├── .grafema/
+│   ├── config.yaml       # Конфигурация плагинов (version controlled)
+│   ├── guarantees.yaml   # Гарантии (version controlled)
+│   └── graph.rfdb        # База графа (gitignore)
 ├── src/
 └── ...
 ```
 
-### 1.2 Создание конфигурации
+### 1.3 Конфигурация
 
-```bash
-mkdir -p .rflow
+По умолчанию Grafema использует все встроенные плагины — "batteries included".
+Плагины которые не находят релевантных паттернов просто ничего не делают.
+
+Пример минимальной конфигурации `.grafema/config.yaml`:
+
+```yaml
+plugins:
+  indexing:
+    - JSModuleIndexer
+  analysis:
+    - JSASTAnalyzer
+    - ExpressRouteAnalyzer
+  enrichment:
+    - MethodCallResolver
+  validation:
+    - EvalBanValidator
 ```
 
-Создайте `.rflow/config.json`:
-
-```json
-{
-  "entryPoints": ["src/index.js"],
-  "ignore": ["node_modules", "dist", "build", "*.test.js", "*.spec.js"]
-}
-```
-
-По умолчанию включены все плагины — "batteries included". Плагины которые не находят релевантных паттернов просто ничего не делают.
+Полный справочник конфигурации: [configuration.md](configuration.md)
 
 **Встроенные плагины:**
 
@@ -58,39 +73,48 @@ mkdir -p .rflow
 | | SocketIOAnalyzer | WebSocket события |
 | | DatabaseAnalyzer | SQL/NoSQL запросы |
 | | FetchAnalyzer | HTTP клиентские запросы |
-| | ReactAnalyzer | React компоненты и хуки |
+| | ServiceLayerAnalyzer | Service layer паттерны |
 | Enrichment | MethodCallResolver | Разрешение method calls |
 | | AliasTracker | Отслеживание алиасов переменных |
-| | InstanceOfResolver | Определение типов через instanceof |
 | | ValueDomainAnalyzer | Анализ возможных значений |
 | | MountPointResolver | Разрешение mount points (Express) |
 | | PrefixEvaluator | Вычисление префиксов путей |
-| Validation | CallResolverValidator | Проверка разрешения вызовов |
+| | HTTPConnectionEnricher | Связь frontend requests с backend routes |
+| Validation | EvalBanValidator | Запрет eval() и Function() |
+| | SQLInjectionValidator | Детектирование SQL injection |
+| | CallResolverValidator | Проверка разрешения вызовов |
 
-### 1.3 Добавьте в .gitignore
+### 1.4 Добавьте в .gitignore
 
 ```gitignore
-# Navi
-.rflow/graph.rfdb
-.rflow/*.log
+# Grafema
+.grafema/graph.rfdb
+.grafema/rfdb.sock
 ```
+
+`grafema init` автоматически добавляет эти строки в `.gitignore`.
 
 ## Step 2: Первый анализ
 
 ### 2.1 Запуск анализа
 
+```bash
+grafema analyze
+```
+
+Или через MCP:
 ```javascript
 // MCP tool: analyze_project
 { "force": true }
 ```
 
-Или через CLI:
-```bash
-node path/to/navi/src/cli.js analyze --project .
-```
-
 ### 2.2 Проверка результатов
 
+```bash
+grafema overview
+```
+
+Или через MCP:
 ```javascript
 // MCP tool: get_stats
 {}
@@ -147,7 +171,7 @@ node path/to/navi/src/cli.js analyze --project .
 
 ### 3.3 Проверить используемые зависимости
 
-Navi определяет зависимости по импортам (надёжнее чем package.json):
+Grafema определяет зависимости по импортам (надёжнее чем package.json):
 
 ```javascript
 // MCP tool: query_graph
@@ -183,7 +207,7 @@ Navi определяет зависимости по импортам (надё
 - Есть project-specific паттерны (custom ORM, internal frameworks)
 - Нужна специфичная семантика
 
-См. `get_documentation({ topic: "plugin-development" })` для гайда.
+См. [plugin-development.md](plugin-development.md) для гайда.
 
 ## Step 5: Создание гарантий
 
@@ -226,7 +250,7 @@ Navi определяет зависимости по импортам (надё
 ```
 
 ```bash
-git add .rflow/guarantees.yaml
+git add .grafema/guarantees.yaml
 git commit -m "Add code guarantees"
 ```
 
@@ -244,7 +268,7 @@ git commit -m "Add code guarantees"
 ### 6.1 Проверка гарантий в CI
 
 ```yaml
-# .github/workflows/navi.yml
+# .github/workflows/grafema.yml
 name: Code Analysis
 on: [push, pull_request]
 
@@ -255,8 +279,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
       - run: npm ci
-      - run: npx navi analyze --project .
-      - run: npx navi check-guarantees --fail-on-violation
+      - run: npx grafema analyze
+      - run: npx grafema check-guarantees --fail-on-violation
 ```
 
 ### 6.2 Pre-commit hook
@@ -265,15 +289,15 @@ jobs:
 #!/bin/bash
 # .git/hooks/pre-commit
 
-npx navi check-guarantees --fail-on-violation
+npx grafema check-guarantees --fail-on-violation
 ```
 
 ## Чеклист внедрения
 
-- [ ] Создана директория `.rflow/`
-- [ ] Настроен `.rflow/config.json` (entryPoints, ignore)
-- [ ] Добавлен `.rflow/graph.rfdb` в `.gitignore`
-- [ ] Первый анализ выполнен
+- [ ] Выполнен `grafema init`
+- [ ] Настроен `.grafema/config.yaml` (при необходимости)
+- [ ] Добавлен `.grafema/graph.rfdb` в `.gitignore`
+- [ ] Первый анализ выполнен (`grafema analyze`)
 - [ ] Проверена схема графа (`get_schema`)
 - [ ] Проверены метрики покрытия (unresolved calls)
 - [ ] Созданы базовые гарантии
@@ -284,12 +308,12 @@ npx navi check-guarantees --fail-on-violation
 
 ### Анализ занимает слишком много времени
 
-- Проверьте `ignore` в конфигурации — исключите node_modules, dist, тесты
-- Используйте `entryPoints` вместо анализа всех файлов
+- Используйте `exclude` в конфигурации для исключения тестов и сгенерированного кода
+- Используйте `include` для ограничения анализа конкретными директориями
 
 ### Много неразрешённых вызовов
 
-- Добавьте `MethodCallResolver` и `AliasTracker` в enrichment
+- Проверьте что `MethodCallResolver` и `AliasTracker` включены в enrichment
 - Проверьте есть ли плагины для используемых библиотек
 - Некоторые динамические паттерны не могут быть разрешены статически
 
@@ -297,10 +321,11 @@ npx navi check-guarantees --fail-on-violation
 
 - Проверьте что плагин добавлен в правильную фазу (analysis vs enrichment)
 - Проверьте порядок плагинов — enrichers зависят от результатов analysis
-- Посмотрите логи анализа для ошибок
+- Используйте `--log-level debug` для детальных логов
 
 ## См. также
 
-- `get_documentation({ topic: "guarantee-workflow" })` — создание гарантий
-- `get_documentation({ topic: "plugin-development" })` — написание плагинов
-- `get_documentation({ topic: "semantic-coverage" })` — покрытие семантикой
+- [Configuration Reference](configuration.md) — полный справочник конфигурации
+- [Guarantee Workflow](guarantee-workflow.md) — создание гарантий
+- [Plugin Development](plugin-development.md) — написание плагинов
+- [Semantic Coverage](semantic-coverage.md) — покрытие семантикой
