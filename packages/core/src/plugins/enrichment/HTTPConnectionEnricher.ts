@@ -173,35 +173,61 @@ export class HTTPConnectionEnricher extends Plugin {
   }
 
   /**
-   * Проверяет совпадают ли пути
-   * Поддерживает параметризованные пути: /api/users/:id матчится с /api/users/123
+   * Normalize URL to canonical form for comparison.
+   * Converts both Express params (:id) and template literals (${...}) to {param}.
    */
-  private pathsMatch(requestUrl: string, routePath: string): boolean {
-    // Точное совпадение
-    if (requestUrl === routePath) {
-      return true;
-    }
-
-    // Если route не имеет параметров, требуем точное совпадение
-    if (!this.hasParams(routePath)) {
-      return false;
-    }
-
-    // Преобразуем route path в regex
-    // /api/users/:id → /api/users/[^/]+
-    const regexPattern = routePath
-      .replace(/:[^/]+/g, '[^/]+')  // :param → [^/]+
-      .replace(/\//g, '\\/');        // / → \/
-
-    const regex = new RegExp(`^${regexPattern}$`);
-    return regex.test(requestUrl);
+  private normalizeUrl(url: string): string {
+    return url
+      .replace(/:[^/]+/g, '{param}')      // :id -> {param}
+      .replace(/\$\{[^}]*\}/g, '{param}'); // ${...} -> {param}, ${userId} -> {param}
   }
 
   /**
-   * Проверяет есть ли параметры в пути
+   * Check if URL has any parameter placeholders (after normalization)
+   */
+  private hasParamsNormalized(normalizedUrl: string): boolean {
+    return normalizedUrl.includes('{param}');
+  }
+
+  /**
+   * Check if request URL matches route path.
+   * Supports:
+   * - Exact match
+   * - Express params (:id)
+   * - Template literals (${...})
+   * - Concrete values matching params (/users/123 matches /users/:id)
+   */
+  private pathsMatch(requestUrl: string, routePath: string): boolean {
+    // Normalize both to canonical form
+    const normRequest = this.normalizeUrl(requestUrl);
+    const normRoute = this.normalizeUrl(routePath);
+
+    // If both normalize to same string, they match
+    if (normRequest === normRoute) {
+      return true;
+    }
+
+    // If route has no params after normalization, require exact match
+    if (!this.hasParamsNormalized(normRoute)) {
+      return false;
+    }
+
+    // Handle case where request has concrete value (e.g., '/users/123')
+    // and route has param (e.g., '/users/{param}')
+    const routeRegex = normRoute
+      .replace(/\{param\}/g, '[^/]+')  // {param} -> [^/]+
+      .replace(/\//g, '\\/');           // / -> \/
+
+    return new RegExp(`^${routeRegex}$`).test(normRequest);
+  }
+
+  /**
+   * Check if path has parameters (for edge matchType metadata)
    */
   private hasParams(path: string): boolean {
-    return Boolean(path && path.includes(':'));
+    if (!path) return false;
+    // Check for Express params or template literals
+    return path.includes(':') || path.includes('${');
   }
 
   /**

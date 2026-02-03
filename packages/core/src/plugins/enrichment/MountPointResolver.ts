@@ -5,21 +5,22 @@
  * - express:middleware (with mountPath) instead of MOUNT_POINT
  * - http:route instead of ENDPOINT
  *
+ * REG-318 Fix: Uses IMPORT nodes to determine which file a router variable
+ * comes from, then applies mount prefix ONLY to routes in that specific file.
+ *
  * Algorithm:
  * 1. Find express:middleware nodes with mountPath
- * 2. Get the MODULE node for the file containing the mount
- * 3. Follow IMPORTS edges to find imported modules
- * 4. Find http:route nodes in those modules
- * 5. Update routes with fullPath = mountPath + route.path
- *
- * Note: This applies mount prefixes to ALL routes in imported modules.
- * This matches how Express router mounting typically works.
+ * 2. Build import map: for each mount file, map local variable names to resolved file paths
+ * 3. For each mount, find the specific imported file matching mount.name
+ * 4. Apply mount prefix only to routes in that specific file
  */
 
 import { Plugin } from '../Plugin.js';
 import { createSuccessResult, createErrorResult } from '@grafema/types';
 import type { PluginMetadata, PluginContext, PluginResult } from '@grafema/types';
 import type { BaseNodeRecord } from '@grafema/types';
+import { dirname, resolve, join } from 'path';
+import { existsSync } from 'fs';
 
 interface MountNode {
   id: string;
@@ -57,6 +58,36 @@ export class MountPointResolver extends Plugin {
       },
       dependencies: ['JSModuleIndexer', 'JSASTAnalyzer', 'ExpressRouteAnalyzer']
     };
+  }
+
+  /**
+   * Resolve relative import source to absolute file path.
+   * Replicates JSModuleIndexer.resolveModulePath() logic.
+   */
+  private resolveImportSource(importSource: string, containingFile: string): string | null {
+    // Only handle relative imports
+    if (!importSource.startsWith('./') && !importSource.startsWith('../')) {
+      return null;  // External package
+    }
+
+    const dir = dirname(containingFile);
+    const basePath = resolve(dir, importSource);
+
+    // Try direct path
+    if (existsSync(basePath)) return basePath;
+
+    // Try extensions
+    for (const ext of ['.js', '.mjs', '.jsx', '.ts', '.tsx']) {
+      if (existsSync(basePath + ext)) return basePath + ext;
+    }
+
+    // Try index files
+    for (const indexFile of ['index.js', 'index.ts', 'index.mjs', 'index.tsx']) {
+      const indexPath = join(basePath, indexFile);
+      if (existsSync(indexPath)) return indexPath;
+    }
+
+    return null;
   }
 
   async execute(context: PluginContext): Promise<PluginResult> {
@@ -111,40 +142,40 @@ export class MountPointResolver extends Plugin {
         );
       }
 
-      // Step 2: Build module import relationships using DEPENDS_ON edges
-      // JSModuleIndexer creates DEPENDS_ON edges between MODULE nodes
-      // Map<sourceModuleFile, Set<importedModuleFile>>
-      const moduleImports = new Map<string, Set<string>>();
+      // Step 2: Build import map for files that contain mount points
+      // Map<file, Map<localName, resolvedFile>>
+      const importMaps = new Map<string, Map<string, string>>();
+      const mountFiles = new Set(mountNodes.map(m => m.file).filter((f): f is string => Boolean(f)));
 
-      // First, build MODULE file lookup
-      const moduleFiles = new Map<string, string>(); // moduleId -> file
-      for await (const node of graph.queryNodes({ type: 'MODULE' })) {
-        const mod = node as { id: string; file?: string };
-        if (mod.file) {
-          moduleFiles.set(mod.id, mod.file);
-        }
-      }
+      for (const mountFile of mountFiles) {
+        const importMap = new Map<string, string>();
 
-      logger.debug('MODULE nodes indexed', { count: moduleFiles.size });
+        // Query IMPORT nodes in this file
+        for await (const node of graph.queryNodes({ type: 'IMPORT' })) {
+          const importNode = node as { file?: string; local?: string; source?: string };
 
-      // Then, get all DEPENDS_ON edges to build the relationship
-      if (graph.getAllEdges) {
-        const edges = await graph.getAllEdges();
-        for (const edge of edges) {
-          if (edge.type === 'DEPENDS_ON') {
-            const srcFile = moduleFiles.get(edge.src);
-            const dstFile = moduleFiles.get(edge.dst);
-            if (srcFile && dstFile) {
-              if (!moduleImports.has(srcFile)) {
-                moduleImports.set(srcFile, new Set());
-              }
-              moduleImports.get(srcFile)!.add(dstFile);
-              logger.debug('Found module dependency', { from: srcFile, to: dstFile });
-            }
+          if (importNode.file !== mountFile) continue;
+          if (!importNode.local || !importNode.source) continue;
+
+          // Resolve source to absolute path
+          const resolvedPath = this.resolveImportSource(importNode.source, mountFile);
+          if (resolvedPath) {
+            importMap.set(importNode.local, resolvedPath);
+            logger.debug('Import mapped', {
+              local: importNode.local,
+              source: importNode.source,
+              resolved: resolvedPath
+            });
           }
         }
+
+        importMaps.set(mountFile, importMap);
       }
-      logger.debug('Module imports built', { files: moduleImports.size });
+
+      logger.debug('Import maps built', {
+        files: importMaps.size,
+        totalMappings: [...importMaps.values()].reduce((sum, m) => sum + m.size, 0)
+      });
 
       // Step 3: Collect all routes by file
       const routesByFile = new Map<string, RouteNode[]>();
@@ -160,55 +191,71 @@ export class MountPointResolver extends Plugin {
 
       // Step 4: For each mount point, find and update routes
       for (const mount of mountNodes) {
-        if (!mount.file || !mount.mountPath) continue;
+        if (!mount.file || !mount.mountPath || !mount.name) continue;
 
-        // Get all modules imported by this file
-        const importedFiles = moduleImports.get(mount.file);
-        if (!importedFiles || importedFiles.size === 0) {
-          logger.debug('No imports found for mount', { file: mount.file, name: mount.name });
+        // Get import map for this file
+        const importMap = importMaps.get(mount.file);
+        if (!importMap) {
+          logger.debug('No import map for mount file', { file: mount.file });
           continue;
         }
 
-        // For each imported module, check if it has routes
-        for (const importedFile of importedFiles) {
-          const routes = routesByFile.get(importedFile);
-          if (!routes || routes.length === 0) continue;
-
-          logger.debug('Found routes in imported module', {
-            mountFile: mount.file,
-            importedFile,
-            routeCount: routes.length
+        // Find the specific imported file for this mount variable
+        const importedFile = importMap.get(mount.name);
+        if (!importedFile) {
+          logger.debug('No import found for mount name', {
+            file: mount.file,
+            mountName: mount.name,
+            availableImports: [...importMap.keys()]
           });
+          continue;
+        }
 
-          // Update routes with fullPath
-          for (const route of routes) {
-            const localPath = route.localPath || route.path || '';
-            const fullPath = mount.mountPath + localPath;
+        // Get routes in that specific file
+        const routes = routesByFile.get(importedFile);
+        if (!routes || routes.length === 0) {
+          logger.debug('No routes in imported file', {
+            importedFile,
+            mountName: mount.name
+          });
+          continue;
+        }
 
-            // Support multiple mount points
-            const mountPrefixes = route.mountPrefixes || [];
-            const fullPaths = route.fullPaths || [];
+        logger.debug('Applying mount prefix', {
+          mountPath: mount.mountPath,
+          mountName: mount.name,
+          importedFile,
+          routeCount: routes.length
+        });
 
-            if (!mountPrefixes.includes(mount.mountPath)) {
-              mountPrefixes.push(mount.mountPath);
-              fullPaths.push(fullPath);
-            }
+        // Update routes with fullPath
+        for (const route of routes) {
+          const localPath = route.localPath || route.path || '';
+          const fullPath = mount.mountPath + localPath;
 
-            // Update route node
-            const updatedRoute: RouteNode = {
-              ...route,
-              mountPrefixes,
-              fullPaths,
-              mountPrefix: route.mountPrefix || mount.mountPath,
-              fullPath: route.fullPath || fullPath
-            };
+          // Support multiple mount points
+          const mountPrefixes = route.mountPrefixes || [];
+          const fullPaths = route.fullPaths || [];
 
-            await graph.addNode(updatedRoute as BaseNodeRecord);
-            routesUpdated++;
+          if (!mountPrefixes.includes(mount.mountPath)) {
+            mountPrefixes.push(mount.mountPath);
+            fullPaths.push(fullPath);
           }
 
-          mountPointsProcessed++;
+          // Update route node
+          const updatedRoute: RouteNode = {
+            ...route,
+            mountPrefixes,
+            fullPaths,
+            mountPrefix: route.mountPrefix || mount.mountPath,
+            fullPath: route.fullPath || fullPath
+          };
+
+          await graph.addNode(updatedRoute as BaseNodeRecord);
+          routesUpdated++;
         }
+
+        mountPointsProcessed++;
       }
 
       logger.info('Updated routes with mount prefixes', {
