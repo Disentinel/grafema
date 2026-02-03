@@ -133,6 +133,12 @@ export class GrafemaClientManager extends EventEmitter {
    * Follows same pattern as RFDBServerBackend
    */
   private findServerBinary(): string | null {
+    // 0. Check GRAFEMA_RFDB_SERVER environment variable
+    const envBinary = process.env.GRAFEMA_RFDB_SERVER;
+    if (envBinary && existsSync(envBinary)) {
+      return envBinary;
+    }
+
     // 1. Check packages/rfdb-server in monorepo (development)
     // Navigate up from node_modules to find monorepo root
     const possibleRoots = [
@@ -142,6 +148,8 @@ export class GrafemaClientManager extends EventEmitter {
       join(__dirname, '..', '..', '..'),
       join(__dirname, '..', '..', '..', '..'),
       join(__dirname, '..', '..', '..', '..', '..'),
+      // Known grafema monorepo location (development convenience)
+      '/Users/vadimr/grafema',
     ];
 
     for (const root of possibleRoots) {
