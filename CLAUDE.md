@@ -107,7 +107,7 @@ All implementation happens through subagents. Top-level agent only coordinates.
 
 **Review:**
 - **Kevlin Henney** (Low-level Reviewer) — Code quality, readability, test quality, naming, structure
-- **Linus Torvalds** (High-level Reviewer) — Ruthless and pragmatic. Did we do the right thing or a hack? Does it align with vision? Would this embarrass us?
+- **Steve Jobs + Вадим Решетников** (High-level Review, parallel) — Vision alignment gatekeepers. Run in parallel, BOTH must approve. Look for fundamental errors, corner-cutting, and architectural gaps. **Default stance: REJECT.** Use every opportunity to reject plans. When in doubt — escalate to user immediately.
 
 **Project Management:**
 - **Andy Grove** (PM / Tech Debt) — Manages Linear, prioritizes backlog, tracks tech debt. Ruthless prioritization: what moves the needle NOW?
@@ -143,7 +143,7 @@ START
      └─ NO
          ├─ Does it change core architecture? (affects multiple systems, long-term impact)
          │   → YES → Full MLA (all personas)
-         └─ NO → Mini-MLA (Don, Rob, Linus)
+         └─ NO → Mini-MLA (Don, Rob, Steve+Vadim)
 ```
 
 **Configurations:**
@@ -151,8 +151,8 @@ START
 | Config | Team | When to Use |
 |--------|------|-------------|
 | **Single Agent** | Rob | Trivial changes, hotfixes, well-defined tasks |
-| **Mini-MLA** | Don → Rob → Linus | Medium complexity, local scope, clear boundaries |
-| **Mini-MLA + Refactor** | Don → Uncle Bob → Kent → Rob → Linus | Same as Mini-MLA, but touching messy code |
+| **Mini-MLA** | Don → Rob → Steve+Vadim | Medium complexity, local scope, clear boundaries |
+| **Mini-MLA + Refactor** | Don → Uncle Bob → Kent → Rob → Steve+Vadim | Same as Mini-MLA, but touching messy code |
 | **Full MLA** | All personas | Architectural decisions, complex debugging, ambiguous requirements |
 
 **Stopping Condition:**
@@ -198,7 +198,8 @@ _tasks/
 │   ├── 001-user-request.md
 │   ├── 002-don-plan.md
 │   ├── 003-joel-tech-plan.md
-│   ├── 004-linus-plan-review.md
+│   ├── 004-steve-review.md
+│   ├── 005-vadim-review.md
 │   └── ...
 ```
 
@@ -208,8 +209,8 @@ _tasks/
 **STEP 2 — PLAN:**
 1. Don analyzes codebase, creates `0XX-don-plan.md`
 2. Joel expands into detailed tech plan `0XX-joel-tech-plan.md`
-3. Linus reviews the plan
-4. Iterate until Linus approves
+3. **Steve Jobs + Вадим Решетников review in parallel** — both must approve
+4. Iterate until BOTH approve. If either rejects or has doubts → escalate to user
 
 **STEP 2.5 — PREPARE (Refactor-First):**
 
@@ -243,9 +244,10 @@ Before implementation, improve the code we're about to touch. This is "Boy Scout
 1. Kent writes tests, creates report
 2. Rob implements, creates report
 3. Donald run the code and review if results aligned with initial intent
-4. Kevlin + Linus review in parallel
-5. Back to PLAN step — Don reviews results
-6. Loop until Don, Joel, and Linus ALL agree task is FULLY DONE
+4. Kevlin reviews code quality
+5. **Steve Jobs + Вадим Решетников review in parallel** — ruthless vision alignment check
+6. Back to PLAN step — Don reviews results
+7. Loop until Don, Joel, Steve, AND Вадим ALL agree task is FULLY DONE
 
 **STEP 3.5 — DEMO (before reviews):**
 - Steve Jobs demos the feature
@@ -316,15 +318,22 @@ If REFACTOR:
 - Clean, correct solution that doesn't create technical debt
 - If tests fail, fix implementation, not tests (unless tests are wrong)
 
-### For Linus Torvalds (Review)
-Focus on high-level only:
-- Did we do the right thing? Or something stupid?
+### For Steve Jobs + Вадим Решетников (High-level Review)
+
+**Run in parallel. BOTH must approve. Default stance: REJECT.**
+
+**Primary Questions:**
+- Does this align with project vision? ("AI should query the graph, not read code")
 - Did we cut corners instead of doing it right?
-- Does it align with project vision?
 - Did we add a hack where we could do the right thing?
-- Is it at the right level of abstraction?
-- Do tests actually test what they claim?
-- Did we forget something from the original request?
+- Are there fundamental architectural gaps that make this feature useless?
+- Would shipping this embarrass us?
+
+**CRITICAL — Zero Tolerance for "MVP Limitations":**
+- If a "limitation" makes the feature work for <50% of real-world cases → **REJECT**
+- If the limitation is actually an architectural gap → **STOP, don't defer**
+- "Accept limitation for MVP" is FORBIDDEN when the limitation defeats the feature's purpose
+- Root Cause Policy: fix from roots, not symptoms. If it takes longer — it takes longer.
 
 **MANDATORY Complexity & Architecture Checklist:**
 
@@ -346,6 +355,11 @@ Before approving ANY plan involving data flow, enrichment, or graph traversal:
    - Changes to enricher = **BAD** (not abstract enough)
 
 4. **Grafema doesn't brute-force**: If solution scans all nodes looking for patterns, it's WRONG. Grafema uses targeted queries and forward registration.
+
+**When in Doubt:**
+- REJECT the plan
+- Escalate to user immediately
+- Do NOT approve hoping issues will be fixed later
 
 ### For Kevlin Henney (Review)
 Focus on code quality:
@@ -461,12 +475,12 @@ Do NOT start coding until Linear status is updated.
 ### Finishing Task
 
 1. Code ready → Linear status → **In Review**
-2. Report: "Ready for Linus review"
+2. Report: "Ready for high-level review (Steve + Вадим)"
 3. User will `/clear` and start next task in same worker
 
 ### Merge Process
 
-**CRITICAL: Review and merge is Linus's responsibility.**
+**CRITICAL: Review and merge requires Steve Jobs + Вадим Решетников approval.**
 
 Claude Code workflow stops at **In Review**:
 - Code is ready
@@ -474,15 +488,17 @@ Claude Code workflow stops at **In Review**:
 - Commits are clean
 - Status: In Review
 
-User manually invokes Linus Torvalds agent:
-1. Linus performs high-level review
-2. If approved → Linus merges to main (from main repo)
-3. Linus updates Linear → **Done**
+User manually invokes high-level review:
+1. Steve Jobs + Вадим review in parallel
+2. BOTH must approve — if either rejects, back to implementation
+3. If approved → merge to main (from main repo)
+4. Update Linear → **Done**
 
-Linus must verify:
+Reviewers must verify:
 - Did we do the right thing?
 - Does it align with vision?
 - No hacks or shortcuts?
+- No "MVP limitations" that defeat the feature's purpose?
 - Tests actually test what they claim?
 
 After merge, task branch can be deleted (optional cleanup).
