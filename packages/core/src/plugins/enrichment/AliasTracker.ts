@@ -16,6 +16,7 @@
 import { Plugin, createSuccessResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { BaseNodeRecord, NodeRecord } from '@grafema/types';
+import { StrictModeError } from '../../errors/GrafemaError.js';
 
 /**
  * Alias info from index
@@ -88,6 +89,7 @@ export class AliasTracker extends Plugin {
     let aliasesFound = 0;
     let edgesCreated = 0;
     let resolvedToMethod = 0;
+    const errors: Error[] = [];
 
     // Трекинг превышений глубины
     this.depthExceeded = [];
@@ -192,11 +194,30 @@ export class AliasTracker extends Plugin {
           chain: info.chain.join(' → ')
         }))
       });
+
+      // In strict mode, report as errors
+      if (context.strictMode) {
+        for (const info of this.depthExceeded) {
+          const error = new StrictModeError(
+            `Alias chain exceeded max depth (${info.depth}): ${info.name}`,
+            'STRICT_ALIAS_DEPTH_EXCEEDED',
+            {
+              filePath: info.file,
+              phase: 'ENRICHMENT',
+              plugin: 'AliasTracker',
+              aliasName: info.name,
+              chainLength: info.depth,
+            },
+            `Possible circular alias reference. Chain: ${info.chain.slice(0, 3).join(' -> ')}...`
+          );
+          errors.push(error);
+        }
+      }
     }
 
     logger.info('Summary', summary);
 
-    return createSuccessResult({ nodes: 0, edges: edgesCreated }, summary);
+    return createSuccessResult({ nodes: 0, edges: edgesCreated }, summary, errors);
   }
 
   /**

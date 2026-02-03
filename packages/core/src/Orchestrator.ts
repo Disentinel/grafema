@@ -68,6 +68,11 @@ export interface OrchestratorOptions {
    * If provided and non-empty, discovery plugins are skipped.
    */
   services?: ServiceDefinition[];
+  /**
+   * Enable strict mode for fail-fast debugging.
+   * When true, enrichers report unresolved references as fatal errors.
+   */
+  strictMode?: boolean;
 }
 
 /**
@@ -152,6 +157,8 @@ export class Orchestrator {
   private logger: Logger;
   /** Config-provided services (REG-174) */
   private configServices: ServiceDefinition[] | undefined;
+  /** Strict mode flag (REG-330) */
+  private strictMode: boolean;
 
   constructor(options: OrchestratorOptions = {}) {
     this.graph = options.graph!;
@@ -179,6 +186,9 @@ export class Orchestrator {
 
     // Store config-provided services (REG-174)
     this.configServices = options.services;
+
+    // Strict mode configuration (REG-330)
+    this.strictMode = options.strictMode ?? false;
 
     // Modified auto-add logic: SKIP auto-add if config services provided (REG-174)
     const hasDiscovery = this.plugins.some(p => p.metadata?.phase === 'DISCOVERY');
@@ -410,6 +420,27 @@ export class Orchestrator {
     this.profiler.end('ENRICHMENT');
     this.logger.info('ENRICHMENT phase complete', { duration: ((Date.now() - enrichmentStart) / 1000).toFixed(2) });
 
+    // STRICT MODE BARRIER: Check for fatal errors after ENRICHMENT (REG-330)
+    if (this.strictMode) {
+      const enrichmentDiagnostics = this.diagnosticCollector.getByPhase('ENRICHMENT');
+      const strictErrors = enrichmentDiagnostics.filter(d => d.severity === 'fatal');
+
+      if (strictErrors.length > 0) {
+        this.logger.error(`Strict mode: ${strictErrors.length} unresolved reference(s) found`);
+        for (const err of strictErrors) {
+          this.logger.error(`  [${err.code}] ${err.message}`, {
+            file: err.file,
+            line: err.line,
+            plugin: err.plugin,
+          });
+        }
+        throw new Error(
+          `Strict mode: ${strictErrors.length} unresolved reference(s) found during ENRICHMENT. ` +
+          `Run without --strict for graceful degradation, or fix the underlying issues.`
+        );
+      }
+    }
+
     // PHASE 4: VALIDATION - проверка корректности графа (глобально)
     const validationStart = Date.now();
     this.profiler.start('VALIDATION');
@@ -633,6 +664,7 @@ export class Orchestrator {
         onProgress: this.onProgress as unknown as PluginContext['onProgress'],
         forceAnalysis: this.forceAnalysis,
         logger: this.logger,
+        strictMode: this.strictMode, // REG-330: Pass strict mode flag
       };
 
       // Add reportIssue for VALIDATION phase

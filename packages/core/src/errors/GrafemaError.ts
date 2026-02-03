@@ -206,3 +206,34 @@ export class ValidationError extends GrafemaError {
     this.severity = severity;
   }
 }
+
+/**
+ * Strict mode error - reported when strictMode=true and an enricher
+ * cannot resolve a reference.
+ *
+ * Unlike other errors, StrictModeError is used to collect issues that
+ * would normally be silently skipped. All collected StrictModeErrors
+ * cause analysis to fail after the ENRICHMENT phase completes.
+ *
+ * Severity: fatal (always)
+ * Codes:
+ * - STRICT_UNRESOLVED_METHOD: Method call cannot be resolved to definition
+ * - STRICT_UNRESOLVED_CALL: Function call cannot be resolved to definition
+ * - STRICT_UNRESOLVED_ARGUMENT: Argument cannot be linked to parameter
+ * - STRICT_ALIAS_DEPTH_EXCEEDED: Alias chain too deep (potential cycle)
+ * - STRICT_BROKEN_IMPORT: Import/re-export chain broken
+ */
+export class StrictModeError extends GrafemaError {
+  readonly code: string;
+  readonly severity = 'fatal' as const;
+
+  constructor(
+    message: string,
+    code: string,
+    context: ErrorContext = {},
+    suggestion?: string
+  ) {
+    super(message, context, suggestion);
+    this.code = code;
+  }
+}

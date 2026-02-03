@@ -141,6 +141,7 @@ export const analyzeCommand = new Command('analyze')
   .option('-v, --verbose', 'Show verbose logging')
   .option('--debug', 'Enable debug mode (writes diagnostics.log)')
   .option('--log-level <level>', 'Set log level (silent, errors, warnings, info, debug)')
+  .option('--strict', 'Enable strict mode (fail on unresolved references)')
   .addHelpText('after', `
 Examples:
   grafema analyze                Analyze current project
@@ -149,8 +150,9 @@ Examples:
   grafema analyze -s api         Analyze only "api" service (monorepo)
   grafema analyze -v             Verbose output with progress details
   grafema analyze --debug        Write diagnostics.log for debugging
+  grafema analyze --strict       Fail on unresolved references (debugging)
 `)
-  .action(async (path: string, options: { service?: string; entrypoint?: string; clear?: boolean; quiet?: boolean; verbose?: boolean; debug?: boolean; logLevel?: string }) => {
+  .action(async (path: string, options: { service?: string; entrypoint?: string; clear?: boolean; quiet?: boolean; verbose?: boolean; debug?: boolean; logLevel?: string; strict?: boolean }) => {
     const projectPath = resolve(path);
     const grafemaDir = join(projectPath, '.grafema');
     const dbPath = join(grafemaDir, 'graph.rfdb');
@@ -190,6 +192,12 @@ Examples:
 
     log(`Loaded ${plugins.length} plugins`);
 
+    // Resolve strict mode: CLI flag overrides config
+    const strictMode = options.strict ?? config.strict ?? false;
+    if (strictMode) {
+      log('Strict mode enabled - analysis will fail on unresolved references');
+    }
+
     const startTime = Date.now();
 
     const orchestrator = new Orchestrator({
@@ -200,6 +208,7 @@ Examples:
       forceAnalysis: options.clear || false,
       logger,
       services: config.services.length > 0 ? config.services : undefined,  // Pass config services (REG-174)
+      strictMode, // REG-330: Pass strict mode flag
       onProgress: (progress) => {
         if (options.verbose) {
           log(`[${progress.phase}] ${progress.message}`);

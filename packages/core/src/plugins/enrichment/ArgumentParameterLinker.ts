@@ -27,6 +27,7 @@
 import { Plugin, createSuccessResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { BaseNodeRecord, EdgeRecord } from '@grafema/types';
+import { StrictModeError } from '../../errors/GrafemaError.js';
 
 /**
  * Extended call node type
@@ -83,6 +84,7 @@ export class ArgumentParameterLinker extends Plugin {
     let edgesCreated = 0;
     let unresolvedCalls = 0;
     let noParams = 0;
+    const errors: Error[] = [];
 
     // Collect all CALL nodes (both CALL and METHOD_CALL via CALL type check)
     const callNodes: CallNode[] = [];
@@ -129,6 +131,23 @@ export class ArgumentParameterLinker extends Plugin {
       const callsEdges = await graph.getOutgoingEdges(callNode.id, ['CALLS']);
       if (callsEdges.length === 0) {
         unresolvedCalls++;
+
+        // In strict mode, report unresolved calls that have arguments
+        if (context.strictMode) {
+          const error = new StrictModeError(
+            `Call with arguments has no resolved target: ${callNode.name || callNode.id}`,
+            'STRICT_UNRESOLVED_ARGUMENT',
+            {
+              filePath: callNode.file,
+              lineNumber: callNode.line as number | undefined,
+              phase: 'ENRICHMENT',
+              plugin: 'ArgumentParameterLinker',
+              callId: callNode.id,
+            },
+            `Ensure the called function is imported or defined`
+          );
+          errors.push(error);
+        }
         continue; // Unresolved call, skip
       }
 
@@ -214,7 +233,8 @@ export class ArgumentParameterLinker extends Plugin {
         unresolvedCalls,
         noParams,
         timeMs: Date.now() - startTime
-      }
+      },
+      errors
     );
   }
 }
