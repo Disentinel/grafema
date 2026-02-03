@@ -1102,3 +1102,327 @@ describe('aggregateValues', () => {
     assert.ok(result.values.includes(0), 'Zero should be included');
   });
 });
+
+// =============================================================================
+// TESTS: HTTP_RECEIVES Edge Following (REG-252 Phase D)
+// =============================================================================
+
+describe('traceValues with HTTP_RECEIVES edges', () => {
+  let backend: MockGraphBackend;
+
+  beforeEach(() => {
+    backend = new MockGraphBackend();
+  });
+
+  /**
+   * WHY: traceValues should follow HTTP_RECEIVES edges at CALL terminals.
+   * This enables cross-service value tracing:
+   *
+   * Frontend:
+   *   const data = await response.json();  // CALL node
+   *
+   * Backend:
+   *   res.json({ users: [] });  // OBJECT_LITERAL
+   *
+   * Graph:
+   *   CALL (response.json()) --[HTTP_RECEIVES]--> OBJECT_LITERAL ({ users: [] })
+   *
+   * When tracing `data`, we reach the CALL terminal. Instead of stopping
+   * with "call_result" unknown, we should follow HTTP_RECEIVES edge to
+   * find the backend OBJECT_LITERAL.
+   */
+  it('should trace through HTTP_RECEIVES edge to backend response', async () => {
+    // Setup graph:
+    // Frontend: data variable assigned from response.json() CALL
+    // Backend: OBJECT_LITERAL with response data
+    // HTTP_RECEIVES edge connects them
+
+    // Frontend side
+    await backend.addNode({
+      id: 'var-data',
+      type: 'VARIABLE',
+      name: 'data',
+      file: 'client.js',
+      line: 3,
+    });
+    await backend.addNode({
+      id: 'call-json',
+      type: 'CALL',
+      object: 'response',
+      method: 'json',
+      file: 'client.js',
+      line: 3,
+    });
+
+    // Backend side
+    await backend.addNode({
+      id: 'obj-response',
+      type: 'OBJECT_LITERAL',
+      file: 'server.js',
+      line: 5,
+    });
+
+    // Data flow edges
+    await backend.addEdge({ src: 'var-data', dst: 'call-json', type: 'ASSIGNED_FROM' });
+
+    // HTTP_RECEIVES edge (CALL -> OBJECT_LITERAL)
+    await backend.addEdge({ src: 'call-json', dst: 'obj-response', type: 'HTTP_RECEIVES' });
+
+    // Trace from frontend variable
+    const results = await traceValues(backend, 'var-data');
+
+    // Should NOT stop at CALL with "call_result"
+    // Should follow HTTP_RECEIVES to OBJECT_LITERAL
+    assert.ok(results.length >= 1, 'Should have traced results');
+
+    // Check if we reached the OBJECT_LITERAL
+    const hasObjectLiteral = results.some((r) => r.source.id === 'obj-response');
+    assert.ok(
+      hasObjectLiteral,
+      `Should trace through HTTP_RECEIVES to OBJECT_LITERAL. ` +
+        `Results: ${JSON.stringify(results.map((r) => ({ id: r.source.id, reason: r.reason })))}`
+    );
+  });
+
+  /**
+   * WHY: When frontend variable is traced, it should ultimately find the
+   * backend OBJECT_LITERAL through the HTTP boundary.
+   *
+   * Full chain:
+   * VARIABLE(data) --ASSIGNED_FROM--> CALL(response.json()) --HTTP_RECEIVES--> OBJECT_LITERAL
+   */
+  it('should find OBJECT_LITERAL from backend when tracing frontend variable', async () => {
+    // Setup: complete frontend-to-backend trace
+
+    // Frontend variable
+    await backend.addNode({
+      id: 'var-users',
+      type: 'VARIABLE',
+      name: 'users',
+      file: 'frontend/api.js',
+      line: 10,
+    });
+
+    // Frontend CALL (response.json())
+    await backend.addNode({
+      id: 'call-response-json',
+      type: 'CALL',
+      object: 'response',
+      method: 'json',
+      file: 'frontend/api.js',
+      line: 9,
+    });
+
+    // Backend response data
+    await backend.addNode({
+      id: 'obj-users-response',
+      type: 'OBJECT_LITERAL',
+      value: { users: [], count: 0 },
+      file: 'backend/routes/users.js',
+      line: 15,
+    });
+
+    // Edges
+    await backend.addEdge({ src: 'var-users', dst: 'call-response-json', type: 'ASSIGNED_FROM' });
+    await backend.addEdge({ src: 'call-response-json', dst: 'obj-users-response', type: 'HTTP_RECEIVES' });
+
+    // Trace
+    const results = await traceValues(backend, 'var-users');
+
+    // Should find the backend OBJECT_LITERAL
+    assert.ok(results.length >= 1, 'Should have results');
+
+    const backendResult = results.find((r) => r.source.file === 'backend/routes/users.js');
+    assert.ok(
+      backendResult,
+      `Should find result from backend file. Results: ${JSON.stringify(
+        results.map((r) => ({ file: r.source.file, id: r.source.id }))
+      )}`
+    );
+    assert.strictEqual(
+      backendResult!.source.id,
+      'obj-users-response',
+      'Should trace to the specific OBJECT_LITERAL in backend'
+    );
+  });
+
+  /**
+   * WHY: If CALL node has no HTTP_RECEIVES edge, traceValues should
+   * still return "call_result" unknown (original behavior preserved).
+   */
+  it('should still mark CALL as unknown when no HTTP_RECEIVES edge exists', async () => {
+    // Setup: CALL without HTTP_RECEIVES edge
+    await backend.addNode({
+      id: 'var-result',
+      type: 'VARIABLE',
+      name: 'result',
+      file: 'file.js',
+      line: 1,
+    });
+    await backend.addNode({
+      id: 'call-some-fn',
+      type: 'CALL',
+      name: 'someFunction',
+      file: 'file.js',
+      line: 1,
+    });
+
+    await backend.addEdge({ src: 'var-result', dst: 'call-some-fn', type: 'ASSIGNED_FROM' });
+    // No HTTP_RECEIVES edge
+
+    const results = await traceValues(backend, 'var-result');
+
+    assert.strictEqual(results.length, 1, 'Should have one result');
+    assert.strictEqual(results[0].isUnknown, true);
+    assert.strictEqual(results[0].reason, 'call_result');
+  });
+
+  /**
+   * WHY: Multiple HTTP_RECEIVES edges (from conditional backend responses)
+   * should all be followed, returning multiple possible values.
+   */
+  it('should follow multiple HTTP_RECEIVES edges for conditional responses', async () => {
+    // Setup: CALL with multiple HTTP_RECEIVES edges (conditional backend responses)
+    await backend.addNode({
+      id: 'var-data',
+      type: 'VARIABLE',
+      name: 'data',
+      file: 'client.js',
+      line: 5,
+    });
+    await backend.addNode({
+      id: 'call-json',
+      type: 'CALL',
+      object: 'response',
+      method: 'json',
+      file: 'client.js',
+      line: 4,
+    });
+
+    // Two possible backend responses
+    await backend.addNode({
+      id: 'obj-success',
+      type: 'OBJECT_LITERAL',
+      value: { success: true },
+      file: 'server.js',
+      line: 10,
+    });
+    await backend.addNode({
+      id: 'obj-error',
+      type: 'OBJECT_LITERAL',
+      value: { error: 'Not found' },
+      file: 'server.js',
+      line: 8,
+    });
+
+    // Edges
+    await backend.addEdge({ src: 'var-data', dst: 'call-json', type: 'ASSIGNED_FROM' });
+    await backend.addEdge({ src: 'call-json', dst: 'obj-success', type: 'HTTP_RECEIVES' });
+    await backend.addEdge({ src: 'call-json', dst: 'obj-error', type: 'HTTP_RECEIVES' });
+
+    const results = await traceValues(backend, 'var-data');
+
+    // Should find both backend responses
+    assert.strictEqual(results.length, 2, 'Should find both conditional responses');
+
+    const foundIds = results.map((r) => r.source.id).sort();
+    assert.deepStrictEqual(
+      foundIds,
+      ['obj-error', 'obj-success'],
+      'Should include both success and error responses'
+    );
+  });
+
+  /**
+   * WHY: Ensure OBJECT_LITERAL terminal is handled correctly after HTTP_RECEIVES.
+   * OBJECT_LITERAL without edges should not return "no_sources".
+   */
+  it('should handle OBJECT_LITERAL terminal correctly after HTTP_RECEIVES', async () => {
+    await backend.addNode({
+      id: 'call-json',
+      type: 'CALL',
+      object: 'response',
+      method: 'json',
+      file: 'client.js',
+      line: 3,
+    });
+    await backend.addNode({
+      id: 'obj-response',
+      type: 'OBJECT_LITERAL',
+      file: 'server.js',
+      line: 5,
+    });
+
+    await backend.addEdge({ src: 'call-json', dst: 'obj-response', type: 'HTTP_RECEIVES' });
+
+    // Trace starting from the CALL node
+    const results = await traceValues(backend, 'call-json');
+
+    // Should reach OBJECT_LITERAL and NOT mark as "no_sources"
+    assert.ok(results.length >= 1, 'Should have results');
+
+    const objectLiteralResult = results.find((r) => r.source.id === 'obj-response');
+    assert.ok(objectLiteralResult, 'Should find OBJECT_LITERAL result');
+
+    // OBJECT_LITERAL should not have "no_sources" reason
+    if (objectLiteralResult!.isUnknown) {
+      assert.notStrictEqual(
+        objectLiteralResult!.reason,
+        'no_sources',
+        'OBJECT_LITERAL should not have no_sources reason'
+      );
+    }
+  });
+
+  /**
+   * WHY: HTTP_RECEIVES should work together with other edge types.
+   * If OBJECT_LITERAL has HAS_PROPERTY edges, those should be traceable too.
+   */
+  it('should allow further tracing from OBJECT_LITERAL properties', async () => {
+    // Frontend
+    await backend.addNode({
+      id: 'var-users',
+      type: 'VARIABLE',
+      name: 'users',
+      file: 'client.js',
+      line: 5,
+    });
+    await backend.addNode({
+      id: 'call-json',
+      type: 'CALL',
+      object: 'response',
+      method: 'json',
+      file: 'client.js',
+      line: 4,
+    });
+
+    // Backend OBJECT_LITERAL with property pointing to array
+    await backend.addNode({
+      id: 'obj-response',
+      type: 'OBJECT_LITERAL',
+      file: 'server.js',
+      line: 10,
+    });
+    await backend.addNode({
+      id: 'array-users',
+      type: 'ARRAY_LITERAL',
+      value: [],
+      file: 'server.js',
+      line: 10,
+    });
+
+    // Edges
+    await backend.addEdge({ src: 'var-users', dst: 'call-json', type: 'ASSIGNED_FROM' });
+    await backend.addEdge({ src: 'call-json', dst: 'obj-response', type: 'HTTP_RECEIVES' });
+    // Note: HAS_PROPERTY is not followed by traceValues (different traversal)
+    // This test just verifies HTTP_RECEIVES doesn't break other functionality
+
+    const results = await traceValues(backend, 'var-users');
+
+    assert.ok(results.length >= 1, 'Should have results after HTTP_RECEIVES');
+    assert.ok(
+      results.some((r) => r.source.id === 'obj-response'),
+      'Should reach OBJECT_LITERAL through HTTP_RECEIVES'
+    );
+  });
+});

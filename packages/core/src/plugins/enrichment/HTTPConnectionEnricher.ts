@@ -29,6 +29,7 @@ interface HTTPRouteNode extends BaseNodeRecord {
 interface HTTPRequestNode extends BaseNodeRecord {
   method?: string;
   url?: string;
+  responseDataNode?: string;  // ID of response.json() CALL node (set by FetchAnalyzer)
 }
 
 /**
@@ -49,9 +50,9 @@ export class HTTPConnectionEnricher extends Plugin {
       priority: 50,  // После основных enrichers
       creates: {
         nodes: [],
-        edges: ['INTERACTS_WITH']
+        edges: ['INTERACTS_WITH', 'HTTP_RECEIVES']
       },
-      dependencies: ['ExpressRouteAnalyzer', 'FetchAnalyzer']
+      dependencies: ['ExpressRouteAnalyzer', 'FetchAnalyzer', 'ExpressResponseAnalyzer']
     };
   }
 
@@ -106,13 +107,35 @@ export class HTTPConnectionEnricher extends Plugin {
           const routePath = route.fullPath || route.path;
 
           if (routePath && method === routeMethod && this.pathsMatch(url, routePath)) {
-            // Создаём edge
+            // 1. Create INTERACTS_WITH edge (existing)
             await graph.addEdge({
               type: 'INTERACTS_WITH',
               src: request.id,
               dst: route.id,
               matchType: this.hasParams(routePath) ? 'parametric' : 'exact'
             });
+
+            edgesCreated++;
+
+            // 2. Create HTTP_RECEIVES edges if both sides have data nodes
+            const responseDataNode = request.responseDataNode;
+            if (responseDataNode) {
+              const respondsWithEdges = await graph.getOutgoingEdges(route.id, ['RESPONDS_WITH']);
+              for (const respEdge of respondsWithEdges) {
+                await graph.addEdge({
+                  type: 'HTTP_RECEIVES',
+                  src: responseDataNode,
+                  dst: respEdge.dst,
+                  metadata: {
+                    method: request.method,
+                    path: request.url,
+                    viaRequest: request.id,
+                    viaRoute: route.id
+                  }
+                });
+                edgesCreated++;
+              }
+            }
 
             connections.push({
               request: `${method} ${url}`,
@@ -121,7 +144,6 @@ export class HTTPConnectionEnricher extends Plugin {
               routeFile: route.file
             });
 
-            edgesCreated++;
             break; // Один request → один route
           }
         }

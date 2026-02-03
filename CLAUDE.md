@@ -263,11 +263,26 @@ Focus on high-level only:
 - Do tests actually test what they claim?
 - Did we forget something from the original request?
 
-**Complexity checklist (CRITICAL):**
-- Does the solution iterate over ALL nodes of a broad type (CALL, VARIABLE, etc.)? → RED FLAG
-- Could iteration be narrowed to a specific subset?
-- What's the Big-O complexity? O(n) over WHAT n?
-- Are there nested iterations? What's the combined complexity?
+**MANDATORY Complexity & Architecture Checklist:**
+
+Before approving ANY plan involving data flow, enrichment, or graph traversal:
+
+1. **Complexity Check**: What's the iteration space?
+   - O(n) over ALL nodes/edges = **RED FLAG, REJECT**
+   - O(n) over all nodes of ONE type = **RED FLAG** (there can be millions)
+   - O(m) over specific SMALL set (e.g., http:request nodes) = OK
+   - Reusing existing iteration (extending current enricher) = BEST
+
+2. **Plugin Architecture**: Does it use existing abstractions?
+   - Forward registration (analyzer marks data, stores in metadata) = **GOOD**
+   - Backward pattern scanning (enricher searches for patterns) = **BAD**
+   - Extending existing enricher pass = **BEST** (no extra iteration)
+
+3. **Extensibility**: Adding new library/framework support requires:
+   - Only new analyzer plugin = **GOOD**
+   - Changes to enricher = **BAD** (not abstract enough)
+
+4. **Grafema doesn't brute-force**: If solution scans all nodes looking for patterns, it's WRONG. Grafema uses targeted queries and forward registration.
 
 ### For Kevlin Henney (Review)
 Focus on code quality:
