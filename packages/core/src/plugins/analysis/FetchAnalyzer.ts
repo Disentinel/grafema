@@ -332,7 +332,8 @@ export class FetchAnalyzer extends Plugin {
           const responseDataNodeId = await this.findResponseJsonCall(
             graph,
             request.file,
-            fetchCall.responseVarName
+            fetchCall.responseVarName,
+            request.line
           );
           if (responseDataNodeId) {
             request.responseDataNode = responseDataNodeId;
@@ -601,17 +602,24 @@ export class FetchAnalyzer extends Plugin {
    * Finds the response consumption CALL node (response.json(), response.text(), etc.)
    * by querying the graph for CALL nodes in the same file with matching object name.
    *
+   * Important: Filters to find the response.json() call AFTER the fetch line and
+   * closest to it, ensuring we match the correct call in the same function scope.
+   *
    * @param graph - Graph backend
    * @param file - File path where fetch call is located
    * @param responseVarName - Variable name holding the response
+   * @param fetchLine - Line number of the fetch call (response.json must be after this)
    * @returns CALL node ID or null if not found
    */
   private async findResponseJsonCall(
     graph: PluginContext['graph'],
     file: string,
-    responseVarName: string
+    responseVarName: string,
+    fetchLine: number
   ): Promise<string | null> {
-    // Query for CALL nodes in the same file
+    // Collect all matching CALL nodes
+    const candidates: Array<{ id: string; line: number }> = [];
+
     for await (const node of graph.queryNodes({ type: 'CALL' })) {
       // Check if it's in the same file
       if (node.file !== file) continue;
@@ -622,10 +630,18 @@ export class FetchAnalyzer extends Plugin {
 
       // Check if method is a response consumption method
       if (callNode.method && RESPONSE_CONSUMPTION_METHODS.includes(callNode.method)) {
-        return node.id;
+        const nodeLine = node.line ?? 0;
+        // Only consider calls AFTER the fetch line (response.json comes after fetch)
+        if (nodeLine > fetchLine) {
+          candidates.push({ id: node.id, line: nodeLine });
+        }
       }
     }
 
-    return null;
+    if (candidates.length === 0) return null;
+
+    // Return the closest match (smallest line number after fetch)
+    candidates.sort((a, b) => a.line - b.line);
+    return candidates[0].id;
   }
 }
