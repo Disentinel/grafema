@@ -26,7 +26,6 @@ import assert from 'node:assert';
 import {
   GrafemaError,
   StrictModeError,
-  type ErrorContext,
 } from '@grafema/core';
 
 // =============================================================================
@@ -47,7 +46,7 @@ describe('StrictModeError', () => {
     });
 
     it('should set code, message, and context correctly', () => {
-      const context: ErrorContext = {
+      const context = {
         filePath: 'service.js',
         lineNumber: 42,
         phase: 'ENRICHMENT',
@@ -236,7 +235,7 @@ describe('StrictModeError', () => {
 
   describe('PluginResult.errors[] compatibility', () => {
     it('should work with Error[] type', () => {
-      const errors: Error[] = [];
+      const errors = [];
       const strictError = new StrictModeError('Test', 'STRICT_TEST', {});
 
       // Should compile and work - StrictModeError is Error
@@ -246,7 +245,7 @@ describe('StrictModeError', () => {
     });
 
     it('should allow mixing with other GrafemaError types', () => {
-      const errors: Error[] = [];
+      const errors = [];
 
       errors.push(new StrictModeError('Strict error', 'STRICT_TEST', {}));
       errors.push(new Error('Plain error'));
