@@ -1,0 +1,110 @@
+{
+  "name": "grafema-explore",
+  "displayName": "Grafema Explore",
+  "description": "Interactive graph navigation for Grafema code analysis",
+  "version": "0.0.1",
+  "publisher": "grafema",
+  "engines": {
+    "vscode": "^1.74.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onView:grafemaExplore"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "views": {
+      "explorer": [
+        {
+          "id": "grafemaExplore",
+          "name": "Grafema Explore"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "grafema.gotoLocation",
+        "title": "Go to Location"
+      },
+      {
+        "command": "grafema.findAtCursor",
+        "title": "Grafema: Find Node at Cursor",
+        "icon": "$(search)"
+      },
+      {
+        "command": "grafema.setAsRoot",
+        "title": "Set as Root",
+        "icon": "$(home)"
+      },
+      {
+        "command": "grafema.refreshEdges",
+        "title": "Refresh",
+        "icon": "$(refresh)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "grafema.findAtCursor",
+          "when": "view == grafemaExplore",
+          "group": "navigation@1"
+        },
+        {
+          "command": "grafema.refreshEdges",
+          "when": "view == grafemaExplore",
+          "group": "navigation@2"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "grafema.setAsRoot",
+          "when": "view == grafemaExplore && viewItem == grafemaNode",
+          "group": "navigation@1"
+        },
+        {
+          "command": "grafema.setAsRoot",
+          "when": "view == grafemaExplore && viewItem == grafemaEdge",
+          "group": "navigation@1"
+        }
+      ],
+      "view/item/inline": [
+        {
+          "command": "grafema.setAsRoot",
+          "when": "view == grafemaExplore && viewItem == grafemaNode",
+          "group": "inline"
+        },
+        {
+          "command": "grafema.setAsRoot",
+          "when": "view == grafemaExplore && viewItem == grafemaEdge",
+          "group": "inline"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "grafema.findAtCursor",
+        "key": "ctrl+shift+g",
+        "mac": "cmd+shift+g",
+        "when": "editorTextFocus"
+      }
+    ]
+  },
+  "scripts": {
+    "build": "node esbuild.config.mjs",
+    "watch": "node esbuild.config.mjs --watch",
+    "package": "vsce package",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@grafema/rfdb-client": "workspace:*",
+    "@grafema/types": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.74.0",
+    "esbuild": "^0.19.0",
+    "typescript": "^5.9.3"
+  }
+}
