@@ -33,6 +33,45 @@ export interface DisplayableNode {
   file: string;
   /** Line number (optional) */
   line?: number;
+  /** HTTP method (for http:route, http:request) */
+  method?: string;
+  /** Path or URL (for http:route, http:request) */
+  path?: string;
+  /** URL (for http:request) */
+  url?: string;
+}
+
+/**
+ * Get the display name for a node based on its type.
+ *
+ * HTTP nodes use method + path/url instead of name.
+ * Other nodes use their name field.
+ */
+export function getNodeDisplayName(node: DisplayableNode): string {
+  switch (node.type) {
+    case 'http:route':
+      // Express routes: "GET /users"
+      if (node.method && node.path) {
+        return `${node.method} ${node.path}`;
+      }
+      break;
+    case 'http:request':
+      // Fetch/axios requests: "POST /api/data"
+      if (node.method && node.url) {
+        return `${node.method} ${node.url}`;
+      }
+      break;
+  }
+  // Default: use name, but guard against JSON metadata corruption
+  if (node.name && !node.name.startsWith('{')) {
+    return node.name;
+  }
+  // Fallback: extract name from semantic ID if possible
+  const parts = node.id.split('#');
+  if (parts.length > 1) {
+    return parts[1]; // Usually contains the key identifier
+  }
+  return node.id;
 }
 
 /**
@@ -47,8 +86,9 @@ export function formatNodeDisplay(node: DisplayableNode, options: FormatNodeOpti
   const { projectPath, showLocation = true, indent = '' } = options;
   const lines: string[] = [];
 
-  // Line 1: [TYPE] name
-  lines.push(`${indent}[${node.type}] ${node.name}`);
+  // Line 1: [TYPE] display name (type-specific)
+  const displayName = getNodeDisplayName(node);
+  lines.push(`${indent}[${node.type}] ${displayName}`);
 
   // Line 2: ID (semantic ID)
   lines.push(`${indent}  ID: ${node.id}`);

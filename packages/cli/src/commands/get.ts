@@ -24,6 +24,9 @@ interface NodeInfo {
   name: string;
   file: string;
   line?: number;
+  method?: string;
+  path?: string;
+  url?: string;
   [key: string]: unknown;
 }
 
@@ -153,6 +156,9 @@ async function outputText(
     name: node.name || '',
     file: node.file || '',
     line: node.line,
+    method: node.method,
+    path: node.path,
+    url: node.url,
   };
 
   // Display node details
@@ -252,11 +258,13 @@ async function getNodeName(backend: RFDBServerBackend, nodeId: string): Promise<
 }
 
 /**
- * Extract metadata fields (exclude standard fields)
+ * Extract metadata fields (exclude standard and display fields)
  */
 function getMetadataFields(node: any): Record<string, unknown> {
   const standardFields = new Set([
     'id', 'type', 'nodeType', 'name', 'file', 'line',
+    // Display fields shown in primary line for HTTP nodes
+    'method', 'path', 'url',
   ]);
 
   const metadata: Record<string, unknown> = {};
