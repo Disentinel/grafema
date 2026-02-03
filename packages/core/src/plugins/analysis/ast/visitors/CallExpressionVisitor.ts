@@ -52,6 +52,8 @@ interface ObjectPropertyInfo {
   callColumn?: number;
   nestedObjectId?: string;
   nestedArrayId?: string;
+  // REG-329: Scope path for variable resolution
+  valueScopePath?: string[];
 }
 
 /**
@@ -507,6 +509,8 @@ export class CallExpressionVisitor extends ASTVisitor {
         if (spreadArg.type === 'Identifier') {
           propertyInfo.valueName = spreadArg.name;
           propertyInfo.valueType = 'VARIABLE';
+          // REG-329: Capture scope path for spread variable resolution
+          propertyInfo.valueScopePath = this.scopeTracker?.getContext().scopePath ?? [];
         }
 
         objectProperties.push(propertyInfo);
@@ -632,6 +636,8 @@ export class CallExpressionVisitor extends ASTVisitor {
           else if (value.type === 'Identifier') {
             propertyInfo.valueType = 'VARIABLE';
             propertyInfo.valueName = value.name;
+            // REG-329: Capture scope path for scope-aware variable resolution
+            propertyInfo.valueScopePath = this.scopeTracker?.getContext().scopePath ?? [];
           }
           // Call expression
           else if (value.type === 'CallExpression') {
