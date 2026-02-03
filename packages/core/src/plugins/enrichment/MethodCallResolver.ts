@@ -14,6 +14,7 @@
 import { Plugin, createSuccessResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { BaseNodeRecord } from '@grafema/types';
+import { StrictModeError } from '../../errors/GrafemaError.js';
 
 /**
  * Extended call node with method properties
@@ -55,6 +56,7 @@ export class MethodCallResolver extends Plugin {
     let methodCallsProcessed = 0;
     let edgesCreated = 0;
     let unresolved = 0;
+    const errors: Error[] = [];
 
     // Собираем все METHOD_CALL ноды (CALL с object атрибутом)
     const methodCalls: MethodCallNode[] = [];
@@ -131,6 +133,24 @@ export class MethodCallResolver extends Plugin {
         edgesCreated++;
       } else {
         unresolved++;
+
+        // In strict mode, collect error for later reporting
+        if (context.strictMode) {
+          const error = new StrictModeError(
+            `Cannot resolve method call: ${methodCall.object}.${methodCall.method}`,
+            'STRICT_UNRESOLVED_METHOD',
+            {
+              filePath: methodCall.file,
+              lineNumber: methodCall.line as number | undefined,
+              phase: 'ENRICHMENT',
+              plugin: 'MethodCallResolver',
+              object: methodCall.object,
+              method: methodCall.method,
+            },
+            `Check if class "${methodCall.object}" is imported and has method "${methodCall.method}"`
+          );
+          errors.push(error);
+        }
       }
     }
 
@@ -143,7 +163,7 @@ export class MethodCallResolver extends Plugin {
 
     logger.info('Summary', summary);
 
-    return createSuccessResult({ nodes: 0, edges: edgesCreated }, summary);
+    return createSuccessResult({ nodes: 0, edges: edgesCreated }, summary, errors);
   }
 
   /**

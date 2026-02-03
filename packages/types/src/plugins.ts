@@ -101,6 +101,12 @@ export interface PluginContext {
    * @returns The ID of the created issue node
    */
   reportIssue?(issue: IssueSpec): Promise<string>;
+  /**
+   * Strict mode flag. When true, enrichers should report unresolved
+   * references as fatal errors instead of silently continuing.
+   * Default: false (graceful degradation).
+   */
+  strictMode?: boolean;
 }
 
 // === PLUGIN RESULT ===

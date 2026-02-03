@@ -15,6 +15,7 @@ import { Plugin, createSuccessResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { BaseNodeRecord } from '@grafema/types';
 import { dirname, resolve } from 'path';
+import { StrictModeError } from '../../errors/GrafemaError.js';
 
 // === INTERFACES ===
 
@@ -156,6 +157,7 @@ export class FunctionCallResolver extends Plugin {
     };
 
     let reExportsResolved = 0; // Counter for successfully resolved re-export chains
+    const errors: Error[] = [];
 
     for (const callSite of callSitesToResolve) {
       const calledName = callSite.name;
@@ -203,6 +205,24 @@ export class FunctionCallResolver extends Plugin {
           // Distinguish: if visited set would show cycle, it's circular
           // For simplicity, count as broken (can add nuance later)
           skipped.reExportsBroken++;
+
+          // In strict mode, collect error
+          if (context.strictMode) {
+            const error = new StrictModeError(
+              `Cannot resolve re-export chain for: ${calledName}`,
+              'STRICT_BROKEN_IMPORT',
+              {
+                filePath: file,
+                lineNumber: callSite.line as number | undefined,
+                phase: 'ENRICHMENT',
+                plugin: 'FunctionCallResolver',
+                calledFunction: calledName,
+                importSource: imp.source,
+              },
+              `Check if the module "${imp.source}" exists and exports "${calledName}"`
+            );
+            errors.push(error);
+          }
           continue;
         }
 
@@ -282,7 +302,8 @@ export class FunctionCallResolver extends Plugin {
         reExportsResolved,
         skipped,
         timeMs: Date.now() - startTime
-      }
+      },
+      errors
     );
   }
 

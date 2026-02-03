@@ -12,6 +12,7 @@ export {
   PluginError,
   AnalysisError,
   ValidationError,
+  StrictModeError,
 } from './errors/GrafemaError.js';
 export type { ErrorContext, GrafemaErrorJSON } from './errors/GrafemaError.js';
 

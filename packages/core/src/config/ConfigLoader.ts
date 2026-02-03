@@ -60,6 +60,15 @@ export interface GrafemaConfig {
    * See OrchestratorConfig.exclude for documentation.
    */
   exclude?: string[];
+
+  /**
+   * Enable strict mode for fail-fast debugging.
+   * When true, analysis fails if enrichers cannot resolve references.
+   * When false (default), graceful degradation with warnings.
+   *
+   * Can be overridden via CLI: --strict
+   */
+  strict?: boolean;
 }
 
 /**
@@ -101,6 +110,7 @@ export const DEFAULT_CONFIG: GrafemaConfig = {
     ],
   },
   services: [], // Empty by default (uses auto-discovery)
+  strict: false, // Graceful degradation by default
 };
 
 /**
@@ -338,5 +348,6 @@ function mergeConfig(
     // Note: YAML null becomes undefined here (null ?? undefined = undefined)
     include: user.include ?? undefined,
     exclude: user.exclude ?? undefined,
+    strict: user.strict ?? defaults.strict,
   };
 }
