@@ -29,6 +29,7 @@ const traverse = (traverseModule as any).default || traverseModule;
 interface HttpRequestNode {
   id: string;
   type: 'http:request';
+  name: string;  // Human-readable name like "GET /api/users"
   method: string;
   url: string;
   library: string;
@@ -184,6 +185,7 @@ export class FetchAnalyzer extends Plugin {
             const request: HttpRequestNode = {
               id: `http:request#${method}:${url}#${module.file}#${line}`,
               type: 'http:request',
+              name: `${method} ${url}`,
               method: method,
               url: url,
               library: 'fetch',
@@ -217,6 +219,7 @@ export class FetchAnalyzer extends Plugin {
             const request: HttpRequestNode = {
               id: `http:request#${method}:${url}#${module.file}#${line}`,
               type: 'http:request',
+              name: `${method} ${url}`,
               method: method,
               url: url,
               library: 'axios',
@@ -262,6 +265,7 @@ export class FetchAnalyzer extends Plugin {
               const request: HttpRequestNode = {
                 id: `http:request#${method.toUpperCase()}:${url}#${module.file}#${line}`,
                 type: 'http:request',
+                name: `${method.toUpperCase()} ${url}`,
                 method: method.toUpperCase(),
                 url: url,
                 library: 'axios',
@@ -295,6 +299,7 @@ export class FetchAnalyzer extends Plugin {
               const request: HttpRequestNode = {
                 id: `http:request#${method}:${url}#${module.file}#${line}`,
                 type: 'http:request',
+                name: `${method} ${url}`,
                 method: method,
                 url: url,
                 library: calleeName,
