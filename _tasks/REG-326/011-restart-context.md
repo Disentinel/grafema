@@ -35,4 +35,4 @@ The original plan had two parts:
 Restart planning with Don Melton, taking into account:
 - Local variables ARE in the graph (no more "limitation")
 - ExpressResponseAnalyzer still creates disconnected nodes (needs fix)
-- High-level review by Steve Jobs + Вадим (not Linus)
+- High-level review by Steve Jobs + Vadim (not Linus)

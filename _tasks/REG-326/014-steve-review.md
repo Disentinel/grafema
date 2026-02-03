@@ -4,7 +4,7 @@
 
 ## Verdict: **CONDITIONAL APPROVE**
 
-This plan is close, but I have serious concerns about reliability and vision alignment. We need to discuss these with Вадим before proceeding.
+This plan is close, but I have serious concerns about reliability and vision alignment. We need to discuss these with Vadim before proceeding.
 
 ---
 
@@ -46,7 +46,7 @@ res.send(statusData);
 
 **My take:** This is a 60% solution. We fix the linkage problem, but object literals still dead-end.
 
-**Questions for Вадим:**
+**Questions for Vadim:**
 1. Is "show the variable name but can't trace further" acceptable for MVP?
 2. Should we fix ObjectExpression handling in this task, or defer?
 3. If deferred, does this diminish the value enough to reconsider priority?
@@ -89,7 +89,7 @@ router.get('/data', (req, res) => {
 
 **Is this correct?** Module-level variables ARE in scope. Should we match them?
 
-**Questions for Вадим:**
+**Questions for Vadim:**
 1. Should module-level variables be resolvable from handler scope?
 2. What about variables from outer closures?
 3. Do we need a proper scope chain walk instead of prefix matching?
@@ -115,7 +115,7 @@ Joel's analysis: O(R × N × (V+C+P)) for full plugin execution
 
 **If this runs during trace:** Acceptable, trace is a slow command anyway
 
-**Questions for Вадим:**
+**Questions for Vadim:**
 1. Does ExpressResponseAnalyzer run during `analyze` or `trace`?
 2. If during analyze, is 1-second overhead per 50 routes acceptable?
 3. Should we add `parentScopeId` now instead of deferring?
@@ -146,7 +146,7 @@ Response 1 (res.send at line 23):
 
 **My take:** This is useful for "what variable?", less useful for "what database query?".
 
-**Questions for Вадим:**
+**Questions for Vadim:**
 1. Is this output valuable enough to ship as MVP?
 2. What percentage of responses are object literals vs. function calls vs. database queries?
 3. If most responses are object literals, does this feature miss the mark?
@@ -165,7 +165,7 @@ The plan solves ONE problem (stub nodes) but leaves TWO problems unsolved:
 
 ---
 
-## Questions for Вадим (MUST ANSWER BEFORE PROCEEDING)
+## Questions for Vadim (MUST ANSWER BEFORE PROCEEDING)
 
 ### Critical Path Questions:
 
@@ -220,13 +220,13 @@ The plan solves ONE problem (stub nodes) but leaves TWO problems unsolved:
 
 **I'm torn between A and B. Option C feels like over-engineering, but A feels like shipping a half-working feature.**
 
-**Let's discuss with Вадим before proceeding.**
+**Let's discuss with Vadim before proceeding.**
 
 ---
 
 ## If We Proceed (Conditional Approval)
 
-If Вадим approves shipping with known limitations, then:
+If Vadim approves shipping with known limitations, then:
 
 1. ✅ **Don's plan is architecturally sound** — no hacks, no shortcuts
 2. ✅ **Joel's spec is implementable** — clear, detailed, testable
@@ -251,9 +251,9 @@ This is good engineering — clean, incremental, testable. But I'm not convinced
 
 Otherwise, I'd rather wait until we can trace through object literals and have proper scope resolution. Half-working features damage trust more than missing features.
 
-**Let's discuss with Вадим.**
+**Let's discuss with Vadim.**
 
 ---
 
 *Review by Steve Jobs, Product Design*
-*Status: CONDITIONAL APPROVE — awaiting Вадим's input on critical questions*
+*Status: CONDITIONAL APPROVE — awaiting Vadim's input on critical questions*

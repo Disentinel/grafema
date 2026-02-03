@@ -1,4 +1,4 @@
-# Вадим Решетников - High-Level Review for REG-326
+# Vadim Reshetnikov - High-Level Review for REG-326
 
 **Date:** 2026-02-03
 
@@ -10,15 +10,15 @@
 
 > "Object literals are 98% of JSON API responses. We need it first priority."
 
-**Decision:** Приостанавливаем REG-326, фиксим ObjectExpression в JSASTAnalyzer, затем продолжаем.
+**Decision:** Pause REG-326, fix ObjectExpression in JSASTAnalyzer first, then continue.
 
-**Rationale:** Без ASSIGNED_FROM для object literals, feature бесполезна для 98% real-world cases. Это именно та ситуация где "accept limitation for MVP" defeats the purpose.
+**Rationale:** Without ASSIGNED_FROM for object literals, the feature is useless for 98% of real-world cases. This is exactly the situation where "accept limitation for MVP" defeats the purpose.
 
 ### 2. Global Scope Variables — Fallback Search
 
 > "Global level variables should be 'second tier' of search. We know all variables in global scope, right? So we can fallback to them. Like shadowing in reverse. JS resolves them somehow."
 
-**Decision:** Scope resolution должен включать:
+**Decision:** Scope resolution must include:
 1. First: local scope (handler function)
 2. Second: module-level scope (global variables in same file)
 
@@ -28,7 +28,7 @@
 
 > "We need proper scope chain track. I know it's hard but it's a major investment. Since JS engine can track it - we can track it too."
 
-**Decision:** String prefix matching — временное решение. Нужен proper scope chain.
+**Decision:** String prefix matching is a temporary solution. Proper scope chain required.
 
 **Scope chain walk:**
 1. Start from identifier usage location
@@ -40,7 +40,7 @@
 
 > "We need a system-wide flag to fail immediately instead of WARN and stub/global. In this mode we can find and fix product gaps easier."
 
-**Decision:** Добавить глобальный strict mode flag:
+**Decision:** Add global strict mode flag:
 - Default: WARN + create stub (current behavior)
 - Strict: FAIL immediately when can't resolve
 
@@ -115,5 +115,5 @@ Steve asked: "Should `--from-route` support wildcards? (e.g., `"GET /api/*"`)"
 
 ---
 
-*Review by Вадим Решетников, Product Owner*
+*Review by Vadim Reshetnikov, Product Owner*
 *Status: NEEDS REWORK — expand scope before implementation*

@@ -52,7 +52,7 @@ REG-326 will be unblocked when REG-327 is complete.
 
 Linus Torvalds removed from high-level reviewer role. New review process:
 
-**Steve Jobs + Вадим Решетников (parallel review)**
+**Steve Jobs + Vadim Reshetnikov (parallel review)**
 - Both must approve
 - Default stance: REJECT
 - Zero tolerance for "MVP limitations" that defeat feature purpose
@@ -74,4 +74,4 @@ The following files were created during planning but should NOT be committed:
 
 ---
 
-*This decision made by Вадим Решетников (product owner)*
+*This decision made by Vadim Reshetnikov (product owner)*
