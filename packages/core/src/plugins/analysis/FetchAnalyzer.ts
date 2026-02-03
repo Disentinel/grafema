@@ -382,6 +382,25 @@ export class FetchAnalyzer extends Plugin {
             dst: request.id
           });
         }
+
+        // Find CALL node that makes this request (same file, same line)
+        // Determine expected call name based on library
+        const expectedCallNames = this.getExpectedCallNames(request.library, request.method);
+
+        for await (const callNode of graph.queryNodes({ type: 'CALL' })) {
+          if (
+            callNode.file === request.file &&
+            callNode.line === request.line &&
+            expectedCallNames.includes(callNode.name as string)
+          ) {
+            await graph.addEdge({
+              type: 'MAKES_REQUEST',
+              src: callNode.id,
+              dst: request.id
+            });
+            break; // Only link to first matching CALL node
+          }
+        }
       }
 
       // Создаём EXTERNAL ноды для внешних API
@@ -488,6 +507,28 @@ export class FetchAnalyzer extends Plugin {
     }
 
     return null;
+  }
+
+  /**
+   * Returns expected CALL node names based on library and HTTP method.
+   * Used to match http:request with corresponding CALL node.
+   *
+   * @param library - Library name (fetch, axios, or custom wrapper name)
+   * @param method - HTTP method (GET, POST, etc.)
+   * @returns Array of possible call names
+   */
+  private getExpectedCallNames(library: string, method: string): string[] {
+    if (library === 'fetch') {
+      return ['fetch'];
+    }
+
+    if (library === 'axios') {
+      // axios.get(), axios.post(), etc. or axios() config call
+      return [`axios.${method.toLowerCase()}`, 'axios'];
+    }
+
+    // Custom wrapper (authFetch, apiFetch, etc.)
+    return [library];
   }
 
   /**
