@@ -45,7 +45,15 @@ export type RFDBCommand =
   | 'datalogLoadRules'
   | 'datalogClearRules'
   | 'datalogQuery'
-  | 'checkGuarantee';
+  | 'checkGuarantee'
+  // Protocol v2 - Multi-Database Commands
+  | 'hello'
+  | 'createDatabase'
+  | 'openDatabase'
+  | 'closeDatabase'
+  | 'dropDatabase'
+  | 'listDatabases'
+  | 'currentDatabase';
 
 // === WIRE FORMAT ===
 // Nodes as sent over the wire
@@ -217,6 +225,45 @@ export interface PingResponse extends RFDBResponse {
   version: string;
 }
 
+// === PROTOCOL V2 - MULTI-DATABASE RESPONSES ===
+
+export interface HelloResponse extends RFDBResponse {
+  ok: boolean;
+  protocolVersion: number;
+  serverVersion: string;
+  features: string[];
+}
+
+export interface CreateDatabaseResponse extends RFDBResponse {
+  ok: boolean;
+  databaseId: string;
+}
+
+export interface OpenDatabaseResponse extends RFDBResponse {
+  ok: boolean;
+  databaseId: string;
+  mode: string;
+  nodeCount: number;
+  edgeCount: number;
+}
+
+export interface DatabaseInfo {
+  name: string;
+  ephemeral: boolean;
+  nodeCount: number;
+  edgeCount: number;
+  connectionCount: number;
+}
+
+export interface ListDatabasesResponse extends RFDBResponse {
+  databases: DatabaseInfo[];
+}
+
+export interface CurrentDatabaseResponse extends RFDBResponse {
+  database: string | null;
+  mode: string | null;
+}
+
 // === ATTR QUERY ===
 export interface AttrQuery {
   nodeType?: string;
@@ -290,4 +337,13 @@ export interface IRFDBClient {
   datalogClearRules(): Promise<RFDBResponse>;
   datalogQuery(query: string): Promise<DatalogResult[]>;
   checkGuarantee(ruleSource: string): Promise<DatalogResult[]>;
+
+  // Protocol v2 - Multi-Database
+  hello(protocolVersion?: number): Promise<HelloResponse>;
+  createDatabase(name: string, ephemeral?: boolean): Promise<CreateDatabaseResponse>;
+  openDatabase(name: string, mode?: 'rw' | 'ro'): Promise<OpenDatabaseResponse>;
+  closeDatabase(): Promise<RFDBResponse>;
+  dropDatabase(name: string): Promise<RFDBResponse>;
+  listDatabases(): Promise<ListDatabasesResponse>;
+  currentDatabase(): Promise<CurrentDatabaseResponse>;
 }

@@ -19,6 +19,11 @@ import type {
   DatalogResult,
   NodeType,
   EdgeType,
+  HelloResponse,
+  CreateDatabaseResponse,
+  OpenDatabaseResponse,
+  ListDatabasesResponse,
+  CurrentDatabaseResponse,
 } from '@grafema/types';
 
 interface PendingRequest {
@@ -558,6 +563,71 @@ export class RFDBClient extends EventEmitter implements IRFDBClient {
   async ping(): Promise<string | false> {
     const response = await this._send('ping') as { pong?: boolean; version?: string };
     return response.pong && response.version ? response.version : false;
+  }
+
+  // ===========================================================================
+  // Protocol v2 - Multi-Database Commands
+  // ===========================================================================
+
+  /**
+   * Negotiate protocol version with server
+   * @param protocolVersion - Protocol version to negotiate (default: 2)
+   * @returns Server capabilities including protocolVersion, serverVersion, features
+   */
+  async hello(protocolVersion: number = 2): Promise<HelloResponse> {
+    const response = await this._send('hello' as RFDBCommand, { protocolVersion });
+    return response as HelloResponse;
+  }
+
+  /**
+   * Create a new database
+   * @param name - Database name (alphanumeric, _, -)
+   * @param ephemeral - If true, database is in-memory and auto-cleaned on disconnect
+   */
+  async createDatabase(name: string, ephemeral: boolean = false): Promise<CreateDatabaseResponse> {
+    const response = await this._send('createDatabase' as RFDBCommand, { name, ephemeral });
+    return response as CreateDatabaseResponse;
+  }
+
+  /**
+   * Open a database and set as current for this session
+   * @param name - Database name
+   * @param mode - 'rw' (read-write) or 'ro' (read-only)
+   */
+  async openDatabase(name: string, mode: 'rw' | 'ro' = 'rw'): Promise<OpenDatabaseResponse> {
+    const response = await this._send('openDatabase' as RFDBCommand, { name, mode });
+    return response as OpenDatabaseResponse;
+  }
+
+  /**
+   * Close current database
+   */
+  async closeDatabase(): Promise<RFDBResponse> {
+    return this._send('closeDatabase' as RFDBCommand);
+  }
+
+  /**
+   * Drop (delete) a database - must not be in use
+   * @param name - Database name
+   */
+  async dropDatabase(name: string): Promise<RFDBResponse> {
+    return this._send('dropDatabase' as RFDBCommand, { name });
+  }
+
+  /**
+   * List all databases
+   */
+  async listDatabases(): Promise<ListDatabasesResponse> {
+    const response = await this._send('listDatabases' as RFDBCommand);
+    return response as ListDatabasesResponse;
+  }
+
+  /**
+   * Get current database for this session
+   */
+  async currentDatabase(): Promise<CurrentDatabaseResponse> {
+    const response = await this._send('currentDatabase' as RFDBCommand);
+    return response as CurrentDatabaseResponse;
   }
 
   /**
