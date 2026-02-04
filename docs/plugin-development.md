@@ -454,10 +454,106 @@ To add a plugin to the Grafema codebase:
 
 3. Add to DEFAULT_CONFIG in `packages/core/src/config/ConfigLoader.ts` if it should be enabled by default.
 
-### Custom Plugins in Project (TODO)
+### Custom Plugins in Project
 
-> **Note:** Custom plugins in the project directory are not yet implemented.
-> Current approach: fork the repository or create an npm package.
+Place custom plugins in `.grafema/plugins/` directory:
+
+```
+your-project/
+├── .grafema/
+│   ├── config.yaml
+│   └── plugins/
+│       ├── MyCustomAnalyzer.mjs    # ESM plugin
+│       ├── LegacyAnalyzer.cjs      # CommonJS plugin
+│       └── AnotherPlugin.js        # Auto-detected format
+```
+
+Supported extensions: `.js`, `.mjs`, `.cjs`
+
+**ESM Plugin Example (`.mjs`):**
+```javascript
+// .grafema/plugins/MyAnalyzer.mjs
+import { Plugin, createSuccessResult } from '@grafema/core';
+
+export default class MyAnalyzer extends Plugin {
+  get metadata() {
+    return {
+      name: 'MyAnalyzer',
+      phase: 'ANALYSIS',
+      priority: 50,
+    };
+  }
+
+  async execute(context) {
+    // Your analysis logic
+    return createSuccessResult({ nodes: 0, edges: 0 });
+  }
+}
+```
+
+#### ESM + CJS Interop
+
+If your plugin needs to import CommonJS modules from the target project (e.g., legacy config files), use `createRequire`:
+
+```javascript
+// .grafema/plugins/LegacyConfigReader.mjs
+import { createRequire } from 'module';
+import { Plugin, createSuccessResult } from '@grafema/core';
+
+export default class LegacyConfigReader extends Plugin {
+  get metadata() {
+    return { name: 'LegacyConfigReader', phase: 'DISCOVERY', priority: 100 };
+  }
+
+  async execute(context) {
+    const { projectPath } = context;
+
+    // Create require function relative to project
+    const require = createRequire(projectPath + '/package.json');
+
+    // Now you can require CJS modules from the project
+    const legacyConfig = require('./config/services.js');
+
+    // Process the config...
+    return createSuccessResult({ nodes: 0, edges: 0 });
+  }
+}
+```
+
+**Alternative: execSync pattern** for complex CJS interop:
+
+```javascript
+// .grafema/plugins/ComplexCJSIntegration.mjs
+import { execSync } from 'child_process';
+import { readFileSync, writeFileSync } from 'fs';
+import { join } from 'path';
+
+export default class ComplexCJSIntegration extends Plugin {
+  async execute(context) {
+    const { projectPath } = context;
+
+    // Create a temporary CJS script that does the heavy lifting
+    const script = `
+      const config = require('./config');
+      const result = extractServices(config);
+      console.log(JSON.stringify(result));
+    `;
+
+    const scriptPath = join(projectPath, '.grafema', '.tmp-extract.cjs');
+    writeFileSync(scriptPath, script);
+
+    try {
+      const output = execSync(\`node \${scriptPath}\`, { cwd: projectPath });
+      const services = JSON.parse(output.toString());
+      // Process services...
+    } finally {
+      unlinkSync(scriptPath);
+    }
+
+    return createSuccessResult({ nodes: 0, edges: 0 });
+  }
+}
+```
 
 ## Type Naming Conventions
 

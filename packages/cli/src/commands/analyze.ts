@@ -113,7 +113,7 @@ async function loadCustomPlugins(
 
   try {
     const files = readdirSync(pluginsDir).filter(
-      (f) => f.endsWith('.js') || f.endsWith('.mjs')
+      (f) => f.endsWith('.js') || f.endsWith('.mjs') || f.endsWith('.cjs')
     );
 
     for (const file of files) {
@@ -122,9 +122,9 @@ async function loadCustomPlugins(
         const pluginUrl = pathToFileURL(pluginPath).href;
         const module = await import(pluginUrl);
 
-        const PluginClass = module.default || module[file.replace(/\.(m?js)$/, '')];
+        const PluginClass = module.default || module[file.replace(/\.[cm]?js$/, '')];
         if (PluginClass && typeof PluginClass === 'function') {
-          const pluginName = PluginClass.name || file.replace(/\.(m?js)$/, '');
+          const pluginName = PluginClass.name || file.replace(/\.[cm]?js$/, '');
           customPlugins[pluginName] = () => new PluginClass() as Plugin;
           log(`Loaded custom plugin: ${pluginName}`);
         }
