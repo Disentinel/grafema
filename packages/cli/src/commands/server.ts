@@ -13,20 +13,49 @@ import { existsSync, unlinkSync, writeFileSync, readFileSync } from 'fs';
 import { spawn } from 'child_process';
 import { fileURLToPath } from 'url';
 import { setTimeout as sleep } from 'timers/promises';
-import { RFDBClient } from '@grafema/core';
+import { RFDBClient, loadConfig } from '@grafema/core';
 import { exitWithError } from '../utils/errorFormatter.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
+// Extend config type for server settings
+interface ServerConfig {
+  binaryPath?: string;
+}
+
 /**
  * Find RFDB server binary in order of preference:
- * 1. @grafema/rfdb npm package
- * 2. packages/rfdb-server/target/release (monorepo development)
- * 3. packages/rfdb-server/target/debug
+ * 1. Explicit path (from --binary flag or config)
+ * 2. Monorepo development (target/release, target/debug)
+ * 3. @grafema/rfdb npm package (prebuilt binaries)
+ * 4. ~/.local/bin/rfdb-server (user-installed)
  */
-function findServerBinary(): string | null {
-  // 1. Check @grafema/rfdb npm package
+function findServerBinary(explicitPath?: string): string | null {
+  // 1. Explicit path from --binary flag or config
+  if (explicitPath) {
+    const resolved = resolve(explicitPath);
+    if (existsSync(resolved)) {
+      return resolved;
+    }
+    // Explicit path specified but not found - this is an error
+    console.error(`Specified binary not found: ${resolved}`);
+    return null;
+  }
+
+  // 2. Check packages/rfdb-server in monorepo (for development)
+  const projectRoot = join(__dirname, '../../../..');
+  const releaseBinary = join(projectRoot, 'packages/rfdb-server/target/release/rfdb-server');
+  if (existsSync(releaseBinary)) {
+    return releaseBinary;
+  }
+
+  const debugBinary = join(projectRoot, 'packages/rfdb-server/target/debug/rfdb-server');
+  if (existsSync(debugBinary)) {
+    return debugBinary;
+  }
+
+  // 3. Check @grafema/rfdb npm package
   try {
     const rfdbPkg = require.resolve('@grafema/rfdb');
     const rfdbDir = dirname(rfdbPkg);
@@ -50,18 +79,10 @@ function findServerBinary(): string | null {
     // @grafema/rfdb not installed
   }
 
-  // 2. Check packages/rfdb-server in monorepo
-  // From packages/cli/dist/commands -> project root is 4 levels up
-  const projectRoot = join(__dirname, '../../../..');
-  const releaseBinary = join(projectRoot, 'packages/rfdb-server/target/release/rfdb-server');
-  if (existsSync(releaseBinary)) {
-    return releaseBinary;
-  }
-
-  // 3. Check debug build
-  const debugBinary = join(projectRoot, 'packages/rfdb-server/target/debug/rfdb-server');
-  if (existsSync(debugBinary)) {
-    return debugBinary;
+  // 4. Check ~/.local/bin (user-installed binary for unsupported platforms)
+  const homeBinary = join(process.env.HOME || '', '.local', 'bin', 'rfdb-server');
+  if (existsSync(homeBinary)) {
+    return homeBinary;
   }
 
   return null;
@@ -106,10 +127,15 @@ export const serverCommand = new Command('server')
   .description('Manage RFDB server lifecycle')
   .addHelpText('after', `
 Examples:
-  grafema server start           Start the RFDB server (detached)
-  grafema server stop            Stop the running server
-  grafema server status          Check if server is running
-  grafema server status --json   Server status as JSON
+  grafema server start                       Start the RFDB server
+  grafema server start --binary /path/to/bin Start with specific binary
+  grafema server stop                        Stop the running server
+  grafema server status                      Check if server is running
+  grafema server status --json               Server status as JSON
+
+Config (in .grafema/config.yaml):
+  server:
+    binaryPath: /path/to/rfdb-server    # Optional: path to binary
 `);
 
 // grafema server start
@@ -117,7 +143,8 @@ serverCommand
   .command('start')
   .description('Start the RFDB server')
   .option('-p, --project <path>', 'Project path', '.')
-  .action(async (options: { project: string }) => {
+  .option('-b, --binary <path>', 'Path to rfdb-server binary')
+  .action(async (options: { project: string; binary?: string }) => {
     const projectPath = resolve(options.project);
     const { grafemaDir, socketPath, dbPath, pidPath } = getProjectPaths(projectPath);
 
@@ -144,16 +171,43 @@ serverCommand
       unlinkSync(socketPath);
     }
 
-    // Find server binary
-    const binaryPath = findServerBinary();
+    // Determine binary path: CLI flag > config > auto-detect
+    let binaryPath: string | null = null;
+
+    if (options.binary) {
+      // Explicit --binary flag
+      binaryPath = findServerBinary(options.binary);
+    } else {
+      // Try to read from config
+      try {
+        const config = loadConfig(projectPath);
+        const serverConfig = (config as unknown as { server?: ServerConfig }).server;
+        if (serverConfig?.binaryPath) {
+          binaryPath = findServerBinary(serverConfig.binaryPath);
+        }
+      } catch {
+        // Config not found or invalid - continue with auto-detect
+      }
+
+      // Auto-detect if not specified
+      if (!binaryPath) {
+        binaryPath = findServerBinary();
+      }
+    }
+
     if (!binaryPath) {
       exitWithError('RFDB server binary not found', [
-        'Install: npm install @grafema/rfdb',
-        'Or build: cargo build --release --bin rfdb-server'
+        'Specify path: grafema server start --binary /path/to/rfdb-server',
+        'Or add to config.yaml:',
+        '  server:',
+        '    binaryPath: /path/to/rfdb-server',
+        'Or install: npm install @grafema/rfdb',
+        'Or build: cargo build --release && cp target/release/rfdb-server ~/.local/bin/'
       ]);
     }
 
     console.log(`Starting RFDB server...`);
+    console.log(`  Binary: ${binaryPath}`);
     console.log(`  Database: ${dbPath}`);
     console.log(`  Socket: ${socketPath}`);
 
@@ -171,9 +225,9 @@ serverCommand
       writeFileSync(pidPath, String(serverProcess.pid));
     }
 
-    // Wait for socket to appear
+    // Wait for socket to appear (increased timeout for slow systems)
     let attempts = 0;
-    while (!existsSync(socketPath) && attempts < 50) {
+    while (!existsSync(socketPath) && attempts < 100) {
       await sleep(100);
       attempts++;
     }
@@ -181,7 +235,8 @@ serverCommand
     if (!existsSync(socketPath)) {
       exitWithError('Server failed to start', [
         'Check if database path is valid',
-        'Check server logs for errors'
+        'Check server logs for errors',
+        `Binary used: ${binaryPath}`
       ]);
     }
 

@@ -189,6 +189,7 @@ export const analyzeCommand = new Command('analyze')
   .option('--debug', 'Enable debug mode (writes diagnostics.log)')
   .option('--log-level <level>', 'Set log level (silent, errors, warnings, info, debug)')
   .option('--strict', 'Enable strict mode (fail on unresolved references)')
+  .option('--auto-start', 'Auto-start RFDB server if not running')
   .addHelpText('after', `
 Examples:
   grafema analyze                Analyze current project
@@ -198,8 +199,11 @@ Examples:
   grafema analyze -v             Verbose output with progress details
   grafema analyze --debug        Write diagnostics.log for debugging
   grafema analyze --strict       Fail on unresolved references (debugging)
+  grafema analyze --auto-start   Auto-start server (useful for CI)
+
+Note: Start the server first with: grafema server start
 `)
-  .action(async (path: string, options: { service?: string; entrypoint?: string; clear?: boolean; quiet?: boolean; verbose?: boolean; debug?: boolean; logLevel?: string; strict?: boolean }) => {
+  .action(async (path: string, options: { service?: string; entrypoint?: string; clear?: boolean; quiet?: boolean; verbose?: boolean; debug?: boolean; logLevel?: string; strict?: boolean; autoStart?: boolean }) => {
     const projectPath = resolve(path);
     const grafemaDir = join(projectPath, '.grafema');
     const dbPath = join(grafemaDir, 'graph.rfdb');
@@ -216,8 +220,31 @@ Examples:
 
     log(`Analyzing project: ${projectPath}`);
 
-    const backend = new RFDBServerBackend({ dbPath });
-    await backend.connect();
+    // Connect to RFDB server
+    // Default: require explicit `grafema server start`
+    // Use --auto-start for CI or backwards compatibility
+    const backend = new RFDBServerBackend({
+      dbPath,
+      autoStart: options.autoStart ?? false
+    });
+
+    try {
+      await backend.connect();
+    } catch (err) {
+      if (!options.autoStart && err instanceof Error && err.message.includes('not running')) {
+        console.error('');
+        console.error('RFDB server is not running.');
+        console.error('');
+        console.error('Start the server first:');
+        console.error('  grafema server start');
+        console.error('');
+        console.error('Or use --auto-start flag:');
+        console.error('  grafema analyze --auto-start');
+        console.error('');
+        process.exit(1);
+      }
+      throw err;
+    }
 
     if (options.clear) {
       log('Clearing existing database...');

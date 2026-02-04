@@ -40,6 +40,12 @@ const __dirname = dirname(__filename);
 export interface RFDBServerBackendOptions {
   socketPath?: string;
   dbPath?: string;
+  /**
+   * If true, automatically start the server if not running.
+   * If false, require explicit `grafema server start`.
+   * Default: true (for backwards compatibility)
+   */
+  autoStart?: boolean;
 }
 
 /**
@@ -89,6 +95,7 @@ export interface BackendStats extends GraphStats {
 export class RFDBServerBackend {
   readonly socketPath: string;
   readonly dbPath: string | undefined;
+  private readonly autoStart: boolean;
   private client: RFDBClient | null;
   private serverProcess: ChildProcess | null;
   connected: boolean;  // Public for compatibility
@@ -98,6 +105,7 @@ export class RFDBServerBackend {
 
   constructor(options: RFDBServerBackendOptions = {}) {
     this.dbPath = options.dbPath;
+    this.autoStart = options.autoStart ?? true; // Default true for backwards compat
     // Default socket path: next to the database in .grafema folder
     // This ensures each project has its own socket, avoiding conflicts
     if (options.socketPath) {
@@ -114,7 +122,9 @@ export class RFDBServerBackend {
   }
 
   /**
-   * Connect to RFDB server, starting it if necessary
+   * Connect to RFDB server.
+   * If autoStart is true (default), starts the server if not running.
+   * If autoStart is false, requires explicit `grafema server start`.
    */
   async connect(): Promise<void> {
     if (this.connected) return;
@@ -127,14 +137,20 @@ export class RFDBServerBackend {
       // Verify server is responsive
       await this.client.ping();
       this.connected = true;
-      console.log(`[RFDBServerBackend] Connected to existing RFDB server at ${this.socketPath}`);
+      console.log(`[RFDBServerBackend] Connected to RFDB server at ${this.socketPath}`);
       return;
     } catch {
-      // Server not running, need to start it
+      // Server not running
+      if (!this.autoStart) {
+        throw new Error(
+          `RFDB server not running at ${this.socketPath}\n` +
+          `Start the server first: grafema server start`
+        );
+      }
       console.log(`[RFDBServerBackend] RFDB server not running, starting...`);
     }
 
-    // Start the server
+    // Start the server (only if autoStart is true)
     await this._startServer();
 
     // Connect again
