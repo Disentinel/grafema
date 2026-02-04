@@ -4,7 +4,8 @@
 
 import { Command } from 'commander';
 import { resolve, join } from 'path';
-import { existsSync, mkdirSync } from 'fs';
+import { existsSync, mkdirSync, readdirSync } from 'fs';
+import { pathToFileURL } from 'url';
 import {
   Orchestrator,
   RFDBServerBackend,
@@ -96,14 +97,60 @@ const BUILTIN_PLUGINS: Record<string, () => Plugin> = {
   BrokenImportValidator: () => new BrokenImportValidator() as Plugin,
 };
 
-function createPlugins(config: GrafemaConfig['plugins']): Plugin[] {
+/**
+ * Load custom plugins from .grafema/plugins/ directory
+ */
+async function loadCustomPlugins(
+  projectPath: string,
+  log: (msg: string) => void
+): Promise<Record<string, () => Plugin>> {
+  const pluginsDir = join(projectPath, '.grafema', 'plugins');
+  if (!existsSync(pluginsDir)) {
+    return {};
+  }
+
+  const customPlugins: Record<string, () => Plugin> = {};
+
+  try {
+    const files = readdirSync(pluginsDir).filter(
+      (f) => f.endsWith('.js') || f.endsWith('.mjs')
+    );
+
+    for (const file of files) {
+      try {
+        const pluginPath = join(pluginsDir, file);
+        const pluginUrl = pathToFileURL(pluginPath).href;
+        const module = await import(pluginUrl);
+
+        const PluginClass = module.default || module[file.replace(/\.(m?js)$/, '')];
+        if (PluginClass && typeof PluginClass === 'function') {
+          const pluginName = PluginClass.name || file.replace(/\.(m?js)$/, '');
+          customPlugins[pluginName] = () => new PluginClass() as Plugin;
+          log(`Loaded custom plugin: ${pluginName}`);
+        }
+      } catch (err) {
+        console.warn(`Failed to load plugin ${file}: ${(err as Error).message}`);
+      }
+    }
+  } catch (err) {
+    console.warn(`Error loading custom plugins: ${(err as Error).message}`);
+  }
+
+  return customPlugins;
+}
+
+function createPlugins(
+  config: GrafemaConfig['plugins'],
+  customPlugins: Record<string, () => Plugin> = {}
+): Plugin[] {
   const plugins: Plugin[] = [];
   const phases: (keyof GrafemaConfig['plugins'])[] = ['discovery', 'indexing', 'analysis', 'enrichment', 'validation'];
 
   for (const phase of phases) {
     const names = config[phase] || [];
     for (const name of names) {
-      const factory = BUILTIN_PLUGINS[name];
+      // Check built-in first, then custom
+      const factory = BUILTIN_PLUGINS[name] || customPlugins[name];
       if (factory) {
         plugins.push(factory());
       } else {
@@ -188,7 +235,9 @@ Examples:
       }
     }
 
-    const plugins = createPlugins(config.plugins);
+    // Load custom plugins from .grafema/plugins/
+    const customPlugins = await loadCustomPlugins(projectPath, log);
+    const plugins = createPlugins(config.plugins, customPlugins);
 
     log(`Loaded ${plugins.length} plugins`);
 
