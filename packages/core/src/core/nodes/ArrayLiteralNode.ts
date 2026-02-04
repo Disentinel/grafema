@@ -34,10 +34,11 @@ export class ArrayLiteralNode {
   ): ArrayLiteralNodeRecord {
     if (!file) throw new Error('ArrayLiteralNode.create: file is required');
     if (line === undefined) throw new Error('ArrayLiteralNode.create: line is required');
+    if (column === undefined) throw new Error('ArrayLiteralNode.create: column is required');
 
     const counter = options.counter !== undefined ? `:${options.counter}` : '';
     const argSuffix = options.argIndex !== undefined ? `arg${options.argIndex}` : 'arr';
-    const id = `ARRAY_LITERAL#${argSuffix}#${file}#${line}:${column || 0}${counter}`;
+    const id = `ARRAY_LITERAL#${argSuffix}#${file}#${line}:${column}${counter}`;
 
     return {
       id,
@@ -45,7 +46,7 @@ export class ArrayLiteralNode {
       name: `<array>`,
       file,
       line,
-      column: column || 0,
+      column,
       parentCallId: options.parentCallId,
       argIndex: options.argIndex
     };

@@ -41,8 +41,8 @@ interface ClassContextOptions {
 export class ClassNode {
   static readonly TYPE = 'CLASS' as const;
 
-  static readonly REQUIRED = ['name', 'file', 'line'] as const;
-  static readonly OPTIONAL = ['column', 'exported', 'superClass', 'methods', 'isInstantiationRef'] as const;
+  static readonly REQUIRED = ['name', 'file', 'line', 'column'] as const;
+  static readonly OPTIONAL = ['exported', 'superClass', 'methods', 'isInstantiationRef'] as const;
 
   static create(
     name: string,
@@ -54,6 +54,7 @@ export class ClassNode {
     if (!name) throw new Error('ClassNode.create: name is required');
     if (!file) throw new Error('ClassNode.create: file is required');
     if (!line) throw new Error('ClassNode.create: line is required');
+    if (column === undefined) throw new Error('ClassNode.create: column is required');
 
     return {
       id: `${file}:CLASS:${name}:${line}`,
@@ -61,7 +62,7 @@ export class ClassNode {
       name,
       file,
       line,
-      column: column || 0,
+      column,
       exported: options.exported || false,
       superClass: options.superClass,
       methods: options.methods || [],
@@ -91,6 +92,7 @@ export class ClassNode {
     if (!name) throw new Error('ClassNode.createWithContext: name is required');
     if (!context.file) throw new Error('ClassNode.createWithContext: file is required');
     if (location.line === undefined) throw new Error('ClassNode.createWithContext: line is required');
+    if (location.column === undefined) throw new Error('ClassNode.createWithContext: column is required');
 
     // Compute semantic ID
     const id = computeSemanticId(this.TYPE, name, context);
@@ -101,7 +103,7 @@ export class ClassNode {
       name,
       file: context.file,
       line: location.line,
-      column: location.column ?? 0,
+      column: location.column,
       exported: options.exported || false,
       superClass: options.superClass,
       methods: options.methods || [],

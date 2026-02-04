@@ -27,8 +27,8 @@ interface DecoratorNodeOptions {
 export class DecoratorNode {
   static readonly TYPE = 'DECORATOR' as const;
 
-  static readonly REQUIRED = ['name', 'file', 'line', 'targetId', 'targetType'] as const;
-  static readonly OPTIONAL = ['column', 'arguments'] as const;
+  static readonly REQUIRED = ['name', 'file', 'line', 'column', 'targetId', 'targetType'] as const;
+  static readonly OPTIONAL = ['arguments'] as const;
 
   /**
    * Create DECORATOR node
@@ -54,6 +54,7 @@ export class DecoratorNode {
     if (!name) throw new Error('DecoratorNode.create: name is required');
     if (!file) throw new Error('DecoratorNode.create: file is required');
     if (!line) throw new Error('DecoratorNode.create: line is required');
+    if (column === undefined) throw new Error('DecoratorNode.create: column is required');
     if (!targetId) throw new Error('DecoratorNode.create: targetId is required');
     if (!targetType) throw new Error('DecoratorNode.create: targetType is required');
 
@@ -63,7 +64,7 @@ export class DecoratorNode {
       name,
       file,
       line,
-      column: column || 0,
+      column,
       arguments: options.arguments || [],
       targetId,
       targetType

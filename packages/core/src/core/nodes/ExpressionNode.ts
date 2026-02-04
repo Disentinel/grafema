@@ -46,9 +46,9 @@ interface ExpressionNodeOptions {
 export class ExpressionNode {
   static readonly TYPE = 'EXPRESSION' as const;
 
-  static readonly REQUIRED = ['expressionType', 'file', 'line'] as const;
+  static readonly REQUIRED = ['expressionType', 'file', 'line', 'column'] as const;
   static readonly OPTIONAL = [
-    'column', 'object', 'property', 'computed', 'computedPropertyVar',
+    'object', 'property', 'computed', 'computedPropertyVar',
     'operator', 'path', 'baseName', 'propertyPath', 'arrayIndex'
   ] as const;
 
@@ -72,6 +72,7 @@ export class ExpressionNode {
     if (!expressionType) throw new Error('ExpressionNode.create: expressionType is required');
     if (!file) throw new Error('ExpressionNode.create: file is required');
     if (!line) throw new Error('ExpressionNode.create: line is required');
+    if (column === undefined) throw new Error('ExpressionNode.create: column is required');
 
     const node: ExpressionNodeRecord = {
       id: `${file}:EXPRESSION:${expressionType}:${line}:${column}`,
@@ -79,7 +80,7 @@ export class ExpressionNode {
       name: this._computeName(expressionType, options),
       file,
       line,
-      column: column || 0,
+      column,
       expressionType
     };
 
@@ -191,7 +192,7 @@ export class ExpressionNode {
       name: this._computeName(expressionType, options),
       file,
       line,
-      column: column || 0,
+      column,
       expressionType
     };
 

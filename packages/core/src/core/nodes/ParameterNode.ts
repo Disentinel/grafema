@@ -22,8 +22,8 @@ interface ParameterNodeOptions {
 export class ParameterNode {
   static readonly TYPE = 'PARAMETER' as const;
 
-  static readonly REQUIRED = ['name', 'file', 'line', 'functionId'] as const;
-  static readonly OPTIONAL = ['column', 'index', 'defaultValue', 'rest'] as const;
+  static readonly REQUIRED = ['name', 'file', 'line', 'column', 'functionId'] as const;
+  static readonly OPTIONAL = ['index', 'defaultValue', 'rest'] as const;
 
   static create(
     name: string,
@@ -36,6 +36,7 @@ export class ParameterNode {
     if (!name) throw new Error('ParameterNode.create: name is required');
     if (!file) throw new Error('ParameterNode.create: file is required');
     if (!line) throw new Error('ParameterNode.create: line is required');
+    if (column === undefined) throw new Error('ParameterNode.create: column is required');
     if (!functionId) throw new Error('ParameterNode.create: functionId is required');
 
     return {
@@ -44,7 +45,7 @@ export class ParameterNode {
       name,
       file,
       line,
-      column: column || 0,
+      column,
       functionId,
       index: options.index || 0,
       defaultValue: options.defaultValue,

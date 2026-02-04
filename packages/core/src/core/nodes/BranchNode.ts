@@ -13,6 +13,7 @@ import { computeSemanticId, type ScopeContext, type Location } from '../Semantic
 
 interface BranchNodeRecord extends BaseNodeRecord {
   type: 'BRANCH';
+  column: number;
   branchType: 'switch' | 'if' | 'ternary';
   parentScopeId?: string;
 }
@@ -29,7 +30,7 @@ interface BranchContextOptions {
 
 export class BranchNode {
   static readonly TYPE = 'BRANCH' as const;
-  static readonly REQUIRED = ['branchType', 'file', 'line'] as const;
+  static readonly REQUIRED = ['branchType', 'file', 'line', 'column'] as const;
   static readonly OPTIONAL = ['parentScopeId'] as const;
 
   /**
@@ -39,12 +40,14 @@ export class BranchNode {
     branchType: 'switch' | 'if' | 'ternary',
     file: string,
     line: number,
+    column: number,
     options: BranchNodeOptions = {}
   ): BranchNodeRecord {
     // Validation
     if (!branchType) throw new Error('BranchNode.create: branchType is required');
     if (!file) throw new Error('BranchNode.create: file is required');
     if (line === undefined) throw new Error('BranchNode.create: line is required');
+    if (column === undefined) throw new Error('BranchNode.create: column is required');
 
     const counter = options.counter !== undefined ? `:${options.counter}` : '';
     const id = `${file}:BRANCH:${branchType}:${line}${counter}`;
@@ -55,6 +58,7 @@ export class BranchNode {
       name: branchType,
       file,
       line,
+      column,
       branchType,
       parentScopeId: options.parentScopeId
     };
@@ -72,6 +76,7 @@ export class BranchNode {
     if (!branchType) throw new Error('BranchNode.createWithContext: branchType is required');
     if (!context.file) throw new Error('BranchNode.createWithContext: file is required');
     if (location.line === undefined) throw new Error('BranchNode.createWithContext: line is required');
+    if (location.column === undefined) throw new Error('BranchNode.createWithContext: column is required');
     if (options.discriminator === undefined) throw new Error('BranchNode.createWithContext: discriminator is required');
 
     const id = computeSemanticId('BRANCH', branchType, context, {
@@ -84,6 +89,7 @@ export class BranchNode {
       name: `${branchType}#${options.discriminator}`,
       file: context.file,
       line: location.line,
+      column: location.column,
       branchType,
       parentScopeId: options.parentScopeId
     };

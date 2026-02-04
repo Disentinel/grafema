@@ -33,8 +33,8 @@ interface VariableContextOptions {
 export class VariableDeclarationNode {
   static readonly TYPE = 'VARIABLE_DECLARATION' as const;
 
-  static readonly REQUIRED = ['name', 'file', 'line'] as const;
-  static readonly OPTIONAL = ['column', 'parentScopeId'] as const;
+  static readonly REQUIRED = ['name', 'file', 'line', 'column'] as const;
+  static readonly OPTIONAL = ['parentScopeId'] as const;
 
   static create(
     name: string,
@@ -46,9 +46,10 @@ export class VariableDeclarationNode {
     if (!name) throw new Error('VariableDeclarationNode.create: name is required');
     if (!file) throw new Error('VariableDeclarationNode.create: file is required');
     if (line === undefined) throw new Error('VariableDeclarationNode.create: line is required');
+    if (column === undefined) throw new Error('VariableDeclarationNode.create: column is required');
 
     const counter = options.counter !== undefined ? `:${options.counter}` : '';
-    const id = `${file}:VARIABLE_DECLARATION:${name}:${line}:${column || 0}${counter}`;
+    const id = `${file}:VARIABLE_DECLARATION:${name}:${line}:${column}${counter}`;
 
     return {
       id,
@@ -56,7 +57,7 @@ export class VariableDeclarationNode {
       name,
       file,
       line,
-      column: column || 0,
+      column,
       parentScopeId: options.parentScopeId
     };
   }
@@ -83,6 +84,7 @@ export class VariableDeclarationNode {
     if (!name) throw new Error('VariableDeclarationNode.createWithContext: name is required');
     if (!context.file) throw new Error('VariableDeclarationNode.createWithContext: file is required');
     if (location.line === undefined) throw new Error('VariableDeclarationNode.createWithContext: line is required');
+    if (location.column === undefined) throw new Error('VariableDeclarationNode.createWithContext: column is required');
 
     // Compute semantic ID using 'VARIABLE' type for cleaner IDs
     const id = computeSemanticId('VARIABLE', name, context);
@@ -93,7 +95,7 @@ export class VariableDeclarationNode {
       name,
       file: context.file,
       line: location.line,
-      column: location.column ?? 0,
+      column: location.column,
       parentScopeId: options.parentScopeId
     };
   }

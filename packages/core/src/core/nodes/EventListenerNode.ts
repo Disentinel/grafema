@@ -6,13 +6,13 @@ import type { BaseNodeRecord } from '@grafema/types';
 
 interface EventListenerNodeRecord extends BaseNodeRecord {
   type: 'EVENT_LISTENER';
+  column: number;
   object?: string;
   parentScopeId?: string;
   callbackArg?: string;
 }
 
 interface EventListenerNodeOptions {
-  column?: number;
   parentScopeId?: string;
   callbackArg?: string;
   counter?: number;
@@ -21,22 +21,24 @@ interface EventListenerNodeOptions {
 export class EventListenerNode {
   static readonly TYPE = 'EVENT_LISTENER' as const;
 
-  static readonly REQUIRED = ['name', 'file', 'line'] as const;
-  static readonly OPTIONAL = ['object', 'column', 'parentScopeId', 'callbackArg'] as const;
+  static readonly REQUIRED = ['name', 'file', 'line', 'column'] as const;
+  static readonly OPTIONAL = ['object', 'parentScopeId', 'callbackArg'] as const;
 
   static create(
     eventName: string,
     objectName: string | undefined,
     file: string,
     line: number,
+    column: number,
     options: EventListenerNodeOptions = {}
   ): EventListenerNodeRecord {
     if (!eventName) throw new Error('EventListenerNode.create: eventName is required');
     if (!file) throw new Error('EventListenerNode.create: file is required');
     if (line === undefined) throw new Error('EventListenerNode.create: line is required');
+    if (column === undefined) throw new Error('EventListenerNode.create: column is required');
 
     const counter = options.counter !== undefined ? `:${options.counter}` : '';
-    const id = `${file}:EVENT_LISTENER:${eventName}:${line}:${options.column || 0}${counter}`;
+    const id = `${file}:EVENT_LISTENER:${eventName}:${line}:${column}${counter}`;
 
     return {
       id,
@@ -45,6 +47,7 @@ export class EventListenerNode {
       object: objectName,
       file,
       line,
+      column,
       parentScopeId: options.parentScopeId,
       callbackArg: options.callbackArg
     };

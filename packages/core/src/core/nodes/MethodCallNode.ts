@@ -39,8 +39,8 @@ interface MethodCallContextOptions {
 export class MethodCallNode {
   static readonly TYPE = 'METHOD_CALL' as const;
 
-  static readonly REQUIRED = ['name', 'file', 'line', 'args'] as const;
-  static readonly OPTIONAL = ['object', 'method', 'column', 'parentScopeId'] as const;
+  static readonly REQUIRED = ['name', 'file', 'line', 'column', 'args'] as const;
+  static readonly OPTIONAL = ['object', 'method', 'parentScopeId'] as const;
 
   /**
    * Create METHOD_CALL node
@@ -56,10 +56,11 @@ export class MethodCallNode {
     if (!methodName) throw new Error('MethodCallNode.create: methodName is required');
     if (!file) throw new Error('MethodCallNode.create: file is required');
     if (line === undefined) throw new Error('MethodCallNode.create: line is required');
+    if (column === undefined) throw new Error('MethodCallNode.create: column is required');
 
     const fullName = objectName ? `${objectName}.${methodName}` : methodName;
     const counter = options.counter !== undefined ? `:${options.counter}` : '';
-    const id = `${file}:METHOD_CALL:${fullName}:${line}:${column || 0}${counter}`;
+    const id = `${file}:METHOD_CALL:${fullName}:${line}:${column}${counter}`;
 
     return {
       id,
@@ -69,7 +70,7 @@ export class MethodCallNode {
       method: methodName,
       file,
       line,
-      column: column || 0,
+      column,
       parentScopeId: options.parentScopeId,
       args: options.args || []
     };
@@ -99,6 +100,7 @@ export class MethodCallNode {
     if (!methodName) throw new Error('MethodCallNode.createWithContext: methodName is required');
     if (!context.file) throw new Error('MethodCallNode.createWithContext: file is required');
     if (location.line === undefined) throw new Error('MethodCallNode.createWithContext: line is required');
+    if (location.column === undefined) throw new Error('MethodCallNode.createWithContext: column is required');
     if (options.discriminator === undefined) throw new Error('MethodCallNode.createWithContext: discriminator is required');
 
     const fullName = objectName ? `${objectName}.${methodName}` : methodName;
@@ -116,7 +118,7 @@ export class MethodCallNode {
       method: methodName,
       file: context.file,
       line: location.line,
-      column: location.column ?? 0,
+      column: location.column,
       parentScopeId: options.parentScopeId,
       args: options.args || []
     };

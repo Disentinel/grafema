@@ -29,8 +29,8 @@ interface EnumNodeOptions {
 export class EnumNode {
   static readonly TYPE = 'ENUM' as const;
 
-  static readonly REQUIRED = ['name', 'file', 'line'] as const;
-  static readonly OPTIONAL = ['column', 'isConst', 'members'] as const;
+  static readonly REQUIRED = ['name', 'file', 'line', 'column'] as const;
+  static readonly OPTIONAL = ['isConst', 'members'] as const;
 
   /**
    * Create ENUM node
@@ -52,6 +52,7 @@ export class EnumNode {
     if (!name) throw new Error('EnumNode.create: name is required');
     if (!file) throw new Error('EnumNode.create: file is required');
     if (!line) throw new Error('EnumNode.create: line is required');
+    if (column === undefined) throw new Error('EnumNode.create: column is required');
 
     return {
       id: `${file}:ENUM:${name}:${line}`,
@@ -59,7 +60,7 @@ export class EnumNode {
       name,
       file,
       line,
-      column: column || 0,
+      column,
       isConst: options.isConst || false,
       members: options.members || []
     };

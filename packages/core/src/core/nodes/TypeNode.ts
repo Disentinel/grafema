@@ -22,8 +22,8 @@ interface TypeNodeOptions {
 export class TypeNode {
   static readonly TYPE = 'TYPE' as const;
 
-  static readonly REQUIRED = ['name', 'file', 'line'] as const;
-  static readonly OPTIONAL = ['column', 'aliasOf'] as const;
+  static readonly REQUIRED = ['name', 'file', 'line', 'column'] as const;
+  static readonly OPTIONAL = ['aliasOf'] as const;
 
   /**
    * Create TYPE node
@@ -45,6 +45,7 @@ export class TypeNode {
     if (!name) throw new Error('TypeNode.create: name is required');
     if (!file) throw new Error('TypeNode.create: file is required');
     if (!line) throw new Error('TypeNode.create: line is required');
+    if (column === undefined) throw new Error('TypeNode.create: column is required');
 
     return {
       id: `${file}:TYPE:${name}:${line}`,
@@ -52,7 +53,7 @@ export class TypeNode {
       name,
       file,
       line,
-      column: column || 0,
+      column,
       aliasOf: options.aliasOf
     };
   }

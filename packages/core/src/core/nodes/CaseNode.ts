@@ -12,6 +12,7 @@ import { computeSemanticId, type ScopeContext, type Location } from '../Semantic
 
 interface CaseNodeRecord extends BaseNodeRecord {
   type: 'CASE';
+  column: number;
   value: unknown;
   isDefault: boolean;
   fallsThrough: boolean;
@@ -31,7 +32,7 @@ interface CaseContextOptions {
 
 export class CaseNode {
   static readonly TYPE = 'CASE' as const;
-  static readonly REQUIRED = ['file', 'line'] as const;
+  static readonly REQUIRED = ['file', 'line', 'column'] as const;
   static readonly OPTIONAL = ['value', 'isDefault', 'fallsThrough', 'isEmpty', 'parentBranchId'] as const;
 
   /**
@@ -44,10 +45,12 @@ export class CaseNode {
     isEmpty: boolean,
     file: string,
     line: number,
+    column: number,
     options: CaseNodeOptions = {}
   ): CaseNodeRecord {
     if (!file) throw new Error('CaseNode.create: file is required');
     if (line === undefined) throw new Error('CaseNode.create: line is required');
+    if (column === undefined) throw new Error('CaseNode.create: column is required');
 
     const valueName = isDefault ? 'default' : String(value);
     const counter = options.counter !== undefined ? `:${options.counter}` : '';
@@ -59,6 +62,7 @@ export class CaseNode {
       name: isDefault ? 'default' : `case ${String(value)}`,
       file,
       line,
+      column,
       value,
       isDefault,
       fallsThrough,
@@ -81,6 +85,7 @@ export class CaseNode {
   ): CaseNodeRecord {
     if (!context.file) throw new Error('CaseNode.createWithContext: file is required');
     if (location.line === undefined) throw new Error('CaseNode.createWithContext: line is required');
+    if (location.column === undefined) throw new Error('CaseNode.createWithContext: column is required');
     if (options.discriminator === undefined) throw new Error('CaseNode.createWithContext: discriminator is required');
 
     const valueName = isDefault ? 'default' : String(value);
@@ -94,6 +99,7 @@ export class CaseNode {
       name: isDefault ? 'default' : `case ${String(value)}`,
       file: context.file,
       line: location.line,
+      column: location.column,
       value,
       isDefault,
       fallsThrough,

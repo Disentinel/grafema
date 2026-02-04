@@ -20,8 +20,8 @@ interface ConstantNodeOptions {
 export class ConstantNode {
   static readonly TYPE = 'CONSTANT' as const;
 
-  static readonly REQUIRED = ['name', 'file', 'line'] as const;
-  static readonly OPTIONAL = ['column', 'value', 'parentScopeId'] as const;
+  static readonly REQUIRED = ['name', 'file', 'line', 'column'] as const;
+  static readonly OPTIONAL = ['value', 'parentScopeId'] as const;
 
   static create(
     name: string,
@@ -33,9 +33,10 @@ export class ConstantNode {
     if (!name) throw new Error('ConstantNode.create: name is required');
     if (!file) throw new Error('ConstantNode.create: file is required');
     if (line === undefined) throw new Error('ConstantNode.create: line is required');
+    if (column === undefined) throw new Error('ConstantNode.create: column is required');
 
     const counter = options.counter !== undefined ? `:${options.counter}` : '';
-    const id = `${file}:CONSTANT:${name}:${line}:${column || 0}${counter}`;
+    const id = `${file}:CONSTANT:${name}:${line}:${column}${counter}`;
 
     return {
       id,
@@ -43,7 +44,7 @@ export class ConstantNode {
       name,
       file,
       line,
-      column: column || 0,
+      column,
       value: options.value,
       parentScopeId: options.parentScopeId
     };

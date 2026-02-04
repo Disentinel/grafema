@@ -35,8 +35,8 @@ interface CallSiteContextOptions {
 export class CallSiteNode {
   static readonly TYPE = 'CALL_SITE' as const;
 
-  static readonly REQUIRED = ['name', 'file', 'line'] as const;
-  static readonly OPTIONAL = ['column', 'parentScopeId', 'targetFunctionName'] as const;
+  static readonly REQUIRED = ['name', 'file', 'line', 'column'] as const;
+  static readonly OPTIONAL = ['parentScopeId', 'targetFunctionName'] as const;
 
   /**
    * Create CALL_SITE node
@@ -51,9 +51,10 @@ export class CallSiteNode {
     if (!targetName) throw new Error('CallSiteNode.create: targetName is required');
     if (!file) throw new Error('CallSiteNode.create: file is required');
     if (line === undefined) throw new Error('CallSiteNode.create: line is required');
+    if (column === undefined) throw new Error('CallSiteNode.create: column is required');
 
     const counter = options.counter !== undefined ? `:${options.counter}` : '';
-    const id = `${file}:CALL_SITE:${targetName}:${line}:${column || 0}${counter}`;
+    const id = `${file}:CALL_SITE:${targetName}:${line}:${column}${counter}`;
 
     return {
       id,
@@ -61,7 +62,7 @@ export class CallSiteNode {
       name: targetName,
       file,
       line,
-      column: column || 0,
+      column,
       parentScopeId: options.parentScopeId,
       targetFunctionName: targetName
     };
@@ -89,6 +90,7 @@ export class CallSiteNode {
     if (!targetName) throw new Error('CallSiteNode.createWithContext: targetName is required');
     if (!context.file) throw new Error('CallSiteNode.createWithContext: file is required');
     if (location.line === undefined) throw new Error('CallSiteNode.createWithContext: line is required');
+    if (location.column === undefined) throw new Error('CallSiteNode.createWithContext: column is required');
     if (options.discriminator === undefined) throw new Error('CallSiteNode.createWithContext: discriminator is required');
 
     // Compute semantic ID with discriminator
@@ -103,7 +105,7 @@ export class CallSiteNode {
       name: targetName,
       file: context.file,
       line: location.line,
-      column: location.column ?? 0,
+      column: location.column,
       parentScopeId: options.parentScopeId,
       targetFunctionName: targetName
     };

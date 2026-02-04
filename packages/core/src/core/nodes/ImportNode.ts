@@ -35,8 +35,8 @@ interface ImportNodeOptions {
 export class ImportNode {
   static readonly TYPE = 'IMPORT' as const;
 
-  static readonly REQUIRED = ['name', 'file', 'line', 'source'] as const;
-  static readonly OPTIONAL = ['column', 'importType', 'importBinding', 'imported', 'local', 'isDynamic', 'isResolvable', 'dynamicPath', 'sideEffect'] as const;
+  static readonly REQUIRED = ['name', 'file', 'line', 'column', 'source'] as const;
+  static readonly OPTIONAL = ['importType', 'importBinding', 'imported', 'local', 'isDynamic', 'isResolvable', 'dynamicPath', 'sideEffect'] as const;
 
   /**
    * Create IMPORT node
@@ -60,6 +60,7 @@ export class ImportNode {
     if (!name) throw new Error('ImportNode.create: name is required');
     if (!file) throw new Error('ImportNode.create: file is required');
     if (line === undefined) throw new Error('ImportNode.create: line is required');
+    if (column === undefined) throw new Error('ImportNode.create: column is required');
     if (!source) throw new Error('ImportNode.create: source is required');
 
     // Auto-detect importType from imported field if not explicitly provided
@@ -75,7 +76,7 @@ export class ImportNode {
       name,
       file,
       line,      // Stored as field, not in ID
-      column: column || 0,
+      column,
       source,
       importType: importType || 'named',           // NEW field with auto-detection
       importBinding: options.importBinding || 'value',  // RENAMED field
