@@ -1,41 +1,49 @@
 # Grafema
 
-> Static code analysis toolkit with graph-based representation
+> Understand your code without reading it all
 
-**Warning: This project is in early alpha stage (v0.1.0-alpha) and is not recommended for production use. APIs may change without notice.**
+Grafema is a code analysis tool that lets you **trace data flow across your codebase**. Click on a frontend `fetch()` call, trace it to the backend handler. Click on `res.json(data)`, trace back to where that data came from.
 
-## What is Grafema?
+**Frontend to backend. Code to data. In clicks.**
 
-Grafema is a code analysis toolkit that builds a graph representation of your codebase. It parses source code into an AST, extracts entities (functions, classes, variables), and tracks relationships between them (calls, imports, data flow).
+## What Can You Do With It?
 
-Key capabilities:
-- Graph-based code representation
-- Data flow and alias tracking
-- Datalog query support
-- MCP integration for AI assistants
-- Plugin architecture for custom analyzers
-
-## Packages
-
-| Package | Description |
-|---------|-------------|
-| [@grafema/types](./packages/types) | Type definitions |
-| [@grafema/core](./packages/core) | Core analysis engine |
-| [@grafema/mcp](./packages/mcp) | MCP server for AI assistants |
-| [@grafema/rfdb-client](./packages/rfdb) | RFDB graph database client |
-| [@grafema/rfdb](https://github.com/Disentinel/rfdb) | RFDB server (optional, for persistent storage) |
+- **Find where data comes from** - Trace any variable back to its source, across files and services
+- **Trace API calls to handlers** - Click a frontend request, see the backend handler that responds
+- **Understand code without reading it all** - Query the graph instead of grep-ing through thousands of files
+- **Let AI navigate your code** - Claude Code can query Grafema directly via MCP, no file reading needed
 
 ## Quick Start
 
-```bash
-# Install dependencies
-pnpm install
+### 1. Analyze Your Project
 
-# Build all packages
-pnpm build
+```bash
+# Using npx (no installation needed)
+npx @grafema/cli init
+npx @grafema/cli analyze
+
+# Or install globally
+npm install -g @grafema/cli
+grafema init
+grafema analyze
 ```
 
-### Using with Claude Code
+This creates a `.grafema/` directory with the code graph.
+
+### 2. Query the Graph
+
+```bash
+# Find all API endpoints
+grafema query "http:handler"
+
+# Find where a function is called
+grafema query "calls myFunction"
+
+# Natural language queries work too
+grafema query "functions that handle user authentication"
+```
+
+### 3. Use with Claude Code (MCP Integration)
 
 Add to your `.mcp.json` in the project root:
 
@@ -63,34 +71,100 @@ Or for Claude Desktop (`~/.config/claude/claude_desktop_config.json`):
 }
 ```
 
-### Programmatic usage
+Now Claude can query your codebase graph directly instead of reading files.
+
+### 4. VS Code Extension
+
+Interactive graph navigation for visual exploration.
+
+**Installation:**
+1. Download the latest `.vsix` from the releases page
+2. In VS Code: `Cmd+Shift+P` > "Extensions: Install from VSIX..."
+3. Select the downloaded file
+
+Or build from source:
+```bash
+cd packages/vscode
+./scripts/install-local.sh
+```
+
+**Usage:**
+- **Cmd+Shift+G** (Mac) / **Ctrl+Shift+G** (Windows/Linux) - Find the graph node at cursor
+- Expand nodes to explore incoming/outgoing edges
+- Click on edges to trace connections
+- Click any node to jump to its source location
+
+## Features
+
+### Cross-Service Tracing
+
+Trace data flow from frontend to backend and back:
+```
+fetch('/api/users') → Express route → handler → database query → response
+```
+
+### Data Flow Tracking
+
+Follow how data moves through your code:
+- Variable assignments and reassignments
+- Function arguments to parameters
+- Return values to callers
+- Promise resolution chains
+
+### AI-First Design
+
+Built for AI agents to navigate code efficiently:
+- MCP tools for Claude integration
+- Graph queries instead of file reading
+- Structured navigation instead of grep
+
+## Language Support
+
+Currently supported:
+- JavaScript
+- TypeScript
+- Express.js (route and handler analysis)
+
+## Packages
+
+| Package | Description |
+|---------|-------------|
+| [@grafema/cli](./packages/cli) | Command-line interface |
+| [@grafema/core](./packages/core) | Core analysis engine |
+| [@grafema/mcp](./packages/mcp) | MCP server for AI assistants |
+| [@grafema/types](./packages/types) | Type definitions |
+| [grafema-explore](./packages/vscode) | VS Code extension |
+
+## Programmatic Usage
 
 ```typescript
 import { Orchestrator } from '@grafema/core';
 
-// Default: in-memory backend (no persistence, works out of the box)
 const orchestrator = new Orchestrator({
   rootDir: './src',
 });
 
 await orchestrator.initialize();
 await orchestrator.run();
+
+// Query the graph
+const handlers = await orchestrator.query('http:handler');
 ```
 
-### With RFDB (optional, for persistent storage)
+### With RFDB (Persistent Storage)
+
+For larger codebases or persistent storage:
 
 ```typescript
 import { Orchestrator, RFDBServerBackend } from '@grafema/core';
 
-// Requires rfdb-server to be running
 const orchestrator = new Orchestrator({
   rootDir: './src',
   backend: new RFDBServerBackend({ socketPath: '/tmp/rfdb.sock' }),
 });
 ```
 
-To start RFDB server:
-
+Start RFDB server:
 ```bash
 npm install @grafema/rfdb
 npx rfdb-server --socket /tmp/rfdb.sock --data-dir ./rfdb-data
@@ -99,21 +173,12 @@ npx rfdb-server --socket /tmp/rfdb.sock --data-dir ./rfdb-data
 ## Requirements
 
 - Node.js >= 18
-- pnpm >= 8
 
-## Roadmap
+## Documentation
 
-### Current (Alpha)
-- Core analysis pipeline
-- JavaScript/TypeScript support
-- Basic plugin system
-- MCP server integration
-
-### Planned
-- Improved data flow analysis
-- Additional language support
-- VSCode extension
-- Incremental analysis improvements
+- [Configuration Guide](./docs/configuration.md)
+- [Datalog Query Reference](./docs/datalog-reference.md)
+- [Project Onboarding](./docs/project-onboarding.md)
 
 ## License
 

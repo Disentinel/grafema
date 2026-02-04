@@ -2,6 +2,70 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.0-beta] - 2026-02-04
+
+### Highlights
+
+- **Cross-service tracing** - Click on a frontend fetch call, trace to backend handler
+- **VS Code Extension** - Interactive graph navigation (Cmd+Shift+G)
+- **Promise dataflow** - Track data through resolve() callbacks
+- **Column-precise locations** - All nodes have exact column positions
+
+### Data Flow
+
+- **REG-252**: Cross-service value tracing (frontend <-> backend)
+- **REG-334**: Promise dataflow tracking through resolve() calls
+- **REG-333**: Support wrapper functions (asyncHandler, catchAsync)
+- **REG-263**: Track return statements (RETURNS edge)
+- **REG-229**: Argument-to-parameter binding
+- **REG-225**: Cross-file imported function call resolution
+- **REG-232**: Re-export chain resolution
+
+### Control Flow
+
+- **REG-267**: Control flow layer (BRANCH, LOOP, TRY_BLOCK nodes)
+- **REG-272**: Loop variable declarations (for...of/for...in)
+- **REG-268**: Dynamic imports with isDynamic flag
+- **REG-274**: IfStatement tracking
+- **REG-275**: SwitchStatement tracking
+
+### Graph Improvements
+
+- **REG-337/339**: Column location for all physical nodes
+- **REG-313**: Nested paths in attr() predicate
+- **REG-315**: attr_edge() predicate for edge metadata
+- **REG-250**: Fixed attr() to return attribute values
+- **REG-251**: Fixed edge() predicate
+
+### Enrichment
+
+- **REG-248**: Router mount prefix resolution
+- **REG-226**: External package call resolution
+- **REG-309**: Scope-aware variable lookup
+- **REG-269**: Transitive closure captures
+- **REG-262**: Method call usage edges
+
+### Query UX
+
+- **REG-307**: Natural language query support
+- **REG-253**: Query by arbitrary node type
+- **REG-249**: http:request nodes searchable
+
+### Validation
+
+- **REG-261**: Broken import detection
+- **REG-227**: Updated CallResolverValidator
+
+### Bug Fixes
+
+- **REG-322**: HANDLED_BY edge finds correct handler
+- **REG-321**: MAKES_REQUEST links to CALL node
+- **REG-318**: MountPointResolver module matching
+- **REG-308**: Server-side file filtering
+- **REG-247**: WorkspaceDiscovery entrypoint passing
+
+---
+
 ## [0.1.1-alpha] - 2025-01-25
 
 ### Features
