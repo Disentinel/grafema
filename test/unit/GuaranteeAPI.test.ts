@@ -17,12 +17,14 @@ import { GuaranteeAPI, type GuaranteeGraphBackend } from '../../src/v2/api/Guara
 import { GuaranteeNode } from '../../src/v2/core/nodes/GuaranteeNode.js';
 
 describe('GuaranteeAPI', () => {
-  let backend: ReturnType<typeof createTestBackend> & { cleanup: () => Promise<void> };
+  let db: Awaited<ReturnType<typeof createTestDatabase>>;
+  let backend: Awaited<ReturnType<typeof createTestDatabase>>['backend'];
   let api: GuaranteeAPI;
 
   beforeEach(async () => {
     if (db) await db.cleanup();
-    backend = createTestBackend() as ReturnType<typeof createTestBackend> & { cleanup: () => Promise<void> };
+    db = await createTestDatabase();
+    backend = db.backend;
     api = new GuaranteeAPI(backend as unknown as GuaranteeGraphBackend);
   });
 

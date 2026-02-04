@@ -293,8 +293,8 @@ export { process };
       const results = [];
 
       for (let i = 0; i < 3; i++) {
-        const testBackend = createTestBackend();
-        await testBackend.connect();
+        const testDb = await createTestDatabase();
+        const testBackend = testDb.backend;
 
         const testDir = join(tmpdir(), `grafema-test-determinism-${Date.now()}-${testCounter++}`);
         mkdirSync(testDir, { recursive: true });
@@ -312,7 +312,7 @@ export { process };
         }
 
         results.push(funcId);
-        await testBackend.cleanup();
+        await testDb.cleanup();
       }
 
       // All runs should produce the same semantic part
@@ -346,8 +346,8 @@ export { process };
       writeFileSync(join(testDir1, 'index.js'), `function foo() { return 1; }
 export { foo };`);
 
-      const backend1 = createTestBackend();
-      await backend1.connect();
+      const db1 = await createTestDatabase();
+      const backend1 = db1.backend;
       await createTestOrchestrator(backend1).run(testDir1);
 
       let func1 = null;
@@ -355,7 +355,7 @@ export { foo };`);
         func1 = node;
         break;
       }
-      await backend1.cleanup();
+      await db1.cleanup();
 
       // Test with expanded code
       const testDir2 = join(tmpdir(), `grafema-test-ws2-${Date.now()}-${testCounter++}`);
@@ -368,8 +368,8 @@ function foo() {
 export { foo };
 `);
 
-      const backend2 = createTestBackend();
-      await backend2.connect();
+      const db2 = await createTestDatabase();
+      const backend2 = db2.backend;
       await createTestOrchestrator(backend2).run(testDir2);
 
       let func2 = null;
@@ -377,7 +377,7 @@ export { foo };
         func2 = node;
         break;
       }
-      await backend2.cleanup();
+      await db2.cleanup();
 
       assert.ok(func1 && func2, 'Both should find function foo');
 
@@ -404,8 +404,8 @@ function target() { return 42; }
 export { target };
 `);
 
-      const backend1 = createTestBackend();
-      await backend1.connect();
+      const db1 = await createTestDatabase();
+      const backend1 = db1.backend;
       await createTestOrchestrator(backend1).run(testDir1);
 
       let func1 = null;
@@ -413,7 +413,7 @@ export { target };
         func1 = node;
         break;
       }
-      await backend1.cleanup();
+      await db1.cleanup();
 
       // Test with extra code above
       const testDir2 = join(tmpdir(), `grafema-test-above2-${Date.now()}-${testCounter++}`);
@@ -428,8 +428,8 @@ function target() { return 42; }
 export { target };
 `);
 
-      const backend2 = createTestBackend();
-      await backend2.connect();
+      const db2 = await createTestDatabase();
+      const backend2 = db2.backend;
       await createTestOrchestrator(backend2).run(testDir2);
 
       let func2 = null;
@@ -437,7 +437,7 @@ export { target };
         func2 = node;
         break;
       }
-      await backend2.cleanup();
+      await db2.cleanup();
 
       assert.ok(func1 && func2, 'Both should find function target');
 

@@ -390,8 +390,8 @@ export {};
       writeFileSync(join(testDir1, 'index.js'), `function foo() { return 1; }
 export { foo };`);
 
-      const backend1 = createTestBackend();
-      await backend1.connect();
+      const db1 = await createTestDatabase();
+      const backend1 = db1.backend;
       const orchestrator1 = createTestOrchestrator(backend1);
       await orchestrator1.run(testDir1);
 
@@ -401,7 +401,7 @@ export { foo };`);
         break;
       }
 
-      await backend1.cleanup();
+      await db1.cleanup();
 
       // Test 2: Same code with more whitespace
       const testDir2 = join(tmpdir(), `grafema-test-stability2-${Date.now()}-${testCounter++}`);
@@ -414,8 +414,8 @@ function foo() {
 export { foo };
 `);
 
-      const backend2 = createTestBackend();
-      await backend2.connect();
+      const db2 = await createTestDatabase();
+      const backend2 = db2.backend;
       const orchestrator2 = createTestOrchestrator(backend2);
       await orchestrator2.run(testDir2);
 
@@ -425,7 +425,7 @@ export { foo };
         break;
       }
 
-      await backend2.cleanup();
+      await db2.cleanup();
 
       assert.ok(func1 && func2, 'Both should find function foo');
 
@@ -453,8 +453,8 @@ function target() { return 42; }
 export { target };
 `);
 
-      const backend1 = createTestBackend();
-      await backend1.connect();
+      const db1 = await createTestDatabase();
+      const backend1 = db1.backend;
       const orchestrator1 = createTestOrchestrator(backend1);
       await orchestrator1.run(testDir1);
 
@@ -464,7 +464,7 @@ export { target };
         break;
       }
 
-      await backend1.cleanup();
+      await db1.cleanup();
 
       // Test 2: Code added above the target function
       const testDir2 = join(tmpdir(), `grafema-test-above2-${Date.now()}-${testCounter++}`);
@@ -479,8 +479,8 @@ function target() { return 42; }
 export { target };
 `);
 
-      const backend2 = createTestBackend();
-      await backend2.connect();
+      const db2 = await createTestDatabase();
+      const backend2 = db2.backend;
       const orchestrator2 = createTestOrchestrator(backend2);
       await orchestrator2.run(testDir2);
 
@@ -490,7 +490,7 @@ export { target };
         break;
       }
 
-      await backend2.cleanup();
+      await db2.cleanup();
 
       assert.ok(func1 && func2, 'Both should find function target');
 

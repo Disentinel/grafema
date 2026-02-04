@@ -47,7 +47,7 @@ let testCounter = 0;
  * Helper to create a test project with given files and run analysis
  */
 async function setupTest(
-  backend: ReturnType<typeof createTestBackend>,
+  backend: Awaited<ReturnType<typeof createTestDatabase>>['backend'],
   files: Record<string, string>
 ): Promise<{ testDir: string }> {
   const testDir = join(tmpdir(), `grafema-test-funcmeta-${Date.now()}-${testCounter++}`);
@@ -78,7 +78,7 @@ async function setupTest(
  * Get nodes by type from backend
  */
 async function getNodesByType(
-  backend: ReturnType<typeof createTestBackend>,
+  backend: Awaited<ReturnType<typeof createTestDatabase>>['backend'],
   nodeType: string
 ): Promise<NodeRecord[]> {
   const allNodes = await backend.getAllNodes();
@@ -105,7 +105,7 @@ function getControlFlowMetadata(funcNode: NodeRecord): ControlFlowMetadata | und
  * Find function node by name
  */
 async function getFunctionByName(
-  backend: ReturnType<typeof createTestBackend>,
+  backend: Awaited<ReturnType<typeof createTestDatabase>>['backend'],
   name: string
 ): Promise<NodeRecord | undefined> {
   const functionNodes = await getNodesByType(backend, 'FUNCTION');
@@ -117,11 +117,11 @@ async function getFunctionByName(
 // =============================================================================
 
 describe('Function Control Flow Metadata (REG-267 Phase 6)', () => {
-  let backend: ReturnType<typeof createTestBackend> & { cleanup: () => Promise<void> };
+  let backend: Awaited<ReturnType<typeof createTestDatabase>>['backend'] & { cleanup: () => Promise<void> };
 
   beforeEach(async () => {
     if (db) await db.cleanup();
-    backend = createTestBackend() as ReturnType<typeof createTestBackend> & { cleanup: () => Promise<void> };
+    backend = await createTestDatabase(); backend = db.backend;
   });
 
   after(async () => {
