@@ -11,7 +11,7 @@ import type { NodePath } from '@babel/traverse';
 import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { NodeRecord } from '@grafema/types';
-import { getLine } from './ast/utils/location.js';
+import { getLine, getColumn } from './ast/utils/location.js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const traverse = (traverseModule as any).default || traverseModule;
@@ -30,6 +30,7 @@ interface DatabaseQueryNode {
   method: string;
   file: string;
   line: number;
+  column: number;
 }
 
 /**
@@ -224,7 +225,8 @@ export class DatabaseAnalyzer extends Plugin {
                   object: objectName,
                   method: methodName,
                   file: module.file!,
-                  line: getLine(node)
+                  line: getLine(node),
+                  column: getColumn(node)
                 });
               }
             }

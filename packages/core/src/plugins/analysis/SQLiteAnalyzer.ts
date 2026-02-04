@@ -16,7 +16,7 @@ import type { NodePath } from '@babel/traverse';
 import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { NodeRecord } from '@grafema/types';
-import { getLine } from './ast/utils/location.js';
+import { getLine, getColumn } from './ast/utils/location.js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const traverse = (traverseModule as any).default || traverseModule;
@@ -34,6 +34,7 @@ interface SQLiteQueryNode {
   tableName: string | null;
   file: string;
   line: number;
+  column: number;
   promiseWrapped?: boolean;
 }
 
@@ -181,7 +182,8 @@ export class SQLiteAnalyzer extends Plugin {
                   operationType: operationType,
                   tableName: tableName,
                   file: module.file!,
-                  line: getLine(node)
+                  line: getLine(node),
+                  column: getColumn(node)
                 });
               }
             }
@@ -254,6 +256,7 @@ export class SQLiteAnalyzer extends Plugin {
                           tableName: tableName,
                           file: module.file!,
                           line: getLine(innerNode),
+                          column: getColumn(innerNode),
                           promiseWrapped: true
                         });
                       }

@@ -18,7 +18,7 @@ import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { NodeRecord } from '@grafema/types';
 import { NetworkRequestNode } from '../../core/nodes/NetworkRequestNode.js';
-import { getLine } from './ast/utils/location.js';
+import { getLine, getColumn } from './ast/utils/location.js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const traverse = (traverseModule as any).default || traverseModule;
@@ -35,6 +35,7 @@ interface HttpRequestNode {
   library: string;
   file: string;
   line: number;
+  column: number;
   staticUrl: 'yes' | 'no';
   responseDataNode?: string | null;  // ID of CALL node for response.json(), response.text(), etc.
 }
@@ -191,6 +192,7 @@ export class FetchAnalyzer extends Plugin {
               library: 'fetch',
               file: module.file!,
               line: line,
+              column: getColumn(node),
               staticUrl: url !== 'dynamic' && url !== 'unknown' ? 'yes' : 'no'
             };
 
@@ -225,6 +227,7 @@ export class FetchAnalyzer extends Plugin {
               library: 'axios',
               file: module.file!,
               line: line,
+              column: getColumn(node),
               staticUrl: url !== 'dynamic' && url !== 'unknown' ? 'yes' : 'no'
             };
 
@@ -271,6 +274,7 @@ export class FetchAnalyzer extends Plugin {
                 library: 'axios',
                 file: module.file!,
                 line: line,
+                column: getColumn(node),
                 staticUrl: url !== 'dynamic' && url !== 'unknown' ? 'yes' : 'no'
               };
 
@@ -305,6 +309,7 @@ export class FetchAnalyzer extends Plugin {
                 library: calleeName,
                 file: module.file!,
                 line: line,
+                column: getColumn(node),
                 staticUrl: url !== 'dynamic' && url !== 'unknown' ? 'yes' : 'no'
               };
 

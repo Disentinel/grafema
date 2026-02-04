@@ -13,7 +13,7 @@ import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { NodeRecord } from '@grafema/types';
 import { NetworkRequestNode } from '../../core/nodes/NetworkRequestNode.js';
-import { getLine } from './ast/utils/location.js';
+import { getLine, getColumn } from './ast/utils/location.js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const traverse = (traverseModule as any).default || traverseModule;
@@ -29,6 +29,7 @@ interface EndpointNode {
   localPath: string;
   file: string;
   line: number;
+  column: number;
   mountedOn: string;
 }
 
@@ -43,6 +44,7 @@ interface MountPointNode {
   targetVariable: string | null;
   file: string;
   line: number;
+  column: number;
   mountedOn: string;
 }
 
@@ -210,6 +212,7 @@ export class ExpressAnalyzer extends Plugin {
                   localPath: routePath,
                   file: module.file!,
                   line: getLine(node),
+                  column: getColumn(node),
                   mountedOn: objectName
                 });
               }
@@ -287,6 +290,7 @@ export class ExpressAnalyzer extends Plugin {
                   targetVariable: targetVariable,
                   file: module.file!,
                   line: getLine(node),
+                  column: getColumn(node),
                   mountedOn: objectName
                 });
               }

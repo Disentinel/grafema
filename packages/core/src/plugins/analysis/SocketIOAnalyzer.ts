@@ -56,6 +56,7 @@ interface SocketListenerNode {
   handlerLine: number;
   file: string;
   line: number;
+  column: number;
 }
 
 /**
@@ -68,6 +69,7 @@ interface SocketRoomNode {
   objectName: string;
   file: string;
   line: number;
+  column: number;
 }
 
 /**
@@ -372,7 +374,8 @@ export class SocketIOAnalyzer extends Plugin {
               handlerName: handlerName,
               handlerLine: handlerLine,
               file: module.file!,
-              line: line
+              line: line,
+              column: getColumn(node)
             });
           }
 
@@ -393,7 +396,8 @@ export class SocketIOAnalyzer extends Plugin {
                 room: roomName,
                 objectName: objectName,
                 file: module.file!,
-                line: line
+                line: line,
+                column: getColumn(node)
               });
             }
           }
