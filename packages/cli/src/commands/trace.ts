@@ -19,6 +19,7 @@ interface TraceOptions {
   json?: boolean;
   depth: string;
   to?: string;
+  fromRoute?: string;
 }
 
 // =============================================================================
@@ -85,6 +86,7 @@ export const traceCommand = new Command('trace')
   .option('-j, --json', 'Output as JSON')
   .option('-d, --depth <n>', 'Max trace depth', '10')
   .option('-t, --to <sink>', 'Sink point: "fn#argIndex.property" (e.g., "addNode#0.type")')
+  .option('-r, --from-route <pattern>', 'Trace from route response (e.g., "GET /status" or "/status")')
   .addHelpText('after', `
 Examples:
   grafema trace "userId"                     Trace all variables named "userId"
@@ -92,6 +94,8 @@ Examples:
   grafema trace "config" --depth 5           Limit trace depth to 5 levels
   grafema trace "apiKey" --json              Output trace as JSON
   grafema trace --to "addNode#0.type"        Trace values reaching sink point
+  grafema trace --from-route "GET /status"   Trace values from route response
+  grafema trace -r "/status"                 Trace by path only
 `)
   .action(async (pattern: string | undefined, options: TraceOptions) => {
     const projectPath = resolve(options.project);
@@ -112,9 +116,16 @@ Examples:
         return;
       }
 
+      // Handle route-based trace if --from-route option is provided
+      if (options.fromRoute) {
+        const maxDepth = parseInt(options.depth, 10);
+        await handleRouteTrace(backend, options.fromRoute, projectPath, options.json, maxDepth);
+        return;
+      }
+
       // Regular trace requires pattern
       if (!pattern) {
-        exitWithError('Pattern required', ['Provide a pattern or use --to for sink trace']);
+        exitWithError('Pattern required', ['Provide a pattern, use --to for sink trace, or --from-route for route trace']);
       }
 
       // Parse pattern: "varName from functionName" or just "varName"
@@ -740,6 +751,232 @@ async function handleSinkTrace(
   if (result.statistics.unknownElements) {
     console.log('');
     console.log('Note: Some values could not be determined (runtime/parameter inputs)');
+  }
+}
+
+// =============================================================================
+// ROUTE-BASED TRACE IMPLEMENTATION (REG-326)
+// =============================================================================
+
+/**
+ * Find route by pattern.
+ *
+ * Supports:
+ * - "METHOD /path" format (e.g., "GET /status")
+ * - "/path" format (e.g., "/status")
+ *
+ * Matching strategy:
+ * 1. Try exact "METHOD PATH" match
+ * 2. Try "/PATH" only match (any method)
+ *
+ * @param backend - Graph backend
+ * @param pattern - Route pattern (with or without method)
+ * @returns Route node or null if not found
+ */
+async function findRouteByPattern(
+  backend: RFDBServerBackend,
+  pattern: string
+): Promise<NodeInfo | null> {
+  const trimmed = pattern.trim();
+
+  for await (const node of backend.queryNodes({ type: 'http:route' })) {
+    const method = (node as NodeInfo & { method?: string }).method || '';
+    const path = (node as NodeInfo & { path?: string }).path || '';
+
+    // Match "METHOD /path"
+    if (`${method} ${path}` === trimmed) {
+      return {
+        id: node.id,
+        type: node.type || 'http:route',
+        name: `${method} ${path}`,
+        file: node.file || '',
+        line: node.line
+      };
+    }
+
+    // Match "/path" only (ignore method)
+    if (path === trimmed) {
+      return {
+        id: node.id,
+        type: node.type || 'http:route',
+        name: `${method} ${path}`,
+        file: node.file || '',
+        line: node.line
+      };
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Handle route-based trace (--from-route option).
+ *
+ * Flow:
+ * 1. Find route by pattern
+ * 2. Get RESPONDS_WITH edges from route
+ * 3. For each response node: call traceValues()
+ * 4. Format and display results grouped by response call
+ *
+ * @param backend - Graph backend
+ * @param pattern - Route pattern (e.g., "GET /status" or "/status")
+ * @param projectPath - Project root path
+ * @param jsonOutput - Whether to output as JSON
+ * @param maxDepth - Maximum trace depth (default 10)
+ */
+async function handleRouteTrace(
+  backend: RFDBServerBackend,
+  pattern: string,
+  projectPath: string,
+  jsonOutput?: boolean,
+  maxDepth: number = 10
+): Promise<void> {
+  // Find route
+  const route = await findRouteByPattern(backend, pattern);
+
+  if (!route) {
+    console.log(`Route not found: ${pattern}`);
+    console.log('');
+    console.log('Hint: Use "grafema query" to list available routes');
+    return;
+  }
+
+  // Get RESPONDS_WITH edges
+  const respondsWithEdges = await backend.getOutgoingEdges(route.id, ['RESPONDS_WITH']);
+
+  if (respondsWithEdges.length === 0) {
+    if (jsonOutput) {
+      console.log(JSON.stringify({
+        route: {
+          name: route.name,
+          file: route.file,
+          line: route.line
+        },
+        responses: [],
+        message: 'No response data found'
+      }, null, 2));
+    } else {
+      console.log(`Route: ${route.name} (${route.file}:${route.line || '?'})`);
+      console.log('');
+      console.log('No response data found for this route.');
+      console.log('');
+      console.log('Hint: Make sure ExpressResponseAnalyzer is in your config.');
+    }
+    return;
+  }
+
+  // Build response data
+  const responses: Array<{
+    index: number;
+    method: string;
+    line: number;
+    sources: Array<{
+      type: string;
+      value?: unknown;
+      reason?: string;
+      file: string;
+      line: number;
+      id: string;
+      name?: string;
+    }>;
+  }> = [];
+
+  // Trace each response
+  for (let i = 0; i < respondsWithEdges.length; i++) {
+    const edge = respondsWithEdges[i];
+    const responseNode = await backend.getNode(edge.dst);
+
+    if (!responseNode) continue;
+
+    const responseMethod = (edge.metadata?.responseMethod as string) || 'unknown';
+
+    // Trace values from this response node
+    const traced = await traceValues(backend, responseNode.id, {
+      maxDepth,
+      followDerivesFrom: true,
+      detectNondeterministic: true
+    });
+
+    // Format traced values
+    const sources = await Promise.all(
+      traced.map(async (t) => {
+        const relativePath = t.source.file.startsWith(projectPath)
+          ? t.source.file.substring(projectPath.length + 1)
+          : t.source.file;
+
+        if (t.isUnknown) {
+          return {
+            type: 'UNKNOWN',
+            reason: t.reason || 'runtime input',
+            file: relativePath,
+            line: t.source.line,
+            id: t.source.id
+          };
+        } else if (t.value !== undefined) {
+          return {
+            type: 'LITERAL',
+            value: t.value,
+            file: relativePath,
+            line: t.source.line,
+            id: t.source.id
+          };
+        } else {
+          // Look up node to get type and name
+          const sourceNode = await backend.getNode(t.source.id);
+          return {
+            type: sourceNode?.type || 'VALUE',
+            name: sourceNode?.name || '<unnamed>',
+            file: relativePath,
+            line: t.source.line,
+            id: t.source.id
+          };
+        }
+      })
+    );
+
+    responses.push({
+      index: i + 1,
+      method: responseMethod,
+      line: responseNode.line || 0,
+      sources: sources.length > 0 ? sources : []
+    });
+
+    if (!jsonOutput) {
+      // Display human-readable output
+      console.log(`Response ${i + 1} (res.${responseMethod} at line ${responseNode.line || '?'}):`);
+      if (sources.length === 0) {
+        console.log('  No data sources found (response may be external or complex)');
+      } else {
+        console.log('  Data sources:');
+        for (const src of sources) {
+          if (src.type === 'UNKNOWN') {
+            console.log(`    [UNKNOWN] ${src.reason} at ${src.file}:${src.line}`);
+          } else if (src.type === 'LITERAL') {
+            console.log(`    [LITERAL] ${JSON.stringify(src.value)} at ${src.file}:${src.line}`);
+          } else {
+            console.log(`    [${src.type}] ${src.name} at ${src.file}:${src.line}`);
+          }
+        }
+      }
+      console.log('');
+    }
+  }
+
+  // Output results
+  if (jsonOutput) {
+    console.log(JSON.stringify({
+      route: {
+        name: route.name,
+        file: route.file,
+        line: route.line
+      },
+      responses
+    }, null, 2));
+  } else {
+    // Human-readable output header
+    if (responses.length > 0 && !jsonOutput) {
+      // Already printed above, just for clarity
+    }
   }
 }
 
