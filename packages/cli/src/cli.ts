@@ -4,6 +4,9 @@
  */
 
 import { Command } from 'commander';
+import { readFileSync } from 'fs';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
 import { initCommand } from './commands/init.js';
 import { analyzeCommand } from './commands/analyze.js';
 import { overviewCommand } from './commands/overview.js';
@@ -22,12 +25,16 @@ import { doctorCommand } from './commands/doctor.js';
 import { schemaCommand } from './commands/schema.js';
 import { explainCommand } from './commands/explain.js';
 
+// Read version from package.json
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const pkg = JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf-8'));
+
 const program = new Command();
 
 program
   .name('grafema')
   .description('Grafema code analysis CLI')
-  .version('0.1.0-alpha.1');
+  .version(pkg.version);
 
 // Commands in logical order
 program.addCommand(initCommand);
