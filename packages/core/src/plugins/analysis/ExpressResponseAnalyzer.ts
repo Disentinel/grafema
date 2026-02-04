@@ -36,6 +36,7 @@ interface ResponseCallInfo {
   argColumn: number;       // Column of the argument
   argType: string;         // Type of the argument ('ObjectExpression', 'Identifier', etc.)
   line: number;
+  identifierName?: string; // Actual variable name for Identifier arguments
 }
 
 export class ExpressResponseAnalyzer extends Plugin {
@@ -128,16 +129,13 @@ export class ExpressResponseAnalyzer extends Plugin {
 
       // Create RESPONDS_WITH edges
       for (const call of responseCalls) {
-        // Always create a unique response node for each route
-        // JSASTAnalyzer doesn't create nodes inside functions, and each route
-        // needs its own response node even if at the same source location
-        const dstNodeId = await this.createResponseArgumentNode(
+        // Try to resolve to existing variable, or create a unique response node
+        const dstNodeId = await this.resolveOrCreateResponseNode(
           graph,
           handlerNode.file,
-          call.argLine,
-          call.argColumn,
-          call.argType,
-          route.id
+          call,
+          route.id,
+          handlerNode.id // Handler's semantic ID for scope resolution
         );
 
         await graph.addEdge({
@@ -223,7 +221,8 @@ export class ExpressResponseAnalyzer extends Plugin {
           argLine,
           argColumn,
           argType: arg.type,
-          line: getLine(callNode)
+          line: getLine(callNode),
+          identifierName: arg.type === 'Identifier' ? (arg as Identifier).name : undefined
         });
       }
     });
@@ -310,6 +309,244 @@ export class ExpressResponseAnalyzer extends Plugin {
       memberExpr.property.type === 'Identifier' &&
       (memberExpr.property as Identifier).name === methodName
     );
+  }
+
+  /**
+   * Resolve response node: find existing variable or create stub.
+   *
+   * For Identifier arguments (e.g., res.json(statusData)):
+   * 1. Try to find existing VARIABLE/PARAMETER/CONSTANT with same name in handler scope
+   * 2. If found, return existing node ID (no stub needed)
+   * 3. If not found, fall back to creating stub (external/global variables)
+   *
+   * For non-Identifier arguments (ObjectExpression, CallExpression, etc.):
+   * - Always create stub node (existing behavior)
+   *
+   * @param graph - Graph backend
+   * @param file - Handler file path
+   * @param call - Response call info (includes identifierName)
+   * @param routeId - Route ID (for metadata)
+   * @param handlerSemanticId - Handler function's semantic ID (for scope matching)
+   * @returns Node ID (existing or newly created)
+   */
+  private async resolveOrCreateResponseNode(
+    graph: PluginContext['graph'],
+    file: string,
+    call: ResponseCallInfo,
+    routeId: string,
+    handlerSemanticId: string
+  ): Promise<string> {
+    const { argLine, argColumn, argType, identifierName } = call;
+
+    // For Identifier arguments, try to find existing variable/parameter
+    if (argType === 'Identifier' && identifierName) {
+      const existingNodeId = await this.findIdentifierInScope(
+        graph,
+        file,
+        identifierName,
+        handlerSemanticId,
+        argLine
+      );
+
+      if (existingNodeId) {
+        return existingNodeId; // Use existing node, no stub needed
+      }
+      // Fall through to create stub if not found (external/global variables)
+    }
+
+    // For non-Identifier or not-found, create stub node (existing logic)
+    return this.createResponseArgumentNode(
+      graph,
+      file,
+      argLine,
+      argColumn,
+      argType,
+      routeId
+    );
+  }
+
+  /**
+   * Find existing VARIABLE/CONSTANT/PARAMETER node in handler scope.
+   *
+   * Strategy:
+   * 1. Parse handler semantic ID to extract scope prefix
+   * 2. Query VARIABLE/CONSTANT nodes: match by name, file, scope prefix, and line <= useLine
+   * 3. Query PARAMETER nodes: match by name, file, parentFunctionId === handlerSemanticId
+   *
+   * Scope matching:
+   * - Handler ID: "routes.js->anonymous[1]->FUNCTION->anonymous[1]"
+   * - Scope prefix: "routes.js->anonymous[1]->"
+   * - Variable ID: "routes.js->anonymous[1]->VARIABLE->statusData" (matches prefix)
+   * - External ID: "utils.js->VARIABLE->config" (different file)
+   *
+   * @param graph - Graph backend
+   * @param file - File path
+   * @param name - Variable name to find
+   * @param handlerSemanticId - Handler function's semantic ID
+   * @param useLine - Line where identifier is used (variable must be declared before this)
+   * @returns Node ID if found, null otherwise
+   */
+  private async findIdentifierInScope(
+    graph: PluginContext['graph'],
+    file: string,
+    name: string,
+    handlerSemanticId: string,
+    useLine: number
+  ): Promise<string | null> {
+    // Extract scope prefix from handler semantic ID
+    const handlerScopePrefix = this.extractScopePrefix(handlerSemanticId);
+
+    // Query VARIABLE nodes
+    for await (const node of graph.queryNodes({ type: 'VARIABLE' })) {
+      if (node.name === name && node.file === file) {
+        // Check if in handler scope and declared before usage
+        if (node.id.startsWith(handlerScopePrefix) && (node.line as number) <= useLine) {
+          return node.id;
+        }
+      }
+    }
+
+    // Query CONSTANT nodes
+    for await (const node of graph.queryNodes({ type: 'CONSTANT' })) {
+      if (node.name === name && node.file === file) {
+        if (node.id.startsWith(handlerScopePrefix) && (node.line as number) <= useLine) {
+          return node.id;
+        }
+      }
+    }
+
+    // Query PARAMETER nodes
+    for await (const node of graph.queryNodes({ type: 'PARAMETER' })) {
+      if (node.name === name && node.file === file) {
+        // Parameters belong to the function directly
+        const parentFunctionId = (node as NodeRecord & { parentFunctionId?: string }).parentFunctionId;
+        if (parentFunctionId === handlerSemanticId) {
+          return node.id;
+        }
+      }
+    }
+
+    // Also check module-level variables (scope prefix would be just "file.js->")
+    // For module-level constants, they should be accessible from any function in the file
+    const modulePrefix = this.extractModulePrefix(handlerSemanticId);
+    if (modulePrefix) {
+      // Check module-level VARIABLE
+      for await (const node of graph.queryNodes({ type: 'VARIABLE' })) {
+        if (node.name === name && node.file === file) {
+          // Module-level variables have IDs like "file.js->VARIABLE->name" (3 parts)
+          // Function-local variables have IDs like "file.js->funcName->VARIABLE->name" (4+ parts)
+          // Only match true module-level variables by checking structure
+          if (this.isModuleLevelId(node.id, modulePrefix) && (node.line as number) <= useLine) {
+            return node.id;
+          }
+        }
+      }
+
+      // Check module-level CONSTANT
+      for await (const node of graph.queryNodes({ type: 'CONSTANT' })) {
+        if (node.name === name && node.file === file) {
+          if (this.isModuleLevelId(node.id, modulePrefix) && (node.line as number) <= useLine) {
+            return node.id;
+          }
+        }
+      }
+    }
+
+    return null; // Not found - will create stub
+  }
+
+  /**
+   * Extract scope prefix from handler function's semantic ID.
+   *
+   * Handler function semantic IDs follow the pattern:
+   *   {file}->{scope_path}->{type}->{name}
+   *
+   * Variables declared INSIDE the handler have IDs where the handler's NAME
+   * becomes part of THEIR scope path:
+   *   {file}->{handler_name}->{type}->{var_name}
+   *
+   * Examples:
+   * - Handler: "index.js->global->FUNCTION->anonymous[0]"
+   *   -> Variables inside: "index.js->anonymous[0]->CONSTANT->statusData"
+   *   -> Scope prefix: "index.js->anonymous[0]->"
+   *
+   * - Handler: "routes.js->anonymous[1]->FUNCTION->anonymous[1]"
+   *   -> Variables inside: "routes.js->anonymous[1]->VARIABLE->data"
+   *   -> Scope prefix: "routes.js->anonymous[1]->"
+   *
+   * - Handler: "app.js->global->FUNCTION->handleRequest"
+   *   -> Variables inside: "app.js->handleRequest->VARIABLE->result"
+   *   -> Scope prefix: "app.js->handleRequest->"
+   *
+   * Algorithm:
+   * 1. Split by "->"
+   * 2. Take file (first part) and handler name (last part)
+   * 3. Join with "->" and add trailing "->"
+   *
+   * @param semanticId - Handler function's semantic ID
+   * @returns Scope prefix for matching variables declared inside the handler
+   */
+  private extractScopePrefix(semanticId: string): string {
+    const parts = semanticId.split('->');
+    // Semantic ID format: file->scope->TYPE->name
+    // We need file + function name (last part) to match variables inside the function
+    if (parts.length >= 4) {
+      const file = parts[0];
+      const functionName = parts[parts.length - 1]; // Function name is the last part
+      return `${file}->${functionName}->`;
+    }
+    // Fallback: use first two parts (shouldn't happen for well-formed IDs)
+    if (parts.length >= 2) {
+      return `${parts[0]}->${parts[1]}->`;
+    }
+    return semanticId;
+  }
+
+  /**
+   * Extract module prefix from semantic ID (for module-level variable access).
+   *
+   * Examples:
+   * - "routes.js->anonymous[1]->FUNCTION->anonymous[1]" -> "routes.js->"
+   * - "app.js->startServer->FUNCTION->startServer" -> "app.js->"
+   *
+   * @param semanticId - Handler function's semantic ID
+   * @returns Module prefix for matching module-level variables
+   */
+  private extractModulePrefix(semanticId: string): string | null {
+    const parts = semanticId.split('->');
+    if (parts.length >= 1 && parts[0]) {
+      return `${parts[0]}->`;
+    }
+    return null;
+  }
+
+  /**
+   * Check if a semantic ID represents a true module-level variable.
+   *
+   * Semantic IDs have format: file->scope->TYPE->name
+   * - Module-level variables have "global" as the scope: "file.js->global->TYPE->name"
+   * - Function-local variables have function name as scope: "file.js->funcName->TYPE->name"
+   *
+   * Examples:
+   * - "index.js->global->CONSTANT->CONFIG" -> true (module-level)
+   * - "index.js->global->VARIABLE->counter" -> true (module-level)
+   * - "index.js->anonymous[0]->CONSTANT->data" -> false (function-local)
+   * - "routes.js->handler->VARIABLE->result" -> false (function-local)
+   *
+   * @param nodeId - The node's semantic ID
+   * @param modulePrefix - The module prefix (e.g., "index.js->")
+   * @returns true if this is a module-level variable
+   */
+  private isModuleLevelId(nodeId: string, modulePrefix: string): boolean {
+    if (!nodeId.startsWith(modulePrefix)) {
+      return false;
+    }
+
+    // Check if the scope part (second component) is "global"
+    const parts = nodeId.split('->');
+    // Expected format: ["file.js", "global", "TYPE", "name"]
+    // Check that second part is "global" (module scope)
+    return parts.length >= 4 && parts[1] === 'global';
   }
 
   /**
