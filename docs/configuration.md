@@ -304,4 +304,3 @@ This will create a new `config.yaml` while preserving your settings.
 
 - [Project Onboarding Guide](project-onboarding.md) - Getting started with Grafema
 - [Plugin Development Guide](plugin-development.md) - Creating custom plugins
-- [Guarantee Workflow](guarantee-workflow.md) - Creating code invariants

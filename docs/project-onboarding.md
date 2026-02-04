@@ -7,12 +7,12 @@ This guide will help you integrate Grafema into an existing project and iterativ
 ## Process Overview
 
 ```
-┌─────────────┐     ┌─────────────┐     ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
-│   SETUP     │ →   │  ANALYZE    │ →   │   ASSESS    │ →   │ GUARANTEES  │ →   │    CI/CD    │
-├─────────────┤     ├─────────────┤     ├─────────────┤     ├─────────────┤     ├─────────────┤
-│ Configure   │     │ First       │     │ Evaluate    │     │ Create      │     │ Integrate   │
-│ .grafema/   │     │ analysis    │     │ coverage    │     │ invariants  │     │ into CI     │
-└─────────────┘     └─────────────┘     └─────────────┘     └─────────────┘     └─────────────┘
+┌─────────────┐     ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+│   SETUP     │ →   │  ANALYZE    │ →   │   ASSESS    │ →   │   QUERY     │
+├─────────────┤     ├─────────────┤     ├─────────────┤     ├─────────────┤
+│ Configure   │     │ First       │     │ Evaluate    │     │ Explore     │
+│ .grafema/   │     │ analysis    │     │ coverage    │     │ the graph   │
+└─────────────┘     └─────────────┘     └─────────────┘     └─────────────┘
 ```
 
 All plugins are enabled by default ("batteries included"). Plugins that don't find relevant patterns simply do nothing.
@@ -37,7 +37,6 @@ Grafema stores configuration and data in `.grafema/`:
 your-project/
 ├── .grafema/
 │   ├── config.yaml       # Plugin configuration (version controlled)
-│   ├── guarantees.yaml   # Code guarantees (version controlled)
 │   └── graph.rfdb        # Graph database (gitignore)
 ├── src/
 └── ...
@@ -190,82 +189,28 @@ If:
 
 See [plugin-development.md](plugin-development.md) for the guide.
 
-## Step 5: Create Guarantees
+## Step 5: Explore the Graph
 
-### 5.1 Start with Simple Guarantees
-
-After achieving good coverage, create basic guarantees:
+Now you can query the graph to understand your codebase:
 
 ```bash
-# Ban eval()
-grafema guarantee add --id no-eval \
-  --name "No eval() usage" \
-  --rule 'violation(X) :- node(X, "CALL"), attr(X, "name", "eval").' \
-  --severity error
+# Find functions by name
+grafema query "function authenticate"
 
-# Ban console.log in production
-grafema guarantee add --id no-console-log \
-  --name "No console.log" \
-  --rule 'violation(X) :- node(X, "METHOD_CALL"), attr(X, "object", "console"), attr(X, "method", "log").' \
-  --severity warning \
-  --governs "src/**/*.js"
+# Find HTTP routes
+grafema query "route /api"
+
+# Trace variables
+grafema trace "userId"
 ```
 
-### 5.2 Check Guarantees
+For more query examples, see [Datalog Cheat Sheet](datalog-cheat-sheet.md).
 
-```bash
-grafema check-guarantees
-```
-
-### 5.3 Export for Version Control
-
-```bash
-grafema guarantee export
-git add .grafema/guarantees.yaml
-git commit -m "Add code guarantees"
-```
-
-### 5.4 Complex Guarantees
-
-For complex guarantees, see [guarantee-workflow.md](guarantee-workflow.md).
-
-## Step 6: CI/CD Integration
-
-### 6.1 Check Guarantees in CI
-
-```yaml
-# .github/workflows/grafema.yml
-name: Code Analysis
-on: [push, pull_request]
-
-jobs:
-  analyze:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-      - run: npm ci
-      - run: npx grafema analyze
-      - run: npx grafema check-guarantees --fail-on-violation
-```
-
-### 6.2 Pre-commit Hook
-
-```bash
-#!/bin/bash
-# .git/hooks/pre-commit
-
-npx grafema check-guarantees --fail-on-violation
-```
-
-## Step 7: What's Next?
-
-After CI/CD integration:
+## What's Next?
 
 1. **Expand coverage** — Write custom plugins for libraries specific to your project
-2. **Add more guarantees** — Enforce architectural decisions (e.g., "no direct DB access from controllers")
-3. **Track metrics over time** — Monitor call resolution rate, find regressions
-4. **Query the graph** — Use Grafema in code reviews to understand changes
+2. **Query during code review** — Use Grafema to understand changes before merging
+3. **Track metrics** — Monitor call resolution rate over time
 
 ## Onboarding Checklist
 
@@ -275,9 +220,7 @@ After CI/CD integration:
 - [ ] First analysis complete (`grafema analyze`)
 - [ ] Schema verified (`grafema schema`)
 - [ ] Coverage metrics checked (unresolved calls)
-- [ ] Basic guarantees created
-- [ ] Guarantees exported to YAML
-- [ ] CI/CD integration configured
+- [ ] Try some queries (`grafema query`)
 
 ## Troubleshooting
 
@@ -310,7 +253,6 @@ See [glossary.md](glossary.md) for definitions of terms like "enrichment", "sema
 ## See Also
 
 - [Configuration Reference](configuration.md) — Full configuration reference
-- [Guarantee Workflow](guarantee-workflow.md) — Creating guarantees
 - [Plugin Development](plugin-development.md) — Writing plugins
 - [Datalog Cheat Sheet](datalog-cheat-sheet.md) — Common queries with explanations
 - [Glossary](glossary.md) — Term definitions

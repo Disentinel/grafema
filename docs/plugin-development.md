@@ -595,5 +595,4 @@ grafema analyze --log-level debug
 
 - [Configuration Reference](configuration.md) — Full configuration reference
 - [Project Onboarding](project-onboarding.md) — Getting started with Grafema
-- [Guarantee Workflow](guarantee-workflow.md) — Creating guarantees
 - [Glossary](glossary.md) — Term definitions

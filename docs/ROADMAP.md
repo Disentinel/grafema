@@ -23,7 +23,7 @@ Graph-Driven Development: from code graph to system guarantees.
 ### CLI ✅
 
 - `grafema analyze` — full project analysis
-- `grafema query` — natural language + Datalog queries
+- `grafema query` — pattern matching + Datalog queries
 - `grafema ls` — list nodes by type
 - `grafema types` — show available node types
 - `grafema show` — node details with edges

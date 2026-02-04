@@ -164,9 +164,7 @@ npx grafema check --list-categories
 ## Next Steps
 
 - [Configuration Reference](configuration.md) - Customize plugins and file patterns
-- [Project Onboarding Guide](project-onboarding.md) - Comprehensive setup for teams
 - [Datalog Cheat Sheet](datalog-cheat-sheet.md) - Advanced graph queries
-- [Guarantee Workflow](guarantee-workflow.md) - Enforce code invariants in CI
 
 ## Troubleshooting
 

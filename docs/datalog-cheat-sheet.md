@@ -186,6 +186,5 @@ grafema node "CALL:src/utils.js:42:eval"
 
 ## See Also
 
-- [Guarantee Workflow](guarantee-workflow.md) — Using guarantees
 - [Configuration](configuration.md) — Plugin configuration
-- [Project Onboarding](project-onboarding.md) — Getting started guide
+- [Getting Started](getting-started.md) — Quick start guide
