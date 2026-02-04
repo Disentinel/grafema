@@ -31,6 +31,7 @@ interface EndpointNode {
   path: string;
   file: string;
   line: number;
+  column: number;
   routerName: string;
   handlerLine: number;
   handlerColumn: number;
@@ -45,6 +46,7 @@ interface MiddlewareNode {
   name: string;
   file: string;
   line: number;
+  column: number;
   endpointId?: string;
   order?: number;
   mountPath?: string;
@@ -257,6 +259,7 @@ export class ExpressRouteAnalyzer extends Plugin {
                     path: routePath,
                     file: module.file!,
                     line: getLine(node),
+                    column: getColumn(node),
                     routerName: objectName,
                     handlerLine: actualHandler.loc
                       ? getLine(actualHandler)
@@ -296,6 +299,7 @@ export class ExpressRouteAnalyzer extends Plugin {
                         name: middlewareName,
                         file: module.file!,
                         line: mwNode.loc ? getLine(mwNode) : getLine(node),
+                        column: mwNode.loc ? getColumn(mwNode) : getColumn(node),
                         endpointId: endpointId,
                         order: index // Порядок в цепочке
                       });
@@ -340,6 +344,7 @@ export class ExpressRouteAnalyzer extends Plugin {
                       name: middlewareName,
                       file: module.file!,
                       line: getLine(node),
+                      column: getColumn(node),
                       mountPath: mountPath,
                       isGlobal: mountPath === '/' // Global middleware если нет path
                     });
