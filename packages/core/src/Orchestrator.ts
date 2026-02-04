@@ -622,6 +622,17 @@ export class Orchestrator {
         allEntrypoints.push(...(result.metadata.entrypoints as EntrypointInfo[]));
       }
 
+      // Warn if plugin created nodes but didn't return services/entrypoints in metadata
+      // This catches common mistake of not returning services via result.metadata.services
+      if (result.success && result.created.nodes > 0 &&
+          !result.metadata?.services && !result.metadata?.entrypoints) {
+        this.logger.warn('Discovery plugin created nodes but returned no services/entrypoints in metadata', {
+          plugin: plugin.metadata.name,
+          nodesCreated: result.created.nodes,
+          hint: 'Services must be returned via result.metadata.services for Orchestrator to index them'
+        });
+      }
+
       this.onProgress({
         phase: 'discovery',
         currentPlugin: plugin.metadata.name,
