@@ -7,7 +7,10 @@
 
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert';
-import { createTestDatabase } from '../helpers/TestRFDB.js';
+import { createTestDatabase, cleanupAllTestDatabases } from '../helpers/TestRFDB.js';
+
+// Cleanup all test databases after all tests complete
+after(cleanupAllTestDatabases);
 import { createTestOrchestrator, analyzeProject } from '../helpers/createTestOrchestrator.js';
 import { writeFileSync, mkdirSync, rmSync } from 'fs';
 import { join } from 'path';

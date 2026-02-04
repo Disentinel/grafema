@@ -10,7 +10,7 @@
  * - Creates CALLS edges from CALL nodes to EXTERNAL_FUNCTION nodes
  */
 
-import { describe, it } from 'node:test';
+import { describe, it, after } from 'node:test';
 import assert from 'node:assert';
 import { NodejsBuiltinsResolver } from '@grafema/core';
 import { join } from 'path';

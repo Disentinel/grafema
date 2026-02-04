@@ -10,9 +10,12 @@
  * and uses those edges to resolve function calls to their definitions.
  */
 
-import { describe, it } from 'node:test';
+import { describe, it, after } from 'node:test';
 import assert from 'node:assert';
-import { createTestDatabase } from '../helpers/TestRFDB.js';
+import { createTestDatabase, cleanupAllTestDatabases } from '../helpers/TestRFDB.js';
+
+// Cleanup all test databases after all tests complete
+after(cleanupAllTestDatabases);
 import { FunctionCallResolver } from '@grafema/core';
 import { mkdirSync } from 'fs';
 import { join } from 'path';

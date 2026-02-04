@@ -9,7 +9,10 @@ import assert from 'node:assert';
 import { writeFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { createTestDatabase } from '../helpers/TestRFDB.js';
+import { createTestDatabase, cleanupAllTestDatabases } from '../helpers/TestRFDB.js';
+
+// Cleanup all test databases after all tests complete
+after(cleanupAllTestDatabases);
 import { createTestOrchestrator } from '../helpers/createTestOrchestrator.js';
 
 describe('CallResolverValidator', () => {

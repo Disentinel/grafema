@@ -631,6 +631,18 @@ export class RFDBClient extends EventEmitter implements IRFDBClient {
   }
 
   /**
+   * Unref the socket so it doesn't keep the process alive.
+   *
+   * Call this in test environments to allow process to exit
+   * even if connections remain open.
+   */
+  unref(): void {
+    if (this.socket) {
+      this.socket.unref();
+    }
+  }
+
+  /**
    * Close connection
    */
   async close(): Promise<void> {

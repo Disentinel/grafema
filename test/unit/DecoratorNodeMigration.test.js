@@ -25,7 +25,10 @@ import { writeFileSync, mkdirSync } from 'fs';
 import { tmpdir } from 'os';
 
 import { DecoratorNode, NodeFactory } from '@grafema/core';
-import { createTestDatabase } from '../helpers/TestRFDB.js';
+import { createTestDatabase, cleanupAllTestDatabases } from '../helpers/TestRFDB.js';
+
+// Cleanup all test databases after all tests complete
+after(cleanupAllTestDatabases);
 import { createTestOrchestrator } from '../helpers/createTestOrchestrator.js';
 
 let testCounter = 0;

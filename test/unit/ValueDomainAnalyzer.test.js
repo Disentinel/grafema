@@ -1,9 +1,12 @@
-import { describe, it } from 'node:test';
+import { describe, it, after } from 'node:test';
 import assert from 'node:assert';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { mkdirSync, writeFileSync } from 'fs';
-import { createTestDatabase } from '../helpers/TestRFDB.js';
+import { createTestDatabase, cleanupAllTestDatabases } from '../helpers/TestRFDB.js';
+
+// Cleanup all test databases after all tests complete
+after(cleanupAllTestDatabases);
 import { ValueDomainAnalyzer } from '@grafema/core';
 
 let testCounter = 0;

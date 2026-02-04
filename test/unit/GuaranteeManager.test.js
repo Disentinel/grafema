@@ -15,7 +15,10 @@ import assert from 'node:assert';
 import { join } from 'path';
 import { existsSync, unlinkSync, mkdirSync, writeFileSync } from 'fs';
 
-import { createTestDatabase } from '../helpers/TestRFDB.js';
+import { createTestDatabase, cleanupAllTestDatabases } from '../helpers/TestRFDB.js';
+
+// Cleanup all test databases after all tests complete
+after(cleanupAllTestDatabases);
 import { createTestOrchestrator } from '../helpers/createTestOrchestrator.js';
 import { GuaranteeManager } from '@grafema/core';
 

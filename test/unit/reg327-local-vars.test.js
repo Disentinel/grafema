@@ -1,7 +1,10 @@
 import { describe, it, after, beforeEach } from 'node:test';
 import assert from 'node:assert';
 
-import { createTestDatabase } from '../helpers/TestRFDB.js';
+import { createTestDatabase, cleanupAllTestDatabases } from '../helpers/TestRFDB.js';
+
+// Cleanup all test databases after all tests complete
+after(cleanupAllTestDatabases);
 import { setupSemanticTest } from '../helpers/setupSemanticTest.js';
 
 const TEST_LABEL = 'reg327-local-vars';

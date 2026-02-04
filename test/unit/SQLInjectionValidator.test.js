@@ -9,13 +9,16 @@
  * Эти тесты демонстрируют интеграцию ValueDomainAnalyzer с валидатором.
  */
 
-import { describe, it } from 'node:test';
+import { describe, it, after } from 'node:test';
 import assert from 'node:assert';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { mkdirSync, writeFileSync } from 'fs';
 
-import { createTestDatabase } from '../helpers/TestRFDB.js';
+import { createTestDatabase, cleanupAllTestDatabases } from '../helpers/TestRFDB.js';
+
+// Cleanup all test databases after all tests complete
+after(cleanupAllTestDatabases);
 import { createTestOrchestrator } from '../helpers/createTestOrchestrator.js';
 import { SQLInjectionValidator } from '@grafema/core';
 import { ValueDomainAnalyzer } from '@grafema/core';

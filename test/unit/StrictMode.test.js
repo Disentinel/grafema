@@ -19,7 +19,7 @@
  * These tests are written TDD-style - they will fail until implementation.
  */
 
-import { describe, it } from 'node:test';
+import { describe, it, after } from 'node:test';
 import assert from 'node:assert';
 import { StrictModeError } from '@grafema/core';
 import { MethodCallResolver } from '@grafema/core';

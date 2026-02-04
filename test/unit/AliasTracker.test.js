@@ -4,10 +4,13 @@
  * Tests for alias resolution: const m = obj.method; m() → resolves to obj.method
  */
 
-import { describe, it, beforeEach } from 'node:test';
+import { describe, it, beforeEach, after } from 'node:test';
 import assert from 'node:assert';
 import { AliasTracker } from '@grafema/core';
-import { createTestDatabase } from '../helpers/TestRFDB.js';
+import { createTestDatabase, cleanupAllTestDatabases } from '../helpers/TestRFDB.js';
+
+// Cleanup all test databases after all tests complete
+after(cleanupAllTestDatabases);
 
 describe('AliasTracker', () => {
   async function setupBackend() {

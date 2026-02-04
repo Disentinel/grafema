@@ -20,6 +20,59 @@ import { setTimeout as sleep } from 'node:timers/promises';
 let testCounter = 0;
 
 // ===========================================================================
+// Auto-cleanup Registry
+// ===========================================================================
+
+/** @type {Set<TestDatabase>} */
+const activeTestDatabases = new Set();
+
+// Forceful cleanup on process exit - destroy all sockets synchronously
+// This ensures the process can exit even if tests don't call cleanup()
+process.on('exit', () => {
+  // Force close all test database connections
+  for (const db of activeTestDatabases) {
+    try {
+      if (db.backend._client?.socket) {
+        db.backend._client.socket.destroy();
+      }
+    } catch {
+      // Ignore
+    }
+  }
+  activeTestDatabases.clear();
+
+  // Force close shared server connection
+  if (sharedServerInstance?.client?.socket) {
+    try {
+      sharedServerInstance.client.socket.destroy();
+    } catch {
+      // Ignore
+    }
+  }
+});
+
+// Also handle beforeExit for async cleanup when possible
+process.on('beforeExit', async () => {
+  if (activeTestDatabases.size > 0) {
+    const cleanupPromises = [];
+    for (const db of activeTestDatabases) {
+      cleanupPromises.push(db.cleanup().catch(() => {}));
+    }
+    await Promise.all(cleanupPromises);
+    activeTestDatabases.clear();
+  }
+
+  // Close shared server connection
+  if (sharedServerInstance?.client) {
+    try {
+      await sharedServerInstance.client.close();
+    } catch {
+      // Ignore
+    }
+  }
+});
+
+// ===========================================================================
 // Shared Test Server (Singleton)
 // ===========================================================================
 
@@ -67,9 +120,24 @@ async function _startSharedServer() {
   mkdirSync(dataDir, { recursive: true });
   mkdirSync(dirname(dbPath), { recursive: true });
 
-  // Remove stale socket
+  // Check if socket already exists - another test file might have started the server
   if (existsSync(socketPath)) {
-    rmSync(socketPath, { force: true });
+    try {
+      // Try to connect to existing server
+      const client = new RFDBClient(socketPath);
+      await client.connect();
+      await client.hello(2);
+
+      // Connection succeeded - reuse existing server
+      return {
+        client,
+        socketPath,
+        serverProcess: null, // We didn't start it
+      };
+    } catch {
+      // Connection failed - socket is stale, remove it
+      rmSync(socketPath, { force: true });
+    }
   }
 
   // Find server binary
@@ -160,10 +228,17 @@ export async function createTestDatabase() {
   await testClient.hello(2);
   await testClient.openDatabase(dbName);
 
+  // Keep socket ref'd during tests (removed unref to fix early exit)
+
   // Create backend wrapper
   const backend = new TestDatabaseBackend(testClient, dbName);
 
-  return new TestDatabase(backend, dbName, server);
+  const testDb = new TestDatabase(backend, dbName, server);
+
+  // Register for auto-cleanup
+  activeTestDatabases.add(testDb);
+
+  return testDb;
 }
 
 /**
@@ -186,6 +261,9 @@ class TestDatabase {
   async cleanup() {
     if (this._cleaned) return;
     this._cleaned = true;
+
+    // Remove from auto-cleanup registry
+    activeTestDatabases.delete(this);
 
     try {
       await this.backend.close();
@@ -392,6 +470,51 @@ class TestDatabaseBackend {
   // Alias for compatibility
   async cleanup() {
     await this.close();
+  }
+}
+
+// ===========================================================================
+// Cleanup Helpers
+// ===========================================================================
+
+/**
+ * Cleanup all active test databases and close shared server connection.
+ *
+ * Call this in your test file's `after()` hook:
+ *   import { after } from 'node:test';
+ *   import { cleanupAllTestDatabases } from '../helpers/TestRFDB.js';
+ *   after(cleanupAllTestDatabases);
+ */
+export async function cleanupAllTestDatabases() {
+  const cleanupPromises = [];
+  for (const db of activeTestDatabases) {
+    cleanupPromises.push(db.cleanup().catch(() => {}));
+  }
+  await Promise.all(cleanupPromises);
+  activeTestDatabases.clear();
+
+  // Close shared server connection and unref so process can exit
+  if (sharedServerInstance?.client) {
+    try {
+      // Unref to allow process exit, then close
+      sharedServerInstance.client.unref();
+      await sharedServerInstance.client.close();
+    } catch {
+      // Ignore cleanup errors
+    }
+    sharedServerInstance = null;
+  }
+
+  // Unref all remaining handles to allow process exit
+  // This handles any sockets that weren't properly cleaned up
+  for (const handle of process._getActiveHandles()) {
+    if (handle.unref && typeof handle.unref === 'function') {
+      try {
+        handle.unref();
+      } catch {
+        // Ignore unref errors
+      }
+    }
   }
 }
 

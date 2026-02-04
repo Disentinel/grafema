@@ -6,7 +6,10 @@ import { describe, it, after, beforeEach } from 'node:test';
 import assert from 'node:assert';
 import { join } from 'path';
 
-import { createTestDatabase } from '../helpers/TestRFDB.js';
+import { createTestDatabase, cleanupAllTestDatabases } from '../helpers/TestRFDB.js';
+
+// Cleanup all test databases after all tests complete
+after(cleanupAllTestDatabases);
 import { createTestOrchestrator } from '../helpers/createTestOrchestrator.js';
 
 const FIXTURE_PATH = join(process.cwd(), 'test/fixtures/computed-property');

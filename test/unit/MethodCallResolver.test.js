@@ -6,7 +6,10 @@
 
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert';
-import { createTestDatabase } from '../helpers/TestRFDB.js';
+import { createTestDatabase, cleanupAllTestDatabases } from '../helpers/TestRFDB.js';
+
+// Cleanup all test databases after all tests complete
+after(cleanupAllTestDatabases);
 import { MethodCallResolver } from '@grafema/core';
 import { writeFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
