@@ -13,26 +13,23 @@ import { describe, it, after, beforeEach } from 'node:test';
 import assert from 'node:assert';
 import { join } from 'path';
 
-import { createTestBackend } from '../helpers/TestRFDB.js';
+import { createTestDatabase } from '../helpers/TestRFDB.js';
 import { createTestOrchestrator } from '../helpers/createTestOrchestrator.js';
 
 const FIXTURE_PATH = join(process.cwd(), 'test/fixtures/passes-argument');
 
 describe('PASSES_ARGUMENT Edges', () => {
+  let db;
   let backend;
 
   beforeEach(async () => {
-    if (backend) {
-      await backend.cleanup();
-    }
-    backend = createTestBackend();
-    await backend.connect();
+    if (db) await db.cleanup();
+    db = await createTestDatabase();
+    backend = db.backend;
   });
 
   after(async () => {
-    if (backend) {
-      await backend.cleanup();
-    }
+    if (db) await db.cleanup();
   });
 
   describe('Basic argument passing', () => {

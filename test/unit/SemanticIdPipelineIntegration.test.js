@@ -19,7 +19,7 @@
 import { describe, it, after, beforeEach } from 'node:test';
 import assert from 'node:assert';
 
-import { createTestBackend } from '../helpers/TestRFDB.js';
+import { createTestDatabase } from '../helpers/TestRFDB.js';
 import { setupSemanticTest } from '../helpers/setupSemanticTest.js';
 
 const TEST_LABEL = 'pipeline';
@@ -52,20 +52,17 @@ function isSemanticIdFormat(id) {
 }
 
 describe('Semantic ID Pipeline Integration', () => {
+  let db;
   let backend;
 
   beforeEach(async () => {
-    if (backend) {
-      await backend.cleanup();
-    }
-    backend = createTestBackend();
-    await backend.connect();
+    if (db) await db.cleanup();
+    db = await createTestDatabase();
+    backend = db.backend;
   });
 
   after(async () => {
-    if (backend) {
-      await backend.cleanup();
-    }
+    if (db) await db.cleanup();
   });
 
   // ===========================================================================
@@ -652,9 +649,9 @@ console.log(result);
       const ids1 = codeNodes1.map(n => n.id).sort();
 
       // Clean up and re-analyze
-      await backend.cleanup();
-      backend = createTestBackend();
-      await backend.connect();
+      await db.cleanup();
+      db = await createTestDatabase();
+    backend = db.backend;
 
       await setupTest(backend, codeFiles);
       const nodes2 = await backend.getAllNodes();
@@ -685,11 +682,9 @@ function targetFunc() {
       const targetFuncId1 = nodes1.find(n => n.name === 'targetFunc' && n.type === 'FUNCTION')?.id;
       const targetCallId1 = nodes1.find(n => n.name === 'targetCall' && n.type === 'CALL')?.id;
 
-      await backend.cleanup();
-      backend = createTestBackend();
-      await backend.connect();
-
-      // Code with unrelated additions
+      await db.cleanup();
+      db = await createTestDatabase();
+    backend = db.backend;
       await setupTest(backend, {
         'index.js': `
 const unrelated1 = 'new';

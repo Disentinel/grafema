@@ -22,7 +22,7 @@ import { join } from 'path';
 import { writeFileSync, mkdirSync } from 'fs';
 import { tmpdir } from 'os';
 
-import { createTestBackend } from '../../../helpers/TestRFDB.js';
+import { createTestDatabase } from '../../../helpers/TestRFDB.js';
 import { createTestOrchestrator } from '../../../helpers/createTestOrchestrator.js';
 import { ExpressRouteAnalyzer } from '@grafema/core';
 import type { NodeRecord, EdgeRecord } from '@grafema/types';
@@ -94,15 +94,14 @@ describe('ExpressRouteAnalyzer HANDLED_BY Edge (REG-322)', () => {
 
   beforeEach(async () => {
     if (backend?.cleanup) {
-      await backend.cleanup();
+      await db.cleanup();
     }
     backend = createTestBackend() as ReturnType<typeof createTestBackend> & { cleanup?: () => Promise<void> };
-    await backend.connect();
   });
 
   after(async () => {
     if (backend?.cleanup) {
-      await backend.cleanup();
+      await db.cleanup();
     }
   });
 

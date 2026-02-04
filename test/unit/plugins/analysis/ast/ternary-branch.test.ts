@@ -24,7 +24,7 @@ import { join } from 'path';
 import { writeFileSync, mkdirSync } from 'fs';
 import { tmpdir } from 'os';
 
-import { createTestBackend } from '../../../../helpers/TestRFDB.js';
+import { createTestDatabase } from '../../../../helpers/TestRFDB.js';
 import { createTestOrchestrator } from '../../../../helpers/createTestOrchestrator.js';
 import type { NodeRecord } from '@grafema/types';
 
@@ -121,17 +121,12 @@ describe('Ternary Branch Nodes Analysis (REG-287)', () => {
   let backend: ReturnType<typeof createTestBackend> & { cleanup: () => Promise<void> };
 
   beforeEach(async () => {
-    if (backend) {
-      await backend.cleanup();
-    }
+    if (db) await db.cleanup();
     backend = createTestBackend() as ReturnType<typeof createTestBackend> & { cleanup: () => Promise<void> };
-    await backend.connect();
   });
 
   after(async () => {
-    if (backend) {
-      await backend.cleanup();
-    }
+    if (db) await db.cleanup();
   });
 
   // ===========================================================================

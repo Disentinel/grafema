@@ -12,7 +12,7 @@
 
 import { describe, it, after, beforeEach } from 'node:test';
 import assert from 'node:assert';
-import { createTestBackend } from '../helpers/TestRFDB.js';
+import { createTestDatabase } from '../helpers/TestRFDB.js';
 import { GuaranteeAPI, type GuaranteeGraphBackend } from '../../src/v2/api/GuaranteeAPI.js';
 import { GuaranteeNode } from '../../src/v2/core/nodes/GuaranteeNode.js';
 
@@ -21,18 +21,13 @@ describe('GuaranteeAPI', () => {
   let api: GuaranteeAPI;
 
   beforeEach(async () => {
-    if (backend) {
-      await backend.cleanup();
-    }
+    if (db) await db.cleanup();
     backend = createTestBackend() as ReturnType<typeof createTestBackend> & { cleanup: () => Promise<void> };
-    await backend.connect();
     api = new GuaranteeAPI(backend as unknown as GuaranteeGraphBackend);
   });
 
   after(async () => {
-    if (backend) {
-      await backend.cleanup();
-    }
+    if (db) await db.cleanup();
   });
 
   describe('createGuarantee()', () => {

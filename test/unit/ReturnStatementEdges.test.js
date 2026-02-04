@@ -27,10 +27,11 @@ import { join } from 'path';
 import { writeFileSync, mkdirSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 
-import { createTestBackend } from '../helpers/TestRFDB.js';
+import { createTestDatabase } from '../helpers/TestRFDB.js';
 import { createTestOrchestrator } from '../helpers/createTestOrchestrator.js';
 
 describe('RETURNS Edges (REG-263)', () => {
+  let db;
   let backend;
   let testDir;
   let testCounter = 0;
@@ -71,18 +72,14 @@ describe('RETURNS Edges (REG-263)', () => {
   }
 
   beforeEach(async () => {
-    if (backend) {
-      await backend.cleanup();
-    }
+    if (db) await db.cleanup();
     cleanupTestDir();
-    backend = createTestBackend();
-    await backend.connect();
+    db = await createTestDatabase();
+    backend = db.backend;
   });
 
   after(async () => {
-    if (backend) {
-      await backend.cleanup();
-    }
+    if (db) await db.cleanup();
     cleanupTestDir();
   });
 

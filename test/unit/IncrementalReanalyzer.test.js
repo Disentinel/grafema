@@ -17,7 +17,7 @@ import { writeFileSync, mkdirSync, rmSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 
-import { createTestBackend } from '../helpers/TestRFDB.js';
+import { createTestDatabase } from '../helpers/TestRFDB.js';
 import { createTestOrchestrator } from '../helpers/createTestOrchestrator.js';
 
 // These will be imported after implementation:
@@ -65,6 +65,7 @@ async function loadImplementation() {
 
 describe('IncrementalReanalyzer (REG-97)', () => {
   let implementationAvailable = false;
+  let db;
   let backend;
 
   before(async () => {
@@ -72,17 +73,13 @@ describe('IncrementalReanalyzer (REG-97)', () => {
   });
 
   beforeEach(async () => {
-    if (backend) {
-      await backend.cleanup();
-    }
-    backend = createTestBackend();
-    await backend.connect();
+    if (db) await db.cleanup();
+    db = await createTestDatabase();
+    backend = db.backend;
   });
 
   after(async () => {
-    if (backend) {
-      await backend.cleanup();
-    }
+    if (db) await db.cleanup();
   });
 
   describe('Single file modification', () => {

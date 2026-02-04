@@ -22,7 +22,7 @@ import { join } from 'path';
 import { writeFileSync, mkdirSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 
-import { createTestBackend } from '../helpers/TestRFDB.js';
+import { createTestDatabase } from '../helpers/TestRFDB.js';
 import { createTestOrchestrator } from '../helpers/createTestOrchestrator.js';
 
 let testCounter = 0;
@@ -77,20 +77,17 @@ function createForcedOrchestrator(backend) {
 }
 
 describe('Clear-and-Rebuild (REG-118)', () => {
+  let db;
   let backend;
 
   beforeEach(async () => {
-    if (backend) {
-      await backend.cleanup();
-    }
-    backend = createTestBackend();
-    await backend.connect();
+    if (db) await db.cleanup();
+    db = await createTestDatabase();
+    backend = db.backend;
   });
 
   after(async () => {
-    if (backend) {
-      await backend.cleanup();
-    }
+    if (db) await db.cleanup();
   });
 
   describe('Idempotency', () => {

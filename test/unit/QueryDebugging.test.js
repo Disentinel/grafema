@@ -11,27 +11,24 @@ import { describe, it, after, beforeEach } from 'node:test';
 import assert from 'node:assert';
 import { join } from 'path';
 
-import { createTestBackend } from '../helpers/TestRFDB.js';
+import { createTestDatabase } from '../helpers/TestRFDB.js';
 import { createTestOrchestrator } from '../helpers/createTestOrchestrator.js';
 import { levenshtein } from '@grafema/core';
 
 const FIXTURE_PATH = join(process.cwd(), 'test/fixtures/01-simple-script');
 
 describe('QueryDebugging', () => {
+  let db;
   let backend;
 
   beforeEach(async () => {
-    if (backend) {
-      await backend.cleanup();
-    }
-    backend = createTestBackend();
-    await backend.connect();
+    if (db) await db.cleanup();
+    db = await createTestDatabase();
+    backend = db.backend;
   });
 
   after(async () => {
-    if (backend) {
-      await backend.cleanup();
-    }
+    if (db) await db.cleanup();
   });
 
   describe('get_schema - Schema Introspection', () => {

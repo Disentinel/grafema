@@ -31,7 +31,7 @@ import { writeFileSync, mkdirSync } from 'fs';
 import { tmpdir } from 'os';
 
 import { InterfaceNode, NodeFactory } from '@grafema/core';
-import { createTestBackend } from '../helpers/TestRFDB.js';
+import { createTestDatabase } from '../helpers/TestRFDB.js';
 import { createTestOrchestrator } from '../helpers/createTestOrchestrator.js';
 
 let testCounter = 0;
@@ -196,20 +196,17 @@ describe('InterfaceNode Migration (REG-103)', () => {
   // ============================================================================
 
   describe('INTERFACE node analysis integration', () => {
+    let db;
     let backend;
 
     beforeEach(async () => {
-      if (backend) {
-        await backend.cleanup();
-      }
-      backend = createTestBackend();
-      await backend.connect();
+      if (db) await db.cleanup();
+      db = await createTestDatabase();
+    backend = db.backend;
     });
 
     after(async () => {
-      if (backend) {
-        await backend.cleanup();
-      }
+      if (db) await db.cleanup();
     });
 
     it('should analyze TypeScript interface and use colon ID format', async () => {
@@ -315,20 +312,17 @@ export { IFirst, ISecond, IThird };
   // ============================================================================
 
   describe('EXTENDS edge consistency', () => {
+    let db;
     let backend;
 
     beforeEach(async () => {
-      if (backend) {
-        await backend.cleanup();
-      }
-      backend = createTestBackend();
-      await backend.connect();
+      if (db) await db.cleanup();
+      db = await createTestDatabase();
+    backend = db.backend;
     });
 
     after(async () => {
-      if (backend) {
-        await backend.cleanup();
-      }
+      if (db) await db.cleanup();
     });
 
     it('should create EXTENDS edge between interfaces in same file', async () => {
@@ -456,20 +450,17 @@ export { ISerializable, ICloneable, IModel };
   // ============================================================================
 
   describe('External interface handling', () => {
+    let db;
     let backend;
 
     beforeEach(async () => {
-      if (backend) {
-        await backend.cleanup();
-      }
-      backend = createTestBackend();
-      await backend.connect();
+      if (db) await db.cleanup();
+      db = await createTestDatabase();
+    backend = db.backend;
     });
 
     after(async () => {
-      if (backend) {
-        await backend.cleanup();
-      }
+      if (db) await db.cleanup();
     });
 
     it('should create external interface node with isExternal flag', async () => {
@@ -655,20 +646,17 @@ export { ILocal, IMixed };
   // ============================================================================
 
   describe('No inline ID strings', () => {
+    let db;
     let backend;
 
     beforeEach(async () => {
-      if (backend) {
-        await backend.cleanup();
-      }
-      backend = createTestBackend();
-      await backend.connect();
+      if (db) await db.cleanup();
+      db = await createTestDatabase();
+    backend = db.backend;
     });
 
     after(async () => {
-      if (backend) {
-        await backend.cleanup();
-      }
+      if (db) await db.cleanup();
     });
 
     it('should NOT use INTERFACE# format in analyzed code', async () => {

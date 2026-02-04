@@ -31,7 +31,7 @@ import { writeFileSync, mkdirSync } from 'fs';
 import { tmpdir } from 'os';
 
 import { EnumNode, NodeFactory } from '@grafema/core';
-import { createTestBackend } from '../helpers/TestRFDB.js';
+import { createTestDatabase } from '../helpers/TestRFDB.js';
 import { createTestOrchestrator } from '../helpers/createTestOrchestrator.js';
 
 let testCounter = 0;
@@ -218,20 +218,17 @@ describe('EnumNode Migration (REG-105)', () => {
   // ============================================================================
 
   describe('ENUM node analysis integration', () => {
+    let db;
     let backend;
 
     beforeEach(async () => {
-      if (backend) {
-        await backend.cleanup();
-      }
-      backend = createTestBackend();
-      await backend.connect();
+      if (db) await db.cleanup();
+      db = await createTestDatabase();
+    backend = db.backend;
     });
 
     after(async () => {
-      if (backend) {
-        await backend.cleanup();
-      }
+      if (db) await db.cleanup();
     });
 
     it('should analyze TypeScript enum and use colon ID format', async () => {
@@ -415,20 +412,17 @@ export { Status, Priority, Color };
   // ============================================================================
 
   describe('No inline ID strings', () => {
+    let db;
     let backend;
 
     beforeEach(async () => {
-      if (backend) {
-        await backend.cleanup();
-      }
-      backend = createTestBackend();
-      await backend.connect();
+      if (db) await db.cleanup();
+      db = await createTestDatabase();
+    backend = db.backend;
     });
 
     after(async () => {
-      if (backend) {
-        await backend.cleanup();
-      }
+      if (db) await db.cleanup();
     });
 
     it('should NOT use ENUM# format in analyzed code', async () => {
