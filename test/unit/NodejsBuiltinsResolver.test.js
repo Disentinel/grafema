@@ -12,7 +12,7 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
-import { RFDBServerBackend, NodejsBuiltinsResolver } from '@grafema/core';
+import { NodejsBuiltinsResolver } from '@grafema/core';
 import { join } from 'path';
 import { tmpdir } from 'os';
 
@@ -22,8 +22,8 @@ describe('NodejsBuiltinsResolver', () => {
   async function setupBackend() {
     const testDir = join(tmpdir(), `navi-test-builtins-${Date.now()}-${testCounter++}`);
 
-    const backend = new RFDBServerBackend({ dbPath: join(testDir, 'test.db') });
-    await backend.connect();
+    const db = await createTestDatabase();
+    const backend = db.backend;
 
     return { backend, testDir };
   }

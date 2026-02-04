@@ -11,8 +11,8 @@ import assert from 'node:assert';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { mkdirSync, writeFileSync } from 'fs';
-import { RFDBServerBackend } from '@grafema/core';
-import { createTestOrchestrator, analyzeProject } from '../helpers/createTestOrchestrator.js';
+import { createTestDatabase } from '../helpers/TestRFDB.js';
+import { analyzeProject } from '../helpers/createTestOrchestrator.js';
 
 let testCounter = 0;
 
@@ -29,15 +29,15 @@ async function setupTest(files) {
     writeFileSync(join(testDir, name), content);
   }
 
-  const backend = new RFDBServerBackend({ dbPath: join(testDir, 'test.db') });
-  await backend.connect();
+  const db = await createTestDatabase();
+  const backend = db.backend;
   await analyzeProject(backend, testDir);
 
-  return { backend, testDir };
+  return { backend, db, testDir };
 }
 
-async function cleanup(backend, testDir) {
-  await backend.close();
+async function cleanup(db) {
+  await db.cleanup();
 }
 
 describe('Destructuring Data Flow', () => {
@@ -45,7 +45,7 @@ describe('Destructuring Data Flow', () => {
     it('should create ASSIGNED_FROM edge to EXPRESSION(config.method) for simple destructuring', async () => {
       // REG-201: const { method } = config should create:
       // method -> ASSIGNED_FROM -> EXPRESSION(config.method)
-      const { backend, testDir } = await setupTest({
+      const { backend, db, testDir } = await setupTest({
         'index.js': `
 const config = { method: 'save', timeout: 1000 };
 const { method } = config;
@@ -100,14 +100,14 @@ const { method } = config;
         assert.ok(sourceVar, 'Source variable should exist');
         assert.strictEqual(sourceVar.name, 'config', 'Should derive from config');
       } finally {
-        await cleanup(backend, testDir);
+        await cleanup(db);
       }
     });
 
     it('should create ASSIGNED_FROM edge to EXPRESSION(response.data.user.name) for nested destructuring', async () => {
       // REG-201: const { data: { user: { name } } } = response should create:
       // name -> ASSIGNED_FROM -> EXPRESSION(response.data.user.name)
-      const { backend, testDir } = await setupTest({
+      const { backend, db, testDir } = await setupTest({
         'index.js': `
 const response = { data: { user: { name: 'John' } } };
 const { data: { user: { name } } } = response;
@@ -158,7 +158,7 @@ const { data: { user: { name } } } = response;
         assert.ok(sourceVar, 'Source variable should exist');
         assert.strictEqual(sourceVar.name, 'response', 'Should derive from response');
       } finally {
-        await cleanup(backend, testDir);
+        await cleanup(db);
       }
     });
 
@@ -166,7 +166,7 @@ const { data: { user: { name } } } = response;
       // REG-201: const { oldName: newName } = obj should create:
       // newName -> ASSIGNED_FROM -> EXPRESSION(obj.oldName)
       // The variable name is 'newName' but it reads from obj.oldName
-      const { backend, testDir } = await setupTest({
+      const { backend, db, testDir } = await setupTest({
         'index.js': `
 const obj = { oldName: 'value' };
 const { oldName: newName } = obj;
@@ -216,7 +216,7 @@ const { oldName: newName } = obj;
         assert.ok(sourceVar, 'Source variable should exist');
         assert.strictEqual(sourceVar.name, 'obj', 'Should derive from obj');
       } finally {
-        await cleanup(backend, testDir);
+        await cleanup(db);
       }
     });
 
@@ -224,7 +224,7 @@ const { oldName: newName } = obj;
       // REG-201 Edge Case: const { x = 5 } = obj should still create:
       // x -> ASSIGNED_FROM -> EXPRESSION(obj.x)
       // Default value doesn't change the data flow source
-      const { backend, testDir } = await setupTest({
+      const { backend, db, testDir } = await setupTest({
         'index.js': `
 const obj = { y: 10 };
 const { x = 5 } = obj;
@@ -274,7 +274,7 @@ const { x = 5 } = obj;
         assert.ok(sourceVar, 'Source variable should exist');
         assert.strictEqual(sourceVar.name, 'obj', 'Should derive from obj');
       } finally {
-        await cleanup(backend, testDir);
+        await cleanup(db);
       }
     });
   });
@@ -284,7 +284,7 @@ const { x = 5 } = obj;
       // REG-201: const [a, b] = arr should create:
       // a -> ASSIGNED_FROM -> EXPRESSION(arr[0]) with computed=true
       // b -> ASSIGNED_FROM -> EXPRESSION(arr[1]) with computed=true
-      const { backend, testDir } = await setupTest({
+      const { backend, db, testDir } = await setupTest({
         'index.js': `
 const arr = ['first', 'second', 'third'];
 const [a, b] = arr;
@@ -374,7 +374,7 @@ const [a, b] = arr;
         assert.ok(bSourceVar, 'Source variable for b should exist');
         assert.strictEqual(bSourceVar.name, 'arr', 'Should derive from arr');
       } finally {
-        await cleanup(backend, testDir);
+        await cleanup(db);
       }
     });
 
@@ -382,7 +382,7 @@ const [a, b] = arr;
       // REG-201 Edge Case: const [first, ...rest] = arr
       // For rest elements, we create edge to the whole source (imprecise but not wrong)
       // rest -> ASSIGNED_FROM -> VARIABLE(arr) (not EXPRESSION)
-      const { backend, testDir } = await setupTest({
+      const { backend, db, testDir } = await setupTest({
         'index.js': `
 const arr = [1, 2, 3, 4, 5];
 const [first, ...rest] = arr;
@@ -424,14 +424,14 @@ const [first, ...rest] = arr;
         assert.strictEqual(target.name, 'arr',
           `Expected target to be 'arr', got ${target.name}`);
       } finally {
-        await cleanup(backend, testDir);
+        await cleanup(db);
       }
     });
 
     it('should create ASSIGNED_FROM edge to whole object for object rest element', async () => {
       // REG-201 Edge Case: const { x, ...rest } = obj
       // rest -> ASSIGNED_FROM -> VARIABLE(obj)
-      const { backend, testDir } = await setupTest({
+      const { backend, db, testDir } = await setupTest({
         'index.js': `
 const obj = { x: 1, y: 2, z: 3 };
 const { x, ...rest } = obj;
@@ -470,7 +470,7 @@ const { x, ...rest } = obj;
         assert.strictEqual(target.name, 'obj',
           `Expected target to be 'obj', got ${target.name}`);
       } finally {
-        await cleanup(backend, testDir);
+        await cleanup(db);
       }
     });
   });
@@ -479,7 +479,7 @@ const { x, ...rest } = obj;
     it('should create ASSIGNED_FROM edge for mixed object/array: const { items: [first] } = data', async () => {
       // REG-201: Mixed destructuring: const { items: [first] } = data
       // first -> ASSIGNED_FROM -> EXPRESSION representing data.items[0]
-      const { backend, testDir } = await setupTest({
+      const { backend, db, testDir } = await setupTest({
         'index.js': `
 const data = { items: ['apple', 'banana', 'cherry'] };
 const { items: [first] } = data;
@@ -533,7 +533,7 @@ const { items: [first] } = data;
         assert.ok(sourceVar, 'Source variable should exist');
         assert.strictEqual(sourceVar.name, 'data', 'Should derive from data');
       } finally {
-        await cleanup(backend, testDir);
+        await cleanup(db);
       }
     });
   });
@@ -541,7 +541,7 @@ const { items: [first] } = data;
   describe('Value Domain Analysis integration', () => {
     it('should trace value through object destructuring to literal', async () => {
       // Integration test: verify destructuring data flow enables value tracing
-      const { backend, testDir } = await setupTest({
+      const { backend, db, testDir } = await setupTest({
         'index.js': `
 const config = { method: 'save' };
 const { method } = config;
@@ -570,7 +570,7 @@ obj[method]();  // Should resolve to obj.save() if data flow is preserved
         // (requires both destructuring data flow AND ValueDomainAnalyzer)
         assert.ok(computedCall, 'Should find computed call obj[method]()');
       } finally {
-        await cleanup(backend, testDir);
+        await cleanup(db);
       }
     });
   });
@@ -596,7 +596,7 @@ describe('Complex Init Expressions (REG-223)', () => {
       // REG-223: const { apiKey } = getConfig() should create:
       // apiKey -> ASSIGNED_FROM -> EXPRESSION(getConfig().apiKey)
       // EXPRESSION -> DERIVES_FROM -> CALL_SITE(getConfig)
-      const { backend, testDir } = await setupTest({
+      const { backend, db, testDir } = await setupTest({
         'index.js': `
 function getConfig() {
   return { apiKey: 'secret', timeout: 1000 };
@@ -635,7 +635,7 @@ const { apiKey } = getConfig();
         assert.strictEqual(callSite.name, 'getConfig',
           `Expected name='getConfig', got ${callSite.name}`);
       } finally {
-        await cleanup(backend, testDir);
+        await cleanup(db);
       }
     });
   });
@@ -645,7 +645,7 @@ const { apiKey } = getConfig();
       // REG-223: const { name } = await fetchUser() should create:
       // name -> ASSIGNED_FROM -> EXPRESSION(fetchUser().name)
       // EXPRESSION -> DERIVES_FROM -> CALL_SITE(fetchUser) [NOT the await]
-      const { backend, testDir } = await setupTest({
+      const { backend, db, testDir } = await setupTest({
         'index.js': `
 async function fetchUser() {
   return { id: 1, name: 'Alice' };
@@ -680,7 +680,7 @@ async function main() {
         assert.strictEqual(callSite.name, 'fetchUser',
           `Expected name='fetchUser', got ${callSite.name}`);
       } finally {
-        await cleanup(backend, testDir);
+        await cleanup(db);
       }
     });
   });
@@ -690,7 +690,7 @@ async function main() {
       // REG-223: const [first] = arr.filter(x => x > 0) should create:
       // first -> ASSIGNED_FROM -> EXPRESSION(arr.filter()[0])
       // EXPRESSION -> DERIVES_FROM -> CALL(arr.filter)
-      const { backend, testDir } = await setupTest({
+      const { backend, db, testDir } = await setupTest({
         'index.js': `
 const arr = [1, 2, 3];
 const [first] = arr.filter(x => x > 0);
@@ -724,13 +724,13 @@ const [first] = arr.filter(x => x > 0);
         assert.ok(methodCall.name.includes('filter'),
           `Expected name to include 'filter', got ${methodCall.name}`);
       } finally {
-        await cleanup(backend, testDir);
+        await cleanup(db);
       }
     });
 
     it('should handle object method call: const { x } = obj.getConfig()', async () => {
       // REG-223: MemberExpression callee
-      const { backend, testDir } = await setupTest({
+      const { backend, db, testDir } = await setupTest({
         'index.js': `
 const obj = {
   getConfig() {
@@ -763,7 +763,7 @@ const { x } = obj.getConfig();
         assert.strictEqual(methodCall.type, 'CALL',
           `Expected CALL node, got ${methodCall.type}`);
       } finally {
-        await cleanup(backend, testDir);
+        await cleanup(db);
       }
     });
   });
@@ -772,7 +772,7 @@ const { x } = obj.getConfig();
     it('should handle nested destructuring from call', async () => {
       // REG-223: const { user: { name } } = fetchData() should create:
       // name -> ASSIGNED_FROM -> EXPRESSION(fetchData().user.name)
-      const { backend, testDir } = await setupTest({
+      const { backend, db, testDir } = await setupTest({
         'index.js': `
 function fetchData() {
   return { user: { id: 1, name: 'Bob' }, timestamp: 123 };
@@ -805,12 +805,12 @@ const { user: { name } } = fetchData();
         assert.strictEqual(callSite.name, 'fetchData',
           `Expected name='fetchData', got ${callSite.name}`);
       } finally {
-        await cleanup(backend, testDir);
+        await cleanup(db);
       }
     });
 
     it('should handle nested await destructuring: const { user: { name } } = await fetchProfile()', async () => {
-      const { backend, testDir } = await setupTest({
+      const { backend, db, testDir } = await setupTest({
         'index.js': `
 async function fetchProfile() {
   return { user: { name: 'Alice', email: 'a@b.com' } };
@@ -841,7 +841,7 @@ async function main() {
         assert.strictEqual(callSite.name, 'fetchProfile',
           `Expected name='fetchProfile', got ${callSite.name}`);
       } finally {
-        await cleanup(backend, testDir);
+        await cleanup(db);
       }
     });
   });
@@ -850,7 +850,7 @@ async function main() {
     it('should handle mixed object and array destructuring from call', async () => {
       // REG-223: const { items: [first] } = getResponse() should create:
       // first -> ASSIGNED_FROM -> EXPRESSION(getResponse().items[0])
-      const { backend, testDir } = await setupTest({
+      const { backend, db, testDir } = await setupTest({
         'index.js': `
 function getResponse() {
   return { items: [{ id: 1 }, { id: 2 }], status: 'ok' };
@@ -885,7 +885,7 @@ const { items: [first] } = getResponse();
         assert.strictEqual(callSite.name, 'getResponse',
           `Expected name='getResponse', got ${callSite.name}`);
       } finally {
-        await cleanup(backend, testDir);
+        await cleanup(db);
       }
     });
   });
@@ -894,7 +894,7 @@ const { items: [first] } = getResponse();
     it('should create direct CALL_SITE assignment for rest element', async () => {
       // REG-223: const { a, ...rest } = getConfig() should create:
       // rest -> ASSIGNED_FROM -> CALL(getConfig) directly (not EXPRESSION)
-      const { backend, testDir } = await setupTest({
+      const { backend, db, testDir } = await setupTest({
         'index.js': `
 function getConfig() {
   return { a: 1, b: 2, c: 3 };
@@ -917,7 +917,7 @@ const { a, ...rest } = getConfig();
         assert.strictEqual(target.name, 'getConfig',
           `Expected name='getConfig', got ${target.name}`);
       } finally {
-        await cleanup(backend, testDir);
+        await cleanup(db);
       }
     });
   });
@@ -925,7 +925,7 @@ const { a, ...rest } = getConfig();
   describe('REG-201 Regression Test', () => {
     it('should NOT break existing simple destructuring (REG-201)', async () => {
       // REG-223 must NOT break REG-201 functionality
-      const { backend, testDir } = await setupTest({
+      const { backend, db, testDir } = await setupTest({
         'index.js': `
 const config = { apiKey: 'secret' };
 const { apiKey } = config;
@@ -957,7 +957,7 @@ const { apiKey } = config;
         assert.strictEqual(source.name, 'config',
           `Expected name='config', got ${source.name}`);
       } finally {
-        await cleanup(backend, testDir);
+        await cleanup(db);
       }
     });
   });
@@ -965,7 +965,7 @@ const { apiKey } = config;
   describe('Coordinate Validation (REVISION 2)', () => {
     it('should handle await with correct coordinate lookup', async () => {
       // Test coordinate mapping: await on different line than call
-      const { backend, testDir } = await setupTest({
+      const { backend, db, testDir } = await setupTest({
         'index.js': `
 async function fetchUser() {
   return { id: 1, name: 'Alice' };
@@ -1003,13 +1003,13 @@ async function main() {
         assert.strictEqual(callSite.name, 'fetchUser',
           `Expected name='fetchUser', got ${callSite.name}`);
       } finally {
-        await cleanup(backend, testDir);
+        await cleanup(db);
       }
     });
 
     it('should handle multiple calls on same line with correct disambiguation', async () => {
       // Test function name disambiguation when multiple calls on same line
-      const { backend, testDir } = await setupTest({
+      const { backend, db, testDir } = await setupTest({
         'index.js': `
 function f1() { return { x: 1 }; }
 function f2() { return { y: 2 }; }
@@ -1047,7 +1047,7 @@ const { x } = f1(), { y } = f2();
         assert.strictEqual(yCall.name, 'f2',
           `y should derive from f2, not f1. Got ${yCall.name}`);
       } finally {
-        await cleanup(backend, testDir);
+        await cleanup(db);
       }
     });
   });

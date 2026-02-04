@@ -20,7 +20,7 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
-import { RFDBServerBackend } from '@grafema/core';
+import { createTestDatabase } from '../helpers/TestRFDB.js';
 import { mkdirSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -42,8 +42,8 @@ describe('ExternalCallResolver', () => {
     const testDir = join(tmpdir(), `grafema-test-extres-${Date.now()}-${testCounter++}`);
     mkdirSync(testDir, { recursive: true });
 
-    const backend = new RFDBServerBackend({ dbPath: join(testDir, 'test.db') });
-    await backend.connect();
+    const db = await createTestDatabase();
+    const backend = db.backend;
 
     return { backend, testDir };
   }

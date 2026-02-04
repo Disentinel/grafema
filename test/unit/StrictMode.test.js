@@ -21,7 +21,7 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
-import { RFDBServerBackend, StrictModeError } from '@grafema/core';
+import { StrictModeError } from '@grafema/core';
 import { MethodCallResolver } from '@grafema/core';
 import { FunctionCallResolver } from '@grafema/core';
 import { ArgumentParameterLinker } from '@grafema/core';
@@ -37,8 +37,8 @@ describe('Strict Mode', () => {
     const testDir = join(tmpdir(), `grafema-test-strict-${Date.now()}-${testCounter++}`);
     mkdirSync(testDir, { recursive: true });
 
-    const backend = new RFDBServerBackend({ dbPath: join(testDir, 'test.db') });
-    await backend.connect();
+    const db = await createTestDatabase();
+    const backend = db.backend;
 
     return { backend, testDir };
   }

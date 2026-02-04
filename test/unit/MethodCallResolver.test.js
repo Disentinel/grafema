@@ -6,7 +6,7 @@
 
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert';
-import { RFDBServerBackend } from '@grafema/core';
+import { createTestDatabase } from '../helpers/TestRFDB.js';
 import { MethodCallResolver } from '@grafema/core';
 import { writeFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
@@ -19,8 +19,8 @@ describe('MethodCallResolver', () => {
     const testDir = join(tmpdir(), `navi-test-methodresolver-${Date.now()}-${testCounter++}`);
     mkdirSync(testDir, { recursive: true });
 
-    const backend = new RFDBServerBackend({ dbPath: join(testDir, 'test.db') });
-    await backend.connect();
+    const db = await createTestDatabase();
+    const backend = db.backend;
 
     return { backend, testDir };
   }

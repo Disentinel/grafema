@@ -6,10 +6,11 @@
 
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert';
-import { RFDBServerBackend } from '@grafema/core';
 import { writeFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
+import { createTestDatabase } from '../helpers/TestRFDB.js';
+import { createTestOrchestrator } from '../helpers/createTestOrchestrator.js';
 
 describe('CallResolverValidator', () => {
   let testCounter = 0;
@@ -30,15 +31,13 @@ describe('CallResolverValidator', () => {
       writeFileSync(join(testDir, filename), content);
     }
 
-    const backend = new RFDBServerBackend({ dbPath: join(testDir, 'test.db') });
-    await backend.connect();
+    const db = await createTestDatabase();
+    const backend = db.backend;
 
-    const { createTestOrchestrator } = await import('../helpers/createTestOrchestrator.js');
     const orchestrator = createTestOrchestrator(backend);
-
     await orchestrator.run(testDir);
 
-    return { backend, testDir };
+    return { backend, db, testDir };
   }
 
   describe('Datalog attr predicate', () => {
