@@ -45,6 +45,7 @@ const KNOWN_EDGE_TYPES = new Set<string>([
   'INTERACTS_WITH', 'CALLS_API', 'LISTENS_TO', 'JOINS_ROOM', 'EMITS_EVENT',
   'RETURNS', 'RECEIVES_ARGUMENT', 'READS_FROM', 'THROWS', 'REGISTERS_VIEW',
   'GOVERNS', 'VIOLATES', 'HAS_PARAMETER', 'DERIVES_FROM',
+  'RESOLVES_TO',  // Promise resolve() data flow
 ]);
 
 // Store initial edge types for reset

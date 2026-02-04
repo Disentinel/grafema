@@ -26,6 +26,7 @@ import type {
   TraceValuesGraphBackend,
   ValueSetResult,
   NondeterministicPattern,
+  UnknownReason,
 } from './types.js';
 
 // =============================================================================
@@ -239,6 +240,55 @@ async function traceRecursive(
       value: node.value,
       source,
       isUnknown: false,
+    });
+    return;
+  }
+
+  // REG-334: Special case - CONSTRUCTOR_CALL for Promise
+  // Follow RESOLVES_TO edges to find actual data sources from resolve() calls
+  if (nodeType === 'CONSTRUCTOR_CALL') {
+    const className = (node as { className?: string }).className;
+
+    if (className === 'Promise') {
+      // Look for incoming RESOLVES_TO edges (resolve/reject calls)
+      const resolveEdges = await backend.getIncomingEdges(nodeId, ['RESOLVES_TO']);
+
+      if (resolveEdges.length > 0) {
+        // Follow resolve/reject calls to their arguments
+        for (const edge of resolveEdges) {
+          // edge.src is the resolve(value) CALL node
+          // We need to find what value was passed to resolve()
+          // The CALL node should have PASSES_ARGUMENT edge to the value
+          const argEdges = await backend.getOutgoingEdges(edge.src, ['PASSES_ARGUMENT']);
+
+          for (const argEdge of argEdges) {
+            // Check if this is the first argument (argIndex 0)
+            const argIndex = (argEdge.metadata as { argIndex?: number } | undefined)?.argIndex;
+            if (argIndex === 0) {
+              // Recursively trace the argument value
+              await traceRecursive(
+                backend,
+                argEdge.dst,
+                visited,
+                depth + 1,
+                maxDepth,
+                followDerivesFrom,
+                detectNondeterministic,
+                results
+              );
+            }
+          }
+        }
+        return; // Traced through resolve, don't mark as unknown
+      }
+    }
+
+    // Non-Promise constructor or no resolve edges - mark as unknown
+    results.push({
+      value: undefined,
+      source,
+      isUnknown: true,
+      reason: 'constructor_call',
     });
     return;
   }

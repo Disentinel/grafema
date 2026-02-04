@@ -87,6 +87,7 @@ export interface ValueSource {
 export type UnknownReason =
   | 'parameter'           // Function parameter (runtime input)
   | 'call_result'         // Return value from function call
+  | 'constructor_call'    // Constructor call without traceable data (REG-334)
   | 'nondeterministic'    // process.env, req.body, etc.
   | 'max_depth'           // Hit depth limit during traversal
   | 'no_sources';         // No ASSIGNED_FROM/DERIVES_FROM edges found
@@ -131,25 +132,49 @@ export interface ValueSetResult {
 }
 
 /**
+ * Edge record for traceValues
+ */
+export interface TraceValuesEdge {
+  src: string;
+  dst: string;
+  type: string;
+  metadata?: { argIndex?: number; isReject?: boolean };
+}
+
+/**
+ * Node record for traceValues
+ */
+export interface TraceValuesNode {
+  id: string;
+  type?: string;
+  nodeType?: string;
+  value?: unknown;
+  file?: string;
+  line?: number;
+  expressionType?: string;
+  object?: string;
+  property?: string;
+  className?: string;
+}
+
+/**
  * Minimal graph backend interface for traceValues().
  * Works with both RFDBServerBackend and internal Graph interface.
  */
 export interface TraceValuesGraphBackend {
-  getNode(id: string): Promise<{
-    id: string;
-    type?: string;
-    nodeType?: string;
-    value?: unknown;
-    file?: string;
-    line?: number;
-    expressionType?: string;
-    object?: string;
-    property?: string;
-  } | null>;
+  getNode(id: string): Promise<TraceValuesNode | null>;
   getOutgoingEdges(
     nodeId: string,
     edgeTypes: string[] | null
-  ): Promise<Array<{ src: string; dst: string; type: string }>>;
+  ): Promise<TraceValuesEdge[]>;
+  /**
+   * Get incoming edges to a node (REG-334: needed for RESOLVES_TO)
+   * Required for Promise tracing - must be implemented by all backends
+   */
+  getIncomingEdges(
+    nodeId: string,
+    edgeTypes: string[] | null
+  ): Promise<TraceValuesEdge[]>;
 }
 
 /**
