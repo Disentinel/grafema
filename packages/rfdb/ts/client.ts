@@ -133,9 +133,19 @@ export class RFDBClient extends EventEmitter implements IRFDBClient {
   }
 
   /**
-   * Send a request and wait for response
+   * Default timeout for operations (60 seconds)
+   * Flush/compact may take time for large graphs, but should not hang indefinitely
    */
-  private async _send(cmd: RFDBCommand, payload: Record<string, unknown> = {}): Promise<RFDBResponse> {
+  private static readonly DEFAULT_TIMEOUT_MS = 60_000;
+
+  /**
+   * Send a request and wait for response with timeout
+   */
+  private async _send(
+    cmd: RFDBCommand,
+    payload: Record<string, unknown> = {},
+    timeoutMs: number = RFDBClient.DEFAULT_TIMEOUT_MS
+  ): Promise<RFDBResponse> {
     if (!this.connected || !this.socket) {
       throw new Error('Not connected to RFDB server');
     }
@@ -145,7 +155,23 @@ export class RFDBClient extends EventEmitter implements IRFDBClient {
 
     return new Promise((resolve, reject) => {
       const id = this.reqId++;
-      this.pending.set(id, { resolve, reject });
+
+      // Setup timeout
+      const timer = setTimeout(() => {
+        this.pending.delete(id);
+        reject(new Error(`RFDB ${cmd} timed out after ${timeoutMs}ms. Server may be unresponsive or dbPath may be invalid.`));
+      }, timeoutMs);
+
+      this.pending.set(id, {
+        resolve: (value) => {
+          clearTimeout(timer);
+          resolve(value);
+        },
+        reject: (error) => {
+          clearTimeout(timer);
+          reject(error);
+        }
+      });
 
       // Write length prefix + message
       const header = Buffer.alloc(4);
