@@ -890,6 +890,12 @@ impl GraphStore for GraphEngine {
             return Ok(());
         }
 
+        // Ephemeral databases don't write to disk - just clear the log
+        if self.is_ephemeral() {
+            self.delta_log.clear();
+            return Ok(());
+        }
+
         eprintln!("[RUST FLUSH] Flushing {} operations to disk", self.delta_log.len());
         eprintln!("[RUST FLUSH] Delta has {} nodes before flush", self.delta_nodes.len());
 

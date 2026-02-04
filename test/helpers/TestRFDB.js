@@ -213,8 +213,16 @@ class TestDatabaseBackend {
   }
 
   // === Write Operations ===
+  async addNode(node) {
+    return this._client.addNodes([node]);
+  }
+
   async addNodes(nodes) {
     return this._client.addNodes(nodes);
+  }
+
+  async addEdge(edge) {
+    return this._client.addEdges([edge]);
   }
 
   async addEdges(edges, skipValidation = false) {
@@ -344,6 +352,22 @@ class TestDatabaseBackend {
 
   async checkGuarantee(ruleSource) {
     return this._client.checkGuarantee(ruleSource);
+  }
+
+  // === Additional methods for compatibility with RFDBServerBackend ===
+  async findNodes(predicate) {
+    const allNodes = await this.getAllNodes();
+    return allNodes.filter(predicate);
+  }
+
+  async getAllEdgesAsync() {
+    return this.getAllEdges();
+  }
+
+  async getStats() {
+    const nodeCount = await this.nodeCount();
+    const edgeCount = await this.edgeCount();
+    return { nodeCount, edgeCount };
   }
 
   // === Connection ===
