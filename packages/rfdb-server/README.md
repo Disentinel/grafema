@@ -29,11 +29,14 @@ cargo build --release
 ### As a CLI
 
 ```bash
-# Start the server
-npx rfdb-server --socket /tmp/rfdb.sock --data-dir ./my-graph
+# Start the server (db-path is required, socket is optional)
+npx rfdb-server ./my-graph.rfdb --socket /tmp/rfdb.sock
 
 # Or if installed globally
-rfdb-server --socket /tmp/rfdb.sock --data-dir ./my-graph
+rfdb-server ./my-graph.rfdb --socket /tmp/rfdb.sock
+
+# Using default socket path (/tmp/rfdb.sock)
+rfdb-server ./my-graph.rfdb
 ```
 
 ### Programmatic usage
