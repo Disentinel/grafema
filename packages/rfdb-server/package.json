@@ -1,6 +1,6 @@
 {
   "name": "@grafema/rfdb",
-  "version": "0.1.1-alpha",
+  "version": "0.2.0-beta",
   "description": "High-performance disk-backed graph database server for Grafema",
   "main": "index.js",
   "types": "index.d.ts",
