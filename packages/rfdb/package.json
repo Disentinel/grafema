@@ -1,6 +1,6 @@
 {
   "name": "@grafema/rfdb-client",
-  "version": "0.2.0-beta",
+  "version": "0.2.1-beta",
   "description": "TypeScript client for RFDB graph database",
   "type": "module",
   "main": "./dist/index.js",
