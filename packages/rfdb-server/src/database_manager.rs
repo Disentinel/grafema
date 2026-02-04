@@ -126,13 +126,25 @@ impl Database {
     }
 
     /// Get node count (for stats)
+    ///
+    /// Uses `unwrap_or_else` to handle poisoned locks gracefully.
+    /// If a writer thread panicked, we still want to report stats.
     pub fn node_count(&self) -> usize {
-        self.engine.read().unwrap().node_count()
+        self.engine
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .node_count()
     }
 
     /// Get edge count (for stats)
+    ///
+    /// Uses `unwrap_or_else` to handle poisoned locks gracefully.
+    /// If a writer thread panicked, we still want to report stats.
     pub fn edge_count(&self) -> usize {
-        self.engine.read().unwrap().edge_count()
+        self.engine
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .edge_count()
     }
 }
 
