@@ -36,11 +36,11 @@ This creates a `.grafema/` directory with the code graph.
 # Find all API endpoints
 grafema query "http:handler"
 
-# Find where a function is called
-grafema query "calls myFunction"
+# Find where a function is called from
+grafema query "function myFunction"
 
-# Natural language queries work too
-grafema query "functions that handle user authentication"
+# Search in specific scope
+grafema query "variable token in authenticate"
 ```
 
 ### 3. Use with Claude Code (MCP Integration)
@@ -77,15 +77,13 @@ Now Claude can query your codebase graph directly instead of reading files.
 
 Interactive graph navigation for visual exploration.
 
-**Installation:**
-1. Download the latest `.vsix` from the releases page
-2. In VS Code: `Cmd+Shift+P` > "Extensions: Install from VSIX..."
-3. Select the downloaded file
-
-Or build from source:
+**Installation (build from source):**
 ```bash
 cd packages/vscode
-./scripts/install-local.sh
+pnpm install
+pnpm build
+# Then in VS Code: Cmd+Shift+P > "Extensions: Install from VSIX..."
+# Select packages/vscode/grafema-explore-*.vsix
 ```
 
 **Usage:**
