@@ -217,6 +217,33 @@ export class ExpressRouteAnalyzer extends Plugin {
                   // Последний handler - это route handler
                   const mainHandler = handlers[handlers.length - 1];
 
+                  // Unwrap wrapper functions (asyncHandler, catchAsync, etc.)
+                  // Pattern: wrapper(async (req, res) => {...}) -> extract inner function
+                  // Also handles nested wrappers: outer(inner(handler))
+                  let actualHandler = mainHandler as Node;
+                  while (actualHandler.type === 'CallExpression') {
+                    const callExpr = actualHandler as CallExpression;
+                    const firstArg = callExpr.arguments[0] as Node | undefined;
+                    if (!firstArg) {
+                      // No arguments - not a wrapper pattern
+                      break;
+                    }
+                    if (
+                      firstArg.type === 'ArrowFunctionExpression' ||
+                      firstArg.type === 'FunctionExpression'
+                    ) {
+                      // Found the actual handler function
+                      actualHandler = firstArg;
+                      break;
+                    } else if (firstArg.type === 'CallExpression') {
+                      // Nested wrapper: outer(inner(...)) - continue unwrapping
+                      actualHandler = firstArg;
+                    } else {
+                      // First arg is not a function or CallExpression - not a wrapper pattern
+                      break;
+                    }
+                  }
+
                   // Все предыдущие - middleware
                   const middlewareHandlers = handlers.slice(0, -1);
 
@@ -231,11 +258,11 @@ export class ExpressRouteAnalyzer extends Plugin {
                     file: module.file!,
                     line: getLine(node),
                     routerName: objectName,
-                    handlerLine: (mainHandler as Node).loc
-                      ? getLine(mainHandler as Node)
+                    handlerLine: actualHandler.loc
+                      ? getLine(actualHandler)
                       : getLine(node),
-                    handlerColumn: (mainHandler as Node).loc
-                      ? getColumn(mainHandler as Node)
+                    handlerColumn: actualHandler.loc
+                      ? getColumn(actualHandler)
                       : getColumn(node)
                   });
 
