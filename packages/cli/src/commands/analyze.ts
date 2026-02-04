@@ -154,7 +154,7 @@ function createPlugins(
       if (factory) {
         plugins.push(factory());
       } else {
-        console.warn(`Unknown plugin: ${name}`);
+        console.warn(`Plugin not found: ${name} (skipping). Check .grafema/config.yaml or add to .grafema/plugins/`);
       }
     }
   }

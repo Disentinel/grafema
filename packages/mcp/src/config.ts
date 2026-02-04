@@ -197,7 +197,7 @@ export function createPlugins(
       plugins.push(factory());
       log(`[Grafema MCP] Enabled plugin: ${name}`);
     } else {
-      log(`[Grafema MCP] Warning: Unknown plugin ${name}`);
+      log(`[Grafema MCP] Plugin not found: ${name} (skipping)`);
     }
   }
 

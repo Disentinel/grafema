@@ -159,8 +159,8 @@ export async function checkConfigValidity(
       return {
         name: 'config',
         status: 'warn',
-        message: `Unknown plugin(s): ${unknownPlugins.join(', ')}`,
-        recommendation: 'Check plugin names for typos. Run: grafema doctor --verbose for available plugins',
+        message: `Plugin(s) not found: ${unknownPlugins.join(', ')} (will be skipped during analysis)`,
+        recommendation: 'Check plugin names for typos or add custom plugins to .grafema/plugins/. Run: grafema doctor --verbose for available plugins',
         details: { unknownPlugins },
       };
     }
