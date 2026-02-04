@@ -44,8 +44,8 @@ interface MethodContextOptions {
 export class MethodNode {
   static readonly TYPE = 'METHOD' as const;
 
-  static readonly REQUIRED = ['name', 'file', 'line', 'className'] as const;
-  static readonly OPTIONAL = ['column', 'async', 'generator', 'static', 'kind'] as const;
+  static readonly REQUIRED = ['name', 'file', 'line', 'column', 'className'] as const;
+  static readonly OPTIONAL = ['async', 'generator', 'static', 'kind'] as const;
 
   static create(
     name: string,
@@ -58,6 +58,7 @@ export class MethodNode {
     if (!name) throw new Error('MethodNode.create: name is required');
     if (!file) throw new Error('MethodNode.create: file is required');
     if (!line) throw new Error('MethodNode.create: line is required');
+    if (column === undefined) throw new Error('MethodNode.create: column is required');
     if (!className) throw new Error('MethodNode.create: className is required');
 
     return {
@@ -66,7 +67,7 @@ export class MethodNode {
       name,
       file,
       line,
-      column: column || 0,
+      column,
       className,
       async: options.async || false,
       generator: options.generator || false,
@@ -101,6 +102,7 @@ export class MethodNode {
     if (!className) throw new Error('MethodNode.createWithContext: className is required');
     if (!context.file) throw new Error('MethodNode.createWithContext: file is required');
     if (location.line === undefined) throw new Error('MethodNode.createWithContext: line is required');
+    if (location.column === undefined) throw new Error('MethodNode.createWithContext: column is required');
 
     // Compute semantic ID
     const id = computeSemanticId(this.TYPE, name, context);
@@ -111,7 +113,7 @@ export class MethodNode {
       name,
       file: context.file,
       line: location.line,
-      column: location.column ?? 0,
+      column: location.column,
       className,
       async: options.async || false,
       generator: options.generator || false,

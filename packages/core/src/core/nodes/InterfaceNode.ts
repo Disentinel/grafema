@@ -33,8 +33,8 @@ interface InterfaceNodeOptions {
 export class InterfaceNode {
   static readonly TYPE = 'INTERFACE' as const;
 
-  static readonly REQUIRED = ['name', 'file', 'line'] as const;
-  static readonly OPTIONAL = ['column', 'extends', 'properties', 'isExternal'] as const;
+  static readonly REQUIRED = ['name', 'file', 'line', 'column'] as const;
+  static readonly OPTIONAL = ['extends', 'properties', 'isExternal'] as const;
 
   /**
    * Create INTERFACE node
@@ -56,6 +56,7 @@ export class InterfaceNode {
     if (!name) throw new Error('InterfaceNode.create: name is required');
     if (!file) throw new Error('InterfaceNode.create: file is required');
     if (!line) throw new Error('InterfaceNode.create: line is required');
+    if (column === undefined) throw new Error('InterfaceNode.create: column is required');
 
     return {
       id: `${file}:INTERFACE:${name}:${line}`,
@@ -63,7 +64,7 @@ export class InterfaceNode {
       name,
       file,
       line,
-      column: column || 0,
+      column,
       extends: options.extends || [],
       properties: options.properties || [],
       ...(options.isExternal !== undefined && { isExternal: options.isExternal })

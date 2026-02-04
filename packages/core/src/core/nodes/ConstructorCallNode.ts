@@ -126,8 +126,8 @@ const BUILTIN_CONSTRUCTORS = new Set([
 export class ConstructorCallNode {
   static readonly TYPE = 'CONSTRUCTOR_CALL' as const;
 
-  static readonly REQUIRED = ['name', 'file', 'line', 'className', 'isBuiltin'] as const;
-  static readonly OPTIONAL = ['column'] as const;
+  static readonly REQUIRED = ['name', 'file', 'line', 'column', 'className', 'isBuiltin'] as const;
+  static readonly OPTIONAL = [] as const;
 
   /**
    * Check if a class name is a built-in JavaScript constructor
@@ -153,7 +153,7 @@ export class ConstructorCallNode {
     options: ConstructorCallNodeOptions = {}
   ): string {
     const counter = options.counter !== undefined ? `:${options.counter}` : '';
-    return `${file}:CONSTRUCTOR_CALL:${className}:${line}:${column || 0}${counter}`;
+    return `${file}:CONSTRUCTOR_CALL:${className}:${line}:${column}${counter}`;
   }
 
   /**
@@ -175,6 +175,7 @@ export class ConstructorCallNode {
     if (!className) throw new Error('ConstructorCallNode.create: className is required');
     if (!file) throw new Error('ConstructorCallNode.create: file is required');
     if (line === undefined) throw new Error('ConstructorCallNode.create: line is required');
+    if (column === undefined) throw new Error('ConstructorCallNode.create: column is required');
 
     const id = this.generateId(className, file, line, column, options);
     const isBuiltin = this.isBuiltinConstructor(className);
@@ -187,7 +188,7 @@ export class ConstructorCallNode {
       isBuiltin,
       file,
       line,
-      column: column || 0
+      column
     };
   }
 

@@ -6,6 +6,7 @@ import type { BaseNodeRecord } from '@grafema/types';
 
 interface DatabaseQueryNodeRecord extends BaseNodeRecord {
   type: 'DATABASE_QUERY';
+  column: number;
   query?: string;
   operation: string;
   parentScopeId?: string;
@@ -18,7 +19,7 @@ interface DatabaseQueryNodeOptions {
 export class DatabaseQueryNode {
   static readonly TYPE = 'DATABASE_QUERY' as const;
 
-  static readonly REQUIRED = ['name', 'file', 'line'] as const;
+  static readonly REQUIRED = ['name', 'file', 'line', 'column'] as const;
   static readonly OPTIONAL = ['query', 'operation', 'parentScopeId'] as const;
 
   static create(
@@ -26,10 +27,12 @@ export class DatabaseQueryNode {
     operation: string | undefined,
     file: string,
     line: number,
+    column: number,
     options: DatabaseQueryNodeOptions = {}
   ): DatabaseQueryNodeRecord {
     if (!file) throw new Error('DatabaseQueryNode.create: file is required');
     if (line === undefined) throw new Error('DatabaseQueryNode.create: line is required');
+    if (column === undefined) throw new Error('DatabaseQueryNode.create: column is required');
 
     const name = query || `${operation || 'QUERY'}`;
     const id = `${file}:DATABASE_QUERY:${name}:${line}`;
@@ -42,6 +45,7 @@ export class DatabaseQueryNode {
       operation: operation || 'UNKNOWN',
       file,
       line,
+      column,
       parentScopeId: options.parentScopeId
     };
   }

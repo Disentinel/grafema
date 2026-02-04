@@ -22,8 +22,8 @@ interface LiteralNodeOptions {
 export class LiteralNode {
   static readonly TYPE = 'LITERAL' as const;
 
-  static readonly REQUIRED = ['file', 'line'] as const;
-  static readonly OPTIONAL = ['value', 'valueType', 'column', 'parentCallId', 'argIndex'] as const;
+  static readonly REQUIRED = ['file', 'line', 'column'] as const;
+  static readonly OPTIONAL = ['value', 'valueType', 'parentCallId', 'argIndex'] as const;
 
   static create(
     value: unknown,
@@ -34,10 +34,11 @@ export class LiteralNode {
   ): LiteralNodeRecord {
     if (!file) throw new Error('LiteralNode.create: file is required');
     if (line === undefined) throw new Error('LiteralNode.create: line is required');
+    if (column === undefined) throw new Error('LiteralNode.create: column is required');
 
     const counter = options.counter !== undefined ? `:${options.counter}` : '';
     const argIndex = options.argIndex !== undefined ? `arg${options.argIndex}` : 'value';
-    const id = `${file}:LITERAL:${argIndex}:${line}:${column || 0}${counter}`;
+    const id = `${file}:LITERAL:${argIndex}:${line}:${column}${counter}`;
 
     return {
       id,
@@ -47,7 +48,7 @@ export class LiteralNode {
       valueType: typeof value,
       file,
       line,
-      column: column || 0,
+      column,
       parentCallId: options.parentCallId,
       argIndex: options.argIndex
     };

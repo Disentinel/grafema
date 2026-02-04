@@ -48,8 +48,8 @@ interface ExportContextOptions {
 export class ExportNode {
   static readonly TYPE = 'EXPORT' as const;
 
-  static readonly REQUIRED = ['name', 'file', 'line'] as const;
-  static readonly OPTIONAL = ['column', 'exportKind', 'local', 'default', 'source', 'exportType'] as const;
+  static readonly REQUIRED = ['name', 'file', 'line', 'column'] as const;
+  static readonly OPTIONAL = ['exportKind', 'local', 'default', 'source', 'exportType'] as const;
 
   static create(
     name: string,
@@ -61,6 +61,7 @@ export class ExportNode {
     if (!name) throw new Error('ExportNode.create: name is required');
     if (!file) throw new Error('ExportNode.create: file is required');
     if (!line) throw new Error('ExportNode.create: line is required');
+    if (column === undefined) throw new Error('ExportNode.create: column is required');
 
     return {
       id: `${file}:EXPORT:${name}:${line}`,
@@ -68,7 +69,7 @@ export class ExportNode {
       name,
       file,
       line,
-      column: column || 0,
+      column,
       exportKind: options.exportKind || 'value',
       local: options.local || name,
       default: options.default || false,
@@ -99,6 +100,7 @@ export class ExportNode {
     if (!name) throw new Error('ExportNode.createWithContext: name is required');
     if (!context.file) throw new Error('ExportNode.createWithContext: file is required');
     if (location.line === undefined) throw new Error('ExportNode.createWithContext: line is required');
+    if (location.column === undefined) throw new Error('ExportNode.createWithContext: column is required');
 
     // Compute semantic ID
     const id = computeSemanticId(this.TYPE, name, context);
@@ -109,7 +111,7 @@ export class ExportNode {
       name,
       file: context.file,
       line: location.line,
-      column: location.column ?? 0,
+      column: location.column,
       exportKind: options.exportKind || 'value',
       local: options.local || name,
       default: options.default || false,

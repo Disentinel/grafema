@@ -34,10 +34,11 @@ export class ObjectLiteralNode {
   ): ObjectLiteralNodeRecord {
     if (!file) throw new Error('ObjectLiteralNode.create: file is required');
     if (line === undefined) throw new Error('ObjectLiteralNode.create: line is required');
+    if (column === undefined) throw new Error('ObjectLiteralNode.create: column is required');
 
     const counter = options.counter !== undefined ? `:${options.counter}` : '';
     const argSuffix = options.argIndex !== undefined ? `arg${options.argIndex}` : 'obj';
-    const id = `OBJECT_LITERAL#${argSuffix}#${file}#${line}:${column || 0}${counter}`;
+    const id = `OBJECT_LITERAL#${argSuffix}#${file}#${line}:${column}${counter}`;
 
     return {
       id,
@@ -45,7 +46,7 @@ export class ObjectLiteralNode {
       name: `<object>`,
       file,
       line,
-      column: column || 0,
+      column,
       parentCallId: options.parentCallId,
       argIndex: options.argIndex
     };

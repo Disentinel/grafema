@@ -154,14 +154,12 @@ interface ArrayLiteralOptions {
 }
 
 interface EventListenerOptions {
-  column?: number;
   parentScopeId?: string;
   callbackArg?: string;
   counter?: number;
 }
 
 interface HttpRequestOptions {
-  column?: number;
   parentScopeId?: string;
   counter?: number;
 }
@@ -295,8 +293,8 @@ export class NodeFactory {
   /**
    * Create BRANCH node
    */
-  static createBranch(branchType: 'switch' | 'if' | 'ternary', file: string, line: number, options: { parentScopeId?: string; counter?: number } = {}) {
-    return brandNode(BranchNode.create(branchType, file, line, options));
+  static createBranch(branchType: 'switch' | 'if' | 'ternary', file: string, line: number, column: number, options: { parentScopeId?: string; counter?: number } = {}) {
+    return brandNode(BranchNode.create(branchType, file, line, column, options));
   }
 
   /**
@@ -309,9 +307,10 @@ export class NodeFactory {
     isEmpty: boolean,
     file: string,
     line: number,
+    column: number,
     options: { parentBranchId?: string; counter?: number } = {}
   ) {
-    return brandNode(CaseNode.create(value, isDefault, fallsThrough, isEmpty, file, line, options));
+    return brandNode(CaseNode.create(value, isDefault, fallsThrough, isEmpty, file, line, column, options));
   }
 
   /**
@@ -420,22 +419,22 @@ export class NodeFactory {
   /**
    * Create EVENT_LISTENER node
    */
-  static createEventListener(eventName: string, objectName: string | undefined, file: string, line: number, options: EventListenerOptions = {}) {
-    return brandNode(EventListenerNode.create(eventName, objectName, file, line, options));
+  static createEventListener(eventName: string, objectName: string | undefined, file: string, line: number, column: number, options: EventListenerOptions = {}) {
+    return brandNode(EventListenerNode.create(eventName, objectName, file, line, column, options));
   }
 
   /**
    * Create HTTP_REQUEST node
    */
-  static createHttpRequest(url: string | undefined, method: string | undefined, file: string, line: number, options: HttpRequestOptions = {}) {
-    return brandNode(HttpRequestNode.create(url, method, file, line, options));
+  static createHttpRequest(url: string | undefined, method: string | undefined, file: string, line: number, column: number, options: HttpRequestOptions = {}) {
+    return brandNode(HttpRequestNode.create(url, method, file, line, column, options));
   }
 
   /**
    * Create DATABASE_QUERY node
    */
-  static createDatabaseQuery(query: string | undefined, operation: string | undefined, file: string, line: number, options: DatabaseQueryOptions = {}) {
-    return brandNode(DatabaseQueryNode.create(query, operation, file, line, options));
+  static createDatabaseQuery(query: string | undefined, operation: string | undefined, file: string, line: number, column: number, options: DatabaseQueryOptions = {}) {
+    return brandNode(DatabaseQueryNode.create(query, operation, file, line, column, options));
   }
 
   /**
