@@ -686,7 +686,20 @@ fn main() {
         std::process::exit(1);
     }
 
-    let db_path = PathBuf::from(&args[1]);
+    let db_path_str = &args[1];
+
+    // Validate db-path doesn't look like a flag
+    if db_path_str.starts_with("--") {
+        eprintln!("Error: db-path '{}' looks like a flag, not a path.", db_path_str);
+        eprintln!("");
+        eprintln!("Correct usage:");
+        eprintln!("  rfdb-server ./my-graph.rfdb --socket /tmp/rfdb.sock");
+        eprintln!("");
+        eprintln!("The first argument must be the database path, not a flag.");
+        std::process::exit(1);
+    }
+
+    let db_path = PathBuf::from(db_path_str);
     let socket_path = args.iter()
         .position(|a| a == "--socket")
         .and_then(|i| args.get(i + 1))
