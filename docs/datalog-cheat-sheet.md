@@ -186,6 +186,6 @@ grafema node "CALL:src/utils.js:42:eval"
 
 ## See Also
 
-- [Datalog Reference](datalog-reference.md) — Full language specification
+- [Guarantee Workflow](guarantee-workflow.md) — Using guarantees
 - [Configuration](configuration.md) — Plugin configuration
 - [Project Onboarding](project-onboarding.md) — Getting started guide

@@ -175,7 +175,7 @@ npx rfdb-server --socket /tmp/rfdb.sock --data-dir ./rfdb-data
 ## Documentation
 
 - [Configuration Guide](./docs/configuration.md)
-- [Datalog Query Reference](./docs/datalog-reference.md)
+- [Datalog Cheat Sheet](./docs/datalog-cheat-sheet.md)
 - [Project Onboarding](./docs/project-onboarding.md)
 
 ## License

@@ -335,6 +335,6 @@ git commit -m "Add HTTP error handling guarantee"
 
 ## См. также
 
-- [Datalog Query Reference](./datalog-reference.md)
+- [Datalog Cheat Sheet](./datalog-cheat-sheet.md)
 - [Plugin Development Guide](./plugin-development.md)
 - [Graph Schema](./graph-schema.md)
