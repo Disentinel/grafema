@@ -3582,15 +3582,22 @@ export class JSASTAnalyzer extends Plugin {
       // Handle return statements for RETURNS edges
       ReturnStatement: (returnPath: NodePath<t.ReturnStatement>) => {
         // Skip if we couldn't determine the function ID
-        if (!currentFunctionId) return;
+        if (!currentFunctionId) {
+          return;
+        }
 
         // Skip if this return is inside a nested function (not the function we're analyzing)
-        // Check if there's a function ancestor between us and funcPath.node
+        // Check if there's a function ancestor BETWEEN us and funcNode
+        // Stop checking once we reach funcNode - parents above funcNode are outside scope
         let parent: NodePath | null = returnPath.parentPath;
         let isInsideConditional = false;
         while (parent) {
-          if (t.isFunction(parent.node) && parent.node !== funcNode) {
-            // This return is inside a nested function - skip it
+          // If we've reached funcNode, we're done checking - this return belongs to funcNode
+          if (parent.node === funcNode) {
+            break;
+          }
+          if (t.isFunction(parent.node)) {
+            // Found a function between returnPath and funcNode - this return is inside a nested function
             return;
           }
           // Track if return is inside a conditional block (if/else, switch case, loop, try/catch)

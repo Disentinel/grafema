@@ -333,6 +333,11 @@ export class FunctionVisitor extends ASTVisitor {
 
         // Exit function scope
         scopeTracker.exitScope();
+
+        // Stop traversal - analyzeFunctionBody already processed contents
+        // Without this, babel traverse continues into arrow body and finds
+        // nested arrow functions, causing duplicate FUNCTION nodes
+        path.skip();
       }
     };
   }
