@@ -504,6 +504,20 @@ export class ValueDomainAnalyzer extends Plugin {
           type: e.type,
         }));
       },
+      // REG-334: getIncomingEdges required for Promise tracing
+      getIncomingEdges: async (nodeId: string, edgeTypes: string[] | null) => {
+        const edges = await graph.getIncomingEdges(nodeId);
+        const filtered = edgeTypes === null
+          ? edges
+          : edges.filter(e => edgeTypes.includes(e.type));
+        return filtered.map(e => ({
+          src: (e as { src?: string; source_id?: string }).src ||
+               (e as { source_id?: string }).source_id || '',
+          dst: (e as { dst?: string; target_id?: string }).dst ||
+               (e as { target_id?: string }).target_id || '',
+          type: e.type,
+        }));
+      },
     };
 
     // Use shared utility

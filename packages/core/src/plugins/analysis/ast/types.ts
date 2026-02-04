@@ -376,6 +376,11 @@ export interface CallArgumentInfo {
   targetId?: string;
   targetName?: string;
   file?: string;
+  // REG-334: Additional fields for resolve/reject argument tracking
+  line?: number;
+  column?: number;
+  literalValue?: unknown;
+  expressionType?: string;
   isSpread?: boolean;
   functionLine?: number;
   functionColumn?: number;
@@ -795,6 +800,50 @@ export interface UpdateExpressionInfo {
   computedPropertyVar?: string;   // Variable name for computed access: obj[i]++ -> "i"
 }
 
+// === PROMISE EXECUTOR CONTEXT ===
+/**
+ * Tracks Promise executor context during analysis.
+ * Used to detect when resolve/reject calls should create RESOLVES_TO edges.
+ *
+ * Stored in collections.promiseExecutorContexts Map, keyed by executor function's start:end position.
+ */
+export interface PromiseExecutorContext {
+  /** ID of the CONSTRUCTOR_CALL node for `new Promise()` */
+  constructorCallId: string;
+  /** Name of the first parameter (typically 'resolve') */
+  resolveName: string;
+  /** Name of the second parameter (typically 'reject'), if any */
+  rejectName?: string;
+  /** File path for edge creation */
+  file: string;
+  /** Line of the Promise constructor for debugging */
+  line: number;
+}
+
+// === PROMISE RESOLUTION INFO ===
+/**
+ * Info for Promise resolution RESOLVES_TO edges.
+ * Created when resolve(value) or reject(error) is called inside Promise executor.
+ *
+ * Graph structure:
+ * CALL[resolve(42)] --RESOLVES_TO--> CONSTRUCTOR_CALL[new Promise]
+ *
+ * Edge direction: resolve CALL -> Promise CONSTRUCTOR_CALL
+ * This allows traceValues to follow RESOLVES_TO from Promise to find data sources.
+ */
+export interface PromiseResolutionInfo {
+  /** ID of the resolve/reject CALL node */
+  callId: string;
+  /** ID of the Promise CONSTRUCTOR_CALL node */
+  constructorCallId: string;
+  /** True if this is reject(), false for resolve() */
+  isReject: boolean;
+  /** File path */
+  file: string;
+  /** Line number of resolve/reject call */
+  line: number;
+}
+
 // === COUNTER REF ===
 export interface CounterRef {
   value: number;
@@ -856,6 +905,10 @@ export interface ASTCollections {
   returnStatements?: ReturnStatementInfo[];
   // Update expression tracking (i++, obj.prop++, arr[i]++) for MODIFIES edges (REG-288, REG-312)
   updateExpressions?: UpdateExpressionInfo[];
+  // Promise resolution tracking for RESOLVES_TO edges (REG-334)
+  promiseResolutions?: PromiseResolutionInfo[];
+  // Promise executor contexts (REG-334) - keyed by executor function's start:end position
+  promiseExecutorContexts?: Map<string, PromiseExecutorContext>;
   // TypeScript-specific collections
   interfaces?: InterfaceDeclarationInfo[];
   typeAliases?: TypeAliasInfo[];

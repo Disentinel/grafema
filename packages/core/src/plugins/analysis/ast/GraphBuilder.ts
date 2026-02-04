@@ -49,6 +49,7 @@ import type {
   CatchBlockInfo,
   FinallyBlockInfo,
   UpdateExpressionInfo,
+  PromiseResolutionInfo,
   ASTCollections,
   GraphNode,
   GraphEdge,
@@ -151,6 +152,8 @@ export class GraphBuilder {
       returnStatements = [],
       // Update expression tracking for MODIFIES edges (REG-288, REG-312)
       updateExpressions = [],
+      // Promise resolution tracking for RESOLVES_TO edges (REG-334)
+      promiseResolutions = [],
       // Object/Array literal tracking
       objectLiterals = [],
       objectProperties = [],
@@ -365,6 +368,9 @@ export class GraphBuilder {
 
     // 30. Buffer UPDATE_EXPRESSION nodes and MODIFIES edges (REG-288, REG-312)
     this.bufferUpdateExpressionEdges(updateExpressions, variableDeclarations, parameters, classDeclarations);
+
+    // 31. Buffer RESOLVES_TO edges for Promise data flow (REG-334)
+    this.bufferPromiseResolutionEdges(promiseResolutions);
 
     // FLUSH: Write all nodes first, then edges in single batch calls
     const nodesCreated = await this._flushNodes(graph);
@@ -2826,6 +2832,35 @@ export class GraphBuilder {
         type: 'CONTAINS',
         src: parentScopeId,
         dst: updateId
+      });
+    }
+  }
+
+  /**
+   * Buffer RESOLVES_TO edges for Promise resolution data flow (REG-334).
+   *
+   * Links resolve/reject CALL nodes to their parent Promise CONSTRUCTOR_CALL.
+   * This enables traceValues to follow Promise data flow:
+   *
+   * Example:
+   * ```
+   * const result = new Promise((resolve) => {
+   *   resolve(42);  // CALL[resolve] --RESOLVES_TO--> CONSTRUCTOR_CALL[Promise]
+   * });
+   * ```
+   *
+   * The edge direction (CALL -> CONSTRUCTOR_CALL) matches data flow semantics:
+   * data flows FROM resolve(value) TO the Promise result.
+   */
+  private bufferPromiseResolutionEdges(promiseResolutions: PromiseResolutionInfo[]): void {
+    for (const resolution of promiseResolutions) {
+      this._bufferEdge({
+        type: 'RESOLVES_TO',
+        src: resolution.callId,
+        dst: resolution.constructorCallId,
+        metadata: {
+          isReject: resolution.isReject
+        }
       });
     }
   }

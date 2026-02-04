@@ -98,6 +98,8 @@ import type {
   VariableReassignmentInfo,
   ReturnStatementInfo,
   UpdateExpressionInfo,
+  PromiseResolutionInfo,
+  PromiseExecutorContext,
   CounterRef,
   ProcessedNodes,
   ASTCollections,
@@ -159,6 +161,10 @@ interface Collections {
   returnStatements: ReturnStatementInfo[];
   // Update expression tracking for MODIFIES edges (REG-288, REG-312)
   updateExpressions: UpdateExpressionInfo[];
+  // Promise resolution tracking for RESOLVES_TO edges (REG-334)
+  promiseResolutions: PromiseResolutionInfo[];
+  // Promise executor contexts (REG-334) - keyed by executor function's start:end position
+  promiseExecutorContexts: Map<string, PromiseExecutorContext>;
   objectLiteralCounterRef: CounterRef;
   arrayLiteralCounterRef: CounterRef;
   ifScopeCounterRef: CounterRef;
@@ -258,7 +264,9 @@ export class JSASTAnalyzer extends Plugin {
           'WRITES_TO', 'IMPORTS', 'INSTANCE_OF', 'HANDLED_BY', 'HAS_CALLBACK',
           'PASSES_ARGUMENT', 'MAKES_REQUEST', 'IMPORTS_FROM', 'EXPORTS_TO', 'ASSIGNED_FROM',
           // TypeScript-specific edges
-          'IMPLEMENTS', 'EXTENDS', 'DECORATED_BY'
+          'IMPLEMENTS', 'EXTENDS', 'DECORATED_BY',
+          // Promise data flow
+          'RESOLVES_TO'
         ]
       },
       dependencies: ['JSModuleIndexer']
@@ -1446,6 +1454,10 @@ export class JSASTAnalyzer extends Plugin {
       const returnStatements: ReturnStatementInfo[] = [];
       // Update expression tracking for MODIFIES edges (REG-288, REG-312)
       const updateExpressions: UpdateExpressionInfo[] = [];
+      // Promise resolution tracking for RESOLVES_TO edges (REG-334)
+      const promiseResolutions: PromiseResolutionInfo[] = [];
+      // Promise executor contexts (REG-334) - keyed by executor function's start:end position
+      const promiseExecutorContexts = new Map<string, PromiseExecutorContext>();
 
       const ifScopeCounterRef: CounterRef = { value: 0 };
       const scopeCounterRef: CounterRef = { value: 0 };
@@ -1518,6 +1530,9 @@ export class JSASTAnalyzer extends Plugin {
         returnStatements,
         // Update expression tracking (REG-288, REG-312)
         updateExpressions,
+        // Promise resolution tracking (REG-334)
+        promiseResolutions,
+        promiseExecutorContexts,
         objectLiteralCounterRef, arrayLiteralCounterRef,
         ifScopeCounterRef, scopeCounterRef, varDeclCounterRef,
         callSiteCounterRef, functionCounterRef, httpRequestCounterRef,
@@ -1749,6 +1764,38 @@ export class JSASTAnalyzer extends Plugin {
               line,
               column
             });
+
+            // REG-334: If this is Promise constructor with executor callback,
+            // register the context for resolve/reject detection
+            if (className === 'Promise' && newNode.arguments.length > 0) {
+              const executorArg = newNode.arguments[0];
+
+              // Only handle inline function expressions (not variable references)
+              if (t.isArrowFunctionExpression(executorArg) || t.isFunctionExpression(executorArg)) {
+                // Extract resolve/reject parameter names
+                let resolveName: string | undefined;
+                let rejectName: string | undefined;
+
+                if (executorArg.params.length > 0 && t.isIdentifier(executorArg.params[0])) {
+                  resolveName = executorArg.params[0].name;
+                }
+                if (executorArg.params.length > 1 && t.isIdentifier(executorArg.params[1])) {
+                  rejectName = executorArg.params[1].name;
+                }
+
+                if (resolveName) {
+                  // Key by function node position to allow nested Promise detection
+                  const funcKey = `${executorArg.start}:${executorArg.end}`;
+                  promiseExecutorContexts.set(funcKey, {
+                    constructorCallId,
+                    resolveName,
+                    rejectName,
+                    file: module.file,
+                    line
+                  });
+                }
+              }
+            }
           }
         }
       });
@@ -1829,7 +1876,8 @@ export class JSASTAnalyzer extends Plugin {
         constructorCalls,
         classDeclarations,
         methodCallbacks,
-        callArguments,
+        // REG-334: Use allCollections.callArguments to include function-level resolve/reject arguments
+        callArguments: allCollections.callArguments || callArguments,
         imports,
         exports,
         httpRequests,
@@ -1851,6 +1899,8 @@ export class JSASTAnalyzer extends Plugin {
         returnStatements,
         // Update expression tracking (REG-288, REG-312)
         updateExpressions,
+        // Promise resolution tracking (REG-334)
+        promiseResolutions: allCollections.promiseResolutions || promiseResolutions,
         // Object/Array literal tracking - use allCollections refs as visitors may have created new arrays
         objectLiterals: allCollections.objectLiterals || objectLiterals,
         objectProperties: allCollections.objectProperties || objectProperties,
@@ -3348,6 +3398,19 @@ export class JSASTAnalyzer extends Plugin {
     // Track try/catch/finally scope transitions
     const tryScopeMap = new Map<t.TryStatement, TryScopeInfo>();
 
+    // REG-334: Use shared Promise executor contexts from collections.
+    // These are populated by module-level NewExpression handler and function-level NewExpression handler.
+    if (!collections.promiseExecutorContexts) {
+      collections.promiseExecutorContexts = new Map<string, PromiseExecutorContext>();
+    }
+    const promiseExecutorContexts = collections.promiseExecutorContexts as Map<string, PromiseExecutorContext>;
+
+    // Initialize promiseResolutions array if not exists
+    if (!collections.promiseResolutions) {
+      collections.promiseResolutions = [];
+    }
+    const promiseResolutions = collections.promiseResolutions as PromiseResolutionInfo[];
+
     // Dynamic scope ID stack for CONTAINS edges
     // Starts with the function body scope, gets updated as we enter/exit conditional scopes
     const scopeIdStack: string[] = [parentScopeId];
@@ -4224,6 +4287,110 @@ export class JSASTAnalyzer extends Plugin {
           getCurrentScopeId(),
           collections
         );
+
+        // REG-334: Check for resolve/reject calls inside Promise executors
+        const callNode = callPath.node;
+        if (t.isIdentifier(callNode.callee)) {
+          const calleeName = callNode.callee.name;
+
+          // Walk up function parents to find Promise executor context
+          // This handles nested callbacks like: new Promise((resolve) => { db.query((err, data) => { resolve(data); }); });
+          let funcParent = callPath.getFunctionParent();
+          while (funcParent) {
+            const funcNode = funcParent.node;
+            const funcKey = `${funcNode.start}:${funcNode.end}`;
+            const context = promiseExecutorContexts.get(funcKey);
+
+            if (context) {
+              const isResolve = calleeName === context.resolveName;
+              const isReject = calleeName === context.rejectName;
+
+              if (isResolve || isReject) {
+                // Find the CALL node ID for this resolve/reject call
+                // It was just added by handleCallExpression
+                const callLine = getLine(callNode);
+                const callColumn = getColumn(callNode);
+
+                // Find matching call site that was just added
+                const resolveCall = callSites.find(cs =>
+                  cs.name === calleeName &&
+                  cs.file === module.file &&
+                  cs.line === callLine &&
+                  cs.column === callColumn
+                );
+
+                if (resolveCall) {
+                  promiseResolutions.push({
+                    callId: resolveCall.id,
+                    constructorCallId: context.constructorCallId,
+                    isReject,
+                    file: module.file,
+                    line: callLine
+                  });
+
+                  // REG-334: Collect arguments for resolve/reject calls
+                  // This enables traceValues to follow PASSES_ARGUMENT edges
+                  if (!collections.callArguments) {
+                    collections.callArguments = [];
+                  }
+                  const callArgumentsArr = collections.callArguments as CallArgumentInfo[];
+
+                  // Process arguments (typically just one: resolve(value))
+                  callNode.arguments.forEach((arg, argIndex) => {
+                    const argInfo: CallArgumentInfo = {
+                      callId: resolveCall.id,
+                      argIndex,
+                      file: module.file,
+                      line: getLine(arg),
+                      column: getColumn(arg)
+                    };
+
+                    // Handle different argument types
+                    if (t.isIdentifier(arg)) {
+                      argInfo.targetType = 'VARIABLE';
+                      argInfo.targetName = arg.name;
+                    } else if (t.isLiteral(arg) && !t.isTemplateLiteral(arg)) {
+                      // Create LITERAL node for the argument value
+                      const literalValue = ExpressionEvaluator.extractLiteralValue(arg as t.Literal);
+                      if (literalValue !== null) {
+                        const argLine = getLine(arg);
+                        const argColumn = getColumn(arg);
+                        const literalId = `LITERAL#arg${argIndex}#${module.file}#${argLine}:${argColumn}:${literalCounterRef.value++}`;
+                        literals.push({
+                          id: literalId,
+                          type: 'LITERAL',
+                          value: literalValue,
+                          valueType: typeof literalValue,
+                          file: module.file,
+                          line: argLine,
+                          column: argColumn,
+                          parentCallId: resolveCall.id,
+                          argIndex
+                        });
+                        argInfo.targetType = 'LITERAL';
+                        argInfo.targetId = literalId;
+                        argInfo.literalValue = literalValue;
+                      }
+                    } else if (t.isCallExpression(arg)) {
+                      argInfo.targetType = 'CALL';
+                      argInfo.nestedCallLine = getLine(arg);
+                      argInfo.nestedCallColumn = getColumn(arg);
+                    } else {
+                      argInfo.targetType = 'EXPRESSION';
+                      argInfo.expressionType = arg.type;
+                    }
+
+                    callArgumentsArr.push(argInfo);
+                  });
+                }
+
+                break; // Found context, stop searching
+              }
+            }
+
+            funcParent = funcParent.getFunctionParent();
+          }
+        }
       },
 
       // NewExpression (constructor calls)
@@ -4259,6 +4426,38 @@ export class JSASTAnalyzer extends Plugin {
               line,
               column
             });
+
+            // REG-334: If this is Promise constructor with executor callback,
+            // register the context for resolve/reject detection
+            if (className === 'Promise' && newNode.arguments.length > 0) {
+              const executorArg = newNode.arguments[0];
+
+              // Only handle inline function expressions (not variable references)
+              if (t.isArrowFunctionExpression(executorArg) || t.isFunctionExpression(executorArg)) {
+                // Extract resolve/reject parameter names
+                let resolveName: string | undefined;
+                let rejectName: string | undefined;
+
+                if (executorArg.params.length > 0 && t.isIdentifier(executorArg.params[0])) {
+                  resolveName = executorArg.params[0].name;
+                }
+                if (executorArg.params.length > 1 && t.isIdentifier(executorArg.params[1])) {
+                  rejectName = executorArg.params[1].name;
+                }
+
+                if (resolveName) {
+                  // Key by function node position to allow nested Promise detection
+                  const funcKey = `${executorArg.start}:${executorArg.end}`;
+                  promiseExecutorContexts.set(funcKey, {
+                    constructorCallId,
+                    resolveName,
+                    rejectName,
+                    file: module.file,
+                    line
+                  });
+                }
+              }
+            }
           }
         }
 

@@ -11,11 +11,13 @@ import type {
   Function,
   FunctionDeclaration,
   ArrowFunctionExpression,
+  FunctionExpression,
   Identifier,
   AssignmentPattern,
   RestElement,
   VariableDeclarator,
-  Comment
+  Comment,
+  NewExpression
 } from '@babel/types';
 import type { NodePath } from '@babel/traverse';
 import { ASTVisitor, type VisitorModule, type VisitorCollections, type VisitorHandlers, type CounterRef } from './ASTVisitor.js';
@@ -24,7 +26,8 @@ import { ScopeTracker } from '../../../../core/ScopeTracker.js';
 import { IdGenerator } from '../IdGenerator.js';
 import { createParameterNodes } from '../utils/createParameterNodes.js';
 import { getLine, getColumn } from '../utils/location.js';
-import type { ParameterInfo } from '../types.js';
+import type { ParameterInfo, PromiseExecutorContext } from '../types.js';
+import { ConstructorCallNode } from '../../../../core/nodes/ConstructorCallNode.js';
 
 /**
  * Function node info
@@ -329,11 +332,78 @@ export class FunctionVisitor extends ASTVisitor {
           parentFunctionId: functionId
         });
 
+        // REG-334: Detect Promise executor context BEFORE analyzing body
+        // This must happen before analyzeFunctionBody so resolve/reject calls can be linked
+        this.detectPromiseExecutorContext(path, node, module, collections);
+
         analyzeFunctionBody(path as NodePath<ArrowFunctionExpression>, bodyScope, module, collections);
 
         // Exit function scope
         scopeTracker.exitScope();
       }
     };
+  }
+
+  /**
+   * REG-334: Detect if this function is a Promise executor callback.
+   * If so, register the context so resolve/reject calls can be linked.
+   *
+   * Pattern: new Promise((resolve, reject) => { ... })
+   *
+   * Must be called BEFORE analyzeFunctionBody so the context is available
+   * when resolve/reject calls are processed.
+   */
+  private detectPromiseExecutorContext(
+    path: NodePath,
+    node: ArrowFunctionExpression | FunctionExpression,
+    module: VisitorModule,
+    collections: VisitorCollections
+  ): void {
+    // Check if this function is the first argument to new Promise()
+    const parent = path.parent;
+    if (parent?.type !== 'NewExpression') return;
+
+    const newExpr = parent as NewExpression;
+
+    // Check it's Promise constructor
+    if (newExpr.callee.type !== 'Identifier') return;
+    if ((newExpr.callee as Identifier).name !== 'Promise') return;
+
+    // Check this function is the first argument
+    if (newExpr.arguments.length === 0) return;
+    if (newExpr.arguments[0] !== node) return;
+
+    // Extract resolve/reject parameter names
+    let resolveName: string | undefined;
+    let rejectName: string | undefined;
+
+    if (node.params.length > 0 && node.params[0].type === 'Identifier') {
+      resolveName = (node.params[0] as Identifier).name;
+    }
+    if (node.params.length > 1 && node.params[1].type === 'Identifier') {
+      rejectName = (node.params[1] as Identifier).name;
+    }
+
+    if (!resolveName) return; // No resolve parameter, nothing to track
+
+    // Generate the CONSTRUCTOR_CALL ID for linking
+    const line = getLine(newExpr);
+    const column = getColumn(newExpr);
+    const constructorCallId = ConstructorCallNode.generateId('Promise', module.file, line, column);
+
+    // Initialize promiseExecutorContexts if not exists
+    if (!collections.promiseExecutorContexts) {
+      collections.promiseExecutorContexts = new Map<string, PromiseExecutorContext>();
+    }
+
+    // Key by function node position to allow nested Promise detection
+    const funcKey = `${node.start}:${node.end}`;
+    (collections.promiseExecutorContexts as Map<string, PromiseExecutorContext>).set(funcKey, {
+      constructorCallId,
+      resolveName,
+      rejectName,
+      file: module.file,
+      line: getLine(node)
+    });
   }
 }
