@@ -24,19 +24,36 @@ function getBinaryPath() {
     process.exit(1);
   }
 
-  const binaryPath = path.join(__dirname, '..', 'prebuilt', platformDir, 'rfdb-server');
-
-  if (!fs.existsSync(binaryPath)) {
-    console.error(`Binary not found for ${platform}-${arch}`);
-    console.error(`Expected at: ${binaryPath}`);
-    console.error('');
-    console.error('Available options:');
-    console.error('1. Build from source: cargo build --release');
-    console.error('2. Download from GitHub releases');
-    process.exit(1);
+  // Check prebuilt binary first
+  const prebuiltPath = path.join(__dirname, '..', 'prebuilt', platformDir, 'rfdb-server');
+  if (fs.existsSync(prebuiltPath)) {
+    return prebuiltPath;
   }
 
-  return binaryPath;
+  // Fallback: check for locally built binary in common locations
+  const localPaths = [
+    // Cargo release build (when building from source)
+    path.join(__dirname, '..', 'target', 'release', 'rfdb-server'),
+    // Monorepo development
+    path.join(__dirname, '..', '..', '..', 'packages', 'rfdb-server', 'target', 'release', 'rfdb-server'),
+    // Home directory fallback for manual builds
+    path.join(process.env.HOME || '', '.local', 'bin', 'rfdb-server'),
+  ];
+
+  for (const localPath of localPaths) {
+    if (fs.existsSync(localPath)) {
+      return localPath;
+    }
+  }
+
+  console.error(`Binary not found for ${platform}-${arch}`);
+  console.error(`Expected at: ${prebuiltPath}`);
+  console.error('');
+  console.error('Available options:');
+  console.error('1. Build from source: cargo build --release');
+  console.error('2. Copy binary to: ~/.local/bin/rfdb-server');
+  console.error('3. Download from GitHub releases');
+  process.exit(1);
 }
 
 const binaryPath = getBinaryPath();

@@ -156,7 +156,8 @@ export class RFDBServerBackend {
    * Find RFDB server binary in order of preference:
    * 1. packages/rfdb-server/target/release (monorepo development - prioritized for dev)
    * 2. packages/rfdb-server/target/debug
-   * 3. @grafema/rfdb npm package (fallback for production)
+   * 3. @grafema/rfdb npm package
+   * 4. ~/.local/bin/rfdb-server (user-installed binary)
    */
   private _findServerBinary(): string | null {
     // 1. Check packages/rfdb-server in monorepo (prioritized for development)
@@ -174,7 +175,7 @@ export class RFDBServerBackend {
       return debugBinary;
     }
 
-    // 3. Check @grafema/rfdb npm package (fallback)
+    // 3. Check @grafema/rfdb npm package
     try {
       const require = createRequire(import.meta.url);
       const rfdbPkg = require.resolve('@grafema/rfdb');
@@ -198,6 +199,13 @@ export class RFDBServerBackend {
       }
     } catch {
       // @grafema/rfdb not installed
+    }
+
+    // 4. Check ~/.local/bin (user-installed binary for unsupported platforms)
+    const homeBinary = join(process.env.HOME || '', '.local', 'bin', 'rfdb-server');
+    if (existsSync(homeBinary)) {
+      console.log(`[RFDBServerBackend] Found user binary: ${homeBinary}`);
+      return homeBinary;
     }
 
     return null;
