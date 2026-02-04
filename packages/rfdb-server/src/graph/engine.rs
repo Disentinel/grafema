@@ -148,6 +148,52 @@ impl GraphEngine {
         })
     }
 
+    /// Create an ephemeral (in-memory only) database
+    ///
+    /// Ephemeral databases store all data in memory and never write to disk.
+    /// They are ideal for testing scenarios where you want complete isolation
+    /// between tests without any disk I/O overhead.
+    ///
+    /// # Example
+    /// ```no_run
+    /// use rfdb::GraphEngine;
+    ///
+    /// let engine = GraphEngine::create_ephemeral().unwrap();
+    /// // Use engine normally - all data stays in memory
+    /// // When engine drops, all data is lost
+    /// ```
+    pub fn create_ephemeral() -> Result<Self> {
+        // Use a unique temp path for identification (never actually created)
+        let temp_path = std::env::temp_dir()
+            .join(format!("rfdb-ephemeral-{}", std::process::id()))
+            .join(format!("{}", std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()));
+
+        debug_log!("GraphEngine::create_ephemeral() - path: {:?}", temp_path);
+
+        Ok(Self {
+            path: temp_path,
+            nodes_segment: None,
+            edges_segment: None,
+            delta_log: DeltaLog::new(),
+            delta_nodes: HashMap::new(),
+            delta_edges: Vec::new(),
+            adjacency: HashMap::new(),
+            reverse_adjacency: HashMap::new(),
+            metadata: GraphMetadata::default(),
+            ops_since_flush: 0,
+            last_memory_check: None,
+            deleted_segment_ids: HashSet::new(),
+        })
+    }
+
+    /// Check if this is an ephemeral (in-memory only) database
+    pub fn is_ephemeral(&self) -> bool {
+        self.path.to_string_lossy().contains("rfdb-ephemeral")
+    }
+
     /// Open an existing graph
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
         let path = normalize_db_path(path);
@@ -1948,5 +1994,139 @@ mod tests {
         assert!(result.contains(&1));
         assert!(!result.contains(&2), "Node 2 is CLASS, not FUNCTION");
         assert!(!result.contains(&3), "Node 3 is in different file");
+    }
+
+    // ============================================================
+    // REG-335: Ephemeral Database Tests
+    // ============================================================
+
+    #[test]
+    fn test_create_ephemeral_database() {
+        let engine = GraphEngine::create_ephemeral();
+        assert!(engine.is_ok());
+
+        let engine = engine.unwrap();
+        assert!(engine.is_ephemeral());
+        assert_eq!(engine.node_count(), 0);
+        assert_eq!(engine.edge_count(), 0);
+    }
+
+    #[test]
+    fn test_ephemeral_add_nodes() {
+        let mut engine = GraphEngine::create_ephemeral().unwrap();
+
+        engine.add_nodes(vec![NodeRecord {
+            id: 1,
+            node_type: Some("TEST".to_string()),
+            file_id: 0,
+            name_offset: 0,
+            version: "main".to_string(),
+            exported: false,
+            replaces: None,
+            deleted: false,
+            name: Some("test".to_string()),
+            file: None,
+            metadata: None,
+        }]);
+
+        assert_eq!(engine.node_count(), 1);
+        assert!(engine.node_exists(1));
+    }
+
+    #[test]
+    fn test_ephemeral_add_edges() {
+        let mut engine = GraphEngine::create_ephemeral().unwrap();
+
+        engine.add_nodes(vec![
+            NodeRecord {
+                id: 1,
+                node_type: Some("FUNC".to_string()),
+                file_id: 0,
+                name_offset: 0,
+                version: "main".to_string(),
+                exported: false,
+                replaces: None,
+                deleted: false,
+                name: Some("foo".to_string()),
+                file: None,
+                metadata: None,
+            },
+            NodeRecord {
+                id: 2,
+                node_type: Some("FUNC".to_string()),
+                file_id: 0,
+                name_offset: 0,
+                version: "main".to_string(),
+                exported: false,
+                replaces: None,
+                deleted: false,
+                name: Some("bar".to_string()),
+                file: None,
+                metadata: None,
+            },
+        ]);
+
+        engine.add_edges(vec![EdgeRecord {
+            src: 1,
+            dst: 2,
+            edge_type: Some("CALLS".to_string()),
+            version: "main".to_string(),
+            metadata: None,
+            deleted: false,
+        }], false);
+
+        assert_eq!(engine.edge_count(), 1);
+        let neighbors = engine.neighbors(1, &["CALLS"]);
+        assert_eq!(neighbors, vec![2]);
+    }
+
+    #[test]
+    fn test_regular_is_not_ephemeral() {
+        use tempfile::tempdir;
+
+        let dir = tempdir().unwrap();
+        let engine = GraphEngine::create(dir.path()).unwrap();
+
+        assert!(!engine.is_ephemeral());
+    }
+
+    #[test]
+    fn test_ephemeral_find_by_type() {
+        let mut engine = GraphEngine::create_ephemeral().unwrap();
+
+        engine.add_nodes(vec![
+            make_test_node(1, "funcA", "FUNCTION"),
+            make_test_node(2, "funcB", "FUNCTION"),
+            make_test_node(3, "classC", "CLASS"),
+        ]);
+
+        let functions = engine.find_by_type("FUNCTION");
+        assert_eq!(functions.len(), 2);
+        assert!(functions.contains(&1));
+        assert!(functions.contains(&2));
+    }
+
+    #[test]
+    fn test_ephemeral_bfs() {
+        let mut engine = GraphEngine::create_ephemeral().unwrap();
+
+        let [a, b, c]: [u128; 3] = [1, 2, 3];
+
+        engine.add_nodes(vec![
+            make_test_node(a, "A", "FUNCTION"),
+            make_test_node(b, "B", "FUNCTION"),
+            make_test_node(c, "C", "FUNCTION"),
+        ]);
+
+        engine.add_edges(vec![
+            make_test_edge(a, b, "CALLS"),
+            make_test_edge(b, c, "CALLS"),
+        ], false);
+
+        let result = engine.bfs(&[a], 2, &["CALLS"]);
+        assert_eq!(result.len(), 3);
+        assert!(result.contains(&a));
+        assert!(result.contains(&b));
+        assert!(result.contains(&c));
     }
 }
