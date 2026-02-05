@@ -4,8 +4,8 @@
 # Outputs: GitHub Release with 4 binary assets
 #
 # Platforms:
-#   - darwin-x64:   Native build on macos-13 (Intel)
-#   - darwin-arm64: Native build on macos-14 (Apple Silicon)
+#   - darwin-x64:   Native build on macos-latest (Intel via Rosetta or x64 runner)
+#   - darwin-arm64: Native build on macos-latest (Apple Silicon)
 #   - linux-x64:    Native build on ubuntu-22.04
 #   - linux-arm64:  Cross-compile via actions-rust-cross
 
@@ -33,12 +33,12 @@ jobs:
       matrix:
         include:
           - name: darwin-x64
-            os: macos-13
+            os: macos-latest
             target: x86_64-apple-darwin
             use_cross: false
 
           - name: darwin-arm64
-            os: macos-14
+            os: macos-latest
             target: aarch64-apple-darwin
             use_cross: false
 
@@ -58,7 +58,7 @@ jobs:
 
       - name: Install Rust toolchain
         if: ${{ !matrix.use_cross }}
-        uses: dtolnay/rust-action@stable
+        uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
 
