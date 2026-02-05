@@ -7,8 +7,8 @@
   "scripts": {
     "build": "pnpm -r build",
     "clean": "pnpm -r clean",
-    "typecheck": "pnpm -r exec tsc --noEmit",
-    "lint": "eslint packages/",
+    "typecheck": "pnpm --filter='@grafema/cli' --filter='@grafema/core' --filter='@grafema/mcp' --filter='@grafema/rfdb-client' --filter='@grafema/types' --filter='grafema-explore' exec tsc --noEmit",
+    "lint": "eslint --cache packages/",
     "mcp": "node --import tsx packages/mcp/src/server.ts",
     "test": "node --test test/unit/",
     "test:scenarios": "node --test test/scenarios/",

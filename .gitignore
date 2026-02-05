@@ -43,3 +43,4 @@ tmp/
 # Grafema
 .grafema/graph.rfdb
 .grafema/rfdb.sock
+.eslintcache
