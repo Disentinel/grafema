@@ -15,6 +15,7 @@ import { resolve, join, relative } from 'path';
 import { existsSync } from 'fs';
 import { RFDBServerBackend } from '@grafema/core';
 import { exitWithError } from '../utils/errorFormatter.js';
+import { Spinner } from '../utils/spinner.js';
 
 interface LsOptions {
   project: string;
@@ -66,6 +67,9 @@ Discover available types:
     const backend = new RFDBServerBackend({ dbPath });
     await backend.connect();
 
+    const spinner = new Spinner('Querying graph...');
+    spinner.start();
+
     try {
       const limit = parseInt(options.limit, 10);
       const nodeType = options.type;
@@ -73,6 +77,7 @@ Discover available types:
       // Check if type exists in graph
       const typeCounts = await backend.countNodesByType();
       if (!typeCounts[nodeType]) {
+        spinner.stop();
         const availableTypes = Object.keys(typeCounts).sort();
         exitWithError(`No nodes of type "${nodeType}" found`, [
           'Available types:',
@@ -103,6 +108,8 @@ Discover available types:
       const totalCount = typeCounts[nodeType];
       const showing = nodes.length;
 
+      spinner.stop();
+
       if (options.json) {
         console.log(JSON.stringify({
           type: nodeType,
@@ -125,6 +132,7 @@ Discover available types:
         }
       }
     } finally {
+      spinner.stop();
       await backend.close();
     }
   });

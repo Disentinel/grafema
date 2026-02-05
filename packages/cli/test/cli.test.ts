@@ -100,7 +100,7 @@ module.exports = { hello };
     it('should error when no database exists', async () => {
       const { stderr, code } = await runCli(['stats']);
       assert.strictEqual(code, 1);
-      assert.ok(stderr.includes('No database found'));
+      assert.ok(stderr.includes('No graph database found'));
     });
   });
 
@@ -108,13 +108,13 @@ module.exports = { hello };
     it('should show query help', async () => {
       const { stdout, code } = await runCli(['query', '--help']);
       assert.strictEqual(code, 0);
-      assert.ok(stdout.includes('Execute a Datalog query'));
+      assert.ok(stdout.includes('Search the code graph'));
     });
 
     it('should error when no database exists', async () => {
       const { stderr, code } = await runCli(['query', 'node(X, _, _, _, _)']);
       assert.strictEqual(code, 1);
-      assert.ok(stderr.includes('No database found'));
+      assert.ok(stderr.includes('No graph database found'));
     });
   });
 
@@ -122,13 +122,13 @@ module.exports = { hello };
     it('should show check help', async () => {
       const { stdout, code } = await runCli(['check', '--help']);
       assert.strictEqual(code, 0);
-      assert.ok(stdout.includes('Check invariants'));
+      assert.ok(stdout.includes('Check invariants/guarantees'));
     });
 
     it('should error when no database exists', async () => {
       const { stderr, code } = await runCli(['check']);
       assert.strictEqual(code, 1);
-      assert.ok(stderr.includes('No database found'));
+      assert.ok(stderr.includes('No graph database found'));
     });
   });
 
@@ -299,7 +299,7 @@ module.exports = { hello, greet };
     assert.ok(existsSync(configPath), '.grafema/config.yaml should be created');
 
     // Step 2: Run analyze with --clear flag
-    const analyzeResult = await runCliInDir(e2eDir, ['analyze', '--clear']);
+    const analyzeResult = await runCliInDir(e2eDir, ['analyze', '--clear', '--auto-start']);
     assert.strictEqual(analyzeResult.code, 0, `analyze failed: ${analyzeResult.stderr}`);
     assert.ok(analyzeResult.stdout.includes('Analysis complete'), 'analyze should complete');
     assert.ok(analyzeResult.stdout.includes('Nodes:'), 'analyze should show node count');

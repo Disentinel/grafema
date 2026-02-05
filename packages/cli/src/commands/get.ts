@@ -12,6 +12,7 @@ import { existsSync } from 'fs';
 import { RFDBServerBackend } from '@grafema/core';
 import { formatNodeDisplay } from '../utils/formatNode.js';
 import { exitWithError } from '../utils/errorFormatter.js';
+import { Spinner } from '../utils/spinner.js';
 
 interface GetOptions {
   project: string;
@@ -66,11 +67,15 @@ Examples:
     const backend = new RFDBServerBackend({ dbPath });
     await backend.connect();
 
+    const spinner = new Spinner('Querying graph...');
+    spinner.start();
+
     try {
       // Retrieve node by semantic ID
       const node = await backend.getNode(semanticId);
 
       if (!node) {
+        spinner.stop();
         exitWithError('Node not found', [
           `ID: ${semanticId}`,
           'Try: grafema query "<name>" to search for nodes',
@@ -81,6 +86,8 @@ Examples:
       const incomingEdges = await backend.getIncomingEdges(semanticId, null);
       const outgoingEdges = await backend.getOutgoingEdges(semanticId, null);
 
+      spinner.stop();
+
       if (options.json) {
         await outputJSON(backend, node, incomingEdges, outgoingEdges);
       } else {
@@ -88,6 +95,7 @@ Examples:
       }
 
     } finally {
+      spinner.stop();
       await backend.close();
     }
   });
