@@ -17,6 +17,7 @@ let edgesProvider: EdgesProvider | null = null;
 let treeView: vscode.TreeView<GraphTreeItem> | null = null;
 let followCursor = true; // Follow cursor mode (toggle with cmd+shift+g)
 let statusBarItem: vscode.StatusBarItem | null = null;
+let selectedTreeItem: GraphTreeItem | null = null; // Track selected item for state export
 
 /**
  * Extension activation
@@ -43,6 +44,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   treeView = vscode.window.createTreeView('grafemaExplore', {
     treeDataProvider: edgesProvider,
     showCollapseAll: true,
+  });
+
+  // Track selection changes for state export
+  treeView.onDidChangeSelection((event) => {
+    selectedTreeItem = event.selection[0] ?? null;
   });
 
   // Update welcome message based on connection state
@@ -139,6 +145,19 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }
   });
 
+  // Copy tree state to clipboard for debugging
+  const copyTreeStateCommand = vscode.commands.registerCommand('grafema.copyTreeState', async () => {
+    if (!clientManager || !edgesProvider) {
+      vscode.window.showErrorMessage('Grafema: Extension not initialized');
+      return;
+    }
+
+    const state = await buildTreeState(clientManager, edgesProvider, selectedTreeItem);
+    const json = JSON.stringify(state, null, 2);
+    await vscode.env.clipboard.writeText(json);
+    vscode.window.showInformationMessage('Grafema: Tree state copied to clipboard');
+  });
+
   // Create status bar item
   statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
   statusBarItem.command = 'grafema.toggleFollowCursor';
@@ -171,6 +190,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     refreshCommand,
     goBackCommand,
     toggleFollowCursorCommand,
+    copyTreeStateCommand,
     selectionChangeListener,
     statusBarItem,
     {
@@ -260,6 +280,141 @@ function debounce<T extends (...args: unknown[]) => unknown>(
       timeoutId = null;
     }, delay);
   };
+}
+
+/**
+ * Build tree state object for debugging export
+ */
+interface TreeStateExport {
+  connection: string;
+  serverVersion: string | null;
+  stats: { nodes: number; edges: number } | null;
+  rootNode: {
+    id: string;
+    type: string;
+    name: string;
+    file: string;
+    line?: number;
+  } | null;
+  selectedNode: {
+    id: string;
+    type: string;
+    name: string;
+    file: string;
+    line?: number;
+  } | null;
+  visibleEdges: Array<{
+    direction: 'outgoing' | 'incoming';
+    type: string;
+    target: string;
+  }>;
+  navigationPath: string[];
+  historyDepth: number;
+}
+
+async function buildTreeState(
+  clientManager: GrafemaClientManager,
+  edgesProvider: EdgesProvider,
+  selectedItem: GraphTreeItem | null
+): Promise<TreeStateExport> {
+  const state: TreeStateExport = {
+    connection: clientManager.state.status,
+    serverVersion: null,
+    stats: null,
+    rootNode: null,
+    selectedNode: null,
+    visibleEdges: [],
+    navigationPath: edgesProvider.getNavigationPathIds(),
+    historyDepth: edgesProvider.getHistoryDepth(),
+  };
+
+  // Get server info if connected
+  if (clientManager.isConnected()) {
+    try {
+      const client = clientManager.getClient();
+      const version = await client.ping();
+      state.serverVersion = version || null;
+
+      const [nodeCount, edgeCount] = await Promise.all([
+        client.nodeCount(),
+        client.edgeCount(),
+      ]);
+      state.stats = { nodes: nodeCount, edges: edgeCount };
+    } catch {
+      // Ignore errors - just leave as null
+    }
+  }
+
+  // Root node info
+  const rootNode = edgesProvider.getRootNode();
+  if (rootNode) {
+    const metadata = parseNodeMetadata(rootNode);
+    state.rootNode = {
+      id: rootNode.id,
+      type: rootNode.nodeType,
+      name: rootNode.name,
+      file: rootNode.file,
+      line: metadata.line,
+    };
+  }
+
+  // Selected node info
+  if (selectedItem?.kind === 'node') {
+    const node = selectedItem.node;
+    const metadata = parseNodeMetadata(node);
+    state.selectedNode = {
+      id: node.id,
+      type: node.nodeType,
+      name: node.name,
+      file: node.file,
+      line: metadata.line,
+    };
+
+    // Fetch visible edges for selected node if connected
+    if (clientManager.isConnected()) {
+      try {
+        const client = clientManager.getClient();
+        const [outgoing, incoming] = await Promise.all([
+          client.getOutgoingEdges(node.id),
+          client.getIncomingEdges(node.id),
+        ]);
+
+        for (const edge of outgoing) {
+          state.visibleEdges.push({
+            direction: 'outgoing',
+            type: edge.edgeType,
+            target: edge.dst,
+          });
+        }
+
+        for (const edge of incoming) {
+          state.visibleEdges.push({
+            direction: 'incoming',
+            type: edge.edgeType,
+            target: edge.src,
+          });
+        }
+      } catch {
+        // Ignore errors
+      }
+    }
+  } else if (selectedItem?.kind === 'edge') {
+    // If an edge is selected, show the target node
+    const edge = selectedItem.edge;
+    const targetNode = selectedItem.targetNode;
+    if (targetNode) {
+      const metadata = parseNodeMetadata(targetNode);
+      state.selectedNode = {
+        id: targetNode.id,
+        type: targetNode.nodeType,
+        name: targetNode.name,
+        file: targetNode.file,
+        line: metadata.line,
+      };
+    }
+  }
+
+  return state;
 }
 
 /**

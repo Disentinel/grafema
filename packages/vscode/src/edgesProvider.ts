@@ -425,6 +425,27 @@ export class EdgesProvider implements vscode.TreeDataProvider<GraphTreeItem> {
   }
 
   /**
+   * Get the current root node (for state export)
+   */
+  getRootNode(): WireNode | null {
+    return this.rootNode;
+  }
+
+  /**
+   * Get the navigation path as array of node IDs (for state export)
+   */
+  getNavigationPathIds(): string[] {
+    return Array.from(this.navigationPath);
+  }
+
+  /**
+   * Get history depth (for state export)
+   */
+  getHistoryDepth(): number {
+    return this.rootHistory.length;
+  }
+
+  /**
    * Get the current status message for display
    */
   getStatusMessage(): string | null {
