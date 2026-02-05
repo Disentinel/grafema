@@ -13,21 +13,7 @@
  */
 
 import type { Diagnostic, DiagnosticCollector } from './DiagnosticCollector.js';
-
-/**
- * Mapping from diagnostic codes to category information
- */
-const DIAGNOSTIC_CODE_CATEGORIES: Record<string, { name: string; checkCommand: string }> = {
-  'ERR_DISCONNECTED_NODES': { name: 'disconnected nodes', checkCommand: 'grafema check connectivity' },
-  'ERR_DISCONNECTED_NODE': { name: 'disconnected nodes', checkCommand: 'grafema check connectivity' },
-  'ERR_UNRESOLVED_CALL': { name: 'unresolved calls', checkCommand: 'grafema check calls' },
-  'ERR_MISSING_ASSIGNMENT': { name: 'missing assignments', checkCommand: 'grafema check dataflow' },
-  'ERR_BROKEN_REFERENCE': { name: 'broken references', checkCommand: 'grafema check dataflow' },
-  'ERR_NO_LEAF_NODE': { name: 'incomplete traces', checkCommand: 'grafema check dataflow' },
-  'DISCONNECTED_NODES': { name: 'disconnected nodes', checkCommand: 'grafema check connectivity' },
-  'UNRESOLVED_FUNCTION_CALL': { name: 'unresolved calls', checkCommand: 'grafema check calls' },
-  'MISSING_ASSIGNMENT': { name: 'missing assignments', checkCommand: 'grafema check dataflow' },
-};
+import { CODE_TO_CATEGORY } from './categories.js';
 
 /**
  * Report output options
@@ -196,7 +182,7 @@ export class DiagnosticReporter {
     // Convert to CategoryCount array with metadata
     const byCode: CategoryCount[] = [];
     for (const [code, count] of codeMap.entries()) {
-      const category = DIAGNOSTIC_CODE_CATEGORIES[code];
+      const category = CODE_TO_CATEGORY[code];
       byCode.push({
         code,
         count,

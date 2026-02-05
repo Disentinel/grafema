@@ -14,9 +14,10 @@ import {
   GuaranteeManager,
   NodeCreationValidator,
   GraphFreshnessChecker,
-  IncrementalReanalyzer
+  IncrementalReanalyzer,
+  DIAGNOSTIC_CATEGORIES,
 } from '@grafema/core';
-import type { GuaranteeGraph } from '@grafema/core';
+import type { GuaranteeGraph, DiagnosticCategory, DiagnosticCategoryKey } from '@grafema/core';
 import type { GraphBackend } from '@grafema/types';
 import { exitWithError } from '../utils/errorFormatter.js';
 
@@ -38,36 +39,8 @@ const BUILT_IN_VALIDATORS: Record<string, { name: string; description: string }>
   }
 };
 
-// Category definition for diagnostic filtering
-export interface DiagnosticCheckCategory {
-  name: string;
-  description: string;
-  codes: string[];
-}
-
-// Available diagnostic categories
-export const CHECK_CATEGORIES: Record<string, DiagnosticCheckCategory> = {
-  'connectivity': {
-    name: 'Graph Connectivity',
-    description: 'Check for disconnected nodes in the graph',
-    codes: ['ERR_DISCONNECTED_NODES', 'ERR_DISCONNECTED_NODE'],
-  },
-  'calls': {
-    name: 'Call Resolution',
-    description: 'Check for unresolved function calls',
-    codes: ['ERR_UNRESOLVED_CALL'],
-  },
-  'dataflow': {
-    name: 'Data Flow',
-    description: 'Check for missing assignments and broken references',
-    codes: ['ERR_MISSING_ASSIGNMENT', 'ERR_BROKEN_REFERENCE', 'ERR_NO_LEAF_NODE'],
-  },
-  'imports': {
-    name: 'Import Validation',
-    description: 'Check for broken imports and undefined symbols',
-    codes: ['ERR_BROKEN_IMPORT', 'ERR_UNDEFINED_SYMBOL'],
-  },
-};
+// Re-export for backward compatibility (deprecated - import from @grafema/core instead)
+export { DIAGNOSTIC_CATEGORIES as CHECK_CATEGORIES };
 
 export const checkCommand = new Command('check')
   .description('Check invariants/guarantees')
@@ -113,7 +86,7 @@ Examples:
       if (options.listCategories) {
         console.log('Available diagnostic categories:');
         console.log('');
-        for (const [key, category] of Object.entries(CHECK_CATEGORIES)) {
+        for (const [key, category] of Object.entries(DIAGNOSTIC_CATEGORIES)) {
           console.log(`  ${key}`);
           console.log(`    ${category.name}`);
           console.log(`    ${category.description}`);
@@ -136,7 +109,7 @@ Examples:
       }
 
       // Check if rule argument is a category name
-      if (rule && (rule in CHECK_CATEGORIES || rule === 'all')) {
+      if (rule && (rule in DIAGNOSTIC_CATEGORIES || rule === 'all')) {
         await runCategoryCheck(rule, options);
         return;
       }
@@ -479,12 +452,13 @@ async function runCategoryCheck(
   // Filter diagnostics by category codes
   let filteredDiagnostics = allDiagnostics;
   if (category !== 'all') {
-    const categoryInfo = CHECK_CATEGORIES[category];
-    if (!categoryInfo) {
+    if (!(category in DIAGNOSTIC_CATEGORIES)) {
       exitWithError(`Unknown category: ${category}`, [
         'Use --list-categories to see available options'
       ]);
     }
+    const categoryKey = category as DiagnosticCategoryKey;
+    const categoryInfo = DIAGNOSTIC_CATEGORIES[categoryKey];
     filteredDiagnostics = allDiagnostics.filter((d: any) =>
       categoryInfo.codes.includes(d.code)
     );
@@ -499,7 +473,7 @@ async function runCategoryCheck(
   } else {
     const categoryName = category === 'all'
       ? 'All Categories'
-      : CHECK_CATEGORIES[category].name;
+      : DIAGNOSTIC_CATEGORIES[category as DiagnosticCategoryKey].name;
 
     if (!options.quiet) {
       console.log(`Checking ${categoryName}...`);
