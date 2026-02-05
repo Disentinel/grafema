@@ -24,8 +24,7 @@ import { tmpdir } from 'os';
 
 import { createTestDatabase } from '../../../helpers/TestRFDB.js';
 import { createTestOrchestrator } from '../../../helpers/createTestOrchestrator.js';
-import { ExpressRouteAnalyzer } from '@grafema/core';
-import type { NodeRecord, EdgeRecord } from '@grafema/types';
+import { ExpressRouteAnalyzer, ExpressHandlerLinker } from '@grafema/core';
 
 let testCounter = 0;
 
@@ -33,10 +32,7 @@ let testCounter = 0;
 // TEST HELPERS
 // =============================================================================
 
-async function setupTest(
-  backend: Awaited<ReturnType<typeof createTestDatabase>>['backend'],
-  files: Record<string, string>
-): Promise<{ testDir: string }> {
+async function setupTest(backend, files) {
   const testDir = join(tmpdir(), `grafema-test-handled-by-${Date.now()}-${testCounter++}`);
   mkdirSync(testDir, { recursive: true });
 
@@ -55,27 +51,24 @@ async function setupTest(
 
   const orchestrator = createTestOrchestrator(backend, {
     forceAnalysis: true,
-    extraPlugins: [new ExpressRouteAnalyzer()]
+    extraPlugins: [
+      new ExpressRouteAnalyzer(),
+      new ExpressHandlerLinker()  // Creates HANDLED_BY edges for routes
+    ]
   });
   await orchestrator.run(testDir);
 
   return { testDir };
 }
 
-async function getNodesByType(
-  backend: Awaited<ReturnType<typeof createTestDatabase>>['backend'],
-  nodeType: string
-): Promise<NodeRecord[]> {
+async function getNodesByType(backend, nodeType) {
   const allNodes = await backend.getAllNodes();
-  return allNodes.filter((n: NodeRecord) => n.type === nodeType);
+  return allNodes.filter((n) => n.type === nodeType);
 }
 
-async function getEdgesByType(
-  backend: Awaited<ReturnType<typeof createTestDatabase>>['backend'],
-  edgeType: string
-): Promise<EdgeRecord[]> {
+async function getEdgesByType(backend, edgeType) {
   const allNodes = await backend.getAllNodes();
-  const allEdges: EdgeRecord[] = [];
+  const allEdges = [];
 
   for (const node of allNodes) {
     const outgoing = await backend.getOutgoingEdges(node.id);
@@ -90,17 +83,19 @@ async function getEdgesByType(
 // =============================================================================
 
 describe('ExpressRouteAnalyzer HANDLED_BY Edge (REG-322)', () => {
-  let backend: Awaited<ReturnType<typeof createTestDatabase>>['backend'] & { cleanup?: () => Promise<void> };
+  let db;
+  let backend;
 
   beforeEach(async () => {
-    if (backend?.cleanup) {
+    if (db?.cleanup) {
       await db.cleanup();
     }
-    backend = await createTestDatabase(); backend = db.backend;
+    db = await createTestDatabase();
+    backend = db.backend;
   });
 
   after(async () => {
-    if (backend?.cleanup) {
+    if (db?.cleanup) {
       await db.cleanup();
     }
   });
@@ -215,6 +210,69 @@ export default app;
       targetNode.line,
       5,
       `HANDLED_BY should point to handler at line 5, got line ${targetNode.line}`
+    );
+  });
+
+  it('should link HANDLED_BY to named function handler', async () => {
+    const code = `
+import express from 'express';
+const router = express.Router();
+
+function handleUsers(req, res) {
+  res.json([]);
+}
+
+router.get('/users', handleUsers);
+
+export default router;
+`;
+
+    await setupTest(backend, { 'index.js': code });
+
+    const routes = await getNodesByType(backend, 'http:route');
+    assert.strictEqual(routes.length, 1, 'Should have 1 http:route');
+
+    const handledByEdges = await getEdgesByType(backend, 'HANDLED_BY');
+    assert.strictEqual(handledByEdges.length, 1, 'Should have 1 HANDLED_BY edge');
+
+    const targetNode = await backend.getNode(handledByEdges[0].dst);
+    assert(targetNode, 'Target function should exist');
+    assert.strictEqual(targetNode.name, 'handleUsers', 'Should link to named function handleUsers');
+  });
+
+  it('should link HANDLED_BY through wrapper function like asyncHandler', async () => {
+    const code = `
+import express from 'express';
+const router = express.Router();
+
+const asyncHandler = (fn) => (req, res, next) => fn(req, res, next).catch(next);
+
+router.post('/items', asyncHandler(async (req, res) => {
+  const item = await createItem(req.body);
+  res.json(item);
+}));
+
+export default router;
+`;
+
+    await setupTest(backend, { 'index.js': code });
+
+    const routes = await getNodesByType(backend, 'http:route');
+    assert.strictEqual(routes.length, 1, 'Should have 1 http:route');
+
+    const handledByEdges = await getEdgesByType(backend, 'HANDLED_BY');
+    assert.strictEqual(handledByEdges.length, 1, 'Should have 1 HANDLED_BY edge');
+
+    const targetNode = await backend.getNode(handledByEdges[0].dst);
+    assert(targetNode, 'Target function should exist');
+    assert.strictEqual(targetNode.type, 'FUNCTION', 'Target should be FUNCTION');
+
+    // The actual handler is the async arrow function inside asyncHandler,
+    // which is on line 8 (the line with async (req, res) => ...)
+    assert.strictEqual(
+      targetNode.line,
+      8,
+      `HANDLED_BY should point to unwrapped handler at line 8, got line ${targetNode.line}`
     );
   });
 });

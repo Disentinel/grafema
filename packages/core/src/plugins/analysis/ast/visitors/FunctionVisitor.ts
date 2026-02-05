@@ -47,6 +47,7 @@ interface FunctionInfo {
   returnType?: string;
   signature?: string;
   jsdocSummary?: string;
+  start?: number;  // Byte offset in file for positional linking
 }
 
 /**
@@ -237,7 +238,8 @@ export class FunctionVisitor extends ASTVisitor {
           paramTypes,
           returnType,
           signature,
-          jsdocSummary
+          jsdocSummary,
+          start: node.start ?? undefined
         });
 
         // Enter function scope BEFORE creating parameters (semantic IDs need function context)
@@ -311,7 +313,8 @@ export class FunctionVisitor extends ASTVisitor {
           paramTypes,
           returnType,
           signature,
-          jsdocSummary
+          jsdocSummary,
+          start: node.start ?? undefined
         });
 
         // Enter function scope BEFORE creating parameters (semantic IDs need function context)

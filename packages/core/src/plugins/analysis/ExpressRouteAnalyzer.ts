@@ -35,6 +35,8 @@ interface EndpointNode {
   routerName: string;
   handlerLine: number;
   handlerColumn: number;
+  handlerStart?: number;  // Byte offset for inline handlers
+  handlerName?: string;   // Function name for named handler references
 }
 
 /**
@@ -252,6 +254,18 @@ export class ExpressRouteAnalyzer extends Plugin {
                   // Создаём http:route
                   const endpointId = `http:route#${method.toUpperCase()}:${routePath}#${module.file}#${getLine(node)}`;
 
+                  // Determine handler identification for HANDLED_BY linking:
+                  // - Inline functions (arrow/function expressions): use byte offset (start)
+                  // - Named references (Identifier): use function name
+                  let handlerStart: number | undefined;
+                  let handlerName: string | undefined;
+                  if (actualHandler.type === 'ArrowFunctionExpression' ||
+                      actualHandler.type === 'FunctionExpression') {
+                    handlerStart = (actualHandler as { start?: number }).start;
+                  } else if (actualHandler.type === 'Identifier') {
+                    handlerName = (actualHandler as Identifier).name;
+                  }
+
                   endpoints.push({
                     id: endpointId,
                     type: 'http:route',
@@ -266,7 +280,9 @@ export class ExpressRouteAnalyzer extends Plugin {
                       : getLine(node),
                     handlerColumn: actualHandler.loc
                       ? getColumn(actualHandler)
-                      : getColumn(node)
+                      : getColumn(node),
+                    handlerStart,
+                    handlerName
                   });
 
                   // Обрабатываем middleware
@@ -358,13 +374,18 @@ export class ExpressRouteAnalyzer extends Plugin {
 
       // Создаём ENDPOINT ноды
       for (const endpoint of endpoints) {
-        // Сохраняем handler location ПЕРЕД destructuring
-        const handlerLine = endpoint.handlerLine;
-        const handlerColumn = endpoint.handlerColumn;
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        const { handlerLine: _hl, handlerColumn: _hc, routerName, ...endpointData } = endpoint;
+        const { handlerLine: _hl, handlerColumn: _hc, handlerStart, handlerName, routerName, ...endpointData } = endpoint;
 
-        await graph.addNode(endpointData as unknown as NodeRecord);
+        // Store handler identification in metadata for ExpressHandlerLinker enricher
+        const nodeData = {
+          ...endpointData,
+          metadata: {
+            ...(handlerStart !== undefined && { handlerStart }),
+            ...(handlerName !== undefined && { handlerName })
+          }
+        };
+        await graph.addNode(nodeData as unknown as NodeRecord);
         endpointsCreated++;
 
         // MODULE -> CONTAINS -> ENDPOINT
@@ -375,26 +396,8 @@ export class ExpressRouteAnalyzer extends Plugin {
         });
         edgesCreated++;
 
-        // Ищем FUNCTION ноду для handler по line+column
-        // NOTE: queryNodes не поддерживает line/column фильтрацию, поэтому фильтруем вручную
-        if (handlerLine) {
-          for await (const fn of graph.queryNodes({
-            type: 'FUNCTION',
-            file: module.file
-          })) {
-            // Проверяем точное совпадение line и column
-            if (fn.line === handlerLine && fn.column === handlerColumn) {
-              // ENDPOINT -> HANDLED_BY -> FUNCTION
-              await graph.addEdge({
-                type: 'HANDLED_BY',
-                src: endpoint.id,
-                dst: fn.id
-              });
-              edgesCreated++;
-              break;
-            }
-          }
-        }
+        // NOTE: HANDLED_BY edges are created by ExpressHandlerLinker enricher
+        // using handlerStart (byte offset) or handlerName stored in node metadata
       }
 
       // Создаём MIDDLEWARE ноды и связи
