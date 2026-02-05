@@ -41,6 +41,7 @@ import type {
   ArrayMutationInfo,
   ObjectMutationInfo,
   VariableReassignmentInfo,
+  UpdateExpressionInfo,
   ReturnStatementInfo,
   ObjectLiteralInfo,
   ObjectPropertyInfo,
@@ -148,6 +149,8 @@ export class GraphBuilder {
       objectMutations = [],
       // Variable reassignment tracking for FLOWS_INTO edges (REG-290)
       variableReassignments = [],
+      // Update expression tracking for UPDATE_EXPRESSION nodes (REG-288)
+      updateExpressions = [],
       // Return statement tracking for RETURNS edges
       returnStatements = [],
       // Update expression tracking for MODIFIES edges (REG-288, REG-312)
@@ -172,7 +175,7 @@ export class GraphBuilder {
 
     // 2. Buffer all SCOPE (without edges)
     for (const scope of scopes) {
-      const { parentFunctionId, parentScopeId, capturesFrom, modifies, ...scopeData } = scope;
+      const { parentFunctionId, parentScopeId, capturesFrom, ...scopeData } = scope;
       this._bufferNode(scopeData as GraphNode);
     }
 
@@ -363,6 +366,9 @@ export class GraphBuilder {
     // 28. Buffer FLOWS_INTO edges for variable reassignments (REG-290)
     this.bufferVariableReassignmentEdges(variableReassignments, variableDeclarations, callSites, methodCalls, parameters);
 
+    // 28.5. Buffer UPDATE_EXPRESSION nodes and MODIFIES/READS_FROM edges (REG-288)
+    this.bufferUpdateExpressionEdges(updateExpressions, variableDeclarations, parameters);
+
     // 29. Buffer RETURNS edges for return statements
     this.bufferReturnEdges(returnStatements, callSites, methodCalls, variableDeclarations, parameters);
 
@@ -408,7 +414,7 @@ export class GraphBuilder {
 
   private bufferScopeEdges(scopes: ScopeInfo[], variableDeclarations: VariableDeclarationInfo[]): void {
     for (const scope of scopes) {
-      const { parentFunctionId, parentScopeId, capturesFrom, modifies, ...scopeData } = scope;
+      const { parentFunctionId, parentScopeId, capturesFrom, ...scopeData } = scope;
 
       // FUNCTION -> HAS_SCOPE -> SCOPE (для function_body)
       if (parentFunctionId) {
@@ -440,16 +446,7 @@ export class GraphBuilder {
         }
       }
 
-      // MODIFIES - scope модифицирует переменные (count++)
-      if (modifies && modifies.length > 0) {
-        for (const mod of modifies) {
-          this._bufferEdge({
-            type: 'MODIFIES',
-            src: scopeData.id,
-            dst: mod.variableId
-          });
-        }
-      }
+      // REG-288: MODIFIES edges removed - now come from UPDATE_EXPRESSION nodes
     }
   }
 
@@ -2354,6 +2351,99 @@ export class GraphBuilder {
           type: 'FLOWS_INTO',
           src: sourceNodeId,
           dst: targetNodeId
+        });
+      }
+    }
+  }
+
+  /**
+   * Buffer UPDATE_EXPRESSION nodes and edges for update expressions (i++, --count).
+   *
+   * Creates:
+   * - UPDATE_EXPRESSION node
+   * - UPDATE_EXPRESSION --MODIFIES--> VARIABLE
+   * - VARIABLE --READS_FROM--> VARIABLE (self-loop, reads current value)
+   * - SCOPE --CONTAINS--> UPDATE_EXPRESSION (if parentScopeId exists)
+   *
+   * Pattern matches bufferVariableReassignmentEdges (compound operators create READS_FROM self-loops).
+   *
+   * REG-288: First-class graph representation for update expressions
+   */
+  private bufferUpdateExpressionEdges(
+    updateExpressions: UpdateExpressionInfo[],
+    variableDeclarations: VariableDeclarationInfo[],
+    parameters: ParameterInfo[]
+  ): void {
+    // Build lookup cache: O(n) instead of O(n*m)
+    const varLookup = new Map<string, VariableDeclarationInfo>();
+    for (const v of variableDeclarations) {
+      varLookup.set(`${v.file}:${v.name}`, v);
+    }
+
+    const paramLookup = new Map<string, ParameterInfo>();
+    for (const p of parameters) {
+      paramLookup.set(`${p.file}:${p.name}`, p);
+    }
+
+    for (const update of updateExpressions) {
+      const {
+        variableName,
+        operator,
+        prefix,
+        file,
+        line,
+        column,
+        parentScopeId
+      } = update;
+
+      // Find target variable node
+      const targetVar = varLookup.get(`${file}:${variableName}`);
+      const targetParam = !targetVar ? paramLookup.get(`${file}:${variableName}`) : null;
+      const targetNodeId = targetVar?.id ?? targetParam?.id;
+
+      if (!targetNodeId) {
+        // Variable not found - could be module-level or external reference
+        continue;
+      }
+
+      // Create UPDATE_EXPRESSION node
+      // ID format: {file}:UPDATE_EXPRESSION:{operator}:{line}:{column}
+      const updateId = `${file}:UPDATE_EXPRESSION:${operator}:${line}:${column}`;
+
+      this._bufferNode({
+        type: 'UPDATE_EXPRESSION',
+        id: updateId,
+        name: `${prefix ? operator : ''}${variableName}${prefix ? '' : operator}`,
+        operator,
+        prefix,
+        variableName,  // Store for queries
+        file,
+        line,
+        column
+      });
+
+      // Create READS_FROM self-loop
+      // UpdateExpression always reads current value (like compound assignment x += 1)
+      this._bufferEdge({
+        type: 'READS_FROM',
+        src: targetNodeId,  // Variable reads from...
+        dst: targetNodeId   // ...itself (self-loop)
+      });
+
+      // Create MODIFIES edge
+      // UPDATE_EXPRESSION modifies the variable
+      this._bufferEdge({
+        type: 'MODIFIES',
+        src: updateId,       // UPDATE_EXPRESSION node
+        dst: targetNodeId    // VARIABLE node
+      });
+
+      // Create CONTAINS edge (if scope exists)
+      if (parentScopeId) {
+        this._bufferEdge({
+          type: 'CONTAINS',
+          src: parentScopeId,
+          dst: updateId
         });
       }
     }
