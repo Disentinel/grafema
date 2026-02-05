@@ -1034,6 +1034,31 @@ fn handle_client(
 fn main() {
     let args: Vec<String> = std::env::args().collect();
 
+    // Handle --version / -V flag
+    if args.iter().any(|a| a == "--version" || a == "-V") {
+        println!("rfdb-server {}", env!("CARGO_PKG_VERSION"));
+        std::process::exit(0);
+    }
+
+    // Handle --help / -h flag
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        println!("rfdb-server {}", env!("CARGO_PKG_VERSION"));
+        println!();
+        println!("High-performance disk-backed graph database server for Grafema");
+        println!();
+        println!("Usage: rfdb-server <db-path> [--socket <socket-path>] [--data-dir <dir>]");
+        println!();
+        println!("Arguments:");
+        println!("  <db-path>      Path to default graph database directory");
+        println!("  --socket       Unix socket path (default: /tmp/rfdb.sock)");
+        println!("  --data-dir     Base directory for multi-database storage");
+        println!();
+        println!("Flags:");
+        println!("  -V, --version  Print version information");
+        println!("  -h, --help     Print this help message");
+        std::process::exit(0);
+    }
+
     if args.len() < 2 {
         eprintln!("Usage: rfdb-server <db-path> [--socket <socket-path>] [--data-dir <dir>]");
         eprintln!("");
