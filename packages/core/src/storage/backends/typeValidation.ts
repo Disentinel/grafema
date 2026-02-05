@@ -46,6 +46,8 @@ const KNOWN_EDGE_TYPES = new Set<string>([
   'RETURNS', 'RECEIVES_ARGUMENT', 'READS_FROM', 'THROWS', 'REGISTERS_VIEW',
   'GOVERNS', 'VIOLATES', 'HAS_PARAMETER', 'DERIVES_FROM',
   'RESOLVES_TO',  // Promise resolve() data flow
+  'YIELDS',       // Generator yield data flow (REG-270)
+  'DELEGATES_TO', // Generator yield* delegation (REG-270)
 ]);
 
 // Store initial edge types for reset

@@ -97,6 +97,7 @@ import type {
   ObjectMutationValue,
   VariableReassignmentInfo,
   ReturnStatementInfo,
+  YieldExpressionInfo,
   UpdateExpressionInfo,
   PromiseResolutionInfo,
   PromiseExecutorContext,
@@ -165,6 +166,8 @@ interface Collections {
   promiseResolutions: PromiseResolutionInfo[];
   // Promise executor contexts (REG-334) - keyed by executor function's start:end position
   promiseExecutorContexts: Map<string, PromiseExecutorContext>;
+  // Yield expression tracking for YIELDS/DELEGATES_TO edges (REG-270)
+  yieldExpressions: YieldExpressionInfo[];
   objectLiteralCounterRef: CounterRef;
   arrayLiteralCounterRef: CounterRef;
   ifScopeCounterRef: CounterRef;
@@ -1458,6 +1461,8 @@ export class JSASTAnalyzer extends Plugin {
       const promiseResolutions: PromiseResolutionInfo[] = [];
       // Promise executor contexts (REG-334) - keyed by executor function's start:end position
       const promiseExecutorContexts = new Map<string, PromiseExecutorContext>();
+      // Yield expression tracking for YIELDS/DELEGATES_TO edges (REG-270)
+      const yieldExpressions: YieldExpressionInfo[] = [];
 
       const ifScopeCounterRef: CounterRef = { value: 0 };
       const scopeCounterRef: CounterRef = { value: 0 };
@@ -1533,6 +1538,8 @@ export class JSASTAnalyzer extends Plugin {
         // Promise resolution tracking (REG-334)
         promiseResolutions,
         promiseExecutorContexts,
+        // Yield expression tracking (REG-270)
+        yieldExpressions,
         objectLiteralCounterRef, arrayLiteralCounterRef,
         ifScopeCounterRef, scopeCounterRef, varDeclCounterRef,
         callSiteCounterRef, functionCounterRef, httpRequestCounterRef,
@@ -1897,6 +1904,8 @@ export class JSASTAnalyzer extends Plugin {
         variableReassignments,
         // Return statement tracking
         returnStatements,
+        // Yield expression tracking (REG-270)
+        yieldExpressions,
         // Update expression tracking (REG-288, REG-312)
         updateExpressions,
         // Promise resolution tracking (REG-334)
@@ -2973,7 +2982,7 @@ export class JSASTAnalyzer extends Plugin {
     literalCounterRef: CounterRef,
     baseLine: number,
     baseColumn: number,
-    literalIdSuffix: 'return' | 'implicit_return' = 'return'
+    literalIdSuffix: 'return' | 'implicit_return' | 'yield' = 'return'
   ): Partial<ReturnStatementInfo> {
     const exprLine = getLine(expr);
     const exprColumn = getColumn(expr);
@@ -3528,6 +3537,11 @@ export class JSASTAnalyzer extends Plugin {
     const objectProperties = collections.objectProperties as ObjectPropertyInfo[];
     const objectLiteralCounterRef = collections.objectLiteralCounterRef as CounterRef;
     const returnStatements = (collections.returnStatements ?? []) as ReturnStatementInfo[];
+    // Initialize yieldExpressions if not exist to ensure nested function calls share same array
+    if (!collections.yieldExpressions) {
+      collections.yieldExpressions = [];
+    }
+    const yieldExpressions = collections.yieldExpressions as YieldExpressionInfo[];
     const parameters = (collections.parameters ?? []) as ParameterInfo[];
     // Control flow collections (Phase 2: LOOP nodes)
     // Initialize if not exist to ensure nested function calls share same arrays
@@ -3813,6 +3827,82 @@ export class JSASTAnalyzer extends Plugin {
         }
 
         controlFlowState.hasThrow = true;
+      },
+
+      // Handle yield expressions for YIELDS/DELEGATES_TO edges (REG-270)
+      YieldExpression: (yieldPath: NodePath<t.YieldExpression>) => {
+        // Skip if we couldn't determine the function ID
+        if (!currentFunctionId) {
+          return;
+        }
+
+        // Skip if this yield is inside a nested function (not the function we're analyzing)
+        // Check if there's a function ancestor BETWEEN us and funcNode
+        let parent: NodePath | null = yieldPath.parentPath;
+        while (parent) {
+          // If we've reached funcNode, we're done checking - this yield belongs to funcNode
+          if (parent.node === funcNode) {
+            break;
+          }
+          if (t.isFunction(parent.node)) {
+            // Found a function between yieldPath and funcNode - this yield is inside a nested function
+            return;
+          }
+          parent = parent.parentPath;
+        }
+
+        const yieldNode = yieldPath.node;
+        const yieldLine = getLine(yieldNode);
+        const yieldColumn = getColumn(yieldNode);
+        const isDelegate = yieldNode.delegate ?? false;
+
+        // Handle bare yield; (no value) - only valid for non-delegate yield
+        if (!yieldNode.argument && !isDelegate) {
+          // Skip - no data flow value
+          return;
+        }
+
+        // For yield* without argument (syntax error in practice, but handle gracefully)
+        if (!yieldNode.argument) {
+          return;
+        }
+
+        const arg = yieldNode.argument;
+
+        // Extract expression-specific info using shared method
+        // Note: We reuse extractReturnExpressionInfo since yield values have identical semantics
+        const exprInfo = this.extractReturnExpressionInfo(
+          arg, module, literals, literalCounterRef, yieldLine, yieldColumn, 'yield'
+        );
+
+        // Map ReturnStatementInfo fields to YieldExpressionInfo fields
+        const yieldInfo: YieldExpressionInfo = {
+          parentFunctionId: currentFunctionId,
+          file: module.file,
+          line: yieldLine,
+          column: yieldColumn,
+          isDelegate,
+          yieldValueType: exprInfo.returnValueType ?? 'NONE',
+          yieldValueName: exprInfo.returnValueName,
+          yieldValueId: exprInfo.returnValueId,
+          yieldValueLine: exprInfo.returnValueLine,
+          yieldValueColumn: exprInfo.returnValueColumn,
+          yieldValueCallName: exprInfo.returnValueCallName,
+          expressionType: exprInfo.expressionType,
+          operator: exprInfo.operator,
+          leftSourceName: exprInfo.leftSourceName,
+          rightSourceName: exprInfo.rightSourceName,
+          consequentSourceName: exprInfo.consequentSourceName,
+          alternateSourceName: exprInfo.alternateSourceName,
+          object: exprInfo.object,
+          property: exprInfo.property,
+          computed: exprInfo.computed,
+          objectSourceName: exprInfo.objectSourceName,
+          expressionSourceNames: exprInfo.expressionSourceNames,
+          unaryArgSourceName: exprInfo.unaryArgSourceName,
+        };
+
+        yieldExpressions.push(yieldInfo);
       },
 
       ForStatement: this.createLoopScopeHandler('for', 'for-loop', 'for', parentScopeId, module, scopes, loops, scopeCounterRef, loopCounterRef, scopeTracker, scopeIdStack, controlFlowState),

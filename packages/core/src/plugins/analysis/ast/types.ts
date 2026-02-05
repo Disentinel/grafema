@@ -653,6 +653,69 @@ export interface ReturnStatementInfo {
   isImplicitReturn?: boolean;
 }
 
+// === YIELD EXPRESSION INFO (REG-270) ===
+/**
+ * Tracks yield expressions for YIELDS and DELEGATES_TO edge creation in GraphBuilder.
+ * Used to connect yielded expressions to their containing generator functions.
+ *
+ * Edge direction:
+ * - For yield:  yieldedExpression --YIELDS--> generatorFunction
+ * - For yield*: delegatedCall --DELEGATES_TO--> generatorFunction
+ *
+ * Examples:
+ * - `yield 42;` creates: LITERAL(42) --YIELDS--> FUNCTION(gen)
+ * - `yield* otherGen();` creates: CALL(otherGen) --DELEGATES_TO--> FUNCTION(gen)
+ */
+export interface YieldExpressionInfo {
+  parentFunctionId: string;          // ID of the containing generator function
+  file: string;
+  line: number;
+  column: number;
+
+  /** true for yield*, false for yield */
+  isDelegate: boolean;
+
+  // Yield value type determines how to resolve the source node
+  // Uses same types as ReturnStatementInfo for code reuse
+  yieldValueType: 'VARIABLE' | 'CALL_SITE' | 'METHOD_CALL' | 'LITERAL' | 'EXPRESSION' | 'NONE';
+
+  // For VARIABLE type
+  yieldValueName?: string;
+
+  // For LITERAL type - the literal node ID
+  yieldValueId?: string;
+
+  // For CALL_SITE/METHOD_CALL type - coordinates for lookup
+  yieldValueLine?: number;
+  yieldValueColumn?: number;
+  yieldValueCallName?: string;
+
+  // For EXPRESSION type (BinaryExpression, ConditionalExpression, etc.)
+  expressionType?: string;
+
+  // For EXPRESSION type - source variable extraction (mirrors ReturnStatementInfo)
+  // For BinaryExpression/LogicalExpression
+  operator?: string;
+  leftSourceName?: string;
+  rightSourceName?: string;
+
+  // For ConditionalExpression
+  consequentSourceName?: string;
+  alternateSourceName?: string;
+
+  // For MemberExpression
+  object?: string;
+  property?: string;
+  computed?: boolean;
+  objectSourceName?: string;
+
+  // For TemplateLiteral
+  expressionSourceNames?: string[];
+
+  // For UnaryExpression
+  unaryArgSourceName?: string;
+}
+
 /**
  * Resolution status for computed property names.
  * Used in FLOWS_INTO edge metadata to indicate how property name was determined.
@@ -925,6 +988,8 @@ export interface ASTCollections {
   promiseResolutions?: PromiseResolutionInfo[];
   // Promise executor contexts (REG-334) - keyed by executor function's start:end position
   promiseExecutorContexts?: Map<string, PromiseExecutorContext>;
+  // Yield expression tracking for YIELDS/DELEGATES_TO edges (REG-270)
+  yieldExpressions?: YieldExpressionInfo[];
   // TypeScript-specific collections
   interfaces?: InterfaceDeclarationInfo[];
   typeAliases?: TypeAliasInfo[];
