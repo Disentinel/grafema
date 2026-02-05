@@ -52,6 +52,11 @@
         "command": "grafema.refreshEdges",
         "title": "Refresh",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "grafema.copyTreeState",
+        "title": "Grafema: Copy Tree State",
+        "icon": "$(clippy)"
       }
     ],
     "menus": {
@@ -75,6 +80,11 @@
           "command": "grafema.refreshEdges",
           "when": "view == grafemaExplore",
           "group": "navigation@4"
+        },
+        {
+          "command": "grafema.copyTreeState",
+          "when": "view == grafemaExplore",
+          "group": "navigation@5"
         }
       ],
       "view/item/context": [
@@ -108,6 +118,12 @@
         "key": "ctrl+shift+g",
         "mac": "cmd+shift+g",
         "when": "editorTextFocus"
+      },
+      {
+        "command": "grafema.copyTreeState",
+        "key": "ctrl+shift+c",
+        "mac": "cmd+shift+c",
+        "when": "focusedView == grafemaExplore"
       }
     ]
   },
