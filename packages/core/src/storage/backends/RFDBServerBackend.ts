@@ -253,19 +253,12 @@ export class RFDBServerBackend {
     console.log(`[RFDBServerBackend] Starting: ${binaryPath} ${this.dbPath} --socket ${this.socketPath}`);
 
     this.serverProcess = spawn(binaryPath, [this.dbPath, '--socket', this.socketPath], {
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ['ignore', 'ignore', 'inherit'], // stdin/stdout ignored, stderr inherited
       detached: true, // Allow server to outlive this process
     });
 
     // Don't let server process prevent parent from exiting
     this.serverProcess.unref();
-
-    this.serverProcess.stderr?.on('data', (data: Buffer) => {
-      const msg = data.toString().trim();
-      if (!msg.includes('FLUSH') && !msg.includes('WRITER')) {
-        console.log(`[rfdb-server] ${msg}`);
-      }
-    });
 
     this.serverProcess.on('error', (err: Error) => {
       console.error(`[RFDBServerBackend] Server process error:`, err);
