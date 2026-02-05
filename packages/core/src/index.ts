@@ -186,7 +186,8 @@ export { SystemDbAnalyzer } from './plugins/analysis/SystemDbAnalyzer.js';
 export { IncrementalAnalysisPlugin } from './plugins/analysis/IncrementalAnalysisPlugin.js';
 
 // Enrichment plugins
-export { MethodCallResolver } from './plugins/enrichment/MethodCallResolver.js';
+export { MethodCallResolver, LIBRARY_SEMANTIC_GROUPS } from './plugins/enrichment/MethodCallResolver.js';
+export type { LibraryCallStats } from './plugins/enrichment/MethodCallResolver.js';
 export { ArgumentParameterLinker } from './plugins/enrichment/ArgumentParameterLinker.js';
 export { AliasTracker } from './plugins/enrichment/AliasTracker.js';
 export { ValueDomainAnalyzer } from './plugins/enrichment/ValueDomainAnalyzer.js';
