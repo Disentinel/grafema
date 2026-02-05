@@ -290,6 +290,52 @@ class TestDatabaseBackend {
     return this._client;
   }
 
+  /**
+   * Parse a wire format node into the expected application format.
+   * Wire format has metadata as JSON string, this parses and spreads it.
+   */
+  _parseNode(wireNode) {
+    if (!wireNode) return null;
+
+    const metadata = wireNode.metadata
+      ? (typeof wireNode.metadata === 'string' ? JSON.parse(wireNode.metadata) : wireNode.metadata)
+      : {};
+
+    // Parse nested JSON strings in metadata
+    for (const [key, value] of Object.entries(metadata)) {
+      if (typeof value === 'string' && (value.startsWith('[') || value.startsWith('{'))) {
+        try {
+          metadata[key] = JSON.parse(value);
+        } catch {
+          // Keep as string
+        }
+      }
+    }
+
+    const humanId = metadata.originalId || wireNode.id;
+
+    // Exclude standard fields from metadata to prevent overwriting
+    const {
+      id: _id,
+      type: _type,
+      name: _name,
+      file: _file,
+      exported: _exported,
+      nodeType: _nodeType,
+      originalId: _originalId,
+      ...safeMetadata
+    } = metadata;
+
+    return {
+      id: humanId,
+      type: wireNode.nodeType,
+      name: wireNode.name,
+      file: wireNode.file,
+      exported: wireNode.exported,
+      ...safeMetadata,
+    };
+  }
+
   // === Write Operations ===
   async addNode(node) {
     return this._client.addNodes([node]);
@@ -325,7 +371,8 @@ class TestDatabaseBackend {
 
   // === Read Operations ===
   async getNode(id) {
-    return this._client.getNode(id);
+    const wireNode = await this._client.getNode(id);
+    return this._parseNode(wireNode);
   }
 
   async nodeExists(id) {
@@ -341,11 +388,14 @@ class TestDatabaseBackend {
   }
 
   async *queryNodes(query) {
-    yield* this._client.queryNodes(query);
+    for await (const wireNode of this._client.queryNodes(query)) {
+      yield this._parseNode(wireNode);
+    }
   }
 
   async getAllNodes(query = {}) {
-    return this._client.getAllNodes(query);
+    const wireNodes = await this._client.getAllNodes(query);
+    return wireNodes.map(n => this._parseNode(n));
   }
 
   async getAllEdges() {

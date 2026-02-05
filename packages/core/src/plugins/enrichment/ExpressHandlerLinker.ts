@@ -18,14 +18,14 @@ import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { BaseNodeRecord } from '@grafema/types';
 
 /**
- * Extended http:route node with handler metadata
+ * Extended http:route node with handler identification fields.
+ * Note: These fields are stored at the top level after metadata parsing,
+ * not nested under a metadata object.
  */
 interface HttpRouteNode extends BaseNodeRecord {
   type: 'http:route';
-  metadata?: {
-    handlerStart?: number;  // Byte offset for inline handlers
-    handlerName?: string;   // Function name for named handlers
-  };
+  handlerStart?: number;  // Byte offset for inline handlers
+  handlerName?: string;   // Function name for named handlers
 }
 
 /**
@@ -117,8 +117,9 @@ export class ExpressHandlerLinker extends Plugin {
           });
         }
 
-        const handlerStart = route.metadata?.handlerStart;
-        const handlerName = route.metadata?.handlerName;
+        // Handler identification is stored at top level after metadata parsing
+        const handlerStart = route.handlerStart;
+        const handlerName = route.handlerName;
 
         // Try to find handler function
         let handlerId: string | undefined;

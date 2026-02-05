@@ -63,6 +63,7 @@ async function setupTest(backend, files) {
 
 async function getNodesByType(backend, nodeType) {
   const allNodes = await backend.getAllNodes();
+  // TestDatabaseBackend._parseNode returns nodes with 'type' field
   return allNodes.filter((n) => n.type === nodeType);
 }
 
@@ -75,7 +76,20 @@ async function getEdgesByType(backend, edgeType) {
     allEdges.push(...outgoing);
   }
 
-  return allEdges.filter(e => e.type === edgeType);
+  // Parse edge metadata and extract original IDs
+  return allEdges
+    .filter(e => (e.edgeType || e.type) === edgeType)
+    .map(e => {
+      const meta = e.metadata
+        ? (typeof e.metadata === 'string' ? JSON.parse(e.metadata) : e.metadata)
+        : {};
+      return {
+        ...e,
+        type: e.edgeType || e.type,
+        src: meta._origSrc || e.src,
+        dst: meta._origDst || e.dst,
+      };
+    });
 }
 
 // =============================================================================
@@ -268,11 +282,11 @@ export default router;
     assert.strictEqual(targetNode.type, 'FUNCTION', 'Target should be FUNCTION');
 
     // The actual handler is the async arrow function inside asyncHandler,
-    // which is on line 8 (the line with async (req, res) => ...)
+    // which is on line 7 (the line with router.post('/items', asyncHandler(async (req, res) => ...)
     assert.strictEqual(
       targetNode.line,
-      8,
-      `HANDLED_BY should point to unwrapped handler at line 8, got line ${targetNode.line}`
+      7,
+      `HANDLED_BY should point to unwrapped handler at line 7, got line ${targetNode.line}`
     );
   });
 });
