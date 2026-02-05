@@ -55,6 +55,7 @@ import {
   BrokenImportValidator,
 } from '@grafema/core';
 import type { LogLevel } from '@grafema/types';
+import { ProgressRenderer } from '../utils/progressRenderer.js';
 
 const BUILTIN_PLUGINS: Record<string, () => Plugin> = {
   // Discovery
@@ -276,6 +277,16 @@ Note: Start the server first with: grafema server start
 
     const startTime = Date.now();
 
+    // Create progress renderer for CLI output
+    // In quiet mode, use a no-op renderer (skip rendering)
+    // In verbose mode, use non-interactive (newlines per update)
+    // In normal mode, use interactive (spinner with line overwrite)
+    const renderer = options.quiet
+      ? null
+      : new ProgressRenderer({
+          isInteractive: !options.verbose && process.stdout.isTTY,
+        });
+
     const orchestrator = new Orchestrator({
       graph: backend as unknown as import('@grafema/types').GraphBackend,
       plugins,
@@ -286,9 +297,7 @@ Note: Start the server first with: grafema server start
       services: config.services.length > 0 ? config.services : undefined,  // Pass config services (REG-174)
       strictMode, // REG-330: Pass strict mode flag
       onProgress: (progress) => {
-        if (options.verbose) {
-          log(`[${progress.phase}] ${progress.message}`);
-        }
+        renderer?.update(progress);
       },
     });
 
@@ -298,11 +307,15 @@ Note: Start the server first with: grafema server start
       await orchestrator.run(projectPath);
       await backend.flush();
 
-      const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
+      const elapsedSeconds = (Date.now() - startTime) / 1000;
       const stats = await backend.getStats();
 
+      // Clear progress line in interactive mode, then show results
+      if (renderer && process.stdout.isTTY) {
+        process.stdout.write('\r\x1b[K'); // Clear line
+      }
       log('');
-      log(`Analysis complete in ${elapsed}s`);
+      log(renderer ? renderer.finish(elapsedSeconds) : `Analysis complete in ${elapsedSeconds.toFixed(2)}s`);
       log(`  Nodes: ${stats.nodeCount}`);
       log(`  Edges: ${stats.edgeCount}`);
 
