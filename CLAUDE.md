@@ -549,3 +549,26 @@ npm test                    # Run all tests
 npm run build              # Build project
 node --test test/unit/     # Run unit tests only
 ```
+
+## Skills
+
+Project-specific skills are available in `.claude/skills/`. Key skills:
+
+### /release
+**Skill:** `grafema-release`
+
+Use when publishing new versions to npm. Covers:
+- Version bumping across packages
+- CHANGELOG.md updates
+- Building packages
+- Publishing with pnpm (converts `workspace:*`)
+- Updating dist-tags
+
+**Trigger:** User says "release", "publish", "bump version"
+
+### Other Skills
+
+See `.claude/skills/` for debugging skills:
+- `grafema-cli-dev-workflow` — build before running CLI
+- `grafema-cross-file-operations` — enrichment phase for cross-file edges
+- `pnpm-workspace-publish` — use `pnpm publish` not `npm publish`

@@ -2,6 +2,32 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.4-beta] - 2026-02-05
+
+### Infrastructure
+
+- **Shared binary finder**: Unified `findRfdbBinary()` utility across CLI, MCP, VS Code extension
+- **Linux support**: Added `~/grafema` and `/home/vadimr/grafema` dev paths for Linux
+- **Explicit server lifecycle**: `grafema server start/stop/status` commands
+- **Binary path config**: Support `server.binaryPath` in config.yaml and `--binary` flag
+- **Release skill**: Added `/release` skill for npm publishing workflow
+
+### Known Issues
+
+- VS Code extension build broken (REG-349: RustAnalyzer top-level await + CJS)
+
+---
+
+## [0.2.3-beta] - 2026-02-04
+
+### Bug Fixes
+
+- Fixed `--version` showing hardcoded 0.1.0 instead of actual version
+- Ported custom plugin loading from MCP to CLI (`.grafema/plugins/`)
+- Added `~/.local/bin/rfdb-server` fallback for user-built binaries
+
+---
+
 ## [0.2.0-beta] - 2026-02-04
 
 ### Highlights
