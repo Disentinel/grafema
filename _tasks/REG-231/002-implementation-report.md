@@ -27,12 +27,9 @@
 
 ## Pre-existing Issues Discovered
 
-### Type Errors
-1. **vscode extension** (`packages/vscode/src/extension.ts:173`): debounce function type mismatch
-2. **cli** (`packages/cli/src/commands/analyze.ts:41`): Missing `ExpressHandlerLinker` export
-3. **cli** (`packages/cli/src/commands/analyze.ts:242`): Unknown `silent` property
-
-These should be tracked as separate issues.
+### Type Errors (tracked as separate issues)
+1. **REG-355**: CLI type errors - Missing `ExpressHandlerLinker` export, unknown `silent` property
+2. **REG-356**: VSCode extension type error - debounce function type mismatch
 
 ## Timing Comparison
 
