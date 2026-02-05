@@ -23,6 +23,9 @@ export type { LogLevel } from './logging/Logger.js';
 // Diagnostics
 export { DiagnosticCollector, DiagnosticReporter, DiagnosticWriter } from './diagnostics/index.js';
 export type { Diagnostic, DiagnosticInput, ReportOptions, SummaryStats } from './diagnostics/index.js';
+// Diagnostic categories (single source of truth)
+export { DIAGNOSTIC_CATEGORIES, CODE_TO_CATEGORY, getCategoryForCode, getCodesForCategory } from './diagnostics/index.js';
+export type { DiagnosticCategory, DiagnosticCategoryKey, CodeCategoryInfo } from './diagnostics/index.js';
 
 // Config
 export { loadConfig, DEFAULT_CONFIG } from './config/index.js';
