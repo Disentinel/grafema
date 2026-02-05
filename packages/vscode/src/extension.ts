@@ -33,8 +33,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   const workspaceRoot = workspaceFolders[0].uri.fsPath;
 
+  // Get rfdb-server path from settings (if configured)
+  const config = vscode.workspace.getConfiguration('grafema');
+  const rfdbServerPath = config.get<string>('rfdbServerPath') || undefined;
+
   // Initialize client manager
-  clientManager = new GrafemaClientManager(workspaceRoot);
+  clientManager = new GrafemaClientManager(workspaceRoot, rfdbServerPath);
 
   // Initialize tree provider
   edgesProvider = new EdgesProvider(clientManager);

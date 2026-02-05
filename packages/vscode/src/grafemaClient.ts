@@ -33,15 +33,17 @@ function sleep(ms: number): Promise<void> {
  */
 export class GrafemaClientManager extends EventEmitter {
   private workspaceRoot: string;
+  private explicitBinaryPath: string | null;
   private client: RFDBClient | null = null;
   private serverProcess: ChildProcess | null = null;
   private _state: ConnectionState = { status: 'disconnected' };
   private socketWatcher: FSWatcher | null = null;
   private reconnecting = false;
 
-  constructor(workspaceRoot: string) {
+  constructor(workspaceRoot: string, explicitBinaryPath?: string) {
     super();
     this.workspaceRoot = workspaceRoot;
+    this.explicitBinaryPath = explicitBinaryPath || null;
   }
 
   get state(): ConnectionState {
@@ -138,13 +140,18 @@ export class GrafemaClientManager extends EventEmitter {
    * Follows same pattern as RFDBServerBackend
    */
   private findServerBinary(): string | null {
-    // 0. Check GRAFEMA_RFDB_SERVER environment variable
+    // 0. Check explicit path from VS Code setting
+    if (this.explicitBinaryPath && existsSync(this.explicitBinaryPath)) {
+      return this.explicitBinaryPath;
+    }
+
+    // 1. Check GRAFEMA_RFDB_SERVER environment variable
     const envBinary = process.env.GRAFEMA_RFDB_SERVER;
     if (envBinary && existsSync(envBinary)) {
       return envBinary;
     }
 
-    // 1. Check packages/rfdb-server in monorepo (development)
+    // 2. Check packages/rfdb-server in monorepo (development)
     // Navigate up from node_modules to find monorepo root
     const possibleRoots = [
       // When running from extension host
@@ -169,7 +176,7 @@ export class GrafemaClientManager extends EventEmitter {
       }
     }
 
-    // 2. Check @grafema/rfdb npm package
+    // 3. Check @grafema/rfdb npm package
     try {
       // Use require.resolve to find the package
       const rfdbPkg = require.resolve('@grafema/rfdb');
