@@ -170,7 +170,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   // Follow cursor on selection change
   const selectionChangeListener = vscode.window.onDidChangeTextEditorSelection(
-    debounce(async (event: vscode.TextEditorSelectionChangeEvent) => {
+    debounce(async (_event: vscode.TextEditorSelectionChangeEvent) => {
       if (followCursor && clientManager?.isConnected()) {
         await findAndSetRoot(false);
       }
@@ -269,13 +269,13 @@ function updateStatusBar(): void {
 /**
  * Simple debounce helper
  */
-function debounce<T extends (...args: unknown[]) => unknown>(
-  fn: T,
+function debounce<Args extends unknown[]>(
+  fn: (...args: Args) => void | Promise<void>,
   delay: number
-): (...args: Parameters<T>) => void {
+): (...args: Args) => void {
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
 
-  return (...args: Parameters<T>) => {
+  return (...args: Args) => {
     if (timeoutId) {
       clearTimeout(timeoutId);
     }
