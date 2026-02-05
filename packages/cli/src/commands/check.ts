@@ -40,7 +40,7 @@ const BUILT_IN_VALIDATORS: Record<string, { name: string; description: string }>
 };
 
 // Re-export for backward compatibility (deprecated - import from @grafema/core instead)
-export { DIAGNOSTIC_CATEGORIES as DIAGNOSTIC_CATEGORIES };
+export { DIAGNOSTIC_CATEGORIES as CHECK_CATEGORIES };
 
 export const checkCommand = new Command('check')
   .description('Check invariants/guarantees')
