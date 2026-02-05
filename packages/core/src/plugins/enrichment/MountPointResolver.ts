@@ -19,8 +19,7 @@ import { Plugin } from '../Plugin.js';
 import { createSuccessResult, createErrorResult } from '@grafema/types';
 import type { PluginMetadata, PluginContext, PluginResult } from '@grafema/types';
 import type { BaseNodeRecord } from '@grafema/types';
-import { dirname, resolve, join } from 'path';
-import { existsSync } from 'fs';
+import { isRelativeImport, resolveRelativeSpecifier } from '../../utils/moduleResolution.js';
 
 interface MountNode {
   id: string;
@@ -62,32 +61,15 @@ export class MountPointResolver extends Plugin {
 
   /**
    * Resolve relative import source to absolute file path.
-   * Replicates JSModuleIndexer.resolveModulePath() logic.
+   * Uses shared utility from moduleResolution.ts (REG-320).
    */
   private resolveImportSource(importSource: string, containingFile: string): string | null {
     // Only handle relative imports
-    if (!importSource.startsWith('./') && !importSource.startsWith('../')) {
+    if (!isRelativeImport(importSource)) {
       return null;  // External package
     }
 
-    const dir = dirname(containingFile);
-    const basePath = resolve(dir, importSource);
-
-    // Try direct path
-    if (existsSync(basePath)) return basePath;
-
-    // Try extensions
-    for (const ext of ['.js', '.mjs', '.jsx', '.ts', '.tsx']) {
-      if (existsSync(basePath + ext)) return basePath + ext;
-    }
-
-    // Try index files
-    for (const indexFile of ['index.js', 'index.ts', 'index.mjs', 'index.tsx']) {
-      const indexPath = join(basePath, indexFile);
-      if (existsSync(indexPath)) return indexPath;
-    }
-
-    return null;
+    return resolveRelativeSpecifier(importSource, containingFile, { useFilesystem: true });
   }
 
   async execute(context: PluginContext): Promise<PluginResult> {

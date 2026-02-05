@@ -83,6 +83,16 @@ export type { FileExplainResult, EnhancedNode } from './core/FileExplainer.js';
 // Hash utilities
 export { calculateFileHash, calculateFileHashAsync, calculateContentHash } from './core/HashUtils.js';
 
+// Module resolution utilities (REG-320)
+export {
+  resolveModulePath,
+  isRelativeImport,
+  resolveRelativeSpecifier,
+  DEFAULT_EXTENSIONS,
+  DEFAULT_INDEX_FILES
+} from './utils/moduleResolution.js';
+export type { ModuleResolutionOptions } from './utils/moduleResolution.js';
+
 // Type validation and path validation
 export {
   levenshtein,

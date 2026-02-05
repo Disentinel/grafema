@@ -16,6 +16,7 @@ import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { BaseNodeRecord } from '@grafema/types';
 import { dirname, resolve } from 'path';
 import { StrictModeError } from '../../errors/GrafemaError.js';
+import { resolveModulePath as resolveModulePathUtil } from '../../utils/moduleResolution.js';
 
 // === INTERFACES ===
 
@@ -353,22 +354,21 @@ export class FunctionCallResolver extends Plugin {
    * @param fileIndex - Set or Map of known file paths for existence checking
    * @returns Resolved file path or null if not found
    */
+  /**
+   * Resolve module path using in-memory file index.
+   * Uses shared utility from moduleResolution.ts (REG-320).
+   * Now supports all extensions (.mjs, .cjs, etc.) - fixes previous bug.
+   */
   private resolveModulePath(
     currentDir: string,
     specifier: string,
     fileIndex: Set<string>
   ): string | null {
     const basePath = resolve(currentDir, specifier);
-    const extensions = ['', '.js', '.ts', '.jsx', '.tsx', '/index.js', '/index.ts'];
-
-    for (const ext of extensions) {
-      const testPath = basePath + ext;
-      if (fileIndex.has(testPath)) {
-        return testPath;
-      }
-    }
-
-    return null;
+    return resolveModulePathUtil(basePath, {
+      useFilesystem: false,
+      fileIndex
+    });
   }
 
   /**

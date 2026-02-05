@@ -13,6 +13,7 @@ import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import Walker from 'node-source-walk';
 import { NodeFactory } from '../../core/NodeFactory.js';
 import { LanguageError } from '../../errors/GrafemaError.js';
+import { resolveModulePath as resolveModulePathUtil } from '../../utils/moduleResolution.js';
 
 /**
  * Manifest with service info
@@ -237,23 +238,12 @@ export class JSModuleIndexer extends Plugin {
   }
 
   /**
-   * Резолвит путь к модулю (добавляет .js/.ts если нужно)
+   * Resolve module path (adds .js/.ts if needed).
+   * Uses shared utility from moduleResolution.ts (REG-320).
+   * Falls back to original path if not found (preserves original behavior).
    */
   private resolveModulePath(path: string): string {
-    if (existsSync(path)) return path;
-    // Try JavaScript extensions
-    if (existsSync(path + '.js')) return path + '.js';
-    if (existsSync(path + '.mjs')) return path + '.mjs';
-    if (existsSync(path + '.jsx')) return path + '.jsx';
-    // Try TypeScript extensions
-    if (existsSync(path + '.ts')) return path + '.ts';
-    if (existsSync(path + '.tsx')) return path + '.tsx';
-    // Try index files
-    if (existsSync(join(path, 'index.js'))) return join(path, 'index.js');
-    if (existsSync(join(path, 'index.ts'))) return join(path, 'index.ts');
-    if (existsSync(join(path, 'index.mjs'))) return join(path, 'index.mjs');
-    if (existsSync(join(path, 'index.tsx'))) return join(path, 'index.tsx');
-    return path;
+    return resolveModulePathUtil(path, { useFilesystem: true }) ?? path;
   }
 
   async execute(context: PluginContext): Promise<PluginResult> {
