@@ -125,7 +125,17 @@
         "mac": "cmd+shift+c",
         "when": "focusedView == grafemaExplore"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "Grafema",
+      "properties": {
+        "grafema.rfdbServerPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to rfdb-server binary. If empty, auto-detect."
+        }
+      }
+    }
   },
   "scripts": {
     "build": "node esbuild.config.mjs",
