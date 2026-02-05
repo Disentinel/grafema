@@ -95,6 +95,7 @@ export const DEFAULT_CONFIG: GrafemaConfig = {
       'ClosureCaptureEnricher',
       'ValueDomainAnalyzer',
       'MountPointResolver',
+      'ExpressHandlerLinker',
       'PrefixEvaluator',
       'ImportExportLinker',
       'HTTPConnectionEnricher',

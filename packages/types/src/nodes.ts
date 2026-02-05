@@ -117,6 +117,7 @@ export interface FunctionNodeRecord extends BaseNodeRecord {
   returnType?: string;       // Return type
   signature?: string;        // Full signature: "(a: T) => R"
   jsdocSummary?: string;     // First line of JSDoc
+  start?: number;            // Byte offset in file (for positional linking)
 }
 
 // Class node
