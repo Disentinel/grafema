@@ -145,7 +145,7 @@ export function orphanFunction() {
     const initResult = runCli(['init'], tempDir);
     assert.strictEqual(initResult.status, 0, `init failed: ${initResult.stderr}`);
 
-    const analyzeResult = runCli(['analyze'], tempDir);
+    const analyzeResult = runCli(['analyze', '--auto-start'], tempDir);
     assert.strictEqual(analyzeResult.status, 0, `analyze failed: ${analyzeResult.stderr}`);
   }
 

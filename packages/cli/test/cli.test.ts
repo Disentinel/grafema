@@ -299,7 +299,7 @@ module.exports = { hello, greet };
     assert.ok(existsSync(configPath), '.grafema/config.yaml should be created');
 
     // Step 2: Run analyze with --clear flag
-    const analyzeResult = await runCliInDir(e2eDir, ['analyze', '--clear']);
+    const analyzeResult = await runCliInDir(e2eDir, ['analyze', '--clear', '--auto-start']);
     assert.strictEqual(analyzeResult.code, 0, `analyze failed: ${analyzeResult.stderr}`);
     assert.ok(analyzeResult.stdout.includes('Analysis complete'), 'analyze should complete');
     assert.ok(analyzeResult.stdout.includes('Nodes:'), 'analyze should show node count');

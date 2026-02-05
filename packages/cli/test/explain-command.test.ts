@@ -115,7 +115,7 @@ module.exports = { fetchData, processData, DataService };
     const initResult = runCli(['init'], tempDir);
     assert.strictEqual(initResult.status, 0, `init failed: ${initResult.stderr}`);
 
-    const analyzeResult = runCli(['analyze'], tempDir);
+    const analyzeResult = runCli(['analyze', '--auto-start'], tempDir);
     assert.strictEqual(analyzeResult.status, 0, `analyze failed: ${analyzeResult.stderr}`);
   }
 
@@ -438,7 +438,7 @@ module.exports = { fetchData, processData, DataService };
       );
 
       runCli(['init'], tempDir);
-      runCli(['analyze'], tempDir);
+      runCli(['analyze', '--auto-start'], tempDir);
 
       const result = runCli(['explain', 'src/constants.js'], tempDir);
 
