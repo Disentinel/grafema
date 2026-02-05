@@ -170,6 +170,74 @@ const COMMON_LIBRARY_METHODS = new Set([
 ]);
 
 /**
+ * Semantic groups for library coverage reporting.
+ * Maps library namespaces to their semantic category and suggested plugin.
+ */
+export const LIBRARY_SEMANTIC_GROUPS: Record<string, { semantic: string; suggestedPlugin: string; description: string }> = {
+  // HTTP Clients
+  axios: { semantic: 'http-client', suggestedPlugin: 'FetchAnalyzer', description: 'HTTP requests not tracked' },
+  got: { semantic: 'http-client', suggestedPlugin: 'FetchAnalyzer', description: 'HTTP requests not tracked' },
+  superagent: { semantic: 'http-client', suggestedPlugin: 'FetchAnalyzer', description: 'HTTP requests not tracked' },
+  request: { semantic: 'http-client', suggestedPlugin: 'FetchAnalyzer', description: 'HTTP requests not tracked' },
+  ky: { semantic: 'http-client', suggestedPlugin: 'FetchAnalyzer', description: 'HTTP requests not tracked' },
+
+  // HTTP Response (Express-like)
+  res: { semantic: 'http-response', suggestedPlugin: 'ExpressResponseAnalyzer', description: 'Response data flow not tracked' },
+  ctx: { semantic: 'http-response', suggestedPlugin: 'KoaResponseAnalyzer', description: 'Response data flow not tracked' },
+  reply: { semantic: 'http-response', suggestedPlugin: 'FastifyResponseAnalyzer', description: 'Response data flow not tracked' },
+
+  // Routers
+  router: { semantic: 'http-router', suggestedPlugin: 'ExpressRouteAnalyzer', description: 'Routes may not be tracked' },
+  app: { semantic: 'http-router', suggestedPlugin: 'ExpressRouteAnalyzer', description: 'Routes may not be tracked' },
+
+  // WebSocket
+  socket: { semantic: 'websocket', suggestedPlugin: 'SocketIOAnalyzer', description: 'WebSocket events not tracked' },
+  io: { semantic: 'websocket', suggestedPlugin: 'SocketIOAnalyzer', description: 'WebSocket events not tracked' },
+  ws: { semantic: 'websocket', suggestedPlugin: 'WebSocketAnalyzer', description: 'WebSocket events not tracked' },
+
+  // Database
+  knex: { semantic: 'database', suggestedPlugin: 'KnexAnalyzer', description: 'Database queries not tracked' },
+  sequelize: { semantic: 'database', suggestedPlugin: 'SequelizeAnalyzer', description: 'Database queries not tracked' },
+  prisma: { semantic: 'database', suggestedPlugin: 'PrismaAnalyzer', description: 'Database queries not tracked' },
+  mongoose: { semantic: 'database', suggestedPlugin: 'MongooseAnalyzer', description: 'Database queries not tracked' },
+  db: { semantic: 'database', suggestedPlugin: 'DatabaseAnalyzer', description: 'Database queries not tracked' },
+  pool: { semantic: 'database', suggestedPlugin: 'DatabaseAnalyzer', description: 'Database queries not tracked' },
+
+  // Auth
+  jwt: { semantic: 'auth', suggestedPlugin: 'AuthAnalyzer', description: 'Auth flow not visible' },
+  jsonwebtoken: { semantic: 'auth', suggestedPlugin: 'AuthAnalyzer', description: 'Auth flow not visible' },
+  passport: { semantic: 'auth', suggestedPlugin: 'PassportAnalyzer', description: 'Auth strategies not tracked' },
+  bcrypt: { semantic: 'auth', suggestedPlugin: 'AuthAnalyzer', description: 'Password handling not tracked' },
+
+  // Validation
+  validator: { semantic: 'validation', suggestedPlugin: 'ValidationAnalyzer', description: 'Validation rules not tracked' },
+  joi: { semantic: 'validation', suggestedPlugin: 'JoiAnalyzer', description: 'Validation schemas not tracked' },
+  yup: { semantic: 'validation', suggestedPlugin: 'YupAnalyzer', description: 'Validation schemas not tracked' },
+  zod: { semantic: 'validation', suggestedPlugin: 'ZodAnalyzer', description: 'Validation schemas not tracked' },
+
+  // Logging
+  logger: { semantic: 'logging', suggestedPlugin: 'LoggingAnalyzer', description: 'Log statements not tracked' },
+  winston: { semantic: 'logging', suggestedPlugin: 'LoggingAnalyzer', description: 'Log statements not tracked' },
+  pino: { semantic: 'logging', suggestedPlugin: 'LoggingAnalyzer', description: 'Log statements not tracked' },
+  bunyan: { semantic: 'logging', suggestedPlugin: 'LoggingAnalyzer', description: 'Log statements not tracked' },
+
+  // Telegram bot
+  bot: { semantic: 'telegram-bot', suggestedPlugin: 'TelegramBotAnalyzer', description: 'Bot commands not tracked' },
+};
+
+/**
+ * Library call statistics for coverage reporting
+ */
+export interface LibraryCallStats {
+  object: string;
+  methods: Map<string, number>; // method -> count
+  totalCalls: number;
+  semantic?: string;
+  suggestedPlugin?: string;
+  description?: string;
+}
+
+/**
  * Extended call node with method properties
  */
 interface MethodCallNode extends BaseNodeRecord {
@@ -209,7 +277,11 @@ export class MethodCallResolver extends Plugin {
     let methodCallsProcessed = 0;
     let edgesCreated = 0;
     let unresolved = 0;
+    let externalSkipped = 0;
     const errors: Error[] = [];
+
+    // Track library calls for coverage reporting
+    const libraryCallStats = new Map<string, LibraryCallStats>();
 
     // Собираем все METHOD_CALL ноды (CALL с object атрибутом)
     const methodCalls: MethodCallNode[] = [];
@@ -260,6 +332,15 @@ export class MethodCallResolver extends Plugin {
 
       // Пропускаем внешние методы (console, Array.prototype, etc.)
       if (this.isExternalMethod(methodCall.object!, methodCall.method!)) {
+        externalSkipped++;
+
+        // Track library calls for coverage reporting (skip built-in objects)
+        const obj = methodCall.object!;
+        const method = methodCall.method!;
+        if (!this.isBuiltInObject(obj) && !BUILTIN_PROTOTYPE_METHODS.has(method)) {
+          this.trackLibraryCall(libraryCallStats, obj, method);
+        }
+
         continue;
       }
 
@@ -307,14 +388,38 @@ export class MethodCallResolver extends Plugin {
       }
     }
 
+    // Convert library stats to array for reporting
+    const libraryStats = Array.from(libraryCallStats.values())
+      .sort((a, b) => b.totalCalls - a.totalCalls);
+
     const summary = {
       methodCallsProcessed,
       edgesCreated,
       unresolved,
-      classesIndexed: classMethodIndex.size
+      externalSkipped,
+      classesIndexed: classMethodIndex.size,
+      libraryStats
     };
 
-    logger.info('Summary', summary);
+    logger.info('Summary', {
+      methodCallsProcessed,
+      edgesCreated,
+      unresolved,
+      externalSkipped,
+      libraryCallsTracked: libraryStats.length
+    });
+
+    // Log library coverage report if there are tracked calls
+    if (libraryStats.length > 0) {
+      logger.info('Library coverage report', {
+        libraries: libraryStats.map(s => ({
+          library: s.object,
+          calls: s.totalCalls,
+          semantic: s.semantic,
+          suggestion: s.suggestedPlugin
+        }))
+      });
+    }
 
     return createSuccessResult({ nodes: 0, edges: edgesCreated }, summary, errors);
   }
@@ -544,5 +649,52 @@ export class MethodCallResolver extends Plugin {
     }
 
     return false;
+  }
+
+  /**
+   * Check if object is a built-in JavaScript global (not a library namespace)
+   */
+  private isBuiltInObject(object: string): boolean {
+    const builtInObjects = new Set([
+      'console', 'Math', 'JSON', 'Object', 'Array', 'String', 'Number',
+      'Boolean', 'Date', 'RegExp', 'Error', 'Promise', 'Set', 'Map',
+      'WeakSet', 'WeakMap', 'Symbol', 'Proxy', 'Reflect', 'Intl',
+      'process', 'global', 'window', 'document', 'Buffer',
+      'fs', 'path', 'http', 'https', 'crypto', 'os', 'url', 'util',
+      'localStorage', 'sessionStorage', 'navigator', 'location', 'history',
+      'performance', 'fetch', 'XMLHttpRequest', 'WebSocket',
+      'setTimeout', 'setInterval', 'clearTimeout', 'clearInterval',
+      'requestAnimationFrame', 'cancelAnimationFrame',
+      'Atomics', 'SharedArrayBuffer', 'DataView', 'ArrayBuffer',
+      'Int8Array', 'Uint8Array', 'Uint8ClampedArray', 'Int16Array',
+      'Uint16Array', 'Int32Array', 'Uint32Array', 'Float32Array',
+      'Float64Array', 'BigInt64Array', 'BigUint64Array',
+    ]);
+    return builtInObjects.has(object);
+  }
+
+  /**
+   * Track a library method call for coverage reporting
+   */
+  private trackLibraryCall(
+    stats: Map<string, LibraryCallStats>,
+    object: string,
+    method: string
+  ): void {
+    if (!stats.has(object)) {
+      const semanticInfo = LIBRARY_SEMANTIC_GROUPS[object];
+      stats.set(object, {
+        object,
+        methods: new Map(),
+        totalCalls: 0,
+        semantic: semanticInfo?.semantic,
+        suggestedPlugin: semanticInfo?.suggestedPlugin,
+        description: semanticInfo?.description
+      });
+    }
+
+    const libStats = stats.get(object)!;
+    libStats.totalCalls++;
+    libStats.methods.set(method, (libStats.methods.get(method) || 0) + 1);
   }
 }
