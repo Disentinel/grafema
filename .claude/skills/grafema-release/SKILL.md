@@ -24,6 +24,46 @@ date: 2026-02-04
 2. **Check for uncommitted changes**: `git status`
 3. **Ensure on correct branch**: usually `main`
 
+## MANDATORY: @grafema/rfdb Binary Download
+
+**IMPORTANT**: If releasing `@grafema/rfdb`, you MUST download prebuilt binaries BEFORE publishing.
+
+### Step 0: Download rfdb-server Binaries
+
+1. **Ensure CI built the binaries**:
+   - Push tag: `git tag rfdb-v0.X.Y && git push origin rfdb-v0.X.Y`
+   - Wait for CI: https://github.com/Disentinel/grafema/actions
+   - All 4 platform jobs must complete (darwin-x64, darwin-arm64, linux-x64, linux-arm64)
+
+2. **Download all binaries**:
+   ```bash
+   ./scripts/download-rfdb-binaries.sh rfdb-v0.X.Y
+   ```
+
+3. **Verify all 4 platforms downloaded**:
+   ```bash
+   ls -la packages/rfdb-server/prebuilt/*/rfdb-server
+   # Must show 4 binaries:
+   #   darwin-arm64/rfdb-server
+   #   darwin-x64/rfdb-server
+   #   linux-arm64/rfdb-server
+   #   linux-x64/rfdb-server
+   ```
+
+4. **Verify binary types**:
+   ```bash
+   file packages/rfdb-server/prebuilt/*/rfdb-server
+   # darwin-arm64: Mach-O 64-bit executable arm64
+   # darwin-x64:   Mach-O 64-bit executable x86_64
+   # linux-arm64:  ELF 64-bit LSB pie executable, ARM aarch64
+   # linux-x64:    ELF 64-bit LSB pie executable, x86-64
+   ```
+
+**DO NOT PUBLISH @grafema/rfdb if any platform is missing!**
+
+The postinstall script will NOT fail if binaries are missing — it shows a warning and succeeds.
+This means users will have a broken installation without any error.
+
 ## Release Steps
 
 ### Step 1: Determine Version
