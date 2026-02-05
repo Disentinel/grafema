@@ -25,6 +25,16 @@ export interface ReportOptions {
 }
 
 /**
+ * Options for strict mode formatting (REG-332)
+ */
+export interface StrictFormatOptions {
+  /** Show resolution chain (hybrid: auto-show for ≤3 errors, hide for more) */
+  verbose?: boolean;
+  /** REG-332: Number of errors suppressed by grafema-ignore comments */
+  suppressedCount?: number;
+}
+
+/**
  * Summary statistics
  */
 export interface SummaryStats {
@@ -198,6 +208,81 @@ export class DiagnosticReporter {
       ...severityStats,
       byCode,
     };
+  }
+
+  /**
+   * Format strict mode errors with enhanced context (REG-332).
+   * Shows resolution chain and context-aware suggestions.
+   *
+   * Uses hybrid progressive disclosure:
+   * - ≤3 errors: show chain by default
+   * - >3 errors: hide chain unless verbose=true
+   *
+   * @param diagnostics - The fatal diagnostics from strict mode
+   * @param options - Formatting options
+   * @returns Formatted string for CLI output
+   */
+  formatStrict(diagnostics: Diagnostic[], options: StrictFormatOptions = {}): string {
+    const lines: string[] = [];
+    // Hybrid: show chain for ≤3 errors unless explicitly set
+    const showChain = options.verbose ?? diagnostics.length <= 3;
+
+    for (const diag of diagnostics) {
+      // Header: CODE file:line
+      const location = diag.file
+        ? diag.line
+          ? `${diag.file}:${diag.line}`
+          : diag.file
+        : '';
+      lines.push(`${diag.code} ${location}`);
+      lines.push('');
+
+      // Message
+      lines.push(`  ${diag.message}`);
+
+      // Resolution chain (if showing and present)
+      if (showChain && diag.resolutionChain && diag.resolutionChain.length > 0) {
+        lines.push('');
+        lines.push('  Resolution chain:');
+        for (const step of diag.resolutionChain) {
+          const stepLocation = step.file
+            ? step.line
+              ? ` (${step.file}:${step.line})`
+              : ` (${step.file})`
+            : '';
+          lines.push(`    ${step.step} -> ${step.result}${stepLocation}`);
+        }
+      }
+
+      // Suggestion (if present)
+      if (diag.suggestion) {
+        lines.push('');
+        lines.push(`  Suggestion: ${diag.suggestion}`);
+      }
+
+      lines.push('');
+      lines.push('---');
+      lines.push('');
+    }
+
+    // Remove trailing separator
+    if (lines.length > 0) {
+      lines.splice(-3);
+    }
+
+    // Add hint about verbose mode if chain hidden
+    if (!showChain && diagnostics.some(d => d.resolutionChain && d.resolutionChain.length > 0)) {
+      lines.push('');
+      lines.push('  Run with --verbose to see resolution chains.');
+    }
+
+    // REG-332: Show suppression summary if any errors were suppressed
+    if (options.suppressedCount && options.suppressedCount > 0) {
+      lines.push('');
+      lines.push(`  ${options.suppressedCount} error(s) suppressed by grafema-ignore comments.`);
+    }
+
+    return lines.join('\n');
   }
 
   /**

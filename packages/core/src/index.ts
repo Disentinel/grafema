@@ -13,8 +13,14 @@ export {
   AnalysisError,
   ValidationError,
   StrictModeError,
+  StrictModeFailure,
 } from './errors/GrafemaError.js';
-export type { ErrorContext, GrafemaErrorJSON } from './errors/GrafemaError.js';
+export type {
+  ErrorContext,
+  GrafemaErrorJSON,
+  ResolutionStep,
+  ResolutionFailureReason,
+} from './errors/GrafemaError.js';
 
 // Logging
 export { Logger, ConsoleLogger, createLogger } from './logging/Logger.js';

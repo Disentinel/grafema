@@ -14,6 +14,7 @@ import {
   DiagnosticWriter,
   createLogger,
   loadConfig,
+  StrictModeFailure,
   type GrafemaConfig,
   // Discovery
   SimpleProjectDiscovery,
@@ -389,19 +390,38 @@ Note: Start the server first with: grafema server start
         statsInterval = null;
       }
 
-      // Orchestrator threw (fatal error stopped analysis)
-      const error = e instanceof Error ? e : new Error(String(e));
       const diagnostics = orchestrator.getDiagnostics();
       const reporter = new DiagnosticReporter(diagnostics);
 
-      console.error('');
-      console.error(`✗ Analysis failed: ${error.message}`);
-      console.error('');
-      console.error('→ Run with --debug for detailed diagnostics');
+      // Clear progress line in interactive mode
+      if (renderer && process.stdout.isTTY) {
+        process.stdout.write('\r\x1b[K');
+      }
 
-      if (diagnostics.count() > 0) {
+      // Check if this is a strict mode failure (REG-332: structured output)
+      if (e instanceof StrictModeFailure) {
+        // Format ONLY from diagnostics, not from error.message
         console.error('');
-        console.error(reporter.report({ format: 'text', includeSummary: true }));
+        console.error(`✗ Strict mode: ${e.count} unresolved reference(s) found during ENRICHMENT.`);
+        console.error('');
+        console.error(reporter.formatStrict(e.diagnostics, {
+          verbose: options.verbose,
+          suppressedCount: e.suppressedCount,  // REG-332
+        }));
+        console.error('');
+        console.error('Run without --strict for graceful degradation, or fix the underlying issues.');
+      } else {
+        // Generic error handling (non-strict)
+        const error = e instanceof Error ? e : new Error(String(e));
+        console.error('');
+        console.error(`✗ Analysis failed: ${error.message}`);
+        console.error('');
+        console.error('→ Run with --debug for detailed diagnostics');
+
+        if (diagnostics.count() > 0) {
+          console.error('');
+          console.error(reporter.report({ format: 'text', includeSummary: true }));
+        }
       }
 
       // Write diagnostics.log in debug mode even on failure

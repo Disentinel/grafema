@@ -13,6 +13,7 @@ import { resolveSourceEntrypoint } from './plugins/discovery/resolveSourceEntryp
 import { Profiler } from './core/Profiler.js';
 import { AnalysisQueue } from './core/AnalysisQueue.js';
 import { DiagnosticCollector } from './diagnostics/DiagnosticCollector.js';
+import { StrictModeFailure } from './errors/GrafemaError.js';
 import type { Plugin, PluginContext } from './plugins/Plugin.js';
 import type { GraphBackend, PluginPhase, Logger, LogLevel, IssueSpec, ServiceDefinition } from '@grafema/types';
 import { createLogger } from './logging/Logger.js';
@@ -420,24 +421,15 @@ export class Orchestrator {
     this.profiler.end('ENRICHMENT');
     this.logger.info('ENRICHMENT phase complete', { duration: ((Date.now() - enrichmentStart) / 1000).toFixed(2) });
 
-    // STRICT MODE BARRIER: Check for fatal errors after ENRICHMENT (REG-330)
+    // STRICT MODE BARRIER: Check for fatal errors after ENRICHMENT (REG-330, REG-332)
     if (this.strictMode) {
       const enrichmentDiagnostics = this.diagnosticCollector.getByPhase('ENRICHMENT');
       const strictErrors = enrichmentDiagnostics.filter(d => d.severity === 'fatal');
 
       if (strictErrors.length > 0) {
         this.logger.error(`Strict mode: ${strictErrors.length} unresolved reference(s) found`);
-        for (const err of strictErrors) {
-          this.logger.error(`  [${err.code}] ${err.message}`, {
-            file: err.file,
-            line: err.line,
-            plugin: err.plugin,
-          });
-        }
-        throw new Error(
-          `Strict mode: ${strictErrors.length} unresolved reference(s) found during ENRICHMENT. ` +
-          `Run without --strict for graceful degradation, or fix the underlying issues.`
-        );
+        // Throw StrictModeFailure with diagnostics - CLI will format (REG-332)
+        throw new StrictModeFailure(strictErrors);
       }
     }
 

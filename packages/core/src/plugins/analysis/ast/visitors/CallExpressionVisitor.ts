@@ -8,11 +8,11 @@
  * - Constructor calls: new Foo(), new Function()
  */
 
-import type { Node, CallExpression, NewExpression, Identifier, MemberExpression, ObjectExpression, ArrayExpression, ObjectProperty, SpreadElement } from '@babel/types';
+import type { Node, CallExpression, NewExpression, Identifier, MemberExpression, ObjectExpression, ArrayExpression, ObjectProperty, SpreadElement, Comment } from '@babel/types';
 import type { NodePath } from '@babel/traverse';
 import { ASTVisitor, type VisitorModule, type VisitorCollections, type VisitorHandlers, type CounterRef } from './ASTVisitor.js';
 import { ExpressionEvaluator } from '../ExpressionEvaluator.js';
-import type { ArrayMutationInfo, ArrayMutationArgument, ObjectMutationInfo, ObjectMutationValue } from '../types.js';
+import type { ArrayMutationInfo, ArrayMutationArgument, ObjectMutationInfo, ObjectMutationValue, GrafemaIgnoreAnnotation } from '../types.js';
 import { ScopeTracker } from '../../../../core/ScopeTracker.js';
 import { computeSemanticId } from '../../../../core/SemanticId.js';
 import { IdGenerator } from '../IdGenerator.js';
@@ -20,6 +20,62 @@ import { NodeFactory } from '../../../../core/NodeFactory.js';
 import { ObjectLiteralNode } from '../../../../core/nodes/ObjectLiteralNode.js';
 import { ArrayLiteralNode } from '../../../../core/nodes/ArrayLiteralNode.js';
 import { getLine, getColumn } from '../utils/location.js';
+
+/**
+ * Pattern for grafema-ignore comments (REG-332)
+ * Matches:
+ *   // grafema-ignore STRICT_UNRESOLVED_METHOD
+ *   // grafema-ignore STRICT_UNRESOLVED_METHOD - known library call
+ *   /* grafema-ignore STRICT_UNRESOLVED_METHOD * /  (block comments)
+ */
+const GRAFEMA_IGNORE_PATTERN = /grafema-ignore(?:-next-line)?\s+([\w_]+)(?:\s+-\s+(.+))?/;
+
+/**
+ * Check node's leadingComments for grafema-ignore annotation.
+ */
+function checkNodeComments(node: Node): GrafemaIgnoreAnnotation | null {
+  const comments = (node as { leadingComments?: Comment[] }).leadingComments;
+  if (!comments || comments.length === 0) return null;
+
+  // Check comments from last to first (closest to node wins)
+  for (let i = comments.length - 1; i >= 0; i--) {
+    const comment = comments[i];
+    const text = comment.value.trim();
+    const match = text.match(GRAFEMA_IGNORE_PATTERN);
+    if (match) {
+      return {
+        code: match[1],
+        reason: match[2]?.trim(),
+      };
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Check if a call has a grafema-ignore comment for suppressing strict mode errors.
+ * Babel attaches leading comments to statements (VariableDeclaration, ExpressionStatement),
+ * not to nested CallExpression nodes. So we check:
+ * 1. The call node itself (rare, but possible for standalone calls)
+ * 2. The parent statement (VariableDeclaration, ExpressionStatement, etc.)
+ *
+ * @param path - Babel NodePath for the CallExpression
+ * @returns GrafemaIgnoreAnnotation if found, null otherwise
+ */
+function getGrafemaIgnore(path: NodePath): GrafemaIgnoreAnnotation | null {
+  // First check the call node itself
+  const callResult = checkNodeComments(path.node);
+  if (callResult) return callResult;
+
+  // Then check parent statement (where Babel typically attaches comments)
+  const statementPath = path.getStatementParent();
+  if (statementPath) {
+    return checkNodeComments(statementPath.node);
+  }
+
+  return null;
+}
 
 /**
  * Object literal info for OBJECT_LITERAL nodes
@@ -142,6 +198,8 @@ interface MethodCallInfo {
   column: number;
   parentScopeId: string;
   isNew?: boolean;
+  /** REG-332: Annotation to suppress strict mode errors */
+  grafemaIgnore?: GrafemaIgnoreAnnotation;
 }
 
 /**
@@ -1190,6 +1248,9 @@ export class CallExpressionVisitor extends ASTVisitor {
                   { useDiscriminator: true, discriminatorKey: `CALL:${fullName}` }
                 );
 
+                // REG-332: Check for grafema-ignore comment
+                const grafemaIgnore = getGrafemaIgnore(path);
+
                 (methodCalls as MethodCallInfo[]).push({
                   id: methodCallId,
                   type: 'CALL',
@@ -1201,7 +1262,8 @@ export class CallExpressionVisitor extends ASTVisitor {
                   file: module.file,
                   line: methodLine,
                   column: methodColumn,
-                  parentScopeId
+                  parentScopeId,
+                  grafemaIgnore: grafemaIgnore ?? undefined,
                 });
 
                 // Check for array mutation methods (push, unshift, splice)
@@ -1349,6 +1411,9 @@ export class CallExpressionVisitor extends ASTVisitor {
               { useDiscriminator: true, discriminatorKey: `CALL:new:${fullName}` }
             );
 
+            // REG-332: Check for grafema-ignore comment
+            const grafemaIgnore = getGrafemaIgnore(path);
+
             (methodCalls as MethodCallInfo[]).push({
               id: newMethodCallId,
               type: 'CALL',
@@ -1359,7 +1424,8 @@ export class CallExpressionVisitor extends ASTVisitor {
               line: memberNewLine,
               column: memberNewColumn,
               parentScopeId,
-              isNew: true  // Mark as constructor call
+              isNew: true,  // Mark as constructor call
+              grafemaIgnore: grafemaIgnore ?? undefined,
             });
           }
         }

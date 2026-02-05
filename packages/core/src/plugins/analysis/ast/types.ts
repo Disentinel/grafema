@@ -204,6 +204,18 @@ export interface VariableDeclarationInfo {
   parentScopeId?: string;
 }
 
+// === GRAFEMA-IGNORE ANNOTATION (REG-332) ===
+/**
+ * Annotation from grafema-ignore comment to suppress strict mode errors.
+ * Parsed from comments like: // grafema-ignore STRICT_UNRESOLVED_METHOD - reason
+ */
+export interface GrafemaIgnoreAnnotation {
+  /** Error code to suppress (e.g., 'STRICT_UNRESOLVED_METHOD') */
+  code: string;
+  /** Optional reason provided by developer */
+  reason?: string;
+}
+
 // === CALL SITE INFO ===
 export interface CallSiteInfo {
   id: string;
@@ -216,6 +228,8 @@ export interface CallSiteInfo {
   parentScopeId?: string;
   targetFunctionName?: string;
   isNew?: boolean;
+  /** REG-332: Annotation to suppress strict mode errors */
+  grafemaIgnore?: GrafemaIgnoreAnnotation;
 }
 
 // === METHOD CALL INFO ===
@@ -234,6 +248,8 @@ export interface MethodCallInfo {
   parentScopeId?: string;
   arguments?: unknown[];
   isNew?: boolean;
+  /** REG-332: Annotation to suppress strict mode errors */
+  grafemaIgnore?: GrafemaIgnoreAnnotation;
 }
 
 // === EVENT LISTENER INFO ===

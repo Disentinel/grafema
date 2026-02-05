@@ -64,11 +64,12 @@ export class RFDBClient extends EventEmitter implements IRFDBClient {
         resolve();
       });
 
-      this.socket.on('error', (err: Error) => {
+      this.socket.on('error', (err: NodeJS.ErrnoException) => {
+        const enhancedError = this._enhanceConnectionError(err);
         if (!this.connected) {
-          reject(err);
+          reject(enhancedError);
         } else {
-          this.emit('error', err);
+          this.emit('error', enhancedError);
         }
       });
 
@@ -86,6 +87,39 @@ export class RFDBClient extends EventEmitter implements IRFDBClient {
         this._handleData(chunk);
       });
     });
+  }
+
+  /**
+   * Enhance connection errors with helpful messages about --auto-start
+   */
+  private _enhanceConnectionError(err: NodeJS.ErrnoException): Error {
+    const code = err.code;
+
+    if (code === 'EPIPE' || code === 'ECONNRESET') {
+      return new Error(
+        `RFDB server connection lost (${code}). The server may have crashed or been stopped.\n` +
+        `Try running with --auto-start flag to automatically start the server, or manually start it with:\n` +
+        `  rfdb-server start`
+      );
+    }
+
+    if (code === 'ENOENT') {
+      return new Error(
+        `RFDB server socket not found at ${this.socketPath}.\n` +
+        `The server is not running. Use --auto-start flag to automatically start it, or manually start with:\n` +
+        `  rfdb-server start`
+      );
+    }
+
+    if (code === 'ECONNREFUSED') {
+      return new Error(
+        `Cannot connect to RFDB server at ${this.socketPath} (connection refused).\n` +
+        `The server may not be running. Use --auto-start flag to automatically start it, or manually start with:\n` +
+        `  rfdb-server start`
+      );
+    }
+
+    return err;
   }
 
   /**
@@ -167,13 +201,23 @@ export class RFDBClient extends EventEmitter implements IRFDBClient {
         reject(new Error(`RFDB ${cmd} timed out after ${timeoutMs}ms. Server may be unresponsive or dbPath may be invalid.`));
       }, timeoutMs);
 
+      // Handle socket errors during this request
+      const errorHandler = (err: NodeJS.ErrnoException) => {
+        this.pending.delete(id);
+        clearTimeout(timer);
+        reject(this._enhanceConnectionError(err));
+      };
+      this.socket!.once('error', errorHandler);
+
       this.pending.set(id, {
         resolve: (value) => {
           clearTimeout(timer);
+          this.socket?.removeListener('error', errorHandler);
           resolve(value);
         },
         reject: (error) => {
           clearTimeout(timer);
+          this.socket?.removeListener('error', errorHandler);
           reject(error);
         }
       });

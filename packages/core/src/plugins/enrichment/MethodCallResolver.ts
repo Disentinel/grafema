@@ -14,7 +14,7 @@
 import { Plugin, createSuccessResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { BaseNodeRecord } from '@grafema/types';
-import { StrictModeError } from '../../errors/GrafemaError.js';
+import { StrictModeError, type ResolutionStep, type ResolutionFailureReason } from '../../errors/GrafemaError.js';
 
 /**
  * Built-in JavaScript prototype methods that should never error in strict mode.
@@ -243,6 +243,8 @@ export interface LibraryCallStats {
 interface MethodCallNode extends BaseNodeRecord {
   object?: string;
   method?: string;
+  /** REG-332: Annotation to suppress strict mode errors */
+  grafemaIgnore?: { code: string; reason?: string };
 }
 
 /**
@@ -278,19 +280,41 @@ export class MethodCallResolver extends Plugin {
     let edgesCreated = 0;
     let unresolved = 0;
     let externalSkipped = 0;
+    let suppressedByIgnore = 0;  // REG-332: Count of errors suppressed by grafema-ignore
     const errors: Error[] = [];
 
     // Track library calls for coverage reporting
     const libraryCallStats = new Map<string, LibraryCallStats>();
 
     // Собираем все METHOD_CALL ноды (CALL с object атрибутом)
-    const methodCalls: MethodCallNode[] = [];
+    // REG-332: Deduplicate by (object, method, file, line), preferring nodes with grafemaIgnore
+    const methodCallMap = new Map<string, MethodCallNode>();
     for await (const node of graph.queryNodes({ nodeType: 'CALL' })) {
       const callNode = node as MethodCallNode;
       if (callNode.object) {
-        methodCalls.push(callNode);
+        // REG-332: Extract grafemaIgnore from metadata if present
+        if (callNode.metadata) {
+          try {
+            const meta = typeof callNode.metadata === 'string'
+              ? JSON.parse(callNode.metadata)
+              : callNode.metadata;
+            if (meta.grafemaIgnore) {
+              callNode.grafemaIgnore = meta.grafemaIgnore;
+            }
+          } catch {
+            // Ignore parse errors
+          }
+        }
+
+        // Deduplicate: prefer node with grafemaIgnore if one exists
+        const key = `${callNode.object}.${callNode.method}:${callNode.file}:${callNode.line}`;
+        const existing = methodCallMap.get(key);
+        if (!existing || (callNode.grafemaIgnore && !existing.grafemaIgnore)) {
+          methodCallMap.set(key, callNode);
+        }
       }
     }
+    const methodCalls = Array.from(methodCallMap.values());
 
     logger.info('Found method calls to resolve', { count: methodCalls.length });
 
@@ -368,8 +392,33 @@ export class MethodCallResolver extends Plugin {
       } else {
         unresolved++;
 
-        // In strict mode, collect error for later reporting
+        // In strict mode, collect error with context-aware analysis (REG-332)
         if (context.strictMode) {
+          // REG-332: Check for grafema-ignore suppression
+          if (methodCall.grafemaIgnore?.code === 'STRICT_UNRESOLVED_METHOD') {
+            suppressedByIgnore++;
+            logger.debug('Suppressed by grafema-ignore', {
+              call: `${methodCall.object}.${methodCall.method}`,
+              reason: methodCall.grafemaIgnore.reason,
+            });
+            continue;
+          }
+
+          // Analyze WHY resolution failed
+          const { reason, chain } = this.analyzeResolutionFailure(
+            methodCall,
+            classMethodIndex,
+            variableTypes
+          );
+
+          // Generate context-aware suggestion based on failure reason
+          const suggestion = this.generateContextualSuggestion(
+            methodCall.object!,
+            methodCall.method!,
+            reason,
+            chain
+          );
+
           const error = new StrictModeError(
             `Cannot resolve method call: ${methodCall.object}.${methodCall.method}`,
             'STRICT_UNRESOLVED_METHOD',
@@ -380,8 +429,10 @@ export class MethodCallResolver extends Plugin {
               plugin: 'MethodCallResolver',
               object: methodCall.object,
               method: methodCall.method,
+              resolutionChain: chain,
+              failureReason: reason,
             },
-            `Check if class "${methodCall.object}" is imported and has method "${methodCall.method}"`
+            suggestion
           );
           errors.push(error);
         }
@@ -397,6 +448,7 @@ export class MethodCallResolver extends Plugin {
       edgesCreated,
       unresolved,
       externalSkipped,
+      suppressedByIgnore,  // REG-332
       classesIndexed: classMethodIndex.size,
       libraryStats
     };
@@ -406,6 +458,7 @@ export class MethodCallResolver extends Plugin {
       edgesCreated,
       unresolved,
       externalSkipped,
+      suppressedByIgnore,  // REG-332
       libraryCallsTracked: libraryStats.length
     });
 
@@ -696,5 +749,125 @@ export class MethodCallResolver extends Plugin {
     const libStats = stats.get(object)!;
     libStats.totalCalls++;
     libStats.methods.set(method, (libStats.methods.get(method) || 0) + 1);
+  }
+
+  /**
+   * Analyze why method resolution failed (REG-332).
+   * Returns the failure reason and resolution chain for context-aware suggestions.
+   */
+  private analyzeResolutionFailure(
+    methodCall: MethodCallNode,
+    classMethodIndex: Map<string, ClassEntry>,
+    variableTypes: Map<string, string>
+  ): { reason: ResolutionFailureReason; chain: ResolutionStep[] } {
+    const { object, method, file } = methodCall;
+    const chain: ResolutionStep[] = [];
+
+    if (!object || !method) {
+      return { reason: 'unknown', chain };
+    }
+
+    // Check if object is a known class name (static call)
+    if (classMethodIndex.has(object)) {
+      const classEntry = classMethodIndex.get(object)!;
+      chain.push({
+        step: `${object} class lookup`,
+        result: 'found',
+        file: classEntry.classNode.file as string | undefined,
+        line: classEntry.classNode.line as number | undefined,
+      });
+
+      if (!classEntry.methods.has(method)) {
+        chain.push({
+          step: `${object}.${method} method`,
+          result: 'NOT FOUND in class',
+        });
+        return { reason: 'method_not_found', chain };
+      }
+    }
+
+    // Check for local class in same file
+    const localKey = `${file}:${object}`;
+    if (classMethodIndex.has(localKey)) {
+      const classEntry = classMethodIndex.get(localKey)!;
+      chain.push({
+        step: `${object} local class`,
+        result: 'found in same file',
+      });
+
+      if (!classEntry.methods.has(method)) {
+        chain.push({
+          step: `${object}.${method} method`,
+          result: 'NOT FOUND',
+        });
+        return { reason: 'method_not_found', chain };
+      }
+    }
+
+    // Check if this is a library call
+    if (LIBRARY_SEMANTIC_GROUPS[object]) {
+      const libInfo = LIBRARY_SEMANTIC_GROUPS[object];
+      chain.push({
+        step: `${object} lookup`,
+        result: `external library (${libInfo.semantic})`,
+      });
+      return { reason: 'external_dependency', chain };
+    }
+
+    // Object type is unknown
+    chain.push({
+      step: `${object} type lookup`,
+      result: 'unknown (not in class index)',
+    });
+    chain.push({
+      step: `${object}.${method}`,
+      result: 'FAILED (no type information)',
+    });
+
+    return { reason: 'unknown_object_type', chain };
+  }
+
+  /**
+   * Generate context-aware suggestion based on failure reason (REG-332).
+   */
+  private generateContextualSuggestion(
+    object: string,
+    method: string,
+    reason: ResolutionFailureReason,
+    chain: ResolutionStep[]
+  ): string {
+    switch (reason) {
+      case 'unknown_object_type': {
+        // Find the source in chain that shows "unknown"
+        const sourceStep = chain.find(s => s.result.includes('unknown'));
+        const sourceDesc = sourceStep?.step || 'the source';
+        return `Variable "${object}" has unknown type from ${sourceDesc}. ` +
+               `Add JSDoc: /** @type {${object}Class} */ or check imports.`;
+      }
+
+      case 'class_not_imported':
+        return `Class "${object}" is not imported. Check your imports or ensure the class is defined.`;
+
+      case 'method_not_found':
+        return `Class "${object}" exists but has no method "${method}". ` +
+               `Check spelling or verify the method is defined in the class.`;
+
+      case 'external_dependency': {
+        const libInfo = LIBRARY_SEMANTIC_GROUPS[object];
+        if (libInfo?.suggestedPlugin) {
+          return `This call is to external library "${object}" (${libInfo.semantic}). ` +
+                 `Consider using ${libInfo.suggestedPlugin} for semantic analysis.`;
+        }
+        return `This call is to external library "${object}". ` +
+               `Consider adding type stubs or a dedicated analyzer plugin.`;
+      }
+
+      case 'circular_reference':
+        return `Alias chain for "${object}" is too deep (possible cycle). ` +
+               `Simplify variable assignments or check for circular references.`;
+
+      default:
+        return `Check if class "${object}" is imported and has method "${method}".`;
+    }
   }
 }

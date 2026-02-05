@@ -155,6 +155,12 @@ export class RFDBServerBackend {
     // Try to connect first
     this.client = new RFDBClient(this.socketPath);
 
+    // Attach error handler to prevent unhandled 'error' events
+    // This is important for stale sockets (socket file exists but server is dead)
+    this.client.on('error', (err: Error) => {
+      this.logError('[RFDBServerBackend] Client error:', err.message);
+    });
+
     try {
       await this.client.connect();
       // Verify server is responsive
@@ -163,7 +169,7 @@ export class RFDBServerBackend {
       this.log(`[RFDBServerBackend] Connected to RFDB server at ${this.socketPath}`);
       return;
     } catch {
-      // Server not running
+      // Server not running or stale socket
       if (!this.autoStart) {
         throw new Error(
           `RFDB server not running at ${this.socketPath}\n` +
@@ -176,8 +182,11 @@ export class RFDBServerBackend {
     // Start the server (only if autoStart is true)
     await this._startServer();
 
-    // Connect again
+    // Connect again with fresh client
     this.client = new RFDBClient(this.socketPath);
+    this.client.on('error', (err: Error) => {
+      this.logError('[RFDBServerBackend] Client error:', err.message);
+    });
     await this.client.connect();
     await this.client.ping();
     this.connected = true;

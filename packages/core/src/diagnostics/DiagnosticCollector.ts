@@ -17,7 +17,7 @@
  */
 
 import type { PluginPhase, PluginResult } from '@grafema/types';
-import { GrafemaError } from '../errors/GrafemaError.js';
+import { GrafemaError, type ResolutionStep, type ResolutionFailureReason } from '../errors/GrafemaError.js';
 
 /**
  * Diagnostic entry - unified format for all errors/warnings
@@ -32,6 +32,10 @@ export interface Diagnostic {
   plugin: string;
   timestamp: number;
   suggestion?: string;
+  /** Resolution chain for context (REG-332) */
+  resolutionChain?: ResolutionStep[];
+  /** Failure reason for context-aware suggestions (REG-332) */
+  failureReason?: ResolutionFailureReason;
 }
 
 /**
@@ -63,6 +67,9 @@ export class DiagnosticCollector {
           phase,
           plugin,
           suggestion: error.suggestion,
+          // REG-332: Pass through resolution context
+          resolutionChain: error.context.resolutionChain as ResolutionStep[] | undefined,
+          failureReason: error.context.failureReason as ResolutionFailureReason | undefined,
         });
       } else {
         // Plain Error - treat as generic error

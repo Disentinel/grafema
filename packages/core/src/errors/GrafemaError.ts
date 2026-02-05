@@ -14,6 +14,7 @@
  */
 
 import type { PluginPhase } from '@grafema/types';
+import type { Diagnostic } from '../diagnostics/DiagnosticCollector.js';
 
 /**
  * Context for error reporting
@@ -235,5 +236,62 @@ export class StrictModeError extends GrafemaError {
   ) {
     super(message, context, suggestion);
     this.code = code;
+  }
+}
+
+/**
+ * A step in the resolution chain showing what was resolved before failure.
+ * Used by StrictModeError to provide context-aware error messages (REG-332).
+ */
+export interface ResolutionStep {
+  /** Description of what was resolved, e.g., "getUser() return" */
+  step: string;
+  /** Result of resolution, e.g., "unknown" or "User class" */
+  result: string;
+  /** File where this step occurred */
+  file?: string;
+  /** Line number */
+  line?: number;
+}
+
+/**
+ * Reasons why resolution can fail.
+ * Used by StrictModeError for context-aware suggestions (REG-332).
+ */
+export type ResolutionFailureReason =
+  | 'unknown_object_type'      // getUser() return unknown
+  | 'class_not_imported'       // User class not in scope
+  | 'method_not_found'         // Class exists but no such method
+  | 'external_dependency'      // From node_modules
+  | 'circular_reference'       // Alias chain too deep
+  | 'builtin_method'           // Built-in prototype method (not an error)
+  | 'unknown';                 // Catch-all
+
+/**
+ * StrictModeFailure - thrown when strict mode stops analysis due to fatal errors.
+ *
+ * Unlike other errors, this carries a reference to the fatal diagnostic(s)
+ * rather than duplicating the message. The CLI formats output from
+ * the diagnostic, not from error.message.
+ *
+ * This prevents the duplication issue where both error.message and
+ * DiagnosticReporter show the same error (REG-332).
+ */
+export class StrictModeFailure extends Error {
+  /** The fatal diagnostics that caused the failure */
+  readonly diagnostics: Diagnostic[];
+  /** Error count for summary */
+  readonly count: number;
+  /** REG-332: Number of errors suppressed by grafema-ignore comments */
+  readonly suppressedCount: number;
+
+  constructor(diagnostics: Diagnostic[], suppressedCount: number = 0) {
+    // Keep message minimal - CLI will format from diagnostics
+    super(`Strict mode: ${diagnostics.length} unresolved reference(s) found`);
+    this.name = 'StrictModeFailure';
+    this.diagnostics = diagnostics;
+    this.count = diagnostics.length;
+    this.suppressedCount = suppressedCount;
+    Object.setPrototypeOf(this, new.target.prototype);
   }
 }
