@@ -137,16 +137,28 @@ interface EdgeToAdd {
 }
 
 // NAPI binding - will be exported from packages/rfdb-server after build
+// Loaded lazily on first execute() call to avoid top-level await (CJS compatibility)
 let parseRustFile: ((code: string) => RustParseResult) | undefined;
+let bindingLoaded = false;
 
-// Try to load the native binding
-// Path: from dist/plugins/analysis/ go up 5 levels to reach project root, then packages/rfdb-server/
-try {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const nativeBinding = await import('../../../../../packages/rfdb-server/grafema-graph-engine.node' as any);
-  parseRustFile = nativeBinding.parseRustFile;
-} catch {
-  // Fallback: try require
+/**
+ * Load the native binding lazily on first use.
+ * This avoids top-level await which breaks esbuild CJS bundling.
+ */
+async function loadNativeBinding(): Promise<void> {
+  if (bindingLoaded) return;
+  bindingLoaded = true;
+
+  // Path: from dist/plugins/analysis/ go up 5 levels to reach project root, then packages/rfdb-server/
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const nativeBinding = await import('../../../../../packages/rfdb-server/grafema-graph-engine.node' as any);
+    parseRustFile = nativeBinding.parseRustFile;
+    return;
+  } catch {
+    // Dynamic import failed, try require fallback
+  }
+
   try {
     const { createRequire } = await import('module');
     const require = createRequire(import.meta.url);
@@ -181,6 +193,9 @@ export class RustAnalyzer extends Plugin {
   async execute(context: PluginContext): Promise<PluginResult> {
     const { graph, onProgress } = context;
     const logger = this.log(context);
+
+    // Load native binding lazily on first use
+    await loadNativeBinding();
 
     if (!parseRustFile) {
       logger.info('Skipping - native binding not available');
