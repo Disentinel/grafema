@@ -4,7 +4,7 @@
  */
 
 import { readFileSync, existsSync } from 'fs';
-import { join, dirname, resolve, extname, relative } from 'path';
+import { join, dirname, resolve, relative } from 'path';
 import { createHash } from 'crypto';
 import { parse, ParserPlugin } from '@babel/parser';
 import traverseModule from '@babel/traverse';
@@ -13,6 +13,7 @@ import type { ImportDeclaration, CallExpression, Identifier } from '@babel/types
 import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { NodeRecord } from '@grafema/types';
+import { resolveModulePath } from '../../utils/moduleResolution.js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const traverse = (traverseModule as any).default || traverseModule;
@@ -79,29 +80,12 @@ export class IncrementalModuleIndexer extends Plugin {
   }
 
   /**
-   * Try to resolve file with different extensions
+   * Try to resolve file with different extensions.
+   * Uses shared utility from moduleResolution.ts (REG-320).
+   * Now supports all extensions (.ts, .tsx, .mjs, .jsx) - fixes previous bug.
    */
   private tryResolve(basePath: string): string | null {
-    if (existsSync(basePath)) {
-      if (!extname(basePath)) {
-        // Try as directory with index.js
-        const indexPath = join(basePath, 'index.js');
-        if (existsSync(indexPath)) return indexPath;
-
-        // Try adding .js
-        if (existsSync(basePath + '.js')) return basePath + '.js';
-      }
-      return basePath;
-    }
-
-    // Try with .js extension
-    if (existsSync(basePath + '.js')) return basePath + '.js';
-
-    // Try as directory
-    const indexPath = join(basePath, 'index.js');
-    if (existsSync(indexPath)) return indexPath;
-
-    return null;
+    return resolveModulePath(basePath, { useFilesystem: true });
   }
 
   /**
