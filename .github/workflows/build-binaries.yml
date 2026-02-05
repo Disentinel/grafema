@@ -1,0 +1,106 @@
+# Build rfdb-server binaries for all supported platforms
+#
+# Triggered by: git tag rfdb-vX.Y.Z && git push --tags
+# Outputs: GitHub Release with 4 binary assets
+#
+# Platforms:
+#   - darwin-x64:   Native build on macos-13 (Intel)
+#   - darwin-arm64: Native build on macos-14 (Apple Silicon)
+#   - linux-x64:    Native build on ubuntu-22.04
+#   - linux-arm64:  Cross-compile via actions-rust-cross
+
+name: Build rfdb-server Binaries
+
+on:
+  push:
+    tags:
+      - 'rfdb-v*'
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  build:
+    name: Build ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: darwin-x64
+            os: macos-13
+            target: x86_64-apple-darwin
+            use_cross: false
+
+          - name: darwin-arm64
+            os: macos-14
+            target: aarch64-apple-darwin
+            use_cross: false
+
+          - name: linux-x64
+            os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            use_cross: false
+
+          - name: linux-arm64
+            os: ubuntu-22.04
+            target: aarch64-unknown-linux-gnu
+            use_cross: true
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        if: ${{ !matrix.use_cross }}
+        uses: dtolnay/rust-action@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo
+        if: ${{ !matrix.use_cross }}
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: packages/rfdb-server -> target
+          key: ${{ matrix.target }}
+
+      - name: Build (native)
+        if: ${{ !matrix.use_cross }}
+        working-directory: packages/rfdb-server
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Build with cross (linux-arm64)
+        if: ${{ matrix.use_cross }}
+        uses: houseabsolute/actions-rust-cross@v0
+        with:
+          command: build
+          target: ${{ matrix.target }}
+          args: --release --manifest-path packages/rfdb-server/Cargo.toml
+          strip: true
+
+      - name: Strip binary (native builds)
+        if: ${{ !matrix.use_cross }}
+        run: strip packages/rfdb-server/target/${{ matrix.target }}/release/rfdb-server
+
+      - name: Prepare binary for upload
+        run: |
+          mkdir -p dist
+          cp packages/rfdb-server/target/${{ matrix.target }}/release/rfdb-server dist/rfdb-server-${{ matrix.name }}
+          chmod +x dist/rfdb-server-${{ matrix.name }}
+          ls -lh dist/
+
+      - name: Verify binary
+        run: |
+          file dist/rfdb-server-${{ matrix.name }}
+          du -h dist/rfdb-server-${{ matrix.name }}
+
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/rfdb-server-${{ matrix.name }}
+          fail_on_unmatched_files: true
