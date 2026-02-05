@@ -23,7 +23,7 @@ import { join } from 'path';
 import { writeFileSync, mkdirSync } from 'fs';
 import { tmpdir } from 'os';
 
-import { createTestBackend } from '../../../../helpers/TestRFDB.js';
+import { createTestDatabase } from '../../../../helpers/TestRFDB.js';
 import { createTestOrchestrator } from '../../../../helpers/createTestOrchestrator.js';
 import type { NodeRecord, EdgeRecord } from '@grafema/types';
 
@@ -37,7 +37,7 @@ let testCounter = 0;
  * Helper to create a test project with given files and run analysis
  */
 async function setupTest(
-  backend: ReturnType<typeof createTestBackend>,
+  backend: Awaited<ReturnType<typeof createTestDatabase>>['backend'],
   files: Record<string, string>
 ): Promise<{ testDir: string }> {
   const testDir = join(tmpdir(), `grafema-test-method-uses-${Date.now()}-${testCounter++}`);
@@ -68,7 +68,7 @@ async function setupTest(
  * Get nodes by type from backend
  */
 async function getNodesByType(
-  backend: ReturnType<typeof createTestBackend>,
+  backend: Awaited<ReturnType<typeof createTestDatabase>>['backend'],
   nodeType: string
 ): Promise<NodeRecord[]> {
   const allNodes = await backend.getAllNodes();
@@ -79,7 +79,7 @@ async function getNodesByType(
  * Get all edges from backend
  */
 async function getAllEdges(
-  backend: ReturnType<typeof createTestBackend>
+  backend: Awaited<ReturnType<typeof createTestDatabase>>['backend']
 ): Promise<EdgeRecord[]> {
   const allNodes = await backend.getAllNodes();
   const allEdges: EdgeRecord[] = [];
@@ -96,7 +96,7 @@ async function getAllEdges(
  * Get edges by type from backend
  */
 async function getEdgesByType(
-  backend: ReturnType<typeof createTestBackend>,
+  backend: Awaited<ReturnType<typeof createTestDatabase>>['backend'],
   edgeType: string
 ): Promise<EdgeRecord[]> {
   const allEdges = await getAllEdges(backend);
@@ -107,7 +107,7 @@ async function getEdgesByType(
  * Find node by name substring
  */
 async function findNodeByName(
-  backend: ReturnType<typeof createTestBackend>,
+  backend: Awaited<ReturnType<typeof createTestDatabase>>['backend'],
   nameSubstring: string,
   nodeType?: string
 ): Promise<NodeRecord | undefined> {
@@ -122,7 +122,7 @@ async function findNodeByName(
  * Find CALL node (method call) by object.method pattern
  */
 async function findMethodCallNode(
-  backend: ReturnType<typeof createTestBackend>,
+  backend: Awaited<ReturnType<typeof createTestDatabase>>['backend'],
   objectName: string,
   methodName: string
 ): Promise<NodeRecord | undefined> {
@@ -139,20 +139,15 @@ async function findMethodCallNode(
 // =============================================================================
 
 describe('Method Call USES Edges (REG-262)', () => {
-  let backend: ReturnType<typeof createTestBackend> & { cleanup: () => Promise<void> };
+  let backend: Awaited<ReturnType<typeof createTestDatabase>>['backend'] & { cleanup: () => Promise<void> };
 
   beforeEach(async () => {
-    if (backend) {
-      await backend.cleanup();
-    }
-    backend = createTestBackend() as ReturnType<typeof createTestBackend> & { cleanup: () => Promise<void> };
-    await backend.connect();
+    if (db) await db.cleanup();
+    backend = await createTestDatabase(); backend = db.backend;
   });
 
   after(async () => {
-    if (backend) {
-      await backend.cleanup();
-    }
+    if (db) await db.cleanup();
   });
 
   // ===========================================================================

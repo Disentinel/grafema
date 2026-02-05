@@ -22,7 +22,7 @@ import { join } from 'path';
 import { writeFileSync, mkdirSync } from 'fs';
 import { tmpdir } from 'os';
 
-import { createTestBackend } from '../../../helpers/TestRFDB.js';
+import { createTestDatabase } from '../../../helpers/TestRFDB.js';
 import { createTestOrchestrator } from '../../../helpers/createTestOrchestrator.js';
 import { ExpressRouteAnalyzer } from '@grafema/core';
 import type { NodeRecord, EdgeRecord } from '@grafema/types';
@@ -34,7 +34,7 @@ let testCounter = 0;
 // =============================================================================
 
 async function setupTest(
-  backend: ReturnType<typeof createTestBackend>,
+  backend: Awaited<ReturnType<typeof createTestDatabase>>['backend'],
   files: Record<string, string>
 ): Promise<{ testDir: string }> {
   const testDir = join(tmpdir(), `grafema-test-handled-by-${Date.now()}-${testCounter++}`);
@@ -63,7 +63,7 @@ async function setupTest(
 }
 
 async function getNodesByType(
-  backend: ReturnType<typeof createTestBackend>,
+  backend: Awaited<ReturnType<typeof createTestDatabase>>['backend'],
   nodeType: string
 ): Promise<NodeRecord[]> {
   const allNodes = await backend.getAllNodes();
@@ -71,7 +71,7 @@ async function getNodesByType(
 }
 
 async function getEdgesByType(
-  backend: ReturnType<typeof createTestBackend>,
+  backend: Awaited<ReturnType<typeof createTestDatabase>>['backend'],
   edgeType: string
 ): Promise<EdgeRecord[]> {
   const allNodes = await backend.getAllNodes();
@@ -90,19 +90,18 @@ async function getEdgesByType(
 // =============================================================================
 
 describe('ExpressRouteAnalyzer HANDLED_BY Edge (REG-322)', () => {
-  let backend: ReturnType<typeof createTestBackend> & { cleanup?: () => Promise<void> };
+  let backend: Awaited<ReturnType<typeof createTestDatabase>>['backend'] & { cleanup?: () => Promise<void> };
 
   beforeEach(async () => {
     if (backend?.cleanup) {
-      await backend.cleanup();
+      await db.cleanup();
     }
-    backend = createTestBackend() as ReturnType<typeof createTestBackend> & { cleanup?: () => Promise<void> };
-    await backend.connect();
+    backend = await createTestDatabase(); backend = db.backend;
   });
 
   after(async () => {
     if (backend?.cleanup) {
-      await backend.cleanup();
+      await db.cleanup();
     }
   });
 

@@ -15,7 +15,10 @@ import assert from 'node:assert';
 import { join } from 'path';
 import { existsSync, unlinkSync, mkdirSync, writeFileSync } from 'fs';
 
-import { createTestBackend } from '../helpers/TestRFDB.js';
+import { createTestDatabase, cleanupAllTestDatabases } from '../helpers/TestRFDB.js';
+
+// Cleanup all test databases after all tests complete
+after(cleanupAllTestDatabases);
 import { createTestOrchestrator } from '../helpers/createTestOrchestrator.js';
 import { GuaranteeManager } from '@grafema/core';
 
@@ -23,17 +26,14 @@ const FIXTURE_PATH = join(process.cwd(), 'test/fixtures/eval-ban');
 const TEST_GUARANTEES_FILE = join(process.cwd(), 'test/fixtures/.rflow-test/guarantees.yaml');
 
 describe('GuaranteeManager', () => {
+  let db;
   let backend;
   let manager;
 
   beforeEach(async () => {
-    if (backend) {
-      await backend.cleanup();
-    }
-    backend = createTestBackend();
-    await backend.connect();
-
-    // Analyze test fixture
+    if (db) await db.cleanup();
+    db = await createTestDatabase();
+    backend = db.backend;
     const orchestrator = createTestOrchestrator(backend);
     await orchestrator.run(FIXTURE_PATH);
 
@@ -47,9 +47,7 @@ describe('GuaranteeManager', () => {
   });
 
   after(async () => {
-    if (backend) {
-      await backend.cleanup();
-    }
+    if (db) await db.cleanup();
     // Cleanup test file
     if (existsSync(TEST_GUARANTEES_FILE)) {
       unlinkSync(TEST_GUARANTEES_FILE);

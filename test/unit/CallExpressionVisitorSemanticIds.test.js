@@ -22,7 +22,10 @@
 import { describe, it, after, beforeEach } from 'node:test';
 import assert from 'node:assert';
 
-import { createTestBackend } from '../helpers/TestRFDB.js';
+import { createTestDatabase, cleanupAllTestDatabases } from '../helpers/TestRFDB.js';
+
+// Cleanup all test databases after all tests complete
+after(cleanupAllTestDatabases);
 import { setupSemanticTest } from '../helpers/setupSemanticTest.js';
 
 const TEST_LABEL = 'call-semantic';
@@ -35,20 +38,17 @@ async function setupTest(backend, files) {
 }
 
 describe('CallExpressionVisitor semantic ID integration', () => {
+  let db;
   let backend;
 
   beforeEach(async () => {
-    if (backend) {
-      await backend.cleanup();
-    }
-    backend = createTestBackend();
-    await backend.connect();
+    if (db) await db.cleanup();
+    db = await createTestDatabase();
+    backend = db.backend;
   });
 
   after(async () => {
-    if (backend) {
-      await backend.cleanup();
-    }
+    if (db) await db.cleanup();
   });
 
   // ===========================================================================
@@ -600,11 +600,9 @@ function test() {
       const calls1 = nodes1.filter(n => n.type === 'CALL').map(n => n.id).sort();
 
       // Cleanup and run again
-      await backend.cleanup();
-      backend = createTestBackend();
-      await backend.connect();
-
-      // Second analysis with same code
+      await db.cleanup();
+      db = await createTestDatabase();
+    backend = db.backend;
       await setupTest(backend, { 'index.js': code });
       const nodes2 = await backend.getAllNodes();
       const calls2 = nodes2.filter(n => n.type === 'CALL').map(n => n.id).sort();
@@ -662,11 +660,9 @@ fn();
       const fnCall1 = nodes1.find(n => n.type === 'CALL' && n.name === 'fn');
       const id1 = fnCall1?.id;
 
-      await backend.cleanup();
-      backend = createTestBackend();
-      await backend.connect();
-
-      // Same call at different line
+      await db.cleanup();
+      db = await createTestDatabase();
+    backend = db.backend;
       await setupTest(backend, {
         'index.js': `
 

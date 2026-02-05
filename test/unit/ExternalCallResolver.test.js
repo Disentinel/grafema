@@ -18,9 +18,12 @@
  * - NodejsBuiltinsResolver: Node.js core modules (fs, path, child_process)
  */
 
-import { describe, it } from 'node:test';
+import { describe, it, after } from 'node:test';
 import assert from 'node:assert';
-import { RFDBServerBackend } from '@grafema/core';
+import { createTestDatabase, cleanupAllTestDatabases } from '../helpers/TestRFDB.js';
+
+// Cleanup all test databases after all tests complete
+after(cleanupAllTestDatabases);
 import { mkdirSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -42,8 +45,8 @@ describe('ExternalCallResolver', () => {
     const testDir = join(tmpdir(), `grafema-test-extres-${Date.now()}-${testCounter++}`);
     mkdirSync(testDir, { recursive: true });
 
-    const backend = new RFDBServerBackend({ dbPath: join(testDir, 'test.db') });
-    await backend.connect();
+    const db = await createTestDatabase();
+    const backend = db.backend;
 
     return { backend, testDir };
   }

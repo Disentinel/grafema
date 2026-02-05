@@ -7,7 +7,10 @@
 
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert';
-import { RFDBServerBackend } from '@grafema/core';
+import { createTestDatabase, cleanupAllTestDatabases } from '../helpers/TestRFDB.js';
+
+// Cleanup all test databases after all tests complete
+after(cleanupAllTestDatabases);
 import { createTestOrchestrator, analyzeProject } from '../helpers/createTestOrchestrator.js';
 import { writeFileSync, mkdirSync, rmSync } from 'fs';
 import { join } from 'path';
@@ -31,8 +34,8 @@ describe('Expression Node Tests', () => {
       writeFileSync(join(testDir, name), content);
     }
 
-    const backend = new RFDBServerBackend({ dbPath: join(testDir, 'test.db') });
-    await backend.connect();
+    const db = await createTestDatabase();
+    const backend = db.backend;
 
     // Run analysis
     await analyzeProject(backend, testDir);

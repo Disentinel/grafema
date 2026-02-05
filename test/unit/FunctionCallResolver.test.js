@@ -10,9 +10,12 @@
  * and uses those edges to resolve function calls to their definitions.
  */
 
-import { describe, it } from 'node:test';
+import { describe, it, after } from 'node:test';
 import assert from 'node:assert';
-import { RFDBServerBackend } from '@grafema/core';
+import { createTestDatabase, cleanupAllTestDatabases } from '../helpers/TestRFDB.js';
+
+// Cleanup all test databases after all tests complete
+after(cleanupAllTestDatabases);
 import { FunctionCallResolver } from '@grafema/core';
 import { mkdirSync } from 'fs';
 import { join } from 'path';
@@ -25,8 +28,8 @@ describe('FunctionCallResolver', () => {
     const testDir = join(tmpdir(), `grafema-test-funcresolver-${Date.now()}-${testCounter++}`);
     mkdirSync(testDir, { recursive: true });
 
-    const backend = new RFDBServerBackend({ dbPath: join(testDir, 'test.db') });
-    await backend.connect();
+    const db = await createTestDatabase();
+    const backend = db.backend;
 
     return { backend, testDir };
   }

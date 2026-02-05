@@ -1,7 +1,10 @@
 import { describe, it, after, beforeEach } from 'node:test';
 import assert from 'node:assert';
 
-import { createTestBackend } from '../helpers/TestRFDB.js';
+import { createTestDatabase, cleanupAllTestDatabases } from '../helpers/TestRFDB.js';
+
+// Cleanup all test databases after all tests complete
+after(cleanupAllTestDatabases);
 import { setupSemanticTest } from '../helpers/setupSemanticTest.js';
 
 const TEST_LABEL = 'reg327-local-vars';
@@ -14,20 +17,17 @@ async function setupTest(backend, files) {
 }
 
 describe('REG-327: Function-local variables in Express handlers', () => {
+  let db;
   let backend;
 
   beforeEach(async () => {
-    if (backend) {
-      await backend.cleanup();
-    }
-    backend = createTestBackend();
-    await backend.connect();
+    if (db) await db.cleanup();
+    db = await createTestDatabase();
+    backend = db.backend;
   });
 
   after(async () => {
-    if (backend) {
-      await backend.cleanup();
-    }
+    if (db) await db.cleanup();
   });
 
   it('should create VARIABLE node for local variable in Express handler', async () => {

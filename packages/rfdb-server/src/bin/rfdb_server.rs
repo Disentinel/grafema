@@ -1,20 +1,30 @@
 //! RFDB Server - Unix socket server for GraphEngine
 //!
-//! Provides a MessagePack-based protocol for graph operations.
-//! Multiple clients can connect and share the same graph.
+//! Multi-database capable graph server. Supports multiple isolated databases
+//! per server instance, with ephemeral (in-memory) databases for testing.
 //!
 //! Usage:
-//!   rfdb-server /path/to/graph.rfdb [--socket /tmp/rfdb.sock]
+//!   rfdb-server /path/to/default.rfdb [--socket /tmp/rfdb.sock] [--data-dir /data]
 //!
 //! Protocol:
 //!   Request:  [4-byte length BE] [MessagePack payload]
 //!   Response: [4-byte length BE] [MessagePack payload]
+//!
+//! Protocol v1 (legacy):
+//!   - Client connects and immediately uses "default" database
+//!   - All existing commands work as before
+//!
+//! Protocol v2 (multi-database):
+//!   - Client sends Hello to negotiate version
+//!   - Client creates/opens specific databases
+//!   - Each session tracks its own current database
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
 
 use serde::{Deserialize, Serialize};
@@ -23,15 +33,62 @@ use serde::{Deserialize, Serialize};
 use rfdb::graph::{GraphEngine, GraphStore};
 use rfdb::storage::{NodeRecord, EdgeRecord, AttrQuery};
 use rfdb::datalog::{parse_program, parse_atom, parse_query, Evaluator};
+use rfdb::database_manager::{DatabaseManager, DatabaseInfo, AccessMode};
+use rfdb::session::ClientSession;
+
+// Global client ID counter
+static NEXT_CLIENT_ID: AtomicUsize = AtomicUsize::new(1);
 
 // ============================================================================
-// Wire Protocol Types
+// Wire Protocol Types (Extended for multi-database)
 // ============================================================================
 
 /// Request from client
 #[derive(Debug, Deserialize)]
 #[serde(tag = "cmd", rename_all = "camelCase")]
 pub enum Request {
+    // ========================================================================
+    // Database Management Commands (Protocol v2)
+    // ========================================================================
+
+    /// Negotiate protocol version with server
+    Hello {
+        #[serde(rename = "protocolVersion")]
+        protocol_version: Option<u32>,
+        #[serde(rename = "clientId")]
+        client_id: Option<String>,
+    },
+
+    /// Create a new database
+    CreateDatabase {
+        name: String,
+        #[serde(default)]
+        ephemeral: bool,
+    },
+
+    /// Open a database and set as current for this session
+    OpenDatabase {
+        name: String,
+        #[serde(default = "default_rw_mode")]
+        mode: String,
+    },
+
+    /// Close current database
+    CloseDatabase,
+
+    /// Drop (delete) a database
+    DropDatabase { name: String },
+
+    /// List all databases
+    ListDatabases,
+
+    /// Get current database for this session
+    CurrentDatabase,
+
+    // ========================================================================
+    // Existing Commands (unchanged)
+    // ========================================================================
+
     // Write operations
     AddNodes { nodes: Vec<WireNode> },
     AddEdges {
@@ -134,10 +191,61 @@ pub enum Request {
     UpdateNodeVersion { id: String, version: String },
 }
 
+fn default_rw_mode() -> String { "rw".to_string() }
+
 /// Response to client
 #[derive(Debug, Serialize)]
 #[serde(untagged)]
 pub enum Response {
+    // ========================================================================
+    // Database Management Responses (Protocol v2)
+    // ========================================================================
+
+    HelloOk {
+        ok: bool,
+        #[serde(rename = "protocolVersion")]
+        protocol_version: u32,
+        #[serde(rename = "serverVersion")]
+        server_version: String,
+        features: Vec<String>,
+    },
+
+    DatabaseCreated {
+        ok: bool,
+        #[serde(rename = "databaseId")]
+        database_id: String,
+    },
+
+    DatabaseOpened {
+        ok: bool,
+        #[serde(rename = "databaseId")]
+        database_id: String,
+        mode: String,
+        #[serde(rename = "nodeCount")]
+        node_count: u32,
+        #[serde(rename = "edgeCount")]
+        edge_count: u32,
+    },
+
+    DatabaseList {
+        databases: Vec<WireDatabaseInfo>,
+    },
+
+    CurrentDb {
+        database: Option<String>,
+        mode: Option<String>,
+    },
+
+    /// Structured error with code (for programmatic handling)
+    ErrorWithCode {
+        error: String,
+        code: String,
+    },
+
+    // ========================================================================
+    // Existing Responses (unchanged)
+    // ========================================================================
+
     Ok { ok: bool },
     Error { error: String },
     Node { node: Option<WireNode> },
@@ -151,6 +259,29 @@ pub enum Response {
     Violations { violations: Vec<WireViolation> },
     Identifier { identifier: Option<String> },
     DatalogResults { results: Vec<WireViolation> },
+}
+
+/// Database information for ListDatabases response
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WireDatabaseInfo {
+    name: String,
+    ephemeral: bool,
+    node_count: usize,
+    edge_count: usize,
+    connection_count: usize,
+}
+
+impl From<DatabaseInfo> for WireDatabaseInfo {
+    fn from(info: DatabaseInfo) -> Self {
+        WireDatabaseInfo {
+            name: info.name,
+            ephemeral: info.ephemeral,
+            node_count: info.node_count,
+            edge_count: info.edge_count,
+            connection_count: info.connection_count,
+        }
+    }
 }
 
 /// Violation from guarantee check
@@ -268,255 +399,480 @@ fn record_to_wire_edge(record: &EdgeRecord) -> WireEdge {
 }
 
 // ============================================================================
-// Request Handler
+// Request Handler (Multi-database aware)
 // ============================================================================
 
-fn handle_request(engine: &mut GraphEngine, request: Request) -> Response {
+fn handle_request(
+    manager: &DatabaseManager,
+    session: &mut ClientSession,
+    request: Request,
+) -> Response {
     match request {
-        // Write operations
+        // ====================================================================
+        // Database Management Commands
+        // ====================================================================
+
+        Request::Hello { protocol_version, client_id: _ } => {
+            session.protocol_version = protocol_version.unwrap_or(2);
+            Response::HelloOk {
+                ok: true,
+                protocol_version: 2,
+                server_version: env!("CARGO_PKG_VERSION").to_string(),
+                features: vec!["multiDatabase".to_string(), "ephemeral".to_string()],
+            }
+        }
+
+        Request::CreateDatabase { name, ephemeral } => {
+            match manager.create_database(&name, ephemeral) {
+                Ok(()) => Response::DatabaseCreated {
+                    ok: true,
+                    database_id: name,
+                },
+                Err(e) => Response::ErrorWithCode {
+                    error: e.to_string(),
+                    code: e.code().to_string(),
+                },
+            }
+        }
+
+        Request::OpenDatabase { name, mode } => {
+            // First, close any currently open database
+            if session.has_database() {
+                handle_close_database(manager, session);
+            }
+
+            let access_mode = AccessMode::from_str(&mode);
+
+            match manager.get_database(&name) {
+                Ok(db) => {
+                    // Track connection
+                    db.add_connection();
+
+                    let node_count = db.node_count();
+                    let edge_count = db.edge_count();
+
+                    session.set_database(db, access_mode);
+
+                    Response::DatabaseOpened {
+                        ok: true,
+                        database_id: name,
+                        mode: access_mode.as_str().to_string(),
+                        node_count: node_count as u32,
+                        edge_count: edge_count as u32,
+                    }
+                }
+                Err(e) => Response::ErrorWithCode {
+                    error: e.to_string(),
+                    code: e.code().to_string(),
+                },
+            }
+        }
+
+        Request::CloseDatabase => {
+            if !session.has_database() {
+                return Response::Error {
+                    error: "No database currently open".to_string(),
+                };
+            }
+
+            handle_close_database(manager, session);
+            Response::Ok { ok: true }
+        }
+
+        Request::DropDatabase { name } => {
+            match manager.drop_database(&name) {
+                Ok(()) => Response::Ok { ok: true },
+                Err(e) => Response::ErrorWithCode {
+                    error: e.to_string(),
+                    code: e.code().to_string(),
+                },
+            }
+        }
+
+        Request::ListDatabases => {
+            let databases: Vec<WireDatabaseInfo> = manager.list_databases()
+                .into_iter()
+                .map(|d| d.into())
+                .collect();
+            Response::DatabaseList { databases }
+        }
+
+        Request::CurrentDatabase => {
+            Response::CurrentDb {
+                database: session.current_db_name().map(|s| s.to_string()),
+                mode: session.current_db.as_ref().map(|_| session.access_mode.as_str().to_string()),
+            }
+        }
+
+        // ====================================================================
+        // Data Operations (require database)
+        // ====================================================================
+
         Request::AddNodes { nodes } => {
-            let records: Vec<NodeRecord> = nodes.into_iter().map(wire_node_to_record).collect();
-            engine.add_nodes(records);
-            Response::Ok { ok: true }
+            with_engine_write(session, |engine| {
+                let records: Vec<NodeRecord> = nodes.into_iter().map(wire_node_to_record).collect();
+                engine.add_nodes(records);
+                Response::Ok { ok: true }
+            })
         }
+
         Request::AddEdges { edges, skip_validation } => {
-            let records: Vec<EdgeRecord> = edges.into_iter().map(wire_edge_to_record).collect();
-            engine.add_edges(records, skip_validation);
-            Response::Ok { ok: true }
+            with_engine_write(session, |engine| {
+                let records: Vec<EdgeRecord> = edges.into_iter().map(wire_edge_to_record).collect();
+                engine.add_edges(records, skip_validation);
+                Response::Ok { ok: true }
+            })
         }
+
         Request::DeleteNode { id } => {
-            engine.delete_node(string_to_id(&id));
-            Response::Ok { ok: true }
+            with_engine_write(session, |engine| {
+                engine.delete_node(string_to_id(&id));
+                Response::Ok { ok: true }
+            })
         }
+
         Request::DeleteEdge { src, dst, edge_type } => {
-            engine.delete_edge(string_to_id(&src), string_to_id(&dst), &edge_type);
-            Response::Ok { ok: true }
+            with_engine_write(session, |engine| {
+                engine.delete_edge(string_to_id(&src), string_to_id(&dst), &edge_type);
+                Response::Ok { ok: true }
+            })
         }
 
-        // Read operations
         Request::GetNode { id } => {
-            let node = engine.get_node(string_to_id(&id)).map(|r| record_to_wire_node(&r));
-            Response::Node { node }
+            with_engine_read(session, |engine| {
+                let node = engine.get_node(string_to_id(&id)).map(|r| record_to_wire_node(&r));
+                Response::Node { node }
+            })
         }
+
         Request::NodeExists { id } => {
-            Response::Bool { value: engine.node_exists(string_to_id(&id)) }
+            with_engine_read(session, |engine| {
+                Response::Bool { value: engine.node_exists(string_to_id(&id)) }
+            })
         }
+
         Request::FindByType { node_type } => {
-            let ids: Vec<String> = engine.find_by_type(&node_type)
-                .into_iter()
-                .map(id_to_string)
-                .collect();
-            Response::Ids { ids }
+            with_engine_read(session, |engine| {
+                let ids: Vec<String> = engine.find_by_type(&node_type)
+                    .into_iter()
+                    .map(id_to_string)
+                    .collect();
+                Response::Ids { ids }
+            })
         }
+
         Request::FindByAttr { query } => {
-            let attr_query = AttrQuery {
-                version: None,
-                node_type: query.node_type,
-                file_id: None,
-                file: query.file,
-                exported: query.exported,
-                name: query.name,
-            };
-            let ids: Vec<String> = engine.find_by_attr(&attr_query)
-                .into_iter()
-                .map(id_to_string)
-                .collect();
-            Response::Ids { ids }
+            with_engine_read(session, |engine| {
+                let attr_query = AttrQuery {
+                    version: None,
+                    node_type: query.node_type,
+                    file_id: None,
+                    file: query.file,
+                    exported: query.exported,
+                    name: query.name,
+                };
+                let ids: Vec<String> = engine.find_by_attr(&attr_query)
+                    .into_iter()
+                    .map(id_to_string)
+                    .collect();
+                Response::Ids { ids }
+            })
         }
 
-        // Graph traversal
         Request::Neighbors { id, edge_types } => {
-            let edge_types_refs: Vec<&str> = edge_types.iter().map(|s| s.as_str()).collect();
-            let ids: Vec<String> = engine.neighbors(string_to_id(&id), &edge_types_refs)
-                .into_iter()
-                .map(id_to_string)
-                .collect();
-            Response::Ids { ids }
+            with_engine_read(session, |engine| {
+                let edge_types_refs: Vec<&str> = edge_types.iter().map(|s| s.as_str()).collect();
+                let ids: Vec<String> = engine.neighbors(string_to_id(&id), &edge_types_refs)
+                    .into_iter()
+                    .map(id_to_string)
+                    .collect();
+                Response::Ids { ids }
+            })
         }
+
         Request::Bfs { start_ids, max_depth, edge_types } => {
-            let start: Vec<u128> = start_ids.iter().map(|s| string_to_id(s)).collect();
-            let edge_types_refs: Vec<&str> = edge_types.iter().map(|s| s.as_str()).collect();
-            let ids: Vec<String> = engine.bfs(&start, max_depth as usize, &edge_types_refs)
-                .into_iter()
-                .map(id_to_string)
-                .collect();
-            Response::Ids { ids }
+            with_engine_read(session, |engine| {
+                let start: Vec<u128> = start_ids.iter().map(|s| string_to_id(s)).collect();
+                let edge_types_refs: Vec<&str> = edge_types.iter().map(|s| s.as_str()).collect();
+                let ids: Vec<String> = engine.bfs(&start, max_depth as usize, &edge_types_refs)
+                    .into_iter()
+                    .map(id_to_string)
+                    .collect();
+                Response::Ids { ids }
+            })
         }
+
         Request::Reachability { start_ids, max_depth, edge_types, backward } => {
-            let start: Vec<u128> = start_ids.iter().map(|s| string_to_id(s)).collect();
-            let edge_types_refs: Vec<&str> = edge_types.iter().map(|s| s.as_str()).collect();
-            let ids: Vec<String> = engine.reachability(&start, max_depth as usize, &edge_types_refs, backward)
-                .into_iter()
-                .map(id_to_string)
-                .collect();
-            Response::Ids { ids }
+            with_engine_read(session, |engine| {
+                let start: Vec<u128> = start_ids.iter().map(|s| string_to_id(s)).collect();
+                let edge_types_refs: Vec<&str> = edge_types.iter().map(|s| s.as_str()).collect();
+                let ids: Vec<String> = engine.reachability(&start, max_depth as usize, &edge_types_refs, backward)
+                    .into_iter()
+                    .map(id_to_string)
+                    .collect();
+                Response::Ids { ids }
+            })
         }
+
         Request::Dfs { start_ids, max_depth, edge_types } => {
-            let start: Vec<u128> = start_ids.iter().map(|s| string_to_id(s)).collect();
-            let edge_types_refs: Vec<&str> = edge_types.iter().map(|s| s.as_str()).collect();
-            // DFS using the standalone traversal function
-            let ids: Vec<String> = rfdb::graph::traversal::dfs(
-                &start,
-                max_depth as usize,
-                |id| engine.neighbors(id, &edge_types_refs),
-            )
-                .into_iter()
-                .map(id_to_string)
-                .collect();
-            Response::Ids { ids }
+            with_engine_read(session, |engine| {
+                let start: Vec<u128> = start_ids.iter().map(|s| string_to_id(s)).collect();
+                let edge_types_refs: Vec<&str> = edge_types.iter().map(|s| s.as_str()).collect();
+                let ids: Vec<String> = rfdb::graph::traversal::dfs(
+                    &start,
+                    max_depth as usize,
+                    |id| engine.neighbors(id, &edge_types_refs),
+                )
+                    .into_iter()
+                    .map(id_to_string)
+                    .collect();
+                Response::Ids { ids }
+            })
         }
+
         Request::GetOutgoingEdges { id, edge_types } => {
-            let edge_types_refs: Option<Vec<&str>> = edge_types.as_ref()
-                .map(|v| v.iter().map(|s| s.as_str()).collect());
-            let edges: Vec<WireEdge> = engine.get_outgoing_edges(string_to_id(&id), edge_types_refs.as_deref())
-                .into_iter()
-                .map(|e| record_to_wire_edge(&e))
-                .collect();
-            Response::Edges { edges }
+            with_engine_read(session, |engine| {
+                let edge_types_refs: Option<Vec<&str>> = edge_types.as_ref()
+                    .map(|v| v.iter().map(|s| s.as_str()).collect());
+                let edges: Vec<WireEdge> = engine.get_outgoing_edges(string_to_id(&id), edge_types_refs.as_deref())
+                    .into_iter()
+                    .map(|e| record_to_wire_edge(&e))
+                    .collect();
+                Response::Edges { edges }
+            })
         }
+
         Request::GetIncomingEdges { id, edge_types } => {
-            let edge_types_refs: Option<Vec<&str>> = edge_types.as_ref()
-                .map(|v| v.iter().map(|s| s.as_str()).collect());
-            let edges: Vec<WireEdge> = engine.get_incoming_edges(string_to_id(&id), edge_types_refs.as_deref())
-                .into_iter()
-                .map(|e| record_to_wire_edge(&e))
-                .collect();
-            Response::Edges { edges }
+            with_engine_read(session, |engine| {
+                let edge_types_refs: Option<Vec<&str>> = edge_types.as_ref()
+                    .map(|v| v.iter().map(|s| s.as_str()).collect());
+                let edges: Vec<WireEdge> = engine.get_incoming_edges(string_to_id(&id), edge_types_refs.as_deref())
+                    .into_iter()
+                    .map(|e| record_to_wire_edge(&e))
+                    .collect();
+                Response::Edges { edges }
+            })
         }
 
-        // Stats
         Request::NodeCount => {
-            Response::Count { count: engine.node_count() as u32 }
-        }
-        Request::EdgeCount => {
-            Response::Count { count: engine.edge_count() as u32 }
-        }
-        Request::CountNodesByType { types } => {
-            Response::Counts { counts: engine.count_nodes_by_type(types.as_deref()) }
-        }
-        Request::CountEdgesByType { edge_types } => {
-            Response::Counts { counts: engine.count_edges_by_type(edge_types.as_deref()) }
+            with_engine_read(session, |engine| {
+                Response::Count { count: engine.node_count() as u32 }
+            })
         }
 
-        // Control
+        Request::EdgeCount => {
+            with_engine_read(session, |engine| {
+                Response::Count { count: engine.edge_count() as u32 }
+            })
+        }
+
+        Request::CountNodesByType { types } => {
+            with_engine_read(session, |engine| {
+                Response::Counts { counts: engine.count_nodes_by_type(types.as_deref()) }
+            })
+        }
+
+        Request::CountEdgesByType { edge_types } => {
+            with_engine_read(session, |engine| {
+                Response::Counts { counts: engine.count_edges_by_type(edge_types.as_deref()) }
+            })
+        }
+
         Request::Flush => {
-            match engine.flush() {
-                Ok(()) => Response::Ok { ok: true },
-                Err(e) => Response::Error { error: e.to_string() },
-            }
+            with_engine_write(session, |engine| {
+                match engine.flush() {
+                    Ok(()) => Response::Ok { ok: true },
+                    Err(e) => Response::Error { error: e.to_string() },
+                }
+            })
         }
+
         Request::Compact => {
-            match engine.compact() {
-                Ok(()) => Response::Ok { ok: true },
-                Err(e) => Response::Error { error: e.to_string() },
-            }
+            with_engine_write(session, |engine| {
+                match engine.compact() {
+                    Ok(()) => Response::Ok { ok: true },
+                    Err(e) => Response::Error { error: e.to_string() },
+                }
+            })
         }
+
         Request::Clear => {
-            engine.clear();
-            Response::Ok { ok: true }
+            with_engine_write(session, |engine| {
+                engine.clear();
+                Response::Ok { ok: true }
+            })
         }
+
         Request::Ping => {
             Response::Pong { pong: true, version: env!("CARGO_PKG_VERSION").to_string() }
         }
+
         Request::Shutdown => {
             // This will be handled specially in the main loop
             Response::Ok { ok: true }
         }
 
-        // Bulk operations
         Request::GetAllEdges => {
-            let edges: Vec<WireEdge> = engine.get_all_edges()
-                .into_iter()
-                .map(|e| record_to_wire_edge(&e))
-                .collect();
-            Response::Edges { edges }
+            with_engine_read(session, |engine| {
+                let edges: Vec<WireEdge> = engine.get_all_edges()
+                    .into_iter()
+                    .map(|e| record_to_wire_edge(&e))
+                    .collect();
+                Response::Edges { edges }
+            })
         }
+
         Request::QueryNodes { query } => {
-            let attr_query = AttrQuery {
-                version: None,
-                node_type: query.node_type,
-                file_id: None,
-                file: query.file,
-                exported: query.exported,
-                name: query.name,
-            };
-            // find_by_attr returns Vec<u128> IDs, we need to get each node
-            let ids = engine.find_by_attr(&attr_query);
-            let nodes: Vec<WireNode> = ids.into_iter()
-                .filter_map(|id| engine.get_node(id))
-                .map(|r| record_to_wire_node(&r))
-                .collect();
-            Response::Nodes { nodes }
+            with_engine_read(session, |engine| {
+                let attr_query = AttrQuery {
+                    version: None,
+                    node_type: query.node_type,
+                    file_id: None,
+                    file: query.file,
+                    exported: query.exported,
+                    name: query.name,
+                };
+                let ids = engine.find_by_attr(&attr_query);
+                let nodes: Vec<WireNode> = ids.into_iter()
+                    .filter_map(|id| engine.get_node(id))
+                    .map(|r| record_to_wire_node(&r))
+                    .collect();
+                Response::Nodes { nodes }
+            })
         }
 
-        // Datalog queries
         Request::CheckGuarantee { rule_source } => {
-            match execute_check_guarantee(engine, &rule_source) {
-                Ok(violations) => Response::Violations { violations },
-                Err(e) => Response::Error { error: e },
-            }
-        }
-        Request::DatalogLoadRules { source } => {
-            match execute_datalog_load_rules(engine, &source) {
-                Ok(count) => Response::Count { count },
-                Err(e) => Response::Error { error: e },
-            }
-        }
-        Request::DatalogClearRules => {
-            // Rules are session-specific, nothing to clear at server level
-            Response::Ok { ok: true }
-        }
-        Request::DatalogQuery { query } => {
-            match execute_datalog_query(engine, &query) {
-                Ok(results) => Response::DatalogResults { results },
-                Err(e) => Response::Error { error: e },
-            }
+            with_engine_read(session, |engine| {
+                match execute_check_guarantee(engine, &rule_source) {
+                    Ok(violations) => Response::Violations { violations },
+                    Err(e) => Response::Error { error: e },
+                }
+            })
         }
 
-        // Node utility
-        Request::IsEndpoint { id } => {
-            Response::Bool { value: engine.is_endpoint(string_to_id(&id)) }
+        Request::DatalogLoadRules { source } => {
+            with_engine_read(session, |engine| {
+                match execute_datalog_load_rules(engine, &source) {
+                    Ok(count) => Response::Count { count },
+                    Err(e) => Response::Error { error: e },
+                }
+            })
         }
-        Request::GetNodeIdentifier { id } => {
-            let node = engine.get_node(string_to_id(&id));
-            let identifier = node.and_then(|n| {
-                n.name.clone().or_else(|| Some(format!("{}:{}", n.node_type.as_deref().unwrap_or("UNKNOWN"), id)))
-            });
-            Response::Identifier { identifier }
-        }
-        Request::UpdateNodeVersion { id: _, version: _ } => {
-            // Note: update_node_version is not implemented in GraphEngine
-            // Version management is done through delete_version + add with new version
+
+        Request::DatalogClearRules => {
             Response::Ok { ok: true }
+        }
+
+        Request::DatalogQuery { query } => {
+            with_engine_read(session, |engine| {
+                match execute_datalog_query(engine, &query) {
+                    Ok(results) => Response::DatalogResults { results },
+                    Err(e) => Response::Error { error: e },
+                }
+            })
+        }
+
+        Request::IsEndpoint { id } => {
+            with_engine_read(session, |engine| {
+                Response::Bool { value: engine.is_endpoint(string_to_id(&id)) }
+            })
+        }
+
+        Request::GetNodeIdentifier { id } => {
+            with_engine_read(session, |engine| {
+                let node = engine.get_node(string_to_id(&id));
+                let identifier = node.and_then(|n| {
+                    n.name.clone().or_else(|| Some(format!("{}:{}", n.node_type.as_deref().unwrap_or("UNKNOWN"), id)))
+                });
+                Response::Identifier { identifier }
+            })
+        }
+
+        Request::UpdateNodeVersion { id: _, version: _ } => {
+            with_engine_write(session, |_engine| {
+                Response::Ok { ok: true }
+            })
         }
     }
 }
+
+/// Helper: execute read operation on current database
+fn with_engine_read<F>(session: &ClientSession, f: F) -> Response
+where
+    F: FnOnce(&GraphEngine) -> Response,
+{
+    match &session.current_db {
+        Some(db) => {
+            let engine = db.engine.read().unwrap();
+            f(&engine)
+        }
+        None => Response::ErrorWithCode {
+            error: "No database selected. Use openDatabase first.".to_string(),
+            code: "NO_DATABASE_SELECTED".to_string(),
+        },
+    }
+}
+
+/// Helper: execute write operation on current database
+fn with_engine_write<F>(session: &ClientSession, f: F) -> Response
+where
+    F: FnOnce(&mut GraphEngine) -> Response,
+{
+    match &session.current_db {
+        Some(db) => {
+            if !session.can_write() {
+                return Response::ErrorWithCode {
+                    error: "Operation not allowed in read-only mode".to_string(),
+                    code: "READ_ONLY_MODE".to_string(),
+                };
+            }
+            let mut engine = db.engine.write().unwrap();
+            f(&mut engine)
+        }
+        None => Response::ErrorWithCode {
+            error: "No database selected. Use openDatabase first.".to_string(),
+            code: "NO_DATABASE_SELECTED".to_string(),
+        },
+    }
+}
+
+/// Close current database and decrement connection count
+///
+/// If the database is ephemeral and no other connections remain,
+/// it will be automatically removed from the manager.
+fn handle_close_database(manager: &DatabaseManager, session: &mut ClientSession) {
+    if let Some(db) = &session.current_db {
+        let db_name = db.name.clone();
+        db.remove_connection();
+        // Cleanup ephemeral database if no connections remain
+        manager.cleanup_ephemeral_if_unused(&db_name);
+    }
+    session.clear_database();
+}
+
+// ============================================================================
+// Datalog Helpers
+// ============================================================================
 
 /// Execute a guarantee check (violation query)
 fn execute_check_guarantee(
     engine: &GraphEngine,
     rule_source: &str,
 ) -> std::result::Result<Vec<WireViolation>, String> {
-    // Parse the program
     let program = parse_program(rule_source)
         .map_err(|e| format!("Datalog parse error: {}", e))?;
 
-    // Create evaluator
     let mut evaluator = Evaluator::new(engine);
 
-    // Load all rules
     for rule in program.rules() {
         evaluator.add_rule(rule.clone());
     }
 
-    // Query for violations
     let violation_query = parse_atom("violation(X)")
         .map_err(|e| format!("Internal error parsing violation query: {}", e))?;
 
-    // Execute query
     let bindings = evaluator.query(&violation_query);
 
-    // Convert to wire format
     let violations: Vec<WireViolation> = bindings.into_iter()
         .map(|b| {
             let mut map = std::collections::HashMap::new();
@@ -535,7 +891,6 @@ fn execute_datalog_load_rules(
     _engine: &GraphEngine,
     source: &str,
 ) -> std::result::Result<u32, String> {
-    // Parse the program to validate and count rules
     let program = parse_program(source)
         .map_err(|e| format!("Datalog parse error: {}", e))?;
 
@@ -547,17 +902,13 @@ fn execute_datalog_query(
     engine: &GraphEngine,
     query_source: &str,
 ) -> std::result::Result<Vec<WireViolation>, String> {
-    // Parse the query (supports single atom or conjunction)
     let literals = parse_query(query_source)
         .map_err(|e| format!("Datalog query parse error: {}", e))?;
 
-    // Create evaluator
     let evaluator = Evaluator::new(engine);
 
-    // Execute query using conjunction evaluation
     let bindings = evaluator.eval_query(&literals);
 
-    // Convert to wire format
     let results: Vec<WireViolation> = bindings.into_iter()
         .map(|b| {
             let mut map = std::collections::HashMap::new();
@@ -610,13 +961,23 @@ fn write_message(stream: &mut UnixStream, data: &[u8]) -> std::io::Result<()> {
 
 fn handle_client(
     mut stream: UnixStream,
-    engine: Arc<std::sync::RwLock<GraphEngine>>,
+    manager: Arc<DatabaseManager>,
     client_id: usize,
+    legacy_mode: bool,
 ) {
     eprintln!("[rfdb-server] Client {} connected", client_id);
 
+    let mut session = ClientSession::new(client_id);
+
+    // In legacy mode (protocol v1), auto-open "default" database
+    if legacy_mode {
+        if let Ok(db) = manager.get_database("default") {
+            db.add_connection();
+            session.set_database(db, AccessMode::ReadWrite);
+        }
+    }
+
     loop {
-        // Read request
         let msg = match read_message(&mut stream) {
             Ok(Some(msg)) => msg,
             Ok(None) => {
@@ -629,27 +990,20 @@ fn handle_client(
             }
         };
 
-        // Deserialize request
         let request: Request = match rmp_serde::from_slice(&msg) {
             Ok(req) => req,
             Err(e) => {
                 let response = Response::Error { error: format!("Invalid request: {}", e) };
-                let resp_bytes = rmp_serde::to_vec(&response).unwrap();
+                let resp_bytes = rmp_serde::to_vec_named(&response).unwrap();
                 let _ = write_message(&mut stream, &resp_bytes);
                 continue;
             }
         };
 
-        // Check for shutdown
         let is_shutdown = matches!(request, Request::Shutdown);
 
-        // Handle request
-        let response = {
-            let mut engine_guard = engine.write().unwrap();
-            handle_request(&mut engine_guard, request)
-        };
+        let response = handle_request(&manager, &mut session, request);
 
-        // Serialize and send response (use to_vec_named for proper field names)
         let resp_bytes = match rmp_serde::to_vec_named(&response) {
             Ok(bytes) => bytes,
             Err(e) => {
@@ -668,6 +1022,9 @@ fn handle_client(
             std::process::exit(0);
         }
     }
+
+    // Cleanup: close database and release connections
+    handle_close_database(&manager, &mut session);
 }
 
 // ============================================================================
@@ -678,11 +1035,12 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
 
     if args.len() < 2 {
-        eprintln!("Usage: rfdb-server <db-path> [--socket <socket-path>]");
+        eprintln!("Usage: rfdb-server <db-path> [--socket <socket-path>] [--data-dir <dir>]");
         eprintln!("");
         eprintln!("Arguments:");
-        eprintln!("  <db-path>      Path to graph database directory");
+        eprintln!("  <db-path>      Path to default graph database directory");
         eprintln!("  --socket       Unix socket path (default: /tmp/rfdb.sock)");
+        eprintln!("  --data-dir     Base directory for multi-database storage");
         std::process::exit(1);
     }
 
@@ -706,28 +1064,38 @@ fn main() {
         .map(|s| s.as_str())
         .unwrap_or("/tmp/rfdb.sock");
 
+    let data_dir = args.iter()
+        .position(|a| a == "--data-dir")
+        .and_then(|i| args.get(i + 1))
+        .map(PathBuf::from)
+        .unwrap_or_else(|| db_path.parent().unwrap_or(&db_path).to_path_buf());
+
     // Remove stale socket file
     let _ = std::fs::remove_file(socket_path);
 
-    // Open or create database
-    eprintln!("[rfdb-server] Opening database: {:?}", db_path);
-    let engine = if db_path.join("nodes.bin").exists() {
-        GraphEngine::open(&db_path).expect("Failed to open database")
-    } else {
-        GraphEngine::create(&db_path).expect("Failed to create database")
-    };
-    let engine = Arc::new(std::sync::RwLock::new(engine));
+    // Create database manager with data directory
+    let manager = Arc::new(DatabaseManager::new(data_dir.clone()));
 
-    eprintln!("[rfdb-server] Database opened: {} nodes, {} edges",
-        engine.read().unwrap().node_count(),
-        engine.read().unwrap().edge_count());
+    // Create "default" database from legacy db_path for backwards compatibility
+    eprintln!("[rfdb-server] Opening default database: {:?}", db_path);
+    manager.create_default_from_path(&db_path)
+        .expect("Failed to create default database");
+
+    eprintln!("[rfdb-server] Data directory for multi-database: {:?}", data_dir);
+
+    // Get stats from default database
+    if let Ok(db) = manager.get_database("default") {
+        eprintln!("[rfdb-server] Default database: {} nodes, {} edges",
+            db.node_count(),
+            db.edge_count());
+    }
 
     // Bind Unix socket
     let listener = UnixListener::bind(socket_path).expect("Failed to bind socket");
     eprintln!("[rfdb-server] Listening on {}", socket_path);
 
     // Set up signal handler for graceful shutdown
-    let engine_for_signal = Arc::clone(&engine);
+    let manager_for_signal = Arc::clone(&manager);
     let socket_path_for_signal = socket_path.to_string();
     let mut signals = signal_hook::iterator::Signals::new(&[
         signal_hook::consts::SIGINT,
@@ -738,10 +1106,15 @@ fn main() {
         for sig in signals.forever() {
             eprintln!("[rfdb-server] Received signal {}, flushing...", sig);
 
-            if let Ok(mut guard) = engine_for_signal.write() {
-                match guard.flush() {
-                    Ok(()) => eprintln!("[rfdb-server] Flush complete"),
-                    Err(e) => eprintln!("[rfdb-server] Flush failed: {}", e),
+            // Flush all databases
+            for db_info in manager_for_signal.list_databases() {
+                if let Ok(db) = manager_for_signal.get_database(&db_info.name) {
+                    if let Ok(mut engine) = db.engine.write() {
+                        match engine.flush() {
+                            Ok(()) => eprintln!("[rfdb-server] Flushed database '{}'", db_info.name),
+                            Err(e) => eprintln!("[rfdb-server] Flush failed for '{}': {}", db_info.name, e),
+                        }
+                    }
                 }
             }
 
@@ -752,19 +1125,475 @@ fn main() {
     });
 
     // Accept connections
-    let mut client_id = 0;
     for stream in listener.incoming() {
         match stream {
             Ok(stream) => {
-                client_id += 1;
-                let engine_clone = Arc::clone(&engine);
+                let client_id = NEXT_CLIENT_ID.fetch_add(1, Ordering::SeqCst);
+                let manager_clone = Arc::clone(&manager);
                 thread::spawn(move || {
-                    handle_client(stream, engine_clone, client_id);
+                    // legacy_mode: true until client sends Hello
+                    handle_client(stream, manager_clone, client_id, true);
                 });
             }
             Err(e) => {
                 eprintln!("[rfdb-server] Accept error: {}", e);
             }
+        }
+    }
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[cfg(test)]
+mod protocol_tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    // Helper to create a test manager with default database
+    fn setup_test_manager() -> (tempfile::TempDir, Arc<DatabaseManager>) {
+        let dir = tempdir().unwrap();
+        let manager = Arc::new(DatabaseManager::new(dir.path().to_path_buf()));
+
+        // Create default database for backwards compat testing
+        let db_path = dir.path().join("default.rfdb");
+        std::fs::create_dir_all(&db_path).unwrap();
+        manager.create_default_from_path(&db_path).unwrap();
+
+        (dir, manager)
+    }
+
+    // ============================================================================
+    // Hello Command
+    // ============================================================================
+
+    #[test]
+    fn test_hello_command() {
+        let (_dir, manager) = setup_test_manager();
+        let mut session = ClientSession::new(1);
+
+        let request = Request::Hello {
+            protocol_version: Some(2),
+            client_id: Some("test-client".to_string()),
+        };
+
+        let response = handle_request(&manager, &mut session, request);
+
+        match response {
+            Response::HelloOk { ok, protocol_version, server_version, features } => {
+                assert!(ok);
+                assert_eq!(protocol_version, 2);
+                assert!(!server_version.is_empty());
+                assert!(features.contains(&"multiDatabase".to_string()));
+                assert!(features.contains(&"ephemeral".to_string()));
+            }
+            _ => panic!("Expected HelloOk response"),
+        }
+
+        assert_eq!(session.protocol_version, 2);
+    }
+
+    // ============================================================================
+    // CreateDatabase Command
+    // ============================================================================
+
+    #[test]
+    fn test_create_database_command() {
+        let (_dir, manager) = setup_test_manager();
+        let mut session = ClientSession::new(1);
+
+        let request = Request::CreateDatabase {
+            name: "testdb".to_string(),
+            ephemeral: false,
+        };
+
+        let response = handle_request(&manager, &mut session, request);
+
+        match response {
+            Response::DatabaseCreated { ok, database_id } => {
+                assert!(ok);
+                assert_eq!(database_id, "testdb");
+            }
+            _ => panic!("Expected DatabaseCreated response"),
+        }
+
+        assert!(manager.database_exists("testdb"));
+    }
+
+    #[test]
+    fn test_create_database_already_exists() {
+        let (_dir, manager) = setup_test_manager();
+        let mut session = ClientSession::new(1);
+
+        manager.create_database("existing", false).unwrap();
+
+        let request = Request::CreateDatabase {
+            name: "existing".to_string(),
+            ephemeral: false,
+        };
+
+        let response = handle_request(&manager, &mut session, request);
+
+        match response {
+            Response::ErrorWithCode { error, code } => {
+                assert!(error.contains("existing"));
+                assert_eq!(code, "DATABASE_EXISTS");
+            }
+            _ => panic!("Expected ErrorWithCode response"),
+        }
+    }
+
+    // ============================================================================
+    // OpenDatabase Command
+    // ============================================================================
+
+    #[test]
+    fn test_open_database_command() {
+        let (_dir, manager) = setup_test_manager();
+        let mut session = ClientSession::new(1);
+
+        manager.create_database("testdb", false).unwrap();
+
+        let request = Request::OpenDatabase {
+            name: "testdb".to_string(),
+            mode: "rw".to_string(),
+        };
+
+        let response = handle_request(&manager, &mut session, request);
+
+        match response {
+            Response::DatabaseOpened { ok, database_id, mode, node_count, edge_count } => {
+                assert!(ok);
+                assert_eq!(database_id, "testdb");
+                assert_eq!(mode, "rw");
+                assert_eq!(node_count, 0);
+                assert_eq!(edge_count, 0);
+            }
+            _ => panic!("Expected DatabaseOpened response"),
+        }
+
+        assert!(session.has_database());
+        assert_eq!(session.current_db_name(), Some("testdb"));
+
+        // Verify connection count incremented
+        let db = manager.get_database("testdb").unwrap();
+        assert_eq!(db.connection_count(), 1);
+    }
+
+    #[test]
+    fn test_open_database_not_found() {
+        let (_dir, manager) = setup_test_manager();
+        let mut session = ClientSession::new(1);
+
+        let request = Request::OpenDatabase {
+            name: "nonexistent".to_string(),
+            mode: "rw".to_string(),
+        };
+
+        let response = handle_request(&manager, &mut session, request);
+
+        match response {
+            Response::ErrorWithCode { error, code } => {
+                assert!(error.contains("nonexistent"));
+                assert_eq!(code, "DATABASE_NOT_FOUND");
+            }
+            _ => panic!("Expected ErrorWithCode response"),
+        }
+    }
+
+    #[test]
+    fn test_open_database_closes_previous() {
+        let (_dir, manager) = setup_test_manager();
+        let mut session = ClientSession::new(1);
+
+        manager.create_database("db1", false).unwrap();
+        manager.create_database("db2", false).unwrap();
+
+        // Open first database
+        handle_request(&manager, &mut session, Request::OpenDatabase {
+            name: "db1".to_string(),
+            mode: "rw".to_string(),
+        });
+
+        let db1 = manager.get_database("db1").unwrap();
+        assert_eq!(db1.connection_count(), 1);
+
+        // Open second database - should close first
+        handle_request(&manager, &mut session, Request::OpenDatabase {
+            name: "db2".to_string(),
+            mode: "rw".to_string(),
+        });
+
+        // db1 should have 0 connections now
+        assert_eq!(db1.connection_count(), 0);
+
+        let db2 = manager.get_database("db2").unwrap();
+        assert_eq!(db2.connection_count(), 1);
+
+        assert_eq!(session.current_db_name(), Some("db2"));
+    }
+
+    // ============================================================================
+    // CloseDatabase Command
+    // ============================================================================
+
+    #[test]
+    fn test_close_database_command() {
+        let (_dir, manager) = setup_test_manager();
+        let mut session = ClientSession::new(1);
+
+        manager.create_database("testdb", false).unwrap();
+
+        // Open database
+        handle_request(&manager, &mut session, Request::OpenDatabase {
+            name: "testdb".to_string(),
+            mode: "rw".to_string(),
+        });
+
+        // Close it
+        let response = handle_request(&manager, &mut session, Request::CloseDatabase);
+
+        match response {
+            Response::Ok { ok } => assert!(ok),
+            _ => panic!("Expected Ok response"),
+        }
+
+        assert!(!session.has_database());
+
+        let db = manager.get_database("testdb").unwrap();
+        assert_eq!(db.connection_count(), 0);
+    }
+
+    #[test]
+    fn test_close_database_no_database_open() {
+        let (_dir, manager) = setup_test_manager();
+        let mut session = ClientSession::new(1);
+
+        let response = handle_request(&manager, &mut session, Request::CloseDatabase);
+
+        match response {
+            Response::Error { error } => {
+                assert!(error.contains("No database"));
+            }
+            _ => panic!("Expected Error response"),
+        }
+    }
+
+    // ============================================================================
+    // DropDatabase Command
+    // ============================================================================
+
+    #[test]
+    fn test_drop_database_command() {
+        let (_dir, manager) = setup_test_manager();
+        let mut session = ClientSession::new(1);
+
+        manager.create_database("testdb", false).unwrap();
+
+        let response = handle_request(&manager, &mut session, Request::DropDatabase {
+            name: "testdb".to_string(),
+        });
+
+        match response {
+            Response::Ok { ok } => assert!(ok),
+            _ => panic!("Expected Ok response"),
+        }
+
+        assert!(!manager.database_exists("testdb"));
+    }
+
+    #[test]
+    fn test_drop_database_in_use() {
+        let (_dir, manager) = setup_test_manager();
+        let mut session1 = ClientSession::new(1);
+        let mut session2 = ClientSession::new(2);
+
+        manager.create_database("testdb", false).unwrap();
+
+        // Session 1 opens database
+        handle_request(&manager, &mut session1, Request::OpenDatabase {
+            name: "testdb".to_string(),
+            mode: "rw".to_string(),
+        });
+
+        // Session 2 tries to drop
+        let response = handle_request(&manager, &mut session2, Request::DropDatabase {
+            name: "testdb".to_string(),
+        });
+
+        match response {
+            Response::ErrorWithCode { error, code } => {
+                assert!(error.contains("in use"));
+                assert_eq!(code, "DATABASE_IN_USE");
+            }
+            _ => panic!("Expected ErrorWithCode response"),
+        }
+    }
+
+    // ============================================================================
+    // ListDatabases Command
+    // ============================================================================
+
+    #[test]
+    fn test_list_databases_command() {
+        let (_dir, manager) = setup_test_manager();
+        let mut session = ClientSession::new(1);
+
+        manager.create_database("db1", false).unwrap();
+        manager.create_database("db2", true).unwrap();
+
+        let response = handle_request(&manager, &mut session, Request::ListDatabases);
+
+        match response {
+            Response::DatabaseList { databases } => {
+                // default + db1 + db2
+                assert!(databases.len() >= 2);
+
+                let db1_info = databases.iter().find(|d| d.name == "db1");
+                assert!(db1_info.is_some());
+                assert!(!db1_info.unwrap().ephemeral);
+
+                let db2_info = databases.iter().find(|d| d.name == "db2");
+                assert!(db2_info.is_some());
+                assert!(db2_info.unwrap().ephemeral);
+            }
+            _ => panic!("Expected DatabaseList response"),
+        }
+    }
+
+    // ============================================================================
+    // CurrentDatabase Command
+    // ============================================================================
+
+    #[test]
+    fn test_current_database_none() {
+        let (_dir, manager) = setup_test_manager();
+        let mut session = ClientSession::new(1);
+        session.clear_database(); // Ensure no database is set
+
+        let response = handle_request(&manager, &mut session, Request::CurrentDatabase);
+
+        match response {
+            Response::CurrentDb { database, mode } => {
+                assert!(database.is_none());
+                assert!(mode.is_none());
+            }
+            _ => panic!("Expected CurrentDb response"),
+        }
+    }
+
+    #[test]
+    fn test_current_database_with_open() {
+        let (_dir, manager) = setup_test_manager();
+        let mut session = ClientSession::new(1);
+
+        manager.create_database("testdb", false).unwrap();
+
+        handle_request(&manager, &mut session, Request::OpenDatabase {
+            name: "testdb".to_string(),
+            mode: "ro".to_string(),
+        });
+
+        let response = handle_request(&manager, &mut session, Request::CurrentDatabase);
+
+        match response {
+            Response::CurrentDb { database, mode } => {
+                assert_eq!(database, Some("testdb".to_string()));
+                assert_eq!(mode, Some("ro".to_string()));
+            }
+            _ => panic!("Expected CurrentDb response"),
+        }
+    }
+
+    // ============================================================================
+    // Backwards Compatibility (Protocol v1)
+    // ============================================================================
+
+    #[test]
+    fn test_legacy_client_auto_opens_default() {
+        let (_dir, manager) = setup_test_manager();
+
+        // Simulate legacy client connection (legacy_mode = true)
+        let mut session = ClientSession::new(1);
+
+        // In legacy mode, session should auto-open "default" database
+        let db = manager.get_database("default").unwrap();
+        db.add_connection();
+        session.set_database(db.clone(), AccessMode::ReadWrite);
+
+        assert!(session.has_database());
+        assert_eq!(session.current_db_name(), Some("default"));
+    }
+
+    #[test]
+    fn test_data_ops_require_database() {
+        let (_dir, manager) = setup_test_manager();
+        let mut session = ClientSession::new(1);
+
+        // Protocol v2 client without opening database
+        session.protocol_version = 2;
+        session.clear_database();
+
+        let request = Request::AddNodes { nodes: vec![] };
+        let response = handle_request(&manager, &mut session, request);
+
+        match response {
+            Response::ErrorWithCode { error, code } => {
+                assert!(error.contains("No database"));
+                assert_eq!(code, "NO_DATABASE_SELECTED");
+            }
+            _ => panic!("Expected ErrorWithCode response"),
+        }
+    }
+
+    // ============================================================================
+    // Read-Only Mode
+    // ============================================================================
+
+    #[test]
+    fn test_read_only_blocks_writes() {
+        let (_dir, manager) = setup_test_manager();
+        let mut session = ClientSession::new(1);
+
+        manager.create_database("testdb", false).unwrap();
+
+        handle_request(&manager, &mut session, Request::OpenDatabase {
+            name: "testdb".to_string(),
+            mode: "ro".to_string(),
+        });
+
+        let request = Request::AddNodes { nodes: vec![] };
+        let response = handle_request(&manager, &mut session, request);
+
+        match response {
+            Response::ErrorWithCode { error, code } => {
+                assert!(error.contains("read-only"));
+                assert_eq!(code, "READ_ONLY_MODE");
+            }
+            _ => panic!("Expected ErrorWithCode response"),
+        }
+    }
+
+    #[test]
+    fn test_read_only_allows_reads() {
+        let (_dir, manager) = setup_test_manager();
+        let mut session = ClientSession::new(1);
+
+        manager.create_database("testdb", false).unwrap();
+
+        handle_request(&manager, &mut session, Request::OpenDatabase {
+            name: "testdb".to_string(),
+            mode: "ro".to_string(),
+        });
+
+        let response = handle_request(&manager, &mut session, Request::NodeCount);
+
+        match response {
+            Response::Count { count } => {
+                assert_eq!(count, 0);
+            }
+            _ => panic!("Expected Count response"),
         }
     }
 }

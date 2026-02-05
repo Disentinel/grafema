@@ -33,7 +33,10 @@ import { writeFileSync, mkdirSync } from 'fs';
 import { tmpdir } from 'os';
 
 import { NetworkRequestNode } from '@grafema/core';
-import { createTestBackend } from '../helpers/TestRFDB.js';
+import { createTestDatabase, cleanupAllTestDatabases } from '../helpers/TestRFDB.js';
+
+// Cleanup all test databases after all tests complete
+after(cleanupAllTestDatabases);
 import { createTestOrchestrator } from '../helpers/createTestOrchestrator.js';
 
 /**
@@ -83,11 +86,12 @@ async function setupTest(backend, files) {
 // ============================================================================
 
 describe('NetworkRequestNode Migration (REG-109)', () => {
+  let db;
   let backend;
 
   beforeEach(async () => {
-    backend = createTestBackend();
-    await backend.connect();
+    db = await createTestDatabase();
+    backend = db.backend;
   });
 
   afterEach(async () => {

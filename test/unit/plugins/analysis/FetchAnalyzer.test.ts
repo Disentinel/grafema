@@ -18,7 +18,7 @@ import { join } from 'path';
 import { writeFileSync, mkdirSync } from 'fs';
 import { tmpdir } from 'os';
 
-import { createTestBackend } from '../../../helpers/TestRFDB.js';
+import { createTestDatabase } from '../../../helpers/TestRFDB.js';
 import { createTestOrchestrator } from '../../../helpers/createTestOrchestrator.js';
 import type { NodeRecord, EdgeRecord } from '@grafema/types';
 
@@ -33,7 +33,7 @@ let testCounter = 0;
  * Uses the default test orchestrator which includes FetchAnalyzer
  */
 async function setupTest(
-  backend: ReturnType<typeof createTestBackend>,
+  backend: Awaited<ReturnType<typeof createTestDatabase>>['backend'],
   files: Record<string, string>
 ): Promise<{ testDir: string }> {
   const testDir = join(tmpdir(), `grafema-test-fetch-analyzer-${Date.now()}-${testCounter++}`);
@@ -67,7 +67,7 @@ async function setupTest(
  * Get nodes by type from backend
  */
 async function getNodesByType(
-  backend: ReturnType<typeof createTestBackend>,
+  backend: Awaited<ReturnType<typeof createTestDatabase>>['backend'],
   nodeType: string
 ): Promise<NodeRecord[]> {
   const allNodes = await backend.getAllNodes();
@@ -78,7 +78,7 @@ async function getNodesByType(
  * Find http:request node by method and URL pattern
  */
 async function findHttpRequestNode(
-  backend: ReturnType<typeof createTestBackend>,
+  backend: Awaited<ReturnType<typeof createTestDatabase>>['backend'],
   method: string,
   urlPattern: string
 ): Promise<NodeRecord | undefined> {
@@ -94,7 +94,7 @@ async function findHttpRequestNode(
  * Find CALL node by object and method name in a specific file
  */
 async function findCallNode(
-  backend: ReturnType<typeof createTestBackend>,
+  backend: Awaited<ReturnType<typeof createTestDatabase>>['backend'],
   objectName: string,
   methodName: string,
   file?: string
@@ -116,20 +116,17 @@ async function findCallNode(
 // =============================================================================
 
 describe('FetchAnalyzer responseDataNode tracking (REG-252 Phase B)', () => {
-  let backend: ReturnType<typeof createTestBackend> & { cleanup: () => Promise<void> };
+  let db: Awaited<ReturnType<typeof createTestDatabase>>;
+  let backend: Awaited<ReturnType<typeof createTestDatabase>>['backend'];
 
   beforeEach(async () => {
-    if (backend) {
-      await backend.cleanup();
-    }
-    backend = createTestBackend() as ReturnType<typeof createTestBackend> & { cleanup: () => Promise<void> };
-    await backend.connect();
+    if (db) await db.cleanup();
+    db = await createTestDatabase();
+    backend = db.backend;
   });
 
   after(async () => {
-    if (backend) {
-      await backend.cleanup();
-    }
+    if (db) await db.cleanup();
   });
 
   // ===========================================================================

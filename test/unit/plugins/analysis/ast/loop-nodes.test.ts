@@ -24,7 +24,7 @@ import { join } from 'path';
 import { writeFileSync, mkdirSync } from 'fs';
 import { tmpdir } from 'os';
 
-import { createTestBackend } from '../../../../helpers/TestRFDB.js';
+import { createTestDatabase } from '../../../../helpers/TestRFDB.js';
 import { createTestOrchestrator } from '../../../../helpers/createTestOrchestrator.js';
 import type { NodeRecord, EdgeRecord } from '@grafema/types';
 
@@ -38,7 +38,7 @@ let testCounter = 0;
  * Helper to create a test project with given files and run analysis
  */
 async function setupTest(
-  backend: ReturnType<typeof createTestBackend>,
+  backend: Awaited<ReturnType<typeof createTestDatabase>>['backend'],
   files: Record<string, string>
 ): Promise<{ testDir: string }> {
   const testDir = join(tmpdir(), `grafema-test-loop-${Date.now()}-${testCounter++}`);
@@ -69,7 +69,7 @@ async function setupTest(
  * Get nodes by type from backend
  */
 async function getNodesByType(
-  backend: ReturnType<typeof createTestBackend>,
+  backend: Awaited<ReturnType<typeof createTestDatabase>>['backend'],
   nodeType: string
 ): Promise<NodeRecord[]> {
   const allNodes = await backend.getAllNodes();
@@ -80,7 +80,7 @@ async function getNodesByType(
  * Get edges by type from backend
  */
 async function getEdgesByType(
-  backend: ReturnType<typeof createTestBackend>,
+  backend: Awaited<ReturnType<typeof createTestDatabase>>['backend'],
   edgeType: string
 ): Promise<EdgeRecord[]> {
   const allNodes = await backend.getAllNodes();
@@ -98,7 +98,7 @@ async function getEdgesByType(
  * Get all edges from backend
  */
 async function getAllEdges(
-  backend: ReturnType<typeof createTestBackend>
+  backend: Awaited<ReturnType<typeof createTestDatabase>>['backend']
 ): Promise<EdgeRecord[]> {
   const allNodes = await backend.getAllNodes();
   const allEdges: EdgeRecord[] = [];
@@ -116,20 +116,15 @@ async function getAllEdges(
 // =============================================================================
 
 describe('Loop Nodes Analysis (REG-267 Phase 2)', () => {
-  let backend: ReturnType<typeof createTestBackend> & { cleanup: () => Promise<void> };
+  let backend: Awaited<ReturnType<typeof createTestDatabase>>['backend'] & { cleanup: () => Promise<void> };
 
   beforeEach(async () => {
-    if (backend) {
-      await backend.cleanup();
-    }
-    backend = createTestBackend() as ReturnType<typeof createTestBackend> & { cleanup: () => Promise<void> };
-    await backend.connect();
+    if (db) await db.cleanup();
+    backend = await createTestDatabase(); backend = db.backend;
   });
 
   after(async () => {
-    if (backend) {
-      await backend.cleanup();
-    }
+    if (db) await db.cleanup();
   });
 
   // ===========================================================================

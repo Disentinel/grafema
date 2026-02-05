@@ -1,9 +1,12 @@
-import { describe, it } from 'node:test';
+import { describe, it, after } from 'node:test';
 import assert from 'node:assert';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { mkdirSync, writeFileSync } from 'fs';
-import { RFDBServerBackend } from '@grafema/core';
+import { createTestDatabase, cleanupAllTestDatabases } from '../helpers/TestRFDB.js';
+
+// Cleanup all test databases after all tests complete
+after(cleanupAllTestDatabases);
 import { ValueDomainAnalyzer } from '@grafema/core';
 
 let testCounter = 0;
@@ -19,8 +22,8 @@ async function setupBackend() {
 
   writeFileSync(join(testDir, 'index.js'), '// Empty');
 
-  const backend = new RFDBServerBackend({ dbPath: join(testDir, 'test.db') });
-  await backend.connect();
+  const db = await createTestDatabase();
+    const backend = db.backend;
 
   return { backend, testDir };
 }

@@ -4,32 +4,18 @@
  * Tests for alias resolution: const m = obj.method; m() → resolves to obj.method
  */
 
-import { describe, it, beforeEach } from 'node:test';
+import { describe, it, beforeEach, after } from 'node:test';
 import assert from 'node:assert';
-import { RFDBServerBackend } from '@grafema/core';
 import { AliasTracker } from '@grafema/core';
-import { writeFileSync, mkdirSync, rmSync } from 'fs';
-import { join } from 'path';
-import { tmpdir } from 'os';
+import { createTestDatabase, cleanupAllTestDatabases } from '../helpers/TestRFDB.js';
+
+// Cleanup all test databases after all tests complete
+after(cleanupAllTestDatabases);
 
 describe('AliasTracker', () => {
-  let testCounter = 0;
-
   async function setupBackend() {
-    const testDir = join(tmpdir(), `navi-test-alias-${Date.now()}-${testCounter++}`);
-    mkdirSync(testDir, { recursive: true });
-
-    writeFileSync(join(testDir, 'package.json'), JSON.stringify({
-      name: 'alias-test',
-      version: '1.0.0'
-    }));
-
-    writeFileSync(join(testDir, 'index.js'), '// Empty');
-
-    const backend = new RFDBServerBackend({ dbPath: join(testDir, 'test.db') });
-    await backend.connect();
-
-    return { backend, testDir };
+    const db = await createTestDatabase();
+    return { backend: db.backend, db };
   }
 
   describe('Basic alias resolution', () => {

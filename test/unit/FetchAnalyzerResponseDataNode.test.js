@@ -12,7 +12,10 @@ import { join } from 'path';
 import { writeFileSync, mkdirSync } from 'fs';
 import { tmpdir } from 'os';
 
-import { createTestBackend } from '../helpers/TestRFDB.js';
+import { createTestDatabase, cleanupAllTestDatabases } from '../helpers/TestRFDB.js';
+
+// Cleanup all test databases after all tests complete
+after(cleanupAllTestDatabases);
 import { createTestOrchestrator } from '../helpers/createTestOrchestrator.js';
 
 let testCounter = 0;
@@ -58,20 +61,17 @@ async function getCallNode(backend, nodeId) {
 }
 
 describe('FetchAnalyzer responseDataNode scope (REG-324)', () => {
+  let db;
   let backend;
 
   beforeEach(async () => {
-    if (backend) {
-      await backend.cleanup();
-    }
-    backend = createTestBackend();
-    await backend.connect();
+    if (db) await db.cleanup();
+    db = await createTestDatabase();
+    backend = db.backend;
   });
 
   after(async () => {
-    if (backend) {
-      await backend.cleanup();
-    }
+    if (db) await db.cleanup();
   });
 
   it('should link to correct response.json() when multiple functions use same variable name', async () => {

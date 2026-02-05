@@ -21,7 +21,10 @@
 import { describe, it, after, beforeEach } from 'node:test';
 import assert from 'node:assert';
 
-import { createTestBackend } from '../helpers/TestRFDB.js';
+import { createTestDatabase, cleanupAllTestDatabases } from '../helpers/TestRFDB.js';
+
+// Cleanup all test databases after all tests complete
+after(cleanupAllTestDatabases);
 import { setupSemanticTest } from '../helpers/setupSemanticTest.js';
 
 const TEST_LABEL = 'var-semantic';
@@ -34,20 +37,17 @@ async function setupTest(backend, files) {
 }
 
 describe('VariableVisitor semantic ID integration', () => {
+  let db;
   let backend;
 
   beforeEach(async () => {
-    if (backend) {
-      await backend.cleanup();
-    }
-    backend = createTestBackend();
-    await backend.connect();
+    if (db) await db.cleanup();
+    db = await createTestDatabase();
+    backend = db.backend;
   });
 
   after(async () => {
-    if (backend) {
-      await backend.cleanup();
-    }
+    if (db) await db.cleanup();
   });
 
   // ===========================================================================
@@ -363,9 +363,9 @@ function getData() {
       const resultId1 = nodes1.find(n => n.name === 'result')?.id;
 
       // Cleanup and run again with same code
-      await backend.cleanup();
-      backend = createTestBackend();
-      await backend.connect();
+      await db.cleanup();
+      db = await createTestDatabase();
+    backend = db.backend;
 
       await setupTest(backend, {
         'index.js': `
@@ -396,11 +396,9 @@ const target = 'original';
       const nodes1 = await backend.getAllNodes();
       const targetId1 = nodes1.find(n => n.name === 'target')?.id;
 
-      await backend.cleanup();
-      backend = createTestBackend();
-      await backend.connect();
-
-      // Second version with more code
+      await db.cleanup();
+      db = await createTestDatabase();
+    backend = db.backend;
       await setupTest(backend, {
         'index.js': `
 const unrelated = 'new variable';
@@ -430,11 +428,9 @@ const myVar = 42;
       const nodes1 = await backend.getAllNodes();
       const myVarId1 = nodes1.find(n => n.name === 'myVar')?.id;
 
-      await backend.cleanup();
-      backend = createTestBackend();
-      await backend.connect();
-
-      // Same variable but at different line (added empty lines)
+      await db.cleanup();
+      db = await createTestDatabase();
+    backend = db.backend;
       await setupTest(backend, {
         'index.js': `
 

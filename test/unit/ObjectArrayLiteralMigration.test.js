@@ -30,7 +30,10 @@ import { writeFileSync, mkdirSync } from 'fs';
 import { tmpdir } from 'os';
 
 import { NodeFactory } from '@grafema/core';
-import { createTestBackend } from '../helpers/TestRFDB.js';
+import { createTestDatabase, cleanupAllTestDatabases } from '../helpers/TestRFDB.js';
+
+// Cleanup all test databases after all tests complete
+after(cleanupAllTestDatabases);
 import { createTestOrchestrator } from '../helpers/createTestOrchestrator.js';
 
 let testCounter = 0;
@@ -286,20 +289,17 @@ describe('ObjectArrayLiteralMigration (REG-110)', () => {
   // ============================================================================
 
   describe('GraphBuilder integration - OBJECT_LITERAL', () => {
+    let db;
     let backend;
 
     beforeEach(async () => {
-      if (backend) {
-        await backend.cleanup();
-      }
-      backend = createTestBackend();
-      await backend.connect();
+      if (db) await db.cleanup();
+      db = await createTestDatabase();
+    backend = db.backend;
     });
 
     after(async () => {
-      if (backend) {
-        await backend.cleanup();
-      }
+      if (db) await db.cleanup();
     });
 
     it('should create OBJECT_LITERAL node for object arg in function call', async () => {
@@ -380,20 +380,17 @@ merge({ x: 1 }, { y: 2 });
   // ============================================================================
 
   describe('GraphBuilder integration - ARRAY_LITERAL', () => {
+    let db;
     let backend;
 
     beforeEach(async () => {
-      if (backend) {
-        await backend.cleanup();
-      }
-      backend = createTestBackend();
-      await backend.connect();
+      if (db) await db.cleanup();
+      db = await createTestDatabase();
+    backend = db.backend;
     });
 
     after(async () => {
-      if (backend) {
-        await backend.cleanup();
-      }
+      if (db) await db.cleanup();
     });
 
     it('should create ARRAY_LITERAL node for array arg in function call', async () => {
@@ -474,20 +471,17 @@ init({ debug: true }, ['a', 'b', 'c']);
   // ============================================================================
 
   describe('Nested literals ID format (breaking change)', () => {
+    let db;
     let backend;
 
     beforeEach(async () => {
-      if (backend) {
-        await backend.cleanup();
-      }
-      backend = createTestBackend();
-      await backend.connect();
+      if (db) await db.cleanup();
+      db = await createTestDatabase();
+    backend = db.backend;
     });
 
     after(async () => {
-      if (backend) {
-        await backend.cleanup();
-      }
+      if (db) await db.cleanup();
     });
 
     it('should use obj suffix for nested object in object property (not property name)', async () => {
