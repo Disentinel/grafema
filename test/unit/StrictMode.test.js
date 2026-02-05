@@ -21,6 +21,10 @@
 
 import { describe, it, after } from 'node:test';
 import assert from 'node:assert';
+import { createTestDatabase, cleanupAllTestDatabases } from '../helpers/TestRFDB.js';
+
+// Cleanup all test databases after all tests complete
+after(cleanupAllTestDatabases);
 import { StrictModeError } from '@grafema/core';
 import { MethodCallResolver } from '@grafema/core';
 import { FunctionCallResolver } from '@grafema/core';
