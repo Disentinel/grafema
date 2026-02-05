@@ -46,6 +46,11 @@ export interface RFDBServerBackendOptions {
    * Default: true (for backwards compatibility)
    */
   autoStart?: boolean;
+  /**
+   * If true, suppress all console output (for clean CLI progress).
+   * Default: false
+   */
+  silent?: boolean;
 }
 
 /**
@@ -96,6 +101,7 @@ export class RFDBServerBackend {
   readonly socketPath: string;
   readonly dbPath: string | undefined;
   private readonly autoStart: boolean;
+  private readonly silent: boolean;
   private client: RFDBClient | null;
   private serverProcess: ChildProcess | null;
   connected: boolean;  // Public for compatibility
@@ -106,6 +112,7 @@ export class RFDBServerBackend {
   constructor(options: RFDBServerBackendOptions = {}) {
     this.dbPath = options.dbPath;
     this.autoStart = options.autoStart ?? true; // Default true for backwards compat
+    this.silent = options.silent ?? false;
     // Default socket path: next to the database in .grafema folder
     // This ensures each project has its own socket, avoiding conflicts
     if (options.socketPath) {
@@ -119,6 +126,22 @@ export class RFDBServerBackend {
     this.serverProcess = null;
     this.connected = false;
     this.edgeTypes = new Set();
+  }
+
+  /**
+   * Log message if not in silent mode.
+   */
+  private log(message: string): void {
+    if (!this.silent) {
+      console.log(message);
+    }
+  }
+
+  /**
+   * Log error (always shown, even in silent mode).
+   */
+  private logError(message: string, error?: unknown): void {
+    console.error(message, error ?? '');
   }
 
   /**
@@ -137,7 +160,7 @@ export class RFDBServerBackend {
       // Verify server is responsive
       await this.client.ping();
       this.connected = true;
-      console.log(`[RFDBServerBackend] Connected to RFDB server at ${this.socketPath}`);
+      this.log(`[RFDBServerBackend] Connected to RFDB server at ${this.socketPath}`);
       return;
     } catch {
       // Server not running
@@ -147,7 +170,7 @@ export class RFDBServerBackend {
           `Start the server first: grafema server start`
         );
       }
-      console.log(`[RFDBServerBackend] RFDB server not running, starting...`);
+      this.log(`[RFDBServerBackend] RFDB server not running, starting...`);
     }
 
     // Start the server (only if autoStart is true)
@@ -158,7 +181,7 @@ export class RFDBServerBackend {
     await this.client.connect();
     await this.client.ping();
     this.connected = true;
-    console.log(`[RFDBServerBackend] Connected to RFDB server at ${this.socketPath}`);
+    this.log(`[RFDBServerBackend] Connected to RFDB server at ${this.socketPath}`);
   }
 
   /**
@@ -180,14 +203,14 @@ export class RFDBServerBackend {
     const projectRoot = join(__dirname, '../../../../..');
     const releaseBinary = join(projectRoot, 'packages/rfdb-server/target/release/rfdb-server');
     if (existsSync(releaseBinary)) {
-      console.log(`[RFDBServerBackend] Found release binary: ${releaseBinary}`);
+      this.log(`[RFDBServerBackend] Found release binary: ${releaseBinary}`);
       return releaseBinary;
     }
 
     // 2. Check debug build
     const debugBinary = join(projectRoot, 'packages/rfdb-server/target/debug/rfdb-server');
     if (existsSync(debugBinary)) {
-      console.log(`[RFDBServerBackend] Found debug binary: ${debugBinary}`);
+      this.log(`[RFDBServerBackend] Found debug binary: ${debugBinary}`);
       return debugBinary;
     }
 
@@ -210,7 +233,7 @@ export class RFDBServerBackend {
 
       const npmBinary = join(rfdbDir, 'prebuilt', platformDir, 'rfdb-server');
       if (existsSync(npmBinary)) {
-        console.log(`[RFDBServerBackend] Found binary in @grafema/rfdb: ${npmBinary}`);
+        this.log(`[RFDBServerBackend] Found binary in @grafema/rfdb: ${npmBinary}`);
         return npmBinary;
       }
     } catch {
@@ -220,7 +243,7 @@ export class RFDBServerBackend {
     // 4. Check ~/.local/bin (user-installed binary for unsupported platforms)
     const homeBinary = join(process.env.HOME || '', '.local', 'bin', 'rfdb-server');
     if (existsSync(homeBinary)) {
-      console.log(`[RFDBServerBackend] Found user binary: ${homeBinary}`);
+      this.log(`[RFDBServerBackend] Found user binary: ${homeBinary}`);
       return homeBinary;
     }
 
@@ -250,7 +273,7 @@ export class RFDBServerBackend {
       unlinkSync(this.socketPath);
     }
 
-    console.log(`[RFDBServerBackend] Starting: ${binaryPath} ${this.dbPath} --socket ${this.socketPath}`);
+    this.log(`[RFDBServerBackend] Starting: ${binaryPath} ${this.dbPath} --socket ${this.socketPath}`);
 
     this.serverProcess = spawn(binaryPath, [this.dbPath, '--socket', this.socketPath], {
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -263,12 +286,12 @@ export class RFDBServerBackend {
     this.serverProcess.stderr?.on('data', (data: Buffer) => {
       const msg = data.toString().trim();
       if (!msg.includes('FLUSH') && !msg.includes('WRITER')) {
-        console.log(`[rfdb-server] ${msg}`);
+        this.log(`[rfdb-server] ${msg}`);
       }
     });
 
     this.serverProcess.on('error', (err: Error) => {
-      console.error(`[RFDBServerBackend] Server process error:`, err);
+      this.logError(`[RFDBServerBackend] Server process error:`, err);
     });
 
     // Wait for socket to appear
@@ -282,7 +305,7 @@ export class RFDBServerBackend {
       throw new Error(`RFDB server failed to start (socket not created after ${attempts * 100}ms)`);
     }
 
-    console.log(`[RFDBServerBackend] Server started on ${this.socketPath}`);
+    this.log(`[RFDBServerBackend] Server started on ${this.socketPath}`);
   }
 
   /**

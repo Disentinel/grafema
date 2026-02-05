@@ -200,8 +200,8 @@ describe('ProgressRenderer', () => {
       renderer.update({ phase: 'discovery' });
       const lastOutput = output.getLastLine();
 
-      // Should contain a spinner character
-      const hasSpinner = /[|/\-\\]/.test(lastOutput);
+      // Should contain a spinner character (Braille pattern)
+      const hasSpinner = /[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/.test(lastOutput);
       assert.ok(hasSpinner, `Interactive mode should show spinner. Got: ${lastOutput}`);
     });
 
@@ -376,14 +376,14 @@ describe('ProgressRenderer', () => {
 
       const seenIndexes = new Set<number>();
 
-      // Update enough times to cycle through all 4 frames
-      for (let i = 0; i < 8; i++) {
+      // Update enough times to cycle through all 10 Braille frames
+      for (let i = 0; i < 20; i++) {
         renderer.update({ phase: 'discovery' });
         seenIndexes.add(renderer.getState().spinnerIndex);
       }
 
-      // Should have seen all 4 spinner frames (indexes 0-3)
-      assert.strictEqual(seenIndexes.size, 4, 'Should cycle through all 4 spinner frames');
+      // Should have seen all 10 spinner frames (indexes 0-9)
+      assert.strictEqual(seenIndexes.size, 10, 'Should cycle through all 10 spinner frames');
     });
 
     it('should show different spinner characters in output', () => {
@@ -391,11 +391,11 @@ describe('ProgressRenderer', () => {
 
       const spinnerChars = new Set<string>();
 
-      for (let i = 0; i < 8; i++) {
+      for (let i = 0; i < 20; i++) {
         renderer.update({ phase: 'discovery' });
         const line = output.lines[output.lines.length - 1];
-        // Extract spinner character (after \r, before space)
-        const match = line.match(/^\r([|/\-\\])/);
+        // Extract spinner character (Braille, after \r, before space)
+        const match = line.match(/^\r([⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏])/);
         if (match) {
           spinnerChars.add(match[1]);
         }

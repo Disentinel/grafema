@@ -503,7 +503,11 @@ export class Orchestrator {
       }
     }
 
-    console.log(`[Orchestrator] Built ${units.length} indexing units (${units.filter(u => u.type === 'service').length} services, ${units.filter(u => u.type === 'entrypoint').length} standalone entrypoints)`);
+    this.logger.debug('Built indexing units', {
+      total: units.length,
+      services: units.filter(u => u.type === 'service').length,
+      entrypoints: units.filter(u => u.type === 'entrypoint').length
+    });
     return units;
   }
 
@@ -775,8 +779,7 @@ export class Orchestrator {
     // Get the database path from the main graph backend
     const mainDbPath = (this.graph as unknown as { dbPath?: string }).dbPath || join(manifest.projectPath, '.grafema', 'graph.rfdb');
 
-    console.log(`[Orchestrator] Starting queue-based parallel analysis...`);
-    console.log(`[Orchestrator] Using database: ${mainDbPath}`);
+    this.logger.debug('Starting queue-based parallel analysis', { database: mainDbPath });
 
     // Start RFDB server using the SAME database as main graph
     await this.startRfdbServer(socketPath, mainDbPath);
@@ -786,7 +789,7 @@ export class Orchestrator {
       .filter(p => p.metadata?.phase === 'ANALYSIS')
       .map(p => p.metadata.name);
 
-    console.log(`[Orchestrator] Analysis plugins: ${analysisPlugins.join(', ')}`);
+    this.logger.debug('Analysis plugins', { plugins: analysisPlugins });
 
     // Create analysis queue
     this.analysisQueue = new AnalysisQueue({
@@ -813,7 +816,7 @@ export class Orchestrator {
       moduleCount++;
     }
 
-    console.log(`[Orchestrator] Queued ${moduleCount} modules for analysis...`);
+    this.logger.debug('Queued modules for analysis', { count: moduleCount });
 
     // Subscribe to progress events
     this.analysisQueue.on('taskCompleted', ({ file, stats, duration }: { file: string; stats?: { nodes?: number }; duration: number }) => {
@@ -825,14 +828,18 @@ export class Orchestrator {
     });
 
     this.analysisQueue.on('taskFailed', ({ file, error }: { file: string; error: string }) => {
-      console.error(`[Orchestrator] Analysis failed for ${file}: ${error}`);
+      this.logger.error('Analysis failed', { file, error });
     });
 
     // Wait for all tasks to complete (barrier)
     const stats = await this.analysisQueue.waitForCompletion();
 
-    console.log(`[Orchestrator] Queue complete: ${stats.nodesCreated} nodes, ${stats.edgesCreated} edges`);
-    console.log(`[Orchestrator] ${stats.tasksCompleted} succeeded, ${stats.tasksFailed} failed`);
+    this.logger.debug('Queue complete', {
+      nodesCreated: stats.nodesCreated,
+      edgesCreated: stats.edgesCreated,
+      succeeded: stats.tasksCompleted,
+      failed: stats.tasksFailed
+    });
 
     // Stop workers and server
     await this.analysisQueue.stop();
@@ -855,13 +862,13 @@ export class Orchestrator {
         await testClient.connect();
         await testClient.ping();
         await testClient.close();
-        console.log(`[Orchestrator] Using existing RFDB server at ${socketPath}`);
+        this.logger.debug('Using existing RFDB server', { socketPath });
         this.rfdbServerProcess = null; // Mark that we didn't start the server
         this._serverWasExternal = true;
         return;
       } catch (e) {
         // Socket exists but server not responding, remove stale socket
-        console.log(`[Orchestrator] Stale socket found, removing...`);
+        this.logger.debug('Stale socket found, removing');
         unlinkSync(socketPath);
       }
     }
@@ -874,7 +881,7 @@ export class Orchestrator {
     let binaryPath = existsSync(serverBinary) ? serverBinary : debugBinary;
 
     if (!existsSync(binaryPath)) {
-      console.log(`[Orchestrator] RFDB server binary not found at ${binaryPath}, building...`);
+      this.logger.debug('RFDB server binary not found, building', { path: binaryPath });
       execSync('cargo build --bin rfdb-server', {
         cwd: join(projectRoot, 'packages/rfdb-server'),
         stdio: 'inherit',
@@ -882,7 +889,7 @@ export class Orchestrator {
       binaryPath = debugBinary;
     }
 
-    console.log(`[Orchestrator] Starting RFDB server: ${binaryPath} with db: ${dbPath}`);
+    this.logger.debug('Starting RFDB server', { binary: binaryPath, database: dbPath });
     this.rfdbServerProcess = spawn(binaryPath, [dbPath, '--socket', socketPath], {
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -891,7 +898,7 @@ export class Orchestrator {
     this.rfdbServerProcess.stderr?.on('data', (data: Buffer) => {
       const msg = data.toString().trim();
       if (!msg.includes('FLUSH') && !msg.includes('WRITER')) {
-        console.log(`[rfdb-server] ${msg}`);
+        this.logger.debug('rfdb-server', { message: msg });
       }
     });
 
@@ -906,7 +913,7 @@ export class Orchestrator {
       throw new Error('RFDB server failed to start');
     }
 
-    console.log(`[Orchestrator] RFDB server started on ${socketPath}`);
+    this.logger.debug('RFDB server started', { socketPath });
   }
 
   /**
@@ -915,7 +922,7 @@ export class Orchestrator {
   async stopRfdbServer(): Promise<void> {
     // Don't stop external server (started by MCP or another process)
     if (this._serverWasExternal) {
-      console.log(`[Orchestrator] Leaving external RFDB server running`);
+      this.logger.debug('Leaving external RFDB server running');
       return;
     }
 
@@ -923,7 +930,7 @@ export class Orchestrator {
       this.rfdbServerProcess.kill('SIGTERM');
       await sleep(200);
       this.rfdbServerProcess = null;
-      console.log(`[Orchestrator] RFDB server stopped`);
+      this.logger.debug('RFDB server stopped');
     }
   }
 }

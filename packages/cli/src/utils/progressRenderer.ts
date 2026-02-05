@@ -2,7 +2,7 @@
  * ProgressRenderer - Formats and displays analysis progress for CLI.
  *
  * Consumes ProgressInfo events from Orchestrator and renders them as
- * user-friendly progress output with phase tracking, progress bars,
+ * user-friendly progress output with phase tracking, elapsed time,
  * and spinner animation.
  *
  * @example
@@ -33,7 +33,7 @@ export interface ProgressRendererOptions {
  * ProgressRenderer - Formats and displays analysis progress for CLI.
  *
  * Consumes ProgressInfo events from Orchestrator and renders them as
- * user-friendly progress output with phase tracking, progress bars,
+ * user-friendly progress output with phase tracking, elapsed time,
  * and spinner animation.
  */
 export class ProgressRenderer {
@@ -51,8 +51,10 @@ export class ProgressRenderer {
   private lastDisplayTime: number = 0;
   private displayThrottle: number;
   private write: (text: string) => void;
-  private spinnerFrames = ['|', '/', '-', '\\'];
+  private spinnerFrames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
   private activePlugins: string[] = [];
+  private nodeCount: number = 0;
+  private edgeCount: number = 0;
 
   constructor(options?: ProgressRendererOptions) {
     this.isInteractive = options?.isInteractive ?? process.stdout.isTTY ?? false;
@@ -113,14 +115,24 @@ export class ProgressRenderer {
   }
 
   /**
+   * Update graph statistics (called separately from progress events).
+   * This allows real-time node/edge count updates.
+   */
+  setStats(nodeCount: number, edgeCount: number): void {
+    this.nodeCount = nodeCount;
+    this.edgeCount = edgeCount;
+  }
+
+  /**
    * Format and display current state to console.
    */
   private display(): void {
     const output = this.formatOutput();
 
     if (this.isInteractive) {
-      // TTY mode: overwrite previous line
-      this.write(`\r${output}`);
+      // TTY mode: overwrite previous line, pad with spaces to clear old content
+      const padded = output.padEnd(80, ' ');
+      this.write(`\r${padded}`);
     } else {
       // Non-TTY mode: append newline
       this.write(`${output}\n`);
@@ -135,16 +147,58 @@ export class ProgressRenderer {
     }
   }
 
+  /**
+   * Format elapsed time as human-readable string.
+   */
+  private formatElapsed(): string {
+    const elapsed = (Date.now() - this.startTime) / 1000;
+    if (elapsed < 60) {
+      return `${elapsed.toFixed(1)}s`;
+    }
+    const minutes = Math.floor(elapsed / 60);
+    const seconds = Math.floor(elapsed % 60);
+    return `${minutes}m${seconds}s`;
+  }
+
   private formatInteractive(): string {
     const spinner = this.spinnerFrames[this.spinnerIndex];
+    const elapsed = this.formatElapsed();
     const phaseLabel = this.getPhaseLabel();
     const progress = this.formatPhaseProgress();
+    const stats = this.formatStats();
 
-    return `${spinner} ${phaseLabel}${progress}`;
+    // Format: ⠋ [3/5] Analysis... 150/4047 modules | 12.5s | 1.2M nodes
+    return `${spinner} ${phaseLabel}${progress} | ${elapsed}${stats}`;
   }
 
   private formatNonInteractive(): string {
-    return `[${this.currentPhase}] ${this.message || this.formatPhaseProgress()}`;
+    const elapsed = this.formatElapsed();
+    return `[${this.currentPhase}] ${this.message || this.formatPhaseProgress()} (${elapsed})`;
+  }
+
+  /**
+   * Format node/edge counts if available.
+   */
+  private formatStats(): string {
+    if (this.nodeCount === 0 && this.edgeCount === 0) {
+      return '';
+    }
+    const nodes = this.formatNumber(this.nodeCount);
+    const edges = this.formatNumber(this.edgeCount);
+    return ` | ${nodes} nodes, ${edges} edges`;
+  }
+
+  /**
+   * Format large numbers with K/M suffix.
+   */
+  private formatNumber(n: number): string {
+    if (n >= 1_000_000) {
+      return `${(n / 1_000_000).toFixed(1)}M`;
+    }
+    if (n >= 1_000) {
+      return `${(n / 1_000).toFixed(1)}K`;
+    }
+    return String(n);
   }
 
   /**
@@ -216,6 +270,8 @@ export class ProgressRenderer {
     servicesAnalyzed: number;
     spinnerIndex: number;
     activePlugins: string[];
+    nodeCount: number;
+    edgeCount: number;
   } {
     return {
       phaseIndex: this.currentPhaseIndex,
@@ -225,6 +281,8 @@ export class ProgressRenderer {
       servicesAnalyzed: this.servicesAnalyzed,
       spinnerIndex: this.spinnerIndex,
       activePlugins: [...this.activePlugins],
+      nodeCount: this.nodeCount,
+      edgeCount: this.edgeCount,
     };
   }
 }
