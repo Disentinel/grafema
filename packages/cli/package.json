@@ -38,6 +38,7 @@
     "directory": "packages/cli"
   },
   "dependencies": {
+    "@grafema/api": "workspace:*",
     "@grafema/core": "workspace:*",
     "@grafema/types": "workspace:*",
     "commander": "^13.0.0",

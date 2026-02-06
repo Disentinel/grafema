@@ -1,0 +1,53 @@
+type Mutation {
+  # ============================================================================
+  # Analysis
+  # ============================================================================
+
+  """
+  Run project analysis.
+  Blocks until complete (with timeout).
+  """
+  analyzeProject(
+    """Optional: analyze only this service"""
+    service: String
+
+    """Force re-analysis even if already analyzed"""
+    force: Boolean
+  ): AnalysisResult!
+
+  # ============================================================================
+  # Guarantees
+  # ============================================================================
+
+  """
+  Create a new guarantee.
+
+  For Datalog-based: provide name + rule
+  For contract-based: provide name + type + priority
+  """
+  createGuarantee(input: CreateGuaranteeInput!): Guarantee!
+
+  """
+  Delete a guarantee by name.
+  """
+  deleteGuarantee(name: String!): Boolean!
+
+  """
+  Check all guarantees or specific ones.
+  """
+  checkGuarantees(
+    """Specific guarantee names to check (null = all)"""
+    names: [String!]
+  ): GuaranteeCheckResult!
+
+  """
+  Check a single ad-hoc invariant without persisting.
+  """
+  checkInvariant(
+    """Datalog rule"""
+    rule: String!
+
+    """Description for error messages"""
+    description: String
+  ): GuaranteeResult!
+}

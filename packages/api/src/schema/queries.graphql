@@ -1,0 +1,213 @@
+type Query {
+  # ============================================================================
+  # Node Lookups
+  # ============================================================================
+
+  """
+  Get a single node by ID.
+  Returns null if not found.
+  """
+  node(id: ID!): Node
+
+  """
+  Find nodes matching filter criteria.
+  Uses cursor-based pagination (Relay spec).
+  """
+  nodes(
+    """Filter criteria"""
+    filter: NodeFilter
+
+    """Number of items to return (default: 50, max: 250)"""
+    first: Int
+
+    """Cursor to start after"""
+    after: String
+  ): NodeConnection!
+
+  # ============================================================================
+  # Graph Traversal
+  # ============================================================================
+
+  """
+  BFS traversal from starting nodes.
+  Returns all node IDs reachable within maxDepth.
+
+  Complexity: O(V + E) where V = reachable nodes, E = traversed edges
+  """
+  bfs(
+    """Starting node IDs"""
+    startIds: [ID!]!
+
+    """Maximum traversal depth"""
+    maxDepth: Int!
+
+    """Edge types to traverse (empty = all)"""
+    edgeTypes: [String!]!
+  ): [ID!]!
+
+  """
+  DFS traversal from starting nodes.
+  Returns all node IDs reachable within maxDepth.
+
+  Complexity: O(V + E) where V = reachable nodes, E = traversed edges
+  """
+  dfs(
+    """Starting node IDs"""
+    startIds: [ID!]!
+
+    """Maximum traversal depth"""
+    maxDepth: Int!
+
+    """Edge types to traverse (null = all)"""
+    edgeTypes: [String!]
+  ): [ID!]!
+
+  """
+  Check if a path exists between two nodes.
+  Uses BFS internally with early termination.
+
+  Complexity: O(V + E) worst case, often much faster with early termination
+  """
+  reachability(
+    """Source node ID"""
+    from: ID!
+
+    """Target node ID"""
+    to: ID!
+
+    """Edge types to traverse (null = all)"""
+    edgeTypes: [String!]
+
+    """Maximum depth to search (default: 10)"""
+    maxDepth: Int
+  ): Boolean!
+
+  # ============================================================================
+  # Datalog Queries
+  # ============================================================================
+
+  """
+  Execute a Datalog query on the code graph.
+
+  The query must define a violation/1 predicate.
+
+  Available predicates:
+  - node(Id, Type) - match nodes by type
+  - edge(Src, Dst, Type) - match edges
+  - attr(Id, Name, Value) - match node attributes
+
+  Example: violation(X) :- node(X, "FUNCTION"), attr(X, "async", true).
+  """
+  datalog(
+    """Datalog query defining violation/1"""
+    query: String!
+
+    """Maximum results (default: 50)"""
+    limit: Int
+
+    """Results to skip (for simple pagination)"""
+    offset: Int
+  ): DatalogResult!
+
+  # ============================================================================
+  # High-Level Queries (from MCP handlers)
+  # ============================================================================
+
+  """
+  Find all calls to a function/method.
+  """
+  findCalls(
+    """Function or method name"""
+    target: String!
+
+    """Optional class name for method calls"""
+    className: String
+
+    """Maximum results"""
+    limit: Int
+
+    """Results to skip"""
+    offset: Int
+  ): [CallInfo!]!
+
+  """
+  Get comprehensive function details including calls and callers.
+  """
+  getFunctionDetails(
+    """Function name"""
+    name: String!
+
+    """File path for disambiguation"""
+    file: String
+
+    """Follow transitive call chains"""
+    transitive: Boolean
+  ): FunctionDetails
+
+  """
+  Find guards (conditional scopes) protecting a node.
+  """
+  findGuards(
+    """Node ID to find guards for"""
+    nodeId: ID!
+  ): [GuardInfo!]!
+
+  """
+  Trace variable alias chain to original source.
+  """
+  traceAlias(
+    """Variable name"""
+    variableName: String!
+
+    """File where variable is defined"""
+    file: String!
+
+    """Maximum trace depth (default: 20)"""
+    maxDepth: Int
+  ): [Node!]!
+
+  """
+  Trace data flow from/to a node.
+  """
+  traceDataFlow(
+    """Source node ID or variable name"""
+    source: String!
+
+    """File path"""
+    file: String
+
+    """Direction of trace"""
+    direction: TraversalDirection
+
+    """Maximum depth (default: 10)"""
+    maxDepth: Int
+  ): [[String!]!]!
+
+  # ============================================================================
+  # Guarantees
+  # ============================================================================
+
+  """
+  List all defined guarantees.
+  """
+  guarantees: [Guarantee!]!
+
+  """
+  Get a specific guarantee by ID.
+  """
+  guarantee(id: ID!): Guarantee
+
+  # ============================================================================
+  # Statistics
+  # ============================================================================
+
+  """
+  Get graph statistics.
+  """
+  stats: GraphStats!
+
+  """
+  Get current analysis status.
+  """
+  analysisStatus: AnalysisStatus!
+}

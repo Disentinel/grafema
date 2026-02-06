@@ -5,6 +5,7 @@
  *   grafema server start   - Start detached server
  *   grafema server stop    - Stop server gracefully
  *   grafema server status  - Check if server is running
+ *   grafema server graphql - Start GraphQL API server
  */
 
 import { Command } from 'commander';
@@ -13,7 +14,7 @@ import { existsSync, unlinkSync, writeFileSync, readFileSync } from 'fs';
 import { spawn } from 'child_process';
 import { fileURLToPath } from 'url';
 import { setTimeout as sleep } from 'timers/promises';
-import { RFDBClient, loadConfig } from '@grafema/core';
+import { RFDBClient, loadConfig, RFDBServerBackend } from '@grafema/core';
 import { exitWithError } from '../utils/errorFormatter.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -394,4 +395,57 @@ serverCommand
         console.log('  (stale socket file exists)');
       }
     }
+  });
+
+// grafema server graphql
+serverCommand
+  .command('graphql')
+  .description('Start GraphQL API server (requires RFDB server running)')
+  .option('-p, --project <path>', 'Project path', '.')
+  .option('--port <number>', 'Port to listen on', '4000')
+  .option('--host <string>', 'Hostname to bind to', 'localhost')
+  .action(async (options: { project: string; port: string; host: string }) => {
+    const projectPath = resolve(options.project);
+    const { socketPath } = getProjectPaths(projectPath);
+
+    // Check if RFDB server is running
+    const status = await isServerRunning(socketPath);
+    if (!status.running) {
+      exitWithError('RFDB server not running', [
+        'Start the server first: grafema server start',
+        'Or run: grafema analyze (starts server automatically)'
+      ]);
+    }
+
+    // Create backend connection
+    const backend = new RFDBServerBackend({ socketPath });
+    await backend.connect();
+
+    // Import and start GraphQL server
+    const { startServer } = await import('@grafema/api');
+    const port = parseInt(options.port, 10);
+
+    console.log('Starting Grafema GraphQL API...');
+    console.log(`  RFDB Socket: ${socketPath}`);
+    if (status.version) {
+      console.log(`  RFDB Version: ${status.version}`);
+    }
+    console.log('');
+
+    const server = startServer({
+      backend,
+      port,
+      hostname: options.host,
+    });
+
+    // Handle shutdown
+    const shutdown = async () => {
+      console.log('\nShutting down GraphQL server...');
+      server.close();
+      await backend.close();
+      process.exit(0);
+    };
+
+    process.on('SIGINT', shutdown);
+    process.on('SIGTERM', shutdown);
   });

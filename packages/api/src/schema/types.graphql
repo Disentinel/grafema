@@ -1,0 +1,440 @@
+"""
+A node in the code graph representing a code entity.
+"""
+type Node {
+  """Unique identifier for the node (e.g., "fn:src/api.ts:login:42")"""
+  id: ID!
+
+  """Node type (e.g., FUNCTION, CLASS, MODULE, http:route)"""
+  type: String!
+
+  """Human-readable name"""
+  name: String!
+
+  """Source file path (relative to project root)"""
+  file: String
+
+  """Line number in source file (1-indexed)"""
+  line: Int
+
+  """Column number in source file (1-indexed)"""
+  column: Int
+
+  """Whether this entity is exported from its module"""
+  exported: Boolean
+
+  """Arbitrary metadata as JSON object"""
+  metadata: JSON
+
+  # Relationship fields
+
+  """
+  Outgoing edges from this node.
+  Optional filter by edge types.
+  """
+  outgoingEdges(
+    types: [String!]
+    first: Int
+    after: String
+  ): GraphEdgeConnection!
+
+  """
+  Incoming edges to this node.
+  Optional filter by edge types.
+  """
+  incomingEdges(
+    types: [String!]
+    first: Int
+    after: String
+  ): GraphEdgeConnection!
+
+  """
+  Child nodes (via CONTAINS edges).
+  For hierarchical traversal: SERVICE -> MODULE -> FUNCTION -> SCOPE
+  """
+  children(first: Int, after: String): NodeConnection!
+
+  """
+  Parent node (via incoming CONTAINS edge).
+  Returns null for root nodes (SERVICE, PROJECT).
+  """
+  parent: Node
+}
+
+"""
+An edge in the code graph representing a relationship between nodes.
+"""
+type Edge {
+  """Source node"""
+  src: Node!
+
+  """Destination node"""
+  dst: Node!
+
+  """Edge type (e.g., CALLS, CONTAINS, IMPORTS)"""
+  type: String!
+
+  """Ordering index for ordered relationships"""
+  index: Int
+
+  """Arbitrary metadata as JSON object"""
+  metadata: JSON
+}
+
+# ============================================================================
+# Pagination Types (Relay Connection Spec)
+# ============================================================================
+
+"""
+Connection type for paginated node results (Relay spec).
+"""
+type NodeConnection {
+  """Edges containing nodes and cursors"""
+  edges: [NodeEdge!]!
+
+  """Pagination info"""
+  pageInfo: PageInfo!
+
+  """Total count of matching nodes"""
+  totalCount: Int!
+}
+
+"""
+Edge wrapper for cursor-based pagination.
+"""
+type NodeEdge {
+  """The node"""
+  node: Node!
+
+  """Cursor for this node (use with after/before args)"""
+  cursor: String!
+}
+
+"""
+Connection type for paginated graph edge results.
+"""
+type GraphEdgeConnection {
+  """Edges containing graph edges and cursors"""
+  edges: [GraphEdgeEdge!]!
+
+  """Pagination info"""
+  pageInfo: PageInfo!
+
+  """Total count of matching edges"""
+  totalCount: Int!
+}
+
+"""
+Edge wrapper for graph edges.
+"""
+type GraphEdgeEdge {
+  """The graph edge"""
+  node: Edge!
+
+  """Cursor for this edge"""
+  cursor: String!
+}
+
+"""
+Pagination info (Relay spec).
+"""
+type PageInfo {
+  """Has more items after endCursor"""
+  hasNextPage: Boolean!
+
+  """Has more items before startCursor"""
+  hasPreviousPage: Boolean!
+
+  """Cursor of first item in current page"""
+  startCursor: String
+
+  """Cursor of last item in current page"""
+  endCursor: String
+}
+
+# ============================================================================
+# Query Result Types
+# ============================================================================
+
+"""
+Result of a Datalog query.
+"""
+type DatalogResult {
+  """Whether the query executed successfully"""
+  success: Boolean!
+
+  """Number of results"""
+  count: Int!
+
+  """Query results with variable bindings"""
+  results: [DatalogBinding!]!
+
+  """Error message if query failed"""
+  error: String
+}
+
+"""
+Variable bindings from a Datalog query result.
+"""
+type DatalogBinding {
+  """Map of variable names to values"""
+  bindings: JSON!
+
+  """Enriched node data if X binding is a node ID"""
+  node: Node
+}
+
+"""
+Function details including call graph information.
+"""
+type FunctionDetails {
+  """The function node"""
+  function: Node!
+
+  """Functions/methods this function calls"""
+  calls: [CallInfo!]!
+
+  """Functions that call this function"""
+  calledBy: [CallerInfo!]!
+}
+
+"""
+Information about a call made by a function.
+"""
+type CallInfo {
+  """The CALL node"""
+  call: Node!
+
+  """Name of the called function/method"""
+  name: String!
+
+  """Object name for method calls (e.g., "console" in console.log)"""
+  object: String
+
+  """Whether the target was resolved"""
+  resolved: Boolean!
+
+  """Target function if resolved"""
+  target: Node
+
+  """Call type: CALL or METHOD_CALL"""
+  callType: String!
+
+  """Depth in transitive call chain (0 = direct)"""
+  depth: Int!
+}
+
+"""
+Information about a function that calls another function.
+"""
+type CallerInfo {
+  """The calling function"""
+  function: Node!
+
+  """File containing the caller"""
+  file: String!
+
+  """Line number of the call"""
+  line: Int!
+}
+
+"""
+Guard (conditional scope) protecting a node.
+"""
+type GuardInfo {
+  """The SCOPE node ID"""
+  scopeId: ID!
+
+  """Type of conditional (if_statement, else_statement, etc.)"""
+  scopeType: String!
+
+  """Raw condition text"""
+  condition: String
+
+  """Parsed constraints as JSON"""
+  constraints: JSON
+
+  """Source file"""
+  file: String!
+
+  """Line number"""
+  line: Int!
+}
+
+"""
+Guarantee definition.
+"""
+type Guarantee {
+  """Unique identifier"""
+  id: ID!
+
+  """Human-readable name"""
+  name: String!
+
+  """Datalog rule or contract condition"""
+  rule: String
+
+  """Severity level"""
+  severity: String
+
+  """Guarantee type for contract-based"""
+  type: String
+
+  """Priority level"""
+  priority: String
+
+  """Lifecycle status"""
+  status: String
+
+  """Description"""
+  description: String
+}
+
+"""
+Result of checking guarantees.
+"""
+type GuaranteeCheckResult {
+  """Total guarantees checked"""
+  total: Int!
+
+  """Number that passed"""
+  passed: Int!
+
+  """Number that failed"""
+  failed: Int!
+
+  """Individual results"""
+  results: [GuaranteeResult!]!
+}
+
+"""
+Result of checking a single guarantee.
+"""
+type GuaranteeResult {
+  """Guarantee ID"""
+  guaranteeId: ID!
+
+  """Whether the guarantee passed"""
+  passed: Boolean!
+
+  """Number of violations (for Datalog guarantees)"""
+  violationCount: Int
+
+  """Sample violations"""
+  violations: [Violation!]
+}
+
+"""
+A violation of a guarantee.
+"""
+type Violation {
+  """Node that violated the guarantee"""
+  node: Node
+
+  """File containing the violation"""
+  file: String
+
+  """Line number"""
+  line: Int
+}
+
+"""
+Graph statistics.
+"""
+type GraphStats {
+  """Total node count"""
+  nodeCount: Int!
+
+  """Total edge count"""
+  edgeCount: Int!
+
+  """Nodes grouped by type"""
+  nodesByType: JSON!
+
+  """Edges grouped by type"""
+  edgesByType: JSON!
+}
+
+"""
+Analysis status.
+"""
+type AnalysisStatus {
+  """Whether analysis is currently running"""
+  running: Boolean!
+
+  """Current phase"""
+  phase: String
+
+  """Status message"""
+  message: String
+
+  """Number of services discovered"""
+  servicesDiscovered: Int!
+
+  """Number of services analyzed"""
+  servicesAnalyzed: Int!
+
+  """Error message if analysis failed"""
+  error: String
+}
+
+"""
+Result of analyze mutation.
+"""
+type AnalysisResult {
+  """Whether analysis succeeded"""
+  success: Boolean!
+
+  """Status after analysis"""
+  status: AnalysisStatus!
+}
+
+# ============================================================================
+# Input Types
+# ============================================================================
+
+"""
+Filter for node queries.
+"""
+input NodeFilter {
+  """Filter by node type"""
+  type: String
+
+  """Filter by name (exact match)"""
+  name: String
+
+  """Filter by file path (partial match)"""
+  file: String
+
+  """Filter by exported status"""
+  exported: Boolean
+}
+
+"""
+Input for creating a guarantee.
+"""
+input CreateGuaranteeInput {
+  """Unique name"""
+  name: String!
+
+  """Datalog rule defining violation/1"""
+  rule: String
+
+  """Severity: error, warning, info"""
+  severity: Severity
+
+  """Type: guarantee:queue, guarantee:api, guarantee:permission"""
+  type: String
+
+  """Priority: critical, important, observed, tracked"""
+  priority: Priority
+
+  """Description"""
+  description: String
+
+  """Owner (team or person)"""
+  owner: String
+
+  """Node IDs this guarantee governs"""
+  governs: [String!]
+}

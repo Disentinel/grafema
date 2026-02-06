@@ -1,0 +1,51 @@
+{
+  "name": "@grafema/api",
+  "version": "0.1.0-beta",
+  "description": "GraphQL API server for Grafema code analysis toolkit",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsc && pnpm run copy-schema",
+    "copy-schema": "mkdir -p dist/schema && cp src/schema/*.graphql dist/schema/",
+    "clean": "rm -rf dist",
+    "test": "node --import tsx --test test/*.test.ts",
+    "test:watch": "node --import tsx --test --watch test/*.test.ts"
+  },
+  "keywords": [
+    "grafema",
+    "graphql",
+    "api",
+    "code-analysis"
+  ],
+  "license": "Apache-2.0",
+  "author": "Vadim Reshetnikov",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Disentinel/grafema.git",
+    "directory": "packages/api"
+  },
+  "dependencies": {
+    "@grafema/core": "workspace:*",
+    "@grafema/types": "workspace:*",
+    "dataloader": "^2.2.3",
+    "graphql": "^16.10.0",
+    "graphql-scalars": "^1.24.0",
+    "graphql-yoga": "^5.10.11"
+  },
+  "devDependencies": {
+    "@types/node": "^25.0.8",
+    "tsx": "^4.19.2",
+    "typescript": "^5.9.3"
+  }
+}

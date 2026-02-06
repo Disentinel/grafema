@@ -1,0 +1,27 @@
+"""
+Direction for graph traversal.
+"""
+enum TraversalDirection {
+  FORWARD
+  BACKWARD
+  BOTH
+}
+
+"""
+Severity levels for guarantees.
+"""
+enum Severity {
+  ERROR
+  WARNING
+  INFO
+}
+
+"""
+Priority levels for contract guarantees.
+"""
+enum Priority {
+  CRITICAL
+  IMPORTANT
+  OBSERVED
+  TRACKED
+}

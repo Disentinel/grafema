@@ -1,0 +1,84 @@
+type Subscription {
+  """
+  Stream nodes matching filter as they're found.
+  Useful for UI visualization of large datasets.
+  """
+  nodesStream(
+    """Filter criteria"""
+    filter: NodeFilter
+
+    """Batch size for streaming (default: 100)"""
+    batchSize: Int
+  ): NodeBatch!
+
+  """
+  Stream BFS traversal results level by level.
+  Each batch contains all nodes at one depth level.
+  """
+  bfsStream(
+    """Starting node IDs"""
+    startIds: [ID!]!
+
+    """Maximum traversal depth"""
+    maxDepth: Int!
+
+    """Edge types to traverse"""
+    edgeTypes: [String!]!
+  ): TraversalBatch!
+
+  """
+  Stream analysis progress events.
+  """
+  analysisProgress(
+    """Optional: filter to specific service"""
+    service: String
+  ): AnalysisEvent!
+}
+
+"""
+Batch of nodes for streaming responses.
+"""
+type NodeBatch {
+  """Nodes in this batch"""
+  nodes: [Node!]!
+
+  """Progress from 0.0 to 1.0"""
+  progress: Float!
+
+  """Whether streaming is complete"""
+  done: Boolean!
+}
+
+"""
+Batch of traversal results at a specific depth.
+"""
+type TraversalBatch {
+  """Current depth level"""
+  depth: Int!
+
+  """Node IDs at this depth"""
+  nodeIds: [ID!]!
+
+  """Whether traversal is complete"""
+  done: Boolean!
+}
+
+"""
+Analysis progress event.
+"""
+type AnalysisEvent {
+  """Current phase name"""
+  phase: String!
+
+  """Human-readable message"""
+  message: String!
+
+  """Progress from 0.0 to 1.0"""
+  progress: Float!
+
+  """Number of services completed"""
+  servicesCompleted: Int!
+
+  """Total number of services"""
+  servicesTotal: Int!
+}

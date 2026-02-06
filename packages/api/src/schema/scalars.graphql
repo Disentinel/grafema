@@ -1,0 +1,2 @@
+"""Custom JSON scalar for arbitrary metadata."""
+scalar JSON
