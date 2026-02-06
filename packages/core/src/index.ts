@@ -133,6 +133,16 @@ export { isGuaranteeType } from './core/nodes/NodeKind.js';
 // Issue nodes (detected problems)
 export { IssueNode, type IssueNodeRecord, type IssueSeverity, type IssueType } from './core/nodes/IssueNode.js';
 
+// Guarantee nodes (contract-based)
+export { GuaranteeNode } from './core/nodes/GuaranteeNode.js';
+export type {
+  GuaranteeNodeRecord,
+  GuaranteeNodeOptions,
+  GuaranteePriority,
+  GuaranteeStatus,
+  GuaranteeType,
+} from './core/nodes/GuaranteeNode.js';
+
 // Node contracts
 export { FunctionNode } from './core/nodes/FunctionNode.js';
 export { CallSiteNode } from './core/nodes/CallSiteNode.js';

@@ -337,12 +337,31 @@ class TestDatabaseBackend {
   }
 
   // === Write Operations ===
+  /**
+   * Store originalId in metadata to preserve semantic IDs through RFDB's numeric ID system.
+   * This mirrors RFDBServerBackend.addNodes behavior.
+   */
+  _prepareNodes(nodes) {
+    return nodes.map(node => {
+      const { id, type, metadata, ...rest } = node;
+      // Parse existing metadata if it's a string
+      const existingMeta = typeof metadata === 'string' ? JSON.parse(metadata) : (metadata || {});
+      // Store original semantic ID in metadata
+      return {
+        ...rest,
+        id,
+        type,
+        metadata: JSON.stringify({ originalId: String(id), ...existingMeta }),
+      };
+    });
+  }
+
   async addNode(node) {
-    return this._client.addNodes([node]);
+    return this._client.addNodes(this._prepareNodes([node]));
   }
 
   async addNodes(nodes) {
-    return this._client.addNodes(nodes);
+    return this._client.addNodes(this._prepareNodes(nodes));
   }
 
   async addEdge(edge) {
@@ -427,12 +446,38 @@ class TestDatabaseBackend {
     return this._client.reachability(startIds, maxDepth, edgeTypes, backward);
   }
 
+  /**
+   * Translate numeric ID to semantic ID using metadata.originalId
+   */
+  async _translateId(numericId) {
+    const wireNode = await this._client.getNode(numericId);
+    if (!wireNode) return numericId;
+
+    const metadata = wireNode.metadata
+      ? (typeof wireNode.metadata === 'string' ? JSON.parse(wireNode.metadata) : wireNode.metadata)
+      : {};
+
+    return metadata.originalId || numericId;
+  }
+
   async getOutgoingEdges(id, edgeTypes = null) {
-    return this._client.getOutgoingEdges(id, edgeTypes);
+    const edges = await this._client.getOutgoingEdges(id, edgeTypes);
+    // Translate numeric IDs to semantic IDs
+    return Promise.all(edges.map(async (edge) => ({
+      ...edge,
+      src: await this._translateId(edge.src),
+      dst: await this._translateId(edge.dst),
+    })));
   }
 
   async getIncomingEdges(id, edgeTypes = null) {
-    return this._client.getIncomingEdges(id, edgeTypes);
+    const edges = await this._client.getIncomingEdges(id, edgeTypes);
+    // Translate numeric IDs to semantic IDs
+    return Promise.all(edges.map(async (edge) => ({
+      ...edge,
+      src: await this._translateId(edge.src),
+      dst: await this._translateId(edge.dst),
+    })));
   }
 
   // === Stats ===
