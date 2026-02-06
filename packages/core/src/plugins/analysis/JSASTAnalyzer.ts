@@ -3496,7 +3496,7 @@ export class JSASTAnalyzer extends Plugin {
    * Uses ScopeTracker from collections for semantic ID generation.
    */
   analyzeFunctionBody(
-    funcPath: NodePath<t.Function>,
+    funcPath: NodePath<t.Function | t.StaticBlock>,
     parentScopeId: string,
     module: VisitorModule,
     collections: VisitorCollections
@@ -3635,16 +3635,22 @@ export class JSASTAnalyzer extends Plugin {
 
     // Determine the ID of the function we're analyzing for RETURNS edges
     // Find by matching file/line/column in functions collection (it was just added by the visitor)
+    // REG-271: Skip for StaticBlock (static blocks don't have RETURNS edges or control flow metadata)
     const funcNode = funcPath.node;
     const funcLine = getLine(funcNode);
     const funcColumn = getColumn(funcNode);
     let currentFunctionId: string | null = null;
 
-    const matchingFunction = functions.find(f =>
-      f.file === module.file &&
-      f.line === funcLine &&
-      (f.column === undefined || f.column === funcColumn)
-    );
+    // StaticBlock is not a function - skip function matching for RETURNS edges
+    // For StaticBlock, matchingFunction will be undefined
+    const matchingFunction = funcNode.type !== 'StaticBlock'
+      ? functions.find(f =>
+          f.file === module.file &&
+          f.line === funcLine &&
+          (f.column === undefined || f.column === funcColumn)
+        )
+      : undefined;
+
     if (matchingFunction) {
       currentFunctionId = matchingFunction.id;
     }

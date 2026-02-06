@@ -13,6 +13,10 @@ import type {
   ClassDeclaration,
   ClassMethod,
   ClassProperty,
+  ClassPrivateProperty,
+  ClassPrivateMethod,
+  StaticBlock,
+  PrivateName,
   Identifier,
   ArrowFunctionExpression,
   FunctionExpression,
@@ -22,7 +26,7 @@ import type {
 import type { NodePath } from '@babel/traverse';
 import { ASTVisitor, type VisitorModule, type VisitorCollections, type VisitorHandlers } from './ASTVisitor.js';
 import type { AnalyzeFunctionBodyCallback } from './FunctionVisitor.js';
-import type { DecoratorInfo, ParameterInfo } from '../types.js';
+import type { DecoratorInfo, ParameterInfo, VariableDeclarationInfo } from '../types.js';
 import { ExpressionEvaluator } from '../ExpressionEvaluator.js';
 import { createParameterNodes } from '../utils/createParameterNodes.js';
 import { ScopeTracker } from '../../../../core/ScopeTracker.js';
@@ -36,6 +40,9 @@ import { getLine, getColumn } from '../utils/location.js';
  */
 interface ClassInfo extends ClassNodeRecord {
   implements?: string[];  // TypeScript implements (visitor extension)
+  // REG-271: Additional class members
+  properties?: string[];     // IDs of class properties (including private)
+  staticBlocks?: string[];   // IDs of static block scopes
 }
 
 /**
@@ -56,6 +63,9 @@ interface ClassFunctionInfo {
   className: string;
   methodKind?: 'constructor' | 'method' | 'get' | 'set';
   legacyId?: string;  // Kept for debugging/migration purposes
+  // REG-271: Private methods support
+  isPrivate?: boolean;
+  isStatic?: boolean;
 }
 
 /**
@@ -70,7 +80,9 @@ interface ScopeInfo {
   conditional?: boolean;
   file: string;
   line: number;
-  parentFunctionId: string;
+  parentFunctionId?: string;
+  // REG-271: For static blocks, the containing class ID
+  parentClassId?: string;
 }
 
 export class ClassVisitor extends ASTVisitor {
@@ -378,6 +390,240 @@ export class ClassVisitor extends ASTVisitor {
             });
 
             analyzeFunctionBody(methodPath, methodBodyScopeId, module, collections);
+
+            // Exit method scope
+            scopeTracker.exitScope();
+          },
+
+          // REG-271: Static block handler
+          StaticBlock: (staticBlockPath: NodePath) => {
+            const staticBlockNode = staticBlockPath.node as StaticBlock;
+
+            // Skip if not direct child of current class
+            if (staticBlockPath.parent !== classNode.body) {
+              return;
+            }
+
+            const blockLine = getLine(staticBlockNode);
+
+            // Enter static block scope for tracking
+            const { discriminator } = scopeTracker.enterCountedScope('static_block');
+
+            // Generate semantic ID for static block scope
+            const staticBlockScopeId = computeSemanticId('SCOPE', `static_block#${discriminator}`, scopeTracker.getContext());
+
+            // Add to class staticBlocks array for CONTAINS edge
+            if (!currentClass.staticBlocks) {
+              currentClass.staticBlocks = [];
+            }
+            currentClass.staticBlocks.push(staticBlockScopeId);
+
+            // Create SCOPE node for static block
+            (scopes as ScopeInfo[]).push({
+              id: staticBlockScopeId,
+              semanticId: staticBlockScopeId,
+              type: 'SCOPE',
+              scopeType: 'static_block',
+              name: `${className}:static_block#${discriminator}`,
+              conditional: false,
+              file: module.file,
+              line: blockLine,
+              parentClassId: currentClass.id  // For CONTAINS edge creation
+            });
+
+            // Analyze static block body using existing infrastructure
+            analyzeFunctionBody(staticBlockPath as NodePath<StaticBlock>, staticBlockScopeId, module, collections);
+
+            // Exit static block scope
+            scopeTracker.exitScope();
+          },
+
+          // REG-271: Private property handler
+          ClassPrivateProperty: (propPath: NodePath) => {
+            const propNode = propPath.node as ClassPrivateProperty;
+
+            // Skip if not direct child of current class
+            if (propPath.parent !== classNode.body) {
+              return;
+            }
+
+            // Extract name: PrivateName.id.name is WITHOUT # prefix
+            // For #privateField, key.id.name = "privateField"
+            const privateName = (propNode.key as PrivateName).id.name;
+            const displayName = `#${privateName}`;  // Prepend # for clarity
+
+            const propLine = getLine(propNode);
+            const propColumn = getColumn(propNode);
+
+            // Check if value is a function (arrow function or function expression)
+            if (propNode.value &&
+                (propNode.value.type === 'ArrowFunctionExpression' ||
+                 propNode.value.type === 'FunctionExpression')) {
+              // Handle as private method (function-valued property)
+              const funcNode = propNode.value as ArrowFunctionExpression | FunctionExpression;
+
+              const functionId = computeSemanticId('FUNCTION', displayName, scopeTracker.getContext());
+
+              // Add to class methods list for CONTAINS edges
+              currentClass.methods.push(functionId);
+
+              (functions as ClassFunctionInfo[]).push({
+                id: functionId,
+                type: 'FUNCTION',
+                name: displayName,
+                file: module.file,
+                line: propLine,
+                column: propColumn,
+                async: funcNode.async || false,
+                generator: funcNode.type === 'FunctionExpression' ? funcNode.generator || false : false,
+                arrowFunction: funcNode.type === 'ArrowFunctionExpression',
+                isClassProperty: true,
+                isPrivate: true,
+                isStatic: propNode.static || false,
+                className: className
+              });
+
+              // Enter method scope for tracking
+              scopeTracker.enterScope(displayName, 'FUNCTION');
+
+              // Create PARAMETER nodes if needed
+              if (parameters) {
+                createParameterNodes(funcNode.params, functionId, module.file, propLine, parameters as ParameterInfo[], scopeTracker);
+              }
+
+              // Create SCOPE for property function body
+              const propBodyScopeId = computeSemanticId('SCOPE', 'body', scopeTracker.getContext());
+              (scopes as ScopeInfo[]).push({
+                id: propBodyScopeId,
+                semanticId: propBodyScopeId,
+                type: 'SCOPE',
+                scopeType: 'property_body',
+                name: `${className}.${displayName}:body`,
+                conditional: false,
+                file: module.file,
+                line: propLine,
+                parentFunctionId: functionId
+              });
+
+              const funcPath = propPath.get('value') as NodePath<ArrowFunctionExpression | FunctionExpression>;
+              analyzeFunctionBody(funcPath, propBodyScopeId, module, collections);
+
+              // Exit method scope
+              scopeTracker.exitScope();
+            } else {
+              // Handle as private field (non-function property)
+              const variableId = computeSemanticId('VARIABLE', displayName, scopeTracker.getContext());
+
+              // Add to class properties list for HAS_PROPERTY edges
+              if (!currentClass.properties) {
+                currentClass.properties = [];
+              }
+              currentClass.properties.push(variableId);
+
+              // Add to variableDeclarations for VARIABLE node creation
+              (collections.variableDeclarations as VariableDeclarationInfo[]).push({
+                id: variableId,
+                semanticId: variableId,
+                type: 'VARIABLE',
+                name: displayName,
+                file: module.file,
+                line: propLine,
+                column: propColumn,
+                isPrivate: true,
+                isStatic: propNode.static || false,
+                isClassProperty: true,
+                parentScopeId: currentClass.id  // Use class ID as parent for HAS_PROPERTY edge
+              });
+
+              // Extract decorators if present
+              const propNodeWithDecorators = propNode as ClassPrivateProperty & { decorators?: Decorator[] };
+              if (propNodeWithDecorators.decorators && propNodeWithDecorators.decorators.length > 0 && decorators) {
+                for (const decorator of propNodeWithDecorators.decorators) {
+                  const decoratorInfo = this.extractDecoratorInfo(decorator, variableId, 'PROPERTY', module);
+                  if (decoratorInfo) {
+                    (decorators as DecoratorInfo[]).push(decoratorInfo);
+                  }
+                }
+              }
+            }
+          },
+
+          // REG-271: Private method handler
+          ClassPrivateMethod: (methodPath: NodePath) => {
+            const methodNode = methodPath.node as ClassPrivateMethod;
+
+            // Skip if not direct child of current class
+            if (methodPath.parent !== classNode.body) {
+              return;
+            }
+
+            // Extract name: PrivateName.id.name is WITHOUT # prefix
+            const privateName = (methodNode.key as PrivateName).id.name;
+            const displayName = `#${privateName}`;  // Prepend # for clarity
+
+            const methodLine = getLine(methodNode);
+            const methodColumn = getColumn(methodNode);
+
+            // Use semantic ID as primary ID
+            // For getter/setter, include kind in name for unique ID (e.g., "get:#prop", "set:#prop")
+            const kind = methodNode.kind as 'get' | 'set' | 'method';
+            const semanticName = (kind === 'get' || kind === 'set') ? `${kind}:${displayName}` : displayName;
+            const functionId = computeSemanticId('FUNCTION', semanticName, scopeTracker.getContext());
+
+            // Add method to class methods list for CONTAINS edges
+            currentClass.methods.push(functionId);
+
+            const funcData: ClassFunctionInfo = {
+              id: functionId,
+              type: 'FUNCTION',
+              name: displayName,
+              file: module.file,
+              line: methodLine,
+              column: methodColumn,
+              async: methodNode.async || false,
+              generator: methodNode.generator || false,
+              isClassMethod: true,
+              isPrivate: true,
+              isStatic: methodNode.static || false,
+              className: className,
+              methodKind: methodNode.kind as 'get' | 'set' | 'method'
+            };
+            (functions as ClassFunctionInfo[]).push(funcData);
+
+            // Extract method decorators
+            const methodNodeWithDecorators = methodNode as ClassPrivateMethod & { decorators?: Decorator[] };
+            if (methodNodeWithDecorators.decorators && methodNodeWithDecorators.decorators.length > 0 && decorators) {
+              for (const decorator of methodNodeWithDecorators.decorators) {
+                const decoratorInfo = this.extractDecoratorInfo(decorator, functionId, 'METHOD', module);
+                if (decoratorInfo) {
+                  (decorators as DecoratorInfo[]).push(decoratorInfo);
+                }
+              }
+            }
+
+            // Enter method scope for tracking
+            scopeTracker.enterScope(displayName, 'FUNCTION');
+
+            // Create PARAMETER nodes
+            if (parameters) {
+              createParameterNodes(methodNode.params, functionId, module.file, methodLine, parameters as ParameterInfo[], scopeTracker);
+            }
+
+            // Create SCOPE for method body
+            const methodBodyScopeId = computeSemanticId('SCOPE', 'body', scopeTracker.getContext());
+            (scopes as ScopeInfo[]).push({
+              id: methodBodyScopeId,
+              semanticId: methodBodyScopeId,
+              type: 'SCOPE',
+              scopeType: 'method_body',
+              name: `${className}.${displayName}:body`,
+              conditional: false,
+              file: module.file,
+              line: methodLine,
+              parentFunctionId: functionId
+            });
+
+            analyzeFunctionBody(methodPath as NodePath<ClassPrivateMethod>, methodBodyScopeId, module, collections);
 
             // Exit method scope
             scopeTracker.exitScope();

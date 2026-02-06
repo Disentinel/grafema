@@ -31,6 +31,10 @@ export interface FunctionInfo {
   isCallback?: boolean;
   parentScopeId?: string;
   controlFlow?: ControlFlowMetadata;
+  // REG-271: Private methods support
+  isPrivate?: boolean;   // true for #privateMethod
+  isStatic?: boolean;    // true for static #method()
+  methodKind?: 'constructor' | 'method' | 'get' | 'set';
 }
 
 // === PARAMETER INFO ===
@@ -202,6 +206,10 @@ export interface VariableDeclarationInfo {
   column?: number;
   value?: unknown;
   parentScopeId?: string;
+  // REG-271: Private fields support
+  isPrivate?: boolean;      // true for #privateField
+  isStatic?: boolean;       // true for static #field
+  isClassProperty?: boolean; // true for class properties (vs local variables)
 }
 
 // === GRAFEMA-IGNORE ANNOTATION (REG-332) ===
@@ -297,6 +305,9 @@ export interface ClassDeclarationInfo {
   superClass?: string;
   implements?: string[];  // имена интерфейсов, которые реализует класс
   methods: string[];
+  // REG-271: Additional class members
+  properties?: string[];     // IDs of class properties (including private)
+  staticBlocks?: string[];   // IDs of static block scopes
 }
 
 // === INTERFACE DECLARATION INFO ===

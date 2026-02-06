@@ -12,6 +12,7 @@ import type {
   FunctionDeclaration,
   ArrowFunctionExpression,
   FunctionExpression,
+  StaticBlock,
   Identifier,
   AssignmentPattern,
   RestElement,
@@ -66,9 +67,10 @@ interface ScopeInfo {
 
 /**
  * Callback type for analyzing function bodies
+ * REG-271: Widened to include StaticBlock for class static initialization blocks
  */
 export type AnalyzeFunctionBodyCallback = (
-  path: NodePath<Function>,
+  path: NodePath<Function | StaticBlock>,
   scopeId: string,
   module: VisitorModule,
   collections: VisitorCollections

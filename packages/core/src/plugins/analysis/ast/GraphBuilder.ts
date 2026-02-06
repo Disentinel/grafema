@@ -874,7 +874,12 @@ export class GraphBuilder {
 
   private bufferVariableEdges(variableDeclarations: VariableDeclarationInfo[]): void {
     for (const varDecl of variableDeclarations) {
-      const { parentScopeId, ...varData } = varDecl;
+      const { parentScopeId, isClassProperty, ...varData } = varDecl;
+
+      // REG-271: Skip class properties - they get HAS_PROPERTY edges from CLASS, not DECLARES from SCOPE
+      if (isClassProperty) {
+        continue;
+      }
 
       // SCOPE -> DECLARES -> VARIABLE
       this._bufferEdge({
@@ -988,7 +993,7 @@ export class GraphBuilder {
 
   private bufferClassDeclarationNodes(classDeclarations: ClassDeclarationInfo[]): void {
     for (const classDecl of classDeclarations) {
-      const { id, type, name, file, line, column, superClass, methods } = classDecl;
+      const { id, type, name, file, line, column, superClass, methods, properties, staticBlocks } = classDecl;
 
       // Buffer CLASS node
       this._bufferNode({
@@ -1008,6 +1013,28 @@ export class GraphBuilder {
           src: id,
           dst: methodId
         });
+      }
+
+      // REG-271: Buffer HAS_PROPERTY edges: CLASS -> VARIABLE (private fields)
+      if (properties) {
+        for (const propertyId of properties) {
+          this._bufferEdge({
+            type: 'HAS_PROPERTY',
+            src: id,
+            dst: propertyId
+          });
+        }
+      }
+
+      // REG-271: Buffer CONTAINS edges: CLASS -> SCOPE (static blocks)
+      if (staticBlocks) {
+        for (const staticBlockId of staticBlocks) {
+          this._bufferEdge({
+            type: 'CONTAINS',
+            src: id,
+            dst: staticBlockId
+          });
+        }
       }
 
       // If superClass, buffer DERIVES_FROM edge with computed ID
