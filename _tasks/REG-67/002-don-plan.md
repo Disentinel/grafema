@@ -217,7 +217,7 @@ Grafema is an AI-first tool with a solo developer. The release process should be
 
 ---
 
-## 5. Implementation Summary
+## 5. Phase 1: Local Release Infrastructure
 
 ### Deliverables
 
@@ -228,32 +228,258 @@ Grafema is an AI-first tool with a solo developer. The release process should be
 5. **Create `RELEASING.md`** — document the full process
 6. **Update CLAUDE.md** — reference new release workflow
 
-### Scope Boundaries
+---
 
-**In Scope:**
+## 6. Phase 2: CI/CD Release Validation
+
+### Why CI/CD is Critical NOW (Not Later)
+
+User feedback (Vadim):
+> "CI/CD serves as Claude's checklist — it catches what Claude might forget due to context limits."
+
+Key concerns:
+1. All tests pass (none skipped)
+2. Changelogs/READMEs/docs are in sync
+3. All required binaries are built and uploaded
+4. Nothing important is forgotten
+
+**Claude's context is limited.** CI/CD is NOT automation for humans — it's a **safety net for AI agents** executing releases.
+
+### Research Findings
+
+Based on web search for GitHub Actions best practices:
+
+**For pnpm monorepos:**
+- Use `pnpm/action-setup@v3` with pnpm version 9
+- Use `actions/setup-node@v4` with Node.js 22
+- Authentication via `NODE_AUTH_TOKEN` secret
+
+**For Rust cross-platform binaries:**
+- Build matrix with target triples per platform
+- Use `houseabsolute/actions-rust-cross@v0` for cross-compilation
+- Use `softprops/action-gh-release@v2` for uploading artifacts
+
+**For changelog validation:**
+- `mikepenz/release-changelog-builder-action` for changelog checks
+- Simple grep-based validation for version entries
+
+### Sources
+- [Building a cross platform Rust CI/CD pipeline with GitHub Actions](https://ahmedjama.com/blog/2025/12/cross-platform-rust-pipeline-github-actions/)
+- [How to Deploy Rust Binaries with GitHub Actions](https://dzfrias.dev/blog/deploy-rust-cross-platform-github-actions/)
+- [Automatically publish your Node package to NPM with pnpm and GitHub Actions](https://dev.to/receter/automatically-publish-your-node-package-to-npm-with-pnpm-and-github-actions-22eg)
+- [GitHub Actions in 2026: The Complete Guide to Monorepo CI/CD](https://dev.to/pockit_tools/github-actions-in-2026-the-complete-guide-to-monorepo-cicd-and-self-hosted-runners-1jop)
+- [Changelog Validator GitHub Action](https://github.com/marketplace/actions/changelog-validator)
+
+### Existing Infrastructure Analysis
+
+**Already exists:**
+- `.github/workflows/build-binaries.yml` — Rust binary builds for 4 platforms (darwin-x64, darwin-arm64, linux-x64, linux-arm64)
+- `.github/workflows/vscode-release.yml` — VS Code extension packaging
+
+**Missing:**
+- Pre-release validation workflow (tests, docs sync)
+- npm publish workflow
+- Post-publish verification
+
+### CI/CD Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    RELEASE VALIDATION PIPELINE                          │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  ┌──────────────────┐     ┌──────────────────┐     ┌─────────────────┐  │
+│  │  TRIGGER:        │     │  PRE-RELEASE     │     │  POST-RELEASE   │  │
+│  │  push tag v*     │────▶│  VALIDATION      │────▶│  VERIFICATION   │  │
+│  └──────────────────┘     └──────────────────┘     └─────────────────┘  │
+│                                    │                        │            │
+│                           ┌────────┴────────┐               │            │
+│                           ▼                 ▼               ▼            │
+│                    ┌────────────┐    ┌────────────┐  ┌────────────┐     │
+│                    │ Unit Tests │    │ Doc Sync   │  │ npm verify │     │
+│                    │ (no skip)  │    │ Check      │  │ install    │     │
+│                    ├────────────┤    ├────────────┤  └────────────┘     │
+│                    │ Typecheck  │    │ Changelog  │                      │
+│                    ├────────────┤    │ Has Entry  │                      │
+│                    │ Lint       │    ├────────────┤                      │
+│                    ├────────────┤    │ Version    │                      │
+│                    │ Build All  │    │ Sync Check │                      │
+│                    └────────────┘    └────────────┘                      │
+│                                                                          │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### Workflow 1: `release-validate.yml` (Pre-Release Checks)
+
+**Trigger:** `push tag v*` OR manual dispatch
+
+**Jobs:**
+
+#### Job 1: `test` — All Tests Pass (None Skipped)
+```yaml
+- Run: npm test
+- Assert: Exit code 0
+- Assert: No ".skip" or ".only" in test files (grep check)
+```
+
+**What Claude might forget:** Running the full test suite, or leaving `.only()` from debugging.
+
+#### Job 2: `typecheck-lint` — Static Analysis
+```yaml
+- Run: pnpm typecheck
+- Run: pnpm lint
+```
+
+**What Claude might forget:** Type errors in files not touched by the change.
+
+#### Job 3: `build` — All Packages Build
+```yaml
+- Run: pnpm -r build
+- Assert: All packages in dist/
+```
+
+**What Claude might forget:** Build errors in dependent packages.
+
+#### Job 4: `version-sync` — Unified Package Versions
+```yaml
+- Script: Check all package.json versions match
+- Assert: All @grafema/* packages have same version
+```
+
+**What Claude might forget:** Updating all packages, not just the ones changed.
+
+#### Job 5: `changelog-check` — CHANGELOG.md Has Entry
+```yaml
+- Script: grep -q "## \[${VERSION}\]" CHANGELOG.md
+- Assert: Version entry exists with date
+```
+
+**What Claude might forget:** Updating CHANGELOG after code changes.
+
+#### Job 6: `docs-sync` — READMEs Not Stale
+```yaml
+- Script: Check key documentation files modified recently OR have no TODOs
+- Warning only (not blocking)
+```
+
+**What Claude might forget:** Updating package READMEs when API changes.
+
+#### Job 7: `binary-check` (for @grafema/rfdb releases)
+```yaml
+- Condition: If rfdb-v* tag also exists for this version
+- Assert: All 4 platform binaries present in prebuilt/
+- Assert: Binary architecture matches expected (via file command)
+```
+
+**What Claude might forget:** Downloading binaries before publishing @grafema/rfdb.
+
+### Workflow 2: `release-publish.yml` (npm Publish)
+
+**Trigger:** Manual dispatch after validation passes
+
+**Jobs:**
+
+#### Job 1: `publish` — Publish to npm
+```yaml
+- Auth: NPM_TOKEN secret
+- Run: pnpm -r publish --access public --tag beta --no-git-checks
+- Order: types → core → cli → mcp → rfdb-client → rfdb
+```
+
+#### Job 2: `verify` — Post-Publish Verification
+```yaml
+- Wait: 60 seconds (npm registry propagation)
+- Run: npx @grafema/cli@${VERSION} --version
+- Assert: Version matches expected
+```
+
+**What Claude might forget:** Verifying the published package actually works.
+
+### Workflow 3: `release-binaries.yml` (Already Exists)
+
+**Location:** `.github/workflows/build-binaries.yml`
+**Trigger:** `push tag rfdb-v*`
+**Status:** Already implemented, builds all 4 platforms
+
+### Deliverables for Phase 2
+
+1. **`.github/workflows/release-validate.yml`**
+   - Pre-release validation checks
+   - Triggered by v* tag push
+   - Blocks release if any check fails
+
+2. **`.github/workflows/release-publish.yml`**
+   - npm publish automation
+   - Manual trigger only (after validation passes)
+   - Post-publish verification
+
+3. **Update `scripts/release.sh`**
+   - Add: `--ci` flag to run local validation before tagging
+   - Add: Link to GitHub Actions status page
+
+4. **Update `grafema-release` skill**
+   - Add: CI/CD status check step
+   - Add: "Wait for green CI" instruction
+
+### What Each Check Catches
+
+| Check | Claude Context Limitation Mitigated |
+|-------|-------------------------------------|
+| Tests pass | Forgot to run tests after last change |
+| No .skip/.only | Left debugging code in tests |
+| Typecheck | Type errors in untouched files |
+| Build | Broken imports after refactoring |
+| Version sync | Only bumped some packages |
+| Changelog entry | Forgot to document the release |
+| Binary check | Forgot to download rfdb binaries |
+| Post-publish verify | Published broken package |
+
+### Implementation Notes
+
+**Why manual publish trigger?**
+- User reviews CI results before publish
+- No automatic npm publish on tag (too risky)
+- Gives opportunity to fix issues before publishing
+
+**Why not use Changesets CI?**
+- Changesets automates PR-based workflow
+- We don't need PR automation (solo dev + AI)
+- Our validation is simpler and more targeted
+
+---
+
+## 7. Scope Boundaries
+
+**In Scope (Phase 1):**
 - Branch strategy (stable)
 - Version sync mechanism
 - Release script
 - Documentation
 
-**Out of Scope:**
-- CI/CD automation (future enhancement)
+**In Scope (Phase 2):**
+- GitHub Actions pre-release validation
+- GitHub Actions post-publish verification
+- CI status integration in release skill
+
+**Out of Scope (v0.5+):**
 - Conventional commits enforcement
-- Automated changelog generation
-- GitHub Actions release workflow
+- Automated changelog generation from commits
+- Automated version bumping
 
 ### Risk Assessment
 
 | Risk | Mitigation |
 |------|------------|
-| Version sync gets out of sync again | Script enforces unified versions |
+| Version sync gets out of sync again | Script enforces + CI validates |
 | stable branch diverges | Only updated via release script |
 | npm publish fails mid-release | Script has atomic stages, can retry |
 | User confusion about branches | Clear documentation |
+| CI passes but release still broken | Post-publish verification step |
+| Claude forgets step | CI/CD catches the gap |
 
 ---
 
-## 6. Alignment with Project Vision
+## 8. Alignment with Project Vision
 
 **"AI should query the graph, not read code"** — This release workflow is designed for AI execution:
 
@@ -261,11 +487,32 @@ Grafema is an AI-first tool with a solo developer. The release process should be
 2. Script has predictable behavior
 3. Documentation explains WHY, not just HOW
 4. No hidden state or complex tooling to debug
+5. **CI/CD serves as Claude's memory** — catches what context limits might miss
 
 **Dogfooding principle satisfied:**
 - stable branch ensures Grafema can analyze Grafema
 - Even if main is broken, stable provides working version for hooks
 
+**AI-first design:**
+- CI/CD is not automation for humans — it's a **safety net for AI agents**
+- Each check corresponds to a specific Claude context limitation
+- Manual publish trigger keeps human in the loop
+
 ---
 
-**Recommendation:** Proceed with Joel Spolsky for detailed technical specification.
+## 9. Implementation Order
+
+**Phase 1** (local infrastructure):
+1. Create `stable` branch
+2. Create `scripts/release.sh` with local validation
+3. Sync package versions
+4. Update `/release` skill
+5. Create RELEASING.md
+
+**Phase 2** (CI/CD):
+1. Create `.github/workflows/release-validate.yml`
+2. Create `.github/workflows/release-publish.yml`
+3. Update release script to check CI status
+4. Update `/release` skill with CI integration
+
+**Recommendation:** Proceed with Joel Spolsky for detailed technical specification covering both phases.

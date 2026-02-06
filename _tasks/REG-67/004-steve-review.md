@@ -132,3 +132,198 @@ This is a **solid, pragmatic plan** that solves the stated problem without over-
 **APPROVED for implementation.**
 
 Awaiting Vadim's confirmation.
+
+---
+
+## Revision Review (CI/CD Added)
+
+**Date:** 2026-02-06
+
+---
+
+### VERDICT: APPROVE
+
+---
+
+### Context
+
+Vadim's feedback on the original plan:
+
+> "CI/CD serves as Claude's checklist — it catches what Claude might forget due to context limits."
+
+This is a **critical insight**. Claude operates within context windows. Complex multi-step release processes can exceed that context, causing steps to be forgotten. CI/CD is not automation for humans — it's a **safety net for AI agents**.
+
+Don and Joel have revised the plan to include CI/CD as Phase 2 (not deferred to v0.5+).
+
+---
+
+### What's Right About the CI/CD Addition
+
+#### 1. Correct Framing of the Problem
+
+The updated plan explicitly states:
+
+> "Claude's context is limited. CI/CD is NOT automation for humans — it's a **safety net for AI agents** executing releases."
+
+This is the right mental model. Each CI check corresponds to a specific Claude context limitation:
+
+| Check | What Claude Might Forget |
+|-------|--------------------------|
+| Tests pass | Running tests after the last change |
+| No .skip/.only | Removing debugging code from tests |
+| TypeScript | Type errors in files not touched during session |
+| Build | Broken imports after refactoring |
+| Version sync | Only bumping some packages |
+| Changelog entry | Documenting the release |
+| Binary check | Downloading rfdb binaries before publish |
+| Post-publish verify | Confirming the published package works |
+
+This is **exhaustive and correct**.
+
+#### 2. Correct Trigger Strategy
+
+**CI workflow (`ci.yml`):**
+- Triggers on every push to main and PRs
+- Catches issues early, before release
+- This is standard CI — good
+
+**Release validation (`release-validate.yml`):**
+- Triggers on `v*` tag push
+- Runs all CI checks PLUS release-specific checks (changelog, version sync)
+- This is the **gate before publish** — correct
+
+**Release publish (`release-publish.yml`):**
+- Manual trigger only
+- Requires human confirmation before npm publish
+- Includes post-publish verification
+
+**Why manual publish is correct:**
+- npm publish is irreversible (72-hour unpublish window)
+- Gives Claude (or human) a chance to review validation results
+- No accidental publishes from typo'd tags
+
+#### 3. Correct Scope — Not Over-Engineered
+
+The CI/CD plan does NOT include:
+- Automated version bumping (would require conventional commits)
+- Automated changelog generation (would require conventional commits)
+- Release train complexity
+- Approval workflows
+
+What it DOES include:
+- Validation checks (things can fail)
+- Manual publish trigger (human in the loop)
+- Post-publish verification (confirm it worked)
+
+This is **minimal viable CI/CD** that solves the stated problem.
+
+#### 4. Reuses Existing Patterns
+
+The workflow files match patterns from existing `.github/workflows/`:
+- Same pnpm/action-setup@v4
+- Same Node.js 22, pnpm 9
+- Same structure and conventions
+
+No new tools or frameworks introduced.
+
+---
+
+### Concerns (Not Blocking)
+
+#### 1. Changelog Format Validation
+
+The `changelog-check` job uses:
+```bash
+grep -qE "^\#\#\s*\[$VERSION\]\s*-\s*[0-9]{4}-[0-9]{2}-[0-9]{2}" CHANGELOG.md
+```
+
+This validates format: `## [0.2.5] - 2026-02-06`
+
+It does NOT validate:
+- Content exists under the header
+- Content is meaningful
+
+**Reality check:** This is acceptable. Automated content validation is impossible. The format check ensures Claude at least added an entry. Content quality is a human review concern.
+
+#### 2. Binary Check is Warning-Only
+
+The `binary-check` job for rfdb binaries issues a warning, not a failure:
+```yaml
+# Warning only, not failure - binaries might be downloaded separately
+```
+
+This is intentional because:
+- rfdb binaries might be added in a separate step
+- Not all releases include rfdb changes
+
+**Recommendation:** Consider making this a failure for stable releases (non-prerelease) if @grafema/rfdb is being published. The current approach is defensible but could let a broken rfdb release through.
+
+**Not blocking** because rfdb publish is explicitly optional in the workflow.
+
+#### 3. NPM_TOKEN Secret Setup
+
+The plan mentions configuring NPM_TOKEN but doesn't verify it exists before attempting publish.
+
+**In practice:** The workflow will fail clearly if the secret is missing ("NODE_AUTH_TOKEN is not set"). Good enough.
+
+---
+
+### Critical Checks Passed
+
+#### Does this address Vadim's concern?
+
+**YES.** The CI/CD pipeline catches exactly what Claude might forget:
+
+1. **All tests pass (none skipped)** — `test` job + `.only/.skip` grep check
+2. **Changelogs/docs in sync** — `changelog-check` job
+3. **All required binaries built** — `binary-check` job (for rfdb)
+4. **Nothing forgotten** — Each check is a memory extension for Claude
+
+#### Is the CI/CD scope right?
+
+**YES.** Not over-engineered (no automated versioning, no release trains), not under-done (covers all critical validation points).
+
+#### Is the workflow trigger strategy correct?
+
+**YES.**
+
+| Event | Workflow | Behavior |
+|-------|----------|----------|
+| Push to main/PR | `ci.yml` | Validate continuously |
+| Push tag `v*` | `release-validate.yml` | Gate before publish |
+| Manual trigger | `release-publish.yml` | Human-approved publish |
+
+This is the correct separation of concerns.
+
+---
+
+### Alignment with Project Vision
+
+> "AI should query the graph, not read code."
+
+The CI/CD addition aligns with this vision by **extending Claude's effective memory**. The GitHub Actions workflows are:
+- Deterministic (same input = same output)
+- Documented (comments explain why each check exists)
+- AI-executable (Claude can trigger via gh CLI)
+
+The `/release` skill update includes CI integration instructions, making the process end-to-end AI-executable.
+
+---
+
+### Final Notes
+
+The revised plan with CI/CD as Phase 2 is **stronger than the original**. Vadim's insight that CI/CD serves as Claude's checklist is correct and well-implemented.
+
+The total estimated effort (9-13 hours) is reasonable for what's being delivered:
+- Phase 1: Local infrastructure (scripts, branches, docs)
+- Phase 2: CI/CD safety net (3 workflows, integration)
+
+**One observation:** The plan could have deferred CI/CD to a separate ticket (REG-XXX) if time was constrained. By including it in the same task, the team ensures it ships together. This is the right call — a release workflow without validation is incomplete.
+
+---
+
+### APPROVED
+
+The revised plan with CI/CD is complete, correctly scoped, and directly addresses Vadim's concerns about Claude's context limitations.
+
+Awaiting Vadim's confirmation.

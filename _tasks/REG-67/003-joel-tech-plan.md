@@ -1077,3 +1077,1118 @@ git push origin stable --force
 ---
 
 **Ready for implementation by Kent Beck (tests) and Rob Pike (code).**
+
+---
+
+## Phase 2: CI/CD Implementation
+
+### Overview
+
+Phase 2 implements GitHub Actions workflows that serve as Claude's safety net. Each workflow check corresponds to a specific Claude context limitation that might cause issues during releases.
+
+### Existing Workflow Patterns
+
+From `.github/workflows/build-binaries.yml` and `.github/workflows/vscode-release.yml`:
+
+- **pnpm setup**: `pnpm/action-setup@v4` with version 9
+- **Node setup**: `actions/setup-node@v4` with Node.js 20
+- **Checkout**: `actions/checkout@v4`
+- **Release**: `softprops/action-gh-release@v2`
+- **Rust**: `dtolnay/rust-toolchain@stable` with `Swatinem/rust-cache@v2`
+- **Cross-compile**: `houseabsolute/actions-rust-cross@v0`
+
+### Workflow Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                          CI/CD WORKFLOW ARCHITECTURE                          │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  TRIGGER: push to main, pull_request                                        │
+│       ↓                                                                      │
+│  ┌─────────────────────────────────────────────────────────────────────┐    │
+│  │                    ci.yml (Continuous Integration)                   │    │
+│  │  ┌─────────┐  ┌───────────────┐  ┌───────────┐  ┌──────────────┐   │    │
+│  │  │  test   │  │ typecheck-lint│  │   build   │  │ version-sync │   │    │
+│  │  └─────────┘  └───────────────┘  └───────────┘  └──────────────┘   │    │
+│  └─────────────────────────────────────────────────────────────────────┘    │
+│                                                                              │
+│  TRIGGER: push tag v*                                                        │
+│       ↓                                                                      │
+│  ┌─────────────────────────────────────────────────────────────────────┐    │
+│  │               release-validate.yml (Pre-Release Gates)              │    │
+│  │  ┌─────────┐  ┌───────────────┐  ┌──────────────┐  ┌────────────┐  │    │
+│  │  │  tests  │  │ changelog-    │  │ version-sync │  │  no-skip   │  │    │
+│  │  │  pass   │  │ entry-exists  │  │    check     │  │  in-tests  │  │    │
+│  │  └─────────┘  └───────────────┘  └──────────────┘  └────────────┘  │    │
+│  └─────────────────────────────────────────────────────────────────────┘    │
+│                                                                              │
+│  TRIGGER: workflow_dispatch (manual, after validation)                       │
+│       ↓                                                                      │
+│  ┌─────────────────────────────────────────────────────────────────────┐    │
+│  │                  release-publish.yml (npm Publish)                   │    │
+│  │  ┌─────────┐  ┌───────────────┐  ┌──────────────────────────────┐  │    │
+│  │  │ publish │──│ wait 60s for  │──│   verify: npx @grafema/cli   │  │    │
+│  │  │ to npm  │  │   npm sync    │  │       @version --version     │  │    │
+│  │  └─────────┘  └───────────────┘  └──────────────────────────────┘  │    │
+│  └─────────────────────────────────────────────────────────────────────┘    │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+### Step 2.1: Create `.github/workflows/ci.yml`
+
+**Purpose:** Runs on every push/PR to catch issues early. This is the primary workflow that validates code quality.
+
+**File:** `/grafema/.github/workflows/ci.yml`
+
+```yaml
+# Continuous Integration for Grafema
+#
+# Runs on:
+#   - Every push to main
+#   - Every pull request
+#
+# Validates:
+#   - All tests pass (no .skip or .only)
+#   - TypeScript compiles
+#   - ESLint passes
+#   - All packages build
+#   - Package versions are in sync
+
+name: CI
+
+on:
+  push:
+    branches: [main, stable]
+  pull_request:
+    branches: [main]
+
+env:
+  NODE_VERSION: '22'
+  PNPM_VERSION: '9'
+
+jobs:
+  # Job 1: Run all tests
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build (required for tests)
+        run: pnpm build
+
+      - name: Run tests
+        run: pnpm test
+
+      - name: Check for .only or .skip in test files
+        run: |
+          echo "Checking for .only() or .skip() in test files..."
+          if grep -rE '\.(only|skip)\s*\(' test/ --include="*.test.js" --include="*.test.ts"; then
+            echo "::error::Found .only() or .skip() in test files. Remove before releasing."
+            exit 1
+          fi
+          echo "No .only() or .skip() found."
+
+  # Job 2: TypeScript and ESLint
+  typecheck-lint:
+    name: Typecheck & Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: TypeScript check
+        run: pnpm typecheck
+
+      - name: ESLint
+        run: pnpm lint
+
+  # Job 3: Build all packages
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build all packages
+        run: pnpm build
+
+      - name: Verify build artifacts exist
+        run: |
+          echo "Verifying build outputs..."
+          # Check that dist directories exist for key packages
+          test -d packages/types/dist || (echo "::error::packages/types/dist not found" && exit 1)
+          test -d packages/core/dist || (echo "::error::packages/core/dist not found" && exit 1)
+          test -d packages/cli/dist || (echo "::error::packages/cli/dist not found" && exit 1)
+          test -d packages/mcp/dist || (echo "::error::packages/mcp/dist not found" && exit 1)
+          echo "All build artifacts verified."
+
+  # Job 4: Version sync check
+  version-sync:
+    name: Version Sync
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check all package versions match
+        run: |
+          echo "Checking package version synchronization..."
+
+          # Get root version
+          ROOT_VERSION=$(node -p "require('./package.json').version")
+          echo "Root version: $ROOT_VERSION"
+
+          # Check all publishable packages
+          PACKAGES=(
+            "packages/types"
+            "packages/core"
+            "packages/cli"
+            "packages/mcp"
+            "packages/api"
+            "packages/rfdb"
+            "packages/rfdb-server"
+          )
+
+          MISMATCH=0
+          for pkg in "${PACKAGES[@]}"; do
+            if [ -f "$pkg/package.json" ]; then
+              PKG_VERSION=$(node -p "require('./$pkg/package.json').version")
+              PKG_NAME=$(node -p "require('./$pkg/package.json').name")
+              if [ "$PKG_VERSION" != "$ROOT_VERSION" ]; then
+                echo "::error::Version mismatch: $PKG_NAME is $PKG_VERSION, expected $ROOT_VERSION"
+                MISMATCH=1
+              else
+                echo "  $PKG_NAME: $PKG_VERSION"
+              fi
+            fi
+          done
+
+          if [ "$MISMATCH" -eq 1 ]; then
+            echo ""
+            echo "::error::Package versions are out of sync. Run: pnpm -r exec npm version $ROOT_VERSION --no-git-tag-version --allow-same-version"
+            exit 1
+          fi
+
+          echo "All package versions are in sync."
+```
+
+**What Each Job Catches (Claude Context Limitations):**
+
+| Job | Catches |
+|-----|---------|
+| `test` | Forgot to run tests after last change |
+| `.only/.skip check` | Left debugging code in tests |
+| `typecheck-lint` | Type errors in files not touched |
+| `build` | Broken imports after refactoring |
+| `version-sync` | Only bumped some packages |
+
+---
+
+### Step 2.2: Create `.github/workflows/release-validate.yml`
+
+**Purpose:** Runs when a release tag is pushed. Must pass before npm publish.
+
+**File:** `/grafema/.github/workflows/release-validate.yml`
+
+```yaml
+# Pre-Release Validation for Grafema
+#
+# Triggered by: git push tag v*
+#
+# Validates:
+#   - All CI checks pass
+#   - CHANGELOG.md has entry for this version
+#   - Package versions match tag version
+#   - For rfdb releases: binaries exist
+#
+# This workflow MUST pass before npm publish.
+# Claude should wait for green status before proceeding.
+
+name: Release Validation
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  NODE_VERSION: '22'
+  PNPM_VERSION: '9'
+
+jobs:
+  # Extract version from tag
+  setup:
+    name: Setup
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      is_prerelease: ${{ steps.version.outputs.is_prerelease }}
+
+    steps:
+      - name: Extract version from tag
+        id: version
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          VERSION="${TAG#v}"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+          if [[ "$VERSION" =~ -beta|-alpha|-rc ]]; then
+            echo "is_prerelease=true" >> $GITHUB_OUTPUT
+          else
+            echo "is_prerelease=false" >> $GITHUB_OUTPUT
+          fi
+
+          echo "Tag: $TAG"
+          echo "Version: $VERSION"
+
+  # Run all CI checks
+  ci-checks:
+    name: CI Checks
+    runs-on: ubuntu-latest
+    needs: setup
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build all packages
+        run: pnpm build
+
+      - name: Run all tests
+        run: pnpm test
+
+      - name: TypeScript check
+        run: pnpm typecheck
+
+      - name: ESLint
+        run: pnpm lint
+
+      - name: Check for .only or .skip in test files
+        run: |
+          if grep -rE '\.(only|skip)\s*\(' test/ --include="*.test.js" --include="*.test.ts" 2>/dev/null; then
+            echo "::error::Found .only() or .skip() in test files"
+            exit 1
+          fi
+
+  # Validate version numbers match
+  version-check:
+    name: Version Check
+    runs-on: ubuntu-latest
+    needs: setup
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Verify all packages have correct version
+        env:
+          EXPECTED_VERSION: ${{ needs.setup.outputs.version }}
+        run: |
+          echo "Expected version: $EXPECTED_VERSION"
+
+          # Check root
+          ROOT_VERSION=$(node -p "require('./package.json').version")
+          if [ "$ROOT_VERSION" != "$EXPECTED_VERSION" ]; then
+            echo "::error::Root package.json version ($ROOT_VERSION) doesn't match tag ($EXPECTED_VERSION)"
+            exit 1
+          fi
+
+          # Check all packages
+          PACKAGES=(
+            "packages/types"
+            "packages/core"
+            "packages/cli"
+            "packages/mcp"
+            "packages/api"
+            "packages/rfdb"
+            "packages/rfdb-server"
+          )
+
+          for pkg in "${PACKAGES[@]}"; do
+            if [ -f "$pkg/package.json" ]; then
+              PKG_VERSION=$(node -p "require('./$pkg/package.json').version")
+              PKG_NAME=$(node -p "require('./$pkg/package.json').name")
+              if [ "$PKG_VERSION" != "$EXPECTED_VERSION" ]; then
+                echo "::error::$PKG_NAME version ($PKG_VERSION) doesn't match tag ($EXPECTED_VERSION)"
+                exit 1
+              fi
+              echo "  $PKG_NAME: $PKG_VERSION"
+            fi
+          done
+
+          echo "All package versions match tag."
+
+  # Validate CHANGELOG has entry
+  changelog-check:
+    name: Changelog Check
+    runs-on: ubuntu-latest
+    needs: setup
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check CHANGELOG.md has version entry
+        env:
+          VERSION: ${{ needs.setup.outputs.version }}
+        run: |
+          echo "Checking for CHANGELOG.md entry for version $VERSION..."
+
+          if [ ! -f "CHANGELOG.md" ]; then
+            echo "::error::CHANGELOG.md not found"
+            exit 1
+          fi
+
+          # Check for [version] entry with date
+          if ! grep -qE "^\#\#\s*\[$VERSION\]\s*-\s*[0-9]{4}-[0-9]{2}-[0-9]{2}" CHANGELOG.md; then
+            echo "::error::CHANGELOG.md missing entry for [$VERSION] with date"
+            echo "Expected format: ## [$VERSION] - YYYY-MM-DD"
+            echo ""
+            echo "Recent CHANGELOG entries:"
+            head -50 CHANGELOG.md | grep -E "^\#\#" || true
+            exit 1
+          fi
+
+          echo "CHANGELOG.md has entry for $VERSION"
+
+  # Check for rfdb binaries (only for non-prerelease)
+  binary-check:
+    name: Binary Check (rfdb)
+    runs-on: ubuntu-latest
+    needs: setup
+    # Only run for stable releases that might publish @grafema/rfdb
+    if: needs.setup.outputs.is_prerelease == 'false'
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check for prebuilt binaries
+        run: |
+          echo "Checking rfdb-server prebuilt binaries..."
+
+          PLATFORMS=(
+            "darwin-arm64"
+            "darwin-x64"
+            "linux-arm64"
+            "linux-x64"
+          )
+
+          MISSING=0
+          for platform in "${PLATFORMS[@]}"; do
+            BINARY="packages/rfdb-server/prebuilt/$platform/rfdb-server"
+            if [ ! -f "$BINARY" ]; then
+              echo "::warning::Missing binary: $BINARY"
+              MISSING=1
+            else
+              echo "  Found: $platform ($(du -h "$BINARY" | cut -f1))"
+            fi
+          done
+
+          if [ "$MISSING" -eq 1 ]; then
+            echo ""
+            echo "::warning::Some platform binaries are missing. If publishing @grafema/rfdb, run:"
+            echo "  ./scripts/download-rfdb-binaries.sh rfdb-v<VERSION>"
+            # Warning only, not failure - binaries might be downloaded separately
+          fi
+
+  # Final status check
+  validation-complete:
+    name: Validation Complete
+    runs-on: ubuntu-latest
+    needs: [setup, ci-checks, version-check, changelog-check]
+    # Also wait for binary-check if it ran
+    if: always()
+
+    steps:
+      - name: Check all validations passed
+        env:
+          CI_RESULT: ${{ needs.ci-checks.result }}
+          VERSION_RESULT: ${{ needs.version-check.result }}
+          CHANGELOG_RESULT: ${{ needs.changelog-check.result }}
+        run: |
+          echo "Validation Results:"
+          echo "  CI Checks: $CI_RESULT"
+          echo "  Version Check: $VERSION_RESULT"
+          echo "  Changelog Check: $CHANGELOG_RESULT"
+
+          if [ "$CI_RESULT" != "success" ] || [ "$VERSION_RESULT" != "success" ] || [ "$CHANGELOG_RESULT" != "success" ]; then
+            echo ""
+            echo "::error::Release validation FAILED. Do NOT proceed with npm publish."
+            exit 1
+          fi
+
+          echo ""
+          echo "All validations PASSED. Safe to proceed with npm publish."
+          echo ""
+          echo "Next step: Run 'Release Publish' workflow manually from GitHub Actions."
+```
+
+**What Each Check Catches:**
+
+| Check | Claude Context Limitation Mitigated |
+|-------|-------------------------------------|
+| `ci-checks` | Forgot to run tests, build, or lint |
+| `.only/.skip` | Left debugging code in tests |
+| `version-check` | Only bumped some packages, or version mismatch with tag |
+| `changelog-check` | Forgot to document the release |
+| `binary-check` | Forgot to download rfdb binaries before publishing |
+
+---
+
+### Step 2.3: Create `.github/workflows/release-publish.yml`
+
+**Purpose:** Manual npm publish after validation passes. Includes post-publish verification.
+
+**File:** `/grafema/.github/workflows/release-publish.yml`
+
+```yaml
+# npm Publish Workflow for Grafema
+#
+# IMPORTANT: This workflow is MANUAL only.
+# Only run AFTER release-validate.yml passes.
+#
+# Trigger: workflow_dispatch from GitHub Actions UI
+#
+# Required secrets:
+#   - NPM_TOKEN: npm access token with publish permissions
+#
+# Publishes:
+#   - @grafema/types
+#   - @grafema/rfdb-client (as @grafema/rfdb)
+#   - @grafema/core
+#   - @grafema/mcp
+#   - @grafema/api
+#   - @grafema/cli
+#   - @grafema/rfdb (rfdb-server, only if binaries present)
+
+name: Release Publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to publish (e.g., 0.2.5-beta). Must match existing tag.'
+        required: true
+        type: string
+      dry_run:
+        description: 'Dry run (do not actually publish)'
+        required: false
+        type: boolean
+        default: false
+      publish_rfdb:
+        description: 'Also publish @grafema/rfdb (requires binaries)'
+        required: false
+        type: boolean
+        default: false
+
+env:
+  NODE_VERSION: '22'
+  PNPM_VERSION: '9'
+
+jobs:
+  # Verify tag exists and validation passed
+  preflight:
+    name: Preflight Check
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.check.outputs.tag }}
+      dist_tag: ${{ steps.check.outputs.dist_tag }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify tag exists
+        id: check
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          TAG="v$VERSION"
+
+          if ! git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "::error::Tag $TAG does not exist. Create it first."
+            exit 1
+          fi
+
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+
+          # Determine dist-tag
+          if [[ "$VERSION" =~ -beta|-alpha|-rc ]]; then
+            echo "dist_tag=beta" >> $GITHUB_OUTPUT
+          else
+            echo "dist_tag=latest" >> $GITHUB_OUTPUT
+          fi
+
+          echo "Tag: $TAG"
+          echo "Dist-tag: $(grep dist_tag $GITHUB_OUTPUT | cut -d= -f2)"
+
+      - name: Check release-validate workflow status
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: v${{ inputs.version }}
+        run: |
+          echo "Checking if release-validate passed for $TAG..."
+
+          # Get the latest workflow run for release-validate on this tag
+          RESULT=$(gh run list \
+            --workflow=release-validate.yml \
+            --branch="$TAG" \
+            --limit=1 \
+            --json conclusion \
+            --jq '.[0].conclusion' 2>/dev/null || echo "not_found")
+
+          if [ "$RESULT" == "not_found" ] || [ -z "$RESULT" ]; then
+            echo "::warning::Could not find release-validate run for $TAG"
+            echo "Make sure release-validate.yml passed before publishing!"
+          elif [ "$RESULT" != "success" ]; then
+            echo "::error::release-validate workflow did not succeed (result: $RESULT)"
+            echo "Do NOT publish until validation passes."
+            exit 1
+          else
+            echo "release-validate passed."
+          fi
+
+  # Publish packages to npm
+  publish:
+    name: Publish to npm
+    runs-on: ubuntu-latest
+    needs: preflight
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.preflight.outputs.tag }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build all packages
+        run: pnpm build
+
+      - name: Publish packages
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          DIST_TAG: ${{ needs.preflight.outputs.dist_tag }}
+          PUBLISH_RFDB: ${{ inputs.publish_rfdb }}
+        run: |
+          # Package publish order (dependency order)
+          PACKAGES=(
+            "packages/types"
+            "packages/rfdb"
+            "packages/core"
+            "packages/mcp"
+            "packages/api"
+            "packages/cli"
+          )
+
+          if [ "$PUBLISH_RFDB" == "true" ]; then
+            PACKAGES+=("packages/rfdb-server")
+          fi
+
+          DRY_RUN_FLAG=""
+          if [ "$DRY_RUN" == "true" ]; then
+            DRY_RUN_FLAG="--dry-run"
+            echo "DRY RUN MODE - packages will NOT be published"
+          fi
+
+          for pkg in "${PACKAGES[@]}"; do
+            if [ -f "$pkg/package.json" ]; then
+              PKG_NAME=$(node -p "require('./$pkg/package.json').name")
+              PKG_PRIVATE=$(node -p "require('./$pkg/package.json').private || false")
+
+              if [ "$PKG_PRIVATE" == "true" ]; then
+                echo "SKIP: $PKG_NAME (private)"
+                continue
+              fi
+
+              echo ""
+              echo "Publishing $PKG_NAME with tag '$DIST_TAG'..."
+              cd "$pkg"
+              pnpm publish --access public --tag "$DIST_TAG" --no-git-checks $DRY_RUN_FLAG
+              cd -
+              echo "Published: $PKG_NAME"
+            fi
+          done
+
+          echo ""
+          echo "All packages published successfully."
+
+  # Verify published packages work
+  verify:
+    name: Verify Publication
+    runs-on: ubuntu-latest
+    needs: [preflight, publish]
+    # Skip verification in dry-run mode
+    if: inputs.dry_run != true
+    timeout-minutes: 10
+
+    steps:
+      - name: Wait for npm registry propagation
+        run: |
+          echo "Waiting 60 seconds for npm registry to propagate..."
+          sleep 60
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Verify @grafema/cli installation
+        env:
+          VERSION: ${{ inputs.version }}
+          DIST_TAG: ${{ needs.preflight.outputs.dist_tag }}
+        run: |
+          echo "Verifying @grafema/cli@$VERSION..."
+
+          # Try to install the specific version
+          npm install -g @grafema/cli@$VERSION
+
+          # Check version matches
+          INSTALLED_VERSION=$(grafema --version 2>/dev/null | head -1 || echo "unknown")
+          echo "Installed version: $INSTALLED_VERSION"
+
+          if [[ "$INSTALLED_VERSION" != *"$VERSION"* ]]; then
+            echo "::warning::Version mismatch. Expected $VERSION, got $INSTALLED_VERSION"
+          fi
+
+          echo ""
+          echo "Verification complete."
+
+      - name: Check dist-tag
+        env:
+          VERSION: ${{ inputs.version }}
+          DIST_TAG: ${{ needs.preflight.outputs.dist_tag }}
+        run: |
+          echo "Checking npm dist-tag..."
+
+          TAG_VERSION=$(npm view @grafema/cli dist-tags.$DIST_TAG 2>/dev/null || echo "unknown")
+          echo "  $DIST_TAG tag points to: $TAG_VERSION"
+
+          if [ "$TAG_VERSION" != "$VERSION" ]; then
+            echo "::warning::dist-tag '$DIST_TAG' points to $TAG_VERSION, expected $VERSION"
+            echo "Update manually if needed: npm dist-tag add @grafema/cli@$VERSION $DIST_TAG"
+          fi
+
+  # Summary
+  summary:
+    name: Publish Summary
+    runs-on: ubuntu-latest
+    needs: [preflight, publish, verify]
+    if: always()
+
+    steps:
+      - name: Print summary
+        env:
+          VERSION: ${{ inputs.version }}
+          DIST_TAG: ${{ needs.preflight.outputs.dist_tag }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          PUBLISH_RESULT: ${{ needs.publish.result }}
+          VERIFY_RESULT: ${{ needs.verify.result }}
+        run: |
+          echo "========================================"
+          echo "     RELEASE PUBLISH SUMMARY"
+          echo "========================================"
+          echo ""
+          echo "Version:   $VERSION"
+          echo "Dist-tag:  $DIST_TAG"
+          echo "Dry run:   $DRY_RUN"
+          echo ""
+          echo "Results:"
+          echo "  Publish: $PUBLISH_RESULT"
+          echo "  Verify:  $VERIFY_RESULT"
+          echo ""
+
+          if [ "$DRY_RUN" == "true" ]; then
+            echo "This was a DRY RUN. No packages were actually published."
+            echo "Run again without dry_run to publish for real."
+          elif [ "$PUBLISH_RESULT" == "success" ]; then
+            echo "Publication successful!"
+            echo ""
+            echo "Install with:"
+            echo "  npm install @grafema/cli@$VERSION"
+            echo "  # or"
+            echo "  npm install @grafema/cli@$DIST_TAG"
+          else
+            echo "Publication FAILED. Check logs above."
+          fi
+```
+
+**Key Features:**
+
+1. **Manual trigger only** - Prevents accidental publishes
+2. **Preflight check** - Verifies tag exists and validation passed
+3. **Dependency order** - Publishes packages in correct order
+4. **Post-publish verification** - Confirms packages actually work
+5. **Dry-run mode** - Test the workflow without publishing
+
+---
+
+### Step 2.4: Update `scripts/release.sh` for CI Integration
+
+Add CI status check before tagging. Update the existing script with these additions.
+
+**Changes to add to `/grafema/scripts/release.sh`:**
+
+After the pre-flight checks section, add:
+
+```bash
+#---------------------------------------------------------
+# STEP 1.5: Check CI status (optional)
+#---------------------------------------------------------
+if [ "$SKIP_CI_CHECK" != "true" ]; then
+    echo ""
+    echo -e "${BLUE}=== CI Status Check ===${NC}"
+
+    # Check if gh CLI is available
+    if command -v gh &> /dev/null; then
+        echo "Checking latest CI run on main..."
+
+        CI_STATUS=$(gh run list --workflow=ci.yml --branch=main --limit=1 --json conclusion --jq '.[0].conclusion' 2>/dev/null || echo "unknown")
+
+        case "$CI_STATUS" in
+            success)
+                echo -e "${GREEN}[x] CI passing on main${NC}"
+                ;;
+            failure)
+                echo -e "${RED}ERROR: CI is failing on main. Fix before releasing.${NC}"
+                echo "View: gh run list --workflow=ci.yml --branch=main"
+                exit 1
+                ;;
+            *)
+                echo -e "${YELLOW}WARNING: Could not determine CI status ($CI_STATUS)${NC}"
+                read -p "Continue anyway? [y/N] " -n 1 -r
+                echo
+                if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                    exit 1
+                fi
+                ;;
+        esac
+    else
+        echo -e "${YELLOW}[SKIP] gh CLI not available, skipping CI check${NC}"
+    fi
+fi
+```
+
+Add `--skip-ci-check` flag parsing:
+
+```bash
+# In argument parsing section, add:
+        --skip-ci-check)
+            SKIP_CI_CHECK=true
+            ;;
+```
+
+Add to usage message:
+
+```bash
+echo "  --skip-ci-check  Skip GitHub Actions CI status check"
+```
+
+---
+
+### Step 2.5: Update `/release` Skill with CI Integration
+
+Add new section to the skill document about CI/CD workflow.
+
+**Add to `/grafema/.claude/skills/grafema-release/SKILL.md`:**
+
+After the "Pre-Release Checklist" section, add:
+
+```markdown
+## CI/CD Integration
+
+Grafema uses GitHub Actions as a safety net. Before publishing:
+
+### 1. Check CI Status
+
+```bash
+# View latest CI run
+gh run list --workflow=ci.yml --branch=main --limit=3
+
+# If CI is failing, check why:
+gh run view <run-id>
+```
+
+### 2. After Creating Tag
+
+When you push a version tag, GitHub Actions will:
+
+1. **release-validate.yml** runs automatically
+   - Validates all tests pass
+   - Checks version sync
+   - Verifies CHANGELOG.md entry
+   - View: https://github.com/Disentinel/grafema/actions/workflows/release-validate.yml
+
+2. **Wait for validation to pass** (usually 5-10 minutes)
+
+3. **Trigger release-publish.yml manually** (after validation passes)
+   - Go to: https://github.com/Disentinel/grafema/actions/workflows/release-publish.yml
+   - Click "Run workflow"
+   - Enter version (e.g., 0.2.5-beta)
+   - Optionally enable dry-run first
+
+### 3. Verify Publication
+
+After publish workflow completes:
+
+```bash
+# Check npm registry
+npm view @grafema/cli versions --json | tail -5
+
+# Install and verify
+npx @grafema/cli@<version> --version
+```
+
+### What CI Catches
+
+| Check | Why It Exists |
+|-------|---------------|
+| Tests pass | Forgot to run tests after changes |
+| No .skip/.only | Left debugging code in tests |
+| TypeScript | Type errors in untouched files |
+| Build | Broken imports after refactoring |
+| Version sync | Only bumped some packages |
+| Changelog | Forgot to document release |
+| Binary check | Forgot rfdb binaries |
+
+**IMPORTANT:** Do NOT publish if validation fails. Fix issues first.
+```
+
+---
+
+### Step 2.6: Secrets Required
+
+The following GitHub secrets must be configured:
+
+| Secret | Purpose | How to Get |
+|--------|---------|------------|
+| `NPM_TOKEN` | npm publish authentication | `npm token create` with publish access |
+
+**To configure:**
+1. Go to https://github.com/Disentinel/grafema/settings/secrets/actions
+2. Add `NPM_TOKEN` with your npm access token
+
+---
+
+## Phase 2 Dependency Graph
+
+```
+Step 2.1: Create ci.yml
+    |
+    v
+Step 2.2: Create release-validate.yml (depends on 2.1 patterns)
+    |
+    v
+Step 2.3: Create release-publish.yml (depends on 2.2)
+    |
+    +---> Step 2.4: Update release.sh with CI check (can be parallel)
+    |
+    v
+Step 2.5: Update /release skill (depends on 2.1-2.4)
+    |
+    v
+Step 2.6: Configure NPM_TOKEN secret (can be done anytime)
+```
+
+**Parallelizable:**
+- Steps 2.1, 2.2, 2.3 can be created in sequence (file creation)
+- Step 2.4 can be done in parallel with 2.1-2.3
+- Step 2.6 can be done anytime
+
+---
+
+## Phase 2 Testing/Validation Plan
+
+### 1. Test CI Workflow
+
+```bash
+# Create test branch
+git checkout -b test/ci-workflow
+
+# Make small change and push
+echo "# test" >> README.md
+git add README.md && git commit -m "test: CI workflow"
+git push origin test/ci-workflow
+
+# Create PR, verify CI runs
+gh pr create --title "Test CI" --body "Testing CI workflow"
+
+# Check CI status
+gh run list --branch=test/ci-workflow
+```
+
+### 2. Test Release Validation
+
+```bash
+# Create test tag (use prerelease so it doesn't conflict)
+git tag v0.0.0-test.1
+git push origin v0.0.0-test.1
+
+# Watch validation run
+gh run watch --workflow=release-validate.yml
+
+# Should fail (version mismatch) - this is expected!
+# Clean up
+git tag -d v0.0.0-test.1
+git push origin :refs/tags/v0.0.0-test.1
+```
+
+### 3. Test Publish Dry-Run
+
+```bash
+# Trigger from GitHub Actions UI with dry_run=true
+# Verify no actual publish happens
+```
+
+---
+
+## Phase 2 Estimated Effort
+
+| Step | Estimated Time |
+|------|----------------|
+| Step 2.1: Create ci.yml | 30 min |
+| Step 2.2: Create release-validate.yml | 45 min |
+| Step 2.3: Create release-publish.yml | 45 min |
+| Step 2.4: Update release.sh | 20 min |
+| Step 2.5: Update /release skill | 20 min |
+| Step 2.6: Configure secrets | 10 min |
+| Testing & validation | 1-2 hours |
+| **Total Phase 2** | **4-5 hours** |
+
+---
+
+## Combined Success Criteria
+
+### Phase 1 (Local)
+1. All packages have unified version
+2. `scripts/release.sh` exists and passes dry-run
+3. `stable` branch exists
+4. `/release` skill updated
+5. `RELEASING.md` exists
+
+### Phase 2 (CI/CD)
+1. `ci.yml` runs on every push/PR
+2. `release-validate.yml` runs on v* tag push
+3. `release-publish.yml` works with manual trigger
+4. Release script checks CI status before proceeding
+5. NPM_TOKEN secret configured
+6. `/release` skill includes CI integration steps
+
+---
+
+## Full Implementation Order
+
+```
+PHASE 1 (Local Infrastructure)
+├── 1.1 Create scripts/release.sh
+├── 1.2 Update root package.json
+├── 1.3 Sync all package versions
+├── 2.1 Create stable branch
+├── 3.1 Update grafema-release skill
+├── 4.1 Create RELEASING.md
+├── 4.2 Delete old publish.sh
+└── 5.1 Update CLAUDE.md
+
+PHASE 2 (CI/CD)
+├── 2.1 Create .github/workflows/ci.yml
+├── 2.2 Create .github/workflows/release-validate.yml
+├── 2.3 Create .github/workflows/release-publish.yml
+├── 2.4 Update scripts/release.sh with CI check
+├── 2.5 Update /release skill with CI integration
+└── 2.6 Configure NPM_TOKEN secret
+```
+
+**Total estimated effort: 9-13 hours**
