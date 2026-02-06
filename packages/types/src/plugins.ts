@@ -4,6 +4,7 @@
 
 import type { NodeType, NodeRecord } from './nodes.js';
 import type { EdgeType, EdgeRecord } from './edges.js';
+import type { AnyBrandedNode } from './branded.js';
 
 // === LOG LEVEL ===
 /**
@@ -245,14 +246,30 @@ export interface InputEdge {
 
 // Minimal interface for graph operations
 export interface GraphBackend {
-  addNode(node: InputNode): Promise<void> | void;
+  /**
+   * Add a node to the graph.
+   *
+   * This is an UPSERT operation: if a node with the same ID exists,
+   * it will be replaced with the new node data.
+   *
+   * @param node - Branded node from NodeFactory
+   */
+  addNode(node: AnyBrandedNode): Promise<void> | void;
   addEdge(edge: InputEdge): Promise<void> | void;
-  addNodes(nodes: InputNode[]): Promise<void> | void;
+  /**
+   * Add multiple nodes (batch operation).
+   *
+   * This is an UPSERT operation: existing nodes with same IDs
+   * will be replaced.
+   *
+   * @param nodes - Array of branded nodes from NodeFactory
+   */
+  addNodes(nodes: AnyBrandedNode[]): Promise<void> | void;
   addEdges(edges: InputEdge[]): Promise<void> | void;
 
-  getNode(id: string): Promise<NodeRecord | null>;
-  queryNodes(filter: NodeFilter): AsyncIterable<NodeRecord> | AsyncGenerator<NodeRecord>;
-  getAllNodes(filter?: NodeFilter): Promise<NodeRecord[]>;
+  getNode(id: string): Promise<AnyBrandedNode | null>;
+  queryNodes(filter: NodeFilter): AsyncIterable<AnyBrandedNode> | AsyncGenerator<AnyBrandedNode>;
+  getAllNodes(filter?: NodeFilter): Promise<AnyBrandedNode[]>;
 
   getOutgoingEdges(nodeId: string, edgeTypes?: EdgeType[] | null): Promise<EdgeRecord[]>;
   getIncomingEdges(nodeId: string, edgeTypes?: EdgeType[] | null): Promise<EdgeRecord[]>;
