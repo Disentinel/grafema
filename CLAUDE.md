@@ -559,13 +559,17 @@ Project-specific skills are available in `.claude/skills/`. Key skills:
 **Skill:** `grafema-release`
 
 Use when publishing new versions to npm. Covers:
-- Version bumping across packages
+- Unified versioning across all packages
+- Automated pre-flight checks (tests, clean git, CI status)
 - CHANGELOG.md updates
 - Building packages
-- Publishing with pnpm (converts `workspace:*`)
-- Updating dist-tags
+- Publishing with correct dist-tags (beta/latest)
+- Automatic stable branch merge
+- CI/CD validation via GitHub Actions
 
 **Trigger:** User says "release", "publish", "bump version"
+
+**Quick command:** `./scripts/release.sh patch --publish`
 
 ### Other Skills
 
