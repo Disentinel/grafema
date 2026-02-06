@@ -4,7 +4,7 @@
  */
 
 import { readFileSync, existsSync, unlinkSync } from 'fs';
-import { join, dirname, resolve } from 'path';
+import { join, dirname, resolve, basename } from 'path';
 import { fileURLToPath } from 'url';
 import { spawn, execSync, ChildProcess } from 'child_process';
 import { setTimeout as sleep } from 'timers/promises';
@@ -74,6 +74,11 @@ export interface OrchestratorOptions {
    * When true, enrichers report unresolved references as fatal errors.
    */
   strictMode?: boolean;
+  /**
+   * Multi-root workspace configuration (REG-76).
+   * If provided, each root is indexed with rootPrefix in context.
+   */
+  workspaceRoots?: string[];
 }
 
 /**
@@ -137,6 +142,8 @@ interface UnitManifest {
     [key: string]: unknown;
   };
   modules: unknown[];
+  /** Root prefix for multi-root workspace (REG-76) */
+  rootPrefix?: string;
 }
 
 export class Orchestrator {
@@ -160,6 +167,8 @@ export class Orchestrator {
   private configServices: ServiceDefinition[] | undefined;
   /** Strict mode flag (REG-330) */
   private strictMode: boolean;
+  /** Multi-root workspace roots (REG-76) */
+  private workspaceRoots: string[] | undefined;
 
   constructor(options: OrchestratorOptions = {}) {
     this.graph = options.graph!;
@@ -191,6 +200,9 @@ export class Orchestrator {
     // Strict mode configuration (REG-330)
     this.strictMode = options.strictMode ?? false;
 
+    // Multi-root workspace configuration (REG-76)
+    this.workspaceRoots = options.workspaceRoots;
+
     // Modified auto-add logic: SKIP auto-add if config services provided (REG-174)
     const hasDiscovery = this.plugins.some(p => p.metadata?.phase === 'DISCOVERY');
     const hasConfigServices = this.configServices && this.configServices.length > 0;
@@ -209,6 +221,12 @@ export class Orchestrator {
 
     // Resolve to absolute path
     const absoluteProjectPath = projectPath.startsWith('/') ? projectPath : resolve(projectPath);
+
+    // REG-76: Multi-root workspace support
+    // If workspaceRoots is provided, run analysis for each root with rootPrefix
+    if (this.workspaceRoots && this.workspaceRoots.length > 0) {
+      return this.runMultiRoot(absoluteProjectPath);
+    }
 
     // RADICAL SIMPLIFICATION: Clear entire graph once at the start if forceAnalysis
     if (this.forceAnalysis && this.graph.clear) {
@@ -456,6 +474,166 @@ export class Orchestrator {
   }
 
   /**
+   * REG-76: Run analysis for multi-root workspace.
+   * Each root is analyzed separately with rootPrefix in context.
+   * All results go to the same unified graph.
+   */
+  private async runMultiRoot(workspacePath: string): Promise<DiscoveryManifest> {
+    const totalStartTime = Date.now();
+    const roots = this.workspaceRoots!;
+
+    this.logger.info('Multi-root workspace mode', { roots: roots.length });
+
+    // Clear graph once at the start if forceAnalysis
+    if (this.forceAnalysis && this.graph.clear) {
+      this.logger.info('Clearing entire graph (forceAnalysis=true)');
+      await this.graph.clear();
+      this.logger.info('Graph cleared successfully');
+    }
+
+    // Collect all services from all roots
+    const allServices: ServiceInfo[] = [];
+    const allEntrypoints: EntrypointInfo[] = [];
+
+    // Process each root
+    for (let rootIdx = 0; rootIdx < roots.length; rootIdx++) {
+      const rootRelativePath = roots[rootIdx];
+      const rootName = basename(rootRelativePath);
+      const rootAbsolutePath = join(workspacePath, rootRelativePath);
+
+      this.logger.info(`Processing root ${rootIdx + 1}/${roots.length}`, {
+        root: rootName,
+        path: rootAbsolutePath
+      });
+
+      // Discover services in this root
+      const rootManifest = await this.discoverInRoot(rootAbsolutePath, rootName);
+
+      // Build indexing units for this root
+      const units = this.buildIndexingUnits(rootManifest);
+
+      // INDEXING phase for this root
+      for (const unit of units) {
+        const unitManifest: UnitManifest = {
+          projectPath: rootAbsolutePath,
+          service: {
+            ...unit,
+            id: unit.id,
+            name: unit.name,
+            path: unit.path
+          },
+          modules: [],
+          rootPrefix: rootName,  // REG-76: Pass root prefix
+        };
+
+        await this.runPhase('INDEXING', {
+          manifest: unitManifest,
+          graph: this.graph,
+          workerCount: 1,
+          rootPrefix: rootName,  // Pass to context
+        });
+      }
+
+      // ANALYSIS phase for this root
+      if (!this.indexOnly) {
+        for (const unit of units) {
+          const unitManifest: UnitManifest = {
+            projectPath: rootAbsolutePath,
+            service: {
+              ...unit,
+              id: unit.id,
+              name: unit.name,
+              path: unit.path
+            },
+            modules: [],
+            rootPrefix: rootName,
+          };
+
+          await this.runPhase('ANALYSIS', {
+            manifest: unitManifest,
+            graph: this.graph,
+            workerCount: 1,
+            rootPrefix: rootName,
+          });
+        }
+      }
+
+      // Collect services with root prefix in path for unified manifest
+      for (const svc of rootManifest.services) {
+        allServices.push({
+          ...svc,
+          // Prefix path with root name for unified manifest
+          path: svc.path ? `${rootName}/${svc.path.replace(rootAbsolutePath + '/', '')}` : undefined,
+        });
+      }
+
+      for (const ep of rootManifest.entrypoints) {
+        allEntrypoints.push({
+          ...ep,
+          file: `${rootName}/${ep.file.replace(rootAbsolutePath + '/', '')}`,
+        });
+      }
+    }
+
+    // Create unified manifest
+    const unifiedManifest: DiscoveryManifest = {
+      services: allServices,
+      entrypoints: allEntrypoints,
+      projectPath: workspacePath,
+    };
+
+    // Skip remaining phases if indexOnly
+    if (this.indexOnly) {
+      const totalTime = ((Date.now() - totalStartTime) / 1000).toFixed(2);
+      this.logger.info('indexOnly mode - skipping remaining phases', { duration: totalTime });
+      return unifiedManifest;
+    }
+
+    // ENRICHMENT phase (global - operates on unified graph)
+    this.profiler.start('ENRICHMENT');
+    await this.runPhase('ENRICHMENT', {
+      manifest: unifiedManifest,
+      graph: this.graph,
+      workerCount: this.workerCount
+    });
+    this.profiler.end('ENRICHMENT');
+
+    // VALIDATION phase (global)
+    this.profiler.start('VALIDATION');
+    await this.runPhase('VALIDATION', {
+      manifest: unifiedManifest,
+      graph: this.graph,
+      workerCount: this.workerCount
+    });
+    this.profiler.end('VALIDATION');
+
+    // Flush graph
+    if (this.graph.flush) {
+      await this.graph.flush();
+    }
+
+    const totalTime = ((Date.now() - totalStartTime) / 1000).toFixed(2);
+    this.logger.info('Multi-root analysis complete', {
+      duration: totalTime,
+      roots: roots.length,
+      services: allServices.length
+    });
+
+    this.profiler.printSummary();
+    return unifiedManifest;
+  }
+
+  /**
+   * Discover services in a specific root directory.
+   * Uses the same discovery logic but scoped to the root.
+   */
+  private async discoverInRoot(rootPath: string, _rootName: string): Promise<DiscoveryManifest> {
+    // For now, use the same discovery mechanism
+    // rootName is available for future use if needed
+    return this.discover(rootPath);
+  }
+
+  /**
    * Build unified list of indexing units from services and entrypoints
    * Each unit has: id, name, path, type, and original data
    */
@@ -672,6 +850,8 @@ export class Orchestrator {
         forceAnalysis: this.forceAnalysis,
         logger: this.logger,
         strictMode: this.strictMode, // REG-330: Pass strict mode flag
+        // REG-76: Pass rootPrefix for multi-root workspace support
+        rootPrefix: (context as { rootPrefix?: string }).rootPrefix,
       };
 
       // Add reportIssue for VALIDATION phase

@@ -1,5 +1,5 @@
 import { readFileSync, existsSync, statSync } from 'fs';
-import { join } from 'path';
+import { join, basename } from 'path';
 import { parse as parseYAML } from 'yaml';
 import type { ServiceDefinition } from '@grafema/types';
 
@@ -69,6 +69,36 @@ export interface GrafemaConfig {
    * Can be overridden via CLI: --strict
    */
   strict?: boolean;
+
+  /**
+   * Multi-root workspace configuration (REG-76).
+   * Allows indexing multiple directories as a single unified graph.
+   * Each root is prefixed in semantic IDs to prevent collisions.
+   *
+   * @example
+   * ```yaml
+   * workspace:
+   *   roots:
+   *     - ./backend
+   *     - ./frontend
+   *     - ./shared
+   * ```
+   */
+  workspace?: WorkspaceConfig;
+}
+
+/**
+ * Multi-root workspace configuration.
+ * Each root directory is indexed separately but produces a unified graph.
+ * Root names (basename of path) are prefixed to file paths in semantic IDs.
+ */
+export interface WorkspaceConfig {
+  /**
+   * List of root directories to include in the workspace.
+   * Paths are relative to the project root (where .grafema/ is located).
+   * Each root's basename is used as prefix in semantic IDs.
+   */
+  roots: string[];
 }
 
 /**
@@ -170,6 +200,9 @@ export function loadConfig(
     // Validate include/exclude patterns (THROWS on error)
     validatePatterns(parsed.include, parsed.exclude, logger);
 
+    // Validate workspace.roots if present (THROWS on error) - REG-76
+    validateWorkspace(parsed.workspace, projectPath);
+
     // Merge with defaults (user config may be partial)
     return mergeConfig(DEFAULT_CONFIG, parsed);
   }
@@ -196,6 +229,9 @@ export function loadConfig(
 
     // Validate include/exclude patterns (THROWS on error)
     validatePatterns(parsed.include, parsed.exclude, logger);
+
+    // Validate workspace.roots if present (THROWS on error) - REG-76
+    validateWorkspace(parsed.workspace, projectPath);
 
     return mergeConfig(DEFAULT_CONFIG, parsed);
   }
@@ -276,6 +312,84 @@ function validateServices(services: unknown, projectPath: string): void {
 }
 
 /**
+ * Validate workspace configuration (REG-76).
+ * THROWS on error (fail loudly per project convention).
+ *
+ * Validation rules:
+ * 1. workspace.roots must be an array if provided
+ * 2. Each root must be a non-empty string
+ * 3. Each root path must exist and be a directory
+ * 4. Root basenames must be unique (to prevent semantic ID collisions)
+ *
+ * @param workspace - Parsed workspace config (may be undefined)
+ * @param projectPath - Project root for path validation
+ */
+function validateWorkspace(workspace: unknown, projectPath: string): void {
+  // undefined/null is valid (means single-root mode)
+  if (workspace === undefined || workspace === null) {
+    return;
+  }
+
+  // Must be an object
+  if (typeof workspace !== 'object') {
+    throw new Error(`Config error: workspace must be an object, got ${typeof workspace}`);
+  }
+
+  const ws = workspace as { roots?: unknown };
+
+  // roots is optional, but if provided must be valid
+  if (ws.roots === undefined || ws.roots === null) {
+    return;
+  }
+
+  // roots must be an array
+  if (!Array.isArray(ws.roots)) {
+    throw new Error(`Config error: workspace.roots must be an array, got ${typeof ws.roots}`);
+  }
+
+  // Track root names for duplicate detection
+  const seenNames = new Set<string>();
+
+  // Validate each root
+  for (let i = 0; i < ws.roots.length; i++) {
+    const root = ws.roots[i];
+
+    // Must be a string
+    if (typeof root !== 'string') {
+      throw new Error(`Config error: workspace.roots[${i}] must be a string, got ${typeof root}`);
+    }
+
+    // Must not be empty
+    if (!root.trim()) {
+      throw new Error(`Config error: workspace.roots[${i}] cannot be empty or whitespace-only`);
+    }
+
+    // Must be relative path
+    if (root.startsWith('/') || root.startsWith('~')) {
+      throw new Error(`Config error: workspace.roots[${i}] must be relative to project root, got "${root}"`);
+    }
+
+    // Path must exist
+    const absolutePath = join(projectPath, root);
+    if (!existsSync(absolutePath)) {
+      throw new Error(`Config error: workspace.roots[${i}] "${root}" does not exist`);
+    }
+
+    // Path must be a directory
+    if (!statSync(absolutePath).isDirectory()) {
+      throw new Error(`Config error: workspace.roots[${i}] "${root}" must be a directory`);
+    }
+
+    // Check for duplicate root names (basename)
+    const rootName = basename(root);
+    if (seenNames.has(rootName)) {
+      throw new Error(`Config error: Duplicate workspace root name "${rootName}" - root names (basenames) must be unique`);
+    }
+    seenNames.add(rootName);
+  }
+}
+
+/**
  * Validate include/exclude patterns.
  * THROWS on error (fail loudly per project convention).
  *
@@ -351,5 +465,7 @@ function mergeConfig(
     include: user.include ?? undefined,
     exclude: user.exclude ?? undefined,
     strict: user.strict ?? defaults.strict,
+    // Workspace config: pass through if specified (REG-76)
+    workspace: user.workspace ?? undefined,
   };
 }

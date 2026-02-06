@@ -119,10 +119,14 @@ export class RustModuleIndexer extends Plugin {
       try {
         const content = readFileSync(filePath, 'utf-8');
         const hash = createHash('sha256').update(content).digest('hex');
-        const relativePath = relative(rustRoot, filePath);
-        const moduleName = this.pathToModuleName(relativePath);
+        const baseRelativePath = relative(rustRoot, filePath);
+        const moduleName = this.pathToModuleName(baseRelativePath);
 
-        const nodeId = `RUST_MODULE#${moduleName}#${filePath}`;
+        // REG-76: Prefix with rootPrefix for multi-root workspace support
+        const prefixedPath = context.rootPrefix
+          ? `${context.rootPrefix}/${baseRelativePath}`
+          : baseRelativePath;
+        const nodeId = `RUST_MODULE#${moduleName}#${prefixedPath}`;
 
         await graph.addNode({
           id: nodeId,

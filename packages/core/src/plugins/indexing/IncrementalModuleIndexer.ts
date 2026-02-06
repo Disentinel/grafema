@@ -170,7 +170,11 @@ export class IncrementalModuleIndexer extends Plugin {
 
         // Create MODULE node with semantic ID
         const fileHash = this.calculateFileHash(file);
-        const relativePath = relative(projectPath, file);
+        const baseRelativePath = relative(projectPath, file);
+        // REG-76: Prefix with rootPrefix for multi-root workspace support
+        const relativePath = context.rootPrefix
+          ? `${context.rootPrefix}/${baseRelativePath}`
+          : baseRelativePath;
         const semanticId = `${relativePath}->global->MODULE->module`;
 
         const moduleNode: NodeRecord = {
@@ -198,7 +202,11 @@ export class IncrementalModuleIndexer extends Plugin {
         totalImportsParsed += imports.length;
         for (const importFile of imports) {
           // Store for later edge creation with semantic ID format
-          const importRelativePath = relative(projectPath, importFile);
+          const importBaseRelativePath = relative(projectPath, importFile);
+          // REG-76: Prefix with rootPrefix for multi-root workspace support
+          const importRelativePath = context.rootPrefix
+            ? `${context.rootPrefix}/${importBaseRelativePath}`
+            : importBaseRelativePath;
           const importSemanticId = `${importRelativePath}->global->MODULE->module`;
           pendingImports.push({
             src: moduleNode.id,

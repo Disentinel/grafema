@@ -360,7 +360,11 @@ export class JSModuleIndexer extends Plugin {
 
         // Создаём MODULE ноду для текущего файла с semantic ID
         const fileHash = this.calculateFileHash(currentFile);
-        const relativePath = relative(projectPath, currentFile) || basename(currentFile);
+        const baseRelativePath = relative(projectPath, currentFile) || basename(currentFile);
+        // REG-76: Prefix with rootPrefix for multi-root workspace support
+        const relativePath = context.rootPrefix
+          ? `${context.rootPrefix}/${baseRelativePath}`
+          : baseRelativePath;
         const semanticId = `${relativePath}->global->MODULE->module`;
 
         // Construct MODULE node manually to preserve absolute file path for analyzers
@@ -409,7 +413,11 @@ export class JSModuleIndexer extends Plugin {
 
           // Queue DEPENDS_ON edges for later (after all nodes exist)
           // Use semantic ID format for dependency reference
-          const depRelativePath = relative(projectPath, resolvedDep) || basename(resolvedDep);
+          const depBaseRelativePath = relative(projectPath, resolvedDep) || basename(resolvedDep);
+          // REG-76: Prefix with rootPrefix for multi-root workspace support
+          const depRelativePath = context.rootPrefix
+            ? `${context.rootPrefix}/${depBaseRelativePath}`
+            : depBaseRelativePath;
           const depModuleId = `${depRelativePath}->global->MODULE->module`;
           pendingDependsOnEdges.push({
             src: moduleId,

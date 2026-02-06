@@ -107,6 +107,18 @@ export interface PluginContext {
    * Default: false (graceful degradation).
    */
   strictMode?: boolean;
+
+  /**
+   * Root prefix for multi-root workspace support (REG-76).
+   * When indexing a workspace with multiple roots, this is the root's
+   * basename (e.g., "backend", "frontend"). Used to prefix file paths
+   * in semantic IDs to prevent collisions.
+   *
+   * Example:
+   * - Single root (undefined): "src/utils.js->global->FUNCTION->foo"
+   * - Multi root ("backend"): "backend/src/utils.js->global->FUNCTION->foo"
+   */
+  rootPrefix?: string;
 }
 
 // === PLUGIN RESULT ===
