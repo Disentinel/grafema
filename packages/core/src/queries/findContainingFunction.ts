@@ -24,7 +24,7 @@ interface GraphBackend {
   getNode(id: string): Promise<{
     id: string;
     type: string;
-    name: string;
+    name?: string;
     file?: string;
     line?: number;
   } | null>;

@@ -15,7 +15,7 @@ import {
 import { TOOLS } from './definitions.js';
 import { initializeFromArgs, setupLogging, getProjectPath } from './state.js';
 import { textResult, errorResult, log } from './utils.js';
-import { ensureAnalyzed, discoverServices } from './analysis.js';
+import { discoverServices } from './analysis.js';
 import {
   handleQueryGraph,
   handleFindCalls,
@@ -37,7 +37,34 @@ import {
   handleReportIssue,
   handleGetFunctionDetails,
 } from './handlers.js';
-import type { ToolResult, ReportIssueArgs, GetDocumentationArgs, GetFunctionDetailsArgs } from './types.js';
+import type {
+  ToolResult,
+  ReportIssueArgs,
+  GetDocumentationArgs,
+  GetFunctionDetailsArgs,
+  QueryGraphArgs,
+  FindCallsArgs,
+  FindNodesArgs,
+  TraceAliasArgs,
+  TraceDataFlowArgs,
+  CheckInvariantArgs,
+  AnalyzeProjectArgs,
+  GetSchemaArgs,
+  CreateGuaranteeArgs,
+  CheckGuaranteesArgs,
+  DeleteGuaranteeArgs,
+  GetCoverageArgs,
+  FindGuardsArgs,
+} from './types.js';
+
+/**
+ * Type-safe argument casting helper.
+ * MCP SDK provides args as Record<string, unknown>, this helper
+ * casts them to the expected handler argument type.
+ */
+function asArgs<T>(args: Record<string, unknown> | undefined): T {
+  return (args ?? {}) as T;
+}
 
 // Initialize from command line args
 initializeFromArgs();
@@ -78,27 +105,27 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
 
     switch (name) {
       case 'query_graph':
-        result = await handleQueryGraph(args as any);
+        result = await handleQueryGraph(asArgs<QueryGraphArgs>(args));
         break;
 
       case 'find_calls':
-        result = await handleFindCalls(args as any);
+        result = await handleFindCalls(asArgs<FindCallsArgs>(args));
         break;
 
       case 'find_nodes':
-        result = await handleFindNodes(args as any);
+        result = await handleFindNodes(asArgs<FindNodesArgs>(args));
         break;
 
       case 'trace_alias':
-        result = await handleTraceAlias(args as any);
+        result = await handleTraceAlias(asArgs<TraceAliasArgs>(args));
         break;
 
       case 'trace_dataflow':
-        result = await handleTraceDataFlow(args as any);
+        result = await handleTraceDataFlow(asArgs<TraceDataFlowArgs>(args));
         break;
 
       case 'check_invariant':
-        result = await handleCheckInvariant(args as any);
+        result = await handleCheckInvariant(asArgs<CheckInvariantArgs>(args));
         break;
 
       case 'discover_services':
@@ -107,7 +134,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
         break;
 
       case 'analyze_project':
-        result = await handleAnalyzeProject(args as any);
+        result = await handleAnalyzeProject(asArgs<AnalyzeProjectArgs>(args));
         break;
 
       case 'get_analysis_status':
@@ -119,11 +146,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
         break;
 
       case 'get_schema':
-        result = await handleGetSchema(args as any);
+        result = await handleGetSchema(asArgs<GetSchemaArgs>(args));
         break;
 
       case 'create_guarantee':
-        result = await handleCreateGuarantee(args as any);
+        result = await handleCreateGuarantee(asArgs<CreateGuaranteeArgs>(args));
         break;
 
       case 'list_guarantees':
@@ -131,31 +158,31 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
         break;
 
       case 'check_guarantees':
-        result = await handleCheckGuarantees(args as any);
+        result = await handleCheckGuarantees(asArgs<CheckGuaranteesArgs>(args));
         break;
 
       case 'delete_guarantee':
-        result = await handleDeleteGuarantee(args as any);
+        result = await handleDeleteGuarantee(asArgs<DeleteGuaranteeArgs>(args));
         break;
 
       case 'get_coverage':
-        result = await handleGetCoverage(args as any);
+        result = await handleGetCoverage(asArgs<GetCoverageArgs>(args));
         break;
 
       case 'get_documentation':
-        result = await handleGetDocumentation(args as GetDocumentationArgs);
+        result = await handleGetDocumentation(asArgs<GetDocumentationArgs>(args));
         break;
 
       case 'find_guards':
-        result = await handleFindGuards(args as any);
+        result = await handleFindGuards(asArgs<FindGuardsArgs>(args));
         break;
 
       case 'report_issue':
-        result = await handleReportIssue(args as unknown as ReportIssueArgs);
+        result = await handleReportIssue(asArgs<ReportIssueArgs>(args));
         break;
 
       case 'get_function_details':
-        result = await handleGetFunctionDetails(args as unknown as GetFunctionDetailsArgs);
+        result = await handleGetFunctionDetails(asArgs<GetFunctionDetailsArgs>(args));
         break;
 
       default:
@@ -170,8 +197,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     return result;
   } catch (error) {
     const duration = Date.now() - startTime;
-    log(`[Grafema MCP] ✗ ${name} FAILED after ${duration}ms: ${(error as Error).message}`);
-    return errorResult((error as Error).message);
+    const message = error instanceof Error ? error.message : String(error);
+    log(`[Grafema MCP] ✗ ${name} FAILED after ${duration}ms: ${message}`);
+    return errorResult(message);
   }
 });
 

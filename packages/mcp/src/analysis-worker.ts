@@ -13,7 +13,6 @@ import { pathToFileURL } from 'url';
 import {
   Orchestrator,
   RFDBServerBackend,
-  Plugin,
   // Indexing
   JSModuleIndexer,
   // Analysis
@@ -42,7 +41,8 @@ import {
   GraphConnectivityValidator,
   DataFlowValidator,
 } from '@grafema/core';
-import type { ParallelConfig } from '@grafema/core';
+import type { ParallelConfig ,
+  Plugin} from '@grafema/core';
 
 /**
  * Config structure
@@ -84,7 +84,6 @@ interface ErrorMessage {
   stack?: string;
 }
 
-type WorkerMessage = ProgressMessage | CompleteMessage | ErrorMessage;
 
 const projectPath = process.argv[2];
 const serviceName = process.argv[3] && process.argv[3] !== '' ? process.argv[3] : null;
@@ -284,14 +283,16 @@ async function run(): Promise<void> {
         await db.close();
         console.log('[Worker] Database connection closed in cleanup');
       } catch (closeErr) {
-        console.error('[Worker] Error closing database connection:', (closeErr as Error).message);
+        const message = closeErr instanceof Error ? closeErr.message : String(closeErr);
+        console.error('[Worker] Error closing database connection:', message);
       }
     }
   }
 }
 
 run().catch(err => {
-  sendError(err as Error);
+  const error = err instanceof Error ? err : new Error(String(err));
+  sendError(error);
   console.error('Analysis failed:', err);
   process.exit(1);
 });

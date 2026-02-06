@@ -3,7 +3,8 @@
  * Reads everything directly from RFDB (no caches)
  */
 
-import { createServer, Server, IncomingMessage, ServerResponse } from 'http';
+import type { Server, IncomingMessage, ServerResponse } from 'http';
+import { createServer } from 'http';
 import { parse as parseUrl } from 'url';
 
 // Node type constants
@@ -172,7 +173,8 @@ export class GraphAPI {
     } catch (error) {
       console.error('API error:', error);
       res.writeHead(500);
-      res.end(JSON.stringify({ error: (error as Error).message }));
+      const message = error instanceof Error ? error.message : String(error);
+      res.end(JSON.stringify({ error: message }));
     }
   }
 

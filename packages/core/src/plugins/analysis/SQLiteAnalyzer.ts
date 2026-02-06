@@ -9,7 +9,8 @@
  */
 
 import { readFileSync } from 'fs';
-import { parse, ParserPlugin } from '@babel/parser';
+import type { ParserPlugin } from '@babel/parser';
+import { parse } from '@babel/parser';
 import traverseModule from '@babel/traverse';
 import type { CallExpression, Identifier, MemberExpression, Node } from '@babel/types';
 import type { NodePath } from '@babel/traverse';
@@ -18,7 +19,6 @@ import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { NodeRecord } from '@grafema/types';
 import { getLine, getColumn } from './ast/utils/location.js';
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const traverse = (traverseModule as any).default || traverseModule;
 
 /**
@@ -312,7 +312,7 @@ export class SQLiteAnalyzer extends Plugin {
           edgesCreated++;
         }
       }
-    } catch (error) {
+    } catch (_error) {
       // Silent - per-module errors shouldn't spam logs
     }
 

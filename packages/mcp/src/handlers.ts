@@ -2,7 +2,6 @@
  * MCP Tool Handlers
  */
 
-import { join } from 'path';
 import { ensureAnalyzed } from './analysis.js';
 import { getProjectPath, getAnalysisStatus, getOrCreateBackend, getGuaranteeManager, getGuaranteeAPI, isAnalysisRunning } from './state.js';
 import { CoverageAnalyzer, findCallsInFunction, findContainingFunction } from '@grafema/core';
@@ -34,8 +33,9 @@ import type {
   FindGuardsArgs,
   GuardInfo,
   GetFunctionDetailsArgs,
-  GraphBackend,
   GraphNode,
+  DatalogBinding,
+  CallResult,
 } from './types.js';
 import { isGuaranteeType } from '@grafema/core';
 
@@ -43,8 +43,7 @@ import { isGuaranteeType } from '@grafema/core';
 
 export async function handleQueryGraph(args: QueryGraphArgs): Promise<ToolResult> {
   const db = await ensureAnalyzed();
-  const { query, limit: requestedLimit, offset: requestedOffset, format } = args;
-  const explain = (args as any).explain;
+  const { query, limit: requestedLimit, offset: requestedOffset, format, explain } = args;
 
   const limit = normalizeLimit(requestedLimit);
   const offset = Math.max(0, requestedOffset || 0);
@@ -87,7 +86,7 @@ export async function handleQueryGraph(args: QueryGraphArgs): Promise<ToolResult
 
     const enrichedResults: unknown[] = [];
     for (const result of paginatedResults) {
-      const nodeId = result.bindings?.find((b: any) => b.name === 'X')?.value;
+      const nodeId = result.bindings?.find((b: DatalogBinding) => b.name === 'X')?.value;
       if (nodeId) {
         const node = await db.getNode(nodeId);
         if (node) {
@@ -117,14 +116,14 @@ export async function handleQueryGraph(args: QueryGraphArgs): Promise<ToolResult
 
     return textResult(guardResponseSize(responseText));
   } catch (error) {
-    return errorResult((error as Error).message);
+    const message = error instanceof Error ? error.message : String(error);
+    return errorResult(message);
   }
 }
 
 export async function handleFindCalls(args: FindCallsArgs): Promise<ToolResult> {
   const db = await ensureAnalyzed();
-  const { target: name, limit: requestedLimit, offset: requestedOffset } = args;
-  const className = (args as any).className;
+  const { target: name, limit: requestedLimit, offset: requestedOffset, className } = args;
 
   const limit = normalizeLimit(requestedLimit);
   const offset = Math.max(0, requestedOffset || 0);
@@ -134,8 +133,8 @@ export async function handleFindCalls(args: FindCallsArgs): Promise<ToolResult> 
   let totalMatched = 0;
 
   for await (const node of db.queryNodes({ type: 'CALL' })) {
-    if ((node as any).name !== name && (node as any).method !== name) continue;
-    if (className && (node as any).object !== className) continue;
+    if (node.name !== name && node['method'] !== name) continue;
+    if (className && node['object'] !== className) continue;
 
     totalMatched++;
 
@@ -164,8 +163,8 @@ export async function handleFindCalls(args: FindCallsArgs): Promise<ToolResult> 
 
     calls.push({
       id: node.id,
-      name: (node as any).name,
-      object: (node as any).object,
+      name: node.name,
+      object: node['object'] as string | undefined,
       file: node.file,
       line: node.line,
       resolved: isResolved,
@@ -177,7 +176,7 @@ export async function handleFindCalls(args: FindCallsArgs): Promise<ToolResult> 
     return textResult(`No calls found for "${className ? className + '.' : ''}${name}"`);
   }
 
-  const resolved = calls.filter((c: any) => c.resolved).length;
+  const resolved = calls.filter((c: CallResult) => c.resolved).length;
   const unresolved = calls.length - resolved;
   const hasMore = offset + calls.length < totalMatched;
 
@@ -419,7 +418,8 @@ export async function handleCheckInvariant(args: CheckInvariantArgs): Promise<To
       )}${total > 20 ? `\n\n... and ${total - 20} more` : ''}`
     );
   } catch (error) {
-    return errorResult((error as Error).message);
+    const message = error instanceof Error ? error.message : String(error);
+    return errorResult(message);
   }
 }
 
@@ -451,7 +451,8 @@ export async function handleAnalyzeProject(args: AnalyzeProjectArgs): Promise<To
         `- Total time: ${status.timings.total || 'N/A'}s`
     );
   } catch (error) {
-    return errorResult((error as Error).message);
+    const message = error instanceof Error ? error.message : String(error);
+    return errorResult(message);
   }
 }
 
@@ -576,7 +577,8 @@ export async function handleCreateGuarantee(args: CreateGuaranteeArgs): Promise<
       );
     }
   } catch (error) {
-    return errorResult(`Failed to create guarantee: ${(error as Error).message}`);
+    const message = error instanceof Error ? error.message : String(error);
+    return errorResult(`Failed to create guarantee: ${message}`);
   }
 }
 
@@ -622,7 +624,8 @@ export async function handleListGuarantees(): Promise<ToolResult> {
 
     return textResult(results.join('\n'));
   } catch (error) {
-    return errorResult(`Failed to list guarantees: ${(error as Error).message}`);
+    const message = error instanceof Error ? error.message : String(error);
+    return errorResult(`Failed to list guarantees: ${message}`);
   }
 }
 
@@ -731,7 +734,8 @@ export async function handleCheckGuarantees(args: CheckGuaranteesArgs): Promise<
     const summary = `\n---\nTotal: ${totalPassed + totalFailed} | ✅ Passed: ${totalPassed} | ❌ Failed: ${totalFailed}`;
     return textResult(results.join('\n') + summary);
   } catch (error) {
-    return errorResult(`Failed to check guarantees: ${(error as Error).message}`);
+    const message = error instanceof Error ? error.message : String(error);
+    return errorResult(`Failed to check guarantees: ${message}`);
   }
 }
 
@@ -766,7 +770,8 @@ export async function handleDeleteGuarantee(args: DeleteGuaranteeArgs): Promise<
 
     return errorResult(`Guarantee not found: ${name}`);
   } catch (error) {
-    return errorResult(`Failed to delete guarantee: ${(error as Error).message}`);
+    const message = error instanceof Error ? error.message : String(error);
+    return errorResult(`Failed to delete guarantee: ${message}`);
   }
 }
 
@@ -807,7 +812,8 @@ export async function handleGetCoverage(args: GetCoverageArgs): Promise<ToolResu
 
     return textResult(output);
   } catch (error) {
-    return errorResult(`Failed to calculate coverage: ${(error as Error).message}`);
+    const message = error instanceof Error ? error.message : String(error);
+    return errorResult(`Failed to calculate coverage: ${message}`);
   }
 }
 

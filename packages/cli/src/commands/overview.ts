@@ -8,10 +8,6 @@ import { existsSync } from 'fs';
 import { RFDBServerBackend } from '@grafema/core';
 import { exitWithError } from '../utils/errorFormatter.js';
 
-interface NodeStats {
-  type: string;
-  count: number;
-}
 
 export const overviewCommand = new Command('overview')
   .description('Show project overview and statistics')

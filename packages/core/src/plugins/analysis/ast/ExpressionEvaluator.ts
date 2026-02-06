@@ -6,12 +6,10 @@ import type {
   StringLiteral,
   NumericLiteral,
   BooleanLiteral,
-  NullLiteral,
   TemplateLiteral,
   ArrayExpression,
   ObjectExpression,
-  ObjectProperty,
-  SpreadElement
+  ObjectProperty
 } from '@babel/types';
 
 export type LiteralValue = string | number | boolean | null | undefined | LiteralValue[] | { [key: string]: LiteralValue };

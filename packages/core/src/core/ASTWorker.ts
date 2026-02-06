@@ -11,7 +11,8 @@
 import { parentPort } from 'worker_threads';
 import { readFileSync } from 'fs';
 import { basename } from 'path';
-import { parse, ParserPlugin } from '@babel/parser';
+import type { ParserPlugin } from '@babel/parser';
+import { parse } from '@babel/parser';
 import traverseModule from '@babel/traverse';
 import type { Node, ImportDeclaration, ExportNamedDeclaration, ExportDefaultDeclaration, VariableDeclaration, FunctionDeclaration, ClassDeclaration, CallExpression, Identifier, ExportSpecifier } from '@babel/types';
 import type { NodePath, Visitor } from '@babel/traverse';
@@ -21,9 +22,9 @@ import { ExportNode, type ExportNodeRecord } from './nodes/ExportNode.js';
 import { ScopeTracker } from './ScopeTracker.js';
 import { computeSemanticId } from './SemanticId.js';
 import { getLine, getColumn } from '../plugins/analysis/ast/utils/location.js';
+import { getTraverseFunction } from '../plugins/analysis/ast/utils/babelTraverse.js';
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const traverse = (traverseModule as any).default || traverseModule;
+const traverse = getTraverseFunction(traverseModule);
 
 // Simplified visitors for extraction (no graph access needed)
 import { ExpressionEvaluator } from '../plugins/analysis/ast/ExpressionEvaluator.js';
@@ -227,7 +228,7 @@ function parseModule(filePath: string, moduleId: string, moduleName: string): AS
     eventListeners: new Set()
   };
 
-  const module: ModuleInfo = { id: moduleId, file: filePath, name: moduleName };
+  const _module: ModuleInfo = { id: moduleId, file: filePath, name: moduleName };
 
   // Extract imports
   traverse(ast, {
@@ -559,7 +560,8 @@ if (parentPort) {
         const collections = parseModule(msg.filePath, msg.moduleId, msg.moduleName);
         parentPort!.postMessage({ type: 'result', taskId: msg.taskId, collections });
       } catch (error) {
-        parentPort!.postMessage({ type: 'error', taskId: msg.taskId, error: (error as Error).message });
+        const message = error instanceof Error ? error.message : String(error);
+        parentPort!.postMessage({ type: 'error', taskId: msg.taskId, error: message });
       }
     } else if (msg.type === 'exit') {
       process.exit(0);

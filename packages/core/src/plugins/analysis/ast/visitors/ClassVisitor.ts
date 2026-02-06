@@ -29,7 +29,7 @@ import type { AnalyzeFunctionBodyCallback } from './FunctionVisitor.js';
 import type { DecoratorInfo, ParameterInfo, VariableDeclarationInfo } from '../types.js';
 import { ExpressionEvaluator } from '../ExpressionEvaluator.js';
 import { createParameterNodes } from '../utils/createParameterNodes.js';
-import { ScopeTracker } from '../../../../core/ScopeTracker.js';
+import type { ScopeTracker } from '../../../../core/ScopeTracker.js';
 import { ClassNode, type ClassNodeRecord } from '../../../../core/nodes/ClassNode.js';
 import { computeSemanticId } from '../../../../core/SemanticId.js';
 import { getLine, getColumn } from '../utils/location.js';

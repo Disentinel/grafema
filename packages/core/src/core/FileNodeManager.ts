@@ -60,7 +60,8 @@ export async function clearFileNodesIfNeeded(
       await graph.deleteNode(id);
     } catch (err) {
       // Log but continue - node might already be deleted by concurrent operation
-      console.warn(`[FileNodeManager] Failed to delete ${id}:`, (err as Error).message);
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn(`[FileNodeManager] Failed to delete ${id}:`, message);
     }
   }
 

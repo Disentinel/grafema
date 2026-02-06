@@ -160,11 +160,13 @@ export async function loadCustomPlugins(projectPath: string): Promise<CustomPlug
           log(`[Grafema MCP] Loaded custom plugin: ${pluginName} from ${file}`);
         }
       } catch (err) {
-        log(`[Grafema MCP] Failed to load plugin ${file}: ${(err as Error).message}`);
+        const message = err instanceof Error ? err.message : String(err);
+        log(`[Grafema MCP] Failed to load plugin ${file}: ${message}`);
       }
     }
   } catch (err) {
-    log(`[Grafema MCP] Error loading custom plugins: ${(err as Error).message}`);
+    const message = err instanceof Error ? err.message : String(err);
+    log(`[Grafema MCP] Error loading custom plugins: ${message}`);
   }
 
   return { plugins: customPlugins, pluginMap };

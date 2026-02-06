@@ -8,7 +8,6 @@ import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
 import { spawn } from 'child_process';
 import { createInterface } from 'readline';
 import { fileURLToPath } from 'url';
-import { exitWithError } from '../utils/errorFormatter.js';
 import { stringify as stringifyYAML } from 'yaml';
 import { DEFAULT_CONFIG } from '@grafema/core';
 

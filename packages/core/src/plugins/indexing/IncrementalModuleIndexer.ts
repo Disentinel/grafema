@@ -3,10 +3,11 @@
  * Стартует с entry файла, затем анализирует импорты и добавляет новые файлы в очередь
  */
 
-import { readFileSync, existsSync } from 'fs';
+import { readFileSync } from 'fs';
 import { join, dirname, resolve, relative } from 'path';
 import { createHash } from 'crypto';
-import { parse, ParserPlugin } from '@babel/parser';
+import type { ParserPlugin } from '@babel/parser';
+import { parse } from '@babel/parser';
 import traverseModule from '@babel/traverse';
 import type { NodePath } from '@babel/traverse';
 import type { ImportDeclaration, CallExpression, Identifier } from '@babel/types';
@@ -15,7 +16,7 @@ import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { NodeRecord } from '@grafema/types';
 import { resolveModulePath } from '../../utils/moduleResolution.js';
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+ 
 const traverse = (traverseModule as any).default || traverseModule;
 
 /**
@@ -282,7 +283,8 @@ export class IncrementalModuleIndexer extends Plugin {
 
     } catch (error) {
       logger.error('Indexing failed', { error });
-      return createErrorResult(error as Error);
+      const err = error instanceof Error ? error : new Error(String(error));
+      return createErrorResult(err);
     }
   }
 }

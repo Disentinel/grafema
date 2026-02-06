@@ -151,7 +151,8 @@ export class RustModuleIndexer extends Plugin {
           });
         }
       } catch (err) {
-        errors.push({ file: filePath, error: (err as Error).message });
+        const message = err instanceof Error ? err.message : String(err);
+        errors.push({ file: filePath, error: message });
       }
     }
 

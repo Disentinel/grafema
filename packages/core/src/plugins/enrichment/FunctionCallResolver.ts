@@ -37,10 +37,6 @@ interface ExportNode extends BaseNodeRecord {
   source?: string; // Re-export source (if re-exporting)
 }
 
-interface ExportIndexEntry {
-  node: ExportNode;
-  exportKey: string; // "default" | "named:functionName"
-}
 
 interface ExternalModuleResult {
   type: 'external';

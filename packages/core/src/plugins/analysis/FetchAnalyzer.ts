@@ -10,7 +10,8 @@
  */
 
 import { readFileSync } from 'fs';
-import { parse, ParserPlugin } from '@babel/parser';
+import type { ParserPlugin } from '@babel/parser';
+import { parse } from '@babel/parser';
 import traverseModule from '@babel/traverse';
 import type { CallExpression, Identifier, MemberExpression, ObjectExpression, Node } from '@babel/types';
 import type { NodePath } from '@babel/traverse';
@@ -20,7 +21,6 @@ import type { NodeRecord } from '@grafema/types';
 import { NetworkRequestNode } from '../../core/nodes/NetworkRequestNode.js';
 import { getLine, getColumn } from './ast/utils/location.js';
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const traverse = (traverseModule as any).default || traverseModule;
 
 /**
@@ -131,7 +131,8 @@ export class FetchAnalyzer extends Plugin {
       );
     } catch (error) {
       logger.error('Analysis failed', { error });
-      return createErrorResult(error as Error);
+      const err = error instanceof Error ? error : new Error(String(error));
+      return createErrorResult(err);
     }
   }
 
@@ -462,7 +463,7 @@ export class FetchAnalyzer extends Plugin {
         requests: fetchCalls.length,
         apis: externalAPIs.size
       };
-    } catch (error) {
+    } catch (_error) {
       // Silent - per-module errors shouldn't spam logs
       return { requests: 0, apis: 0 };
     }

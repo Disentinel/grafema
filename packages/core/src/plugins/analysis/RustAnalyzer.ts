@@ -151,7 +151,6 @@ async function loadNativeBinding(): Promise<void> {
 
   // Path: from dist/plugins/analysis/ go up 5 levels to reach project root, then packages/rfdb-server/
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const nativeBinding = await import('../../../../../packages/rfdb-server/grafema-graph-engine.node' as any);
     parseRustFile = nativeBinding.parseRustFile;
     return;
@@ -254,10 +253,11 @@ export class RustAnalyzer extends Plugin {
           });
         }
       } catch (err) {
-        errors.push({ file: module.file!, error: (err as Error).message });
+        const message = err instanceof Error ? err.message : String(err);
+        errors.push({ file: module.file!, error: message });
         logger.warn('Error parsing module', {
           file: module.file,
-          error: (err as Error).message
+          error: message
         });
       }
     }

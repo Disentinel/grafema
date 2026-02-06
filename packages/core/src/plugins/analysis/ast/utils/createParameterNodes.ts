@@ -15,7 +15,7 @@ import type {
   RestElement
 } from '@babel/types';
 import type { ParameterInfo } from '../types.js';
-import { ScopeTracker } from '../../../../core/ScopeTracker.js';
+import type { ScopeTracker } from '../../../../core/ScopeTracker.js';
 import { computeSemanticId } from '../../../../core/SemanticId.js';
 
 /**

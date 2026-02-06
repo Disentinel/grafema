@@ -52,7 +52,7 @@ import {
   type IssueSeverity,
 } from './nodes/index.js';
 
-import type { BaseNodeRecord, BrandedNode } from '@grafema/types';
+import type { BaseNodeRecord } from '@grafema/types';
 import { brandNode } from '@grafema/types';
 import type { ScopeContext } from './SemanticId.js';
 

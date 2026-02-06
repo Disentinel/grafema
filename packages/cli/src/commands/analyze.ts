@@ -6,10 +6,11 @@ import { Command } from 'commander';
 import { resolve, join } from 'path';
 import { existsSync, mkdirSync, readdirSync } from 'fs';
 import { pathToFileURL } from 'url';
+import type {
+  Plugin} from '@grafema/core';
 import {
   Orchestrator,
   RFDBServerBackend,
-  Plugin,
   DiagnosticReporter,
   DiagnosticWriter,
   createLogger,
@@ -149,11 +150,13 @@ async function loadCustomPlugins(
           log(`Loaded custom plugin: ${pluginName}`);
         }
       } catch (err) {
-        console.warn(`Failed to load plugin ${file}: ${(err as Error).message}`);
+        const message = err instanceof Error ? err.message : String(err);
+        console.warn(`Failed to load plugin ${file}: ${message}`);
       }
     }
   } catch (err) {
-    console.warn(`Error loading custom plugins: ${(err as Error).message}`);
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn(`Error loading custom plugins: ${message}`);
   }
 
   return customPlugins;

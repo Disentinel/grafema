@@ -17,9 +17,8 @@ import type {
 import type { NodePath } from '@babel/traverse';
 import { ASTVisitor, type VisitorModule, type VisitorCollections, type VisitorHandlers, type CounterRef } from './ASTVisitor.js';
 import { ExpressionEvaluator } from '../ExpressionEvaluator.js';
-import { ScopeTracker } from '../../../../core/ScopeTracker.js';
+import type { ScopeTracker } from '../../../../core/ScopeTracker.js';
 import { IdGenerator } from '../IdGenerator.js';
-import { NodeFactory } from '../../../../core/NodeFactory.js';
 
 /**
  * Variable info extracted from pattern
@@ -78,31 +77,6 @@ interface ClassInstantiationInfo {
   parentScopeId: string;
 }
 
-/**
- * Literal/expression info for data flow
- */
-interface LiteralExpressionInfo {
-  id: string;
-  type: 'EXPRESSION';
-  expressionType: string;
-  path: string;
-  baseName: string;
-  propertyPath: string[] | null;
-  arrayIndex?: number;
-  file: string;
-  line: number;
-}
-
-/**
- * Variable assignment info for data flow
- */
-interface VariableAssignmentInfo {
-  variableId: string;
-  sourceId: string | null;
-  sourceName?: string;
-  sourceType: string;
-  file?: string;
-}
 
 /**
  * Call info extracted from CallExpression (REG-223)

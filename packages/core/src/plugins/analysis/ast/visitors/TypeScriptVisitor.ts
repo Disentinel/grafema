@@ -14,8 +14,7 @@ import type {
   TSPropertySignature,
   TSMethodSignature,
   Identifier,
-  Expression,
-  TSExpressionWithTypeArguments
+  Expression
 } from '@babel/types';
 import type { NodePath } from '@babel/traverse';
 import { ASTVisitor, type VisitorModule, type VisitorCollections, type VisitorHandlers } from './ASTVisitor.js';
@@ -26,7 +25,7 @@ import type {
   EnumDeclarationInfo,
   EnumMemberInfo
 } from '../types.js';
-import { ScopeTracker } from '../../../../core/ScopeTracker.js';
+import type { ScopeTracker } from '../../../../core/ScopeTracker.js';
 import { computeSemanticId } from '../../../../core/SemanticId.js';
 import { getLine, getColumn } from '../utils/location.js';
 

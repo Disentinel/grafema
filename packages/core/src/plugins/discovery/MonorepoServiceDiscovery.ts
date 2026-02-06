@@ -112,7 +112,8 @@ export class MonorepoServiceDiscovery extends DiscoveryPlugin {
         { services }
       );
     } catch (error) {
-      return createErrorResult(error as Error);
+      const err = error instanceof Error ? error : new Error(String(error));
+      return createErrorResult(err);
     }
   }
 }

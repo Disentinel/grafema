@@ -6,7 +6,8 @@
 import { readFileSync, existsSync, unlinkSync } from 'fs';
 import { join, dirname, resolve, basename } from 'path';
 import { fileURLToPath } from 'url';
-import { spawn, execSync, ChildProcess } from 'child_process';
+import type { ChildProcess } from 'child_process';
+import { spawn, execSync } from 'child_process';
 import { setTimeout as sleep } from 'timers/promises';
 import { SimpleProjectDiscovery } from './plugins/discovery/SimpleProjectDiscovery.js';
 import { resolveSourceEntrypoint } from './plugins/discovery/resolveSourceEntrypoint.js';
@@ -713,10 +714,11 @@ export class Orchestrator {
               const pkg = JSON.parse(readFileSync(packageJsonPath, 'utf-8'));
               entrypoint = resolveSourceEntrypoint(servicePath, pkg) ?? pkg.main ?? 'index.js';
             } catch (e) {
+              const message = e instanceof Error ? e.message : String(e);
               this.logger.warn('Failed to read package.json for auto-detection', {
                 service: configSvc.name,
                 path: packageJsonPath,
-                error: (e as Error).message
+                error: message
               });
               entrypoint = 'index.js';
             }
@@ -1038,7 +1040,7 @@ export class Orchestrator {
         this.rfdbServerProcess = null; // Mark that we didn't start the server
         this._serverWasExternal = true;
         return;
-      } catch (e) {
+      } catch (_e) {
         // Socket exists but server not responding, remove stale socket
         this.logger.debug('Stale socket found, removing');
         unlinkSync(socketPath);

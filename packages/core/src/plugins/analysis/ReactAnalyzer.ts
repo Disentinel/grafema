@@ -11,7 +11,8 @@
  */
 
 import { readFileSync } from 'fs';
-import { parse, ParserPlugin } from '@babel/parser';
+import type { ParserPlugin } from '@babel/parser';
+import { parse } from '@babel/parser';
 import traverseModule from '@babel/traverse';
 import type { NodePath } from '@babel/traverse';
 import type { Node, CallExpression, JSXElement, JSXAttribute, VariableDeclarator, FunctionDeclaration } from '@babel/types';
@@ -20,7 +21,6 @@ import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { NodeRecord } from '@grafema/types';
 import { getLine, getColumn } from './ast/utils/location.js';
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const traverse = (traverseModule as any).default || traverseModule;
 
 // React event handlers mapping
@@ -254,7 +254,7 @@ export class ReactAnalyzer extends Plugin {
           stats.browserAPIs += result.browserAPIs;
           stats.issues += result.issues;
           stats.edges += result.edges;
-        } catch (err) {
+        } catch (_err) {
           // Silent - per-module errors shouldn't spam logs
         }
       }
@@ -275,7 +275,8 @@ export class ReactAnalyzer extends Plugin {
       );
     } catch (error) {
       logger.error('Analysis failed', { error });
-      return createErrorResult(error as Error);
+      const err = error instanceof Error ? error : new Error(String(error));
+      return createErrorResult(err);
     }
   }
 

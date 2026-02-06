@@ -5,7 +5,7 @@
  * Uses minimatch for pattern matching.
  */
 
-import { readdirSync, statSync, existsSync, readFileSync, lstatSync } from 'fs';
+import { readdirSync, existsSync, readFileSync, lstatSync } from 'fs';
 import { join, relative } from 'path';
 import { minimatch } from 'minimatch';
 import type { WorkspaceConfig } from './parsers.js';

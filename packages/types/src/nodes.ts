@@ -92,8 +92,8 @@ export type NodeType = BaseNodeType | NamespacedNodeType | string;
 export interface BaseNodeRecord {
   id: string;
   type: NodeType;
-  name: string;
-  file: string;
+  name?: string;  // Optional - some nodes (BRANCH, CASE, LOOP) don't have meaningful names
+  file?: string;  // Optional - some synthetic nodes may not have a file
   exported?: boolean;  // Optional - some nodes may not have export status
   line?: number;  // Optional - not always available
   column?: number;

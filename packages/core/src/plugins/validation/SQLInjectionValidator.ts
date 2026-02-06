@@ -396,7 +396,8 @@ export class SQLInjectionValidator extends Plugin {
       }
     } catch (err) {
       // Datalog query might fail if backend doesn't support it
-      logger.debug('Datalog check skipped', { error: (err as Error).message });
+      const message = err instanceof Error ? err.message : String(err);
+      logger.debug('Datalog check skipped', { error: message });
     }
 
     return issues;

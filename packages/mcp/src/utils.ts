@@ -3,7 +3,7 @@
  */
 
 import { appendFileSync, existsSync, mkdirSync, readdirSync, unlinkSync, statSync } from 'fs';
-import { join, basename } from 'path';
+import { join } from 'path';
 import type { PaginationParams, ToolResult } from './types.js';
 
 // === CONSTANTS ===

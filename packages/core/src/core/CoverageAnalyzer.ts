@@ -12,9 +12,9 @@
  *   const result = await analyzer.analyze();
  */
 
-import { readdirSync, statSync, existsSync, lstatSync } from 'fs';
+import { readdirSync, existsSync, lstatSync } from 'fs';
 import { join, relative, extname } from 'path';
-import type { GraphBackend, NodeRecord } from '@grafema/types';
+import type { GraphBackend } from '@grafema/types';
 
 /**
  * Supported file extensions by language

@@ -11,7 +11,6 @@ import { Plugin, createErrorResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 // @ts-expect-error - no type declarations for node-source-walk
 import Walker from 'node-source-walk';
-import { NodeFactory } from '../../core/NodeFactory.js';
 import { LanguageError } from '../../errors/GrafemaError.js';
 import { resolveModulePath as resolveModulePathUtil } from '../../utils/moduleResolution.js';
 
@@ -188,8 +187,9 @@ export class JSModuleIndexer extends Plugin {
         this.cache.set(filePath, []);
         return [];
       }
-      this.cache.set(filePath, new Error((e as Error).message));
-      return new Error((e as Error).message);
+      const message = e instanceof Error ? e.message : String(e);
+      this.cache.set(filePath, new Error(message));
+      return new Error(message);
     }
 
     this.walker.traverse(ast, (node: ASTNode) => {
@@ -472,7 +472,8 @@ export class JSModuleIndexer extends Plugin {
 
     } catch (error) {
       logger.error('Indexing failed', { error });
-      return createErrorResult(error as Error);
+      const err = error instanceof Error ? error : new Error(String(error));
+      return createErrorResult(err);
     }
   }
 }

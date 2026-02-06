@@ -30,7 +30,7 @@ interface GraphBackend {
   getNode(id: string): Promise<{
     id: string;
     type: string;
-    name: string;
+    name?: string;
     file?: string;
     line?: number;
     object?: string;
@@ -126,7 +126,7 @@ export async function findCallsInFunction(
  */
 async function buildCallInfo(
   backend: GraphBackend,
-  callNode: { id: string; type: string; name: string; file?: string; line?: number; object?: string },
+  callNode: { id: string; type: string; name?: string; file?: string; line?: number; object?: string },
   depth: number
 ): Promise<CallInfo> {
   // Check for CALLS edge (resolved target)
@@ -139,7 +139,7 @@ async function buildCallInfo(
     if (targetNode) {
       target = {
         id: targetNode.id,
-        name: targetNode.name,
+        name: targetNode.name ?? '<anonymous>',
         file: targetNode.file,
         line: targetNode.line,
       };
@@ -148,7 +148,7 @@ async function buildCallInfo(
 
   return {
     id: callNode.id,
-    name: callNode.name,
+    name: callNode.name ?? '<unknown>',
     type: callNode.type as 'CALL' | 'METHOD_CALL',
     object: callNode.object,
     resolved: isResolved,

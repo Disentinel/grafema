@@ -139,7 +139,8 @@ export class IncrementalReanalyzer {
         nodesCreated += result.nodes;
         edgesCreated += result.edges;
       } catch (err) {
-        console.error(`[IncrementalReanalyzer] Failed to analyze ${module.file}:`, (err as Error).message);
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`[IncrementalReanalyzer] Failed to analyze ${module.file}:`, message);
       }
     }
 
@@ -160,7 +161,8 @@ export class IncrementalReanalyzer {
         const result1 = await instanceOfResolver.execute(pluginContext);
         edgesCreated += result1.created.edges;
       } catch (err) {
-        console.error(`[IncrementalReanalyzer] InstanceOfResolver error:`, (err as Error).message);
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`[IncrementalReanalyzer] InstanceOfResolver error:`, message);
       }
 
       if (options.onProgress) {
@@ -172,7 +174,8 @@ export class IncrementalReanalyzer {
         const result2 = await importExportLinker.execute(pluginContext);
         edgesCreated += result2.created.edges;
       } catch (err) {
-        console.error(`[IncrementalReanalyzer] ImportExportLinker error:`, (err as Error).message);
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`[IncrementalReanalyzer] ImportExportLinker error:`, message);
       }
 
       if (options.onProgress) {

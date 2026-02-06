@@ -169,11 +169,12 @@ export const queryResolvers = {
         error: null,
       };
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       return {
         success: false,
         count: 0,
         results: [],
-        error: (error as Error).message,
+        error: message,
       };
     }
   },

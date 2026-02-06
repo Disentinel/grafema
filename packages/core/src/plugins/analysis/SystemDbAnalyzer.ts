@@ -12,15 +12,16 @@
  */
 
 import { readFileSync } from 'fs';
-import { parse, ParserPlugin } from '@babel/parser';
+import type { ParserPlugin } from '@babel/parser';
+import { parse } from '@babel/parser';
 import traverseModule from '@babel/traverse';
-import type { CallExpression, Identifier, MemberExpression, Node } from '@babel/types';
+import type { CallExpression, Identifier, Node } from '@babel/types';
 import type { NodePath } from '@babel/traverse';
 import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { NodeRecord } from '@grafema/types';
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+ 
 const traverse = (traverseModule as any).default || traverseModule;
 
 /**
@@ -225,9 +226,10 @@ export class SystemDbAnalyzer extends Plugin {
         } catch (err) {
           // Skip files that can't be parsed
           if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+            const message = err instanceof Error ? err.message : String(err);
             logger.warn('Failed to analyze module', {
               file: module.file,
-              error: (err as Error).message
+              error: message
             });
           }
         }
@@ -241,7 +243,8 @@ export class SystemDbAnalyzer extends Plugin {
       );
     } catch (error) {
       logger.error('Analysis failed', { error });
-      return createErrorResult(error as Error);
+      const err = error instanceof Error ? error : new Error(String(error));
+      return createErrorResult(err);
     }
   }
 

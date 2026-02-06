@@ -5,8 +5,10 @@
  * If the database exists but server is not running, spawns it automatically.
  */
 
-import { spawn, ChildProcess } from 'child_process';
-import { existsSync, unlinkSync, watch, FSWatcher } from 'fs';
+import type { ChildProcess } from 'child_process';
+import { spawn } from 'child_process';
+import type { FSWatcher } from 'fs';
+import { existsSync, unlinkSync, watch } from 'fs';
 import { join, dirname } from 'path';
 import { EventEmitter } from 'events';
 import { RFDBClient } from '@grafema/rfdb-client';
