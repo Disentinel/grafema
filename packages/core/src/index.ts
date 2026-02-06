@@ -247,7 +247,6 @@ export { ShadowingDetector } from './plugins/validation/ShadowingDetector.js';
 export { GraphConnectivityValidator } from './plugins/validation/GraphConnectivityValidator.js';
 export { DataFlowValidator } from './plugins/validation/DataFlowValidator.js';
 export { TypeScriptDeadCodeValidator } from './plugins/validation/TypeScriptDeadCodeValidator.js';
-export { NodeCreationValidator } from './plugins/validation/NodeCreationValidator.js';
 export { BrokenImportValidator } from './plugins/validation/BrokenImportValidator.js';
 
 // Discovery plugins

@@ -12,13 +12,11 @@ import { existsSync, readFileSync } from 'fs';
 import {
   RFDBServerBackend,
   GuaranteeManager,
-  NodeCreationValidator,
   GraphFreshnessChecker,
   IncrementalReanalyzer,
   DIAGNOSTIC_CATEGORIES,
 } from '@grafema/core';
 import type { GuaranteeGraph, DiagnosticCategory, DiagnosticCategoryKey } from '@grafema/core';
-import type { GraphBackend } from '@grafema/types';
 import { exitWithError } from '../utils/errorFormatter.js';
 
 interface GuaranteeFile {
@@ -32,11 +30,14 @@ interface GuaranteeFile {
 }
 
 // Available built-in validators
-const BUILT_IN_VALIDATORS: Record<string, { name: string; description: string }> = {
-  'node-creation': {
-    name: 'NodeCreationValidator',
-    description: 'Validates that all nodes are created through NodeFactory'
-  }
+// Add new validators here as they are implemented
+const BUILT_IN_VALIDATORS: Record<string, { name: string; description: string; create: () => unknown }> = {
+  // Example:
+  // 'my-validator': {
+  //   name: 'MyValidator',
+  //   description: 'Validates something important',
+  //   create: () => new MyValidator()
+  // }
 };
 
 // Re-export for backward compatibility (deprecated - import from @grafema/core instead)
@@ -47,7 +48,7 @@ export const checkCommand = new Command('check')
   .argument('[rule]', 'Specific rule ID to check (or "all" for all rules)')
   .option('-p, --project <path>', 'Project path', '.')
   .option('-f, --file <path>', 'Path to guarantees YAML file')
-  .option('-g, --guarantee <name>', 'Run a built-in guarantee validator (e.g., node-creation)')
+  .option('-g, --guarantee <name>', 'Run a built-in guarantee validator')
   .option('-j, --json', 'Output results as JSON')
   .option('-q, --quiet', 'Only output failures')
   .option('--list-guarantees', 'List available built-in guarantees')
@@ -61,7 +62,7 @@ Examples:
   grafema check calls                    Check call resolution
   grafema check dataflow                 Check data flow integrity
   grafema check all                      Run all diagnostic categories
-  grafema check --guarantee node-creation    Run built-in validator
+  grafema check --guarantee <name>           Run built-in validator
   grafema check --list-categories        List available categories
   grafema check --list-guarantees        List built-in guarantees
   grafema check --fail-on-stale          CI mode: fail if graph is stale
@@ -339,19 +340,21 @@ async function runBuiltInValidator(
   }
 
   try {
-    let validator;
-    let validatorName: string;
-
-    switch (guaranteeName) {
-      case 'node-creation':
-        validator = new NodeCreationValidator();
-        validatorName = 'NodeCreationValidator';
-        break;
-      default:
+    const validatorInfo = BUILT_IN_VALIDATORS[guaranteeName];
+    if (!validatorInfo) {
+      const available = Object.keys(BUILT_IN_VALIDATORS);
+      if (available.length === 0) {
         exitWithError(`Unknown guarantee: ${guaranteeName}`, [
-          'Use --list-guarantees to see available options'
+          'No built-in guarantees are currently available'
         ]);
+      }
+      exitWithError(`Unknown guarantee: ${guaranteeName}`, [
+        `Available: ${available.join(', ')}`
+      ]);
     }
+
+    const validator = validatorInfo.create() as { execute: (ctx: { graph: unknown; projectPath: string }) => Promise<{ metadata?: unknown }> };
+    const validatorName = validatorInfo.name;
 
     if (!options.quiet) {
       console.log(`Running ${validatorName}...`);
@@ -359,7 +362,7 @@ async function runBuiltInValidator(
     }
 
     const result = await validator.execute({
-      graph: backend as unknown as GraphBackend,
+      graph: backend,
       projectPath: resolvedPath
     });
 

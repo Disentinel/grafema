@@ -340,16 +340,15 @@ container.push(item);
     });
   });
 
-  describe('Integration with NodeCreationValidator', () => {
-    it('should allow tracing objects through arrays to addNodes', async () => {
-      // This test verifies that NodeCreationValidator can trace:
-      // addNodes(arr) <- arr <- FLOWS_INTO <- obj
+  describe('Data flow tracing through arrays', () => {
+    it('should allow tracing objects through arrays via FLOWS_INTO edges', async () => {
+      // This test verifies data flow tracing:
+      // function(arr) <- arr <- FLOWS_INTO <- obj
       await setupTest(backend, {
         'index.js': `
 const nodes = [];
 const moduleNode = { id: 'test', type: 'MODULE', name: 'test', file: '/test.js' };
 nodes.push(moduleNode);
-// Later: graph.addNodes(nodes);
         `
       });
 
@@ -371,12 +370,12 @@ nodes.push(moduleNode);
 
       assert.ok(
         flowsInto,
-        'FLOWS_INTO edge needed for NodeCreationValidator to trace objects through arrays'
+        'FLOWS_INTO edge needed to trace objects through arrays'
       );
     });
 
-    it('should detect objects pushed into arrays passed to addNodes', async () => {
-      // This test verifies NodeCreationValidator actually traverses FLOWS_INTO edges
+    it('should support tracing objects pushed into arrays passed to functions', async () => {
+      // This test verifies data flow analysis can traverse FLOWS_INTO edges
       // to find objects that were pushed into an array
       await setupTest(backend, {
         'index.js': `
@@ -421,9 +420,8 @@ graph.addNodes(nodes);
 
       assert.ok(passesArg, 'PASSES_ARGUMENT edge from addNodes to nodes should exist');
 
-      // The NodeCreationValidator can now trace:
-      // addNodes(nodes) -> nodes (PASSES_ARGUMENT) -> inlineNode (FLOWS_INTO) -> object literal
-      // This allows detecting that inlineNode is not from NodeFactory
+      // Data flow tracing can now follow:
+      // function(nodes) -> nodes (PASSES_ARGUMENT) -> inlineNode (FLOWS_INTO) -> object literal
     });
   });
 });
