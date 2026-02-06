@@ -107,7 +107,8 @@ All implementation happens through subagents. Top-level agent only coordinates.
 
 **Review:**
 - **Kevlin Henney** (Low-level Reviewer) — Code quality, readability, test quality, naming, structure
-- **Steve Jobs + Вадим Решетников** (High-level Review, parallel) — Vision alignment gatekeepers. Run in parallel, BOTH must approve. Look for fundamental errors, corner-cutting, and architectural gaps. **Default stance: REJECT.** Use every opportunity to reject plans. When in doubt — escalate to user immediately.
+- **Steve Jobs** (High-level Review, auto) — Vision alignment gatekeeper. Runs automatically as subagent. Looks for fundamental errors, corner-cutting, and architectural gaps. **Default stance: REJECT.** If Steve rejects → back to implementation immediately.
+- **Вадим Решетников** (Final Review, human) — Called only AFTER Steve approves. User reviews Steve's approval to confirm or override. If Вадим rejects → back to implementation.
 
 **Project Management:**
 - **Andy Grove** (PM / Tech Debt) — Manages Linear, prioritizes backlog, tracks tech debt. Ruthless prioritization: what moves the needle NOW?
@@ -151,8 +152,8 @@ START
 | Config | Team | When to Use |
 |--------|------|-------------|
 | **Single Agent** | Rob | Trivial changes, hotfixes, well-defined tasks |
-| **Mini-MLA** | Don → Rob → Steve+Vadim | Medium complexity, local scope, clear boundaries |
-| **Mini-MLA + Refactor** | Don → Uncle Bob → Kent → Rob → Steve+Vadim | Same as Mini-MLA, but touching messy code |
+| **Mini-MLA** | Don → Rob → Steve(auto) → Vadim(user) | Medium complexity, local scope, clear boundaries |
+| **Mini-MLA + Refactor** | Don → Uncle Bob → Kent → Rob → Steve(auto) → Vadim(user) | Same as Mini-MLA, but touching messy code |
 | **Full MLA** | All personas | Architectural decisions, complex debugging, ambiguous requirements |
 
 **Stopping Condition:**
@@ -209,8 +210,9 @@ _tasks/
 **STEP 2 — PLAN:**
 1. Don analyzes codebase, creates `0XX-don-plan.md`
 2. Joel expands into detailed tech plan `0XX-joel-tech-plan.md`
-3. **Steve Jobs + Вадим Решетников review in parallel** — both must approve
-4. Iterate until BOTH approve. If either rejects or has doubts → escalate to user
+3. **Steve Jobs reviews** (automatic subagent) — if REJECT → back to step 1
+4. **If Steve APPROVE → call user** to review Steve's approval as Вадим
+5. Iterate until BOTH approve. If Вадим rejects → back to step 1
 
 **STEP 2.5 — PREPARE (Refactor-First):**
 
@@ -245,9 +247,10 @@ Before implementation, improve the code we're about to touch. This is "Boy Scout
 2. Rob implements, creates report
 3. Donald run the code and review if results aligned with initial intent
 4. Kevlin reviews code quality
-5. **Steve Jobs + Вадим Решетников review in parallel** — ruthless vision alignment check
-6. Back to PLAN step — Don reviews results
-7. Loop until Don, Joel, Steve, AND Вадим ALL agree task is FULLY DONE
+5. Don reviews results
+6. **Steve Jobs reviews** (automatic subagent) — if REJECT → back to step 2
+7. **If Steve APPROVE → call user** to review Steve's approval as Вадим
+8. Loop until Don, Steve, AND Вадим ALL agree task is FULLY DONE
 
 **STEP 3.5 — DEMO (before reviews):**
 - Steve Jobs demos the feature
@@ -318,9 +321,9 @@ If REFACTOR:
 - Clean, correct solution that doesn't create technical debt
 - If tests fail, fix implementation, not tests (unless tests are wrong)
 
-### For Steve Jobs + Вадим Решетников (High-level Review)
+### For Steve Jobs (High-level Review — Automatic)
 
-**Run in parallel. BOTH must approve. Default stance: REJECT.**
+**Runs as subagent. Default stance: REJECT. If approves → escalate to user (Вадим).**
 
 **Primary Questions:**
 - Does this align with project vision? ("AI should query the graph, not read code")
@@ -358,8 +361,12 @@ Before approving ANY plan involving data flow, enrichment, or graph traversal:
 
 **When in Doubt:**
 - REJECT the plan
-- Escalate to user immediately
 - Do NOT approve hoping issues will be fixed later
+
+**Escalation Flow:**
+1. Steve REJECT → back to implementation, no user involvement
+2. Steve APPROVE → call user with Steve's review for Вадим confirmation
+3. User (as Вадим) confirms or rejects
 
 ### For Kevlin Henney (Review)
 Focus on code quality:
@@ -474,27 +481,21 @@ Do NOT start coding until Linear status is updated.
 
 ### Finishing Task
 
-1. Code ready → Linear status → **In Review**
-2. Report: "Ready for high-level review (Steve + Вадим)"
-3. User will `/clear` and start next task in same worker
+1. Code ready → run Steve Jobs review automatically
+2. If Steve REJECT → fix issues, don't bother user
+3. If Steve APPROVE → call user with Steve's review summary
+4. User (as Вадим) confirms → Linear status → **In Review**
+5. User will merge and `/clear` to start next task
 
 ### Merge Process
 
-**CRITICAL: Review and merge requires Steve Jobs + Вадим Решетников approval.**
+**Review flow:**
+1. Steve Jobs reviews automatically (subagent) — if REJECT, fix and retry
+2. If Steve APPROVE → present Steve's review to user
+3. User (as Вадим) confirms or rejects
+4. If confirmed → merge to main, update Linear → **Done**
 
-Claude Code workflow stops at **In Review**:
-- Code is ready
-- Tests pass
-- Commits are clean
-- Status: In Review
-
-User manually invokes high-level review:
-1. Steve Jobs + Вадим review in parallel
-2. BOTH must approve — if either rejects, back to implementation
-3. If approved → merge to main (from main repo)
-4. Update Linear → **Done**
-
-Reviewers must verify:
+**What Steve verifies:**
 - Did we do the right thing?
 - Does it align with vision?
 - No hacks or shortcuts?
