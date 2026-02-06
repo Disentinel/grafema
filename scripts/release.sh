@@ -300,7 +300,7 @@ if [ "$PUBLISH" = true ]; then
     fi
 
     # Determine dist-tag based on version
-    if [[ "$NEW_VERSION" =~ -beta|-alpha ]]; then
+    if [[ "$NEW_VERSION" =~ (-beta|-alpha|-rc) ]]; then
         DIST_TAG="beta"
     else
         DIST_TAG="latest"
