@@ -24,7 +24,6 @@
 import { Plugin, createSuccessResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { BaseNodeRecord } from '@grafema/types';
-import { brandNode } from '@grafema/types';
 import { JS_GLOBAL_FUNCTIONS } from '../../data/builtins/index.js';
 
 // === INTERFACES ===
@@ -175,13 +174,13 @@ export class ExternalCallResolver extends Plugin {
         // Check if node already exists in graph
         const existingNode = await graph.getNode(externalModuleId);
         if (!existingNode) {
-          await graph.addNode(brandNode({
+          await graph.addNode({
             id: externalModuleId,
-            type: 'EXTERNAL_MODULE' as const,
+            type: 'EXTERNAL_MODULE',
             name: packageName,
             file: '',
             line: 0
-          }));
+          });
           nodesCreated++;
         }
         createdExternalModules.add(externalModuleId);

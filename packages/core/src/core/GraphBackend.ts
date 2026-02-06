@@ -9,7 +9,7 @@
  * - TestBackend (wrapper over RFDBServerBackend for tests)
  */
 
-import type { NodeRecord, AnyBrandedNode } from '@grafema/types';
+import type { NodeRecord } from '@grafema/types';
 import type { EdgeRecord, EdgeType } from '@grafema/types';
 
 // Re-export types for convenience
@@ -77,32 +77,19 @@ export abstract class GraphBackend {
   // ========================================
 
   /**
-   * Add a single node to the graph.
-   *
-   * This is an UPSERT operation: if a node with the same ID exists,
-   * it will be replaced with the new node data.
-   *
-   * @param node - Branded node from NodeFactory
+   * Add a single node
    */
-  abstract addNode(node: AnyBrandedNode): Promise<void>;
+  abstract addNode(node: NodeRecord): Promise<void>;
 
   /**
-   * Add multiple nodes (batch operation).
-   *
-   * This is an UPSERT operation: existing nodes with same IDs
-   * will be replaced.
-   *
-   * @param nodes - Array of branded nodes from NodeFactory
+   * Add multiple nodes (batch operation)
    */
-  abstract addNodes(nodes: AnyBrandedNode[]): Promise<void>;
+  abstract addNodes(nodes: NodeRecord[]): Promise<void>;
 
   /**
-   * Get node by ID.
-   *
-   * Returns a branded node since all nodes in the database were
-   * originally created through NodeFactory.
+   * Get node by ID
    */
-  abstract getNode(id: string): Promise<AnyBrandedNode | null>;
+  abstract getNode(id: string): Promise<NodeRecord | null>;
 
   /**
    * Check if node exists
@@ -194,13 +181,13 @@ export abstract class GraphBackend {
    * Find nodes by predicate (for demo-gui compatibility)
    * WARNING: May be slow on large graphs
    */
-  abstract findNodes(predicate: (node: AnyBrandedNode) => boolean): Promise<AnyBrandedNode[]>;
+  abstract findNodes(predicate: (node: NodeRecord) => boolean): Promise<NodeRecord[]>;
 
   /**
    * Get all nodes (for GUI - only for first level visualization)
    * WARNING: Do not use on large graphs
    */
-  abstract getAllNodes(): Promise<AnyBrandedNode[]>;
+  abstract getAllNodes(): Promise<NodeRecord[]>;
 
   /**
    * Get all edges (for GUI)

@@ -28,8 +28,7 @@ import { setTimeout as sleep } from 'timers/promises';
 
 import type { WireNode, WireEdge } from '@grafema/types';
 import type { NodeType, EdgeType } from '@grafema/types';
-import type { BaseNodeRecord, EdgeRecord, AnyBrandedNode } from '@grafema/types';
-import { brandNode } from '@grafema/types';
+import type { BaseNodeRecord, EdgeRecord } from '@grafema/types';
 import type { AttrQuery, GraphStats, GraphExport } from '../../core/GraphBackend.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -355,36 +354,26 @@ export class RFDBServerBackend {
   // ===========================================================================
 
   /**
-   * Add a single node to the graph.
-   *
-   * This is an UPSERT operation: if a node with the same ID exists,
-   * it will be replaced with the new node data.
-   *
-   * @param node - Branded node from NodeFactory
+   * Add a single node
    */
-  async addNode(node: AnyBrandedNode): Promise<void> {
+  async addNode(node: InputNode): Promise<void> {
     return this.addNodes([node]);
   }
 
   /**
-   * Add multiple nodes (batch operation).
-   *
-   * This is an UPSERT operation: existing nodes with same IDs
-   * will be replaced.
-   *
-   * @param nodes - Array of branded nodes from NodeFactory
+   * Add multiple nodes
    */
-  async addNodes(nodes: AnyBrandedNode[]): Promise<void> {
+  async addNodes(nodes: InputNode[]): Promise<void> {
     if (!this.client) throw new Error('Not connected');
     if (!nodes.length) return;
 
     const wireNodes: WireNode[] = nodes.map(n => {
-      // Extract standard fields from branded node
-      const { id, type, name, file, exported, ...rest } = n;
+      // Extract metadata from node
+      const { id, type, nodeType, node_type, name, file, exported, ...rest } = n;
 
       return {
         id: String(id),
-        nodeType: (type || 'UNKNOWN') as NodeType,
+        nodeType: (nodeType || node_type || type || 'UNKNOWN') as NodeType,
         name: name || '',
         file: file || '',
         exported: exported || false,
@@ -439,12 +428,9 @@ export class RFDBServerBackend {
   }
 
   /**
-   * Get a node by ID.
-   *
-   * Returns a branded node since all nodes in the database were
-   * originally created through NodeFactory.
+   * Get a node by ID
    */
-  async getNode(id: string): Promise<AnyBrandedNode | null> {
+  async getNode(id: string): Promise<BaseNodeRecord | null> {
     if (!this.client) throw new Error('Not connected');
     const node = await this.client.getNode(String(id));
     if (!node) return null;
@@ -477,13 +463,9 @@ export class RFDBServerBackend {
   }
 
   /**
-   * Parse a node from wire format to branded JS format.
-   *
-   * All nodes in the database were originally created through NodeFactory,
-   * so branding them on retrieval restores the type information that
-   * TypeScript loses during the database round-trip.
+   * Parse a node from wire format to JS format
    */
-  private _parseNode(wireNode: WireNode): AnyBrandedNode {
+  private _parseNode(wireNode: WireNode): BaseNodeRecord {
     const metadata: Record<string, unknown> = wireNode.metadata ? JSON.parse(wireNode.metadata) : {};
 
     // Parse nested JSON strings
@@ -512,15 +494,14 @@ export class RFDBServerBackend {
       ...safeMetadata
     } = metadata;
 
-    // Brand the node - it was originally created via NodeFactory
-    return brandNode({
+    return {
       id: humanId,
       type: wireNode.nodeType,
       name: wireNode.name,
       file: wireNode.file,
       exported: wireNode.exported,
       ...safeMetadata,
-    });
+    };
   }
 
   /**
@@ -539,12 +520,9 @@ export class RFDBServerBackend {
   }
 
   /**
-   * Async generator for querying nodes.
-   *
-   * Returns branded nodes since all nodes in the database were
-   * originally created through NodeFactory.
+   * Async generator for querying nodes
    */
-  async *queryNodes(query: NodeQuery): AsyncGenerator<AnyBrandedNode, void, unknown> {
+  async *queryNodes(query: NodeQuery): AsyncGenerator<BaseNodeRecord, void, unknown> {
     if (!this.client) throw new Error('Not connected');
 
     // Build query for server
@@ -571,13 +549,10 @@ export class RFDBServerBackend {
   }
 
   /**
-   * Get ALL nodes matching query (collects from queryNodes into array).
-   *
-   * Returns branded nodes since all nodes in the database were
-   * originally created through NodeFactory.
+   * Get ALL nodes matching query (collects from queryNodes into array)
    */
-  async getAllNodes(query: NodeQuery = {}): Promise<AnyBrandedNode[]> {
-    const nodes: AnyBrandedNode[] = [];
+  async getAllNodes(query: NodeQuery = {}): Promise<BaseNodeRecord[]> {
+    const nodes: BaseNodeRecord[] = [];
     for await (const node of this.queryNodes(query)) {
       nodes.push(node);
     }
@@ -787,12 +762,9 @@ export class RFDBServerBackend {
   }
 
   /**
-   * Find nodes by predicate (for compatibility).
-   *
-   * Returns branded nodes since all nodes in the database were
-   * originally created through NodeFactory.
+   * Find nodes by predicate (for compatibility)
    */
-  async findNodes(predicate: (node: AnyBrandedNode) => boolean): Promise<AnyBrandedNode[]> {
+  async findNodes(predicate: (node: BaseNodeRecord) => boolean): Promise<BaseNodeRecord[]> {
     const allNodes = await this.getAllNodes();
     return allNodes.filter(predicate);
   }

@@ -4,8 +4,7 @@
  */
 
 import { dirname, resolve, basename } from 'path';
-import type { GraphBackend, AnyBrandedNode } from '@grafema/types';
-import { brandNode } from '@grafema/types';
+import type { GraphBackend } from '@grafema/types';
 import { ImportNode } from '../../../core/nodes/ImportNode.js';
 import { InterfaceNode, type InterfaceNodeRecord } from '../../../core/nodes/InterfaceNode.js';
 import { EnumNode, type EnumNodeRecord } from '../../../core/nodes/EnumNode.js';
@@ -84,18 +83,11 @@ export class GraphBuilder {
 
   /**
    * Flush all buffered nodes to the graph
-   *
-   * GraphBuilder creates nodes via validated internal paths.
-   * We brand them here before adding to the graph.
    */
   private async _flushNodes(graph: GraphBackend): Promise<number> {
     if (this._nodeBuffer.length > 0) {
-      // Brand each node before adding to graph
-      // This is safe because GraphBuilder creates nodes through validated paths
-      const brandedNodes: AnyBrandedNode[] = this._nodeBuffer.map(node =>
-        brandNode(node as import('@grafema/types').BaseNodeRecord)
-      );
-      await graph.addNodes(brandedNodes);
+      // Cast to unknown first since GraphNode is more permissive than NodeRecord
+      await graph.addNodes(this._nodeBuffer as unknown as import('@grafema/types').NodeRecord[]);
       const count = this._nodeBuffer.length;
       this._nodeBuffer = [];
       return count;

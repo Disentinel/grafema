@@ -11,7 +11,6 @@ import type { NodePath } from '@babel/traverse';
 import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { NodeRecord } from '@grafema/types';
-import { brandNode } from '@grafema/types';
 import { getLine, getColumn } from './ast/utils/location.js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -241,30 +240,16 @@ export class DatabaseAnalyzer extends Plugin {
 
         const existingDb = await graph.getNode(databaseId);
         if (!existingDb) {
-          await graph.addNode(brandNode({
+          await graph.addNode({
             id: databaseId,
-            type: 'db:connection' as const,
-            name: '__database__',
-            file: ''
-          }));
+            type: 'db:connection',
+            name: '__database__'
+          } as NodeRecord);
         }
 
         // Создаём DATABASE_QUERY ноды
         for (const query of databaseQueries) {
-          await graph.addNode(brandNode({
-            id: query.id,
-            type: 'db:query' as const,
-            name: query.sqlSnippet,
-            file: query.file,
-            line: query.line,
-            column: query.column,
-            sql: query.sql,
-            sqlSnippet: query.sqlSnippet,
-            operation: query.operation,
-            tableName: query.tableName,
-            object: query.object,
-            method: query.method
-          }));
+          await graph.addNode(query as unknown as NodeRecord);
           queriesCreated++;
 
           // Создаём TABLE ноду если есть tableName
@@ -272,12 +257,11 @@ export class DatabaseAnalyzer extends Plugin {
             const tableId = `TABLE:${query.tableName}`;
 
             if (!createdTables.has(tableId)) {
-              await graph.addNode(brandNode({
+              await graph.addNode({
                 id: tableId,
-                type: 'db:table' as const,
-                name: query.tableName,
-                file: ''
-              }));
+                type: 'db:table',
+                name: query.tableName
+              } as NodeRecord);
               tablesCreated++;
               createdTables.add(tableId);
             }

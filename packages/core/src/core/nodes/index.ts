@@ -46,12 +46,6 @@ export { EventListenerNode, type EventListenerNodeRecord } from './EventListener
 export { HttpRequestNode, type HttpRequestNodeRecord } from './HttpRequestNode.js';
 export { DatabaseQueryNode, type DatabaseQueryNodeRecord } from './DatabaseQueryNode.js';
 
-// HTTP/Express nodes (namespaced types)
-export { HttpRouteNode } from './HttpRouteNode.js';
-export { HttpRequestCallNode } from './HttpRequestCallNode.js';
-export { ExpressMountNode } from './ExpressMountNode.js';
-export { ExternalNode } from './ExternalNode.js';
-
 // Guarantee nodes (contract-based)
 export { GuaranteeNode, type GuaranteeNodeRecord, type GuaranteePriority, type GuaranteeStatus, type GuaranteeType } from './GuaranteeNode.js';
 

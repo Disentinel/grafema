@@ -23,7 +23,6 @@ import type { NodePath } from '@babel/traverse';
 import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { NodeRecord } from '@grafema/types';
-import { brandNode } from '@grafema/types';
 import { getLine, getColumn } from './ast/utils/location.js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -219,13 +218,7 @@ export class SocketIOAnalyzer extends Plugin {
           event: eventName
         };
 
-        await graph.addNode(brandNode({
-          id: eventNode.id,
-          type: 'socketio:event' as const,
-          name: eventNode.name,
-          event: eventNode.event,
-          file: ''  // Event channels are global, not tied to a file
-        }));
+        await graph.addNode(eventNode as unknown as NodeRecord);
         createdCount++;
 
         // Step 4: Connect all emits of this event to the channel
@@ -413,19 +406,7 @@ export class SocketIOAnalyzer extends Plugin {
 
       // Создаём ноды в графе
       for (const emit of emits) {
-        await graph.addNode(brandNode({
-          id: emit.id,
-          type: 'socketio:emit' as const,
-          name: emit.event,
-          file: emit.file,
-          line: emit.line,
-          column: emit.column,
-          event: emit.event,
-          room: emit.room,
-          namespace: emit.namespace,
-          broadcast: emit.broadcast,
-          objectName: emit.objectName
-        }));
+        await graph.addNode(emit as unknown as NodeRecord);
 
         // Создаём ребро от модуля к event
         await graph.addEdge({
@@ -436,18 +417,7 @@ export class SocketIOAnalyzer extends Plugin {
       }
 
       for (const listener of listeners) {
-        await graph.addNode(brandNode({
-          id: listener.id,
-          type: 'socketio:on' as const,
-          name: listener.event,
-          file: listener.file,
-          line: listener.line,
-          column: listener.column,
-          event: listener.event,
-          objectName: listener.objectName,
-          handlerName: listener.handlerName,
-          handlerLine: listener.handlerLine
-        }));
+        await graph.addNode(listener as unknown as NodeRecord);
 
         // Создаём ребро от модуля к listener
         await graph.addEdge({
@@ -478,16 +448,7 @@ export class SocketIOAnalyzer extends Plugin {
       }
 
       for (const room of rooms) {
-        await graph.addNode(brandNode({
-          id: room.id,
-          type: 'socketio:room' as const,
-          name: room.room,
-          file: room.file,
-          line: room.line,
-          column: room.column,
-          room: room.room,
-          objectName: room.objectName
-        }));
+        await graph.addNode(room as unknown as NodeRecord);
 
         // Создаём ребро от модуля к room
         await graph.addEdge({

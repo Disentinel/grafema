@@ -23,7 +23,6 @@ import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { GraphBackend } from '@grafema/types';
 import type { NodeRecord } from '@grafema/types';
-import { brandNode } from '@grafema/types';
 import { versionManager, VersionedNode } from '../../core/VersionManager.js';
 import { VCSPluginFactory } from '../vcs/index.js';
 import type { VCSPlugin } from '../vcs/VCSPlugin.js';
@@ -273,14 +272,7 @@ export class IncrementalAnalysisPlugin extends Plugin {
     // 4a. ADDED nodes - create with __local version
     for (const node of changes.added) {
       const enrichedNode = versionManager.enrichNodeWithVersion(node, '__local');
-      // Spread first, then override with required fields to ensure they're present
-      const nodeWithRequired = {
-        ...enrichedNode,
-        id: enrichedNode.id!,
-        name: enrichedNode.name || 'unknown',
-        file: enrichedNode.file || filePath
-      };
-      await graph.addNode(brandNode(nodeWithRequired));
+      await graph.addNode(enrichedNode as unknown as NodeRecord);
     }
 
     // 4b. MODIFIED nodes - create __local version + REPLACES edge
@@ -290,14 +282,7 @@ export class IncrementalAnalysisPlugin extends Plugin {
         replacesId: mainNodeId
       });
 
-      // Spread first, then override with required fields to ensure they're present
-      const nodeWithRequired = {
-        ...enrichedNode,
-        id: enrichedNode.id!,
-        name: enrichedNode.name || 'unknown',
-        file: enrichedNode.file || filePath
-      };
-      await graph.addNode(brandNode(nodeWithRequired));
+      await graph.addNode(enrichedNode as unknown as NodeRecord);
 
       // Create REPLACES edge
       const replacesEdge = versionManager.createReplacesEdge(enrichedNode.id!, mainNodeId);

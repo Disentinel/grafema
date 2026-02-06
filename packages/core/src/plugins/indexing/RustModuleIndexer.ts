@@ -9,7 +9,6 @@ import { createHash } from 'crypto';
 import { Plugin, createSuccessResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { NodeRecord } from '@grafema/types';
-import { brandNode } from '@grafema/types';
 
 // Test file patterns for Rust
 const RUST_TEST_PATTERNS: RegExp[] = [
@@ -129,16 +128,16 @@ export class RustModuleIndexer extends Plugin {
           : baseRelativePath;
         const nodeId = `RUST_MODULE#${moduleName}#${prefixedPath}`;
 
-        await graph.addNode(brandNode({
+        await graph.addNode({
           id: nodeId,
-          type: 'RUST_MODULE' as const,
+          type: 'RUST_MODULE',
           name: moduleName,
           file: filePath,
           contentHash: hash,
           isLib: basename(filePath) === 'lib.rs',
           isMod: basename(filePath) === 'mod.rs',
           isTest: this.isTestFile(filePath)
-        }));
+        } as unknown as NodeRecord);
 
         nodesCreated++;
 

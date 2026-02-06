@@ -13,7 +13,6 @@ import type { ImportDeclaration, CallExpression, Identifier } from '@babel/types
 import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { NodeRecord } from '@grafema/types';
-import { brandNode } from '@grafema/types';
 import { resolveModulePath } from '../../utils/moduleResolution.js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -178,13 +177,13 @@ export class IncrementalModuleIndexer extends Plugin {
           : baseRelativePath;
         const semanticId = `${relativePath}->global->MODULE->module`;
 
-        const moduleNode = brandNode({
+        const moduleNode: NodeRecord = {
           id: semanticId,
-          type: 'MODULE' as const,
+          type: 'MODULE',
           name: relativePath,
           file: file,
           contentHash: fileHash
-        });
+        } as unknown as NodeRecord;
 
         await graph.addNode(moduleNode);
         nodesCreated++;

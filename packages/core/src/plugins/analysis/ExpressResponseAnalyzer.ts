@@ -20,7 +20,6 @@ import type { NodePath } from '@babel/traverse';
 import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { NodeRecord } from '@grafema/types';
-import { brandNode } from '@grafema/types';
 import { getLine } from './ast/utils/location.js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -567,69 +566,69 @@ export class ExpressResponseAnalyzer extends Plugin {
         // Include counter to make the node unique even for same location
         const counter = this.responseNodeCounter++;
         const id = `OBJECT_LITERAL#response:${counter}#${file}#${line}:${column}`;
-        await graph.addNode(brandNode({
+        await graph.addNode({
           id,
-          type: 'OBJECT_LITERAL' as const,
+          type: 'OBJECT_LITERAL',
           name: '<response>',
           file,
           line,
           column,
           parentRouteId: routeId
-        }));
+        } as NodeRecord);
         return id;
       }
       case 'Identifier': {
         // For identifiers, we link to the variable that's being returned
         const counter = this.responseNodeCounter++;
         const id = `VARIABLE#response:${counter}#${file}#${line}:${column}`;
-        await graph.addNode(brandNode({
+        await graph.addNode({
           id,
-          type: 'VARIABLE' as const,
+          type: 'VARIABLE',
           name: '<response>',
           file,
           line,
           column
-        }));
+        } as NodeRecord);
         return id;
       }
       case 'CallExpression': {
         const counter = this.responseNodeCounter++;
         const id = `CALL#response:${counter}#${file}#${line}:${column}`;
-        await graph.addNode(brandNode({
+        await graph.addNode({
           id,
-          type: 'CALL' as const,
+          type: 'CALL',
           name: '<response>',
           file,
           line,
           column
-        }));
+        } as NodeRecord);
         return id;
       }
       case 'ArrayExpression': {
         const counter = this.responseNodeCounter++;
         const id = `ARRAY_LITERAL#response:${counter}#${file}#${line}:${column}`;
-        await graph.addNode(brandNode({
+        await graph.addNode({
           id,
-          type: 'ARRAY_LITERAL' as const,
+          type: 'ARRAY_LITERAL',
           name: '<response>',
           file,
           line,
           column
-        }));
+        } as NodeRecord);
         return id;
       }
       default: {
         // Generic expression node
         const counter = this.responseNodeCounter++;
         const id = `EXPRESSION#response:${counter}#${file}#${line}:${column}`;
-        await graph.addNode(brandNode({
+        await graph.addNode({
           id,
-          type: 'EXPRESSION' as const,
+          type: 'EXPRESSION',
           name: '<response>',
           file,
           line,
           column
-        }));
+        } as NodeRecord);
         return id;
       }
     }
