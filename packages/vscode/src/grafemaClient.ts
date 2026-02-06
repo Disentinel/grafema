@@ -137,7 +137,13 @@ export class GrafemaClientManager extends EventEmitter {
 
   /**
    * Find rfdb-server binary
-   * Follows same pattern as RFDBServerBackend
+   *
+   * Search order:
+   * 1. Explicit path from VS Code setting (user override)
+   * 2. Bundled binary in extension (production)
+   * 3. GRAFEMA_RFDB_SERVER environment variable
+   * 4. Monorepo development paths
+   * 5. @grafema/rfdb npm package (fallback)
    */
   private findServerBinary(): string | null {
     // 0. Check explicit path from VS Code setting
@@ -145,13 +151,21 @@ export class GrafemaClientManager extends EventEmitter {
       return this.explicitBinaryPath;
     }
 
-    // 1. Check GRAFEMA_RFDB_SERVER environment variable
+    // 1. Check extension bundled binary (production)
+    // After esbuild, __dirname is packages/vscode/dist
+    // Binary is at packages/vscode/binaries/rfdb-server
+    const extensionBinary = join(__dirname, '..', 'binaries', 'rfdb-server');
+    if (existsSync(extensionBinary)) {
+      return extensionBinary;
+    }
+
+    // 2. Check GRAFEMA_RFDB_SERVER environment variable
     const envBinary = process.env.GRAFEMA_RFDB_SERVER;
     if (envBinary && existsSync(envBinary)) {
       return envBinary;
     }
 
-    // 2. Check packages/rfdb-server in monorepo (development)
+    // 3. Check packages/rfdb-server in monorepo (development)
     // Navigate up from node_modules to find monorepo root
     const possibleRoots = [
       // When running from extension host
@@ -176,7 +190,7 @@ export class GrafemaClientManager extends EventEmitter {
       }
     }
 
-    // 3. Check @grafema/rfdb npm package
+    // 4. Check @grafema/rfdb npm package
     try {
       // Use require.resolve to find the package
       const rfdbPkg = require.resolve('@grafema/rfdb');

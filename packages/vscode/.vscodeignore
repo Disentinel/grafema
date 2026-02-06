@@ -5,3 +5,7 @@ tsconfig.json
 esbuild.config.mjs
 *.map
 .gitignore
+
+# Include bundled binaries (downloaded during CI)
+!binaries/
+!binaries/**

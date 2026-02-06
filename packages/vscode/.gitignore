@@ -1,0 +1,8 @@
+# Build output
+dist/
+
+# Bundled binaries (downloaded during CI, not committed)
+binaries/
+
+# VSIX packages
+*.vsix

@@ -140,8 +140,14 @@
   "scripts": {
     "build": "node esbuild.config.mjs",
     "watch": "node esbuild.config.mjs --watch",
+    "clean": "rm -rf dist binaries",
+    "vscode:prepublish": "npm run build",
     "package": "vsce package",
-    "clean": "rm -rf dist"
+    "package:darwin-arm64": "vsce package --target darwin-arm64",
+    "package:darwin-x64": "vsce package --target darwin-x64",
+    "package:linux-x64": "vsce package --target linux-x64",
+    "package:linux-arm64": "vsce package --target linux-arm64",
+    "package:universal": "vsce package"
   },
   "dependencies": {
     "@grafema/rfdb-client": "workspace:*",
