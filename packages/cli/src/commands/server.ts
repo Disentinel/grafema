@@ -1,5 +1,5 @@
 /**
- * Server command - Manage RFDB server lifecycle
+ * Server command - Manage RFDB (Rega Flow Database) server lifecycle
  *
  * Provides explicit control over the RFDB server process:
  *   grafema server start   - Start detached server
@@ -124,7 +124,7 @@ function getProjectPaths(projectPath: string) {
 
 // Create main server command with subcommands
 export const serverCommand = new Command('server')
-  .description('Manage RFDB server lifecycle')
+  .description('Manage RFDB (Rega Flow Database) server lifecycle')
   .addHelpText('after', `
 Examples:
   grafema server start                       Start the RFDB server

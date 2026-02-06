@@ -1,6 +1,8 @@
 # @grafema/rfdb-client
 
-> TypeScript client for RFDB graph database
+> TypeScript client for RFDB (Rega Flow Database)
+
+*Named after the author's wife Regina (Rega for short). The Hebrew word רגע (rega, "moment") conveniently fits the concept — a flow of discrete moments captured in the graph.*
 
 **Warning: This package is in early alpha stage and is not recommended for production use.**
 
@@ -12,7 +14,7 @@ npm install @grafema/rfdb-client
 
 ## Overview
 
-High-performance TypeScript client for RFDB (ReginaFlow Database) - a graph database optimized for code analysis. Communicates with RFDB server via Unix socket using MessagePack protocol.
+High-performance TypeScript client for RFDB (Rega Flow Database) — a graph database optimized for code analysis. Communicates with RFDB server via Unix socket using MessagePack protocol.
 
 ## Features
 

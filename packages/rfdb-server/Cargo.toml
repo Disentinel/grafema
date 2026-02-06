@@ -3,7 +3,7 @@ name = "rfdb"
 version = "0.1.0"
 edition = "2021"
 authors = ["Vadim Reshetnikov"]
-description = "High-performance disk-backed graph engine for semantic code analysis"
+description = "RFDB (Rega Flow Database) — high-performance disk-backed graph engine for semantic code analysis"
 
 [lib]
 # Support both regular library and Node.js addon

@@ -1,6 +1,8 @@
 # @grafema/rfdb
 
-> High-performance disk-backed graph database server for Grafema
+> **RFDB** (Rega Flow Database) — high-performance disk-backed graph database server for Grafema
+
+*Named after the author's wife Regina (Rega for short). The Hebrew word רגע (rega, "moment") conveniently fits the concept — a flow of discrete moments captured in the graph.*
 
 **Warning: This package is in early alpha stage and is not recommended for production use.**
 
@@ -69,7 +71,7 @@ server.kill();
 
 ## With Grafema
 
-RFDB is optional for Grafema. By default, Grafema uses an in-memory backend. To use RFDB for persistent storage:
+RFDB (Rega Flow Database) is optional for Grafema. By default, Grafema uses an in-memory backend. To use RFDB for persistent storage:
 
 ```javascript
 const { Orchestrator, RFDBServerBackend } = require('@grafema/core');

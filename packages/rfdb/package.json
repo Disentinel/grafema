@@ -1,7 +1,7 @@
 {
   "name": "@grafema/rfdb-client",
   "version": "0.2.1-beta",
-  "description": "TypeScript client for RFDB graph database",
+  "description": "TypeScript client for RFDB (Rega Flow Database)",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -32,7 +32,9 @@
     "graph",
     "database",
     "code-analysis",
-    "rust"
+    "rust",
+    "rega-flow",
+    "rfdb"
   ],
   "license": "Apache-2.0",
   "author": "Vadim Reshetnikov",

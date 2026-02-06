@@ -1,7 +1,7 @@
 {
   "name": "@grafema/rfdb",
   "version": "0.2.3-beta",
-  "description": "High-performance disk-backed graph database server for Grafema",
+  "description": "RFDB (Rega Flow Database) — high-performance disk-backed graph database server for Grafema",
   "main": "index.js",
   "types": "index.d.ts",
   "bin": {
@@ -16,7 +16,9 @@
     "database",
     "semantic-analysis",
     "code-analysis",
-    "rust"
+    "rust",
+    "rega-flow",
+    "rfdb"
   ],
   "author": "Vadim Reshetnikov",
   "license": "Apache-2.0",
