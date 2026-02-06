@@ -149,12 +149,96 @@ fn bench_neighbors(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_reachability(c: &mut Criterion) {
+    let mut group = c.benchmark_group("reachability");
+
+    for size in [100, 1000, 10000] {
+        let (_dir, engine) = create_test_graph(size, size * 3);
+
+        group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, _| {
+            b.iter(|| {
+                let result = engine.reachability(
+                    black_box(&[0]),
+                    10,
+                    &["CALLS"],
+                    false, // forward
+                );
+                black_box(result);
+            });
+        });
+    }
+
+    group.finish();
+}
+
+fn bench_reachability_backward(c: &mut Criterion) {
+    let mut group = c.benchmark_group("reachability_backward");
+
+    for size in [100, 1000, 10000] {
+        let (_dir, engine) = create_test_graph(size, size * 3);
+
+        group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, _| {
+            b.iter(|| {
+                let result = engine.reachability(
+                    black_box(&[50]), // Start from middle
+                    10,
+                    &["CALLS"],
+                    true, // backward
+                );
+                black_box(result);
+            });
+        });
+    }
+
+    group.finish();
+}
+
+fn bench_flush(c: &mut Criterion) {
+    let mut group = c.benchmark_group("flush");
+
+    for size in [1000, 10000, 50000] {
+        group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {
+            b.iter(|| {
+                let dir = TempDir::new().unwrap();
+                let mut engine = GraphEngine::create(dir.path()).unwrap();
+
+                // Add nodes
+                let nodes: Vec<NodeRecord> = (0..size)
+                    .map(|i| NodeRecord {
+                        id: i as u128,
+                        node_type: Some("FUNCTION".to_string()),
+                        file_id: (i % 100) as u32,
+                        name_offset: i as u32,
+                        version: "main".to_string(),
+                        exported: false,
+                        replaces: None,
+                        deleted: false,
+                        name: Some(format!("func_{}", i)),
+                        file: Some(format!("src/file_{}.js", i % 100)),
+                        metadata: None,
+                    })
+                    .collect();
+
+                engine.add_nodes(nodes);
+
+                // Measure flush
+                black_box(engine.flush().unwrap());
+            });
+        });
+    }
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_add_nodes,
     bench_find_by_type,
     bench_find_by_attr,
     bench_bfs,
-    bench_neighbors
+    bench_neighbors,
+    bench_reachability,
+    bench_reachability_backward,
+    bench_flush
 );
 criterion_main!(benches);

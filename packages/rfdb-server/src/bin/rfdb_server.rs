@@ -26,8 +26,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
+use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
+use sysinfo::System;
 
 // Import from library
 use rfdb::graph::{GraphEngine, GraphStore};
@@ -35,6 +37,7 @@ use rfdb::storage::{NodeRecord, EdgeRecord, AttrQuery};
 use rfdb::datalog::{parse_program, parse_atom, parse_query, Evaluator};
 use rfdb::database_manager::{DatabaseManager, DatabaseInfo, AccessMode};
 use rfdb::session::ClientSession;
+use rfdb::metrics::{Metrics, MetricsSnapshot, SLOW_QUERY_THRESHOLD_MS};
 
 // Global client ID counter
 static NEXT_CLIENT_ID: AtomicUsize = AtomicUsize::new(1);
@@ -171,6 +174,11 @@ pub enum Request {
     Clear,
     Ping,
     Shutdown,
+    /// Get server performance statistics
+    ///
+    /// Returns metrics about query latency, memory usage, and graph size.
+    /// Metrics are collected server-wide, not per-database.
+    GetStats,
 
     // Bulk operations
     GetAllEdges,
@@ -259,6 +267,51 @@ pub enum Response {
     Violations { violations: Vec<WireViolation> },
     Identifier { identifier: Option<String> },
     DatalogResults { results: Vec<WireViolation> },
+
+    /// Performance statistics response
+    Stats {
+        // Graph size
+        #[serde(rename = "nodeCount")]
+        node_count: u64,
+        #[serde(rename = "edgeCount")]
+        edge_count: u64,
+        #[serde(rename = "deltaSize")]
+        delta_size: u64,
+
+        // Memory (system)
+        #[serde(rename = "memoryPercent")]
+        memory_percent: f32,
+
+        // Query latency
+        #[serde(rename = "queryCount")]
+        query_count: u64,
+        #[serde(rename = "slowQueryCount")]
+        slow_query_count: u64,
+        #[serde(rename = "queryP50Ms")]
+        query_p50_ms: u64,
+        #[serde(rename = "queryP95Ms")]
+        query_p95_ms: u64,
+        #[serde(rename = "queryP99Ms")]
+        query_p99_ms: u64,
+
+        // Flush stats
+        #[serde(rename = "flushCount")]
+        flush_count: u64,
+        #[serde(rename = "lastFlushMs")]
+        last_flush_ms: u64,
+        #[serde(rename = "lastFlushNodes")]
+        last_flush_nodes: u64,
+        #[serde(rename = "lastFlushEdges")]
+        last_flush_edges: u64,
+
+        // Top slow queries
+        #[serde(rename = "topSlowQueries")]
+        top_slow_queries: Vec<WireSlowQuery>,
+
+        // Uptime
+        #[serde(rename = "uptimeSecs")]
+        uptime_secs: u64,
+    },
 }
 
 /// Database information for ListDatabases response
@@ -289,6 +342,15 @@ impl From<DatabaseInfo> for WireDatabaseInfo {
 #[serde(rename_all = "camelCase")]
 pub struct WireViolation {
     pub bindings: HashMap<String, String>,
+}
+
+/// Slow query info for wire protocol
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WireSlowQuery {
+    pub operation: String,
+    pub duration_ms: u64,
+    pub timestamp_ms: u64,
 }
 
 /// Node representation for wire protocol
@@ -399,6 +461,55 @@ fn record_to_wire_edge(record: &EdgeRecord) -> WireEdge {
 }
 
 // ============================================================================
+// Memory Check Helper
+// ============================================================================
+
+/// Check system memory usage percentage.
+///
+/// Uses sysinfo crate to query system memory. Returns 0.0 if unable to query.
+fn check_memory_usage() -> f32 {
+    let mut sys = System::new();
+    sys.refresh_memory();
+    let total = sys.total_memory();
+    if total == 0 {
+        return 0.0;
+    }
+    let used = sys.used_memory();
+    (used as f64 / total as f64 * 100.0) as f32
+}
+
+// ============================================================================
+// Operation Name Helper
+// ============================================================================
+
+/// Get operation name for metrics tracking.
+///
+/// Maps Request variants to string names used by the metrics system.
+fn get_operation_name(request: &Request) -> String {
+    match request {
+        Request::Bfs { .. } => "Bfs".to_string(),
+        Request::Dfs { .. } => "Dfs".to_string(),
+        Request::Neighbors { .. } => "Neighbors".to_string(),
+        Request::Reachability { .. } => "Reachability".to_string(),
+        Request::FindByType { .. } => "FindByType".to_string(),
+        Request::FindByAttr { .. } => "FindByAttr".to_string(),
+        Request::GetNode { .. } => "GetNode".to_string(),
+        Request::AddNodes { .. } => "AddNodes".to_string(),
+        Request::AddEdges { .. } => "AddEdges".to_string(),
+        Request::DatalogQuery { .. } => "DatalogQuery".to_string(),
+        Request::CheckGuarantee { .. } => "CheckGuarantee".to_string(),
+        Request::GetOutgoingEdges { .. } => "GetOutgoingEdges".to_string(),
+        Request::GetIncomingEdges { .. } => "GetIncomingEdges".to_string(),
+        Request::Flush => "Flush".to_string(),
+        Request::Compact => "Compact".to_string(),
+        Request::NodeCount => "NodeCount".to_string(),
+        Request::EdgeCount => "EdgeCount".to_string(),
+        Request::GetStats => "GetStats".to_string(),
+        _ => "Other".to_string(),
+    }
+}
+
+// ============================================================================
 // Request Handler (Multi-database aware)
 // ============================================================================
 
@@ -406,6 +517,7 @@ fn handle_request(
     manager: &DatabaseManager,
     session: &mut ClientSession,
     request: Request,
+    metrics: &Option<Arc<Metrics>>,
 ) -> Response {
     match request {
         // ====================================================================
@@ -793,6 +905,55 @@ fn handle_request(
                 Response::Ok { ok: true }
             })
         }
+
+        Request::GetStats => {
+            // Collect stats from all sources
+            let metrics_snapshot = if let Some(ref m) = metrics {
+                m.snapshot()
+            } else {
+                MetricsSnapshot::default()
+            };
+
+            // Get graph stats from current database (if any)
+            let (node_count, edge_count, delta_size) = if let Some(ref db) = session.current_db {
+                let engine = db.engine.read().unwrap();
+                (
+                    engine.node_count() as u64,
+                    engine.edge_count() as u64,
+                    engine.ops_since_flush as u64,
+                )
+            } else {
+                // No database selected - return zeros
+                (0, 0, 0)
+            };
+
+            // Get system memory
+            let memory_percent = check_memory_usage();
+
+            Response::Stats {
+                node_count,
+                edge_count,
+                delta_size,
+                memory_percent,
+                query_count: metrics_snapshot.query_count,
+                slow_query_count: metrics_snapshot.slow_query_count,
+                query_p50_ms: metrics_snapshot.query_p50_ms,
+                query_p95_ms: metrics_snapshot.query_p95_ms,
+                query_p99_ms: metrics_snapshot.query_p99_ms,
+                flush_count: metrics_snapshot.flush_count,
+                last_flush_ms: metrics_snapshot.last_flush_ms,
+                last_flush_nodes: metrics_snapshot.last_flush_nodes,
+                last_flush_edges: metrics_snapshot.last_flush_edges,
+                top_slow_queries: metrics_snapshot.top_slow_queries.into_iter()
+                    .map(|sq| WireSlowQuery {
+                        operation: sq.operation,
+                        duration_ms: sq.duration_ms,
+                        timestamp_ms: sq.timestamp_ms,
+                    })
+                    .collect(),
+                uptime_secs: metrics_snapshot.uptime_secs,
+            }
+        }
     }
 }
 
@@ -964,6 +1125,7 @@ fn handle_client(
     manager: Arc<DatabaseManager>,
     client_id: usize,
     legacy_mode: bool,
+    metrics: Option<Arc<Metrics>>,
 ) {
     eprintln!("[rfdb-server] Client {} connected", client_id);
 
@@ -1002,7 +1164,23 @@ fn handle_client(
 
         let is_shutdown = matches!(request, Request::Shutdown);
 
-        let response = handle_request(&manager, &mut session, request);
+        // Time the request for metrics
+        let start = Instant::now();
+        let op_name = get_operation_name(&request);
+
+        let response = handle_request(&manager, &mut session, request, &metrics);
+
+        // Record metrics if enabled
+        if let Some(ref m) = metrics {
+            let duration_ms = start.elapsed().as_millis() as u64;
+            m.record_query(&op_name, duration_ms);
+
+            // Log slow queries to stderr (existing pattern)
+            if duration_ms >= SLOW_QUERY_THRESHOLD_MS {
+                eprintln!("[RUST SLOW] {}: {}ms (client {})",
+                         op_name, duration_ms, client_id);
+            }
+        }
 
         let resp_bytes = match rmp_serde::to_vec_named(&response) {
             Ok(bytes) => bytes,
@@ -1046,7 +1224,7 @@ fn main() {
         println!();
         println!("High-performance disk-backed graph database server for Grafema");
         println!();
-        println!("Usage: rfdb-server <db-path> [--socket <socket-path>] [--data-dir <dir>]");
+        println!("Usage: rfdb-server <db-path> [--socket <socket-path>] [--data-dir <dir>] [--metrics]");
         println!();
         println!("Arguments:");
         println!("  <db-path>      Path to default graph database directory");
@@ -1056,16 +1234,18 @@ fn main() {
         println!("Flags:");
         println!("  -V, --version  Print version information");
         println!("  -h, --help     Print this help message");
+        println!("  --metrics      Enable performance metrics collection");
         std::process::exit(0);
     }
 
     if args.len() < 2 {
-        eprintln!("Usage: rfdb-server <db-path> [--socket <socket-path>] [--data-dir <dir>]");
+        eprintln!("Usage: rfdb-server <db-path> [--socket <socket-path>] [--data-dir <dir>] [--metrics]");
         eprintln!("");
         eprintln!("Arguments:");
         eprintln!("  <db-path>      Path to default graph database directory");
         eprintln!("  --socket       Unix socket path (default: /tmp/rfdb.sock)");
         eprintln!("  --data-dir     Base directory for multi-database storage");
+        eprintln!("  --metrics      Enable performance metrics collection");
         std::process::exit(1);
     }
 
@@ -1094,6 +1274,15 @@ fn main() {
         .and_then(|i| args.get(i + 1))
         .map(PathBuf::from)
         .unwrap_or_else(|| db_path.parent().unwrap_or(&db_path).to_path_buf());
+
+    // Create metrics collector if --metrics flag is present
+    let metrics_enabled = args.iter().any(|a| a == "--metrics");
+    let metrics: Option<Arc<Metrics>> = if metrics_enabled {
+        eprintln!("[rfdb-server] Metrics collection enabled");
+        Some(Arc::new(Metrics::new()))
+    } else {
+        None
+    };
 
     // Remove stale socket file
     let _ = std::fs::remove_file(socket_path);
@@ -1155,9 +1344,10 @@ fn main() {
             Ok(stream) => {
                 let client_id = NEXT_CLIENT_ID.fetch_add(1, Ordering::SeqCst);
                 let manager_clone = Arc::clone(&manager);
+                let metrics_clone = metrics.clone();
                 thread::spawn(move || {
                     // legacy_mode: true until client sends Hello
-                    handle_client(stream, manager_clone, client_id, true);
+                    handle_client(stream, manager_clone, client_id, true, metrics_clone);
                 });
             }
             Err(e) => {
@@ -1203,7 +1393,7 @@ mod protocol_tests {
             client_id: Some("test-client".to_string()),
         };
 
-        let response = handle_request(&manager, &mut session, request);
+        let response = handle_request(&manager, &mut session, request, &None);
 
         match response {
             Response::HelloOk { ok, protocol_version, server_version, features } => {
@@ -1233,7 +1423,7 @@ mod protocol_tests {
             ephemeral: false,
         };
 
-        let response = handle_request(&manager, &mut session, request);
+        let response = handle_request(&manager, &mut session, request, &None);
 
         match response {
             Response::DatabaseCreated { ok, database_id } => {
@@ -1258,7 +1448,7 @@ mod protocol_tests {
             ephemeral: false,
         };
 
-        let response = handle_request(&manager, &mut session, request);
+        let response = handle_request(&manager, &mut session, request, &None);
 
         match response {
             Response::ErrorWithCode { error, code } => {
@@ -1285,7 +1475,7 @@ mod protocol_tests {
             mode: "rw".to_string(),
         };
 
-        let response = handle_request(&manager, &mut session, request);
+        let response = handle_request(&manager, &mut session, request, &None);
 
         match response {
             Response::DatabaseOpened { ok, database_id, mode, node_count, edge_count } => {
@@ -1316,7 +1506,7 @@ mod protocol_tests {
             mode: "rw".to_string(),
         };
 
-        let response = handle_request(&manager, &mut session, request);
+        let response = handle_request(&manager, &mut session, request, &None);
 
         match response {
             Response::ErrorWithCode { error, code } => {
@@ -1339,7 +1529,7 @@ mod protocol_tests {
         handle_request(&manager, &mut session, Request::OpenDatabase {
             name: "db1".to_string(),
             mode: "rw".to_string(),
-        });
+        }, &None);
 
         let db1 = manager.get_database("db1").unwrap();
         assert_eq!(db1.connection_count(), 1);
@@ -1348,7 +1538,7 @@ mod protocol_tests {
         handle_request(&manager, &mut session, Request::OpenDatabase {
             name: "db2".to_string(),
             mode: "rw".to_string(),
-        });
+        }, &None);
 
         // db1 should have 0 connections now
         assert_eq!(db1.connection_count(), 0);
@@ -1374,10 +1564,10 @@ mod protocol_tests {
         handle_request(&manager, &mut session, Request::OpenDatabase {
             name: "testdb".to_string(),
             mode: "rw".to_string(),
-        });
+        }, &None);
 
         // Close it
-        let response = handle_request(&manager, &mut session, Request::CloseDatabase);
+        let response = handle_request(&manager, &mut session, Request::CloseDatabase, &None);
 
         match response {
             Response::Ok { ok } => assert!(ok),
@@ -1395,7 +1585,7 @@ mod protocol_tests {
         let (_dir, manager) = setup_test_manager();
         let mut session = ClientSession::new(1);
 
-        let response = handle_request(&manager, &mut session, Request::CloseDatabase);
+        let response = handle_request(&manager, &mut session, Request::CloseDatabase, &None);
 
         match response {
             Response::Error { error } => {
@@ -1418,7 +1608,7 @@ mod protocol_tests {
 
         let response = handle_request(&manager, &mut session, Request::DropDatabase {
             name: "testdb".to_string(),
-        });
+        }, &None);
 
         match response {
             Response::Ok { ok } => assert!(ok),
@@ -1440,12 +1630,12 @@ mod protocol_tests {
         handle_request(&manager, &mut session1, Request::OpenDatabase {
             name: "testdb".to_string(),
             mode: "rw".to_string(),
-        });
+        }, &None);
 
         // Session 2 tries to drop
         let response = handle_request(&manager, &mut session2, Request::DropDatabase {
             name: "testdb".to_string(),
-        });
+        }, &None);
 
         match response {
             Response::ErrorWithCode { error, code } => {
@@ -1468,7 +1658,7 @@ mod protocol_tests {
         manager.create_database("db1", false).unwrap();
         manager.create_database("db2", true).unwrap();
 
-        let response = handle_request(&manager, &mut session, Request::ListDatabases);
+        let response = handle_request(&manager, &mut session, Request::ListDatabases, &None);
 
         match response {
             Response::DatabaseList { databases } => {
@@ -1497,7 +1687,7 @@ mod protocol_tests {
         let mut session = ClientSession::new(1);
         session.clear_database(); // Ensure no database is set
 
-        let response = handle_request(&manager, &mut session, Request::CurrentDatabase);
+        let response = handle_request(&manager, &mut session, Request::CurrentDatabase, &None);
 
         match response {
             Response::CurrentDb { database, mode } => {
@@ -1518,9 +1708,9 @@ mod protocol_tests {
         handle_request(&manager, &mut session, Request::OpenDatabase {
             name: "testdb".to_string(),
             mode: "ro".to_string(),
-        });
+        }, &None);
 
-        let response = handle_request(&manager, &mut session, Request::CurrentDatabase);
+        let response = handle_request(&manager, &mut session, Request::CurrentDatabase, &None);
 
         match response {
             Response::CurrentDb { database, mode } => {
@@ -1561,7 +1751,7 @@ mod protocol_tests {
         session.clear_database();
 
         let request = Request::AddNodes { nodes: vec![] };
-        let response = handle_request(&manager, &mut session, request);
+        let response = handle_request(&manager, &mut session, request, &None);
 
         match response {
             Response::ErrorWithCode { error, code } => {
@@ -1586,10 +1776,10 @@ mod protocol_tests {
         handle_request(&manager, &mut session, Request::OpenDatabase {
             name: "testdb".to_string(),
             mode: "ro".to_string(),
-        });
+        }, &None);
 
         let request = Request::AddNodes { nodes: vec![] };
-        let response = handle_request(&manager, &mut session, request);
+        let response = handle_request(&manager, &mut session, request, &None);
 
         match response {
             Response::ErrorWithCode { error, code } => {
@@ -1610,15 +1800,98 @@ mod protocol_tests {
         handle_request(&manager, &mut session, Request::OpenDatabase {
             name: "testdb".to_string(),
             mode: "ro".to_string(),
-        });
+        }, &None);
 
-        let response = handle_request(&manager, &mut session, Request::NodeCount);
+        let response = handle_request(&manager, &mut session, Request::NodeCount, &None);
 
         match response {
             Response::Count { count } => {
                 assert_eq!(count, 0);
             }
             _ => panic!("Expected Count response"),
+        }
+    }
+
+    // ============================================================================
+    // GetStats Command
+    // ============================================================================
+
+    #[test]
+    fn test_get_stats_no_database() {
+        let (_dir, manager) = setup_test_manager();
+        let mut session = ClientSession::new(1);
+        session.clear_database(); // Ensure no database is set
+
+        let metrics = Some(Arc::new(Metrics::new()));
+
+        // Record some queries
+        metrics.as_ref().unwrap().record_query("Bfs", 50);
+        metrics.as_ref().unwrap().record_query("Bfs", 150); // slow
+
+        let response = handle_request(&manager, &mut session, Request::GetStats, &metrics);
+
+        match response {
+            Response::Stats {
+                query_count, slow_query_count, node_count, edge_count, ..
+            } => {
+                assert_eq!(query_count, 2);
+                assert_eq!(slow_query_count, 1);
+                // No database selected
+                assert_eq!(node_count, 0);
+                assert_eq!(edge_count, 0);
+            }
+            _ => panic!("Expected Stats response"),
+        }
+    }
+
+    #[test]
+    fn test_get_stats_with_database() {
+        let (_dir, manager) = setup_test_manager();
+        let mut session = ClientSession::new(1);
+        let metrics = Some(Arc::new(Metrics::new()));
+
+        // Open default database
+        handle_request(&manager, &mut session, Request::OpenDatabase {
+            name: "default".to_string(),
+            mode: "rw".to_string(),
+        }, &metrics);
+
+        // Add some nodes
+        handle_request(&manager, &mut session, Request::AddNodes {
+            nodes: vec![WireNode {
+                id: "1".to_string(),
+                node_type: Some("TEST".to_string()),
+                name: Some("test".to_string()),
+                file: None,
+                exported: false,
+                metadata: None,
+            }],
+        }, &metrics);
+
+        let response = handle_request(&manager, &mut session, Request::GetStats, &metrics);
+
+        match response {
+            Response::Stats { node_count, .. } => {
+                assert_eq!(node_count, 1);
+            }
+            _ => panic!("Expected Stats response"),
+        }
+    }
+
+    #[test]
+    fn test_get_stats_metrics_disabled() {
+        let (_dir, manager) = setup_test_manager();
+        let mut session = ClientSession::new(1);
+        let metrics: Option<Arc<Metrics>> = None; // Disabled
+
+        let response = handle_request(&manager, &mut session, Request::GetStats, &metrics);
+
+        match response {
+            Response::Stats { query_count, .. } => {
+                // Should return zeros when metrics disabled
+                assert_eq!(query_count, 0);
+            }
+            _ => panic!("Expected Stats response"),
         }
     }
 }

@@ -47,6 +47,7 @@ pub mod error;
 pub mod datalog;
 pub mod database_manager;
 pub mod session;
+pub mod metrics;
 
 #[cfg(feature = "napi")]
 pub mod ffi;
@@ -57,6 +58,9 @@ pub use error::{GraphError, Result};
 
 // Re-export основных типов
 pub use graph::{compute_node_id, string_id_to_u128};
+
+// Re-export metrics types
+pub use metrics::{Metrics, MetricsSnapshot, SLOW_QUERY_THRESHOLD_MS};
 
 // Re-export NAPI bindings when feature is enabled
 #[cfg(feature = "napi")]
