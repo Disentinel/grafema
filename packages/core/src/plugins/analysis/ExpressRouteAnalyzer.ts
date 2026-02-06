@@ -16,6 +16,7 @@ import type { NodePath } from '@babel/traverse';
 import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { NodeRecord } from '@grafema/types';
+import { brandNode } from '@grafema/types';
 import { getLine, getColumn } from './ast/utils/location.js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -378,14 +379,20 @@ export class ExpressRouteAnalyzer extends Plugin {
         const { handlerLine: _hl, handlerColumn: _hc, handlerStart, handlerName, routerName, ...endpointData } = endpoint;
 
         // Store handler identification in metadata for ExpressHandlerLinker enricher
-        const nodeData = {
-          ...endpointData,
+        await graph.addNode(brandNode({
+          id: endpointData.id,
+          type: 'http:route' as const,
+          name: `${endpointData.method} ${endpointData.path}`,
+          method: endpointData.method,
+          path: endpointData.path,
+          file: endpointData.file,
+          line: endpointData.line,
+          column: endpointData.column,
           metadata: {
             ...(handlerStart !== undefined && { handlerStart }),
             ...(handlerName !== undefined && { handlerName })
           }
-        };
-        await graph.addNode(nodeData as unknown as NodeRecord);
+        }));
         endpointsCreated++;
 
         // MODULE -> CONTAINS -> ENDPOINT
@@ -404,7 +411,16 @@ export class ExpressRouteAnalyzer extends Plugin {
       for (const middleware of middlewares) {
         const { endpointId, order, ...middlewareData } = middleware;
 
-        await graph.addNode(middlewareData as unknown as NodeRecord);
+        await graph.addNode(brandNode({
+          id: middlewareData.id,
+          type: 'express:middleware' as const,
+          name: middlewareData.name,
+          file: middlewareData.file,
+          line: middlewareData.line,
+          column: middlewareData.column,
+          mountPath: middlewareData.mountPath,
+          isGlobal: middlewareData.isGlobal
+        }));
         middlewareCreated++;
 
         // MODULE -> CONTAINS -> MIDDLEWARE

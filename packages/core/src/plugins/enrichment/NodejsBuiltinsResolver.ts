@@ -22,6 +22,7 @@
 import { Plugin, createSuccessResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { BaseNodeRecord } from '@grafema/types';
+import { brandNode } from '@grafema/types';
 import { BuiltinRegistry } from '../../data/builtins/BuiltinRegistry.js';
 
 /**
@@ -98,13 +99,13 @@ export class NodejsBuiltinsResolver extends Plugin {
           // Check if node already exists in graph
           const existingNode = await graph.getNode(moduleNodeId);
           if (!existingNode) {
-            await graph.addNode({
+            await graph.addNode(brandNode({
               id: moduleNodeId,
-              type: 'EXTERNAL_MODULE',
+              type: 'EXTERNAL_MODULE' as const,
               name: normalizedSource,
               file: '',
               line: 0
-            });
+            }));
             externalModulesCreated++;
           }
           createdExternalModules.add(normalizedSource);
@@ -181,16 +182,16 @@ export class NodejsBuiltinsResolver extends Plugin {
         // Check if node already exists in graph
         const existingNode = await graph.getNode(externalFuncId);
         if (!existingNode) {
-          await graph.addNode({
+          await graph.addNode(brandNode({
             id: externalFuncId,
-            type: 'EXTERNAL_FUNCTION',
+            type: 'EXTERNAL_FUNCTION' as const,
             name: `${this.registry.normalizeModule(moduleName)}.${functionName}`,
             file: '',
             line: 0,
             isBuiltin: true,
             ...(funcDef.security && { security: funcDef.security }),
             ...(funcDef.pure !== undefined && { pure: funcDef.pure })
-          });
+          }));
           nodesCreated++;
         }
         createdExternalFunctions.add(externalFuncId);

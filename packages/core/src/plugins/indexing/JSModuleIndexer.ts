@@ -12,6 +12,7 @@ import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 // @ts-expect-error - no type declarations for node-source-walk
 import Walker from 'node-source-walk';
 import { NodeFactory } from '../../core/NodeFactory.js';
+import { brandNode } from '@grafema/types';
 import { LanguageError } from '../../errors/GrafemaError.js';
 import { resolveModulePath as resolveModulePathUtil } from '../../utils/moduleResolution.js';
 
@@ -381,7 +382,7 @@ export class JSModuleIndexer extends Plugin {
         const moduleId = moduleNode.id;
 
         logger.debug('Creating MODULE node', { moduleId: moduleNode.id });
-        await graph.addNode(moduleNode);
+        await graph.addNode(brandNode(moduleNode));
         nodesCreated++;
 
         // Always create SERVICE -> CONTAINS -> MODULE edge (even if module exists)

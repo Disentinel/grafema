@@ -58,6 +58,7 @@ import { ConstructorCallNode } from '../../core/nodes/ConstructorCallNode.js';
 import { ObjectLiteralNode } from '../../core/nodes/ObjectLiteralNode.js';
 import { NodeFactory } from '../../core/NodeFactory.js';
 import type { PluginContext, PluginResult, PluginMetadata, GraphBackend } from '@grafema/types';
+import { brandNode } from '@grafema/types';
 import type {
   ModuleNode,
   FunctionInfo,
@@ -308,13 +309,17 @@ export class JSASTAnalyzer extends Plugin {
     }
 
     if (currentHash !== module.contentHash) {
-      await graph.addNode({
+      // Module content changed - update with new hash
+      // Note: This is a transitional pattern. In the future, all module
+      // creation should go through NodeFactory.createModule()
+      await graph.addNode(brandNode({
         id: module.id,
-        type: 'MODULE',
+        type: 'MODULE' as const,
         name: module.name,
         file: module.file,
-        contentHash: currentHash
-      });
+        contentHash: currentHash,
+        relativePath: module.name  // Use name as relativePath for compatibility
+      }));
       return true;
     }
 

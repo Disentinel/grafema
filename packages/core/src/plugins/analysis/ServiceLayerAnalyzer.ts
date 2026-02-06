@@ -24,6 +24,7 @@ import type { NodePath } from '@babel/traverse';
 import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { NodeRecord } from '@grafema/types';
+import { brandNode } from '@grafema/types';
 import { getLine } from './ast/utils/location.js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -305,7 +306,14 @@ export class ServiceLayerAnalyzer extends Plugin {
 
       // Создаём ноды в графе
       for (const serviceClass of serviceClasses) {
-        await graph.addNode(serviceClass as unknown as NodeRecord);
+        await graph.addNode(brandNode({
+          id: serviceClass.id,
+          type: 'SERVICE_CLASS' as const,
+          name: serviceClass.name,
+          file: serviceClass.file,
+          line: serviceClass.line,
+          methods: serviceClass.methods
+        }));
 
         // Создаём ребро от модуля к service class
         await graph.addEdge({
@@ -316,7 +324,14 @@ export class ServiceLayerAnalyzer extends Plugin {
       }
 
       for (const instance of serviceInstances) {
-        await graph.addNode(instance as unknown as NodeRecord);
+        await graph.addNode(brandNode({
+          id: instance.id,
+          type: 'SERVICE_INSTANCE' as const,
+          name: instance.serviceClass,
+          file: instance.file,
+          line: instance.line,
+          serviceClass: instance.serviceClass
+        }));
 
         // Создаём ребро от модуля к instance
         await graph.addEdge({
@@ -339,7 +354,15 @@ export class ServiceLayerAnalyzer extends Plugin {
       }
 
       for (const registration of serviceRegistrations) {
-        await graph.addNode(registration as unknown as NodeRecord);
+        await graph.addNode(brandNode({
+          id: registration.id,
+          type: 'SERVICE_REGISTRATION' as const,
+          name: registration.serviceName,
+          file: registration.file,
+          line: registration.line,
+          serviceName: registration.serviceName,
+          objectName: registration.objectName
+        }));
 
         // Создаём ребро от модуля к registration
         await graph.addEdge({
@@ -350,7 +373,14 @@ export class ServiceLayerAnalyzer extends Plugin {
       }
 
       for (const usage of serviceUsages) {
-        await graph.addNode(usage as unknown as NodeRecord);
+        await graph.addNode(brandNode({
+          id: usage.id,
+          type: 'SERVICE_USAGE' as const,
+          name: usage.serviceName,
+          file: usage.file,
+          line: usage.line,
+          serviceName: usage.serviceName
+        }));
 
         // Создаём ребро от модуля к usage
         await graph.addEdge({

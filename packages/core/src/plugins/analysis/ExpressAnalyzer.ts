@@ -11,19 +11,17 @@ import type { CallExpression, ImportDeclaration, StringLiteral, TemplateLiteral,
 import type { NodePath } from '@babel/traverse';
 import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
-import type { NodeRecord } from '@grafema/types';
-import { NetworkRequestNode } from '../../core/nodes/NetworkRequestNode.js';
+import type { AnyBrandedNode } from '@grafema/types';
+import { NodeFactory } from '../../core/NodeFactory.js';
 import { getLine, getColumn } from './ast/utils/location.js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const traverse = (traverseModule as any).default || traverseModule;
 
 /**
- * Endpoint node
+ * Endpoint data - raw data before node creation
  */
-interface EndpointNode {
-  id: string;
-  type: 'http:route';
+interface EndpointData {
   method: string;
   path: string;
   localPath: string;
@@ -34,11 +32,9 @@ interface EndpointNode {
 }
 
 /**
- * Mount point node
+ * Mount point data - raw data before node creation
  */
-interface MountPointNode {
-  id: string;
-  type: 'express:mount';
+interface MountPointData {
   prefix: string;
   targetFunction: string | null;
   targetVariable: string | null;
@@ -87,7 +83,7 @@ export class ExpressAnalyzer extends Plugin {
       const { graph } = context;
 
       // Create net:request singleton (GraphBackend handles deduplication)
-      const networkNode = NetworkRequestNode.create();
+      const networkNode = NodeFactory.createNetworkRequest();
       await graph.addNode(networkNode);
 
       // Получаем все MODULE ноды
@@ -127,7 +123,7 @@ export class ExpressAnalyzer extends Plugin {
    * Анализировать один модуль на Express patterns
    */
   private async analyzeModule(
-    module: NodeRecord,
+    module: AnyBrandedNode,
     graph: PluginContext['graph'],
     networkId: string
   ): Promise<AnalysisResult> {
@@ -143,8 +139,8 @@ export class ExpressAnalyzer extends Plugin {
         plugins: ['jsx'] as ParserPlugin[]
       });
 
-      const endpoints: EndpointNode[] = [];
-      const mountPoints: MountPointNode[] = [];
+      const endpoints: EndpointData[] = [];
+      const mountPoints: MountPointData[] = [];
       const imports: ImportInfo[] = [];
 
       // Собираем импорты для резолвинга mount points
@@ -203,11 +199,8 @@ export class ExpressAnalyzer extends Plugin {
               }
 
               if (routePath) {
-                const method = methodName.toUpperCase();
                 endpoints.push({
-                  id: `http:route#${method}:${routePath}#${module.file}#${getLine(node)}`,
-                  type: 'http:route',
-                  method: method,
+                  method: methodName.toUpperCase(),
                   path: routePath,
                   localPath: routePath,
                   file: module.file!,
@@ -283,8 +276,6 @@ export class ExpressAnalyzer extends Plugin {
               // Создаём mount point
               if ((targetFunction || targetVariable) && prefix) {
                 mountPoints.push({
-                  id: `express:mount#${prefix}#${module.file}#${getLine(node)}`,
-                  type: 'express:mount',
                   prefix: prefix,
                   targetFunction: targetFunction,
                   targetVariable: targetVariable,
@@ -301,21 +292,29 @@ export class ExpressAnalyzer extends Plugin {
 
       // Создаём ENDPOINT ноды
       for (const endpoint of endpoints) {
-        await graph.addNode(endpoint as unknown as NodeRecord);
+        const routeNode = NodeFactory.createHttpRoute(
+          endpoint.method,
+          endpoint.path,
+          endpoint.file,
+          endpoint.line,
+          endpoint.column,
+          { localPath: endpoint.localPath, mountedOn: endpoint.mountedOn }
+        );
+        await graph.addNode(routeNode);
         endpointsCreated++;
 
         // MODULE --EXPOSES--> ENDPOINT
         await graph.addEdge({
           type: 'EXPOSES',
           src: module.id,
-          dst: endpoint.id
+          dst: routeNode.id
         });
         edgesCreated++;
 
         // ENDPOINT --INTERACTS_WITH--> EXTERNAL_NETWORK
         await graph.addEdge({
           type: 'INTERACTS_WITH',
-          src: endpoint.id,
+          src: routeNode.id,
           dst: networkId
         });
         edgesCreated++;
@@ -323,19 +322,27 @@ export class ExpressAnalyzer extends Plugin {
 
       // Создаём MOUNT_POINT ноды
       for (const mountPoint of mountPoints) {
-        await graph.addNode(mountPoint as unknown as NodeRecord);
+        const mountNode = NodeFactory.createExpressMount(
+          mountPoint.prefix,
+          mountPoint.mountedOn,
+          mountPoint.file,
+          mountPoint.line,
+          mountPoint.column,
+          { targetFunction: mountPoint.targetFunction, targetVariable: mountPoint.targetVariable }
+        );
+        await graph.addNode(mountNode);
         mountPointsCreated++;
 
         // MODULE --DEFINES--> MOUNT_POINT
         await graph.addEdge({
           type: 'DEFINES',
           src: module.id,
-          dst: mountPoint.id
+          dst: mountNode.id
         });
         edgesCreated++;
 
         // Создаём MOUNTS рёбра
-        const mountEdges = await this.createMountEdges(mountPoint, module, imports, graph);
+        const mountEdges = await this.createMountEdges(mountPoint, mountNode.id, module, imports, graph);
         edgesCreated += mountEdges;
       }
     } catch (error) {
@@ -353,8 +360,9 @@ export class ExpressAnalyzer extends Plugin {
    * Создать MOUNTS рёбра для mount point
    */
   private async createMountEdges(
-    mountPoint: MountPointNode,
-    module: NodeRecord,
+    mountPoint: MountPointData,
+    mountNodeId: string,
+    module: { id: string; file?: string; name?: string },
     imports: ImportInfo[],
     graph: PluginContext['graph']
   ): Promise<number> {
@@ -403,7 +411,7 @@ export class ExpressAnalyzer extends Plugin {
       if (targetModule) {
         await graph.addEdge({
           type: 'MOUNTS',
-          src: mountPoint.id,
+          src: mountNodeId,
           dst: targetModuleId
         });
         edgesCreated++;

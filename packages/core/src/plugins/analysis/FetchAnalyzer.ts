@@ -16,20 +16,18 @@ import type { CallExpression, Identifier, MemberExpression, ObjectExpression, No
 import type { NodePath } from '@babel/traverse';
 import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
-import type { NodeRecord } from '@grafema/types';
+import type { NodeRecord, AnyBrandedNode } from '@grafema/types';
 import { NetworkRequestNode } from '../../core/nodes/NetworkRequestNode.js';
+import { NodeFactory } from '../../core/NodeFactory.js';
 import { getLine, getColumn } from './ast/utils/location.js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const traverse = (traverseModule as any).default || traverseModule;
 
 /**
- * HTTP request node
+ * HTTP request data - raw data before node creation
  */
-interface HttpRequestNode {
-  id: string;
-  type: 'http:request';
-  name: string;  // Human-readable name like "GET /api/users"
+interface HttpRequestData {
   method: string;
   methodSource: MethodSource;
   url: string;
@@ -50,7 +48,7 @@ const RESPONSE_CONSUMPTION_METHODS = ['json', 'text', 'blob', 'arrayBuffer', 'fo
  * Fetch call info with response variable name (for responseDataNode tracking)
  */
 interface FetchCallInfo {
-  request: HttpRequestNode;
+  request: HttpRequestData;
   responseVarName: string | null;
 }
 
@@ -141,7 +139,7 @@ export class FetchAnalyzer extends Plugin {
    */
   private async ensureNetworkNode(graph: PluginContext['graph']): Promise<string> {
     if (!this.networkNodeId) {
-      const networkNode = NetworkRequestNode.create();
+      const networkNode = NodeFactory.createNetworkRequest();
       await graph.addNode(networkNode);
       this.networkNodeCreated = true;
       this.networkNodeId = networkNode.id;
@@ -207,10 +205,7 @@ export class FetchAnalyzer extends Plugin {
             const method = methodInfo.method;
             const line = getLine(node);
 
-            const request: HttpRequestNode = {
-              id: `http:request#${method}:${url}#${module.file}#${line}`,
-              type: 'http:request',
-              name: `${method} ${url}`,
+            const request: HttpRequestData = {
               method: method,
               methodSource: methodInfo.source,
               url: url,
@@ -243,10 +238,7 @@ export class FetchAnalyzer extends Plugin {
             const url = this.extractURL(urlArg);
             const line = getLine(node);
 
-            const request: HttpRequestNode = {
-              id: `http:request#${method}:${url}#${module.file}#${line}`,
-              type: 'http:request',
-              name: `${method} ${url}`,
+            const request: HttpRequestData = {
               method: method,
               methodSource: 'explicit',
               url: url,
@@ -284,11 +276,8 @@ export class FetchAnalyzer extends Plugin {
               const method = methodInfo.method;
               const line = getLine(node);
 
-              const request: HttpRequestNode = {
-                id: `http:request#${method}:${url}#${module.file}#${line}`,
-                type: 'http:request',
-                name: `${method} ${url}`,
-                method: method,
+              const request: HttpRequestData = {
+                method: method.toUpperCase(),
                 methodSource: methodInfo.source,
                 url: url,
                 library: 'axios',
@@ -321,10 +310,7 @@ export class FetchAnalyzer extends Plugin {
               const method = methodInfo.method;
               const line = getLine(node);
 
-              const request: HttpRequestNode = {
-                id: `http:request#${method}:${url}#${module.file}#${line}`,
-                type: 'http:request',
-                name: `${method} ${url}`,
+              const request: HttpRequestData = {
                 method: method,
                 methodSource: methodInfo.source,
                 url: url,
@@ -348,13 +334,15 @@ export class FetchAnalyzer extends Plugin {
       });
 
       // Extract httpRequests for external API handling
-      const httpRequests = fetchCalls.map(fc => fc.request);
+      // Track created node IDs for edges
+      const createdRequestNodes: Array<{ node: AnyBrandedNode; data: HttpRequestData }> = [];
 
       // Создаём HTTP_REQUEST ноды
       for (const fetchCall of fetchCalls) {
         const request = fetchCall.request;
 
         // Find responseDataNode if we have a response variable name
+        let responseDataNode: string | null = null;
         if (fetchCall.responseVarName) {
           const responseDataNodeId = await this.findResponseJsonCall(
             graph,
@@ -363,24 +351,35 @@ export class FetchAnalyzer extends Plugin {
             request.line
           );
           if (responseDataNodeId) {
-            request.responseDataNode = responseDataNodeId;
+            responseDataNode = responseDataNodeId;
           }
         }
 
-        await graph.addNode(request as unknown as NodeRecord);
+        const requestNode = NodeFactory.createHttpRequestCall(
+          request.method,
+          request.url,
+          request.library,
+          request.file,
+          request.line,
+          request.column,
+          request.staticUrl,
+          { responseDataNode }
+        );
+        await graph.addNode(requestNode);
+        createdRequestNodes.push({ node: requestNode, data: request });
 
         // Создаём ребро от модуля к request
         await graph.addEdge({
           type: 'CONTAINS',
           src: module.id,
-          dst: request.id
+          dst: requestNode.id
         });
 
         // http:request --CALLS--> net:request singleton (created lazily)
         const networkId = await this.ensureNetworkNode(graph);
         await graph.addEdge({
           type: 'CALLS',
-          src: request.id,
+          src: requestNode.id,
           dst: networkId
         });
 
@@ -407,7 +406,7 @@ export class FetchAnalyzer extends Plugin {
           await graph.addEdge({
             type: 'MAKES_REQUEST',
             src: closestFunction.id,
-            dst: request.id
+            dst: requestNode.id
           });
         }
 
@@ -424,7 +423,7 @@ export class FetchAnalyzer extends Plugin {
             await graph.addEdge({
               type: 'MAKES_REQUEST',
               src: callNode.id,
-              dst: request.id
+              dst: requestNode.id
             });
             break; // Only link to first matching CALL node
           }
@@ -433,27 +432,21 @@ export class FetchAnalyzer extends Plugin {
 
       // Создаём EXTERNAL ноды для внешних API
       for (const apiDomain of externalAPIs) {
-        const apiId = `EXTERNAL#${apiDomain}`;
-
         // Проверяем что нода ещё не создана
-        const existingApi = await graph.getNode(apiId);
+        const externalNode = NodeFactory.createExternal(apiDomain);
+        const existingApi = await graph.getNode(externalNode.id);
         if (!existingApi) {
-          await graph.addNode({
-            id: apiId,
-            type: 'EXTERNAL',
-            domain: apiDomain,
-            name: apiDomain
-          } as unknown as NodeRecord);
+          await graph.addNode(externalNode);
         }
 
         // Создаём рёбра от http:request к EXTERNAL
-        const apiRequests = httpRequests.filter(r => r.url.includes(apiDomain));
+        const apiRequests = createdRequestNodes.filter(r => r.data.url.includes(apiDomain));
 
-        for (const request of apiRequests) {
+        for (const { node: requestNode } of apiRequests) {
           await graph.addEdge({
             type: 'CALLS_API',
-            src: request.id,
-            dst: apiId
+            src: requestNode.id,
+            dst: externalNode.id
           });
         }
       }

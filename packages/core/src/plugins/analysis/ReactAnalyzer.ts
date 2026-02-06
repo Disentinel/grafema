@@ -18,6 +18,7 @@ import type { Node, CallExpression, JSXElement, JSXAttribute, VariableDeclarator
 import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { NodeRecord } from '@grafema/types';
+import { brandNode } from '@grafema/types';
 import { getLine, getColumn } from './ast/utils/location.js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1326,7 +1327,15 @@ export class ReactAnalyzer extends Plugin {
   ): Promise<void> {
     // Add component nodes
     for (const component of analysis.components) {
-      await graph.addNode(component as unknown as NodeRecord);
+      await graph.addNode(brandNode({
+        id: component.id,
+        type: 'react:component' as const,
+        name: component.name,
+        file: component.file,
+        line: component.line,
+        column: component.column,
+        kind: component.kind
+      }));
       if (moduleId) {
         await graph.addEdge({
           type: 'DEFINES',
@@ -1338,22 +1347,58 @@ export class ReactAnalyzer extends Plugin {
 
     // Add hook nodes
     for (const hook of analysis.hooks) {
-      await graph.addNode(hook as unknown as NodeRecord);
+      // Extract all hook properties except those we explicitly set
+      const { id, type, file, line, column, hookName, ...restHook } = hook;
+      await graph.addNode(brandNode({
+        id,
+        type,
+        name: hookName,
+        file,
+        line,
+        column,
+        hookName,
+        ...restHook
+      }));
     }
 
     // Add event nodes
     for (const event of analysis.events) {
-      await graph.addNode(event as unknown as NodeRecord);
+      await graph.addNode(brandNode({
+        id: event.id,
+        type: 'dom:event' as const,
+        name: event.eventType,
+        file: event.file,
+        line: event.line,
+        eventType: event.eventType,
+        reactProp: event.reactProp,
+        handler: event.handler
+      }));
     }
 
     // Add browser API nodes
     for (const api of analysis.browserAPIs) {
-      await graph.addNode(api as unknown as NodeRecord);
+      const { id, type, file, line, ...restApi } = api;
+      await graph.addNode(brandNode({
+        id,
+        type,
+        name: (api as { api?: string }).api || type,
+        file,
+        line,
+        ...restApi
+      }));
     }
 
     // Add issue nodes
     for (const issue of analysis.issues) {
-      await graph.addNode(issue as unknown as NodeRecord);
+      const { id, type, file, line, ...restIssue } = issue;
+      await graph.addNode(brandNode({
+        id,
+        type,
+        name: (issue as { variable?: string }).variable || type,
+        file,
+        line,
+        ...restIssue
+      }));
     }
 
     // Add edges

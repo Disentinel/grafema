@@ -249,7 +249,39 @@ export interface HttpRouteNodeRecord extends BaseNodeRecord {
   type: 'http:route';
   method: string;
   path: string;
+  localPath?: string;    // Original path before mounting (e.g., '/users' before being mounted on '/api')
+  mountedOn?: string;    // Variable name of mount target (e.g., 'app', 'router')
   handler?: string;
+}
+
+// HTTP Request node (fetch, axios, etc. call sites)
+export interface HttpRequestCallNodeRecord extends BaseNodeRecord {
+  type: 'http:request';
+  method: string;
+  url: string;
+  library: string;       // 'fetch', 'axios', or custom wrapper name
+  staticUrl: 'yes' | 'no';
+  responseDataNode?: string | null;  // ID of CALL node for response.json(), etc.
+}
+
+// Express mount point node
+export interface ExpressMountNodeRecord extends BaseNodeRecord {
+  type: 'express:mount';
+  prefix: string;
+  targetFunction: string | null;
+  targetVariable: string | null;
+  mountedOn: string;     // Variable name (e.g., 'app', 'router')
+}
+
+// Network request singleton node (represents external network as system resource)
+export interface NetworkRequestNodeRecord extends BaseNodeRecord {
+  type: 'net:request';
+}
+
+// External API/service node
+export interface ExternalNodeRecord extends BaseNodeRecord {
+  type: 'EXTERNAL';
+  domain?: string;
 }
 
 // Database query node
@@ -304,6 +336,10 @@ export type NodeRecord =
   | CatchBlockNodeRecord
   | FinallyBlockNodeRecord
   | HttpRouteNodeRecord
+  | HttpRequestCallNodeRecord
+  | ExpressMountNodeRecord
+  | NetworkRequestNodeRecord
+  | ExternalNodeRecord
   | DbQueryNodeRecord
   | EventListenerNodeRecord
   | GuaranteeNodeRecord

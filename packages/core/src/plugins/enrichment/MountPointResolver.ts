@@ -19,6 +19,7 @@ import { Plugin } from '../Plugin.js';
 import { createSuccessResult, createErrorResult } from '@grafema/types';
 import type { PluginMetadata, PluginContext, PluginResult } from '@grafema/types';
 import type { BaseNodeRecord } from '@grafema/types';
+import { brandNode } from '@grafema/types';
 import { isRelativeImport, resolveRelativeSpecifier } from '../../utils/moduleResolution.js';
 
 interface MountNode {
@@ -233,7 +234,7 @@ export class MountPointResolver extends Plugin {
             fullPath: route.fullPath || fullPath
           };
 
-          await graph.addNode(updatedRoute as BaseNodeRecord);
+          await graph.addNode(brandNode(updatedRoute as BaseNodeRecord));
           routesUpdated++;
         }
 

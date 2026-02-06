@@ -19,6 +19,7 @@ import type { NodePath } from '@babel/traverse';
 import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { NodeRecord } from '@grafema/types';
+import { brandNode } from '@grafema/types';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const traverse = (traverseModule as any).default || traverseModule;
@@ -177,9 +178,9 @@ export class SystemDbAnalyzer extends Plugin {
               line: reg.line
             });
 
-            await graph.addNode({
+            await graph.addNode(brandNode({
               id: nodeId,
-              type: 'SYSTEM_DB_VIEW_REGISTRATION',
+              type: 'SYSTEM_DB_VIEW_REGISTRATION' as const,
               name: `${reg.type}('${reg.viewName}', '${reg.serverName}')`,
               file: module.file,
               line: reg.line,
@@ -187,7 +188,7 @@ export class SystemDbAnalyzer extends Plugin {
               viewName: reg.viewName,
               serverName: reg.serverName,
               callType: reg.type
-            } as unknown as NodeRecord);
+            }));
             nodesCreated++;
 
             // Link MODULE -> REGISTERS_VIEW -> REGISTRATION
@@ -203,15 +204,15 @@ export class SystemDbAnalyzer extends Plugin {
           for (const sub of subscriptions) {
             const nodeId = `${module.file}:SYSTEM_DB_SUBSCRIPTION:${sub.line}`;
 
-            await graph.addNode({
+            await graph.addNode(brandNode({
               id: nodeId,
-              type: 'SYSTEM_DB_SUBSCRIPTION',
+              type: 'SYSTEM_DB_SUBSCRIPTION' as const,
               name: `subscribe([${sub.servers.join(', ')}])`,
               file: module.file,
               line: sub.line,
               column: sub.column,
               servers: sub.servers
-            } as unknown as NodeRecord);
+            }));
             nodesCreated++;
 
             // Link MODULE -> CHECKS_VIEWS -> SUBSCRIPTION

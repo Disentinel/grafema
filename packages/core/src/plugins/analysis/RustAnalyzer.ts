@@ -8,6 +8,7 @@ import { readFileSync } from 'fs';
 import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { NodeRecord } from '@grafema/types';
+import { brandNode } from '@grafema/types';
 
 /**
  * Rust function from parser
@@ -291,19 +292,19 @@ export class RustAnalyzer extends Plugin {
       for (const call of calls || []) {
         const callId = `RUST_CALL#${parentName}#${call.line}#${call.column}#${module.file}`;
 
-        await graph.addNode({
+        await graph.addNode(brandNode({
           id: callId,
-          type: 'RUST_CALL',
-          file: module.file,
+          type: 'RUST_CALL' as const,
+          file: module.file || '',
           line: call.line,
           column: call.column,
+          name: call.name || `${call.callType}:${call.method || 'unknown'}`,
           callType: call.callType, // "function" | "method" | "macro"
-          name: call.name || null,
           receiver: call.receiver || null,
           method: call.method || null,
           argsCount: call.argsCount,
           sideEffect: call.sideEffect || null // "fs:write", "panic", "io:print", etc.
-        } as unknown as NodeRecord);
+        }));
 
         edges.push({ src: parentId, dst: callId, type: 'CONTAINS' });
         callCount++;
@@ -314,11 +315,11 @@ export class RustAnalyzer extends Plugin {
     for (const fn of parseResult.functions) {
       const nodeId = `RUST_FUNCTION#${fn.name}#${module.file}#${fn.line}`;
 
-      await graph.addNode({
+      await graph.addNode(brandNode({
         id: nodeId,
-        type: 'RUST_FUNCTION',
+        type: 'RUST_FUNCTION' as const,
         name: fn.name,
-        file: module.file,
+        file: module.file || '',
         line: fn.line,
         column: fn.column,
         pub: fn.isPub,
@@ -333,7 +334,7 @@ export class RustAnalyzer extends Plugin {
         params: fn.params || [],
         returnType: fn.returnType || null,
         unsafeBlocks: fn.unsafeBlocks?.length || 0 // Count of unsafe blocks in body
-      } as unknown as NodeRecord);
+      }));
 
       edges.push({ src: module.id, dst: nodeId, type: 'CONTAINS' });
 
@@ -345,16 +346,16 @@ export class RustAnalyzer extends Plugin {
     for (const s of parseResult.structs) {
       const nodeId = `RUST_STRUCT#${s.name}#${module.file}#${s.line}`;
 
-      await graph.addNode({
+      await graph.addNode(brandNode({
         id: nodeId,
-        type: 'RUST_STRUCT',
+        type: 'RUST_STRUCT' as const,
         name: s.name,
-        file: module.file,
+        file: module.file || '',
         line: s.line,
         pub: s.isPub,
         napi: s.isNapi,
         fields: s.fields || []
-      } as unknown as NodeRecord);
+      }));
 
       edges.push({ src: module.id, dst: nodeId, type: 'CONTAINS' });
     }
@@ -363,14 +364,14 @@ export class RustAnalyzer extends Plugin {
     for (const impl of parseResult.impls) {
       const implId = `RUST_IMPL#${impl.targetType}${impl.traitName ? ':' + impl.traitName : ''}#${module.file}#${impl.line}`;
 
-      await graph.addNode({
+      await graph.addNode(brandNode({
         id: implId,
-        type: 'RUST_IMPL',
+        type: 'RUST_IMPL' as const,
         name: impl.targetType,
         traitName: impl.traitName || null,
-        file: module.file,
+        file: module.file || '',
         line: impl.line
-      } as unknown as NodeRecord);
+      }));
 
       edges.push({ src: module.id, dst: implId, type: 'CONTAINS' });
 
@@ -387,11 +388,11 @@ export class RustAnalyzer extends Plugin {
       for (const method of impl.methods) {
         const methodId = `RUST_METHOD#${method.name}#${module.file}#${method.line}`;
 
-        await graph.addNode({
+        await graph.addNode(brandNode({
           id: methodId,
-          type: 'RUST_METHOD',
+          type: 'RUST_METHOD' as const,
           name: method.name,
-          file: module.file,
+          file: module.file || '',
           line: method.line,
           column: method.column,
           pub: method.isPub,
@@ -409,7 +410,7 @@ export class RustAnalyzer extends Plugin {
           implId: implId,
           implType: impl.targetType,
           unsafeBlocks: method.unsafeBlocks?.length || 0 // Count of unsafe blocks in body
-        } as unknown as NodeRecord);
+        }));
 
         edges.push({ src: implId, dst: methodId, type: 'CONTAINS' });
         methodCount++;
@@ -423,11 +424,11 @@ export class RustAnalyzer extends Plugin {
     for (const t of parseResult.traits) {
       const nodeId = `RUST_TRAIT#${t.name}#${module.file}#${t.line}`;
 
-      await graph.addNode({
+      await graph.addNode(brandNode({
         id: nodeId,
-        type: 'RUST_TRAIT',
+        type: 'RUST_TRAIT' as const,
         name: t.name,
-        file: module.file,
+        file: module.file || '',
         line: t.line,
         pub: t.isPub,
         methods: (t.methods || []).map(m => ({
@@ -435,7 +436,7 @@ export class RustAnalyzer extends Plugin {
           params: m.params,
           returnType: m.returnType
         }))
-      } as unknown as NodeRecord);
+      }));
 
       edges.push({ src: module.id, dst: nodeId, type: 'CONTAINS' });
     }

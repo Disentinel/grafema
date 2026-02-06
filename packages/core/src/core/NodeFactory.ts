@@ -44,6 +44,10 @@ import {
   ExpressionNode,
   ArgumentExpressionNode,
   IssueNode,
+  HttpRouteNode,
+  HttpRequestCallNode,
+  ExpressMountNode,
+  ExternalNode,
   type EntrypointType,
   type EntrypointTrigger,
   type DecoratorTargetType,
@@ -228,6 +232,21 @@ interface ArgumentExpressionOptions extends ExpressionOptions {
   parentCallId: string;
   argIndex: number;
   counter?: number;
+}
+
+interface HttpRouteOptions {
+  localPath?: string;
+  mountedOn?: string;
+  handler?: string;
+}
+
+interface HttpRequestCallOptions {
+  responseDataNode?: string | null;
+}
+
+interface ExpressMountOptions {
+  targetFunction?: string | null;
+  targetVariable?: string | null;
 }
 
 // Validator type for node classes
@@ -664,6 +683,91 @@ export class NodeFactory {
   }
 
   /**
+   * Create http:route node
+   *
+   * Represents HTTP route definitions (Express app.get(), router.post(), etc.)
+   *
+   * @param method - HTTP method (GET, POST, etc.)
+   * @param path - Route path (e.g., '/users', '/api/items/:id')
+   * @param file - Absolute file path
+   * @param line - Line number
+   * @param column - Column position
+   * @param options - Optional fields (localPath, mountedOn, handler)
+   */
+  static createHttpRoute(
+    method: string,
+    path: string,
+    file: string,
+    line: number,
+    column: number,
+    options: HttpRouteOptions = {}
+  ) {
+    return brandNode(HttpRouteNode.create(method, path, file, line, column, options));
+  }
+
+  /**
+   * Create http:request node
+   *
+   * Represents HTTP request call sites (fetch(), axios.get(), etc.)
+   *
+   * @param method - HTTP method (GET, POST, etc.)
+   * @param url - Request URL (may be 'dynamic' if not statically determinable)
+   * @param library - Library used ('fetch', 'axios', or custom wrapper name)
+   * @param file - Absolute file path
+   * @param line - Line number
+   * @param column - Column position
+   * @param staticUrl - 'yes' if URL is static, 'no' if dynamic
+   * @param options - Optional fields (responseDataNode)
+   */
+  static createHttpRequestCall(
+    method: string,
+    url: string,
+    library: string,
+    file: string,
+    line: number,
+    column: number,
+    staticUrl: 'yes' | 'no',
+    options: HttpRequestCallOptions = {}
+  ) {
+    return brandNode(HttpRequestCallNode.create(method, url, library, file, line, column, staticUrl, options));
+  }
+
+  /**
+   * Create express:mount node
+   *
+   * Represents Express.js app.use() mount points.
+   *
+   * @param prefix - Mount path prefix (e.g., '/api', '/users')
+   * @param mountedOn - Variable name of mount target (e.g., 'app', 'router')
+   * @param file - Absolute file path
+   * @param line - Line number
+   * @param column - Column position
+   * @param options - Optional target function/variable
+   */
+  static createExpressMount(
+    prefix: string,
+    mountedOn: string,
+    file: string,
+    line: number,
+    column: number,
+    options: ExpressMountOptions = {}
+  ) {
+    return brandNode(ExpressMountNode.create(prefix, mountedOn, file, line, column, options));
+  }
+
+  /**
+   * Create EXTERNAL node
+   *
+   * Represents external APIs/services that the codebase interacts with.
+   * Singleton per domain - same domain always produces same ID.
+   *
+   * @param domain - External service domain (e.g., 'api.github.com')
+   */
+  static createExternal(domain: string) {
+    return brandNode(ExternalNode.create(domain));
+  }
+
+  /**
    * Validate node by its type
    */
   static validate(node: BaseNodeRecord): string[] {
@@ -696,7 +800,11 @@ export class NodeFactory {
       'TYPE': TypeNode,
       'ENUM': EnumNode,
       'DECORATOR': DecoratorNode,
-      'EXPRESSION': ExpressionNode
+      'EXPRESSION': ExpressionNode,
+      'http:route': HttpRouteNode,
+      'http:request': HttpRequestCallNode,
+      'express:mount': ExpressMountNode,
+      'EXTERNAL': ExternalNode
     };
 
     // Handle issue:* types dynamically

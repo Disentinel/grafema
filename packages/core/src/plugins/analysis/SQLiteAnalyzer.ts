@@ -16,6 +16,7 @@ import type { NodePath } from '@babel/traverse';
 import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { NodeRecord } from '@grafema/types';
+import { brandNode } from '@grafema/types';
 import { getLine, getColumn } from './ast/utils/location.js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -271,10 +272,19 @@ export class SQLiteAnalyzer extends Plugin {
 
       // Создаём DATABASE_QUERY ноды
       for (const query of queries) {
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        const { promiseWrapped, ...queryData } = query;
-
-        await graph.addNode(queryData as unknown as NodeRecord);
+        await graph.addNode(brandNode({
+          id: query.id,
+          type: 'db:query' as const,
+          name: query.query.substring(0, 50),
+          file: query.file,
+          line: query.line,
+          column: query.column,
+          method: query.method,
+          query: query.query,
+          params: query.params,
+          operationType: query.operationType,
+          tableName: query.tableName
+        }));
         queriesCreated++;
 
         // MODULE -> CONTAINS -> DATABASE_QUERY

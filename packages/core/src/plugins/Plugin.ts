@@ -16,7 +16,7 @@ import type {
   NodeFilter,
   Logger,
 } from '@grafema/types';
-import type { NodeRecord } from '@grafema/types';
+import type { NodeRecord, AnyBrandedNode } from '@grafema/types';
 
 // Re-export types for convenience
 export type { PluginMetadata, PluginContext, PluginResult, IPlugin };
@@ -63,9 +63,11 @@ export abstract class Plugin implements IPlugin {
   /**
    * Helper: Get all MODULE nodes from graph
    * Works with RFDBServerBackend
+   *
+   * Returns branded nodes since they come from the database.
    */
-  async getModules(graph: PluginContext['graph']): Promise<NodeRecord[]> {
-    const modules: NodeRecord[] = [];
+  async getModules(graph: PluginContext['graph']): Promise<AnyBrandedNode[]> {
+    const modules: AnyBrandedNode[] = [];
     const filter: NodeFilter = { type: 'MODULE' };
     for await (const node of graph.queryNodes(filter)) {
       modules.push(node);
