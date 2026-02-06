@@ -101,6 +101,8 @@ import type {
   UpdateExpressionInfo,
   PromiseResolutionInfo,
   PromiseExecutorContext,
+  RejectionPatternInfo,
+  CatchesFromInfo,
   CounterRef,
   ProcessedNodes,
   ASTCollections,
@@ -1463,6 +1465,9 @@ export class JSASTAnalyzer extends Plugin {
       const promiseExecutorContexts = new Map<string, PromiseExecutorContext>();
       // Yield expression tracking for YIELDS/DELEGATES_TO edges (REG-270)
       const yieldExpressions: YieldExpressionInfo[] = [];
+      // REG-311: Async error tracking
+      const rejectionPatterns: RejectionPatternInfo[] = [];
+      const catchesFromInfos: CatchesFromInfo[] = [];
 
       const ifScopeCounterRef: CounterRef = { value: 0 };
       const scopeCounterRef: CounterRef = { value: 0 };
@@ -1540,6 +1545,9 @@ export class JSASTAnalyzer extends Plugin {
         promiseExecutorContexts,
         // Yield expression tracking (REG-270)
         yieldExpressions,
+        // REG-311: Async error tracking
+        rejectionPatterns,
+        catchesFromInfos,
         objectLiteralCounterRef, arrayLiteralCounterRef,
         ifScopeCounterRef, scopeCounterRef, varDeclCounterRef,
         callSiteCounterRef, functionCounterRef, httpRequestCounterRef,
@@ -1798,7 +1806,9 @@ export class JSASTAnalyzer extends Plugin {
                     resolveName,
                     rejectName,
                     file: module.file,
-                    line
+                    line,
+                    // REG-311: Module-level Promise has no creator function
+                    creatorFunctionId: undefined
                   });
                 }
               }
@@ -1913,7 +1923,14 @@ export class JSASTAnalyzer extends Plugin {
         // Object/Array literal tracking - use allCollections refs as visitors may have created new arrays
         objectLiterals: allCollections.objectLiterals || objectLiterals,
         objectProperties: allCollections.objectProperties || objectProperties,
-        arrayLiterals: allCollections.arrayLiterals || arrayLiterals
+        arrayLiterals: allCollections.arrayLiterals || arrayLiterals,
+        // REG-311: Async error tracking
+        rejectionPatterns: Array.isArray(allCollections.rejectionPatterns)
+          ? allCollections.rejectionPatterns as RejectionPatternInfo[]
+          : rejectionPatterns,
+        catchesFromInfos: Array.isArray(allCollections.catchesFromInfos)
+          ? allCollections.catchesFromInfos as CatchesFromInfo[]
+          : catchesFromInfos
       });
       this.profiler.end('graph_build');
 
@@ -2410,7 +2427,7 @@ export class JSASTAnalyzer extends Plugin {
     scopeTracker: ScopeTracker | undefined,
     tryScopeMap: Map<t.TryStatement, TryScopeInfo>,
     scopeIdStack?: string[],
-    controlFlowState?: { hasTryCatch: boolean }
+    controlFlowState?: { hasTryCatch: boolean; tryBlockDepth: number }
   ): { enter: (tryPath: NodePath<t.TryStatement>) => void; exit: (tryPath: NodePath<t.TryStatement>) => void } {
     return {
       enter: (tryPath: NodePath<t.TryStatement>) => {
@@ -2419,6 +2436,8 @@ export class JSASTAnalyzer extends Plugin {
         // Phase 6 (REG-267): Mark that this function has try/catch
         if (controlFlowState) {
           controlFlowState.hasTryCatch = true;
+          // REG-311: Increment try block depth for O(1) isInsideTry detection
+          controlFlowState.tryBlockDepth++;
         }
 
         // Determine actual parent - use stack for nested structures, otherwise original parentScopeId
@@ -2560,6 +2579,12 @@ export class JSASTAnalyzer extends Plugin {
         const tryNode = tryPath.node;
         const scopeInfo = tryScopeMap.get(tryNode);
 
+        // REG-311: Only decrement try block depth if we're still in 'try' block
+        // (not transitioned to catch/finally, where we already decremented)
+        if (controlFlowState && scopeInfo?.currentBlock === 'try') {
+          controlFlowState.tryBlockDepth--;
+        }
+
         // Pop the current scope from stack (could be try, catch, or finally)
         if (scopeIdStack) {
           scopeIdStack.pop();
@@ -2593,7 +2618,8 @@ export class JSASTAnalyzer extends Plugin {
     varDeclCounterRef: CounterRef,
     scopeTracker: ScopeTracker | undefined,
     tryScopeMap: Map<t.TryStatement, TryScopeInfo>,
-    scopeIdStack?: string[]
+    scopeIdStack?: string[],
+    controlFlowState?: { hasTryCatch: boolean; tryBlockDepth: number }
   ): { enter: (catchPath: NodePath<t.CatchClause>) => void } {
     return {
       enter: (catchPath: NodePath<t.CatchClause>) => {
@@ -2617,6 +2643,12 @@ export class JSASTAnalyzer extends Plugin {
           if (scopeTracker) {
             scopeTracker.exitScope();
             scopeTracker.enterCountedScope('catch');
+          }
+
+          // REG-311: Decrement tryBlockDepth when leaving try block for catch
+          // Calls in catch block should NOT have isInsideTry=true
+          if (controlFlowState) {
+            controlFlowState.tryBlockDepth--;
           }
 
           scopeInfo.currentBlock = 'catch';
@@ -3628,6 +3660,16 @@ export class JSASTAnalyzer extends Plugin {
     }
     const promiseResolutions = collections.promiseResolutions as PromiseResolutionInfo[];
 
+    // REG-311: Initialize rejectionPatterns and catchesFromInfos collections
+    if (!collections.rejectionPatterns) {
+      collections.rejectionPatterns = [];
+    }
+    if (!collections.catchesFromInfos) {
+      collections.catchesFromInfos = [];
+    }
+    const rejectionPatterns = collections.rejectionPatterns as RejectionPatternInfo[];
+    const catchesFromInfos = collections.catchesFromInfos as CatchesFromInfo[];
+
     // Dynamic scope ID stack for CONTAINS edges
     // Starts with the function body scope, gets updated as we enter/exit conditional scopes
     const scopeIdStack: string[] = [parentScopeId];
@@ -3665,7 +3707,9 @@ export class JSASTAnalyzer extends Plugin {
       hasEarlyReturn: false,
       hasThrow: false,
       returnCount: 0,       // Track total return count for early return detection
-      totalStatements: 0    // Track if there are statements after returns
+      totalStatements: 0,   // Track if there are statements after returns
+      // REG-311: Try block depth counter for O(1) isInsideTry detection
+      tryBlockDepth: 0
     };
 
     // Handle implicit return for THIS arrow function if it has an expression body
@@ -3821,6 +3865,7 @@ export class JSASTAnalyzer extends Plugin {
       },
 
       // Phase 6 (REG-267): Track throw statements for control flow metadata
+      // REG-311: Also detect async_throw rejection patterns
       ThrowStatement: (throwPath: NodePath<t.ThrowStatement>) => {
         // Skip if this throw is inside a nested function (not the function we're analyzing)
         let parent: NodePath | null = throwPath.parentPath;
@@ -3833,6 +3878,67 @@ export class JSASTAnalyzer extends Plugin {
         }
 
         controlFlowState.hasThrow = true;
+
+        // REG-311: Track rejection patterns for async functions
+        const isAsyncFunction = funcNode.async === true;
+        if (isAsyncFunction && currentFunctionId) {
+          const throwNode = throwPath.node;
+          const arg = throwNode.argument;
+          const throwLine = getLine(throwNode);
+          const throwColumn = getColumn(throwNode);
+
+          // Case 1: throw new Error() or throw new CustomError()
+          if (arg && t.isNewExpression(arg) && t.isIdentifier(arg.callee)) {
+            rejectionPatterns.push({
+              functionId: currentFunctionId,
+              errorClassName: arg.callee.name,
+              rejectionType: 'async_throw',
+              file: module.file,
+              line: throwLine,
+              column: throwColumn
+            });
+          }
+          // Case 2: throw identifier - needs micro-trace
+          else if (arg && t.isIdentifier(arg)) {
+            const varName = arg.name;
+
+            // Check if it's a parameter
+            const isParameter = funcNode.params.some(p =>
+              t.isIdentifier(p) && p.name === varName
+            );
+
+            if (isParameter) {
+              // Parameter forwarding - can't resolve statically
+              rejectionPatterns.push({
+                functionId: currentFunctionId,
+                errorClassName: null,
+                rejectionType: 'variable_parameter',
+                file: module.file,
+                line: throwLine,
+                column: throwColumn,
+                sourceVariableName: varName
+              });
+            } else {
+              // Try micro-trace
+              const { errorClassName, tracePath } = this.microTraceToErrorClass(
+                varName,
+                funcPath,
+                variableDeclarations
+              );
+
+              rejectionPatterns.push({
+                functionId: currentFunctionId,
+                errorClassName,
+                rejectionType: errorClassName ? 'variable_traced' : 'variable_unknown',
+                file: module.file,
+                line: throwLine,
+                column: throwColumn,
+                sourceVariableName: varName,
+                tracePath
+              });
+            }
+          }
+        }
       },
 
       // Handle yield expressions for YIELDS/DELEGATES_TO edges (REG-270)
@@ -3941,7 +4047,8 @@ export class JSASTAnalyzer extends Plugin {
         varDeclCounterRef,
         scopeTracker,
         tryScopeMap,
-        scopeIdStack
+        scopeIdStack,
+        controlFlowState
       ),
 
       SwitchStatement: (switchPath: NodePath<t.SwitchStatement>) => {
@@ -4150,6 +4257,13 @@ export class JSASTAnalyzer extends Plugin {
 
       // Function call expressions
       CallExpression: (callPath: NodePath<t.CallExpression>) => {
+        // REG-311: Detect isAwaited (parent is AwaitExpression)
+        const parent = callPath.parentPath;
+        const isAwaited = parent?.isAwaitExpression() ?? false;
+
+        // REG-311: Detect isInsideTry (O(1) via depth counter)
+        const isInsideTry = controlFlowState.tryBlockDepth > 0;
+
         this.handleCallExpression(
           callPath.node,
           processedCallSites,
@@ -4160,7 +4274,9 @@ export class JSASTAnalyzer extends Plugin {
           callSiteCounterRef,
           scopeTracker,
           getCurrentScopeId(),
-          collections
+          collections,
+          isAwaited,
+          isInsideTry
         );
 
         // REG-334: Check for resolve/reject calls inside Promise executors
@@ -4265,6 +4381,151 @@ export class JSASTAnalyzer extends Plugin {
 
             funcParent = funcParent.getFunctionParent();
           }
+
+          // REG-311: Detect executor_reject pattern - reject(new Error()) inside Promise executor
+          // Walk up to find Promise executor context and check if this is reject call with NewExpression arg
+          funcParent = callPath.getFunctionParent();
+          while (funcParent && currentFunctionId) {
+            const funcNode = funcParent.node;
+            const funcKey = `${funcNode.start}:${funcNode.end}`;
+            const context = promiseExecutorContexts.get(funcKey);
+
+            if (context && calleeName === context.rejectName && callNode.arguments.length > 0) {
+              // REG-311: Use the creator function's ID (the function that created the Promise),
+              // not the executor's ID
+              const targetFunctionId = context.creatorFunctionId || currentFunctionId;
+              const arg = callNode.arguments[0];
+              const callLine = getLine(callNode);
+              const callColumn = getColumn(callNode);
+
+              // Case 1: reject(new Error())
+              if (t.isNewExpression(arg) && t.isIdentifier(arg.callee)) {
+                rejectionPatterns.push({
+                  functionId: targetFunctionId,
+                  errorClassName: arg.callee.name,
+                  rejectionType: 'executor_reject',
+                  file: module.file,
+                  line: callLine,
+                  column: callColumn
+                });
+              }
+              // Case 2: reject(err) where err is variable
+              else if (t.isIdentifier(arg)) {
+                const varName = arg.name;
+                // Check if it's a parameter of ANY containing function (executor, outer, etc.)
+                // Walk up the function chain to find if varName is a parameter
+                let isParameter = false;
+                let checkParent: NodePath<t.Node> | null = funcParent;
+                while (checkParent) {
+                  if (t.isFunction(checkParent.node)) {
+                    if (checkParent.node.params.some(p =>
+                      t.isIdentifier(p) && p.name === varName
+                    )) {
+                      isParameter = true;
+                      break;
+                    }
+                  }
+                  checkParent = checkParent.getFunctionParent();
+                }
+
+                if (isParameter) {
+                  rejectionPatterns.push({
+                    functionId: targetFunctionId,
+                    errorClassName: null,
+                    rejectionType: 'variable_parameter',
+                    file: module.file,
+                    line: callLine,
+                    column: callColumn,
+                    sourceVariableName: varName
+                  });
+                } else {
+                  // Try micro-trace
+                  const { errorClassName, tracePath } = this.microTraceToErrorClass(
+                    varName,
+                    funcParent as NodePath<t.Function>,
+                    variableDeclarations
+                  );
+
+                  rejectionPatterns.push({
+                    functionId: targetFunctionId,
+                    errorClassName,
+                    rejectionType: errorClassName ? 'variable_traced' : 'variable_unknown',
+                    file: module.file,
+                    line: callLine,
+                    column: callColumn,
+                    sourceVariableName: varName,
+                    tracePath
+                  });
+                }
+              }
+              break;
+            }
+            funcParent = funcParent.getFunctionParent();
+          }
+        }
+
+        // REG-311: Detect Promise.reject(new Error()) pattern
+        if (t.isMemberExpression(callNode.callee) && currentFunctionId) {
+          const memberCallee = callNode.callee;
+          if (t.isIdentifier(memberCallee.object) &&
+              memberCallee.object.name === 'Promise' &&
+              t.isIdentifier(memberCallee.property) &&
+              memberCallee.property.name === 'reject' &&
+              callNode.arguments.length > 0) {
+            const arg = callNode.arguments[0];
+            const callLine = getLine(callNode);
+            const callColumn = getColumn(callNode);
+
+            // Case 1: Promise.reject(new Error())
+            if (t.isNewExpression(arg) && t.isIdentifier(arg.callee)) {
+              rejectionPatterns.push({
+                functionId: currentFunctionId,
+                errorClassName: arg.callee.name,
+                rejectionType: 'promise_reject',
+                file: module.file,
+                line: callLine,
+                column: callColumn
+              });
+            }
+            // Case 2: Promise.reject(err) where err is variable
+            else if (t.isIdentifier(arg)) {
+              const varName = arg.name;
+              // Check if it's a parameter of containing function
+              const isParameter = funcNode.params.some(p =>
+                t.isIdentifier(p) && p.name === varName
+              );
+
+              if (isParameter) {
+                rejectionPatterns.push({
+                  functionId: currentFunctionId,
+                  errorClassName: null,
+                  rejectionType: 'variable_parameter',
+                  file: module.file,
+                  line: callLine,
+                  column: callColumn,
+                  sourceVariableName: varName
+                });
+              } else {
+                // Try micro-trace
+                const { errorClassName, tracePath } = this.microTraceToErrorClass(
+                  varName,
+                  funcPath,
+                  variableDeclarations
+                );
+
+                rejectionPatterns.push({
+                  functionId: currentFunctionId,
+                  errorClassName,
+                  rejectionType: errorClassName ? 'variable_traced' : 'variable_unknown',
+                  file: module.file,
+                  line: callLine,
+                  column: callColumn,
+                  sourceVariableName: varName,
+                  tracePath
+                });
+              }
+            }
+          }
         }
       },
 
@@ -4328,7 +4589,9 @@ export class JSASTAnalyzer extends Plugin {
                     resolveName,
                     rejectName,
                     file: module.file,
-                    line
+                    line,
+                    // REG-311: Store the ID of the function that creates the Promise
+                    creatorFunctionId: currentFunctionId || undefined
                   });
                 }
               }
@@ -4406,6 +4669,10 @@ export class JSASTAnalyzer extends Plugin {
       }
     });
 
+    // REG-311: Second pass - collect CATCHES_FROM info for try/catch blocks
+    // This links catch blocks to exception sources in their corresponding try blocks
+    this.collectCatchesFromInfo(funcPath, catchBlocks, callSites, methodCalls, constructorCalls, catchesFromInfos, module);
+
     // Phase 6 (REG-267): Attach control flow metadata to the function node
     if (matchingFunction) {
       const cyclomaticComplexity = 1 +
@@ -4414,13 +4681,27 @@ export class JSASTAnalyzer extends Plugin {
         controlFlowState.caseCount +
         controlFlowState.logicalOpCount;
 
+      // REG-311: Collect rejection info for this function
+      const functionRejectionPatterns = rejectionPatterns.filter(p => p.functionId === matchingFunction.id);
+      const canReject = functionRejectionPatterns.length > 0;
+      const hasAsyncThrow = functionRejectionPatterns.some(p => p.rejectionType === 'async_throw');
+      const rejectedBuiltinErrors = [...new Set(
+        functionRejectionPatterns
+          .filter(p => p.errorClassName !== null)
+          .map(p => p.errorClassName!)
+      )];
+
       matchingFunction.controlFlow = {
         hasBranches: controlFlowState.branchCount > 0,
         hasLoops: controlFlowState.loopCount > 0,
         hasTryCatch: controlFlowState.hasTryCatch,
         hasEarlyReturn: controlFlowState.hasEarlyReturn,
         hasThrow: controlFlowState.hasThrow,
-        cyclomaticComplexity
+        cyclomaticComplexity,
+        // REG-311: Async error tracking
+        canReject,
+        hasAsyncThrow,
+        rejectedBuiltinErrors: rejectedBuiltinErrors.length > 0 ? rejectedBuiltinErrors : undefined
       };
     }
   }
@@ -4434,6 +4715,7 @@ export class JSASTAnalyzer extends Plugin {
    * - Method calls (MemberExpression callee) → methodCalls collection
    * - Array mutation detection (push, unshift, splice)
    * - Object.assign() detection
+   * - REG-311: isAwaited and isInsideTry metadata on CALL nodes
    *
    * @param callNode - The call expression AST node
    * @param processedCallSites - Set of already processed call site keys to avoid duplicates
@@ -4445,6 +4727,8 @@ export class JSASTAnalyzer extends Plugin {
    * @param scopeTracker - Optional scope tracker for semantic ID generation
    * @param parentScopeId - ID of the parent scope containing this call
    * @param collections - Full collections object for array/object mutations
+   * @param isAwaited - REG-311: true if wrapped in await expression
+   * @param isInsideTry - REG-311: true if inside try block
    */
   private handleCallExpression(
     callNode: t.CallExpression,
@@ -4456,7 +4740,9 @@ export class JSASTAnalyzer extends Plugin {
     callSiteCounterRef: CounterRef,
     scopeTracker: ScopeTracker | undefined,
     parentScopeId: string,
-    collections: VisitorCollections
+    collections: VisitorCollections,
+    isAwaited: boolean = false,
+    isInsideTry: boolean = false
   ): void {
     // Handle direct function calls (greet(), main())
     if (callNode.callee.type === 'Identifier') {
@@ -4484,7 +4770,10 @@ export class JSASTAnalyzer extends Plugin {
         line: getLine(callNode),
         column: getColumn(callNode),  // REG-223: Add column for coordinate-based lookup
         parentScopeId,
-        targetFunctionName: calleeName
+        targetFunctionName: calleeName,
+        // REG-311: Async error tracking metadata
+        isAwaited,
+        isInsideTry
       });
     }
     // Handle method calls (obj.method(), data.process())
@@ -4525,7 +4814,11 @@ export class JSASTAnalyzer extends Plugin {
           file: module.file,
           line: getLine(callNode),
           column: getColumn(callNode),
-          parentScopeId
+          parentScopeId,
+          // REG-311: Async error tracking metadata
+          isAwaited,
+          isInsideTry,
+          isMethodCall: true
         });
 
         // Check for array mutation methods (push, unshift, splice)
@@ -4601,6 +4894,255 @@ export class JSASTAnalyzer extends Plugin {
         }
       }
     }
+  }
+
+  /**
+   * REG-311: Micro-trace - follow variable assignments within function to find error source.
+   * Used to resolve reject(err) or throw err where err is a variable.
+   *
+   * Uses cycle detection via Set<variableName> to avoid infinite loops on circular assignments.
+   *
+   * @param variableName - Name of variable to trace
+   * @param funcPath - NodePath of containing function for AST traversal
+   * @param variableDeclarations - Variable declarations in current scope
+   * @returns Error class name if traced to NewExpression, null otherwise, plus trace path
+   */
+  private microTraceToErrorClass(
+    variableName: string,
+    funcPath: NodePath<t.Function>,
+    variableDeclarations: VariableDeclarationInfo[]
+  ): { errorClassName: string | null; tracePath: string[] } {
+    const tracePath: string[] = [variableName];
+    const visited = new Set<string>(); // Cycle detection
+    let currentName = variableName;
+
+    const funcBody = funcPath.node.body;
+    if (!t.isBlockStatement(funcBody)) {
+      return { errorClassName: null, tracePath };
+    }
+
+    // Iterate until we find a NewExpression or can't trace further
+    while (!visited.has(currentName)) {
+      visited.add(currentName);
+      let found = false;
+      let foundNewExpression: string | null = null;
+      let nextName: string | null = null;
+
+      // Walk AST to find assignments: currentName = newValue
+      funcPath.traverse({
+        VariableDeclarator: (declPath: NodePath<t.VariableDeclarator>) => {
+          if (found || foundNewExpression) return;
+          if (t.isIdentifier(declPath.node.id) && declPath.node.id.name === currentName) {
+            const init = declPath.node.init;
+            if (init) {
+              // Case 1: const err = new Error()
+              if (t.isNewExpression(init) && t.isIdentifier(init.callee)) {
+                tracePath.push(`new ${init.callee.name}()`);
+                foundNewExpression = init.callee.name;
+                found = true;
+                return;
+              }
+              // Case 2: const err = otherVar (chain)
+              if (t.isIdentifier(init)) {
+                tracePath.push(init.name);
+                nextName = init.name;
+                found = true;
+                return;
+              }
+            }
+          }
+        },
+        AssignmentExpression: (assignPath: NodePath<t.AssignmentExpression>) => {
+          if (found || foundNewExpression) return;
+          const left = assignPath.node.left;
+          const right = assignPath.node.right;
+
+          if (t.isIdentifier(left) && left.name === currentName) {
+            if (t.isNewExpression(right) && t.isIdentifier(right.callee)) {
+              tracePath.push(`new ${right.callee.name}()`);
+              foundNewExpression = right.callee.name;
+              found = true;
+              return;
+            }
+            if (t.isIdentifier(right)) {
+              tracePath.push(right.name);
+              nextName = right.name;
+              found = true;
+              return;
+            }
+          }
+        }
+      });
+
+      // If we found a NewExpression, return the class name
+      if (foundNewExpression) {
+        return { errorClassName: foundNewExpression, tracePath };
+      }
+
+      // If we found another variable to follow, continue
+      if (nextName) {
+        currentName = nextName;
+        continue;
+      }
+
+      // Couldn't trace further
+      break;
+    }
+
+    return { errorClassName: null, tracePath };
+  }
+
+  /**
+   * REG-311: Collect CATCHES_FROM info linking catch blocks to exception sources in try blocks.
+   *
+   * Sources include:
+   * - Awaited calls: await foo() in try block
+   * - Sync calls: foo() in try block (any call can throw)
+   * - Throw statements: throw new Error() in try block
+   * - Constructor calls: new SomeClass() in try block
+   *
+   * @param funcPath - Function path to traverse
+   * @param catchBlocks - Collection of CATCH_BLOCK nodes
+   * @param callSites - Collection of CALL nodes (direct function calls)
+   * @param methodCalls - Collection of CALL nodes (method calls)
+   * @param constructorCalls - Collection of CONSTRUCTOR_CALL nodes
+   * @param catchesFromInfos - Collection to push CatchesFromInfo to
+   * @param module - Module context
+   */
+  private collectCatchesFromInfo(
+    funcPath: NodePath<t.Function>,
+    catchBlocks: CatchBlockInfo[],
+    callSites: CallSiteInfo[],
+    methodCalls: MethodCallInfo[],
+    constructorCalls: ConstructorCallInfo[],
+    catchesFromInfos: CatchesFromInfo[],
+    module: VisitorModule
+  ): void {
+    // Traverse to find TryStatements and collect sources
+    funcPath.traverse({
+      TryStatement: (tryPath: NodePath<t.TryStatement>) => {
+        const tryNode = tryPath.node;
+        const handler = tryNode.handler;
+
+        // Skip if no catch clause
+        if (!handler) return;
+
+        // Find the catch block for this try
+        // Match by line number since we don't have the tryBlockId here
+        const catchLine = getLine(handler);
+        const catchBlock = catchBlocks.find(cb =>
+          cb.file === module.file && cb.line === catchLine
+        );
+
+        if (!catchBlock || !catchBlock.parameterName) return;
+
+        // Traverse only the try block body (not catch or finally)
+        const tryBody = tryNode.block;
+        const sources: Array<{ id: string; type: CatchesFromInfo['sourceType']; line: number }> = [];
+
+        // Collect sources from try block
+        tryPath.get('block').traverse({
+          // Stop at nested TryStatement - don't collect from inner try blocks
+          TryStatement: (innerPath) => {
+            innerPath.skip(); // Don't traverse into nested try blocks
+          },
+
+          // Stop at function boundaries - don't collect from nested functions
+          Function: (innerFuncPath) => {
+            innerFuncPath.skip();
+          },
+
+          CallExpression: (callPath: NodePath<t.CallExpression>) => {
+            const callNode = callPath.node;
+            const callLine = getLine(callNode);
+            const callColumn = getColumn(callNode);
+
+            // Check if this is an awaited call
+            const parent = callPath.parentPath;
+            const isAwaited = parent?.isAwaitExpression() ?? false;
+
+            // Find the CALL node that matches this CallExpression
+            let sourceId: string | null = null;
+            let sourceType: CatchesFromInfo['sourceType'] = 'sync_call';
+
+            // Check method calls first (includes Promise.reject which is a method call)
+            const matchingMethodCall = methodCalls.find(mc =>
+              mc.file === module.file &&
+              mc.line === callLine &&
+              mc.column === callColumn
+            );
+
+            if (matchingMethodCall) {
+              sourceId = matchingMethodCall.id;
+              sourceType = isAwaited ? 'awaited_call' : 'sync_call';
+            } else {
+              // Check direct function calls
+              const matchingCallSite = callSites.find(cs =>
+                cs.file === module.file &&
+                cs.line === callLine &&
+                cs.column === callColumn
+              );
+
+              if (matchingCallSite) {
+                sourceId = matchingCallSite.id;
+                sourceType = isAwaited ? 'awaited_call' : 'sync_call';
+              }
+            }
+
+            if (sourceId) {
+              sources.push({ id: sourceId, type: sourceType, line: callLine });
+            }
+          },
+
+          ThrowStatement: (throwPath: NodePath<t.ThrowStatement>) => {
+            const throwNode = throwPath.node;
+            const throwLine = getLine(throwNode);
+            const throwColumn = getColumn(throwNode);
+
+            // Create a synthetic ID for the throw statement
+            // We don't have THROW_STATEMENT nodes, so we use line/column as identifier
+            const sourceId = `THROW#${module.file}#${throwLine}:${throwColumn}`;
+
+            sources.push({ id: sourceId, type: 'throw_statement', line: throwLine });
+          },
+
+          NewExpression: (newPath: NodePath<t.NewExpression>) => {
+            // Skip NewExpression that is direct argument of ThrowStatement
+            // In `throw new Error()`, the throw statement is the primary source
+            if (newPath.parentPath?.isThrowStatement()) {
+              return;
+            }
+
+            const newNode = newPath.node;
+            const newLine = getLine(newNode);
+            const newColumn = getColumn(newNode);
+
+            // Find matching constructor call
+            const matchingConstructor = constructorCalls.find(cc =>
+              cc.file === module.file &&
+              cc.line === newLine &&
+              cc.column === newColumn
+            );
+
+            if (matchingConstructor) {
+              sources.push({ id: matchingConstructor.id, type: 'constructor_call', line: newLine });
+            }
+          }
+        });
+
+        // Create CatchesFromInfo for each source
+        for (const source of sources) {
+          catchesFromInfos.push({
+            catchBlockId: catchBlock.id,
+            parameterName: catchBlock.parameterName,
+            sourceId: source.id,
+            sourceType: source.type,
+            file: module.file,
+            sourceLine: source.line
+          });
+        }
+      }
+    });
   }
 
   /**

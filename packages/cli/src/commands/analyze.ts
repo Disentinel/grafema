@@ -46,6 +46,7 @@ import {
   FunctionCallResolver,
   HTTPConnectionEnricher,
   RustFFIEnricher,
+  RejectionPropagationEnricher,
   // Validation
   CallResolverValidator,
   EvalBanValidator,
@@ -90,6 +91,7 @@ const BUILTIN_PLUGINS: Record<string, () => Plugin> = {
   FunctionCallResolver: () => new FunctionCallResolver() as Plugin,
   HTTPConnectionEnricher: () => new HTTPConnectionEnricher() as Plugin,
   RustFFIEnricher: () => new RustFFIEnricher() as Plugin,
+  RejectionPropagationEnricher: () => new RejectionPropagationEnricher() as Plugin,
   // Validation
   CallResolverValidator: () => new CallResolverValidator() as Plugin,
   EvalBanValidator: () => new EvalBanValidator() as Plugin,

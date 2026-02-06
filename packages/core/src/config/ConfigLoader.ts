@@ -123,6 +123,7 @@ export const DEFAULT_CONFIG: GrafemaConfig = {
       'ArgumentParameterLinker',
       'AliasTracker',
       'ClosureCaptureEnricher',
+      'RejectionPropagationEnricher',
       'ValueDomainAnalyzer',
       'MountPointResolver',
       'ExpressHandlerLinker',

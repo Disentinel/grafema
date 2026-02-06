@@ -193,6 +193,10 @@ export interface ControlFlowMetadata {
   hasEarlyReturn: boolean;   // Has return before function end
   hasThrow: boolean;         // Has throw statements
   cyclomaticComplexity: number;  // McCabe cyclomatic complexity
+  // REG-311: Async error tracking
+  canReject?: boolean;         // True if function can reject (has rejection patterns)
+  hasAsyncThrow?: boolean;     // True if async function has throw statements
+  rejectedBuiltinErrors?: string[];  // List of builtin error class names this function can reject
 }
 
 // === VARIABLE DECLARATION INFO ===
@@ -238,6 +242,10 @@ export interface CallSiteInfo {
   isNew?: boolean;
   /** REG-332: Annotation to suppress strict mode errors */
   grafemaIgnore?: GrafemaIgnoreAnnotation;
+  /** REG-311: true if wrapped in await expression */
+  isAwaited?: boolean;
+  /** REG-311: true if inside try block (protected from propagation) */
+  isInsideTry?: boolean;
 }
 
 // === METHOD CALL INFO ===
@@ -258,6 +266,12 @@ export interface MethodCallInfo {
   isNew?: boolean;
   /** REG-332: Annotation to suppress strict mode errors */
   grafemaIgnore?: GrafemaIgnoreAnnotation;
+  /** REG-311: true if wrapped in await expression */
+  isAwaited?: boolean;
+  /** REG-311: true if inside try block (protected from propagation) */
+  isInsideTry?: boolean;
+  /** REG-311: true if this is a method call (for CALL node filtering) */
+  isMethodCall?: boolean;
 }
 
 // === EVENT LISTENER INFO ===
@@ -908,6 +922,8 @@ export interface PromiseExecutorContext {
   file: string;
   /** Line of the Promise constructor for debugging */
   line: number;
+  /** REG-311: ID of the function that creates the Promise (for attributing rejection patterns) */
+  creatorFunctionId?: string;
 }
 
 // === PROMISE RESOLUTION INFO ===
@@ -932,6 +948,71 @@ export interface PromiseResolutionInfo {
   file: string;
   /** Line number of resolve/reject call */
   line: number;
+}
+
+// === REJECTION PATTERN INFO (REG-311) ===
+/**
+ * Tracks patterns that can cause Promise rejection in a function.
+ * Used for REJECTS edge creation and error flow analysis.
+ *
+ * Patterns detected:
+ * - promise_reject: Promise.reject(new Error())
+ * - executor_reject: reject(new Error()) in Promise executor
+ * - async_throw: throw new Error() in async function
+ * - variable_traced: reject(err) where err traced to NewExpression
+ * - variable_parameter: reject(param) where param is function parameter
+ * - variable_unknown: reject(x) where x couldn't be traced
+ */
+export interface RejectionPatternInfo {
+  /** ID of the containing FUNCTION node */
+  functionId: string;
+  /** Error class name (e.g., 'Error', 'ValidationError') - null for unresolved variables */
+  errorClassName: string | null;
+  /** Rejection pattern type */
+  rejectionType:
+    | 'promise_reject'     // Promise.reject(new Error())
+    | 'executor_reject'    // reject(new Error()) in Promise executor
+    | 'async_throw'        // throw new Error() in async function
+    | 'variable_traced'    // reject(err) where err traced to NewExpression
+    | 'variable_parameter' // reject(param) where param is function parameter
+    | 'variable_unknown';  // reject(x) where x couldn't be traced
+  /** File path */
+  file: string;
+  /** Line number of rejection call */
+  line: number;
+  /** Column number */
+  column: number;
+  /** Source variable name (for variable_* types) */
+  sourceVariableName?: string;
+  /** Trace path for debugging (e.g., ["err", "error", "new ValidationError"]) */
+  tracePath?: string[];
+}
+
+// === CATCHES FROM INFO (REG-311) ===
+/**
+ * Info for CATCHES_FROM edges linking catch parameters to error sources.
+ * Created when analyzing try/catch blocks to track which exception sources
+ * a catch block can handle.
+ *
+ * Sources include:
+ * - awaited_call: await foo() in try block
+ * - sync_call: foo() in try block (any call can throw)
+ * - throw_statement: throw new Error() in try block
+ * - constructor_call: new SomeClass() in try block
+ */
+export interface CatchesFromInfo {
+  /** ID of the CATCH_BLOCK node */
+  catchBlockId: string;
+  /** Name of catch parameter (e.g., 'e' in catch(e)) */
+  parameterName: string;
+  /** ID of source node in try block (CALL, THROW_STATEMENT, CONSTRUCTOR_CALL) */
+  sourceId: string;
+  /** Source type */
+  sourceType: 'awaited_call' | 'sync_call' | 'throw_statement' | 'constructor_call';
+  /** File path */
+  file: string;
+  /** Line of the source (for metadata) */
+  sourceLine: number;
 }
 
 // === COUNTER REF ===
@@ -1001,6 +1082,10 @@ export interface ASTCollections {
   promiseExecutorContexts?: Map<string, PromiseExecutorContext>;
   // Yield expression tracking for YIELDS/DELEGATES_TO edges (REG-270)
   yieldExpressions?: YieldExpressionInfo[];
+  // REG-311: Rejection pattern tracking for async error analysis
+  rejectionPatterns?: RejectionPatternInfo[];
+  // REG-311: CATCHES_FROM tracking for catch parameter error sources
+  catchesFromInfos?: CatchesFromInfo[];
   // TypeScript-specific collections
   interfaces?: InterfaceDeclarationInfo[];
   typeAliases?: TypeAliasInfo[];

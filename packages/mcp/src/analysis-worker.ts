@@ -33,6 +33,7 @@ import {
   MountPointResolver,
   PrefixEvaluator,
   HTTPConnectionEnricher,
+  RejectionPropagationEnricher,
   // Validation
   CallResolverValidator,
   EvalBanValidator,
@@ -172,6 +173,7 @@ async function run(): Promise<void> {
       MountPointResolver: () => new MountPointResolver(),
       PrefixEvaluator: () => new PrefixEvaluator(),
       HTTPConnectionEnricher: () => new HTTPConnectionEnricher(),
+      RejectionPropagationEnricher: () => new RejectionPropagationEnricher(),
       CallResolverValidator: () => new CallResolverValidator(),
       EvalBanValidator: () => new EvalBanValidator(),
       SQLInjectionValidator: () => new SQLInjectionValidator(),

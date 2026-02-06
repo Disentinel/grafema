@@ -88,6 +88,10 @@ export const EDGE_TYPE = {
   // Errors
   THROWS: 'THROWS',
 
+  // REG-311: Async error flow
+  REJECTS: 'REJECTS',           // FUNCTION -> CLASS (error class it can reject)
+  CATCHES_FROM: 'CATCHES_FROM', // CATCH_BLOCK -> error sources in TRY_BLOCK
+
   // Guarantees/Invariants
   GOVERNS: 'GOVERNS',
   VIOLATES: 'VIOLATES',

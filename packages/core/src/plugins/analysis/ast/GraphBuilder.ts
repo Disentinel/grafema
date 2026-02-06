@@ -51,6 +51,8 @@ import type {
   CatchBlockInfo,
   FinallyBlockInfo,
   PromiseResolutionInfo,
+  RejectionPatternInfo,
+  CatchesFromInfo,
   ASTCollections,
   GraphNode,
   GraphEdge,
@@ -160,7 +162,11 @@ export class GraphBuilder {
       // Object/Array literal tracking
       objectLiterals = [],
       objectProperties = [],
-      arrayLiterals = []
+      arrayLiterals = [],
+      // REG-311: Rejection pattern tracking for async error analysis
+      rejectionPatterns = [],
+      // REG-311: CATCHES_FROM tracking for catch parameter error sources
+      catchesFromInfos = []
     } = data;
 
     // Reset buffers for this build
@@ -377,6 +383,12 @@ export class GraphBuilder {
 
     // 32. Buffer YIELDS/DELEGATES_TO edges for generator yields (REG-270)
     this.bufferYieldEdges(yieldExpressions, callSites, methodCalls, variableDeclarations, parameters);
+
+    // 33. Buffer REJECTS edges for async error tracking (REG-311)
+    this.bufferRejectionEdges(functions, rejectionPatterns);
+
+    // 34. Buffer CATCHES_FROM edges linking catch blocks to error sources (REG-311)
+    this.bufferCatchesFromEdges(catchesFromInfos);
 
     // FLUSH: Write all nodes first, then edges in single batch calls
     const nodesCreated = await this._flushNodes(graph);
@@ -3265,5 +3277,118 @@ export class GraphBuilder {
     }
 
     return edgesCreated;
+  }
+
+  /**
+   * Buffer REJECTS edges for async error tracking (REG-311).
+   *
+   * Creates edges from FUNCTION nodes to error CLASS nodes they can reject.
+   * This enables tracking which async functions can throw which error types:
+   *
+   * - Promise.reject(new Error()) -> FUNCTION --REJECTS--> CLASS[Error]
+   * - reject(new ValidationError()) in executor -> FUNCTION --REJECTS--> CLASS[ValidationError]
+   * - throw new AuthError() in async function -> FUNCTION --REJECTS--> CLASS[AuthError]
+   *
+   * Also stores rejectionPatterns in function metadata for downstream enrichers.
+   *
+   * @param functions - All function infos from analysis
+   * @param rejectionPatterns - Collected rejection patterns from analysis
+   */
+  private bufferRejectionEdges(functions: FunctionInfo[], rejectionPatterns: RejectionPatternInfo[]): void {
+    // Group rejection patterns by functionId for efficient lookup
+    const patternsByFunction = new Map<string, RejectionPatternInfo[]>();
+    for (const pattern of rejectionPatterns) {
+      const existing = patternsByFunction.get(pattern.functionId);
+      if (existing) {
+        existing.push(pattern);
+      } else {
+        patternsByFunction.set(pattern.functionId, [pattern]);
+      }
+    }
+
+    // Process each function that has rejection patterns
+    for (const [functionId, patterns] of patternsByFunction) {
+      // Collect unique error class names from this function's rejection patterns
+      const errorClassNames = new Set<string>();
+      for (const pattern of patterns) {
+        if (pattern.errorClassName) {
+          errorClassNames.add(pattern.errorClassName);
+        }
+      }
+
+      // Create REJECTS edges to error class nodes
+      // Note: These edges target computed CLASS IDs - they will be dangling
+      // if the class isn't declared, but that's expected behavior for
+      // built-in classes like Error, TypeError, etc.
+      for (const errorClassName of errorClassNames) {
+        // Find the function's file to compute the class ID
+        const func = functions.find(f => f.id === functionId);
+        const file = func?.file ?? '';
+
+        // Compute potential class ID at global scope
+        // For built-in errors, this will be a dangling reference (expected)
+        const globalContext = { file, scopePath: [] as string[] };
+        const classId = computeSemanticId('CLASS', errorClassName, globalContext);
+
+        this._bufferEdge({
+          type: 'REJECTS',
+          src: functionId,
+          dst: classId,
+          metadata: {
+            errorClassName
+          }
+        });
+      }
+
+      // Store rejection patterns in function metadata for downstream enrichers
+      // Find and update the function node in the buffer
+      for (const node of this._nodeBuffer) {
+        if (node.id === functionId) {
+          // Store in metadata field for proper persistence and test compatibility
+          if (!node.metadata) {
+            node.metadata = {};
+          }
+          (node.metadata as Record<string, unknown>).rejectionPatterns = patterns.map(p => ({
+            rejectionType: p.rejectionType,
+            errorClassName: p.errorClassName,
+            line: p.line,
+            column: p.column,
+            sourceVariableName: p.sourceVariableName,
+            tracePath: p.tracePath
+          }));
+          break;
+        }
+      }
+    }
+  }
+
+  /**
+   * Buffer CATCHES_FROM edges linking catch blocks to error sources (REG-311).
+   *
+   * Creates edges from CATCH_BLOCK nodes to potential error sources within
+   * their corresponding try blocks. This enables tracking which catch blocks
+   * can handle which exceptions:
+   *
+   * - try { await fetch() } catch(e) -> CATCH_BLOCK --CATCHES_FROM--> CALL[fetch]
+   * - try { throw new Error() } catch(e) -> CATCH_BLOCK --CATCHES_FROM--> THROW_STATEMENT
+   *
+   * The sourceType metadata helps distinguish different error source kinds
+   * for more precise error flow analysis.
+   *
+   * @param catchesFromInfos - Collected CATCHES_FROM info from analysis
+   */
+  private bufferCatchesFromEdges(catchesFromInfos: CatchesFromInfo[]): void {
+    for (const info of catchesFromInfos) {
+      this._bufferEdge({
+        type: 'CATCHES_FROM',
+        src: info.catchBlockId,
+        dst: info.sourceId,
+        metadata: {
+          parameterName: info.parameterName,
+          sourceType: info.sourceType,
+          sourceLine: info.sourceLine
+        }
+      });
+    }
   }
 }

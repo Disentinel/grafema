@@ -364,12 +364,34 @@ class TestDatabaseBackend {
     return this._client.addNodes(this._prepareNodes(nodes));
   }
 
+  /**
+   * Prepare edges for storage by preserving original IDs in metadata.
+   * This mirrors RFDBServerBackend.addEdges behavior.
+   */
+  _prepareEdges(edges) {
+    return edges.map(e => {
+      const { src, dst, type, edgeType, edge_type, etype, metadata, ...rest } = e;
+      const flatMetadata = {
+        _origSrc: String(src),
+        _origDst: String(dst),
+        ...rest,
+        ...(typeof metadata === 'object' && metadata !== null ? metadata : {})
+      };
+      return {
+        src: String(src),
+        dst: String(dst),
+        edgeType: edgeType || edge_type || etype || type || 'UNKNOWN',
+        metadata: JSON.stringify(flatMetadata),
+      };
+    });
+  }
+
   async addEdge(edge) {
-    return this._client.addEdges([edge]);
+    return this._client.addEdges(this._prepareEdges([edge]));
   }
 
   async addEdges(edges, skipValidation = false) {
-    return this._client.addEdges(edges, skipValidation);
+    return this._client.addEdges(this._prepareEdges(edges), skipValidation);
   }
 
   async deleteNode(id) {
@@ -417,8 +439,29 @@ class TestDatabaseBackend {
     return wireNodes.map(n => this._parseNode(n));
   }
 
+  /**
+   * Parse an edge from wire format, using _origSrc/_origDst for semantic IDs.
+   * Spreads metadata to top level for convenient access in tests.
+   */
+  _parseEdge(wireEdge) {
+    const metadata = wireEdge.metadata
+      ? (typeof wireEdge.metadata === 'string' ? JSON.parse(wireEdge.metadata) : wireEdge.metadata)
+      : {};
+    const { _origSrc, _origDst, ...rest } = metadata;
+    return {
+      src: _origSrc || wireEdge.src,
+      dst: _origDst || wireEdge.dst,
+      type: wireEdge.edgeType || wireEdge.type,
+      // Spread metadata at top level for test convenience
+      ...rest,
+      // Also keep metadata object for compatibility
+      metadata: Object.keys(rest).length > 0 ? rest : undefined,
+    };
+  }
+
   async getAllEdges() {
-    return this._client.getAllEdges();
+    const wireEdges = await this._client.getAllEdges();
+    return wireEdges.map(e => this._parseEdge(e));
   }
 
   async isEndpoint(id) {
@@ -462,22 +505,14 @@ class TestDatabaseBackend {
 
   async getOutgoingEdges(id, edgeTypes = null) {
     const edges = await this._client.getOutgoingEdges(id, edgeTypes);
-    // Translate numeric IDs to semantic IDs
-    return Promise.all(edges.map(async (edge) => ({
-      ...edge,
-      src: await this._translateId(edge.src),
-      dst: await this._translateId(edge.dst),
-    })));
+    // Parse edges to use semantic IDs from _origSrc/_origDst metadata
+    return edges.map(edge => this._parseEdge(edge));
   }
 
   async getIncomingEdges(id, edgeTypes = null) {
     const edges = await this._client.getIncomingEdges(id, edgeTypes);
-    // Translate numeric IDs to semantic IDs
-    return Promise.all(edges.map(async (edge) => ({
-      ...edge,
-      src: await this._translateId(edge.src),
-      dst: await this._translateId(edge.dst),
-    })));
+    // Parse edges to use semantic IDs from _origSrc/_origDst metadata
+    return edges.map(edge => this._parseEdge(edge));
   }
 
   // === Stats ===

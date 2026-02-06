@@ -33,6 +33,7 @@ import {
   InstanceOfResolver,
   HTTPConnectionEnricher,
   RustFFIEnricher,
+  RejectionPropagationEnricher,
   // Validation
   CallResolverValidator,
   EvalBanValidator,
@@ -95,6 +96,7 @@ export const BUILTIN_PLUGINS: Record<string, PluginFactory> = {
   InstanceOfResolver: () => new InstanceOfResolver(),
   HTTPConnectionEnricher: () => new HTTPConnectionEnricher(),
   RustFFIEnricher: () => new RustFFIEnricher(),
+  RejectionPropagationEnricher: () => new RejectionPropagationEnricher(),
 
   // Validation
   CallResolverValidator: () => new CallResolverValidator(),
