@@ -286,10 +286,10 @@ export class FetchAnalyzer extends Plugin {
               const line = getLine(node);
 
               const request: HttpRequestNode = {
-                id: `http:request#${method}:${url}#${module.file}#${line}`,
+                id: `http:request#${method.toUpperCase()}:${url}#${module.file}#${line}`,
                 type: 'http:request',
-                name: `${method} ${url}`,
-                method: method,
+                name: `${method.toUpperCase()} ${url}`,
+                method: method.toUpperCase(),
                 methodSource: methodInfo.source,
                 url: url,
                 library: 'axios',
