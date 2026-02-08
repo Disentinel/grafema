@@ -188,7 +188,7 @@ async function run(): Promise<void> {
 
     // Build plugins array from config
     const plugins: Plugin[] = [];
-    for (const [phase, pluginNames] of Object.entries(config.plugins || {})) {
+    for (const [_phase, pluginNames] of Object.entries(config.plugins || {})) {
       for (const name of pluginNames) {
         if (builtinPlugins[name]) {
           plugins.push(builtinPlugins[name]());
@@ -254,7 +254,7 @@ async function run(): Promise<void> {
     const allEdges = await db.getAllEdgesAsync();
     edgeCount = allEdges.length;
 
-    for await (const _ of db.queryNodes({})) {
+    for await (const _node of db.queryNodes({})) {
       nodeCount++;
     }
 

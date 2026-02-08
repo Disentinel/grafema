@@ -463,7 +463,7 @@ export class FetchAnalyzer extends Plugin {
         requests: fetchCalls.length,
         apis: externalAPIs.size
       };
-    } catch (_error) {
+    } catch {
       // Silent - per-module errors shouldn't spam logs
       return { requests: 0, apis: 0 };
     }

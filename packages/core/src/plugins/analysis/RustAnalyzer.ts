@@ -5,7 +5,7 @@
  */
 
 import { readFileSync } from 'fs';
-import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
+import { Plugin, createSuccessResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { NodeRecord } from '@grafema/types';
 

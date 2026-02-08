@@ -36,6 +36,7 @@ import type {
   GraphNode,
   DatalogBinding,
   CallResult,
+  ReportIssueArgs,
 } from './types.js';
 import { isGuaranteeType } from '@grafema/core';
 
@@ -43,7 +44,7 @@ import { isGuaranteeType } from '@grafema/core';
 
 export async function handleQueryGraph(args: QueryGraphArgs): Promise<ToolResult> {
   const db = await ensureAnalyzed();
-  const { query, limit: requestedLimit, offset: requestedOffset, format, explain } = args;
+  const { query, limit: requestedLimit, offset: requestedOffset, format: _format, explain: _explain } = args;
 
   const limit = normalizeLimit(requestedLimit);
   const offset = Math.max(0, requestedOffset || 0);
@@ -253,7 +254,7 @@ export async function handleFindNodes(args: FindNodesArgs): Promise<ToolResult> 
 export async function handleTraceAlias(args: TraceAliasArgs): Promise<ToolResult> {
   const db = await ensureAnalyzed();
   const { variableName, file } = args;
-  const projectPath = getProjectPath();
+  const _projectPath = getProjectPath();
 
   let varNode: GraphNode | null = null;
 
@@ -1117,7 +1118,7 @@ function formatCallsForDisplay(calls: CallInfo[]): string[] {
 
 // === BUG REPORTING ===
 
-export async function handleReportIssue(args: import('./types.js').ReportIssueArgs): Promise<ToolResult> {
+export async function handleReportIssue(args: ReportIssueArgs): Promise<ToolResult> {
   const { title, description, context, labels = ['bug'] } = args;
   // Use user's token if provided, otherwise fall back to project's issue-only token
   const GRAFEMA_ISSUE_TOKEN = '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';

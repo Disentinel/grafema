@@ -405,7 +405,7 @@ async function buildTreeState(
     }
   } else if (selectedItem?.kind === 'edge') {
     // If an edge is selected, show the target node
-    const edge = selectedItem.edge;
+    const _edge = selectedItem.edge;
     const targetNode = selectedItem.targetNode;
     if (targetNode) {
       const metadata = parseNodeMetadata(targetNode);

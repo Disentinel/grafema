@@ -367,7 +367,7 @@ export class ServiceLayerAnalyzer extends Plugin {
         registrations: serviceRegistrations.length,
         usages: serviceUsages.length
       };
-    } catch (_error) {
+    } catch {
       // Silent - per-module errors shouldn't spam logs
       return { classes: 0, instances: 0, registrations: 0, usages: 0 };
     }

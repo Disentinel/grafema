@@ -465,7 +465,7 @@ export class SocketIOAnalyzer extends Plugin {
         listeners: listeners.length,
         rooms: rooms.length
       };
-    } catch (_error) {
+    } catch {
       // Silent - per-module errors shouldn't spam logs
       return { emits: 0, listeners: 0, rooms: 0 };
     }

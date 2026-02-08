@@ -340,7 +340,7 @@ export class ExpressAnalyzer extends Plugin {
         const mountEdges = await this.createMountEdges(mountPoint, module, imports, graph);
         edgesCreated += mountEdges;
       }
-    } catch (error) {
+    } catch {
       // Silent - per-module errors shouldn't spam logs
     }
 

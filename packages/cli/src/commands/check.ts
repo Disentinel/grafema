@@ -437,7 +437,7 @@ async function runCategoryCheck(
     .map(line => {
       try {
         return JSON.parse(line);
-      } catch (_e) {
+      } catch {
         return null;
       }
     })

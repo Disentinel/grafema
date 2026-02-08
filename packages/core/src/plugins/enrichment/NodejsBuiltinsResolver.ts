@@ -87,7 +87,7 @@ export class NodejsBuiltinsResolver extends Plugin {
     let importsFromEdgesCreated = 0;
 
     for (const [, importInfo] of importIndex) {
-      const { source, file, localName, importNodeId, importType } = importInfo;
+      const { source, file: _file, localName: _localName, importNodeId, importType: _importType } = importInfo;
       const normalizedSource = this.registry.normalizeModule(source);
 
       if (this.registry.isBuiltinModule(normalizedSource)) {

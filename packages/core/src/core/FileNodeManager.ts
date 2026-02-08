@@ -94,7 +94,7 @@ export async function clearServiceNodeIfExists(
     await graph.deleteNode(serviceId);
     console.log(`[FileNodeManager] Cleared SERVICE node: ${serviceId}`);
     return true;
-  } catch (err) {
+  } catch {
     // Node might not exist on fresh analysis - that's OK
     return false;
   }

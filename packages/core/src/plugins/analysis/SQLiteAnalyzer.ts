@@ -312,7 +312,7 @@ export class SQLiteAnalyzer extends Plugin {
           edgesCreated++;
         }
       }
-    } catch (_error) {
+    } catch {
       // Silent - per-module errors shouldn't spam logs
     }
 

@@ -254,7 +254,7 @@ export class ReactAnalyzer extends Plugin {
           stats.browserAPIs += result.browserAPIs;
           stats.issues += result.issues;
           stats.edges += result.edges;
-        } catch (_err) {
+        } catch {
           // Silent - per-module errors shouldn't spam logs
         }
       }
@@ -732,7 +732,7 @@ export class ReactAnalyzer extends Plugin {
     const callbackParams = new Set<string>(); // Track parameters of nested callback functions
 
     // Simple recursive AST walker to collect identifiers
-    const collectIdentifiers = (node: Node | null, parentType: string | null = null, isPropertyKey = false): void => {
+    const collectIdentifiers = (node: Node | null, _parentType: string | null = null, isPropertyKey = false): void => {
       if (!node) return;
 
       if (node.type === 'Identifier') {
@@ -880,7 +880,7 @@ export class ReactAnalyzer extends Plugin {
     const hasCleanup = hookData.hasCleanup as boolean;
 
     // Simple recursive AST walker
-    const checkNode = (node: Node | null, parent: Node | null = null): void => {
+    const checkNode = (node: Node | null, _parent: Node | null = null): void => {
       if (!node || typeof node !== 'object') return;
 
       if (node.type === 'CallExpression') {

@@ -1040,7 +1040,7 @@ export class Orchestrator {
         this.rfdbServerProcess = null; // Mark that we didn't start the server
         this._serverWasExternal = true;
         return;
-      } catch (_e) {
+      } catch {
         // Socket exists but server not responding, remove stale socket
         this.logger.debug('Stale socket found, removing');
         unlinkSync(socketPath);

@@ -402,7 +402,7 @@ export class ExpressRouteAnalyzer extends Plugin {
 
       // Создаём MIDDLEWARE ноды и связи
       for (const middleware of middlewares) {
-        const { endpointId, order, ...middlewareData } = middleware;
+        const { endpointId, order: _order, ...middlewareData } = middleware;
 
         await graph.addNode(middlewareData as unknown as NodeRecord);
         middlewareCreated++;
@@ -444,7 +444,7 @@ export class ExpressRouteAnalyzer extends Plugin {
           }
         }
       }
-    } catch (error) {
+    } catch {
       // Silent - per-module errors shouldn't spam logs
     }
 

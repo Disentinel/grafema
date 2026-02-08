@@ -15,7 +15,7 @@ import type { ParserPlugin } from '@babel/parser';
 import { parse } from '@babel/parser';
 import traverseModule from '@babel/traverse';
 import type { Node, ImportDeclaration, ExportNamedDeclaration, ExportDefaultDeclaration, VariableDeclaration, FunctionDeclaration, ClassDeclaration, CallExpression, Identifier, ExportSpecifier } from '@babel/types';
-import type { NodePath, Visitor } from '@babel/traverse';
+import type { NodePath } from '@babel/traverse';
 import { ClassNode, type ClassNodeRecord } from './nodes/ClassNode.js';
 import { ImportNode, type ImportNodeRecord } from './nodes/ImportNode.js';
 import { ExportNode, type ExportNodeRecord } from './nodes/ExportNode.js';
@@ -147,20 +147,6 @@ export interface ASTCollections {
   httpRequests: unknown[];
   literals: unknown[];
   variableAssignments: unknown[];
-}
-
-/**
- * Counters for unique IDs
- * @deprecated Use ScopeTracker.getItemCounter() instead
- */
-interface Counters {
-  ifScope: number;
-  scope: number;
-  varDecl: number;
-  callSite: number;
-  function: number;
-  httpRequest: number;
-  literal: number;
 }
 
 /**

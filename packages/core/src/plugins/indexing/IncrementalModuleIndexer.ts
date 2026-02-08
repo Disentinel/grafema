@@ -135,7 +135,7 @@ export class IncrementalModuleIndexer extends Plugin {
       });
 
       return imports;
-    } catch (err) {
+    } catch {
       // Parse error will be logged by execute() when it needs logger context
       return [];
     }

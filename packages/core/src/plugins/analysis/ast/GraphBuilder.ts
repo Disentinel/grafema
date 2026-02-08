@@ -4,7 +4,7 @@
  */
 
 import { basename } from 'path';
-import type { GraphBackend } from '@grafema/types';
+import type { GraphBackend, NodeRecord } from '@grafema/types';
 import { ImportNode } from '../../../core/nodes/ImportNode.js';
 import { InterfaceNode, type InterfaceNodeRecord } from '../../../core/nodes/InterfaceNode.js';
 import { EnumNode } from '../../../core/nodes/EnumNode.js';
@@ -85,7 +85,7 @@ export class GraphBuilder {
   private async _flushNodes(graph: GraphBackend): Promise<number> {
     if (this._nodeBuffer.length > 0) {
       // Cast to unknown first since GraphNode is more permissive than NodeRecord
-      await graph.addNodes(this._nodeBuffer as unknown as import('@grafema/types').NodeRecord[]);
+      await graph.addNodes(this._nodeBuffer as unknown as NodeRecord[]);
       const count = this._nodeBuffer.length;
       this._nodeBuffer = [];
       return count;
@@ -1374,7 +1374,7 @@ export class GraphBuilder {
 
   private bufferLiterals(literals: LiteralInfo[]): void {
     for (const literal of literals) {
-      const { parentCallId, argIndex, ...literalData } = literal;
+      const { parentCallId: _parentCallId, argIndex: _argIndex, ...literalData } = literal;
       this._bufferNode(literalData as GraphNode);
     }
   }

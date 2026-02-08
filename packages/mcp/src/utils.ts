@@ -83,7 +83,7 @@ export function normalizeLimit(limit: number | undefined | null): number {
 }
 
 export function formatPaginationInfo(params: PaginationParams): string {
-  const { limit, offset, returned, total, hasMore } = params;
+  const { limit: _limit, offset, returned, total, hasMore } = params;
   let info = `\n📄 Pagination: showing ${returned}`;
   if (total !== undefined) {
     info += ` of ${total}`;

@@ -58,7 +58,7 @@ import {
   TypeScriptDeadCodeValidator,
   BrokenImportValidator,
 } from '@grafema/core';
-import type { LogLevel } from '@grafema/types';
+import type { LogLevel, GraphBackend } from '@grafema/types';
 import { ProgressRenderer } from '../utils/progressRenderer.js';
 
 export interface NodeEdgeCountBackend {
@@ -335,7 +335,7 @@ Note: Start the server first with: grafema server start
     }
 
     const orchestrator = new Orchestrator({
-      graph: backend as unknown as import('@grafema/types').GraphBackend,
+      graph: backend as unknown as GraphBackend,
       plugins,
       serviceFilter: options.service || null,
       entrypoint: options.entrypoint,

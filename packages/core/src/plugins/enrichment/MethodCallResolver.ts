@@ -758,7 +758,7 @@ export class MethodCallResolver extends Plugin {
   private analyzeResolutionFailure(
     methodCall: MethodCallNode,
     classMethodIndex: Map<string, ClassEntry>,
-    variableTypes: Map<string, string>
+    _variableTypes: Map<string, string>
   ): { reason: ResolutionFailureReason; chain: ResolutionStep[] } {
     const { object, method, file } = methodCall;
     const chain: ResolutionStep[] = [];

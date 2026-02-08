@@ -301,7 +301,7 @@ export class DatabaseAnalyzer extends Plugin {
           }
         }
       }
-    } catch (_error) {
+    } catch {
       // Silent - per-module errors shouldn't spam logs
     }
 
