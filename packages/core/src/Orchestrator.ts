@@ -170,6 +170,8 @@ export class Orchestrator {
   private strictMode: boolean;
   /** Multi-root workspace roots (REG-76) */
   private workspaceRoots: string[] | undefined;
+  /** REG-357: Accumulated suppressedByIgnore from enrichment plugins */
+  private suppressedByIgnoreCount: number = 0;
 
   constructor(options: OrchestratorOptions = {}) {
     this.graph = options.graph!;
@@ -219,6 +221,9 @@ export class Orchestrator {
    */
   async run(projectPath: string): Promise<DiscoveryManifest> {
     const totalStartTime = Date.now();
+
+    // REG-357: Reset suppressed count for each run
+    this.suppressedByIgnoreCount = 0;
 
     // Resolve to absolute path
     const absoluteProjectPath = projectPath.startsWith('/') ? projectPath : resolve(projectPath);
@@ -447,8 +452,8 @@ export class Orchestrator {
 
       if (strictErrors.length > 0) {
         this.logger.error(`Strict mode: ${strictErrors.length} unresolved reference(s) found`);
-        // Throw StrictModeFailure with diagnostics - CLI will format (REG-332)
-        throw new StrictModeFailure(strictErrors);
+        // REG-357: Pass suppressedByIgnore count from enrichment plugin results
+        throw new StrictModeFailure(strictErrors, this.suppressedByIgnoreCount);
       }
     }
 
@@ -891,6 +896,14 @@ export class Orchestrator {
           result
         );
 
+        // REG-357: Collect suppressedByIgnore from ENRICHMENT plugin results
+        if (phaseName === 'ENRICHMENT' && result.metadata) {
+          const suppressed = (result.metadata as Record<string, unknown>).suppressedByIgnore;
+          if (typeof suppressed === 'number') {
+            this.suppressedByIgnoreCount += suppressed;
+          }
+        }
+
         // Log plugin completion with warning if errors occurred
         if (!result.success) {
           console.warn(`[Orchestrator] Plugin ${plugin.metadata.name} reported failure`, {
@@ -900,10 +913,19 @@ export class Orchestrator {
         }
 
         // Check for fatal errors - STOP immediately
+        // REG-357: In strict mode ENRICHMENT, don't halt on strict mode errors.
+        // The strict mode barrier after ENRICHMENT handles them collectively.
         if (this.diagnosticCollector.hasFatal()) {
           const allDiagnostics = this.diagnosticCollector.getAll();
-          const fatal = allDiagnostics.find(d => d.severity === 'fatal');
-          throw new Error(`Fatal error in ${plugin.metadata.name}: ${fatal?.message || 'Unknown fatal error'}`);
+          const fatals = allDiagnostics.filter(d => d.severity === 'fatal');
+
+          // Skip halt only if ALL fatals are strict mode errors during ENRICHMENT.
+          // If any non-strict fatal exists, halt immediately.
+          const allStrictErrors = fatals.every(d => d.code.startsWith('STRICT_'));
+          if (!(this.strictMode && phaseName === 'ENRICHMENT' && allStrictErrors)) {
+            const fatal = fatals[0];
+            throw new Error(`Fatal error in ${plugin.metadata.name}: ${fatal?.message || 'Unknown fatal error'}`);
+          }
         }
       } catch (e) {
         // Plugin threw an exception (not just returned errors)
