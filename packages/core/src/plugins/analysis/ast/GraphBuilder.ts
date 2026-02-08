@@ -23,6 +23,7 @@ import type {
   VariableDeclarationInfo,
   CallSiteInfo,
   MethodCallInfo,
+  MethodCallbackInfo,
   EventListenerInfo,
   ClassInstantiationInfo,
   ClassDeclarationInfo,
