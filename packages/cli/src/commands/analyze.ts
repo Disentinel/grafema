@@ -60,6 +60,20 @@ import {
 import type { LogLevel } from '@grafema/types';
 import { ProgressRenderer } from '../utils/progressRenderer.js';
 
+export interface NodeEdgeCountBackend {
+  nodeCount: () => Promise<number>;
+  edgeCount: () => Promise<number>;
+}
+
+export async function fetchNodeEdgeCounts(backend: NodeEdgeCountBackend): Promise<{ nodeCount: number; edgeCount: number }> {
+  const [nodeCount, edgeCount] = await Promise.all([backend.nodeCount(), backend.edgeCount()]);
+  return { nodeCount, edgeCount };
+}
+
+export function exitWithCode(code: number, exitFn: (code: number) => void = process.exit): void {
+  exitFn(code);
+}
+
 const BUILTIN_PLUGINS: Record<string, () => Plugin> = {
   // Discovery
   SimpleProjectDiscovery: () => new SimpleProjectDiscovery() as Plugin,
@@ -308,12 +322,13 @@ Note: Start the server first with: grafema server start
     if (renderer && !options.quiet) {
       statsInterval = setInterval(async () => {
         try {
-          const stats = await backend.getStats();
+          const stats = await fetchNodeEdgeCounts(backend);
           renderer.setStats(stats.nodeCount, stats.edgeCount);
         } catch {
           // Ignore stats errors during analysis
         }
       }, 500); // Poll every 500ms
+      statsInterval.unref?.();
     }
 
     const orchestrator = new Orchestrator({
@@ -336,14 +351,8 @@ Note: Start the server first with: grafema server start
       await orchestrator.run(projectPath);
       await backend.flush();
 
-      // Stop stats polling
-      if (statsInterval) {
-        clearInterval(statsInterval);
-        statsInterval = null;
-      }
-
       const elapsedSeconds = (Date.now() - startTime) / 1000;
-      const stats = await backend.getStats();
+      const stats = await fetchNodeEdgeCounts(backend);
 
       // Clear progress line in interactive mode, then show results
       if (renderer && process.stdout.isTTY) {
@@ -386,12 +395,6 @@ Note: Start the server first with: grafema server start
         exitCode = 0; // Success (maybe warnings)
       }
     } catch (e) {
-      // Stop stats polling on error
-      if (statsInterval) {
-        clearInterval(statsInterval);
-        statsInterval = null;
-      }
-
       const diagnostics = orchestrator.getDiagnostics();
       const reporter = new DiagnosticReporter(diagnostics);
 
@@ -434,13 +437,19 @@ Note: Start the server first with: grafema server start
       }
 
       exitCode = 1;
-    }
+    } finally {
+      // Stop stats polling
+      if (statsInterval) {
+        clearInterval(statsInterval);
+        statsInterval = null;
+      }
 
-    await backend.close();
+      if (backend.connected) {
+        await backend.close();
+      }
 
-    // Exit with appropriate code
-    // 0 = success, 1 = fatal, 2 = errors
-    if (exitCode !== 0) {
-      process.exit(exitCode);
+      // Exit with appropriate code
+      // 0 = success, 1 = fatal, 2 = errors
+      exitWithCode(exitCode);
     }
   });
