@@ -129,7 +129,7 @@ export async function handleFindCalls(args: FindCallsArgs): Promise<ToolResult> 
   const limit = normalizeLimit(requestedLimit);
   const offset = Math.max(0, requestedOffset || 0);
 
-  const calls: unknown[] = [];
+  const calls: CallResult[] = [];
   let skipped = 0;
   let totalMatched = 0;
 
@@ -155,7 +155,7 @@ export async function handleFindCalls(args: FindCallsArgs): Promise<ToolResult> 
       target = targetNode
         ? {
             type: targetNode.type,
-            name: targetNode.name,
+            name: targetNode.name ?? '',
             file: targetNode.file,
             line: targetNode.line,
           }
@@ -177,7 +177,7 @@ export async function handleFindCalls(args: FindCallsArgs): Promise<ToolResult> 
     return textResult(`No calls found for "${className ? className + '.' : ''}${name}"`);
   }
 
-  const resolved = calls.filter((c: CallResult) => c.resolved).length;
+  const resolved = calls.filter(c => c.resolved).length;
   const unresolved = calls.length - resolved;
   const hasMore = offset + calls.length < totalMatched;
 
