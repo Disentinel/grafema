@@ -438,6 +438,16 @@ plugins:
 2. Within a phase, plugins are sorted by `priority` (higher = earlier)
 3. Use `dependencies` for explicit dependencies between plugins
 
+### Execution Model & Idempotency
+
+ANALYSIS plugins may execute **per module/indexing unit**, not necessarily once per project. This means any global logic you run in `execute()` can be invoked multiple times, and naive node/edge creation can produce duplicates.
+
+Recommended patterns:
+- Use **deterministic IDs** for nodes and edges (for example, derived from file path + semantic identity) so re-execution naturally converges on the same graph entities.
+- For truly global work, add a **run-once guard** inside the plugin instance (a boolean flag) and return early on subsequent calls.
+- Prefer **file-scoped processing**: treat the current module as the unit of work rather than scanning the entire graph on each execute.
+- If you must aggregate across modules, **check for existing nodes/edges** before creating new ones, keyed by stable identifiers.
+
 ### Adding a Built-in Plugin
 
 To add a plugin to the Grafema codebase:
