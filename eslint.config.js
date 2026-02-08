@@ -20,12 +20,12 @@ export default [
     rules: {
       // Syntax rules (fast, no type info needed)
       'no-debugger': 'error',
-      '@typescript-eslint/no-unused-vars': ['warn', {
+      '@typescript-eslint/no-unused-vars': ['error', {
         argsIgnorePattern: '^_',
         varsIgnorePattern: '^_',
         destructuredArrayIgnorePattern: '^_'
       }],
-      '@typescript-eslint/consistent-type-imports': 'warn',
+      '@typescript-eslint/consistent-type-imports': 'error',
     },
   },
 ];
