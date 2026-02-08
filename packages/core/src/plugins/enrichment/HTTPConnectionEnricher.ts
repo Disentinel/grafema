@@ -12,6 +12,7 @@
 import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { BaseNodeRecord } from '@grafema/types';
+import { StrictModeError, ValidationError } from '../../errors/GrafemaError.js';
 
 /**
  * HTTP route node
@@ -28,9 +29,12 @@ interface HTTPRouteNode extends BaseNodeRecord {
  */
 interface HTTPRequestNode extends BaseNodeRecord {
   method?: string;
+  methodSource?: MethodSource;
   url?: string;
   responseDataNode?: string;  // ID of response.json() CALL node (set by FetchAnalyzer)
 }
+
+type MethodSource = 'explicit' | 'default' | 'unknown';
 
 /**
  * Connection info for logging
@@ -88,25 +92,65 @@ export class HTTPConnectionEnricher extends Plugin {
       });
 
       let edgesCreated = 0;
+      const errors: Error[] = [];
       const connections: ConnectionInfo[] = [];
 
       // Для каждого request ищем matching route
       for (const request of uniqueRequests) {
-        // Пропускаем dynamic URLs
-        if (request.url === 'dynamic' || !request.url) {
+        const methodSource = request.methodSource ?? 'explicit';
+        const method = request.method ? request.method.toUpperCase() : null;
+        const url = request.url;
+
+        if (methodSource === 'unknown') {
+          const urlLabel = url ?? 'unknown';
+          const message = `Unknown HTTP method for request ${urlLabel}`;
+          if (context.strictMode) {
+            errors.push(new StrictModeError(
+              message,
+              'STRICT_UNKNOWN_HTTP_METHOD',
+              {
+                filePath: request.file,
+                lineNumber: request.line as number | undefined,
+                phase: 'ENRICHMENT',
+                plugin: 'HTTPConnectionEnricher',
+                requestId: request.id,
+              },
+              'Provide method as a string literal or resolvable const (e.g., method: \"POST\")'
+            ));
+          } else {
+            errors.push(new ValidationError(
+              message,
+              'WARN_HTTP_METHOD_UNKNOWN',
+              {
+                filePath: request.file,
+                lineNumber: request.line as number | undefined,
+                phase: 'ENRICHMENT',
+                plugin: 'HTTPConnectionEnricher',
+                requestId: request.id,
+              },
+              'Provide method as a string literal or resolvable const (e.g., method: \"POST\")',
+              'warning'
+            ));
+          }
           continue;
         }
 
-        const method = (request.method || 'GET').toUpperCase();
-        const url = request.url;
+        // Пропускаем dynamic URLs
+        if (url === 'dynamic' || !url) {
+          continue;
+        }
 
         // Ищем matching route
         for (const route of uniqueRoutes) {
-          const routeMethod = (route.method || 'GET').toUpperCase();
+          const routeMethod = route.method ? route.method.toUpperCase() : null;
           // Use fullPath (from MountPointResolver) if available, fallback to local path
           const routePath = route.fullPath || route.path;
 
-          if (routePath && method === routeMethod && this.pathsMatch(url, routePath)) {
+          if (!routeMethod) continue;
+          if (methodSource === 'default' && routeMethod !== 'GET') continue;
+          if (methodSource === 'explicit' && (!method || method !== routeMethod)) continue;
+
+          if (routePath && this.pathsMatch(url, routePath)) {
             // 1. Create INTERACTS_WITH edge (existing)
             await graph.addEdge({
               type: 'INTERACTS_WITH',
@@ -137,8 +181,9 @@ export class HTTPConnectionEnricher extends Plugin {
               }
             }
 
+            const requestLabel = `${method ?? 'UNKNOWN'} ${url}`;
             connections.push({
-              request: `${method} ${url}`,
+              request: requestLabel,
               route: `${routeMethod} ${routePath}`,
               requestFile: request.file,
               routeFile: route.file
@@ -163,7 +208,8 @@ export class HTTPConnectionEnricher extends Plugin {
           connections: connections.length,
           routesAnalyzed: uniqueRoutes.length,
           requestsAnalyzed: uniqueRequests.length
-        }
+        },
+        errors
       );
 
     } catch (error) {
@@ -178,7 +224,7 @@ export class HTTPConnectionEnricher extends Plugin {
    */
   private normalizeUrl(url: string): string {
     return url
-      .replace(/:[^/]+/g, '{param}')      // :id -> {param}
+      .replace(/:[A-Za-z0-9_]+/g, '{param}')      // :id -> {param}
       .replace(/\$\{[^}]*\}/g, '{param}'); // ${...} -> {param}, ${userId} -> {param}
   }
 
@@ -214,11 +260,17 @@ export class HTTPConnectionEnricher extends Plugin {
 
     // Handle case where request has concrete value (e.g., '/users/123')
     // and route has param (e.g., '/users/{param}')
-    const routeRegex = normRoute
-      .replace(/\{param\}/g, '[^/]+')  // {param} -> [^/]+
-      .replace(/\//g, '\\/');           // / -> \/
+    return this.buildParamRegex(normRoute).test(normRequest);
+  }
 
-    return new RegExp(`^${routeRegex}$`).test(normRequest);
+  private escapeRegExp(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  private buildParamRegex(normalizedRoute: string): RegExp {
+    const parts = normalizedRoute.split('{param}');
+    const pattern = parts.map(part => this.escapeRegExp(part)).join('[^/]+');
+    return new RegExp(`^${pattern}$`);
   }
 
   /**

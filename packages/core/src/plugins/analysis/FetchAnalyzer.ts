@@ -31,6 +31,7 @@ interface HttpRequestNode {
   type: 'http:request';
   name: string;  // Human-readable name like "GET /api/users"
   method: string;
+  methodSource: MethodSource;
   url: string;
   library: string;
   file: string;
@@ -52,6 +53,8 @@ interface FetchCallInfo {
   request: HttpRequestNode;
   responseVarName: string | null;
 }
+
+type MethodSource = 'explicit' | 'default' | 'unknown';
 
 /**
  * Analysis result
@@ -167,6 +170,26 @@ export class FetchAnalyzer extends Plugin {
         ] as ParserPlugin[]
       });
 
+      const constStrings = new Map<string, string>();
+      const constObjects = new Map<string, ObjectExpression>();
+
+      // Collect simple const assignments for method resolution
+      traverse(ast, {
+        VariableDeclarator: (path: NodePath) => {
+          const node = path.node as { id: Node; init?: Node | null };
+          const parent = path.parentPath?.node as { type?: string; kind?: string } | undefined;
+          if (!parent || parent.type !== 'VariableDeclaration' || parent.kind !== 'const') return;
+          if (!node.init || node.id.type !== 'Identifier') return;
+
+          const name = (node.id as Identifier).name;
+          if (node.init.type === 'StringLiteral') {
+            constStrings.set(name, (node.init as { value: string }).value);
+          } else if (node.init.type === 'ObjectExpression') {
+            constObjects.set(name, node.init as ObjectExpression);
+          }
+        }
+      });
+
       const fetchCalls: FetchCallInfo[] = [];
       const externalAPIs = new Set<string>();
 
@@ -180,7 +203,8 @@ export class FetchAnalyzer extends Plugin {
           if (callee.type === 'Identifier' && (callee as Identifier).name === 'fetch') {
             const urlArg = node.arguments[0];
             const url = this.extractURL(urlArg);
-            const method = this.extractMethod(node.arguments[1]) || 'GET';
+            const methodInfo = this.extractMethodInfo(node.arguments[1], constStrings, constObjects);
+            const method = methodInfo.method;
             const line = getLine(node);
 
             const request: HttpRequestNode = {
@@ -188,6 +212,7 @@ export class FetchAnalyzer extends Plugin {
               type: 'http:request',
               name: `${method} ${url}`,
               method: method,
+              methodSource: methodInfo.source,
               url: url,
               library: 'fetch',
               file: module.file!,
@@ -223,6 +248,7 @@ export class FetchAnalyzer extends Plugin {
               type: 'http:request',
               name: `${method} ${url}`,
               method: method,
+              methodSource: 'explicit',
               url: url,
               library: 'axios',
               file: module.file!,
@@ -250,26 +276,20 @@ export class FetchAnalyzer extends Plugin {
                   (p.key as Identifier).type === 'Identifier' &&
                   (p.key as Identifier).name === 'url'
               );
-              const methodProp = objExpr.properties.find(
-                p =>
-                  p.type === 'ObjectProperty' &&
-                  (p.key as Identifier).type === 'Identifier' &&
-                  (p.key as Identifier).name === 'method'
-              );
 
               const url = urlProp
                 ? this.extractURL((urlProp as { value: Node }).value)
                 : 'unknown';
-              const method = methodProp
-                ? this.extractString((methodProp as { value: Node }).value) || 'GET'
-                : 'GET';
+              const methodInfo = this.extractMethodInfo(config, constStrings, constObjects);
+              const method = methodInfo.method;
               const line = getLine(node);
 
               const request: HttpRequestNode = {
-                id: `http:request#${method.toUpperCase()}:${url}#${module.file}#${line}`,
+                id: `http:request#${method}:${url}#${module.file}#${line}`,
                 type: 'http:request',
-                name: `${method.toUpperCase()} ${url}`,
-                method: method.toUpperCase(),
+                name: `${method} ${url}`,
+                method: method,
+                methodSource: methodInfo.source,
                 url: url,
                 library: 'axios',
                 file: module.file!,
@@ -297,7 +317,8 @@ export class FetchAnalyzer extends Plugin {
             ) {
               const urlArg = node.arguments[0];
               const url = this.extractURL(urlArg);
-              const method = this.extractMethod(node.arguments[1]) || 'GET';
+              const methodInfo = this.extractMethodInfo(node.arguments[1], constStrings, constObjects);
+              const method = methodInfo.method;
               const line = getLine(node);
 
               const request: HttpRequestNode = {
@@ -305,6 +326,7 @@ export class FetchAnalyzer extends Plugin {
                 type: 'http:request',
                 name: `${method} ${url}`,
                 method: method,
+                methodSource: methodInfo.source,
                 url: url,
                 library: calleeName,
                 file: module.file!,
@@ -480,36 +502,75 @@ export class FetchAnalyzer extends Plugin {
   }
 
   /**
-   * Извлекает HTTP method из options объекта
+   * Извлекает HTTP method из options объекта и источник значения
    */
-  private extractMethod(optionsArg: Node | undefined): string | null {
-    if (!optionsArg || optionsArg.type !== 'ObjectExpression') {
-      return null;
+  private extractMethodInfo(
+    optionsArg: Node | undefined,
+    constStrings: Map<string, string>,
+    constObjects: Map<string, ObjectExpression>
+  ): { method: string; source: MethodSource } {
+    if (!optionsArg) {
+      return { method: 'GET', source: 'default' };
     }
 
-    const objExpr = optionsArg as ObjectExpression;
-    const methodProp = objExpr.properties.find(
-      p =>
-        p.type === 'ObjectProperty' &&
-        (p.key as Identifier).type === 'Identifier' &&
-        (p.key as Identifier).name === 'method'
-    );
-
-    if (methodProp && (methodProp as { value: Node }).value) {
-      return this.extractString((methodProp as { value: Node }).value);
+    let optionsNode: Node = optionsArg;
+    if (optionsNode.type === 'Identifier') {
+      const resolvedObject = constObjects.get((optionsNode as Identifier).name);
+      if (resolvedObject) {
+        optionsNode = resolvedObject;
+      } else {
+        return { method: 'UNKNOWN', source: 'unknown' };
+      }
     }
 
-    return null;
+    if (optionsNode.type !== 'ObjectExpression') {
+      return { method: 'UNKNOWN', source: 'unknown' };
+    }
+
+    const objExpr = optionsNode as ObjectExpression;
+    const methodProp = objExpr.properties.find(p => {
+      if (p.type !== 'ObjectProperty') return false;
+      const key = p.key;
+      if (key.type === 'Identifier') return key.name === 'method';
+      if (key.type === 'StringLiteral') return key.value === 'method';
+      return false;
+    });
+
+    if (!methodProp || !(methodProp as { value?: Node }).value) {
+      return { method: 'GET', source: 'default' };
+    }
+
+    const methodValue = (methodProp as { value: Node }).value;
+    const methodString = this.extractStaticString(methodValue, constStrings);
+    if (!methodString) {
+      return { method: 'UNKNOWN', source: 'unknown' };
+    }
+
+    return { method: methodString.toUpperCase(), source: 'explicit' };
   }
 
   /**
-   * Извлекает строковое значение
+   * Извлекает статическое строковое значение (StringLiteral, простая TemplateLiteral, или const Identifier)
    */
-  private extractString(node: Node | undefined): string | null {
+  private extractStaticString(
+    node: Node | undefined,
+    constStrings: Map<string, string>
+  ): string | null {
     if (!node) return null;
 
     if (node.type === 'StringLiteral') {
       return (node as { value: string }).value;
+    }
+
+    if (node.type === 'TemplateLiteral') {
+      const tl = node as { quasis: Array<{ value: { raw: string } }>; expressions: unknown[] };
+      if (tl.expressions.length === 0) {
+        return tl.quasis.map(q => q.value.raw).join('');
+      }
+    }
+
+    if (node.type === 'Identifier') {
+      return constStrings.get((node as Identifier).name) || null;
     }
 
     return null;

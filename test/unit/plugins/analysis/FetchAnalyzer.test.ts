@@ -406,7 +406,119 @@ async function downloadFile() {
   });
 
   // ===========================================================================
-  // TEST 8: axios response handling (out of scope for v1.0, but good to document)
+  // TEST 8: HTTP method source detection
+  // ===========================================================================
+
+  describe('HTTP method source detection', () => {
+    it('should mark default method when options omitted', async () => {
+      await setupTest(backend, {
+        'index.js': `
+async function fetchDefault() {
+  await fetch('/api/default');
+}
+        `
+      });
+
+      const requestNode = await findHttpRequestNode(backend, 'GET', '/api/default');
+      assert.ok(requestNode, 'Should have http:request node for GET /api/default');
+
+      const methodSource = (requestNode as unknown as { methodSource?: string }).methodSource;
+      assert.strictEqual(methodSource, 'default', 'methodSource should be default when options are omitted');
+    });
+
+    it('should mark explicit method from object literal', async () => {
+      await setupTest(backend, {
+        'index.js': `
+async function fetchExplicit() {
+  await fetch('/api/explicit', { method: 'POST' });
+}
+        `
+      });
+
+      const requestNode = await findHttpRequestNode(backend, 'POST', '/api/explicit');
+      assert.ok(requestNode, 'Should have http:request node for POST /api/explicit');
+
+      const methodSource = (requestNode as unknown as { methodSource?: string }).methodSource;
+      assert.strictEqual(methodSource, 'explicit', 'methodSource should be explicit for literal method');
+    });
+
+    it('should resolve method from const identifiers (string + options object)', async () => {
+      await setupTest(backend, {
+        'index.js': `
+const METHOD = 'PATCH';
+const OPTIONS = { method: 'PUT' };
+
+async function fetchConstMethod() {
+  await fetch('/api/const-string', { method: METHOD });
+  await fetch('/api/const-object', OPTIONS);
+}
+        `
+      });
+
+      const stringMethodNode = await findHttpRequestNode(backend, 'PATCH', '/api/const-string');
+      assert.ok(stringMethodNode, 'Should resolve method from const string identifier');
+      assert.strictEqual(
+        (stringMethodNode as unknown as { methodSource?: string }).methodSource,
+        'explicit'
+      );
+
+      const objectMethodNode = await findHttpRequestNode(backend, 'PUT', '/api/const-object');
+      assert.ok(objectMethodNode, 'Should resolve method from const options object');
+      assert.strictEqual(
+        (objectMethodNode as unknown as { methodSource?: string }).methodSource,
+        'explicit'
+      );
+    });
+
+    it('should mark unknown when method is not statically resolvable', async () => {
+      await setupTest(backend, {
+        'index.js': `
+function getMethod() { return 'POST'; }
+
+async function fetchUnknown() {
+  const method = getMethod();
+  await fetch('/api/unknown', { method });
+}
+        `
+      });
+
+      const requestNode = await findHttpRequestNode(backend, 'UNKNOWN', '/api/unknown');
+      assert.ok(requestNode, 'Should create http:request node with UNKNOWN method');
+
+      const methodSource = (requestNode as unknown as { methodSource?: string }).methodSource;
+      assert.strictEqual(methodSource, 'unknown', 'methodSource should be unknown for unresolved identifiers');
+    });
+
+    it('should handle axios config default and explicit method', async () => {
+      await setupTest(backend, {
+        'index.js': `
+import axios from 'axios';
+
+async function axiosCalls() {
+  await axios({ url: '/api/axios-default' });
+  await axios({ url: '/api/axios-explicit', method: 'put' });
+}
+        `
+      });
+
+      const defaultNode = await findHttpRequestNode(backend, 'GET', '/api/axios-default');
+      assert.ok(defaultNode, 'Should have http:request node for axios default GET');
+      assert.strictEqual(
+        (defaultNode as unknown as { methodSource?: string }).methodSource,
+        'default'
+      );
+
+      const explicitNode = await findHttpRequestNode(backend, 'PUT', '/api/axios-explicit');
+      assert.ok(explicitNode, 'Should have http:request node for axios explicit PUT');
+      assert.strictEqual(
+        (explicitNode as unknown as { methodSource?: string }).methodSource,
+        'explicit'
+      );
+    });
+  });
+
+  // ===========================================================================
+  // TEST 9: axios response handling (out of scope for v1.0, but good to document)
   // ===========================================================================
 
   describe('Axios patterns (documented limitation)', () => {

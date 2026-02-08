@@ -50,18 +50,17 @@ class MockGraphBackend {
  * Simplified pathsMatch (same logic as HTTPConnectionEnricher)
  */
 function pathsMatch(requestUrl, routePath) {
-  if (requestUrl === routePath) return true;
-  if (!routePath.includes(':')) return false;
+  const normRequest = normalizeUrl(requestUrl);
+  const normRoute = normalizeUrl(routePath);
 
-  const regexPattern = routePath
-    .replace(/:[^/]+/g, '[^/]+')
-    .replace(/\//g, '\\/');
-  const regex = new RegExp(`^${regexPattern}$`);
-  return regex.test(requestUrl);
+  if (normRequest === normRoute) return true;
+  if (!hasParamsNormalized(normRoute)) return false;
+
+  return buildParamRegex(normRoute).test(normRequest);
 }
 
 function hasParams(path) {
-  return Boolean(path && path.includes(':'));
+  return Boolean(path && (path.includes(':') || path.includes('${')));
 }
 
 /**
@@ -87,16 +86,22 @@ async function matchRequestsToRoutes(graph) {
   for (const request of uniqueRequests) {
     if (request.url === 'dynamic' || !request.url) continue;
 
-    const method = (request.method || 'GET').toUpperCase();
+    const methodSource = request.methodSource || 'explicit';
+    const method = request.method ? request.method.toUpperCase() : null;
     const url = request.url;
 
     for (const route of uniqueRoutes) {
-      const routeMethod = (route.method || 'GET').toUpperCase();
+      const routeMethod = route.method ? route.method.toUpperCase() : null;
 
       // THE FIX: Use fullPath if available, fallback to path
       const routePath = route.fullPath || route.path;
 
-      if (routePath && method === routeMethod && pathsMatch(url, routePath)) {
+      if (!routeMethod) continue;
+      if (methodSource === 'unknown') continue;
+      if (methodSource === 'default' && routeMethod !== 'GET') continue;
+      if (methodSource === 'explicit' && (!method || method !== routeMethod)) continue;
+
+      if (routePath && pathsMatch(url, routePath)) {
         edges.push({
           type: 'INTERACTS_WITH',
           src: request.id,
@@ -254,6 +259,37 @@ describe('HTTPConnectionEnricher - Mount Prefix Support', () => {
       assert.strictEqual(edges.length, 1);
       assert.strictEqual(edges[0].matchType, 'parametric');
     });
+
+    it('should treat dots in routes as literal characters', async () => {
+      const graph = new MockGraphBackend();
+
+      graph.addNode({
+        id: 'route:file-json',
+        type: 'http:route',
+        method: 'GET',
+        path: '/files/:id.json',
+        fullPath: '/api/files/:id.json',
+      });
+
+      graph.addNode({
+        id: 'request:file-json',
+        type: 'http:request',
+        method: 'GET',
+        url: '/api/files/123.json',
+      });
+
+      graph.addNode({
+        id: 'request:file-json-wrong',
+        type: 'http:request',
+        method: 'GET',
+        url: '/api/files/123xjson',
+      });
+
+      const edges = await matchRequestsToRoutes(graph);
+
+      assert.strictEqual(edges.length, 1, 'Only the literal .json path should match');
+      assert.strictEqual(edges[0].src, 'request:file-json');
+    });
   });
 
   describe('Method matching', () => {
@@ -301,6 +337,63 @@ describe('HTTPConnectionEnricher - Mount Prefix Support', () => {
       const edges = await matchRequestsToRoutes(graph);
 
       assert.strictEqual(edges.length, 1);
+    });
+  });
+
+  describe('Method source fallback', () => {
+
+    it('should match default GET only when route is GET', async () => {
+      const graph = new MockGraphBackend();
+
+      graph.addNode({
+        id: 'route:get-users',
+        type: 'http:route',
+        method: 'GET',
+        fullPath: '/api/users',
+      });
+
+      graph.addNode({
+        id: 'route:post-users',
+        type: 'http:route',
+        method: 'POST',
+        fullPath: '/api/users',
+      });
+
+      graph.addNode({
+        id: 'request:default-get',
+        type: 'http:request',
+        method: 'GET',
+        methodSource: 'default',
+        url: '/api/users',
+      });
+
+      const edges = await matchRequestsToRoutes(graph);
+
+      assert.strictEqual(edges.length, 1, 'Default GET should match only GET routes');
+      assert.strictEqual(edges[0].dst, 'route:get-users');
+    });
+
+    it('should skip matching when method is unknown', async () => {
+      const graph = new MockGraphBackend();
+
+      graph.addNode({
+        id: 'route:get-users',
+        type: 'http:route',
+        method: 'GET',
+        fullPath: '/api/users',
+      });
+
+      graph.addNode({
+        id: 'request:unknown',
+        type: 'http:request',
+        method: 'UNKNOWN',
+        methodSource: 'unknown',
+        url: '/api/users',
+      });
+
+      const edges = await matchRequestsToRoutes(graph);
+
+      assert.strictEqual(edges.length, 0, 'Unknown method should not match any route');
     });
   });
 
@@ -881,8 +974,18 @@ describe('HTTPConnectionEnricher - HTTP_RECEIVES Edges (REG-252 Phase C)', () =>
  */
 function normalizeUrl(url) {
   return url
-    .replace(/:[^/]+/g, '{param}')      // :id -> {param}
+    .replace(/:[A-Za-z0-9_]+/g, '{param}')      // :id -> {param}
     .replace(/\$\{[^}]*\}/g, '{param}'); // ${...} -> {param}, ${userId} -> {param}
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function buildParamRegex(normalizedRoute) {
+  const parts = normalizedRoute.split('{param}');
+  const pattern = parts.map(escapeRegExp).join('[^/]+');
+  return new RegExp(`^${pattern}$`);
 }
 
 /**
@@ -926,11 +1029,7 @@ function pathsMatchNormalized(requestUrl, routePath) {
 
   // Handle case where request has concrete value (e.g., '/users/123')
   // and route has param (e.g., '/users/{param}')
-  const routeRegex = normRoute
-    .replace(/\{param\}/g, '[^/]+')  // {param} -> [^/]+
-    .replace(/\//g, '\\/');           // / -> \/
-
-  return new RegExp(`^${routeRegex}$`).test(normRequest);
+  return buildParamRegex(normRoute).test(normRequest);
 }
 
 /**
@@ -956,14 +1055,20 @@ async function matchRequestsToRoutesNormalized(graph) {
   for (const request of uniqueRequests) {
     if (request.url === 'dynamic' || !request.url) continue;
 
-    const method = (request.method || 'GET').toUpperCase();
+    const methodSource = request.methodSource || 'explicit';
+    const method = request.method ? request.method.toUpperCase() : null;
     const url = request.url;
 
     for (const route of uniqueRoutes) {
-      const routeMethod = (route.method || 'GET').toUpperCase();
+      const routeMethod = route.method ? route.method.toUpperCase() : null;
       const routePath = route.fullPath || route.path;
 
-      if (routePath && method === routeMethod && pathsMatchNormalized(url, routePath)) {
+      if (!routeMethod) continue;
+      if (methodSource === 'unknown') continue;
+      if (methodSource === 'default' && routeMethod !== 'GET') continue;
+      if (methodSource === 'explicit' && (!method || method !== routeMethod)) continue;
+
+      if (routePath && pathsMatchNormalized(url, routePath)) {
         edges.push({
           type: 'INTERACTS_WITH',
           src: request.id,

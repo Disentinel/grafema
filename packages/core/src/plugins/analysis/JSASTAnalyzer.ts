@@ -3679,6 +3679,8 @@ export class JSASTAnalyzer extends Plugin {
     // Find by matching file/line/column in functions collection (it was just added by the visitor)
     // REG-271: Skip for StaticBlock (static blocks don't have RETURNS edges or control flow metadata)
     const funcNode = funcPath.node;
+    const functionNode = t.isFunction(funcNode) ? funcNode : null;
+    const functionPath = functionNode ? (funcPath as NodePath<t.Function>) : null;
     const funcLine = getLine(funcNode);
     const funcColumn = getColumn(funcNode);
     let currentFunctionId: string | null = null;
@@ -3880,8 +3882,8 @@ export class JSASTAnalyzer extends Plugin {
         controlFlowState.hasThrow = true;
 
         // REG-311: Track rejection patterns for async functions
-        const isAsyncFunction = funcNode.async === true;
-        if (isAsyncFunction && currentFunctionId) {
+        const isAsyncFunction = functionNode?.async === true;
+        if (isAsyncFunction && currentFunctionId && functionNode && functionPath) {
           const throwNode = throwPath.node;
           const arg = throwNode.argument;
           const throwLine = getLine(throwNode);
@@ -3903,8 +3905,8 @@ export class JSASTAnalyzer extends Plugin {
             const varName = arg.name;
 
             // Check if it's a parameter
-            const isParameter = funcNode.params.some(p =>
-              t.isIdentifier(p) && p.name === varName
+            const isParameter = functionNode.params.some(param =>
+              t.isIdentifier(param) && param.name === varName
             );
 
             if (isParameter) {
@@ -3922,7 +3924,7 @@ export class JSASTAnalyzer extends Plugin {
               // Try micro-trace
               const { errorClassName, tracePath } = this.microTraceToErrorClass(
                 varName,
-                funcPath,
+                functionPath,
                 variableDeclarations
               );
 
@@ -4491,9 +4493,9 @@ export class JSASTAnalyzer extends Plugin {
             else if (t.isIdentifier(arg)) {
               const varName = arg.name;
               // Check if it's a parameter of containing function
-              const isParameter = funcNode.params.some(p =>
-                t.isIdentifier(p) && p.name === varName
-              );
+              const isParameter = functionNode
+                ? functionNode.params.some(param => t.isIdentifier(param) && param.name === varName)
+                : false;
 
               if (isParameter) {
                 rejectionPatterns.push({
@@ -4507,9 +4509,23 @@ export class JSASTAnalyzer extends Plugin {
                 });
               } else {
                 // Try micro-trace
+                if (!functionPath) {
+                  rejectionPatterns.push({
+                    functionId: currentFunctionId,
+                    errorClassName: null,
+                    rejectionType: 'variable_unknown',
+                    file: module.file,
+                    line: callLine,
+                    column: callColumn,
+                    sourceVariableName: varName,
+                    tracePath: [varName]
+                  });
+                  return;
+                }
+
                 const { errorClassName, tracePath } = this.microTraceToErrorClass(
                   varName,
-                  funcPath,
+                  functionPath,
                   variableDeclarations
                 );
 
@@ -4671,7 +4687,17 @@ export class JSASTAnalyzer extends Plugin {
 
     // REG-311: Second pass - collect CATCHES_FROM info for try/catch blocks
     // This links catch blocks to exception sources in their corresponding try blocks
-    this.collectCatchesFromInfo(funcPath, catchBlocks, callSites, methodCalls, constructorCalls, catchesFromInfos, module);
+    if (functionPath) {
+      this.collectCatchesFromInfo(
+        functionPath,
+        catchBlocks,
+        callSites,
+        methodCalls,
+        constructorCalls,
+        catchesFromInfos,
+        module
+      );
+    }
 
     // Phase 6 (REG-267): Attach control flow metadata to the function node
     if (matchingFunction) {
