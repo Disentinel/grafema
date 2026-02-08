@@ -24,7 +24,7 @@ All plugins are enabled by default ("batteries included"). Plugins that don't fi
 The simplest way to start:
 
 ```bash
-grafema init
+npx @grafema/cli init
 ```
 
 This creates `.grafema/config.yaml` with sensible defaults.
@@ -93,14 +93,14 @@ Full configuration reference: [configuration.md](configuration.md)
 .grafema/rfdb.sock
 ```
 
-`grafema init` automatically adds these lines to `.gitignore`.
+`npx @grafema/cli init` automatically adds these lines to `.gitignore`.
 
 ## Step 2: First Analysis
 
 ### 2.1 Run Analysis
 
 ```bash
-grafema analyze
+npx @grafema/cli analyze
 ```
 
 Or via MCP:
@@ -112,7 +112,7 @@ Or via MCP:
 ### 2.2 Check Results
 
 ```bash
-grafema overview
+npx @grafema/cli overview
 ```
 
 Example output:
@@ -131,7 +131,7 @@ Edges: 2,456 total
 ### 2.3 Check Schema
 
 ```bash
-grafema schema
+npx @grafema/cli schema
 ```
 
 Shows all node types and edge types in the graph.
@@ -144,17 +144,17 @@ Use Datalog queries to find unanalyzed code. See [Datalog Cheat Sheet](datalog-c
 
 ```bash
 # Find unresolved function calls (no CALLS edge)
-grafema query 'violation(X) :- node(X, "CALL"), \+ edge(X, _, "CALLS").'
+npx @grafema/cli query 'violation(X) :- node(X, "CALL"), \+ edge(X, _, "CALLS").'
 
 # Find unresolved method calls
-grafema query 'violation(X) :- node(X, "METHOD_CALL"), \+ edge(X, _, "CALLS").'
+npx @grafema/cli query 'violation(X) :- node(X, "METHOD_CALL"), \+ edge(X, _, "CALLS").'
 ```
 
 ### 3.2 Analysis by File
 
 ```bash
 # Find files with the most unresolved calls
-grafema query 'violation(F) :- node(C, "CALL"), attr(C, "file", F), \+ edge(C, _, "CALLS").'
+npx @grafema/cli query 'violation(F) :- node(C, "CALL"), attr(C, "file", F), \+ edge(C, _, "CALLS").'
 ```
 
 ### 3.3 Check Dependencies
@@ -163,7 +163,7 @@ Grafema determines dependencies by imports (more reliable than package.json):
 
 ```bash
 # Find all external dependencies
-grafema query 'violation(X) :- node(X, "MODULE"), attr(X, "external", "true").'
+npx @grafema/cli query 'violation(X) :- node(X, "MODULE"), attr(X, "external", "true").'
 ```
 
 ## Step 4: Coverage Metrics
@@ -171,13 +171,13 @@ grafema query 'violation(X) :- node(X, "MODULE"), attr(X, "external", "true").'
 Track these metrics:
 
 ```bash
-# 1. Call resolution rate - grafema overview shows totals
+# 1. Call resolution rate - overview output shows totals
 
 # 2. Unresolved calls (should decrease over time)
-grafema query 'violation(X) :- node(X, "CALL"), \+ edge(X, _, "CALLS").'
+npx @grafema/cli query 'violation(X) :- node(X, "CALL"), \+ edge(X, _, "CALLS").'
 
 # 3. Semantic coverage (HTTP routes, DB queries, etc.)
-grafema query 'violation(X) :- node(X, "http:route").'  # How many routes found
+npx @grafema/cli query 'violation(X) :- node(X, "http:route").'  # How many routes found
 ```
 
 ### 4.1 When to Write a Custom Plugin
@@ -195,13 +195,13 @@ Now you can query the graph to understand your codebase:
 
 ```bash
 # Find functions by name
-grafema query "function authenticate"
+npx @grafema/cli query "function authenticate"
 
 # Find HTTP routes
-grafema query "route /api"
+npx @grafema/cli query "route /api"
 
 # Trace variables
-grafema trace "userId"
+npx @grafema/cli trace "userId"
 ```
 
 For more query examples, see [Datalog Cheat Sheet](datalog-cheat-sheet.md).
@@ -214,13 +214,13 @@ For more query examples, see [Datalog Cheat Sheet](datalog-cheat-sheet.md).
 
 ## Onboarding Checklist
 
-- [ ] Run `grafema init`
+- [ ] Run `npx @grafema/cli init`
 - [ ] Configure `.grafema/config.yaml` (if needed)
 - [ ] Add `.grafema/graph.rfdb` to `.gitignore`
-- [ ] First analysis complete (`grafema analyze`)
-- [ ] Schema verified (`grafema schema`)
+- [ ] First analysis complete (`npx @grafema/cli analyze`)
+- [ ] Schema verified (`npx @grafema/cli schema`)
 - [ ] Coverage metrics checked (unresolved calls)
-- [ ] Try some queries (`grafema query`)
+- [ ] Try some queries (`npx @grafema/cli query`)
 
 ## Troubleshooting
 
@@ -241,7 +241,7 @@ For more query examples, see [Datalog Cheat Sheet](datalog-cheat-sheet.md).
 - Check plugin order — enrichers depend on analysis results
 - Use `--log-level debug` for detailed logs
 
-### `grafema init` fails
+### `npx @grafema/cli init` fails
 
 - Ensure you have a `package.json` in the project root
 - Check write permissions for `.grafema/` directory

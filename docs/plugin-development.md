@@ -54,7 +54,7 @@ export class HelloWorldPlugin extends Plugin {
 }
 ```
 
-**That's it!** 15 lines. Add `HelloWorldPlugin` to your config and run `grafema analyze`.
+**That's it!** 15 lines. Add `HelloWorldPlugin` to your config and run `npx @grafema/cli analyze`.
 
 ## Plugin Types
 
@@ -673,7 +673,7 @@ async execute(context) {
 
 Control log level via CLI:
 ```bash
-grafema analyze --log-level debug
+npx @grafema/cli analyze --log-level debug
 ```
 
 ### Common Problems

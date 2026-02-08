@@ -108,19 +108,19 @@ app.use('/api', userRoutes);
 
 ### Analyzing the Connection
 
-After running `grafema analyze`:
+After running `npx @grafema/cli analyze`:
 
 ```bash
 # Find HTTP requests
-grafema query "http:request"
+npx @grafema/cli query "http:request"
 # Shows: GET /api/users at client.js:3
 
 # Find HTTP routes
-grafema query "http:route"
+npx @grafema/cli query "http:route"
 # Shows: GET /users at routes.js:1
 
 # Trace from a route's response
-grafema trace --from-route "GET /users"
+npx @grafema/cli trace --from-route "GET /users"
 # Shows what data the route returns
 ```
 
@@ -128,13 +128,13 @@ grafema trace --from-route "GET /users"
 
 ```bash
 # Find all frontend-backend connections
-grafema query --raw 'edge(Req, Route, "INTERACTS_WITH"), type(Req, "http:request")'
+npx @grafema/cli query --raw 'edge(Req, Route, "INTERACTS_WITH"), type(Req, "http:request")'
 
 # Find routes that receive POST requests
-grafema query --raw 'type(R, "http:route"), attr(R, "method", "POST")'
+npx @grafema/cli query --raw 'type(R, "http:route"), attr(R, "method", "POST")'
 
 # Find requests with dynamic URLs (not fully traceable)
-grafema query --raw 'type(R, "http:request"), attr(R, "url", "dynamic")'
+npx @grafema/cli query --raw 'type(R, "http:request"), attr(R, "url", "dynamic")'
 ```
 
 ### Using VS Code Extension
@@ -225,7 +225,7 @@ app.use('/api', userRouter);
 The `MountPointResolver` needs to detect this. Verify the route has `fullPath` set:
 
 ```bash
-grafema query --type http:route
+npx @grafema/cli query --type http:route
 # Check that fullPath includes /api/users, not just /users
 ```
 
@@ -267,14 +267,14 @@ The URL couldn't be statically determined. Common causes:
 Run analysis with debug output:
 
 ```bash
-grafema analyze --verbose
+npx @grafema/cli analyze --verbose
 # Look for "HTTPConnectionEnricher" logs showing connections found
 ```
 
 Or query the INTERACTS_WITH edges:
 
 ```bash
-grafema query --raw 'edge(_, _, "INTERACTS_WITH")'
+npx @grafema/cli query --raw 'edge(_, _, "INTERACTS_WITH")'
 ```
 
 ## Configuration

@@ -22,11 +22,11 @@ Graph-Driven Development: from code graph to system guarantees.
 
 ### CLI ✅
 
-- `grafema analyze` — full project analysis
-- `grafema query` — pattern matching + Datalog queries
-- `grafema ls` — list nodes by type
-- `grafema types` — show available node types
-- `grafema show` — node details with edges
+- `npx @grafema/cli analyze` — full project analysis
+- `npx @grafema/cli query` — pattern matching + Datalog queries
+- `npx @grafema/cli ls` — list nodes by type
+- `npx @grafema/cli types` — show available node types
+- `npx @grafema/cli show` — node details with edges
 
 ### MCP Server ✅
 

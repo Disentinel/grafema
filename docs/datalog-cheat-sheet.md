@@ -141,15 +141,15 @@ violation(X) :-
 
 ## Understanding Results
 
-Query results return node IDs. Use `grafema node <id>` to see full node details:
+Query results return node IDs. Use `npx @grafema/cli node <id>` to see full node details:
 
 ```bash
 # Run query
-grafema query 'violation(X) :- node(X, "CALL"), attr(X, "name", "eval").'
+npx @grafema/cli query 'violation(X) :- node(X, "CALL"), attr(X, "name", "eval").'
 
 # Output: CALL:src/utils.js:42:eval
 # Get details
-grafema node "CALL:src/utils.js:42:eval"
+npx @grafema/cli node "CALL:src/utils.js:42:eval"
 ```
 
 ## Tips

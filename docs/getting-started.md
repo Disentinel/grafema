@@ -12,7 +12,7 @@
 In your project directory:
 
 ```bash
-npx grafema init
+npx @grafema/cli init
 ```
 
 This creates `.grafema/config.yaml` with default settings. Grafema automatically detects Express routes, database queries, API calls, and more.
@@ -22,7 +22,7 @@ This creates `.grafema/config.yaml` with default settings. Grafema automatically
 Build the code graph:
 
 ```bash
-npx grafema analyze
+npx @grafema/cli analyze
 ```
 
 Expected output:
@@ -39,7 +39,7 @@ Analysis complete in 4.52s
 ### See what was found
 
 ```bash
-npx grafema overview
+npx @grafema/cli overview
 ```
 
 Output:
@@ -58,7 +58,7 @@ External Interactions:
 ### Find all API endpoints
 
 ```bash
-npx grafema query "route /api"
+npx @grafema/cli query "route /api"
 ```
 
 Output:
@@ -75,7 +75,7 @@ Found 2 results.
 ### Search for functions
 
 ```bash
-npx grafema query "function authenticate"
+npx @grafema/cli query "function authenticate"
 ```
 
 Output:
@@ -93,7 +93,7 @@ Called by (3):
 ### Trace data flow
 
 ```bash
-npx grafema trace "userId from authenticate"
+npx @grafema/cli trace "userId from authenticate"
 ```
 
 Output:
@@ -113,7 +113,7 @@ Possible values:
 ### Check for issues
 
 ```bash
-npx grafema check connectivity
+npx @grafema/cli check connectivity
 ```
 
 Output:
@@ -127,10 +127,13 @@ No issues found
 
 For visual graph exploration:
 
-1. Install the extension:
+1. Build the extension from this repo:
    ```bash
-   cd node_modules/grafema/packages/vscode
-   ./scripts/install-local.sh
+   cd packages/vscode
+   pnpm install
+   pnpm build
+   # Then in VS Code: Cmd+Shift+P > "Extensions: Install from VSIX..."
+   # Select packages/vscode/grafema-explore-*.vsix
    ```
 
 2. Open your project in VS Code
@@ -143,22 +146,22 @@ For visual graph exploration:
 
 ```bash
 # Find functions by name (partial match)
-npx grafema query "auth"
+npx @grafema/cli query "auth"
 
 # Find all HTTP routes
-npx grafema query "route"
+npx @grafema/cli query "route"
 
 # Find variables in a specific function
-npx grafema query "config in loadSettings"
+npx @grafema/cli query "config in loadSettings"
 
 # Trace where a value flows
-npx grafema trace "apiKey"
+npx @grafema/cli trace "apiKey"
 
 # Check data flow integrity
-npx grafema check dataflow
+npx @grafema/cli check dataflow
 
 # See all available checks
-npx grafema check --list-categories
+npx @grafema/cli check --list-categories
 ```
 
 ## Next Steps
@@ -169,7 +172,7 @@ npx grafema check --list-categories
 ## Troubleshooting
 
 **"No graph database found"**
-Run `grafema analyze` first to build the graph.
+Run `npx @grafema/cli analyze` first to build the graph.
 
 **Analysis is slow**
 Add an `exclude` pattern in `.grafema/config.yaml`:

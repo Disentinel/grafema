@@ -21,11 +21,6 @@ Grafema is a code analysis tool that lets you **trace data flow across your code
 # Using npx (no installation needed)
 npx @grafema/cli init
 npx @grafema/cli analyze
-
-# Or install globally
-npm install -g @grafema/cli
-grafema init
-grafema analyze
 ```
 
 This creates a `.grafema/` directory with the code graph.
@@ -34,13 +29,13 @@ This creates a `.grafema/` directory with the code graph.
 
 ```bash
 # Find all API endpoints
-grafema query "http:handler"
+npx @grafema/cli query "route /api"
 
 # Find where a function is called from
-grafema query "function myFunction"
+npx @grafema/cli query "function myFunction"
 
 # Search in specific scope
-grafema query "variable token in authenticate"
+npx @grafema/cli query "variable token in authenticate"
 ```
 
 ### 3. Use with Claude Code (MCP Integration)
@@ -165,7 +160,7 @@ const orchestrator = new Orchestrator({
 Start RFDB server:
 ```bash
 npm install @grafema/rfdb
-npx rfdb-server --socket /tmp/rfdb.sock --data-dir ./rfdb-data
+npx rfdb-server ./rfdb-data --socket /tmp/rfdb.sock
 ```
 
 ## Requirements
@@ -177,6 +172,7 @@ npx rfdb-server --socket /tmp/rfdb.sock --data-dir ./rfdb-data
 - [Configuration Guide](./docs/configuration.md)
 - [Datalog Cheat Sheet](./docs/datalog-cheat-sheet.md)
 - [Project Onboarding](./docs/project-onboarding.md)
+- [CLI Reference](./packages/cli/README.md)
 
 ## License
 

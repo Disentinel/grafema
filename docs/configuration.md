@@ -1,15 +1,15 @@
 # Grafema Configuration Reference
 
-> **Configure Grafema to understand your codebase.** Tell it which plugins to use, which files to analyze, and which services make up your project. Most projects work with zero configuration — just run `grafema init` and go.
+> **Configure Grafema to understand your codebase.** Tell it which plugins to use, which files to analyze, and which services make up your project. Most projects work with zero configuration — just run `npx @grafema/cli init` and go.
 
 This document describes the complete configuration format for Grafema.
 
 ## Quick Start
 
-Run `grafema init` to create a default configuration:
+Run `npx @grafema/cli init` to create a default configuration:
 
 ```bash
-grafema init
+npx @grafema/cli init
 ```
 
 This creates `.grafema/config.yaml` with sensible defaults.
@@ -295,7 +295,7 @@ exclude:
 If you have an existing `.grafema/config.json`:
 
 ```bash
-grafema init --force
+npx @grafema/cli init --force
 ```
 
 This will create a new `config.yaml` while preserving your settings.
