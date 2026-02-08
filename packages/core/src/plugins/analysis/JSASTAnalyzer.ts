@@ -2577,7 +2577,7 @@ export class JSASTAnalyzer extends Plugin {
       },
       exit: (tryPath: NodePath<t.TryStatement>) => {
         const tryNode = tryPath.node;
-        const scopeInfo = tryScopeMap.get(tryNode);
+        const _scopeInfo = tryScopeMap.get(tryNode);
 
         // REG-311: Only decrement try block depth if we're still in 'try' block
         // (not transitioned to catch/finally, where we already decremented)
@@ -3539,11 +3539,11 @@ export class JSASTAnalyzer extends Plugin {
     const variableDeclarations = (collections.variableDeclarations ?? []) as VariableDeclarationInfo[];
     const callSites = (collections.callSites ?? []) as CallSiteInfo[];
     const methodCalls = (collections.methodCalls ?? []) as MethodCallInfo[];
-    const eventListeners = (collections.eventListeners ?? []) as EventListenerInfo[];
-    const methodCallbacks = (collections.methodCallbacks ?? []) as MethodCallbackInfo[];
+    const _eventListeners = (collections.eventListeners ?? []) as EventListenerInfo[];
+    const _methodCallbacks = (collections.methodCallbacks ?? []) as MethodCallbackInfo[];
     const classInstantiations = (collections.classInstantiations ?? []) as ClassInstantiationInfo[];
     const constructorCalls = (collections.constructorCalls ?? []) as ConstructorCallInfo[];
-    const httpRequests = (collections.httpRequests ?? []) as HttpRequestInfo[];
+    const _httpRequests = (collections.httpRequests ?? []) as HttpRequestInfo[];
     const literals = (collections.literals ?? []) as LiteralInfo[];
     const variableAssignments = (collections.variableAssignments ?? []) as VariableAssignmentInfo[];
     const ifScopeCounterRef = (collections.ifScopeCounterRef ?? { value: 0 }) as CounterRef;
@@ -3551,9 +3551,9 @@ export class JSASTAnalyzer extends Plugin {
     const varDeclCounterRef = (collections.varDeclCounterRef ?? { value: 0 }) as CounterRef;
     const callSiteCounterRef = (collections.callSiteCounterRef ?? { value: 0 }) as CounterRef;
     const functionCounterRef = (collections.functionCounterRef ?? { value: 0 }) as CounterRef;
-    const httpRequestCounterRef = (collections.httpRequestCounterRef ?? { value: 0 }) as CounterRef;
+    const _httpRequestCounterRef = (collections.httpRequestCounterRef ?? { value: 0 }) as CounterRef;
     const literalCounterRef = (collections.literalCounterRef ?? { value: 0 }) as CounterRef;
-    const anonymousFunctionCounterRef = (collections.anonymousFunctionCounterRef ?? { value: 0 }) as CounterRef;
+    const _anonymousFunctionCounterRef = (collections.anonymousFunctionCounterRef ?? { value: 0 }) as CounterRef;
     const scopeTracker = collections.scopeTracker as ScopeTracker | undefined;
     // Object literal tracking (REG-328)
     if (!collections.objectLiterals) {
@@ -3574,7 +3574,7 @@ export class JSASTAnalyzer extends Plugin {
       collections.yieldExpressions = [];
     }
     const yieldExpressions = collections.yieldExpressions as YieldExpressionInfo[];
-    const parameters = (collections.parameters ?? []) as ParameterInfo[];
+    const _parameters = (collections.parameters ?? []) as ParameterInfo[];
     // Control flow collections (Phase 2: LOOP nodes)
     // Initialize if not exist to ensure nested function calls share same arrays
     if (!collections.loops) {
@@ -3601,9 +3601,9 @@ export class JSASTAnalyzer extends Plugin {
     const parentScopeVariables = new Set<{ name: string; id: string; scopeId: string }>();
 
     const processedCallSites = processedNodes.callSites;
-    const processedVarDecls = processedNodes.varDecls;
+    const _processedVarDecls = processedNodes.varDecls;
     const processedMethodCalls = processedNodes.methodCalls;
-    const processedEventListeners = processedNodes.eventListeners;
+    const _processedEventListeners = processedNodes.eventListeners;
 
     // Track if/else scope transitions (Phase 3: extended with branchId)
     const ifElseScopeMap = new Map<t.IfStatement, IfElseScopeInfo>();

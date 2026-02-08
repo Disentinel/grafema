@@ -147,8 +147,8 @@ export class PrefixEvaluator extends Plugin {
             plugins: ['jsx', 'typescript'] as ParserPlugin[]
           });
         } catch (error) {
-          const err = error as Error;
-          logger.debug('Failed to parse file', { file: module.file, error: err.message });
+          const message = error instanceof Error ? error.message : String(error);
+          logger.debug('Failed to parse file', { file: module.file, error: message });
           continue;
         }
 
@@ -185,7 +185,8 @@ export class PrefixEvaluator extends Plugin {
     } catch (error) {
       const logger = this.log(context);
       logger.error('Error in PrefixEvaluator', { error });
-      return createErrorResult(error as Error);
+      const err = error instanceof Error ? error : new Error(String(error));
+      return createErrorResult(err);
     }
   }
 

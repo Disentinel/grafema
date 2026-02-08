@@ -8,14 +8,14 @@
  */
 
 import * as vscode from 'vscode';
-import type { WireNode, WireEdge } from '@grafema/types';
-import { GrafemaClientManager } from './grafemaClient';
-import {
+import type { WireNode } from '@grafema/types';
+import type { GrafemaClientManager } from './grafemaClient';
+import type {
   GraphTreeItem,
+  NodeMetadata} from './types';
+import {
   parseNodeMetadata,
-  formatNodeLabel,
-  formatEdgeLabel,
-  NodeMetadata,
+  formatNodeLabel
 } from './types';
 
 export class EdgesProvider implements vscode.TreeDataProvider<GraphTreeItem> {

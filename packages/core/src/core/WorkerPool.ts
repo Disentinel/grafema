@@ -136,7 +136,8 @@ export class WorkerPool extends EventEmitter {
         queue.complete(task.id, result);
         this.emit('worker:task:completed', { workerId, task, result });
       } catch (error) {
-        queue.fail(task.id, error as Error);
+        const err = error instanceof Error ? error : new Error(String(error));
+        queue.fail(task.id, err);
         this.emit('worker:task:failed', { workerId, task, error });
       } finally {
         this.activeWorkers--;

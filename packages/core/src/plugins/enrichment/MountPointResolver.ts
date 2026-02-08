@@ -253,7 +253,8 @@ export class MountPointResolver extends Plugin {
     } catch (error) {
       const logger = this.log(context);
       logger.error('Error in MountPointResolver', { error });
-      return createErrorResult(error as Error);
+      const err = error instanceof Error ? error : new Error(String(error));
+      return createErrorResult(err);
     }
   }
 }

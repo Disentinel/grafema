@@ -10,7 +10,7 @@ import { Command } from 'commander';
 import { resolve, join, dirname } from 'path';
 import { relative } from 'path';
 import { existsSync } from 'fs';
-import { RFDBServerBackend, findContainingFunction as findContainingFunctionCore, type CallerInfo } from '@grafema/core';
+import { RFDBServerBackend, findContainingFunction as findContainingFunctionCore } from '@grafema/core';
 import { formatNodeDisplay, formatNodeInline } from '../utils/formatNode.js';
 import { exitWithError } from '../utils/errorFormatter.js';
 

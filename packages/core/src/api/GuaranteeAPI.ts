@@ -304,7 +304,7 @@ export class GuaranteeAPI {
 
     const result: CheckGuaranteeResult = {
       id,
-      name: guarantee.name,
+      name: guarantee.name ?? id,
       passed: true,
       errors: [],
       validatedCount: 0,
@@ -324,7 +324,8 @@ export class GuaranteeAPI {
         this.schemaCache.set(id, validate);
       } catch (e) {
         result.passed = false;
-        result.errors.push(`Invalid schema: ${(e as Error).message}`);
+        const message = e instanceof Error ? e.message : String(e);
+        result.errors.push(`Invalid schema: ${message}`);
         return result;
       }
     }

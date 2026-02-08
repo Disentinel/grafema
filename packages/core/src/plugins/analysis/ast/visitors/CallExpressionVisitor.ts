@@ -8,12 +8,12 @@
  * - Constructor calls: new Foo(), new Function()
  */
 
-import type { Node, CallExpression, NewExpression, Identifier, MemberExpression, ObjectExpression, ArrayExpression, ObjectProperty, SpreadElement, Comment } from '@babel/types';
+import type { Node, CallExpression, NewExpression, Identifier, MemberExpression, ObjectExpression, ArrayExpression, ObjectProperty, Comment } from '@babel/types';
 import type { NodePath } from '@babel/traverse';
 import { ASTVisitor, type VisitorModule, type VisitorCollections, type VisitorHandlers, type CounterRef } from './ASTVisitor.js';
 import { ExpressionEvaluator } from '../ExpressionEvaluator.js';
 import type { ArrayMutationInfo, ArrayMutationArgument, ObjectMutationInfo, ObjectMutationValue, GrafemaIgnoreAnnotation } from '../types.js';
-import { ScopeTracker } from '../../../../core/ScopeTracker.js';
+import type { ScopeTracker } from '../../../../core/ScopeTracker.js';
 import { computeSemanticId } from '../../../../core/SemanticId.js';
 import { IdGenerator } from '../IdGenerator.js';
 import { NodeFactory } from '../../../../core/NodeFactory.js';

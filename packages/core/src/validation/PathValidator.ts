@@ -18,14 +18,6 @@
 import type { GraphBackend } from '@grafema/types';
 import type { BaseNodeRecord } from '@grafema/types';
 
-/**
- * Edge record from backend
- */
-interface EdgeRecord {
-  src: string;
-  dst: string | number;
-  type: string;
-}
 
 /**
  * Node with optional version field for version tracking

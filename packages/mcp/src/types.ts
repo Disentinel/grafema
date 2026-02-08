@@ -45,6 +45,7 @@ export interface QueryGraphArgs {
   limit?: number;
   offset?: number;
   format?: 'table' | 'json' | 'tree';
+  explain?: boolean;
 }
 
 export interface FindCallsArgs {
@@ -52,6 +53,7 @@ export interface FindCallsArgs {
   limit?: number;
   offset?: number;
   include_indirect?: boolean;
+  className?: string;
 }
 
 export interface TraceAliasArgs {
@@ -190,7 +192,7 @@ export interface GraphBackend {
 export interface GraphNode {
   id: string;
   type: string;
-  name: string;
+  name?: string;  // Optional - some nodes (BRANCH, CASE, LOOP) don't have names
   file?: string;
   line?: number;
   [key: string]: unknown;
@@ -264,6 +266,27 @@ export interface GetFunctionDetailsArgs {
 
 // Re-export types from core for convenience
 export type { CallInfo, CallerInfo, FindCallsOptions } from '@grafema/core';
+
+/**
+ * Datalog query result binding
+ */
+export interface DatalogBinding {
+  name: string;
+  value: string;
+}
+
+/**
+ * Call result structure for filtering
+ */
+export interface CallResult {
+  id: string;
+  name?: string;
+  object?: string;
+  file?: string;
+  line?: number;
+  resolved: boolean;
+  target: { type: string; name: string; file?: string; line?: number } | null;
+}
 
 /**
  * Information about a conditional guard (SCOPE node)

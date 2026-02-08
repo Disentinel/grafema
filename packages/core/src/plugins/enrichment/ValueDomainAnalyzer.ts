@@ -576,7 +576,7 @@ export class ValueDomainAnalyzer extends Plugin {
    * @param graph - Graph backend with edge operations
    * @returns Statistics about resolution
    */
-  async resolveComputedMutations(graph: Graph, logger: ReturnType<typeof this.log>): Promise<{
+  async resolveComputedMutations(graph: Graph, _logger: ReturnType<typeof this.log>): Promise<{
     resolved: number;
     conditional: number;
     unknownParameter: number;

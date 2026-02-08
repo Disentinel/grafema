@@ -166,7 +166,7 @@ export class ASTWorkerPool extends EventEmitter {
     const promises = modules.map(m =>
       this.parseModule(m.file, m.id, m.name)
         .then(collections => ({ module: m, collections, error: null }))
-        .catch(error => ({ module: m, collections: null, error: error as Error }))
+        .catch(error => ({ module: m, collections: null, error: error instanceof Error ? error : new Error(String(error)) }))
     );
 
     return Promise.all(promises);

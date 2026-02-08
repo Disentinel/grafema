@@ -26,7 +26,6 @@ import type {
   TraceValuesGraphBackend,
   ValueSetResult,
   NondeterministicPattern,
-  UnknownReason,
 } from './types.js';
 
 // =============================================================================

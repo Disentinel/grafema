@@ -278,7 +278,7 @@ export class GuaranteeManager {
     try {
       violations = await this.graph.checkGuarantee(node.rule);
     } catch (e) {
-      error = (e as Error).message;
+      error = e instanceof Error ? e.message : String(e);
     }
 
     // Обогащаем violations информацией о нодах

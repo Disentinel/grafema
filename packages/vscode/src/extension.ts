@@ -10,7 +10,8 @@ import type { WireNode } from '@grafema/types';
 import { GrafemaClientManager } from './grafemaClient';
 import { EdgesProvider } from './edgesProvider';
 import { findNodeAtCursor } from './nodeLocator';
-import { parseNodeMetadata, GraphTreeItem } from './types';
+import type { GraphTreeItem } from './types';
+import { parseNodeMetadata } from './types';
 
 let clientManager: GrafemaClientManager | null = null;
 let edgesProvider: EdgesProvider | null = null;
@@ -404,7 +405,7 @@ async function buildTreeState(
     }
   } else if (selectedItem?.kind === 'edge') {
     // If an edge is selected, show the target node
-    const edge = selectedItem.edge;
+    const _edge = selectedItem.edge;
     const targetNode = selectedItem.targetNode;
     if (targetNode) {
       const metadata = parseNodeMetadata(targetNode);

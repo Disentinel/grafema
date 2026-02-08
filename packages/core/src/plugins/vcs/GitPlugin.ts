@@ -114,8 +114,9 @@ export class GitPlugin extends VCSPlugin {
 
       return files;
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       throw new FileAccessError(
-        `Failed to get changed files: ${(error as Error).message}`,
+        `Failed to get changed files: ${message}`,
         'ERR_GIT_ACCESS_DENIED',
         { plugin: 'GitPlugin' },
         'Check that git is installed and this is a valid git repository'
@@ -157,8 +158,9 @@ export class GitPlugin extends VCSPlugin {
       // Парсим unified diff
       return this._parseUnifiedDiff(filePath, stdout);
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       throw new FileAccessError(
-        `Failed to get diff for ${filePath}: ${(error as Error).message}`,
+        `Failed to get diff for ${filePath}: ${message}`,
         'ERR_GIT_ACCESS_DENIED',
         { plugin: 'GitPlugin', filePath },
         'Ensure the file is tracked by git and the working directory is accessible'
@@ -174,8 +176,9 @@ export class GitPlugin extends VCSPlugin {
       const { stdout } = await this._exec('git rev-parse --abbrev-ref HEAD');
       return stdout.trim();
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       throw new FileAccessError(
-        `Failed to get current branch: ${(error as Error).message}`,
+        `Failed to get current branch: ${message}`,
         'ERR_GIT_ACCESS_DENIED',
         { plugin: 'GitPlugin' },
         'Ensure this is a valid git repository with at least one commit'
@@ -191,8 +194,9 @@ export class GitPlugin extends VCSPlugin {
       const { stdout } = await this._exec('git rev-parse HEAD');
       return stdout.trim();
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       throw new FileAccessError(
-        `Failed to get last commit hash: ${(error as Error).message}`,
+        `Failed to get last commit hash: ${message}`,
         'ERR_GIT_NOT_FOUND',
         { plugin: 'GitPlugin' },
         'Ensure this is a valid git repository with at least one commit'
@@ -328,8 +332,9 @@ export class GitPlugin extends VCSPlugin {
       const { stdout } = await this._exec('git ls-files');
       return stdout.trim().split('\n').filter(line => line.length > 0);
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       throw new FileAccessError(
-        `Failed to get tracked files: ${(error as Error).message}`,
+        `Failed to get tracked files: ${message}`,
         'ERR_GIT_ACCESS_DENIED',
         { plugin: 'GitPlugin' },
         'Check that git is installed and this is a valid git repository'
@@ -353,8 +358,9 @@ export class GitPlugin extends VCSPlugin {
         message: lines[4]
       };
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       throw new FileAccessError(
-        `Failed to get last commit info: ${(error as Error).message}`,
+        `Failed to get last commit info: ${message}`,
         'ERR_GIT_NOT_FOUND',
         { plugin: 'GitPlugin' },
         'Ensure this is a valid git repository with at least one commit'

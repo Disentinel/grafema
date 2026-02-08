@@ -8,14 +8,6 @@ import type { PluginContext, PluginMetadata, PluginResult } from '../Plugin.js';
 import type { NodeRecord } from '@grafema/types';
 import { ValidationError } from '../../errors/GrafemaError.js';
 
-/**
- * Edge structure
- */
-interface EdgeRecord {
-  src: string;
-  dst: string;
-  [key: string]: unknown;
-}
 
 /**
  * Unreachable node info for manifest

@@ -357,10 +357,11 @@ export async function checkGraphStats(
       },
     };
   } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
     return {
       name: 'graph_stats',
       status: 'warn',
-      message: `Could not read graph stats: ${(err as Error).message}`,
+      message: `Could not read graph stats: ${message}`,
     };
   }
 }
@@ -496,10 +497,11 @@ export async function checkConnectivity(
       details: { unreachableCount, percentage, byType },
     };
   } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
     return {
       name: 'connectivity',
       status: 'warn',
-      message: `Could not check connectivity: ${(err as Error).message}`,
+      message: `Could not check connectivity: ${message}`,
     };
   }
 }
@@ -547,10 +549,11 @@ export async function checkFreshness(
       },
     };
   } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
     return {
       name: 'freshness',
       status: 'warn',
-      message: `Could not check freshness: ${(err as Error).message}`,
+      message: `Could not check freshness: ${message}`,
     };
   }
 }

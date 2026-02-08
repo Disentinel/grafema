@@ -60,7 +60,8 @@ export async function clearFileNodesIfNeeded(
       await graph.deleteNode(id);
     } catch (err) {
       // Log but continue - node might already be deleted by concurrent operation
-      console.warn(`[FileNodeManager] Failed to delete ${id}:`, (err as Error).message);
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn(`[FileNodeManager] Failed to delete ${id}:`, message);
     }
   }
 
@@ -93,7 +94,7 @@ export async function clearServiceNodeIfExists(
     await graph.deleteNode(serviceId);
     console.log(`[FileNodeManager] Cleared SERVICE node: ${serviceId}`);
     return true;
-  } catch (err) {
+  } catch {
     // Node might not exist on fresh analysis - that's OK
     return false;
   }

@@ -160,9 +160,10 @@ function Explorer({ backend, startNode, projectPath }: ExplorerProps) {
           }));
         }
       } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
         setState(s => ({
           ...s,
-          error: (err as Error).message,
+          error: message,
           loading: false,
         }));
       }
@@ -387,9 +388,10 @@ function Explorer({ backend, startNode, projectPath }: ExplorerProps) {
         error: results.length === 0 ? `No results for "${query}"` : null,
       }));
     } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
       setState(s => ({
         ...s,
-        error: (err as Error).message,
+        error: message,
         loading: false,
       }));
     }
@@ -408,9 +410,10 @@ function Explorer({ backend, startNode, projectPath }: ExplorerProps) {
         loading: false,
       }));
     } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
       setState(s => ({
         ...s,
-        error: (err as Error).message,
+        error: message,
         loading: false,
       }));
     }
@@ -1010,7 +1013,8 @@ async function runBatchExplore(
       outputResults(callees, 'callees', useJson, projectPath, target);
     }
   } catch (err) {
-    exitWithError(`Explore failed: ${(err as Error).message}`);
+    const message = err instanceof Error ? err.message : String(err);
+    exitWithError(`Explore failed: ${message}`);
   }
 }
 

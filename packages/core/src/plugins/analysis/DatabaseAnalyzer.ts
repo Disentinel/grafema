@@ -4,7 +4,8 @@
  */
 
 import { readFileSync } from 'fs';
-import { parse, ParserPlugin } from '@babel/parser';
+import type { ParserPlugin } from '@babel/parser';
+import { parse } from '@babel/parser';
 import traverseModule from '@babel/traverse';
 import type { CallExpression, Identifier } from '@babel/types';
 import type { NodePath } from '@babel/traverse';
@@ -12,9 +13,9 @@ import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { NodeRecord } from '@grafema/types';
 import { getLine, getColumn } from './ast/utils/location.js';
+import { getTraverseFunction } from './ast/utils/babelTraverse.js';
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const traverse = (traverseModule as any).default || traverseModule;
+const traverse = getTraverseFunction(traverseModule);
 
 /**
  * Database query node
@@ -109,7 +110,8 @@ export class DatabaseAnalyzer extends Plugin {
       );
     } catch (error) {
       logger.error('Analysis failed', { error });
-      return createErrorResult(error as Error);
+      const err = error instanceof Error ? error : new Error(String(error));
+      return createErrorResult(err);
     }
   }
 
@@ -299,7 +301,7 @@ export class DatabaseAnalyzer extends Plugin {
           }
         }
       }
-    } catch (error) {
+    } catch {
       // Silent - per-module errors shouldn't spam logs
     }
 

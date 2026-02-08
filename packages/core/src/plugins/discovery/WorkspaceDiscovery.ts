@@ -97,7 +97,8 @@ export class WorkspaceDiscovery extends DiscoveryPlugin {
           throw new Error(`Unknown workspace type: ${detection.type}`);
       }
     } catch (error) {
-      return createErrorResult(error as Error);
+      const err = error instanceof Error ? error : new Error(String(error));
+      return createErrorResult(err);
     }
 
     logger.debug('Workspace config parsed', {

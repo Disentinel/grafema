@@ -16,18 +16,9 @@ import {
   IncrementalReanalyzer,
   DIAGNOSTIC_CATEGORIES,
 } from '@grafema/core';
-import type { GuaranteeGraph, DiagnosticCategory, DiagnosticCategoryKey } from '@grafema/core';
+import type { GuaranteeGraph, DiagnosticCategoryKey } from '@grafema/core';
 import { exitWithError } from '../utils/errorFormatter.js';
 
-interface GuaranteeFile {
-  guarantees: Array<{
-    id: string;
-    name: string;
-    rule: string;
-    severity?: 'error' | 'warning' | 'info';
-    governs?: string[];
-  }>;
-}
 
 // Available built-in validators
 // Add new validators here as they are implemented
@@ -398,7 +389,7 @@ async function runBuiltInValidator(
         console.log('');
 
         for (const issue of issues.slice(0, 10)) {
-          const location = issue.file ? `${issue.file}${issue.line ? `:${issue.line}` : ''}` : '';
+          const _location = issue.file ? `${issue.file}${issue.line ? `:${issue.line}` : ''}` : '';
           console.log(`  \x1b[31m•\x1b[0m [${issue.type}] ${issue.message}`);
           if (issue.suggestion && !options.quiet) {
             console.log(`    Suggestion: ${issue.suggestion}`);
@@ -446,7 +437,7 @@ async function runCategoryCheck(
     .map(line => {
       try {
         return JSON.parse(line);
-      } catch (e) {
+      } catch {
         return null;
       }
     })

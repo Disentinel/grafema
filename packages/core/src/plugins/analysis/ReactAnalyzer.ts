@@ -11,7 +11,8 @@
  */
 
 import { readFileSync } from 'fs';
-import { parse, ParserPlugin } from '@babel/parser';
+import type { ParserPlugin } from '@babel/parser';
+import { parse } from '@babel/parser';
 import traverseModule from '@babel/traverse';
 import type { NodePath } from '@babel/traverse';
 import type { Node, CallExpression, JSXElement, JSXAttribute, VariableDeclarator, FunctionDeclaration } from '@babel/types';
@@ -20,7 +21,6 @@ import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { NodeRecord } from '@grafema/types';
 import { getLine, getColumn } from './ast/utils/location.js';
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const traverse = (traverseModule as any).default || traverseModule;
 
 // React event handlers mapping
@@ -254,7 +254,7 @@ export class ReactAnalyzer extends Plugin {
           stats.browserAPIs += result.browserAPIs;
           stats.issues += result.issues;
           stats.edges += result.edges;
-        } catch (err) {
+        } catch {
           // Silent - per-module errors shouldn't spam logs
         }
       }
@@ -275,7 +275,8 @@ export class ReactAnalyzer extends Plugin {
       );
     } catch (error) {
       logger.error('Analysis failed', { error });
-      return createErrorResult(error as Error);
+      const err = error instanceof Error ? error : new Error(String(error));
+      return createErrorResult(err);
     }
   }
 
@@ -731,7 +732,7 @@ export class ReactAnalyzer extends Plugin {
     const callbackParams = new Set<string>(); // Track parameters of nested callback functions
 
     // Simple recursive AST walker to collect identifiers
-    const collectIdentifiers = (node: Node | null, parentType: string | null = null, isPropertyKey = false): void => {
+    const collectIdentifiers = (node: Node | null, _parentType: string | null = null, isPropertyKey = false): void => {
       if (!node) return;
 
       if (node.type === 'Identifier') {
@@ -879,7 +880,7 @@ export class ReactAnalyzer extends Plugin {
     const hasCleanup = hookData.hasCleanup as boolean;
 
     // Simple recursive AST walker
-    const checkNode = (node: Node | null, parent: Node | null = null): void => {
+    const checkNode = (node: Node | null, _parent: Node | null = null): void => {
       if (!node || typeof node !== 'object') return;
 
       if (node.type === 'CallExpression') {

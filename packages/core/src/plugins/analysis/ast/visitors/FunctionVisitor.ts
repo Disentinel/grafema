@@ -23,7 +23,7 @@ import type {
 import type { NodePath } from '@babel/traverse';
 import { ASTVisitor, type VisitorModule, type VisitorCollections, type VisitorHandlers, type CounterRef } from './ASTVisitor.js';
 import { typeNodeToString } from './TypeScriptVisitor.js';
-import { ScopeTracker } from '../../../../core/ScopeTracker.js';
+import type { ScopeTracker } from '../../../../core/ScopeTracker.js';
 import { IdGenerator } from '../IdGenerator.js';
 import { createParameterNodes } from '../utils/createParameterNodes.js';
 import { getLine, getColumn } from '../utils/location.js';

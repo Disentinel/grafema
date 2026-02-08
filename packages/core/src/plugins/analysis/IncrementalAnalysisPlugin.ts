@@ -23,15 +23,16 @@ import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { GraphBackend } from '@grafema/types';
 import type { NodeRecord } from '@grafema/types';
-import { versionManager, VersionedNode } from '../../core/VersionManager.js';
+import type { VersionedNode } from '../../core/VersionManager.js';
+import { versionManager } from '../../core/VersionManager.js';
 import { VCSPluginFactory } from '../vcs/index.js';
 import type { VCSPlugin } from '../vcs/VCSPlugin.js';
-import { parse, ParserPlugin } from '@babel/parser';
+import type { ParserPlugin } from '@babel/parser';
+import { parse } from '@babel/parser';
 import traverseModule from '@babel/traverse';
 import type { NodePath } from '@babel/traverse';
 import { readFile } from 'fs/promises';
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const traverse = (traverseModule as any).default || traverseModule;
 
 /**
@@ -184,7 +185,8 @@ export class IncrementalAnalysisPlugin extends Plugin {
       );
     } catch (error) {
       logger.error('Incremental analysis failed', { error: error instanceof Error ? error.message : String(error) });
-      return createErrorResult(error as Error);
+      const err = error instanceof Error ? error : new Error(String(error));
+      return createErrorResult(err);
     }
   }
 
@@ -642,7 +644,6 @@ export class IncrementalAnalysisPlugin extends Plugin {
    * This method was disabled as part of stableId removal (REG-140).
    * The getNodesByStableId method never existed on GraphBackend.
    */
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   private async findCalleeAndCreateEdge(
     _callerId: string,
     _calleeStableId: string,
@@ -656,7 +657,6 @@ export class IncrementalAnalysisPlugin extends Plugin {
   /**
    * Анализировать методы класса
    */
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   private async analyzeClassMethods(
     _classNode: VersionedNode,
     _ast: unknown,

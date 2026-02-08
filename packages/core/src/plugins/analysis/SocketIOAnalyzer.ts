@@ -16,7 +16,8 @@
  */
 
 import { readFileSync } from 'fs';
-import { parse, ParserPlugin } from '@babel/parser';
+import type { ParserPlugin } from '@babel/parser';
+import { parse } from '@babel/parser';
 import traverseModule from '@babel/traverse';
 import type { CallExpression, Identifier, MemberExpression, Node } from '@babel/types';
 import type { NodePath } from '@babel/traverse';
@@ -25,7 +26,7 @@ import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { NodeRecord } from '@grafema/types';
 import { getLine, getColumn } from './ast/utils/location.js';
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+ 
 const traverse = (traverseModule as any).default || traverseModule;
 
 /**
@@ -162,7 +163,8 @@ export class SocketIOAnalyzer extends Plugin {
       );
     } catch (error) {
       logger.error('Analysis failed', { error });
-      return createErrorResult(error as Error);
+      const err = error instanceof Error ? error : new Error(String(error));
+      return createErrorResult(err);
     }
   }
 
@@ -463,7 +465,7 @@ export class SocketIOAnalyzer extends Plugin {
         listeners: listeners.length,
         rooms: rooms.length
       };
-    } catch (error) {
+    } catch {
       // Silent - per-module errors shouldn't spam logs
       return { emits: 0, listeners: 0, rooms: 0 };
     }

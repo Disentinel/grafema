@@ -2,7 +2,8 @@
  * MCP Analysis Orchestration
  */
 
-import { Orchestrator, Plugin } from '@grafema/core';
+import type { Plugin } from '@grafema/core';
+import { Orchestrator } from '@grafema/core';
 import {
   getOrCreateBackend,
   getProjectPath,

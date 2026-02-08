@@ -3,7 +3,7 @@
  */
 
 import type * as t from '@babel/types';
-import type { GraphBackend } from '@grafema/types';
+import type { ScopeTracker } from '../../../core/ScopeTracker.js';
 
 // === MODULE NODE ===
 export interface ModuleNode {
@@ -1110,7 +1110,7 @@ export interface ASTCollections {
   finallyBlockCounterRef?: CounterRef;
   processedNodes?: ProcessedNodes;
   // ScopeTracker for semantic ID generation
-  scopeTracker?: import('../../../core/ScopeTracker.js').ScopeTracker;
+  scopeTracker?: ScopeTracker;
 }
 
 // === EXTRACTED VARIABLE ===

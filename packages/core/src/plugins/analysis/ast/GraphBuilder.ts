@@ -3,11 +3,11 @@
  * OPTIMIZED: Uses batched writes to reduce FFI overhead
  */
 
-import { dirname, resolve, basename } from 'path';
-import type { GraphBackend } from '@grafema/types';
+import { basename } from 'path';
+import type { GraphBackend, NodeRecord } from '@grafema/types';
 import { ImportNode } from '../../../core/nodes/ImportNode.js';
 import { InterfaceNode, type InterfaceNodeRecord } from '../../../core/nodes/InterfaceNode.js';
-import { EnumNode, type EnumNodeRecord } from '../../../core/nodes/EnumNode.js';
+import { EnumNode } from '../../../core/nodes/EnumNode.js';
 import { DecoratorNode } from '../../../core/nodes/DecoratorNode.js';
 import { NetworkRequestNode } from '../../../core/nodes/NetworkRequestNode.js';
 import { NodeFactory } from '../../../core/NodeFactory.js';
@@ -23,11 +23,10 @@ import type {
   VariableDeclarationInfo,
   CallSiteInfo,
   MethodCallInfo,
+  MethodCallbackInfo,
   EventListenerInfo,
   ClassInstantiationInfo,
-  ConstructorCallInfo,
   ClassDeclarationInfo,
-  MethodCallbackInfo,
   CallArgumentInfo,
   ImportInfo,
   ExportInfo,
@@ -87,7 +86,7 @@ export class GraphBuilder {
   private async _flushNodes(graph: GraphBackend): Promise<number> {
     if (this._nodeBuffer.length > 0) {
       // Cast to unknown first since GraphNode is more permissive than NodeRecord
-      await graph.addNodes(this._nodeBuffer as unknown as import('@grafema/types').NodeRecord[]);
+      await graph.addNodes(this._nodeBuffer as unknown as NodeRecord[]);
       const count = this._nodeBuffer.length;
       this._nodeBuffer = [];
       return count;
@@ -175,26 +174,26 @@ export class GraphBuilder {
 
     // 1. Buffer all functions (without edges)
     for (const func of functions) {
-      const { parentScopeId, ...funcData } = func;
+      const { parentScopeId: _parentScopeId, ...funcData } = func;
       this._bufferNode(funcData as GraphNode);
     }
 
     // 2. Buffer all SCOPE (without edges)
     for (const scope of scopes) {
-      const { parentFunctionId, parentScopeId, capturesFrom, ...scopeData } = scope;
+      const { parentFunctionId: _parentFunctionId, parentScopeId: _parentScopeId, capturesFrom: _capturesFrom, ...scopeData } = scope;
       this._bufferNode(scopeData as GraphNode);
     }
 
     // 2.5. Buffer BRANCH nodes
     // Note: parentScopeId is kept on node for query support (REG-275 test requirement)
     for (const branch of branches) {
-      const { discriminantExpressionId, discriminantExpressionType, discriminantLine, discriminantColumn, ...branchData } = branch;
+      const { discriminantExpressionId: _discriminantExpressionId, discriminantExpressionType: _discriminantExpressionType, discriminantLine: _discriminantLine, discriminantColumn: _discriminantColumn, ...branchData } = branch;
       this._bufferNode(branchData as GraphNode);
     }
 
     // 2.6. Buffer CASE nodes
     for (const caseInfo of cases) {
-      const { parentBranchId, ...caseData } = caseInfo;
+      const { parentBranchId: _parentBranchId, ...caseData } = caseInfo;
       this._bufferNode(caseData as GraphNode);
     }
 
@@ -202,8 +201,8 @@ export class GraphBuilder {
     for (const loop of loops) {
       // Exclude metadata used for edge creation (not stored on node)
       const {
-        iteratesOverName, iteratesOverLine, iteratesOverColumn,
-        conditionExpressionId, conditionExpressionType, conditionLine, conditionColumn,
+        iteratesOverName: _iteratesOverName, iteratesOverLine: _iteratesOverLine, iteratesOverColumn: _iteratesOverColumn,
+        conditionExpressionId: _conditionExpressionId, conditionExpressionType: _conditionExpressionType, conditionLine: _conditionLine, conditionColumn: _conditionColumn,
         ...loopData
       } = loop;
       this._bufferNode(loopData as GraphNode);
@@ -216,13 +215,13 @@ export class GraphBuilder {
 
     // 2.9. Buffer CATCH_BLOCK nodes (Phase 4)
     for (const catchBlock of catchBlocks) {
-      const { parentTryBlockId, ...catchData } = catchBlock;
+      const { parentTryBlockId: _parentTryBlockId, ...catchData } = catchBlock;
       this._bufferNode(catchData as GraphNode);
     }
 
     // 2.10. Buffer FINALLY_BLOCK nodes (Phase 4)
     for (const finallyBlock of finallyBlocks) {
-      const { parentTryBlockId, ...finallyData } = finallyBlock;
+      const { parentTryBlockId: _parentTryBlockId2, ...finallyData } = finallyBlock;
       this._bufferNode(finallyData as GraphNode);
     }
 
@@ -233,7 +232,7 @@ export class GraphBuilder {
 
     // 3.5. Buffer PARAMETER nodes and HAS_PARAMETER edges
     for (const param of parameters) {
-      const { functionId, ...paramData } = param;
+      const { functionId: _functionId, ...paramData } = param;
       // Keep parentFunctionId on the node for queries
       this._bufferNode(paramData as GraphNode);
 
@@ -249,7 +248,7 @@ export class GraphBuilder {
 
     // 4. Buffer CALL_SITE (keep parentScopeId on node for queries)
     for (const callSite of callSites) {
-      const { targetFunctionName, ...callData } = callSite;
+      const { targetFunctionName: _targetFunctionName, ...callData } = callSite;
       this._bufferNode(callData as GraphNode);
     }
 
@@ -860,7 +859,7 @@ export class GraphBuilder {
    * REG-275: For CallExpression discriminants, we don't create nodes here since
    * bufferBranchEdges links to the existing CALL_SITE node by coordinates.
    */
-  private bufferDiscriminantExpressions(branches: BranchInfo[], callSites: CallSiteInfo[]): void {
+  private bufferDiscriminantExpressions(branches: BranchInfo[], _callSites: CallSiteInfo[]): void {
     for (const branch of branches) {
       if (branch.discriminantExpressionId && branch.discriminantExpressionType) {
         // Skip CallExpression - we link to existing CALL_SITE in bufferBranchEdges
@@ -1078,7 +1077,7 @@ export class GraphBuilder {
     }
 
     for (const instantiation of classInstantiations) {
-      const { variableId, className, line } = instantiation;
+      const { variableId, className, line: _line } = instantiation;
 
       let classId = declarationMap.get(className);
 
@@ -1376,7 +1375,7 @@ export class GraphBuilder {
 
   private bufferLiterals(literals: LiteralInfo[]): void {
     for (const literal of literals) {
-      const { parentCallId, argIndex, ...literalData } = literal;
+      const { parentCallId: _parentCallId, argIndex: _argIndex, ...literalData } = literal;
       this._bufferNode(literalData as GraphNode);
     }
   }

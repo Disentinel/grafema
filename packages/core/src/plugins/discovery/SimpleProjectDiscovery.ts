@@ -101,7 +101,8 @@ export class SimpleProjectDiscovery extends Plugin {
 
       return createSuccessResult({ nodes: 1, edges: 0 }, { services: [service] });
     } catch (error) {
-      return createErrorResult(error as Error);
+      const err = error instanceof Error ? error : new Error(String(error));
+      return createErrorResult(err);
     }
   }
 }
