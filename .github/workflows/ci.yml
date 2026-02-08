@@ -1,0 +1,182 @@
+# Continuous Integration for Grafema
+#
+# Runs on:
+#   - Every push to main and stable
+#   - Every pull request to main
+#
+# Validates:
+#   - All tests pass (no .skip or .only)
+#   - TypeScript compiles
+#   - ESLint passes
+#   - All packages build
+#   - Package versions are in sync
+
+name: CI
+
+on:
+  push:
+    branches: [main, stable]
+  pull_request:
+    branches: [main]
+
+env:
+  NODE_VERSION: '22'
+  PNPM_VERSION: '9'
+
+jobs:
+  # Job 1: Run all tests
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build (required for tests)
+        run: pnpm build
+
+      - name: Run tests
+        run: pnpm test
+
+      - name: Check for .only or .skip in test files
+        run: |
+          echo "Checking for .only() or .skip() in test files..."
+          if grep -rE '\.(only|skip)\s*\(' test/ --include="*.test.js" --include="*.test.ts" 2>/dev/null; then
+            echo "::error::Found .only() or .skip() in test files. Remove before releasing."
+            exit 1
+          fi
+          echo "No .only() or .skip() found."
+
+  # Job 2: TypeScript and ESLint
+  typecheck-lint:
+    name: Typecheck & Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: TypeScript check
+        run: pnpm typecheck
+
+      - name: ESLint
+        run: pnpm lint
+
+  # Job 3: Build all packages
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build all packages
+        run: pnpm build
+
+      - name: Verify build artifacts exist
+        run: |
+          echo "Verifying build outputs..."
+          # Check that dist directories exist for key packages
+          test -d packages/types/dist || (echo "::error::packages/types/dist not found" && exit 1)
+          test -d packages/core/dist || (echo "::error::packages/core/dist not found" && exit 1)
+          test -d packages/cli/dist || (echo "::error::packages/cli/dist not found" && exit 1)
+          test -d packages/mcp/dist || (echo "::error::packages/mcp/dist not found" && exit 1)
+          echo "All build artifacts verified."
+
+  # Job 4: Version sync check
+  version-sync:
+    name: Version Sync
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check all package versions match
+        run: |
+          echo "Checking package version synchronization..."
+
+          # Get root version
+          ROOT_VERSION=$(node -p "require('./package.json').version")
+          echo "Root version: $ROOT_VERSION"
+
+          # Check all publishable packages
+          PACKAGES=(
+            "packages/types"
+            "packages/core"
+            "packages/cli"
+            "packages/mcp"
+            "packages/api"
+            "packages/rfdb"
+            "packages/rfdb-server"
+          )
+
+          MISMATCH=0
+          for pkg in "${PACKAGES[@]}"; do
+            if [ -f "$pkg/package.json" ]; then
+              PKG_VERSION=$(node -p "require('./$pkg/package.json').version")
+              PKG_NAME=$(node -p "require('./$pkg/package.json').name")
+              if [ "$PKG_VERSION" != "$ROOT_VERSION" ]; then
+                echo "::error::Version mismatch: $PKG_NAME is $PKG_VERSION, expected $ROOT_VERSION"
+                MISMATCH=1
+              else
+                echo "  $PKG_NAME: $PKG_VERSION"
+              fi
+            fi
+          done
+
+          if [ "$MISMATCH" -eq 1 ]; then
+            echo ""
+            echo "::error::Package versions are out of sync. Run: pnpm -r exec npm version $ROOT_VERSION --no-git-tag-version --allow-same-version"
+            exit 1
+          fi
+
+          echo "All package versions are in sync."

@@ -4,10 +4,10 @@ description: |
   Grafema release procedure for publishing new versions to npm. Use when:
   (1) user says "release", "publish", "bump version", (2) preparing a new
   beta/stable release, (3) need to update changelog and documentation before
-  publish. Covers version bumping, changelog updates, building, and npm publish.
+  publish. Uses unified release script with validation.
 author: Claude Code
-version: 1.0.0
-date: 2026-02-04
+version: 2.0.0
+date: 2026-02-06
 ---
 
 # Grafema Release Procedure
@@ -18,11 +18,27 @@ date: 2026-02-04
 - New features ready for users
 - Bug fixes need to be shipped
 
+## Quick Reference
+
+```bash
+# Preview changes (dry run)
+./scripts/release.sh patch --dry-run
+
+# Bump version without publishing
+./scripts/release.sh patch
+
+# Bump and publish
+./scripts/release.sh 0.2.5-beta --publish
+```
+
 ## Pre-Release Checklist
 
-1. **Verify tests pass**: `pnpm test` (if available)
-2. **Check for uncommitted changes**: `git status`
-3. **Ensure on correct branch**: usually `main`
+The release script validates these automatically, but verify manually first:
+
+1. **On `main` branch**: `git branch --show-current`
+2. **Working directory clean**: `git status`
+3. **Tests pass**: `pnpm test`
+4. **No uncommitted changes**: `git status --porcelain`
 
 ## MANDATORY: @grafema/rfdb Binary Download
 
@@ -43,61 +59,118 @@ date: 2026-02-04
 3. **Verify all 4 platforms downloaded**:
    ```bash
    ls -la packages/rfdb-server/prebuilt/*/rfdb-server
-   # Must show 4 binaries:
-   #   darwin-arm64/rfdb-server
-   #   darwin-x64/rfdb-server
-   #   linux-arm64/rfdb-server
-   #   linux-x64/rfdb-server
-   ```
-
-4. **Verify binary types**:
-   ```bash
-   file packages/rfdb-server/prebuilt/*/rfdb-server
-   # darwin-arm64: Mach-O 64-bit executable arm64
-   # darwin-x64:   Mach-O 64-bit executable x86_64
-   # linux-arm64:  ELF 64-bit LSB pie executable, ARM aarch64
-   # linux-x64:    ELF 64-bit LSB pie executable, x86-64
+   # Must show 4 binaries
    ```
 
 **DO NOT PUBLISH @grafema/rfdb if any platform is missing!**
 
-The postinstall script will NOT fail if binaries are missing — it shows a warning and succeeds.
-This means users will have a broken installation without any error.
+## CI/CD Integration
 
-## Release Steps
+Grafema uses GitHub Actions as a safety net. Before publishing:
 
-### Step 1: Determine Version
+### 1. Check CI Status
 
-Check current versions:
 ```bash
-grep '"version"' package.json packages/*/package.json
+# View latest CI run
+gh run list --workflow=ci.yml --branch=main --limit=3
+
+# If CI is failing, check why:
+gh run view <run-id>
 ```
 
-Version format: `X.Y.Z-beta` or `X.Y.Z`
-- Patch (Z): bug fixes
-- Minor (Y): new features, backwards compatible
-- Major (X): breaking changes
+### 2. After Creating Tag
 
-### Step 2: Bump Versions
+When you push a version tag, GitHub Actions will:
 
-Bump all packages that changed:
+1. **release-validate.yml** runs automatically
+   - Validates all tests pass
+   - Checks version sync
+   - Verifies CHANGELOG.md entry
+   - View: https://github.com/Disentinel/grafema/actions/workflows/release-validate.yml
+
+2. **Wait for validation to pass** (usually 5-10 minutes)
+
+3. **Trigger release-publish.yml manually** (after validation passes)
+   - Go to: https://github.com/Disentinel/grafema/actions/workflows/release-publish.yml
+   - Click "Run workflow"
+   - Enter version (e.g., 0.2.5-beta)
+   - Optionally enable dry-run first
+
+### 3. Verify Publication
+
+After publish workflow completes:
+
 ```bash
-# Root package
-npm version 0.X.Y-beta --no-git-tag-version
+# Check npm registry
+npm view @grafema/cli versions --json | tail -5
 
-# Individual packages (only those with changes)
-cd packages/types && npm version 0.X.Y-beta --no-git-tag-version
-cd packages/core && npm version 0.X.Y-beta --no-git-tag-version
-cd packages/cli && npm version 0.X.Y-beta --no-git-tag-version
-# etc.
+# Install and verify
+npx @grafema/cli@<version> --version
 ```
 
-### Step 3: Update CHANGELOG.md
+### What CI Catches
 
-Edit `/Users/vadimr/grafema/CHANGELOG.md`:
+| Check | Why It Exists |
+|-------|---------------|
+| Tests pass | Forgot to run tests after changes |
+| No .skip/.only | Left debugging code in tests |
+| TypeScript | Type errors in untouched files |
+| Build | Broken imports after refactoring |
+| Version sync | Only bumped some packages |
+| Changelog | Forgot to document release |
+| Binary check | Forgot rfdb binaries |
+
+**IMPORTANT:** Do NOT publish if validation fails. Fix issues first.
+
+## Release Workflow
+
+### Option A: Simple Patch Release
+
+```bash
+./scripts/release.sh patch --publish
+```
+
+This will:
+1. Run pre-flight checks (tests, clean git)
+2. Bump patch version across all packages
+3. Build all packages
+4. Prompt for CHANGELOG.md update
+5. Create commit and tag
+6. Publish to npm with appropriate dist-tag
+7. Push to origin and merge to stable
+
+### Option B: Specific Version
+
+```bash
+./scripts/release.sh 0.3.0-beta --publish
+```
+
+### Option C: Dry Run (Preview)
+
+```bash
+./scripts/release.sh minor --dry-run
+```
+
+## Version Types
+
+| Type | Current | Result | npm dist-tag |
+|------|---------|--------|--------------|
+| `patch` | 0.2.4-beta | 0.2.5 | latest |
+| `minor` | 0.2.4-beta | 0.3.0 | latest |
+| `major` | 0.2.4-beta | 1.0.0 | latest |
+| `prerelease` | 0.2.4-beta | 0.2.4-beta.1 | beta |
+| `0.2.5-beta` | any | 0.2.5-beta | beta |
+| `0.3.0` | any | 0.3.0 | latest |
+
+## CHANGELOG.md Format
+
+When the script prompts for changelog update, use this format:
 
 ```markdown
 ## [0.X.Y-beta] - YYYY-MM-DD
+
+### Highlights
+- Major changes worth mentioning
 
 ### Features
 - **REG-XXX**: Description of feature
@@ -112,90 +185,87 @@ Edit `/Users/vadimr/grafema/CHANGELOG.md`:
 - Any known limitations
 ```
 
-Categories to use:
-- **Highlights** (for major releases)
-- **Features** / **New Capabilities**
-- **Bug Fixes**
-- **Infrastructure** / **Improvements**
-- **Breaking Changes** (if any)
-- **Known Issues**
+## Package Publish Order
 
-### Step 4: Build Packages
+The script publishes in dependency order automatically:
 
+1. `@grafema/types` (no deps)
+2. `@grafema/rfdb-client` (depends on types)
+3. `@grafema/core` (depends on types, rfdb-client)
+4. `@grafema/mcp` (depends on core, types)
+5. `@grafema/api` (depends on core, types)
+6. `@grafema/cli` (depends on api, core, types)
+7. `@grafema/rfdb` (standalone, Rust binary)
+
+## dist-tag Management
+
+The script automatically selects dist-tag based on version:
+- Versions with `-beta` or `-alpha` -> `beta` tag
+- Versions without prerelease suffix -> `latest` tag
+
+To manually update dist-tags:
 ```bash
-# Build all packages
-cd packages/types && pnpm build
-cd packages/core && pnpm build
-cd packages/cli && pnpm build
+npm dist-tag add @grafema/cli@0.2.5-beta latest
 ```
 
-Or from root:
+## Rollback Procedure
+
+If something goes wrong after publishing:
+
+### 1. Unpublish failed version (within 72 hours)
 ```bash
-pnpm -r build
+npm unpublish @grafema/cli@0.2.5-beta
 ```
 
-Note: VS Code extension may fail due to RustAnalyzer issue (REG-349).
-
-### Step 5: Publish to npm
-
-Use `pnpm publish` (NOT `npm publish`) to convert `workspace:*` dependencies:
-
+### 2. Or deprecate
 ```bash
-cd packages/types && pnpm publish --access public --tag beta --no-git-checks
-cd packages/core && pnpm publish --access public --tag beta --no-git-checks
-cd packages/cli && pnpm publish --access public --tag beta --no-git-checks
+npm deprecate @grafema/cli@0.2.5-beta "Use 0.2.4-beta instead"
 ```
 
-### Step 6: Update dist-tags (if needed)
-
-To make beta the default for `npm install`:
+### 3. Revert git changes
 ```bash
-npm dist-tag add @grafema/types@0.X.Y-beta latest
-npm dist-tag add @grafema/core@0.X.Y-beta latest
-npm dist-tag add @grafema/cli@0.X.Y-beta latest
+git revert HEAD
+git push origin main
+git push origin stable
 ```
 
-### Step 7: Verify Publication
-
+### 4. Delete tag
 ```bash
-npm view @grafema/cli versions --json | tail -5
-npx @grafema/cli@latest --version
+git tag -d v0.2.5-beta
+git push origin :refs/tags/v0.2.5-beta
 ```
-
-### Step 8: Commit and Tag (optional)
-
-```bash
-git add -A
-git commit -m "chore: release v0.X.Y-beta"
-git tag v0.X.Y-beta
-git push origin main --tags
-```
-
-## Package Dependencies
-
-Publication order matters due to dependencies:
-1. `@grafema/types` (no dependencies)
-2. `@grafema/core` (depends on types)
-3. `@grafema/cli` (depends on core, types)
-4. `@grafema/mcp` (depends on core)
-5. `@grafema/rfdb` (standalone, Rust binary)
 
 ## Common Issues
 
 ### "workspace:*" in published package
 **Cause**: Used `npm publish` instead of `pnpm publish`
-**Fix**: Use `pnpm publish` which converts workspace protocol
+**Fix**: Always use `pnpm publish` via the script
 
 ### Package not visible on npm
 **Cause**: Published with `--tag beta` but user expects `latest`
 **Fix**: `npm dist-tag add @grafema/pkg@version latest`
 
-### Build fails on VS Code extension
-**Cause**: RustAnalyzer top-level await incompatible with CJS
-**Status**: Known issue (REG-349), skip VS Code for now
+### NPM_TOKEN not found
+**Fix**: Either set environment variable or create `.npmrc.local`:
+```
+//registry.npmjs.org/:_authToken=npm_XXXXX
+```
+
+### Build fails
+**Fix**: Script automatically reverts version changes. Fix build issue and retry.
 
 ## Post-Release
 
-1. Test installation: `npx @grafema/cli@latest --version`
-2. Announce in relevant channels
-3. Update Linear issues to Done if applicable
+1. Verify installation: `npx @grafema/cli@latest --version`
+2. Update Linear issues to Done
+3. Announce in relevant channels
+
+## Stable Branch
+
+The `stable` branch always points to the last released version. The release script automatically merges to stable after successful release.
+
+To manually check stable status:
+```bash
+git log stable -1 --oneline
+git log main -1 --oneline
+```

@@ -1,0 +1,249 @@
+# Pre-Release Validation for Grafema
+#
+# Triggered by: git push tag v*
+#
+# Validates:
+#   - All CI checks pass
+#   - CHANGELOG.md has entry for this version
+#   - Package versions match tag version
+#   - For rfdb releases: binaries exist
+#
+# This workflow MUST pass before npm publish.
+# Claude should wait for green status before proceeding.
+
+name: Release Validation
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  NODE_VERSION: '22'
+  PNPM_VERSION: '9'
+
+jobs:
+  # Extract version from tag
+  setup:
+    name: Setup
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      is_prerelease: ${{ steps.version.outputs.is_prerelease }}
+
+    steps:
+      - name: Extract version from tag
+        id: version
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          VERSION="${TAG#v}"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+          if [[ "$VERSION" =~ -beta|-alpha|-rc ]]; then
+            echo "is_prerelease=true" >> $GITHUB_OUTPUT
+          else
+            echo "is_prerelease=false" >> $GITHUB_OUTPUT
+          fi
+
+          echo "Tag: $TAG"
+          echo "Version: $VERSION"
+
+  # Run all CI checks
+  ci-checks:
+    name: CI Checks
+    runs-on: ubuntu-latest
+    needs: setup
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build all packages
+        run: pnpm build
+
+      - name: Run all tests
+        run: pnpm test
+
+      - name: TypeScript check
+        run: pnpm typecheck
+
+      - name: ESLint
+        run: pnpm lint
+
+      - name: Check for .only or .skip in test files
+        run: |
+          if grep -rE '\.(only|skip)\s*\(' test/ --include="*.test.js" --include="*.test.ts" 2>/dev/null; then
+            echo "::error::Found .only() or .skip() in test files"
+            exit 1
+          fi
+
+  # Validate version numbers match
+  version-check:
+    name: Version Check
+    runs-on: ubuntu-latest
+    needs: setup
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Verify all packages have correct version
+        env:
+          EXPECTED_VERSION: ${{ needs.setup.outputs.version }}
+        run: |
+          echo "Expected version: $EXPECTED_VERSION"
+
+          # Check root
+          ROOT_VERSION=$(node -p "require('./package.json').version")
+          if [ "$ROOT_VERSION" != "$EXPECTED_VERSION" ]; then
+            echo "::error::Root package.json version ($ROOT_VERSION) doesn't match tag ($EXPECTED_VERSION)"
+            exit 1
+          fi
+
+          # Check all packages
+          PACKAGES=(
+            "packages/types"
+            "packages/core"
+            "packages/cli"
+            "packages/mcp"
+            "packages/api"
+            "packages/rfdb"
+            "packages/rfdb-server"
+          )
+
+          for pkg in "${PACKAGES[@]}"; do
+            if [ -f "$pkg/package.json" ]; then
+              PKG_VERSION=$(node -p "require('./$pkg/package.json').version")
+              PKG_NAME=$(node -p "require('./$pkg/package.json').name")
+              if [ "$PKG_VERSION" != "$EXPECTED_VERSION" ]; then
+                echo "::error::$PKG_NAME version ($PKG_VERSION) doesn't match tag ($EXPECTED_VERSION)"
+                exit 1
+              fi
+              echo "  $PKG_NAME: $PKG_VERSION"
+            fi
+          done
+
+          echo "All package versions match tag."
+
+  # Validate CHANGELOG has entry
+  changelog-check:
+    name: Changelog Check
+    runs-on: ubuntu-latest
+    needs: setup
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check CHANGELOG.md has version entry
+        env:
+          VERSION: ${{ needs.setup.outputs.version }}
+        run: |
+          echo "Checking for CHANGELOG.md entry for version $VERSION..."
+
+          if [ ! -f "CHANGELOG.md" ]; then
+            echo "::error::CHANGELOG.md not found"
+            exit 1
+          fi
+
+          # Check for [version] entry with date
+          if ! grep -qE "^\#\#\s*\[$VERSION\]\s*-\s*[0-9]{4}-[0-9]{2}-[0-9]{2}" CHANGELOG.md; then
+            echo "::error::CHANGELOG.md missing entry for [$VERSION] with date"
+            echo "Expected format: ## [$VERSION] - YYYY-MM-DD"
+            echo ""
+            echo "Recent CHANGELOG entries:"
+            head -50 CHANGELOG.md | grep -E "^\#\#" || true
+            exit 1
+          fi
+
+          echo "CHANGELOG.md has entry for $VERSION"
+
+  # Check for rfdb binaries (only for non-prerelease)
+  binary-check:
+    name: Binary Check (rfdb)
+    runs-on: ubuntu-latest
+    needs: setup
+    # Only run for stable releases that might publish @grafema/rfdb
+    if: needs.setup.outputs.is_prerelease == 'false'
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check for prebuilt binaries
+        run: |
+          echo "Checking rfdb-server prebuilt binaries..."
+
+          PLATFORMS=(
+            "darwin-arm64"
+            "darwin-x64"
+            "linux-arm64"
+            "linux-x64"
+          )
+
+          MISSING=0
+          for platform in "${PLATFORMS[@]}"; do
+            BINARY="packages/rfdb-server/prebuilt/$platform/rfdb-server"
+            if [ ! -f "$BINARY" ]; then
+              echo "::warning::Missing binary: $BINARY"
+              MISSING=1
+            else
+              echo "  Found: $platform ($(du -h "$BINARY" | cut -f1))"
+            fi
+          done
+
+          if [ "$MISSING" -eq 1 ]; then
+            echo ""
+            echo "::warning::Some platform binaries are missing. If publishing @grafema/rfdb, run:"
+            echo "  ./scripts/download-rfdb-binaries.sh rfdb-v<VERSION>"
+            # Warning only, not failure - binaries might be downloaded separately
+          fi
+
+  # Final status check
+  validation-complete:
+    name: Validation Complete
+    runs-on: ubuntu-latest
+    needs: [setup, ci-checks, version-check, changelog-check]
+    # Also wait for binary-check if it ran
+    if: always()
+
+    steps:
+      - name: Check all validations passed
+        env:
+          CI_RESULT: ${{ needs.ci-checks.result }}
+          VERSION_RESULT: ${{ needs.version-check.result }}
+          CHANGELOG_RESULT: ${{ needs.changelog-check.result }}
+        run: |
+          echo "Validation Results:"
+          echo "  CI Checks: $CI_RESULT"
+          echo "  Version Check: $VERSION_RESULT"
+          echo "  Changelog Check: $CHANGELOG_RESULT"
+
+          if [ "$CI_RESULT" != "success" ] || [ "$VERSION_RESULT" != "success" ] || [ "$CHANGELOG_RESULT" != "success" ]; then
+            echo ""
+            echo "::error::Release validation FAILED. Do NOT proceed with npm publish."
+            exit 1
+          fi
+
+          echo ""
+          echo "All validations PASSED. Safe to proceed with npm publish."
+          echo ""
+          echo "Next step: Run 'Release Publish' workflow manually from GitHub Actions."

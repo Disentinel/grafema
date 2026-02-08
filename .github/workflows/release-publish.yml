@@ -1,0 +1,284 @@
+# npm Publish Workflow for Grafema
+#
+# IMPORTANT: This workflow is MANUAL only.
+# Only run AFTER release-validate.yml passes.
+#
+# Trigger: workflow_dispatch from GitHub Actions UI
+#
+# Required secrets:
+#   - NPM_TOKEN: npm access token with publish permissions
+#
+# Publishes:
+#   - @grafema/types
+#   - @grafema/rfdb-client (as @grafema/rfdb)
+#   - @grafema/core
+#   - @grafema/mcp
+#   - @grafema/api
+#   - @grafema/cli
+#   - @grafema/rfdb (rfdb-server, only if binaries present)
+
+name: Release Publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to publish (e.g., 0.2.5-beta). Must match existing tag.'
+        required: true
+        type: string
+      dry_run:
+        description: 'Dry run (do not actually publish)'
+        required: false
+        type: boolean
+        default: false
+      publish_rfdb:
+        description: 'Also publish @grafema/rfdb (requires binaries)'
+        required: false
+        type: boolean
+        default: false
+
+env:
+  NODE_VERSION: '22'
+  PNPM_VERSION: '9'
+
+jobs:
+  # Verify tag exists and validation passed
+  preflight:
+    name: Preflight Check
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.check.outputs.tag }}
+      dist_tag: ${{ steps.check.outputs.dist_tag }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify tag exists
+        id: check
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          TAG="v$VERSION"
+
+          if ! git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "::error::Tag $TAG does not exist. Create it first."
+            exit 1
+          fi
+
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+
+          # Determine dist-tag
+          if [[ "$VERSION" =~ -beta|-alpha|-rc ]]; then
+            echo "dist_tag=beta" >> $GITHUB_OUTPUT
+          else
+            echo "dist_tag=latest" >> $GITHUB_OUTPUT
+          fi
+
+          echo "Tag: $TAG"
+
+      - name: Check release-validate workflow status
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: v${{ inputs.version }}
+        run: |
+          echo "Checking if release-validate passed for $TAG..."
+
+          # Get the latest workflow run for release-validate on this tag
+          RESULT=$(gh run list \
+            --workflow=release-validate.yml \
+            --limit=10 \
+            --json conclusion,headBranch \
+            --jq ".[] | select(.headBranch == \"$TAG\") | .conclusion" 2>/dev/null | head -1 || echo "not_found")
+
+          if [ "$RESULT" == "not_found" ] || [ -z "$RESULT" ]; then
+            echo "::warning::Could not find release-validate run for $TAG"
+            echo "Make sure release-validate.yml passed before publishing!"
+          elif [ "$RESULT" != "success" ]; then
+            echo "::error::release-validate workflow did not succeed (result: $RESULT)"
+            echo "Do NOT publish until validation passes."
+            exit 1
+          else
+            echo "release-validate passed."
+          fi
+
+  # Publish packages to npm
+  publish:
+    name: Publish to npm
+    runs-on: ubuntu-latest
+    needs: preflight
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.preflight.outputs.tag }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build all packages
+        run: pnpm build
+
+      - name: Publish packages
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          DIST_TAG: ${{ needs.preflight.outputs.dist_tag }}
+          PUBLISH_RFDB: ${{ inputs.publish_rfdb }}
+        run: |
+          # Package publish order (dependency order)
+          PACKAGES=(
+            "packages/types"
+            "packages/rfdb"
+            "packages/core"
+            "packages/mcp"
+            "packages/api"
+            "packages/cli"
+          )
+
+          if [ "$PUBLISH_RFDB" == "true" ]; then
+            PACKAGES+=("packages/rfdb-server")
+          fi
+
+          DRY_RUN_FLAG=""
+          if [ "$DRY_RUN" == "true" ]; then
+            DRY_RUN_FLAG="--dry-run"
+            echo "DRY RUN MODE - packages will NOT be published"
+          fi
+
+          for pkg in "${PACKAGES[@]}"; do
+            if [ -f "$pkg/package.json" ]; then
+              PKG_NAME=$(node -p "require('./$pkg/package.json').name")
+              PKG_PRIVATE=$(node -p "require('./$pkg/package.json').private || false")
+
+              if [ "$PKG_PRIVATE" == "true" ]; then
+                echo "SKIP: $PKG_NAME (private)"
+                continue
+              fi
+
+              echo ""
+              echo "Publishing $PKG_NAME with tag '$DIST_TAG'..."
+              cd "$pkg"
+              pnpm publish --access public --tag "$DIST_TAG" --no-git-checks $DRY_RUN_FLAG
+              cd -
+              echo "Published: $PKG_NAME"
+            fi
+          done
+
+          echo ""
+          echo "All packages published successfully."
+
+  # Verify published packages work
+  verify:
+    name: Verify Publication
+    runs-on: ubuntu-latest
+    needs: [preflight, publish]
+    # Skip verification in dry-run mode
+    if: inputs.dry_run != true
+    timeout-minutes: 10
+
+    steps:
+      - name: Wait for npm registry propagation
+        run: |
+          echo "Waiting 60 seconds for npm registry to propagate..."
+          sleep 60
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Verify @grafema/cli installation
+        env:
+          VERSION: ${{ inputs.version }}
+          DIST_TAG: ${{ needs.preflight.outputs.dist_tag }}
+        run: |
+          echo "Verifying @grafema/cli@$VERSION..."
+
+          # Try to install the specific version
+          npm install -g @grafema/cli@$VERSION
+
+          # Check version matches
+          INSTALLED_VERSION=$(grafema --version 2>/dev/null | head -1 || echo "unknown")
+          echo "Installed version: $INSTALLED_VERSION"
+
+          if [[ "$INSTALLED_VERSION" != *"$VERSION"* ]]; then
+            echo "::warning::Version mismatch. Expected $VERSION, got $INSTALLED_VERSION"
+          fi
+
+          echo ""
+          echo "Verification complete."
+
+      - name: Check dist-tag
+        env:
+          VERSION: ${{ inputs.version }}
+          DIST_TAG: ${{ needs.preflight.outputs.dist_tag }}
+        run: |
+          echo "Checking npm dist-tag..."
+
+          TAG_VERSION=$(npm view @grafema/cli dist-tags.$DIST_TAG 2>/dev/null || echo "unknown")
+          echo "  $DIST_TAG tag points to: $TAG_VERSION"
+
+          if [ "$TAG_VERSION" != "$VERSION" ]; then
+            echo "::warning::dist-tag '$DIST_TAG' points to $TAG_VERSION, expected $VERSION"
+            echo "Update manually if needed: npm dist-tag add @grafema/cli@$VERSION $DIST_TAG"
+          fi
+
+  # Summary
+  summary:
+    name: Publish Summary
+    runs-on: ubuntu-latest
+    needs: [preflight, publish, verify]
+    if: always()
+
+    steps:
+      - name: Print summary
+        env:
+          VERSION: ${{ inputs.version }}
+          DIST_TAG: ${{ needs.preflight.outputs.dist_tag }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          PUBLISH_RESULT: ${{ needs.publish.result }}
+          VERIFY_RESULT: ${{ needs.verify.result }}
+        run: |
+          echo "========================================"
+          echo "     RELEASE PUBLISH SUMMARY"
+          echo "========================================"
+          echo ""
+          echo "Version:   $VERSION"
+          echo "Dist-tag:  $DIST_TAG"
+          echo "Dry run:   $DRY_RUN"
+          echo ""
+          echo "Results:"
+          echo "  Publish: $PUBLISH_RESULT"
+          echo "  Verify:  $VERIFY_RESULT"
+          echo ""
+
+          if [ "$DRY_RUN" == "true" ]; then
+            echo "This was a DRY RUN. No packages were actually published."
+            echo "Run again without dry_run to publish for real."
+          elif [ "$PUBLISH_RESULT" == "success" ]; then
+            echo "Publication successful!"
+            echo ""
+            echo "Install with:"
+            echo "  npm install @grafema/cli@$VERSION"
+            echo "  # or"
+            echo "  npm install @grafema/cli@$DIST_TAG"
+          else
+            echo "Publication FAILED. Check logs above."
+          fi
