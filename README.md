@@ -1,5 +1,8 @@
 # Grafema
 
+[![CI](https://github.com/Disentinel/grafema/actions/workflows/ci.yml/badge.svg)](https://github.com/Disentinel/grafema/actions/workflows/ci.yml)
+![Coverage](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/Disentinel/COVERAGE_GIST_ID/raw/grafema-coverage.json)
+
 > Understand your code without reading it all
 
 Grafema is a code analysis tool that lets you **trace data flow across your codebase**. Click on a frontend `fetch()` call, trace it to the backend handler. Click on `res.json(data)`, trace back to where that data came from.
