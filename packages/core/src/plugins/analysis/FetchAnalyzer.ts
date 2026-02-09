@@ -345,15 +345,24 @@ export class FetchAnalyzer extends Plugin {
       // Extract httpRequests for external API handling
       const httpRequests = fetchCalls.map(fc => fc.request);
 
+      // Pre-fetch FUNCTION and CALL nodes for this file once (avoid N+1 IPC queries)
+      const fileFunctions: NodeRecord[] = [];
+      for await (const fn of graph.queryNodes({ type: 'FUNCTION', file: module.file! })) {
+        fileFunctions.push(fn);
+      }
+      const fileCalls: NodeRecord[] = [];
+      for await (const cn of graph.queryNodes({ type: 'CALL', file: module.file! })) {
+        fileCalls.push(cn);
+      }
+
       // Создаём HTTP_REQUEST ноды
       for (const fetchCall of fetchCalls) {
         const request = fetchCall.request;
 
         // Find responseDataNode if we have a response variable name
         if (fetchCall.responseVarName) {
-          const responseDataNodeId = await this.findResponseJsonCall(
-            graph,
-            request.file,
+          const responseDataNodeId = this.findResponseJsonCallInMemory(
+            fileCalls,
             fetchCall.responseVarName,
             request.line
           );
@@ -378,23 +387,18 @@ export class FetchAnalyzer extends Plugin {
           dst: this.networkNodeId!
         });
 
-        // Ищем FUNCTION node которая делает запрос
-        const functions: NodeRecord[] = [];
-        for await (const fn of graph.queryNodes({ type: 'FUNCTION' })) {
-          if (
-            fn.file === request.file &&
-            (fn.line ?? 0) <= request.line &&
-            (fn.line ?? 0) + 50 >= request.line
-          ) {
-            functions.push(fn);
-          }
-        }
+        // Ищем FUNCTION node которая делает запрос (in-memory filter)
+        const functions = fileFunctions.filter(fn =>
+          fn.line != null &&
+          fn.line <= request.line &&
+          fn.line + 50 >= request.line
+        );
 
         if (functions.length > 0) {
           // Берём ближайшую функцию
           const closestFunction = functions.reduce((closest, func) => {
-            const currentDistance = Math.abs((func.line ?? 0) - request.line);
-            const closestDistance = Math.abs((closest.line ?? 0) - request.line);
+            const currentDistance = Math.abs(func.line! - request.line);
+            const closestDistance = Math.abs(closest.line! - request.line);
             return currentDistance < closestDistance ? func : closest;
           });
 
@@ -405,23 +409,20 @@ export class FetchAnalyzer extends Plugin {
           });
         }
 
-        // Find CALL node that makes this request (same file, same line)
-        // Determine expected call name based on library
+        // Find CALL node that makes this request (same file, same line, in-memory)
         const expectedCallNames = this.getExpectedCallNames(request.library, request.method);
 
-        for await (const callNode of graph.queryNodes({ type: 'CALL' })) {
-          if (
-            callNode.file === request.file &&
-            callNode.line === request.line &&
-            expectedCallNames.includes(callNode.name as string)
-          ) {
-            edges.push({
-              type: 'MAKES_REQUEST',
-              src: callNode.id,
-              dst: request.id
-            });
-            break; // Only link to first matching CALL node
-          }
+        const matchingCall = fileCalls.find(callNode =>
+          callNode.line === request.line &&
+          expectedCallNames.includes(callNode.name as string)
+        );
+
+        if (matchingCall) {
+          edges.push({
+            type: 'MAKES_REQUEST',
+            src: matchingCall.id,
+            dst: request.id
+          });
         }
       }
 
@@ -668,48 +669,36 @@ export class FetchAnalyzer extends Plugin {
 
   /**
    * Finds the response consumption CALL node (response.json(), response.text(), etc.)
-   * by querying the graph for CALL nodes in the same file with matching object name.
+   * from pre-fetched CALL nodes for the current file.
    *
-   * Important: Filters to find the response.json() call AFTER the fetch line and
+   * Filters to find the response.json() call AFTER the fetch line and
    * closest to it, ensuring we match the correct call in the same function scope.
    *
-   * @param graph - Graph backend
-   * @param file - File path where fetch call is located
+   * @param fileCalls - Pre-fetched CALL nodes for this file
    * @param responseVarName - Variable name holding the response
    * @param fetchLine - Line number of the fetch call (response.json must be after this)
    * @returns CALL node ID or null if not found
    */
-  private async findResponseJsonCall(
-    graph: PluginContext['graph'],
-    file: string,
+  private findResponseJsonCallInMemory(
+    fileCalls: NodeRecord[],
     responseVarName: string,
     fetchLine: number
-  ): Promise<string | null> {
-    // Collect all matching CALL nodes
-    const candidates: Array<{ id: string; line: number }> = [];
+  ): string | null {
+    let bestId: string | null = null;
+    let bestLine = Infinity;
 
-    for await (const node of graph.queryNodes({ type: 'CALL' })) {
-      // Check if it's in the same file
-      if (node.file !== file) continue;
-
-      // Check if object matches response variable name
+    for (const node of fileCalls) {
       const callNode = node as unknown as { object?: string; method?: string };
       if (callNode.object !== responseVarName) continue;
+      if (!callNode.method || !RESPONSE_CONSUMPTION_METHODS.includes(callNode.method)) continue;
 
-      // Check if method is a response consumption method
-      if (callNode.method && RESPONSE_CONSUMPTION_METHODS.includes(callNode.method)) {
-        const nodeLine = node.line ?? 0;
-        // Only consider calls AFTER the fetch line (response.json comes after fetch)
-        if (nodeLine > fetchLine) {
-          candidates.push({ id: node.id, line: nodeLine });
-        }
+      if (node.line == null) continue;
+      if (node.line > fetchLine && node.line < bestLine) {
+        bestId = node.id;
+        bestLine = node.line;
       }
     }
 
-    if (candidates.length === 0) return null;
-
-    // Return the closest match (smallest line number after fetch)
-    candidates.sort((a, b) => a.line - b.line);
-    return candidates[0].id;
+    return bestId;
   }
 }
