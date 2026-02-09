@@ -47,7 +47,6 @@ export class MonorepoServiceDiscovery extends DiscoveryPlugin {
     return {
       name: 'MonorepoServiceDiscovery',
       phase: 'DISCOVERY',
-      priority: 100,
       creates: {
         nodes: ['SERVICE'],
         edges: []

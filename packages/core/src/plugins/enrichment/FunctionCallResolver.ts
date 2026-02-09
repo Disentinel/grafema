@@ -55,7 +55,6 @@ export class FunctionCallResolver extends Plugin {
     return {
       name: 'FunctionCallResolver',
       phase: 'ENRICHMENT',
-      priority: 80, // After ImportExportLinker (90)
       creates: {
         nodes: ['EXTERNAL_MODULE'],
         edges: ['CALLS']

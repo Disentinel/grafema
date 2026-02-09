@@ -50,11 +50,11 @@ export class SystemDbAnalyzer extends Plugin {
     return {
       name: 'SystemDbAnalyzer',
       phase: 'ANALYSIS',
-      priority: 85, // Run after JSASTAnalyzer
       creates: {
         nodes: ['SYSTEM_DB_VIEW_REGISTRATION', 'SYSTEM_DB_SUBSCRIPTION'],
         edges: ['REGISTERS_VIEW', 'CHECKS_VIEWS']
-      }
+      },
+      dependencies: ['JSASTAnalyzer']
     };
   }
 

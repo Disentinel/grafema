@@ -72,7 +72,6 @@ export class ExpressAnalyzer extends Plugin {
     return {
       name: 'ExpressAnalyzer',
       phase: 'ANALYSIS',
-      priority: 75, // После JSASTAnalyzer (80)
       creates: {
         nodes: ['http:route', 'express:mount'],
         edges: ['EXPOSES', 'MOUNTS', 'DEFINES']

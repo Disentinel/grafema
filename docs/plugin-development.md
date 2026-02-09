@@ -18,7 +18,7 @@
 
 Each plugin:
 - Inherits from `Plugin` class
-- Declares metadata (phase, priority, created types)
+- Declares metadata (phase, dependencies, created types)
 - Implements `execute(context)` method
 - Returns `PluginResult`
 
@@ -34,7 +34,7 @@ export class HelloWorldPlugin extends Plugin {
     return {
       name: 'HelloWorldPlugin',
       phase: 'VALIDATION',  // Runs after all analysis is done
-      priority: 10,
+      dependencies: [],
     };
   }
 
@@ -119,7 +119,6 @@ export class MyLibraryAnalyzer extends Plugin {
     return {
       name: 'MyLibraryAnalyzer',
       phase: 'ANALYSIS',           // DISCOVERY | INDEXING | ANALYSIS | ENRICHMENT | VALIDATION
-      priority: 70,                // Higher = runs earlier in phase (JSASTAnalyzer = 80)
       creates: {
         nodes: ['mylib:endpoint'], // Node types this plugin creates
         edges: ['HANDLES']         // Edge types this plugin creates
@@ -243,7 +242,7 @@ export class TodoDetector extends Plugin {
     return {
       name: 'TodoDetector',
       phase: 'ANALYSIS',
-      priority: 50,
+      dependencies: ['JSASTAnalyzer'],
       creates: { nodes: ['code:todo'], edges: ['CONTAINS'] }
     };
   }
@@ -312,7 +311,6 @@ export class FastifyRouteAnalyzer extends Plugin {
     return {
       name: 'FastifyRouteAnalyzer',
       phase: 'ANALYSIS',
-      priority: 75,
       creates: {
         nodes: ['http:route'],
         edges: ['CONTAINS', 'HANDLED_BY']
@@ -435,8 +433,8 @@ plugins:
 ### Plugin Order
 
 1. Plugins execute in phase order: DISCOVERY → INDEXING → ANALYSIS → ENRICHMENT → VALIDATION
-2. Within a phase, plugins are sorted by `priority` (higher = earlier)
-3. Use `dependencies` for explicit dependencies between plugins
+2. Within a phase, plugins are topologically sorted by `dependencies`
+3. Plugins with no dependency relationship run in registration order
 
 ### Execution Model & Idempotency
 
@@ -490,7 +488,7 @@ export default class MyAnalyzer extends Plugin {
     return {
       name: 'MyAnalyzer',
       phase: 'ANALYSIS',
-      priority: 50,
+      dependencies: ['JSASTAnalyzer'],
     };
   }
 
@@ -512,7 +510,7 @@ import { Plugin, createSuccessResult } from '@grafema/core';
 
 export default class LegacyConfigReader extends Plugin {
   get metadata() {
-    return { name: 'LegacyConfigReader', phase: 'DISCOVERY', priority: 100 };
+    return { name: 'LegacyConfigReader', phase: 'DISCOVERY', dependencies: [] };
   }
 
   async execute(context) {
@@ -683,13 +681,13 @@ npx @grafema/cli analyze --log-level debug
 | Plugin doesn't find patterns | Add `logger.debug(JSON.stringify(node, null, 2))` in traverse to see AST |
 | Nodes created but not visible | Check ID uniqueness |
 | Edges not created | Verify src and dst nodes exist |
-| Plugin runs too early | Decrease priority (lower = later) |
+| Plugin runs too early | Add missing `dependencies` to ensure correct order |
 | Plugin doesn't run at all | Verify class name is in config.yaml |
 
 ## Plugin Development Checklist
 
 - [ ] Plugin type determined (analysis/enrichment/validation)
-- [ ] Metadata correct (phase, priority, creates, dependencies)
+- [ ] Metadata correct (phase, dependencies, creates)
 - [ ] Execute returns PluginResult
 - [ ] Nodes have unique IDs
 - [ ] Nodes have file/line for navigation

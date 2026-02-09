@@ -1097,8 +1097,6 @@ describe('ExternalCallResolver', () => {
 
       assert.strictEqual(metadata.name, 'ExternalCallResolver');
       assert.strictEqual(metadata.phase, 'ENRICHMENT');
-      assert.strictEqual(metadata.priority, 70,
-        'Priority should be 70 (after FunctionCallResolver at 80)');
       assert.deepStrictEqual(metadata.creates.edges, ['CALLS']);
       assert.deepStrictEqual(metadata.creates.nodes, ['EXTERNAL_MODULE']);
       assert.ok(metadata.dependencies.includes('FunctionCallResolver'),

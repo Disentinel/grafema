@@ -83,6 +83,8 @@ export { AnalysisQueue } from './core/AnalysisQueue.js';
 export { ASTWorkerPool, type ModuleInfo as ASTModuleInfo, type ParseResult, type ASTWorkerPoolStats } from './core/ASTWorkerPool.js';
 export { GuaranteeManager } from './core/GuaranteeManager.js';
 export type { GuaranteeGraph } from './core/GuaranteeManager.js';
+export { toposort, CycleError } from './core/toposort.js';
+export type { ToposortItem } from './core/toposort.js';
 export { clearFileNodesIfNeeded, clearServiceNodeIfExists } from './core/FileNodeManager.js';
 export { CoverageAnalyzer } from './core/CoverageAnalyzer.js';
 export type { CoverageResult } from './core/CoverageAnalyzer.js';
@@ -128,10 +130,14 @@ export { GuaranteeAPI } from './api/GuaranteeAPI.js';
 export type { GuaranteeGraphBackend } from './api/GuaranteeAPI.js';
 
 // Node kinds
-export { isGuaranteeType } from './core/nodes/NodeKind.js';
+export { isGuaranteeType, isGrafemaType } from './core/nodes/NodeKind.js';
 
 // Issue nodes (detected problems)
 export { IssueNode, type IssueNodeRecord, type IssueSeverity, type IssueType } from './core/nodes/IssueNode.js';
+
+// Plugin nodes (self-describing pipeline)
+export { PluginNode } from './core/nodes/PluginNode.js';
+export type { PluginNodeRecord, PluginNodeOptions } from './core/nodes/PluginNode.js';
 
 // Guarantee nodes (contract-based)
 export { GuaranteeNode } from './core/nodes/GuaranteeNode.js';

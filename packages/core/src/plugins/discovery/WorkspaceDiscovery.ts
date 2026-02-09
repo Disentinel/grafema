@@ -42,7 +42,6 @@ export class WorkspaceDiscovery extends DiscoveryPlugin {
     return {
       name: 'WorkspaceDiscovery',
       phase: 'DISCOVERY',
-      priority: 110, // Higher than MonorepoServiceDiscovery (100)
       creates: {
         nodes: ['SERVICE'],
         edges: []

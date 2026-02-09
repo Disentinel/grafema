@@ -29,7 +29,7 @@ export class RustModuleIndexer extends Plugin {
     return {
       name: 'RustModuleIndexer',
       phase: 'INDEXING',
-      priority: 85,  // After JSModuleIndexer (90)
+      dependencies: [],
       creates: {
         nodes: ['RUST_MODULE'],
         edges: ['CONTAINS']

@@ -80,6 +80,9 @@ export const NAMESPACED_TYPE = {
   // Events
   EVENT_LISTENER: 'event:listener',
   EVENT_EMIT: 'event:emit',
+
+  // Grafema internal (self-describing pipeline)
+  GRAFEMA_PLUGIN: 'grafema:plugin',
 } as const;
 
 export type NamespacedNodeType = typeof NAMESPACED_TYPE[keyof typeof NAMESPACED_TYPE];
@@ -285,6 +288,17 @@ export interface GuaranteeNodeRecord extends BaseNodeRecord {
   updatedAt?: number;
 }
 
+// Plugin node (Grafema internal - self-describing pipeline)
+export interface PluginNodeRecord extends BaseNodeRecord {
+  type: 'grafema:plugin';
+  phase: string;
+  priority: number;
+  builtin: boolean;
+  createsNodes: string[];
+  createsEdges: string[];
+  dependencies: string[];
+}
+
 // Union of all node types
 export type NodeRecord =
   | FunctionNodeRecord
@@ -307,6 +321,7 @@ export type NodeRecord =
   | DbQueryNodeRecord
   | EventListenerNodeRecord
   | GuaranteeNodeRecord
+  | PluginNodeRecord
   | BaseNodeRecord; // fallback for custom types
 
 // === HELPER FUNCTIONS ===

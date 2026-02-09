@@ -912,22 +912,34 @@ export class CallExpressionVisitor extends ASTVisitor {
         actualArg = arg.argument;
       }
 
-      // Determine value type
-      const literalValue = ExpressionEvaluator.extractLiteralValue(actualArg);
-      if (literalValue !== null) {
-        argInfo.valueType = 'LITERAL';
-        argInfo.literalValue = literalValue;
+      // Determine value type and store coordinates for node lookup in GraphBuilder.
+      // IMPORTANT: Check ObjectExpression/ArrayExpression BEFORE extractLiteralValue
+      // to match the order in extractArguments (which creates the actual nodes).
+      // extractLiteralValue returns objects/arrays with all-literal properties as
+      // literal values, but extractArguments creates OBJECT_LITERAL/ARRAY_LITERAL nodes.
+      if (actualArg.type === 'ObjectExpression') {
+        argInfo.valueType = 'OBJECT_LITERAL';
+        argInfo.valueLine = actualArg.loc?.start.line;
+        argInfo.valueColumn = actualArg.loc?.start.column;
+      } else if (actualArg.type === 'ArrayExpression') {
+        argInfo.valueType = 'ARRAY_LITERAL';
+        argInfo.valueLine = actualArg.loc?.start.line;
+        argInfo.valueColumn = actualArg.loc?.start.column;
       } else if (actualArg.type === 'Identifier') {
         argInfo.valueType = 'VARIABLE';
         argInfo.valueName = actualArg.name;
-      } else if (actualArg.type === 'ObjectExpression') {
-        argInfo.valueType = 'OBJECT_LITERAL';
-      } else if (actualArg.type === 'ArrayExpression') {
-        argInfo.valueType = 'ARRAY_LITERAL';
       } else if (actualArg.type === 'CallExpression') {
         argInfo.valueType = 'CALL';
         argInfo.callLine = actualArg.loc?.start.line;
         argInfo.callColumn = actualArg.loc?.start.column;
+      } else {
+        const literalValue = ExpressionEvaluator.extractLiteralValue(actualArg);
+        if (literalValue !== null) {
+          argInfo.valueType = 'LITERAL';
+          argInfo.literalValue = literalValue;
+          argInfo.valueLine = actualArg.loc?.start.line;
+          argInfo.valueColumn = actualArg.loc?.start.column;
+        }
       }
 
       mutationArgs.push(argInfo);

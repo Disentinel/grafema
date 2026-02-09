@@ -59,7 +59,7 @@ export class EvalBanValidator extends Plugin {
     return {
       name: 'EvalBanValidator',
       phase: 'VALIDATION',
-      priority: 95, // Высокий приоритет - security check
+      dependencies: ['JSASTAnalyzer'],
       creates: {
         nodes: [],
         edges: []

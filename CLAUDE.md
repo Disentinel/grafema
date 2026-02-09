@@ -439,6 +439,27 @@ Available statuses:
 - **Done** → merged to main, worktree removed
 - **Canceled** / **Duplicate** → cancelled tasks
 
+### Vibe-kanban Sprint Board
+
+**Source of truth for current sprint.** Linear remains backlog/planning tool.
+
+**Workflow:**
+1. Sprint start: open v0.2 tasks from Linear loaded into vibe-kanban (`npx vibe-kanban`)
+2. During sprint: work from vibe-kanban board. New tech debt → create in BOTH kanban and Linear
+3. Sprint end: run `_scripts/sync-vk-to-linear.sh` to mark completed tasks in Linear
+
+**Vibe-kanban API:** `http://127.0.0.1:<port>/api/` (port in `/tmp/vibe-kanban/vibe-kanban.port`)
+- `GET /api/tasks?project_id=<id>` — list tasks
+- `POST /api/tasks` — create task (body: `{project_id, title, description}`)
+- `PATCH /api/tasks/<id>` — update (body: `{status: "done"}`)
+- `DELETE /api/tasks/<id>` — delete (**no confirmation, be careful**)
+
+**Task naming convention:** `REG-XXX: Title [PRIORITY]` — always include Linear ID for traceability.
+
+**MCP:** vibe-kanban MCP server configured in settings. Requires backend running (`npx vibe-kanban`). Restart Claude Code after starting backend for MCP tools to load.
+
+**IMPORTANT:** `delete_task` has NO confirmation. Don't use bulk delete operations. Prefer status changes over deletion.
+
 ## Git Worktree Workflow
 
 **CRITICAL: Worker Slots Pattern**
@@ -543,13 +564,48 @@ git worktree remove ../grafema-worker-N --force
 git worktree add ../grafema-worker-N
 ```
 
+## Agent Teams (Experimental)
+
+Agent Teams — экспериментальная фича Claude Code для координации нескольких инстансов с shared task list и межагентным messaging. Включена в settings.
+
+### Когда использовать
+
+- **Параллельный research** — несколько гипотез одновременно
+- **Code review с разных ракурсов** — security, performance, test coverage
+- **Независимые модули** — каждый тиммейт владеет своим набором файлов
+- **Debugging** — конкурирующие гипотезы, тиммейты спорят друг с другом
+
+### Когда НЕ использовать
+
+- MLA workflow (Don → Joel → Kent → Rob) — для этого worktrees + персистентные инстансы
+- Задачи с зависимостями между шагами — sequential work
+- Правки в одних и тех же файлах — конфликты неизбежны
+
+### Ограничения (на февраль 2026)
+
+- **No session resumption** — если лид падает, команда теряется
+- **One team per session** — нельзя несколько команд
+- **Тиммейты не персистентны** — создаются заново каждый раз
+- **No nested teams** — тиммейты не спавнят своих тиммейтов
+
+### Обязательно
+
+После каждого использования Agent Teams — записать в задачу/комментарий:
+1. Была ли реальная польза vs обычные subagents?
+2. Сколько примерно токенов потрачено (субъективно: много/умеренно)?
+3. Какие проблемы возникли?
+
+Это нужно для принятия решения — продолжать ли использовать или откатиться.
+
 ## Commands
 
 ```bash
-npm test                    # Run all tests
-npm run build              # Build project
-node --test test/unit/     # Run unit tests only
+pnpm build                                              # Build all packages (REQUIRED before tests)
+node --test --test-concurrency=1 'test/unit/*.test.js'  # Run all unit tests
+node --test test/unit/specific-file.test.js             # Run single test file
 ```
+
+**CRITICAL: Tests run against `dist/`, not `src/`.** Always `pnpm build` before running tests after any TypeScript changes. Stale builds cause false failures that look like real bugs.
 
 ## Skills
 

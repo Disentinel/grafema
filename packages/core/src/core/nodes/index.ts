@@ -52,6 +52,9 @@ export { GuaranteeNode, type GuaranteeNodeRecord, type GuaranteePriority, type G
 // Issue nodes (detected problems)
 export { IssueNode, type IssueNodeRecord, type IssueSeverity, type IssueType } from './IssueNode.js';
 
+// Plugin nodes (self-describing pipeline)
+export { PluginNode, type PluginNodeRecord, type PluginNodeOptions } from './PluginNode.js';
+
 // Node type constants and helpers
 export {
   NODE_TYPE,
@@ -63,6 +66,7 @@ export {
   isSideEffectType,
   matchesTypePattern,
   isGuaranteeType,
+  isGrafemaType,
   type BaseNodeType,
   type NamespacedNodeType,
   type NodeType,

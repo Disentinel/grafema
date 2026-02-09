@@ -173,7 +173,6 @@ export class RustAnalyzer extends Plugin {
     return {
       name: 'RustAnalyzer',
       phase: 'ANALYSIS',
-      priority: 75, // Lower than JSASTAnalyzer (80)
       creates: {
         nodes: [
           'RUST_FUNCTION',

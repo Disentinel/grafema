@@ -51,7 +51,6 @@ export class ClosureCaptureEnricher extends Plugin {
     return {
       name: 'ClosureCaptureEnricher',
       phase: 'ENRICHMENT',
-      priority: 40, // Lower number = runs later. Runs after ImportExportLinker (90)
       creates: {
         nodes: [],
         edges: ['CAPTURES']

@@ -46,7 +46,6 @@ export class ExpressResponseAnalyzer extends Plugin {
     return {
       name: 'ExpressResponseAnalyzer',
       phase: 'ANALYSIS',
-      priority: 74, // After ExpressRouteAnalyzer (75)
       creates: {
         nodes: [],
         edges: ['RESPONDS_WITH']

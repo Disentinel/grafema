@@ -89,6 +89,9 @@ export const NAMESPACED_TYPE = {
   GUARANTEE_QUEUE: 'guarantee:queue',
   GUARANTEE_API: 'guarantee:api',
   GUARANTEE_PERMISSION: 'guarantee:permission',
+
+  // Grafema internal (self-describing pipeline)
+  GRAFEMA_PLUGIN: 'grafema:plugin',
 } as const;
 
 export type NamespacedNodeType = typeof NAMESPACED_TYPE[keyof typeof NAMESPACED_TYPE];
@@ -168,4 +171,12 @@ export function matchesTypePattern(nodeType: string, pattern: string): boolean {
 export function isGuaranteeType(nodeType: string): boolean {
   if (!nodeType) return false;
   return getNamespace(nodeType) === 'guarantee';
+}
+
+/**
+ * Check if type is a grafema internal type (grafema:plugin, etc.)
+ */
+export function isGrafemaType(nodeType: string): boolean {
+  if (!nodeType) return false;
+  return getNamespace(nodeType) === 'grafema';
 }

@@ -48,7 +48,6 @@ export class DatabaseAnalyzer extends Plugin {
     return {
       name: 'DatabaseAnalyzer',
       phase: 'ANALYSIS',
-      priority: 75, // После JSASTAnalyzer (80)
       creates: {
         nodes: ['db:query', 'db:table', 'db:connection'],
         edges: ['MAKES_QUERY', 'TARGETS', 'READS_FROM', 'WRITES_TO']
