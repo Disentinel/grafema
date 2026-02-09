@@ -2,6 +2,73 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.5-beta] - 2026-02-09
+
+### Highlights
+
+- **Declarative plugin ordering** — Replace magic priority numbers with `dependencies: [...]` (topological sort)
+- **Batch IPC** — 10-17x speedup in analysis phase by eliminating N+1 graph calls
+- **MCP onboarding** — AI agents get step-by-step instructions via MCP Prompts protocol
+- **Plugin introspection** — Query `grafema:plugin` nodes to discover plugin capabilities without reading source
+
+### Plugin Architecture
+
+- **REG-367**: Replace `priority` with declarative `dependencies` for plugin ordering. Topological sort with cycle detection
+- **REG-386**: Expose plugin metadata as `grafema:plugin` graph nodes — phase, dependencies, created types all queryable
+- **REG-388**: Batch IPC optimization across all analysis plugins — collect nodes/edges, flush once instead of N+1 calls
+
+### Data Flow
+
+- **REG-270**: YIELDS/DELEGATES_TO edges for generator functions (`yield`, `yield*`)
+- **REG-288**: Track UpdateExpression modifications (`i++`, `--count`) as first-class graph nodes
+- **REG-392**: FLOWS_INTO edges for non-variable values in array mutations (literals, calls, expressions)
+
+### CLI & DX
+
+- **REG-199**: `--log-file` option for `grafema analyze` — write structured logs to file
+- **REG-350**: Live progress UI during analysis — current phase and plugin name
+- **REG-347**: Loading spinner for slow graph queries, auto-start server fix
+- **REG-385**: Fix CLI failure in nvm environments — use `process.execPath` instead of `'node'`
+- **REG-353**: VS Code "Copy Tree State" command for debugging
+- **REG-348**: VS Code setting for custom rfdb-server binary path
+
+### Onboarding
+
+- **REG-173**: Instruction-driven onboarding via MCP Prompts — AI agents receive step-by-step setup guide
+
+### Quality & Testing
+
+- **REG-195**: Code coverage with c8 and CI integration
+- **REG-149**: ESLint type safety — promote warn to error, fix all `as any` / `as unknown` casts
+- **REG-198**: Enforce branded nodes in GraphBackend.addNode — no more raw object literals
+- **REG-154**: Fix 4 skipped test files, migrate ExpressResponseAnalyzer to NodeFactory
+- **REG-390**: Fix 293 test failures after multi-branch merge
+- **REG-393**: Directory index resolution regression test
+
+### Enrichment & Analysis
+
+- **REG-306**: Extract shared expression handling in JSASTAnalyzer
+- **REG-323**: Byte offset for HANDLED_BY edge matching (precision fix)
+- **REG-351**: Reduce strict mode false positives — expand isExternalMethod detection
+- **REG-354**: Library coverage tracking — report which libraries are called and suggest analyzers
+- **REG-311**: Track async error patterns (Promise.reject, reject callback)
+
+### Infrastructure
+
+- **REG-67**: Release workflow with CI/CD — stable branch, semantic versioning, GitHub Actions
+- **REG-76**: Multi-root workspace support
+- **REG-349**: Fix esbuild CJS bundling (RustAnalyzer lazy load)
+- **REG-243**: Deduplicate diagnostic category mappings
+- **REG-320**: Extract shared `resolveModulePath` utility
+- **REG-378**: Ensure `grafema analyze` exits cleanly
+
+### Bug Fixes
+
+- **REG-322**: HANDLED_BY edge finds correct handler (byte offset matching)
+- **REG-385**: CLI init fails when Node.js not in PATH (nvm)
+
+---
+
 ## [0.2.4-beta] - 2026-02-05
 
 ### Infrastructure

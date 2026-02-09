@@ -105,6 +105,8 @@ Follow how data moves through your code:
 - Function arguments to parameters
 - Return values to callers
 - Promise resolution chains
+- Generator yields and delegations
+- Update expressions (`i++`, `--count`)
 
 ### AI-First Design
 
@@ -112,6 +114,15 @@ Built for AI agents to navigate code efficiently:
 - MCP tools for Claude integration
 - Graph queries instead of file reading
 - Structured navigation instead of grep
+- MCP Prompts for guided onboarding
+- Plugin metadata queryable via graph (no source reading needed)
+
+### Plugin System
+
+Extensible architecture with declarative dependencies:
+- Declare `dependencies: ['ImportExportLinker']` instead of magic priority numbers
+- Automatic topological ordering with cycle detection
+- Batch IPC for fast analysis (10-17x speedup vs sequential calls)
 
 ## Language Support
 
