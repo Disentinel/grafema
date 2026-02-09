@@ -10,7 +10,10 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
+  ListPromptsRequestSchema,
+  GetPromptRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
+import { PROMPTS, getPrompt } from './prompts.js';
 
 import { TOOLS } from './definitions.js';
 import { initializeFromArgs, setupLogging, getProjectPath } from './state.js';
@@ -36,6 +39,8 @@ import {
   handleFindGuards,
   handleReportIssue,
   handleGetFunctionDetails,
+  handleReadProjectStructure,
+  handleWriteConfig,
 } from './handlers.js';
 import type {
   ToolResult,
@@ -55,6 +60,8 @@ import type {
   DeleteGuaranteeArgs,
   GetCoverageArgs,
   FindGuardsArgs,
+  ReadProjectStructureArgs,
+  WriteConfigArgs,
 } from './types.js';
 
 /**
@@ -82,6 +89,7 @@ const server = new Server(
   {
     capabilities: {
       tools: {},
+      prompts: {},
     },
   }
 );
@@ -89,6 +97,16 @@ const server = new Server(
 // List available tools
 server.setRequestHandler(ListToolsRequestSchema, async (_request, _extra) => {
   return { tools: TOOLS };
+});
+
+// List available prompts
+server.setRequestHandler(ListPromptsRequestSchema, async () => {
+  return { prompts: PROMPTS };
+});
+
+// Get prompt by name
+server.setRequestHandler(GetPromptRequestSchema, async (request) => {
+  return getPrompt(request.params.name);
 });
 
 // Handle tool calls
@@ -183,6 +201,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
 
       case 'get_function_details':
         result = await handleGetFunctionDetails(asArgs<GetFunctionDetailsArgs>(args));
+        break;
+
+      case 'read_project_structure':
+        result = await handleReadProjectStructure(asArgs<ReadProjectStructureArgs>(args));
+        break;
+
+      case 'write_config':
+        result = await handleWriteConfig(asArgs<WriteConfigArgs>(args));
         break;
 
       default:

@@ -46,7 +46,8 @@
     "@grafema/core": "workspace:*",
     "@grafema/types": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.25.1",
-    "ajv": "^8.17.1"
+    "ajv": "^8.17.1",
+    "yaml": "^2.8.2"
   },
   "devDependencies": {
     "@types/node": "^25.0.8",

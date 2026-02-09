@@ -21,6 +21,7 @@
   ],
   "scripts": {
     "build": "tsc",
+    "postbuild": "cp -r src/instructions/*.md dist/instructions/",
     "clean": "rm -rf dist"
   },
   "keywords": [

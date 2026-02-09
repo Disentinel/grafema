@@ -4,8 +4,12 @@
 
 import { ensureAnalyzed } from './analysis.js';
 import { getProjectPath, getAnalysisStatus, getOrCreateBackend, getGuaranteeManager, getGuaranteeAPI, isAnalysisRunning } from './state.js';
-import { CoverageAnalyzer, findCallsInFunction, findContainingFunction } from '@grafema/core';
+import { CoverageAnalyzer, findCallsInFunction, findContainingFunction, validateServices, validatePatterns, validateWorkspace, getOnboardingInstruction } from '@grafema/core';
 import type { CallInfo, CallerInfo } from '@grafema/core';
+import { existsSync, readdirSync, statSync, writeFileSync, mkdirSync } from 'fs';
+import type { Dirent } from 'fs';
+import { join, basename } from 'path';
+import { stringify as stringifyYAML } from 'yaml';
 import {
   normalizeLimit,
   formatPaginationInfo,
@@ -37,6 +41,8 @@ import type {
   DatalogBinding,
   CallResult,
   ReportIssueArgs,
+  ReadProjectStructureArgs,
+  WriteConfigArgs,
 } from './types.js';
 import { isGuaranteeType } from '@grafema/core';
 
@@ -822,6 +828,7 @@ export async function handleGetDocumentation(args: GetDocumentationArgs): Promis
   const { topic = 'overview' } = args;
 
   const docs: Record<string, string> = {
+    onboarding: getOnboardingInstruction(),
     overview: `
 # Grafema Code Analysis
 
@@ -1184,4 +1191,183 @@ ${context ? `## Context\n\`\`\`\n${context}\n\`\`\`\n` : ''}
     `**Or copy this template to** ${issueUrl}:\n\n` +
     `---\n**Title:** ${title}\n\n${body}\n---`
   );
+}
+
+// === PROJECT STRUCTURE (REG-173) ===
+
+export async function handleReadProjectStructure(
+  args: ReadProjectStructureArgs
+): Promise<ToolResult> {
+  const projectPath = getProjectPath();
+  const subPath = args.path || '.';
+  const maxDepth = Math.min(Math.max(1, args.depth || 3), 5);
+  const includeFiles = args.include_files !== false;
+
+  const targetPath = join(projectPath, subPath);
+
+  if (!existsSync(targetPath)) {
+    return errorResult(`Path does not exist: ${subPath}`);
+  }
+
+  if (!statSync(targetPath).isDirectory()) {
+    return errorResult(`Path is not a directory: ${subPath}`);
+  }
+
+  const EXCLUDED = new Set([
+    'node_modules', '.git', 'dist', 'build', '.grafema',
+    'coverage', '.next', '.nuxt', '.cache', '.output',
+    '__pycache__', '.tox', 'target',
+  ]);
+
+  const lines: string[] = [];
+
+  function walk(dir: string, prefix: string, depth: number): void {
+    if (depth > maxDepth) return;
+
+    let entries: Dirent[];
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+
+    const dirs: string[] = [];
+    const files: string[] = [];
+
+    for (const entry of entries) {
+      if (EXCLUDED.has(entry.name)) continue;
+
+      if (entry.isDirectory()) {
+        dirs.push(entry.name);
+      } else if (includeFiles) {
+        files.push(entry.name);
+      }
+    }
+
+    dirs.sort();
+    files.sort();
+
+    const allEntries = [
+      ...dirs.map(d => ({ name: d, isDir: true })),
+      ...files.map(f => ({ name: f, isDir: false })),
+    ];
+
+    for (let i = 0; i < allEntries.length; i++) {
+      const entry = allEntries[i];
+      const isLast = i === allEntries.length - 1;
+      const connector = isLast ? '└── ' : '├── ';
+      const childPrefix = isLast ? '    ' : '│   ';
+
+      if (entry.isDir) {
+        lines.push(`${prefix}${connector}${entry.name}/`);
+        walk(join(dir, entry.name), prefix + childPrefix, depth + 1);
+      } else {
+        lines.push(`${prefix}${connector}${entry.name}`);
+      }
+    }
+  }
+
+  lines.push(subPath === '.' ? basename(projectPath) + '/' : subPath + '/');
+  walk(targetPath, '', 1);
+
+  if (lines.length === 1) {
+    return textResult(`Directory is empty or contains only excluded entries: ${subPath}`);
+  }
+
+  return textResult(lines.join('\n'));
+}
+
+// === WRITE CONFIG (REG-173) ===
+
+export async function handleWriteConfig(
+  args: WriteConfigArgs
+): Promise<ToolResult> {
+  const projectPath = getProjectPath();
+  const grafemaDir = join(projectPath, '.grafema');
+  const configPath = join(grafemaDir, 'config.yaml');
+
+  try {
+    if (args.services) {
+      validateServices(args.services, projectPath);
+    }
+
+    if (args.include !== undefined || args.exclude !== undefined) {
+      const warnings: string[] = [];
+      validatePatterns(args.include, args.exclude, {
+        warn: (msg: string) => warnings.push(msg),
+      });
+    }
+
+    if (args.workspace) {
+      validateWorkspace(args.workspace, projectPath);
+    }
+
+    const config: Record<string, unknown> = {};
+
+    if (args.services && args.services.length > 0) {
+      config.services = args.services;
+    }
+
+    if (args.plugins) {
+      config.plugins = args.plugins;
+    }
+
+    if (args.include) {
+      config.include = args.include;
+    }
+
+    if (args.exclude) {
+      config.exclude = args.exclude;
+    }
+
+    if (args.workspace) {
+      config.workspace = args.workspace;
+    }
+
+    const yaml = stringifyYAML(config, { lineWidth: 0 });
+    const content =
+      '# Grafema Configuration\n' +
+      '# Generated by Grafema onboarding\n' +
+      '# Documentation: https://github.com/grafema/grafema#configuration\n\n' +
+      yaml;
+
+    if (!existsSync(grafemaDir)) {
+      mkdirSync(grafemaDir, { recursive: true });
+    }
+
+    writeFileSync(configPath, content);
+
+    const summary: string[] = ['Configuration written to .grafema/config.yaml'];
+
+    if (args.services && args.services.length > 0) {
+      summary.push(`Services: ${args.services.map(s => s.name).join(', ')}`);
+    } else {
+      summary.push('Services: using auto-discovery (none explicitly configured)');
+    }
+
+    if (args.plugins) {
+      summary.push('Plugins: custom configuration');
+    } else {
+      summary.push('Plugins: using defaults');
+    }
+
+    if (args.include) {
+      summary.push(`Include patterns: ${args.include.join(', ')}`);
+    }
+
+    if (args.exclude) {
+      summary.push(`Exclude patterns: ${args.exclude.join(', ')}`);
+    }
+
+    if (args.workspace?.roots) {
+      summary.push(`Workspace roots: ${args.workspace.roots.join(', ')}`);
+    }
+
+    summary.push('\nNext step: run analyze_project to build the graph.');
+
+    return textResult(summary.join('\n'));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return errorResult(`Failed to write config: ${message}`);
+  }
 }

@@ -299,3 +299,32 @@ export interface GuardInfo {
   file: string;
   line: number;
 }
+
+// === PROJECT STRUCTURE (REG-173) ===
+
+export interface ReadProjectStructureArgs {
+  path?: string;
+  depth?: number;
+  include_files?: boolean;
+}
+
+// === WRITE CONFIG (REG-173) ===
+
+export interface WriteConfigArgs {
+  services?: Array<{
+    name: string;
+    path: string;
+    entryPoint?: string;
+  }>;
+  plugins?: {
+    indexing?: string[];
+    analysis?: string[];
+    enrichment?: string[];
+    validation?: string[];
+  };
+  include?: string[];
+  exclude?: string[];
+  workspace?: {
+    roots?: string[];
+  };
+}

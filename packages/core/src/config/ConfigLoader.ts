@@ -248,7 +248,7 @@ export function loadConfig(
  * @param services - Parsed services array (may be undefined)
  * @param projectPath - Project root for path validation
  */
-function validateServices(services: unknown, projectPath: string): void {
+export function validateServices(services: unknown, projectPath: string): void {
   // undefined/null is valid (means use defaults)
   if (services === undefined || services === null) {
     return;
@@ -325,7 +325,7 @@ function validateServices(services: unknown, projectPath: string): void {
  * @param workspace - Parsed workspace config (may be undefined)
  * @param projectPath - Project root for path validation
  */
-function validateWorkspace(workspace: unknown, projectPath: string): void {
+export function validateWorkspace(workspace: unknown, projectPath: string): void {
   // undefined/null is valid (means single-root mode)
   if (workspace === undefined || workspace === null) {
     return;
@@ -403,7 +403,7 @@ function validateWorkspace(workspace: unknown, projectPath: string): void {
  * @param exclude - Parsed exclude patterns (may be undefined)
  * @param logger - Logger for warnings
  */
-function validatePatterns(
+export function validatePatterns(
   include: unknown,
   exclude: unknown,
   logger: { warn: (msg: string) => void }
