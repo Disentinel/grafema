@@ -244,6 +244,55 @@ describe('JSModuleIndexer', () => {
   });
 
   // ===========================================================================
+  // TESTS: Directory Index Resolution (REG-393)
+  // ===========================================================================
+
+  describe('Directory Index Resolution (REG-393)', () => {
+    it('should resolve require("./defaults") to defaults/index.js', async () => {
+      // Setup: Create directory structure like axios
+      // lib/
+      //   index.js         → require('./defaults')
+      //   defaults/
+      //     index.js       → some content
+      mkdirSync(join(tempDir, 'lib'), { recursive: true });
+      mkdirSync(join(tempDir, 'lib', 'defaults'), { recursive: true });
+
+      writeFileSync(join(tempDir, 'lib', 'index.js'), `
+        const defaults = require('./defaults');
+        module.exports = { defaults };
+      `);
+      writeFileSync(join(tempDir, 'lib', 'defaults', 'index.js'), `
+        module.exports = { key: 'value' };
+      `);
+
+      const graph = new MockGraphBackend();
+      const indexer = new JSModuleIndexer();
+      const result = await indexer.execute(createContext(tempDir, 'lib/index.js', graph));
+
+      // Verify: Plugin succeeded
+      assert.strictEqual(result.success, true, 'Plugin should succeed');
+
+      // Get all nodes
+      const nodes = await graph.getAllNodes();
+      const nodeIds = nodes.map((n: any) => n.id);
+
+      // Verify: defaults/index.js has a MODULE node
+      const hasDefaultsIndex = nodeIds.some((id: string) =>
+        id.includes('lib/defaults/index.js') || id.includes('lib\\defaults\\index.js')
+      );
+      assert.ok(hasDefaultsIndex, 'defaults/index.js should have a MODULE node');
+
+      // Verify: lib/index.js DEPENDS_ON defaults/index.js
+      const hasDependency = graph.edges.some((edge: any) =>
+        (edge.src.includes('lib/index.js') || edge.src.includes('lib\\index.js')) &&
+        (edge.dst.includes('lib/defaults/index.js') || edge.dst.includes('lib\\defaults\\index.js')) &&
+        edge.type === 'DEPENDS_ON'
+      );
+      assert.ok(hasDependency, 'lib/index.js should DEPEND_ON defaults/index.js');
+    });
+  });
+
+  // ===========================================================================
   // TESTS: Include/Exclude Pattern Filtering (REG-185)
   // ===========================================================================
 
