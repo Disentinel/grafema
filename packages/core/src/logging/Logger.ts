@@ -4,13 +4,19 @@
  * Features:
  * - 5 log levels: silent, errors, warnings, info, debug
  * - Context support for structured logging
- * - No external dependencies
+ * - Console and file output (or both via MultiLogger)
  * - Safe handling of circular references
  *
  * Usage:
  *   const logger = createLogger('info');
  *   logger.info('Processing files', { count: 150 });
+ *
+ *   // Write logs to file (REG-199):
+ *   const logger = createLogger('info', { logFile: '.grafema/analysis.log' });
  */
+
+import { createWriteStream, writeFileSync, mkdirSync, accessSync, statSync, constants, type WriteStream } from 'fs';
+import { dirname, resolve } from 'path';
 
 /**
  * Log level type
@@ -145,8 +151,153 @@ export class ConsoleLogger implements Logger {
 }
 
 /**
- * Create a Logger instance with the specified log level
+ * File-based Logger implementation (REG-199)
+ *
+ * Writes log messages to a file with ISO timestamps using a write stream
+ * (non-blocking I/O). File is truncated on construction (overwritten each run).
+ * Parent directories are created automatically.
+ *
+ * Validates path on construction — throws if the directory is not writable
+ * or the path points to a directory.
  */
-export function createLogger(level: LogLevel): Logger {
-  return new ConsoleLogger(level);
+export class FileLogger implements Logger {
+  private readonly priority: number;
+  private readonly stream: WriteStream;
+
+  constructor(logLevel: LogLevel, filePath: string) {
+    this.priority = LOG_LEVEL_PRIORITY[logLevel];
+    const resolvedPath = resolve(filePath);
+
+    // Create parent directories
+    const dir = dirname(resolvedPath);
+    mkdirSync(dir, { recursive: true });
+
+    // Validate: parent directory must be writable
+    try {
+      accessSync(dir, constants.W_OK);
+    } catch {
+      throw new Error(`Cannot write log file: directory '${dir}' is not writable`);
+    }
+
+    // Validate: path must not point to an existing directory
+    try {
+      if (statSync(resolvedPath).isDirectory()) {
+        throw new Error(`Cannot write log file: '${resolvedPath}' is a directory`);
+      }
+    } catch (e) {
+      // If stat throws, file doesn't exist yet — that's fine
+      if (e instanceof Error && e.message.includes('is a directory')) throw e;
+    }
+
+    // Truncate/create file synchronously (validates writeability),
+    // then open stream in append mode for non-blocking writes
+    writeFileSync(resolvedPath, '');
+    this.stream = createWriteStream(resolvedPath, { flags: 'a' });
+    this.stream.on('error', () => {
+      // Silently ignore stream errors — don't crash analysis for logging failures
+    });
+  }
+
+  private shouldLog(methodLevel: number): boolean {
+    return this.priority >= methodLevel;
+  }
+
+  private writeLine(level: string, message: string, context?: Record<string, unknown>): void {
+    const timestamp = new Date().toISOString();
+    const formatted = formatMessage(`${timestamp} [${level}] ${message}`, context);
+    this.stream.write(formatted + '\n');
+  }
+
+  error(message: string, context?: Record<string, unknown>): void {
+    if (!this.shouldLog(METHOD_LEVELS.error)) return;
+    this.writeLine('ERROR', message, context);
+  }
+
+  warn(message: string, context?: Record<string, unknown>): void {
+    if (!this.shouldLog(METHOD_LEVELS.warn)) return;
+    this.writeLine('WARN', message, context);
+  }
+
+  info(message: string, context?: Record<string, unknown>): void {
+    if (!this.shouldLog(METHOD_LEVELS.info)) return;
+    this.writeLine('INFO', message, context);
+  }
+
+  debug(message: string, context?: Record<string, unknown>): void {
+    if (!this.shouldLog(METHOD_LEVELS.debug)) return;
+    this.writeLine('DEBUG', message, context);
+  }
+
+  trace(message: string, context?: Record<string, unknown>): void {
+    if (!this.shouldLog(METHOD_LEVELS.trace)) return;
+    this.writeLine('TRACE', message, context);
+  }
+
+  /** Flush and close the write stream. Returns when all data is written. */
+  close(): Promise<void> {
+    return new Promise((resolve) => {
+      this.stream.end(resolve);
+    });
+  }
+}
+
+/**
+ * Multi-output Logger that delegates to multiple Logger instances.
+ *
+ * Each inner logger applies its own level filtering independently.
+ * Used to write to both console and file simultaneously.
+ */
+export class MultiLogger implements Logger {
+  private readonly loggers: Logger[];
+
+  constructor(loggers: Logger[]) {
+    this.loggers = loggers;
+  }
+
+  error(message: string, context?: Record<string, unknown>): void {
+    for (const logger of this.loggers) logger.error(message, context);
+  }
+
+  warn(message: string, context?: Record<string, unknown>): void {
+    for (const logger of this.loggers) logger.warn(message, context);
+  }
+
+  info(message: string, context?: Record<string, unknown>): void {
+    for (const logger of this.loggers) logger.info(message, context);
+  }
+
+  debug(message: string, context?: Record<string, unknown>): void {
+    for (const logger of this.loggers) logger.debug(message, context);
+  }
+
+  trace(message: string, context?: Record<string, unknown>): void {
+    for (const logger of this.loggers) logger.trace(message, context);
+  }
+
+  /** Close all inner loggers that have a close() method (e.g., FileLogger). */
+  async close(): Promise<void> {
+    for (const logger of this.loggers) {
+      if (logger instanceof FileLogger) {
+        await logger.close();
+      }
+    }
+  }
+}
+
+/**
+ * Create a Logger instance with the specified log level.
+ *
+ * When logFile is specified, returns a MultiLogger that writes to both
+ * console and file. The file logger always captures at 'debug' level
+ * for complete post-mortem debugging, regardless of the console level.
+ */
+export function createLogger(level: LogLevel, options?: { logFile?: string }): Logger {
+  const consoleLogger = new ConsoleLogger(level);
+
+  if (options?.logFile) {
+    const fileLogger = new FileLogger('debug', options.logFile);
+    return new MultiLogger([consoleLogger, fileLogger]);
+  }
+
+  return consoleLogger;
 }
