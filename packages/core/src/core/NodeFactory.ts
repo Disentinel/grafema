@@ -44,6 +44,7 @@ import {
   ExpressionNode,
   ArgumentExpressionNode,
   IssueNode,
+  PluginNode,
   type EntrypointType,
   type EntrypointTrigger,
   type DecoratorTargetType,
@@ -664,6 +665,33 @@ export class NodeFactory {
   }
 
   /**
+   * Create grafema:plugin node.
+   *
+   * Represents a Grafema plugin in the analysis pipeline.
+   * Created by the Orchestrator at startup to make the pipeline
+   * queryable via the graph.
+   *
+   * @param name - Plugin class name (e.g., 'HTTPConnectionEnricher')
+   * @param phase - Plugin phase (DISCOVERY, INDEXING, ANALYSIS, ENRICHMENT, VALIDATION)
+   * @param options - Optional fields (priority, file, builtin, creates, dependencies)
+   */
+  static createPlugin(
+    name: string,
+    phase: string,
+    options: {
+      priority?: number;
+      file?: string;
+      line?: number;
+      builtin?: boolean;
+      createsNodes?: string[];
+      createsEdges?: string[];
+      dependencies?: string[];
+    } = {}
+  ) {
+    return brandNode(PluginNode.create(name, phase, options));
+  }
+
+  /**
    * Validate node by its type
    */
   static validate(node: BaseNodeRecord): string[] {
@@ -702,6 +730,11 @@ export class NodeFactory {
     // Handle issue:* types dynamically
     if (IssueNode.isIssueType(node.type)) {
       return IssueNode.validate(node as Parameters<typeof IssueNode.validate>[0]);
+    }
+
+    // Handle grafema:plugin type
+    if (PluginNode.isPluginType(node.type)) {
+      return PluginNode.validate(node);
     }
 
     const validator = validators[node.type];

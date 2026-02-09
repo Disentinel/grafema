@@ -146,7 +146,11 @@ async function loadCustomPlugins(
         const PluginClass = module.default || module[file.replace(/\.[cm]?js$/, '')];
         if (PluginClass && typeof PluginClass === 'function') {
           const pluginName = PluginClass.name || file.replace(/\.[cm]?js$/, '');
-          customPlugins[pluginName] = () => new PluginClass() as Plugin;
+          customPlugins[pluginName] = () => {
+            const instance = new PluginClass() as Plugin;
+            instance.config.sourceFile = pluginPath;
+            return instance;
+          };
           log(`Loaded custom plugin: ${pluginName}`);
         }
       } catch (err) {

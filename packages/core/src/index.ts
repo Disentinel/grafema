@@ -128,10 +128,14 @@ export { GuaranteeAPI } from './api/GuaranteeAPI.js';
 export type { GuaranteeGraphBackend } from './api/GuaranteeAPI.js';
 
 // Node kinds
-export { isGuaranteeType } from './core/nodes/NodeKind.js';
+export { isGuaranteeType, isGrafemaType } from './core/nodes/NodeKind.js';
 
 // Issue nodes (detected problems)
 export { IssueNode, type IssueNodeRecord, type IssueSeverity, type IssueType } from './core/nodes/IssueNode.js';
+
+// Plugin nodes (self-describing pipeline)
+export { PluginNode } from './core/nodes/PluginNode.js';
+export type { PluginNodeRecord, PluginNodeOptions } from './core/nodes/PluginNode.js';
 
 // Guarantee nodes (contract-based)
 export { GuaranteeNode } from './core/nodes/GuaranteeNode.js';

@@ -155,7 +155,11 @@ export async function loadCustomPlugins(projectPath: string): Promise<CustomPlug
         const PluginClass = module.default || module[file.replace(/\.(m?js)$/, '')];
         if (PluginClass && typeof PluginClass === 'function') {
           const pluginName = PluginClass.name || file.replace(/\.(m?js)$/, '');
-          customPlugins.push(new PluginClass());
+          const instance = new PluginClass();
+          if (instance.config) {
+            instance.config.sourceFile = pluginPath;
+          }
+          customPlugins.push(instance);
           pluginMap[pluginName] = PluginClass;
           log(`[Grafema MCP] Loaded custom plugin: ${pluginName} from ${file}`);
         }

@@ -262,6 +262,8 @@ function parsePattern(pattern: string): { type: string | null; name: string } {
       emit: 'socketio:emit',
       on: 'socketio:on',
       listener: 'socketio:on',
+      // Grafema internal
+      plugin: 'grafema:plugin',
     };
 
     if (typeMap[typeWord]) {
@@ -614,6 +616,16 @@ async function findNodes(
         nodeInfo.handlerName = node.handlerName as string | undefined;
       }
 
+      // Include plugin-specific fields
+      if (nodeType === 'grafema:plugin') {
+        nodeInfo.phase = node.phase as string | undefined;
+        nodeInfo.priority = node.priority as number | undefined;
+        nodeInfo.builtin = node.builtin as boolean | undefined;
+        nodeInfo.createsNodes = node.createsNodes as string[] | undefined;
+        nodeInfo.createsEdges = node.createsEdges as string[] | undefined;
+        nodeInfo.dependencies = node.dependencies as string[] | undefined;
+      }
+
       results.push(nodeInfo);
       if (results.length >= limit) break;
     }
@@ -740,6 +752,12 @@ async function displayNode(node: NodeInfo, projectPath: string, backend: RFDBSer
   // Special formatting for Socket.IO emit/on
   if (node.type === 'socketio:emit' || node.type === 'socketio:on') {
     console.log(formatSocketIONodeDisplay(node, projectPath));
+    return;
+  }
+
+  // Special formatting for Grafema plugin nodes
+  if (node.type === 'grafema:plugin') {
+    console.log(formatPluginDisplay(node, projectPath));
     return;
   }
 
@@ -893,6 +911,47 @@ function formatSocketIONodeDisplay(node: NodeInfo, projectPath: string): string 
   // Listener-specific fields
   if (node.type === 'socketio:on' && node.handlerName) {
     lines.push(`  Handler: ${node.handlerName}`);
+  }
+
+  return lines.join('\n');
+}
+
+/**
+ * Format Grafema plugin node for display.
+ *
+ * Output:
+ *   [grafema:plugin] HTTPConnectionEnricher
+ *     Phase: ENRICHMENT (priority: 50)
+ *     Creates: edges: INTERACTS_WITH, HTTP_RECEIVES
+ *     Dependencies: ExpressRouteAnalyzer, FetchAnalyzer, ExpressResponseAnalyzer
+ *     Source: packages/core/src/plugins/enrichment/HTTPConnectionEnricher.ts
+ */
+function formatPluginDisplay(node: NodeInfo, projectPath: string): string {
+  const lines: string[] = [];
+
+  lines.push(`[${node.type}] ${node.name}`);
+
+  const phase = (node.phase as string) || 'unknown';
+  const priority = (node.priority as number) ?? 0;
+  lines.push(`  Phase: ${phase} (priority: ${priority})`);
+
+  const createsNodes = (node.createsNodes as string[]) || [];
+  const createsEdges = (node.createsEdges as string[]) || [];
+  const createsParts: string[] = [];
+  if (createsNodes.length > 0) createsParts.push(`nodes: ${createsNodes.join(', ')}`);
+  if (createsEdges.length > 0) createsParts.push(`edges: ${createsEdges.join(', ')}`);
+  if (createsParts.length > 0) {
+    lines.push(`  Creates: ${createsParts.join('; ')}`);
+  }
+
+  const deps = (node.dependencies as string[]) || [];
+  if (deps.length > 0) {
+    lines.push(`  Dependencies: ${deps.join(', ')}`);
+  }
+
+  if (node.file) {
+    const relPath = relative(projectPath, node.file);
+    lines.push(`  Source: ${relPath}`);
   }
 
   return lines.join('\n');
