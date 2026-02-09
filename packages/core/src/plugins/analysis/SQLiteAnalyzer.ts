@@ -269,22 +269,30 @@ export class SQLiteAnalyzer extends Plugin {
       });
 
       // Создаём DATABASE_QUERY ноды
+      const nodes: NodeRecord[] = [];
+      const edges: Array<{ type: string; src: string; dst: string }> = [];
+
       for (const query of queries) {
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
         const { promiseWrapped, ...queryData } = query;
 
-        await graph.addNode(queryData as unknown as NodeRecord);
+        nodes.push(queryData as unknown as NodeRecord);
         queriesCreated++;
 
         // MODULE -> CONTAINS -> DATABASE_QUERY
-        await graph.addEdge({
+        edges.push({
           type: 'CONTAINS',
           src: module.id,
           dst: query.id
         });
         edgesCreated++;
+      }
 
-        // Ищем FUNCTION ноду которая содержит этот query
+      // Flush nodes first so queryNodes can find them
+      await graph.addNodes(nodes);
+
+      // Find containing functions (reads FUNCTION nodes from JSASTAnalyzer)
+      for (const query of queries) {
         const containingFunctions: NodeRecord[] = [];
         for await (const n of graph.queryNodes({ type: 'FUNCTION' })) {
           if (
@@ -303,7 +311,7 @@ export class SQLiteAnalyzer extends Plugin {
           );
 
           // FUNCTION -> EXECUTES_QUERY -> DATABASE_QUERY
-          await graph.addEdge({
+          edges.push({
             type: 'EXECUTES_QUERY',
             src: closestFunction.id,
             dst: query.id
@@ -311,6 +319,9 @@ export class SQLiteAnalyzer extends Plugin {
           edgesCreated++;
         }
       }
+
+      // Flush all edges
+      await graph.addEdges(edges);
     } catch {
       // Silent - per-module errors shouldn't spam logs
     }

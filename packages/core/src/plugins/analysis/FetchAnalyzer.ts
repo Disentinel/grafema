@@ -86,7 +86,11 @@ export class FetchAnalyzer extends Plugin {
     try {
       const { graph } = context;
 
-      // net:request singleton created lazily in analyzeModule when first request found
+      // Create net:request singleton once before processing modules
+      const networkNode = NetworkRequestNode.create();
+      await graph.addNode(networkNode);
+      this.networkNodeCreated = true;
+      this.networkNodeId = networkNode.id;
 
       // Получаем все модули
       const modules = await this.getModules(graph);
@@ -135,24 +139,15 @@ export class FetchAnalyzer extends Plugin {
     }
   }
 
-  /**
-   * Ensures net:request singleton exists, creating it if necessary.
-   * Called lazily when first HTTP request is detected.
-   */
-  private async ensureNetworkNode(graph: PluginContext['graph']): Promise<string> {
-    if (!this.networkNodeId) {
-      const networkNode = NetworkRequestNode.create();
-      await graph.addNode(networkNode);
-      this.networkNodeCreated = true;
-      this.networkNodeId = networkNode.id;
-    }
-    return this.networkNodeId;
-  }
 
   private async analyzeModule(
     module: NodeRecord,
     graph: PluginContext['graph']
   ): Promise<AnalysisResult> {
+    // Batch arrays for nodes and edges
+    const nodes: NodeRecord[] = [];
+    const edges: Array<{ type: string; src: string; dst: string }> = [];
+
     try {
       const code = readFileSync(module.file!, 'utf-8');
 
@@ -367,21 +362,20 @@ export class FetchAnalyzer extends Plugin {
           }
         }
 
-        await graph.addNode(request as unknown as NodeRecord);
+        nodes.push(request as unknown as NodeRecord);
 
         // Создаём ребро от модуля к request
-        await graph.addEdge({
+        edges.push({
           type: 'CONTAINS',
           src: module.id,
           dst: request.id
         });
 
-        // http:request --CALLS--> net:request singleton (created lazily)
-        const networkId = await this.ensureNetworkNode(graph);
-        await graph.addEdge({
+        // http:request --CALLS--> net:request singleton
+        edges.push({
           type: 'CALLS',
           src: request.id,
-          dst: networkId
+          dst: this.networkNodeId!
         });
 
         // Ищем FUNCTION node которая делает запрос
@@ -404,7 +398,7 @@ export class FetchAnalyzer extends Plugin {
             return currentDistance < closestDistance ? func : closest;
           });
 
-          await graph.addEdge({
+          edges.push({
             type: 'MAKES_REQUEST',
             src: closestFunction.id,
             dst: request.id
@@ -421,7 +415,7 @@ export class FetchAnalyzer extends Plugin {
             callNode.line === request.line &&
             expectedCallNames.includes(callNode.name as string)
           ) {
-            await graph.addEdge({
+            edges.push({
               type: 'MAKES_REQUEST',
               src: callNode.id,
               dst: request.id
@@ -438,7 +432,7 @@ export class FetchAnalyzer extends Plugin {
         // Проверяем что нода ещё не создана
         const existingApi = await graph.getNode(apiId);
         if (!existingApi) {
-          await graph.addNode({
+          nodes.push({
             id: apiId,
             type: 'EXTERNAL',
             domain: apiDomain,
@@ -450,12 +444,20 @@ export class FetchAnalyzer extends Plugin {
         const apiRequests = httpRequests.filter(r => r.url.includes(apiDomain));
 
         for (const request of apiRequests) {
-          await graph.addEdge({
+          edges.push({
             type: 'CALLS_API',
             src: request.id,
             dst: apiId
           });
         }
+      }
+
+      // Flush batched operations
+      if (nodes.length > 0) {
+        await graph.addNodes(nodes);
+      }
+      if (edges.length > 0) {
+        await graph.addEdges(edges);
       }
 
       return {

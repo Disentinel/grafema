@@ -235,30 +235,32 @@ export class DatabaseAnalyzer extends Plugin {
         }
       });
 
-      // Создаём EXTERNAL_DATABASE ноду если есть хотя бы один query
+      // Collect all nodes and edges for batch operations
       if (databaseQueries.length > 0) {
         const databaseId = 'EXTERNAL_DATABASE:__database__';
+        const nodes: NodeRecord[] = [];
+        const edges: Array<{ type: string; src: string; dst: string }> = [];
 
         const existingDb = await graph.getNode(databaseId);
         if (!existingDb) {
-          await graph.addNode({
+          nodes.push({
             id: databaseId,
             type: 'db:connection',
             name: '__database__'
           } as NodeRecord);
         }
 
-        // Создаём DATABASE_QUERY ноды
+        // Prepare DATABASE_QUERY and TABLE nodes
         for (const query of databaseQueries) {
-          await graph.addNode(query as unknown as NodeRecord);
+          nodes.push(query as unknown as NodeRecord);
           queriesCreated++;
 
-          // Создаём TABLE ноду если есть tableName
+          // Prepare TABLE node if has tableName
           if (query.tableName) {
             const tableId = `TABLE:${query.tableName}`;
 
             if (!createdTables.has(tableId)) {
-              await graph.addNode({
+              nodes.push({
                 id: tableId,
                 type: 'db:table',
                 name: query.tableName
@@ -268,7 +270,7 @@ export class DatabaseAnalyzer extends Plugin {
             }
 
             // DATABASE_QUERY -> TARGETS -> TABLE
-            await graph.addEdge({
+            edges.push({
               type: 'TARGETS',
               src: query.id,
               dst: tableId
@@ -280,7 +282,7 @@ export class DatabaseAnalyzer extends Plugin {
           const isReadOperation = query.operation === 'SELECT';
           const edgeType = isReadOperation ? 'READS_FROM' : 'WRITES_TO';
 
-          await graph.addEdge({
+          edges.push({
             type: edgeType,
             src: query.id,
             dst: databaseId
@@ -291,7 +293,7 @@ export class DatabaseAnalyzer extends Plugin {
           const parentFunction = this.findParentFunction(query, functions);
 
           if (parentFunction) {
-            await graph.addEdge({
+            edges.push({
               type: 'MAKES_QUERY',
               src: parentFunction.id,
               dst: query.id
@@ -299,6 +301,10 @@ export class DatabaseAnalyzer extends Plugin {
             edgesCreated++;
           }
         }
+
+        // Flush all nodes and edges
+        await graph.addNodes(nodes);
+        await graph.addEdges(edges);
       }
     } catch {
       // Silent - per-module errors shouldn't spam logs

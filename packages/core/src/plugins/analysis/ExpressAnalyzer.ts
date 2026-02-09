@@ -86,9 +86,13 @@ export class ExpressAnalyzer extends Plugin {
     try {
       const { graph } = context;
 
+      // Batch arrays
+      const nodes: NodeRecord[] = [];
+      const edges: Array<{type: string; src: string; dst: string; [key: string]: unknown}> = [];
+
       // Create net:request singleton (GraphBackend handles deduplication)
       const networkNode = NetworkRequestNode.create();
-      await graph.addNode(networkNode);
+      nodes.push(networkNode as unknown as NodeRecord);
 
       // Получаем все MODULE ноды
       const modules = await this.getModules(graph);
@@ -99,11 +103,15 @@ export class ExpressAnalyzer extends Plugin {
 
       // Анализируем каждый модуль
       for (const module of modules) {
-        const result = await this.analyzeModule(module, graph, networkNode.id);
+        const result = await this.analyzeModule(module, graph, networkNode.id, nodes, edges);
         endpointsCreated += result.endpoints;
         mountPointsCreated += result.mountPoints;
         edgesCreated += result.edges;
       }
+
+      // Add all nodes and edges in batch
+      await graph.addNodes(nodes);
+      await graph.addEdges(edges);
 
       logger.info('Analysis complete', { endpointsCreated, mountPointsCreated });
 
@@ -130,7 +138,9 @@ export class ExpressAnalyzer extends Plugin {
   private async analyzeModule(
     module: NodeRecord,
     graph: PluginContext['graph'],
-    networkId: string
+    networkId: string,
+    nodes: NodeRecord[],
+    edges: Array<{type: string; src: string; dst: string; [key: string]: unknown}>
   ): Promise<AnalysisResult> {
     let endpointsCreated = 0;
     let mountPointsCreated = 0;
@@ -302,11 +312,11 @@ export class ExpressAnalyzer extends Plugin {
 
       // Создаём ENDPOINT ноды
       for (const endpoint of endpoints) {
-        await graph.addNode(endpoint as unknown as NodeRecord);
+        nodes.push(endpoint as unknown as NodeRecord);
         endpointsCreated++;
 
         // MODULE --EXPOSES--> ENDPOINT
-        await graph.addEdge({
+        edges.push({
           type: 'EXPOSES',
           src: module.id,
           dst: endpoint.id
@@ -314,7 +324,7 @@ export class ExpressAnalyzer extends Plugin {
         edgesCreated++;
 
         // ENDPOINT --INTERACTS_WITH--> EXTERNAL_NETWORK
-        await graph.addEdge({
+        edges.push({
           type: 'INTERACTS_WITH',
           src: endpoint.id,
           dst: networkId
@@ -324,11 +334,11 @@ export class ExpressAnalyzer extends Plugin {
 
       // Создаём MOUNT_POINT ноды
       for (const mountPoint of mountPoints) {
-        await graph.addNode(mountPoint as unknown as NodeRecord);
+        nodes.push(mountPoint as unknown as NodeRecord);
         mountPointsCreated++;
 
         // MODULE --DEFINES--> MOUNT_POINT
-        await graph.addEdge({
+        edges.push({
           type: 'DEFINES',
           src: module.id,
           dst: mountPoint.id
@@ -336,7 +346,7 @@ export class ExpressAnalyzer extends Plugin {
         edgesCreated++;
 
         // Создаём MOUNTS рёбра
-        const mountEdges = await this.createMountEdges(mountPoint, module, imports, graph);
+        const mountEdges = await this.createMountEdges(mountPoint, module, imports, graph, edges);
         edgesCreated += mountEdges;
       }
     } catch {
@@ -357,7 +367,8 @@ export class ExpressAnalyzer extends Plugin {
     mountPoint: MountPointNode,
     module: NodeRecord,
     imports: ImportInfo[],
-    graph: PluginContext['graph']
+    graph: PluginContext['graph'],
+    edges: Array<{type: string; src: string; dst: string; [key: string]: unknown}>
   ): Promise<number> {
     let edgesCreated = 0;
 
@@ -402,7 +413,7 @@ export class ExpressAnalyzer extends Plugin {
       // Проверяем что модуль существует в графе
       const targetModule = await graph.getNode(targetModuleId);
       if (targetModule) {
-        await graph.addEdge({
+        edges.push({
           type: 'MOUNTS',
           src: mountPoint.id,
           dst: targetModuleId
