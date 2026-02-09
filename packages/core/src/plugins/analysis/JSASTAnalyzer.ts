@@ -279,7 +279,16 @@ export class JSASTAnalyzer extends Plugin {
           'RESOLVES_TO'
         ]
       },
-      dependencies: ['JSModuleIndexer']
+      dependencies: ['JSModuleIndexer'],
+      fields: [
+        { name: 'object', fieldType: 'string', nodeTypes: ['CALL'] },
+        { name: 'method', fieldType: 'string', nodeTypes: ['CALL'] },
+        { name: 'async', fieldType: 'bool', nodeTypes: ['FUNCTION', 'METHOD'] },
+        { name: 'scopeType', fieldType: 'string', nodeTypes: ['SCOPE'] },
+        { name: 'importType', fieldType: 'string', nodeTypes: ['IMPORT'] },
+        { name: 'exportType', fieldType: 'string', nodeTypes: ['EXPORT'] },
+        { name: 'parentScopeId', fieldType: 'id', nodeTypes: ['FUNCTION', 'METHOD', 'SCOPE', 'VARIABLE'] },
+      ]
     };
   }
 

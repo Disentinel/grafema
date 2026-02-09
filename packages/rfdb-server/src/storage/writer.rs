@@ -314,6 +314,10 @@ pub struct GraphMetadata {
     pub edge_count: usize,
     pub created_at: u64,
     pub updated_at: u64,
+    /// Persisted field declarations for metadata indexing.
+    /// Loaded on open() so field indexes are rebuilt automatically.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub field_declarations: Vec<crate::storage::FieldDecl>,
 }
 
 impl Default for GraphMetadata {
@@ -329,6 +333,7 @@ impl Default for GraphMetadata {
             edge_count: 0,
             created_at: now,
             updated_at: now,
+            field_declarations: Vec::new(),
         }
     }
 }

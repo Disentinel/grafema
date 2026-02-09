@@ -245,16 +245,6 @@ impl NodesSegment {
         0..self.node_count()
     }
 
-    /// Найти индекс ноды по ID (линейный поиск, можно оптимизировать)
-    pub fn find_index(&self, id: u128) -> Option<usize> {
-        for idx in 0..self.node_count {
-            if self.get_id(idx) == Some(id) {
-                return Some(idx);
-            }
-        }
-        None
-    }
-
     /// Получить строку по offset из string table
     pub fn get_string(&self, offset: u32) -> Option<&str> {
         self.string_table.as_ref()?.get(offset)

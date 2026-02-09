@@ -16,6 +16,7 @@ import type {
   RFDBResponse,
   IRFDBClient,
   AttrQuery,
+  FieldDeclaration,
   DatalogResult,
   NodeType,
   EdgeType,
@@ -591,6 +592,16 @@ export class RFDBClient extends EventEmitter implements IRFDBClient {
    */
   async updateNodeVersion(id: string, version: string): Promise<RFDBResponse> {
     return this._send('updateNodeVersion', { id: String(id), version });
+  }
+
+  /**
+   * Declare metadata fields for server-side indexing.
+   * Call before adding nodes so the server builds indexes on flush.
+   * Returns the number of declared fields.
+   */
+  async declareFields(fields: FieldDeclaration[]): Promise<number> {
+    const response = await this._send('declareFields', { fields });
+    return (response as { count?: number }).count || 0;
   }
 
   // ===========================================================================

@@ -53,7 +53,9 @@ export type RFDBCommand =
   | 'closeDatabase'
   | 'dropDatabase'
   | 'listDatabases'
-  | 'currentDatabase';
+  | 'currentDatabase'
+  // Schema declaration
+  | 'declareFields';
 
 // === WIRE FORMAT ===
 // Nodes as sent over the wire
@@ -273,6 +275,19 @@ export interface AttrQuery {
   file?: string;
   exported?: boolean;
   version?: string;
+  /** Extra fields are matched against node metadata JSON (e.g. object, method, async) */
+  [key: string]: string | boolean | number | undefined;
+}
+
+// === FIELD DECLARATION ===
+/** Declaration of a metadata field for server-side indexing. */
+export interface FieldDeclaration {
+  /** Field name as it appears in metadata JSON (e.g. "object", "method", "async") */
+  name: string;
+  /** Field type hint for storage optimization */
+  fieldType?: 'string' | 'bool' | 'int' | 'id';
+  /** Restrict indexing to specific node types. If omitted, indexes all node types. */
+  nodeTypes?: NodeType[];
 }
 
 // === DATALOG TYPES ===
@@ -302,6 +317,7 @@ export interface IRFDBClient {
   deleteEdge(src: string, dst: string, edgeType: EdgeType): Promise<RFDBResponse>;
   clear(): Promise<RFDBResponse>;
   updateNodeVersion(id: string, version: string): Promise<RFDBResponse>;
+  declareFields(fields: FieldDeclaration[]): Promise<number>;
 
   // Read operations
   getNode(id: string): Promise<WireNode | null>;

@@ -7,11 +7,12 @@ use std::env;
 use std::sync::Mutex;
 use std::time::{Instant, Duration};
 use sysinfo::{System, RefreshKind, MemoryRefreshKind};
-use crate::storage::{NodeRecord, EdgeRecord, AttrQuery, SegmentWriter, GraphMetadata};
+use crate::storage::{NodeRecord, EdgeRecord, AttrQuery, FieldDecl, SegmentWriter, GraphMetadata};
 use crate::storage::delta::{Delta, DeltaLog};
 use crate::storage::segment::{NodesSegment, EdgesSegment};
 use crate::error::Result;
 use super::{GraphStore, traversal};
+use super::index_set::IndexSet;
 
 // Global system info singleton for memory monitoring
 static SYSTEM_INFO: Mutex<Option<System>> = Mutex::new(None);
@@ -121,6 +122,13 @@ pub struct GraphEngine {
     // When a node in segment is deleted but not in delta_nodes,
     // we track it here until next flush
     deleted_segment_ids: HashSet<u128>,
+
+    // Secondary indexes over segment data (rebuilt on open/flush)
+    index_set: IndexSet,
+
+    // Declared metadata fields for indexing.
+    // Set via declare_fields(), used during index rebuild.
+    declared_fields: Vec<FieldDecl>,
 }
 
 impl GraphEngine {
@@ -145,6 +153,8 @@ impl GraphEngine {
             ops_since_flush: 0,
             last_memory_check: None,
             deleted_segment_ids: HashSet::new(),
+            index_set: IndexSet::new(),
+            declared_fields: Vec::new(),
         })
     }
 
@@ -186,6 +196,8 @@ impl GraphEngine {
             ops_since_flush: 0,
             last_memory_check: None,
             deleted_segment_ids: HashSet::new(),
+            index_set: IndexSet::new(),
+            declared_fields: Vec::new(),
         })
     }
 
@@ -245,11 +257,21 @@ impl GraphEngine {
             }
         }
 
+        // Restore declared fields from persisted metadata
+        let declared_fields = metadata.field_declarations.clone();
+
+        // Build secondary indexes from nodes segment (using persisted field declarations)
+        let mut index_set = IndexSet::new();
+        if let Some(ref nodes_seg) = nodes_segment {
+            index_set.rebuild_from_segment(nodes_seg, &declared_fields);
+        }
+
         tracing::info!(
-            "Opened graph at {:?}: {} nodes, {} edges",
+            "Opened graph at {:?}: {} nodes, {} edges, {} declared fields",
             path,
             nodes_segment.as_ref().map_or(0, |s| s.node_count()),
-            edges_segment.as_ref().map_or(0, |s| s.edge_count())
+            edges_segment.as_ref().map_or(0, |s| s.edge_count()),
+            declared_fields.len()
         );
 
         Ok(Self {
@@ -265,6 +287,8 @@ impl GraphEngine {
             ops_since_flush: 0,
             last_memory_check: None,
             deleted_segment_ids: HashSet::new(),
+            index_set,
+            declared_fields,
         })
     }
 
@@ -337,9 +361,9 @@ impl GraphEngine {
             return None;
         }
 
-        // Then look in segment
+        // Then look in segment via index (O(1) instead of O(n) linear scan)
         if let Some(ref segment) = self.nodes_segment {
-            if let Some(idx) = segment.find_index(id) {
+            if let Some(idx) = self.index_set.find_node_index(id) {
                 if !segment.is_deleted(idx) {
                     // Reconstruct NodeRecord from segment
                     return Some(NodeRecord {
@@ -374,6 +398,7 @@ impl GraphEngine {
         self.metadata = GraphMetadata::default();
         self.ops_since_flush = 0;
         self.deleted_segment_ids.clear();
+        self.index_set.clear();
         tracing::info!("Graph cleared");
     }
 
@@ -500,9 +525,9 @@ impl GraphEngine {
             }
         }
 
-        // Then check segment (persisted ноды)
+        // Then check segment via index (O(1))
         if let Some(ref segment) = self.nodes_segment {
-            if let Some(idx) = segment.find_index(id) {
+            if let Some(idx) = self.index_set.find_node_index(id) {
                 let file_path = segment.get_file_path(idx)
                     .map(|s| if s.is_empty() { None } else { Some(s.to_string()) })
                     .unwrap_or(None);
@@ -526,9 +551,9 @@ impl GraphEngine {
             }
         }
 
-        // Then check segment (persisted ноды)
+        // Then check segment via index (O(1))
         if let Some(ref segment) = self.nodes_segment {
-            if let Some(idx) = segment.find_index(id) {
+            if let Some(idx) = self.index_set.find_node_index(id) {
                 let file_path = segment.get_file_path(idx)
                     .map(|s| if s.is_empty() { None } else { Some(s.to_string()) })
                     .unwrap_or(None);
@@ -614,6 +639,56 @@ impl GraphEngine {
             })
         }
     }
+
+    /// Declare metadata fields for indexing.
+    ///
+    /// After declaration, the next flush() will build field indexes,
+    /// and find_by_attr() will use them for O(1) metadata field lookups
+    /// instead of O(n) JSON parsing.
+    ///
+    /// If a segment is already loaded, triggers immediate index rebuild.
+    pub fn declare_fields(&mut self, fields: Vec<FieldDecl>) {
+        self.declared_fields = fields;
+        // Rebuild indexes with new field declarations
+        if let Some(ref nodes_seg) = self.nodes_segment {
+            self.index_set.rebuild_from_segment(nodes_seg, &self.declared_fields);
+        }
+    }
+
+    /// Get the currently declared fields.
+    pub fn declared_fields(&self) -> &[FieldDecl] {
+        &self.declared_fields
+    }
+
+    /// Check if a metadata JSON string matches all (key, value) filters.
+    /// Returns true if metadata contains all specified key-value pairs.
+    /// Returns false if metadata is None/empty or any filter doesn't match.
+    fn metadata_matches(metadata_json: Option<&str>, filters: &[(String, String)]) -> bool {
+        if filters.is_empty() {
+            return true;
+        }
+        let json_str = match metadata_json {
+            Some(s) if !s.is_empty() => s,
+            _ => return false,
+        };
+        let parsed: serde_json::Value = match serde_json::from_str(json_str) {
+            Ok(v) => v,
+            Err(_) => return false,
+        };
+        let obj = match parsed.as_object() {
+            Some(o) => o,
+            None => return false,
+        };
+        for (key, value) in filters {
+            match obj.get(key) {
+                Some(serde_json::Value::String(s)) if s == value => {}
+                Some(serde_json::Value::Bool(b)) if b.to_string() == *value => {}
+                Some(serde_json::Value::Number(n)) if n.to_string() == *value => {}
+                _ => return false,
+            }
+        }
+        true
+    }
 }
 
 impl GraphStore for GraphEngine {
@@ -660,7 +735,7 @@ impl GraphStore for GraphEngine {
                 node.name.as_deref().unwrap_or("").to_string()
             )
         } else if let Some(ref segment) = self.nodes_segment {
-            if let Some(idx) = segment.find_index(id) {
+            if let Some(idx) = self.index_set.find_node_index(id) {
                 let fp = segment.get_file_path(idx).unwrap_or("");
                 let n = segment.get_name(idx).unwrap_or("");
                 (fp.to_string(), n.to_string())
@@ -722,6 +797,13 @@ impl GraphStore for GraphEngine {
 
             let matches = version_match && type_match && file_id_match && file_path_match && exported_match && name_match;
 
+            if matches && !query.metadata_filters.is_empty() {
+                // Check metadata filters against node metadata JSON
+                if !Self::metadata_matches(node.metadata.as_deref(), &query.metadata_filters) {
+                    continue;
+                }
+            }
+
             if matches {
                 result.push(id);
             }
@@ -729,75 +811,148 @@ impl GraphStore for GraphEngine {
 
         let delta_count = result.len();
 
-        // Поиск в segment (после flush)
-        // Segment теперь хранит все поля включая version и exported
+        // Поиск в segment using secondary indexes for narrowing
         if let Some(ref segment) = self.nodes_segment {
-            for idx in segment.iter_indices() {
+            // Determine candidate indices using type_index, file_index, and field_indexes
+            // instead of full segment scan
+            let use_type_index = type_prefix.is_some();
+            let use_file_index = query.file.is_some();
+
+            // Separate metadata filters into indexed (have field index) and unindexed.
+            // A field index is only usable if:
+            // 1. The field has been declared (has an index)
+            // 2. The declaration covers the query's node type (unrestricted OR matching)
+            let mut indexed_field_filter: Option<(&str, &str)> = None;
+            let mut unindexed_filters: Vec<&(String, String)> = Vec::new();
+
+            let query_node_type = type_prefix.as_deref();
+
+            for filter in &query.metadata_filters {
+                if indexed_field_filter.is_none() && self.index_set.has_field_index(&filter.0) {
+                    // Check if the declaration covers the query's node type
+                    let field_covers_query = self.declared_fields.iter()
+                        .find(|d| d.name == filter.0)
+                        .map_or(false, |decl| {
+                            match (&decl.node_types, query_node_type) {
+                                (None, _) => true, // unrestricted — covers all types
+                                (Some(types), Some(qt)) => types.iter().any(|t| t == qt),
+                                (Some(_), None) => false, // restricted but no type in query — can't guarantee coverage
+                            }
+                        });
+
+                    if field_covers_query {
+                        indexed_field_filter = Some((&filter.0, &filter.1));
+                    } else {
+                        unindexed_filters.push(filter);
+                    }
+                } else {
+                    unindexed_filters.push(filter);
+                }
+            }
+
+            // Build candidate set from indexes when possible
+            enum Candidates {
+                /// Use specific indices from index (O(K) where K = matching nodes)
+                Indexed(Vec<usize>),
+                /// Full scan (no index applicable)
+                FullScan,
+            }
+
+            // Choose the most selective index for candidates
+            let candidates = if let Some((field, value)) = indexed_field_filter {
+                // Field index available — most selective for metadata-heavy queries
+                let field_candidates = self.index_set.find_by_field(field, value)
+                    .unwrap_or(&[])
+                    .to_vec();
+                Candidates::Indexed(field_candidates)
+            } else if use_type_index {
+                let type_candidates = if is_wildcard {
+                    self.index_set.find_by_type_prefix(type_prefix.as_ref().unwrap())
+                } else {
+                    self.index_set.find_by_type(type_prefix.as_ref().unwrap()).to_vec()
+                };
+                Candidates::Indexed(type_candidates)
+            } else if use_file_index {
+                Candidates::Indexed(self.index_set.find_by_file(query.file.as_ref().unwrap()).to_vec())
+            } else {
+                Candidates::FullScan
+            };
+
+            // Helper closure to check remaining filters on a candidate index
+            let check_remaining = |idx: usize| -> Option<u128> {
                 if segment.is_deleted(idx) {
-                    continue;
+                    return None;
                 }
 
-                let Some(id) = segment.get_id(idx) else { continue };
+                let id = segment.get_id(idx)?;
 
-                // Пропустить если уже есть в delta (приоритет delta)
-                if self.delta_nodes.contains_key(&id) {
-                    continue;
+                // Skip if in delta (priority) or deleted from segment
+                if self.delta_nodes.contains_key(&id) || self.deleted_segment_ids.contains(&id) {
+                    return None;
                 }
 
-                // Пропустить если удалён (tracked in deleted_segment_ids)
-                if self.deleted_segment_ids.contains(&id) {
-                    continue;
-                }
-
-                // Проверка node_type с поддержкой wildcard
+                // Type check (skip if already matched by type index or field index was used)
                 let type_match = match (&type_prefix, is_wildcard) {
                     (Some(prefix), true) => segment.get_node_type(idx).map_or(false, |t| t.starts_with(prefix)),
                     (Some(exact), false) => segment.get_node_type(idx).map_or(false, |t| t == exact),
                     (None, _) => true,
                 };
-                if !type_match {
-                    continue;
-                }
+                if !type_match { return None; }
 
+                // File check
                 let file_id_match = query.file_id.map_or(true, |f| {
                     segment.get_file_id(idx).map_or(false, |fid| fid == f)
                 });
-                if !file_id_match {
-                    continue;
-                }
+                if !file_id_match { return None; }
 
-                // File path match (alternative to file_id)
                 let file_path_match = query.file.as_ref().map_or(true, |f| {
                     segment.get_file_path(idx).map_or(false, |path| path == f)
                 });
-                if !file_path_match {
-                    continue;
-                }
+                if !file_path_match { return None; }
 
                 let name_match = query.name.as_ref().map_or(true, |n| {
                     segment.get_name(idx).map_or(false, |name| name == n)
                 });
-                if !name_match {
-                    continue;
-                }
+                if !name_match { return None; }
 
-                // Проверка version
                 let version_match = query.version.as_ref().map_or(true, |v| {
                     segment.get_version(idx).map_or(false, |ver| ver == v)
                 });
-                if !version_match {
-                    continue;
-                }
+                if !version_match { return None; }
 
-                // Проверка exported
                 let exported_match = query.exported.map_or(true, |e| {
                     segment.get_exported(idx).map_or(false, |exp| exp == e)
                 });
-                if !exported_match {
-                    continue;
+                if !exported_match { return None; }
+
+                // Check remaining (unindexed) metadata filters via JSON parsing
+                if !unindexed_filters.is_empty() {
+                    let unindexed_pairs: Vec<(String, String)> = unindexed_filters.iter()
+                        .map(|(k, v)| (k.clone(), v.clone()))
+                        .collect();
+                    if !Self::metadata_matches(segment.get_metadata(idx), &unindexed_pairs) {
+                        return None;
+                    }
                 }
 
-                result.push(id);
+                Some(id)
+            };
+
+            match candidates {
+                Candidates::Indexed(indices) => {
+                    for idx in indices {
+                        if let Some(id) = check_remaining(idx) {
+                            result.push(id);
+                        }
+                    }
+                }
+                Candidates::FullScan => {
+                    for idx in segment.iter_indices() {
+                        if let Some(id) = check_remaining(idx) {
+                            result.push(id);
+                        }
+                    }
+                }
             }
         }
 
@@ -1019,6 +1174,7 @@ impl GraphStore for GraphEngine {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs();
+        self.metadata.field_declarations = self.declared_fields.clone();
 
         writer.write_metadata(&self.metadata)?;
 
@@ -1031,6 +1187,12 @@ impl GraphStore for GraphEngine {
         // Перезагружаем segments
         self.nodes_segment = Some(NodesSegment::open(&self.path.join("nodes.bin"))?);
         self.edges_segment = Some(EdgesSegment::open(&self.path.join("edges.bin"))?);
+
+        // Rebuild secondary indexes from new segment
+        self.index_set.clear();
+        if let Some(ref nodes_seg) = self.nodes_segment {
+            self.index_set.rebuild_from_segment(nodes_seg, &self.declared_fields);
+        }
 
         // Rebuild adjacency and reverse_adjacency
         self.adjacency.clear();
@@ -2134,5 +2296,549 @@ mod tests {
         assert!(result.contains(&a));
         assert!(result.contains(&b));
         assert!(result.contains(&c));
+    }
+
+    // ============================================================
+    // REG-398: ID Index Tests
+    // ============================================================
+
+    #[test]
+    fn test_index_get_node_after_flush() {
+        // Verify ID index works correctly after flush:
+        // add nodes → flush → get_node() uses index instead of linear scan
+        use tempfile::tempdir;
+
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("test");
+
+        let mut engine = GraphEngine::create(&db_path).unwrap();
+
+        engine.add_nodes(vec![
+            make_test_node(100, "funcA", "FUNCTION"),
+            make_test_node(200, "funcB", "FUNCTION"),
+            make_test_node(300, "classC", "CLASS"),
+        ]);
+
+        engine.flush().unwrap();
+
+        // After flush, nodes are in segment — lookups go through index
+        let node = engine.get_node(100).unwrap();
+        assert_eq!(node.name.as_deref(), Some("funcA"));
+
+        let node = engine.get_node(200).unwrap();
+        assert_eq!(node.name.as_deref(), Some("funcB"));
+
+        let node = engine.get_node(300).unwrap();
+        assert_eq!(node.name.as_deref(), Some("classC"));
+
+        // Non-existent node
+        assert!(engine.get_node(999).is_none());
+    }
+
+    #[test]
+    fn test_index_survives_reopen() {
+        // Verify index is rebuilt correctly on open()
+        use tempfile::tempdir;
+
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("test");
+
+        {
+            let mut engine = GraphEngine::create(&db_path).unwrap();
+            engine.add_nodes(vec![
+                make_test_node(10, "A", "FUNCTION"),
+                make_test_node(20, "B", "FUNCTION"),
+            ]);
+            engine.flush().unwrap();
+        }
+
+        // Reopen — index rebuilt from segment
+        {
+            let engine = GraphEngine::open(&db_path).unwrap();
+            let node = engine.get_node(10).unwrap();
+            assert_eq!(node.name.as_deref(), Some("A"));
+
+            let node = engine.get_node(20).unwrap();
+            assert_eq!(node.name.as_deref(), Some("B"));
+
+            assert!(engine.get_node(999).is_none());
+        }
+    }
+
+    #[test]
+    fn test_index_delta_takes_priority_over_segment() {
+        // Delta nodes must be found before index is consulted
+        use tempfile::tempdir;
+
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("test");
+
+        let mut engine = GraphEngine::create(&db_path).unwrap();
+
+        engine.add_nodes(vec![make_test_node(1, "original", "FUNCTION")]);
+        engine.flush().unwrap();
+
+        // Add a new node with same ID to delta (overwrites segment version)
+        engine.add_nodes(vec![make_test_node(1, "updated", "FUNCTION")]);
+
+        // Delta should take priority
+        let node = engine.get_node(1).unwrap();
+        assert_eq!(node.name.as_deref(), Some("updated"));
+    }
+
+    #[test]
+    fn test_index_deleted_segment_node_not_returned() {
+        // Delete a segment node → deleted_segment_ids blocks lookup
+        // even though index still has the entry
+        use tempfile::tempdir;
+
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("test");
+
+        let mut engine = GraphEngine::create(&db_path).unwrap();
+        engine.add_nodes(vec![
+            make_test_node(1, "keep", "FUNCTION"),
+            make_test_node(2, "delete_me", "FUNCTION"),
+        ]);
+        engine.flush().unwrap();
+
+        // Both exist after flush
+        assert!(engine.get_node(1).is_some());
+        assert!(engine.get_node(2).is_some());
+
+        // Delete node 2
+        engine.delete_node(2);
+
+        // Node 2 should not be found (deleted_segment_ids blocks before index)
+        assert!(engine.get_node(2).is_none());
+        // Node 1 still accessible via index
+        assert!(engine.get_node(1).is_some());
+    }
+
+    #[test]
+    fn test_index_get_node_strings_after_flush() {
+        // Verify get_node_strings() uses index for segment lookup
+        use tempfile::tempdir;
+
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("test");
+
+        let mut engine = GraphEngine::create(&db_path).unwrap();
+        engine.add_nodes(vec![NodeRecord {
+            id: 42,
+            node_type: Some("FUNCTION".to_string()),
+            file_id: 0,
+            name_offset: 0,
+            version: "main".to_string(),
+            exported: false,
+            replaces: None,
+            deleted: false,
+            name: Some("myFunc".to_string()),
+            file: Some("src/app.js".to_string()),
+            metadata: Some("{\"async\":true}".to_string()),
+        }]);
+        engine.flush().unwrap();
+
+        // get_node_strings uses index
+        let (file, name) = engine.get_node_strings(42).unwrap();
+        assert_eq!(file.as_deref(), Some("src/app.js"));
+        assert_eq!(name.as_deref(), Some("myFunc"));
+
+        // get_node_strings_with_metadata uses index
+        let (file, name, meta) = engine.get_node_strings_with_metadata(42).unwrap();
+        assert_eq!(file.as_deref(), Some("src/app.js"));
+        assert_eq!(name.as_deref(), Some("myFunc"));
+        assert_eq!(meta.as_deref(), Some("{\"async\":true}"));
+    }
+
+    #[test]
+    fn test_index_rebuilt_after_flush_with_new_nodes() {
+        // Flush twice: index must reflect the merged segment
+        use tempfile::tempdir;
+
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("test");
+
+        let mut engine = GraphEngine::create(&db_path).unwrap();
+
+        // First batch
+        engine.add_nodes(vec![make_test_node(1, "A", "FUNCTION")]);
+        engine.flush().unwrap();
+
+        // Second batch
+        engine.add_nodes(vec![make_test_node(2, "B", "FUNCTION")]);
+        engine.flush().unwrap();
+
+        // Both should be findable via index
+        assert!(engine.get_node(1).is_some());
+        assert!(engine.get_node(2).is_some());
+    }
+
+    // ===== Metadata filter tests =====
+
+    fn make_node_with_metadata(id: u128, name: &str, node_type: &str, metadata_json: &str) -> NodeRecord {
+        NodeRecord {
+            id,
+            node_type: Some(node_type.to_string()),
+            file_id: 0,
+            name_offset: 0,
+            version: "main".to_string(),
+            exported: false,
+            replaces: None,
+            deleted: false,
+            name: Some(name.to_string()),
+            file: Some("test.js".to_string()),
+            metadata: Some(metadata_json.to_string()),
+        }
+    }
+
+    #[test]
+    fn test_metadata_matches_helper() {
+        // Empty filters always match
+        assert!(GraphEngine::metadata_matches(None, &[]));
+        assert!(GraphEngine::metadata_matches(Some("{}"), &[]));
+
+        // No metadata fails when filters are present
+        let filters = vec![("object".to_string(), "express".to_string())];
+        assert!(!GraphEngine::metadata_matches(None, &filters));
+        assert!(!GraphEngine::metadata_matches(Some(""), &filters));
+
+        // String value match
+        assert!(GraphEngine::metadata_matches(
+            Some(r#"{"object":"express","method":"get"}"#),
+            &[("object".to_string(), "express".to_string())]
+        ));
+
+        // Multiple filters (AND semantics)
+        assert!(GraphEngine::metadata_matches(
+            Some(r#"{"object":"express","method":"get"}"#),
+            &[
+                ("object".to_string(), "express".to_string()),
+                ("method".to_string(), "get".to_string()),
+            ]
+        ));
+
+        // Partial match fails (AND semantics)
+        assert!(!GraphEngine::metadata_matches(
+            Some(r#"{"object":"express"}"#),
+            &[
+                ("object".to_string(), "express".to_string()),
+                ("method".to_string(), "get".to_string()),
+            ]
+        ));
+
+        // Boolean value match
+        assert!(GraphEngine::metadata_matches(
+            Some(r#"{"async":true}"#),
+            &[("async".to_string(), "true".to_string())]
+        ));
+
+        // Number value match
+        assert!(GraphEngine::metadata_matches(
+            Some(r#"{"argCount":3}"#),
+            &[("argCount".to_string(), "3".to_string())]
+        ));
+
+        // Wrong value doesn't match
+        assert!(!GraphEngine::metadata_matches(
+            Some(r#"{"object":"express"}"#),
+            &[("object".to_string(), "koa".to_string())]
+        ));
+
+        // Invalid JSON doesn't match
+        assert!(!GraphEngine::metadata_matches(
+            Some("not json"),
+            &[("key".to_string(), "val".to_string())]
+        ));
+    }
+
+    #[test]
+    fn test_find_by_attr_metadata_filter_delta() {
+        // Metadata filtering on delta (in-memory) nodes
+        let mut engine = GraphEngine::create_ephemeral().unwrap();
+
+        engine.add_nodes(vec![
+            make_node_with_metadata(1, "app.get", "CALL", r#"{"object":"express","method":"get"}"#),
+            make_node_with_metadata(2, "app.post", "CALL", r#"{"object":"express","method":"post"}"#),
+            make_node_with_metadata(3, "db.query", "CALL", r#"{"object":"knex","method":"query"}"#),
+            make_test_node(4, "plainFunc", "CALL"), // no metadata
+        ]);
+
+        // Filter by object=express → should find nodes 1 and 2
+        let query = AttrQuery::new()
+            .node_type("CALL")
+            .metadata_filter("object", "express");
+        let ids = engine.find_by_attr(&query);
+        assert_eq!(ids.len(), 2);
+        assert!(ids.contains(&1));
+        assert!(ids.contains(&2));
+
+        // Filter by object=express AND method=get → only node 1
+        let query = AttrQuery::new()
+            .node_type("CALL")
+            .metadata_filter("object", "express")
+            .metadata_filter("method", "get");
+        let ids = engine.find_by_attr(&query);
+        assert_eq!(ids.len(), 1);
+        assert!(ids.contains(&1));
+
+        // Filter by object=knex → only node 3
+        let query = AttrQuery::new()
+            .node_type("CALL")
+            .metadata_filter("object", "knex");
+        let ids = engine.find_by_attr(&query);
+        assert_eq!(ids.len(), 1);
+        assert!(ids.contains(&3));
+
+        // Filter with nonexistent value → empty
+        let query = AttrQuery::new()
+            .node_type("CALL")
+            .metadata_filter("object", "nonexistent");
+        let ids = engine.find_by_attr(&query);
+        assert!(ids.is_empty());
+    }
+
+    #[test]
+    fn test_find_by_attr_metadata_filter_segment() {
+        // Metadata filtering on segment (after flush) nodes
+        use tempfile::tempdir;
+
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("test");
+
+        let mut engine = GraphEngine::create(&db_path).unwrap();
+
+        engine.add_nodes(vec![
+            make_node_with_metadata(1, "app.get", "CALL", r#"{"object":"express","method":"get"}"#),
+            make_node_with_metadata(2, "app.post", "CALL", r#"{"object":"express","method":"post"}"#),
+            make_node_with_metadata(3, "db.query", "CALL", r#"{"object":"knex","method":"query"}"#),
+        ]);
+
+        engine.flush().unwrap();
+
+        // After flush, nodes are in segment. Metadata filter should still work.
+        let query = AttrQuery::new()
+            .node_type("CALL")
+            .metadata_filter("object", "express");
+        let ids = engine.find_by_attr(&query);
+        assert_eq!(ids.len(), 2);
+        assert!(ids.contains(&1));
+        assert!(ids.contains(&2));
+
+        // Boolean filter on segment
+        engine.add_nodes(vec![
+            make_node_with_metadata(4, "asyncFn", "FUNCTION", r#"{"async":true}"#),
+            make_node_with_metadata(5, "syncFn", "FUNCTION", r#"{"async":false}"#),
+        ]);
+        engine.flush().unwrap();
+
+        let query = AttrQuery::new()
+            .node_type("FUNCTION")
+            .metadata_filter("async", "true");
+        let ids = engine.find_by_attr(&query);
+        assert_eq!(ids.len(), 1);
+        assert!(ids.contains(&4));
+    }
+
+    #[test]
+    fn test_find_by_attr_metadata_filter_without_type() {
+        // Metadata-only filter (no node_type) should work with full scan
+        let mut engine = GraphEngine::create_ephemeral().unwrap();
+
+        engine.add_nodes(vec![
+            make_node_with_metadata(1, "a", "CALL", r#"{"framework":"express"}"#),
+            make_node_with_metadata(2, "b", "FUNCTION", r#"{"framework":"express"}"#),
+            make_test_node(3, "c", "CALL"), // no metadata
+        ]);
+
+        let query = AttrQuery::new()
+            .metadata_filter("framework", "express");
+        let ids = engine.find_by_attr(&query);
+        assert_eq!(ids.len(), 2);
+        assert!(ids.contains(&1));
+        assert!(ids.contains(&2));
+    }
+
+    // ===== DeclareFields + field index tests =====
+
+    #[test]
+    fn test_declare_fields_ephemeral() {
+        use crate::storage::{FieldDecl, FieldType};
+
+        let mut engine = GraphEngine::create_ephemeral().unwrap();
+
+        // Declare fields before adding nodes (no segment, so no rebuild)
+        engine.declare_fields(vec![
+            FieldDecl { name: "object".to_string(), field_type: FieldType::String, node_types: None },
+        ]);
+
+        assert_eq!(engine.declared_fields().len(), 1);
+        assert_eq!(engine.declared_fields()[0].name, "object");
+    }
+
+    #[test]
+    fn test_field_index_after_flush() {
+        use tempfile::tempdir;
+        use crate::storage::{FieldDecl, FieldType};
+
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("test");
+
+        let mut engine = GraphEngine::create(&db_path).unwrap();
+
+        // Declare fields BEFORE adding nodes
+        engine.declare_fields(vec![
+            FieldDecl { name: "object".to_string(), field_type: FieldType::String, node_types: None },
+            FieldDecl { name: "method".to_string(), field_type: FieldType::String, node_types: None },
+        ]);
+
+        engine.add_nodes(vec![
+            make_node_with_metadata(1, "app.get", "CALL", r#"{"object":"express","method":"get"}"#),
+            make_node_with_metadata(2, "app.post", "CALL", r#"{"object":"express","method":"post"}"#),
+            make_node_with_metadata(3, "db.query", "CALL", r#"{"object":"knex","method":"query"}"#),
+            make_test_node(4, "plainFunc", "FUNCTION"), // no metadata
+        ]);
+
+        // Before flush: no segment, field indexes empty.
+        // All nodes are in delta, metadata filtering uses JSON parse.
+        let query = AttrQuery::new()
+            .node_type("CALL")
+            .metadata_filter("object", "express");
+        let ids = engine.find_by_attr(&query);
+        assert_eq!(ids.len(), 2); // works via delta JSON parsing
+
+        // After flush: nodes in segment, field indexes built
+        engine.flush().unwrap();
+
+        // Same query should use field index now (O(1) instead of JSON parse)
+        let ids = engine.find_by_attr(&query);
+        assert_eq!(ids.len(), 2);
+        assert!(ids.contains(&1));
+        assert!(ids.contains(&2));
+
+        // Two filters: object=express AND method=get
+        // "object" is indexed (used as candidate source)
+        // "method" checked via JSON parse on the narrowed set
+        let query = AttrQuery::new()
+            .node_type("CALL")
+            .metadata_filter("object", "express")
+            .metadata_filter("method", "get");
+        let ids = engine.find_by_attr(&query);
+        assert_eq!(ids.len(), 1);
+        assert!(ids.contains(&1));
+    }
+
+    #[test]
+    fn test_field_index_with_node_type_restriction() {
+        use tempfile::tempdir;
+        use crate::storage::{FieldDecl, FieldType};
+
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("test");
+
+        let mut engine = GraphEngine::create(&db_path).unwrap();
+
+        // Declare "object" field restricted to CALL nodes only
+        engine.declare_fields(vec![
+            FieldDecl {
+                name: "object".to_string(),
+                field_type: FieldType::String,
+                node_types: Some(vec!["CALL".to_string()]),
+            },
+        ]);
+
+        engine.add_nodes(vec![
+            make_node_with_metadata(1, "app.get", "CALL", r#"{"object":"express"}"#),
+            // FUNCTION node with same metadata field — should NOT be indexed
+            make_node_with_metadata(2, "helper", "FUNCTION", r#"{"object":"utils"}"#),
+        ]);
+
+        engine.flush().unwrap();
+
+        // Query for object=express on CALL — should use field index
+        let query = AttrQuery::new()
+            .node_type("CALL")
+            .metadata_filter("object", "express");
+        let ids = engine.find_by_attr(&query);
+        assert_eq!(ids.len(), 1);
+        assert!(ids.contains(&1));
+
+        // Query for object=utils on FUNCTION — field not indexed for FUNCTION,
+        // falls back to JSON parse
+        let query = AttrQuery::new()
+            .node_type("FUNCTION")
+            .metadata_filter("object", "utils");
+        let ids = engine.find_by_attr(&query);
+        assert_eq!(ids.len(), 1);
+        assert!(ids.contains(&2));
+    }
+
+    #[test]
+    fn test_field_index_survives_reopen() {
+        use tempfile::tempdir;
+        use crate::storage::{FieldDecl, FieldType};
+
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("test");
+
+        {
+            let mut engine = GraphEngine::create(&db_path).unwrap();
+            engine.declare_fields(vec![
+                FieldDecl { name: "object".to_string(), field_type: FieldType::String, node_types: None },
+            ]);
+            engine.add_nodes(vec![
+                make_node_with_metadata(1, "app.get", "CALL", r#"{"object":"express"}"#),
+                make_node_with_metadata(2, "db.query", "CALL", r#"{"object":"knex"}"#),
+            ]);
+            engine.flush().unwrap();
+        }
+
+        // Reopen — declared_fields is restored from metadata.json,
+        // field indexes are rebuilt automatically.
+        let engine = GraphEngine::open(&db_path).unwrap();
+
+        // Verify field declarations were persisted
+        assert_eq!(engine.declared_fields().len(), 1);
+        assert_eq!(engine.declared_fields()[0].name, "object");
+
+        // Field index is available — O(1) lookup, not JSON parsing fallback
+        let query = AttrQuery::new()
+            .node_type("CALL")
+            .metadata_filter("object", "express");
+        let ids = engine.find_by_attr(&query);
+        assert_eq!(ids.len(), 1);
+        assert!(ids.contains(&1));
+    }
+
+    #[test]
+    fn test_declare_fields_triggers_index_rebuild() {
+        use tempfile::tempdir;
+        use crate::storage::{FieldDecl, FieldType};
+
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("test");
+
+        let mut engine = GraphEngine::create(&db_path).unwrap();
+
+        // Add nodes first, flush
+        engine.add_nodes(vec![
+            make_node_with_metadata(1, "app.get", "CALL", r#"{"object":"express"}"#),
+            make_node_with_metadata(2, "db.query", "CALL", r#"{"object":"knex"}"#),
+        ]);
+        engine.flush().unwrap();
+
+        // Now declare fields AFTER data is already in segment
+        // This should trigger immediate index rebuild
+        engine.declare_fields(vec![
+            FieldDecl { name: "object".to_string(), field_type: FieldType::String, node_types: None },
+        ]);
+
+        // Field index should now be available
+        let query = AttrQuery::new()
+            .node_type("CALL")
+            .metadata_filter("object", "express");
+        let ids = engine.find_by_attr(&query);
+        assert_eq!(ids.len(), 1);
+        assert!(ids.contains(&1));
     }
 }

@@ -16,9 +16,6 @@ memmap2 = "0.9"
 # Cryptographic hashing for deterministic IDs
 blake3 = "1.5"
 
-# Embedded KV store for secondary indexes
-sled = "0.34"
-
 # Parallel iteration
 rayon = "1.10"
 

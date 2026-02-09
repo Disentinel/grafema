@@ -26,7 +26,7 @@ import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
 import { setTimeout as sleep } from 'timers/promises';
 
-import type { WireNode, WireEdge } from '@grafema/types';
+import type { WireNode, WireEdge, FieldDeclaration, AttrQuery as RFDBAttrQuery } from '@grafema/types';
 import type { NodeType, EdgeType } from '@grafema/types';
 import type { BaseNodeRecord, EdgeRecord } from '@grafema/types';
 import type { AttrQuery, GraphStats, GraphExport } from '../../core/GraphBackend.js';
@@ -349,6 +349,15 @@ export class RFDBServerBackend {
     await this.client.flush();
   }
 
+  /**
+   * Declare metadata fields for server-side indexing.
+   * Persisted in metadata.json — survives database reopen.
+   */
+  async declareFields(fields: FieldDeclaration[]): Promise<number> {
+    if (!this.client) throw new Error('Not connected');
+    return this.client.declareFields(fields);
+  }
+
   // ===========================================================================
   // Node Operations
   // ===========================================================================
@@ -543,7 +552,7 @@ export class RFDBServerBackend {
     }
 
     // Otherwise use client's queryNodes
-    for await (const wireNode of this.client.queryNodes(serverQuery)) {
+    for await (const wireNode of this.client.queryNodes(serverQuery as unknown as RFDBAttrQuery)) {
       yield this._parseNode(wireNode);
     }
   }

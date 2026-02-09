@@ -1,6 +1,7 @@
 //! Граф API и реализация
 
 pub mod engine;
+pub mod index_set;
 pub mod traversal;
 pub mod id_gen;
 
