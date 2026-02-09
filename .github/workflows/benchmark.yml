@@ -1,0 +1,85 @@
+# RFDB Performance Regression Detection
+#
+# Compares benchmark results between PR branch and main.
+# Fails if any benchmark regresses more than 20%.
+#
+# Runs on:
+#   - PRs to main that touch rfdb-server code (with 'benchmark' label)
+#   - Pushes to main (baseline update only, no comparison)
+
+name: RFDB Benchmarks
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'packages/rfdb-server/src/**'
+      - 'packages/rfdb-server/benches/**'
+      - 'packages/rfdb-server/Cargo.toml'
+      - '.github/workflows/benchmark.yml'
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, labeled]
+    paths:
+      - 'packages/rfdb-server/src/**'
+      - 'packages/rfdb-server/benches/**'
+      - 'packages/rfdb-server/Cargo.toml'
+
+jobs:
+  benchmark:
+    # On PRs: only run if 'benchmark' label is present
+    # On push to main: always run (baseline update)
+    if: |
+      github.event_name == 'push' ||
+      contains(github.event.pull_request.labels.*.name, 'benchmark')
+
+    name: Performance Regression Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo registry and build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            packages/rfdb-server/target
+          key: ${{ runner.os }}-cargo-bench-${{ hashFiles('packages/rfdb-server/Cargo.lock', 'packages/rfdb-server/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-bench-
+
+      - name: Install critcmp
+        run: cargo install critcmp
+
+      - name: Run benchmarks (PR branch)
+        working-directory: packages/rfdb-server
+        run: cargo bench --bench graph_operations -- --save-baseline pr
+
+      - name: Checkout main branch for baseline
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          clean: false
+
+      - name: Run benchmarks (main baseline)
+        if: github.event_name == 'pull_request'
+        working-directory: packages/rfdb-server
+        run: cargo bench --bench graph_operations -- --save-baseline main
+
+      - name: Compare and check for regressions
+        if: github.event_name == 'pull_request'
+        working-directory: packages/rfdb-server
+        run: |
+          echo "## Benchmark Comparison: main vs pr"
+          echo ""
+          critcmp main pr | tee /tmp/bench-comparison.txt
+          echo ""
+          bash ../../scripts/check-bench-regression.sh /tmp/bench-comparison.txt 1.20
