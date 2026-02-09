@@ -21,6 +21,7 @@ import type { NodePath } from '@babel/traverse';
 import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { NodeRecord } from '@grafema/types';
+import { NodeFactory } from '../../core/NodeFactory.js';
 import { getLine } from './ast/utils/location.js';
 
 const traverse = (traverseModule as any).default || traverseModule;
@@ -574,79 +575,45 @@ export class ExpressResponseAnalyzer extends Plugin {
     line: number,
     column: number,
     astType: string,
-    routeId: string,
+    _routeId: string,
     nodes: NodeRecord[]
   ): string {
-    // Map AST type to node type and create appropriate node
+    const counter = this.responseNodeCounter++;
+
+    // Map AST type to node type and create appropriate node via NodeFactory
     switch (astType) {
       case 'ObjectExpression': {
-        // Include counter to make the node unique even for same location
-        const counter = this.responseNodeCounter++;
-        const id = `OBJECT_LITERAL#response:${counter}#${file}#${line}:${column}`;
-        nodes.push({
-          id,
-          type: 'OBJECT_LITERAL',
-          name: '<response>',
-          file,
-          line,
-          column,
-          parentRouteId: routeId
-        } as NodeRecord);
-        return id;
+        const node = NodeFactory.createObjectLiteral(file, line, column, {
+          argIndex: counter
+        });
+        nodes.push(node as NodeRecord);
+        return node.id;
       }
       case 'Identifier': {
-        // For identifiers, we link to the variable that's being returned
-        const counter = this.responseNodeCounter++;
-        const id = `VARIABLE#response:${counter}#${file}#${line}:${column}`;
-        nodes.push({
-          id,
-          type: 'VARIABLE',
-          name: '<response>',
-          file,
-          line,
-          column
-        } as NodeRecord);
-        return id;
+        const node = NodeFactory.createVariableDeclaration('<response>', file, line, column, {
+          counter
+        });
+        nodes.push(node as NodeRecord);
+        return node.id;
       }
       case 'CallExpression': {
-        const counter = this.responseNodeCounter++;
-        const id = `CALL#response:${counter}#${file}#${line}:${column}`;
-        nodes.push({
-          id,
-          type: 'CALL',
-          name: '<response>',
-          file,
-          line,
-          column
-        } as NodeRecord);
-        return id;
+        const node = NodeFactory.createCallSite('<response>', file, line, column, {
+          counter
+        });
+        nodes.push(node as NodeRecord);
+        return node.id;
       }
       case 'ArrayExpression': {
-        const counter = this.responseNodeCounter++;
-        const id = `ARRAY_LITERAL#response:${counter}#${file}#${line}:${column}`;
-        nodes.push({
-          id,
-          type: 'ARRAY_LITERAL',
-          name: '<response>',
-          file,
-          line,
-          column
-        } as NodeRecord);
-        return id;
+        const node = NodeFactory.createArrayLiteral(file, line, column, {
+          argIndex: counter
+        });
+        nodes.push(node as NodeRecord);
+        return node.id;
       }
       default: {
-        // Generic expression node
-        const counter = this.responseNodeCounter++;
-        const id = `EXPRESSION#response:${counter}#${file}#${line}:${column}`;
-        nodes.push({
-          id,
-          type: 'EXPRESSION',
-          name: '<response>',
-          file,
-          line,
-          column
-        } as NodeRecord);
-        return id;
+        const node = NodeFactory.createExpression(astType, file, line, column);
+        nodes.push(node as NodeRecord);
+        return node.id;
       }
     }
   }

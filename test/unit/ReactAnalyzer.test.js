@@ -10,7 +10,6 @@
  * - Edge cases (stale closures, missing cleanup, RAF loops)
  */
 
-// SKIP: ReactAnalyzer feature incomplete - missing fixtures
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert';
 import { readFileSync } from 'fs';
@@ -89,7 +88,7 @@ class MockGraph {
 // BASIC COMPONENT TESTS
 // =============================================================================
 
-describe.skip('ReactAnalyzer - Basic Components', () => {
+describe('ReactAnalyzer - Basic Components', () => {
   it('should detect functional component definitions', async () => {
     const { ast, filePath } = parseFixture('basic-component.jsx');
     const graph = new MockGraph();
@@ -156,7 +155,7 @@ describe.skip('ReactAnalyzer - Basic Components', () => {
 // EVENT HANDLER TESTS
 // =============================================================================
 
-describe.skip('ReactAnalyzer - Event Handlers', () => {
+describe('ReactAnalyzer - Event Handlers', () => {
   it('should detect onClick handlers', async () => {
     const { ast, filePath } = parseFixture('event-handlers.jsx');
     const graph = new MockGraph();
@@ -212,7 +211,7 @@ describe.skip('ReactAnalyzer - Event Handlers', () => {
 // HOOKS TESTS
 // =============================================================================
 
-describe.skip('ReactAnalyzer - Hooks', () => {
+describe('ReactAnalyzer - Hooks', () => {
   it('should detect useState and link state/setter pairs', async () => {
     const { ast, filePath } = parseFixture('hooks-basic.jsx');
     const graph = new MockGraph();
@@ -283,7 +282,7 @@ describe.skip('ReactAnalyzer - Hooks', () => {
 // EDGE CASE: STALE CLOSURE DETECTION
 // =============================================================================
 
-describe.skip('ReactAnalyzer - Stale Closure Detection', () => {
+describe('ReactAnalyzer - Stale Closure Detection', () => {
   it('should detect variables used in callback but not in deps', async () => {
     const { ast, filePath } = parseFixture('edge-case-stale-closure.jsx');
     const graph = new MockGraph();
@@ -334,7 +333,7 @@ describe.skip('ReactAnalyzer - Stale Closure Detection', () => {
 // EDGE CASE: MISSING CLEANUP DETECTION
 // =============================================================================
 
-describe.skip('ReactAnalyzer - Missing Cleanup Detection', () => {
+describe('ReactAnalyzer - Missing Cleanup Detection', () => {
   it('should detect setInterval without clearInterval', async () => {
     const { ast, filePath } = parseFixture('edge-case-missing-cleanup.jsx');
     const graph = new MockGraph();
@@ -400,7 +399,7 @@ describe.skip('ReactAnalyzer - Missing Cleanup Detection', () => {
 // EDGE CASE: CANVAS/RAF RENDERING BUGS
 // =============================================================================
 
-describe.skip('ReactAnalyzer - Canvas/RAF Rendering', () => {
+describe('ReactAnalyzer - Canvas/RAF Rendering', () => {
   it('should detect RAF loop without cancelAnimationFrame cleanup', async () => {
     const { ast, filePath } = parseFixture('edge-case-canvas-raf.jsx');
     const graph = new MockGraph();
@@ -469,7 +468,7 @@ describe.skip('ReactAnalyzer - Canvas/RAF Rendering', () => {
 // CONDITIONAL RENDERING TESTS
 // =============================================================================
 
-describe.skip('ReactAnalyzer - Conditional Rendering', () => {
+describe('ReactAnalyzer - Conditional Rendering', () => {
   it('should detect && short-circuit rendering', async () => {
     const { ast, filePath } = parseFixture('conditional-rendering.jsx');
     const graph = new MockGraph();
@@ -509,7 +508,7 @@ describe.skip('ReactAnalyzer - Conditional Rendering', () => {
 // BROWSER API TESTS
 // =============================================================================
 
-describe.skip('ReactAnalyzer - Browser APIs', () => {
+describe('ReactAnalyzer - Browser APIs', () => {
   it('should detect localStorage read/write', async () => {
     const { ast, filePath } = parseFixture('browser-apis.jsx');
     const graph = new MockGraph();
@@ -585,7 +584,7 @@ describe.skip('ReactAnalyzer - Browser APIs', () => {
 // INTEGRATION: DATA FLOW THROUGH COMPONENTS
 // =============================================================================
 
-describe.skip('ReactAnalyzer - Cross-Component Data Flow', () => {
+describe('ReactAnalyzer - Cross-Component Data Flow', () => {
   it('should trace data from state to child prop', async () => {
     const { ast, filePath } = parseFixture('basic-component.jsx');
     const graph = new MockGraph();
@@ -620,7 +619,7 @@ describe.skip('ReactAnalyzer - Cross-Component Data Flow', () => {
 // STATE MANAGEMENT TESTS
 // =============================================================================
 
-describe.skip('ReactAnalyzer - State Management', () => {
+describe('ReactAnalyzer - State Management', () => {
   it('should detect useReducer and dispatch calls', async () => {
     const { ast, filePath } = parseFixture('state-management.jsx');
     const graph = new MockGraph();
@@ -677,7 +676,7 @@ describe.skip('ReactAnalyzer - State Management', () => {
 // REFS TESTS
 // =============================================================================
 
-describe.skip('ReactAnalyzer - Refs', () => {
+describe('ReactAnalyzer - Refs', () => {
   it('should detect useRef and ref.current mutations', async () => {
     const { ast, filePath } = parseFixture('refs-patterns.jsx');
     const graph = new MockGraph();
@@ -742,7 +741,7 @@ describe.skip('ReactAnalyzer - Refs', () => {
 // ALL DOM EVENTS TESTS
 // =============================================================================
 
-describe.skip('ReactAnalyzer - Complete DOM Events', () => {
+describe('ReactAnalyzer - Complete DOM Events', () => {
   it('should detect all mouse events', async () => {
     const { ast, filePath } = parseFixture('all-dom-events.jsx');
     const graph = new MockGraph();
@@ -855,7 +854,7 @@ describe.skip('ReactAnalyzer - Complete DOM Events', () => {
 // OBSERVER APIs TESTS
 // =============================================================================
 
-describe.skip('ReactAnalyzer - Observer APIs', () => {
+describe('ReactAnalyzer - Observer APIs', () => {
   it('should detect IntersectionObserver usage', async () => {
     const { ast, filePath } = parseFixture('observers-and-apis.jsx');
     const graph = new MockGraph();
@@ -954,7 +953,7 @@ describe.skip('ReactAnalyzer - Observer APIs', () => {
 // useLayoutEffect TESTS
 // =============================================================================
 
-describe.skip('ReactAnalyzer - useLayoutEffect', () => {
+describe('ReactAnalyzer - useLayoutEffect', () => {
   it('should detect useLayoutEffect usage', async () => {
     const { ast, filePath } = parseFixture('layout-effects.jsx');
     const graph = new MockGraph();
@@ -1016,7 +1015,7 @@ describe.skip('ReactAnalyzer - useLayoutEffect', () => {
 // EDGE CASE: State updates after unmount
 // =============================================================================
 
-describe.skip('ReactAnalyzer - State Updates After Unmount', () => {
+describe('ReactAnalyzer - State Updates After Unmount', () => {
   it('should detect async setState that might fire after unmount', async () => {
     const { ast, filePath } = parseFixture('edge-case-missing-cleanup.jsx');
     const graph = new MockGraph();

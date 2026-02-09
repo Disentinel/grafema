@@ -8,7 +8,6 @@
  * with correct metadata in various contexts.
  */
 
-// SKIP: REG-116 TDD test - behavior lock for future refactoring
 import { describe, it, after, beforeEach } from 'node:test';
 import assert from 'node:assert';
 import { join } from 'path';
