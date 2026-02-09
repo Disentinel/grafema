@@ -34,8 +34,17 @@ export { DIAGNOSTIC_CATEGORIES, CODE_TO_CATEGORY, getCategoryForCode, getCodesFo
 export type { DiagnosticCategory, DiagnosticCategoryKey, CodeCategoryInfo } from './diagnostics/index.js';
 
 // Config
-export { loadConfig, DEFAULT_CONFIG } from './config/index.js';
+export {
+  loadConfig,
+  DEFAULT_CONFIG,
+  validateServices,
+  validatePatterns,
+  validateWorkspace,
+} from './config/index.js';
 export type { GrafemaConfig } from './config/index.js';
+
+// Instructions (for AI agents)
+export { getOnboardingInstruction } from './instructions/index.js';
 
 // Main orchestrator
 export { Orchestrator } from './Orchestrator.js';

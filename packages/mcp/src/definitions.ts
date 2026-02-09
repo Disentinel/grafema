@@ -6,9 +6,11 @@ import { DEFAULT_LIMIT, MAX_LIMIT } from './utils.js';
 
 interface SchemaProperty {
   type: string;
-  description: string;
+  description?: string;
   enum?: string[];
-  items?: { type: string };
+  items?: SchemaProperty;
+  properties?: Record<string, SchemaProperty>;
+  required?: string[];
 }
 
 export interface ToolDefinition {
@@ -390,7 +392,7 @@ Examples:
       properties: {
         topic: {
           type: 'string',
-          description: 'Topic: queries, types, guarantees, or overview',
+          description: 'Topic: queries, types, guarantees, onboarding, or overview',
         },
       },
     },
@@ -503,6 +505,91 @@ Max transitive depth is 5 to prevent explosion.`,
         },
       },
       required: ['name'],
+    },
+  },
+  {
+    name: 'read_project_structure',
+    description: `Get the directory structure of the project.
+Returns a tree of files and directories, useful for understanding
+project layout during onboarding.
+
+Excludes: node_modules, .git, dist, build, .grafema, coverage, .next, .nuxt
+
+Use this tool when studying a new project to identify services,
+packages, and entry points.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: {
+          type: 'string',
+          description: 'Subdirectory to scan (relative to project root). Default: project root.',
+        },
+        depth: {
+          type: 'number',
+          description: 'Maximum directory depth (default: 3, max: 5)',
+        },
+        include_files: {
+          type: 'boolean',
+          description: 'Include files in output, not just directories (default: true)',
+        },
+      },
+    },
+  },
+  {
+    name: 'write_config',
+    description: `Write or update the Grafema configuration file (.grafema/config.yaml).
+Validates all inputs before writing. Creates .grafema/ directory if needed.
+
+Use this tool after studying the project to save the discovered configuration.
+Only include fields you want to override — defaults are used for omitted fields.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        services: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              name: { type: 'string', description: 'Service name (e.g., "backend")' },
+              path: { type: 'string', description: 'Path relative to project root (e.g., "apps/backend")' },
+              entryPoint: { type: 'string', description: 'Entry point file relative to service path (e.g., "src/index.ts")' },
+            },
+            required: ['name', 'path'],
+          },
+          description: 'Service definitions (leave empty to use auto-discovery)',
+        },
+        plugins: {
+          type: 'object',
+          properties: {
+            indexing: { type: 'array', items: { type: 'string' }, description: 'Indexing plugins' },
+            analysis: { type: 'array', items: { type: 'string' }, description: 'Analysis plugins' },
+            enrichment: { type: 'array', items: { type: 'string' }, description: 'Enrichment plugins' },
+            validation: { type: 'array', items: { type: 'string' }, description: 'Validation plugins' },
+          },
+          description: 'Plugin configuration (omit to use defaults)',
+        },
+        include: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Glob patterns for files to include (e.g., ["src/**/*.ts"])',
+        },
+        exclude: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Glob patterns for files to exclude (e.g., ["**/*.test.ts"])',
+        },
+        workspace: {
+          type: 'object',
+          properties: {
+            roots: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'Root directories for multi-root workspace',
+            },
+          },
+          description: 'Multi-root workspace config (only for workspaces)',
+        },
+      },
     },
   },
 ];

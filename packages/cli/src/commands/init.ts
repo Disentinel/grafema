@@ -93,6 +93,9 @@ function printNextSteps(): void {
   console.log('  1. Review config:  code .grafema/config.yaml');
   console.log('  2. Build graph:    grafema analyze');
   console.log('  3. Explore:        grafema overview');
+  console.log('');
+  console.log('For AI-assisted setup, use the Grafema MCP server');
+  console.log('with the "onboard_project" prompt.');
 }
 
 /**
