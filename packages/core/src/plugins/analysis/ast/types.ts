@@ -3,7 +3,7 @@
  */
 
 import type * as t from '@babel/types';
-import type { GraphBackend } from '@grafema/types';
+import type { ScopeTracker } from '../../../core/ScopeTracker.js';
 
 // === MODULE NODE ===
 export interface ModuleNode {
@@ -31,6 +31,10 @@ export interface FunctionInfo {
   isCallback?: boolean;
   parentScopeId?: string;
   controlFlow?: ControlFlowMetadata;
+  // REG-271: Private methods support
+  isPrivate?: boolean;   // true for #privateMethod
+  isStatic?: boolean;    // true for static #method()
+  methodKind?: 'constructor' | 'method' | 'get' | 'set';
 }
 
 // === PARAMETER INFO ===
@@ -82,6 +86,9 @@ export interface BranchInfo {
   discriminantColumn?: number;
   // For else-if chains: the parent BRANCH id whose alternate this branch is
   isAlternateOfBranchId?: string;
+  // For ternary: IDs of consequent and alternate expressions
+  consequentExpressionId?: string;
+  alternateExpressionId?: string;
 }
 
 // === CASE INFO ===
@@ -112,6 +119,33 @@ export interface LoopInfo {
   iteratesOverName?: string;      // Variable name (e.g., 'items')
   iteratesOverLine?: number;      // Line of collection reference
   iteratesOverColumn?: number;    // Column of collection reference
+  // For while/do-while: condition expression (REG-280)
+  conditionExpressionId?: string;     // ID of EXPRESSION/CALL node for condition
+  conditionExpressionType?: string;   // 'Identifier', 'BinaryExpression', 'CallExpression', etc.
+  conditionLine?: number;             // Line of condition expression
+  conditionColumn?: number;           // Column of condition expression
+
+  // For classic for loop (REG-282): init, test, update expressions
+  // All three can be null (e.g., for (;;) {})
+
+  // Init: let i = 0 - points to VARIABLE node
+  initVariableName?: string;      // Variable name declared in init (e.g., 'i')
+  initLine?: number;              // Line of init declaration
+
+  // Test (condition): i < 10 - points to EXPRESSION node
+  testExpressionId?: string;      // ID of EXPRESSION node
+  testExpressionType?: string;    // 'BinaryExpression', 'Identifier', etc.
+  testLine?: number;
+  testColumn?: number;
+
+  // Update: i++ - points to EXPRESSION node
+  updateExpressionId?: string;    // ID of EXPRESSION node
+  updateExpressionType?: string;  // 'UpdateExpression', 'AssignmentExpression', etc.
+  updateLine?: number;
+  updateColumn?: number;
+
+  // For for-await-of (REG-284)
+  async?: boolean;                // true for for-await-of loops
 }
 
 // === TRY BLOCK INFO ===
@@ -159,6 +193,10 @@ export interface ControlFlowMetadata {
   hasEarlyReturn: boolean;   // Has return before function end
   hasThrow: boolean;         // Has throw statements
   cyclomaticComplexity: number;  // McCabe cyclomatic complexity
+  // REG-311: Async error tracking
+  canReject?: boolean;         // True if function can reject (has rejection patterns)
+  hasAsyncThrow?: boolean;     // True if async function has throw statements
+  rejectedBuiltinErrors?: string[];  // List of builtin error class names this function can reject
 }
 
 // === VARIABLE DECLARATION INFO ===
@@ -171,6 +209,37 @@ export interface VariableDeclarationInfo {
   line: number;
   column?: number;
   value?: unknown;
+  parentScopeId?: string;
+  // REG-271: Private fields support
+  isPrivate?: boolean;      // true for #privateField
+  isStatic?: boolean;       // true for static #field
+  isClassProperty?: boolean; // true for class properties (vs local variables)
+}
+
+// === GRAFEMA-IGNORE ANNOTATION (REG-332) ===
+/**
+ * Annotation from grafema-ignore comment to suppress strict mode errors.
+ * Parsed from comments like: // grafema-ignore STRICT_UNRESOLVED_METHOD - reason
+ */
+export interface GrafemaIgnoreAnnotation {
+  /** Error code to suppress (e.g., 'STRICT_UNRESOLVED_METHOD') */
+  code: string;
+  /** Optional reason provided by developer */
+  reason?: string;
+}
+
+// === PROPERTY ACCESS INFO ===
+export interface PropertyAccessInfo {
+  id: string;
+  semanticId?: string;  // Stable ID: file->scope->PROPERTY_ACCESS->objectName.propertyName#N
+  type: 'PROPERTY_ACCESS';
+  objectName: string;      // "config", "this", "a.b", etc.
+  propertyName: string;    // "maxBodyLength", "<computed>", "0", etc.
+  optional?: boolean;      // true for obj?.prop
+  computed?: boolean;      // true for obj[x]
+  file: string;
+  line: number;
+  column: number;
   parentScopeId?: string;
 }
 
@@ -186,6 +255,12 @@ export interface CallSiteInfo {
   parentScopeId?: string;
   targetFunctionName?: string;
   isNew?: boolean;
+  /** REG-332: Annotation to suppress strict mode errors */
+  grafemaIgnore?: GrafemaIgnoreAnnotation;
+  /** REG-311: true if wrapped in await expression */
+  isAwaited?: boolean;
+  /** REG-311: true if inside try block (protected from propagation) */
+  isInsideTry?: boolean;
 }
 
 // === METHOD CALL INFO ===
@@ -204,6 +279,14 @@ export interface MethodCallInfo {
   parentScopeId?: string;
   arguments?: unknown[];
   isNew?: boolean;
+  /** REG-332: Annotation to suppress strict mode errors */
+  grafemaIgnore?: GrafemaIgnoreAnnotation;
+  /** REG-311: true if wrapped in await expression */
+  isAwaited?: boolean;
+  /** REG-311: true if inside try block (protected from propagation) */
+  isInsideTry?: boolean;
+  /** REG-311: true if this is a method call (for CALL node filtering) */
+  isMethodCall?: boolean;
 }
 
 // === EVENT LISTENER INFO ===
@@ -251,6 +334,9 @@ export interface ClassDeclarationInfo {
   superClass?: string;
   implements?: string[];  // имена интерфейсов, которые реализует класс
   methods: string[];
+  // REG-271: Additional class members
+  properties?: string[];     // IDs of class properties (including private)
+  staticBlocks?: string[];   // IDs of static block scopes
 }
 
 // === INTERFACE DECLARATION INFO ===
@@ -346,6 +432,11 @@ export interface CallArgumentInfo {
   targetId?: string;
   targetName?: string;
   file?: string;
+  // REG-334: Additional fields for resolve/reject argument tracking
+  line?: number;
+  column?: number;
+  literalValue?: unknown;
+  expressionType?: string;
   isSpread?: boolean;
   functionLine?: number;
   functionColumn?: number;
@@ -448,6 +539,8 @@ export interface ObjectPropertyInfo {
   // For nested object/array
   nestedObjectId?: string;
   nestedArrayId?: string;
+  // For VARIABLE values - scope path for scope-aware lookup (REG-329)
+  valueScopePath?: string[];
 }
 
 // === ARRAY LITERAL INFO ===
@@ -598,6 +691,69 @@ export interface ReturnStatementInfo {
 
   // For arrow function implicit returns
   isImplicitReturn?: boolean;
+}
+
+// === YIELD EXPRESSION INFO (REG-270) ===
+/**
+ * Tracks yield expressions for YIELDS and DELEGATES_TO edge creation in GraphBuilder.
+ * Used to connect yielded expressions to their containing generator functions.
+ *
+ * Edge direction:
+ * - For yield:  yieldedExpression --YIELDS--> generatorFunction
+ * - For yield*: delegatedCall --DELEGATES_TO--> generatorFunction
+ *
+ * Examples:
+ * - `yield 42;` creates: LITERAL(42) --YIELDS--> FUNCTION(gen)
+ * - `yield* otherGen();` creates: CALL(otherGen) --DELEGATES_TO--> FUNCTION(gen)
+ */
+export interface YieldExpressionInfo {
+  parentFunctionId: string;          // ID of the containing generator function
+  file: string;
+  line: number;
+  column: number;
+
+  /** true for yield*, false for yield */
+  isDelegate: boolean;
+
+  // Yield value type determines how to resolve the source node
+  // Uses same types as ReturnStatementInfo for code reuse
+  yieldValueType: 'VARIABLE' | 'CALL_SITE' | 'METHOD_CALL' | 'LITERAL' | 'EXPRESSION' | 'NONE';
+
+  // For VARIABLE type
+  yieldValueName?: string;
+
+  // For LITERAL type - the literal node ID
+  yieldValueId?: string;
+
+  // For CALL_SITE/METHOD_CALL type - coordinates for lookup
+  yieldValueLine?: number;
+  yieldValueColumn?: number;
+  yieldValueCallName?: string;
+
+  // For EXPRESSION type (BinaryExpression, ConditionalExpression, etc.)
+  expressionType?: string;
+
+  // For EXPRESSION type - source variable extraction (mirrors ReturnStatementInfo)
+  // For BinaryExpression/LogicalExpression
+  operator?: string;
+  leftSourceName?: string;
+  rightSourceName?: string;
+
+  // For ConditionalExpression
+  consequentSourceName?: string;
+  alternateSourceName?: string;
+
+  // For MemberExpression
+  object?: string;
+  property?: string;
+  computed?: boolean;
+  objectSourceName?: string;
+
+  // For TemplateLiteral
+  expressionSourceNames?: string[];
+
+  // For UnaryExpression
+  unaryArgSourceName?: string;
 }
 
 /**
@@ -763,6 +919,117 @@ export interface UpdateExpressionInfo {
   computedPropertyVar?: string;   // Variable name for computed access: obj[i]++ -> "i"
 }
 
+// === PROMISE EXECUTOR CONTEXT ===
+/**
+ * Tracks Promise executor context during analysis.
+ * Used to detect when resolve/reject calls should create RESOLVES_TO edges.
+ *
+ * Stored in collections.promiseExecutorContexts Map, keyed by executor function's start:end position.
+ */
+export interface PromiseExecutorContext {
+  /** ID of the CONSTRUCTOR_CALL node for `new Promise()` */
+  constructorCallId: string;
+  /** Name of the first parameter (typically 'resolve') */
+  resolveName: string;
+  /** Name of the second parameter (typically 'reject'), if any */
+  rejectName?: string;
+  /** File path for edge creation */
+  file: string;
+  /** Line of the Promise constructor for debugging */
+  line: number;
+  /** REG-311: ID of the function that creates the Promise (for attributing rejection patterns) */
+  creatorFunctionId?: string;
+}
+
+// === PROMISE RESOLUTION INFO ===
+/**
+ * Info for Promise resolution RESOLVES_TO edges.
+ * Created when resolve(value) or reject(error) is called inside Promise executor.
+ *
+ * Graph structure:
+ * CALL[resolve(42)] --RESOLVES_TO--> CONSTRUCTOR_CALL[new Promise]
+ *
+ * Edge direction: resolve CALL -> Promise CONSTRUCTOR_CALL
+ * This allows traceValues to follow RESOLVES_TO from Promise to find data sources.
+ */
+export interface PromiseResolutionInfo {
+  /** ID of the resolve/reject CALL node */
+  callId: string;
+  /** ID of the Promise CONSTRUCTOR_CALL node */
+  constructorCallId: string;
+  /** True if this is reject(), false for resolve() */
+  isReject: boolean;
+  /** File path */
+  file: string;
+  /** Line number of resolve/reject call */
+  line: number;
+}
+
+// === REJECTION PATTERN INFO (REG-311) ===
+/**
+ * Tracks patterns that can cause Promise rejection in a function.
+ * Used for REJECTS edge creation and error flow analysis.
+ *
+ * Patterns detected:
+ * - promise_reject: Promise.reject(new Error())
+ * - executor_reject: reject(new Error()) in Promise executor
+ * - async_throw: throw new Error() in async function
+ * - variable_traced: reject(err) where err traced to NewExpression
+ * - variable_parameter: reject(param) where param is function parameter
+ * - variable_unknown: reject(x) where x couldn't be traced
+ */
+export interface RejectionPatternInfo {
+  /** ID of the containing FUNCTION node */
+  functionId: string;
+  /** Error class name (e.g., 'Error', 'ValidationError') - null for unresolved variables */
+  errorClassName: string | null;
+  /** Rejection pattern type */
+  rejectionType:
+    | 'promise_reject'     // Promise.reject(new Error())
+    | 'executor_reject'    // reject(new Error()) in Promise executor
+    | 'async_throw'        // throw new Error() in async function
+    | 'variable_traced'    // reject(err) where err traced to NewExpression
+    | 'variable_parameter' // reject(param) where param is function parameter
+    | 'variable_unknown';  // reject(x) where x couldn't be traced
+  /** File path */
+  file: string;
+  /** Line number of rejection call */
+  line: number;
+  /** Column number */
+  column: number;
+  /** Source variable name (for variable_* types) */
+  sourceVariableName?: string;
+  /** Trace path for debugging (e.g., ["err", "error", "new ValidationError"]) */
+  tracePath?: string[];
+}
+
+// === CATCHES FROM INFO (REG-311) ===
+/**
+ * Info for CATCHES_FROM edges linking catch parameters to error sources.
+ * Created when analyzing try/catch blocks to track which exception sources
+ * a catch block can handle.
+ *
+ * Sources include:
+ * - awaited_call: await foo() in try block
+ * - sync_call: foo() in try block (any call can throw)
+ * - throw_statement: throw new Error() in try block
+ * - constructor_call: new SomeClass() in try block
+ */
+export interface CatchesFromInfo {
+  /** ID of the CATCH_BLOCK node */
+  catchBlockId: string;
+  /** Name of catch parameter (e.g., 'e' in catch(e)) */
+  parameterName: string;
+  /** ID of source node in try block (CALL, THROW_STATEMENT, CONSTRUCTOR_CALL) */
+  sourceId: string;
+  /** Source type */
+  sourceType: 'awaited_call' | 'sync_call' | 'throw_statement' | 'constructor_call';
+  /** File path */
+  file: string;
+  /** Line of the source (for metadata) */
+  sourceLine: number;
+}
+
 // === COUNTER REF ===
 export interface CounterRef {
   value: number;
@@ -824,6 +1091,18 @@ export interface ASTCollections {
   returnStatements?: ReturnStatementInfo[];
   // Update expression tracking (i++, obj.prop++, arr[i]++) for MODIFIES edges (REG-288, REG-312)
   updateExpressions?: UpdateExpressionInfo[];
+  // Promise resolution tracking for RESOLVES_TO edges (REG-334)
+  promiseResolutions?: PromiseResolutionInfo[];
+  // Promise executor contexts (REG-334) - keyed by executor function's start:end position
+  promiseExecutorContexts?: Map<string, PromiseExecutorContext>;
+  // Yield expression tracking for YIELDS/DELEGATES_TO edges (REG-270)
+  yieldExpressions?: YieldExpressionInfo[];
+  // REG-311: Rejection pattern tracking for async error analysis
+  rejectionPatterns?: RejectionPatternInfo[];
+  // REG-311: CATCHES_FROM tracking for catch parameter error sources
+  catchesFromInfos?: CatchesFromInfo[];
+  // Property access tracking for PROPERTY_ACCESS nodes (REG-395)
+  propertyAccesses?: PropertyAccessInfo[];
   // TypeScript-specific collections
   interfaces?: InterfaceDeclarationInfo[];
   typeAliases?: TypeAliasInfo[];
@@ -841,6 +1120,8 @@ export interface ASTCollections {
   arrayLiteralCounterRef?: CounterRef;
   branchCounterRef?: CounterRef;
   caseCounterRef?: CounterRef;
+  // Counter ref for property access tracking (REG-395)
+  propertyAccessCounterRef?: CounterRef;
   // Counter refs for control flow (add)
   loopCounterRef?: CounterRef;
   tryBlockCounterRef?: CounterRef;
@@ -848,7 +1129,7 @@ export interface ASTCollections {
   finallyBlockCounterRef?: CounterRef;
   processedNodes?: ProcessedNodes;
   // ScopeTracker for semantic ID generation
-  scopeTracker?: import('../../../core/ScopeTracker.js').ScopeTracker;
+  scopeTracker?: ScopeTracker;
 }
 
 // === EXTRACTED VARIABLE ===

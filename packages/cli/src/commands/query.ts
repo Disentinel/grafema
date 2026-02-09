@@ -15,6 +15,7 @@ import { existsSync } from 'fs';
 import { RFDBServerBackend, parseSemanticId, findCallsInFunction as findCallsInFunctionCore, findContainingFunction as findContainingFunctionCore } from '@grafema/core';
 import { formatNodeDisplay, formatNodeInline, formatLocation } from '../utils/formatNode.js';
 import { exitWithError } from '../utils/errorFormatter.js';
+import { Spinner } from '../utils/spinner.js';
 
 interface QueryOptions {
   project: string;
@@ -130,9 +131,13 @@ Examples:
     const backend = new RFDBServerBackend({ dbPath });
     await backend.connect();
 
+    const spinner = new Spinner('Querying graph...');
+    spinner.start();
+
     try {
       // Raw Datalog mode
       if (options.raw) {
+        spinner.stop();
         await executeRawQuery(backend, pattern, options);
         return;
       }
@@ -158,6 +163,8 @@ Examples:
 
       // Find matching nodes
       const nodes = await findNodes(backend, query, limit);
+
+      spinner.stop();
 
       // Check if query has scope constraints for suggestion
       const hasScope = query.file !== null || query.scopes.length > 0;
@@ -218,6 +225,7 @@ Examples:
       }
 
     } finally {
+      spinner.stop();
       await backend.close();
     }
   });
@@ -254,6 +262,9 @@ function parsePattern(pattern: string): { type: string | null; name: string } {
       emit: 'socketio:emit',
       on: 'socketio:on',
       listener: 'socketio:on',
+      // Property access aliases (REG-395)
+      property: 'PROPERTY_ACCESS',
+      prop: 'PROPERTY_ACCESS',
     };
 
     if (typeMap[typeWord]) {
@@ -551,7 +562,8 @@ async function findNodes(
         'http:request',
         'socketio:event',
         'socketio:emit',
-        'socketio:on'
+        'socketio:on',
+        'PROPERTY_ACCESS'
       ];
 
   for (const nodeType of searchTypes) {
@@ -604,6 +616,11 @@ async function findNodes(
       if (nodeType === 'socketio:on') {
         nodeInfo.objectName = node.objectName as string | undefined;
         nodeInfo.handlerName = node.handlerName as string | undefined;
+      }
+
+      // Include objectName for PROPERTY_ACCESS nodes (REG-395)
+      if (nodeType === 'PROPERTY_ACCESS') {
+        nodeInfo.objectName = node.objectName as string | undefined;
       }
 
       results.push(nodeInfo);

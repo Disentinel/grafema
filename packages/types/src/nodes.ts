@@ -21,6 +21,7 @@ export const NODE_TYPE = {
 
   // Call graph
   CALL: 'CALL',
+  PROPERTY_ACCESS: 'PROPERTY_ACCESS',
 
   // Project structure
   PROJECT: 'PROJECT',
@@ -92,8 +93,8 @@ export type NodeType = BaseNodeType | NamespacedNodeType | string;
 export interface BaseNodeRecord {
   id: string;
   type: NodeType;
-  name: string;
-  file: string;
+  name?: string;  // Optional - some nodes (BRANCH, CASE, LOOP) don't have meaningful names
+  file?: string;  // Optional - some synthetic nodes may not have a file
   exported?: boolean;  // Optional - some nodes may not have export status
   line?: number;  // Optional - not always available
   column?: number;
@@ -117,6 +118,7 @@ export interface FunctionNodeRecord extends BaseNodeRecord {
   returnType?: string;       // Return type
   signature?: string;        // Full signature: "(a: T) => R"
   jsdocSummary?: string;     // First line of JSDoc
+  start?: number;            // Byte offset in file (for positional linking)
 }
 
 // Class node
@@ -183,6 +185,14 @@ export interface CallNodeRecord extends BaseNodeRecord {
   objectName?: string;
 }
 
+// Property access node (property read: obj.prop, a.b.c)
+export interface PropertyAccessNodeRecord extends BaseNodeRecord {
+  type: 'PROPERTY_ACCESS';
+  objectName: string;
+  optional?: boolean;
+  computed?: boolean;
+}
+
 // Service node (project-level)
 export interface ServiceNodeRecord extends BaseNodeRecord {
   type: 'SERVICE';
@@ -218,6 +228,7 @@ export interface LoopNodeRecord extends BaseNodeRecord {
   loopType: 'for' | 'for-in' | 'for-of' | 'while' | 'do-while';
   parentScopeId?: string;
   bodyScopeId?: string;  // ID of SCOPE node containing loop body
+  async?: boolean;       // true for for-await-of loops
 }
 
 // Try block node
@@ -293,6 +304,7 @@ export type NodeRecord =
   | ExportNodeRecord
   | VariableNodeRecord
   | CallNodeRecord
+  | PropertyAccessNodeRecord
   | ServiceNodeRecord
   | ScopeNodeRecord
   | BranchNodeRecord

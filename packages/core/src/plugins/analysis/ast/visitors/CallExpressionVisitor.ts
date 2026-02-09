@@ -8,18 +8,74 @@
  * - Constructor calls: new Foo(), new Function()
  */
 
-import type { Node, CallExpression, NewExpression, Identifier, MemberExpression, ObjectExpression, ArrayExpression, ObjectProperty, SpreadElement } from '@babel/types';
+import type { Node, CallExpression, NewExpression, Identifier, MemberExpression, ObjectExpression, ArrayExpression, ObjectProperty, Comment } from '@babel/types';
 import type { NodePath } from '@babel/traverse';
 import { ASTVisitor, type VisitorModule, type VisitorCollections, type VisitorHandlers, type CounterRef } from './ASTVisitor.js';
 import { ExpressionEvaluator } from '../ExpressionEvaluator.js';
-import type { ArrayMutationInfo, ArrayMutationArgument, ObjectMutationInfo, ObjectMutationValue } from '../types.js';
-import { ScopeTracker } from '../../../../core/ScopeTracker.js';
+import type { ArrayMutationInfo, ArrayMutationArgument, ObjectMutationInfo, ObjectMutationValue, GrafemaIgnoreAnnotation } from '../types.js';
+import type { ScopeTracker } from '../../../../core/ScopeTracker.js';
 import { computeSemanticId } from '../../../../core/SemanticId.js';
 import { IdGenerator } from '../IdGenerator.js';
 import { NodeFactory } from '../../../../core/NodeFactory.js';
 import { ObjectLiteralNode } from '../../../../core/nodes/ObjectLiteralNode.js';
 import { ArrayLiteralNode } from '../../../../core/nodes/ArrayLiteralNode.js';
 import { getLine, getColumn } from '../utils/location.js';
+
+/**
+ * Pattern for grafema-ignore comments (REG-332)
+ * Matches:
+ *   // grafema-ignore STRICT_UNRESOLVED_METHOD
+ *   // grafema-ignore STRICT_UNRESOLVED_METHOD - known library call
+ *   /* grafema-ignore STRICT_UNRESOLVED_METHOD * /  (block comments)
+ */
+const GRAFEMA_IGNORE_PATTERN = /grafema-ignore(?:-next-line)?\s+([\w_]+)(?:\s+-\s+(.+))?/;
+
+/**
+ * Check node's leadingComments for grafema-ignore annotation.
+ */
+function checkNodeComments(node: Node): GrafemaIgnoreAnnotation | null {
+  const comments = (node as { leadingComments?: Comment[] }).leadingComments;
+  if (!comments || comments.length === 0) return null;
+
+  // Check comments from last to first (closest to node wins)
+  for (let i = comments.length - 1; i >= 0; i--) {
+    const comment = comments[i];
+    const text = comment.value.trim();
+    const match = text.match(GRAFEMA_IGNORE_PATTERN);
+    if (match) {
+      return {
+        code: match[1],
+        reason: match[2]?.trim(),
+      };
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Check if a call has a grafema-ignore comment for suppressing strict mode errors.
+ * Babel attaches leading comments to statements (VariableDeclaration, ExpressionStatement),
+ * not to nested CallExpression nodes. So we check:
+ * 1. The call node itself (rare, but possible for standalone calls)
+ * 2. The parent statement (VariableDeclaration, ExpressionStatement, etc.)
+ *
+ * @param path - Babel NodePath for the CallExpression
+ * @returns GrafemaIgnoreAnnotation if found, null otherwise
+ */
+function getGrafemaIgnore(path: NodePath): GrafemaIgnoreAnnotation | null {
+  // First check the call node itself
+  const callResult = checkNodeComments(path.node);
+  if (callResult) return callResult;
+
+  // Then check parent statement (where Babel typically attaches comments)
+  const statementPath = path.getStatementParent();
+  if (statementPath) {
+    return checkNodeComments(statementPath.node);
+  }
+
+  return null;
+}
 
 /**
  * Object literal info for OBJECT_LITERAL nodes
@@ -52,6 +108,8 @@ interface ObjectPropertyInfo {
   callColumn?: number;
   nestedObjectId?: string;
   nestedArrayId?: string;
+  // REG-329: Scope path for variable resolution
+  valueScopePath?: string[];
 }
 
 /**
@@ -140,6 +198,8 @@ interface MethodCallInfo {
   column: number;
   parentScopeId: string;
   isNew?: boolean;
+  /** REG-332: Annotation to suppress strict mode errors */
+  grafemaIgnore?: GrafemaIgnoreAnnotation;
 }
 
 /**
@@ -507,6 +567,8 @@ export class CallExpressionVisitor extends ASTVisitor {
         if (spreadArg.type === 'Identifier') {
           propertyInfo.valueName = spreadArg.name;
           propertyInfo.valueType = 'VARIABLE';
+          // REG-329: Capture scope path for spread variable resolution
+          propertyInfo.valueScopePath = this.scopeTracker?.getContext().scopePath ?? [];
         }
 
         objectProperties.push(propertyInfo);
@@ -632,6 +694,8 @@ export class CallExpressionVisitor extends ASTVisitor {
           else if (value.type === 'Identifier') {
             propertyInfo.valueType = 'VARIABLE';
             propertyInfo.valueName = value.name;
+            // REG-329: Capture scope path for scope-aware variable resolution
+            propertyInfo.valueScopePath = this.scopeTracker?.getContext().scopePath ?? [];
           }
           // Call expression
           else if (value.type === 'CallExpression') {
@@ -993,6 +1057,38 @@ export class CallExpressionVisitor extends ASTVisitor {
   }
 
   /**
+   * Extract full dotted name from a MemberExpression chain.
+   * For `a.b.c` returns "a.b.c". Returns null for complex expressions.
+   *
+   * Used by REG-395 to create CALL nodes for nested method calls like a.b.c().
+   */
+  static extractMemberExpressionName(node: MemberExpression): string | null {
+    const parts: string[] = [];
+    let current: MemberExpression | null = node;
+
+    // Walk the chain collecting property names
+    while (current) {
+      if (current.computed) return null; // Can't statically resolve computed access
+      if (current.property.type !== 'Identifier') return null;
+      parts.unshift((current.property as Identifier).name);
+
+      if (current.object.type === 'Identifier') {
+        parts.unshift((current.object as Identifier).name);
+        return parts.join('.');
+      } else if (current.object.type === 'ThisExpression') {
+        parts.unshift('this');
+        return parts.join('.');
+      } else if (current.object.type === 'MemberExpression') {
+        current = current.object as MemberExpression;
+      } else {
+        return null; // Complex expression
+      }
+    }
+
+    return null;
+  }
+
+  /**
    * Get a stable scope ID for a function parent.
    *
    * Format must match what FunctionVisitor/ClassVisitor creates (semantic ID):
@@ -1184,6 +1280,9 @@ export class CallExpressionVisitor extends ASTVisitor {
                   { useDiscriminator: true, discriminatorKey: `CALL:${fullName}` }
                 );
 
+                // REG-332: Check for grafema-ignore comment
+                const grafemaIgnore = getGrafemaIgnore(path);
+
                 (methodCalls as MethodCallInfo[]).push({
                   id: methodCallId,
                   type: 'CALL',
@@ -1195,7 +1294,8 @@ export class CallExpressionVisitor extends ASTVisitor {
                   file: module.file,
                   line: methodLine,
                   column: methodColumn,
-                  parentScopeId
+                  parentScopeId,
+                  grafemaIgnore: grafemaIgnore ?? undefined,
                 });
 
                 // Check for array mutation methods (push, unshift, splice)
@@ -1240,10 +1340,11 @@ export class CallExpressionVisitor extends ASTVisitor {
               }
             }
             // REG-117: Nested array mutations like obj.arr.push(item)
+            // REG-395: General nested method calls like a.b.c() or obj.nested.method()
             // object is MemberExpression, property is the method name
             else if (object.type === 'MemberExpression' && property.type === 'Identifier') {
               const nestedMember = object as MemberExpression;
-              const methodName = (property as Identifier).name;
+              const methodName = isComputed ? '<computed>' : (property as Identifier).name;
               const ARRAY_MUTATION_METHODS = ['push', 'unshift', 'splice'];
 
               if (ARRAY_MUTATION_METHODS.includes(methodName)) {
@@ -1267,6 +1368,43 @@ export class CallExpressionVisitor extends ASTVisitor {
                     baseObjectName,
                     propertyName
                   );
+                }
+              }
+
+              // REG-395: Create CALL node for nested method calls like a.b.c()
+              // Extract full object name by walking the MemberExpression chain
+              const objectName = CallExpressionVisitor.extractMemberExpressionName(nestedMember);
+              if (objectName) {
+                const nodeKey = `${callNode.start}:${callNode.end}`;
+                if (!processedNodes.methodCalls.has(nodeKey)) {
+                  processedNodes.methodCalls.add(nodeKey);
+
+                  const fullName = `${objectName}.${methodName}`;
+                  const methodLine = getLine(callNode);
+                  const methodColumn = getColumn(callNode);
+
+                  const idGenerator = new IdGenerator(scopeTracker);
+                  const methodCallId = idGenerator.generate(
+                    'CALL', fullName, module.file,
+                    methodLine, methodColumn,
+                    callSiteCounterRef,
+                    { useDiscriminator: true, discriminatorKey: `CALL:${fullName}` }
+                  );
+
+                  const grafemaIgnore = getGrafemaIgnore(path);
+
+                  (methodCalls as MethodCallInfo[]).push({
+                    id: methodCallId,
+                    type: 'CALL',
+                    name: fullName,
+                    object: objectName,
+                    method: methodName,
+                    file: module.file,
+                    line: methodLine,
+                    column: methodColumn,
+                    parentScopeId,
+                    grafemaIgnore: grafemaIgnore ?? undefined,
+                  });
                 }
               }
             }
@@ -1343,6 +1481,9 @@ export class CallExpressionVisitor extends ASTVisitor {
               { useDiscriminator: true, discriminatorKey: `CALL:new:${fullName}` }
             );
 
+            // REG-332: Check for grafema-ignore comment
+            const grafemaIgnore = getGrafemaIgnore(path);
+
             (methodCalls as MethodCallInfo[]).push({
               id: newMethodCallId,
               type: 'CALL',
@@ -1353,7 +1494,8 @@ export class CallExpressionVisitor extends ASTVisitor {
               line: memberNewLine,
               column: memberNewColumn,
               parentScopeId,
-              isNew: true  // Mark as constructor call
+              isNew: true,  // Mark as constructor call
+              grafemaIgnore: grafemaIgnore ?? undefined,
             });
           }
         }

@@ -2,8 +2,8 @@
  * Base class for AST visitors
  * Each visitor handles specific AST node types and collects relevant data
  */
-import type { Node, SourceLocation } from '@babel/types';
-import { getNodeLocation, type NodeLocation } from '../utils/location.js';
+import type { Node } from '@babel/types';
+import { getNodeLocation } from '../utils/location.js';
 import type { NodePath } from '@babel/traverse';
 import type {
   FunctionInfo,
@@ -24,6 +24,7 @@ import type {
   VariableAssignmentInfo,
   CallArgumentInfo,
   ParameterInfo,
+  PropertyAccessInfo,
   CounterRef,
   ProcessedNodes
 } from '../types.js';
@@ -67,6 +68,10 @@ export interface VisitorCollections {
   parameters?: ParameterInfo[];
   sideEffects?: unknown[];  // TODO: define SideEffectInfo type
   code?: string;  // Source code for condition extraction
+
+  // Property access tracking (REG-395)
+  propertyAccesses?: PropertyAccessInfo[];
+  propertyAccessCounterRef?: CounterRef;
 
   // Branching (REG-275)
   branches?: BranchInfo[];

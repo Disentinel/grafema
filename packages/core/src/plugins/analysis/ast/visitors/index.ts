@@ -34,3 +34,5 @@ export { ClassVisitor } from './ClassVisitor.js';
 export { CallExpressionVisitor } from './CallExpressionVisitor.js';
 
 export { TypeScriptVisitor } from './TypeScriptVisitor.js';
+
+export { PropertyAccessVisitor } from './PropertyAccessVisitor.js';

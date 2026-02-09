@@ -3,11 +3,11 @@
  * OPTIMIZED: Uses batched writes to reduce FFI overhead
  */
 
-import { dirname, resolve, basename } from 'path';
-import type { GraphBackend } from '@grafema/types';
+import { basename } from 'path';
+import type { GraphBackend, NodeRecord } from '@grafema/types';
 import { ImportNode } from '../../../core/nodes/ImportNode.js';
 import { InterfaceNode, type InterfaceNodeRecord } from '../../../core/nodes/InterfaceNode.js';
-import { EnumNode, type EnumNodeRecord } from '../../../core/nodes/EnumNode.js';
+import { EnumNode } from '../../../core/nodes/EnumNode.js';
 import { DecoratorNode } from '../../../core/nodes/DecoratorNode.js';
 import { NetworkRequestNode } from '../../../core/nodes/NetworkRequestNode.js';
 import { NodeFactory } from '../../../core/NodeFactory.js';
@@ -23,11 +23,10 @@ import type {
   VariableDeclarationInfo,
   CallSiteInfo,
   MethodCallInfo,
+  MethodCallbackInfo,
   EventListenerInfo,
   ClassInstantiationInfo,
-  ConstructorCallInfo,
   ClassDeclarationInfo,
-  MethodCallbackInfo,
   CallArgumentInfo,
   ImportInfo,
   ExportInfo,
@@ -41,14 +40,19 @@ import type {
   ArrayMutationInfo,
   ObjectMutationInfo,
   VariableReassignmentInfo,
+  UpdateExpressionInfo,
   ReturnStatementInfo,
+  YieldExpressionInfo,
   ObjectLiteralInfo,
   ObjectPropertyInfo,
   ArrayLiteralInfo,
   TryBlockInfo,
   CatchBlockInfo,
   FinallyBlockInfo,
-  UpdateExpressionInfo,
+  PromiseResolutionInfo,
+  RejectionPatternInfo,
+  CatchesFromInfo,
+  PropertyAccessInfo,
   ASTCollections,
   GraphNode,
   GraphEdge,
@@ -83,7 +87,7 @@ export class GraphBuilder {
   private async _flushNodes(graph: GraphBackend): Promise<number> {
     if (this._nodeBuffer.length > 0) {
       // Cast to unknown first since GraphNode is more permissive than NodeRecord
-      await graph.addNodes(this._nodeBuffer as unknown as import('@grafema/types').NodeRecord[]);
+      await graph.addNodes(this._nodeBuffer as unknown as NodeRecord[]);
       const count = this._nodeBuffer.length;
       this._nodeBuffer = [];
       return count;
@@ -147,14 +151,24 @@ export class GraphBuilder {
       objectMutations = [],
       // Variable reassignment tracking for FLOWS_INTO edges (REG-290)
       variableReassignments = [],
+      // Update expression tracking for UPDATE_EXPRESSION nodes and MODIFIES edges (REG-288, REG-312)
+      updateExpressions = [],
       // Return statement tracking for RETURNS edges
       returnStatements = [],
-      // Update expression tracking for MODIFIES edges (REG-288, REG-312)
-      updateExpressions = [],
+      // Yield expression tracking for YIELDS/DELEGATES_TO edges (REG-270)
+      yieldExpressions = [],
+      // Promise resolution tracking for RESOLVES_TO edges (REG-334)
+      promiseResolutions = [],
       // Object/Array literal tracking
       objectLiterals = [],
       objectProperties = [],
-      arrayLiterals = []
+      arrayLiterals = [],
+      // REG-311: Rejection pattern tracking for async error analysis
+      rejectionPatterns = [],
+      // REG-311: CATCHES_FROM tracking for catch parameter error sources
+      catchesFromInfos = [],
+      // Property access tracking for PROPERTY_ACCESS nodes (REG-395)
+      propertyAccesses = []
     } = data;
 
     // Reset buffers for this build
@@ -163,32 +177,37 @@ export class GraphBuilder {
 
     // 1. Buffer all functions (without edges)
     for (const func of functions) {
-      const { parentScopeId, ...funcData } = func;
+      const { parentScopeId: _parentScopeId, ...funcData } = func;
       this._bufferNode(funcData as GraphNode);
     }
 
     // 2. Buffer all SCOPE (without edges)
     for (const scope of scopes) {
-      const { parentFunctionId, parentScopeId, capturesFrom, modifies, ...scopeData } = scope;
+      const { parentFunctionId: _parentFunctionId, parentScopeId: _parentScopeId, capturesFrom: _capturesFrom, ...scopeData } = scope;
       this._bufferNode(scopeData as GraphNode);
     }
 
     // 2.5. Buffer BRANCH nodes
     // Note: parentScopeId is kept on node for query support (REG-275 test requirement)
     for (const branch of branches) {
-      const { discriminantExpressionId, discriminantExpressionType, discriminantLine, discriminantColumn, ...branchData } = branch;
+      const { discriminantExpressionId: _discriminantExpressionId, discriminantExpressionType: _discriminantExpressionType, discriminantLine: _discriminantLine, discriminantColumn: _discriminantColumn, ...branchData } = branch;
       this._bufferNode(branchData as GraphNode);
     }
 
     // 2.6. Buffer CASE nodes
     for (const caseInfo of cases) {
-      const { parentBranchId, ...caseData } = caseInfo;
+      const { parentBranchId: _parentBranchId, ...caseData } = caseInfo;
       this._bufferNode(caseData as GraphNode);
     }
 
     // 2.7. Buffer LOOP nodes
     for (const loop of loops) {
-      const { iteratesOverName, iteratesOverLine, iteratesOverColumn, ...loopData } = loop;
+      // Exclude metadata used for edge creation (not stored on node)
+      const {
+        iteratesOverName: _iteratesOverName, iteratesOverLine: _iteratesOverLine, iteratesOverColumn: _iteratesOverColumn,
+        conditionExpressionId: _conditionExpressionId, conditionExpressionType: _conditionExpressionType, conditionLine: _conditionLine, conditionColumn: _conditionColumn,
+        ...loopData
+      } = loop;
       this._bufferNode(loopData as GraphNode);
     }
 
@@ -199,13 +218,13 @@ export class GraphBuilder {
 
     // 2.9. Buffer CATCH_BLOCK nodes (Phase 4)
     for (const catchBlock of catchBlocks) {
-      const { parentTryBlockId, ...catchData } = catchBlock;
+      const { parentTryBlockId: _parentTryBlockId, ...catchData } = catchBlock;
       this._bufferNode(catchData as GraphNode);
     }
 
     // 2.10. Buffer FINALLY_BLOCK nodes (Phase 4)
     for (const finallyBlock of finallyBlocks) {
-      const { parentTryBlockId, ...finallyData } = finallyBlock;
+      const { parentTryBlockId: _parentTryBlockId2, ...finallyData } = finallyBlock;
       this._bufferNode(finallyData as GraphNode);
     }
 
@@ -216,7 +235,7 @@ export class GraphBuilder {
 
     // 3.5. Buffer PARAMETER nodes and HAS_PARAMETER edges
     for (const param of parameters) {
-      const { functionId, ...paramData } = param;
+      const { functionId: _functionId, ...paramData } = param;
       // Keep parentFunctionId on the node for queries
       this._bufferNode(paramData as GraphNode);
 
@@ -232,7 +251,7 @@ export class GraphBuilder {
 
     // 4. Buffer CALL_SITE (keep parentScopeId on node for queries)
     for (const callSite of callSites) {
-      const { targetFunctionName, ...callData } = callSite;
+      const { targetFunctionName: _targetFunctionName, ...callData } = callSite;
       this._bufferNode(callData as GraphNode);
     }
 
@@ -259,6 +278,12 @@ export class GraphBuilder {
     // 6.3. Buffer edges for LOOP (HAS_BODY, ITERATES_OVER, CONTAINS)
     this.bufferLoopEdges(loops, scopes, variableDeclarations, parameters);
 
+    // 6.35. Buffer HAS_CONDITION edges for LOOP (REG-280)
+    this.bufferLoopConditionEdges(loops, callSites);
+
+    // 6.37. Buffer EXPRESSION nodes for loop conditions (REG-280)
+    this.bufferLoopConditionExpressions(loops);
+
     // 6.5. Buffer edges for BRANCH (needs callSites for CallExpression discriminant lookup)
     // Phase 3 (REG-267): Now includes scopes for if-branches HAS_CONSEQUENT/HAS_ALTERNATE
     this.bufferBranchEdges(branches, callSites, scopes);
@@ -280,6 +305,9 @@ export class GraphBuilder {
 
     // 9. Buffer METHOD_CALL nodes, CONTAINS edges, and USES edges (REG-262)
     this.bufferMethodCalls(methodCalls, variableDeclarations, parameters);
+
+    // 9.5. Buffer PROPERTY_ACCESS nodes and CONTAINS edges (REG-395)
+    this.bufferPropertyAccessNodes(module, propertyAccesses);
 
     // 10. Buffer net:stdio and WRITES_TO edges for console.log/error
     this.bufferStdioNodes(methodCalls);
@@ -315,7 +343,8 @@ export class GraphBuilder {
     this.bufferArrayLiteralNodes(arrayLiterals);
 
     // 18.7. Buffer HAS_PROPERTY edges (OBJECT_LITERAL -> property values)
-    this.bufferObjectPropertyEdges(objectProperties);
+    // REG-329: Pass variableDeclarations and parameters for scope-aware variable resolution
+    this.bufferObjectPropertyEdges(objectProperties, variableDeclarations, parameters);
 
     // 19. Buffer ASSIGNED_FROM edges for data flow (some need to create EXPRESSION nodes)
     this.bufferAssignmentEdges(variableAssignments, variableDeclarations, callSites, methodCalls, functions, classInstantiations, parameters);
@@ -354,6 +383,18 @@ export class GraphBuilder {
     // 30. Buffer UPDATE_EXPRESSION nodes and MODIFIES edges (REG-288, REG-312)
     this.bufferUpdateExpressionEdges(updateExpressions, variableDeclarations, parameters, classDeclarations);
 
+    // 31. Buffer RESOLVES_TO edges for Promise data flow (REG-334)
+    this.bufferPromiseResolutionEdges(promiseResolutions);
+
+    // 32. Buffer YIELDS/DELEGATES_TO edges for generator yields (REG-270)
+    this.bufferYieldEdges(yieldExpressions, callSites, methodCalls, variableDeclarations, parameters);
+
+    // 33. Buffer REJECTS edges for async error tracking (REG-311)
+    this.bufferRejectionEdges(functions, rejectionPatterns);
+
+    // 34. Buffer CATCHES_FROM edges linking catch blocks to error sources (REG-311)
+    this.bufferCatchesFromEdges(catchesFromInfos);
+
     // FLUSH: Write all nodes first, then edges in single batch calls
     const nodesCreated = await this._flushNodes(graph);
     const edgesCreated = await this._flushEdges(graph);
@@ -390,7 +431,7 @@ export class GraphBuilder {
 
   private bufferScopeEdges(scopes: ScopeInfo[], variableDeclarations: VariableDeclarationInfo[]): void {
     for (const scope of scopes) {
-      const { parentFunctionId, parentScopeId, capturesFrom, modifies, ...scopeData } = scope;
+      const { parentFunctionId, parentScopeId, capturesFrom, ...scopeData } = scope;
 
       // FUNCTION -> HAS_SCOPE -> SCOPE (для function_body)
       if (parentFunctionId) {
@@ -422,16 +463,7 @@ export class GraphBuilder {
         }
       }
 
-      // MODIFIES - scope модифицирует переменные (count++)
-      if (modifies && modifies.length > 0) {
-        for (const mod of modifies) {
-          this._bufferEdge({
-            type: 'MODIFIES',
-            src: scopeData.id,
-            dst: mod.variableId
-          });
-        }
-      }
+      // REG-288: MODIFIES edges removed - now come from UPDATE_EXPRESSION nodes
     }
   }
 
@@ -488,12 +520,16 @@ export class GraphBuilder {
           p.name === iterableName && p.file === loop.file
         );
 
+        // Determine iteration type: for-in iterates keys, for-of iterates values
+        const iterates = loop.loopType === 'for-in' ? 'keys' : 'values';
+
         if (param) {
           // Parameter found - most local binding
           this._bufferEdge({
             type: 'ITERATES_OVER',
             src: loop.id,
-            dst: param.id
+            dst: param.id,
+            metadata: { iterates }
           });
         } else {
           // Find variable by name and line proximity (scope-aware heuristic)
@@ -511,9 +547,148 @@ export class GraphBuilder {
             this._bufferEdge({
               type: 'ITERATES_OVER',
               src: loop.id,
-              dst: candidateVars[0].id
+              dst: candidateVars[0].id,
+              metadata: { iterates }
             });
           }
+        }
+      }
+
+      // REG-282: LOOP (for) -> HAS_INIT -> VARIABLE (let i = 0)
+      if (loop.loopType === 'for' && loop.initVariableName && loop.initLine) {
+        // Find the variable declared in the init on this line
+        const initVar = variableDeclarations.find(v =>
+          v.name === loop.initVariableName &&
+          v.file === loop.file &&
+          v.line === loop.initLine
+        );
+        if (initVar) {
+          this._bufferEdge({
+            type: 'HAS_INIT',
+            src: loop.id,
+            dst: initVar.id
+          });
+        }
+      }
+
+      // REG-282: LOOP -> HAS_CONDITION -> EXPRESSION (i < 10 or condition for while/do-while)
+      if (loop.testExpressionId && loop.testExpressionType) {
+        // Create EXPRESSION node for the test
+        this._bufferNode({
+          id: loop.testExpressionId,
+          type: 'EXPRESSION',
+          name: loop.testExpressionType,
+          file: loop.file,
+          line: loop.testLine,
+          column: loop.testColumn,
+          expressionType: loop.testExpressionType
+        });
+
+        this._bufferEdge({
+          type: 'HAS_CONDITION',
+          src: loop.id,
+          dst: loop.testExpressionId
+        });
+      }
+
+      // REG-282: LOOP (for) -> HAS_UPDATE -> EXPRESSION (i++)
+      if (loop.loopType === 'for' && loop.updateExpressionId && loop.updateExpressionType) {
+        // Create EXPRESSION node for the update
+        this._bufferNode({
+          id: loop.updateExpressionId,
+          type: 'EXPRESSION',
+          name: loop.updateExpressionType,
+          file: loop.file,
+          line: loop.updateLine,
+          column: loop.updateColumn,
+          expressionType: loop.updateExpressionType
+        });
+
+        this._bufferEdge({
+          type: 'HAS_UPDATE',
+          src: loop.id,
+          dst: loop.updateExpressionId
+        });
+      }
+    }
+  }
+
+  /**
+   * Buffer HAS_CONDITION edges from LOOP to condition EXPRESSION/CALL nodes.
+   * Also creates EXPRESSION nodes for non-CallExpression conditions.
+   *
+   * REG-280: For while/do-while/for loops, creates HAS_CONDITION edge to the
+   * condition expression. For-in/for-of loops don't have conditions (use ITERATES_OVER).
+   *
+   * For CallExpression conditions, links to existing CALL_SITE node by coordinates.
+   */
+  private bufferLoopConditionEdges(loops: LoopInfo[], callSites: CallSiteInfo[]): void {
+    for (const loop of loops) {
+      // Skip for-in/for-of loops - they don't have test expressions
+      if (loop.loopType === 'for-in' || loop.loopType === 'for-of') {
+        continue;
+      }
+
+      // Skip if no condition (e.g., infinite for loop: for(;;))
+      if (!loop.conditionExpressionId) {
+        continue;
+      }
+
+      // LOOP -> HAS_CONDITION -> EXPRESSION/CALL
+      let targetId = loop.conditionExpressionId;
+
+      // For CallExpression conditions, look up the actual CALL_SITE by coordinates
+      // because CALL_SITE uses semantic IDs that don't match the generated ID
+      if (loop.conditionExpressionType === 'CallExpression' && loop.conditionLine && loop.conditionColumn !== undefined) {
+        const callSite = callSites.find(cs =>
+          cs.file === loop.file &&
+          cs.line === loop.conditionLine &&
+          cs.column === loop.conditionColumn
+        );
+        if (callSite) {
+          targetId = callSite.id;
+        }
+      }
+
+      this._bufferEdge({
+        type: 'HAS_CONDITION',
+        src: loop.id,
+        dst: targetId
+      });
+    }
+  }
+
+  /**
+   * Buffer EXPRESSION nodes for loop condition expressions (non-CallExpression).
+   * Similar to bufferDiscriminantExpressions but for loops.
+   *
+   * REG-280: Creates EXPRESSION nodes for while/do-while/for loop conditions.
+   * CallExpression conditions use existing CALL_SITE nodes (no EXPRESSION created).
+   */
+  private bufferLoopConditionExpressions(loops: LoopInfo[]): void {
+    for (const loop of loops) {
+      // Skip for-in/for-of loops - they don't have test expressions
+      if (loop.loopType === 'for-in' || loop.loopType === 'for-of') {
+        continue;
+      }
+
+      if (loop.conditionExpressionId && loop.conditionExpressionType) {
+        // Skip CallExpression - we link to existing CALL_SITE in bufferLoopConditionEdges
+        if (loop.conditionExpressionType === 'CallExpression') {
+          continue;
+        }
+
+        // Only create if it looks like an EXPRESSION ID
+        if (loop.conditionExpressionId.includes(':EXPRESSION:')) {
+          this._bufferNode({
+            id: loop.conditionExpressionId,
+            type: 'EXPRESSION',
+            name: loop.conditionExpressionType,
+            file: loop.file,
+            line: loop.conditionLine,
+            column: loop.conditionColumn,
+            expressionType: loop.conditionExpressionType
+          });
         }
       }
     }
@@ -591,6 +766,24 @@ export class GraphBuilder {
 
         // For else-if chains: if this branch is the alternate of another branch
         // This is handled differently - see below
+      }
+
+      // REG-287: For ternary branches, create HAS_CONSEQUENT and HAS_ALTERNATE edges to expressions
+      if (branch.branchType === 'ternary') {
+        if (branch.consequentExpressionId) {
+          this._bufferEdge({
+            type: 'HAS_CONSEQUENT',
+            src: branch.id,
+            dst: branch.consequentExpressionId
+          });
+        }
+        if (branch.alternateExpressionId) {
+          this._bufferEdge({
+            type: 'HAS_ALTERNATE',
+            src: branch.id,
+            dst: branch.alternateExpressionId
+          });
+        }
       }
 
       // Phase 3: For else-if chains, create HAS_ALTERNATE from parent branch to this branch
@@ -672,7 +865,7 @@ export class GraphBuilder {
    * REG-275: For CallExpression discriminants, we don't create nodes here since
    * bufferBranchEdges links to the existing CALL_SITE node by coordinates.
    */
-  private bufferDiscriminantExpressions(branches: BranchInfo[], callSites: CallSiteInfo[]): void {
+  private bufferDiscriminantExpressions(branches: BranchInfo[], _callSites: CallSiteInfo[]): void {
     for (const branch of branches) {
       if (branch.discriminantExpressionId && branch.discriminantExpressionType) {
         // Skip CallExpression - we link to existing CALL_SITE in bufferBranchEdges
@@ -698,7 +891,12 @@ export class GraphBuilder {
 
   private bufferVariableEdges(variableDeclarations: VariableDeclarationInfo[]): void {
     for (const varDecl of variableDeclarations) {
-      const { parentScopeId, ...varData } = varDecl;
+      const { parentScopeId, isClassProperty, ...varData } = varDecl;
+
+      // REG-271: Skip class properties - they get HAS_PROPERTY edges from CLASS, not DECLARES from SCOPE
+      if (isClassProperty) {
+        continue;
+      }
 
       // SCOPE -> DECLARES -> VARIABLE
       this._bufferEdge({
@@ -785,6 +983,38 @@ export class GraphBuilder {
     }
   }
 
+  /**
+   * Buffer PROPERTY_ACCESS nodes and CONTAINS edges (REG-395).
+   *
+   * Creates nodes for property reads (obj.prop, a.b.c) and
+   * CONTAINS edges from the enclosing scope (function or module).
+   */
+  private bufferPropertyAccessNodes(module: ModuleNode, propertyAccesses: PropertyAccessInfo[]): void {
+    for (const propAccess of propertyAccesses) {
+      // Buffer node with all relevant fields
+      this._bufferNode({
+        id: propAccess.id,
+        type: 'PROPERTY_ACCESS',
+        name: propAccess.propertyName,
+        objectName: propAccess.objectName,
+        file: propAccess.file,
+        line: propAccess.line,
+        column: propAccess.column,
+        semanticId: propAccess.semanticId,
+        optional: propAccess.optional,
+        computed: propAccess.computed
+      } as GraphNode);
+
+      // SCOPE/FUNCTION/MODULE -> CONTAINS -> PROPERTY_ACCESS
+      const containsSrc = propAccess.parentScopeId ?? module.id;
+      this._bufferEdge({
+        type: 'CONTAINS',
+        src: containsSrc,
+        dst: propAccess.id
+      });
+    }
+  }
+
   private bufferStdioNodes(methodCalls: MethodCallInfo[]): void {
     const consoleIOMethods = methodCalls.filter(mc =>
       (mc.object === 'console' && (mc.method === 'log' || mc.method === 'error'))
@@ -812,7 +1042,7 @@ export class GraphBuilder {
 
   private bufferClassDeclarationNodes(classDeclarations: ClassDeclarationInfo[]): void {
     for (const classDecl of classDeclarations) {
-      const { id, type, name, file, line, column, superClass, methods } = classDecl;
+      const { id, type, name, file, line, column, superClass, methods, properties, staticBlocks } = classDecl;
 
       // Buffer CLASS node
       this._bufferNode({
@@ -832,6 +1062,28 @@ export class GraphBuilder {
           src: id,
           dst: methodId
         });
+      }
+
+      // REG-271: Buffer HAS_PROPERTY edges: CLASS -> VARIABLE (private fields)
+      if (properties) {
+        for (const propertyId of properties) {
+          this._bufferEdge({
+            type: 'HAS_PROPERTY',
+            src: id,
+            dst: propertyId
+          });
+        }
+      }
+
+      // REG-271: Buffer CONTAINS edges: CLASS -> SCOPE (static blocks)
+      if (staticBlocks) {
+        for (const staticBlockId of staticBlocks) {
+          this._bufferEdge({
+            type: 'CONTAINS',
+            src: id,
+            dst: staticBlockId
+          });
+        }
       }
 
       // If superClass, buffer DERIVES_FROM edge with computed ID
@@ -863,7 +1115,7 @@ export class GraphBuilder {
     }
 
     for (const instantiation of classInstantiations) {
-      const { variableId, className, line } = instantiation;
+      const { variableId, className, line: _line } = instantiation;
 
       let classId = declarationMap.get(className);
 
@@ -1161,7 +1413,7 @@ export class GraphBuilder {
 
   private bufferLiterals(literals: LiteralInfo[]): void {
     for (const literal of literals) {
-      const { parentCallId, argIndex, ...literalData } = literal;
+      const { parentCallId: _parentCallId, argIndex: _argIndex, ...literalData } = literal;
       this._bufferNode(literalData as GraphNode);
     }
   }
@@ -1973,7 +2225,8 @@ export class GraphBuilder {
 
         // Try parsing as semantic ID
         const parsed = parseSemanticId(v.id);
-        if (parsed && parsed.type === 'VARIABLE') {
+        // REG-329: Check for both VARIABLE and CONSTANT (const declarations)
+        if (parsed && (parsed.type === 'VARIABLE' || parsed.type === 'CONSTANT')) {
           // FIXED (REG-309): Handle module-level scope matching
           // Empty search scope [] should match semantic ID scope ['global']
           if (searchScopePath.length === 0) {
@@ -2427,6 +2680,260 @@ export class GraphBuilder {
   }
 
   /**
+   * Buffer YIELDS and DELEGATES_TO edges connecting yield expressions to their generator functions.
+   *
+   * Edge direction:
+   * - For yield:  yieldedExpression --YIELDS--> generatorFunction
+   * - For yield*: delegatedCall --DELEGATES_TO--> generatorFunction
+   *
+   * This enables tracing data flow through generator functions:
+   * - Query: "What does this generator yield?"
+   * - Answer: Follow YIELDS edges from function to see all possible yielded values
+   * - Query: "What generators does this delegate to?"
+   * - Answer: Follow DELEGATES_TO edges from function
+   *
+   * REG-270: Generator yield tracking
+   */
+  private bufferYieldEdges(
+    yieldExpressions: YieldExpressionInfo[],
+    callSites: CallSiteInfo[],
+    methodCalls: MethodCallInfo[],
+    variableDeclarations: VariableDeclarationInfo[],
+    parameters: ParameterInfo[]
+  ): void {
+    for (const yld of yieldExpressions) {
+      const { parentFunctionId, yieldValueType, file, isDelegate } = yld;
+
+      // Skip if no value yielded (bare yield;)
+      if (yieldValueType === 'NONE') {
+        continue;
+      }
+
+      let sourceNodeId: string | null = null;
+
+      switch (yieldValueType) {
+        case 'LITERAL':
+          // Direct reference to literal node
+          sourceNodeId = yld.yieldValueId ?? null;
+          break;
+
+        case 'VARIABLE': {
+          // Find variable declaration by name in same file
+          const varName = yld.yieldValueName;
+          if (varName) {
+            const sourceVar = variableDeclarations.find(v =>
+              v.name === varName && v.file === file
+            );
+            if (sourceVar) {
+              sourceNodeId = sourceVar.id;
+            } else {
+              // Check parameters
+              const sourceParam = parameters.find(p =>
+                p.name === varName && p.file === file
+              );
+              if (sourceParam) {
+                sourceNodeId = sourceParam.id;
+              }
+            }
+          }
+          break;
+        }
+
+        case 'CALL_SITE': {
+          // Find call site by coordinates
+          const { yieldValueLine, yieldValueColumn, yieldValueCallName } = yld;
+          if (yieldValueLine && yieldValueColumn) {
+            const callSite = callSites.find(cs =>
+              cs.line === yieldValueLine &&
+              cs.column === yieldValueColumn &&
+              (yieldValueCallName ? cs.name === yieldValueCallName : true)
+            );
+            if (callSite) {
+              sourceNodeId = callSite.id;
+            }
+          }
+          break;
+        }
+
+        case 'METHOD_CALL': {
+          // Find method call by coordinates and method name
+          const { yieldValueLine, yieldValueColumn, yieldValueCallName } = yld;
+          if (yieldValueLine && yieldValueColumn) {
+            const methodCall = methodCalls.find(mc =>
+              mc.line === yieldValueLine &&
+              mc.column === yieldValueColumn &&
+              mc.file === file &&
+              (yieldValueCallName ? mc.method === yieldValueCallName : true)
+            );
+            if (methodCall) {
+              sourceNodeId = methodCall.id;
+            }
+          }
+          break;
+        }
+
+        case 'EXPRESSION': {
+          // Create EXPRESSION node and DERIVES_FROM edges for yield expressions
+          const {
+            expressionType,
+            yieldValueId,
+            yieldValueLine,
+            yieldValueColumn,
+            operator,
+            object,
+            property,
+            computed,
+            objectSourceName,
+            leftSourceName,
+            rightSourceName,
+            consequentSourceName,
+            alternateSourceName,
+            expressionSourceNames,
+            unaryArgSourceName
+          } = yld;
+
+          // Skip if no expression ID was generated
+          if (!yieldValueId) {
+            break;
+          }
+
+          // Create EXPRESSION node using NodeFactory
+          const expressionNode = NodeFactory.createExpressionFromMetadata(
+            expressionType || 'Unknown',
+            file,
+            yieldValueLine || yld.line,
+            yieldValueColumn || yld.column,
+            {
+              id: yieldValueId,
+              object,
+              property,
+              computed,
+              operator
+            }
+          );
+
+          this._bufferNode(expressionNode);
+          sourceNodeId = yieldValueId;
+
+          // Buffer DERIVES_FROM edges based on expression type
+          // Helper function to find source variable or parameter
+          const findSource = (name: string): string | null => {
+            const variable = variableDeclarations.find(v =>
+              v.name === name && v.file === file
+            );
+            if (variable) return variable.id;
+
+            const param = parameters.find(p =>
+              p.name === name && p.file === file
+            );
+            if (param) return param.id;
+
+            return null;
+          };
+
+          // MemberExpression: derives from the object
+          if (expressionType === 'MemberExpression' && objectSourceName) {
+            const srcId = findSource(objectSourceName);
+            if (srcId) {
+              this._bufferEdge({
+                type: 'DERIVES_FROM',
+                src: yieldValueId,
+                dst: srcId
+              });
+            }
+          }
+
+          // BinaryExpression / LogicalExpression: derives from left and right operands
+          if (expressionType === 'BinaryExpression' || expressionType === 'LogicalExpression') {
+            if (leftSourceName) {
+              const srcId = findSource(leftSourceName);
+              if (srcId) {
+                this._bufferEdge({
+                  type: 'DERIVES_FROM',
+                  src: yieldValueId,
+                  dst: srcId
+                });
+              }
+            }
+            if (rightSourceName) {
+              const srcId = findSource(rightSourceName);
+              if (srcId) {
+                this._bufferEdge({
+                  type: 'DERIVES_FROM',
+                  src: yieldValueId,
+                  dst: srcId
+                });
+              }
+            }
+          }
+
+          // ConditionalExpression: derives from consequent and alternate
+          if (expressionType === 'ConditionalExpression') {
+            if (consequentSourceName) {
+              const srcId = findSource(consequentSourceName);
+              if (srcId) {
+                this._bufferEdge({
+                  type: 'DERIVES_FROM',
+                  src: yieldValueId,
+                  dst: srcId
+                });
+              }
+            }
+            if (alternateSourceName) {
+              const srcId = findSource(alternateSourceName);
+              if (srcId) {
+                this._bufferEdge({
+                  type: 'DERIVES_FROM',
+                  src: yieldValueId,
+                  dst: srcId
+                });
+              }
+            }
+          }
+
+          // UnaryExpression: derives from the argument
+          if (expressionType === 'UnaryExpression' && unaryArgSourceName) {
+            const srcId = findSource(unaryArgSourceName);
+            if (srcId) {
+              this._bufferEdge({
+                type: 'DERIVES_FROM',
+                src: yieldValueId,
+                dst: srcId
+              });
+            }
+          }
+
+          // TemplateLiteral: derives from all embedded expressions
+          if (expressionType === 'TemplateLiteral' && expressionSourceNames && expressionSourceNames.length > 0) {
+            for (const sourceName of expressionSourceNames) {
+              const srcId = findSource(sourceName);
+              if (srcId) {
+                this._bufferEdge({
+                  type: 'DERIVES_FROM',
+                  src: yieldValueId,
+                  dst: srcId
+                });
+              }
+            }
+          }
+
+          break;
+        }
+      }
+
+      // Create YIELDS or DELEGATES_TO edge if we found a source node
+      if (sourceNodeId && parentFunctionId) {
+        const edgeType = isDelegate ? 'DELEGATES_TO' : 'YIELDS';
+        this._bufferEdge({
+          type: edgeType,
+          src: sourceNodeId,
+          dst: parentFunctionId
+        });
+      }
+    }
+  }
+
+  /**
    * Buffer UPDATE_EXPRESSION nodes and edges for increment/decrement operations.
    *
    * Handles two target types:
@@ -2657,6 +3164,35 @@ export class GraphBuilder {
   }
 
   /**
+   * Buffer RESOLVES_TO edges for Promise resolution data flow (REG-334).
+   *
+   * Links resolve/reject CALL nodes to their parent Promise CONSTRUCTOR_CALL.
+   * This enables traceValues to follow Promise data flow:
+   *
+   * Example:
+   * ```
+   * const result = new Promise((resolve) => {
+   *   resolve(42);  // CALL[resolve] --RESOLVES_TO--> CONSTRUCTOR_CALL[Promise]
+   * });
+   * ```
+   *
+   * The edge direction (CALL -> CONSTRUCTOR_CALL) matches data flow semantics:
+   * data flows FROM resolve(value) TO the Promise result.
+   */
+  private bufferPromiseResolutionEdges(promiseResolutions: PromiseResolutionInfo[]): void {
+    for (const resolution of promiseResolutions) {
+      this._bufferEdge({
+        type: 'RESOLVES_TO',
+        src: resolution.callId,
+        dst: resolution.constructorCallId,
+        metadata: {
+          isReject: resolution.isReject
+        }
+      });
+    }
+  }
+
+  /**
    * Buffer OBJECT_LITERAL nodes to the graph.
    * These are object literals passed as function arguments or nested in other literals.
    */
@@ -2697,10 +3233,43 @@ export class GraphBuilder {
   /**
    * Buffer HAS_PROPERTY edges connecting OBJECT_LITERAL nodes to their property values.
    * Creates edges from object literal to its property value nodes (LITERAL, nested OBJECT_LITERAL, ARRAY_LITERAL, etc.)
+   *
+   * REG-329: Adds scope-aware variable resolution for VARIABLE property values.
+   * Uses the same resolveVariableInScope infrastructure as mutation handlers.
    */
-  private bufferObjectPropertyEdges(objectProperties: ObjectPropertyInfo[]): void {
+  private bufferObjectPropertyEdges(
+    objectProperties: ObjectPropertyInfo[],
+    variableDeclarations: VariableDeclarationInfo[],
+    parameters: ParameterInfo[]
+  ): void {
     for (const prop of objectProperties) {
-      // Only create edge if we have a destination node ID
+      // REG-329: Handle VARIABLE value types with scope resolution
+      if (prop.valueType === 'VARIABLE' && prop.valueName) {
+        const scopePath = prop.valueScopePath ?? [];
+        const file = prop.file;
+
+        // Resolve variable using scope chain
+        const resolvedVar = this.resolveVariableInScope(
+          prop.valueName, scopePath, file, variableDeclarations
+        );
+        const resolvedParam = !resolvedVar
+          ? this.resolveParameterInScope(prop.valueName, scopePath, file, parameters)
+          : null;
+
+        const resolvedNodeId = resolvedVar?.id ?? resolvedParam?.semanticId ?? resolvedParam?.id;
+
+        if (resolvedNodeId) {
+          this._bufferEdge({
+            type: 'HAS_PROPERTY',
+            src: prop.objectId,
+            dst: resolvedNodeId,
+            propertyName: prop.propertyName
+          });
+        }
+        continue;
+      }
+
+      // Existing logic for non-VARIABLE types
       if (prop.valueNodeId) {
         this._bufferEdge({
           type: 'HAS_PROPERTY',
@@ -2745,5 +3314,118 @@ export class GraphBuilder {
     }
 
     return edgesCreated;
+  }
+
+  /**
+   * Buffer REJECTS edges for async error tracking (REG-311).
+   *
+   * Creates edges from FUNCTION nodes to error CLASS nodes they can reject.
+   * This enables tracking which async functions can throw which error types:
+   *
+   * - Promise.reject(new Error()) -> FUNCTION --REJECTS--> CLASS[Error]
+   * - reject(new ValidationError()) in executor -> FUNCTION --REJECTS--> CLASS[ValidationError]
+   * - throw new AuthError() in async function -> FUNCTION --REJECTS--> CLASS[AuthError]
+   *
+   * Also stores rejectionPatterns in function metadata for downstream enrichers.
+   *
+   * @param functions - All function infos from analysis
+   * @param rejectionPatterns - Collected rejection patterns from analysis
+   */
+  private bufferRejectionEdges(functions: FunctionInfo[], rejectionPatterns: RejectionPatternInfo[]): void {
+    // Group rejection patterns by functionId for efficient lookup
+    const patternsByFunction = new Map<string, RejectionPatternInfo[]>();
+    for (const pattern of rejectionPatterns) {
+      const existing = patternsByFunction.get(pattern.functionId);
+      if (existing) {
+        existing.push(pattern);
+      } else {
+        patternsByFunction.set(pattern.functionId, [pattern]);
+      }
+    }
+
+    // Process each function that has rejection patterns
+    for (const [functionId, patterns] of patternsByFunction) {
+      // Collect unique error class names from this function's rejection patterns
+      const errorClassNames = new Set<string>();
+      for (const pattern of patterns) {
+        if (pattern.errorClassName) {
+          errorClassNames.add(pattern.errorClassName);
+        }
+      }
+
+      // Create REJECTS edges to error class nodes
+      // Note: These edges target computed CLASS IDs - they will be dangling
+      // if the class isn't declared, but that's expected behavior for
+      // built-in classes like Error, TypeError, etc.
+      for (const errorClassName of errorClassNames) {
+        // Find the function's file to compute the class ID
+        const func = functions.find(f => f.id === functionId);
+        const file = func?.file ?? '';
+
+        // Compute potential class ID at global scope
+        // For built-in errors, this will be a dangling reference (expected)
+        const globalContext = { file, scopePath: [] as string[] };
+        const classId = computeSemanticId('CLASS', errorClassName, globalContext);
+
+        this._bufferEdge({
+          type: 'REJECTS',
+          src: functionId,
+          dst: classId,
+          metadata: {
+            errorClassName
+          }
+        });
+      }
+
+      // Store rejection patterns in function metadata for downstream enrichers
+      // Find and update the function node in the buffer
+      for (const node of this._nodeBuffer) {
+        if (node.id === functionId) {
+          // Store in metadata field for proper persistence and test compatibility
+          if (!node.metadata) {
+            node.metadata = {};
+          }
+          (node.metadata as Record<string, unknown>).rejectionPatterns = patterns.map(p => ({
+            rejectionType: p.rejectionType,
+            errorClassName: p.errorClassName,
+            line: p.line,
+            column: p.column,
+            sourceVariableName: p.sourceVariableName,
+            tracePath: p.tracePath
+          }));
+          break;
+        }
+      }
+    }
+  }
+
+  /**
+   * Buffer CATCHES_FROM edges linking catch blocks to error sources (REG-311).
+   *
+   * Creates edges from CATCH_BLOCK nodes to potential error sources within
+   * their corresponding try blocks. This enables tracking which catch blocks
+   * can handle which exceptions:
+   *
+   * - try { await fetch() } catch(e) -> CATCH_BLOCK --CATCHES_FROM--> CALL[fetch]
+   * - try { throw new Error() } catch(e) -> CATCH_BLOCK --CATCHES_FROM--> THROW_STATEMENT
+   *
+   * The sourceType metadata helps distinguish different error source kinds
+   * for more precise error flow analysis.
+   *
+   * @param catchesFromInfos - Collected CATCHES_FROM info from analysis
+   */
+  private bufferCatchesFromEdges(catchesFromInfos: CatchesFromInfo[]): void {
+    for (const info of catchesFromInfos) {
+      this._bufferEdge({
+        type: 'CATCHES_FROM',
+        src: info.catchBlockId,
+        dst: info.sourceId,
+        metadata: {
+          parameterName: info.parameterName,
+          sourceType: info.sourceType,
+          sourceLine: info.sourceLine
+        }
+      });
+    }
   }
 }

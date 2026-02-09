@@ -40,6 +40,7 @@ import {
   ClassVisitor,
   CallExpressionVisitor,
   TypeScriptVisitor,
+  PropertyAccessVisitor,
   type VisitorModule,
   type VisitorCollections,
   type TrackVariableAssignmentCallback
@@ -55,6 +56,7 @@ import { ScopeTracker } from '../../core/ScopeTracker.js';
 import { computeSemanticId } from '../../core/SemanticId.js';
 import { ExpressionNode } from '../../core/nodes/ExpressionNode.js';
 import { ConstructorCallNode } from '../../core/nodes/ConstructorCallNode.js';
+import { ObjectLiteralNode } from '../../core/nodes/ObjectLiteralNode.js';
 import { NodeFactory } from '../../core/NodeFactory.js';
 import type { PluginContext, PluginResult, PluginMetadata, GraphBackend } from '@grafema/types';
 import type {
@@ -96,7 +98,13 @@ import type {
   ObjectMutationValue,
   VariableReassignmentInfo,
   ReturnStatementInfo,
+  YieldExpressionInfo,
   UpdateExpressionInfo,
+  PromiseResolutionInfo,
+  PromiseExecutorContext,
+  RejectionPatternInfo,
+  CatchesFromInfo,
+  PropertyAccessInfo,
   CounterRef,
   ProcessedNodes,
   ASTCollections,
@@ -158,6 +166,15 @@ interface Collections {
   returnStatements: ReturnStatementInfo[];
   // Update expression tracking for MODIFIES edges (REG-288, REG-312)
   updateExpressions: UpdateExpressionInfo[];
+  // Promise resolution tracking for RESOLVES_TO edges (REG-334)
+  promiseResolutions: PromiseResolutionInfo[];
+  // Promise executor contexts (REG-334) - keyed by executor function's start:end position
+  promiseExecutorContexts: Map<string, PromiseExecutorContext>;
+  // Yield expression tracking for YIELDS/DELEGATES_TO edges (REG-270)
+  yieldExpressions: YieldExpressionInfo[];
+  // Property access tracking for PROPERTY_ACCESS nodes (REG-395)
+  propertyAccesses: PropertyAccessInfo[];
+  propertyAccessCounterRef: CounterRef;
   objectLiteralCounterRef: CounterRef;
   arrayLiteralCounterRef: CounterRef;
   ifScopeCounterRef: CounterRef;
@@ -257,7 +274,9 @@ export class JSASTAnalyzer extends Plugin {
           'WRITES_TO', 'IMPORTS', 'INSTANCE_OF', 'HANDLED_BY', 'HAS_CALLBACK',
           'PASSES_ARGUMENT', 'MAKES_REQUEST', 'IMPORTS_FROM', 'EXPORTS_TO', 'ASSIGNED_FROM',
           // TypeScript-specific edges
-          'IMPLEMENTS', 'EXTENDS', 'DECORATED_BY'
+          'IMPLEMENTS', 'EXTENDS', 'DECORATED_BY',
+          // Promise data flow
+          'RESOLVES_TO'
         ]
       },
       dependencies: ['JSModuleIndexer']
@@ -614,7 +633,10 @@ export class JSASTAnalyzer extends Plugin {
     line: number,
     literals: LiteralInfo[],
     variableAssignments: VariableAssignmentInfo[],
-    literalCounterRef: CounterRef
+    literalCounterRef: CounterRef,
+    objectLiterals: ObjectLiteralInfo[],
+    objectProperties: ObjectPropertyInfo[],
+    objectLiteralCounterRef: CounterRef
   ): void {
     if (!initNode) return;
     // initNode is already typed as t.Expression
@@ -622,7 +644,41 @@ export class JSASTAnalyzer extends Plugin {
 
     // 0. AwaitExpression
     if (initExpression.type === 'AwaitExpression') {
-      return this.trackVariableAssignment(initExpression.argument, variableId, variableName, module, line, literals, variableAssignments, literalCounterRef);
+      return this.trackVariableAssignment(initExpression.argument, variableId, variableName, module, line, literals, variableAssignments, literalCounterRef, objectLiterals, objectProperties, objectLiteralCounterRef);
+    }
+
+    // 0.5. ObjectExpression (REG-328) - must be before literal check
+    if (initExpression.type === 'ObjectExpression') {
+      const column = initExpression.loc?.start.column ?? 0;
+      const objectNode = ObjectLiteralNode.create(
+        module.file,
+        line,
+        column,
+        { counter: objectLiteralCounterRef.value++ }
+      );
+
+      // Add to objectLiterals collection for GraphBuilder to create the node
+      objectLiterals.push(objectNode as unknown as ObjectLiteralInfo);
+
+      // Extract properties from the object literal
+      this.extractObjectProperties(
+        initExpression,
+        objectNode.id,
+        module,
+        objectProperties,
+        objectLiterals,
+        objectLiteralCounterRef,
+        literals,
+        literalCounterRef
+      );
+
+      // Create ASSIGNED_FROM edge: VARIABLE -> OBJECT_LITERAL
+      variableAssignments.push({
+        variableId,
+        sourceId: objectNode.id,
+        sourceType: 'OBJECT_LITERAL'
+      });
+      return;
     }
 
     // 1. Literal
@@ -836,8 +892,8 @@ export class JSASTAnalyzer extends Plugin {
         column: column
       });
 
-      this.trackVariableAssignment(initExpression.consequent, variableId, variableName, module, line, literals, variableAssignments, literalCounterRef);
-      this.trackVariableAssignment(initExpression.alternate, variableId, variableName, module, line, literals, variableAssignments, literalCounterRef);
+      this.trackVariableAssignment(initExpression.consequent, variableId, variableName, module, line, literals, variableAssignments, literalCounterRef, objectLiterals, objectProperties, objectLiteralCounterRef);
+      this.trackVariableAssignment(initExpression.alternate, variableId, variableName, module, line, literals, variableAssignments, literalCounterRef, objectLiterals, objectProperties, objectLiteralCounterRef);
       return;
     }
 
@@ -859,8 +915,8 @@ export class JSASTAnalyzer extends Plugin {
         column: column
       });
 
-      this.trackVariableAssignment(initExpression.left, variableId, variableName, module, line, literals, variableAssignments, literalCounterRef);
-      this.trackVariableAssignment(initExpression.right, variableId, variableName, module, line, literals, variableAssignments, literalCounterRef);
+      this.trackVariableAssignment(initExpression.left, variableId, variableName, module, line, literals, variableAssignments, literalCounterRef, objectLiterals, objectProperties, objectLiteralCounterRef);
+      this.trackVariableAssignment(initExpression.right, variableId, variableName, module, line, literals, variableAssignments, literalCounterRef, objectLiterals, objectProperties, objectLiteralCounterRef);
       return;
     }
 
@@ -887,10 +943,157 @@ export class JSASTAnalyzer extends Plugin {
       for (const expr of initExpression.expressions) {
         // Filter out TSType nodes (only in TypeScript code)
         if (t.isExpression(expr)) {
-          this.trackVariableAssignment(expr, variableId, variableName, module, line, literals, variableAssignments, literalCounterRef);
+          this.trackVariableAssignment(expr, variableId, variableName, module, line, literals, variableAssignments, literalCounterRef, objectLiterals, objectProperties, objectLiteralCounterRef);
         }
       }
       return;
+    }
+  }
+
+  /**
+   * Extract object properties and create ObjectPropertyInfo records.
+   * Handles nested object/array literals recursively. (REG-328)
+   */
+  private extractObjectProperties(
+    objectExpr: t.ObjectExpression,
+    objectId: string,
+    module: VisitorModule,
+    objectProperties: ObjectPropertyInfo[],
+    objectLiterals: ObjectLiteralInfo[],
+    objectLiteralCounterRef: CounterRef,
+    literals: LiteralInfo[],
+    literalCounterRef: CounterRef
+  ): void {
+    for (const prop of objectExpr.properties) {
+      const propLine = prop.loc?.start.line || 0;
+      const propColumn = prop.loc?.start.column || 0;
+
+      // Handle spread properties: { ...other }
+      if (prop.type === 'SpreadElement') {
+        const spreadArg = prop.argument;
+        const propertyInfo: ObjectPropertyInfo = {
+          objectId,
+          propertyName: '<spread>',
+          valueType: 'SPREAD',
+          file: module.file,
+          line: propLine,
+          column: propColumn
+        };
+
+        if (spreadArg.type === 'Identifier') {
+          propertyInfo.valueName = spreadArg.name;
+          propertyInfo.valueType = 'VARIABLE';
+        }
+
+        objectProperties.push(propertyInfo);
+        continue;
+      }
+
+      // Handle regular properties
+      if (prop.type === 'ObjectProperty') {
+        let propertyName: string;
+
+        // Get property name
+        if (prop.key.type === 'Identifier') {
+          propertyName = prop.key.name;
+        } else if (prop.key.type === 'StringLiteral') {
+          propertyName = prop.key.value;
+        } else if (prop.key.type === 'NumericLiteral') {
+          propertyName = String(prop.key.value);
+        } else {
+          propertyName = '<computed>';
+        }
+
+        const propertyInfo: ObjectPropertyInfo = {
+          objectId,
+          propertyName,
+          file: module.file,
+          line: propLine,
+          column: propColumn,
+          valueType: 'EXPRESSION'
+        };
+
+        const value = prop.value;
+
+        // Nested object literal - check BEFORE extractLiteralValue
+        if (value.type === 'ObjectExpression') {
+          const nestedObjectNode = ObjectLiteralNode.create(
+            module.file,
+            value.loc?.start.line || 0,
+            value.loc?.start.column || 0,
+            { counter: objectLiteralCounterRef.value++ }
+          );
+          objectLiterals.push(nestedObjectNode as unknown as ObjectLiteralInfo);
+          const nestedObjectId = nestedObjectNode.id;
+
+          // Recursively extract nested properties
+          this.extractObjectProperties(
+            value,
+            nestedObjectId,
+            module,
+            objectProperties,
+            objectLiterals,
+            objectLiteralCounterRef,
+            literals,
+            literalCounterRef
+          );
+
+          propertyInfo.valueType = 'OBJECT_LITERAL';
+          propertyInfo.nestedObjectId = nestedObjectId;
+          propertyInfo.valueNodeId = nestedObjectId;
+        }
+        // Literal value (primitives only - objects/arrays handled above)
+        else {
+          const literalValue = ExpressionEvaluator.extractLiteralValue(value);
+          // Handle both non-null literals AND explicit null literals (NullLiteral)
+          if (literalValue !== null || value.type === 'NullLiteral') {
+            const literalId = `LITERAL#${propertyName}#${module.file}#${propLine}:${propColumn}:${literalCounterRef.value++}`;
+            literals.push({
+              id: literalId,
+              type: 'LITERAL',
+              value: literalValue,
+              valueType: typeof literalValue,
+              file: module.file,
+              line: propLine,
+              column: propColumn,
+              parentCallId: objectId,
+              argIndex: 0
+            });
+            propertyInfo.valueType = 'LITERAL';
+            propertyInfo.valueNodeId = literalId;
+            propertyInfo.literalValue = literalValue;
+          }
+          // Variable reference
+          else if (value.type === 'Identifier') {
+            propertyInfo.valueType = 'VARIABLE';
+            propertyInfo.valueName = value.name;
+          }
+          // Call expression
+          else if (value.type === 'CallExpression') {
+            propertyInfo.valueType = 'CALL';
+            propertyInfo.callLine = value.loc?.start.line;
+            propertyInfo.callColumn = value.loc?.start.column;
+          }
+          // Other expressions
+          else {
+            propertyInfo.valueType = 'EXPRESSION';
+          }
+        }
+
+        objectProperties.push(propertyInfo);
+      }
+      // Handle object methods: { foo() {} }
+      else if (prop.type === 'ObjectMethod') {
+        const propertyName = prop.key.type === 'Identifier' ? prop.key.name : '<computed>';
+        objectProperties.push({
+          objectId,
+          propertyName,
+          valueType: 'EXPRESSION',
+          file: module.file,
+          line: propLine,
+          column: propColumn
+        });
+      }
     }
   }
 
@@ -1261,6 +1464,17 @@ export class JSASTAnalyzer extends Plugin {
       const returnStatements: ReturnStatementInfo[] = [];
       // Update expression tracking for MODIFIES edges (REG-288, REG-312)
       const updateExpressions: UpdateExpressionInfo[] = [];
+      // Promise resolution tracking for RESOLVES_TO edges (REG-334)
+      const promiseResolutions: PromiseResolutionInfo[] = [];
+      // Promise executor contexts (REG-334) - keyed by executor function's start:end position
+      const promiseExecutorContexts = new Map<string, PromiseExecutorContext>();
+      // Yield expression tracking for YIELDS/DELEGATES_TO edges (REG-270)
+      const yieldExpressions: YieldExpressionInfo[] = [];
+      // REG-311: Async error tracking
+      const rejectionPatterns: RejectionPatternInfo[] = [];
+      const catchesFromInfos: CatchesFromInfo[] = [];
+      // Property access tracking for PROPERTY_ACCESS nodes (REG-395)
+      const propertyAccesses: PropertyAccessInfo[] = [];
 
       const ifScopeCounterRef: CounterRef = { value: 0 };
       const scopeCounterRef: CounterRef = { value: 0 };
@@ -1274,6 +1488,7 @@ export class JSASTAnalyzer extends Plugin {
       const arrayLiteralCounterRef: CounterRef = { value: 0 };
       const branchCounterRef: CounterRef = { value: 0 };
       const caseCounterRef: CounterRef = { value: 0 };
+      const propertyAccessCounterRef: CounterRef = { value: 0 };
 
       const processedNodes: ProcessedNodes = {
         functions: new Set(),
@@ -1302,7 +1517,7 @@ export class JSASTAnalyzer extends Plugin {
       this.profiler.start('traverse_variables');
       const variableVisitor = new VariableVisitor(
         module,
-        { variableDeclarations, classInstantiations, literals, variableAssignments, varDeclCounterRef, literalCounterRef, scopes, scopeCounterRef },
+        { variableDeclarations, classInstantiations, literals, variableAssignments, varDeclCounterRef, literalCounterRef, scopes, scopeCounterRef, objectLiterals, objectProperties, objectLiteralCounterRef },
         this.extractVariableNamesFromPattern.bind(this),
         this.trackVariableAssignment.bind(this) as TrackVariableAssignmentCallback,
         scopeTracker  // Pass ScopeTracker for semantic ID generation
@@ -1333,6 +1548,17 @@ export class JSASTAnalyzer extends Plugin {
         returnStatements,
         // Update expression tracking (REG-288, REG-312)
         updateExpressions,
+        // Promise resolution tracking (REG-334)
+        promiseResolutions,
+        promiseExecutorContexts,
+        // Yield expression tracking (REG-270)
+        yieldExpressions,
+        // REG-311: Async error tracking
+        rejectionPatterns,
+        catchesFromInfos,
+        // Property access tracking (REG-395)
+        propertyAccesses,
+        propertyAccessCounterRef,
         objectLiteralCounterRef, arrayLiteralCounterRef,
         ifScopeCounterRef, scopeCounterRef, varDeclCounterRef,
         callSiteCounterRef, functionCounterRef, httpRequestCounterRef,
@@ -1528,6 +1754,12 @@ export class JSASTAnalyzer extends Plugin {
       traverse(ast, callExpressionVisitor.getHandlers());
       this.profiler.end('traverse_calls');
 
+      // Property access expressions (REG-395)
+      this.profiler.start('traverse_property_access');
+      const propertyAccessVisitor = new PropertyAccessVisitor(module, allCollections, scopeTracker);
+      traverse(ast, propertyAccessVisitor.getHandlers());
+      this.profiler.end('traverse_property_access');
+
       // Module-level NewExpression (constructor calls)
       // This handles top-level code like `const x = new Date()` that's not inside a function
       this.profiler.start('traverse_new');
@@ -1564,6 +1796,40 @@ export class JSASTAnalyzer extends Plugin {
               line,
               column
             });
+
+            // REG-334: If this is Promise constructor with executor callback,
+            // register the context for resolve/reject detection
+            if (className === 'Promise' && newNode.arguments.length > 0) {
+              const executorArg = newNode.arguments[0];
+
+              // Only handle inline function expressions (not variable references)
+              if (t.isArrowFunctionExpression(executorArg) || t.isFunctionExpression(executorArg)) {
+                // Extract resolve/reject parameter names
+                let resolveName: string | undefined;
+                let rejectName: string | undefined;
+
+                if (executorArg.params.length > 0 && t.isIdentifier(executorArg.params[0])) {
+                  resolveName = executorArg.params[0].name;
+                }
+                if (executorArg.params.length > 1 && t.isIdentifier(executorArg.params[1])) {
+                  rejectName = executorArg.params[1].name;
+                }
+
+                if (resolveName) {
+                  // Key by function node position to allow nested Promise detection
+                  const funcKey = `${executorArg.start}:${executorArg.end}`;
+                  promiseExecutorContexts.set(funcKey, {
+                    constructorCallId,
+                    resolveName,
+                    rejectName,
+                    file: module.file,
+                    line,
+                    // REG-311: Module-level Promise has no creator function
+                    creatorFunctionId: undefined
+                  });
+                }
+              }
+            }
           }
         }
       });
@@ -1644,7 +1910,8 @@ export class JSASTAnalyzer extends Plugin {
         constructorCalls,
         classDeclarations,
         methodCallbacks,
-        callArguments,
+        // REG-334: Use allCollections.callArguments to include function-level resolve/reject arguments
+        callArguments: allCollections.callArguments || callArguments,
         imports,
         exports,
         httpRequests,
@@ -1664,12 +1931,25 @@ export class JSASTAnalyzer extends Plugin {
         variableReassignments,
         // Return statement tracking
         returnStatements,
+        // Yield expression tracking (REG-270)
+        yieldExpressions,
         // Update expression tracking (REG-288, REG-312)
         updateExpressions,
+        // Promise resolution tracking (REG-334)
+        promiseResolutions: allCollections.promiseResolutions || promiseResolutions,
         // Object/Array literal tracking - use allCollections refs as visitors may have created new arrays
         objectLiterals: allCollections.objectLiterals || objectLiterals,
         objectProperties: allCollections.objectProperties || objectProperties,
-        arrayLiterals: allCollections.arrayLiterals || arrayLiterals
+        arrayLiterals: allCollections.arrayLiterals || arrayLiterals,
+        // REG-311: Async error tracking
+        rejectionPatterns: Array.isArray(allCollections.rejectionPatterns)
+          ? allCollections.rejectionPatterns as RejectionPatternInfo[]
+          : rejectionPatterns,
+        catchesFromInfos: Array.isArray(allCollections.catchesFromInfos)
+          ? allCollections.catchesFromInfos as CatchesFromInfo[]
+          : catchesFromInfos,
+        // Property access tracking (REG-395)
+        propertyAccesses: allCollections.propertyAccesses || propertyAccesses
       });
       this.profiler.end('graph_build');
 
@@ -1743,6 +2023,9 @@ export class JSASTAnalyzer extends Plugin {
    * @param literalCounterRef - Counter for unique literal IDs
    * @param scopeTracker - Tracker for semantic ID generation
    * @param parentScopeVariables - Set to track variables for closure analysis
+   * @param objectLiterals - Collection for object literal nodes (REG-328)
+   * @param objectProperties - Collection for object property edges (REG-328)
+   * @param objectLiteralCounterRef - Counter for unique object literal IDs (REG-328)
    */
   private handleVariableDeclaration(
     varPath: NodePath<t.VariableDeclaration>,
@@ -1755,7 +2038,10 @@ export class JSASTAnalyzer extends Plugin {
     varDeclCounterRef: CounterRef,
     literalCounterRef: CounterRef,
     scopeTracker: ScopeTracker | undefined,
-    parentScopeVariables: Set<{ name: string; id: string; scopeId: string }>
+    parentScopeVariables: Set<{ name: string; id: string; scopeId: string }>,
+    objectLiterals: ObjectLiteralInfo[],
+    objectProperties: ObjectPropertyInfo[],
+    objectLiteralCounterRef: CounterRef
   ): void {
     const varNode = varPath.node;
     const isConst = varNode.kind === 'const';
@@ -1870,7 +2156,10 @@ export class JSASTAnalyzer extends Plugin {
                 varInfo.loc.start.line,
                 literals,
                 variableAssignments,
-                literalCounterRef
+                literalCounterRef,
+                objectLiterals,
+                objectProperties,
+                objectLiteralCounterRef
               );
             }
           });
@@ -1897,7 +2186,10 @@ export class JSASTAnalyzer extends Plugin {
             varInfo.loc.start.line,
             literals,
             variableAssignments,
-            literalCounterRef
+            literalCounterRef,
+            objectLiterals,
+            objectProperties,
+            objectLiteralCounterRef
           );
         }
       }
@@ -1952,10 +2244,102 @@ export class JSASTAnalyzer extends Plugin {
           }
         }
 
+        // 2b. Extract init/test/update for classic for loops and test for while/do-while (REG-282)
+        let initVariableName: string | undefined;
+        let initLine: number | undefined;
+
+        let testExpressionId: string | undefined;
+        let testExpressionType: string | undefined;
+        let testLine: number | undefined;
+        let testColumn: number | undefined;
+
+        let updateExpressionId: string | undefined;
+        let updateExpressionType: string | undefined;
+        let updateLine: number | undefined;
+        let updateColumn: number | undefined;
+
+        if (loopType === 'for') {
+          const forNode = node as t.ForStatement;
+
+          // Extract init: let i = 0
+          if (forNode.init) {
+            initLine = getLine(forNode.init);
+            if (t.isVariableDeclaration(forNode.init)) {
+              // Get name of first declared variable
+              const firstDeclarator = forNode.init.declarations[0];
+              if (t.isIdentifier(firstDeclarator.id)) {
+                initVariableName = firstDeclarator.id.name;
+              }
+            }
+          }
+
+          // Extract test: i < 10
+          if (forNode.test) {
+            testLine = getLine(forNode.test);
+            testColumn = getColumn(forNode.test);
+            testExpressionType = forNode.test.type;
+            testExpressionId = ExpressionNode.generateId(forNode.test.type, module.file, testLine, testColumn);
+          }
+
+          // Extract update: i++
+          if (forNode.update) {
+            updateLine = getLine(forNode.update);
+            updateColumn = getColumn(forNode.update);
+            updateExpressionType = forNode.update.type;
+            updateExpressionId = ExpressionNode.generateId(forNode.update.type, module.file, updateLine, updateColumn);
+          }
+        }
+
+        // Extract test condition for while and do-while loops
+        if (loopType === 'while' || loopType === 'do-while') {
+          const condLoop = node as t.WhileStatement | t.DoWhileStatement;
+          if (condLoop.test) {
+            testLine = getLine(condLoop.test);
+            testColumn = getColumn(condLoop.test);
+            testExpressionType = condLoop.test.type;
+            testExpressionId = ExpressionNode.generateId(condLoop.test.type, module.file, testLine, testColumn);
+          }
+        }
+
+        // Extract async flag for for-await-of (REG-284)
+        let isAsync: boolean | undefined;
+        if (loopType === 'for-of') {
+          const forOfNode = node as t.ForOfStatement;
+          isAsync = forOfNode.await === true ? true : undefined;
+        }
+
         // 3. Determine actual parent - use stack for nested loops, otherwise original parentScopeId
         const actualParentScopeId = (scopeIdStack && scopeIdStack.length > 0)
           ? scopeIdStack[scopeIdStack.length - 1]
           : parentScopeId;
+
+        // 3.5. Extract condition expression for while/do-while/for loops (REG-280)
+        // Note: for-in and for-of don't have test expressions (they use ITERATES_OVER instead)
+        let conditionExpressionId: string | undefined;
+        let conditionExpressionType: string | undefined;
+        let conditionLine: number | undefined;
+        let conditionColumn: number | undefined;
+
+        if (loopType === 'while' || loopType === 'do-while') {
+          const testNode = (node as t.WhileStatement | t.DoWhileStatement).test;
+          if (testNode) {
+            const condResult = this.extractDiscriminantExpression(testNode, module);
+            conditionExpressionId = condResult.id;
+            conditionExpressionType = condResult.expressionType;
+            conditionLine = condResult.line;
+            conditionColumn = condResult.column;
+          }
+        } else if (loopType === 'for') {
+          const forNode = node as t.ForStatement;
+          // for loop test may be null (infinite loop: for(;;))
+          if (forNode.test) {
+            const condResult = this.extractDiscriminantExpression(forNode.test, module);
+            conditionExpressionId = condResult.id;
+            conditionExpressionType = condResult.expressionType;
+            conditionLine = condResult.line;
+            conditionColumn = condResult.column;
+          }
+        }
 
         // 4. Push LOOP info
         loops.push({
@@ -1969,7 +2353,24 @@ export class JSASTAnalyzer extends Plugin {
           parentScopeId: actualParentScopeId,
           iteratesOverName,
           iteratesOverLine,
-          iteratesOverColumn
+          iteratesOverColumn,
+          conditionExpressionId,
+          conditionExpressionType,
+          conditionLine,
+          conditionColumn,
+          // REG-282: init/test/update for classic for loops
+          initVariableName,
+          initLine,
+          testExpressionId,
+          testExpressionType,
+          testLine,
+          testColumn,
+          updateExpressionId,
+          updateExpressionType,
+          updateLine,
+          updateColumn,
+          // REG-284: async flag for for-await-of
+          async: isAsync
         });
 
         // 5. Create body SCOPE (backward compatibility)
@@ -2045,7 +2446,7 @@ export class JSASTAnalyzer extends Plugin {
     scopeTracker: ScopeTracker | undefined,
     tryScopeMap: Map<t.TryStatement, TryScopeInfo>,
     scopeIdStack?: string[],
-    controlFlowState?: { hasTryCatch: boolean }
+    controlFlowState?: { hasTryCatch: boolean; tryBlockDepth: number }
   ): { enter: (tryPath: NodePath<t.TryStatement>) => void; exit: (tryPath: NodePath<t.TryStatement>) => void } {
     return {
       enter: (tryPath: NodePath<t.TryStatement>) => {
@@ -2054,6 +2455,8 @@ export class JSASTAnalyzer extends Plugin {
         // Phase 6 (REG-267): Mark that this function has try/catch
         if (controlFlowState) {
           controlFlowState.hasTryCatch = true;
+          // REG-311: Increment try block depth for O(1) isInsideTry detection
+          controlFlowState.tryBlockDepth++;
         }
 
         // Determine actual parent - use stack for nested structures, otherwise original parentScopeId
@@ -2193,7 +2596,13 @@ export class JSASTAnalyzer extends Plugin {
       },
       exit: (tryPath: NodePath<t.TryStatement>) => {
         const tryNode = tryPath.node;
-        const scopeInfo = tryScopeMap.get(tryNode);
+        const _scopeInfo = tryScopeMap.get(tryNode);
+
+        // REG-311: Only decrement try block depth if we're still in 'try' block
+        // (not transitioned to catch/finally, where we already decremented)
+        if (controlFlowState && _scopeInfo?.currentBlock === 'try') {
+          controlFlowState.tryBlockDepth--;
+        }
 
         // Pop the current scope from stack (could be try, catch, or finally)
         if (scopeIdStack) {
@@ -2228,7 +2637,8 @@ export class JSASTAnalyzer extends Plugin {
     varDeclCounterRef: CounterRef,
     scopeTracker: ScopeTracker | undefined,
     tryScopeMap: Map<t.TryStatement, TryScopeInfo>,
-    scopeIdStack?: string[]
+    scopeIdStack?: string[],
+    controlFlowState?: { hasTryCatch: boolean; tryBlockDepth: number }
   ): { enter: (catchPath: NodePath<t.CatchClause>) => void } {
     return {
       enter: (catchPath: NodePath<t.CatchClause>) => {
@@ -2252,6 +2662,12 @@ export class JSASTAnalyzer extends Plugin {
           if (scopeTracker) {
             scopeTracker.exitScope();
             scopeTracker.enterCountedScope('catch');
+          }
+
+          // REG-311: Decrement tryBlockDepth when leaving try block for catch
+          // Calls in catch block should NOT have isInsideTry=true
+          if (controlFlowState) {
+            controlFlowState.tryBlockDepth--;
           }
 
           scopeInfo.currentBlock = 'catch';
@@ -2592,6 +3008,209 @@ export class JSASTAnalyzer extends Plugin {
   }
 
   /**
+   * Extract return expression info from an expression node.
+   * Used for both explicit return statements and implicit arrow returns.
+   *
+   * This method consolidates ~450 lines of duplicated expression handling code
+   * from three locations:
+   * 1. Top-level implicit arrow returns (arrow function expression body)
+   * 2. ReturnStatement handler (explicit returns)
+   * 3. Nested arrow function implicit returns
+   *
+   * @param expr - The expression being returned
+   * @param module - Module info for file context
+   * @param literals - Collection to add literal nodes to
+   * @param literalCounterRef - Counter for generating unique literal IDs
+   * @param baseLine - Line number for literal ID generation
+   * @param baseColumn - Column number for literal ID generation
+   * @param literalIdSuffix - 'return' or 'implicit_return'
+   * @returns Partial ReturnStatementInfo with expression-specific fields
+   */
+  private extractReturnExpressionInfo(
+    expr: t.Expression,
+    module: { file: string },
+    literals: LiteralInfo[],
+    literalCounterRef: CounterRef,
+    baseLine: number,
+    baseColumn: number,
+    literalIdSuffix: 'return' | 'implicit_return' | 'yield' = 'return'
+  ): Partial<ReturnStatementInfo> {
+    const exprLine = getLine(expr);
+    const exprColumn = getColumn(expr);
+
+    // Identifier (variable reference)
+    if (t.isIdentifier(expr)) {
+      return {
+        returnValueType: 'VARIABLE',
+        returnValueName: expr.name,
+      };
+    }
+
+    // TemplateLiteral must come BEFORE isLiteral (TemplateLiteral extends Literal)
+    if (t.isTemplateLiteral(expr)) {
+      const sourceNames: string[] = [];
+      for (const embedded of expr.expressions) {
+        if (t.isIdentifier(embedded)) {
+          sourceNames.push(embedded.name);
+        }
+      }
+      return {
+        returnValueType: 'EXPRESSION',
+        expressionType: 'TemplateLiteral',
+        returnValueLine: exprLine,
+        returnValueColumn: exprColumn,
+        returnValueId: NodeFactory.generateExpressionId(
+          'TemplateLiteral', module.file, exprLine, exprColumn
+        ),
+        ...(sourceNames.length > 0 ? { expressionSourceNames: sourceNames } : {}),
+      };
+    }
+
+    // Literal values (after TemplateLiteral check)
+    if (t.isLiteral(expr)) {
+      const literalId = `LITERAL#${literalIdSuffix}#${module.file}#${baseLine}:${baseColumn}:${literalCounterRef.value++}`;
+      literals.push({
+        id: literalId,
+        type: 'LITERAL',
+        value: ExpressionEvaluator.extractLiteralValue(expr),
+        valueType: typeof ExpressionEvaluator.extractLiteralValue(expr),
+        file: module.file,
+        line: exprLine,
+        column: exprColumn,
+      });
+      return {
+        returnValueType: 'LITERAL',
+        returnValueId: literalId,
+      };
+    }
+
+    // Direct function call: return foo()
+    if (t.isCallExpression(expr) && t.isIdentifier(expr.callee)) {
+      return {
+        returnValueType: 'CALL_SITE',
+        returnValueLine: exprLine,
+        returnValueColumn: exprColumn,
+        returnValueCallName: expr.callee.name,
+      };
+    }
+
+    // Method call: return obj.method()
+    if (t.isCallExpression(expr) && t.isMemberExpression(expr.callee)) {
+      return {
+        returnValueType: 'METHOD_CALL',
+        returnValueLine: exprLine,
+        returnValueColumn: exprColumn,
+        returnValueCallName: t.isIdentifier(expr.callee.property)
+          ? expr.callee.property.name
+          : undefined,
+      };
+    }
+
+    // BinaryExpression: return a + b
+    if (t.isBinaryExpression(expr)) {
+      return {
+        returnValueType: 'EXPRESSION',
+        expressionType: 'BinaryExpression',
+        returnValueLine: exprLine,
+        returnValueColumn: exprColumn,
+        operator: expr.operator,
+        returnValueId: NodeFactory.generateExpressionId(
+          'BinaryExpression', module.file, exprLine, exprColumn
+        ),
+        leftSourceName: t.isIdentifier(expr.left) ? expr.left.name : undefined,
+        rightSourceName: t.isIdentifier(expr.right) ? expr.right.name : undefined,
+      };
+    }
+
+    // LogicalExpression: return a && b, return a || b
+    if (t.isLogicalExpression(expr)) {
+      return {
+        returnValueType: 'EXPRESSION',
+        expressionType: 'LogicalExpression',
+        returnValueLine: exprLine,
+        returnValueColumn: exprColumn,
+        operator: expr.operator,
+        returnValueId: NodeFactory.generateExpressionId(
+          'LogicalExpression', module.file, exprLine, exprColumn
+        ),
+        leftSourceName: t.isIdentifier(expr.left) ? expr.left.name : undefined,
+        rightSourceName: t.isIdentifier(expr.right) ? expr.right.name : undefined,
+      };
+    }
+
+    // ConditionalExpression: return condition ? a : b
+    if (t.isConditionalExpression(expr)) {
+      return {
+        returnValueType: 'EXPRESSION',
+        expressionType: 'ConditionalExpression',
+        returnValueLine: exprLine,
+        returnValueColumn: exprColumn,
+        returnValueId: NodeFactory.generateExpressionId(
+          'ConditionalExpression', module.file, exprLine, exprColumn
+        ),
+        consequentSourceName: t.isIdentifier(expr.consequent) ? expr.consequent.name : undefined,
+        alternateSourceName: t.isIdentifier(expr.alternate) ? expr.alternate.name : undefined,
+      };
+    }
+
+    // UnaryExpression: return !x, return -x
+    if (t.isUnaryExpression(expr)) {
+      return {
+        returnValueType: 'EXPRESSION',
+        expressionType: 'UnaryExpression',
+        returnValueLine: exprLine,
+        returnValueColumn: exprColumn,
+        operator: expr.operator,
+        returnValueId: NodeFactory.generateExpressionId(
+          'UnaryExpression', module.file, exprLine, exprColumn
+        ),
+        unaryArgSourceName: t.isIdentifier(expr.argument) ? expr.argument.name : undefined,
+      };
+    }
+
+    // MemberExpression (property access): return obj.prop
+    if (t.isMemberExpression(expr)) {
+      return {
+        returnValueType: 'EXPRESSION',
+        expressionType: 'MemberExpression',
+        returnValueLine: exprLine,
+        returnValueColumn: exprColumn,
+        returnValueId: NodeFactory.generateExpressionId(
+          'MemberExpression', module.file, exprLine, exprColumn
+        ),
+        object: t.isIdentifier(expr.object) ? expr.object.name : undefined,
+        objectSourceName: t.isIdentifier(expr.object) ? expr.object.name : undefined,
+        property: t.isIdentifier(expr.property) ? expr.property.name : undefined,
+        computed: expr.computed,
+      };
+    }
+
+    // NewExpression: return new Foo()
+    if (t.isNewExpression(expr)) {
+      return {
+        returnValueType: 'EXPRESSION',
+        expressionType: 'NewExpression',
+        returnValueLine: exprLine,
+        returnValueColumn: exprColumn,
+        returnValueId: NodeFactory.generateExpressionId(
+          'NewExpression', module.file, exprLine, exprColumn
+        ),
+      };
+    }
+
+    // Fallback for other expression types
+    return {
+      returnValueType: 'EXPRESSION',
+      expressionType: expr.type,
+      returnValueLine: exprLine,
+      returnValueColumn: exprColumn,
+      returnValueId: NodeFactory.generateExpressionId(
+        expr.type, module.file, exprLine, exprColumn
+      ),
+    };
+  }
+
+  /**
    * Factory method to create IfStatement handler.
    * Creates BRANCH node for if statement and SCOPE nodes for if/else bodies.
    * Tracks if/else scope transitions via ifElseScopeMap.
@@ -2773,6 +3392,96 @@ export class JSASTAnalyzer extends Plugin {
   }
 
   /**
+   * Factory method to create ConditionalExpression (ternary) handler.
+   * Creates BRANCH nodes with branchType='ternary' and increments branchCount for cyclomatic complexity.
+   *
+   * Key difference from IfStatement: ternary has EXPRESSIONS as branches, not SCOPE blocks.
+   * We store consequentExpressionId and alternateExpressionId in BranchInfo for HAS_CONSEQUENT/HAS_ALTERNATE edges.
+   *
+   * @param parentScopeId - Parent scope ID for the BRANCH node
+   * @param module - Module context
+   * @param branches - Collection to push BRANCH nodes to
+   * @param branchCounterRef - Counter for unique BRANCH IDs
+   * @param scopeTracker - Tracker for semantic ID generation
+   * @param scopeIdStack - Stack for tracking current scope ID for CONTAINS edges
+   * @param controlFlowState - State for tracking control flow metrics (complexity)
+   * @param countLogicalOperators - Function to count logical operators in condition
+   */
+  private createConditionalExpressionHandler(
+    parentScopeId: string,
+    module: VisitorModule,
+    branches: BranchInfo[],
+    branchCounterRef: CounterRef,
+    scopeTracker: ScopeTracker | undefined,
+    scopeIdStack?: string[],
+    controlFlowState?: { branchCount: number; logicalOpCount: number },
+    countLogicalOperators?: (node: t.Expression) => number
+  ): (condPath: NodePath<t.ConditionalExpression>) => void {
+    return (condPath: NodePath<t.ConditionalExpression>) => {
+      const condNode = condPath.node;
+
+      // Increment branch count for cyclomatic complexity
+      if (controlFlowState) {
+        controlFlowState.branchCount++;
+        // Count logical operators in the test condition (e.g., a && b ? x : y)
+        if (countLogicalOperators) {
+          controlFlowState.logicalOpCount += countLogicalOperators(condNode.test);
+        }
+      }
+
+      // Determine parent scope from stack or fallback
+      const actualParentScopeId = (scopeIdStack && scopeIdStack.length > 0)
+        ? scopeIdStack[scopeIdStack.length - 1]
+        : parentScopeId;
+
+      // Create BRANCH node with branchType='ternary'
+      const branchCounter = branchCounterRef.value++;
+      const legacyBranchId = `${module.file}:BRANCH:ternary:${getLine(condNode)}:${branchCounter}`;
+      const branchId = scopeTracker
+        ? computeSemanticId('BRANCH', 'ternary', scopeTracker.getContext(), { discriminator: branchCounter })
+        : legacyBranchId;
+
+      // Extract condition expression info for HAS_CONDITION edge
+      const conditionResult = this.extractDiscriminantExpression(condNode.test, module);
+
+      // Generate expression IDs for consequent and alternate
+      const consequentLine = getLine(condNode.consequent);
+      const consequentColumn = getColumn(condNode.consequent);
+      const consequentExpressionId = ExpressionNode.generateId(
+        condNode.consequent.type,
+        module.file,
+        consequentLine,
+        consequentColumn
+      );
+
+      const alternateLine = getLine(condNode.alternate);
+      const alternateColumn = getColumn(condNode.alternate);
+      const alternateExpressionId = ExpressionNode.generateId(
+        condNode.alternate.type,
+        module.file,
+        alternateLine,
+        alternateColumn
+      );
+
+      branches.push({
+        id: branchId,
+        semanticId: branchId,
+        type: 'BRANCH',
+        branchType: 'ternary',
+        file: module.file,
+        line: getLine(condNode),
+        parentScopeId: actualParentScopeId,
+        discriminantExpressionId: conditionResult.id,
+        discriminantExpressionType: conditionResult.expressionType,
+        discriminantLine: conditionResult.line,
+        discriminantColumn: conditionResult.column,
+        consequentExpressionId,
+        alternateExpressionId
+      });
+    };
+  }
+
+  /**
    * Factory method to create BlockStatement handler for tracking if/else and try/finally transitions.
    * When entering an else block, switches scope from if to else.
    * When entering a finally block, switches scope from try/catch to finally.
@@ -2838,7 +3547,7 @@ export class JSASTAnalyzer extends Plugin {
    * Uses ScopeTracker from collections for semantic ID generation.
    */
   analyzeFunctionBody(
-    funcPath: NodePath<t.Function>,
+    funcPath: NodePath<t.Function | t.StaticBlock>,
     parentScopeId: string,
     module: VisitorModule,
     collections: VisitorCollections
@@ -2849,11 +3558,11 @@ export class JSASTAnalyzer extends Plugin {
     const variableDeclarations = (collections.variableDeclarations ?? []) as VariableDeclarationInfo[];
     const callSites = (collections.callSites ?? []) as CallSiteInfo[];
     const methodCalls = (collections.methodCalls ?? []) as MethodCallInfo[];
-    const eventListeners = (collections.eventListeners ?? []) as EventListenerInfo[];
-    const methodCallbacks = (collections.methodCallbacks ?? []) as MethodCallbackInfo[];
+    const _eventListeners = (collections.eventListeners ?? []) as EventListenerInfo[];
+    const _methodCallbacks = (collections.methodCallbacks ?? []) as MethodCallbackInfo[];
     const classInstantiations = (collections.classInstantiations ?? []) as ClassInstantiationInfo[];
     const constructorCalls = (collections.constructorCalls ?? []) as ConstructorCallInfo[];
-    const httpRequests = (collections.httpRequests ?? []) as HttpRequestInfo[];
+    const _httpRequests = (collections.httpRequests ?? []) as HttpRequestInfo[];
     const literals = (collections.literals ?? []) as LiteralInfo[];
     const variableAssignments = (collections.variableAssignments ?? []) as VariableAssignmentInfo[];
     const ifScopeCounterRef = (collections.ifScopeCounterRef ?? { value: 0 }) as CounterRef;
@@ -2861,12 +3570,30 @@ export class JSASTAnalyzer extends Plugin {
     const varDeclCounterRef = (collections.varDeclCounterRef ?? { value: 0 }) as CounterRef;
     const callSiteCounterRef = (collections.callSiteCounterRef ?? { value: 0 }) as CounterRef;
     const functionCounterRef = (collections.functionCounterRef ?? { value: 0 }) as CounterRef;
-    const httpRequestCounterRef = (collections.httpRequestCounterRef ?? { value: 0 }) as CounterRef;
+    const _httpRequestCounterRef = (collections.httpRequestCounterRef ?? { value: 0 }) as CounterRef;
     const literalCounterRef = (collections.literalCounterRef ?? { value: 0 }) as CounterRef;
-    const anonymousFunctionCounterRef = (collections.anonymousFunctionCounterRef ?? { value: 0 }) as CounterRef;
+    const _anonymousFunctionCounterRef = (collections.anonymousFunctionCounterRef ?? { value: 0 }) as CounterRef;
     const scopeTracker = collections.scopeTracker as ScopeTracker | undefined;
+    // Object literal tracking (REG-328)
+    if (!collections.objectLiterals) {
+      collections.objectLiterals = [];
+    }
+    if (!collections.objectProperties) {
+      collections.objectProperties = [];
+    }
+    if (!collections.objectLiteralCounterRef) {
+      collections.objectLiteralCounterRef = { value: 0 };
+    }
+    const objectLiterals = collections.objectLiterals as ObjectLiteralInfo[];
+    const objectProperties = collections.objectProperties as ObjectPropertyInfo[];
+    const objectLiteralCounterRef = collections.objectLiteralCounterRef as CounterRef;
     const returnStatements = (collections.returnStatements ?? []) as ReturnStatementInfo[];
-    const parameters = (collections.parameters ?? []) as ParameterInfo[];
+    // Initialize yieldExpressions if not exist to ensure nested function calls share same array
+    if (!collections.yieldExpressions) {
+      collections.yieldExpressions = [];
+    }
+    const yieldExpressions = collections.yieldExpressions as YieldExpressionInfo[];
+    const _parameters = (collections.parameters ?? []) as ParameterInfo[];
     // Control flow collections (Phase 2: LOOP nodes)
     // Initialize if not exist to ensure nested function calls share same arrays
     if (!collections.loops) {
@@ -2893,9 +3620,9 @@ export class JSASTAnalyzer extends Plugin {
     const parentScopeVariables = new Set<{ name: string; id: string; scopeId: string }>();
 
     const processedCallSites = processedNodes.callSites;
-    const processedVarDecls = processedNodes.varDecls;
+    const _processedVarDecls = processedNodes.varDecls;
     const processedMethodCalls = processedNodes.methodCalls;
-    const processedEventListeners = processedNodes.eventListeners;
+    const _processedEventListeners = processedNodes.eventListeners;
 
     // Track if/else scope transitions (Phase 3: extended with branchId)
     const ifElseScopeMap = new Map<t.IfStatement, IfElseScopeInfo>();
@@ -2939,6 +3666,29 @@ export class JSASTAnalyzer extends Plugin {
     // Track try/catch/finally scope transitions
     const tryScopeMap = new Map<t.TryStatement, TryScopeInfo>();
 
+    // REG-334: Use shared Promise executor contexts from collections.
+    // These are populated by module-level NewExpression handler and function-level NewExpression handler.
+    if (!collections.promiseExecutorContexts) {
+      collections.promiseExecutorContexts = new Map<string, PromiseExecutorContext>();
+    }
+    const promiseExecutorContexts = collections.promiseExecutorContexts as Map<string, PromiseExecutorContext>;
+
+    // Initialize promiseResolutions array if not exists
+    if (!collections.promiseResolutions) {
+      collections.promiseResolutions = [];
+    }
+    const promiseResolutions = collections.promiseResolutions as PromiseResolutionInfo[];
+
+    // REG-311: Initialize rejectionPatterns and catchesFromInfos collections
+    if (!collections.rejectionPatterns) {
+      collections.rejectionPatterns = [];
+    }
+    if (!collections.catchesFromInfos) {
+      collections.catchesFromInfos = [];
+    }
+    const rejectionPatterns = collections.rejectionPatterns as RejectionPatternInfo[];
+    const catchesFromInfos = collections.catchesFromInfos as CatchesFromInfo[];
+
     // Dynamic scope ID stack for CONTAINS edges
     // Starts with the function body scope, gets updated as we enter/exit conditional scopes
     const scopeIdStack: string[] = [parentScopeId];
@@ -2946,16 +3696,24 @@ export class JSASTAnalyzer extends Plugin {
 
     // Determine the ID of the function we're analyzing for RETURNS edges
     // Find by matching file/line/column in functions collection (it was just added by the visitor)
+    // REG-271: Skip for StaticBlock (static blocks don't have RETURNS edges or control flow metadata)
     const funcNode = funcPath.node;
+    const functionNode = t.isFunction(funcNode) ? funcNode : null;
+    const functionPath = functionNode ? (funcPath as NodePath<t.Function>) : null;
     const funcLine = getLine(funcNode);
     const funcColumn = getColumn(funcNode);
     let currentFunctionId: string | null = null;
 
-    const matchingFunction = functions.find(f =>
-      f.file === module.file &&
-      f.line === funcLine &&
-      (f.column === undefined || f.column === funcColumn)
-    );
+    // StaticBlock is not a function - skip function matching for RETURNS edges
+    // For StaticBlock, matchingFunction will be undefined
+    const matchingFunction = funcNode.type !== 'StaticBlock'
+      ? functions.find(f =>
+          f.file === module.file &&
+          f.line === funcLine &&
+          (f.column === undefined || f.column === funcColumn)
+        )
+      : undefined;
+
     if (matchingFunction) {
       currentFunctionId = matchingFunction.id;
     }
@@ -2970,7 +3728,9 @@ export class JSASTAnalyzer extends Plugin {
       hasEarlyReturn: false,
       hasThrow: false,
       returnCount: 0,       // Track total return count for early return detection
-      totalStatements: 0    // Track if there are statements after returns
+      totalStatements: 0,   // Track if there are statements after returns
+      // REG-311: Try block depth counter for O(1) isInsideTry detection
+      tryBlockDepth: 0
     };
 
     // Handle implicit return for THIS arrow function if it has an expression body
@@ -2980,135 +3740,20 @@ export class JSASTAnalyzer extends Plugin {
       const bodyLine = getLine(bodyExpr);
       const bodyColumn = getColumn(bodyExpr);
 
+      // Extract expression-specific info using shared method
+      const exprInfo = this.extractReturnExpressionInfo(
+        bodyExpr, module, literals, literalCounterRef, funcLine, funcColumn, 'implicit_return'
+      );
+
       const returnInfo: ReturnStatementInfo = {
         parentFunctionId: currentFunctionId,
         file: module.file,
         line: bodyLine,
         column: bodyColumn,
         returnValueType: 'NONE',
-        isImplicitReturn: true
+        isImplicitReturn: true,
+        ...exprInfo,
       };
-
-      // Apply type detection logic for the implicit return
-      if (t.isIdentifier(bodyExpr)) {
-        returnInfo.returnValueType = 'VARIABLE';
-        returnInfo.returnValueName = bodyExpr.name;
-      }
-      // TemplateLiteral must come BEFORE isLiteral (TemplateLiteral extends Literal)
-      else if (t.isTemplateLiteral(bodyExpr)) {
-        returnInfo.returnValueType = 'EXPRESSION';
-        returnInfo.expressionType = 'TemplateLiteral';
-        returnInfo.returnValueLine = getLine(bodyExpr);
-        returnInfo.returnValueColumn = getColumn(bodyExpr);
-        returnInfo.returnValueId = NodeFactory.generateExpressionId(
-          'TemplateLiteral', module.file, getLine(bodyExpr), getColumn(bodyExpr)
-        );
-        const sourceNames: string[] = [];
-        for (const expr of bodyExpr.expressions) {
-          if (t.isIdentifier(expr)) sourceNames.push(expr.name);
-        }
-        if (sourceNames.length > 0) returnInfo.expressionSourceNames = sourceNames;
-      }
-      else if (t.isLiteral(bodyExpr)) {
-        returnInfo.returnValueType = 'LITERAL';
-        const literalId = `LITERAL#implicit_return#${module.file}#${funcLine}:${funcColumn}:${literalCounterRef.value++}`;
-        returnInfo.returnValueId = literalId;
-        literals.push({
-          id: literalId,
-          type: 'LITERAL',
-          value: ExpressionEvaluator.extractLiteralValue(bodyExpr),
-          valueType: typeof ExpressionEvaluator.extractLiteralValue(bodyExpr),
-          file: module.file,
-          line: bodyLine,
-          column: bodyColumn
-        });
-      }
-      else if (t.isCallExpression(bodyExpr) && t.isIdentifier(bodyExpr.callee)) {
-        returnInfo.returnValueType = 'CALL_SITE';
-        returnInfo.returnValueLine = getLine(bodyExpr);
-        returnInfo.returnValueColumn = getColumn(bodyExpr);
-        returnInfo.returnValueCallName = bodyExpr.callee.name;
-      }
-      else if (t.isCallExpression(bodyExpr) && t.isMemberExpression(bodyExpr.callee)) {
-        returnInfo.returnValueType = 'METHOD_CALL';
-        returnInfo.returnValueLine = getLine(bodyExpr);
-        returnInfo.returnValueColumn = getColumn(bodyExpr);
-        if (t.isIdentifier(bodyExpr.callee.property)) {
-          returnInfo.returnValueCallName = bodyExpr.callee.property.name;
-        }
-      }
-      // REG-276: Detailed EXPRESSION handling for implicit arrow returns
-      else if (t.isBinaryExpression(bodyExpr)) {
-        returnInfo.returnValueType = 'EXPRESSION';
-        returnInfo.expressionType = 'BinaryExpression';
-        returnInfo.returnValueLine = getLine(bodyExpr);
-        returnInfo.returnValueColumn = getColumn(bodyExpr);
-        returnInfo.operator = bodyExpr.operator;
-        returnInfo.returnValueId = NodeFactory.generateExpressionId(
-          'BinaryExpression', module.file, getLine(bodyExpr), getColumn(bodyExpr)
-        );
-        if (t.isIdentifier(bodyExpr.left)) returnInfo.leftSourceName = bodyExpr.left.name;
-        if (t.isIdentifier(bodyExpr.right)) returnInfo.rightSourceName = bodyExpr.right.name;
-      }
-      else if (t.isLogicalExpression(bodyExpr)) {
-        returnInfo.returnValueType = 'EXPRESSION';
-        returnInfo.expressionType = 'LogicalExpression';
-        returnInfo.returnValueLine = getLine(bodyExpr);
-        returnInfo.returnValueColumn = getColumn(bodyExpr);
-        returnInfo.operator = bodyExpr.operator;
-        returnInfo.returnValueId = NodeFactory.generateExpressionId(
-          'LogicalExpression', module.file, getLine(bodyExpr), getColumn(bodyExpr)
-        );
-        if (t.isIdentifier(bodyExpr.left)) returnInfo.leftSourceName = bodyExpr.left.name;
-        if (t.isIdentifier(bodyExpr.right)) returnInfo.rightSourceName = bodyExpr.right.name;
-      }
-      else if (t.isConditionalExpression(bodyExpr)) {
-        returnInfo.returnValueType = 'EXPRESSION';
-        returnInfo.expressionType = 'ConditionalExpression';
-        returnInfo.returnValueLine = getLine(bodyExpr);
-        returnInfo.returnValueColumn = getColumn(bodyExpr);
-        returnInfo.returnValueId = NodeFactory.generateExpressionId(
-          'ConditionalExpression', module.file, getLine(bodyExpr), getColumn(bodyExpr)
-        );
-        if (t.isIdentifier(bodyExpr.consequent)) returnInfo.consequentSourceName = bodyExpr.consequent.name;
-        if (t.isIdentifier(bodyExpr.alternate)) returnInfo.alternateSourceName = bodyExpr.alternate.name;
-      }
-      else if (t.isUnaryExpression(bodyExpr)) {
-        returnInfo.returnValueType = 'EXPRESSION';
-        returnInfo.expressionType = 'UnaryExpression';
-        returnInfo.returnValueLine = getLine(bodyExpr);
-        returnInfo.returnValueColumn = getColumn(bodyExpr);
-        returnInfo.operator = bodyExpr.operator;
-        returnInfo.returnValueId = NodeFactory.generateExpressionId(
-          'UnaryExpression', module.file, getLine(bodyExpr), getColumn(bodyExpr)
-        );
-        if (t.isIdentifier(bodyExpr.argument)) returnInfo.unaryArgSourceName = bodyExpr.argument.name;
-      }
-      else if (t.isMemberExpression(bodyExpr)) {
-        returnInfo.returnValueType = 'EXPRESSION';
-        returnInfo.expressionType = 'MemberExpression';
-        returnInfo.returnValueLine = getLine(bodyExpr);
-        returnInfo.returnValueColumn = getColumn(bodyExpr);
-        returnInfo.returnValueId = NodeFactory.generateExpressionId(
-          'MemberExpression', module.file, getLine(bodyExpr), getColumn(bodyExpr)
-        );
-        if (t.isIdentifier(bodyExpr.object)) {
-          returnInfo.object = bodyExpr.object.name;
-          returnInfo.objectSourceName = bodyExpr.object.name;
-        }
-        if (t.isIdentifier(bodyExpr.property)) returnInfo.property = bodyExpr.property.name;
-        returnInfo.computed = bodyExpr.computed;
-      }
-      else {
-        // Fallback: any other expression type
-        returnInfo.returnValueType = 'EXPRESSION';
-        returnInfo.expressionType = bodyExpr.type;
-        returnInfo.returnValueLine = getLine(bodyExpr);
-        returnInfo.returnValueColumn = getColumn(bodyExpr);
-        returnInfo.returnValueId = NodeFactory.generateExpressionId(
-          bodyExpr.type, module.file, getLine(bodyExpr), getColumn(bodyExpr)
-        );
-      }
 
       returnStatements.push(returnInfo);
     }
@@ -3126,7 +3771,10 @@ export class JSASTAnalyzer extends Plugin {
           varDeclCounterRef,
           literalCounterRef,
           scopeTracker,
-          parentScopeVariables
+          parentScopeVariables,
+          objectLiterals,
+          objectProperties,
+          objectLiteralCounterRef
         );
       },
 
@@ -3170,15 +3818,22 @@ export class JSASTAnalyzer extends Plugin {
       // Handle return statements for RETURNS edges
       ReturnStatement: (returnPath: NodePath<t.ReturnStatement>) => {
         // Skip if we couldn't determine the function ID
-        if (!currentFunctionId) return;
+        if (!currentFunctionId) {
+          return;
+        }
 
         // Skip if this return is inside a nested function (not the function we're analyzing)
-        // Check if there's a function ancestor between us and funcPath.node
+        // Check if there's a function ancestor BETWEEN us and funcNode
+        // Stop checking once we reach funcNode - parents above funcNode are outside scope
         let parent: NodePath | null = returnPath.parentPath;
         let isInsideConditional = false;
         while (parent) {
-          if (t.isFunction(parent.node) && parent.node !== funcNode) {
-            // This return is inside a nested function - skip it
+          // If we've reached funcNode, we're done checking - this return belongs to funcNode
+          if (parent.node === funcNode) {
+            break;
+          }
+          if (t.isFunction(parent.node)) {
+            // Found a function between returnPath and funcNode - this return is inside a nested function
             return;
           }
           // Track if return is inside a conditional block (if/else, switch case, loop, try/catch)
@@ -3213,226 +3868,25 @@ export class JSASTAnalyzer extends Plugin {
 
         const arg = returnNode.argument;
 
-        // Determine return value type and extract relevant info
+        // Extract expression-specific info using shared method
+        const exprInfo = this.extractReturnExpressionInfo(
+          arg, module, literals, literalCounterRef, returnLine, returnColumn, 'return'
+        );
+
         const returnInfo: ReturnStatementInfo = {
           parentFunctionId: currentFunctionId,
           file: module.file,
           line: returnLine,
           column: returnColumn,
-          returnValueType: 'NONE'
+          returnValueType: 'NONE',
+          ...exprInfo,
         };
-
-        // Identifier (variable reference)
-        if (t.isIdentifier(arg)) {
-          returnInfo.returnValueType = 'VARIABLE';
-          returnInfo.returnValueName = arg.name;
-        }
-        // TemplateLiteral must come BEFORE isLiteral (TemplateLiteral extends Literal)
-        else if (t.isTemplateLiteral(arg)) {
-          returnInfo.returnValueType = 'EXPRESSION';
-          returnInfo.expressionType = 'TemplateLiteral';
-          returnInfo.returnValueLine = getLine(arg);
-          returnInfo.returnValueColumn = getColumn(arg);
-
-          returnInfo.returnValueId = NodeFactory.generateExpressionId(
-            'TemplateLiteral',
-            module.file,
-            getLine(arg),
-            getColumn(arg)
-          );
-
-          // Extract all embedded expression identifiers
-          const sourceNames: string[] = [];
-          for (const expr of arg.expressions) {
-            if (t.isIdentifier(expr)) {
-              sourceNames.push(expr.name);
-            }
-          }
-          if (sourceNames.length > 0) {
-            returnInfo.expressionSourceNames = sourceNames;
-          }
-        }
-        // Literal values (after TemplateLiteral check)
-        else if (t.isLiteral(arg)) {
-          returnInfo.returnValueType = 'LITERAL';
-          // Create a LITERAL node ID for this return value
-          const literalId = `LITERAL#return#${module.file}#${returnLine}:${returnColumn}:${literalCounterRef.value++}`;
-          returnInfo.returnValueId = literalId;
-
-          // Also add to literals collection for node creation
-          literals.push({
-            id: literalId,
-            type: 'LITERAL',
-            value: ExpressionEvaluator.extractLiteralValue(arg),
-            valueType: typeof ExpressionEvaluator.extractLiteralValue(arg),
-            file: module.file,
-            line: returnLine,
-            column: returnColumn
-          });
-        }
-        // Direct function call: return foo()
-        else if (t.isCallExpression(arg) && t.isIdentifier(arg.callee)) {
-          returnInfo.returnValueType = 'CALL_SITE';
-          returnInfo.returnValueLine = getLine(arg);
-          returnInfo.returnValueColumn = getColumn(arg);
-          returnInfo.returnValueCallName = arg.callee.name;
-        }
-        // Method call: return obj.method()
-        else if (t.isCallExpression(arg) && t.isMemberExpression(arg.callee)) {
-          returnInfo.returnValueType = 'METHOD_CALL';
-          returnInfo.returnValueLine = getLine(arg);
-          returnInfo.returnValueColumn = getColumn(arg);
-          // Extract method name for lookup
-          if (t.isIdentifier(arg.callee.property)) {
-            returnInfo.returnValueCallName = arg.callee.property.name;
-          }
-        }
-        // BinaryExpression: return a + b
-        else if (t.isBinaryExpression(arg)) {
-          returnInfo.returnValueType = 'EXPRESSION';
-          returnInfo.expressionType = 'BinaryExpression';
-          returnInfo.returnValueLine = getLine(arg);
-          returnInfo.returnValueColumn = getColumn(arg);
-          returnInfo.operator = arg.operator;
-
-          // Generate stable ID for the EXPRESSION node
-          returnInfo.returnValueId = NodeFactory.generateExpressionId(
-            'BinaryExpression',
-            module.file,
-            getLine(arg),
-            getColumn(arg)
-          );
-
-          // Extract left operand source
-          if (t.isIdentifier(arg.left)) {
-            returnInfo.leftSourceName = arg.left.name;
-          }
-          // Extract right operand source
-          if (t.isIdentifier(arg.right)) {
-            returnInfo.rightSourceName = arg.right.name;
-          }
-        }
-        // LogicalExpression: return a && b, return a || b
-        else if (t.isLogicalExpression(arg)) {
-          returnInfo.returnValueType = 'EXPRESSION';
-          returnInfo.expressionType = 'LogicalExpression';
-          returnInfo.returnValueLine = getLine(arg);
-          returnInfo.returnValueColumn = getColumn(arg);
-          returnInfo.operator = arg.operator;
-
-          returnInfo.returnValueId = NodeFactory.generateExpressionId(
-            'LogicalExpression',
-            module.file,
-            getLine(arg),
-            getColumn(arg)
-          );
-
-          if (t.isIdentifier(arg.left)) {
-            returnInfo.leftSourceName = arg.left.name;
-          }
-          if (t.isIdentifier(arg.right)) {
-            returnInfo.rightSourceName = arg.right.name;
-          }
-        }
-        // ConditionalExpression: return condition ? a : b
-        else if (t.isConditionalExpression(arg)) {
-          returnInfo.returnValueType = 'EXPRESSION';
-          returnInfo.expressionType = 'ConditionalExpression';
-          returnInfo.returnValueLine = getLine(arg);
-          returnInfo.returnValueColumn = getColumn(arg);
-
-          returnInfo.returnValueId = NodeFactory.generateExpressionId(
-            'ConditionalExpression',
-            module.file,
-            getLine(arg),
-            getColumn(arg)
-          );
-
-          // Extract consequent (then branch) source
-          if (t.isIdentifier(arg.consequent)) {
-            returnInfo.consequentSourceName = arg.consequent.name;
-          }
-          // Extract alternate (else branch) source
-          if (t.isIdentifier(arg.alternate)) {
-            returnInfo.alternateSourceName = arg.alternate.name;
-          }
-        }
-        // UnaryExpression: return !x, return -x
-        else if (t.isUnaryExpression(arg)) {
-          returnInfo.returnValueType = 'EXPRESSION';
-          returnInfo.expressionType = 'UnaryExpression';
-          returnInfo.returnValueLine = getLine(arg);
-          returnInfo.returnValueColumn = getColumn(arg);
-          returnInfo.operator = arg.operator;
-
-          returnInfo.returnValueId = NodeFactory.generateExpressionId(
-            'UnaryExpression',
-            module.file,
-            getLine(arg),
-            getColumn(arg)
-          );
-
-          if (t.isIdentifier(arg.argument)) {
-            returnInfo.unaryArgSourceName = arg.argument.name;
-          }
-        }
-        // MemberExpression (property access): return obj.prop
-        else if (t.isMemberExpression(arg)) {
-          returnInfo.returnValueType = 'EXPRESSION';
-          returnInfo.expressionType = 'MemberExpression';
-          returnInfo.returnValueLine = getLine(arg);
-          returnInfo.returnValueColumn = getColumn(arg);
-
-          returnInfo.returnValueId = NodeFactory.generateExpressionId(
-            'MemberExpression',
-            module.file,
-            getLine(arg),
-            getColumn(arg)
-          );
-
-          // Extract object.property info
-          if (t.isIdentifier(arg.object)) {
-            returnInfo.object = arg.object.name;
-            returnInfo.objectSourceName = arg.object.name;
-          }
-          if (t.isIdentifier(arg.property)) {
-            returnInfo.property = arg.property.name;
-          }
-          returnInfo.computed = arg.computed;
-        }
-        // NewExpression: return new Foo()
-        else if (t.isNewExpression(arg)) {
-          returnInfo.returnValueType = 'EXPRESSION';
-          returnInfo.expressionType = 'NewExpression';
-          returnInfo.returnValueLine = getLine(arg);
-          returnInfo.returnValueColumn = getColumn(arg);
-
-          returnInfo.returnValueId = NodeFactory.generateExpressionId(
-            'NewExpression',
-            module.file,
-            getLine(arg),
-            getColumn(arg)
-          );
-        }
-        // Fallback for other expression types
-        else {
-          returnInfo.returnValueType = 'EXPRESSION';
-          returnInfo.expressionType = arg.type;
-          returnInfo.returnValueLine = getLine(arg);
-          returnInfo.returnValueColumn = getColumn(arg);
-
-          returnInfo.returnValueId = NodeFactory.generateExpressionId(
-            arg.type,
-            module.file,
-            getLine(arg),
-            getColumn(arg)
-          );
-        }
 
         returnStatements.push(returnInfo);
       },
 
       // Phase 6 (REG-267): Track throw statements for control flow metadata
+      // REG-311: Also detect async_throw rejection patterns
       ThrowStatement: (throwPath: NodePath<t.ThrowStatement>) => {
         // Skip if this throw is inside a nested function (not the function we're analyzing)
         let parent: NodePath | null = throwPath.parentPath;
@@ -3445,6 +3899,143 @@ export class JSASTAnalyzer extends Plugin {
         }
 
         controlFlowState.hasThrow = true;
+
+        // REG-311: Track rejection patterns for async functions
+        const isAsyncFunction = functionNode?.async === true;
+        if (isAsyncFunction && currentFunctionId && functionNode && functionPath) {
+          const throwNode = throwPath.node;
+          const arg = throwNode.argument;
+          const throwLine = getLine(throwNode);
+          const throwColumn = getColumn(throwNode);
+
+          // Case 1: throw new Error() or throw new CustomError()
+          if (arg && t.isNewExpression(arg) && t.isIdentifier(arg.callee)) {
+            rejectionPatterns.push({
+              functionId: currentFunctionId,
+              errorClassName: arg.callee.name,
+              rejectionType: 'async_throw',
+              file: module.file,
+              line: throwLine,
+              column: throwColumn
+            });
+          }
+          // Case 2: throw identifier - needs micro-trace
+          else if (arg && t.isIdentifier(arg)) {
+            const varName = arg.name;
+
+            // Check if it's a parameter
+            const isParameter = functionNode.params.some(param =>
+              t.isIdentifier(param) && param.name === varName
+            );
+
+            if (isParameter) {
+              // Parameter forwarding - can't resolve statically
+              rejectionPatterns.push({
+                functionId: currentFunctionId,
+                errorClassName: null,
+                rejectionType: 'variable_parameter',
+                file: module.file,
+                line: throwLine,
+                column: throwColumn,
+                sourceVariableName: varName
+              });
+            } else {
+              // Try micro-trace
+              const { errorClassName, tracePath } = this.microTraceToErrorClass(
+                varName,
+                functionPath,
+                variableDeclarations
+              );
+
+              rejectionPatterns.push({
+                functionId: currentFunctionId,
+                errorClassName,
+                rejectionType: errorClassName ? 'variable_traced' : 'variable_unknown',
+                file: module.file,
+                line: throwLine,
+                column: throwColumn,
+                sourceVariableName: varName,
+                tracePath
+              });
+            }
+          }
+        }
+      },
+
+      // Handle yield expressions for YIELDS/DELEGATES_TO edges (REG-270)
+      YieldExpression: (yieldPath: NodePath<t.YieldExpression>) => {
+        // Skip if we couldn't determine the function ID
+        if (!currentFunctionId) {
+          return;
+        }
+
+        // Skip if this yield is inside a nested function (not the function we're analyzing)
+        // Check if there's a function ancestor BETWEEN us and funcNode
+        let parent: NodePath | null = yieldPath.parentPath;
+        while (parent) {
+          // If we've reached funcNode, we're done checking - this yield belongs to funcNode
+          if (parent.node === funcNode) {
+            break;
+          }
+          if (t.isFunction(parent.node)) {
+            // Found a function between yieldPath and funcNode - this yield is inside a nested function
+            return;
+          }
+          parent = parent.parentPath;
+        }
+
+        const yieldNode = yieldPath.node;
+        const yieldLine = getLine(yieldNode);
+        const yieldColumn = getColumn(yieldNode);
+        const isDelegate = yieldNode.delegate ?? false;
+
+        // Handle bare yield; (no value) - only valid for non-delegate yield
+        if (!yieldNode.argument && !isDelegate) {
+          // Skip - no data flow value
+          return;
+        }
+
+        // For yield* without argument (syntax error in practice, but handle gracefully)
+        if (!yieldNode.argument) {
+          return;
+        }
+
+        const arg = yieldNode.argument;
+
+        // Extract expression-specific info using shared method
+        // Note: We reuse extractReturnExpressionInfo since yield values have identical semantics
+        const exprInfo = this.extractReturnExpressionInfo(
+          arg, module, literals, literalCounterRef, yieldLine, yieldColumn, 'yield'
+        );
+
+        // Map ReturnStatementInfo fields to YieldExpressionInfo fields
+        const yieldInfo: YieldExpressionInfo = {
+          parentFunctionId: currentFunctionId,
+          file: module.file,
+          line: yieldLine,
+          column: yieldColumn,
+          isDelegate,
+          yieldValueType: exprInfo.returnValueType ?? 'NONE',
+          yieldValueName: exprInfo.returnValueName,
+          yieldValueId: exprInfo.returnValueId,
+          yieldValueLine: exprInfo.returnValueLine,
+          yieldValueColumn: exprInfo.returnValueColumn,
+          yieldValueCallName: exprInfo.returnValueCallName,
+          expressionType: exprInfo.expressionType,
+          operator: exprInfo.operator,
+          leftSourceName: exprInfo.leftSourceName,
+          rightSourceName: exprInfo.rightSourceName,
+          consequentSourceName: exprInfo.consequentSourceName,
+          alternateSourceName: exprInfo.alternateSourceName,
+          object: exprInfo.object,
+          property: exprInfo.property,
+          computed: exprInfo.computed,
+          objectSourceName: exprInfo.objectSourceName,
+          expressionSourceNames: exprInfo.expressionSourceNames,
+          unaryArgSourceName: exprInfo.unaryArgSourceName,
+        };
+
+        yieldExpressions.push(yieldInfo);
       },
 
       ForStatement: this.createLoopScopeHandler('for', 'for-loop', 'for', parentScopeId, module, scopes, loops, scopeCounterRef, loopCounterRef, scopeTracker, scopeIdStack, controlFlowState),
@@ -3477,7 +4068,8 @@ export class JSASTAnalyzer extends Plugin {
         varDeclCounterRef,
         scopeTracker,
         tryScopeMap,
-        scopeIdStack
+        scopeIdStack,
+        controlFlowState
       ),
 
       SwitchStatement: (switchPath: NodePath<t.SwitchStatement>) => {
@@ -3489,6 +4081,53 @@ export class JSASTAnalyzer extends Plugin {
           scopeTracker,
           controlFlowState
         );
+      },
+
+      FunctionDeclaration: (funcDeclPath: NodePath<t.FunctionDeclaration>) => {
+        const node = funcDeclPath.node;
+        const funcName = node.id ? node.id.name : this.generateAnonymousName(scopeTracker);
+        // Use semantic ID as primary ID when scopeTracker available
+        const legacyId = `FUNCTION#${funcName}#${module.file}#${getLine(node)}:${getColumn(node)}:${functionCounterRef.value++}`;
+        const functionId = scopeTracker
+          ? computeSemanticId('FUNCTION', funcName, scopeTracker.getContext())
+          : legacyId;
+
+        functions.push({
+          id: functionId,
+          type: 'FUNCTION',
+          name: funcName,
+          file: module.file,
+          line: getLine(node),
+          column: getColumn(node),
+          async: node.async || false,
+          generator: node.generator || false,
+          parentScopeId
+        });
+
+        const nestedScopeId = `SCOPE#${funcName}:body#${module.file}#${getLine(node)}`;
+        const closureSemanticId = this.generateSemanticId('closure', scopeTracker);
+        scopes.push({
+          id: nestedScopeId,
+          type: 'SCOPE',
+          scopeType: 'closure',
+          name: `${funcName}:body`,
+          semanticId: closureSemanticId,
+          conditional: false,
+          file: module.file,
+          line: getLine(node),
+          parentFunctionId: functionId,
+          capturesFrom: parentScopeId
+        });
+
+        // Enter nested function scope for semantic ID generation
+        if (scopeTracker) {
+          scopeTracker.enterScope(funcName, 'function');
+        }
+        this.analyzeFunctionBody(funcDeclPath, nestedScopeId, module, collections);
+        if (scopeTracker) {
+          scopeTracker.exitScope();
+        }
+        funcDeclPath.skip();
       },
 
       FunctionExpression: (funcPath: NodePath<t.FunctionExpression>) => {
@@ -3602,134 +4241,20 @@ export class JSASTAnalyzer extends Plugin {
           const bodyLine = getLine(bodyExpr);
           const bodyColumn = getColumn(bodyExpr);
 
+          // Extract expression-specific info using shared method
+          const exprInfo = this.extractReturnExpressionInfo(
+            bodyExpr, module, literals, literalCounterRef, line, column, 'implicit_return'
+          );
+
           const returnInfo: ReturnStatementInfo = {
             parentFunctionId: functionId,
             file: module.file,
             line: bodyLine,
             column: bodyColumn,
             returnValueType: 'NONE',
-            isImplicitReturn: true
+            isImplicitReturn: true,
+            ...exprInfo,
           };
-
-          // Apply same type detection logic as ReturnStatement handler
-          if (t.isIdentifier(bodyExpr)) {
-            returnInfo.returnValueType = 'VARIABLE';
-            returnInfo.returnValueName = bodyExpr.name;
-          }
-          // TemplateLiteral must come BEFORE isLiteral (TemplateLiteral extends Literal)
-          else if (t.isTemplateLiteral(bodyExpr)) {
-            returnInfo.returnValueType = 'EXPRESSION';
-            returnInfo.expressionType = 'TemplateLiteral';
-            returnInfo.returnValueLine = getLine(bodyExpr);
-            returnInfo.returnValueColumn = getColumn(bodyExpr);
-            returnInfo.returnValueId = NodeFactory.generateExpressionId(
-              'TemplateLiteral', module.file, getLine(bodyExpr), getColumn(bodyExpr)
-            );
-            const sourceNames: string[] = [];
-            for (const expr of bodyExpr.expressions) {
-              if (t.isIdentifier(expr)) sourceNames.push(expr.name);
-            }
-            if (sourceNames.length > 0) returnInfo.expressionSourceNames = sourceNames;
-          }
-          else if (t.isLiteral(bodyExpr)) {
-            returnInfo.returnValueType = 'LITERAL';
-            const literalId = `LITERAL#implicit_return#${module.file}#${line}:${column}:${literalCounterRef.value++}`;
-            returnInfo.returnValueId = literalId;
-            literals.push({
-              id: literalId,
-              type: 'LITERAL',
-              value: ExpressionEvaluator.extractLiteralValue(bodyExpr),
-              valueType: typeof ExpressionEvaluator.extractLiteralValue(bodyExpr),
-              file: module.file,
-              line: bodyLine,
-              column: bodyColumn
-            });
-          }
-          else if (t.isCallExpression(bodyExpr) && t.isIdentifier(bodyExpr.callee)) {
-            returnInfo.returnValueType = 'CALL_SITE';
-            returnInfo.returnValueLine = getLine(bodyExpr);
-            returnInfo.returnValueColumn = getColumn(bodyExpr);
-            returnInfo.returnValueCallName = bodyExpr.callee.name;
-          }
-          else if (t.isCallExpression(bodyExpr) && t.isMemberExpression(bodyExpr.callee)) {
-            returnInfo.returnValueType = 'METHOD_CALL';
-            returnInfo.returnValueLine = getLine(bodyExpr);
-            returnInfo.returnValueColumn = getColumn(bodyExpr);
-            if (t.isIdentifier(bodyExpr.callee.property)) {
-              returnInfo.returnValueCallName = bodyExpr.callee.property.name;
-            }
-          }
-          // REG-276: Detailed EXPRESSION handling for nested implicit arrow returns
-          else if (t.isBinaryExpression(bodyExpr)) {
-            returnInfo.returnValueType = 'EXPRESSION';
-            returnInfo.expressionType = 'BinaryExpression';
-            returnInfo.returnValueLine = getLine(bodyExpr);
-            returnInfo.returnValueColumn = getColumn(bodyExpr);
-            returnInfo.operator = bodyExpr.operator;
-            returnInfo.returnValueId = NodeFactory.generateExpressionId(
-              'BinaryExpression', module.file, getLine(bodyExpr), getColumn(bodyExpr)
-            );
-            if (t.isIdentifier(bodyExpr.left)) returnInfo.leftSourceName = bodyExpr.left.name;
-            if (t.isIdentifier(bodyExpr.right)) returnInfo.rightSourceName = bodyExpr.right.name;
-          }
-          else if (t.isLogicalExpression(bodyExpr)) {
-            returnInfo.returnValueType = 'EXPRESSION';
-            returnInfo.expressionType = 'LogicalExpression';
-            returnInfo.returnValueLine = getLine(bodyExpr);
-            returnInfo.returnValueColumn = getColumn(bodyExpr);
-            returnInfo.operator = bodyExpr.operator;
-            returnInfo.returnValueId = NodeFactory.generateExpressionId(
-              'LogicalExpression', module.file, getLine(bodyExpr), getColumn(bodyExpr)
-            );
-            if (t.isIdentifier(bodyExpr.left)) returnInfo.leftSourceName = bodyExpr.left.name;
-            if (t.isIdentifier(bodyExpr.right)) returnInfo.rightSourceName = bodyExpr.right.name;
-          }
-          else if (t.isConditionalExpression(bodyExpr)) {
-            returnInfo.returnValueType = 'EXPRESSION';
-            returnInfo.expressionType = 'ConditionalExpression';
-            returnInfo.returnValueLine = getLine(bodyExpr);
-            returnInfo.returnValueColumn = getColumn(bodyExpr);
-            returnInfo.returnValueId = NodeFactory.generateExpressionId(
-              'ConditionalExpression', module.file, getLine(bodyExpr), getColumn(bodyExpr)
-            );
-            if (t.isIdentifier(bodyExpr.consequent)) returnInfo.consequentSourceName = bodyExpr.consequent.name;
-            if (t.isIdentifier(bodyExpr.alternate)) returnInfo.alternateSourceName = bodyExpr.alternate.name;
-          }
-          else if (t.isUnaryExpression(bodyExpr)) {
-            returnInfo.returnValueType = 'EXPRESSION';
-            returnInfo.expressionType = 'UnaryExpression';
-            returnInfo.returnValueLine = getLine(bodyExpr);
-            returnInfo.returnValueColumn = getColumn(bodyExpr);
-            returnInfo.operator = bodyExpr.operator;
-            returnInfo.returnValueId = NodeFactory.generateExpressionId(
-              'UnaryExpression', module.file, getLine(bodyExpr), getColumn(bodyExpr)
-            );
-            if (t.isIdentifier(bodyExpr.argument)) returnInfo.unaryArgSourceName = bodyExpr.argument.name;
-          }
-          else if (t.isMemberExpression(bodyExpr)) {
-            returnInfo.returnValueType = 'EXPRESSION';
-            returnInfo.expressionType = 'MemberExpression';
-            returnInfo.returnValueLine = getLine(bodyExpr);
-            returnInfo.returnValueColumn = getColumn(bodyExpr);
-            returnInfo.returnValueId = NodeFactory.generateExpressionId(
-              'MemberExpression', module.file, getLine(bodyExpr), getColumn(bodyExpr)
-            );
-            if (t.isIdentifier(bodyExpr.object)) {
-              returnInfo.object = bodyExpr.object.name;
-              returnInfo.objectSourceName = bodyExpr.object.name;
-            }
-            if (t.isIdentifier(bodyExpr.property)) returnInfo.property = bodyExpr.property.name;
-            returnInfo.computed = bodyExpr.computed;
-          }
-          else {
-            returnInfo.returnValueType = 'EXPRESSION';
-            returnInfo.expressionType = bodyExpr.type;
-            returnInfo.returnValueLine = getLine(bodyExpr);
-            returnInfo.returnValueColumn = getColumn(bodyExpr);
-            returnInfo.returnValueId = NodeFactory.generateExpressionId(
-              bodyExpr.type, module.file, getLine(bodyExpr), getColumn(bodyExpr)
-            );
-          }
 
           returnStatements.push(returnInfo);
         }
@@ -3783,11 +4308,30 @@ export class JSASTAnalyzer extends Plugin {
         this.countLogicalOperators.bind(this)
       ),
 
+      // Ternary expressions (REG-287): Creates BRANCH nodes with branchType='ternary'
+      ConditionalExpression: this.createConditionalExpressionHandler(
+        parentScopeId,
+        module,
+        branches,
+        branchCounterRef,
+        scopeTracker,
+        scopeIdStack,
+        controlFlowState,
+        this.countLogicalOperators.bind(this)
+      ),
+
       // Track when we enter the alternate (else) block of an IfStatement
       BlockStatement: this.createBlockStatementHandler(scopeTracker, ifElseScopeMap, tryScopeMap, scopeIdStack),
 
       // Function call expressions
       CallExpression: (callPath: NodePath<t.CallExpression>) => {
+        // REG-311: Detect isAwaited (parent is AwaitExpression)
+        const parent = callPath.parentPath;
+        const isAwaited = parent?.isAwaitExpression() ?? false;
+
+        // REG-311: Detect isInsideTry (O(1) via depth counter)
+        const isInsideTry = controlFlowState.tryBlockDepth > 0;
+
         this.handleCallExpression(
           callPath.node,
           processedCallSites,
@@ -3798,8 +4342,273 @@ export class JSASTAnalyzer extends Plugin {
           callSiteCounterRef,
           scopeTracker,
           getCurrentScopeId(),
-          collections
+          collections,
+          isAwaited,
+          isInsideTry
         );
+
+        // REG-334: Check for resolve/reject calls inside Promise executors
+        const callNode = callPath.node;
+        if (t.isIdentifier(callNode.callee)) {
+          const calleeName = callNode.callee.name;
+
+          // Walk up function parents to find Promise executor context
+          // This handles nested callbacks like: new Promise((resolve) => { db.query((err, data) => { resolve(data); }); });
+          let funcParent = callPath.getFunctionParent();
+          while (funcParent) {
+            const funcNode = funcParent.node;
+            const funcKey = `${funcNode.start}:${funcNode.end}`;
+            const context = promiseExecutorContexts.get(funcKey);
+
+            if (context) {
+              const isResolve = calleeName === context.resolveName;
+              const isReject = calleeName === context.rejectName;
+
+              if (isResolve || isReject) {
+                // Find the CALL node ID for this resolve/reject call
+                // It was just added by handleCallExpression
+                const callLine = getLine(callNode);
+                const callColumn = getColumn(callNode);
+
+                // Find matching call site that was just added
+                const resolveCall = callSites.find(cs =>
+                  cs.name === calleeName &&
+                  cs.file === module.file &&
+                  cs.line === callLine &&
+                  cs.column === callColumn
+                );
+
+                if (resolveCall) {
+                  promiseResolutions.push({
+                    callId: resolveCall.id,
+                    constructorCallId: context.constructorCallId,
+                    isReject,
+                    file: module.file,
+                    line: callLine
+                  });
+
+                  // REG-334: Collect arguments for resolve/reject calls
+                  // This enables traceValues to follow PASSES_ARGUMENT edges
+                  if (!collections.callArguments) {
+                    collections.callArguments = [];
+                  }
+                  const callArgumentsArr = collections.callArguments as CallArgumentInfo[];
+
+                  // Process arguments (typically just one: resolve(value))
+                  callNode.arguments.forEach((arg, argIndex) => {
+                    const argInfo: CallArgumentInfo = {
+                      callId: resolveCall.id,
+                      argIndex,
+                      file: module.file,
+                      line: getLine(arg),
+                      column: getColumn(arg)
+                    };
+
+                    // Handle different argument types
+                    if (t.isIdentifier(arg)) {
+                      argInfo.targetType = 'VARIABLE';
+                      argInfo.targetName = arg.name;
+                    } else if (t.isLiteral(arg) && !t.isTemplateLiteral(arg)) {
+                      // Create LITERAL node for the argument value
+                      const literalValue = ExpressionEvaluator.extractLiteralValue(arg as t.Literal);
+                      if (literalValue !== null) {
+                        const argLine = getLine(arg);
+                        const argColumn = getColumn(arg);
+                        const literalId = `LITERAL#arg${argIndex}#${module.file}#${argLine}:${argColumn}:${literalCounterRef.value++}`;
+                        literals.push({
+                          id: literalId,
+                          type: 'LITERAL',
+                          value: literalValue,
+                          valueType: typeof literalValue,
+                          file: module.file,
+                          line: argLine,
+                          column: argColumn,
+                          parentCallId: resolveCall.id,
+                          argIndex
+                        });
+                        argInfo.targetType = 'LITERAL';
+                        argInfo.targetId = literalId;
+                        argInfo.literalValue = literalValue;
+                      }
+                    } else if (t.isCallExpression(arg)) {
+                      argInfo.targetType = 'CALL';
+                      argInfo.nestedCallLine = getLine(arg);
+                      argInfo.nestedCallColumn = getColumn(arg);
+                    } else {
+                      argInfo.targetType = 'EXPRESSION';
+                      argInfo.expressionType = arg.type;
+                    }
+
+                    callArgumentsArr.push(argInfo);
+                  });
+                }
+
+                break; // Found context, stop searching
+              }
+            }
+
+            funcParent = funcParent.getFunctionParent();
+          }
+
+          // REG-311: Detect executor_reject pattern - reject(new Error()) inside Promise executor
+          // Walk up to find Promise executor context and check if this is reject call with NewExpression arg
+          funcParent = callPath.getFunctionParent();
+          while (funcParent && currentFunctionId) {
+            const funcNode = funcParent.node;
+            const funcKey = `${funcNode.start}:${funcNode.end}`;
+            const context = promiseExecutorContexts.get(funcKey);
+
+            if (context && calleeName === context.rejectName && callNode.arguments.length > 0) {
+              // REG-311: Use the creator function's ID (the function that created the Promise),
+              // not the executor's ID
+              const targetFunctionId = context.creatorFunctionId || currentFunctionId;
+              const arg = callNode.arguments[0];
+              const callLine = getLine(callNode);
+              const callColumn = getColumn(callNode);
+
+              // Case 1: reject(new Error())
+              if (t.isNewExpression(arg) && t.isIdentifier(arg.callee)) {
+                rejectionPatterns.push({
+                  functionId: targetFunctionId,
+                  errorClassName: arg.callee.name,
+                  rejectionType: 'executor_reject',
+                  file: module.file,
+                  line: callLine,
+                  column: callColumn
+                });
+              }
+              // Case 2: reject(err) where err is variable
+              else if (t.isIdentifier(arg)) {
+                const varName = arg.name;
+                // Check if it's a parameter of ANY containing function (executor, outer, etc.)
+                // Walk up the function chain to find if varName is a parameter
+                let isParameter = false;
+                let checkParent: NodePath<t.Node> | null = funcParent;
+                while (checkParent) {
+                  if (t.isFunction(checkParent.node)) {
+                    if (checkParent.node.params.some(p =>
+                      t.isIdentifier(p) && p.name === varName
+                    )) {
+                      isParameter = true;
+                      break;
+                    }
+                  }
+                  checkParent = checkParent.getFunctionParent();
+                }
+
+                if (isParameter) {
+                  rejectionPatterns.push({
+                    functionId: targetFunctionId,
+                    errorClassName: null,
+                    rejectionType: 'variable_parameter',
+                    file: module.file,
+                    line: callLine,
+                    column: callColumn,
+                    sourceVariableName: varName
+                  });
+                } else {
+                  // Try micro-trace
+                  const { errorClassName, tracePath } = this.microTraceToErrorClass(
+                    varName,
+                    funcParent as NodePath<t.Function>,
+                    variableDeclarations
+                  );
+
+                  rejectionPatterns.push({
+                    functionId: targetFunctionId,
+                    errorClassName,
+                    rejectionType: errorClassName ? 'variable_traced' : 'variable_unknown',
+                    file: module.file,
+                    line: callLine,
+                    column: callColumn,
+                    sourceVariableName: varName,
+                    tracePath
+                  });
+                }
+              }
+              break;
+            }
+            funcParent = funcParent.getFunctionParent();
+          }
+        }
+
+        // REG-311: Detect Promise.reject(new Error()) pattern
+        if (t.isMemberExpression(callNode.callee) && currentFunctionId) {
+          const memberCallee = callNode.callee;
+          if (t.isIdentifier(memberCallee.object) &&
+              memberCallee.object.name === 'Promise' &&
+              t.isIdentifier(memberCallee.property) &&
+              memberCallee.property.name === 'reject' &&
+              callNode.arguments.length > 0) {
+            const arg = callNode.arguments[0];
+            const callLine = getLine(callNode);
+            const callColumn = getColumn(callNode);
+
+            // Case 1: Promise.reject(new Error())
+            if (t.isNewExpression(arg) && t.isIdentifier(arg.callee)) {
+              rejectionPatterns.push({
+                functionId: currentFunctionId,
+                errorClassName: arg.callee.name,
+                rejectionType: 'promise_reject',
+                file: module.file,
+                line: callLine,
+                column: callColumn
+              });
+            }
+            // Case 2: Promise.reject(err) where err is variable
+            else if (t.isIdentifier(arg)) {
+              const varName = arg.name;
+              // Check if it's a parameter of containing function
+              const isParameter = functionNode
+                ? functionNode.params.some(param => t.isIdentifier(param) && param.name === varName)
+                : false;
+
+              if (isParameter) {
+                rejectionPatterns.push({
+                  functionId: currentFunctionId,
+                  errorClassName: null,
+                  rejectionType: 'variable_parameter',
+                  file: module.file,
+                  line: callLine,
+                  column: callColumn,
+                  sourceVariableName: varName
+                });
+              } else {
+                // Try micro-trace
+                if (!functionPath) {
+                  rejectionPatterns.push({
+                    functionId: currentFunctionId,
+                    errorClassName: null,
+                    rejectionType: 'variable_unknown',
+                    file: module.file,
+                    line: callLine,
+                    column: callColumn,
+                    sourceVariableName: varName,
+                    tracePath: [varName]
+                  });
+                  return;
+                }
+
+                const { errorClassName, tracePath } = this.microTraceToErrorClass(
+                  varName,
+                  functionPath,
+                  variableDeclarations
+                );
+
+                rejectionPatterns.push({
+                  functionId: currentFunctionId,
+                  errorClassName,
+                  rejectionType: errorClassName ? 'variable_traced' : 'variable_unknown',
+                  file: module.file,
+                  line: callLine,
+                  column: callColumn,
+                  sourceVariableName: varName,
+                  tracePath
+                });
+              }
+            }
+          }
+        }
       },
 
       // NewExpression (constructor calls)
@@ -3835,6 +4644,40 @@ export class JSASTAnalyzer extends Plugin {
               line,
               column
             });
+
+            // REG-334: If this is Promise constructor with executor callback,
+            // register the context for resolve/reject detection
+            if (className === 'Promise' && newNode.arguments.length > 0) {
+              const executorArg = newNode.arguments[0];
+
+              // Only handle inline function expressions (not variable references)
+              if (t.isArrowFunctionExpression(executorArg) || t.isFunctionExpression(executorArg)) {
+                // Extract resolve/reject parameter names
+                let resolveName: string | undefined;
+                let rejectName: string | undefined;
+
+                if (executorArg.params.length > 0 && t.isIdentifier(executorArg.params[0])) {
+                  resolveName = executorArg.params[0].name;
+                }
+                if (executorArg.params.length > 1 && t.isIdentifier(executorArg.params[1])) {
+                  rejectName = executorArg.params[1].name;
+                }
+
+                if (resolveName) {
+                  // Key by function node position to allow nested Promise detection
+                  const funcKey = `${executorArg.start}:${executorArg.end}`;
+                  promiseExecutorContexts.set(funcKey, {
+                    constructorCallId,
+                    resolveName,
+                    rejectName,
+                    file: module.file,
+                    line,
+                    // REG-311: Store the ID of the function that creates the Promise
+                    creatorFunctionId: currentFunctionId || undefined
+                  });
+                }
+              }
+            }
           }
         }
 
@@ -3905,8 +4748,64 @@ export class JSASTAnalyzer extends Plugin {
             });
           }
         }
+      },
+
+      // Property access expressions (REG-395)
+      // Shared handler for both MemberExpression and OptionalMemberExpression
+      MemberExpression: (memberPath: NodePath<t.MemberExpression>) => {
+        // Initialize collections if needed
+        if (!collections.propertyAccesses) {
+          collections.propertyAccesses = [];
+        }
+        if (!collections.propertyAccessCounterRef) {
+          collections.propertyAccessCounterRef = { value: 0 };
+        }
+
+        PropertyAccessVisitor.extractPropertyAccesses(
+          memberPath,
+          memberPath.node,
+          module,
+          collections.propertyAccesses as PropertyAccessInfo[],
+          collections.propertyAccessCounterRef as CounterRef,
+          scopeTracker,
+          currentFunctionId || getCurrentScopeId()
+        );
+      },
+      // OptionalMemberExpression: obj?.prop (same logic as MemberExpression)
+      OptionalMemberExpression: (memberPath: NodePath) => {
+        // Initialize collections if needed
+        if (!collections.propertyAccesses) {
+          collections.propertyAccesses = [];
+        }
+        if (!collections.propertyAccessCounterRef) {
+          collections.propertyAccessCounterRef = { value: 0 };
+        }
+
+        PropertyAccessVisitor.extractPropertyAccesses(
+          memberPath,
+          memberPath.node as t.MemberExpression,
+          module,
+          collections.propertyAccesses as PropertyAccessInfo[],
+          collections.propertyAccessCounterRef as CounterRef,
+          scopeTracker,
+          currentFunctionId || getCurrentScopeId()
+        );
       }
     });
+
+    // REG-311: Second pass - collect CATCHES_FROM info for try/catch blocks
+    // This links catch blocks to exception sources in their corresponding try blocks
+    if (functionPath) {
+      this.collectCatchesFromInfo(
+        functionPath,
+        catchBlocks,
+        callSites,
+        methodCalls,
+        constructorCalls,
+        catchesFromInfos,
+        module
+      );
+    }
 
     // Phase 6 (REG-267): Attach control flow metadata to the function node
     if (matchingFunction) {
@@ -3916,13 +4815,27 @@ export class JSASTAnalyzer extends Plugin {
         controlFlowState.caseCount +
         controlFlowState.logicalOpCount;
 
+      // REG-311: Collect rejection info for this function
+      const functionRejectionPatterns = rejectionPatterns.filter(p => p.functionId === matchingFunction.id);
+      const canReject = functionRejectionPatterns.length > 0;
+      const hasAsyncThrow = functionRejectionPatterns.some(p => p.rejectionType === 'async_throw');
+      const rejectedBuiltinErrors = [...new Set(
+        functionRejectionPatterns
+          .filter(p => p.errorClassName !== null)
+          .map(p => p.errorClassName!)
+      )];
+
       matchingFunction.controlFlow = {
         hasBranches: controlFlowState.branchCount > 0,
         hasLoops: controlFlowState.loopCount > 0,
         hasTryCatch: controlFlowState.hasTryCatch,
         hasEarlyReturn: controlFlowState.hasEarlyReturn,
         hasThrow: controlFlowState.hasThrow,
-        cyclomaticComplexity
+        cyclomaticComplexity,
+        // REG-311: Async error tracking
+        canReject,
+        hasAsyncThrow,
+        rejectedBuiltinErrors: rejectedBuiltinErrors.length > 0 ? rejectedBuiltinErrors : undefined
       };
     }
   }
@@ -3936,6 +4849,7 @@ export class JSASTAnalyzer extends Plugin {
    * - Method calls (MemberExpression callee) → methodCalls collection
    * - Array mutation detection (push, unshift, splice)
    * - Object.assign() detection
+   * - REG-311: isAwaited and isInsideTry metadata on CALL nodes
    *
    * @param callNode - The call expression AST node
    * @param processedCallSites - Set of already processed call site keys to avoid duplicates
@@ -3947,6 +4861,8 @@ export class JSASTAnalyzer extends Plugin {
    * @param scopeTracker - Optional scope tracker for semantic ID generation
    * @param parentScopeId - ID of the parent scope containing this call
    * @param collections - Full collections object for array/object mutations
+   * @param isAwaited - REG-311: true if wrapped in await expression
+   * @param isInsideTry - REG-311: true if inside try block
    */
   private handleCallExpression(
     callNode: t.CallExpression,
@@ -3958,7 +4874,9 @@ export class JSASTAnalyzer extends Plugin {
     callSiteCounterRef: CounterRef,
     scopeTracker: ScopeTracker | undefined,
     parentScopeId: string,
-    collections: VisitorCollections
+    collections: VisitorCollections,
+    isAwaited: boolean = false,
+    isInsideTry: boolean = false
   ): void {
     // Handle direct function calls (greet(), main())
     if (callNode.callee.type === 'Identifier') {
@@ -3986,7 +4904,10 @@ export class JSASTAnalyzer extends Plugin {
         line: getLine(callNode),
         column: getColumn(callNode),  // REG-223: Add column for coordinate-based lookup
         parentScopeId,
-        targetFunctionName: calleeName
+        targetFunctionName: calleeName,
+        // REG-311: Async error tracking metadata
+        isAwaited,
+        isInsideTry
       });
     }
     // Handle method calls (obj.method(), data.process())
@@ -4027,7 +4948,11 @@ export class JSASTAnalyzer extends Plugin {
           file: module.file,
           line: getLine(callNode),
           column: getColumn(callNode),
-          parentScopeId
+          parentScopeId,
+          // REG-311: Async error tracking metadata
+          isAwaited,
+          isInsideTry,
+          isMethodCall: true
         });
 
         // Check for array mutation methods (push, unshift, splice)
@@ -4064,6 +4989,7 @@ export class JSASTAnalyzer extends Plugin {
         }
       }
       // REG-117: Nested array mutations like obj.arr.push(item)
+      // REG-395: General nested method calls like a.b.c() or obj.nested.method()
       // object is MemberExpression, property is the method name
       else if (object.type === 'MemberExpression' && property.type === 'Identifier') {
         const nestedMember = object;
@@ -4101,8 +5027,288 @@ export class JSASTAnalyzer extends Plugin {
             );
           }
         }
+
+        // REG-395: Create CALL node for nested method calls like a.b.c()
+        const objectName = CallExpressionVisitor.extractMemberExpressionName(nestedMember as t.MemberExpression);
+        if (objectName) {
+          const nodeKey = `${callNode.start}:${callNode.end}`;
+          if (!processedMethodCalls.has(nodeKey)) {
+            processedMethodCalls.add(nodeKey);
+
+            const fullName = `${objectName}.${methodName}`;
+            const legacyId = `CALL#${fullName}#${module.file}#${getLine(callNode)}:${getColumn(callNode)}:${callSiteCounterRef.value++}`;
+
+            let methodCallId = legacyId;
+            if (scopeTracker) {
+              const discriminator = scopeTracker.getItemCounter(`CALL:${fullName}`);
+              methodCallId = computeSemanticId('CALL', fullName, scopeTracker.getContext(), { discriminator });
+            }
+
+            methodCalls.push({
+              id: methodCallId,
+              type: 'CALL',
+              name: fullName,
+              object: objectName,
+              method: methodName,
+              file: module.file,
+              line: getLine(callNode),
+              column: getColumn(callNode),
+              parentScopeId,
+              isMethodCall: true
+            });
+          }
+        }
       }
     }
+  }
+
+  /**
+   * REG-311: Micro-trace - follow variable assignments within function to find error source.
+   * Used to resolve reject(err) or throw err where err is a variable.
+   *
+   * Uses cycle detection via Set<variableName> to avoid infinite loops on circular assignments.
+   *
+   * @param variableName - Name of variable to trace
+   * @param funcPath - NodePath of containing function for AST traversal
+   * @param variableDeclarations - Variable declarations in current scope
+   * @returns Error class name if traced to NewExpression, null otherwise, plus trace path
+   */
+  private microTraceToErrorClass(
+    variableName: string,
+    funcPath: NodePath<t.Function>,
+    _variableDeclarations: VariableDeclarationInfo[]
+  ): { errorClassName: string | null; tracePath: string[] } {
+    const tracePath: string[] = [variableName];
+    const visited = new Set<string>(); // Cycle detection
+    let currentName = variableName;
+
+    const funcBody = funcPath.node.body;
+    if (!t.isBlockStatement(funcBody)) {
+      return { errorClassName: null, tracePath };
+    }
+
+    // Iterate until we find a NewExpression or can't trace further
+    while (!visited.has(currentName)) {
+      visited.add(currentName);
+      let found = false;
+      let foundNewExpression: string | null = null;
+      let nextName: string | null = null;
+
+      // Walk AST to find assignments: currentName = newValue
+      funcPath.traverse({
+        VariableDeclarator: (declPath: NodePath<t.VariableDeclarator>) => {
+          if (found || foundNewExpression) return;
+          if (t.isIdentifier(declPath.node.id) && declPath.node.id.name === currentName) {
+            const init = declPath.node.init;
+            if (init) {
+              // Case 1: const err = new Error()
+              if (t.isNewExpression(init) && t.isIdentifier(init.callee)) {
+                tracePath.push(`new ${init.callee.name}()`);
+                foundNewExpression = init.callee.name;
+                found = true;
+                return;
+              }
+              // Case 2: const err = otherVar (chain)
+              if (t.isIdentifier(init)) {
+                tracePath.push(init.name);
+                nextName = init.name;
+                found = true;
+                return;
+              }
+            }
+          }
+        },
+        AssignmentExpression: (assignPath: NodePath<t.AssignmentExpression>) => {
+          if (found || foundNewExpression) return;
+          const left = assignPath.node.left;
+          const right = assignPath.node.right;
+
+          if (t.isIdentifier(left) && left.name === currentName) {
+            if (t.isNewExpression(right) && t.isIdentifier(right.callee)) {
+              tracePath.push(`new ${right.callee.name}()`);
+              foundNewExpression = right.callee.name;
+              found = true;
+              return;
+            }
+            if (t.isIdentifier(right)) {
+              tracePath.push(right.name);
+              nextName = right.name;
+              found = true;
+              return;
+            }
+          }
+        }
+      });
+
+      // If we found a NewExpression, return the class name
+      if (foundNewExpression) {
+        return { errorClassName: foundNewExpression, tracePath };
+      }
+
+      // If we found another variable to follow, continue
+      if (nextName) {
+        currentName = nextName;
+        continue;
+      }
+
+      // Couldn't trace further
+      break;
+    }
+
+    return { errorClassName: null, tracePath };
+  }
+
+  /**
+   * REG-311: Collect CATCHES_FROM info linking catch blocks to exception sources in try blocks.
+   *
+   * Sources include:
+   * - Awaited calls: await foo() in try block
+   * - Sync calls: foo() in try block (any call can throw)
+   * - Throw statements: throw new Error() in try block
+   * - Constructor calls: new SomeClass() in try block
+   *
+   * @param funcPath - Function path to traverse
+   * @param catchBlocks - Collection of CATCH_BLOCK nodes
+   * @param callSites - Collection of CALL nodes (direct function calls)
+   * @param methodCalls - Collection of CALL nodes (method calls)
+   * @param constructorCalls - Collection of CONSTRUCTOR_CALL nodes
+   * @param catchesFromInfos - Collection to push CatchesFromInfo to
+   * @param module - Module context
+   */
+  private collectCatchesFromInfo(
+    funcPath: NodePath<t.Function>,
+    catchBlocks: CatchBlockInfo[],
+    callSites: CallSiteInfo[],
+    methodCalls: MethodCallInfo[],
+    constructorCalls: ConstructorCallInfo[],
+    catchesFromInfos: CatchesFromInfo[],
+    module: VisitorModule
+  ): void {
+    // Traverse to find TryStatements and collect sources
+    funcPath.traverse({
+      TryStatement: (tryPath: NodePath<t.TryStatement>) => {
+        const tryNode = tryPath.node;
+        const handler = tryNode.handler;
+
+        // Skip if no catch clause
+        if (!handler) return;
+
+        // Find the catch block for this try
+        // Match by line number since we don't have the tryBlockId here
+        const catchLine = getLine(handler);
+        const catchBlock = catchBlocks.find(cb =>
+          cb.file === module.file && cb.line === catchLine
+        );
+
+        if (!catchBlock || !catchBlock.parameterName) return;
+
+        // Traverse only the try block body (not catch or finally)
+        const _tryBody = tryNode.block;
+        const sources: Array<{ id: string; type: CatchesFromInfo['sourceType']; line: number }> = [];
+
+        // Collect sources from try block
+        tryPath.get('block').traverse({
+          // Stop at nested TryStatement - don't collect from inner try blocks
+          TryStatement: (innerPath) => {
+            innerPath.skip(); // Don't traverse into nested try blocks
+          },
+
+          // Stop at function boundaries - don't collect from nested functions
+          Function: (innerFuncPath) => {
+            innerFuncPath.skip();
+          },
+
+          CallExpression: (callPath: NodePath<t.CallExpression>) => {
+            const callNode = callPath.node;
+            const callLine = getLine(callNode);
+            const callColumn = getColumn(callNode);
+
+            // Check if this is an awaited call
+            const parent = callPath.parentPath;
+            const isAwaited = parent?.isAwaitExpression() ?? false;
+
+            // Find the CALL node that matches this CallExpression
+            let sourceId: string | null = null;
+            let sourceType: CatchesFromInfo['sourceType'] = 'sync_call';
+
+            // Check method calls first (includes Promise.reject which is a method call)
+            const matchingMethodCall = methodCalls.find(mc =>
+              mc.file === module.file &&
+              mc.line === callLine &&
+              mc.column === callColumn
+            );
+
+            if (matchingMethodCall) {
+              sourceId = matchingMethodCall.id;
+              sourceType = isAwaited ? 'awaited_call' : 'sync_call';
+            } else {
+              // Check direct function calls
+              const matchingCallSite = callSites.find(cs =>
+                cs.file === module.file &&
+                cs.line === callLine &&
+                cs.column === callColumn
+              );
+
+              if (matchingCallSite) {
+                sourceId = matchingCallSite.id;
+                sourceType = isAwaited ? 'awaited_call' : 'sync_call';
+              }
+            }
+
+            if (sourceId) {
+              sources.push({ id: sourceId, type: sourceType, line: callLine });
+            }
+          },
+
+          ThrowStatement: (throwPath: NodePath<t.ThrowStatement>) => {
+            const throwNode = throwPath.node;
+            const throwLine = getLine(throwNode);
+            const throwColumn = getColumn(throwNode);
+
+            // Create a synthetic ID for the throw statement
+            // We don't have THROW_STATEMENT nodes, so we use line/column as identifier
+            const sourceId = `THROW#${module.file}#${throwLine}:${throwColumn}`;
+
+            sources.push({ id: sourceId, type: 'throw_statement', line: throwLine });
+          },
+
+          NewExpression: (newPath: NodePath<t.NewExpression>) => {
+            // Skip NewExpression that is direct argument of ThrowStatement
+            // In `throw new Error()`, the throw statement is the primary source
+            if (newPath.parentPath?.isThrowStatement()) {
+              return;
+            }
+
+            const newNode = newPath.node;
+            const newLine = getLine(newNode);
+            const newColumn = getColumn(newNode);
+
+            // Find matching constructor call
+            const matchingConstructor = constructorCalls.find(cc =>
+              cc.file === module.file &&
+              cc.line === newLine &&
+              cc.column === newColumn
+            );
+
+            if (matchingConstructor) {
+              sources.push({ id: matchingConstructor.id, type: 'constructor_call', line: newLine });
+            }
+          }
+        });
+
+        // Create CatchesFromInfo for each source
+        for (const source of sources) {
+          catchesFromInfos.push({
+            catchBlockId: catchBlock.id,
+            parameterName: catchBlock.parameterName,
+            sourceId: source.id,
+            sourceType: source.type,
+            file: module.file,
+            sourceLine: source.line
+          });
+        }
+      }
+    });
   }
 
   /**
