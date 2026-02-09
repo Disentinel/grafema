@@ -51,8 +51,44 @@ jobs:
       - name: Build (required for tests)
         run: pnpm build
 
-      - name: Run tests
-        run: pnpm test
+      - name: Run tests with coverage
+        run: pnpm test:coverage
+
+      - name: Extract coverage percentage
+        if: github.ref == 'refs/heads/main'
+        id: coverage
+        run: |
+          COVERAGE=$(node -e "
+            const r = JSON.parse(require('fs').readFileSync('coverage/coverage-final.json','utf8'));
+            let hit=0, total=0;
+            for (const f of Object.values(r)) {
+              for (const [,c] of Object.entries(f.s)) { total++; if(c>0) hit++; }
+            }
+            console.log(total>0 ? Math.round(hit/total*100) : 0);
+          ")
+          echo "pct=$COVERAGE" >> "$GITHUB_OUTPUT"
+          echo "Coverage: ${COVERAGE}%"
+
+      - name: Update coverage badge
+        if: github.ref == 'refs/heads/main' && vars.COVERAGE_GIST_ID != ''
+        uses: schneegans/dynamic-badges-action@v1.7.0
+        with:
+          auth: ${{ secrets.GIST_TOKEN }}
+          gistID: ${{ vars.COVERAGE_GIST_ID }}
+          filename: grafema-coverage.json
+          label: coverage
+          message: ${{ steps.coverage.outputs.pct }}%
+          valColorRange: ${{ steps.coverage.outputs.pct }}
+          minColorRange: 0
+          maxColorRange: 100
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage/lcov-report/
+          retention-days: 14
 
       - name: Check for .only or .skip in test files
         run: |
