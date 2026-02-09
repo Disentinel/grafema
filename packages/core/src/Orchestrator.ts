@@ -218,6 +218,68 @@ export class Orchestrator {
   }
 
   /**
+   * Register all loaded plugins as grafema:plugin nodes in the graph.
+   *
+   * Creates a node for each plugin with its metadata (phase, priority,
+   * creates, dependencies). Also creates DEPENDS_ON edges between
+   * plugins that declare dependencies.
+   *
+   * Called once at the start of run(), before any analysis phase.
+   * Complexity: O(p) where p = number of plugins (typically 20-35).
+   */
+  private async registerPluginNodes(): Promise<void> {
+    const pluginNodes: Array<{ id: string; name: string; dependencies: string[] }> = [];
+
+    for (const plugin of this.plugins) {
+      const meta = plugin.metadata;
+      if (!meta?.name) continue;
+
+      const sourceFile = (plugin.config?.sourceFile as string) || '';
+      const isBuiltin = !sourceFile;
+
+      const node = NodeFactory.createPlugin(meta.name, meta.phase, {
+        priority: meta.priority ?? 0,
+        file: sourceFile,
+        builtin: isBuiltin,
+        createsNodes: (meta.creates?.nodes as string[]) ?? [],
+        createsEdges: (meta.creates?.edges as string[]) ?? [],
+        dependencies: meta.dependencies ?? [],
+      });
+
+      await this.graph.addNode(node);
+      pluginNodes.push({
+        id: node.id,
+        name: meta.name,
+        dependencies: meta.dependencies ?? [],
+      });
+    }
+
+    // Create DEPENDS_ON edges between plugins
+    const nameToId = new Map<string, string>();
+    for (const pn of pluginNodes) {
+      nameToId.set(pn.name, pn.id);
+    }
+
+    for (const pn of pluginNodes) {
+      for (const dep of pn.dependencies) {
+        const depId = nameToId.get(dep);
+        if (depId) {
+          await this.graph.addEdge({
+            src: pn.id,
+            dst: depId,
+            type: 'DEPENDS_ON',
+          });
+        }
+      }
+    }
+
+    this.logger.debug('Registered plugin nodes', {
+      count: pluginNodes.length,
+      edges: pluginNodes.reduce((sum, pn) => sum + pn.dependencies.filter(d => nameToId.has(d)).length, 0),
+    });
+  }
+
+  /**
    * Запустить анализ проекта
    */
   async run(projectPath: string): Promise<DiscoveryManifest> {
@@ -241,6 +303,9 @@ export class Orchestrator {
       await this.graph.clear();
       this.logger.info('Graph cleared successfully');
     }
+
+    // Register plugin pipeline as grafema:plugin nodes (REG-386)
+    await this.registerPluginNodes();
 
     this.onProgress({ phase: 'discovery', currentPlugin: 'Starting discovery...', message: 'Discovering services...', totalFiles: 0, processedFiles: 0 });
 
@@ -497,6 +562,9 @@ export class Orchestrator {
       await this.graph.clear();
       this.logger.info('Graph cleared successfully');
     }
+
+    // Register plugin pipeline as grafema:plugin nodes (REG-386)
+    await this.registerPluginNodes();
 
     // Collect all services from all roots
     const allServices: ServiceInfo[] = [];
