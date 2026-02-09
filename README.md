@@ -1,7 +1,6 @@
 # Grafema
 
 [![CI](https://github.com/Disentinel/grafema/actions/workflows/ci.yml/badge.svg)](https://github.com/Disentinel/grafema/actions/workflows/ci.yml)
-![Coverage](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/Disentinel/COVERAGE_GIST_ID/raw/grafema-coverage.json)
 
 > Understand your code without reading it all
 

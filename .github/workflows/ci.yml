@@ -70,7 +70,7 @@ jobs:
           echo "Coverage: ${COVERAGE}%"
 
       - name: Update coverage badge
-        if: github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' && vars.COVERAGE_GIST_ID != ''
         uses: schneegans/dynamic-badges-action@v1.7.0
         with:
           auth: ${{ secrets.GIST_TOKEN }}
