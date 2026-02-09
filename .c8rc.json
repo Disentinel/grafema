@@ -1,0 +1,20 @@
+{
+  "all": true,
+  "src": [
+    "packages/core/dist",
+    "packages/cli/dist",
+    "packages/mcp/dist",
+    "packages/api/dist",
+    "packages/types/dist",
+    "packages/rfdb/dist"
+  ],
+  "include": [
+    "packages/*/dist/**"
+  ],
+  "exclude": [
+    "**/*.d.ts",
+    "**/*.test.*"
+  ],
+  "reporter": ["text", "lcov", "json"],
+  "reports-dir": "./coverage"
+}

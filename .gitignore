@@ -40,6 +40,9 @@ tmp/
 .npmrc.local
 .rfguard/
 
+# Coverage
+coverage/
+
 # Grafema
 .grafema/graph.rfdb
 .grafema/rfdb.sock
