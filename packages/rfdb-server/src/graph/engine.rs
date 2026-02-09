@@ -12,6 +12,7 @@ use crate::storage::delta::{Delta, DeltaLog};
 use crate::storage::segment::{NodesSegment, EdgesSegment};
 use crate::error::Result;
 use super::{GraphStore, traversal};
+use super::index_set::IndexSet;
 
 // Global system info singleton for memory monitoring
 static SYSTEM_INFO: Mutex<Option<System>> = Mutex::new(None);
@@ -121,6 +122,9 @@ pub struct GraphEngine {
     // When a node in segment is deleted but not in delta_nodes,
     // we track it here until next flush
     deleted_segment_ids: HashSet<u128>,
+
+    // Secondary indexes over segment data (rebuilt on open/flush)
+    index_set: IndexSet,
 }
 
 impl GraphEngine {
@@ -145,6 +149,7 @@ impl GraphEngine {
             ops_since_flush: 0,
             last_memory_check: None,
             deleted_segment_ids: HashSet::new(),
+            index_set: IndexSet::new(),
         })
     }
 
@@ -186,6 +191,7 @@ impl GraphEngine {
             ops_since_flush: 0,
             last_memory_check: None,
             deleted_segment_ids: HashSet::new(),
+            index_set: IndexSet::new(),
         })
     }
 
@@ -245,6 +251,12 @@ impl GraphEngine {
             }
         }
 
+        // Build ID index from nodes segment
+        let mut index_set = IndexSet::new();
+        if let Some(ref nodes_seg) = nodes_segment {
+            index_set.rebuild_from_segment(nodes_seg);
+        }
+
         tracing::info!(
             "Opened graph at {:?}: {} nodes, {} edges",
             path,
@@ -265,6 +277,7 @@ impl GraphEngine {
             ops_since_flush: 0,
             last_memory_check: None,
             deleted_segment_ids: HashSet::new(),
+            index_set,
         })
     }
 
@@ -337,9 +350,9 @@ impl GraphEngine {
             return None;
         }
 
-        // Then look in segment
+        // Then look in segment via index (O(1) instead of O(n) linear scan)
         if let Some(ref segment) = self.nodes_segment {
-            if let Some(idx) = segment.find_index(id) {
+            if let Some(idx) = self.index_set.find_node_index(id) {
                 if !segment.is_deleted(idx) {
                     // Reconstruct NodeRecord from segment
                     return Some(NodeRecord {
@@ -374,6 +387,7 @@ impl GraphEngine {
         self.metadata = GraphMetadata::default();
         self.ops_since_flush = 0;
         self.deleted_segment_ids.clear();
+        self.index_set.clear();
         tracing::info!("Graph cleared");
     }
 
@@ -500,9 +514,9 @@ impl GraphEngine {
             }
         }
 
-        // Then check segment (persisted ноды)
+        // Then check segment via index (O(1))
         if let Some(ref segment) = self.nodes_segment {
-            if let Some(idx) = segment.find_index(id) {
+            if let Some(idx) = self.index_set.find_node_index(id) {
                 let file_path = segment.get_file_path(idx)
                     .map(|s| if s.is_empty() { None } else { Some(s.to_string()) })
                     .unwrap_or(None);
@@ -526,9 +540,9 @@ impl GraphEngine {
             }
         }
 
-        // Then check segment (persisted ноды)
+        // Then check segment via index (O(1))
         if let Some(ref segment) = self.nodes_segment {
-            if let Some(idx) = segment.find_index(id) {
+            if let Some(idx) = self.index_set.find_node_index(id) {
                 let file_path = segment.get_file_path(idx)
                     .map(|s| if s.is_empty() { None } else { Some(s.to_string()) })
                     .unwrap_or(None);
@@ -660,7 +674,7 @@ impl GraphStore for GraphEngine {
                 node.name.as_deref().unwrap_or("").to_string()
             )
         } else if let Some(ref segment) = self.nodes_segment {
-            if let Some(idx) = segment.find_index(id) {
+            if let Some(idx) = self.index_set.find_node_index(id) {
                 let fp = segment.get_file_path(idx).unwrap_or("");
                 let n = segment.get_name(idx).unwrap_or("");
                 (fp.to_string(), n.to_string())
@@ -1031,6 +1045,12 @@ impl GraphStore for GraphEngine {
         // Перезагружаем segments
         self.nodes_segment = Some(NodesSegment::open(&self.path.join("nodes.bin"))?);
         self.edges_segment = Some(EdgesSegment::open(&self.path.join("edges.bin"))?);
+
+        // Rebuild ID index from new segment
+        self.index_set.clear();
+        if let Some(ref nodes_seg) = self.nodes_segment {
+            self.index_set.rebuild_from_segment(nodes_seg);
+        }
 
         // Rebuild adjacency and reverse_adjacency
         self.adjacency.clear();
@@ -2134,5 +2154,181 @@ mod tests {
         assert!(result.contains(&a));
         assert!(result.contains(&b));
         assert!(result.contains(&c));
+    }
+
+    // ============================================================
+    // REG-398: ID Index Tests
+    // ============================================================
+
+    #[test]
+    fn test_index_get_node_after_flush() {
+        // Verify ID index works correctly after flush:
+        // add nodes → flush → get_node() uses index instead of linear scan
+        use tempfile::tempdir;
+
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("test");
+
+        let mut engine = GraphEngine::create(&db_path).unwrap();
+
+        engine.add_nodes(vec![
+            make_test_node(100, "funcA", "FUNCTION"),
+            make_test_node(200, "funcB", "FUNCTION"),
+            make_test_node(300, "classC", "CLASS"),
+        ]);
+
+        engine.flush().unwrap();
+
+        // After flush, nodes are in segment — lookups go through index
+        let node = engine.get_node(100).unwrap();
+        assert_eq!(node.name.as_deref(), Some("funcA"));
+
+        let node = engine.get_node(200).unwrap();
+        assert_eq!(node.name.as_deref(), Some("funcB"));
+
+        let node = engine.get_node(300).unwrap();
+        assert_eq!(node.name.as_deref(), Some("classC"));
+
+        // Non-existent node
+        assert!(engine.get_node(999).is_none());
+    }
+
+    #[test]
+    fn test_index_survives_reopen() {
+        // Verify index is rebuilt correctly on open()
+        use tempfile::tempdir;
+
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("test");
+
+        {
+            let mut engine = GraphEngine::create(&db_path).unwrap();
+            engine.add_nodes(vec![
+                make_test_node(10, "A", "FUNCTION"),
+                make_test_node(20, "B", "FUNCTION"),
+            ]);
+            engine.flush().unwrap();
+        }
+
+        // Reopen — index rebuilt from segment
+        {
+            let engine = GraphEngine::open(&db_path).unwrap();
+            let node = engine.get_node(10).unwrap();
+            assert_eq!(node.name.as_deref(), Some("A"));
+
+            let node = engine.get_node(20).unwrap();
+            assert_eq!(node.name.as_deref(), Some("B"));
+
+            assert!(engine.get_node(999).is_none());
+        }
+    }
+
+    #[test]
+    fn test_index_delta_takes_priority_over_segment() {
+        // Delta nodes must be found before index is consulted
+        use tempfile::tempdir;
+
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("test");
+
+        let mut engine = GraphEngine::create(&db_path).unwrap();
+
+        engine.add_nodes(vec![make_test_node(1, "original", "FUNCTION")]);
+        engine.flush().unwrap();
+
+        // Add a new node with same ID to delta (overwrites segment version)
+        engine.add_nodes(vec![make_test_node(1, "updated", "FUNCTION")]);
+
+        // Delta should take priority
+        let node = engine.get_node(1).unwrap();
+        assert_eq!(node.name.as_deref(), Some("updated"));
+    }
+
+    #[test]
+    fn test_index_deleted_segment_node_not_returned() {
+        // Delete a segment node → deleted_segment_ids blocks lookup
+        // even though index still has the entry
+        use tempfile::tempdir;
+
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("test");
+
+        let mut engine = GraphEngine::create(&db_path).unwrap();
+        engine.add_nodes(vec![
+            make_test_node(1, "keep", "FUNCTION"),
+            make_test_node(2, "delete_me", "FUNCTION"),
+        ]);
+        engine.flush().unwrap();
+
+        // Both exist after flush
+        assert!(engine.get_node(1).is_some());
+        assert!(engine.get_node(2).is_some());
+
+        // Delete node 2
+        engine.delete_node(2);
+
+        // Node 2 should not be found (deleted_segment_ids blocks before index)
+        assert!(engine.get_node(2).is_none());
+        // Node 1 still accessible via index
+        assert!(engine.get_node(1).is_some());
+    }
+
+    #[test]
+    fn test_index_get_node_strings_after_flush() {
+        // Verify get_node_strings() uses index for segment lookup
+        use tempfile::tempdir;
+
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("test");
+
+        let mut engine = GraphEngine::create(&db_path).unwrap();
+        engine.add_nodes(vec![NodeRecord {
+            id: 42,
+            node_type: Some("FUNCTION".to_string()),
+            file_id: 0,
+            name_offset: 0,
+            version: "main".to_string(),
+            exported: false,
+            replaces: None,
+            deleted: false,
+            name: Some("myFunc".to_string()),
+            file: Some("src/app.js".to_string()),
+            metadata: Some("{\"async\":true}".to_string()),
+        }]);
+        engine.flush().unwrap();
+
+        // get_node_strings uses index
+        let (file, name) = engine.get_node_strings(42).unwrap();
+        assert_eq!(file.as_deref(), Some("src/app.js"));
+        assert_eq!(name.as_deref(), Some("myFunc"));
+
+        // get_node_strings_with_metadata uses index
+        let (file, name, meta) = engine.get_node_strings_with_metadata(42).unwrap();
+        assert_eq!(file.as_deref(), Some("src/app.js"));
+        assert_eq!(name.as_deref(), Some("myFunc"));
+        assert_eq!(meta.as_deref(), Some("{\"async\":true}"));
+    }
+
+    #[test]
+    fn test_index_rebuilt_after_flush_with_new_nodes() {
+        // Flush twice: index must reflect the merged segment
+        use tempfile::tempdir;
+
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("test");
+
+        let mut engine = GraphEngine::create(&db_path).unwrap();
+
+        // First batch
+        engine.add_nodes(vec![make_test_node(1, "A", "FUNCTION")]);
+        engine.flush().unwrap();
+
+        // Second batch
+        engine.add_nodes(vec![make_test_node(2, "B", "FUNCTION")]);
+        engine.flush().unwrap();
+
+        // Both should be findable via index
+        assert!(engine.get_node(1).is_some());
+        assert!(engine.get_node(2).is_some());
     }
 }
