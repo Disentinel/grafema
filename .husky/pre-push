@@ -1,15 +1,22 @@
 #!/bin/sh
 
 # Build and run full test suite (10 min timeout)
-pnpm build || {
-  echo "Build failed"
+echo "Building..."
+pnpm build > /tmp/grafema-pre-push-build.log 2>&1 || {
+  echo "Build failed. Log: /tmp/grafema-pre-push-build.log"
+  tail -20 /tmp/grafema-pre-push-build.log
   exit 1
 }
+echo "Build OK. Running tests..."
 
-perl -e 'alarm 600; exec @ARGV' node --test 'test/unit/*.test.js' || {
-  echo "Tests failed or timed out (10 min limit)"
+perl -e 'alarm 600; exec @ARGV' node --test 'test/unit/*.test.js' > /tmp/grafema-pre-push-tests.log 2>&1
+TEST_EXIT=$?
+if [ $TEST_EXIT -ne 0 ]; then
+  echo "Tests failed or timed out (10 min limit). Exit code: $TEST_EXIT"
+  echo "Test output: /tmp/grafema-pre-push-tests.log"
+  tail -20 /tmp/grafema-pre-push-tests.log
   exit 1
-}
+fi
 
 # NodeFactory guarantee check (only if packages/core was modified)
 if git diff --name-only HEAD @{u} 2>/dev/null | grep -q "^packages/core/"; then
