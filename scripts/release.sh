@@ -27,6 +27,7 @@ VERSION_ARG=""
 PUBLISH=false
 DRY_RUN=false
 SKIP_CI_CHECK=false
+SKIP_CHANGELOG=false
 
 for arg in "$@"; do
     case $arg in
@@ -38,6 +39,9 @@ for arg in "$@"; do
             ;;
         --skip-ci-check)
             SKIP_CI_CHECK=true
+            ;;
+        --skip-changelog)
+            SKIP_CHANGELOG=true
             ;;
         *)
             VERSION_ARG="$arg"
@@ -52,9 +56,10 @@ if [ -z "$VERSION_ARG" ]; then
     echo "Or explicit version: 0.2.5-beta, 0.3.0, etc."
     echo ""
     echo "Options:"
-    echo "  --publish        Publish to npm after versioning"
-    echo "  --dry-run        Preview changes without modifying files"
-    echo "  --skip-ci-check  Skip GitHub Actions CI status check"
+    echo "  --publish         Publish to npm after versioning"
+    echo "  --dry-run         Preview changes without modifying files"
+    echo "  --skip-ci-check   Skip GitHub Actions CI status check"
+    echo "  --skip-changelog  Skip CHANGELOG.md update check (for hotfixes)"
     exit 1
 fi
 
@@ -210,6 +215,14 @@ if [ "$DRY_RUN" = true ]; then
         echo "  - $pkg"
     done
     echo "  - package.json (root)"
+    echo ""
+    if [ "$SKIP_CHANGELOG" = true ]; then
+        echo -e "${YELLOW}[SKIP] CHANGELOG check bypassed (--skip-changelog)${NC}"
+    elif grep -q "\[$NEW_VERSION\]" CHANGELOG.md; then
+        echo -e "${GREEN}[x] CHANGELOG.md contains [$NEW_VERSION] entry${NC}"
+    else
+        echo -e "${RED}[!] CHANGELOG.md does NOT contain [$NEW_VERSION] entry${NC}"
+    fi
     exit 0
 fi
 
@@ -248,29 +261,27 @@ fi
 echo -e "${GREEN}[x] Build successful${NC}"
 
 #---------------------------------------------------------
-# STEP 5: Prompt for changelog update
+# STEP 5: Verify changelog was updated
 #---------------------------------------------------------
 echo ""
-echo -e "${YELLOW}=== Changelog Update Required ===${NC}"
-echo ""
-echo "Please update CHANGELOG.md with release notes for v$NEW_VERSION"
-echo "Press Enter when ready to continue..."
-read -r
+echo -e "${BLUE}=== Changelog Check ===${NC}"
 
-#---------------------------------------------------------
-# STEP 6: Verify changelog was updated
-#---------------------------------------------------------
-if ! grep -q "\[$NEW_VERSION\]" CHANGELOG.md; then
-    echo -e "${YELLOW}WARNING: CHANGELOG.md doesn't contain [$NEW_VERSION] entry.${NC}"
-    read -p "Continue anyway? [y/N] " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        exit 1
-    fi
+if [ "$SKIP_CHANGELOG" = true ]; then
+    echo -e "${YELLOW}[SKIP] CHANGELOG check bypassed (--skip-changelog)${NC}"
+elif ! grep -q "\[$NEW_VERSION\]" CHANGELOG.md; then
+    echo -e "${RED}ERROR: CHANGELOG.md does not contain a [$NEW_VERSION] entry.${NC}"
+    echo ""
+    echo "Please add release notes to CHANGELOG.md before releasing."
+    echo "Expected entry format: ## [$NEW_VERSION] - $(date +%Y-%m-%d)"
+    echo ""
+    echo "To bypass this check for hotfixes, use: --skip-changelog"
+    exit 1
+else
+    echo -e "${GREEN}[x] CHANGELOG.md contains [$NEW_VERSION] entry${NC}"
 fi
 
 #---------------------------------------------------------
-# STEP 7: Create commit and tag
+# STEP 6: Create commit and tag
 #---------------------------------------------------------
 echo ""
 echo -e "${BLUE}=== Git Commit and Tag ===${NC}"
@@ -282,7 +293,7 @@ git tag "v$NEW_VERSION"
 echo -e "${GREEN}[x] Created commit and tag v$NEW_VERSION${NC}"
 
 #---------------------------------------------------------
-# STEP 8: Publish to npm (if --publish flag)
+# STEP 7: Publish to npm (if --publish flag)
 #---------------------------------------------------------
 if [ "$PUBLISH" = true ]; then
     echo ""
@@ -331,7 +342,7 @@ if [ "$PUBLISH" = true ]; then
 fi
 
 #---------------------------------------------------------
-# STEP 9: Push and merge to stable
+# STEP 8: Push and merge to stable
 #---------------------------------------------------------
 echo ""
 echo -e "${BLUE}=== Push and Update Stable Branch ===${NC}"

@@ -430,9 +430,9 @@ describe('PARAMETER nodes', () => {
       assert.ok(configParam, '"config" parameter should exist');
 
       // Semantic ID should include class name in scope
-      // Expected format: index.js->Processor->constructor->PARAMETER->config#0
+      // Expected format: index.js->ConfigService->constructor->PARAMETER->config#0
       assert.ok(
-        configParam.id.includes('Processor'),
+        configParam.id.includes('ConfigService'),
         `Class PARAMETER ID should include class name in scope. Got: ${configParam.id}`
       );
     });

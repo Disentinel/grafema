@@ -403,7 +403,7 @@ describe('ExportNode.create with source and exportType', () => {
         'formatDate',
         '/project/src/utils.ts',
         15,
-        0,
+        8,
         { exportType: 'named' }
       );
 
@@ -417,7 +417,7 @@ describe('ExportNode.create with source and exportType', () => {
         'helper',
         '/project/src/index.ts',
         10,
-        0,
+        1,
         {
           exportType: 'named',
           source: './helpers'
@@ -434,7 +434,7 @@ describe('ExportNode.create with source and exportType', () => {
         '*',
         '/project/src/index.ts',
         5,
-        0,
+        1,
         {
           exportType: 'all',
           source: './utils'
@@ -642,7 +642,7 @@ describe('InterfaceNode.create with isExternal', () => {
         'ISerializable',
         '/project/src/models/User.ts',
         10,
-        0,
+        1,
         { isExternal: true }
       );
 
@@ -656,7 +656,7 @@ describe('InterfaceNode.create with isExternal', () => {
         'IUser',
         '/project/src/types.ts',
         5,
-        0,
+        1,
         { isExternal: false }
       );
 
@@ -671,7 +671,7 @@ describe('InterfaceNode.create with isExternal', () => {
         'IExternalLib',
         '/project/src/adapters/external.ts',
         20,
-        0,
+        1,
         { isExternal: true }
       );
 
@@ -753,14 +753,14 @@ describe('NodeFactory Part 2 - Cross-cutting concerns', () => {
 
   describe('Enhanced nodes pass NodeFactory.validate()', () => {
     it('ClassNode with isInstantiationRef passes validation', () => {
-      const node = ClassNode.create('MyClass', '/file.ts', 1, 0, { isInstantiationRef: true });
+      const node = ClassNode.create('MyClass', '/file.ts', 1, 5, { isInstantiationRef: true });
       const errors = NodeFactory.validate(node);
       assert.strictEqual(errors.length, 0,
         `Expected no errors, got: ${JSON.stringify(errors)}`);
     });
 
     it('ExportNode with exportType and source passes validation', () => {
-      const node = ExportNode.create('myExport', '/file.ts', 1, 0, {
+      const node = ExportNode.create('myExport', '/file.ts', 1, 8, {
         exportType: 'named',
         source: './utils'
       });
@@ -770,7 +770,7 @@ describe('NodeFactory Part 2 - Cross-cutting concerns', () => {
     });
 
     it('InterfaceNode with isExternal passes validation', () => {
-      const node = InterfaceNode.create('IMyInterface', '/file.ts', 1, 0, { isExternal: true });
+      const node = InterfaceNode.create('IMyInterface', '/file.ts', 1, 3, { isExternal: true });
       const errors = NodeFactory.validate(node);
       assert.strictEqual(errors.length, 0,
         `Expected no errors, got: ${JSON.stringify(errors)}`);

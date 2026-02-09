@@ -392,7 +392,7 @@ describe('NodeFactory.createImport', () => {
         'React',
         '/project/src/App.js',
         1,
-        0,
+        1,
         'react',
         { imported: 'default' }
       );
@@ -407,7 +407,7 @@ describe('NodeFactory.createImport', () => {
         'useState',
         '/project/src/App.js',
         1,
-        0,
+        10,
         'react',
         { imported: 'useState', local: 'useState' }
       );
@@ -421,7 +421,7 @@ describe('NodeFactory.createImport', () => {
         'fs',
         '/project/src/App.js',
         1,
-        0,
+        8,
         'fs',
         { imported: '*', local: 'fs' }
       );
@@ -435,7 +435,7 @@ describe('NodeFactory.createImport', () => {
         'User',
         '/project/src/types.ts',
         1,
-        0,
+        14,
         './user',
         { imported: 'User', importBinding: 'type' }
       );

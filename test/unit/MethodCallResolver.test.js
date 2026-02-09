@@ -265,9 +265,9 @@ describe('MethodCallResolver', () => {
             line: 1
           },
           {
-            id: 'repo-find-method',
+            id: 'repo-findById-method',
             type: 'METHOD',
-            name: 'find',
+            name: 'findById',
             file: 'repo.js',
             line: 5
           },
@@ -279,22 +279,22 @@ describe('MethodCallResolver', () => {
             file: 'app.js',
             line: 3
           },
-          // Method call: repo.find()
+          // Method call: repo.findById()
           {
-            id: 'repo-find-call',
+            id: 'repo-findById-call',
             type: 'CALL',
-            name: 'repo.find',
+            name: 'repo.findById',
             file: 'app.js',
             line: 5,
             object: 'repo',
-            method: 'find'
+            method: 'findById'
           }
         ]);
 
         // CLASS -> METHOD
         await backend.addEdge({
           src: 'repo-class',
-          dst: 'repo-find-method',
+          dst: 'repo-findById-method',
           type: 'CONTAINS'
         });
 
@@ -310,11 +310,11 @@ describe('MethodCallResolver', () => {
         const result = await resolver.execute({ graph: backend });
 
         // Should create CALLS edge
-        const edges = await backend.getOutgoingEdges('repo-find-call', ['CALLS']);
+        const edges = await backend.getOutgoingEdges('repo-findById-call', ['CALLS']);
         assert.strictEqual(edges.length, 1, 'Should create one CALLS edge');
 
         const targetNode = await backend.getNode(edges[0].dst);
-        assert.strictEqual(targetNode.name, 'find', 'Should point to find method');
+        assert.strictEqual(targetNode.name, 'findById', 'Should point to findById method');
 
         console.log('INSTANCE_OF based resolution works');
       } finally {

@@ -729,11 +729,11 @@ describe('Strict Mode', () => {
           {
             id: 'call-2',
             type: 'CALL',
-            name: 'db.query',
+            name: 'db.findRecords',
             file: 'src/repository.js',
             line: 20,
             object: 'db',
-            method: 'query'
+            method: 'findRecords'
           },
           {
             id: 'call-3',

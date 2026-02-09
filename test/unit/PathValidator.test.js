@@ -17,21 +17,26 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert';
 import { PathValidator } from '@grafema/core';
-import { TestBackend } from '../helpers/TestRFDB.js';
+import { createTestDatabase, cleanupAllTestDatabases } from '../helpers/TestRFDB.js';
 import { versionManager } from '@grafema/core';
 
+after(cleanupAllTestDatabases);
+
 describe('PathValidator', () => {
+  let db;
   let backend;
   let pathValidator;
 
   before(async () => {
-    backend = new TestBackend();
-    await backend.connect();
+    db = await createTestDatabase();
+    backend = db.backend;
     pathValidator = new PathValidator(backend);
   });
 
   after(async () => {
-    await backend.disconnect();
+    if (backend) {
+      await backend.close();
+    }
   });
 
   describe('Scenario 1: Safe Refactoring - All Paths Preserved', () => {

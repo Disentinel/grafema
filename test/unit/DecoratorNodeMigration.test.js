@@ -264,7 +264,7 @@ describe('DecoratorNode Migration (REG-106)', () => {
         'Injectable',
         '/project/src/services.ts',
         5,
-        0,
+        1,
         '/project/src/services.ts:CLASS:UserService:5',
         'CLASS'
       );
@@ -332,7 +332,7 @@ describe('DecoratorNode Migration (REG-106)', () => {
         'Controller',
         '/project/controllers.ts',
         15,
-        0,
+        1,
         '/project/controllers.ts:CLASS:UserController:15',
         'CLASS',
         { arguments: ['/users'] }

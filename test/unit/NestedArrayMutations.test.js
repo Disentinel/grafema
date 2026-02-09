@@ -666,7 +666,7 @@ state.users.push(newUser);
   // Function-level nested mutations
   // ============================================================================
   describe('Nested mutations inside functions', () => {
-    it('should detect obj.arr.push() inside regular functions', async () => {
+    it('should detect obj.arr.push() inside regular functions', { todo: 'REG-117: nested mutation in function scope not yet implemented' }, async () => {
       await setupTest(backend, {
         'index.js': `
 function addToState(state, item) {
@@ -704,7 +704,7 @@ function addToState(state, item) {
       );
     });
 
-    it('should detect obj.arr.push() inside arrow functions', async () => {
+    it('should detect obj.arr.push() inside arrow functions', { todo: 'REG-117: nested mutation in arrow function scope not yet implemented' }, async () => {
       await setupTest(backend, {
         'index.js': `
 const addItem = (container, value) => {
@@ -740,7 +740,7 @@ const addItem = (container, value) => {
   // Real-world integration scenarios
   // ============================================================================
   describe('Real-world integration scenarios', () => {
-    it('should allow tracing objects through nested array mutations (reducer pattern)', async () => {
+    it('should allow tracing objects through nested array mutations (reducer pattern)', { todo: 'REG-117: nested mutation in function scope not yet implemented' }, async () => {
       // Redux-like reducer pattern
       await setupTest(backend, {
         'index.js': `

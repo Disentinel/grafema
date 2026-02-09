@@ -312,8 +312,8 @@ handleRequest(null, { json: (x) => x });
       // NOTE: This test verifies the concept but actual Express handlers
       // use method calls (res.json) which may be handled differently.
       // The fix targets the object literal argument pattern.
-      const statusDataNode = await findNodeInScope(backend, 'statusData', 'CONSTANT', '->global->');
-      assert.ok(statusDataNode, 'statusData CONSTANT should exist at module level');
+      const statusDataNode = await findNodeInScope(backend, 'statusData', 'VARIABLE', '->global->');
+      assert.ok(statusDataNode, 'statusData VARIABLE should exist at module level (const with non-literal init)');
     });
   });
 });

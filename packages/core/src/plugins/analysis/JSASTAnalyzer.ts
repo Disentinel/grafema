@@ -2581,7 +2581,7 @@ export class JSASTAnalyzer extends Plugin {
 
         // REG-311: Only decrement try block depth if we're still in 'try' block
         // (not transitioned to catch/finally, where we already decremented)
-        if (controlFlowState && scopeInfo?.currentBlock === 'try') {
+        if (controlFlowState && _scopeInfo?.currentBlock === 'try') {
           controlFlowState.tryBlockDepth--;
         }
 
@@ -4936,7 +4936,7 @@ export class JSASTAnalyzer extends Plugin {
   private microTraceToErrorClass(
     variableName: string,
     funcPath: NodePath<t.Function>,
-    variableDeclarations: VariableDeclarationInfo[]
+    _variableDeclarations: VariableDeclarationInfo[]
   ): { errorClassName: string | null; tracePath: string[] } {
     const tracePath: string[] = [variableName];
     const visited = new Set<string>(); // Cycle detection
@@ -5063,7 +5063,7 @@ export class JSASTAnalyzer extends Plugin {
         if (!catchBlock || !catchBlock.parameterName) return;
 
         // Traverse only the try block body (not catch or finally)
-        const tryBody = tryNode.block;
+        const _tryBody = tryNode.block;
         const sources: Array<{ id: string; type: CatchesFromInfo['sourceType']; line: number }> = [];
 
         // Collect sources from try block

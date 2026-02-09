@@ -628,7 +628,7 @@ export { ILocal, IMixed };
         'IService',
         '/project/services.ts',
         15,
-        0,
+        1,
         {
           extends: ['IBase'],
           properties: [

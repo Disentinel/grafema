@@ -29,46 +29,22 @@ const activeTestDatabases = new Set();
 // Forceful cleanup on process exit - destroy all sockets synchronously
 // This ensures the process can exit even if tests don't call cleanup()
 process.on('exit', () => {
-  // Force close all test database connections
   for (const db of activeTestDatabases) {
     try {
-      if (db.backend._client?.socket) {
-        db.backend._client.socket.destroy();
-      }
+      _silenceClient(db.backend._client);
     } catch {
       // Ignore
     }
   }
   activeTestDatabases.clear();
 
-  // Force close shared server connection
-  if (sharedServerInstance?.client?.socket) {
-    try {
-      sharedServerInstance.client.socket.destroy();
-    } catch {
-      // Ignore
-    }
-  }
-});
-
-// Also handle beforeExit for async cleanup when possible
-process.on('beforeExit', async () => {
-  if (activeTestDatabases.size > 0) {
-    const cleanupPromises = [];
-    for (const db of activeTestDatabases) {
-      cleanupPromises.push(db.cleanup().catch(() => {}));
-    }
-    await Promise.all(cleanupPromises);
-    activeTestDatabases.clear();
-  }
-
-  // Close shared server connection
   if (sharedServerInstance?.client) {
     try {
-      await sharedServerInstance.client.close();
+      _silenceClient(sharedServerInstance.client);
     } catch {
       // Ignore
     }
+    sharedServerInstance = null;
   }
 });
 
@@ -153,7 +129,7 @@ async function _startSharedServer() {
     binaryPath,
     [dbPath, '--socket', socketPath],
     {
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ['ignore', 'ignore', 'ignore'],
       detached: true,
     }
   );
@@ -343,15 +319,18 @@ class TestDatabaseBackend {
    */
   _prepareNodes(nodes) {
     return nodes.map(node => {
-      const { id, type, metadata, ...rest } = node;
+      const { id, type, nodeType, node_type, name, file, exported, metadata, ...rest } = node;
       // Parse existing metadata if it's a string
       const existingMeta = typeof metadata === 'string' ? JSON.parse(metadata) : (metadata || {});
       // Store original semantic ID in metadata
+      // Match RFDBServerBackend.addNodes: extract known wire fields, put rest in metadata
       return {
-        ...rest,
-        id,
-        type,
-        metadata: JSON.stringify({ originalId: String(id), ...existingMeta }),
+        id: String(id),
+        nodeType: nodeType || node_type || type || 'UNKNOWN',
+        name: name || '',
+        file: file || '',
+        exported: exported === true, // Ensure boolean (RFDB expects bool, not string)
+        metadata: JSON.stringify({ originalId: String(id), ...rest, ...existingMeta }),
       };
     });
   }
@@ -559,7 +538,12 @@ class TestDatabaseBackend {
   }
 
   async checkGuarantee(ruleSource) {
-    return this._client.checkGuarantee(ruleSource);
+    const violations = await this._client.checkGuarantee(ruleSource);
+    // Convert bindings from {X: "value"} to [{name: "X", value: "value"}]
+    // to match the format expected by tests (same as RFDBServerBackend.checkGuarantee)
+    return violations.map(v => ({
+      bindings: Object.entries(v.bindings).map(([name, value]) => ({ name, value }))
+    }));
   }
 
   // === Additional methods for compatibility with RFDBServerBackend ===
@@ -576,6 +560,12 @@ class TestDatabaseBackend {
     const nodeCount = await this.nodeCount();
     const edgeCount = await this.edgeCount();
     return { nodeCount, edgeCount };
+  }
+
+  async export() {
+    const nodes = await this.getAllNodes();
+    const edges = await this.getAllEdges();
+    return { nodes, edges };
   }
 
   // === Connection ===
@@ -608,43 +598,86 @@ class TestDatabaseBackend {
 // ===========================================================================
 
 /**
+ * Forcefully silence a client socket to prevent async activity after test ends.
+ *
+ * The problem: when socket.destroy() is called, it may emit 'error' (EPIPE) or
+ * 'close' events asynchronously. The RFDBClient 'close' handler rejects pending
+ * promises, which creates async activity that Node's test runner catches as
+ * "generated asynchronous activity after the test ended".
+ *
+ * Solution: remove all listeners, clear pending request timeouts, unref the
+ * socket, then destroy it. This ensures no async callbacks fire after cleanup.
+ */
+function _silenceClient(client) {
+  if (!client) return;
+
+  // 1. Clear all pending request timeouts to prevent timer callbacks
+  //    The pending map entries have resolve/reject wrappers with timers
+  //    set up in _send(). We need to clear these before destroying.
+  if (client.pending) {
+    client.pending.clear();
+  }
+
+  // 2. Remove all event listeners from the socket to suppress EPIPE/close/error
+  //    callbacks that would create async activity after test ends
+  if (client.socket) {
+    client.socket.removeAllListeners();
+    client.socket.unref();
+    client.socket.destroy();
+    client.socket = null;
+  }
+
+  client.connected = false;
+}
+
+/**
  * Cleanup all active test databases and close shared server connection.
  *
  * Call this in your test file's `after()` hook:
  *   import { after } from 'node:test';
  *   import { cleanupAllTestDatabases } from '../helpers/TestRFDB.js';
  *   after(cleanupAllTestDatabases);
+ *
+ * Strategy: First, gracefully close databases (send closeDatabase command).
+ * Then forcefully silence all sockets to prevent any async activity from
+ * leaking past the after() hook boundary.
  */
 export async function cleanupAllTestDatabases() {
-  const cleanupPromises = [];
+  // Phase 1: Gracefully close each test database (send closeDatabase to server)
+  // Use a short timeout — if the server doesn't respond quickly, move on.
   for (const db of activeTestDatabases) {
-    cleanupPromises.push(db.cleanup().catch(() => {}));
+    try {
+      if (db.backend._client?.connected) {
+        await db.backend._client.closeDatabase();
+      }
+    } catch {
+      // Ignore — server may have already closed the session
+    }
+    db._cleaned = true;
   }
-  await Promise.all(cleanupPromises);
+
+  // Phase 2: Forcefully silence all test database client sockets.
+  // This removes event listeners and destroys sockets synchronously,
+  // preventing EPIPE errors and async callbacks from firing.
+  for (const db of activeTestDatabases) {
+    _silenceClient(db.backend._client);
+    db.backend._client = null;
+    db.backend.connected = false;
+  }
   activeTestDatabases.clear();
 
-  // Close shared server connection and unref so process can exit
-  if (sharedServerInstance?.client) {
-    try {
-      // Unref to allow process exit, then close
-      sharedServerInstance.client.unref();
-      await sharedServerInstance.client.close();
-    } catch {
-      // Ignore cleanup errors
-    }
-    sharedServerInstance = null;
-  }
-
-  // Unref all remaining handles to allow process exit
-  // This handles any sockets that weren't properly cleaned up
-  for (const handle of process._getActiveHandles()) {
-    if (handle.unref && typeof handle.unref === 'function') {
+  // Phase 3: Close shared server connection the same way.
+  if (sharedServerInstance) {
+    _silenceClient(sharedServerInstance.client);
+    // Kill server process if we own it (prevents orphaned processes)
+    if (sharedServerInstance.serverProcess) {
       try {
-        handle.unref();
+        sharedServerInstance.serverProcess.kill('SIGTERM');
       } catch {
-        // Ignore unref errors
+        // Ignore — may already be dead
       }
     }
+    sharedServerInstance = null;
   }
 }
 

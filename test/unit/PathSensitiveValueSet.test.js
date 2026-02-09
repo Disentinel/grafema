@@ -183,9 +183,15 @@ describe('Path-Sensitive Value Set Analysis', () => {
         let depth = 0;
         let current = scope;
         const constraints = [];
+        const visited = new Set();
 
         while (current) {
-          if (current.constraints) {
+          // Prevent infinite loops from cyclic scope chains
+          const currentKey = current.id || current.originalId;
+          if (visited.has(currentKey)) break;
+          visited.add(currentKey);
+
+          if (current.constraints && Array.isArray(current.constraints)) {
             constraints.push(...current.constraints);
           }
           depth++;

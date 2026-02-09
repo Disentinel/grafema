@@ -211,10 +211,10 @@ const helper = new Helper();
 
         const source = allNodes.find(n => n.id === assignment.dst);
         assert.ok(source, 'Source node not found');
-        // NewExpression должна связываться с CLASS узлом
+        // NewExpression creates a CONSTRUCTOR_CALL node that may later resolve to CLASS
         assert.ok(
-          source.type === 'CLASS' || source.type === 'EXTERNAL_MODULE',
-          `Expected CLASS or EXTERNAL_MODULE, got ${source.type}`
+          source.type === 'CLASS' || source.type === 'EXTERNAL_MODULE' || source.type === 'CONSTRUCTOR_CALL',
+          `Expected CLASS, EXTERNAL_MODULE, or CONSTRUCTOR_CALL, got ${source.type}`
         );
       } finally {
         await backend.close();

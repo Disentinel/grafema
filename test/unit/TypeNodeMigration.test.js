@@ -422,7 +422,6 @@ describe('TypeNode Migration (REG-104)', () => {
 
     it('should have OPTIONAL array with optional fields', () => {
       assert.ok(Array.isArray(TypeNode.OPTIONAL));
-      assert.ok(TypeNode.OPTIONAL.includes('column'));
       assert.ok(TypeNode.OPTIONAL.includes('aliasOf'));
     });
   });

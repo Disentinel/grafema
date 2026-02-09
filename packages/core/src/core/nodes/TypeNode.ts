@@ -67,7 +67,7 @@ export class TypeNode {
 
     const nodeRecord = node as unknown as Record<string, unknown>;
     for (const field of this.REQUIRED) {
-      if (!nodeRecord[field]) {
+      if (nodeRecord[field] === undefined || nodeRecord[field] === null) {
         errors.push(`Missing required field: ${field}`);
       }
     }

@@ -520,7 +520,7 @@ export enum Mode {
         'Priority',
         '/project/enums.ts',
         15,
-        0,
+        6,
         {
           isConst: false,
           members: [

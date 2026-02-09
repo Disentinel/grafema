@@ -127,8 +127,8 @@ describe('Parameter Data Flow', () => {
 
       // Should have multiple parameters with correct indices
       const parameters = await backend.getAllNodes({ type: 'PARAMETER' });
-      // Use originalId or stableId for comparison (parentFunctionId is the string ID)
-      const funcId = multiParamFunc.originalId || multiParamFunc.stableId;
+      // The node's id is already the semantic ID (resolved by _parseNode from originalId in metadata)
+      const funcId = multiParamFunc.id;
       const funcParams = parameters.filter(p => p.parentFunctionId === funcId);
 
       assert.ok(funcParams.length >= 2,

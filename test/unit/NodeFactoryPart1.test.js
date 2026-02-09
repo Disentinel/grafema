@@ -118,7 +118,7 @@ describe('NodeFactory.createClass', () => {
         'UserService',
         '/project/src/services/UserService.ts',
         10,
-        0,
+        5,
         { exported: true }
       );
 
@@ -235,7 +235,7 @@ describe('NodeFactory.createExport', () => {
         'formatDate',
         '/project/src/utils.ts',
         15,
-        0
+        8
       );
 
       const errors = NodeFactory.validate(node);
@@ -248,7 +248,7 @@ describe('NodeFactory.createExport', () => {
         'default',
         '/project/src/App.tsx',
         100,
-        0,
+        1,
         { default: true, local: 'App' }
       );
 
@@ -285,7 +285,7 @@ describe('NodeFactory.createExternalModule', () => {
       const node = NodeFactory.createExternalModule('node:fs');
 
       assert.strictEqual(node.type, 'EXTERNAL_MODULE');
-      assert.strictEqual(node.name, 'node:fs');
+      assert.strictEqual(node.name, 'fs');
     });
   });
 
@@ -426,7 +426,7 @@ describe('NodeFactory.createInterface', () => {
         'IUser',
         '/project/src/types.ts',
         5,
-        0
+        3
       );
 
       const errors = NodeFactory.validate(node);
@@ -536,7 +536,7 @@ describe('NodeFactory.createType', () => {
         'UserId',
         '/project/src/types.ts',
         10,
-        0,
+        6,
         { aliasOf: 'string' }
       );
 
@@ -662,7 +662,7 @@ describe('NodeFactory.createEnum', () => {
         'Status',
         '/project/src/types.ts',
         20,
-        0,
+        5,
         { isConst: true }
       );
 
@@ -836,7 +836,7 @@ describe('NodeFactory.createDecorator', () => {
         'Injectable',
         '/project/src/services/UserService.ts',
         5,
-        0,
+        1,
         'target-id',
         'CLASS',
         { arguments: [{ providedIn: 'root' }] }

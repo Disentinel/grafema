@@ -26,7 +26,7 @@
  * Some tests will FAIL initially - implementation comes after.
  */
 
-import { describe, it, afterEach, beforeEach } from 'node:test';
+import { describe, it, after, afterEach, beforeEach } from 'node:test';
 import assert from 'node:assert';
 import { join } from 'path';
 import { writeFileSync, mkdirSync } from 'fs';

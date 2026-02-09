@@ -13,11 +13,14 @@
 import { describe, it, after } from 'node:test';
 import assert from 'node:assert';
 import { NodejsBuiltinsResolver } from '@grafema/core';
+import { createTestDatabase, cleanupAllTestDatabases } from '../helpers/TestRFDB.js';
 import { join } from 'path';
 import { tmpdir } from 'os';
 
 describe('NodejsBuiltinsResolver', () => {
   let testCounter = 0;
+
+  after(cleanupAllTestDatabases);
 
   async function setupBackend() {
     const testDir = join(tmpdir(), `navi-test-builtins-${Date.now()}-${testCounter++}`);

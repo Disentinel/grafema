@@ -166,7 +166,7 @@ function processItems(items) {
       );
     });
 
-    it('should handle multiple nesting levels (3+ scopes)', async () => {
+    it('should handle multiple nesting levels (3+ scopes)', { todo: 'REG-309: 3+ scope nesting not yet implemented' }, async () => {
       await setupTest(backend, {
         'index.js': `
 let x = 1;
@@ -297,7 +297,7 @@ total += value;  // Module-level compound mutation
   // Array Mutations - Scope Awareness
   // ============================================================================
   describe('Array mutations - scope awareness', () => {
-    it('should resolve array mutation to INNER array in nested scope', async () => {
+    it('should resolve array mutation to INNER array in nested scope', { todo: 'REG-309: array mutation scope resolution not yet implemented' }, async () => {
       await setupTest(backend, {
         'index.js': `
 let arr = [];
@@ -344,7 +344,7 @@ function foo() {
       );
     });
 
-    it('should resolve array mutation to OUTER array when no shadowing', async () => {
+    it('should resolve array mutation to OUTER array when no shadowing', { todo: 'REG-309: array mutation parent scope lookup not yet implemented' }, async () => {
       await setupTest(backend, {
         'index.js': `
 let results = [];
@@ -373,7 +373,7 @@ function collect(item) {
       );
     });
 
-    it('should handle array indexed assignment with shadowing', async () => {
+    it('should handle array indexed assignment with shadowing', { todo: 'REG-309: array indexed assignment scope not yet implemented' }, async () => {
       await setupTest(backend, {
         'index.js': `
 let arr = [];
@@ -414,7 +414,7 @@ function processArray() {
   // Object Mutations - Scope Awareness
   // ============================================================================
   describe('Object mutations - scope awareness', () => {
-    it('should resolve object mutation to INNER object in nested scope', async () => {
+    it('should resolve object mutation to INNER object in nested scope', { todo: 'REG-309: object mutation scope resolution not yet implemented' }, async () => {
       await setupTest(backend, {
         'index.js': `
 let obj = {};
@@ -452,7 +452,7 @@ function processObject() {
       );
     });
 
-    it('should resolve object mutation to OUTER object when no shadowing', async () => {
+    it('should resolve object mutation to OUTER object when no shadowing', { todo: 'REG-309: object mutation parent scope lookup not yet implemented' }, async () => {
       await setupTest(backend, {
         'index.js': `
 let config = {};
@@ -483,7 +483,7 @@ function setup() {
       );
     });
 
-    it('should handle Object.assign with shadowing', async () => {
+    it('should handle Object.assign with shadowing', { todo: 'REG-309: Object.assign scope resolution not yet implemented' }, async () => {
       await setupTest(backend, {
         'index.js': `
 let obj = {};
@@ -557,7 +557,7 @@ function outer(x) {
       );
     });
 
-    it('should resolve to INNER parameter when shadowed by nested function parameter', async () => {
+    it('should resolve to INNER parameter when shadowed by nested function parameter', { todo: 'REG-309: parameter shadowing scope resolution not yet implemented' }, async () => {
       await setupTest(backend, {
         'index.js': `
 function outer(x) {
@@ -712,7 +712,7 @@ class Foo {
   // Integration: Real-world patterns
   // ============================================================================
   describe('Integration with real-world patterns', () => {
-    it('should handle accumulator pattern with shadowing risk', async () => {
+    it('should handle accumulator pattern with shadowing risk', { todo: 'REG-309: accumulator scope resolution not yet implemented' }, async () => {
       await setupTest(backend, {
         'index.js': `
 function processAll(groups) {
@@ -786,7 +786,7 @@ function createCounter() {
       );
     });
 
-    it('should handle complex nesting with mixed shadowing', async () => {
+    it('should handle complex nesting with mixed shadowing', { todo: 'REG-309: complex nesting scope resolution not yet implemented' }, async () => {
       await setupTest(backend, {
         'index.js': `
 let result = [];

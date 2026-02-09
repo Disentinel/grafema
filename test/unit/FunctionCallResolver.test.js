@@ -1464,7 +1464,7 @@ describe('FunctionCallResolver', () => {
       assert.strictEqual(metadata.phase, 'ENRICHMENT');
       assert.strictEqual(metadata.priority, 80, 'Priority should be 80 (after ImportExportLinker at 90)');
       assert.deepStrictEqual(metadata.creates.edges, ['CALLS']);
-      assert.deepStrictEqual(metadata.creates.nodes, []);
+      assert.deepStrictEqual(metadata.creates.nodes, ['EXTERNAL_MODULE']);
       assert.ok(metadata.dependencies.includes('ImportExportLinker'), 'Should depend on ImportExportLinker');
 
       console.log('Plugin metadata is correct');
