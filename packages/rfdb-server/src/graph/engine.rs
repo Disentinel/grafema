@@ -743,75 +743,127 @@ impl GraphStore for GraphEngine {
 
         let delta_count = result.len();
 
-        // Поиск в segment (после flush)
-        // Segment теперь хранит все поля включая version и exported
+        // Поиск в segment using secondary indexes for narrowing
         if let Some(ref segment) = self.nodes_segment {
-            for idx in segment.iter_indices() {
-                if segment.is_deleted(idx) {
-                    continue;
-                }
+            // Determine candidate indices using type_index and/or file_index
+            // instead of full segment scan
+            let use_type_index = type_prefix.is_some();
+            let use_file_index = query.file.is_some();
 
-                let Some(id) = segment.get_id(idx) else { continue };
+            // Build candidate set from indexes when possible
+            enum Candidates {
+                /// Use specific indices from index (O(K) where K = matching nodes)
+                Indexed(Vec<usize>),
+                /// Full scan (no index applicable)
+                FullScan,
+            }
 
-                // Пропустить если уже есть в delta (приоритет delta)
-                if self.delta_nodes.contains_key(&id) {
-                    continue;
-                }
-
-                // Пропустить если удалён (tracked in deleted_segment_ids)
-                if self.deleted_segment_ids.contains(&id) {
-                    continue;
-                }
-
-                // Проверка node_type с поддержкой wildcard
-                let type_match = match (&type_prefix, is_wildcard) {
-                    (Some(prefix), true) => segment.get_node_type(idx).map_or(false, |t| t.starts_with(prefix)),
-                    (Some(exact), false) => segment.get_node_type(idx).map_or(false, |t| t == exact),
-                    (None, _) => true,
+            let candidates = if use_type_index && use_file_index {
+                // Both type and file specified: use type index, filter by file later
+                // (type index is typically more selective than file index)
+                let type_candidates = if is_wildcard {
+                    self.index_set.find_by_type_prefix(type_prefix.as_ref().unwrap())
+                } else {
+                    self.index_set.find_by_type(type_prefix.as_ref().unwrap()).to_vec()
                 };
-                if !type_match {
-                    continue;
+                Candidates::Indexed(type_candidates)
+            } else if use_type_index {
+                let type_candidates = if is_wildcard {
+                    self.index_set.find_by_type_prefix(type_prefix.as_ref().unwrap())
+                } else {
+                    self.index_set.find_by_type(type_prefix.as_ref().unwrap()).to_vec()
+                };
+                Candidates::Indexed(type_candidates)
+            } else if use_file_index {
+                Candidates::Indexed(self.index_set.find_by_file(query.file.as_ref().unwrap()).to_vec())
+            } else {
+                Candidates::FullScan
+            };
+
+            // Helper closure to check remaining filters on a candidate index
+            let check_remaining = |idx: usize| -> Option<u128> {
+                if segment.is_deleted(idx) {
+                    return None;
                 }
 
-                let file_id_match = query.file_id.map_or(true, |f| {
-                    segment.get_file_id(idx).map_or(false, |fid| fid == f)
-                });
-                if !file_id_match {
-                    continue;
+                let id = segment.get_id(idx)?;
+
+                // Skip if in delta (priority) or deleted from segment
+                if self.delta_nodes.contains_key(&id) || self.deleted_segment_ids.contains(&id) {
+                    return None;
                 }
 
-                // File path match (alternative to file_id)
-                let file_path_match = query.file.as_ref().map_or(true, |f| {
-                    segment.get_file_path(idx).map_or(false, |path| path == f)
-                });
-                if !file_path_match {
-                    continue;
+                // If type was already matched by index, skip type check.
+                // But for file-only index queries, we still need type check.
+                if !use_type_index {
+                    let type_match = match (&type_prefix, is_wildcard) {
+                        (Some(prefix), true) => segment.get_node_type(idx).map_or(false, |t| t.starts_with(prefix)),
+                        (Some(exact), false) => segment.get_node_type(idx).map_or(false, |t| t == exact),
+                        (None, _) => true,
+                    };
+                    if !type_match { return None; }
+                }
+
+                // File check (skip if already matched by file index)
+                if !use_file_index {
+                    let file_id_match = query.file_id.map_or(true, |f| {
+                        segment.get_file_id(idx).map_or(false, |fid| fid == f)
+                    });
+                    if !file_id_match { return None; }
+
+                    let file_path_match = query.file.as_ref().map_or(true, |f| {
+                        segment.get_file_path(idx).map_or(false, |path| path == f)
+                    });
+                    if !file_path_match { return None; }
+                } else {
+                    // File index was used, but file_id might also be specified
+                    let file_id_match = query.file_id.map_or(true, |f| {
+                        segment.get_file_id(idx).map_or(false, |fid| fid == f)
+                    });
+                    if !file_id_match { return None; }
+                }
+
+                // File path check when type index was used but file was also specified
+                if use_type_index && use_file_index {
+                    let file_path_match = query.file.as_ref().map_or(true, |f| {
+                        segment.get_file_path(idx).map_or(false, |path| path == f)
+                    });
+                    if !file_path_match { return None; }
                 }
 
                 let name_match = query.name.as_ref().map_or(true, |n| {
                     segment.get_name(idx).map_or(false, |name| name == n)
                 });
-                if !name_match {
-                    continue;
-                }
+                if !name_match { return None; }
 
-                // Проверка version
                 let version_match = query.version.as_ref().map_or(true, |v| {
                     segment.get_version(idx).map_or(false, |ver| ver == v)
                 });
-                if !version_match {
-                    continue;
-                }
+                if !version_match { return None; }
 
-                // Проверка exported
                 let exported_match = query.exported.map_or(true, |e| {
                     segment.get_exported(idx).map_or(false, |exp| exp == e)
                 });
-                if !exported_match {
-                    continue;
-                }
+                if !exported_match { return None; }
 
-                result.push(id);
+                Some(id)
+            };
+
+            match candidates {
+                Candidates::Indexed(indices) => {
+                    for idx in indices {
+                        if let Some(id) = check_remaining(idx) {
+                            result.push(id);
+                        }
+                    }
+                }
+                Candidates::FullScan => {
+                    for idx in segment.iter_indices() {
+                        if let Some(id) = check_remaining(idx) {
+                            result.push(id);
+                        }
+                    }
+                }
             }
         }
 
