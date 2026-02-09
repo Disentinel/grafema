@@ -15,10 +15,16 @@
 import { describe, it, beforeEach, afterEach, mock } from 'node:test';
 import assert from 'node:assert';
 
+import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+
 import {
-  Logger,
   ConsoleLogger,
+  FileLogger,
+  MultiLogger,
   createLogger,
+  type Logger,
   type LogLevel,
 } from '@grafema/core';
 
@@ -646,6 +652,367 @@ describe('Logger', () => {
       assert.doesNotThrow(() => {
         context.logger?.info('This should not throw');
       });
+    });
+  });
+});
+
+// =============================================================================
+// TESTS: FileLogger (REG-199)
+// =============================================================================
+
+describe('FileLogger', () => {
+  let testDir: string;
+
+  beforeEach(() => {
+    testDir = join(tmpdir(), `grafema-logger-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(testDir, { recursive: true });
+  });
+
+  afterEach(() => {
+    rmSync(testDir, { recursive: true, force: true });
+  });
+
+  describe('constructor', () => {
+    it('should create the log file on construction', () => {
+      const logPath = join(testDir, 'test.log');
+      new FileLogger('info', logPath);
+      assert.ok(existsSync(logPath), 'Log file should be created');
+    });
+
+    it('should truncate existing file on construction', async () => {
+      const logPath = join(testDir, 'test.log');
+      writeFileSync(logPath, 'old content\n');
+
+      const logger = new FileLogger('info', logPath);
+      await logger.close();
+      const content = readFileSync(logPath, 'utf-8');
+      assert.strictEqual(content, '', 'File should be truncated');
+    });
+
+    it('should create parent directories if they do not exist', () => {
+      const logPath = join(testDir, 'nested', 'dir', 'test.log');
+      new FileLogger('info', logPath);
+      assert.ok(existsSync(logPath), 'Log file should be created with nested dirs');
+    });
+
+    it('should throw if path points to a directory', () => {
+      assert.throws(() => {
+        new FileLogger('info', testDir);
+      }, /is a directory/);
+    });
+  });
+
+  describe('log methods', () => {
+    it('should write error messages to file', async () => {
+      const logPath = join(testDir, 'test.log');
+      const logger = new FileLogger('errors', logPath);
+      logger.error('Something went wrong');
+      await logger.close();
+
+      const content = readFileSync(logPath, 'utf-8');
+      assert.ok(content.includes('[ERROR]'), 'Should contain ERROR level');
+      assert.ok(content.includes('Something went wrong'), 'Should contain message');
+    });
+
+    it('should write warn messages to file', async () => {
+      const logPath = join(testDir, 'test.log');
+      const logger = new FileLogger('warnings', logPath);
+      logger.warn('Deprecation notice');
+      await logger.close();
+
+      const content = readFileSync(logPath, 'utf-8');
+      assert.ok(content.includes('[WARN]'), 'Should contain WARN level');
+      assert.ok(content.includes('Deprecation notice'), 'Should contain message');
+    });
+
+    it('should write info messages to file', async () => {
+      const logPath = join(testDir, 'test.log');
+      const logger = new FileLogger('info', logPath);
+      logger.info('Processing started');
+      await logger.close();
+
+      const content = readFileSync(logPath, 'utf-8');
+      assert.ok(content.includes('[INFO]'), 'Should contain INFO level');
+      assert.ok(content.includes('Processing started'), 'Should contain message');
+    });
+
+    it('should write debug messages to file', async () => {
+      const logPath = join(testDir, 'test.log');
+      const logger = new FileLogger('debug', logPath);
+      logger.debug('Variable state');
+      await logger.close();
+
+      const content = readFileSync(logPath, 'utf-8');
+      assert.ok(content.includes('[DEBUG]'), 'Should contain DEBUG level');
+      assert.ok(content.includes('Variable state'), 'Should contain message');
+    });
+
+    it('should write trace messages to file', async () => {
+      const logPath = join(testDir, 'test.log');
+      const logger = new FileLogger('debug', logPath);
+      logger.trace('Entering function');
+      await logger.close();
+
+      const content = readFileSync(logPath, 'utf-8');
+      assert.ok(content.includes('[TRACE]'), 'Should contain TRACE level');
+      assert.ok(content.includes('Entering function'), 'Should contain message');
+    });
+  });
+
+  describe('timestamps', () => {
+    it('should include ISO timestamp in each log line', async () => {
+      const logPath = join(testDir, 'test.log');
+      const logger = new FileLogger('info', logPath);
+      logger.info('Timestamp test');
+      await logger.close();
+
+      const content = readFileSync(logPath, 'utf-8');
+      // ISO timestamp pattern: 2026-02-09T12:34:56.789Z
+      assert.ok(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(content), 'Should contain ISO timestamp');
+    });
+  });
+
+  describe('context formatting', () => {
+    it('should include context in file output', async () => {
+      const logPath = join(testDir, 'test.log');
+      const logger = new FileLogger('info', logPath);
+      logger.info('Processing', { files: 150, elapsed: '2.5s' });
+      await logger.close();
+
+      const content = readFileSync(logPath, 'utf-8');
+      assert.ok(content.includes('150'), 'Should contain context value');
+      assert.ok(content.includes('2.5s'), 'Should contain context value');
+    });
+
+    it('should handle circular references in context', () => {
+      const logPath = join(testDir, 'test.log');
+      const logger = new FileLogger('debug', logPath);
+
+      const obj: Record<string, unknown> = { a: 1 };
+      obj.self = obj;
+
+      assert.doesNotThrow(() => {
+        logger.debug('Circular', obj);
+      });
+    });
+  });
+
+  describe('log level filtering', () => {
+    it('should respect log level threshold', async () => {
+      const logPath = join(testDir, 'test.log');
+      const logger = new FileLogger('warnings', logPath);
+
+      logger.error('error');
+      logger.warn('warn');
+      logger.info('info should not appear');
+      logger.debug('debug should not appear');
+      await logger.close();
+
+      const content = readFileSync(logPath, 'utf-8');
+      assert.ok(content.includes('error'), 'Should contain error');
+      assert.ok(content.includes('warn'), 'Should contain warn');
+      assert.ok(!content.includes('info should not appear'), 'Should not contain info');
+      assert.ok(!content.includes('debug should not appear'), 'Should not contain debug');
+    });
+
+    it('silent level should write nothing', async () => {
+      const logPath = join(testDir, 'test.log');
+      const logger = new FileLogger('silent', logPath);
+
+      logger.error('error');
+      logger.warn('warn');
+      logger.info('info');
+      logger.debug('debug');
+      logger.trace('trace');
+      await logger.close();
+
+      const content = readFileSync(logPath, 'utf-8');
+      assert.strictEqual(content, '', 'File should be empty with silent level');
+    });
+  });
+
+  describe('multiple writes', () => {
+    it('should append each log line', async () => {
+      const logPath = join(testDir, 'test.log');
+      const logger = new FileLogger('info', logPath);
+
+      logger.info('Line 1');
+      logger.info('Line 2');
+      logger.info('Line 3');
+      await logger.close();
+
+      const content = readFileSync(logPath, 'utf-8');
+      const lines = content.trim().split('\n');
+      assert.strictEqual(lines.length, 3, 'Should have 3 lines');
+    });
+  });
+});
+
+// =============================================================================
+// TESTS: MultiLogger (REG-199)
+// =============================================================================
+
+describe('MultiLogger', () => {
+  let consoleMock: ConsoleMock;
+  let testDir: string;
+
+  beforeEach(() => {
+    consoleMock = createConsoleMock();
+    consoleMock.install();
+    testDir = join(tmpdir(), `grafema-multi-logger-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(testDir, { recursive: true });
+  });
+
+  afterEach(() => {
+    consoleMock.restore();
+    rmSync(testDir, { recursive: true, force: true });
+  });
+
+  it('should delegate to all inner loggers', async () => {
+    const logPath = join(testDir, 'test.log');
+    const consoleLogger = new ConsoleLogger('info');
+    const fileLogger = new FileLogger('info', logPath);
+    const multi = new MultiLogger([consoleLogger, fileLogger]);
+
+    multi.info('Hello from multi');
+
+    // Console should have it
+    assert.strictEqual(consoleMock.logs.length, 1);
+    assert.ok(String(consoleMock.logs[0].args[0]).includes('Hello from multi'));
+
+    // File should have it (flush first)
+    await fileLogger.close();
+    const content = readFileSync(logPath, 'utf-8');
+    assert.ok(content.includes('Hello from multi'));
+  });
+
+  it('should respect each inner logger level independently', async () => {
+    const logPath = join(testDir, 'test.log');
+    const consoleLogger = new ConsoleLogger('errors'); // Only errors to console
+    const fileLogger = new FileLogger('debug', logPath); // Everything to file
+    const multi = new MultiLogger([consoleLogger, fileLogger]);
+
+    multi.info('Info message');
+    multi.error('Error message');
+
+    // Console: only error (errors level)
+    assert.strictEqual(consoleMock.logs.length, 1);
+    assert.ok(String(consoleMock.logs[0].args[0]).includes('Error message'));
+
+    // File: both (debug level)
+    await fileLogger.close();
+    const content = readFileSync(logPath, 'utf-8');
+    assert.ok(content.includes('Info message'));
+    assert.ok(content.includes('Error message'));
+  });
+
+  it('should handle all log methods', async () => {
+    const logPath = join(testDir, 'test.log');
+    const fileLogger = new FileLogger('debug', logPath);
+    const multi = new MultiLogger([fileLogger]);
+
+    multi.error('e');
+    multi.warn('w');
+    multi.info('i');
+    multi.debug('d');
+    multi.trace('t');
+
+    await fileLogger.close();
+    const content = readFileSync(logPath, 'utf-8');
+    const lines = content.trim().split('\n');
+    assert.strictEqual(lines.length, 5, 'Should have 5 lines');
+  });
+
+  it('should pass context to all loggers', async () => {
+    const logPath = join(testDir, 'test.log');
+    const consoleLogger = new ConsoleLogger('debug');
+    const fileLogger = new FileLogger('debug', logPath);
+    const multi = new MultiLogger([consoleLogger, fileLogger]);
+
+    multi.info('With context', { key: 'value' });
+
+    // Console got context
+    const consoleOutput = String(consoleMock.logs[0].args[0]);
+    assert.ok(consoleOutput.includes('value'));
+
+    // File got context
+    await fileLogger.close();
+    const fileContent = readFileSync(logPath, 'utf-8');
+    assert.ok(fileContent.includes('value'));
+  });
+});
+
+// =============================================================================
+// TESTS: createLogger with logFile option (REG-199)
+// =============================================================================
+
+describe('createLogger with logFile', () => {
+  let testDir: string;
+  let consoleMock: ConsoleMock;
+
+  beforeEach(() => {
+    consoleMock = createConsoleMock();
+    consoleMock.install();
+    testDir = join(tmpdir(), `grafema-create-logger-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(testDir, { recursive: true });
+  });
+
+  afterEach(() => {
+    consoleMock.restore();
+    rmSync(testDir, { recursive: true, force: true });
+  });
+
+  it('should return ConsoleLogger when no logFile specified', () => {
+    const logger = createLogger('info');
+    assert.ok(logger instanceof ConsoleLogger);
+  });
+
+  it('should return MultiLogger when logFile is specified', () => {
+    const logPath = join(testDir, 'test.log');
+    const logger = createLogger('info', { logFile: logPath });
+    assert.ok(logger instanceof MultiLogger);
+  });
+
+  it('should write to both console and file', async () => {
+    const logPath = join(testDir, 'test.log');
+    const logger = createLogger('info', { logFile: logPath });
+
+    logger.info('Dual output test');
+
+    // Console
+    assert.strictEqual(consoleMock.logs.length, 1);
+
+    // File (flush via FileLogger.close exposed on MultiLogger)
+    await (logger as MultiLogger).close();
+    const content = readFileSync(logPath, 'utf-8');
+    assert.ok(content.includes('Dual output test'));
+  });
+
+  it('should capture all levels in file even with quiet console', async () => {
+    const logPath = join(testDir, 'test.log');
+    const logger = createLogger('silent', { logFile: logPath });
+
+    logger.error('error');
+    logger.warn('warn');
+    logger.info('info');
+    logger.debug('debug');
+
+    // Console: nothing (silent)
+    assert.strictEqual(consoleMock.logs.length, 0);
+
+    // File: everything (debug level)
+    await (logger as MultiLogger).close();
+    const content = readFileSync(logPath, 'utf-8');
+    assert.ok(content.includes('error'));
+    assert.ok(content.includes('warn'));
+    assert.ok(content.includes('info'));
+    assert.ok(content.includes('debug'));
+  });
+
+  it('should still work without options parameter (backward compatible)', () => {
+    const logger = createLogger('info');
+    assert.doesNotThrow(() => {
+      logger.info('Backward compat');
     });
   });
 });

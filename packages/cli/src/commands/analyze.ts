@@ -220,6 +220,7 @@ export const analyzeCommand = new Command('analyze')
   .option('-v, --verbose', 'Show verbose logging')
   .option('--debug', 'Enable debug mode (writes diagnostics.log)')
   .option('--log-level <level>', 'Set log level (silent, errors, warnings, info, debug)')
+  .option('--log-file <path>', 'Write all log output to a file')
   .option('--strict', 'Enable strict mode (fail on unresolved references)')
   .option('--auto-start', 'Auto-start RFDB server if not running')
   .addHelpText('after', `
@@ -230,12 +231,13 @@ Examples:
   grafema analyze -s api         Analyze only "api" service (monorepo)
   grafema analyze -v             Verbose output with progress details
   grafema analyze --debug        Write diagnostics.log for debugging
+  grafema analyze --log-file out.log  Write all logs to a file
   grafema analyze --strict       Fail on unresolved references (debugging)
   grafema analyze --auto-start   Auto-start server (useful for CI)
 
 Note: Start the server first with: grafema server start
 `)
-  .action(async (path: string, options: { service?: string; entrypoint?: string; clear?: boolean; quiet?: boolean; verbose?: boolean; debug?: boolean; logLevel?: string; strict?: boolean; autoStart?: boolean }) => {
+  .action(async (path: string, options: { service?: string; entrypoint?: string; clear?: boolean; quiet?: boolean; verbose?: boolean; debug?: boolean; logLevel?: string; logFile?: string; strict?: boolean; autoStart?: boolean }) => {
     const projectPath = resolve(path);
     const grafemaDir = join(projectPath, '.grafema');
     const dbPath = join(grafemaDir, 'graph.rfdb');
@@ -252,8 +254,12 @@ Note: Start the server first with: grafema server start
 
     // Create logger based on CLI flags
     const logLevel = getLogLevel(options);
-    const logger = createLogger(logLevel);
+    const logFile = options.logFile ? resolve(options.logFile) : undefined;
+    const logger = createLogger(logLevel, logFile ? { logFile } : undefined);
 
+    if (logFile) {
+      debug(`Log file: ${logFile}`);
+    }
     debug(`Analyzing project: ${projectPath}`);
 
     // Connect to RFDB server

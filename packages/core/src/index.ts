@@ -23,8 +23,8 @@ export type {
 } from './errors/GrafemaError.js';
 
 // Logging
-export { Logger, ConsoleLogger, createLogger } from './logging/Logger.js';
-export type { LogLevel } from './logging/Logger.js';
+export { ConsoleLogger, FileLogger, MultiLogger, createLogger } from './logging/Logger.js';
+export type { Logger, LogLevel } from './logging/Logger.js';
 
 // Diagnostics
 export { DiagnosticCollector, DiagnosticReporter, DiagnosticWriter } from './diagnostics/index.js';
