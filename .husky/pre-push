@@ -1,17 +1,22 @@
 #!/bin/sh
 
-# NodeFactory guarantee check
-# Ensures all nodes passed to graph.addNode/addNodes are created through NodeFactory
+# Build and run full test suite (5 min timeout)
+pnpm build || {
+  echo "Build failed"
+  exit 1
+}
 
-# Only run if packages/core was modified
-if git diff --cached --name-only | grep -q "^packages/core/"; then
+perl -e 'alarm 300; exec @ARGV' node --test --test-concurrency=1 'test/unit/*.test.js' || {
+  echo "Tests failed or timed out (5 min limit)"
+  exit 1
+}
+
+# NodeFactory guarantee check (only if packages/core was modified)
+if git diff --name-only HEAD @{u} 2>/dev/null | grep -q "^packages/core/"; then
   echo "Running NodeFactory guarantee check..."
-
-  # Check if grafema CLI is available
   if command -v grafema &> /dev/null; then
     grafema check --guarantee=node-creation --project=packages/core --quiet
   else
     echo "Warning: grafema CLI not found, skipping NodeFactory check"
-    echo "Install with: pnpm install && pnpm build"
   fi
 fi
