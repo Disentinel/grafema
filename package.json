@@ -11,7 +11,7 @@
     "lint": "eslint --cache packages/",
     "mcp": "node --import tsx packages/mcp/src/server.ts",
     "test": "node --test test/unit/",
-    "test:coverage": "c8 node --test --test-concurrency=1 'test/unit/*.test.js'",
+    "test:coverage": "c8 node --test 'test/unit/*.test.js'",
     "test:scenarios": "node --test test/scenarios/",
     "release": "./scripts/release.sh",
     "prepare": "husky"
