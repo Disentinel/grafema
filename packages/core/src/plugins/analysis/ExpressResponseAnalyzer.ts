@@ -70,16 +70,24 @@ export class ExpressResponseAnalyzer extends Plugin {
       logger.info('Processing routes', { count: routes.length });
 
       let edgesCreated = 0;
+      let nodesCreated = 0;
+      const allNodes: NodeRecord[] = [];
+      const allEdges: Array<{ type: string; src: string; dst: string; metadata?: unknown }> = [];
 
       for (const route of routes) {
-        const result = await this.analyzeRouteResponses(route, graph);
-        edgesCreated += result;
+        const result = await this.analyzeRouteResponses(route, graph, allNodes, allEdges);
+        edgesCreated += result.edges;
+        nodesCreated += result.nodes;
       }
 
-      logger.info('Analysis complete', { edgesCreated });
+      // Flush all nodes and edges
+      await graph.addNodes(allNodes);
+      await graph.addEdges(allEdges);
+
+      logger.info('Analysis complete', { nodesCreated, edgesCreated });
 
       return createSuccessResult(
-        { nodes: 0, edges: edgesCreated },
+        { nodes: nodesCreated, edges: edgesCreated },
         { routesAnalyzed: routes.length }
       );
     } catch (error) {
@@ -94,16 +102,19 @@ export class ExpressResponseAnalyzer extends Plugin {
    */
   private async analyzeRouteResponses(
     route: NodeRecord,
-    graph: PluginContext['graph']
-  ): Promise<number> {
+    graph: PluginContext['graph'],
+    nodes: NodeRecord[],
+    edges: Array<{ type: string; src: string; dst: string; metadata?: unknown }>
+  ): Promise<{ nodes: number; edges: number }> {
     let edgesCreated = 0;
+    let nodesCreated = 0;
 
     try {
       // Get HANDLED_BY edges to find handler function
       const handledByEdges = await graph.getOutgoingEdges(route.id, ['HANDLED_BY']);
 
       if (handledByEdges.length === 0) {
-        return 0;
+        return { nodes: 0, edges: 0 };
       }
 
       // Get handler function node
@@ -111,7 +122,7 @@ export class ExpressResponseAnalyzer extends Plugin {
       const handlerNode = await graph.getNode(handlerEdge.dst);
 
       if (!handlerNode || !handlerNode.file) {
-        return 0;
+        return { nodes: 0, edges: 0 };
       }
 
       // Parse the file and find response calls in handler
@@ -131,18 +142,21 @@ export class ExpressResponseAnalyzer extends Plugin {
       // Create RESPONDS_WITH edges
       for (const call of responseCalls) {
         // Try to resolve to existing variable, or create a unique response node
-        const dstNodeId = await this.resolveOrCreateResponseNode(
+        const result = await this.resolveOrCreateResponseNode(
           graph,
           handlerNode.file,
           call,
           route.id,
-          handlerNode.id // Handler's semantic ID for scope resolution
+          handlerNode.id, // Handler's semantic ID for scope resolution
+          nodes
         );
 
-        await graph.addEdge({
+        nodesCreated += result.nodesCreated;
+
+        edges.push({
           type: 'RESPONDS_WITH',
           src: route.id,
-          dst: dstNodeId,
+          dst: result.nodeId,
           metadata: {
             responseMethod: call.method
           }
@@ -153,7 +167,7 @@ export class ExpressResponseAnalyzer extends Plugin {
       // Silent - per-route errors shouldn't spam logs
     }
 
-    return edgesCreated;
+    return { nodes: nodesCreated, edges: edgesCreated };
   }
 
   /**
@@ -328,15 +342,17 @@ export class ExpressResponseAnalyzer extends Plugin {
    * @param call - Response call info (includes identifierName)
    * @param routeId - Route ID (for metadata)
    * @param handlerSemanticId - Handler function's semantic ID (for scope matching)
-   * @returns Node ID (existing or newly created)
+   * @param nodes - Array to collect nodes for batch insertion
+   * @returns Object with nodeId and nodesCreated count
    */
   private async resolveOrCreateResponseNode(
     graph: PluginContext['graph'],
     file: string,
     call: ResponseCallInfo,
     routeId: string,
-    handlerSemanticId: string
-  ): Promise<string> {
+    handlerSemanticId: string,
+    nodes: NodeRecord[]
+  ): Promise<{ nodeId: string; nodesCreated: number }> {
     const { argLine, argColumn, argType, identifierName } = call;
 
     // For Identifier arguments, try to find existing variable/parameter
@@ -350,20 +366,21 @@ export class ExpressResponseAnalyzer extends Plugin {
       );
 
       if (existingNodeId) {
-        return existingNodeId; // Use existing node, no stub needed
+        return { nodeId: existingNodeId, nodesCreated: 0 }; // Use existing node, no stub needed
       }
       // Fall through to create stub if not found (external/global variables)
     }
 
     // For non-Identifier or not-found, create stub node (existing logic)
-    return this.createResponseArgumentNode(
-      graph,
+    const nodeId = this.createResponseArgumentNode(
       file,
       argLine,
       argColumn,
       argType,
-      routeId
+      routeId,
+      nodes
     );
+    return { nodeId, nodesCreated: 1 };
   }
 
   /**
@@ -553,21 +570,21 @@ export class ExpressResponseAnalyzer extends Plugin {
   /**
    * Create a node for the response argument
    */
-  private async createResponseArgumentNode(
-    graph: PluginContext['graph'],
+  private createResponseArgumentNode(
     file: string,
     line: number,
     column: number,
     astType: string,
-    routeId: string
-  ): Promise<string> {
+    routeId: string,
+    nodes: NodeRecord[]
+  ): string {
     // Map AST type to node type and create appropriate node
     switch (astType) {
       case 'ObjectExpression': {
         // Include counter to make the node unique even for same location
         const counter = this.responseNodeCounter++;
         const id = `OBJECT_LITERAL#response:${counter}#${file}#${line}:${column}`;
-        await graph.addNode({
+        nodes.push({
           id,
           type: 'OBJECT_LITERAL',
           name: '<response>',
@@ -582,7 +599,7 @@ export class ExpressResponseAnalyzer extends Plugin {
         // For identifiers, we link to the variable that's being returned
         const counter = this.responseNodeCounter++;
         const id = `VARIABLE#response:${counter}#${file}#${line}:${column}`;
-        await graph.addNode({
+        nodes.push({
           id,
           type: 'VARIABLE',
           name: '<response>',
@@ -595,7 +612,7 @@ export class ExpressResponseAnalyzer extends Plugin {
       case 'CallExpression': {
         const counter = this.responseNodeCounter++;
         const id = `CALL#response:${counter}#${file}#${line}:${column}`;
-        await graph.addNode({
+        nodes.push({
           id,
           type: 'CALL',
           name: '<response>',
@@ -608,7 +625,7 @@ export class ExpressResponseAnalyzer extends Plugin {
       case 'ArrayExpression': {
         const counter = this.responseNodeCounter++;
         const id = `ARRAY_LITERAL#response:${counter}#${file}#${line}:${column}`;
-        await graph.addNode({
+        nodes.push({
           id,
           type: 'ARRAY_LITERAL',
           name: '<response>',
@@ -622,7 +639,7 @@ export class ExpressResponseAnalyzer extends Plugin {
         // Generic expression node
         const counter = this.responseNodeCounter++;
         const id = `EXPRESSION#response:${counter}#${file}#${line}:${column}`;
-        await graph.addNode({
+        nodes.push({
           id,
           type: 'EXPRESSION',
           name: '<response>',

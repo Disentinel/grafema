@@ -72,6 +72,10 @@ export class SystemDbAnalyzer extends Plugin {
 
       logger.info('Analyzing modules for system_db patterns', { count: modules.length });
 
+      // Collect all nodes and edges across ALL modules
+      const allNodes: NodeRecord[] = [];
+      const allEdges: Array<{ type: string; src: string; dst: string }> = [];
+
       for (const module of modules) {
         if (!module.file) continue;
 
@@ -166,7 +170,7 @@ export class SystemDbAnalyzer extends Plugin {
             }
           });
 
-          // Create SYSTEM_DB_VIEW_REGISTRATION nodes
+          // Collect SYSTEM_DB_VIEW_REGISTRATION nodes
           for (const reg of registrations) {
             const nodeId = `${module.file}:SYSTEM_DB_VIEW_REGISTRATION:${reg.viewName}:${reg.line}`;
 
@@ -178,7 +182,7 @@ export class SystemDbAnalyzer extends Plugin {
               line: reg.line
             });
 
-            await graph.addNode({
+            allNodes.push({
               id: nodeId,
               type: 'SYSTEM_DB_VIEW_REGISTRATION',
               name: `${reg.type}('${reg.viewName}', '${reg.serverName}')`,
@@ -192,7 +196,7 @@ export class SystemDbAnalyzer extends Plugin {
             nodesCreated++;
 
             // Link MODULE -> REGISTERS_VIEW -> REGISTRATION
-            await graph.addEdge({
+            allEdges.push({
               type: 'REGISTERS_VIEW',
               src: module.id,
               dst: nodeId
@@ -200,11 +204,11 @@ export class SystemDbAnalyzer extends Plugin {
             edgesCreated++;
           }
 
-          // Create SYSTEM_DB_SUBSCRIPTION nodes
+          // Collect SYSTEM_DB_SUBSCRIPTION nodes
           for (const sub of subscriptions) {
             const nodeId = `${module.file}:SYSTEM_DB_SUBSCRIPTION:${sub.line}`;
 
-            await graph.addNode({
+            allNodes.push({
               id: nodeId,
               type: 'SYSTEM_DB_SUBSCRIPTION',
               name: `subscribe([${sub.servers.join(', ')}])`,
@@ -216,7 +220,7 @@ export class SystemDbAnalyzer extends Plugin {
             nodesCreated++;
 
             // Link MODULE -> CHECKS_VIEWS -> SUBSCRIPTION
-            await graph.addEdge({
+            allEdges.push({
               type: 'CHECKS_VIEWS',
               src: module.id,
               dst: nodeId
@@ -234,6 +238,10 @@ export class SystemDbAnalyzer extends Plugin {
           }
         }
       }
+
+      // Flush all nodes and edges at once
+      await graph.addNodes(allNodes);
+      await graph.addEdges(allEdges);
 
       logger.info('Analysis complete', { nodesCreated, edgesCreated });
 

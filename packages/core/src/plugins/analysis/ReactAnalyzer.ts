@@ -1325,11 +1325,14 @@ export class ReactAnalyzer extends Plugin {
     graph: PluginContext['graph'],
     moduleId: string | null
   ): Promise<void> {
-    // Add component nodes
+    const nodes: NodeRecord[] = [];
+    const edges: Array<{ type: string; src: string; dst: string; [key: string]: unknown }> = [];
+
+    // Collect component nodes and DEFINES edges
     for (const component of analysis.components) {
-      await graph.addNode(component as unknown as NodeRecord);
+      nodes.push(component as unknown as NodeRecord);
       if (moduleId) {
-        await graph.addEdge({
+        edges.push({
           type: 'DEFINES',
           src: moduleId,
           dst: component.id
@@ -1337,33 +1340,37 @@ export class ReactAnalyzer extends Plugin {
       }
     }
 
-    // Add hook nodes
+    // Collect hook nodes
     for (const hook of analysis.hooks) {
-      await graph.addNode(hook as unknown as NodeRecord);
+      nodes.push(hook as unknown as NodeRecord);
     }
 
-    // Add event nodes
+    // Collect event nodes
     for (const event of analysis.events) {
-      await graph.addNode(event as unknown as NodeRecord);
+      nodes.push(event as unknown as NodeRecord);
     }
 
-    // Add browser API nodes
+    // Collect browser API nodes
     for (const api of analysis.browserAPIs) {
-      await graph.addNode(api as unknown as NodeRecord);
+      nodes.push(api as unknown as NodeRecord);
     }
 
-    // Add issue nodes
+    // Collect issue nodes
     for (const issue of analysis.issues) {
-      await graph.addNode(issue as unknown as NodeRecord);
+      nodes.push(issue as unknown as NodeRecord);
     }
 
-    // Add edges
+    // Collect edges from analysis
     for (const edge of analysis.edges) {
       const { edgeType, ...rest } = edge;
-      await graph.addEdge({
+      edges.push({
         type: edgeType,
         ...rest
       });
     }
+
+    // Batch write to graph
+    await graph.addNodes(nodes);
+    await graph.addEdges(edges);
   }
 }

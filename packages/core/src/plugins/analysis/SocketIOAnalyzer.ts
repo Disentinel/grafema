@@ -208,7 +208,10 @@ export class SocketIOAnalyzer extends Plugin {
       logger.debug('Unique events found', { count: eventNames.size });
 
       // Step 3: Create event channel node for each unique event
+      const nodes: NodeRecord[] = [];
+      const edges: Array<{ type: string; src: string; dst: string }> = [];
       let createdCount = 0;
+
       for (const eventName of eventNames) {
         const eventNodeId = `socketio:event#${eventName}`;
 
@@ -220,13 +223,13 @@ export class SocketIOAnalyzer extends Plugin {
           event: eventName
         };
 
-        await graph.addNode(eventNode as unknown as NodeRecord);
+        nodes.push(eventNode as unknown as NodeRecord);
         createdCount++;
 
         // Step 4: Connect all emits of this event to the channel
         const matchingEmits = allEmits.filter(e => e.event === eventName);
         for (const emit of matchingEmits) {
-          await graph.addEdge({
+          edges.push({
             type: 'EMITS_EVENT',
             src: emit.id,
             dst: eventNodeId
@@ -236,7 +239,7 @@ export class SocketIOAnalyzer extends Plugin {
         // Step 5: Connect event channel to all listeners of this event
         const matchingListeners = allListeners.filter(l => l.event === eventName);
         for (const listener of matchingListeners) {
-          await graph.addEdge({
+          edges.push({
             type: 'LISTENED_BY',
             src: eventNodeId,
             dst: listener.id
@@ -249,6 +252,10 @@ export class SocketIOAnalyzer extends Plugin {
           listeners: matchingListeners.length
         });
       }
+
+      // Flush all nodes and edges
+      await graph.addNodes(nodes);
+      await graph.addEdges(edges);
 
       return createdCount;
     } catch (error) {
@@ -407,11 +414,14 @@ export class SocketIOAnalyzer extends Plugin {
       });
 
       // Создаём ноды в графе
+      const nodes: NodeRecord[] = [];
+      const edges: Array<{ type: string; src: string; dst: string }> = [];
+
       for (const emit of emits) {
-        await graph.addNode(emit as unknown as NodeRecord);
+        nodes.push(emit as unknown as NodeRecord);
 
         // Создаём ребро от модуля к event
-        await graph.addEdge({
+        edges.push({
           type: 'CONTAINS',
           src: module.id,
           dst: emit.id
@@ -419,10 +429,10 @@ export class SocketIOAnalyzer extends Plugin {
       }
 
       for (const listener of listeners) {
-        await graph.addNode(listener as unknown as NodeRecord);
+        nodes.push(listener as unknown as NodeRecord);
 
         // Создаём ребро от модуля к listener
-        await graph.addEdge({
+        edges.push({
           type: 'CONTAINS',
           src: module.id,
           dst: listener.id
@@ -441,7 +451,7 @@ export class SocketIOAnalyzer extends Plugin {
         );
 
         if (handlerFunction) {
-          await graph.addEdge({
+          edges.push({
             type: 'LISTENS_TO',
             src: listener.id,
             dst: handlerFunction.id
@@ -450,15 +460,19 @@ export class SocketIOAnalyzer extends Plugin {
       }
 
       for (const room of rooms) {
-        await graph.addNode(room as unknown as NodeRecord);
+        nodes.push(room as unknown as NodeRecord);
 
         // Создаём ребро от модуля к room
-        await graph.addEdge({
+        edges.push({
           type: 'CONTAINS',
           src: module.id,
           dst: room.id
         });
       }
+
+      // Flush all nodes and edges
+      await graph.addNodes(nodes);
+      await graph.addEdges(edges);
 
       return {
         emits: emits.length,

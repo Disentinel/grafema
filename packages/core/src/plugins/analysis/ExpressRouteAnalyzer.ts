@@ -372,7 +372,11 @@ export class ExpressRouteAnalyzer extends Plugin {
         }
       });
 
-      // Создаём ENDPOINT ноды
+      // Collect all nodes and edges for batch operations
+      const nodes: NodeRecord[] = [];
+      const edges: Array<{ type: string; src: string; dst: string }> = [];
+
+      // Prepare ENDPOINT nodes
       for (const endpoint of endpoints) {
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
         const { handlerLine: _hl, handlerColumn: _hc, handlerStart, handlerName, routerName, ...endpointData } = endpoint;
@@ -385,11 +389,11 @@ export class ExpressRouteAnalyzer extends Plugin {
             ...(handlerName !== undefined && { handlerName })
           }
         };
-        await graph.addNode(nodeData as unknown as NodeRecord);
+        nodes.push(nodeData as unknown as NodeRecord);
         endpointsCreated++;
 
         // MODULE -> CONTAINS -> ENDPOINT
-        await graph.addEdge({
+        edges.push({
           type: 'CONTAINS',
           src: module.id,
           dst: endpoint.id
@@ -400,15 +404,15 @@ export class ExpressRouteAnalyzer extends Plugin {
         // using handlerStart (byte offset) or handlerName stored in node metadata
       }
 
-      // Создаём MIDDLEWARE ноды и связи
+      // Prepare MIDDLEWARE nodes
       for (const middleware of middlewares) {
         const { endpointId, order: _order, ...middlewareData } = middleware;
 
-        await graph.addNode(middlewareData as unknown as NodeRecord);
+        nodes.push(middlewareData as unknown as NodeRecord);
         middlewareCreated++;
 
         // MODULE -> CONTAINS -> MIDDLEWARE
-        await graph.addEdge({
+        edges.push({
           type: 'CONTAINS',
           src: module.id,
           dst: middleware.id
@@ -418,14 +422,20 @@ export class ExpressRouteAnalyzer extends Plugin {
         // Если есть связанный endpoint
         if (endpointId) {
           // ENDPOINT -> USES_MIDDLEWARE -> MIDDLEWARE
-          await graph.addEdge({
+          edges.push({
             type: 'USES_MIDDLEWARE',
             src: endpointId,
             dst: middleware.id
           });
           edgesCreated++;
         }
+      }
 
+      // Flush nodes first so they exist for edge queries
+      await graph.addNodes(nodes);
+
+      // Query for HANDLED_BY edges (needs nodes to exist first)
+      for (const middleware of middlewares) {
         // Ищем FUNCTION ноду для middleware (если это именованная функция)
         if (!middleware.name.startsWith('inline:')) {
           for await (const fn of graph.queryNodes({
@@ -434,7 +444,7 @@ export class ExpressRouteAnalyzer extends Plugin {
             name: middleware.name
           })) {
             // MIDDLEWARE -> HANDLED_BY -> FUNCTION
-            await graph.addEdge({
+            edges.push({
               type: 'HANDLED_BY',
               src: middleware.id,
               dst: fn.id
@@ -444,6 +454,9 @@ export class ExpressRouteAnalyzer extends Plugin {
           }
         }
       }
+
+      // Flush all edges
+      await graph.addEdges(edges);
     } catch {
       // Silent - per-module errors shouldn't spam logs
     }

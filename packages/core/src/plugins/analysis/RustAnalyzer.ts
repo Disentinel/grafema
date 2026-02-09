@@ -278,20 +278,21 @@ export class RustAnalyzer extends Plugin {
     module: NodeRecord,
     graph: PluginContext['graph']
   ): Promise<AnalysisStats> {
+    const nodes: NodeRecord[] = [];
     const edges: EdgeToAdd[] = [];
     let methodCount = 0;
     let callCount = 0;
 
-    // Helper to process calls within a function/method
-    const processCalls = async (
+    // Helper to collect calls within a function/method
+    const processCalls = (
       calls: RustCall[] | undefined,
       parentId: string,
       parentName: string
-    ): Promise<void> => {
+    ): void => {
       for (const call of calls || []) {
         const callId = `RUST_CALL#${parentName}#${call.line}#${call.column}#${module.file}`;
 
-        await graph.addNode({
+        nodes.push({
           id: callId,
           type: 'RUST_CALL',
           file: module.file,
@@ -314,7 +315,7 @@ export class RustAnalyzer extends Plugin {
     for (const fn of parseResult.functions) {
       const nodeId = `RUST_FUNCTION#${fn.name}#${module.file}#${fn.line}`;
 
-      await graph.addNode({
+      nodes.push({
         id: nodeId,
         type: 'RUST_FUNCTION',
         name: fn.name,
@@ -338,14 +339,14 @@ export class RustAnalyzer extends Plugin {
       edges.push({ src: module.id, dst: nodeId, type: 'CONTAINS' });
 
       // Process calls within this function
-      await processCalls(fn.calls, nodeId, fn.name);
+      processCalls(fn.calls, nodeId, fn.name);
     }
 
     // 2. Process structs
     for (const s of parseResult.structs) {
       const nodeId = `RUST_STRUCT#${s.name}#${module.file}#${s.line}`;
 
-      await graph.addNode({
+      nodes.push({
         id: nodeId,
         type: 'RUST_STRUCT',
         name: s.name,
@@ -363,7 +364,7 @@ export class RustAnalyzer extends Plugin {
     for (const impl of parseResult.impls) {
       const implId = `RUST_IMPL#${impl.targetType}${impl.traitName ? ':' + impl.traitName : ''}#${module.file}#${impl.line}`;
 
-      await graph.addNode({
+      nodes.push({
         id: implId,
         type: 'RUST_IMPL',
         name: impl.targetType,
@@ -387,7 +388,7 @@ export class RustAnalyzer extends Plugin {
       for (const method of impl.methods) {
         const methodId = `RUST_METHOD#${method.name}#${module.file}#${method.line}`;
 
-        await graph.addNode({
+        nodes.push({
           id: methodId,
           type: 'RUST_METHOD',
           name: method.name,
@@ -415,7 +416,7 @@ export class RustAnalyzer extends Plugin {
         methodCount++;
 
         // Process calls within this method
-        await processCalls(method.calls, methodId, `${impl.targetType}::${method.name}`);
+        processCalls(method.calls, methodId, `${impl.targetType}::${method.name}`);
       }
     }
 
@@ -423,7 +424,7 @@ export class RustAnalyzer extends Plugin {
     for (const t of parseResult.traits) {
       const nodeId = `RUST_TRAIT#${t.name}#${module.file}#${t.line}`;
 
-      await graph.addNode({
+      nodes.push({
         id: nodeId,
         type: 'RUST_TRAIT',
         name: t.name,
@@ -440,10 +441,9 @@ export class RustAnalyzer extends Plugin {
       edges.push({ src: module.id, dst: nodeId, type: 'CONTAINS' });
     }
 
-    // 5. Write all edges
-    for (const edge of edges) {
-      await graph.addEdge(edge);
-    }
+    // 5. Write all nodes and edges in batch
+    await graph.addNodes(nodes);
+    await graph.addEdges(edges);
 
     return {
       functions: parseResult.functions.length,

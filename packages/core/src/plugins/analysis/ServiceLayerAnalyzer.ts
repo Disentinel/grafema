@@ -304,12 +304,14 @@ export class ServiceLayerAnalyzer extends Plugin {
         }
       });
 
-      // Создаём ноды в графе
-      for (const serviceClass of serviceClasses) {
-        await graph.addNode(serviceClass as unknown as NodeRecord);
+      // Batch nodes and edges for IPC optimization
+      const nodes: Array<unknown> = [];
+      const edges: Array<{ type: string; src: string; dst: string }> = [];
 
-        // Создаём ребро от модуля к service class
-        await graph.addEdge({
+      // Collect all nodes
+      for (const serviceClass of serviceClasses) {
+        nodes.push(serviceClass as unknown as NodeRecord);
+        edges.push({
           type: 'CONTAINS',
           src: module.id,
           dst: serviceClass.id
@@ -317,19 +319,40 @@ export class ServiceLayerAnalyzer extends Plugin {
       }
 
       for (const instance of serviceInstances) {
-        await graph.addNode(instance as unknown as NodeRecord);
-
-        // Создаём ребро от модуля к instance
-        await graph.addEdge({
+        nodes.push(instance as unknown as NodeRecord);
+        edges.push({
           type: 'CONTAINS',
           src: module.id,
           dst: instance.id
         });
+      }
 
-        // Ищем SERVICE_CLASS ноду и создаём ребро INSTANTIATES
+      for (const registration of serviceRegistrations) {
+        nodes.push(registration as unknown as NodeRecord);
+        edges.push({
+          type: 'CONTAINS',
+          src: module.id,
+          dst: registration.id
+        });
+      }
+
+      for (const usage of serviceUsages) {
+        nodes.push(usage as unknown as NodeRecord);
+        edges.push({
+          type: 'CONTAINS',
+          src: module.id,
+          dst: usage.id
+        });
+      }
+
+      // First flush: add all nodes to graph
+      await graph.addNodes(nodes as NodeRecord[]);
+
+      // Create INSTANTIATES edges (requires querying graph)
+      for (const instance of serviceInstances) {
         for await (const n of graph.queryNodes({ type: 'SERVICE_CLASS' })) {
           if (n.name === instance.serviceClass) {
-            await graph.addEdge({
+            edges.push({
               type: 'INSTANTIATES',
               src: instance.id,
               dst: n.id
@@ -339,27 +362,8 @@ export class ServiceLayerAnalyzer extends Plugin {
         }
       }
 
-      for (const registration of serviceRegistrations) {
-        await graph.addNode(registration as unknown as NodeRecord);
-
-        // Создаём ребро от модуля к registration
-        await graph.addEdge({
-          type: 'CONTAINS',
-          src: module.id,
-          dst: registration.id
-        });
-      }
-
-      for (const usage of serviceUsages) {
-        await graph.addNode(usage as unknown as NodeRecord);
-
-        // Создаём ребро от модуля к usage
-        await graph.addEdge({
-          type: 'CONTAINS',
-          src: module.id,
-          dst: usage.id
-        });
-      }
+      // Second flush: add all edges to graph
+      await graph.addEdges(edges);
 
       return {
         classes: serviceClasses.length,
