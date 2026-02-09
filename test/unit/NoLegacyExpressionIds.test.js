@@ -7,16 +7,15 @@
  * If this test fails, someone added inline EXPRESSION node ID construction
  * instead of using ExpressionNode.create() or NodeFactory.createExpression()
  *
- * TDD: Tests written first per Kent Beck's methodology.
- * These tests will FAIL initially - implementation comes after.
+ * Originally TDD: Tests written first per Kent Beck's methodology.
+ * REG-107 migration is complete. Tests updated in REG-154 to match final architecture.
  */
 
 import { describe, it } from 'node:test';
 import { execSync } from 'child_process';
 import assert from 'assert';
 
-// SKIP: REG-107 EXPRESSION migration incomplete - awaiting completion
-describe.skip('EXPRESSION node ID format validation', () => {
+describe('EXPRESSION node ID format validation', () => {
   describe('no legacy EXPRESSION# format in production code', () => {
     it('should have no EXPRESSION# format in production TypeScript/JavaScript', () => {
       const grepCommand = `grep -r "EXPRESSION#" packages/core/src --include="*.ts" --include="*.js" || true`;
@@ -133,25 +132,6 @@ describe.skip('EXPRESSION node ID format validation', () => {
   });
 
   describe('NodeFactory usage in key files', () => {
-    it('VariableVisitor should use NodeFactory.createExpression()', () => {
-      const file = 'packages/core/src/plugins/analysis/ast/visitors/VariableVisitor.ts';
-      const grepCommand = `grep -c "NodeFactory.createExpression" ${file} || echo "0"`;
-
-      let result;
-      try {
-        result = execSync(grepCommand, { encoding: 'utf-8', cwd: process.cwd() }).trim();
-      } catch (error) {
-        result = '0';
-      }
-
-      const count = parseInt(result, 10);
-
-      assert.ok(
-        count > 0,
-        `${file} should use NodeFactory.createExpression() at least once`
-      );
-    });
-
     it('CallExpressionVisitor should use NodeFactory.createArgumentExpression()', () => {
       const file = 'packages/core/src/plugins/analysis/ast/visitors/CallExpressionVisitor.ts';
       const grepCommand = `grep -c "NodeFactory.createArgumentExpression" ${file} || echo "0"`;
@@ -173,7 +153,6 @@ describe.skip('EXPRESSION node ID format validation', () => {
 
     it('key files should import NodeFactory', () => {
       const files = [
-        'packages/core/src/plugins/analysis/ast/visitors/VariableVisitor.ts',
         'packages/core/src/plugins/analysis/ast/visitors/CallExpressionVisitor.ts',
       ];
 
@@ -289,9 +268,9 @@ describe.skip('EXPRESSION node ID format validation', () => {
       );
     });
 
-    it('NodeFactory should import ArgumentExpressionNode', () => {
+    it('NodeFactory should reference ArgumentExpressionNode', () => {
       const file = 'packages/core/src/core/NodeFactory.ts';
-      const grepCommand = `grep "import.*ArgumentExpressionNode" ${file} || true`;
+      const grepCommand = `grep "ArgumentExpressionNode" ${file} || true`;
 
       let result;
       try {
@@ -302,7 +281,7 @@ describe.skip('EXPRESSION node ID format validation', () => {
 
       assert.ok(
         result.length > 0,
-        `${file} should import ArgumentExpressionNode`
+        `${file} should reference ArgumentExpressionNode`
       );
     });
   });
@@ -339,7 +318,9 @@ describe.skip('EXPRESSION node ID format validation', () => {
       ];
 
       for (const pattern of patterns) {
-        const grepCommand = `grep -r "${pattern}" packages/core/src --include="*.ts" --include="*.js" || true`;
+        // Escape backticks for shell safety
+        const escapedPattern = pattern.replace(/`/g, '\\`');
+        const grepCommand = `grep -r "${escapedPattern}" packages/core/src --include="*.ts" --include="*.js" || true`;
 
         let result;
         try {

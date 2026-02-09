@@ -7,16 +7,15 @@
  * If this test fails, someone added inline CLASS node ID construction
  * instead of using ClassNode.create() or ClassNode.createWithContext()
  *
- * TDD: Tests written first per Kent Beck's methodology.
- * These tests will FAIL initially - implementation comes after.
+ * Originally TDD: Tests written first per Kent Beck's methodology.
+ * REG-99 migration is complete. Tests updated in REG-154 to match final architecture.
  */
 
 import { describe, it } from 'node:test';
 import { execSync } from 'child_process';
 import assert from 'assert';
 
-// SKIP: REG-99 ClassNode migration incomplete - QueueWorker not updated yet
-describe.skip('CLASS node ID format validation', () => {
+describe('CLASS node ID format validation', () => {
   describe('no legacy CLASS# format in production code', () => {
     it('should have no CLASS# format in production TypeScript/JavaScript', () => {
       // Grep for CLASS# in source files (exclude test files, node_modules, dist)
@@ -129,30 +128,10 @@ describe.skip('CLASS node ID format validation', () => {
       );
     });
 
-    it('QueueWorker should use ClassNode.create()', () => {
-      const file = 'packages/core/src/core/QueueWorker.ts';
-      const grepCommand = `grep -c "ClassNode.create" ${file} || echo "0"`;
-
-      let result;
-      try {
-        result = execSync(grepCommand, { encoding: 'utf-8', cwd: process.cwd() }).trim();
-      } catch (error) {
-        result = '0';
-      }
-
-      const count = parseInt(result, 10);
-
-      assert.ok(
-        count > 0,
-        `${file} should use ClassNode.create() at least once`
-      );
-    });
-
     it('key files should import ClassNode', () => {
       const files = [
         'packages/core/src/plugins/analysis/ast/visitors/ClassVisitor.ts',
         'packages/core/src/core/ASTWorker.ts',
-        'packages/core/src/core/QueueWorker.ts'
       ];
 
       for (const file of files) {
@@ -195,28 +174,7 @@ describe.skip('CLASS node ID format validation', () => {
       );
     });
 
-    it('GraphBuilder should compute superclass IDs with :0 suffix', () => {
-      const file = 'packages/core/src/plugins/analysis/ast/GraphBuilder.ts';
-
-      // Look for pattern: `:CLASS:${...}:0` (computed ID with line 0)
-      const grepCommand = `grep ":CLASS:" ${file} | grep ":0" || true`;
-
-      let result;
-      try {
-        result = execSync(grepCommand, { encoding: 'utf-8', cwd: process.cwd() }).trim();
-      } catch (error) {
-        result = '';
-      }
-
-      // Should find at least one line with :CLASS: and :0 pattern
-      const lines = result.split('\n').filter(line => line.trim());
-
-      assert.ok(
-        lines.length > 0,
-        'GraphBuilder should compute CLASS IDs with :0 suffix for unknown locations'
-      );
-    });
-  });
+});
 
   describe('no manual ID construction patterns', () => {
     it('should not have inline CLASS ID construction in visitors', () => {

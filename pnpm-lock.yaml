@@ -8,6 +8,12 @@ importers:
 
   .:
     devDependencies:
+      '@babel/parser':
+        specifier: ^7.26.3
+        version: 7.28.6
+      '@babel/traverse':
+        specifier: ^7.26.4
+        version: 7.28.6
       '@grafema/core':
         specifier: workspace:*
         version: link:packages/core
