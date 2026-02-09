@@ -74,7 +74,9 @@ function askYesNo(question: string): Promise<boolean> {
 function runAnalyze(projectPath: string): Promise<number> {
   return new Promise((resolve) => {
     const cliPath = join(__dirname, '..', 'cli.js');
-    const child = spawn('node', [cliPath, 'analyze', projectPath], {
+    // Use process.execPath (absolute path to current Node binary) instead of
+    // 'node' to avoid PATH lookup failures when nvm isn't loaded in the shell.
+    const child = spawn(process.execPath, [cliPath, 'analyze', projectPath], {
       stdio: 'inherit', // Pass through all I/O for user to see progress
     });
     child.on('close', (code) => resolve(code ?? 1));
