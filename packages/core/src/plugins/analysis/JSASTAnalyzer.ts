@@ -5431,8 +5431,8 @@ export class JSASTAnalyzer extends Plugin {
 
       // Only process NumericLiteral keys - those are clearly array indexed assignments
       // e.g., arr[0] = value, arr[1] = value
-      // All other computed keys (StringLiteral, Identifier, expressions) are handled as object mutations
-      // This avoids duplicate edge creation for ambiguous cases like obj[key] = value
+      // Other computed keys (Identifier, expressions) are ambiguous (could be array or object)
+      // and are handled by detectObjectPropertyAssignment as computed mutations
       if (memberExpr.property.type !== 'NumericLiteral') {
         return;
       }

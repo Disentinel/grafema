@@ -242,7 +242,9 @@ arr[index] = value;
       );
 
       assert.ok(flowsInto, 'Expected FLOWS_INTO edge even with computed index');
-      assert.strictEqual(flowsInto.mutationMethod, 'indexed', 'Edge should have mutationMethod: indexed');
+      // Computed Identifier keys are handled as object computed mutations (mutationType: 'computed')
+      // because arr[index] and obj[key] are indistinguishable at AST level without type inference
+      assert.strictEqual(flowsInto.mutationType, 'computed', 'Edge should have mutationType: computed');
     });
 
     it('should create FLOWS_INTO edge for arr[i + 1] = value', async () => {
@@ -271,7 +273,8 @@ arr[i + 1] = value;
       );
 
       assert.ok(flowsInto, 'Expected FLOWS_INTO edge with expression index');
-      assert.strictEqual(flowsInto.mutationMethod, 'indexed', 'Edge should have mutationMethod: indexed');
+      // BinaryExpression keys are handled as object computed mutations
+      assert.strictEqual(flowsInto.mutationType, 'computed', 'Edge should have mutationType: computed');
     });
   });
 
