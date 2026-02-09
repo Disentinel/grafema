@@ -60,7 +60,7 @@ export class ShadowingDetector extends Plugin {
     return {
       name: 'ShadowingDetector',
       phase: 'VALIDATION',
-      priority: 80, // After enrichment, before other validators
+      dependencies: ['JSASTAnalyzer'],
       creates: {
         nodes: [],
         edges: []

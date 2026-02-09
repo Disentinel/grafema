@@ -43,7 +43,7 @@ export class GraphConnectivityValidator extends Plugin {
     return {
       name: 'GraphConnectivityValidator',
       phase: 'VALIDATION',
-      priority: 100,
+      dependencies: [],
       creates: {
         nodes: [],
         edges: []

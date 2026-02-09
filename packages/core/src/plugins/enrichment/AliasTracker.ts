@@ -71,11 +71,11 @@ export class AliasTracker extends Plugin {
     return {
       name: 'AliasTracker',
       phase: 'ENRICHMENT',
-      priority: 60, // После MethodCallResolver (50)
       creates: {
         nodes: [],
         edges: ['CALLS', 'ALIAS_OF']
-      }
+      },
+      dependencies: ['MethodCallResolver']
     };
   }
 

@@ -47,7 +47,6 @@ export class ExternalCallResolver extends Plugin {
     return {
       name: 'ExternalCallResolver',
       phase: 'ENRICHMENT',
-      priority: 70, // After FunctionCallResolver (80)
       creates: {
         nodes: ['EXTERNAL_MODULE'],
         edges: ['CALLS']

@@ -54,7 +54,6 @@ export class NodejsBuiltinsResolver extends Plugin {
     return {
       name: 'NodejsBuiltinsResolver',
       phase: 'ENRICHMENT',
-      priority: 45, // After ImportExportLinker (90), before/around MethodCallResolver (50)
       creates: {
         nodes: ['EXTERNAL_FUNCTION', 'EXTERNAL_MODULE'],
         edges: ['CALLS', 'IMPORTS_FROM']

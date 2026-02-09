@@ -50,7 +50,7 @@ export class DataFlowValidator extends Plugin {
     return {
       name: 'DataFlowValidator',
       phase: 'VALIDATION',
-      priority: 100,
+      dependencies: [],
       creates: {
         nodes: [],
         edges: []

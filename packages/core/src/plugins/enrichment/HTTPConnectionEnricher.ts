@@ -51,7 +51,6 @@ export class HTTPConnectionEnricher extends Plugin {
     return {
       name: 'HTTPConnectionEnricher',
       phase: 'ENRICHMENT',
-      priority: 50,  // После основных enrichers
       creates: {
         nodes: [],
         edges: ['INTERACTS_WITH', 'HTTP_RECEIVES']

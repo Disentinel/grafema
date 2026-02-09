@@ -35,7 +35,6 @@ export abstract class DiscoveryPlugin extends Plugin {
     return {
       name: this.constructor.name,
       phase: 'DISCOVERY',
-      priority: 100,
       creates: {
         nodes: ['SERVICE'],
         edges: []

@@ -41,7 +41,6 @@ export class ExpressHandlerLinker extends Plugin {
     return {
       name: 'ExpressHandlerLinker',
       phase: 'ENRICHMENT',
-      priority: 50, // After analysis plugins
       creates: {
         nodes: [],
         edges: ['HANDLED_BY']

@@ -82,7 +82,6 @@ export class PrefixEvaluator extends Plugin {
     return {
       name: 'PrefixEvaluator',
       phase: 'ENRICHMENT',
-      priority: 80,  // After MountPointResolver (90)
       creates: {
         nodes: [],
         edges: []

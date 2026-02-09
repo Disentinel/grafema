@@ -48,11 +48,11 @@ export class InstanceOfResolver extends Plugin {
     return {
       name: 'InstanceOfResolver',
       phase: 'ENRICHMENT',
-      priority: 100,  // Высокий приоритет - должен выполняться перед другими enrichment плагинами
       creates: {
         nodes: [],
         edges: ['INSTANCE_OF']  // Пере-создаёт INSTANCE_OF edges
-      }
+      },
+      dependencies: ['JSASTAnalyzer']
     };
   }
 

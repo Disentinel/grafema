@@ -102,7 +102,7 @@ export class SQLInjectionValidator extends Plugin {
     return {
       name: 'SQLInjectionValidator',
       phase: 'VALIDATION',
-      priority: 90, // After ValueDomainAnalyzer (65)
+      dependencies: ['ValueDomainAnalyzer'],
       creates: {
         nodes: ['issue:security'],
         edges: ['AFFECTS']

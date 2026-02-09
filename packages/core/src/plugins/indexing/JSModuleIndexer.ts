@@ -141,7 +141,7 @@ export class JSModuleIndexer extends Plugin {
     return {
       name: 'JSModuleIndexer',
       phase: 'INDEXING',
-      priority: 90,
+      dependencies: [],
       creates: {
         nodes: ['MODULE'],
         edges: ['CONTAINS', 'DEPENDS_ON']

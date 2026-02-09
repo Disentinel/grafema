@@ -36,7 +36,6 @@ export class RejectionPropagationEnricher extends Plugin {
     return {
       name: 'RejectionPropagationEnricher',
       phase: 'ENRICHMENT',
-      priority: 70, // After FunctionCallResolver (80), before ClosureCaptureEnricher (40)
       creates: {
         nodes: [],
         edges: ['REJECTS']

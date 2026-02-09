@@ -755,7 +755,6 @@ describe('FunctionCallResolver - Metadata', () => {
 
     assert.strictEqual(metadata.name, 'FunctionCallResolver');
     assert.strictEqual(metadata.phase, 'ENRICHMENT');
-    assert.strictEqual(metadata.priority, 80);
     assert.deepStrictEqual(metadata.creates.edges, ['CALLS']);
     assert.ok(metadata.dependencies.includes('ImportExportLinker'));
   });
