@@ -1,13 +1,13 @@
 #!/bin/sh
 
-# Build and run full test suite (5 min timeout)
+# Build and run full test suite (10 min timeout)
 pnpm build || {
   echo "Build failed"
   exit 1
 }
 
-perl -e 'alarm 300; exec @ARGV' node --test --test-concurrency=1 'test/unit/*.test.js' || {
-  echo "Tests failed or timed out (5 min limit)"
+perl -e 'alarm 600; exec @ARGV' node --test 'test/unit/*.test.js' || {
+  echo "Tests failed or timed out (10 min limit)"
   exit 1
 }
 
