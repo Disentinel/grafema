@@ -40,6 +40,7 @@ import {
   ClassVisitor,
   CallExpressionVisitor,
   TypeScriptVisitor,
+  PropertyAccessVisitor,
   type VisitorModule,
   type VisitorCollections,
   type TrackVariableAssignmentCallback
@@ -104,6 +105,7 @@ import type {
   PromiseExecutorContext,
   RejectionPatternInfo,
   CatchesFromInfo,
+  PropertyAccessInfo,
   CounterRef,
   ProcessedNodes,
   ASTCollections,
@@ -171,6 +173,9 @@ interface Collections {
   promiseExecutorContexts: Map<string, PromiseExecutorContext>;
   // Yield expression tracking for YIELDS/DELEGATES_TO edges (REG-270)
   yieldExpressions: YieldExpressionInfo[];
+  // Property access tracking for PROPERTY_ACCESS nodes (REG-395)
+  propertyAccesses: PropertyAccessInfo[];
+  propertyAccessCounterRef: CounterRef;
   objectLiteralCounterRef: CounterRef;
   arrayLiteralCounterRef: CounterRef;
   ifScopeCounterRef: CounterRef;
@@ -1468,6 +1473,8 @@ export class JSASTAnalyzer extends Plugin {
       // REG-311: Async error tracking
       const rejectionPatterns: RejectionPatternInfo[] = [];
       const catchesFromInfos: CatchesFromInfo[] = [];
+      // Property access tracking for PROPERTY_ACCESS nodes (REG-395)
+      const propertyAccesses: PropertyAccessInfo[] = [];
 
       const ifScopeCounterRef: CounterRef = { value: 0 };
       const scopeCounterRef: CounterRef = { value: 0 };
@@ -1481,6 +1488,7 @@ export class JSASTAnalyzer extends Plugin {
       const arrayLiteralCounterRef: CounterRef = { value: 0 };
       const branchCounterRef: CounterRef = { value: 0 };
       const caseCounterRef: CounterRef = { value: 0 };
+      const propertyAccessCounterRef: CounterRef = { value: 0 };
 
       const processedNodes: ProcessedNodes = {
         functions: new Set(),
@@ -1548,6 +1556,9 @@ export class JSASTAnalyzer extends Plugin {
         // REG-311: Async error tracking
         rejectionPatterns,
         catchesFromInfos,
+        // Property access tracking (REG-395)
+        propertyAccesses,
+        propertyAccessCounterRef,
         objectLiteralCounterRef, arrayLiteralCounterRef,
         ifScopeCounterRef, scopeCounterRef, varDeclCounterRef,
         callSiteCounterRef, functionCounterRef, httpRequestCounterRef,
@@ -1743,6 +1754,12 @@ export class JSASTAnalyzer extends Plugin {
       traverse(ast, callExpressionVisitor.getHandlers());
       this.profiler.end('traverse_calls');
 
+      // Property access expressions (REG-395)
+      this.profiler.start('traverse_property_access');
+      const propertyAccessVisitor = new PropertyAccessVisitor(module, allCollections, scopeTracker);
+      traverse(ast, propertyAccessVisitor.getHandlers());
+      this.profiler.end('traverse_property_access');
+
       // Module-level NewExpression (constructor calls)
       // This handles top-level code like `const x = new Date()` that's not inside a function
       this.profiler.start('traverse_new');
@@ -1930,7 +1947,9 @@ export class JSASTAnalyzer extends Plugin {
           : rejectionPatterns,
         catchesFromInfos: Array.isArray(allCollections.catchesFromInfos)
           ? allCollections.catchesFromInfos as CatchesFromInfo[]
-          : catchesFromInfos
+          : catchesFromInfos,
+        // Property access tracking (REG-395)
+        propertyAccesses: allCollections.propertyAccesses || propertyAccesses
       });
       this.profiler.end('graph_build');
 
@@ -4064,6 +4083,53 @@ export class JSASTAnalyzer extends Plugin {
         );
       },
 
+      FunctionDeclaration: (funcDeclPath: NodePath<t.FunctionDeclaration>) => {
+        const node = funcDeclPath.node;
+        const funcName = node.id ? node.id.name : this.generateAnonymousName(scopeTracker);
+        // Use semantic ID as primary ID when scopeTracker available
+        const legacyId = `FUNCTION#${funcName}#${module.file}#${getLine(node)}:${getColumn(node)}:${functionCounterRef.value++}`;
+        const functionId = scopeTracker
+          ? computeSemanticId('FUNCTION', funcName, scopeTracker.getContext())
+          : legacyId;
+
+        functions.push({
+          id: functionId,
+          type: 'FUNCTION',
+          name: funcName,
+          file: module.file,
+          line: getLine(node),
+          column: getColumn(node),
+          async: node.async || false,
+          generator: node.generator || false,
+          parentScopeId
+        });
+
+        const nestedScopeId = `SCOPE#${funcName}:body#${module.file}#${getLine(node)}`;
+        const closureSemanticId = this.generateSemanticId('closure', scopeTracker);
+        scopes.push({
+          id: nestedScopeId,
+          type: 'SCOPE',
+          scopeType: 'closure',
+          name: `${funcName}:body`,
+          semanticId: closureSemanticId,
+          conditional: false,
+          file: module.file,
+          line: getLine(node),
+          parentFunctionId: functionId,
+          capturesFrom: parentScopeId
+        });
+
+        // Enter nested function scope for semantic ID generation
+        if (scopeTracker) {
+          scopeTracker.enterScope(funcName, 'function');
+        }
+        this.analyzeFunctionBody(funcDeclPath, nestedScopeId, module, collections);
+        if (scopeTracker) {
+          scopeTracker.exitScope();
+        }
+        funcDeclPath.skip();
+      },
+
       FunctionExpression: (funcPath: NodePath<t.FunctionExpression>) => {
         const node = funcPath.node;
         const funcName = node.id ? node.id.name : this.generateAnonymousName(scopeTracker);
@@ -4682,6 +4748,48 @@ export class JSASTAnalyzer extends Plugin {
             });
           }
         }
+      },
+
+      // Property access expressions (REG-395)
+      // Shared handler for both MemberExpression and OptionalMemberExpression
+      MemberExpression: (memberPath: NodePath<t.MemberExpression>) => {
+        // Initialize collections if needed
+        if (!collections.propertyAccesses) {
+          collections.propertyAccesses = [];
+        }
+        if (!collections.propertyAccessCounterRef) {
+          collections.propertyAccessCounterRef = { value: 0 };
+        }
+
+        PropertyAccessVisitor.extractPropertyAccesses(
+          memberPath,
+          memberPath.node,
+          module,
+          collections.propertyAccesses as PropertyAccessInfo[],
+          collections.propertyAccessCounterRef as CounterRef,
+          scopeTracker,
+          currentFunctionId || getCurrentScopeId()
+        );
+      },
+      // OptionalMemberExpression: obj?.prop (same logic as MemberExpression)
+      OptionalMemberExpression: (memberPath: NodePath) => {
+        // Initialize collections if needed
+        if (!collections.propertyAccesses) {
+          collections.propertyAccesses = [];
+        }
+        if (!collections.propertyAccessCounterRef) {
+          collections.propertyAccessCounterRef = { value: 0 };
+        }
+
+        PropertyAccessVisitor.extractPropertyAccesses(
+          memberPath,
+          memberPath.node as t.MemberExpression,
+          module,
+          collections.propertyAccesses as PropertyAccessInfo[],
+          collections.propertyAccessCounterRef as CounterRef,
+          scopeTracker,
+          currentFunctionId || getCurrentScopeId()
+        );
       }
     });
 
@@ -4881,6 +4989,7 @@ export class JSASTAnalyzer extends Plugin {
         }
       }
       // REG-117: Nested array mutations like obj.arr.push(item)
+      // REG-395: General nested method calls like a.b.c() or obj.nested.method()
       // object is MemberExpression, property is the method name
       else if (object.type === 'MemberExpression' && property.type === 'Identifier') {
         const nestedMember = object;
@@ -4916,6 +5025,37 @@ export class JSASTAnalyzer extends Plugin {
               baseObjectName,
               propertyName
             );
+          }
+        }
+
+        // REG-395: Create CALL node for nested method calls like a.b.c()
+        const objectName = CallExpressionVisitor.extractMemberExpressionName(nestedMember as t.MemberExpression);
+        if (objectName) {
+          const nodeKey = `${callNode.start}:${callNode.end}`;
+          if (!processedMethodCalls.has(nodeKey)) {
+            processedMethodCalls.add(nodeKey);
+
+            const fullName = `${objectName}.${methodName}`;
+            const legacyId = `CALL#${fullName}#${module.file}#${getLine(callNode)}:${getColumn(callNode)}:${callSiteCounterRef.value++}`;
+
+            let methodCallId = legacyId;
+            if (scopeTracker) {
+              const discriminator = scopeTracker.getItemCounter(`CALL:${fullName}`);
+              methodCallId = computeSemanticId('CALL', fullName, scopeTracker.getContext(), { discriminator });
+            }
+
+            methodCalls.push({
+              id: methodCallId,
+              type: 'CALL',
+              name: fullName,
+              object: objectName,
+              method: methodName,
+              file: module.file,
+              line: getLine(callNode),
+              column: getColumn(callNode),
+              parentScopeId,
+              isMethodCall: true
+            });
           }
         }
       }

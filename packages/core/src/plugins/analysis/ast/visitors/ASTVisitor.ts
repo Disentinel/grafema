@@ -24,6 +24,7 @@ import type {
   VariableAssignmentInfo,
   CallArgumentInfo,
   ParameterInfo,
+  PropertyAccessInfo,
   CounterRef,
   ProcessedNodes
 } from '../types.js';
@@ -67,6 +68,10 @@ export interface VisitorCollections {
   parameters?: ParameterInfo[];
   sideEffects?: unknown[];  // TODO: define SideEffectInfo type
   code?: string;  // Source code for condition extraction
+
+  // Property access tracking (REG-395)
+  propertyAccesses?: PropertyAccessInfo[];
+  propertyAccessCounterRef?: CounterRef;
 
   // Branching (REG-275)
   branches?: BranchInfo[];

@@ -869,7 +869,7 @@ Find unresolved calls:
 
 ## Core Node Types
 - MODULE, FUNCTION, CLASS, METHOD, VARIABLE
-- CALL, IMPORT, EXPORT, PARAMETER
+- CALL, PROPERTY_ACCESS, IMPORT, EXPORT, PARAMETER
 
 ## HTTP/Network
 - http:route, http:request, db:query

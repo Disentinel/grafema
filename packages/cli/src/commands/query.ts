@@ -264,6 +264,9 @@ function parsePattern(pattern: string): { type: string | null; name: string } {
       listener: 'socketio:on',
       // Grafema internal
       plugin: 'grafema:plugin',
+      // Property access aliases (REG-395)
+      property: 'PROPERTY_ACCESS',
+      prop: 'PROPERTY_ACCESS',
     };
 
     if (typeMap[typeWord]) {
@@ -561,7 +564,8 @@ async function findNodes(
         'http:request',
         'socketio:event',
         'socketio:emit',
-        'socketio:on'
+        'socketio:on',
+        'PROPERTY_ACCESS'
       ];
 
   for (const nodeType of searchTypes) {
@@ -624,6 +628,11 @@ async function findNodes(
         nodeInfo.createsNodes = node.createsNodes as string[] | undefined;
         nodeInfo.createsEdges = node.createsEdges as string[] | undefined;
         nodeInfo.dependencies = node.dependencies as string[] | undefined;
+      }
+
+      // Include objectName for PROPERTY_ACCESS nodes (REG-395)
+      if (nodeType === 'PROPERTY_ACCESS') {
+        nodeInfo.objectName = node.objectName as string | undefined;
       }
 
       results.push(nodeInfo);

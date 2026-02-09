@@ -21,6 +21,7 @@ export const NODE_TYPE = {
 
   // Call graph
   CALL: 'CALL',
+  PROPERTY_ACCESS: 'PROPERTY_ACCESS',
 
   // Project structure
   PROJECT: 'PROJECT',
@@ -187,6 +188,14 @@ export interface CallNodeRecord extends BaseNodeRecord {
   objectName?: string;
 }
 
+// Property access node (property read: obj.prop, a.b.c)
+export interface PropertyAccessNodeRecord extends BaseNodeRecord {
+  type: 'PROPERTY_ACCESS';
+  objectName: string;
+  optional?: boolean;
+  computed?: boolean;
+}
+
 // Service node (project-level)
 export interface ServiceNodeRecord extends BaseNodeRecord {
   type: 'SERVICE';
@@ -309,6 +318,7 @@ export type NodeRecord =
   | ExportNodeRecord
   | VariableNodeRecord
   | CallNodeRecord
+  | PropertyAccessNodeRecord
   | ServiceNodeRecord
   | ScopeNodeRecord
   | BranchNodeRecord

@@ -1069,6 +1069,38 @@ export class CallExpressionVisitor extends ASTVisitor {
   }
 
   /**
+   * Extract full dotted name from a MemberExpression chain.
+   * For `a.b.c` returns "a.b.c". Returns null for complex expressions.
+   *
+   * Used by REG-395 to create CALL nodes for nested method calls like a.b.c().
+   */
+  static extractMemberExpressionName(node: MemberExpression): string | null {
+    const parts: string[] = [];
+    let current: MemberExpression | null = node;
+
+    // Walk the chain collecting property names
+    while (current) {
+      if (current.computed) return null; // Can't statically resolve computed access
+      if (current.property.type !== 'Identifier') return null;
+      parts.unshift((current.property as Identifier).name);
+
+      if (current.object.type === 'Identifier') {
+        parts.unshift((current.object as Identifier).name);
+        return parts.join('.');
+      } else if (current.object.type === 'ThisExpression') {
+        parts.unshift('this');
+        return parts.join('.');
+      } else if (current.object.type === 'MemberExpression') {
+        current = current.object as MemberExpression;
+      } else {
+        return null; // Complex expression
+      }
+    }
+
+    return null;
+  }
+
+  /**
    * Get a stable scope ID for a function parent.
    *
    * Format must match what FunctionVisitor/ClassVisitor creates (semantic ID):
@@ -1320,10 +1352,11 @@ export class CallExpressionVisitor extends ASTVisitor {
               }
             }
             // REG-117: Nested array mutations like obj.arr.push(item)
+            // REG-395: General nested method calls like a.b.c() or obj.nested.method()
             // object is MemberExpression, property is the method name
             else if (object.type === 'MemberExpression' && property.type === 'Identifier') {
               const nestedMember = object as MemberExpression;
-              const methodName = (property as Identifier).name;
+              const methodName = isComputed ? '<computed>' : (property as Identifier).name;
               const ARRAY_MUTATION_METHODS = ['push', 'unshift', 'splice'];
 
               if (ARRAY_MUTATION_METHODS.includes(methodName)) {
@@ -1347,6 +1380,43 @@ export class CallExpressionVisitor extends ASTVisitor {
                     baseObjectName,
                     propertyName
                   );
+                }
+              }
+
+              // REG-395: Create CALL node for nested method calls like a.b.c()
+              // Extract full object name by walking the MemberExpression chain
+              const objectName = CallExpressionVisitor.extractMemberExpressionName(nestedMember);
+              if (objectName) {
+                const nodeKey = `${callNode.start}:${callNode.end}`;
+                if (!processedNodes.methodCalls.has(nodeKey)) {
+                  processedNodes.methodCalls.add(nodeKey);
+
+                  const fullName = `${objectName}.${methodName}`;
+                  const methodLine = getLine(callNode);
+                  const methodColumn = getColumn(callNode);
+
+                  const idGenerator = new IdGenerator(scopeTracker);
+                  const methodCallId = idGenerator.generate(
+                    'CALL', fullName, module.file,
+                    methodLine, methodColumn,
+                    callSiteCounterRef,
+                    { useDiscriminator: true, discriminatorKey: `CALL:${fullName}` }
+                  );
+
+                  const grafemaIgnore = getGrafemaIgnore(path);
+
+                  (methodCalls as MethodCallInfo[]).push({
+                    id: methodCallId,
+                    type: 'CALL',
+                    name: fullName,
+                    object: objectName,
+                    method: methodName,
+                    file: module.file,
+                    line: methodLine,
+                    column: methodColumn,
+                    parentScopeId,
+                    grafemaIgnore: grafemaIgnore ?? undefined,
+                  });
                 }
               }
             }

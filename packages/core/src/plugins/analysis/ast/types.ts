@@ -228,6 +228,21 @@ export interface GrafemaIgnoreAnnotation {
   reason?: string;
 }
 
+// === PROPERTY ACCESS INFO ===
+export interface PropertyAccessInfo {
+  id: string;
+  semanticId?: string;  // Stable ID: file->scope->PROPERTY_ACCESS->objectName.propertyName#N
+  type: 'PROPERTY_ACCESS';
+  objectName: string;      // "config", "this", "a.b", etc.
+  propertyName: string;    // "maxBodyLength", "<computed>", "0", etc.
+  optional?: boolean;      // true for obj?.prop
+  computed?: boolean;      // true for obj[x]
+  file: string;
+  line: number;
+  column: number;
+  parentScopeId?: string;
+}
+
 // === CALL SITE INFO ===
 export interface CallSiteInfo {
   id: string;
@@ -1088,6 +1103,8 @@ export interface ASTCollections {
   rejectionPatterns?: RejectionPatternInfo[];
   // REG-311: CATCHES_FROM tracking for catch parameter error sources
   catchesFromInfos?: CatchesFromInfo[];
+  // Property access tracking for PROPERTY_ACCESS nodes (REG-395)
+  propertyAccesses?: PropertyAccessInfo[];
   // TypeScript-specific collections
   interfaces?: InterfaceDeclarationInfo[];
   typeAliases?: TypeAliasInfo[];
@@ -1105,6 +1122,8 @@ export interface ASTCollections {
   arrayLiteralCounterRef?: CounterRef;
   branchCounterRef?: CounterRef;
   caseCounterRef?: CounterRef;
+  // Counter ref for property access tracking (REG-395)
+  propertyAccessCounterRef?: CounterRef;
   // Counter refs for control flow (add)
   loopCounterRef?: CounterRef;
   tryBlockCounterRef?: CounterRef;

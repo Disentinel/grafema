@@ -35,7 +35,7 @@ Available predicates:
 
 NODE TYPES:
 - MODULE, FUNCTION, METHOD, CLASS, VARIABLE, PARAMETER
-- CALL, METHOD_CALL, CALL_SITE
+- CALL, PROPERTY_ACCESS, METHOD_CALL, CALL_SITE
 - http:route, http:request, db:query, socketio:emit, socketio:on
 
 EDGE TYPES:
@@ -103,7 +103,7 @@ Returns call sites with file locations and whether they're resolved.`,
       properties: {
         type: {
           type: 'string',
-          description: 'Node type (e.g., FUNCTION, CLASS, MODULE)',
+          description: 'Node type (e.g., FUNCTION, CLASS, MODULE, PROPERTY_ACCESS)',
         },
         name: {
           type: 'string',

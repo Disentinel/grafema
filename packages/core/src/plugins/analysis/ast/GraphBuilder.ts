@@ -52,6 +52,7 @@ import type {
   PromiseResolutionInfo,
   RejectionPatternInfo,
   CatchesFromInfo,
+  PropertyAccessInfo,
   ASTCollections,
   GraphNode,
   GraphEdge,
@@ -165,7 +166,9 @@ export class GraphBuilder {
       // REG-311: Rejection pattern tracking for async error analysis
       rejectionPatterns = [],
       // REG-311: CATCHES_FROM tracking for catch parameter error sources
-      catchesFromInfos = []
+      catchesFromInfos = [],
+      // Property access tracking for PROPERTY_ACCESS nodes (REG-395)
+      propertyAccesses = []
     } = data;
 
     // Reset buffers for this build
@@ -302,6 +305,9 @@ export class GraphBuilder {
 
     // 9. Buffer METHOD_CALL nodes, CONTAINS edges, and USES edges (REG-262)
     this.bufferMethodCalls(methodCalls, variableDeclarations, parameters);
+
+    // 9.5. Buffer PROPERTY_ACCESS nodes and CONTAINS edges (REG-395)
+    this.bufferPropertyAccessNodes(module, propertyAccesses);
 
     // 10. Buffer net:stdio and WRITES_TO edges for console.log/error
     this.bufferStdioNodes(methodCalls);
@@ -975,6 +981,38 @@ export class GraphBuilder {
           }
         }
       }
+    }
+  }
+
+  /**
+   * Buffer PROPERTY_ACCESS nodes and CONTAINS edges (REG-395).
+   *
+   * Creates nodes for property reads (obj.prop, a.b.c) and
+   * CONTAINS edges from the enclosing scope (function or module).
+   */
+  private bufferPropertyAccessNodes(module: ModuleNode, propertyAccesses: PropertyAccessInfo[]): void {
+    for (const propAccess of propertyAccesses) {
+      // Buffer node with all relevant fields
+      this._bufferNode({
+        id: propAccess.id,
+        type: 'PROPERTY_ACCESS',
+        name: propAccess.propertyName,
+        objectName: propAccess.objectName,
+        file: propAccess.file,
+        line: propAccess.line,
+        column: propAccess.column,
+        semanticId: propAccess.semanticId,
+        optional: propAccess.optional,
+        computed: propAccess.computed
+      } as GraphNode);
+
+      // SCOPE/FUNCTION/MODULE -> CONTAINS -> PROPERTY_ACCESS
+      const containsSrc = propAccess.parentScopeId ?? module.id;
+      this._bufferEdge({
+        type: 'CONTAINS',
+        src: containsSrc,
+        dst: propAccess.id
+      });
     }
   }
 
