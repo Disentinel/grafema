@@ -587,6 +587,8 @@ export interface ArrayMutationArgument {
   valueType: 'LITERAL' | 'VARIABLE' | 'CALL' | 'EXPRESSION' | 'OBJECT_LITERAL' | 'ARRAY_LITERAL';
   valueName?: string;          // For VARIABLE type - name of the variable
   valueNodeId?: string;        // For LITERAL, OBJECT_LITERAL, ARRAY_LITERAL - node ID
+  valueLine?: number;          // Line of the value expression (for node lookup in GraphBuilder)
+  valueColumn?: number;        // Column of the value expression (for node lookup in GraphBuilder)
   literalValue?: unknown;      // For LITERAL type
   callLine?: number;           // For CALL type
   callColumn?: number;

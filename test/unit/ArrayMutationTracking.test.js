@@ -424,4 +424,128 @@ graph.addNodes(nodes);
       // function(nodes) -> nodes (PASSES_ARGUMENT) -> inlineNode (FLOWS_INTO) -> object literal
     });
   });
+
+  // REG-392: Non-variable values flowing into arrays
+  describe('Non-variable values in push/unshift (REG-392)', () => {
+    it('should create FLOWS_INTO edge for arr.push(literal)', async () => {
+      await setupTest(backend, {
+        'index.js': `
+const arr = [];
+arr.push('hello');
+        `
+      });
+
+      const allNodes = await backend.getAllNodes();
+      const allEdges = await backend.getAllEdges();
+
+      const arrVar = allNodes.find(n => n.name === 'arr');
+      assert.ok(arrVar, 'Variable "arr" not found');
+
+      const flowsIntoEdges = allEdges.filter(e =>
+        e.type === 'FLOWS_INTO' && e.dst === arrVar.id
+      );
+
+      assert.ok(flowsIntoEdges.length > 0, 'Expected FLOWS_INTO edge to arr from literal');
+
+      const pushEdge = flowsIntoEdges.find(e => e.mutationMethod === 'push');
+      assert.ok(pushEdge, 'Expected edge with mutationMethod: push');
+    });
+
+    it('should create FLOWS_INTO edge for arr.push({obj})', async () => {
+      await setupTest(backend, {
+        'index.js': `
+const arr = [];
+arr.push({ name: 'test' });
+        `
+      });
+
+      const allNodes = await backend.getAllNodes();
+      const allEdges = await backend.getAllEdges();
+
+      const arrVar = allNodes.find(n => n.name === 'arr');
+      assert.ok(arrVar, 'Variable "arr" not found');
+
+      const flowsIntoEdges = allEdges.filter(e =>
+        e.type === 'FLOWS_INTO' && e.dst === arrVar.id
+      );
+
+      assert.ok(flowsIntoEdges.length > 0, 'Expected FLOWS_INTO edge to arr from object literal');
+
+      const pushEdge = flowsIntoEdges.find(e => e.mutationMethod === 'push');
+      assert.ok(pushEdge, 'Expected edge with mutationMethod: push');
+    });
+
+    it('should create FLOWS_INTO edge for arr.push([array])', async () => {
+      await setupTest(backend, {
+        'index.js': `
+const arr = [];
+arr.push([1, 2, 3]);
+        `
+      });
+
+      const allNodes = await backend.getAllNodes();
+      const allEdges = await backend.getAllEdges();
+
+      const arrVar = allNodes.find(n => n.name === 'arr');
+      assert.ok(arrVar, 'Variable "arr" not found');
+
+      const flowsIntoEdges = allEdges.filter(e =>
+        e.type === 'FLOWS_INTO' && e.dst === arrVar.id
+      );
+
+      assert.ok(flowsIntoEdges.length > 0, 'Expected FLOWS_INTO edge to arr from array literal');
+
+      const pushEdge = flowsIntoEdges.find(e => e.mutationMethod === 'push');
+      assert.ok(pushEdge, 'Expected edge with mutationMethod: push');
+    });
+
+    it('should create FLOWS_INTO edge for arr.push(func())', async () => {
+      await setupTest(backend, {
+        'index.js': `
+function getValue() { return 42; }
+const arr = [];
+arr.push(getValue());
+        `
+      });
+
+      const allNodes = await backend.getAllNodes();
+      const allEdges = await backend.getAllEdges();
+
+      const arrVar = allNodes.find(n => n.name === 'arr');
+      assert.ok(arrVar, 'Variable "arr" not found');
+
+      const flowsIntoEdges = allEdges.filter(e =>
+        e.type === 'FLOWS_INTO' && e.dst === arrVar.id
+      );
+
+      assert.ok(flowsIntoEdges.length > 0, 'Expected FLOWS_INTO edge to arr from function call');
+
+      const pushEdge = flowsIntoEdges.find(e => e.mutationMethod === 'push');
+      assert.ok(pushEdge, 'Expected edge with mutationMethod: push');
+    });
+
+    it('should create FLOWS_INTO edge for arr.unshift(literal)', async () => {
+      await setupTest(backend, {
+        'index.js': `
+const arr = [];
+arr.unshift(42);
+        `
+      });
+
+      const allNodes = await backend.getAllNodes();
+      const allEdges = await backend.getAllEdges();
+
+      const arrVar = allNodes.find(n => n.name === 'arr');
+      assert.ok(arrVar, 'Variable "arr" not found');
+
+      const flowsIntoEdges = allEdges.filter(e =>
+        e.type === 'FLOWS_INTO' && e.dst === arrVar.id
+      );
+
+      assert.ok(flowsIntoEdges.length > 0, 'Expected FLOWS_INTO edge to arr from literal');
+
+      const unshiftEdge = flowsIntoEdges.find(e => e.mutationMethod === 'unshift');
+      assert.ok(unshiftEdge, 'Expected edge with mutationMethod: unshift');
+    });
+  });
 });
