@@ -50,7 +50,7 @@ async function setupTest(backend, files) {
   return { testDir };
 }
 
-describe.skip('Indexed Array Assignment Refactoring (REG-116)', () => {
+describe('Indexed Array Assignment Refactoring (REG-116)', () => {
   let db;
   let backend;
 

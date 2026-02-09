@@ -362,7 +362,8 @@ export class GraphBuilder {
     this.bufferImplementsEdges(classDeclarations, interfaces);
 
     // 26. Buffer FLOWS_INTO edges for array mutations (push, unshift, splice, indexed assignment)
-    this.bufferArrayMutationEdges(arrayMutations, variableDeclarations, parameters);
+    // REG-392: Pass literals, objectLiterals, arrayLiterals, callSites for non-variable value lookups
+    this.bufferArrayMutationEdges(arrayMutations, variableDeclarations, parameters, literals, objectLiterals, arrayLiterals, callSites);
 
     // 27. Buffer FLOWS_INTO edges for object mutations (property assignment, Object.assign)
     // REG-152: Now includes classDeclarations for this.prop = value patterns
@@ -2008,21 +2009,20 @@ export class GraphBuilder {
 
   /**
    * Buffer FLOWS_INTO edges for array mutations (push, unshift, splice, indexed assignment)
-   * Creates edges from inserted values to the array variable
+   * Creates edges from inserted values to the array variable.
    *
-   * REG-117: Now handles nested mutations like obj.arr.push(item):
-   * - For nested mutations, falls back to base object if array property not found
-   * - Adds nestedProperty metadata for tracking
-   *
-   * OPTIMIZED: Uses Map-based lookup cache for O(1) variable lookups instead of O(n) find()
+   * REG-117: Handles nested mutations like obj.arr.push(item)
+   * REG-392: Handles non-variable values (LITERAL, OBJECT_LITERAL, ARRAY_LITERAL, CALL)
    */
   private bufferArrayMutationEdges(
     arrayMutations: ArrayMutationInfo[],
     variableDeclarations: VariableDeclarationInfo[],
-    parameters: ParameterInfo[]
+    parameters: ParameterInfo[],
+    literals: LiteralInfo[],
+    objectLiterals: ObjectLiteralInfo[],
+    arrayLiterals: ArrayLiteralInfo[],
+    callSites: CallSiteInfo[]
   ): void {
-    // Note: No longer using Map-based cache - scope-aware lookup requires scope chain walk
-
     for (const mutation of arrayMutations) {
       const { arrayName, mutationScopePath, mutationMethod, insertedValues, file, isNested, baseObjectName, propertyName } = mutation;
 
@@ -2052,32 +2052,58 @@ export class GraphBuilder {
 
       // Create FLOWS_INTO edges for each inserted value
       for (const arg of insertedValues) {
+        let sourceNodeId: string | undefined;
+
         if (arg.valueType === 'VARIABLE' && arg.valueName) {
           // Scope-aware lookup for source variable (REG-309)
           const sourceVar = this.resolveVariableInScope(arg.valueName, scopePath, file, variableDeclarations);
           const sourceParam = !sourceVar ? this.resolveParameterInScope(arg.valueName, scopePath, file, parameters) : null;
-          const sourceNodeId = sourceVar?.id ?? sourceParam?.id;
-
-          if (sourceNodeId) {
-            const edgeData: GraphEdge = {
-              type: 'FLOWS_INTO',
-              src: sourceNodeId,
-              dst: targetNodeId,
-              mutationMethod,
-              argIndex: arg.argIndex
-            };
-            if (arg.isSpread) {
-              edgeData.isSpread = true;
-            }
-            // REG-117: Add nested property metadata
-            if (nestedProperty) {
-              edgeData.nestedProperty = nestedProperty;
-            }
-            this._bufferEdge(edgeData);
-          }
+          sourceNodeId = sourceVar?.id ?? sourceParam?.id;
+        } else if (arg.valueNodeId) {
+          // REG-392: Direct node ID for indexed assignments (LITERAL, OBJECT_LITERAL, ARRAY_LITERAL)
+          sourceNodeId = arg.valueNodeId;
+        } else if (arg.valueType === 'LITERAL' && arg.valueLine !== undefined && arg.valueColumn !== undefined) {
+          // REG-392: Find LITERAL node by coordinates (push/unshift — nodes created by extractArguments)
+          const literalNode = literals.find(l =>
+            l.line === arg.valueLine && l.column === arg.valueColumn && l.file === file
+          );
+          sourceNodeId = literalNode?.id;
+        } else if (arg.valueType === 'OBJECT_LITERAL' && arg.valueLine !== undefined && arg.valueColumn !== undefined) {
+          // REG-392: Find OBJECT_LITERAL node by coordinates
+          const objNode = objectLiterals.find(o =>
+            o.line === arg.valueLine && o.column === arg.valueColumn && o.file === file
+          );
+          sourceNodeId = objNode?.id;
+        } else if (arg.valueType === 'ARRAY_LITERAL' && arg.valueLine !== undefined && arg.valueColumn !== undefined) {
+          // REG-392: Find ARRAY_LITERAL node by coordinates
+          const arrNode = arrayLiterals.find(a =>
+            a.line === arg.valueLine && a.column === arg.valueColumn && a.file === file
+          );
+          sourceNodeId = arrNode?.id;
+        } else if (arg.valueType === 'CALL' && arg.callLine !== undefined && arg.callColumn !== undefined) {
+          // REG-392: Find CALL_SITE node by coordinates
+          const callSite = callSites.find(cs =>
+            cs.line === arg.callLine && cs.column === arg.callColumn && cs.file === file
+          );
+          sourceNodeId = callSite?.id;
         }
-        // For literals, object literals, etc. - we could create edges from LITERAL nodes
-        // but for now we just track variable -> array flows
+
+        if (sourceNodeId) {
+          const edgeData: GraphEdge = {
+            type: 'FLOWS_INTO',
+            src: sourceNodeId,
+            dst: targetNodeId,
+            mutationMethod,
+            argIndex: arg.argIndex
+          };
+          if (arg.isSpread) {
+            edgeData.isSpread = true;
+          }
+          if (nestedProperty) {
+            edgeData.nestedProperty = nestedProperty;
+          }
+          this._bufferEdge(edgeData);
+        }
       }
     }
   }
