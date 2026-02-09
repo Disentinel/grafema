@@ -4,6 +4,7 @@
 
 import type { NodeType, NodeRecord } from './nodes.js';
 import type { EdgeType, EdgeRecord } from './edges.js';
+import type { FieldDeclaration } from './rfdb.js';
 
 // === LOG LEVEL ===
 /**
@@ -45,6 +46,8 @@ export interface PluginMetadata {
     edges?: EdgeType[];
   };
   dependencies?: string[];
+  /** Metadata fields this plugin writes. Used for RFDB server-side indexing. */
+  fields?: FieldDeclaration[];
 }
 
 // === ISSUE SPEC ===
@@ -278,6 +281,9 @@ export interface GraphBackend {
   // Optional persistence
   flush?(): Promise<void>;
   close?(): Promise<void>;
+
+  // Schema declaration
+  declareFields?(fields: FieldDeclaration[]): Promise<number>;
 }
 
 export interface NodeFilter {

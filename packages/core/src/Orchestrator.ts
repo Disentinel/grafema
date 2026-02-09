@@ -16,7 +16,7 @@ import { AnalysisQueue } from './core/AnalysisQueue.js';
 import { DiagnosticCollector } from './diagnostics/DiagnosticCollector.js';
 import { StrictModeFailure } from './errors/GrafemaError.js';
 import type { Plugin, PluginContext } from './plugins/Plugin.js';
-import type { GraphBackend, PluginPhase, Logger, LogLevel, IssueSpec, ServiceDefinition } from '@grafema/types';
+import type { GraphBackend, PluginPhase, Logger, LogLevel, IssueSpec, ServiceDefinition, FieldDeclaration } from '@grafema/types';
 import { createLogger } from './logging/Logger.js';
 import { NodeFactory } from './core/NodeFactory.js';
 import { toposort } from './core/toposort.js';
@@ -279,6 +279,30 @@ export class Orchestrator {
   }
 
   /**
+   * Collect field declarations from all plugins and send to RFDB for indexing.
+   * Deduplicates by field name (last declaration wins if nodeTypes differ).
+   * Called once before analysis to enable server-side metadata indexing.
+   */
+  private async declarePluginFields(): Promise<void> {
+    if (!this.graph.declareFields) return;
+
+    const fieldMap = new Map<string, FieldDeclaration>();
+    for (const plugin of this.plugins) {
+      const fields = plugin.metadata?.fields;
+      if (!fields) continue;
+      for (const field of fields) {
+        fieldMap.set(field.name, field);
+      }
+    }
+
+    if (fieldMap.size === 0) return;
+
+    const fields = [...fieldMap.values()];
+    const count = await this.graph.declareFields(fields);
+    this.logger.debug('Declared metadata fields for indexing', { fields: count });
+  }
+
+  /**
    * Запустить анализ проекта
    */
   async run(projectPath: string): Promise<DiscoveryManifest> {
@@ -305,6 +329,9 @@ export class Orchestrator {
 
     // Register plugin pipeline as grafema:plugin nodes (REG-386)
     await this.registerPluginNodes();
+
+    // Declare metadata fields for RFDB server-side indexing (REG-398)
+    await this.declarePluginFields();
 
     this.onProgress({ phase: 'discovery', currentPlugin: 'Starting discovery...', message: 'Discovering services...', totalFiles: 0, processedFiles: 0 });
 
@@ -564,6 +591,9 @@ export class Orchestrator {
 
     // Register plugin pipeline as grafema:plugin nodes (REG-386)
     await this.registerPluginNodes();
+
+    // Declare metadata fields for RFDB server-side indexing (REG-398)
+    await this.declarePluginFields();
 
     // Collect all services from all roots
     const allServices: ServiceInfo[] = [];

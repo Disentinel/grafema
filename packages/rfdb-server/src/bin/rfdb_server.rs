@@ -33,7 +33,7 @@ use sysinfo::System;
 
 // Import from library
 use rfdb::graph::{GraphEngine, GraphStore};
-use rfdb::storage::{NodeRecord, EdgeRecord, AttrQuery};
+use rfdb::storage::{NodeRecord, EdgeRecord, AttrQuery, FieldDecl, FieldType};
 use rfdb::datalog::{parse_program, parse_atom, parse_query, Evaluator};
 use rfdb::database_manager::{DatabaseManager, DatabaseInfo, AccessMode};
 use rfdb::session::ClientSession;
@@ -197,6 +197,9 @@ pub enum Request {
     IsEndpoint { id: String },
     GetNodeIdentifier { id: String },
     UpdateNodeVersion { id: String, version: String },
+
+    // Schema declaration
+    DeclareFields { fields: Vec<WireFieldDecl> },
 }
 
 fn default_rw_mode() -> String { "rw".to_string() }
@@ -382,7 +385,10 @@ pub struct WireEdge {
     pub metadata: Option<String>,
 }
 
-/// Attribute query for wire protocol
+/// Attribute query for wire protocol.
+/// Known fields are deserialized into typed fields;
+/// any extra fields (e.g. "object", "method") are captured in `extra`
+/// and used as metadata filters.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WireAttrQuery {
@@ -390,6 +396,20 @@ pub struct WireAttrQuery {
     pub name: Option<String>,
     pub file: Option<String>,
     pub exported: Option<bool>,
+    /// Extra fields are matched against node metadata JSON.
+    #[serde(flatten)]
+    pub extra: std::collections::HashMap<String, serde_json::Value>,
+}
+
+/// Field declaration for metadata indexing (wire protocol)
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WireFieldDecl {
+    pub name: String,
+    #[serde(default)]
+    pub field_type: Option<String>,
+    #[serde(default)]
+    pub node_types: Option<Vec<String>>,
 }
 
 // ============================================================================
@@ -675,6 +695,19 @@ fn handle_request(
 
         Request::FindByAttr { query } => {
             with_engine_read(session, |engine| {
+                // Convert extra wire fields to metadata filters
+                let metadata_filters: Vec<(String, String)> = query.extra.into_iter()
+                    .filter_map(|(k, v)| {
+                        // Convert JSON values to string for matching
+                        match v {
+                            serde_json::Value::String(s) => Some((k, s)),
+                            serde_json::Value::Bool(b) => Some((k, b.to_string())),
+                            serde_json::Value::Number(n) => Some((k, n.to_string())),
+                            _ => None, // Skip null, arrays, objects
+                        }
+                    })
+                    .collect();
+
                 let attr_query = AttrQuery {
                     version: None,
                     node_type: query.node_type,
@@ -682,6 +715,7 @@ fn handle_request(
                     file: query.file,
                     exported: query.exported,
                     name: query.name,
+                    metadata_filters,
                 };
                 let ids: Vec<String> = engine.find_by_attr(&attr_query)
                     .into_iter()
@@ -836,6 +870,17 @@ fn handle_request(
 
         Request::QueryNodes { query } => {
             with_engine_read(session, |engine| {
+                let metadata_filters: Vec<(String, String)> = query.extra.into_iter()
+                    .filter_map(|(k, v)| {
+                        match v {
+                            serde_json::Value::String(s) => Some((k, s)),
+                            serde_json::Value::Bool(b) => Some((k, b.to_string())),
+                            serde_json::Value::Number(n) => Some((k, n.to_string())),
+                            _ => None,
+                        }
+                    })
+                    .collect();
+
                 let attr_query = AttrQuery {
                     version: None,
                     node_type: query.node_type,
@@ -843,6 +888,7 @@ fn handle_request(
                     file: query.file,
                     exported: query.exported,
                     name: query.name,
+                    metadata_filters,
                 };
                 let ids = engine.find_by_attr(&attr_query);
                 let nodes: Vec<WireNode> = ids.into_iter()
@@ -903,6 +949,27 @@ fn handle_request(
         Request::UpdateNodeVersion { id: _, version: _ } => {
             with_engine_write(session, |_engine| {
                 Response::Ok { ok: true }
+            })
+        }
+
+        Request::DeclareFields { fields } => {
+            with_engine_write(session, |engine| {
+                let field_decls: Vec<FieldDecl> = fields.into_iter().map(|f| {
+                    let field_type = match f.field_type.as_deref() {
+                        Some("bool") => FieldType::Bool,
+                        Some("int") => FieldType::Int,
+                        Some("id") => FieldType::Id,
+                        _ => FieldType::String,
+                    };
+                    FieldDecl {
+                        name: f.name,
+                        field_type,
+                        node_types: f.node_types,
+                    }
+                }).collect();
+                let count = field_decls.len() as u32;
+                engine.declare_fields(field_decls);
+                Response::Count { count }
             })
         }
 
@@ -1892,6 +1959,196 @@ mod protocol_tests {
                 assert_eq!(query_count, 0);
             }
             _ => panic!("Expected Stats response"),
+        }
+    }
+
+    // ============================================================================
+    // FindByAttr with Metadata Filters
+    // ============================================================================
+
+    #[test]
+    fn test_find_by_attr_with_metadata_filters() {
+        let (_dir, manager) = setup_test_manager();
+        let mut session = ClientSession::new(1);
+
+        // Create ephemeral database
+        handle_request(&manager, &mut session, Request::CreateDatabase {
+            name: "testdb".to_string(),
+            ephemeral: true,
+        }, &None);
+
+        handle_request(&manager, &mut session, Request::OpenDatabase {
+            name: "testdb".to_string(),
+            mode: "rw".to_string(),
+        }, &None);
+
+        // Add nodes with metadata
+        handle_request(&manager, &mut session, Request::AddNodes {
+            nodes: vec![
+                WireNode {
+                    id: "1".to_string(),
+                    node_type: Some("CALL".to_string()),
+                    name: Some("app.get".to_string()),
+                    file: Some("app.js".to_string()),
+                    exported: false,
+                    metadata: Some(r#"{"object":"express","method":"get"}"#.to_string()),
+                },
+                WireNode {
+                    id: "2".to_string(),
+                    node_type: Some("CALL".to_string()),
+                    name: Some("app.post".to_string()),
+                    file: Some("app.js".to_string()),
+                    exported: false,
+                    metadata: Some(r#"{"object":"express","method":"post"}"#.to_string()),
+                },
+                WireNode {
+                    id: "3".to_string(),
+                    node_type: Some("CALL".to_string()),
+                    name: Some("db.query".to_string()),
+                    file: Some("db.js".to_string()),
+                    exported: false,
+                    metadata: Some(r#"{"object":"knex","method":"query"}"#.to_string()),
+                },
+            ],
+        }, &None);
+
+        // findByAttr with extra field "object"="express" via WireAttrQuery
+        let mut extra = std::collections::HashMap::new();
+        extra.insert("object".to_string(), serde_json::Value::String("express".to_string()));
+
+        let response = handle_request(&manager, &mut session, Request::FindByAttr {
+            query: WireAttrQuery {
+                node_type: Some("CALL".to_string()),
+                name: None,
+                file: None,
+                exported: None,
+                extra,
+            },
+        }, &None);
+
+        match response {
+            Response::Ids { ids } => {
+                assert_eq!(ids.len(), 2, "Should find 2 express CALL nodes");
+            }
+            _ => panic!("Expected Ids response"),
+        }
+
+        // findByAttr with two extra fields: object=express AND method=get
+        let mut extra = std::collections::HashMap::new();
+        extra.insert("object".to_string(), serde_json::Value::String("express".to_string()));
+        extra.insert("method".to_string(), serde_json::Value::String("get".to_string()));
+
+        let response = handle_request(&manager, &mut session, Request::FindByAttr {
+            query: WireAttrQuery {
+                node_type: Some("CALL".to_string()),
+                name: None,
+                file: None,
+                exported: None,
+                extra,
+            },
+        }, &None);
+
+        match response {
+            Response::Ids { ids } => {
+                assert_eq!(ids.len(), 1, "Should find only GET handler");
+            }
+            _ => panic!("Expected Ids response"),
+        }
+
+        // findByAttr with no extra fields (backwards compatible)
+        let response = handle_request(&manager, &mut session, Request::FindByAttr {
+            query: WireAttrQuery {
+                node_type: Some("CALL".to_string()),
+                name: None,
+                file: None,
+                exported: None,
+                extra: std::collections::HashMap::new(),
+            },
+        }, &None);
+
+        match response {
+            Response::Ids { ids } => {
+                assert_eq!(ids.len(), 3, "Without metadata filter, all 3 CALL nodes");
+            }
+            _ => panic!("Expected Ids response"),
+        }
+    }
+
+    #[test]
+    fn test_declare_fields_command() {
+        let (_dir, manager) = setup_test_manager();
+        let mut session = ClientSession::new(1);
+
+        // Create and open ephemeral database
+        handle_request(&manager, &mut session, Request::CreateDatabase {
+            name: "testdb".to_string(),
+            ephemeral: true,
+        }, &None);
+
+        handle_request(&manager, &mut session, Request::OpenDatabase {
+            name: "testdb".to_string(),
+            mode: "rw".to_string(),
+        }, &None);
+
+        // Declare fields
+        let response = handle_request(&manager, &mut session, Request::DeclareFields {
+            fields: vec![
+                WireFieldDecl { name: "object".to_string(), field_type: Some("string".to_string()), node_types: None },
+                WireFieldDecl { name: "method".to_string(), field_type: Some("string".to_string()), node_types: None },
+            ],
+        }, &None);
+
+        match response {
+            Response::Count { count } => {
+                assert_eq!(count, 2, "Should report 2 declared fields");
+            }
+            _ => panic!("Expected Count response"),
+        }
+
+        // Add nodes with metadata
+        handle_request(&manager, &mut session, Request::AddNodes {
+            nodes: vec![
+                WireNode {
+                    id: "1".to_string(),
+                    node_type: Some("CALL".to_string()),
+                    name: Some("app.get".to_string()),
+                    file: None,
+                    exported: false,
+                    metadata: Some(r#"{"object":"express","method":"get"}"#.to_string()),
+                },
+                WireNode {
+                    id: "2".to_string(),
+                    node_type: Some("CALL".to_string()),
+                    name: Some("app.post".to_string()),
+                    file: None,
+                    exported: false,
+                    metadata: Some(r#"{"object":"express","method":"post"}"#.to_string()),
+                },
+            ],
+        }, &None);
+
+        // Flush to build field indexes
+        handle_request(&manager, &mut session, Request::Flush, &None);
+
+        // Query using field-indexed metadata filter
+        let mut extra = std::collections::HashMap::new();
+        extra.insert("object".to_string(), serde_json::Value::String("express".to_string()));
+
+        let response = handle_request(&manager, &mut session, Request::FindByAttr {
+            query: WireAttrQuery {
+                node_type: Some("CALL".to_string()),
+                name: None,
+                file: None,
+                exported: None,
+                extra,
+            },
+        }, &None);
+
+        match response {
+            Response::Ids { ids } => {
+                assert_eq!(ids.len(), 2, "Should find 2 express CALL nodes via field index");
+            }
+            _ => panic!("Expected Ids response"),
         }
     }
 }

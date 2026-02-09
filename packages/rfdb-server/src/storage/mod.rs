@@ -89,6 +89,10 @@ pub struct AttrQuery {
     pub file: Option<String>,
     pub exported: Option<bool>,
     pub name: Option<String>,
+    /// Metadata field filters: (key, value) pairs matched against node metadata JSON.
+    /// All filters must match (AND semantics).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub metadata_filters: Vec<(String, String)>,
 }
 
 impl AttrQuery {
@@ -120,4 +124,38 @@ impl AttrQuery {
         self.name = Some(n.into());
         self
     }
+
+    pub fn metadata_filter(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.metadata_filters.push((key.into(), value.into()));
+        self
+    }
+}
+
+/// Declaration of a metadata field to be indexed.
+///
+/// Plugins declare which metadata fields they write. RFDB builds
+/// in-memory secondary indexes for these fields, enabling O(1) lookup
+/// by metadata value instead of O(n) JSON parsing.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FieldDecl {
+    /// Field name as it appears in metadata JSON (e.g. "object", "method", "async")
+    pub name: String,
+    /// Field type hint (for future segment v2 columnar storage)
+    #[serde(default)]
+    pub field_type: FieldType,
+    /// Restrict indexing to specific node types (optimization).
+    /// If None, the field is indexed for all node types.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_types: Option<Vec<String>>,
+}
+
+/// Type hint for declared metadata fields.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum FieldType {
+    #[default]
+    String,
+    Bool,
+    Int,
+    Id,
 }

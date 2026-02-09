@@ -5,6 +5,7 @@
 
 use std::collections::HashMap;
 use crate::storage::segment::NodesSegment;
+use crate::storage::FieldDecl;
 
 /// Secondary indexes for O(1) lookups over mmap segment data.
 ///
@@ -12,6 +13,7 @@ use crate::storage::segment::NodesSegment;
 /// - `id_index`: node ID → segment index (O(1) by-ID lookup)
 /// - `type_index`: node_type → segment indices (O(1) by-type lookup)
 /// - `file_index`: file_path → segment indices (O(1) by-file lookup)
+/// - `field_indexes`: declared metadata field → value → segment indices (O(1) metadata lookup)
 ///
 /// All indexes include deleted nodes — callers check deletion status separately.
 pub struct IndexSet {
@@ -23,6 +25,12 @@ pub struct IndexSet {
 
     /// File path → list of segment indices. O(1) file lookup.
     file_index: HashMap<String, Vec<usize>>,
+
+    /// Declared metadata field indexes.
+    /// Outer key: field name (e.g. "object", "method")
+    /// Inner key: field value as string (e.g. "express", "get")
+    /// Value: segment indices of nodes with that field value
+    field_indexes: HashMap<String, HashMap<String, Vec<usize>>>,
 }
 
 impl IndexSet {
@@ -31,6 +39,7 @@ impl IndexSet {
             id_index: HashMap::new(),
             type_index: HashMap::new(),
             file_index: HashMap::new(),
+            field_indexes: HashMap::new(),
         }
     }
 
@@ -38,19 +47,27 @@ impl IndexSet {
     ///
     /// Called from `GraphEngine::open()` and `GraphEngine::flush()`.
     /// Includes deleted nodes — the caller decides whether to reject them.
-    pub fn rebuild_from_segment(&mut self, segment: &NodesSegment) {
+    ///
+    /// When `declared_fields` is non-empty, also builds metadata field indexes
+    /// by parsing metadata JSON for each node.
+    pub fn rebuild_from_segment(&mut self, segment: &NodesSegment, declared_fields: &[FieldDecl]) {
         self.id_index.clear();
         self.type_index.clear();
         self.file_index.clear();
+        self.field_indexes.clear();
 
         self.id_index.reserve(segment.node_count());
+
+        let has_field_decls = !declared_fields.is_empty();
 
         for idx in 0..segment.node_count() {
             if let Some(id) = segment.get_id(idx) {
                 self.id_index.insert(id, idx);
             }
 
-            if let Some(node_type) = segment.get_node_type(idx) {
+            let node_type_str = segment.get_node_type(idx);
+
+            if let Some(node_type) = node_type_str {
                 self.type_index
                     .entry(node_type.to_string())
                     .or_insert_with(Vec::new)
@@ -65,6 +82,47 @@ impl IndexSet {
                         .push(idx);
                 }
             }
+
+            // Build field indexes from metadata JSON
+            if has_field_decls {
+                if let Some(metadata_json) = segment.get_metadata(idx) {
+                    if !metadata_json.is_empty() {
+                        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(metadata_json) {
+                            if let Some(obj) = parsed.as_object() {
+                                let node_type_ref = node_type_str;
+                                for decl in declared_fields {
+                                    // Skip if field is restricted to specific node types
+                                    // and current node type doesn't match
+                                    if let Some(ref restricted_types) = decl.node_types {
+                                        if let Some(nt) = node_type_ref {
+                                            if !restricted_types.iter().any(|t| t == nt) {
+                                                continue;
+                                            }
+                                        } else {
+                                            continue;
+                                        }
+                                    }
+
+                                    if let Some(val) = obj.get(&decl.name) {
+                                        let val_str = match val {
+                                            serde_json::Value::String(s) => s.clone(),
+                                            serde_json::Value::Bool(b) => b.to_string(),
+                                            serde_json::Value::Number(n) => n.to_string(),
+                                            _ => continue,
+                                        };
+                                        self.field_indexes
+                                            .entry(decl.name.clone())
+                                            .or_insert_with(HashMap::new)
+                                            .entry(val_str)
+                                            .or_insert_with(Vec::new)
+                                            .push(idx);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -73,6 +131,7 @@ impl IndexSet {
         self.id_index.clear();
         self.type_index.clear();
         self.file_index.clear();
+        self.field_indexes.clear();
     }
 
     /// Look up segment index for a node ID. O(1).
@@ -105,6 +164,21 @@ impl IndexSet {
     /// Returns empty slice if no nodes for this file exist.
     pub fn find_by_file(&self, file: &str) -> &[usize] {
         self.file_index.get(file).map_or(&[], |v| v.as_slice())
+    }
+
+    /// Check if a metadata field has been declared (has an index).
+    pub fn has_field_index(&self, field_name: &str) -> bool {
+        self.field_indexes.contains_key(field_name)
+    }
+
+    /// Get segment indices for a declared metadata field value. O(1).
+    ///
+    /// Returns None if the field is not declared (no index exists).
+    /// Returns Some(empty slice) if declared but no nodes have this value.
+    pub fn find_by_field(&self, field_name: &str, value: &str) -> Option<&[usize]> {
+        self.field_indexes.get(field_name).map(|values| {
+            values.get(value).map_or(&[] as &[usize], |v| v.as_slice())
+        })
     }
 }
 
@@ -204,7 +278,7 @@ mod tests {
         let segment = NodesSegment::open(&db_path.join("nodes.bin")).unwrap();
 
         let mut index = IndexSet::new();
-        index.rebuild_from_segment(&segment);
+        index.rebuild_from_segment(&segment, &[]);
 
         // ID index
         assert_eq!(index.find_node_index(100), Some(0));
@@ -281,7 +355,7 @@ mod tests {
         let segment = NodesSegment::open(&db_path.join("nodes.bin")).unwrap();
 
         let mut index = IndexSet::new();
-        index.rebuild_from_segment(&segment);
+        index.rebuild_from_segment(&segment, &[]);
 
         // Wildcard: "http:" prefix matches http:route and http:request
         let http_nodes = index.find_by_type_prefix("http:");
@@ -321,7 +395,7 @@ mod tests {
         let segment1 = NodesSegment::open(&db_path.join("nodes.bin")).unwrap();
 
         let mut index = IndexSet::new();
-        index.rebuild_from_segment(&segment1);
+        index.rebuild_from_segment(&segment1, &[]);
         assert_eq!(index.find_node_index(10), Some(0));
         assert_eq!(index.find_by_type("A").len(), 1);
         assert_eq!(index.find_by_file("old.js").len(), 1);
@@ -340,7 +414,7 @@ mod tests {
         writer.write_nodes(&nodes2).unwrap();
         let segment2 = NodesSegment::open(&db_path.join("nodes.bin")).unwrap();
 
-        index.rebuild_from_segment(&segment2);
+        index.rebuild_from_segment(&segment2, &[]);
 
         // Old data gone
         assert_eq!(index.find_node_index(10), None);
@@ -351,5 +425,156 @@ mod tests {
         assert_eq!(index.find_node_index(20), Some(0));
         assert_eq!(index.find_by_type("B").len(), 1);
         assert_eq!(index.find_by_file("new.js").len(), 1);
+    }
+
+    #[test]
+    fn test_field_index_basic() {
+        use tempfile::tempdir;
+        use crate::storage::{NodeRecord, SegmentWriter, FieldDecl, FieldType};
+        use crate::storage::segment::NodesSegment;
+
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path();
+
+        let nodes = vec![
+            NodeRecord {
+                id: 1,
+                node_type: Some("CALL".to_string()),
+                file_id: 0, name_offset: 0,
+                version: "main".to_string(),
+                exported: false, replaces: None, deleted: false,
+                name: Some("app.get".to_string()),
+                file: Some("app.js".to_string()),
+                metadata: Some(r#"{"object":"express","method":"get"}"#.to_string()),
+            },
+            NodeRecord {
+                id: 2,
+                node_type: Some("CALL".to_string()),
+                file_id: 0, name_offset: 0,
+                version: "main".to_string(),
+                exported: false, replaces: None, deleted: false,
+                name: Some("app.post".to_string()),
+                file: Some("app.js".to_string()),
+                metadata: Some(r#"{"object":"express","method":"post"}"#.to_string()),
+            },
+            NodeRecord {
+                id: 3,
+                node_type: Some("CALL".to_string()),
+                file_id: 0, name_offset: 0,
+                version: "main".to_string(),
+                exported: false, replaces: None, deleted: false,
+                name: Some("db.query".to_string()),
+                file: Some("db.js".to_string()),
+                metadata: Some(r#"{"object":"knex","method":"query"}"#.to_string()),
+            },
+            NodeRecord {
+                id: 4,
+                node_type: Some("FUNCTION".to_string()),
+                file_id: 0, name_offset: 0,
+                version: "main".to_string(),
+                exported: false, replaces: None, deleted: false,
+                name: Some("helper".to_string()),
+                file: Some("utils.js".to_string()),
+                metadata: None, // no metadata
+            },
+        ];
+
+        let writer = SegmentWriter::new(db_path);
+        writer.write_nodes(&nodes).unwrap();
+        let segment = NodesSegment::open(&db_path.join("nodes.bin")).unwrap();
+
+        // Rebuild WITHOUT declared fields — no field indexes
+        let mut index = IndexSet::new();
+        index.rebuild_from_segment(&segment, &[]);
+
+        assert!(!index.has_field_index("object"));
+        assert_eq!(index.find_by_field("object", "express"), None);
+
+        // Rebuild WITH declared fields
+        let fields = vec![
+            FieldDecl { name: "object".to_string(), field_type: FieldType::String, node_types: None },
+            FieldDecl { name: "method".to_string(), field_type: FieldType::String, node_types: None },
+        ];
+        index.rebuild_from_segment(&segment, &fields);
+
+        assert!(index.has_field_index("object"));
+        assert!(index.has_field_index("method"));
+        assert!(!index.has_field_index("nonexistent"));
+
+        // object=express → nodes at indices 0, 1
+        let express_indices = index.find_by_field("object", "express").unwrap();
+        assert_eq!(express_indices.len(), 2);
+        assert!(express_indices.contains(&0));
+        assert!(express_indices.contains(&1));
+
+        // object=knex → node at index 2
+        let knex_indices = index.find_by_field("object", "knex").unwrap();
+        assert_eq!(knex_indices.len(), 1);
+        assert!(knex_indices.contains(&2));
+
+        // object=nonexistent → empty (field indexed but no matching value)
+        let none_indices = index.find_by_field("object", "nonexistent").unwrap();
+        assert!(none_indices.is_empty());
+
+        // method=get → node at index 0
+        let get_indices = index.find_by_field("method", "get").unwrap();
+        assert_eq!(get_indices.len(), 1);
+        assert!(get_indices.contains(&0));
+    }
+
+    #[test]
+    fn test_field_index_with_node_type_filter() {
+        use tempfile::tempdir;
+        use crate::storage::{NodeRecord, SegmentWriter, FieldDecl, FieldType};
+        use crate::storage::segment::NodesSegment;
+
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path();
+
+        let nodes = vec![
+            NodeRecord {
+                id: 1,
+                node_type: Some("CALL".to_string()),
+                file_id: 0, name_offset: 0,
+                version: "main".to_string(),
+                exported: false, replaces: None, deleted: false,
+                name: None, file: None,
+                metadata: Some(r#"{"object":"express"}"#.to_string()),
+            },
+            NodeRecord {
+                id: 2,
+                node_type: Some("FUNCTION".to_string()),
+                file_id: 0, name_offset: 0,
+                version: "main".to_string(),
+                exported: false, replaces: None, deleted: false,
+                name: None, file: None,
+                metadata: Some(r#"{"object":"utils"}"#.to_string()),
+            },
+        ];
+
+        let writer = SegmentWriter::new(db_path);
+        writer.write_nodes(&nodes).unwrap();
+        let segment = NodesSegment::open(&db_path.join("nodes.bin")).unwrap();
+
+        // Declare "object" restricted to CALL only
+        let fields = vec![
+            FieldDecl {
+                name: "object".to_string(),
+                field_type: FieldType::String,
+                node_types: Some(vec!["CALL".to_string()]),
+            },
+        ];
+
+        let mut index = IndexSet::new();
+        index.rebuild_from_segment(&segment, &fields);
+
+        // object=express indexed for CALL node
+        let express = index.find_by_field("object", "express").unwrap();
+        assert_eq!(express.len(), 1);
+        assert!(express.contains(&0));
+
+        // object=utils NOT indexed (FUNCTION node excluded by restriction)
+        let utils = index.find_by_field("object", "utils").unwrap();
+        assert!(utils.is_empty());
     }
 }

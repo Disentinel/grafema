@@ -52,7 +52,7 @@ pub mod metrics;
 pub mod ffi;
 
 pub use graph::{GraphStore, GraphEngine};
-pub use storage::{NodeRecord, EdgeRecord, AttrQuery};
+pub use storage::{NodeRecord, EdgeRecord, AttrQuery, FieldDecl, FieldType};
 pub use error::{GraphError, Result};
 
 // Re-export основных типов
