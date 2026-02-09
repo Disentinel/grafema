@@ -19,6 +19,7 @@ import type { Plugin, PluginContext } from './plugins/Plugin.js';
 import type { GraphBackend, PluginPhase, Logger, LogLevel, IssueSpec, ServiceDefinition } from '@grafema/types';
 import { createLogger } from './logging/Logger.js';
 import { NodeFactory } from './core/NodeFactory.js';
+import { toposort } from './core/toposort.js';
 import type { IssueSeverity } from './core/nodes/IssueNode.js';
 
 /**
@@ -774,10 +775,19 @@ export class Orchestrator {
     // Фильтруем плагины для фазы DISCOVERY
     const discoveryPlugins = this.plugins.filter(p => p.metadata.phase === 'DISCOVERY');
 
-    // Сортируем по приоритету
-    discoveryPlugins.sort((a, b) =>
-      (b.metadata.priority || 0) - (a.metadata.priority || 0)
+    // Topological sort by dependencies (REG-367)
+    const discoveryPluginMap = new Map(discoveryPlugins.map(p => [p.metadata.name, p]));
+    const sortedDiscoveryIds = toposort(
+      discoveryPlugins.map(p => ({
+        id: p.metadata.name,
+        dependencies: p.metadata.dependencies ?? [],
+      }))
     );
+    discoveryPlugins.length = 0;
+    for (const id of sortedDiscoveryIds) {
+      const plugin = discoveryPluginMap.get(id);
+      if (plugin) discoveryPlugins.push(plugin);
+    }
 
     const allServices: ServiceInfo[] = [];
     const allEntrypoints: EntrypointInfo[] = [];
@@ -837,10 +847,19 @@ export class Orchestrator {
       plugin.metadata.phase === phaseName
     );
 
-    // Сортируем по priority (больше = раньше)
-    phasePlugins.sort((a, b) =>
-      (b.metadata.priority || 0) - (a.metadata.priority || 0)
+    // Topological sort by dependencies (REG-367)
+    const pluginMap = new Map(phasePlugins.map(p => [p.metadata.name, p]));
+    const sortedIds = toposort(
+      phasePlugins.map(p => ({
+        id: p.metadata.name,
+        dependencies: p.metadata.dependencies ?? [],
+      }))
     );
+    phasePlugins.length = 0;
+    for (const id of sortedIds) {
+      const plugin = pluginMap.get(id);
+      if (plugin) phasePlugins.push(plugin);
+    }
 
     // Выполняем плагины последовательно
     for (let i = 0; i < phasePlugins.length; i++) {

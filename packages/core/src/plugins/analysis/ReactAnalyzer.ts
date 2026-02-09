@@ -203,7 +203,6 @@ export class ReactAnalyzer extends Plugin {
     return {
       name: 'ReactAnalyzer',
       phase: 'ANALYSIS',
-      priority: 70, // After JSASTAnalyzer and ExpressAnalyzer
       creates: {
         nodes: [
           'react:component', 'react:state', 'react:effect', 'react:callback',

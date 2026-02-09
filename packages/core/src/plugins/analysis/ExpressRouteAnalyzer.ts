@@ -71,7 +71,6 @@ export class ExpressRouteAnalyzer extends Plugin {
     return {
       name: 'ExpressRouteAnalyzer',
       phase: 'ANALYSIS',
-      priority: 75, // После JSASTAnalyzer (80) - меньший приоритет = позже
       creates: {
         nodes: ['http:route', 'express:middleware'],
         edges: ['CONTAINS', 'USES_MIDDLEWARE', 'HANDLED_BY']

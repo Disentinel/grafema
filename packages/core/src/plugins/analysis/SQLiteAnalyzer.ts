@@ -54,7 +54,6 @@ export class SQLiteAnalyzer extends Plugin {
     return {
       name: 'SQLiteAnalyzer',
       phase: 'ANALYSIS',
-      priority: 75, // После JSASTAnalyzer (80)
       creates: {
         nodes: ['db:query'],
         edges: ['CONTAINS', 'EXECUTES_QUERY']

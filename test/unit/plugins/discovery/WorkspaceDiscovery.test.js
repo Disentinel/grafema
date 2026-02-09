@@ -744,7 +744,6 @@ describe('WorkspaceDiscovery Plugin', () => {
 
       assert.strictEqual(metadata.name, 'WorkspaceDiscovery');
       assert.strictEqual(metadata.phase, 'DISCOVERY');
-      assert.strictEqual(metadata.priority, 110); // Higher than MonorepoServiceDiscovery (100)
       assert.deepStrictEqual(metadata.creates.nodes, ['SERVICE']);
       assert.deepStrictEqual(metadata.creates.edges, []);
     });

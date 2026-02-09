@@ -77,12 +77,11 @@ export class BrokenImportValidator extends Plugin {
     return {
       name: 'BrokenImportValidator',
       phase: 'VALIDATION',
-      priority: 85, // After enrichment plugins, before general validators
+      dependencies: ['ImportExportLinker', 'FunctionCallResolver'],
       creates: {
         nodes: [],
         edges: []
-      },
-      dependencies: ['ImportExportLinker', 'FunctionCallResolver']
+      }
     };
   }
 

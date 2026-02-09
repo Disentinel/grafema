@@ -83,6 +83,8 @@ export { AnalysisQueue } from './core/AnalysisQueue.js';
 export { ASTWorkerPool, type ModuleInfo as ASTModuleInfo, type ParseResult, type ASTWorkerPoolStats } from './core/ASTWorkerPool.js';
 export { GuaranteeManager } from './core/GuaranteeManager.js';
 export type { GuaranteeGraph } from './core/GuaranteeManager.js';
+export { toposort, CycleError } from './core/toposort.js';
+export type { ToposortItem } from './core/toposort.js';
 export { clearFileNodesIfNeeded, clearServiceNodeIfExists } from './core/FileNodeManager.js';
 export { CoverageAnalyzer } from './core/CoverageAnalyzer.js';
 export type { CoverageResult } from './core/CoverageAnalyzer.js';

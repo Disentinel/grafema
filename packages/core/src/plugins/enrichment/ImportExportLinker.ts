@@ -39,7 +39,6 @@ export class ImportExportLinker extends Plugin {
     return {
       name: 'ImportExportLinker',
       phase: 'ENRICHMENT',
-      priority: 90, // Run early in enrichment, after analysis
       creates: {
         nodes: [],
         edges: ['IMPORTS', 'IMPORTS_FROM']

@@ -255,7 +255,6 @@ export class JSASTAnalyzer extends Plugin {
     return {
       name: 'JSASTAnalyzer',
       phase: 'ANALYSIS',
-      priority: 80,
       creates: {
         nodes: [
           'FUNCTION', 'CLASS', 'METHOD', 'VARIABLE', 'CONSTANT', 'SCOPE',

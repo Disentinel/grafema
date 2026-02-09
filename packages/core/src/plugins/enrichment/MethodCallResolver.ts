@@ -262,11 +262,11 @@ export class MethodCallResolver extends Plugin {
     return {
       name: 'MethodCallResolver',
       phase: 'ENRICHMENT',
-      priority: 50,
       creates: {
         nodes: [],
         edges: ['CALLS']
-      }
+      },
+      dependencies: ['ImportExportLinker']
     };
   }
 

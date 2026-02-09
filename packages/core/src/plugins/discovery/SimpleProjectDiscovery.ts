@@ -45,7 +45,6 @@ export class SimpleProjectDiscovery extends Plugin {
     return {
       name: 'SimpleProjectDiscovery',
       phase: 'DISCOVERY',
-      priority: 50, // Lower priority than specialized discovery plugins
       creates: {
         nodes: ['SERVICE'],
         edges: []

@@ -72,7 +72,6 @@ export class FetchAnalyzer extends Plugin {
     return {
       name: 'FetchAnalyzer',
       phase: 'ANALYSIS',
-      priority: 75, // После JSASTAnalyzer (80)
       creates: {
         nodes: ['http:request', 'EXTERNAL'],
         edges: ['CONTAINS', 'MAKES_REQUEST', 'CALLS_API']

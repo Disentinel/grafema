@@ -47,12 +47,11 @@ export class CallResolverValidator extends Plugin {
     return {
       name: 'CallResolverValidator',
       phase: 'VALIDATION',
-      priority: 90,
+      dependencies: ['FunctionCallResolver', 'ExternalCallResolver'],
       creates: {
         nodes: [],
         edges: []
-      },
-      dependencies: ['FunctionCallResolver', 'ExternalCallResolver']
+      }
     };
   }
 

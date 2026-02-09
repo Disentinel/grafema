@@ -63,7 +63,6 @@ export class ArgumentParameterLinker extends Plugin {
     return {
       name: 'ArgumentParameterLinker',
       phase: 'ENRICHMENT',
-      priority: 45, // Runs AFTER MethodCallResolver (50) which creates required CALLS edges
       creates: {
         nodes: [],
         edges: ['RECEIVES_ARGUMENT']

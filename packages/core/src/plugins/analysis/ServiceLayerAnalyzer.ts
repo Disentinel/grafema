@@ -90,7 +90,6 @@ export class ServiceLayerAnalyzer extends Plugin {
     return {
       name: 'ServiceLayerAnalyzer',
       phase: 'ANALYSIS',
-      priority: 75, // После JSASTAnalyzer (80)
       creates: {
         nodes: ['SERVICE_CLASS', 'SERVICE_INSTANCE', 'SERVICE_REGISTRATION', 'SERVICE_USAGE'],
         edges: ['CONTAINS', 'INSTANTIATES', 'REGISTERS', 'USES_SERVICE']

@@ -432,7 +432,6 @@ describe('BrokenImportValidator - Metadata', () => {
 
     assert.strictEqual(metadata.name, 'BrokenImportValidator');
     assert.strictEqual(metadata.phase, 'VALIDATION');
-    assert.strictEqual(metadata.priority, 85);
     assert.ok(metadata.dependencies?.includes('ImportExportLinker'));
     assert.ok(metadata.dependencies?.includes('FunctionCallResolver'));
   });

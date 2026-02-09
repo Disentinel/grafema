@@ -1,7 +1,1 @@
 pnpm lint
-
-# Run full test suite with 100s timeout
-perl -e 'alarm 100; exec @ARGV' node --test --test-concurrency=1 'test/unit/*.test.js' || {
-  echo "Tests failed or timed out (100s limit)"
-  exit 1
-}

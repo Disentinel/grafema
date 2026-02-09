@@ -108,11 +108,11 @@ export class ValueDomainAnalyzer extends Plugin {
     return {
       name: 'ValueDomainAnalyzer',
       phase: 'ENRICHMENT',
-      priority: 65, // After AliasTracker (60)
       creates: {
         nodes: [],
         edges: ['CALLS', 'FLOWS_INTO']  // Added FLOWS_INTO (modifies existing)
-      }
+      },
+      dependencies: ['AliasTracker']
     };
   }
 

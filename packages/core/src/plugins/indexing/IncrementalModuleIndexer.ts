@@ -43,7 +43,7 @@ export class IncrementalModuleIndexer extends Plugin {
     return {
       name: 'IncrementalModuleIndexer',
       phase: 'INDEXING',
-      priority: 90,
+      dependencies: [],
       creates: {
         nodes: ['MODULE'],
         edges: ['CONTAINS', 'IMPORTS_FROM']

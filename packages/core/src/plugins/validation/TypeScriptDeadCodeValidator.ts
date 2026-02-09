@@ -47,12 +47,11 @@ export class TypeScriptDeadCodeValidator extends Plugin {
     return {
       name: 'TypeScriptDeadCodeValidator',
       phase: 'VALIDATION',
-      priority: 50, // Lower priority - runs after other validators
+      dependencies: ['JSASTAnalyzer'],
       creates: {
         nodes: [],
         edges: []
-      },
-      dependencies: ['JSASTAnalyzer'] // Requires TypeScript nodes to be created
+      }
     };
   }
 

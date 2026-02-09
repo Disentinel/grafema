@@ -78,7 +78,6 @@ export class IncrementalAnalysisPlugin extends Plugin {
     return {
       name: 'IncrementalAnalysisPlugin',
       phase: 'ANALYSIS',
-      priority: 85, // Запускается после JSModuleIndexer (90) но перед JSASTAnalyzer (80)
       creates: {
         nodes: ['FUNCTION', 'CLASS', 'VARIABLE_DECLARATION'], // Создаёт __local версии
         edges: ['REPLACES', 'CALLS', 'USES']

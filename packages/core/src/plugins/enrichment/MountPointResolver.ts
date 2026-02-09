@@ -50,7 +50,6 @@ export class MountPointResolver extends Plugin {
     return {
       name: 'MountPointResolver',
       phase: 'ENRICHMENT',
-      priority: 90,  // High priority - one of first enrichment plugins
       creates: {
         nodes: [],  // Updates existing nodes
         edges: []   // Doesn't create edges

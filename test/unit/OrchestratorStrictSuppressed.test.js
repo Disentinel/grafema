@@ -26,7 +26,6 @@ function createMockEnrichmentPlugin({ errors = [], suppressedByIgnore = 0 } = {}
     metadata: {
       name: 'MockEnrichmentPlugin',
       phase: 'ENRICHMENT',
-      priority: 50,
       creates: { nodes: [], edges: [] },
     },
     execute: async () => ({
@@ -47,7 +46,6 @@ function createMockDiscoveryPlugin(projectPath) {
     metadata: {
       name: 'MockDiscovery',
       phase: 'DISCOVERY',
-      priority: 100,
       creates: { nodes: [], edges: [] },
     },
     execute: async () => ({
@@ -75,7 +73,6 @@ function createMockIndexingPlugin() {
     metadata: {
       name: 'MockIndexer',
       phase: 'INDEXING',
-      priority: 100,
       creates: { nodes: [], edges: [] },
     },
     execute: async () => ({
@@ -148,7 +145,6 @@ describe('Orchestrator strict mode suppressedCount (REG-357)', () => {
         suppressedByIgnore: 2,
       });
       plugin1.metadata.name = 'Enricher1';
-      plugin1.metadata.priority = 60;
 
       // Second enrichment plugin: 5 suppressed, no errors
       const plugin2 = createMockEnrichmentPlugin({
@@ -156,7 +152,6 @@ describe('Orchestrator strict mode suppressedCount (REG-357)', () => {
         suppressedByIgnore: 5,
       });
       plugin2.metadata.name = 'Enricher2';
-      plugin2.metadata.priority = 40;
 
       const orchestrator = new Orchestrator({
         graph: backend,
@@ -261,7 +256,6 @@ describe('Orchestrator strict mode suppressedCount (REG-357)', () => {
         metadata: {
           name: 'FailingEnricher',
           phase: 'ENRICHMENT',
-          priority: 50,
           creates: { nodes: [], edges: [] },
         },
         execute: async () => ({

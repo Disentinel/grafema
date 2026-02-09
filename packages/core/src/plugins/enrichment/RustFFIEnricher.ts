@@ -29,7 +29,6 @@ export class RustFFIEnricher extends Plugin {
     return {
       name: 'RustFFIEnricher',
       phase: 'ENRICHMENT',
-      priority: 45,  // After MethodCallResolver (50)
       creates: {
         nodes: [],
         edges: ['FFI_CALLS']

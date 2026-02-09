@@ -40,7 +40,6 @@ export type PluginPhase = typeof PLUGIN_PHASE[keyof typeof PLUGIN_PHASE];
 export interface PluginMetadata {
   name: string;
   phase: PluginPhase;
-  priority?: number;
   creates?: {
     nodes?: NodeType[];
     edges?: EdgeType[];
