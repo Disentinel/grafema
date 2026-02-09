@@ -238,7 +238,6 @@ export class Orchestrator {
       const isBuiltin = !sourceFile;
 
       const node = NodeFactory.createPlugin(meta.name, meta.phase, {
-        priority: meta.priority ?? 0,
         file: sourceFile,
         builtin: isBuiltin,
         createsNodes: (meta.creates?.nodes as string[]) ?? [],
