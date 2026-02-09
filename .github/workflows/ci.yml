@@ -118,6 +118,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Build types package (required for typecheck)
+        run: pnpm --filter='@grafema/types' build
+
       - name: TypeScript check
         run: pnpm typecheck
 
