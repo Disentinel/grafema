@@ -300,6 +300,14 @@ export interface GuardInfo {
   line: number;
 }
 
+// === NODE CONTEXT (REG-406) ===
+
+export interface GetContextArgs {
+  semanticId: string;
+  contextLines?: number;
+  edgeType?: string;
+}
+
 // === PROJECT STRUCTURE (REG-173) ===
 
 export interface ReadProjectStructureArgs {

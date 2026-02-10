@@ -16,6 +16,7 @@ import { lsCommand } from './commands/ls.js';
 import { getCommand } from './commands/get.js';
 import { traceCommand } from './commands/trace.js';
 import { impactCommand } from './commands/impact.js';
+import { contextCommand } from './commands/context.js';
 
 import { statsCommand } from './commands/stats.js';
 import { checkCommand } from './commands/check.js';
@@ -41,6 +42,7 @@ program.addCommand(initCommand);
 program.addCommand(analyzeCommand);
 program.addCommand(overviewCommand);
 program.addCommand(queryCommand);
+program.addCommand(contextCommand);
 program.addCommand(typesCommand);
 program.addCommand(lsCommand);
 program.addCommand(getCommand);

@@ -39,6 +39,7 @@ import {
   handleFindGuards,
   handleReportIssue,
   handleGetFunctionDetails,
+  handleGetContext,
   handleReadProjectStructure,
   handleWriteConfig,
 } from './handlers.js';
@@ -47,6 +48,7 @@ import type {
   ReportIssueArgs,
   GetDocumentationArgs,
   GetFunctionDetailsArgs,
+  GetContextArgs,
   QueryGraphArgs,
   FindCallsArgs,
   FindNodesArgs,
@@ -201,6 +203,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
 
       case 'get_function_details':
         result = await handleGetFunctionDetails(asArgs<GetFunctionDetailsArgs>(args));
+        break;
+
+      case 'get_context':
+        result = await handleGetContext(asArgs<GetContextArgs>(args));
         break;
 
       case 'read_project_structure':
