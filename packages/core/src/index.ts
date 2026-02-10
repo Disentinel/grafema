@@ -247,6 +247,7 @@ export { ExternalCallResolver } from './plugins/enrichment/ExternalCallResolver.
 export { ClosureCaptureEnricher } from './plugins/enrichment/ClosureCaptureEnricher.js';
 export { ExpressHandlerLinker } from './plugins/enrichment/ExpressHandlerLinker.js';
 export { RejectionPropagationEnricher } from './plugins/enrichment/RejectionPropagationEnricher.js';
+export { CallbackCallResolver } from './plugins/enrichment/CallbackCallResolver.js';
 
 // Builtin registry
 export { BuiltinRegistry } from './data/builtins/index.js';

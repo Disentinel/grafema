@@ -22,6 +22,7 @@ import { FetchAnalyzer } from '@grafema/core';
 import { ImportExportLinker } from '@grafema/core';
 import { NodejsBuiltinsResolver } from '@grafema/core';
 import { RejectionPropagationEnricher } from '@grafema/core';
+import { CallbackCallResolver } from '@grafema/core';
 
 /**
  * Создать Orchestrator для тестов
@@ -56,6 +57,8 @@ export function createTestOrchestrator(backend, options = {}) {
     plugins.push(new NodejsBuiltinsResolver());
     // REG-311: Async error tracking
     plugins.push(new RejectionPropagationEnricher());
+    // REG-400: Callback function reference resolution (cross-file)
+    plugins.push(new CallbackCallResolver());
   }
 
   // Дополнительные плагины
