@@ -42,14 +42,10 @@
     "@grafema/core": "workspace:*",
     "@grafema/types": "workspace:*",
     "commander": "^13.0.0",
-    "ink": "^6.6.0",
-    "ink-text-input": "^6.0.0",
-    "react": "^19.2.3",
     "yaml": "^2.8.2"
   },
   "devDependencies": {
     "@types/node": "^25.0.8",
-    "@types/react": "^19.2.9",
     "typescript": "^5.9.3"
   }
 }
