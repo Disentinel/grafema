@@ -703,4 +703,143 @@ register(handler);
       );
     });
   });
+
+  // ============================================================================
+  // 10. Function-level method calls (inside function bodies)
+  // ============================================================================
+  describe('Function-level callback resolution', () => {
+    it('should create CALLS edge for forEach(fn) inside a function body', async () => {
+      await setupTest(backend, {
+        'index.js': `
+function invokeCleanup(hook) {
+  if (typeof hook._cleanup === 'function') hook._cleanup();
+}
+
+function unmount(component) {
+  component.hooks.forEach(invokeCleanup);
+}
+`
+      });
+
+      const allNodes = await backend.getAllNodes();
+      const allEdges = await backend.getAllEdges();
+
+      const cleanupFunc = allNodes.find(n =>
+        n.type === 'FUNCTION' && n.name === 'invokeCleanup'
+      );
+      assert.ok(cleanupFunc, 'Should find invokeCleanup FUNCTION node');
+
+      const forEachCall = allNodes.find(n =>
+        n.type === 'CALL' && n.method === 'forEach'
+      );
+      assert.ok(forEachCall, 'Should find forEach CALL node inside unmount()');
+
+      const callsEdge = allEdges.find(e =>
+        e.type === 'CALLS' && e.src === forEachCall.id && e.dst === cleanupFunc.id
+      );
+      assert.ok(
+        callsEdge,
+        `Should have CALLS edge from forEach (${forEachCall?.id}) to invokeCleanup (${cleanupFunc?.id})`
+      );
+    });
+
+    it('should create CALLS edge for nested member forEach(fn) inside a function body', async () => {
+      await setupTest(backend, {
+        'index.js': `
+function invokeEffect(hook) {
+  hook._effect();
+}
+
+function flushEffects(component) {
+  component.__hooks._pendingEffects.forEach(invokeEffect);
+}
+`
+      });
+
+      const allNodes = await backend.getAllNodes();
+      const allEdges = await backend.getAllEdges();
+
+      const effectFunc = allNodes.find(n =>
+        n.type === 'FUNCTION' && n.name === 'invokeEffect'
+      );
+      assert.ok(effectFunc, 'Should find invokeEffect FUNCTION node');
+
+      const forEachCall = allNodes.find(n =>
+        n.type === 'CALL' && n.method === 'forEach'
+      );
+      assert.ok(forEachCall, 'Should find forEach CALL node (nested member)');
+
+      const callsEdge = allEdges.find(e =>
+        e.type === 'CALLS' && e.src === forEachCall.id && e.dst === effectFunc.id
+      );
+      assert.ok(
+        callsEdge,
+        `Should have CALLS edge from nested forEach (${forEachCall?.id}) to invokeEffect (${effectFunc?.id})`
+      );
+    });
+
+    it('should create CALLS edge for map(fn) inside a function body', async () => {
+      await setupTest(backend, {
+        'index.js': `
+function double(x) { return x * 2; }
+
+function processItems(items) {
+  return items.map(double);
+}
+`
+      });
+
+      const allNodes = await backend.getAllNodes();
+      const allEdges = await backend.getAllEdges();
+
+      const doubleFunc = allNodes.find(n =>
+        n.type === 'FUNCTION' && n.name === 'double'
+      );
+      const mapCall = allNodes.find(n =>
+        n.type === 'CALL' && n.method === 'map'
+      );
+      assert.ok(doubleFunc, 'Should find double FUNCTION node');
+      assert.ok(mapCall, 'Should find map CALL node');
+
+      const callsEdge = allEdges.find(e =>
+        e.type === 'CALLS' && e.src === mapCall.id && e.dst === doubleFunc.id
+      );
+      assert.ok(
+        callsEdge,
+        `Should have CALLS edge from map to double inside function body`
+      );
+    });
+
+    it('should NOT create CALLS edge for non-HOF method calls inside function body', async () => {
+      await setupTest(backend, {
+        'index.js': `
+function handler() { return 1; }
+
+function setup() {
+  registry.register(handler);
+}
+`
+      });
+
+      const allNodes = await backend.getAllNodes();
+      const allEdges = await backend.getAllEdges();
+
+      const handlerFunc = allNodes.find(n =>
+        n.type === 'FUNCTION' && n.name === 'handler'
+      );
+      const registerCall = allNodes.find(n =>
+        n.type === 'CALL' && n.method === 'register'
+      );
+      assert.ok(handlerFunc, 'Should find handler FUNCTION node');
+      assert.ok(registerCall, 'Should find register CALL node');
+
+      const callsEdge = allEdges.find(e =>
+        e.type === 'CALLS' && e.src === registerCall.id && e.dst === handlerFunc.id
+      );
+      assert.ok(
+        !callsEdge,
+        'Should NOT have CALLS edge for register() — not a known HOF'
+      );
+    });
+  });
 });
