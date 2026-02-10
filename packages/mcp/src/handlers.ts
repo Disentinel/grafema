@@ -6,9 +6,9 @@ import { ensureAnalyzed } from './analysis.js';
 import { getProjectPath, getAnalysisStatus, getOrCreateBackend, getGuaranteeManager, getGuaranteeAPI, isAnalysisRunning } from './state.js';
 import { CoverageAnalyzer, findCallsInFunction, findContainingFunction, validateServices, validatePatterns, validateWorkspace, getOnboardingInstruction } from '@grafema/core';
 import type { CallInfo, CallerInfo } from '@grafema/core';
-import { existsSync, readdirSync, statSync, writeFileSync, mkdirSync } from 'fs';
+import { existsSync, readFileSync, readdirSync, statSync, writeFileSync, mkdirSync } from 'fs';
 import type { Dirent } from 'fs';
-import { join, basename } from 'path';
+import { join, basename, relative } from 'path';
 import { stringify as stringifyYAML } from 'yaml';
 import {
   normalizeLimit,
@@ -37,6 +37,7 @@ import type {
   FindGuardsArgs,
   GuardInfo,
   GetFunctionDetailsArgs,
+  GetContextArgs,
   GraphNode,
   DatalogBinding,
   CallResult,
@@ -1121,6 +1122,190 @@ function formatCallsForDisplay(calls: CallInfo[]): string[] {
   }
 
   return lines;
+}
+
+// === NODE CONTEXT (REG-406) ===
+
+/**
+ * Structural edge types — shown in compact form (no code context)
+ */
+const CONTEXT_STRUCTURAL_EDGES = new Set([
+  'CONTAINS', 'HAS_SCOPE', 'DECLARES', 'DEFINES',
+  'HAS_CONDITION', 'HAS_CASE', 'HAS_DEFAULT',
+  'HAS_CONSEQUENT', 'HAS_ALTERNATE', 'HAS_BODY',
+  'HAS_INIT', 'HAS_UPDATE', 'HAS_CATCH', 'HAS_FINALLY',
+  'HAS_PARAMETER', 'HAS_PROPERTY', 'HAS_ELEMENT',
+  'USES', 'GOVERNS', 'VIOLATES', 'AFFECTS', 'UNKNOWN',
+]);
+
+export async function handleGetContext(
+  args: GetContextArgs
+): Promise<ToolResult> {
+  const db = await ensureAnalyzed();
+  const { semanticId, contextLines: ctxLines = 3, edgeType } = args;
+
+  // 1. Look up node
+  const node = await db.getNode(semanticId);
+  if (!node) {
+    return errorResult(
+      `Node not found: "${semanticId}"\n` +
+      `Use find_nodes or query_graph to find the correct semantic ID.`
+    );
+  }
+
+  const edgeTypeFilter = edgeType
+    ? new Set(edgeType.split(',').map(t => t.trim().toUpperCase()))
+    : null;
+
+  // 2. Get source code
+  const projectPath = getProjectPath();
+  let sourcePreview: { file: string; startLine: number; endLine: number; lines: string[] } | null = null;
+  if (node.file && node.line) {
+    if (existsSync(node.file)) {
+      try {
+        const content = readFileSync(node.file, 'utf-8');
+        const allLines = content.split('\n');
+        const line = node.line as number;
+        const startLine = Math.max(1, line - ctxLines);
+        const endLine = Math.min(allLines.length, line + ctxLines + 12);
+        sourcePreview = {
+          file: node.file,
+          startLine,
+          endLine,
+          lines: allLines.slice(startLine - 1, endLine),
+        };
+      } catch { /* ignore */ }
+    }
+  }
+
+  // 3. Get edges
+  const rawOutgoing = await db.getOutgoingEdges(node.id);
+  const rawIncoming = await db.getIncomingEdges(node.id);
+
+  // Filter edges
+  const outgoing = edgeTypeFilter
+    ? rawOutgoing.filter(e => edgeTypeFilter.has(e.type || 'UNKNOWN'))
+    : rawOutgoing;
+  const incoming = edgeTypeFilter
+    ? rawIncoming.filter(e => edgeTypeFilter.has(e.type || 'UNKNOWN'))
+    : rawIncoming;
+
+  // 4. Resolve connected nodes (grouped by edge type)
+  type ResolvedEdge = { edge: { src: string; dst: string; type: string }; node: GraphNode | null };
+  const resolveEdges = async (edges: Array<{ src: string; dst: string; type: string }>, field: 'src' | 'dst') => {
+    const grouped = new Map<string, ResolvedEdge[]>();
+    for (const edge of edges) {
+      const connectedNode = await db.getNode(edge[field]);
+      const type = edge.type || 'UNKNOWN';
+      if (!grouped.has(type)) grouped.set(type, []);
+      grouped.get(type)!.push({ edge, node: connectedNode });
+    }
+    return Object.fromEntries(
+      Array.from(grouped.entries()).sort(([a], [b]) => a.localeCompare(b))
+    );
+  };
+
+  const outgoingGrouped = await resolveEdges(outgoing, 'dst');
+  const incomingGrouped = await resolveEdges(incoming, 'src');
+
+  // 5. Format text output
+  const relFile = node.file ? relative(projectPath, node.file) : undefined;
+  const lines: string[] = [];
+
+  lines.push(`[${node.type}] ${node.name || node.id}`);
+  lines.push(`  ID: ${node.id}`);
+  if (relFile) {
+    lines.push(`  Location: ${relFile}${node.line ? `:${node.line}` : ''}`);
+  }
+
+  // Source
+  if (sourcePreview) {
+    lines.push('');
+    lines.push(`  Source (lines ${sourcePreview.startLine}-${sourcePreview.endLine}):`);
+    const maxLineNum = sourcePreview.endLine;
+    const lineNumWidth = String(maxLineNum).length;
+    for (let i = 0; i < sourcePreview.lines.length; i++) {
+      const lineNum = sourcePreview.startLine + i;
+      const paddedNum = String(lineNum).padStart(lineNumWidth, ' ');
+      const prefix = lineNum === (node.line as number) ? '>' : ' ';
+      const displayLine = sourcePreview.lines[i].length > 120
+        ? sourcePreview.lines[i].slice(0, 117) + '...'
+        : sourcePreview.lines[i];
+      lines.push(`    ${prefix}${paddedNum} | ${displayLine}`);
+    }
+  }
+
+  const formatEdgeGroup = (grouped: Record<string, ResolvedEdge[]>, dir: '->' | '<-') => {
+    for (const [edgeTypeKey, edgeNodes] of Object.entries(grouped)) {
+      const isStructural = CONTEXT_STRUCTURAL_EDGES.has(edgeTypeKey);
+      lines.push(`    ${edgeTypeKey} (${edgeNodes.length}):`);
+      for (const { node: connNode } of edgeNodes) {
+        if (!connNode) {
+          lines.push(`      ${dir} [dangling]`);
+          continue;
+        }
+        const nFile = connNode.file ? relative(projectPath, connNode.file) : '';
+        const nLoc = nFile ? (connNode.line ? `${nFile}:${connNode.line}` : nFile) : '';
+        const locStr = nLoc ? `  (${nLoc})` : '';
+        lines.push(`      ${dir} [${connNode.type}] ${connNode.name || connNode.id}${locStr}`);
+
+        // Code context for non-structural edges
+        if (!isStructural && connNode.file && connNode.line && ctxLines > 0) {
+          if (existsSync(connNode.file)) {
+            try {
+              const content = readFileSync(connNode.file, 'utf-8');
+              const allFileLines = content.split('\n');
+              const nLine = connNode.line as number;
+              const sLine = Math.max(1, nLine - Math.min(ctxLines, 2));
+              const eLine = Math.min(allFileLines.length, nLine + Math.min(ctxLines, 2));
+              const w = String(eLine).length;
+              for (let i = sLine; i <= eLine; i++) {
+                const p = i === nLine ? '>' : ' ';
+                const ln = String(i).padStart(w, ' ');
+                const displayLn = allFileLines[i - 1].length > 120
+                  ? allFileLines[i - 1].slice(0, 117) + '...'
+                  : allFileLines[i - 1];
+                lines.push(`           ${p}${ln} | ${displayLn}`);
+              }
+            } catch { /* ignore */ }
+          }
+        }
+      }
+    }
+  };
+
+  if (Object.keys(outgoingGrouped).length > 0) {
+    lines.push('');
+    lines.push('  Outgoing edges:');
+    formatEdgeGroup(outgoingGrouped, '->');
+  }
+
+  if (Object.keys(incomingGrouped).length > 0) {
+    lines.push('');
+    lines.push('  Incoming edges:');
+    formatEdgeGroup(incomingGrouped, '<-');
+  }
+
+  if (Object.keys(outgoingGrouped).length === 0 && Object.keys(incomingGrouped).length === 0) {
+    lines.push('');
+    lines.push('  No edges found.');
+  }
+
+  // Build JSON result alongside text
+  const jsonResult = {
+    node: { id: node.id, type: node.type, name: node.name, file: relFile, line: node.line },
+    source: sourcePreview ? {
+      startLine: sourcePreview.startLine,
+      endLine: sourcePreview.endLine,
+      lines: sourcePreview.lines,
+    } : null,
+    outgoing: outgoingGrouped,
+    incoming: incomingGrouped,
+  };
+
+  return textResult(
+    lines.join('\n') + '\n\n' + JSON.stringify(serializeBigInt(jsonResult), null, 2)
+  );
 }
 
 // === BUG REPORTING ===

@@ -508,6 +508,43 @@ Max transitive depth is 5 to prevent explosion.`,
     },
   },
   {
+    name: 'get_context',
+    description: `Get deep context for a graph node: source code + full graph neighborhood.
+
+Shows ALL incoming and outgoing edges grouped by type, with source code
+at each connected node's location. Works for ANY node type.
+
+Use this after find_nodes or query_graph to deep-dive into a specific node.
+
+Output includes:
+- Node info (type, name, semantic ID, location)
+- Source code at the node's location
+- All outgoing edges (what this node connects to)
+- All incoming edges (what connects to this node)
+- Code context at each connected node's location
+
+Primary edges (CALLS, ASSIGNED_FROM, DEPENDS_ON, etc.) include code context.
+Structural edges (CONTAINS, HAS_SCOPE, etc.) are shown in compact form.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        semanticId: {
+          type: 'string',
+          description: 'Exact semantic ID of the node (from find_nodes or query_graph)',
+        },
+        contextLines: {
+          type: 'number',
+          description: 'Lines of code context around each reference (default: 3)',
+        },
+        edgeType: {
+          type: 'string',
+          description: 'Filter by edge type (comma-separated, e.g., "CALLS,ASSIGNED_FROM")',
+        },
+      },
+      required: ['semanticId'],
+    },
+  },
+  {
     name: 'read_project_structure',
     description: `Get the directory structure of the project.
 Returns a tree of files and directories, useful for understanding
