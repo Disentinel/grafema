@@ -4964,6 +4964,11 @@ export class JSASTAnalyzer extends Plugin {
           isMethodCall: true
         });
 
+        // REG-400: Extract arguments for method calls (enables callback resolution)
+        if (callNode.arguments.length > 0) {
+          this.extractMethodCallArguments(callNode, methodCallId, module, collections);
+        }
+
         // Check for array mutation methods (push, unshift, splice)
         const ARRAY_MUTATION_METHODS = ['push', 'unshift', 'splice'];
         if (ARRAY_MUTATION_METHODS.includes(methodName)) {
@@ -5065,10 +5070,93 @@ export class JSASTAnalyzer extends Plugin {
               parentScopeId,
               isMethodCall: true
             });
+
+            // REG-400: Extract arguments for nested method calls (enables callback resolution)
+            if (callNode.arguments.length > 0) {
+              this.extractMethodCallArguments(callNode, methodCallId, module, collections);
+            }
           }
         }
       }
     }
+  }
+
+  /**
+   * REG-400: Extract arguments from method call nodes inside function bodies.
+   * Populates callArguments collection so GraphBuilder.bufferArgumentEdges can
+   * create PASSES_ARGUMENT and callback CALLS edges.
+   *
+   * This mirrors CallExpressionVisitor.extractArguments but is simplified —
+   * handles Identifier, Literal, CallExpression, and Expression types.
+   */
+  private extractMethodCallArguments(
+    callNode: t.CallExpression,
+    methodCallId: string,
+    module: VisitorModule,
+    collections: VisitorCollections
+  ): void {
+    if (!collections.callArguments) {
+      collections.callArguments = [];
+    }
+    const callArguments = collections.callArguments as CallArgumentInfo[];
+    const literals = (collections.literals ?? []) as LiteralInfo[];
+    const literalCounterRef = (collections.literalCounterRef ?? { value: 0 }) as CounterRef;
+
+    callNode.arguments.forEach((arg, argIndex) => {
+      const argInfo: CallArgumentInfo = {
+        callId: methodCallId,
+        argIndex,
+        file: module.file,
+        line: getLine(arg),
+        column: getColumn(arg)
+      };
+
+      if (t.isSpreadElement(arg)) {
+        const spreadArg = arg.argument;
+        if (t.isIdentifier(spreadArg)) {
+          argInfo.targetType = 'VARIABLE';
+          argInfo.targetName = spreadArg.name;
+          argInfo.isSpread = true;
+        }
+      } else if (t.isIdentifier(arg)) {
+        argInfo.targetType = 'VARIABLE';
+        argInfo.targetName = arg.name;
+      } else if (t.isLiteral(arg) && !t.isTemplateLiteral(arg)) {
+        const literalValue = ExpressionEvaluator.extractLiteralValue(arg as t.Literal);
+        if (literalValue !== null) {
+          const argLine = getLine(arg);
+          const argColumn = getColumn(arg);
+          const literalId = `LITERAL#arg${argIndex}#${module.file}#${argLine}:${argColumn}:${literalCounterRef.value++}`;
+          literals.push({
+            id: literalId,
+            type: 'LITERAL',
+            value: literalValue,
+            valueType: typeof literalValue,
+            file: module.file,
+            line: argLine,
+            column: argColumn,
+            parentCallId: methodCallId,
+            argIndex
+          });
+          argInfo.targetType = 'LITERAL';
+          argInfo.targetId = literalId;
+          argInfo.literalValue = literalValue;
+        }
+      } else if (t.isArrowFunctionExpression(arg) || t.isFunctionExpression(arg)) {
+        argInfo.targetType = 'FUNCTION';
+        argInfo.functionLine = getLine(arg);
+        argInfo.functionColumn = getColumn(arg);
+      } else if (t.isCallExpression(arg)) {
+        argInfo.targetType = 'CALL';
+        argInfo.nestedCallLine = getLine(arg);
+        argInfo.nestedCallColumn = getColumn(arg);
+      } else {
+        argInfo.targetType = 'EXPRESSION';
+        argInfo.expressionType = arg.type;
+      }
+
+      callArguments.push(argInfo);
+    });
   }
 
   /**
