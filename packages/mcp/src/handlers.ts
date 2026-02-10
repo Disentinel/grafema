@@ -4,7 +4,7 @@
 
 import { ensureAnalyzed } from './analysis.js';
 import { getProjectPath, getAnalysisStatus, getOrCreateBackend, getGuaranteeManager, getGuaranteeAPI, isAnalysisRunning } from './state.js';
-import { CoverageAnalyzer, findCallsInFunction, findContainingFunction, validateServices, validatePatterns, validateWorkspace, getOnboardingInstruction } from '@grafema/core';
+import { CoverageAnalyzer, findCallsInFunction, findContainingFunction, validateServices, validatePatterns, validateWorkspace, getOnboardingInstruction, GRAFEMA_VERSION, getSchemaVersion } from '@grafema/core';
 import type { CallInfo, CallerInfo } from '@grafema/core';
 import { existsSync, readdirSync, statSync, writeFileSync, mkdirSync } from 'fs';
 import type { Dirent } from 'fs';
@@ -1302,7 +1302,9 @@ export async function handleWriteConfig(
       validateWorkspace(args.workspace, projectPath);
     }
 
-    const config: Record<string, unknown> = {};
+    const config: Record<string, unknown> = {
+      version: getSchemaVersion(GRAFEMA_VERSION),
+    };
 
     if (args.services && args.services.length > 0) {
       config.services = args.services;

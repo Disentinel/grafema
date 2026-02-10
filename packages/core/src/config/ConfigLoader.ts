@@ -2,6 +2,7 @@ import { readFileSync, existsSync, statSync } from 'fs';
 import { join, basename } from 'path';
 import { parse as parseYAML } from 'yaml';
 import type { ServiceDefinition } from '@grafema/types';
+import { GRAFEMA_VERSION, getSchemaVersion } from '../version.js';
 
 /**
  * Grafema configuration schema.
@@ -36,6 +37,15 @@ import type { ServiceDefinition } from '@grafema/types';
  * If 'services' is specified and non-empty, auto-discovery plugins are skipped entirely.
  */
 export interface GrafemaConfig {
+  /**
+   * Config schema version (major.minor.patch, no pre-release tag).
+   * Must be compatible with the running Grafema version.
+   * If omitted, no version check is performed (backward compatibility).
+   *
+   * @example "0.2.5"
+   */
+  version?: string;
+
   plugins: {
     discovery?: string[];
     indexing: string[];
@@ -106,6 +116,7 @@ export interface WorkspaceConfig {
  * Matches current DEFAULT_PLUGINS in analyze.ts and config.ts (MCP).
  */
 export const DEFAULT_CONFIG: GrafemaConfig = {
+  version: getSchemaVersion(GRAFEMA_VERSION),
   plugins: {
     discovery: [],
     indexing: ['JSModuleIndexer'],
@@ -195,6 +206,9 @@ export function loadConfig(
       return DEFAULT_CONFIG;
     }
 
+    // Validate version compatibility (THROWS on error) - REG-403
+    validateVersion(parsed.version);
+
     // Validate services array if present (THROWS on error per Linus review)
     // This is OUTSIDE try-catch - config errors MUST throw
     validateServices(parsed.services, projectPath);
@@ -225,6 +239,9 @@ export function loadConfig(
       return DEFAULT_CONFIG;
     }
 
+    // Validate version compatibility (THROWS on error) - REG-403
+    validateVersion(parsed.version);
+
     // Validate services array if present (THROWS on error)
     // This is OUTSIDE try-catch - config errors MUST throw
     validateServices(parsed.services, projectPath);
@@ -240,6 +257,46 @@ export function loadConfig(
 
   // 3. No config file - return defaults
   return DEFAULT_CONFIG;
+}
+
+/**
+ * Validate config version compatibility with running Grafema version.
+ * THROWS on error (fail loudly per project convention).
+ *
+ * Compares major.minor.patch (pre-release tags are stripped).
+ * If config has no version field, validation passes silently (backward compat).
+ *
+ * @param configVersion - Version string from config file (may be undefined)
+ * @param currentVersion - Override for testing (defaults to GRAFEMA_VERSION)
+ */
+export function validateVersion(
+  configVersion: unknown,
+  currentVersion?: string
+): void {
+  // No version field = backward compat, accept silently
+  if (configVersion === undefined || configVersion === null) {
+    return;
+  }
+
+  if (typeof configVersion !== 'string') {
+    throw new Error(`Config error: version must be a string, got ${typeof configVersion}`);
+  }
+
+  if (!configVersion.trim()) {
+    throw new Error('Config error: version cannot be empty');
+  }
+
+  const current = currentVersion ?? GRAFEMA_VERSION;
+  const configSchema = getSchemaVersion(configVersion);
+  const currentSchema = getSchemaVersion(current);
+
+  if (configSchema !== currentSchema) {
+    throw new Error(
+      `Config error: config version "${configVersion}" is not compatible with ` +
+      `Grafema ${current}. Expected "${currentSchema}".\n` +
+      `  Run: grafema init --force  (to regenerate config for current version)`
+    );
+  }
 }
 
 /**
@@ -453,6 +510,7 @@ function mergeConfig(
   user: Partial<GrafemaConfig>
 ): GrafemaConfig {
   return {
+    version: user.version ?? defaults.version,
     plugins: {
       discovery: user.plugins?.discovery ?? defaults.plugins.discovery,
       indexing: user.plugins?.indexing ?? defaults.plugins.indexing,

@@ -4,6 +4,7 @@
 export {
   loadConfig,
   DEFAULT_CONFIG,
+  validateVersion,
   validateServices,
   validatePatterns,
   validateWorkspace,
