@@ -59,6 +59,23 @@ import type {
   BuildResult,
 } from './types.js';
 
+/**
+ * Functions/methods known to always invoke their callback argument.
+ * Only create CALLS edges for these — prevents false positives
+ * for store/register patterns where the function is stored, not called.
+ */
+const KNOWN_CALLBACK_INVOKERS = new Set([
+  // Array HOFs
+  'forEach', 'map', 'filter', 'find', 'findIndex',
+  'some', 'every', 'reduce', 'reduceRight', 'flatMap', 'sort',
+  // Timers
+  'setTimeout', 'setInterval', 'setImmediate', 'queueMicrotask',
+  // Promise
+  'then', 'catch', 'finally',
+  // DOM/Node
+  'requestAnimationFrame', 'addEventListener',
+]);
+
 export class GraphBuilder {
   // Track singleton nodes to avoid duplicates (net:stdio, net:request, etc.)
   private _createdSingletons: Set<string> = new Set();
@@ -350,7 +367,7 @@ export class GraphBuilder {
     this.bufferAssignmentEdges(variableAssignments, variableDeclarations, callSites, methodCalls, functions, classInstantiations, parameters);
 
     // 20. Buffer PASSES_ARGUMENT edges (CALL -> argument)
-    this.bufferArgumentEdges(callArguments, variableDeclarations, functions, callSites, methodCalls);
+    this.bufferArgumentEdges(callArguments, variableDeclarations, functions, callSites, methodCalls, imports);
 
     // 21. Buffer INTERFACE nodes and EXTENDS edges
     this.bufferInterfaceNodes(module, interfaces);
@@ -919,8 +936,10 @@ export class GraphBuilder {
         dst: callData.id
       });
 
-      // CALL_SITE -> CALLS -> FUNCTION
-      const targetFunction = functions.find(f => f.name === targetFunctionName);
+      // CALL_SITE -> CALLS -> FUNCTION (scope-aware)
+      const targetFunction = this.findFunctionByName(
+        functions, targetFunctionName, callData.file as string, parentScopeId as string
+      );
       if (targetFunction) {
         this._bufferEdge({
           type: 'CALLS',
@@ -929,6 +948,42 @@ export class GraphBuilder {
         });
       }
     }
+  }
+
+  /**
+   * Scope-aware function lookup: when multiple functions share the same name
+   * (e.g., inner function shadows outer), prefer the one in the same scope.
+   * Falls back to module-level function if no scope match found.
+   */
+  private findFunctionByName(
+    functions: FunctionInfo[],
+    name: string | undefined,
+    file: string,
+    callScopeId: string
+  ): FunctionInfo | undefined {
+    if (!name) return undefined;
+
+    // Find all functions with matching name in the same file
+    const candidates = functions.filter(f => f.name === name && f.file === file);
+
+    if (candidates.length === 0) {
+      // Fallback: try without file constraint (legacy behavior)
+      return functions.find(f => f.name === name);
+    }
+
+    if (candidates.length === 1) {
+      return candidates[0];
+    }
+
+    // Multiple candidates: prefer same scope, then module-level
+    const sameScope = candidates.find(f => f.parentScopeId === callScopeId);
+    if (sameScope) return sameScope;
+
+    // Fallback: prefer module-level function (parentScopeId contains MODULE)
+    const moduleLevel = candidates.find(f =>
+      (f.parentScopeId as string)?.includes(':MODULE:')
+    );
+    return moduleLevel || candidates[0];
   }
 
   private bufferMethodCalls(
@@ -1785,7 +1840,8 @@ export class GraphBuilder {
     variableDeclarations: VariableDeclarationInfo[],
     functions: FunctionInfo[],
     callSites: CallSiteInfo[],
-    methodCalls: MethodCallInfo[]
+    methodCalls: MethodCallInfo[],
+    imports: ImportInfo[]
   ): void {
     for (const arg of callArguments) {
       const {
@@ -1804,12 +1860,37 @@ export class GraphBuilder {
 
       let targetNodeId = targetId;
 
+      // Find the call node for this argument (needed for callback whitelist check)
+      const call = callSites.find(c => c.id === callId)
+        || methodCalls.find(c => c.id === callId);
+
       if (targetType === 'VARIABLE' && targetName) {
         const varNode = variableDeclarations.find(v =>
           v.name === targetName && v.file === file
         );
         if (varNode) {
           targetNodeId = varNode.id;
+        }
+
+        // REG-400: If target is a function reference, create callback CALLS edge
+        if (targetName && file) {
+          const callScopeId = call && 'parentScopeId' in call ? (call as CallSiteInfo).parentScopeId as string : '';
+          const funcNode = this.findFunctionByName(functions, targetName, file, callScopeId);
+          if (funcNode) {
+            if (!targetNodeId) {
+              targetNodeId = funcNode.id;
+            }
+            // Only create CALLS edge for known callback-invoking functions
+            const callName = call && 'method' in call ? (call as MethodCallInfo).method : call?.name;
+            if (callName && KNOWN_CALLBACK_INVOKERS.has(callName)) {
+              this._bufferEdge({
+                type: 'CALLS',
+                src: callId,
+                dst: funcNode.id,
+                metadata: { callType: 'callback' }
+              });
+            }
+          }
         }
       }
       else if (targetType === 'FUNCTION' && functionLine && functionColumn) {
@@ -1835,6 +1916,18 @@ export class GraphBuilder {
                targetType === 'ARRAY_LITERAL') {
         // targetId is already set by CallExpressionVisitor
         targetNodeId = targetId;
+      }
+
+      // REG-400: Import fallback — resolve function reference to IMPORT node
+      // When argument is a variable name matching an imported symbol, point to IMPORT node
+      if (!targetNodeId && targetName) {
+        for (const imp of imports) {
+          const matchingSpec = imp.specifiers.find(s => s.local === targetName);
+          if (matchingSpec) {
+            targetNodeId = `${file}:IMPORT:${imp.source}:${matchingSpec.local}`;
+            break;
+          }
+        }
       }
 
       if (targetNodeId) {

@@ -562,6 +562,11 @@ export class MethodCallResolver extends Plugin {
       if (classEntry.methods.has(method)) {
         return classEntry.methods.get(method)!;
       }
+      // REG-400: Check parent classes via DERIVES_FROM chain
+      const inherited = await this.findMethodInParentClasses(
+        classEntry.classNode, method, classMethodIndex, graph
+      );
+      if (inherited) return inherited;
     }
 
     // 2. Проверяем локальный класс в том же файле
@@ -571,6 +576,11 @@ export class MethodCallResolver extends Plugin {
       if (classEntry.methods.has(method)) {
         return classEntry.methods.get(method)!;
       }
+      // REG-400: Check parent classes via DERIVES_FROM chain
+      const inherited = await this.findMethodInParentClasses(
+        classEntry.classNode, method, classMethodIndex, graph
+      );
+      if (inherited) return inherited;
     }
 
     // 3. Проверяем если object - это "this" (ссылка на текущий класс)
@@ -588,6 +598,11 @@ export class MethodCallResolver extends Plugin {
         if (classEntry.methods.has(method)) {
           return classEntry.methods.get(method)!;
         }
+        // REG-400: Check parent classes via DERIVES_FROM chain
+        const inherited = await this.findMethodInParentClasses(
+          classEntry.classNode, method, classMethodIndex, graph
+        );
+        if (inherited) return inherited;
       }
     }
 
@@ -599,6 +614,43 @@ export class MethodCallResolver extends Plugin {
           return classEntry.methods.get(method)!;
         }
       }
+    }
+
+    return null;
+  }
+
+  /**
+   * REG-400: Walk DERIVES_FROM inheritance chain to find inherited methods.
+   * Used when method is not found on the direct class.
+   */
+  private async findMethodInParentClasses(
+    classNode: BaseNodeRecord,
+    methodName: string,
+    classMethodIndex: Map<string, ClassEntry>,
+    graph: PluginContext['graph'],
+    maxDepth: number = 5,
+    visited: Set<string> = new Set()
+  ): Promise<BaseNodeRecord | null> {
+    if (maxDepth <= 0) return null;
+    if (visited.has(classNode.id.toString())) return null;
+    visited.add(classNode.id.toString());
+
+    const derivesFromEdges = await graph.getOutgoingEdges(classNode.id, ['DERIVES_FROM']);
+
+    for (const edge of derivesFromEdges) {
+      const parentClass = await graph.getNode(edge.dst);
+      if (!parentClass || !parentClass.name) continue;
+
+      const parentEntry = classMethodIndex.get(parentClass.name as string);
+      if (parentEntry && parentEntry.methods.has(methodName)) {
+        return parentEntry.methods.get(methodName)!;
+      }
+
+      // Recurse up the chain
+      const found = await this.findMethodInParentClasses(
+        parentClass, methodName, classMethodIndex, graph, maxDepth - 1, visited
+      );
+      if (found) return found;
     }
 
     return null;

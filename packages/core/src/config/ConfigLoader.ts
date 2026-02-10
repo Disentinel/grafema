@@ -130,6 +130,7 @@ export const DEFAULT_CONFIG: GrafemaConfig = {
       'PrefixEvaluator',
       'ImportExportLinker',
       'HTTPConnectionEnricher',
+      'CallbackCallResolver',
     ],
     validation: [
       'GraphConnectivityValidator',
