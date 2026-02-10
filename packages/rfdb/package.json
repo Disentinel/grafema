@@ -40,7 +40,8 @@
   "author": "Vadim Reshetnikov",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Disentinel/rfdb.git"
+    "url": "https://github.com/Disentinel/grafema.git",
+    "directory": "packages/rfdb"
   },
   "dependencies": {
     "@grafema/types": "workspace:*",

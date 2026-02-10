@@ -34,7 +34,7 @@
   "author": "Vadim Reshetnikov",
   "repository": {
     "type": "git",
-    "url": "https://github.com/grafema/grafema.git",
+    "url": "https://github.com/Disentinel/grafema.git",
     "directory": "packages/cli"
   },
   "dependencies": {
