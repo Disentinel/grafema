@@ -123,6 +123,10 @@ pub struct GraphEngine {
     // we track it here until next flush
     deleted_segment_ids: HashSet<u128>,
 
+    /// Tracks existing edge keys (src, dst, edge_type) for O(1) deduplication.
+    /// Maintained across all code paths: add, delete, flush, clear, open.
+    edge_keys: HashSet<(u128, u128, String)>,
+
     // Secondary indexes over segment data (rebuilt on open/flush)
     index_set: IndexSet,
 
@@ -153,6 +157,7 @@ impl GraphEngine {
             ops_since_flush: 0,
             last_memory_check: None,
             deleted_segment_ids: HashSet::new(),
+            edge_keys: HashSet::new(),
             index_set: IndexSet::new(),
             declared_fields: Vec::new(),
         })
@@ -196,6 +201,7 @@ impl GraphEngine {
             ops_since_flush: 0,
             last_memory_check: None,
             deleted_segment_ids: HashSet::new(),
+            edge_keys: HashSet::new(),
             index_set: IndexSet::new(),
             declared_fields: Vec::new(),
         })
@@ -240,19 +246,23 @@ impl GraphEngine {
             GraphMetadata::default()
         };
 
-        // Build adjacency and reverse_adjacency lists from segments
+        // Build adjacency, reverse_adjacency, and edge_keys from segments
         let mut adjacency = HashMap::new();
         let mut reverse_adjacency = HashMap::new();
+        let mut edge_keys = HashSet::new();
         if let Some(ref edges_seg) = edges_segment {
             for idx in 0..edges_seg.edge_count() {
                 if edges_seg.is_deleted(idx) {
                     continue;
                 }
-                if let Some(src) = edges_seg.get_src(idx) {
+                if let (Some(src), Some(dst)) = (edges_seg.get_src(idx), edges_seg.get_dst(idx)) {
                     adjacency.entry(src).or_insert_with(Vec::new).push(idx);
-                }
-                if let Some(dst) = edges_seg.get_dst(idx) {
                     reverse_adjacency.entry(dst).or_insert_with(Vec::new).push(idx);
+
+                    let edge_type_key = edges_seg.get_edge_type(idx)
+                        .unwrap_or("")
+                        .to_string();
+                    edge_keys.insert((src, dst, edge_type_key));
                 }
             }
         }
@@ -287,6 +297,7 @@ impl GraphEngine {
             ops_since_flush: 0,
             last_memory_check: None,
             deleted_segment_ids: HashSet::new(),
+            edge_keys,
             index_set,
             declared_fields,
         })
@@ -393,6 +404,7 @@ impl GraphEngine {
         self.delta_edges.clear();
         self.adjacency.clear();
         self.reverse_adjacency.clear();
+        self.edge_keys.clear();
         self.nodes_segment = None;
         self.edges_segment = None;
         self.metadata = GraphMetadata::default();
@@ -449,6 +461,14 @@ impl GraphEngine {
         for edge in &mut self.delta_edges {
             if edge.version == version {
                 edge.deleted = true;
+            }
+        }
+
+        // Remove deleted edges from edge_keys
+        for edge in &self.delta_edges {
+            if edge.deleted && edge.version == version {
+                let key = (edge.src, edge.dst, edge.edge_type.clone().unwrap_or_default());
+                self.edge_keys.remove(&key);
             }
         }
     }
@@ -972,7 +992,7 @@ impl GraphStore for GraphEngine {
     fn add_edges(&mut self, edges: Vec<EdgeRecord>, skip_validation: bool) {
         let mut added = 0;
         for edge in edges {
-            // Валидация: проверяем что обе ноды существуют (если не отключена)
+            // Validation: check both nodes exist (unless disabled)
             if !skip_validation {
                 if !self.node_exists(edge.src) {
                     tracing::warn!("Edge src node not found: {}", edge.src);
@@ -982,6 +1002,13 @@ impl GraphStore for GraphEngine {
                     tracing::warn!("Edge dst node not found: {}", edge.dst);
                     continue;
                 }
+            }
+
+            // Deduplication: skip if edge with same (src, dst, type) already exists
+            let edge_key = (edge.src, edge.dst, edge.edge_type.clone().unwrap_or_default());
+            if !self.edge_keys.insert(edge_key) {
+                // insert() returns false if value was already present
+                continue;
             }
 
             self.delta_log.push(Delta::AddEdge(edge.clone()));
@@ -996,6 +1023,9 @@ impl GraphStore for GraphEngine {
         let delta = Delta::DeleteEdge { src, dst, edge_type: edge_type.to_string() };
         self.delta_log.push(delta.clone());
         self.apply_delta(&delta);
+
+        // Remove from edge_keys so the same edge can be re-added later
+        self.edge_keys.remove(&(src, dst, edge_type.to_string()));
     }
 
     fn neighbors(&self, id: u128, edge_types: &[&str]) -> Vec<u128> {
@@ -1119,10 +1149,19 @@ impl GraphStore for GraphEngine {
         eprintln!("[RUST FLUSH] Added {} nodes from delta ({} duplicates)", delta_added, delta_duplicates);
         eprintln!("[RUST FLUSH] Total nodes to write: {}", all_nodes.len());
 
-        // Собираем все рёбра
-        let mut all_edges = Vec::new();
+        // Collect all edges with deduplication (same pattern as get_all_edges)
+        let mut edges_map: HashMap<(u128, u128, String), EdgeRecord> = HashMap::new();
 
-        // Из segment
+        // Delta edges first (more recent, take priority over segment)
+        for edge in &self.delta_edges {
+            if !edge.deleted {
+                let edge_type_key = edge.edge_type.clone().unwrap_or_default();
+                let key = (edge.src, edge.dst, edge_type_key);
+                edges_map.insert(key, edge.clone());
+            }
+        }
+
+        // From segment (don't overwrite delta -- delta is more recent)
         if let Some(ref segment) = self.edges_segment {
             for idx in 0..segment.edge_count() {
                 if !segment.is_deleted(idx) {
@@ -1130,27 +1169,28 @@ impl GraphStore for GraphEngine {
                         segment.get_src(idx),
                         segment.get_dst(idx),
                     ) {
-                        let edge_type = segment.get_edge_type(idx).map(|s| s.to_string());
-                        let metadata = segment.get_metadata(idx).map(|s| s.to_string());
-                        all_edges.push(EdgeRecord {
-                            src,
-                            dst,
-                            edge_type,
-                            version: "main".to_string(),
-                            metadata,
-                            deleted: false,
-                        });
+                        let edge_type = segment.get_edge_type(idx);
+                        let edge_type_key = edge_type.unwrap_or("").to_string();
+                        let key = (src, dst, edge_type_key.clone());
+
+                        // Don't overwrite delta edges (they are more recent)
+                        if !edges_map.contains_key(&key) {
+                            let metadata = segment.get_metadata(idx).map(|s| s.to_string());
+                            edges_map.insert(key, EdgeRecord {
+                                src,
+                                dst,
+                                edge_type: if edge_type_key.is_empty() { None } else { Some(edge_type_key) },
+                                version: "main".to_string(),
+                                metadata,
+                                deleted: false,
+                            });
+                        }
                     }
                 }
             }
         }
 
-        // From delta
-        for edge in &self.delta_edges {
-            if !edge.deleted {
-                all_edges.push(edge.clone());
-            }
-        }
+        let all_edges: Vec<EdgeRecord> = edges_map.into_values().collect();
 
         // Закрываем старые segments перед перезаписью
         self.nodes_segment = None;
@@ -1178,11 +1218,12 @@ impl GraphStore for GraphEngine {
 
         writer.write_metadata(&self.metadata)?;
 
-        // Очищаем delta log и deleted_segment_ids (nodes are now written to new segment)
+        // Clear delta log, caches, and dedup sets (nodes/edges are now written to new segment)
         self.delta_log.clear();
         self.delta_nodes.clear();
         self.delta_edges.clear();
         self.deleted_segment_ids.clear();
+        self.edge_keys.clear();
 
         // Перезагружаем segments
         self.nodes_segment = Some(NodesSegment::open(&self.path.join("nodes.bin"))?);
@@ -1194,19 +1235,23 @@ impl GraphStore for GraphEngine {
             self.index_set.rebuild_from_segment(nodes_seg, &self.declared_fields);
         }
 
-        // Rebuild adjacency and reverse_adjacency
+        // Rebuild adjacency, reverse_adjacency, and edge_keys
         self.adjacency.clear();
         self.reverse_adjacency.clear();
+        // edge_keys already cleared above
         if let Some(ref edges_seg) = self.edges_segment {
             for idx in 0..edges_seg.edge_count() {
                 if edges_seg.is_deleted(idx) {
                     continue;
                 }
-                if let Some(src) = edges_seg.get_src(idx) {
+                if let (Some(src), Some(dst)) = (edges_seg.get_src(idx), edges_seg.get_dst(idx)) {
                     self.adjacency.entry(src).or_insert_with(Vec::new).push(idx);
-                }
-                if let Some(dst) = edges_seg.get_dst(idx) {
                     self.reverse_adjacency.entry(dst).or_insert_with(Vec::new).push(idx);
+
+                    let edge_type_key = edges_seg.get_edge_type(idx)
+                        .unwrap_or("")
+                        .to_string();
+                    self.edge_keys.insert((src, dst, edge_type_key));
                 }
             }
         }
@@ -2840,5 +2885,166 @@ mod tests {
         let ids = engine.find_by_attr(&query);
         assert_eq!(ids.len(), 1);
         assert!(ids.contains(&1));
+    }
+
+    // ============================================================
+    // REG-409: Edge Deduplication Tests
+    // ============================================================
+
+    #[test]
+    fn test_add_edges_dedup_same_session() {
+        let mut engine = GraphEngine::create_ephemeral().unwrap();
+
+        engine.add_nodes(vec![
+            make_test_node(1, "A", "FUNCTION"),
+            make_test_node(2, "B", "FUNCTION"),
+        ]);
+
+        engine.add_edges(vec![make_test_edge(1, 2, "CALLS")], false);
+        engine.add_edges(vec![make_test_edge(1, 2, "CALLS")], false);
+
+        assert_eq!(engine.get_all_edges().len(), 1);
+        assert_eq!(engine.get_outgoing_edges(1, None).len(), 1);
+    }
+
+    #[test]
+    fn test_flush_dedup_segment_plus_delta() {
+        use tempfile::tempdir;
+
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("test");
+
+        let mut engine = GraphEngine::create(&db_path).unwrap();
+
+        engine.add_nodes(vec![
+            make_test_node(1, "A", "FUNCTION"),
+            make_test_node(2, "B", "FUNCTION"),
+        ]);
+
+        // Add edge and flush to segment
+        engine.add_edges(vec![make_test_edge(1, 2, "CALLS")], false);
+        engine.flush().unwrap();
+        assert_eq!(engine.get_all_edges().len(), 1);
+
+        // Add same edge again -- should be blocked by edge_keys
+        engine.add_edges(vec![make_test_edge(1, 2, "CALLS")], false);
+        assert_eq!(engine.get_all_edges().len(), 1);
+
+        // Flush again -- still 1 edge
+        engine.flush().unwrap();
+        assert_eq!(engine.get_all_edges().len(), 1);
+    }
+
+    #[test]
+    fn test_dedup_survives_reopen() {
+        use tempfile::tempdir;
+
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("test");
+
+        {
+            let mut engine = GraphEngine::create(&db_path).unwrap();
+            engine.add_nodes(vec![
+                make_test_node(1, "A", "FUNCTION"),
+                make_test_node(2, "B", "FUNCTION"),
+            ]);
+            engine.add_edges(vec![make_test_edge(1, 2, "CALLS")], false);
+            engine.flush().unwrap();
+        }
+
+        {
+            let mut engine = GraphEngine::open(&db_path).unwrap();
+            assert_eq!(engine.get_all_edges().len(), 1);
+
+            // Try adding the same edge -- should be blocked
+            engine.add_edges(vec![make_test_edge(1, 2, "CALLS")], false);
+            assert_eq!(engine.get_all_edges().len(), 1);
+        }
+    }
+
+    #[test]
+    fn test_different_edge_types_not_deduped() {
+        let mut engine = GraphEngine::create_ephemeral().unwrap();
+
+        engine.add_nodes(vec![
+            make_test_node(1, "A", "FUNCTION"),
+            make_test_node(2, "B", "FUNCTION"),
+        ]);
+
+        engine.add_edges(vec![
+            make_test_edge(1, 2, "CALLS"),
+            make_test_edge(1, 2, "IMPORTS"),
+            make_test_edge(1, 2, "CONTAINS"),
+        ], false);
+
+        assert_eq!(engine.get_all_edges().len(), 3);
+    }
+
+    #[test]
+    fn test_delete_then_readd_edge() {
+        let mut engine = GraphEngine::create_ephemeral().unwrap();
+
+        engine.add_nodes(vec![
+            make_test_node(1, "A", "FUNCTION"),
+            make_test_node(2, "B", "FUNCTION"),
+        ]);
+
+        engine.add_edges(vec![make_test_edge(1, 2, "CALLS")], false);
+        assert_eq!(engine.get_all_edges().len(), 1);
+
+        engine.delete_edge(1, 2, "CALLS");
+        assert_eq!(engine.get_all_edges().len(), 0);
+
+        // Re-add should work
+        engine.add_edges(vec![make_test_edge(1, 2, "CALLS")], false);
+        assert_eq!(engine.get_all_edges().len(), 1);
+    }
+
+    #[test]
+    fn test_clear_resets_edge_keys() {
+        let mut engine = GraphEngine::create_ephemeral().unwrap();
+
+        engine.add_nodes(vec![
+            make_test_node(1, "A", "FUNCTION"),
+            make_test_node(2, "B", "FUNCTION"),
+        ]);
+
+        engine.add_edges(vec![make_test_edge(1, 2, "CALLS")], false);
+        assert_eq!(engine.get_all_edges().len(), 1);
+
+        engine.clear();
+
+        // Re-add nodes and edges after clear
+        engine.add_nodes(vec![
+            make_test_node(1, "A", "FUNCTION"),
+            make_test_node(2, "B", "FUNCTION"),
+        ]);
+        engine.add_edges(vec![make_test_edge(1, 2, "CALLS")], false);
+        assert_eq!(engine.get_all_edges().len(), 1);
+    }
+
+    #[test]
+    fn test_get_outgoing_edges_no_duplicates_after_flush() {
+        use tempfile::tempdir;
+
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("test");
+
+        let mut engine = GraphEngine::create(&db_path).unwrap();
+
+        engine.add_nodes(vec![
+            make_test_node(1, "A", "FUNCTION"),
+            make_test_node(2, "B", "FUNCTION"),
+        ]);
+
+        engine.add_edges(vec![make_test_edge(1, 2, "CALLS")], false);
+        engine.flush().unwrap();
+
+        // After flush, edge is in segment. Adding same edge should be blocked.
+        engine.add_edges(vec![make_test_edge(1, 2, "CALLS")], false);
+
+        // Both should return exactly 1
+        assert_eq!(engine.get_outgoing_edges(1, None).len(), 1);
+        assert_eq!(engine.get_incoming_edges(2, None).len(), 1);
     }
 }
