@@ -47,3 +47,6 @@ coverage/
 .grafema/graph.rfdb
 .grafema/rfdb.sock
 .eslintcache
+
+# SWE-bench artifacts
+logs/run_evaluation/
