@@ -9,7 +9,7 @@ pnpm build > /tmp/grafema-pre-push-build.log 2>&1 || {
 }
 echo "Build OK. Running tests..."
 
-perl -e 'alarm 600; exec @ARGV' node --test 'test/unit/*.test.js' > /tmp/grafema-pre-push-tests.log 2>&1
+perl -e 'alarm 600; exec @ARGV' node --test --test-concurrency=1 'test/unit/*.test.js' > /tmp/grafema-pre-push-tests.log 2>&1
 TEST_EXIT=$?
 if [ $TEST_EXIT -ne 0 ]; then
   echo "Tests failed or timed out (10 min limit). Exit code: $TEST_EXIT"
