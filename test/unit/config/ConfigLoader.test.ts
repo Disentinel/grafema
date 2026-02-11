@@ -17,7 +17,7 @@ import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert';
 import { mkdirSync, writeFileSync, rmSync, existsSync } from 'fs';
 import { join } from 'path';
-import { loadConfig, DEFAULT_CONFIG } from '@grafema/core';
+import { loadConfig, DEFAULT_CONFIG, validateVersion, GRAFEMA_VERSION, getSchemaVersion } from '@grafema/core';
 
 // =============================================================================
 // Test Helpers
@@ -1178,6 +1178,166 @@ exclude:
       assert.deepStrictEqual(config1.include, []);
       // Note: YAML null becomes undefined after merge
       assert.strictEqual(config1.exclude, undefined);
+    });
+  });
+
+  // ===========================================================================
+  // TESTS: Version compatibility (REG-403)
+  // ===========================================================================
+
+  describe('Version compatibility (REG-403)', () => {
+    // -------------------------------------------------------------------------
+    // GRAFEMA_VERSION and getSchemaVersion
+    // -------------------------------------------------------------------------
+
+    it('should export GRAFEMA_VERSION', () => {
+      assert.ok(typeof GRAFEMA_VERSION === 'string');
+      assert.ok(GRAFEMA_VERSION.length > 0);
+    });
+
+    it('getSchemaVersion should strip pre-release tag', () => {
+      assert.strictEqual(getSchemaVersion('0.2.5-beta'), '0.2.5');
+      assert.strictEqual(getSchemaVersion('1.0.0-alpha.1'), '1.0.0');
+      assert.strictEqual(getSchemaVersion('0.2.5'), '0.2.5');
+    });
+
+    it('DEFAULT_CONFIG should have version field', () => {
+      assert.ok(typeof DEFAULT_CONFIG.version === 'string');
+      assert.strictEqual(DEFAULT_CONFIG.version, getSchemaVersion(GRAFEMA_VERSION));
+    });
+
+    // -------------------------------------------------------------------------
+    // validateVersion function
+    // -------------------------------------------------------------------------
+
+    it('should accept undefined version (backward compat)', () => {
+      assert.doesNotThrow(() => validateVersion(undefined));
+    });
+
+    it('should accept null version (backward compat)', () => {
+      assert.doesNotThrow(() => validateVersion(null));
+    });
+
+    it('should accept matching version', () => {
+      assert.doesNotThrow(() => validateVersion('0.2.5', '0.2.5-beta'));
+    });
+
+    it('should accept version matching after stripping pre-release', () => {
+      assert.doesNotThrow(() => validateVersion('0.2.5', '0.2.5'));
+      assert.doesNotThrow(() => validateVersion('0.2.5-beta', '0.2.5'));
+      assert.doesNotThrow(() => validateVersion('0.2.5', '0.2.5-alpha.1'));
+    });
+
+    it('should throw on version mismatch', () => {
+      assert.throws(
+        () => validateVersion('0.2.4', '0.2.5'),
+        /config version "0.2.4" is not compatible with Grafema 0.2.5/
+      );
+    });
+
+    it('should throw on major version mismatch', () => {
+      assert.throws(
+        () => validateVersion('1.0.0', '0.2.5'),
+        /config version "1.0.0" is not compatible/
+      );
+    });
+
+    it('should throw on minor version mismatch', () => {
+      assert.throws(
+        () => validateVersion('0.3.0', '0.2.5'),
+        /config version "0.3.0" is not compatible/
+      );
+    });
+
+    it('should include remediation hint in error message', () => {
+      assert.throws(
+        () => validateVersion('0.1.0', '0.2.5'),
+        /grafema init --force/
+      );
+    });
+
+    it('should throw when version is not a string', () => {
+      assert.throws(
+        () => validateVersion(123),
+        /version must be a string, got number/
+      );
+    });
+
+    it('should throw when version is empty string', () => {
+      assert.throws(
+        () => validateVersion(''),
+        /version cannot be empty/
+      );
+    });
+
+    it('should throw when version is whitespace-only', () => {
+      assert.throws(
+        () => validateVersion('   '),
+        /version cannot be empty/
+      );
+    });
+
+    // -------------------------------------------------------------------------
+    // Integration with loadConfig
+    // -------------------------------------------------------------------------
+
+    it('should load config with matching version', () => {
+      const version = getSchemaVersion(GRAFEMA_VERSION);
+      const yaml = `version: "${version}"
+plugins:
+  indexing:
+    - JSModuleIndexer
+`;
+      writeFileSync(join(grafemaDir, 'config.yaml'), yaml);
+
+      const config = loadConfig(testDir);
+
+      assert.strictEqual(config.version, version);
+      assert.deepStrictEqual(config.plugins.indexing, ['JSModuleIndexer']);
+    });
+
+    it('should load config without version (backward compat)', () => {
+      const yaml = `plugins:
+  indexing:
+    - JSModuleIndexer
+`;
+      writeFileSync(join(grafemaDir, 'config.yaml'), yaml);
+
+      const config = loadConfig(testDir);
+
+      // version from DEFAULT_CONFIG
+      assert.strictEqual(config.version, getSchemaVersion(GRAFEMA_VERSION));
+      assert.deepStrictEqual(config.plugins.indexing, ['JSModuleIndexer']);
+    });
+
+    it('should throw when config has incompatible version', () => {
+      const yaml = `version: "99.99.99"
+plugins:
+  indexing:
+    - JSModuleIndexer
+`;
+      writeFileSync(join(grafemaDir, 'config.yaml'), yaml);
+
+      assert.throws(
+        () => loadConfig(testDir),
+        /config version "99.99.99" is not compatible/
+      );
+    });
+
+    it('should throw on version mismatch in JSON config', () => {
+      const json = {
+        version: '99.99.99',
+        plugins: {
+          indexing: ['JSModuleIndexer'],
+        },
+      };
+      writeFileSync(join(grafemaDir, 'config.json'), JSON.stringify(json));
+
+      const logger = createLoggerMock();
+      assert.throws(
+        () => loadConfig(testDir, logger),
+        /config version "99.99.99" is not compatible/
+      );
     });
   });
 });

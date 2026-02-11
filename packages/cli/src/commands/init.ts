@@ -9,7 +9,7 @@ import { spawn } from 'child_process';
 import { createInterface } from 'readline';
 import { fileURLToPath } from 'url';
 import { stringify as stringifyYAML } from 'yaml';
-import { DEFAULT_CONFIG } from '@grafema/core';
+import { DEFAULT_CONFIG, GRAFEMA_VERSION, getSchemaVersion } from '@grafema/core';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 
@@ -20,6 +20,7 @@ const __dirname = fileURLToPath(new URL('.', import.meta.url));
 function generateConfigYAML(): string {
   // Start with working default config
   const config = {
+    version: getSchemaVersion(GRAFEMA_VERSION),
     // Plugin list (fully implemented)
     plugins: DEFAULT_CONFIG.plugins,
   };

@@ -37,11 +37,15 @@ export type { DiagnosticCategory, DiagnosticCategoryKey, CodeCategoryInfo } from
 export {
   loadConfig,
   DEFAULT_CONFIG,
+  validateVersion,
   validateServices,
   validatePatterns,
   validateWorkspace,
 } from './config/index.js';
 export type { GrafemaConfig } from './config/index.js';
+
+// Version
+export { GRAFEMA_VERSION, getSchemaVersion } from './version.js';
 
 // Instructions (for AI agents)
 export { getOnboardingInstruction } from './instructions/index.js';
