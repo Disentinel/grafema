@@ -2338,15 +2338,7 @@ export class GraphBuilder {
       const matchingVar = variables.find(v => {
         if (v.name !== name || v.file !== file) return false;
 
-        // REG-398: v2 path — use scopePath field if available (set by visitors)
-        if (v.scopePath) {
-          if (searchScopePath.length === 0) {
-            return v.scopePath.length === 0;
-          }
-          return this.scopePathsMatch(v.scopePath, searchScopePath);
-        }
-
-        // v1 fallback: Variable ID IS the semantic ID (when scopeTracker was available during analysis)
+        // Variable ID IS the semantic ID (when scopeTracker was available during analysis)
         // Format: file->scope1->scope2->TYPE->name
         // Legacy format: VARIABLE#name#file#line:column:counter
 
@@ -2393,20 +2385,6 @@ export class GraphBuilder {
     return parameters.find(p => {
       if (p.name !== name || p.file !== file) return false;
 
-      // REG-398: v2 path — use scopePath field if available (set by visitors)
-      if (p.scopePath) {
-        for (let i = scopePath.length; i >= 0; i--) {
-          const searchScopePath = scopePath.slice(0, i);
-          if (searchScopePath.length === 0) {
-            if (p.scopePath.length === 0) return true;
-          } else {
-            if (this.scopePathsMatch(p.scopePath, searchScopePath)) return true;
-          }
-        }
-        return false;
-      }
-
-      // v1 fallback: parse semanticId to extract scope path
       if (p.semanticId) {
         const parsed = parseSemanticId(p.semanticId);
         if (parsed && parsed.type === 'PARAMETER') {

@@ -26,7 +26,7 @@ import type {
   EnumMemberInfo
 } from '../types.js';
 import type { ScopeTracker } from '../../../../core/ScopeTracker.js';
-import { computeSemanticIdV2 } from '../../../../core/SemanticId.js';
+import { computeSemanticId } from '../../../../core/SemanticId.js';
 import { getLine, getColumn } from '../utils/location.js';
 
 /**
@@ -127,10 +127,10 @@ export class TypeScriptVisitor extends ASTVisitor {
 
         const interfaceName = node.id.name;
 
-        // Generate v2 semantic ID if scopeTracker available
+        // Generate semantic ID if scopeTracker available
         let interfaceSemanticId: string | undefined;
         if (scopeTracker) {
-          interfaceSemanticId = computeSemanticIdV2('INTERFACE', interfaceName, module.file, scopeTracker.getNamedParent());
+          interfaceSemanticId = computeSemanticId('INTERFACE', interfaceName, scopeTracker.getContext());
         }
 
         // Extract extends
@@ -189,10 +189,10 @@ export class TypeScriptVisitor extends ASTVisitor {
 
         const typeName = node.id.name;
 
-        // Generate v2 semantic ID if scopeTracker available
+        // Generate semantic ID if scopeTracker available
         let typeSemanticId: string | undefined;
         if (scopeTracker) {
-          typeSemanticId = computeSemanticIdV2('TYPE', typeName, module.file, scopeTracker.getNamedParent());
+          typeSemanticId = computeSemanticId('TYPE', typeName, scopeTracker.getContext());
         }
 
         // Extract the type being aliased
@@ -215,10 +215,10 @@ export class TypeScriptVisitor extends ASTVisitor {
 
         const enumName = node.id.name;
 
-        // Generate v2 semantic ID if scopeTracker available
+        // Generate semantic ID if scopeTracker available
         let enumSemanticId: string | undefined;
         if (scopeTracker) {
-          enumSemanticId = computeSemanticIdV2('ENUM', enumName, module.file, scopeTracker.getNamedParent());
+          enumSemanticId = computeSemanticId('ENUM', enumName, scopeTracker.getContext());
         }
 
         // Extract members

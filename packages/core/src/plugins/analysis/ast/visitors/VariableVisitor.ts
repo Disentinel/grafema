@@ -64,7 +64,6 @@ interface VariableDeclarationInfo {
   line: number;
   parentScopeId: string;
   value?: unknown;
-  scopePath?: string[];  // REG-398: Scope path for v2 scope-aware resolution
 }
 
 /**
@@ -182,6 +181,7 @@ export class VariableVisitor extends ASTVisitor {
     const literals = (this.collections.literals ?? []) as unknown[];
     const variableAssignments = this.collections.variableAssignments ?? [];
     const scopes = (this.collections.scopes ?? []) as unknown[];
+    const varDeclCounterRef = (this.collections.varDeclCounterRef ?? { value: 0 }) as CounterRef;
     const literalCounterRef = (this.collections.literalCounterRef ?? { value: 0 }) as CounterRef;
     const scopeCounterRef = (this.collections.scopeCounterRef ?? { value: 0 }) as CounterRef;
     // Object literal tracking collections (REG-328)
@@ -254,16 +254,16 @@ export class VariableVisitor extends ASTVisitor {
 
               const nodeType = shouldBeConstant ? 'CONSTANT' : 'VARIABLE';
 
-              // Generate v2 semantic ID — variables are unique by name in scope
+              // Generate ID using centralized IdGenerator
               const idGenerator = new IdGenerator(scopeTracker);
-              const varId = idGenerator.generateV2Simple(
+              const varId = idGenerator.generate(
                 nodeType,
                 varInfo.name,
-                module.file
+                module.file,
+                varInfo.loc.start.line,
+                varInfo.loc.start.column,
+                varDeclCounterRef as CounterRef
               );
-
-              // REG-398: Capture scope path for v2 scope-aware resolution
-              const currentScopePath = scopeTracker?.getContext().scopePath ?? [];
 
               if (shouldBeConstant) {
                 // CONSTANT node
@@ -273,8 +273,7 @@ export class VariableVisitor extends ASTVisitor {
                   name: varInfo.name,
                   file: module.file,
                   line: varInfo.loc.start.line,
-                  parentScopeId: module.id,
-                  scopePath: currentScopePath
+                  parentScopeId: module.id
                 };
 
                 if (isLiteral) {
@@ -304,8 +303,7 @@ export class VariableVisitor extends ASTVisitor {
                   name: varInfo.name,
                   file: module.file,
                   line: varInfo.loc.start.line,
-                  parentScopeId: module.id,
-                  scopePath: currentScopePath
+                  parentScopeId: module.id
                 });
               }
 

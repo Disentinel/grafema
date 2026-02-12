@@ -21,7 +21,7 @@ import type {
   NewExpression
 } from '@babel/types';
 import type { NodePath } from '@babel/traverse';
-import { ASTVisitor, type VisitorModule, type VisitorCollections, type VisitorHandlers } from './ASTVisitor.js';
+import { ASTVisitor, type VisitorModule, type VisitorCollections, type VisitorHandlers, type CounterRef } from './ASTVisitor.js';
 import { typeNodeToString } from './TypeScriptVisitor.js';
 import type { ScopeTracker } from '../../../../core/ScopeTracker.js';
 import { IdGenerator } from '../IdGenerator.js';
@@ -102,6 +102,7 @@ export class FunctionVisitor extends ASTVisitor {
     const functions = this.collections.functions ?? [];
     const parameters = this.collections.parameters ?? [];
     const scopes = this.collections.scopes ?? [];
+    const functionCounterRef = (this.collections.functionCounterRef ?? { value: 0 }) as CounterRef;
     const scopeTracker = this.scopeTracker;
 
     const analyzeFunctionBody = this.analyzeFunctionBody;
@@ -217,9 +218,9 @@ export class FunctionVisitor extends ASTVisitor {
 
         const line = getLine(node);
 
-        // Generate v2 semantic ID — functions are unique by name in scope
+        // Generate ID using centralized IdGenerator
         const idGenerator = new IdGenerator(scopeTracker);
-        const functionId = idGenerator.generateV2Simple('FUNCTION', node.id.name, module.file);
+        const functionId = idGenerator.generateSimple('FUNCTION', node.id.name, module.file, line);
 
         // Extract type info
         const { names: paramNames, types: paramTypes } = extractParamInfo(node.params);
@@ -250,7 +251,7 @@ export class FunctionVisitor extends ASTVisitor {
         createParameterNodes(node.params, functionId, module.file, getLine(node), parameters as ParameterInfo[], scopeTracker);
 
         // Create SCOPE for function body
-        const functionBodyScopeId = idGenerator.generateV2Simple('SCOPE', 'body', module.file);
+        const functionBodyScopeId = idGenerator.generateScope('body', `${node.id.name}:body`, module.file, line);
         (scopes as ScopeInfo[]).push({
           id: functionBodyScopeId,
           type: 'SCOPE',
@@ -291,9 +292,9 @@ export class FunctionVisitor extends ASTVisitor {
           }
         }
 
-        // Generate v2 semantic ID — arrows get unique names via variable assignment inference
+        // Generate ID using centralized IdGenerator
         const idGenerator = new IdGenerator(scopeTracker);
-        const functionId = idGenerator.generateV2Simple('FUNCTION', functionName, module.file);
+        const functionId = idGenerator.generate('FUNCTION', functionName, module.file, line, column, functionCounterRef);
 
         // Extract type info
         const { names: paramNames, types: paramTypes } = extractParamInfo(node.params);
@@ -325,7 +326,7 @@ export class FunctionVisitor extends ASTVisitor {
         createParameterNodes(node.params, functionId, module.file, line, parameters as ParameterInfo[], scopeTracker);
 
         // Create SCOPE for arrow function body
-        const bodyScope = idGenerator.generateV2Simple('SCOPE', 'body', module.file);
+        const bodyScope = idGenerator.generateScope('body', `${functionName}:body`, module.file, line, column);
         (scopes as ScopeInfo[]).push({
           id: bodyScope,
           type: 'SCOPE',

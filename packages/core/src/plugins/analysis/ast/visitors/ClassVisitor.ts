@@ -31,7 +31,7 @@ import { ExpressionEvaluator } from '../ExpressionEvaluator.js';
 import { createParameterNodes } from '../utils/createParameterNodes.js';
 import type { ScopeTracker } from '../../../../core/ScopeTracker.js';
 import { ClassNode, type ClassNodeRecord } from '../../../../core/nodes/ClassNode.js';
-import { computeSemanticIdV2 } from '../../../../core/SemanticId.js';
+import { computeSemanticId } from '../../../../core/SemanticId.js';
 import { getLine, getColumn } from '../utils/location.js';
 
 /**
@@ -265,9 +265,9 @@ export class ClassVisitor extends ASTVisitor {
 
               const funcNode = propNode.value as ArrowFunctionExpression | FunctionExpression;
 
-              // Use v2 semantic ID as primary ID
+              // Use semantic ID as primary ID (matching FunctionVisitor pattern)
               const legacyId = `FUNCTION#${className}.${propName}#${module.file}#${propLine}:${propColumn}`;
-              const functionId = computeSemanticIdV2('FUNCTION', propName, module.file, scopeTracker.getNamedParent());
+              const functionId = computeSemanticId('FUNCTION', propName, scopeTracker.getContext());
 
               // Add method to class methods list for CONTAINS edges
               currentClass.methods.push(functionId);
@@ -297,7 +297,7 @@ export class ClassVisitor extends ASTVisitor {
 
               // Create SCOPE for property function body
               const propBodyScopeId = `SCOPE#${className}.${propName}:body#${module.file}#${propLine}`;
-              const propBodySemanticId = computeSemanticIdV2('SCOPE', 'body', module.file, scopeTracker.getNamedParent());
+              const propBodySemanticId = computeSemanticId('SCOPE', 'body', scopeTracker.getContext());
               (scopes as ScopeInfo[]).push({
                 id: propBodyScopeId,
                 semanticId: propBodySemanticId,
@@ -332,9 +332,9 @@ export class ClassVisitor extends ASTVisitor {
             const methodLine = getLine(methodNode);
             const methodColumn = getColumn(methodNode);
 
-            // Use v2 semantic ID as primary ID
+            // Use semantic ID as primary ID (matching FunctionVisitor pattern)
             const legacyId = `FUNCTION#${className}.${methodName}#${module.file}#${methodLine}:${methodColumn}`;
-            const functionId = computeSemanticIdV2('FUNCTION', methodName, module.file, scopeTracker.getNamedParent());
+            const functionId = computeSemanticId('FUNCTION', methodName, scopeTracker.getContext());
 
             // Add method to class methods list for CONTAINS edges
             currentClass.methods.push(functionId);
@@ -376,7 +376,7 @@ export class ClassVisitor extends ASTVisitor {
 
             // Create SCOPE for method body
             const methodBodyScopeId = `SCOPE#${className}.${methodName}:body#${module.file}#${methodLine}`;
-            const methodBodySemanticId = computeSemanticIdV2('SCOPE', 'body', module.file, scopeTracker.getNamedParent());
+            const methodBodySemanticId = computeSemanticId('SCOPE', 'body', scopeTracker.getContext());
             (scopes as ScopeInfo[]).push({
               id: methodBodyScopeId,
               semanticId: methodBodySemanticId,
@@ -410,7 +410,7 @@ export class ClassVisitor extends ASTVisitor {
             const { discriminator } = scopeTracker.enterCountedScope('static_block');
 
             // Generate semantic ID for static block scope
-            const staticBlockScopeId = computeSemanticIdV2('SCOPE', `static_block#${discriminator}`, module.file, scopeTracker.getNamedParent());
+            const staticBlockScopeId = computeSemanticId('SCOPE', `static_block#${discriminator}`, scopeTracker.getContext());
 
             // Add to class staticBlocks array for CONTAINS edge
             if (!currentClass.staticBlocks) {
@@ -462,7 +462,7 @@ export class ClassVisitor extends ASTVisitor {
               // Handle as private method (function-valued property)
               const funcNode = propNode.value as ArrowFunctionExpression | FunctionExpression;
 
-              const functionId = computeSemanticIdV2('FUNCTION', displayName, module.file, scopeTracker.getNamedParent());
+              const functionId = computeSemanticId('FUNCTION', displayName, scopeTracker.getContext());
 
               // Add to class methods list for CONTAINS edges
               currentClass.methods.push(functionId);
@@ -492,7 +492,7 @@ export class ClassVisitor extends ASTVisitor {
               }
 
               // Create SCOPE for property function body
-              const propBodyScopeId = computeSemanticIdV2('SCOPE', 'body', module.file, scopeTracker.getNamedParent());
+              const propBodyScopeId = computeSemanticId('SCOPE', 'body', scopeTracker.getContext());
               (scopes as ScopeInfo[]).push({
                 id: propBodyScopeId,
                 semanticId: propBodyScopeId,
@@ -512,7 +512,7 @@ export class ClassVisitor extends ASTVisitor {
               scopeTracker.exitScope();
             } else {
               // Handle as private field (non-function property)
-              const variableId = computeSemanticIdV2('VARIABLE', displayName, module.file, scopeTracker.getNamedParent());
+              const variableId = computeSemanticId('VARIABLE', displayName, scopeTracker.getContext());
 
               // Add to class properties list for HAS_PROPERTY edges
               if (!currentClass.properties) {
@@ -568,7 +568,7 @@ export class ClassVisitor extends ASTVisitor {
             // For getter/setter, include kind in name for unique ID (e.g., "get:#prop", "set:#prop")
             const kind = methodNode.kind as 'get' | 'set' | 'method';
             const semanticName = (kind === 'get' || kind === 'set') ? `${kind}:${displayName}` : displayName;
-            const functionId = computeSemanticIdV2('FUNCTION', semanticName, module.file, scopeTracker.getNamedParent());
+            const functionId = computeSemanticId('FUNCTION', semanticName, scopeTracker.getContext());
 
             // Add method to class methods list for CONTAINS edges
             currentClass.methods.push(functionId);
@@ -610,7 +610,7 @@ export class ClassVisitor extends ASTVisitor {
             }
 
             // Create SCOPE for method body
-            const methodBodyScopeId = computeSemanticIdV2('SCOPE', 'body', module.file, scopeTracker.getNamedParent());
+            const methodBodyScopeId = computeSemanticId('SCOPE', 'body', scopeTracker.getContext());
             (scopes as ScopeInfo[]).push({
               id: methodBodyScopeId,
               semanticId: methodBodyScopeId,

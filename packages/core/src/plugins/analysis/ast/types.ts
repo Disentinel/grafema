@@ -50,7 +50,6 @@ export interface ParameterInfo {
   isRest?: boolean;      // Rest parameter (e.g., function(...args))
   functionId?: string;   // Legacy field - prefer parentFunctionId
   parentFunctionId?: string;
-  scopePath?: string[];  // REG-398: Scope path for v2 scope-aware resolution
 }
 
 // === SCOPE INFO ===
@@ -211,7 +210,6 @@ export interface VariableDeclarationInfo {
   column?: number;
   value?: unknown;
   parentScopeId?: string;
-  scopePath?: string[];  // REG-398: Scope path for v2 scope-aware resolution
   // REG-271: Private fields support
   isPrivate?: boolean;      // true for #privateField
   isStatic?: boolean;       // true for static #field
