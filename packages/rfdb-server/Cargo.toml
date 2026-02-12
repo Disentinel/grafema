@@ -62,6 +62,7 @@ napi = ["dep:napi", "dep:napi-derive"]
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
 tempfile = "3.10"
+proptest = "1.4"
 # neo4j = "0.5"  # TODO: Add when a current neo4j crate becomes available for benchmarks
 
 [[bin]]
