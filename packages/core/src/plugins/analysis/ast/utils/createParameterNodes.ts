@@ -16,7 +16,7 @@ import type {
 } from '@babel/types';
 import type { ParameterInfo } from '../types.js';
 import type { ScopeTracker } from '../../../../core/ScopeTracker.js';
-import { computeSemanticId } from '../../../../core/SemanticId.js';
+import { computeSemanticIdV2 } from '../../../../core/SemanticId.js';
 
 /**
  * Create PARAMETER nodes for function parameters
@@ -47,11 +47,15 @@ export function createParameterNodes(
 ): void {
   if (!parameters) return; // Guard for backward compatibility
 
+  // REG-398: Capture scope path for v2 scope-aware resolution
+  const scopePath = scopeTracker.getContext().scopePath;
+  const namedParent = scopeTracker.getNamedParent();
+
   params.forEach((param, index) => {
     // Handle different parameter types
     if (param.type === 'Identifier') {
       const name = (param as Identifier).name;
-      const paramId = computeSemanticId('PARAMETER', name, scopeTracker.getContext(), { discriminator: index });
+      const paramId = computeSemanticIdV2('PARAMETER', name, file, namedParent, undefined, index);
       parameters.push({
         id: paramId,
         semanticId: paramId,
@@ -60,14 +64,15 @@ export function createParameterNodes(
         file: file,
         line: param.loc?.start.line || line,
         index: index,
-        parentFunctionId: functionId
+        parentFunctionId: functionId,
+        scopePath
       });
     } else if (param.type === 'AssignmentPattern') {
       // Default parameter: function(a = 1)
       const assignmentParam = param as AssignmentPattern;
       if (assignmentParam.left.type === 'Identifier') {
         const name = assignmentParam.left.name;
-        const paramId = computeSemanticId('PARAMETER', name, scopeTracker.getContext(), { discriminator: index });
+        const paramId = computeSemanticIdV2('PARAMETER', name, file, namedParent, undefined, index);
         parameters.push({
           id: paramId,
           semanticId: paramId,
@@ -77,7 +82,8 @@ export function createParameterNodes(
           line: assignmentParam.left.loc?.start.line || line,
           index: index,
           hasDefault: true,
-          parentFunctionId: functionId
+          parentFunctionId: functionId,
+          scopePath
         });
       }
     } else if ((param as Node).type === 'RestElement') {
@@ -85,7 +91,7 @@ export function createParameterNodes(
       const restParam = param as unknown as RestElement;
       if (restParam.argument.type === 'Identifier') {
         const name = restParam.argument.name;
-        const paramId = computeSemanticId('PARAMETER', name, scopeTracker.getContext(), { discriminator: index });
+        const paramId = computeSemanticIdV2('PARAMETER', name, file, namedParent, undefined, index);
         parameters.push({
           id: paramId,
           semanticId: paramId,
@@ -95,7 +101,8 @@ export function createParameterNodes(
           line: restParam.argument.loc?.start.line || line,
           index: index,
           isRest: true,
-          parentFunctionId: functionId
+          parentFunctionId: functionId,
+          scopePath
         });
       }
     }
