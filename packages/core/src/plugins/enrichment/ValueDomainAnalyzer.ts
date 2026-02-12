@@ -112,7 +112,9 @@ export class ValueDomainAnalyzer extends Plugin {
         nodes: [],
         edges: ['CALLS', 'FLOWS_INTO']  // Added FLOWS_INTO (modifies existing)
       },
-      dependencies: ['AliasTracker']
+      dependencies: ['AliasTracker'],
+      consumes: ['ASSIGNED_FROM', 'FLOWS_INTO', 'CONTAINS'],
+      produces: ['CALLS', 'FLOWS_INTO']
     };
   }
 

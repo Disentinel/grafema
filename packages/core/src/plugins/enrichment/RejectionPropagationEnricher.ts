@@ -40,7 +40,9 @@ export class RejectionPropagationEnricher extends Plugin {
         nodes: [],
         edges: ['REJECTS']
       },
-      dependencies: ['JSASTAnalyzer'] // Needs FUNCTION, CALL nodes with metadata
+      dependencies: ['JSASTAnalyzer'], // Needs FUNCTION, CALL nodes with metadata
+      consumes: ['CALLS', 'REJECTS', 'CONTAINS', 'HAS_SCOPE'],
+      produces: ['REJECTS']
     };
   }
 

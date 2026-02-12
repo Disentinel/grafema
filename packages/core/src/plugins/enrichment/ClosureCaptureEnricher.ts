@@ -55,7 +55,9 @@ export class ClosureCaptureEnricher extends Plugin {
         nodes: [],
         edges: ['CAPTURES']
       },
-      dependencies: ['JSASTAnalyzer'] // Requires SCOPE and VARIABLE nodes
+      dependencies: ['JSASTAnalyzer'], // Requires SCOPE and VARIABLE nodes
+      consumes: [],
+      produces: ['CAPTURES']
     };
   }
 

@@ -45,7 +45,9 @@ export class ExpressHandlerLinker extends Plugin {
         nodes: [],
         edges: ['HANDLED_BY']
       },
-      dependencies: ['JSASTAnalyzer', 'ExpressRouteAnalyzer']
+      dependencies: ['JSASTAnalyzer', 'ExpressRouteAnalyzer'],
+      consumes: [],
+      produces: ['HANDLED_BY']
     };
   }
 

@@ -75,7 +75,9 @@ export class AliasTracker extends Plugin {
         nodes: [],
         edges: ['CALLS', 'ALIAS_OF']
       },
-      dependencies: ['MethodCallResolver']
+      dependencies: ['MethodCallResolver'],
+      consumes: ['ASSIGNED_FROM', 'CONTAINS', 'INSTANCE_OF'],
+      produces: ['CALLS', 'ALIAS_OF']
     };
   }
 
