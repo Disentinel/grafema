@@ -81,14 +81,19 @@ export { Profiler } from './core/Profiler.js';
 export {
   computeSemanticId,
   parseSemanticId,
-  computeDiscriminator
+  computeDiscriminator,
+  computeSemanticIdV2,
+  parseSemanticIdV2,
+  computeContentHash
 } from './core/SemanticId.js';
 export type {
   Location,
   ScopeContext,
   SemanticIdOptions,
   ParsedSemanticId,
-  LocatedItem
+  LocatedItem,
+  ParsedSemanticIdV2,
+  ContentHashHints
 } from './core/SemanticId.js';
 export { ScopeTracker } from './core/ScopeTracker.js';
 export type { ScopeEntry, CountedScopeResult } from './core/ScopeTracker.js';
@@ -180,6 +185,10 @@ export { EnumNode, type EnumMemberRecord } from './core/nodes/EnumNode.js';
 export { DecoratorNode, type DecoratorTargetType } from './core/nodes/DecoratorNode.js';
 export { ExpressionNode, type ExpressionNodeOptions } from './core/nodes/ExpressionNode.js';
 export { ArgumentExpressionNode, type ArgumentExpressionNodeRecord, type ArgumentExpressionNodeOptions } from './core/nodes/ArgumentExpressionNode.js';
+
+// AST CollisionResolver (v2 semantic ID disambiguation)
+export { CollisionResolver } from './plugins/analysis/ast/CollisionResolver.js';
+export type { PendingNode } from './plugins/analysis/ast/CollisionResolver.js';
 
 // AST Visitors (for advanced usage)
 export {

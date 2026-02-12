@@ -12,7 +12,7 @@
 import { Command } from 'commander';
 import { resolve, join, relative, basename } from 'path';
 import { existsSync } from 'fs';
-import { RFDBServerBackend, parseSemanticId, findCallsInFunction as findCallsInFunctionCore, findContainingFunction as findContainingFunctionCore } from '@grafema/core';
+import { RFDBServerBackend, parseSemanticId, parseSemanticIdV2, findCallsInFunction as findCallsInFunctionCore, findContainingFunction as findContainingFunctionCore } from '@grafema/core';
 import { formatNodeDisplay, formatNodeInline, formatLocation } from '../utils/formatNode.js';
 import { exitWithError } from '../utils/errorFormatter.js';
 import { Spinner } from '../utils/spinner.js';
@@ -370,6 +370,33 @@ export function isFileScope(scope: string): boolean {
  * @returns true if ID matches all constraints
  */
 export function matchesScope(semanticId: string, file: string | null, scopes: string[]): boolean {
+  // Try v2 parsing first
+  const parsedV2 = parseSemanticIdV2(semanticId);
+  if (parsedV2) {
+    // File scope check (v2)
+    if (file !== null) {
+      if (parsedV2.file === file) {
+        // Exact match - OK
+      } else if (parsedV2.file.endsWith('/' + file)) {
+        // Partial path match - OK
+      } else if (basename(parsedV2.file) === file) {
+        // Basename exact match - OK
+      } else {
+        return false;
+      }
+    }
+
+    // Function/class scope check (v2): check namedParent
+    for (const scope of scopes) {
+      if (!parsedV2.namedParent || parsedV2.namedParent.toLowerCase() !== scope.toLowerCase()) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  // Fallback to v1 parsing
   const parsed = parseSemanticId(semanticId);
   if (!parsed) return false;
 
@@ -424,6 +451,17 @@ export function matchesScope(semanticId: string, file: string | null, scopes: st
  * @returns Human-readable scope context or null
  */
 export function extractScopeContext(semanticId: string): string | null {
+  // Try v2 parsing first
+  const parsedV2 = parseSemanticIdV2(semanticId);
+  if (parsedV2) {
+    if (parsedV2.namedParent) {
+      return `inside ${parsedV2.namedParent}`;
+    }
+    // v2 with no parent = top-level
+    return null;
+  }
+
+  // Fallback to v1 parsing
   const parsed = parseSemanticId(semanticId);
   if (!parsed) return null;
 

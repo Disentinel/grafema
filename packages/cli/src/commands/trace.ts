@@ -10,7 +10,7 @@
 import { Command } from 'commander';
 import { resolve, join } from 'path';
 import { existsSync } from 'fs';
-import { RFDBServerBackend, parseSemanticId, traceValues, type ValueSource } from '@grafema/core';
+import { RFDBServerBackend, parseSemanticId, parseSemanticIdV2, traceValues, type ValueSource } from '@grafema/core';
 import { formatNodeDisplay, formatNodeInline } from '../utils/formatNode.js';
 import { exitWithError } from '../utils/errorFormatter.js';
 
@@ -227,12 +227,21 @@ async function findVariables(
       if (name.toLowerCase() === varName.toLowerCase()) {
         // If scope specified, check if variable is in that scope
         if (scopeName) {
-          const parsed = parseSemanticId(node.id);
-          if (!parsed) continue; // Skip nodes with invalid IDs
+          // Try v2 parsing first
+          const parsedV2 = parseSemanticIdV2(node.id);
+          if (parsedV2) {
+            if (!parsedV2.namedParent || parsedV2.namedParent.toLowerCase() !== lowerScopeName) {
+              continue;
+            }
+          } else {
+            // Fallback to v1 parsing
+            const parsed = parseSemanticId(node.id);
+            if (!parsed) continue; // Skip nodes with invalid IDs
 
-          // Check if scopeName appears anywhere in the scope chain
-          if (!parsed.scopePath.some(s => s.toLowerCase() === lowerScopeName)) {
-            continue;
+            // Check if scopeName appears anywhere in the scope chain
+            if (!parsed.scopePath.some(s => s.toLowerCase() === lowerScopeName)) {
+              continue;
+            }
           }
         }
 
