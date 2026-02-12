@@ -70,7 +70,9 @@ export class CallbackCallResolver extends Plugin {
       creates: {
         edges: ['CALLS']
       },
-      dependencies: ['ImportExportLinker', 'FunctionCallResolver']
+      dependencies: ['ImportExportLinker', 'FunctionCallResolver'],
+      consumes: ['PASSES_ARGUMENT', 'IMPORTS_FROM'],
+      produces: ['CALLS']
     };
   }
 

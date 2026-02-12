@@ -266,7 +266,9 @@ export class MethodCallResolver extends Plugin {
         nodes: [],
         edges: ['CALLS']
       },
-      dependencies: ['ImportExportLinker']
+      dependencies: ['ImportExportLinker'],
+      consumes: ['CONTAINS', 'INSTANCE_OF', 'DERIVES_FROM'],
+      produces: ['CALLS']
     };
   }
 

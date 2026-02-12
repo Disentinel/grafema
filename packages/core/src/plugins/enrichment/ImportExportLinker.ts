@@ -43,7 +43,9 @@ export class ImportExportLinker extends Plugin {
         nodes: [],
         edges: ['IMPORTS', 'IMPORTS_FROM']
       },
-      dependencies: ['JSASTAnalyzer'] // Requires IMPORT and EXPORT nodes
+      dependencies: ['JSASTAnalyzer'], // Requires IMPORT and EXPORT nodes
+      consumes: [],
+      produces: ['IMPORTS', 'IMPORTS_FROM']
     };
   }
 

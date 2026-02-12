@@ -59,7 +59,9 @@ export class FunctionCallResolver extends Plugin {
         nodes: ['EXTERNAL_MODULE'],
         edges: ['CALLS']
       },
-      dependencies: ['ImportExportLinker'] // Requires IMPORTS_FROM edges
+      dependencies: ['ImportExportLinker'], // Requires IMPORTS_FROM edges
+      consumes: ['IMPORTS_FROM'],
+      produces: ['CALLS']
     };
   }
 

@@ -98,6 +98,7 @@ export { GuaranteeManager } from './core/GuaranteeManager.js';
 export type { GuaranteeGraph } from './core/GuaranteeManager.js';
 export { toposort, CycleError } from './core/toposort.js';
 export type { ToposortItem } from './core/toposort.js';
+export { buildDependencyGraph } from './core/buildDependencyGraph.js';
 export { clearFileNodesIfNeeded, clearServiceNodeIfExists } from './core/FileNodeManager.js';
 export { CoverageAnalyzer } from './core/CoverageAnalyzer.js';
 export type { CoverageResult } from './core/CoverageAnalyzer.js';

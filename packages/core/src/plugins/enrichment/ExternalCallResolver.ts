@@ -51,7 +51,9 @@ export class ExternalCallResolver extends Plugin {
         nodes: ['EXTERNAL_MODULE'],
         edges: ['CALLS']
       },
-      dependencies: ['FunctionCallResolver'] // Requires relative imports to be resolved first
+      dependencies: ['FunctionCallResolver'], // Requires relative imports to be resolved first
+      consumes: ['CALLS'],
+      produces: ['CALLS']
     };
   }
 

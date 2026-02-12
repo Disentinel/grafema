@@ -52,7 +52,9 @@ export class InstanceOfResolver extends Plugin {
         nodes: [],
         edges: ['INSTANCE_OF']  // Пере-создаёт INSTANCE_OF edges
       },
-      dependencies: ['JSASTAnalyzer']
+      dependencies: ['JSASTAnalyzer'],
+      consumes: ['INSTANCE_OF'],
+      produces: ['INSTANCE_OF']
     };
   }
 

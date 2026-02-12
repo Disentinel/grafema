@@ -67,7 +67,9 @@ export class ArgumentParameterLinker extends Plugin {
         nodes: [],
         edges: ['RECEIVES_ARGUMENT']
       },
-      dependencies: ['JSASTAnalyzer', 'MethodCallResolver'] // Requires CALLS edges
+      dependencies: ['JSASTAnalyzer', 'MethodCallResolver'], // Requires CALLS edges
+      consumes: ['PASSES_ARGUMENT', 'CALLS', 'HAS_PARAMETER', 'RECEIVES_ARGUMENT'],
+      produces: ['RECEIVES_ARGUMENT']
     };
   }
 

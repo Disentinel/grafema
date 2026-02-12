@@ -54,7 +54,9 @@ export class MountPointResolver extends Plugin {
         nodes: [],  // Updates existing nodes
         edges: []   // Doesn't create edges
       },
-      dependencies: ['JSModuleIndexer', 'JSASTAnalyzer', 'ExpressRouteAnalyzer']
+      dependencies: ['JSModuleIndexer', 'JSASTAnalyzer', 'ExpressRouteAnalyzer'],
+      consumes: [],
+      produces: []
     };
   }
 

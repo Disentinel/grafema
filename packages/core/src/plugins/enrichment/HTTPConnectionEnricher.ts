@@ -55,7 +55,9 @@ export class HTTPConnectionEnricher extends Plugin {
         nodes: [],
         edges: ['INTERACTS_WITH', 'HTTP_RECEIVES']
       },
-      dependencies: ['ExpressRouteAnalyzer', 'FetchAnalyzer', 'ExpressResponseAnalyzer']
+      dependencies: ['ExpressRouteAnalyzer', 'FetchAnalyzer', 'ExpressResponseAnalyzer'],
+      consumes: ['RESPONDS_WITH'],
+      produces: ['INTERACTS_WITH', 'HTTP_RECEIVES']
     };
   }
 

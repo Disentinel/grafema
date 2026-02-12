@@ -20,6 +20,7 @@ import type { GraphBackend, PluginPhase, Logger, LogLevel, IssueSpec, ServiceDef
 import { createLogger } from './logging/Logger.js';
 import { NodeFactory } from './core/NodeFactory.js';
 import { toposort } from './core/toposort.js';
+import { buildDependencyGraph } from './core/buildDependencyGraph.js';
 import type { IssueSeverity } from './core/nodes/IssueNode.js';
 
 /**
@@ -944,14 +945,16 @@ export class Orchestrator {
       plugin.metadata.phase === phaseName
     );
 
-    // Topological sort by dependencies (REG-367)
+    // Topological sort by dependencies (REG-367, RFD-2)
     const pluginMap = new Map(phasePlugins.map(p => [p.metadata.name, p]));
-    const sortedIds = toposort(
-      phasePlugins.map(p => ({
-        id: p.metadata.name,
-        dependencies: p.metadata.dependencies ?? [],
-      }))
-    );
+    const sortedIds = phaseName === 'ENRICHMENT'
+      ? toposort(buildDependencyGraph(phasePlugins))
+      : toposort(
+          phasePlugins.map(p => ({
+            id: p.metadata.name,
+            dependencies: p.metadata.dependencies ?? [],
+          }))
+        );
     phasePlugins.length = 0;
     for (const id of sortedIds) {
       const plugin = pluginMap.get(id);
