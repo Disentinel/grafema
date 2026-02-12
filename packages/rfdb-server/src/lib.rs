@@ -42,6 +42,7 @@
 
 pub mod graph;
 pub mod storage;
+pub mod storage_v2;
 pub mod error;
 pub mod datalog;
 pub mod database_manager;
