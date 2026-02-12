@@ -9,7 +9,9 @@
  */
 
 import type { ScopeTracker } from '../../../core/ScopeTracker.js';
-import { computeSemanticId } from '../../../core/SemanticId.js';
+import { computeSemanticId, computeSemanticIdV2 } from '../../../core/SemanticId.js';
+import type { ContentHashHints } from '../../../core/SemanticId.js';
+import type { PendingNode } from './CollisionResolver.js';
 
 /**
  * Counter reference for legacy ID generation
@@ -58,6 +60,10 @@ export interface IdGeneratorOptions {
  * ```
  */
 export class IdGenerator {
+  /** Pending nodes for v2 collision resolution */
+  private _pendingNodes: PendingNode[] = [];
+  private _insertionCounter = 0;
+
   constructor(private scopeTracker?: ScopeTracker) {}
 
   /**
@@ -173,5 +179,79 @@ export class IdGenerator {
    */
   getScopeTracker(): ScopeTracker | undefined {
     return this.scopeTracker;
+  }
+
+  // ===========================================================================
+  // v2 ID Generation
+  // ===========================================================================
+
+  /**
+   * Generate v2 ID for nodes that can collide (CALL, METHOD_CALL, PROPERTY_ACCESS).
+   *
+   * Registers a PendingNode for later collision resolution via CollisionResolver.
+   * Sets collectionRef.id to the base ID immediately (may be overwritten later).
+   *
+   * namedParent is automatically obtained from ScopeTracker.getNamedParent().
+   *
+   * @param type - Node type ('CALL', 'METHOD_CALL', 'PROPERTY_ACCESS')
+   * @param name - Node name (e.g., 'console.log')
+   * @param file - Source file path
+   * @param contentHints - Content data for hash-based disambiguation
+   * @param collectionRef - Object whose .id will be updated by CollisionResolver
+   * @returns Base ID (may change after collision resolution)
+   */
+  generateV2(
+    type: string,
+    name: string,
+    file: string,
+    contentHints: ContentHashHints,
+    collectionRef: { id: string }
+  ): string {
+    const namedParent = this.scopeTracker?.getNamedParent();
+    const baseId = computeSemanticIdV2(type, name, file, namedParent);
+
+    this._pendingNodes.push({
+      baseId,
+      contentHints,
+      collectionRef,
+      insertionOrder: this._insertionCounter++
+    });
+
+    collectionRef.id = baseId;
+    return baseId;
+  }
+
+  /**
+   * Generate v2 ID for nodes that are unique by construction.
+   * (FUNCTION, CLASS, VARIABLE, CONSTANT, INTERFACE, TYPE, ENUM, SCOPE)
+   *
+   * These don't need collision resolution — language semantics guarantee uniqueness.
+   * namedParent is automatically obtained from ScopeTracker.getNamedParent().
+   *
+   * @returns Final ID (no collision resolution needed)
+   */
+  generateV2Simple(
+    type: string,
+    name: string,
+    file: string
+  ): string {
+    const namedParent = this.scopeTracker?.getNamedParent();
+    return computeSemanticIdV2(type, name, file, namedParent);
+  }
+
+  /**
+   * Get all pending nodes for collision resolution.
+   * Called after all visitors complete for a file.
+   */
+  getPendingNodes(): PendingNode[] {
+    return this._pendingNodes;
+  }
+
+  /**
+   * Reset v2 pending state (called at start of each file).
+   */
+  resetPending(): void {
+    this._pendingNodes = [];
+    this._insertionCounter = 0;
   }
 }
