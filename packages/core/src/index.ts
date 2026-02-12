@@ -81,14 +81,19 @@ export { Profiler } from './core/Profiler.js';
 export {
   computeSemanticId,
   parseSemanticId,
-  computeDiscriminator
+  computeDiscriminator,
+  computeSemanticIdV2,
+  parseSemanticIdV2,
+  computeContentHash
 } from './core/SemanticId.js';
 export type {
   Location,
   ScopeContext,
   SemanticIdOptions,
   ParsedSemanticId,
-  LocatedItem
+  LocatedItem,
+  ParsedSemanticIdV2,
+  ContentHashHints
 } from './core/SemanticId.js';
 export { ScopeTracker } from './core/ScopeTracker.js';
 export type { ScopeEntry, CountedScopeResult } from './core/ScopeTracker.js';

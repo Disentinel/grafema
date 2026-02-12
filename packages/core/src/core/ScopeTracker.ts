@@ -96,6 +96,28 @@ export class ScopeTracker {
   }
 
   /**
+   * Get the nearest named ancestor scope.
+   *
+   * Walks the scope stack from innermost to outermost, skipping
+   * counted scopes (if#0, try#1, for#0, etc.) and returns the
+   * first named scope.
+   *
+   * Returns undefined when at top-level (global scope).
+   *
+   * Used by v2 semantic ID generation to determine the namedParent.
+   */
+  getNamedParent(): string | undefined {
+    for (let i = this.scopeStack.length - 1; i >= 0; i--) {
+      const entry = this.scopeStack[i];
+      // Counted scopes have '#' in their name (if#0, try#1, for#0, etc.)
+      if (!entry.name.includes('#')) {
+        return entry.name;
+      }
+    }
+    return undefined;
+  }
+
+  /**
    * Get the innermost enclosing scope of a specific type.
    * Searches from innermost to outermost.
    *
