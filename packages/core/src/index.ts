@@ -185,6 +185,10 @@ export { DecoratorNode, type DecoratorTargetType } from './core/nodes/DecoratorN
 export { ExpressionNode, type ExpressionNodeOptions } from './core/nodes/ExpressionNode.js';
 export { ArgumentExpressionNode, type ArgumentExpressionNodeRecord, type ArgumentExpressionNodeOptions } from './core/nodes/ArgumentExpressionNode.js';
 
+// AST CollisionResolver (v2 semantic ID disambiguation)
+export { CollisionResolver } from './plugins/analysis/ast/CollisionResolver.js';
+export type { PendingNode } from './plugins/analysis/ast/CollisionResolver.js';
+
 // AST Visitors (for advanced usage)
 export {
   ASTVisitor,
