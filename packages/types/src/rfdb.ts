@@ -79,6 +79,7 @@ export interface WireEdge {
 // === REQUEST TYPES ===
 export interface RFDBRequest {
   cmd: RFDBCommand;
+  requestId?: string;
   [key: string]: unknown;
 }
 
@@ -170,6 +171,7 @@ export interface CountEdgesByTypeRequest extends RFDBRequest {
 
 // === RESPONSE TYPES ===
 export interface RFDBResponse {
+  requestId?: string;
   error?: string;
   [key: string]: unknown;
 }

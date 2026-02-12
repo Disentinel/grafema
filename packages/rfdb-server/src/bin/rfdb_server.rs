@@ -317,6 +317,24 @@ pub enum Response {
     },
 }
 
+/// Request envelope: captures requestId alongside the tagged Request.
+#[derive(Deserialize)]
+struct RequestEnvelope {
+    #[serde(default, rename = "requestId")]
+    request_id: Option<String>,
+    #[serde(flatten)]
+    request: Request,
+}
+
+/// Response envelope: wraps Response with optional requestId for echo-back.
+#[derive(Serialize)]
+struct ResponseEnvelope {
+    #[serde(rename = "requestId", skip_serializing_if = "Option::is_none")]
+    request_id: Option<String>,
+    #[serde(flatten)]
+    response: Response,
+}
+
 /// Database information for ListDatabases response
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -1219,11 +1237,14 @@ fn handle_client(
             }
         };
 
-        let request: Request = match rmp_serde::from_slice(&msg) {
-            Ok(req) => req,
+        let (request_id, request) = match rmp_serde::from_slice::<RequestEnvelope>(&msg) {
+            Ok(env) => (env.request_id, env.request),
             Err(e) => {
-                let response = Response::Error { error: format!("Invalid request: {}", e) };
-                let resp_bytes = rmp_serde::to_vec_named(&response).unwrap();
+                let envelope = ResponseEnvelope {
+                    request_id: None,
+                    response: Response::Error { error: format!("Invalid request: {}", e) },
+                };
+                let resp_bytes = rmp_serde::to_vec_named(&envelope).unwrap();
                 let _ = write_message(&mut stream, &resp_bytes);
                 continue;
             }
@@ -1249,7 +1270,10 @@ fn handle_client(
             }
         }
 
-        let resp_bytes = match rmp_serde::to_vec_named(&response) {
+        // Wrap response with requestId echo
+        let envelope = ResponseEnvelope { request_id, response };
+
+        let resp_bytes = match rmp_serde::to_vec_named(&envelope) {
             Ok(bytes) => bytes,
             Err(e) => {
                 eprintln!("[rfdb-server] Serialize error: {}", e);

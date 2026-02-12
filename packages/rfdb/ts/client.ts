@@ -154,7 +154,7 @@ export class RFDBClient extends EventEmitter implements IRFDBClient {
   }
 
   /**
-   * Handle decoded response
+   * Handle decoded response — match by requestId if present, else FIFO fallback
    */
   private _handleResponse(response: RFDBResponse): void {
     if (this.pending.size === 0) {
@@ -162,8 +162,22 @@ export class RFDBClient extends EventEmitter implements IRFDBClient {
       return;
     }
 
-    // Get the oldest pending request (FIFO)
-    const [id, { resolve, reject }] = this.pending.entries().next().value as [number, PendingRequest];
+    let id: number;
+
+    if (response.requestId) {
+      // Match by requestId (format: "r${number}")
+      const parsed = this._parseRequestId(response.requestId);
+      if (parsed === null || !this.pending.has(parsed)) {
+        this.emit('error', new Error(`Received response for unknown requestId: ${response.requestId}`));
+        return;
+      }
+      id = parsed;
+    } else {
+      // FIFO fallback for servers that don't echo requestId
+      id = (this.pending.entries().next().value as [number, PendingRequest])[0];
+    }
+
+    const { resolve, reject } = this.pending.get(id)!;
     this.pending.delete(id);
 
     if (response.error) {
@@ -171,6 +185,12 @@ export class RFDBClient extends EventEmitter implements IRFDBClient {
     } else {
       resolve(response);
     }
+  }
+
+  private _parseRequestId(requestId: string): number | null {
+    if (!requestId.startsWith('r')) return null;
+    const num = parseInt(requestId.slice(1), 10);
+    return Number.isNaN(num) ? null : num;
   }
 
   /**
@@ -191,11 +211,10 @@ export class RFDBClient extends EventEmitter implements IRFDBClient {
       throw new Error('Not connected to RFDB server');
     }
 
-    const request = { cmd, ...payload };
-    const msgBytes = encode(request);
-
     return new Promise((resolve, reject) => {
       const id = this.reqId++;
+      const request = { requestId: `r${id}`, cmd, ...payload };
+      const msgBytes = encode(request);
 
       // Setup timeout
       const timer = setTimeout(() => {
