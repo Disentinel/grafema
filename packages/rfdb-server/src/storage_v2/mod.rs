@@ -9,6 +9,7 @@ pub mod bloom;
 pub mod zone_map;
 pub mod writer;
 pub mod segment;
+pub mod manifest;
 
 pub use types::*;
 pub use string_table::StringTableV2;
@@ -16,3 +17,8 @@ pub use bloom::BloomFilter;
 pub use zone_map::ZoneMap;
 pub use writer::{NodeSegmentWriter, EdgeSegmentWriter};
 pub use segment::{NodeSegmentV2, EdgeSegmentV2};
+
+pub use manifest::{
+    CurrentPointer, DurabilityMode, Manifest, ManifestIndex, ManifestStats, ManifestStore,
+    SegmentDescriptor, SnapshotDiff, SnapshotInfo,
+};
