@@ -109,10 +109,11 @@ export class ScopeTracker {
   getNamedParent(): string | undefined {
     for (let i = this.scopeStack.length - 1; i >= 0; i--) {
       const entry = this.scopeStack[i];
-      // Counted scopes have '#' in their name (if#0, try#1, for#0, etc.)
-      if (!entry.name.includes('#')) {
-        return entry.name;
-      }
+      // Skip counted scopes (if#0, try#1, for#0, etc.)
+      if (entry.name.includes('#')) continue;
+      // Skip anonymous functions (anonymous, anonymous[0], anonymous[1], etc.)
+      if (entry.name === 'anonymous' || entry.name.startsWith('anonymous[')) continue;
+      return entry.name;
     }
     return undefined;
   }

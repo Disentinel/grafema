@@ -310,6 +310,35 @@ describe('SemanticId v2', () => {
       assert.strictEqual(tracker.getNamedParent(), 'handler');
     });
 
+    it('should skip anonymous function scopes', () => {
+      const tracker = new ScopeTracker('app.js');
+      tracker.enterScope('handler', 'FUNCTION');
+      tracker.enterScope('anonymous', 'FUNCTION');
+      assert.strictEqual(tracker.getNamedParent(), 'handler');
+    });
+
+    it('should skip indexed anonymous function scopes (anonymous[N])', () => {
+      const tracker = new ScopeTracker('app.js');
+      tracker.enterScope('handler', 'FUNCTION');
+      tracker.enterScope('anonymous[0]', 'FUNCTION');
+      assert.strictEqual(tracker.getNamedParent(), 'handler');
+    });
+
+    it('should skip anonymous inside counted scopes', () => {
+      const tracker = new ScopeTracker('app.js');
+      tracker.enterScope('MyClass', 'CLASS');
+      tracker.enterScope('anonymous[2]', 'FUNCTION');
+      tracker.enterCountedScope('if');
+      assert.strictEqual(tracker.getNamedParent(), 'MyClass');
+    });
+
+    it('should return undefined when only anonymous scopes exist', () => {
+      const tracker = new ScopeTracker('app.js');
+      tracker.enterScope('anonymous', 'FUNCTION');
+      tracker.enterScope('anonymous[0]', 'FUNCTION');
+      assert.strictEqual(tracker.getNamedParent(), undefined);
+    });
+
     it('should update after exitScope', () => {
       const tracker = new ScopeTracker('app.js');
       tracker.enterScope('outer', 'FUNCTION');
