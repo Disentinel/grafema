@@ -6,6 +6,8 @@
 use std::collections::HashSet;
 use std::io::Write;
 
+use serde::{Deserialize, Serialize};
+
 use crate::error::{GraphError, Result};
 
 // ── Constants ──────────────────────────────────────────────────────
@@ -42,7 +44,7 @@ pub const MAX_ZONE_MAP_VALUES_PER_FIELD: usize = 10_000;
 // ── Segment Type ───────────────────────────────────────────────────
 
 /// Type of segment (stored as u8 in header)
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum SegmentType {
     Nodes = 0,
