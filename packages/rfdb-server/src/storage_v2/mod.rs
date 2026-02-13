@@ -10,6 +10,8 @@ pub mod zone_map;
 pub mod writer;
 pub mod segment;
 pub mod manifest;
+pub mod write_buffer;
+pub mod shard;
 
 pub use types::*;
 pub use string_table::StringTableV2;
@@ -22,3 +24,5 @@ pub use manifest::{
     CurrentPointer, DurabilityMode, Manifest, ManifestIndex, ManifestStats, ManifestStore,
     SegmentDescriptor, SnapshotDiff, SnapshotInfo,
 };
+pub use write_buffer::WriteBuffer;
+pub use shard::{Shard, FlushResult};
