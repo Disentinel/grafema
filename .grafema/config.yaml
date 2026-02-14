@@ -1,0 +1,44 @@
+# Grafema Configuration — self-analysis (dogfooding)
+
+# Explicit services: monorepo packages with src/ entry points
+services:
+  - name: "core"
+    path: "packages/core"
+    entryPoint: "src/index.ts"
+  - name: "cli"
+    path: "packages/cli"
+    entryPoint: "src/cli.ts"
+  - name: "mcp"
+    path: "packages/mcp"
+    entryPoint: "src/server.ts"
+  - name: "types"
+    path: "packages/types"
+    entryPoint: "src/index.ts"
+  - name: "api"
+    path: "packages/api"
+    entryPoint: "src/index.ts"
+
+plugins:
+  indexing:
+    - JSModuleIndexer
+  analysis:
+    - JSASTAnalyzer
+  enrichment:
+    - MethodCallResolver
+    - ArgumentParameterLinker
+    - AliasTracker
+    - ClosureCaptureEnricher
+    - RejectionPropagationEnricher
+    - ValueDomainAnalyzer
+    - ImportExportLinker
+  validation:
+    - GraphConnectivityValidator
+    - DataFlowValidator
+    - TypeScriptDeadCodeValidator
+    - BrokenImportValidator
+
+exclude:
+  - "**/*.test.ts"
+  - "**/__tests__/**"
+  - "**/node_modules/**"
+  - "**/dist/**"

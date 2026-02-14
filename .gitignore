@@ -30,7 +30,8 @@ npm-debug.log*
 .mcp.json
 .claude/*
 !.claude/skills/
-.grafema/
+.grafema/*
+!.grafema/config.yaml
 
 # Local project data
 projects/
@@ -43,9 +44,7 @@ tmp/
 # Coverage
 coverage/
 
-# Grafema
-.grafema/graph.rfdb
-.grafema/rfdb.sock
+# Grafema (covered by .grafema/* above)
 .eslintcache
 
 # SWE-bench artifacts
