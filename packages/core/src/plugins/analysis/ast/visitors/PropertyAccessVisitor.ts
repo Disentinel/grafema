@@ -16,7 +16,7 @@
  * - The final link (c) is handled by CALL
  */
 
-import type { MemberExpression, Identifier, StringLiteral, NumericLiteral, Node } from '@babel/types';
+import type { MemberExpression, MetaProperty, Identifier, StringLiteral, NumericLiteral, Node } from '@babel/types';
 import type { NodePath } from '@babel/traverse';
 import { ASTVisitor, type VisitorModule, type VisitorCollections, type VisitorHandlers } from './ASTVisitor.js';
 import type { PropertyAccessInfo, CounterRef } from '../types.js';
@@ -79,9 +79,29 @@ export class PropertyAccessVisitor extends ASTVisitor {
       );
     };
 
+    const metaPropertyHandler = (path: NodePath) => {
+      const node = path.node as unknown as MetaProperty;
+
+      // Skip if inside function — analyzeFunctionBody handles those
+      const functionParent = path.getFunctionParent();
+      if (functionParent) {
+        return;
+      }
+
+      PropertyAccessVisitor.extractMetaProperty(
+        node,
+        module,
+        propertyAccesses,
+        propertyAccessCounterRef,
+        scopeTracker,
+        module.id  // Module-level scope
+      );
+    };
+
     return {
       MemberExpression: handler,
-      OptionalMemberExpression: handler
+      OptionalMemberExpression: handler,
+      MetaProperty: metaPropertyHandler
     };
   }
 
@@ -145,6 +165,48 @@ export class PropertyAccessVisitor extends ASTVisitor {
         parentScopeId
       });
     }
+  }
+
+  /**
+   * Process a MetaProperty node (new.target) and create a PROPERTY_ACCESS entry.
+   *
+   * `new.target` is represented in Babel AST as MetaProperty { meta: "new", property: "target" }.
+   * We track it as PROPERTY_ACCESS with objectName="new", propertyName="target" —
+   * consistent with how ThisExpression uses objectName="this".
+   */
+  static extractMetaProperty(
+    node: MetaProperty,
+    module: VisitorModule,
+    propertyAccesses: PropertyAccessInfo[],
+    propertyAccessCounterRef: CounterRef,
+    scopeTracker: ScopeTracker | undefined,
+    parentScopeId: string
+  ): void {
+    const objectName = node.meta.name;   // "new"
+    const propertyName = node.property.name;  // "target"
+    const fullName = `${objectName}.${propertyName}`;
+
+    let id: string;
+    if (scopeTracker) {
+      const discriminator = scopeTracker.getItemCounter(`PROPERTY_ACCESS:${fullName}`);
+      id = computeSemanticId('PROPERTY_ACCESS', fullName, scopeTracker.getContext(), { discriminator });
+    } else {
+      const line = node.loc?.start?.line ?? 0;
+      const column = node.loc?.start?.column ?? 0;
+      id = `PROPERTY_ACCESS#${fullName}#${module.file}#${line}:${column}:${propertyAccessCounterRef.value++}`;
+    }
+
+    propertyAccesses.push({
+      id,
+      semanticId: id,
+      type: 'PROPERTY_ACCESS',
+      objectName,
+      propertyName,
+      file: module.file,
+      line: node.loc?.start?.line ?? 0,
+      column: node.loc?.start?.column ?? 0,
+      parentScopeId
+    });
   }
 
   /**
@@ -276,6 +338,9 @@ export class PropertyAccessVisitor extends ASTVisitor {
       baseName = (baseObject as Identifier).name;
     } else if (baseObject?.type === 'ThisExpression') {
       baseName = 'this';
+    } else if (baseObject?.type === 'MetaProperty') {
+      // import.meta → treat as base object "import.meta" (REG-300)
+      baseName = 'import.meta';
     } else {
       // Complex expression as base - not trackable as simple property access
       return [];

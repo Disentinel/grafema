@@ -15,8 +15,15 @@
 import { Command } from 'commander';
 import { resolve, join } from 'path';
 import { existsSync } from 'fs';
-import { RFDBServerBackend } from '@grafema/core';
-import type { EdgeRecord, BaseNodeRecord } from '@grafema/types';
+import {
+  RFDBServerBackend,
+  buildNodeContext,
+  getNodeDisplayName,
+  formatEdgeMetadata,
+  STRUCTURAL_EDGE_TYPES,
+} from '@grafema/core';
+import type { NodeContext, EdgeGroup } from '@grafema/core';
+import type { BaseNodeRecord } from '@grafema/types';
 import { getCodePreview, formatCodePreview } from '../utils/codePreview.js';
 import { formatLocation } from '../utils/formatNode.js';
 import { exitWithError } from '../utils/errorFormatter.js';
@@ -29,51 +36,8 @@ interface ContextOptions {
   edgeType?: string;
 }
 
-/**
- * Edge types that are structural/containment — shown in compact form by default.
- * These describe HOW code is nested, not WHAT it does.
- */
-const STRUCTURAL_EDGE_TYPES = new Set([
-  'CONTAINS',
-  'HAS_SCOPE',
-  'DECLARES',
-  'DEFINES',
-  'HAS_CONDITION',
-  'HAS_CASE',
-  'HAS_DEFAULT',
-  'HAS_CONSEQUENT',
-  'HAS_ALTERNATE',
-  'HAS_BODY',
-  'HAS_INIT',
-  'HAS_UPDATE',
-  'HAS_CATCH',
-  'HAS_FINALLY',
-  'HAS_PARAMETER',
-  'HAS_PROPERTY',
-  'HAS_ELEMENT',
-  'USES',
-  'GOVERNS',
-  'VIOLATES',
-  'AFFECTS',
-  'UNKNOWN',
-]);
-
-interface EdgeWithNode {
-  edge: EdgeRecord;
-  node: BaseNodeRecord | null;
-}
-
-interface EdgeGroup {
-  edgeType: string;
-  edges: EdgeWithNode[];
-}
-
-export interface NodeContext {
-  node: BaseNodeRecord;
-  source: { file: string; startLine: number; endLine: number; lines: string[] } | null;
-  outgoing: EdgeGroup[];
-  incoming: EdgeGroup[];
-  /** For CLASS nodes: full context of each method, sorted by source line */
+/** Extended context with CLASS member expansion (REG-411) */
+interface ContextWithMembers extends NodeContext {
   memberContexts?: NodeContext[];
 }
 
@@ -136,8 +100,8 @@ Examples:
         ]);
       }
 
-      // 2. Build context
-      const ctx = await buildNodeContext(backend, node, contextLines, edgeTypeFilter);
+      // 2. Build context (with CLASS member expansion)
+      const ctx = await buildContextWithMembers(backend, node, { contextLines, edgeTypeFilter });
 
       spinner.stop();
 
@@ -154,56 +118,27 @@ Examples:
   });
 
 /**
- * Build full node context: source + all edges with connected nodes
+ * Build context with CLASS member expansion (REG-411)
  */
-async function buildNodeContext(
+async function buildContextWithMembers(
   backend: RFDBServerBackend,
   node: BaseNodeRecord,
-  contextLines: number,
-  edgeTypeFilter: Set<string> | null,
-): Promise<NodeContext> {
-  // Source code preview
-  let source: NodeContext['source'] = null;
-  if (node.file && node.line) {
-    const preview = getCodePreview({
-      file: node.file,
-      line: node.line as number,
-      contextBefore: contextLines,
-      contextAfter: contextLines + 12, // show more after the highlighted line
-    });
-    if (preview) {
-      source = {
-        file: node.file,
-        startLine: preview.startLine,
-        endLine: preview.endLine,
-        lines: preview.lines,
-      };
-    }
-  }
+  options: { contextLines: number; edgeTypeFilter: Set<string> | null },
+): Promise<ContextWithMembers> {
+  const ctx = await buildNodeContext(backend, node, options);
 
-  // Outgoing edges
-  const rawOutgoing = await backend.getOutgoingEdges(node.id);
-  const outgoing = await groupEdges(backend, rawOutgoing, 'dst', edgeTypeFilter);
-
-  // Incoming edges
-  const rawIncoming = await backend.getIncomingEdges(node.id);
-  const incoming = await groupEdges(backend, rawIncoming, 'src', edgeTypeFilter);
-
-  // For CLASS nodes: expand member methods with their full context
   let memberContexts: NodeContext[] | undefined;
   if (node.type === 'CLASS') {
-    const containsEdges = rawOutgoing.filter(
-      e => e.type === 'CONTAINS'
-    );
+    const outEdges = await backend.getOutgoingEdges(node.id);
+    const containsEdges = outEdges.filter(e => e.type === 'CONTAINS');
     const members: NodeContext[] = [];
     for (const edge of containsEdges) {
       const memberNode = await backend.getNode(edge.dst);
       if (memberNode && (memberNode.type === 'FUNCTION' || memberNode.type === 'METHOD')) {
-        const memberCtx = await buildNodeContext(backend, memberNode, contextLines, edgeTypeFilter);
+        const memberCtx = await buildNodeContext(backend, memberNode, options);
         members.push(memberCtx);
       }
     }
-    // Sort by source line (source order)
     members.sort((a, b) => {
       const lineA = (a.node.line as number | undefined) ?? 0;
       const lineB = (b.node.line as number | undefined) ?? 0;
@@ -214,54 +149,17 @@ async function buildNodeContext(
     }
   }
 
-  return { node, source, outgoing, incoming, memberContexts };
-}
-
-/**
- * Group edges by type and resolve connected nodes
- */
-async function groupEdges(
-  backend: RFDBServerBackend,
-  edges: EdgeRecord[],
-  nodeField: 'src' | 'dst',
-  edgeTypeFilter: Set<string> | null,
-): Promise<EdgeGroup[]> {
-  const groups = new Map<string, EdgeWithNode[]>();
-
-  for (const edge of edges) {
-    const edgeType = edge.type || 'UNKNOWN';
-
-    // Apply edge type filter
-    if (edgeTypeFilter && !edgeTypeFilter.has(edgeType)) continue;
-
-    const connectedId = edge[nodeField];
-    const connectedNode = await backend.getNode(connectedId);
-
-    if (!groups.has(edgeType)) {
-      groups.set(edgeType, []);
-    }
-    groups.get(edgeType)!.push({ edge, node: connectedNode });
-  }
-
-  // Sort groups: primary edges first, then structural
-  return Array.from(groups.entries())
-    .sort(([a], [b]) => {
-      const aStructural = STRUCTURAL_EDGE_TYPES.has(a);
-      const bStructural = STRUCTURAL_EDGE_TYPES.has(b);
-      if (aStructural !== bStructural) return aStructural ? 1 : -1;
-      return a.localeCompare(b);
-    })
-    .map(([edgeType, edges]) => ({ edgeType, edges }));
+  return { ...ctx, memberContexts };
 }
 
 /**
  * Print context to stdout in grep-friendly format
  */
-function printContext(ctx: NodeContext, projectPath: string, contextLines: number): void {
+function printContext(ctx: ContextWithMembers, projectPath: string, contextLines: number): void {
   const { node, source, outgoing, incoming } = ctx;
 
   // Node header
-  const displayName = getDisplayName(node);
+  const displayName = getNodeDisplayName(node);
   console.log(`[${node.type}] ${displayName}`);
   console.log(`  ID: ${node.id}`);
 
@@ -307,7 +205,7 @@ function printContext(ctx: NodeContext, projectPath: string, contextLines: numbe
     console.log(`  Methods (${ctx.memberContexts.length}):`);
     for (const memberCtx of ctx.memberContexts) {
       console.log('');
-      console.log(`  ── [${memberCtx.node.type}] ${getDisplayName(memberCtx.node)}`);
+      console.log(`  ── [${memberCtx.node.type}] ${getNodeDisplayName(memberCtx.node)}`);
       const memberLoc = formatLocation(
         memberCtx.node.file,
         memberCtx.node.line as number | undefined,
@@ -383,7 +281,7 @@ function printEdgeGroup(
       continue;
     }
 
-    const displayName = getDisplayName(node);
+    const displayName = getNodeDisplayName(node);
     const loc = formatLocation(node.file, node.line as number | undefined, projectPath);
     const locStr = loc ? `  (${loc})` : '';
 
@@ -408,56 +306,4 @@ function printEdgeGroup(
       }
     }
   }
-}
-
-/**
- * Format edge metadata for inline display (only meaningful fields)
- */
-function formatEdgeMetadata(edge: EdgeRecord): string {
-  const parts: string[] = [];
-  const meta = edge.metadata || {};
-
-  if (edge.type === 'PASSES_ARGUMENT' || edge.type === 'RECEIVES_ARGUMENT') {
-    if ('argIndex' in meta) {
-      parts.push(`arg${meta.argIndex}`);
-    }
-  }
-  if (edge.type === 'FLOWS_INTO') {
-    if ('mutationMethod' in meta) parts.push(`via ${meta.mutationMethod}`);
-  }
-  if (edge.type === 'HAS_PROPERTY') {
-    if ('propertyName' in meta) parts.push(`key: ${meta.propertyName}`);
-  }
-  if (edge.type === 'ITERATES_OVER') {
-    if ('iterates' in meta) parts.push(`${meta.iterates}`);
-  }
-
-  return parts.length > 0 ? `  [${parts.join(', ')}]` : '';
-}
-
-/**
- * Get display name for a node based on its type
- */
-function getDisplayName(node: BaseNodeRecord): string {
-  // HTTP nodes: method + path/url
-  if (node.type === 'http:route') {
-    const method = node.method as string | undefined;
-    const path = node.path as string | undefined;
-    if (method && path) return `${method} ${path}`;
-  }
-  if (node.type === 'http:request') {
-    const method = node.method as string | undefined;
-    const url = node.url as string | undefined;
-    if (method && url) return `${method} ${url}`;
-  }
-
-  // Socket.IO: event name
-  if (node.type === 'socketio:emit' || node.type === 'socketio:on') {
-    const event = node.event as string | undefined;
-    if (event) return event;
-  }
-
-  // Default: name or ID fallback
-  if (node.name && !node.name.startsWith('{')) return node.name;
-  return node.id;
 }

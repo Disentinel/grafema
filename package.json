@@ -10,7 +10,7 @@
     "typecheck": "pnpm --filter='@grafema/cli' --filter='@grafema/core' --filter='@grafema/mcp' --filter='@grafema/rfdb-client' --filter='@grafema/types' --filter='grafema-explore' exec tsc --noEmit",
     "lint": "eslint --cache packages/",
     "mcp": "node --import tsx packages/mcp/src/server.ts",
-    "test": "node --test test/unit/",
+    "test": "./scripts/test.sh",
     "test:coverage": "c8 node --test --test-concurrency=1 'test/unit/*.test.js'",
     "test:scenarios": "node --test test/scenarios/",
     "release": "./scripts/release.sh",

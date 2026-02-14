@@ -127,6 +127,10 @@ pub struct GraphEngine {
     /// Maintained across all code paths: add, delete, flush, clear, open.
     edge_keys: HashSet<(u128, u128, String)>,
 
+    // Track edge keys deleted from segment (not in delta_edges)
+    // Mirrors deleted_segment_ids but for edges. Cleared on flush.
+    deleted_segment_edge_keys: HashSet<(u128, u128, String)>,
+
     // Secondary indexes over segment data (rebuilt on open/flush)
     index_set: IndexSet,
 
@@ -158,6 +162,7 @@ impl GraphEngine {
             last_memory_check: None,
             deleted_segment_ids: HashSet::new(),
             edge_keys: HashSet::new(),
+            deleted_segment_edge_keys: HashSet::new(),
             index_set: IndexSet::new(),
             declared_fields: Vec::new(),
         })
@@ -202,6 +207,7 @@ impl GraphEngine {
             last_memory_check: None,
             deleted_segment_ids: HashSet::new(),
             edge_keys: HashSet::new(),
+            deleted_segment_edge_keys: HashSet::new(),
             index_set: IndexSet::new(),
             declared_fields: Vec::new(),
         })
@@ -298,6 +304,7 @@ impl GraphEngine {
             last_memory_check: None,
             deleted_segment_ids: HashSet::new(),
             edge_keys,
+            deleted_segment_edge_keys: HashSet::new(),
             index_set,
             declared_fields,
         })
@@ -340,12 +347,18 @@ impl GraphEngine {
                     .push(global_idx);
             }
             Delta::DeleteEdge { src, dst, edge_type } => {
+                let mut found_in_delta = false;
                 for edge in &mut self.delta_edges {
                     let matches = edge.src == *src && edge.dst == *dst &&
                         edge.edge_type.as_deref() == Some(edge_type.as_str());
                     if matches {
                         edge.deleted = true;
+                        found_in_delta = true;
                     }
+                }
+                if !found_in_delta {
+                    // Edge is in segment (already flushed), track it for deletion
+                    self.deleted_segment_edge_keys.insert((*src, *dst, edge_type.clone()));
                 }
             }
             Delta::UpdateNodeVersion { id, version } => {
@@ -410,6 +423,7 @@ impl GraphEngine {
         self.metadata = GraphMetadata::default();
         self.ops_since_flush = 0;
         self.deleted_segment_ids.clear();
+        self.deleted_segment_edge_keys.clear();
         self.index_set.clear();
         tracing::info!("Graph cleared");
     }
@@ -610,8 +624,15 @@ impl GraphEngine {
                     if edges_seg.is_deleted(idx) {
                         continue;
                     }
-                    if let Some(src) = edges_seg.get_src(idx) {
+                    if let (Some(src), Some(dst)) = (edges_seg.get_src(idx), edges_seg.get_dst(idx)) {
                         let edge_type = edges_seg.get_edge_type(idx);
+                        let edge_type_key = edge_type.unwrap_or("").to_string();
+
+                        // Skip edges deleted from segment
+                        if self.deleted_segment_edge_keys.contains(&(src, dst, edge_type_key)) {
+                            continue;
+                        }
+
                         if edge_types.is_empty() || edge_type.map_or(false, |et| edge_types.contains(&et)) {
                             result.push(src);
                         }
@@ -1041,6 +1062,15 @@ impl GraphStore for GraphEngine {
                             edges_seg.is_deleted(idx),
                         ) {
                             let edge_type = edges_seg.get_edge_type(idx);
+                            let edge_type_key = edge_type.unwrap_or("").to_string();
+
+                            // Skip edges deleted from segment
+                            if let Some(src) = edges_seg.get_src(idx) {
+                                if self.deleted_segment_edge_keys.contains(&(src, dst, edge_type_key)) {
+                                    continue;
+                                }
+                            }
+
                             if edge_types.is_empty() || edge_type.map_or(false, |et| edge_types.contains(&et)) {
                                 result.push(dst);
                             }
@@ -1173,6 +1203,11 @@ impl GraphStore for GraphEngine {
                         let edge_type_key = edge_type.unwrap_or("").to_string();
                         let key = (src, dst, edge_type_key.clone());
 
+                        // Skip edges deleted from segment
+                        if self.deleted_segment_edge_keys.contains(&key) {
+                            continue;
+                        }
+
                         // Don't overwrite delta edges (they are more recent)
                         if !edges_map.contains_key(&key) {
                             let metadata = segment.get_metadata(idx).map(|s| s.to_string());
@@ -1223,6 +1258,7 @@ impl GraphStore for GraphEngine {
         self.delta_nodes.clear();
         self.delta_edges.clear();
         self.deleted_segment_ids.clear();
+        self.deleted_segment_edge_keys.clear();
         self.edge_keys.clear();
 
         // Перезагружаем segments
@@ -1313,6 +1349,12 @@ impl GraphStore for GraphEngine {
                         edges_seg.get_dst(idx),
                     ) {
                         let edge_type = edges_seg.get_edge_type(idx);
+                        let edge_type_key = edge_type.unwrap_or("").to_string();
+
+                        // Skip edges deleted from segment
+                        if self.deleted_segment_edge_keys.contains(&(src, dst, edge_type_key.clone())) {
+                            continue;
+                        }
 
                         // Filter by edge type if specified
                         if let Some(types) = edge_types {
@@ -1366,6 +1408,12 @@ impl GraphStore for GraphEngine {
                             edges_seg.get_dst(idx),
                         ) {
                             let edge_type = edges_seg.get_edge_type(idx);
+                            let edge_type_key = edge_type.unwrap_or("").to_string();
+
+                            // Skip edges deleted from segment
+                            if self.deleted_segment_edge_keys.contains(&(src, dst, edge_type_key.clone())) {
+                                continue;
+                            }
 
                             // Filter by edge type if specified
                             if let Some(types) = edge_types {
@@ -1439,6 +1487,11 @@ impl GraphStore for GraphEngine {
                     let edge_type = edges_seg.get_edge_type(idx);
                     let edge_type_key = edge_type.unwrap_or("").to_string();
                     let key = (src, dst, edge_type_key.clone());
+
+                    // Skip edges deleted from segment
+                    if self.deleted_segment_edge_keys.contains(&key) {
+                        continue;
+                    }
 
                     // Don't overwrite delta edges (they are more recent)
                     if !edges_map.contains_key(&key) {
@@ -1574,6 +1627,11 @@ impl GraphStore for GraphEngine {
                 ) {
                     let edge_type = edges_seg.get_edge_type(idx).unwrap_or("UNKNOWN");
                     let key = (src, dst, edge_type.to_string());
+
+                    // Skip edges deleted from segment
+                    if self.deleted_segment_edge_keys.contains(&key) {
+                        continue;
+                    }
 
                     if seen_edges.contains(&key) {
                         continue;

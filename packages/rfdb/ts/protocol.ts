@@ -49,6 +49,16 @@ export type {
   DatalogBinding,
   DatalogResult,
 
+  // Snapshot types
+  SnapshotRef,
+  SnapshotStats,
+  SegmentInfo,
+  SnapshotDiff,
+  SnapshotInfo,
+  DiffSnapshotsResponse,
+  FindSnapshotResponse,
+  ListSnapshotsResponse,
+
   // Client interface
   IRFDBClient,
 } from '@grafema/types';
