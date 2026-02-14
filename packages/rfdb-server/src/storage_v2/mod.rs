@@ -12,6 +12,8 @@ pub mod segment;
 pub mod manifest;
 pub mod write_buffer;
 pub mod shard;
+pub mod shard_planner;
+pub mod multi_shard;
 
 pub use types::*;
 pub use string_table::StringTableV2;
@@ -26,3 +28,5 @@ pub use manifest::{
 };
 pub use write_buffer::WriteBuffer;
 pub use shard::{Shard, FlushResult};
+pub use shard_planner::ShardPlanner;
+pub use multi_shard::{DatabaseConfig, MultiShardStore, ShardStats};

@@ -146,6 +146,63 @@ impl Shard {
             edge_descriptors: Vec::new(),
         }
     }
+
+    /// Create new shard for multi-shard mode (with shard_id).
+    ///
+    /// The `path` is the shard directory (e.g., `<db_path>/segments/NN/`).
+    /// Creates the directory if it does not exist.
+    pub fn create_for_shard(path: &Path, shard_id: u16) -> Result<Self> {
+        std::fs::create_dir_all(path)?;
+        Ok(Self {
+            path: Some(path.to_path_buf()),
+            shard_id: Some(shard_id),
+            write_buffer: WriteBuffer::new(),
+            node_segments: Vec::new(),
+            edge_segments: Vec::new(),
+            node_descriptors: Vec::new(),
+            edge_descriptors: Vec::new(),
+        })
+    }
+
+    /// Open existing shard for multi-shard mode (with shard_id).
+    ///
+    /// Like `open()` but sets `shard_id` on the shard so flushed segments
+    /// get descriptors with the correct shard_id.
+    ///
+    /// `path` is the shard directory (e.g., `<db_path>/segments/NN/`).
+    /// `db_path` is the database root (for resolving segment file paths
+    /// via `SegmentDescriptor::file_path()`).
+    pub fn open_for_shard(
+        path: &Path,
+        db_path: &Path,
+        shard_id: u16,
+        node_descriptors: Vec<SegmentDescriptor>,
+        edge_descriptors: Vec<SegmentDescriptor>,
+    ) -> Result<Self> {
+        let mut node_segments = Vec::with_capacity(node_descriptors.len());
+        for desc in &node_descriptors {
+            let file_path = desc.file_path(db_path);
+            let seg = NodeSegmentV2::open(&file_path)?;
+            node_segments.push(seg);
+        }
+
+        let mut edge_segments = Vec::with_capacity(edge_descriptors.len());
+        for desc in &edge_descriptors {
+            let file_path = desc.file_path(db_path);
+            let seg = EdgeSegmentV2::open(&file_path)?;
+            edge_segments.push(seg);
+        }
+
+        Ok(Self {
+            path: Some(path.to_path_buf()),
+            shard_id: Some(shard_id),
+            write_buffer: WriteBuffer::new(),
+            node_segments,
+            edge_segments,
+            node_descriptors,
+            edge_descriptors,
+        })
+    }
 }
 
 // -- Write Operations ---------------------------------------------------------
@@ -553,6 +610,24 @@ impl Shard {
     /// Write buffer size: (nodes, edges).
     pub fn write_buffer_size(&self) -> (usize, usize) {
         (self.write_buffer.node_count(), self.write_buffer.edge_count())
+    }
+
+    /// Return all node IDs (write buffer + segments).
+    ///
+    /// Used for rebuilding `node_to_shard` map on MultiShardStore::open().
+    /// Returns only IDs (16 bytes each), NOT full NodeRecordV2 records
+    /// (~200 bytes each).
+    pub fn all_node_ids(&self) -> Vec<u128> {
+        let mut ids = Vec::new();
+        for node in self.write_buffer.iter_nodes() {
+            ids.push(node.id);
+        }
+        for seg in &self.node_segments {
+            for j in 0..seg.record_count() {
+                ids.push(seg.get_id(j));
+            }
+        }
+        ids
     }
 }
 
