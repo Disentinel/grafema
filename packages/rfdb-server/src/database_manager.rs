@@ -38,7 +38,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use crate::graph::{GraphEngine, GraphStore};
+use crate::graph::{GraphEngine, GraphEngineV2, GraphStore};
 use crate::error::{GraphError, Result};
 
 /// Unique identifier for a client connection
@@ -86,8 +86,10 @@ impl AccessMode {
 pub struct Database {
     /// Database name (for identification)
     pub name: String,
-    /// The graph engine with RwLock for concurrent access
-    pub engine: RwLock<GraphEngine>,
+    /// The graph engine with RwLock for concurrent access.
+    /// Uses trait object so both v1 (GraphEngine) and v2 (GraphEngineV2)
+    /// can be used interchangeably behind the same wire protocol.
+    pub engine: RwLock<Box<dyn GraphStore>>,
     /// Whether this is an ephemeral (in-memory) database
     pub ephemeral: bool,
     /// Number of active connections to this database
@@ -96,7 +98,7 @@ pub struct Database {
 
 impl Database {
     /// Create a new database entry
-    pub fn new(name: String, engine: GraphEngine, ephemeral: bool) -> Self {
+    pub fn new(name: String, engine: Box<dyn GraphStore>, ephemeral: bool) -> Self {
         Self {
             name,
             engine: RwLock::new(engine),
@@ -219,11 +221,11 @@ impl DatabaseManager {
             return Err(GraphError::DatabaseExists(name.to_string()));
         }
 
-        let engine = if ephemeral {
-            GraphEngine::create_ephemeral()?
+        let engine: Box<dyn GraphStore> = if ephemeral {
+            Box::new(GraphEngineV2::create_ephemeral())
         } else {
             let db_path = self.base_path.join(format!("{}.rfdb", name));
-            GraphEngine::create(&db_path)?
+            Box::new(GraphEngineV2::create(&db_path)?)
         };
 
         let database = Arc::new(Database::new(name.to_string(), engine, ephemeral));
@@ -302,10 +304,15 @@ impl DatabaseManager {
     /// Legacy clients that don't use the new protocol automatically
     /// connect to this "default" database.
     pub fn create_default_from_path(&self, db_path: &PathBuf) -> Result<()> {
-        let engine = if db_path.join("nodes.bin").exists() {
-            GraphEngine::open(db_path)?
+        let engine: Box<dyn GraphStore> = if db_path.join("nodes.bin").exists() {
+            // v1 database detected — open with v1 engine
+            Box::new(GraphEngine::open(db_path)?)
+        } else if db_path.join("db_config.json").exists() {
+            // v2 database detected — open with v2 engine
+            Box::new(GraphEngineV2::open(db_path)?)
         } else {
-            GraphEngine::create(db_path)?
+            // New database — create with v2 engine
+            Box::new(GraphEngineV2::create(db_path)?)
         };
 
         let database = Arc::new(Database::new("default".to_string(), engine, false));
@@ -331,7 +338,7 @@ mod database_tests {
     #[test]
     fn test_database_connection_count_starts_at_zero() {
         let dir = tempdir().unwrap();
-        let engine = GraphEngine::create(dir.path()).unwrap();
+        let engine: Box<dyn GraphStore> = Box::new(GraphEngine::create(dir.path()).unwrap());
         let db = Database::new("test".to_string(), engine, false);
 
         assert_eq!(db.connection_count(), 0);
@@ -341,7 +348,7 @@ mod database_tests {
     #[test]
     fn test_database_add_connection_increments() {
         let dir = tempdir().unwrap();
-        let engine = GraphEngine::create(dir.path()).unwrap();
+        let engine: Box<dyn GraphStore> = Box::new(GraphEngine::create(dir.path()).unwrap());
         let db = Database::new("test".to_string(), engine, false);
 
         db.add_connection();
@@ -355,7 +362,7 @@ mod database_tests {
     #[test]
     fn test_database_remove_connection_decrements() {
         let dir = tempdir().unwrap();
-        let engine = GraphEngine::create(dir.path()).unwrap();
+        let engine: Box<dyn GraphStore> = Box::new(GraphEngine::create(dir.path()).unwrap());
         let db = Database::new("test".to_string(), engine, false);
 
         db.add_connection();
@@ -375,7 +382,7 @@ mod database_tests {
         use std::thread;
 
         let dir = tempdir().unwrap();
-        let engine = GraphEngine::create(dir.path()).unwrap();
+        let engine: Box<dyn GraphStore> = Box::new(GraphEngine::create(dir.path()).unwrap());
         let db = Arc::new(Database::new("test".to_string(), engine, false));
 
         let mut handles = vec![];
@@ -417,7 +424,7 @@ mod database_tests {
             metadata: None,
         }]);
 
-        let db = Database::new("test".to_string(), engine, false);
+        let db = Database::new("test".to_string(), Box::new(engine), false);
 
         assert_eq!(db.node_count(), 1);
         assert_eq!(db.edge_count(), 0);
@@ -426,13 +433,13 @@ mod database_tests {
     #[test]
     fn test_database_ephemeral_flag() {
         let dir = tempdir().unwrap();
-        let engine = GraphEngine::create(dir.path()).unwrap();
+        let engine: Box<dyn GraphStore> = Box::new(GraphEngine::create(dir.path()).unwrap());
 
         let persistent_db = Database::new("persistent".to_string(), engine, false);
         assert!(!persistent_db.ephemeral);
 
         let dir2 = tempdir().unwrap();
-        let engine2 = GraphEngine::create(dir2.path()).unwrap();
+        let engine2: Box<dyn GraphStore> = Box::new(GraphEngine::create(dir2.path()).unwrap());
         let ephemeral_db = Database::new("ephemeral".to_string(), engine2, true);
         assert!(ephemeral_db.ephemeral);
     }

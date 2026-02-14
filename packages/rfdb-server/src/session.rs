@@ -76,7 +76,7 @@ mod session_tests {
 
     fn make_test_database(name: &str) -> Arc<Database> {
         let dir = tempdir().unwrap();
-        let engine = GraphEngine::create(dir.path()).unwrap();
+        let engine: Box<dyn crate::graph::GraphStore> = Box::new(GraphEngine::create(dir.path()).unwrap());
         Arc::new(Database::new(name.to_string(), engine, false))
     }
 
