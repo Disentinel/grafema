@@ -264,6 +264,36 @@ impl MultiShardStore {
     }
 }
 
+// ── Tombstones ────────────────────────────────────────────────────
+
+impl MultiShardStore {
+    /// Apply pending tombstones to all shards.
+    ///
+    /// Merges the given node IDs and edge keys into each shard's
+    /// existing tombstone set. Called by `GraphEngineV2::flush()` to
+    /// persist buffered `delete_node`/`delete_edge` operations.
+    pub fn set_tombstones(
+        &mut self,
+        node_ids: &HashSet<u128>,
+        edge_keys: &HashSet<(u128, u128, String)>,
+    ) {
+        for shard in &mut self.shards {
+            let mut merged_nodes: HashSet<u128> =
+                shard.tombstones().node_ids.iter().copied().collect();
+            merged_nodes.extend(node_ids.iter().copied());
+
+            let mut merged_edges: HashSet<(u128, u128, String)> =
+                shard.tombstones().edge_keys.iter().cloned().collect();
+            merged_edges.extend(edge_keys.iter().cloned());
+
+            shard.set_tombstones(TombstoneSet {
+                node_ids: merged_nodes,
+                edge_keys: merged_edges,
+            });
+        }
+    }
+}
+
 // ── Flush ──────────────────────────────────────────────────────────
 
 impl MultiShardStore {

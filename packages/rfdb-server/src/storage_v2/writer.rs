@@ -32,18 +32,12 @@ impl NodeSegmentWriter {
 
     /// Add a node record to the segment.
     ///
-    /// IMPORTANT: The caller must ensure `record.id` matches
-    /// `blake3::hash(semantic_id)`. This is verified in debug builds.
+    /// Add a node record to the segment.
+    ///
+    /// Nodes coming through the v2-native pipeline have id == blake3(semantic_id).
+    /// Nodes from the v1 backward-compat path (GraphStore trait) may have
+    /// arbitrary IDs. Both are accepted during the transition period.
     pub fn add(&mut self, record: NodeRecordV2) {
-        #[cfg(debug_assertions)]
-        {
-            let hash = blake3::hash(record.semantic_id.as_bytes());
-            let expected_id = u128::from_le_bytes(hash.as_bytes()[0..16].try_into().unwrap());
-            debug_assert_eq!(
-                record.id, expected_id,
-                "NodeRecordV2.id must be blake3(semantic_id)"
-            );
-        }
         self.records.push(record);
     }
 

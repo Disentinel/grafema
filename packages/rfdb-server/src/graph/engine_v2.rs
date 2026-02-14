@@ -484,12 +484,17 @@ impl GraphStore for GraphEngineV2 {
     }
 
     fn flush(&mut self) -> Result<()> {
-        // Apply pending tombstones via commit_batch with empty data
-        // If there are pending tombstones, we need to handle them.
-        // For simplicity, flush the store with manifest update.
+        // Apply pending tombstones to shards before flushing to disk.
+        // This ensures delete_node/delete_edge operations are persisted.
+        if !self.pending_tombstone_nodes.is_empty() || !self.pending_tombstone_edges.is_empty() {
+            self.store.set_tombstones(
+                &self.pending_tombstone_nodes,
+                &self.pending_tombstone_edges,
+            );
+            self.pending_tombstone_nodes.clear();
+            self.pending_tombstone_edges.clear();
+        }
         self.store.flush_all(&mut self.manifest)?;
-        self.pending_tombstone_nodes.clear();
-        self.pending_tombstone_edges.clear();
         Ok(())
     }
 
@@ -1151,7 +1156,7 @@ mod tests {
     #[test]
     fn test_declare_fields() {
         let mut engine = GraphEngineV2::create_ephemeral();
-        assert!(engine.declared_fields().is_empty());
+        assert!(engine.declared_fields_ref().is_empty());
 
         engine.declare_fields(vec![FieldDecl {
             name: "async".to_string(),
@@ -1159,8 +1164,8 @@ mod tests {
             node_types: Some(vec!["FUNCTION".to_string()]),
         }]);
 
-        assert_eq!(engine.declared_fields().len(), 1);
-        assert_eq!(engine.declared_fields()[0].name, "async");
+        assert_eq!(engine.declared_fields_ref().len(), 1);
+        assert_eq!(engine.declared_fields_ref()[0].name, "async");
     }
 
     #[test]
