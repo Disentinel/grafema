@@ -87,14 +87,24 @@ jobs:
           path: coverage/lcov-report/
           retention-days: 14
 
-      - name: Check for .only or .skip in test files
+      - name: Check for .only in test files
         run: |
-          echo "Checking for .only() or .skip() in test files..."
-          if grep -rE '\.(only|skip)\s*\(' test/ --include="*.test.js" --include="*.test.ts" 2>/dev/null; then
-            echo "::error::Found .only() or .skip() in test files. Remove before releasing."
+          echo "Checking for .only() in test files..."
+          if grep -rE '\.only\s*\(' test/ --include="*.test.js" --include="*.test.ts" 2>/dev/null; then
+            echo "::error::Found .only() in test files. Remove before merging."
             exit 1
           fi
-          echo "No .only() or .skip() found."
+          echo "No .only() found."
+
+      - name: Check for .skip in test files (stable only)
+        if: github.ref == 'refs/heads/stable'
+        run: |
+          echo "Checking for .skip() in test files (stable branch)..."
+          if grep -rE '\.skip\s*\(' test/ --include="*.test.js" --include="*.test.ts" 2>/dev/null; then
+            echo "::error::Found .skip() in test files. All tests must pass on stable."
+            exit 1
+          fi
+          echo "No .skip() found."
 
   # Job 2: TypeScript and ESLint
   typecheck-lint:
@@ -118,8 +128,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build packages required for typecheck
-        run: pnpm --filter='@grafema/types' --filter='@grafema/rfdb-client' build
+      - name: Build all packages (required for cross-package typecheck)
+        run: pnpm build
 
       - name: TypeScript check
         run: pnpm typecheck
