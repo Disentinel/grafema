@@ -19,7 +19,7 @@ import { join } from 'path';
 import { writeFileSync, mkdirSync } from 'fs';
 import { tmpdir } from 'os';
 
-import { createTestDatabase } from '../../helpers/TestRFDB.js';
+import { createTestDatabase, cleanupAllTestDatabases } from '../../helpers/TestRFDB.js';
 import { createTestOrchestrator } from '../../helpers/createTestOrchestrator.js';
 import type { NodeRecord, EdgeRecord } from '@grafema/types';
 
@@ -143,9 +143,7 @@ describe('Basic Rejection Patterns (REG-311)', () => {
     db = await createTestDatabase();
   });
 
-  after(async () => {
-    if (db) await db.cleanup();
-  });
+  after(cleanupAllTestDatabases);
 
   // ---------------------------------------------------------------------------
   // 1.1 Promise.reject(new Error())
@@ -390,9 +388,7 @@ describe('Variable Rejection Micro-Trace (REG-311)', () => {
     db = await createTestDatabase();
   });
 
-  after(async () => {
-    if (db) await db.cleanup();
-  });
+  after(cleanupAllTestDatabases);
 
   // ---------------------------------------------------------------------------
   // 2.1 const err = new Error(); reject(err)
@@ -612,9 +608,7 @@ describe('isAwaited and isInsideTry on CALL nodes (REG-311)', () => {
     db = await createTestDatabase();
   });
 
-  after(async () => {
-    if (db) await db.cleanup();
-  });
+  after(cleanupAllTestDatabases);
 
   // ---------------------------------------------------------------------------
   // 3.1 isAwaited detection
@@ -830,9 +824,7 @@ describe('CATCHES_FROM edges (REG-311)', () => {
     db = await createTestDatabase();
   });
 
-  after(async () => {
-    if (db) await db.cleanup();
-  });
+  after(cleanupAllTestDatabases);
 
   // ---------------------------------------------------------------------------
   // 4.1 Catch block linked to awaited calls in try
@@ -1082,9 +1074,7 @@ describe('RejectionPropagationEnricher (REG-311)', () => {
     db = await createTestDatabase();
   });
 
-  after(async () => {
-    if (db) await db.cleanup();
-  });
+  after(cleanupAllTestDatabases);
 
   // ---------------------------------------------------------------------------
   // 5.1 Transitive propagation through await
@@ -1298,9 +1288,7 @@ describe('Async Error Tracking Integration (REG-311)', () => {
     db = await createTestDatabase();
   });
 
-  after(async () => {
-    if (db) await db.cleanup();
-  });
+  after(cleanupAllTestDatabases);
 
   describe('Complex real-world patterns', () => {
     it('should handle async function with multiple error paths', async () => {
@@ -1428,9 +1416,7 @@ describe('Sync Throw Patterns and THROWS Edges (REG-286)', () => {
     db = await createTestDatabase();
   });
 
-  after(async () => {
-    if (db) await db.cleanup();
-  });
+  after(cleanupAllTestDatabases);
 
   // ---------------------------------------------------------------------------
   // 7.1 THROWS edge creation for sync functions
