@@ -717,7 +717,7 @@ const [first] = arr.filter(x => x > 0);
         assert.strictEqual(expr.computed, true,
           `Expected computed=true for array access, got ${expr.computed}`);
 
-        // DERIVES_FROM should point to inline CALL node
+        // DERIVES_FROM should point to CALL node
         const derivesEdges = await backend.getOutgoingEdges(expr.id, ['DERIVES_FROM']);
         assert.strictEqual(derivesEdges.length, 1, 'Should have DERIVES_FROM edge');
 

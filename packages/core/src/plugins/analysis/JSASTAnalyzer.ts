@@ -672,57 +672,15 @@ export class JSASTAnalyzer extends Plugin {
     }
 
     // 3. MemberExpression call (e.g., arr.map())
+    // Uses coordinate-based lookup to reference the standard CALL node created by CallExpressionVisitor
     if (initExpression.type === 'CallExpression' && initExpression.callee.type === 'MemberExpression') {
-      const callee = initExpression.callee;
-      const objectName = callee.object.type === 'Identifier' ? callee.object.name : (callee.object.type === 'ThisExpression' ? 'this' : 'unknown');
-      const methodName = callee.property.type === 'Identifier' ? callee.property.name : 'unknown';
-
-      const fullName = `${objectName}.${methodName}`;
-      const methodCallId = `CALL#${fullName}#${module.file}#${getLine(initExpression)}:${getColumn(initExpression)}:inline`;
-
-      const existing = variableAssignments.find(a => a.sourceId === methodCallId);
-      if (!existing) {
-        const extractedArgs: unknown[] = [];
-        initExpression.arguments.forEach((arg, index) => {
-          if (arg.type !== 'SpreadElement') {
-            const argLiteralValue = ExpressionEvaluator.extractLiteralValue(arg);
-            if (argLiteralValue !== null) {
-              const literalId = `LITERAL#arg${index}#${module.file}#${getLine(initExpression)}:${getColumn(initExpression)}:${literalCounterRef.value++}`;
-              literals.push({
-                id: literalId,
-                type: 'LITERAL',
-                value: argLiteralValue,
-                valueType: typeof argLiteralValue,
-                file: module.file,
-                line: arg.loc?.start.line || getLine(initExpression),
-                column: arg.loc?.start.column || getColumn(initExpression),
-                parentCallId: methodCallId,
-                argIndex: index
-              });
-              extractedArgs.push(argLiteralValue);
-            } else {
-              extractedArgs.push(undefined);
-            }
-          }
-        });
-
-        literals.push({
-          id: methodCallId,
-          type: 'CALL',
-          name: fullName,
-          object: objectName,
-          method: methodName,
-          file: module.file,
-          arguments: extractedArgs,
-          line: getLine(initExpression),
-          column: getColumn(initExpression)
-        });
-      }
-
       variableAssignments.push({
         variableId,
-        sourceId: methodCallId,
-        sourceType: 'CALL'
+        sourceType: 'METHOD_CALL',
+        sourceLine: getLine(initExpression),
+        sourceColumn: getColumn(initExpression),
+        sourceFile: module.file,
+        line: line
       });
       return;
     }
