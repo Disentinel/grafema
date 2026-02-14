@@ -328,6 +328,56 @@ impl Shard {
     pub fn tombstones(&self) -> &TombstoneSet {
         &self.tombstones
     }
+
+    /// Find edge keys (src, dst, edge_type) where src is in the given ID set.
+    ///
+    /// Uses bloom filter on each edge segment for pre-filtering:
+    /// if no src_id passes the bloom check, the entire segment is skipped.
+    /// Also scans the write buffer for unflushed edges.
+    ///
+    /// Returns Vec of (src, dst, edge_type) tuples for tombstoning.
+    ///
+    /// Complexity: O(S * (K * B + N_matching))
+    ///   where S = edge segments, K = |src_ids|, B = bloom check cost,
+    ///   N_matching = records in segments that pass bloom filter
+    pub fn find_edge_keys_by_src_ids(
+        &self,
+        src_ids: &HashSet<u128>,
+    ) -> Vec<(u128, u128, String)> {
+        let mut keys = Vec::new();
+
+        if src_ids.is_empty() {
+            return keys;
+        }
+
+        // Step 1: Scan edge segments with bloom pre-filter
+        for seg in &self.edge_segments {
+            // Bloom check: does this segment maybe contain edges from any src_id?
+            let may_match = src_ids.iter().any(|id| seg.maybe_contains_src(*id));
+            if !may_match {
+                continue;
+            }
+
+            // Scan matching segment
+            for j in 0..seg.record_count() {
+                let src = seg.get_src(j);
+                if src_ids.contains(&src) {
+                    let dst = seg.get_dst(j);
+                    let edge_type = seg.get_edge_type(j).to_string();
+                    keys.push((src, dst, edge_type));
+                }
+            }
+        }
+
+        // Step 2: Scan write buffer
+        for edge in self.write_buffer.iter_edges() {
+            if src_ids.contains(&edge.src) {
+                keys.push((edge.src, edge.dst, edge.edge_type.clone()));
+            }
+        }
+
+        keys
+    }
 }
 
 // -- Flush --------------------------------------------------------------------
@@ -1724,5 +1774,134 @@ mod tests {
         assert!(ts.contains_node(3));
         assert!(ts.contains_edge(10, 20, "CALLS"));
         assert!(ts.contains_edge(30, 40, "IMPORTS"));
+    }
+
+    // =========================================================================
+    // find_edge_keys_by_src_ids Tests (RFD-8 T3.1 Commit 2)
+    // =========================================================================
+
+    #[test]
+    fn test_find_edge_keys_by_src_ids_from_buffer() {
+        let mut shard = Shard::ephemeral();
+
+        // Add edges with two different sources to the buffer (unflushed)
+        let e1 = make_edge("src_a", "dst1", "CALLS");
+        let e2 = make_edge("src_a", "dst2", "IMPORTS_FROM");
+        let e3 = make_edge("src_b", "dst3", "CALLS");
+
+        shard.add_edges(vec![e1.clone(), e2.clone(), e3.clone()]);
+
+        // Query for src_a only
+        let src_a_id = node_id("src_a");
+        let src_ids: HashSet<u128> = [src_a_id].into_iter().collect();
+        let keys = shard.find_edge_keys_by_src_ids(&src_ids);
+
+        assert_eq!(keys.len(), 2);
+        // Both edges from src_a should be found
+        assert!(keys.contains(&(e1.src, e1.dst, e1.edge_type.clone())));
+        assert!(keys.contains(&(e2.src, e2.dst, e2.edge_type.clone())));
+        // Edge from src_b should NOT be included
+        assert!(!keys.contains(&(e3.src, e3.dst, e3.edge_type.clone())));
+    }
+
+    #[test]
+    fn test_find_edge_keys_by_src_ids_from_segment() {
+        let mut shard = Shard::ephemeral();
+
+        let e1 = make_edge("seg_src", "seg_dst1", "CALLS");
+        let e2 = make_edge("seg_src", "seg_dst2", "IMPORTS_FROM");
+        shard.add_edges(vec![e1.clone(), e2.clone()]);
+        shard.flush_with_ids(None, Some(1)).unwrap();
+
+        // Write buffer should now be empty
+        assert_eq!(shard.write_buffer_size(), (0, 0));
+
+        let src_id = node_id("seg_src");
+        let src_ids: HashSet<u128> = [src_id].into_iter().collect();
+        let keys = shard.find_edge_keys_by_src_ids(&src_ids);
+
+        assert_eq!(keys.len(), 2);
+        assert!(keys.contains(&(e1.src, e1.dst, e1.edge_type.clone())));
+        assert!(keys.contains(&(e2.src, e2.dst, e2.edge_type.clone())));
+    }
+
+    #[test]
+    fn test_find_edge_keys_by_src_ids_bloom_skips_irrelevant() {
+        let mut shard = Shard::ephemeral();
+
+        // Segment 1: edges from src_x
+        let e1 = make_edge("bloom_src_x", "bloom_dst1", "CALLS");
+        shard.add_edges(vec![e1.clone()]);
+        shard.flush_with_ids(None, Some(1)).unwrap();
+
+        // Segment 2: edges from src_y
+        let e2 = make_edge("bloom_src_y", "bloom_dst2", "CALLS");
+        shard.add_edges(vec![e2.clone()]);
+        shard.flush_with_ids(None, Some(2)).unwrap();
+
+        // Query for src_x only — should find only e1
+        let src_x_id = node_id("bloom_src_x");
+        let src_ids: HashSet<u128> = [src_x_id].into_iter().collect();
+        let keys = shard.find_edge_keys_by_src_ids(&src_ids);
+
+        assert_eq!(keys.len(), 1);
+        assert!(keys.contains(&(e1.src, e1.dst, e1.edge_type.clone())));
+        assert!(!keys.contains(&(e2.src, e2.dst, e2.edge_type.clone())));
+    }
+
+    #[test]
+    fn test_find_edge_keys_by_src_ids_empty_input() {
+        let mut shard = Shard::ephemeral();
+
+        // Add some edges
+        shard.add_edges(vec![
+            make_edge("empty_src1", "empty_dst1", "CALLS"),
+            make_edge("empty_src2", "empty_dst2", "CALLS"),
+        ]);
+        shard.flush_with_ids(None, Some(1)).unwrap();
+
+        // Empty src_ids should return empty result
+        let src_ids: HashSet<u128> = HashSet::new();
+        let keys = shard.find_edge_keys_by_src_ids(&src_ids);
+        assert!(keys.is_empty());
+    }
+
+    #[test]
+    fn test_find_edge_keys_by_src_ids_across_segments() {
+        let mut shard = Shard::ephemeral();
+
+        // Segment 1: edges from src_a and src_b
+        let e1 = make_edge("multi_src_a", "multi_dst1", "CALLS");
+        let e2 = make_edge("multi_src_b", "multi_dst2", "IMPORTS_FROM");
+        shard.add_edges(vec![e1.clone(), e2.clone()]);
+        shard.flush_with_ids(None, Some(1)).unwrap();
+
+        // Segment 2: more edges from src_a
+        let e3 = make_edge("multi_src_a", "multi_dst3", "CONTAINS");
+        shard.add_edges(vec![e3.clone()]);
+        shard.flush_with_ids(None, Some(2)).unwrap();
+
+        // Segment 3: edges from src_c
+        let e4 = make_edge("multi_src_c", "multi_dst4", "CALLS");
+        shard.add_edges(vec![e4.clone()]);
+        shard.flush_with_ids(None, Some(3)).unwrap();
+
+        // Also add an edge to the buffer (unflushed)
+        let e5 = make_edge("multi_src_b", "multi_dst5", "CALLS");
+        shard.add_edges(vec![e5.clone()]);
+
+        // Query for src_a and src_b — should find e1, e2, e3, e5
+        let src_a_id = node_id("multi_src_a");
+        let src_b_id = node_id("multi_src_b");
+        let src_ids: HashSet<u128> = [src_a_id, src_b_id].into_iter().collect();
+        let keys = shard.find_edge_keys_by_src_ids(&src_ids);
+
+        assert_eq!(keys.len(), 4);
+        assert!(keys.contains(&(e1.src, e1.dst, e1.edge_type.clone())));
+        assert!(keys.contains(&(e2.src, e2.dst, e2.edge_type.clone())));
+        assert!(keys.contains(&(e3.src, e3.dst, e3.edge_type.clone())));
+        assert!(keys.contains(&(e5.src, e5.dst, e5.edge_type.clone())));
+        // e4 (src_c) should NOT be included
+        assert!(!keys.contains(&(e4.src, e4.dst, e4.edge_type.clone())));
     }
 }

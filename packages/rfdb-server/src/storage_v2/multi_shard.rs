@@ -456,6 +456,28 @@ impl MultiShardStore {
     }
 }
 
+// ── Edge Key Discovery ─────────────────────────────────────────────
+
+impl MultiShardStore {
+    /// Find edge keys (src, dst, edge_type) where src is in the given ID set,
+    /// across all shards.
+    ///
+    /// Fan-out to all shards, concatenate results.
+    ///
+    /// Complexity: O(N * S * (K * B + N_matching))
+    ///   where N = shard_count
+    pub fn find_edge_keys_by_src_ids(
+        &self,
+        src_ids: &HashSet<u128>,
+    ) -> Vec<(u128, u128, String)> {
+        let mut keys = Vec::new();
+        for shard in &self.shards {
+            keys.extend(shard.find_edge_keys_by_src_ids(src_ids));
+        }
+        keys
+    }
+}
+
 // ── Stats ──────────────────────────────────────────────────────────
 
 impl MultiShardStore {
@@ -1072,6 +1094,47 @@ mod tests {
         // Manifest should have accumulated segments
         let current = manifest_store.current();
         assert!(current.node_segments.len() >= 2);
+    }
+
+    // -- find_edge_keys_by_src_ids Tests (RFD-8 T3.1 Commit 2) -------------------
+
+    #[test]
+    fn test_find_edge_keys_by_src_ids_multi_shard() {
+        let mut store = MultiShardStore::ephemeral(4);
+        let mut manifest_store = ManifestStore::ephemeral();
+
+        // Create nodes in (likely) different shards via different directories
+        let n1 = make_node("src/a/caller", "FUNCTION", "caller", "src/a/file.js");
+        let n2 = make_node("lib/b/callee", "FUNCTION", "callee", "lib/b/file.js");
+        let n3 = make_node("pkg/c/other", "FUNCTION", "other", "pkg/c/file.js");
+        store.add_nodes(vec![n1.clone(), n2.clone(), n3.clone()]);
+
+        // Add edges: n1->n2, n1->n3, n2->n3
+        let e1 = make_edge("src/a/caller", "lib/b/callee", "CALLS");
+        let e2 = make_edge("src/a/caller", "pkg/c/other", "IMPORTS_FROM");
+        let e3 = make_edge("lib/b/callee", "pkg/c/other", "CALLS");
+        store.add_edges(vec![e1.clone(), e2.clone(), e3.clone()]).unwrap();
+
+        // Flush all shards
+        store.flush_all(&mut manifest_store).unwrap();
+
+        // Query for edges where src is n1 (caller)
+        let src_ids: HashSet<u128> = [n1.id].into_iter().collect();
+        let keys = store.find_edge_keys_by_src_ids(&src_ids);
+
+        assert_eq!(keys.len(), 2);
+        assert!(keys.contains(&(e1.src, e1.dst, e1.edge_type.clone())));
+        assert!(keys.contains(&(e2.src, e2.dst, e2.edge_type.clone())));
+        assert!(!keys.contains(&(e3.src, e3.dst, e3.edge_type.clone())));
+
+        // Query for edges where src is n1 or n2
+        let src_ids_both: HashSet<u128> = [n1.id, n2.id].into_iter().collect();
+        let keys_both = store.find_edge_keys_by_src_ids(&src_ids_both);
+
+        assert_eq!(keys_both.len(), 3);
+        assert!(keys_both.contains(&(e1.src, e1.dst, e1.edge_type.clone())));
+        assert!(keys_both.contains(&(e2.src, e2.dst, e2.edge_type.clone())));
+        assert!(keys_both.contains(&(e3.src, e3.dst, e3.edge_type.clone())));
     }
 
     #[test]
