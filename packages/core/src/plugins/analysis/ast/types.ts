@@ -386,6 +386,11 @@ export interface TypeAliasInfo {
   mappedReadonly?: boolean | '+' | '-';
   mappedOptional?: boolean | '+' | '-';
   nameType?: string;
+  conditionalType?: boolean;
+  checkType?: string;
+  extendsType?: string;
+  trueType?: string;
+  falseType?: string;
 }
 
 // === ENUM DECLARATION INFO ===

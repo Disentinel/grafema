@@ -22,6 +22,11 @@ interface TypeNodeRecord extends BaseNodeRecord {
   mappedReadonly?: MappedModifier;
   mappedOptional?: MappedModifier;
   nameType?: string;
+  conditionalType?: boolean;
+  checkType?: string;
+  extendsType?: string;
+  trueType?: string;
+  falseType?: string;
 }
 
 interface TypeNodeOptions {
@@ -33,13 +38,18 @@ interface TypeNodeOptions {
   mappedReadonly?: MappedModifier;
   mappedOptional?: MappedModifier;
   nameType?: string;
+  conditionalType?: boolean;
+  checkType?: string;
+  extendsType?: string;
+  trueType?: string;
+  falseType?: string;
 }
 
 export class TypeNode {
   static readonly TYPE = 'TYPE' as const;
 
   static readonly REQUIRED = ['name', 'file', 'line', 'column'] as const;
-  static readonly OPTIONAL = ['aliasOf', 'mappedType', 'keyName', 'keyConstraint', 'valueType', 'mappedReadonly', 'mappedOptional', 'nameType'] as const;
+  static readonly OPTIONAL = ['aliasOf', 'mappedType', 'keyName', 'keyConstraint', 'valueType', 'mappedReadonly', 'mappedOptional', 'nameType', 'conditionalType', 'checkType', 'extendsType', 'trueType', 'falseType'] as const;
 
   /**
    * Create TYPE node
@@ -70,7 +80,12 @@ export class TypeNode {
       file,
       line,
       column,
-      aliasOf: options.aliasOf
+      aliasOf: options.aliasOf,
+      conditionalType: options.conditionalType,
+      checkType: options.checkType,
+      extendsType: options.extendsType,
+      trueType: options.trueType,
+      falseType: options.falseType
     };
 
     if (options.mappedType) {

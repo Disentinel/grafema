@@ -60,7 +60,9 @@ export type RFDBCommand =
   | 'diffSnapshots'
   | 'tagSnapshot'
   | 'findSnapshot'
-  | 'listSnapshots';
+  | 'listSnapshots'
+  // Batch operations
+  | 'commitBatch';
 
 // === WIRE FORMAT ===
 // Nodes as sent over the wire
@@ -232,6 +234,31 @@ export interface CountsByTypeResponse extends RFDBResponse {
 export interface PingResponse extends RFDBResponse {
   pong: boolean;
   version: string;
+}
+
+// === BATCH OPERATIONS ===
+
+export interface CommitDelta {
+  changedFiles: string[];
+  nodesAdded: number;
+  nodesRemoved: number;
+  edgesAdded: number;
+  edgesRemoved: number;
+  changedNodeTypes: string[];
+  changedEdgeTypes: string[];
+}
+
+export interface CommitBatchRequest extends RFDBRequest {
+  cmd: 'commitBatch';
+  changedFiles: string[];
+  nodes: WireNode[];
+  edges: WireEdge[];
+  tags?: string[];
+}
+
+export interface CommitBatchResponse extends RFDBResponse {
+  ok: boolean;
+  delta: CommitDelta;
 }
 
 // === PROTOCOL V2 - MULTI-DATABASE RESPONSES ===
@@ -443,6 +470,13 @@ export interface IRFDBClient {
   datalogClearRules(): Promise<RFDBResponse>;
   datalogQuery(query: string): Promise<DatalogResult[]>;
   checkGuarantee(ruleSource: string): Promise<DatalogResult[]>;
+
+  // Batch operations
+  beginBatch(): void;
+  commitBatch(tags?: string[]): Promise<CommitDelta>;
+  abortBatch(): void;
+  isBatching(): boolean;
+  findDependentFiles(changedFiles: string[]): Promise<string[]>;
 
   // Protocol v2 - Multi-Database
   hello(protocolVersion?: number): Promise<HelloResponse>;

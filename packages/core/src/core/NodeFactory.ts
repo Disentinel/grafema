@@ -206,6 +206,11 @@ interface TypeOptions {
   mappedReadonly?: boolean | '+' | '-';
   mappedOptional?: boolean | '+' | '-';
   nameType?: string;
+  conditionalType?: boolean;
+  checkType?: string;
+  extendsType?: string;
+  trueType?: string;
+  falseType?: string;
 }
 
 interface EnumOptions {
