@@ -98,6 +98,18 @@ pub struct Manifest {
     /// Enables chain traversal without directory scanning.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parent_version: Option<u64>,
+
+    /// Tombstoned node IDs (logically deleted).
+    /// Query path skips records matching these IDs.
+    /// Cleared by compaction (T4.x).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tombstoned_node_ids: Vec<u128>,
+
+    /// Tombstoned edge keys (src, dst, edge_type).
+    /// Query path skips matching edges.
+    /// Cleared by compaction (T4.x).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tombstoned_edge_keys: Vec<(u128, u128, String)>,
 }
 
 // ── Segment Descriptor ─────────────────────────────────────────────
@@ -677,6 +689,8 @@ impl ManifestStore {
                 edge_segment_count: 0,
             },
             parent_version: None,
+            tombstoned_node_ids: Vec::new(),
+            tombstoned_edge_keys: Vec::new(),
         };
 
         let mut index = ManifestIndex::new();
@@ -725,6 +739,8 @@ impl ManifestStore {
                 edge_segment_count: 0,
             },
             parent_version: None,
+            tombstoned_node_ids: Vec::new(),
+            tombstoned_edge_keys: Vec::new(),
         };
 
         let mut index = ManifestIndex::new();
@@ -783,6 +799,8 @@ impl ManifestStore {
             tags: tags.unwrap_or_default(),
             stats,
             parent_version: Some(self.current.version),
+            tombstoned_node_ids: Vec::new(),
+            tombstoned_edge_keys: Vec::new(),
         })
     }
 
@@ -1201,6 +1219,8 @@ mod tests {
                 edge_segment_count: 1,
             },
             parent_version: Some(4),
+            tombstoned_node_ids: Vec::new(),
+            tombstoned_edge_keys: Vec::new(),
         };
 
         let json = serde_json::to_string_pretty(&manifest).unwrap();
@@ -1311,6 +1331,8 @@ mod tests {
             tags: HashMap::new(),
             stats: ManifestStats::from_segments(&[make_node_descriptor(1, 10)], &[]),
             parent_version: None,
+            tombstoned_node_ids: Vec::new(),
+            tombstoned_edge_keys: Vec::new(),
         };
         index.add_snapshot(&m1);
         assert_eq!(index.latest_version, 1);
@@ -1328,6 +1350,8 @@ mod tests {
                 &[make_edge_descriptor(3, 5)],
             ),
             parent_version: Some(1),
+            tombstoned_node_ids: Vec::new(),
+            tombstoned_edge_keys: Vec::new(),
         };
         index.add_snapshot(&m2);
         assert_eq!(index.latest_version, 2);
@@ -1349,6 +1373,8 @@ mod tests {
             tags: HashMap::from([("commit_sha".to_string(), "abc123".to_string())]),
             stats: ManifestStats::from_segments(&[], &[]),
             parent_version: Some(4),
+            tombstoned_node_ids: Vec::new(),
+            tombstoned_edge_keys: Vec::new(),
         };
         index.add_snapshot(&m);
 
@@ -1375,6 +1401,8 @@ mod tests {
                 tags,
                 stats: ManifestStats::from_segments(&[], &[]),
                 parent_version: if v > 1 { Some(v - 1) } else { None },
+                tombstoned_node_ids: Vec::new(),
+                tombstoned_edge_keys: Vec::new(),
             };
             index.add_snapshot(&m);
         }
@@ -1396,6 +1424,8 @@ mod tests {
             tags: HashMap::from([("key".to_string(), "val".to_string())]),
             stats: ManifestStats::from_segments(&[], &[]),
             parent_version: None,
+            tombstoned_node_ids: Vec::new(),
+            tombstoned_edge_keys: Vec::new(),
         };
         index.add_snapshot(&m);
         assert_eq!(index.snapshots.len(), 1);
@@ -1611,6 +1641,8 @@ mod tests {
             tags: HashMap::new(),
             stats: ManifestStats::from_segments(&[], &[]),
             parent_version: None,
+            tombstoned_node_ids: Vec::new(),
+            tombstoned_edge_keys: Vec::new(),
         };
 
         let result = store.commit(bad_manifest);
@@ -1804,6 +1836,8 @@ mod tests {
             tags: HashMap::new(),
             stats: ManifestStats::from_segments(&[], &[]),
             parent_version: None,
+            tombstoned_node_ids: Vec::new(),
+            tombstoned_edge_keys: Vec::new(),
         };
 
         let to_nodes = vec![make_node_descriptor(1, 10), make_node_descriptor(2, 20)];
@@ -1816,6 +1850,8 @@ mod tests {
             tags: HashMap::new(),
             stats: ManifestStats::from_segments(&to_nodes, &to_edges),
             parent_version: Some(1),
+            tombstoned_node_ids: Vec::new(),
+            tombstoned_edge_keys: Vec::new(),
         };
 
         let diff = SnapshotDiff::compute(&from, &to);
@@ -1838,6 +1874,8 @@ mod tests {
             tags: HashMap::new(),
             stats: ManifestStats::from_segments(&nodes, &[]),
             parent_version: None,
+            tombstoned_node_ids: Vec::new(),
+            tombstoned_edge_keys: Vec::new(),
         };
 
         let diff = SnapshotDiff::compute(&m, &m);
@@ -1856,6 +1894,8 @@ mod tests {
             tags: HashMap::new(),
             stats: ManifestStats::from_segments(&from_nodes, &[]),
             parent_version: None,
+            tombstoned_node_ids: Vec::new(),
+            tombstoned_edge_keys: Vec::new(),
         };
 
         // Remove segment 2, add segments 3 and 4
@@ -1869,6 +1909,8 @@ mod tests {
             tags: HashMap::new(),
             stats: ManifestStats::from_segments(&to_nodes, &to_edges),
             parent_version: Some(1),
+            tombstoned_node_ids: Vec::new(),
+            tombstoned_edge_keys: Vec::new(),
         };
 
         let diff = SnapshotDiff::compute(&from, &to);
@@ -1891,6 +1933,8 @@ mod tests {
             tags: HashMap::new(),
             stats: ManifestStats::from_segments(&from_nodes, &[]),
             parent_version: None,
+            tombstoned_node_ids: Vec::new(),
+            tombstoned_edge_keys: Vec::new(),
         };
 
         let to_nodes = vec![make_node_descriptor(2, 200)];
@@ -1902,6 +1946,8 @@ mod tests {
             tags: HashMap::new(),
             stats: ManifestStats::from_segments(&to_nodes, &[]),
             parent_version: Some(1),
+            tombstoned_node_ids: Vec::new(),
+            tombstoned_edge_keys: Vec::new(),
         };
 
         let diff = SnapshotDiff::compute(&from, &to);
@@ -2077,6 +2123,8 @@ mod tests {
             tags: HashMap::from([("env".to_string(), "test".to_string())]),
             stats: ManifestStats::from_segments(&[make_node_descriptor(1, 100)], &[]),
             parent_version: Some(2),
+            tombstoned_node_ids: Vec::new(),
+            tombstoned_edge_keys: Vec::new(),
         };
 
         let info = SnapshotInfo::from_manifest(&m);
@@ -2165,6 +2213,8 @@ mod tests {
                 &[],
             ),
             parent_version: Some(2),
+            tombstoned_node_ids: Vec::new(),
+            tombstoned_edge_keys: Vec::new(),
         };
         let manifest_path = manifest_file_path(&db_path, 3);
         atomic_write_json(&manifest_path, &manifest_v3, DurabilityMode::Relaxed).unwrap();
@@ -2352,5 +2402,54 @@ mod tests {
             read_json(&manifest_file_path(&db_path, 2)).unwrap();
         assert_eq!(v2_loaded.version, 2);
         assert_eq!(v2_loaded.node_segments[0].segment_id, 1);
+    }
+
+    // ── Tombstone Serde Tests (RFD-8 T3.1) ──────────────────────
+
+    #[test]
+    fn test_manifest_serde_with_tombstones() {
+        let manifest = Manifest {
+            version: 10,
+            created_at: 1707826800,
+            node_segments: vec![make_node_descriptor(1, 50)],
+            edge_segments: vec![],
+            tags: HashMap::new(),
+            stats: ManifestStats::from_segments(&[make_node_descriptor(1, 50)], &[]),
+            parent_version: Some(9),
+            tombstoned_node_ids: vec![100, 200, 300],
+            tombstoned_edge_keys: vec![
+                (10, 20, "CALLS".to_string()),
+                (30, 40, "IMPORTS".to_string()),
+            ],
+        };
+
+        let json = serde_json::to_string_pretty(&manifest).unwrap();
+        let deserialized: Manifest = serde_json::from_str(&json).unwrap();
+        assert_eq!(manifest, deserialized);
+        assert_eq!(deserialized.tombstoned_node_ids, vec![100, 200, 300]);
+        assert_eq!(deserialized.tombstoned_edge_keys.len(), 2);
+    }
+
+    #[test]
+    fn test_manifest_serde_backward_compat() {
+        // Simulate old manifest JSON without tombstone fields
+        let json = r#"{
+            "version": 1,
+            "created_at": 1707826800,
+            "node_segments": [],
+            "edge_segments": [],
+            "tags": {},
+            "stats": {
+                "total_nodes": 0,
+                "total_edges": 0,
+                "node_segment_count": 0,
+                "edge_segment_count": 0
+            }
+        }"#;
+
+        let manifest: Manifest = serde_json::from_str(json).unwrap();
+        assert_eq!(manifest.version, 1);
+        assert!(manifest.tombstoned_node_ids.is_empty());
+        assert!(manifest.tombstoned_edge_keys.is_empty());
     }
 }

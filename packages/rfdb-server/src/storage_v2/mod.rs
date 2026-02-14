@@ -27,6 +27,6 @@ pub use manifest::{
     SegmentDescriptor, SnapshotDiff, SnapshotInfo,
 };
 pub use write_buffer::WriteBuffer;
-pub use shard::{Shard, FlushResult};
+pub use shard::{Shard, FlushResult, TombstoneSet};
 pub use shard_planner::ShardPlanner;
 pub use multi_shard::{DatabaseConfig, MultiShardStore, ShardStats};
