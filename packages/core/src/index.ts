@@ -290,6 +290,7 @@ export { GlobalsRegistry, ALL_GLOBALS } from './data/globals/index.js';
 export { CallResolverValidator } from './plugins/validation/CallResolverValidator.js';
 export { EvalBanValidator } from './plugins/validation/EvalBanValidator.js';
 export { SQLInjectionValidator } from './plugins/validation/SQLInjectionValidator.js';
+export { AwaitInLoopValidator } from './plugins/validation/AwaitInLoopValidator.js';
 export { ShadowingDetector } from './plugins/validation/ShadowingDetector.js';
 export { GraphConnectivityValidator } from './plugins/validation/GraphConnectivityValidator.js';
 export { DataFlowValidator } from './plugins/validation/DataFlowValidator.js';
