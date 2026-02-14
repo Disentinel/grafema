@@ -12,12 +12,13 @@
  * 2. GRAFEMA_RFDB_SERVER environment variable
  * 3. Monorepo target/release (development)
  * 4. Monorepo target/debug (development)
- * 5. @grafema/rfdb npm package (prebuilt)
- * 6. ~/.local/bin/rfdb-server (user-installed)
+ * 5. System PATH lookup
+ * 6. @grafema/rfdb npm package (prebuilt)
+ * 7. ~/.local/bin/rfdb-server (user-installed)
  */
 
 import { existsSync } from 'fs';
-import { join, dirname, resolve } from 'path';
+import { join, delimiter, dirname, resolve } from 'path';
 import { createRequire } from 'module';
 import { fileURLToPath } from 'url';
 
@@ -83,7 +84,17 @@ export function findRfdbBinary(options: FindBinaryOptions = {}): string | null {
     }
   }
 
-  // 5. @grafema/rfdb npm package
+  // 5. System PATH lookup
+  const pathDirs = (process.env.PATH || '').split(delimiter);
+  for (const dir of pathDirs) {
+    if (!dir) continue;
+    const candidate = join(dir, 'rfdb-server');
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  // 6. @grafema/rfdb npm package
   try {
     const require = createRequire(import.meta.url);
     const rfdbPkg = require.resolve('@grafema/rfdb');
@@ -97,7 +108,7 @@ export function findRfdbBinary(options: FindBinaryOptions = {}): string | null {
     // @grafema/rfdb not installed
   }
 
-  // 6. User-installed binary in ~/.local/bin
+  // 7. User-installed binary in ~/.local/bin
   const homeBinary = join(process.env.HOME || '', '.local', 'bin', 'rfdb-server');
   if (existsSync(homeBinary)) {
     return homeBinary;
@@ -147,14 +158,18 @@ Options:
 3. Set environment variable:
    export GRAFEMA_RFDB_SERVER=/path/to/rfdb-server
 
-4. Build from source and install:
+4. Install to system PATH:
+   cargo build --release
+   cp target/release/rfdb-server /usr/local/bin/
+
+5. Build from source and install:
    git clone https://github.com/Disentinel/grafema.git
    cd grafema/packages/rfdb-server
    cargo build --release
    mkdir -p ~/.local/bin
    cp target/release/rfdb-server ~/.local/bin/
 
-5. Install prebuilt (if available for your platform):
+6. Install prebuilt (if available for your platform):
    npm install @grafema/rfdb
 `;
 }

@@ -113,6 +113,10 @@ export type { FileExplainResult, EnhancedNode } from './core/FileExplainer.js';
 // Hash utilities
 export { calculateFileHash, calculateFileHashAsync, calculateContentHash } from './core/HashUtils.js';
 
+// RFDB binary finder utilities (REG-410)
+export { findRfdbBinary, getBinaryNotFoundMessage, getPlatformDir } from './utils/findRfdbBinary.js';
+export type { FindBinaryOptions } from './utils/findRfdbBinary.js';
+
 // Module resolution utilities (REG-320)
 export {
   resolveModulePath,
