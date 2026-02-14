@@ -32,6 +32,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             name: Some("UserService".to_string()),
             file: Some("src/api/users.js".to_string()),
             metadata: None,
+            semantic_id: None,
         },
         NodeRecord {
             id: get_user_id,
@@ -45,6 +46,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             name: Some("getUserById".to_string()),
             file: Some("src/api/users.js".to_string()),
             metadata: None,
+            semantic_id: None,
         },
         NodeRecord {
             id: db_query_id,
@@ -58,6 +60,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             name: Some("SELECT * FROM users".to_string()),
             file: Some("src/api/users.js".to_string()),
             metadata: None,
+            semantic_id: None,
         },
     ];
 
@@ -139,6 +142,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         name: Some("getUserById".to_string()),
         file: Some("src/api/users.js".to_string()),
         metadata: None,
+        semantic_id: None,
     };
 
     engine.add_nodes(vec![get_user_local]);

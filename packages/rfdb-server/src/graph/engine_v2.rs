@@ -41,6 +41,7 @@ fn node_v2_to_v1(v2: &NodeRecordV2) -> NodeRecord {
         } else {
             Some(clean_metadata)
         },
+        semantic_id: Some(v2.semantic_id.clone()),
     }
 }
 
@@ -91,7 +92,10 @@ fn node_v1_to_v2(v1: &NodeRecord) -> NodeRecordV2 {
     let name = v1.name.as_deref().unwrap_or("");
     let file = v1.file.as_deref().unwrap_or("");
     let metadata = v1.metadata.as_deref().unwrap_or("");
-    let semantic_id = format!("{}:{}@{}", node_type, name, file);
+
+    // Use client-provided semantic_id if available, otherwise synthesize.
+    let semantic_id = v1.semantic_id.clone()
+        .unwrap_or_else(|| format!("{}:{}@{}", node_type, name, file));
 
     // Inject `exported` into metadata JSON (v2 stores it there).
     let metadata = inject_exported_into_metadata(metadata, v1.exported);
@@ -775,6 +779,7 @@ mod tests {
             name: Some(name.to_string()),
             file: Some(file.to_string()),
             metadata: None,
+            semantic_id: None,
         }
     }
 
@@ -833,6 +838,7 @@ mod tests {
             name: None,
             file: None,
             metadata: None,
+            semantic_id: None,
         };
 
         let v2 = node_v1_to_v2(&v1);
@@ -1146,6 +1152,7 @@ mod tests {
             name: Some("process".to_string()),
             file: Some("src/worker.js".to_string()),
             metadata: Some(r#"{"line":42}"#.to_string()),
+            semantic_id: None,
         };
 
         engine.add_nodes(vec![original.clone()]);
@@ -1180,6 +1187,7 @@ mod tests {
             name: Some("compute".to_string()),
             file: Some("src/a.js".to_string()),
             metadata: Some(r#"{"line":10,"lang":"js"}"#.to_string()),
+            semantic_id: None,
         };
         let target = NodeRecord {
             id: 11,
@@ -1193,6 +1201,7 @@ mod tests {
             name: Some("target".to_string()),
             file: Some("src/b.js".to_string()),
             metadata: Some(r#"{"line":20}"#.to_string()),
+            semantic_id: None,
         };
         let edge = EdgeRecord {
             src: source.id,

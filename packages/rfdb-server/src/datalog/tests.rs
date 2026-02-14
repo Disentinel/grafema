@@ -365,6 +365,7 @@ mod eval_tests {
                 replaces: None,
                 deleted: false,
                 metadata: None,
+            semantic_id: None,
             },
             NodeRecord {
                 id: 2,
@@ -378,6 +379,7 @@ mod eval_tests {
                 replaces: None,
                 deleted: false,
                 metadata: None,
+            semantic_id: None,
             },
             NodeRecord {
                 id: 3,
@@ -391,6 +393,7 @@ mod eval_tests {
                 replaces: None,
                 deleted: false,
                 metadata: None,
+            semantic_id: None,
             },
             NodeRecord {
                 id: 4,
@@ -404,6 +407,7 @@ mod eval_tests {
                 replaces: None,
                 deleted: false,
                 metadata: None,
+            semantic_id: None,
             },
         ]);
 
@@ -634,6 +638,7 @@ mod eval_tests {
                 replaces: None,
                 deleted: false,
                 metadata: None,
+            semantic_id: None,
             },
             NodeRecord {
                 id: 11,
@@ -647,6 +652,7 @@ mod eval_tests {
                 replaces: None,
                 deleted: false,
                 metadata: None,
+            semantic_id: None,
             },
             NodeRecord {
                 id: 20,
@@ -660,6 +666,7 @@ mod eval_tests {
                 replaces: None,
                 deleted: false,
                 metadata: None,
+            semantic_id: None,
             },
         ]);
 
@@ -794,6 +801,7 @@ mod eval_tests {
                 replaces: None,
                 deleted: false,
                 metadata: Some(r#"{"object":"arr","method":"map"}"#.to_string()),
+                semantic_id: None,
             },
         ]);
 
@@ -858,6 +866,7 @@ mod eval_tests {
                 replaces: None,
                 deleted: false,
                 metadata: Some(r#"{"config": {"host": "localhost", "port": 5432}}"#.to_string()),
+                semantic_id: None,
             },
         ]);
 
@@ -894,6 +903,7 @@ mod eval_tests {
                 replaces: None,
                 deleted: false,
                 metadata: Some(r#"{"connection": {"timeout": 3000, "retries": 5}}"#.to_string()),
+                semantic_id: None,
             },
         ]);
 
@@ -932,6 +942,7 @@ mod eval_tests {
                 deleted: false,
                 // Both "app.name" as literal key AND "app": {"name": "..."} nested
                 metadata: Some(r#"{"app.name": "literal-value", "app": {"name": "nested-value"}}"#.to_string()),
+                semantic_id: None,
             },
         ]);
 
@@ -969,6 +980,7 @@ mod eval_tests {
                 replaces: None,
                 deleted: false,
                 metadata: Some(r#"{"config": {"host": "localhost"}}"#.to_string()),
+                semantic_id: None,
             },
         ]);
 
@@ -1006,6 +1018,7 @@ mod eval_tests {
                 replaces: None,
                 deleted: false,
                 metadata: None, // No "object" = CALL_SITE
+                semantic_id: None,
             },
             // CALL_SITE without CALLS edge - violation!
             NodeRecord {
@@ -1020,6 +1033,7 @@ mod eval_tests {
                 replaces: None,
                 deleted: false,
                 metadata: None, // No "object" = CALL_SITE
+                semantic_id: None,
             },
             // METHOD_CALL (external method call) - no CALLS edge needed
             NodeRecord {
@@ -1034,6 +1048,7 @@ mod eval_tests {
                 replaces: None,
                 deleted: false,
                 metadata: Some(r#"{"object":"arr","method":"map"}"#.to_string()),
+                semantic_id: None,
             },
             // Target function
             NodeRecord {
@@ -1048,6 +1063,7 @@ mod eval_tests {
                 replaces: None,
                 deleted: false,
                 metadata: None,
+            semantic_id: None,
             },
         ]);
 
@@ -1189,6 +1205,7 @@ mod eval_tests {
                 replaces: None,
                 deleted: false,
                 metadata: None,
+            semantic_id: None,
             },
             NodeRecord {
                 id: 2,
@@ -1202,6 +1219,7 @@ mod eval_tests {
                 replaces: None,
                 deleted: false,
                 metadata: None,
+            semantic_id: None,
             },
             NodeRecord {
                 id: 3,
@@ -1215,6 +1233,7 @@ mod eval_tests {
                 replaces: None,
                 deleted: false,
                 metadata: None,
+            semantic_id: None,
             },
         ]);
 
@@ -1357,6 +1376,7 @@ mod eval_tests {
                 replaces: None,
                 deleted: false,
                 metadata: Some(r#"{"url": "/api/users", "method": "GET"}"#.to_string()),
+                semantic_id: None,
             },
             NodeRecord {
                 id: 101,
@@ -1370,6 +1390,7 @@ mod eval_tests {
                 replaces: None,
                 deleted: false,
                 metadata: Some(r#"{"url": "/api/orders", "method": "POST"}"#.to_string()),
+                semantic_id: None,
             },
         ]);
 
@@ -1417,6 +1438,7 @@ mod eval_tests {
                 replaces: None,
                 deleted: false,
                 metadata: Some(r#"{"method": "GET"}"#.to_string()),
+                semantic_id: None,
             },
             NodeRecord {
                 id: 201,
@@ -1430,6 +1452,7 @@ mod eval_tests {
                 replaces: None,
                 deleted: false,
                 metadata: Some(r#"{"method": "POST"}"#.to_string()),
+                semantic_id: None,
             },
         ]);
 
@@ -1483,6 +1506,7 @@ mod eval_tests {
                 replaces: None,
                 deleted: false,
                 metadata: None,
+            semantic_id: None,
             },
             NodeRecord {
                 id: 2,
@@ -1496,6 +1520,7 @@ mod eval_tests {
                 replaces: None,
                 deleted: false,
                 metadata: None,
+            semantic_id: None,
             },
         ]);
 
@@ -1546,6 +1571,7 @@ mod eval_tests {
                 replaces: None,
                 deleted: false,
                 metadata: None,
+            semantic_id: None,
             },
             NodeRecord {
                 id: 20,
@@ -1559,6 +1585,7 @@ mod eval_tests {
                 replaces: None,
                 deleted: false,
                 metadata: None,
+            semantic_id: None,
             },
         ]);
 
@@ -1608,6 +1635,7 @@ mod eval_tests {
                 replaces: None,
                 deleted: false,
                 metadata: None,
+            semantic_id: None,
             },
             NodeRecord {
                 id: 200,
@@ -1621,6 +1649,7 @@ mod eval_tests {
                 replaces: None,
                 deleted: false,
                 metadata: None,
+            semantic_id: None,
             },
         ]);
 
@@ -1681,6 +1710,7 @@ mod eval_tests {
                 replaces: None,
                 deleted: false,
                 metadata: None,
+            semantic_id: None,
             },
             NodeRecord {
                 id: 2,
@@ -1694,6 +1724,7 @@ mod eval_tests {
                 replaces: None,
                 deleted: false,
                 metadata: None,
+            semantic_id: None,
             },
         ]);
 
@@ -1743,6 +1774,7 @@ mod eval_tests {
                 replaces: None,
                 deleted: false,
                 metadata: None,
+            semantic_id: None,
             },
             NodeRecord {
                 id: 2,
@@ -1756,6 +1788,7 @@ mod eval_tests {
                 replaces: None,
                 deleted: false,
                 metadata: None,
+            semantic_id: None,
             },
         ]);
 
@@ -1804,6 +1837,7 @@ mod eval_tests {
                 replaces: None,
                 deleted: false,
                 metadata: None,
+            semantic_id: None,
             },
             NodeRecord {
                 id: 2,
@@ -1817,6 +1851,7 @@ mod eval_tests {
                 replaces: None,
                 deleted: false,
                 metadata: None,
+            semantic_id: None,
             },
         ]);
 
@@ -1856,6 +1891,7 @@ mod eval_tests {
                 replaces: None,
                 deleted: false,
                 metadata: None,
+            semantic_id: None,
             },
             NodeRecord {
                 id: 2,
@@ -1869,6 +1905,7 @@ mod eval_tests {
                 replaces: None,
                 deleted: false,
                 metadata: None,
+            semantic_id: None,
             },
             NodeRecord {
                 id: 10,
@@ -1882,6 +1919,7 @@ mod eval_tests {
                 replaces: None,
                 deleted: false,
                 metadata: None,
+            semantic_id: None,
             },
             NodeRecord {
                 id: 20,
@@ -1895,6 +1933,7 @@ mod eval_tests {
                 replaces: None,
                 deleted: false,
                 metadata: None,
+            semantic_id: None,
             },
         ]);
 

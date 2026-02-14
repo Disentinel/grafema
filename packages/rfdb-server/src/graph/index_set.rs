@@ -230,6 +230,7 @@ mod tests {
                 name: Some("funcA".to_string()),
                 file: Some("src/app.js".to_string()),
                 metadata: None,
+            semantic_id: None,
             },
             NodeRecord {
                 id: 200,
@@ -243,6 +244,7 @@ mod tests {
                 name: Some("funcB".to_string()),
                 file: Some("src/app.js".to_string()),
                 metadata: None,
+            semantic_id: None,
             },
             NodeRecord {
                 id: 300,
@@ -256,6 +258,7 @@ mod tests {
                 name: Some("ClassC".to_string()),
                 file: Some("src/utils.js".to_string()),
                 metadata: None,
+            semantic_id: None,
             },
             NodeRecord {
                 id: 400,
@@ -269,6 +272,7 @@ mod tests {
                 name: Some("varD".to_string()),
                 file: None,
                 metadata: None,
+            semantic_id: None,
             },
         ];
 
@@ -331,6 +335,7 @@ mod tests {
                 version: "main".to_string(),
                 exported: false, replaces: None, deleted: false,
                 name: None, file: None, metadata: None,
+            semantic_id: None,
             },
             NodeRecord {
                 id: 2,
@@ -339,6 +344,7 @@ mod tests {
                 version: "main".to_string(),
                 exported: false, replaces: None, deleted: false,
                 name: None, file: None, metadata: None,
+            semantic_id: None,
             },
             NodeRecord {
                 id: 3,
@@ -347,6 +353,7 @@ mod tests {
                 version: "main".to_string(),
                 exported: false, replaces: None, deleted: false,
                 name: None, file: None, metadata: None,
+            semantic_id: None,
             },
         ];
 
@@ -388,6 +395,7 @@ mod tests {
             version: "main".to_string(),
             exported: false, replaces: None, deleted: false,
             name: None, file: Some("old.js".to_string()), metadata: None,
+        semantic_id: None,
         }];
 
         let writer = SegmentWriter::new(db_path);
@@ -409,6 +417,7 @@ mod tests {
             version: "main".to_string(),
             exported: false, replaces: None, deleted: false,
             name: None, file: Some("new.js".to_string()), metadata: None,
+        semantic_id: None,
         }];
 
         writer.write_nodes(&nodes2).unwrap();
@@ -446,6 +455,7 @@ mod tests {
                 name: Some("app.get".to_string()),
                 file: Some("app.js".to_string()),
                 metadata: Some(r#"{"object":"express","method":"get"}"#.to_string()),
+                semantic_id: None,
             },
             NodeRecord {
                 id: 2,
@@ -456,6 +466,7 @@ mod tests {
                 name: Some("app.post".to_string()),
                 file: Some("app.js".to_string()),
                 metadata: Some(r#"{"object":"express","method":"post"}"#.to_string()),
+                semantic_id: None,
             },
             NodeRecord {
                 id: 3,
@@ -466,6 +477,7 @@ mod tests {
                 name: Some("db.query".to_string()),
                 file: Some("db.js".to_string()),
                 metadata: Some(r#"{"object":"knex","method":"query"}"#.to_string()),
+                semantic_id: None,
             },
             NodeRecord {
                 id: 4,
@@ -476,6 +488,7 @@ mod tests {
                 name: Some("helper".to_string()),
                 file: Some("utils.js".to_string()),
                 metadata: None, // no metadata
+                semantic_id: None,
             },
         ];
 
@@ -540,6 +553,7 @@ mod tests {
                 exported: false, replaces: None, deleted: false,
                 name: None, file: None,
                 metadata: Some(r#"{"object":"express"}"#.to_string()),
+                semantic_id: None,
             },
             NodeRecord {
                 id: 2,
@@ -549,6 +563,7 @@ mod tests {
                 exported: false, replaces: None, deleted: false,
                 name: None, file: None,
                 metadata: Some(r#"{"object":"utils"}"#.to_string()),
+                semantic_id: None,
             },
         ];
 

@@ -168,6 +168,7 @@ impl GraphEngine {
                 name: n.name,
                 file: n.file,
                 metadata: n.metadata,
+                semantic_id: None,
             }
         }).collect();
 
