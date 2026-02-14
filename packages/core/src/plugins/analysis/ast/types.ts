@@ -450,6 +450,7 @@ export interface CallArgumentInfo {
   // REG-402: MemberExpression argument fields for this.method callback resolution
   objectName?: string;
   propertyName?: string;
+  enclosingClassName?: string;
 }
 
 // === IMPORT INFO ===

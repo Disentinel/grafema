@@ -5180,6 +5180,11 @@ export class JSASTAnalyzer extends Plugin {
           argInfo.objectName = arg.object.name;
         } else if (t.isThisExpression(arg.object)) {
           argInfo.objectName = 'this';
+          // Store enclosing class name for direct lookup in GraphBuilder
+          const scopeTracker = collections.scopeTracker as ScopeTracker | undefined;
+          if (scopeTracker) {
+            argInfo.enclosingClassName = scopeTracker.getEnclosingScope('CLASS');
+          }
         }
         if (!arg.computed && t.isIdentifier(arg.property)) {
           argInfo.propertyName = arg.property.name;

@@ -1897,46 +1897,28 @@ export class GraphBuilder {
       else if (targetType === 'EXPRESSION' && arg.expressionType === 'MemberExpression') {
         const { objectName, propertyName } = arg;
 
-        if (objectName === 'this' && propertyName) {
-          // Extract class name from the call's semantic ID scope path
-          // Call ID format: file->ClassName->methodName->CALL->name#N
-          const parsed = parseSemanticId(callId);
-          let className: string | undefined;
-          if (parsed) {
-            // Find class name in scope path by matching against known class methods
-            for (const segment of parsed.scopePath) {
-              if (functions.some(f =>
-                f.isClassMethod === true && f.className === segment && f.file === file
-              )) {
-                className = segment;
-                break;
-              }
-            }
-          }
+        if (objectName === 'this' && propertyName && arg.enclosingClassName) {
+          // Look up target method in same class (className set during analysis via ScopeTracker)
+          const methodNode = functions.find(f =>
+            f.isClassMethod === true &&
+            f.className === arg.enclosingClassName &&
+            f.name === propertyName &&
+            f.file === file
+          );
 
-          if (className) {
-            // Look up target method in same class
-            const methodNode = functions.find(f =>
-              f.isClassMethod === true &&
-              f.className === className &&
-              f.name === propertyName &&
-              f.file === file
-            );
+          if (methodNode) {
+            targetNodeId = methodNode.id;
 
-            if (methodNode) {
-              targetNodeId = methodNode.id;
-
-              // Create CALLS edge for known HOFs (same pattern as REG-400)
-              const callName = call && 'method' in call
-                ? (call as MethodCallInfo).method : call?.name;
-              if (callName && KNOWN_CALLBACK_INVOKERS.has(callName)) {
-                this._bufferEdge({
-                  type: 'CALLS',
-                  src: callId,
-                  dst: methodNode.id,
-                  metadata: { callType: 'callback' }
-                });
-              }
+            // Create CALLS edge for known HOFs (same pattern as REG-400)
+            const callName = call && 'method' in call
+              ? (call as MethodCallInfo).method : call?.name;
+            if (callName && KNOWN_CALLBACK_INVOKERS.has(callName)) {
+              this._bufferEdge({
+                type: 'CALLS',
+                src: callId,
+                dst: methodNode.id,
+                metadata: { callType: 'callback' }
+              });
             }
           }
         }
