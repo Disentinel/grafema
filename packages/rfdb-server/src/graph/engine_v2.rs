@@ -507,13 +507,8 @@ impl GraphStore for GraphEngineV2 {
         let total = self.store.edge_count();
         total.saturating_sub(self.pending_tombstone_edges.len())
     }
-}
 
-// ── Engine-specific Methods (NOT on GraphStore trait) ────────────────
-
-impl GraphEngineV2 {
-    /// Reset the engine, clearing all data.
-    pub fn clear(&mut self) {
+    fn clear(&mut self) {
         self.store = MultiShardStore::ephemeral(DEFAULT_SHARD_COUNT);
         self.manifest = ManifestStore::ephemeral();
         self.pending_tombstone_nodes.clear();
@@ -521,6 +516,17 @@ impl GraphEngineV2 {
         self.declared_fields.clear();
     }
 
+    fn declare_fields(&mut self, fields: Vec<FieldDecl>) {
+        self.declared_fields = fields;
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any { self }
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any { self }
+}
+
+// ── Engine-specific Methods (NOT on GraphStore trait) ────────────────
+
+impl GraphEngineV2 {
     /// Check if a node is an endpoint (for PathValidator).
     ///
     /// Endpoint types: db:query, http:request, http:endpoint,
@@ -583,13 +589,8 @@ impl GraphEngineV2 {
         }
     }
 
-    /// Declare metadata fields for indexing (v1 compat).
-    pub fn declare_fields(&mut self, fields: Vec<FieldDecl>) {
-        self.declared_fields = fields;
-    }
-
     /// Get the currently declared fields.
-    pub fn declared_fields(&self) -> &[FieldDecl] {
+    pub fn declared_fields_ref(&self) -> &[FieldDecl] {
         &self.declared_fields
     }
 

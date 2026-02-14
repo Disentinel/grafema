@@ -10,11 +10,14 @@ pub use engine::GraphEngine;
 pub use engine_v2::GraphEngineV2;
 pub use id_gen::{compute_node_id, string_id_to_u128};
 
-use crate::storage::{NodeRecord, EdgeRecord, AttrQuery};
+use std::any::Any;
+use crate::storage::{NodeRecord, EdgeRecord, AttrQuery, FieldDecl};
 use crate::error::Result;
 
 /// Основной trait для graph storage
-pub trait GraphStore {
+///
+/// Send + Sync required for use behind RwLock<Box<dyn GraphStore>> in Database
+pub trait GraphStore: Send + Sync {
     // === NODE OPERATIONS ===
 
     /// Добавить ноды batch'ом
@@ -88,4 +91,67 @@ pub trait GraphStore {
 
     /// Количество рёбер (включая deleted)
     fn edge_count(&self) -> usize;
+
+    // === ENGINE-SPECIFIC ===
+
+    /// Clear all data (reset engine to empty state)
+    fn clear(&mut self);
+
+    /// Declare metadata fields for secondary indexing
+    fn declare_fields(&mut self, fields: Vec<FieldDecl>);
+
+    // === DOWNCAST SUPPORT ===
+
+    /// Downcast to concrete engine type (for engine-specific operations)
+    fn as_any(&self) -> &dyn Any;
+
+    /// Downcast to concrete engine type (mutable, for engine-specific operations)
+    fn as_any_mut(&mut self) -> &mut dyn Any;
+}
+
+/// Check if a node is an API endpoint (application logic, not storage)
+///
+/// This is a free function rather than a GraphStore method because it's
+/// Grafema-specific business logic, not a storage operation.
+pub fn is_endpoint(engine: &dyn GraphStore, id: u128) -> bool {
+    const ENDPOINT_TYPES: &[&str] = &[
+        "db:query", "http:request", "http:route", "http:endpoint",
+        "graphql:query", "graphql:mutation", "graphql:subscription",
+        "grpc:method", "websocket:handler",
+    ];
+
+    match engine.get_node(id) {
+        Some(node) => {
+            if let Some(ref nt) = node.node_type {
+                ENDPOINT_TYPES.contains(&nt.as_str())
+            } else {
+                false
+            }
+        }
+        None => false,
+    }
+}
+
+/// BFS reachability with optional backward direction (application logic)
+///
+/// Forward: follows outgoing edges. Backward: follows incoming edges.
+/// Free function because direction-aware traversal is application logic
+/// built on top of storage primitives.
+pub fn reachability(
+    engine: &dyn GraphStore,
+    start: &[u128],
+    max_depth: usize,
+    edge_types: &[&str],
+    backward: bool,
+) -> Vec<u128> {
+    if backward {
+        traversal::bfs(start, max_depth, |id| {
+            engine.get_incoming_edges(id, Some(edge_types))
+                .into_iter()
+                .map(|e| e.src)
+                .collect()
+        })
+    } else {
+        engine.bfs(start, max_depth, edge_types)
+    }
 }
