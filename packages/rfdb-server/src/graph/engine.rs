@@ -624,8 +624,15 @@ impl GraphEngine {
                     if edges_seg.is_deleted(idx) {
                         continue;
                     }
-                    if let Some(src) = edges_seg.get_src(idx) {
+                    if let (Some(src), Some(dst)) = (edges_seg.get_src(idx), edges_seg.get_dst(idx)) {
                         let edge_type = edges_seg.get_edge_type(idx);
+                        let edge_type_key = edge_type.unwrap_or("").to_string();
+
+                        // Skip edges deleted from segment
+                        if self.deleted_segment_edge_keys.contains(&(src, dst, edge_type_key)) {
+                            continue;
+                        }
+
                         if edge_types.is_empty() || edge_type.map_or(false, |et| edge_types.contains(&et)) {
                             result.push(src);
                         }
