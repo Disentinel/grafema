@@ -20,6 +20,7 @@ import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { NodeRecord } from '@grafema/types';
 import { NetworkRequestNode } from '../../core/nodes/NetworkRequestNode.js';
 import { getLine, getColumn } from './ast/utils/location.js';
+import { resolveNodeFile } from '../../utils/resolveNodeFile.js';
 
 const traverse = (traverseModule as any).default || traverseModule;
 
@@ -85,6 +86,7 @@ export class FetchAnalyzer extends Plugin {
 
     try {
       const { graph } = context;
+      const projectPath = (context.manifest as { projectPath?: string })?.projectPath ?? '';
 
       // Create net:request singleton once before processing modules
       const networkNode = NetworkRequestNode.create();
@@ -102,7 +104,7 @@ export class FetchAnalyzer extends Plugin {
 
       for (let i = 0; i < modules.length; i++) {
         const module = modules[i];
-        const result = await this.analyzeModule(module, graph);
+        const result = await this.analyzeModule(module, graph, projectPath);
         requestsCount += result.requests;
         apisCount += result.apis;
 
@@ -142,14 +144,15 @@ export class FetchAnalyzer extends Plugin {
 
   private async analyzeModule(
     module: NodeRecord,
-    graph: PluginContext['graph']
+    graph: PluginContext['graph'],
+    projectPath: string
   ): Promise<AnalysisResult> {
     // Batch arrays for nodes and edges
     const nodes: NodeRecord[] = [];
     const edges: Array<{ type: string; src: string; dst: string }> = [];
 
     try {
-      const code = readFileSync(module.file!, 'utf-8');
+      const code = readFileSync(resolveNodeFile(module.file!, projectPath), 'utf-8');
 
       const ast = parse(code, {
         sourceType: 'module',

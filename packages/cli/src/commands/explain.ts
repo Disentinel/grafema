@@ -15,6 +15,7 @@
 import { Command } from 'commander';
 import { resolve, join, relative, normalize } from 'path';
 import { existsSync, realpathSync } from 'fs';
+import { toRelativeDisplay } from '../utils/pathUtils.js';
 import { RFDBServerBackend, FileExplainer, type EnhancedNode } from '@grafema/core';
 import { exitWithError } from '../utils/errorFormatter.js';
 
@@ -166,7 +167,7 @@ function displayNode(node: EnhancedNode, type: string, projectPath: string): voi
 
   // Line 3: Location
   if (node.file) {
-    const relPath = relative(projectPath, node.file);
+    const relPath = toRelativeDisplay(node.file, projectPath);
     const loc = node.line ? `${relPath}:${node.line}` : relPath;
     console.log(`  Location: ${loc}`);
   }

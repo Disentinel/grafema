@@ -100,7 +100,7 @@ export const x = helper();`);
 
       // Check freshness - should be fresh since files haven't changed
       const checker = new GraphFreshnessChecker();
-      const result = await checker.checkFreshness(backend);
+      const result = await checker.checkFreshness(backend, testDir);
 
       assert.strictEqual(result.isFresh, true,
         'Graph should be fresh when files have not changed');
@@ -125,7 +125,7 @@ export const x = helper();`);
       await orchestrator.run(testDir);
 
       const checker = new GraphFreshnessChecker();
-      const result = await checker.checkFreshness(backend);
+      const result = await checker.checkFreshness(backend, testDir);
 
       assert.ok(typeof result.checkDurationMs === 'number',
         'Should include checkDurationMs');
@@ -154,7 +154,7 @@ export const x = helper();`);
 
       // Check freshness - should detect stale module
       const checker = new GraphFreshnessChecker();
-      const result = await checker.checkFreshness(backend);
+      const result = await checker.checkFreshness(backend, testDir);
 
       assert.strictEqual(result.isFresh, false,
         'Graph should be stale when file has changed');
@@ -207,7 +207,7 @@ export const sum = a + b + c;`);
       // file3 unchanged
 
       const checker = new GraphFreshnessChecker();
-      const result = await checker.checkFreshness(backend);
+      const result = await checker.checkFreshness(backend, testDir);
 
       assert.strictEqual(result.isFresh, false,
         'Graph should be stale');
@@ -247,7 +247,7 @@ export const x = toDelete ? 1 : 0;`);
 
       // Check freshness
       const checker = new GraphFreshnessChecker();
-      const result = await checker.checkFreshness(backend);
+      const result = await checker.checkFreshness(backend, testDir);
 
       assert.strictEqual(result.isFresh, false,
         'Graph should be stale when file is deleted');
@@ -292,7 +292,7 @@ export const sum = changed + deleted + fresh;`);
       unlinkSync(deletedFile);
 
       const checker = new GraphFreshnessChecker();
-      const result = await checker.checkFreshness(backend);
+      const result = await checker.checkFreshness(backend, testDir);
 
       assert.strictEqual(result.staleCount, 2,
         'Should have 2 stale modules total');
@@ -361,7 +361,7 @@ export const total = ${Array.from({ length: 50 }, (_, i) => `value${i}`).join(' 
       // Check freshness and measure time
       const checker = new GraphFreshnessChecker();
       const startTime = Date.now();
-      const result = await checker.checkFreshness(backend);
+      const result = await checker.checkFreshness(backend, testDir);
       const duration = Date.now() - startTime;
 
       assert.ok(duration < 1000,
@@ -397,7 +397,7 @@ export const fns = [${Array.from({ length: 100 }, (_, i) => `fn${i}`).join(', ')
       await orchestrator.run(testDir);
 
       const checker = new GraphFreshnessChecker();
-      const result = await checker.checkFreshness(backend);
+      const result = await checker.checkFreshness(backend, testDir);
 
       // Just verify it completes and returns valid result
       // Batching is an internal implementation detail
@@ -433,7 +433,7 @@ export const fns = [${Array.from({ length: 100 }, (_, i) => `fn${i}`).join(', ')
 
       // Should not crash, should skip modules without contentHash
       const checker = new GraphFreshnessChecker();
-      const result = await checker.checkFreshness(backend);
+      const result = await checker.checkFreshness(backend, testDir);
 
       assert.ok(result,
         'Should return result even with malformed modules');
@@ -482,7 +482,7 @@ export const fns = [${Array.from({ length: 100 }, (_, i) => `fn${i}`).join(', ')
       writeFileSync(join(testDir, 'index.js'), 'export const x = 2;');
 
       const checker = new GraphFreshnessChecker();
-      const result = await checker.checkFreshness(backend);
+      const result = await checker.checkFreshness(backend, testDir);
 
       assert.strictEqual(result.staleModules.length, 1,
         'Should have 1 stale module');

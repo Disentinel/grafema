@@ -12,6 +12,7 @@
  */
 
 import { readFileSync } from 'fs';
+import { resolveNodeFile } from '../../utils/resolveNodeFile.js';
 import type { ParserPlugin } from '@babel/parser';
 import { parse } from '@babel/parser';
 import traverseModule from '@babel/traverse';
@@ -63,6 +64,7 @@ export class SystemDbAnalyzer extends Plugin {
 
     try {
       const { graph } = context;
+      const projectPath = (context.manifest as { projectPath?: string })?.projectPath ?? '';
 
       let nodesCreated = 0;
       let edgesCreated = 0;
@@ -80,7 +82,7 @@ export class SystemDbAnalyzer extends Plugin {
         if (!module.file) continue;
 
         try {
-          const code = readFileSync(module.file, 'utf-8');
+          const code = readFileSync(resolveNodeFile(module.file, projectPath), 'utf-8');
           const ast = parse(code, {
             sourceType: 'module',
             plugins: ['jsx', 'typescript'] as ParserPlugin[],

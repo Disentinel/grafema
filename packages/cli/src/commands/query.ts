@@ -10,7 +10,8 @@
  */
 
 import { Command } from 'commander';
-import { resolve, join, relative, basename } from 'path';
+import { resolve, join, basename } from 'path';
+import { toRelativeDisplay } from '../utils/pathUtils.js';
 import { existsSync } from 'fs';
 import { RFDBServerBackend, parseSemanticId, parseSemanticIdV2, findCallsInFunction as findCallsInFunctionCore, findContainingFunction as findContainingFunctionCore } from '@grafema/core';
 import { formatNodeDisplay, formatNodeInline, formatLocation } from '../utils/formatNode.js';
@@ -831,7 +832,7 @@ function formatHttpRouteDisplay(node: NodeInfo, projectPath: string): string {
 
   // Line 2: Location
   if (node.file) {
-    const relPath = relative(projectPath, node.file);
+    const relPath = toRelativeDisplay(node.file, projectPath);
     const loc = node.line ? `${relPath}:${node.line}` : relPath;
     lines.push(`  Location: ${loc}`);
   }
@@ -856,7 +857,7 @@ function formatHttpRequestDisplay(node: NodeInfo, projectPath: string): string {
 
   // Line 2: Location
   if (node.file) {
-    const relPath = relative(projectPath, node.file);
+    const relPath = toRelativeDisplay(node.file, projectPath);
     const loc = node.line ? `${relPath}:${node.line}` : relPath;
     lines.push(`  Location: ${loc}`);
   }
@@ -997,7 +998,7 @@ function formatPluginDisplay(node: NodeInfo, projectPath: string): string {
   }
 
   if (node.file) {
-    const relPath = relative(projectPath, node.file);
+    const relPath = toRelativeDisplay(node.file, projectPath);
     lines.push(`  Source: ${relPath}`);
   }
 

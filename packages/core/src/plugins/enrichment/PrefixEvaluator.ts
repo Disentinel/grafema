@@ -32,6 +32,7 @@ import type {
 } from '@babel/types';
 import type { NodePath } from '@babel/traverse';
 import { readFileSync } from 'fs';
+import { resolveNodeFile } from '../../utils/resolveNodeFile.js';
 import type { NodeRecord } from '@grafema/types';
 
 // ES module compatibility - handle default export
@@ -95,6 +96,7 @@ export class PrefixEvaluator extends Plugin {
   async execute(context: PluginContext): Promise<PluginResult> {
     try {
       const { graph } = context;
+      const projectPath = (context.manifest as { projectPath?: string })?.projectPath ?? '';
       const logger = this.log(context);
       const graphTyped = graph as unknown as Graph;
 
@@ -142,7 +144,7 @@ export class PrefixEvaluator extends Plugin {
         // Parse module AST
         let ast: ParseResult<File>;
         try {
-          const code = readFileSync(module.file, 'utf-8');
+          const code = readFileSync(resolveNodeFile(module.file, projectPath), 'utf-8');
           ast = parse(code, {
             sourceType: 'module',
             plugins: ['jsx', 'typescript'] as ParserPlugin[]

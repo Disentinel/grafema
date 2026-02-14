@@ -137,7 +137,7 @@ Examples:
 
       // Check graph freshness
       const freshnessChecker = new GraphFreshnessChecker();
-      const freshness = await freshnessChecker.checkFreshness(backend);
+      const freshness = await freshnessChecker.checkFreshness(backend, projectPath);
 
       if (!freshness.isFresh) {
         if (options.failOnStale) {
@@ -292,7 +292,7 @@ async function runBuiltInValidator(
 
   // Check graph freshness
   const freshnessChecker = new GraphFreshnessChecker();
-  const freshness = await freshnessChecker.checkFreshness(backend);
+  const freshness = await freshnessChecker.checkFreshness(backend, resolvedPath);
 
   if (!freshness.isFresh) {
     if (options.failOnStale) {

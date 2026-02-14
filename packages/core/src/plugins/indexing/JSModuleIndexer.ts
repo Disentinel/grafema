@@ -373,7 +373,7 @@ export class JSModuleIndexer extends Plugin {
           id: semanticId,
           type: 'MODULE' as const,
           name: relativePath,
-          file: currentFile, // Keep absolute path for file reading in analyzers
+          file: relativePath,
           line: 0,
           contentHash: fileHash || '',
           isTest

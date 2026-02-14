@@ -527,7 +527,7 @@ export async function checkFreshness(
   try {
     await backend.connect();
     const freshnessChecker = new GraphFreshnessChecker();
-    const result = await freshnessChecker.checkFreshness(backend);
+    const result = await freshnessChecker.checkFreshness(backend, projectPath);
     await backend.close();
 
     if (result.isFresh) {

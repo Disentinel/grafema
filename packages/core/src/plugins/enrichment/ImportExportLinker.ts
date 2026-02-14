@@ -13,7 +13,7 @@
  * где exportKey = "default" | "named:functionName" | "all"
  */
 
-import { dirname, resolve } from 'path';
+import { dirname, join } from 'path';
 import { Plugin, createSuccessResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { BaseNodeRecord } from '@grafema/types';
@@ -100,7 +100,7 @@ export class ImportExportLinker extends Plugin {
 
       // Resolve target file path
       const currentDir = dirname(imp.file!);
-      const basePath = resolve(currentDir, imp.source!);
+      const basePath = join(currentDir, imp.source!);
 
       // Try different extensions
       const extensions = ['', '.js', '.ts', '.jsx', '.tsx', '/index.js', '/index.ts'];

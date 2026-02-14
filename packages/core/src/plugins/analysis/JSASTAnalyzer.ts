@@ -59,6 +59,7 @@ import { ConstructorCallNode } from '../../core/nodes/ConstructorCallNode.js';
 import { ObjectLiteralNode } from '../../core/nodes/ObjectLiteralNode.js';
 import { ArrayLiteralNode } from '../../core/nodes/ArrayLiteralNode.js';
 import { NodeFactory } from '../../core/NodeFactory.js';
+import { resolveNodeFile } from '../../utils/resolveNodeFile.js';
 import type { PluginContext, PluginResult, PluginMetadata, GraphBackend } from '@grafema/types';
 import type {
   ModuleNode,
@@ -295,9 +296,9 @@ export class JSASTAnalyzer extends Plugin {
   /**
    * Вычисляет хеш содержимого файла
    */
-  calculateFileHash(filePath: string): string | null {
+  calculateFileHash(filePath: string, projectPath: string = ''): string | null {
     try {
-      const content = readFileSync(filePath, 'utf-8');
+      const content = readFileSync(resolveNodeFile(filePath, projectPath), 'utf-8');
       return createHash('sha256').update(content).digest('hex');
     } catch {
       return null;
@@ -307,7 +308,7 @@ export class JSASTAnalyzer extends Plugin {
   /**
    * Проверяет нужно ли анализировать модуль (сравнивает хеши)
    */
-  async shouldAnalyzeModule(module: ModuleNode, graph: GraphBackend, forceAnalysis: boolean): Promise<boolean> {
+  async shouldAnalyzeModule(module: ModuleNode, graph: GraphBackend, forceAnalysis: boolean, projectPath: string = ""): Promise<boolean> {
     if (forceAnalysis) {
       return true;
     }
@@ -316,7 +317,7 @@ export class JSASTAnalyzer extends Plugin {
       return true;
     }
 
-    const currentHash = this.calculateFileHash(module.file);
+    const currentHash = this.calculateFileHash(module.file, projectPath);
     if (!currentHash) {
       return true;
     }
@@ -365,7 +366,7 @@ export class JSASTAnalyzer extends Plugin {
           continue;
         }
 
-        if (await this.shouldAnalyzeModule(module, graph, forceAnalysis)) {
+        if (await this.shouldAnalyzeModule(module, graph, forceAnalysis, projectPath)) {
           modulesToAnalyze.push(module);
         } else {
           skippedCount++;
@@ -501,7 +502,7 @@ export class JSASTAnalyzer extends Plugin {
       // Convert ModuleNode to ASTModuleInfo format
       const moduleInfos: ASTModuleInfo[] = modules.map(m => ({
         id: m.id,
-        file: m.file,
+        file: resolveNodeFile(m.file, projectPath),
         name: m.name
       }));
 
@@ -546,7 +547,7 @@ export class JSASTAnalyzer extends Plugin {
           context.onProgress({
             phase: 'analysis',
             currentPlugin: 'JSASTAnalyzer',
-            message: `Processed ${result.module.file.replace(projectPath, '')}`,
+            message: `Processed ${result.module.name}`,
             totalFiles: modules.length,
             processedFiles: results.indexOf(result) + 1
           });
@@ -1417,7 +1418,7 @@ export class JSASTAnalyzer extends Plugin {
 
     try {
       this.profiler.start('file_read');
-      const code = readFileSync(module.file, 'utf-8');
+      const code = readFileSync(resolveNodeFile(module.file, projectPath), 'utf-8');
       this.profiler.end('file_read');
 
       this.profiler.start('babel_parse');

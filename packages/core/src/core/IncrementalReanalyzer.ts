@@ -10,6 +10,7 @@
 
 import { relative } from 'path';
 import { clearFileNodesIfNeeded } from './FileNodeManager.js';
+import { resolveNodeFile } from '../utils/resolveNodeFile.js';
 import { JSASTAnalyzer } from '../plugins/analysis/JSASTAnalyzer.js';
 import { InstanceOfResolver } from '../plugins/enrichment/InstanceOfResolver.js';
 import { ImportExportLinker } from '../plugins/enrichment/ImportExportLinker.js';
@@ -90,7 +91,8 @@ export class IncrementalReanalyzer {
 
     for (let i = 0; i < modifiedModules.length; i++) {
       const module = modifiedModules[i];
-      const relativePath = relative(this.projectPath, module.file);
+      const absoluteFile = resolveNodeFile(module.file, this.projectPath);
+      const relativePath = relative(this.projectPath, absoluteFile);
 
       if (options.onProgress) {
         options.onProgress({
@@ -105,7 +107,7 @@ export class IncrementalReanalyzer {
         id: module.id,
         type: 'MODULE',
         name: relativePath,
-        file: module.file,
+        file: relativePath,
         contentHash: module.currentHash!,
         line: 0
       };

@@ -7,6 +7,7 @@
 
 import { access, constants } from 'fs/promises';
 import { calculateFileHashAsync } from './HashUtils.js';
+import { resolveNodeFile } from '../utils/resolveNodeFile.js';
 import type { NodeRecord } from '@grafema/types';
 
 export interface StaleModule {
@@ -39,7 +40,7 @@ interface ModuleInfo {
 const BATCH_SIZE = 50;
 
 export class GraphFreshnessChecker {
-  async checkFreshness(graph: FreshnessGraph): Promise<FreshnessResult> {
+  async checkFreshness(graph: FreshnessGraph, projectPath?: string): Promise<FreshnessResult> {
     const startTime = Date.now();
 
     const modules: ModuleInfo[] = [];
@@ -71,7 +72,7 @@ export class GraphFreshnessChecker {
     for (let i = 0; i < modules.length; i += BATCH_SIZE) {
       const batch = modules.slice(i, i + BATCH_SIZE);
       const results = await Promise.all(
-        batch.map(module => this._checkModuleFreshness(module))
+        batch.map(module => this._checkModuleFreshness(module, projectPath))
       );
 
       for (const result of results) {
@@ -96,8 +97,9 @@ export class GraphFreshnessChecker {
     };
   }
 
-  private async _checkModuleFreshness(module: ModuleInfo): Promise<StaleModule | null> {
-    const exists = await this._fileExists(module.file);
+  private async _checkModuleFreshness(module: ModuleInfo, projectPath?: string): Promise<StaleModule | null> {
+    const absoluteFile = projectPath ? resolveNodeFile(module.file, projectPath) : module.file;
+    const exists = await this._fileExists(absoluteFile);
     if (!exists) {
       return {
         id: module.id,
@@ -108,7 +110,7 @@ export class GraphFreshnessChecker {
       };
     }
 
-    const currentHash = await calculateFileHashAsync(module.file);
+    const currentHash = await calculateFileHashAsync(absoluteFile);
     if (currentHash === null) {
       return {
         id: module.id,

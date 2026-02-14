@@ -16,6 +16,7 @@ import type { NodeRecord } from '@grafema/types';
 import { NetworkRequestNode } from '../../core/nodes/NetworkRequestNode.js';
 import { getLine, getColumn } from './ast/utils/location.js';
 import { getTraverseFunction } from './ast/utils/babelTraverse.js';
+import { resolveNodeFile } from '../../utils/resolveNodeFile.js';
 
 const traverse = getTraverseFunction(traverseModule);
 
@@ -85,6 +86,7 @@ export class ExpressAnalyzer extends Plugin {
 
     try {
       const { graph } = context;
+      const projectPath = (context.manifest as { projectPath?: string })?.projectPath ?? '';
 
       // Batch arrays
       const nodes: NodeRecord[] = [];
@@ -103,7 +105,7 @@ export class ExpressAnalyzer extends Plugin {
 
       // Анализируем каждый модуль
       for (const module of modules) {
-        const result = await this.analyzeModule(module, graph, networkNode.id, nodes, edges);
+        const result = await this.analyzeModule(module, graph, projectPath, networkNode.id, nodes, edges);
         endpointsCreated += result.endpoints;
         mountPointsCreated += result.mountPoints;
         edgesCreated += result.edges;
@@ -138,6 +140,7 @@ export class ExpressAnalyzer extends Plugin {
   private async analyzeModule(
     module: NodeRecord,
     graph: PluginContext['graph'],
+    projectPath: string,
     networkId: string,
     nodes: NodeRecord[],
     edges: Array<{type: string; src: string; dst: string; [key: string]: unknown}>
@@ -148,7 +151,7 @@ export class ExpressAnalyzer extends Plugin {
 
     try {
       // Читаем и парсим файл
-      const code = readFileSync(module.file!, 'utf-8');
+      const code = readFileSync(resolveNodeFile(module.file!, projectPath), 'utf-8');
       const ast = parse(code, {
         sourceType: 'module',
         plugins: ['jsx'] as ParserPlugin[]
@@ -346,7 +349,7 @@ export class ExpressAnalyzer extends Plugin {
         edgesCreated++;
 
         // Создаём MOUNTS рёбра
-        const mountEdges = await this.createMountEdges(mountPoint, module, imports, graph, edges);
+        const mountEdges = await this.createMountEdges(mountPoint, module, imports, graph, projectPath, edges);
         edgesCreated += mountEdges;
       }
     } catch {
@@ -368,6 +371,7 @@ export class ExpressAnalyzer extends Plugin {
     module: NodeRecord,
     imports: ImportInfo[],
     graph: PluginContext['graph'],
+    projectPath: string,
     edges: Array<{type: string; src: string; dst: string; [key: string]: unknown}>
   ): Promise<number> {
     let edgesCreated = 0;
@@ -388,7 +392,7 @@ export class ExpressAnalyzer extends Plugin {
 
         if (hasTarget) {
           // Резолвим путь к модулю
-          const currentDir = dirname(module.file!);
+          const currentDir = dirname(resolveNodeFile(module.file!, projectPath));
           targetModulePath = resolve(currentDir, imp.source);
           break;
         }
@@ -397,14 +401,7 @@ export class ExpressAnalyzer extends Plugin {
 
     // Если нашли целевой модуль, создаем MOUNTS ребро
     if (targetModulePath) {
-      // Derive project root from module's absolute and relative paths
-      // module.file is absolute path, module.name is relative path
-      const moduleAbsPath = module.file!;
-      const moduleRelPath = module.name!;
-      // projectRoot = absolute path minus relative path suffix
-      const projectRoot = moduleAbsPath.endsWith(moduleRelPath)
-        ? moduleAbsPath.slice(0, moduleAbsPath.length - moduleRelPath.length)
-        : dirname(moduleAbsPath); // fallback
+      const projectRoot = projectPath;
 
       // Convert target absolute path to relative path for semantic ID
       const targetRelativePath = relative(projectRoot, targetModulePath);

@@ -261,7 +261,7 @@ export class NodeFactory {
     const contentHash = options.contentHash || this._hashFile(filePath);
     const relativePath = relative(projectPath, filePath) || basename(filePath);
 
-    return brandNode(ModuleNode.create(filePath, relativePath, contentHash, options));
+    return brandNode(ModuleNode.create(relativePath, relativePath, contentHash, options));
   }
 
   /**

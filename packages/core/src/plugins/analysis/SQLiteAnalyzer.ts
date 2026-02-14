@@ -18,6 +18,7 @@ import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { NodeRecord } from '@grafema/types';
 import { getLine, getColumn } from './ast/utils/location.js';
+import { resolveNodeFile } from '../../utils/resolveNodeFile.js';
 
 const traverse = (traverseModule as any).default || traverseModule;
 
@@ -67,6 +68,7 @@ export class SQLiteAnalyzer extends Plugin {
 
     try {
       const { graph } = context;
+      const projectPath = (context.manifest as { projectPath?: string })?.projectPath ?? '';
 
       // Получаем все MODULE ноды
       const modules = await this.getModules(graph);
@@ -77,7 +79,7 @@ export class SQLiteAnalyzer extends Plugin {
 
       // Анализируем каждый модуль
       for (const module of modules) {
-        const result = await this.analyzeModule(module, graph);
+        const result = await this.analyzeModule(module, graph, projectPath);
         queriesCreated += result.queries;
         operationsCreated += result.operations;
         edgesCreated += result.edges;
@@ -97,7 +99,8 @@ export class SQLiteAnalyzer extends Plugin {
 
   private async analyzeModule(
     module: NodeRecord,
-    graph: PluginContext['graph']
+    graph: PluginContext['graph'],
+    projectPath: string
   ): Promise<AnalysisResult> {
     let queriesCreated = 0;
     let operationsCreated = 0;
@@ -105,7 +108,7 @@ export class SQLiteAnalyzer extends Plugin {
 
     try {
       // Читаем файл
-      const code = readFileSync(module.file!, 'utf-8');
+      const code = readFileSync(resolveNodeFile(module.file!, projectPath), 'utf-8');
 
       // Парсим AST
       const ast = parse(code, {
