@@ -1764,6 +1764,26 @@ export class JSASTAnalyzer extends Plugin {
       traverse(ast, callExpressionVisitor.getHandlers());
       this.profiler.end('traverse_calls');
 
+      // REG-297: Detect top-level await expressions
+      this.profiler.start('traverse_top_level_await');
+      let hasTopLevelAwait = false;
+      traverse(ast, {
+        AwaitExpression(awaitPath: NodePath<t.AwaitExpression>) {
+          if (!awaitPath.getFunctionParent()) {
+            hasTopLevelAwait = true;
+            awaitPath.stop();
+          }
+        },
+        // for-await-of uses ForOfStatement.await, not AwaitExpression
+        ForOfStatement(forOfPath: NodePath<t.ForOfStatement>) {
+          if (forOfPath.node.await && !forOfPath.getFunctionParent()) {
+            hasTopLevelAwait = true;
+            forOfPath.stop();
+          }
+        }
+      });
+      this.profiler.end('traverse_top_level_await');
+
       // Property access expressions (REG-395)
       this.profiler.start('traverse_property_access');
       const propertyAccessVisitor = new PropertyAccessVisitor(module, allCollections, scopeTracker);
@@ -1959,7 +1979,9 @@ export class JSASTAnalyzer extends Plugin {
           ? allCollections.catchesFromInfos as CatchesFromInfo[]
           : catchesFromInfos,
         // Property access tracking (REG-395)
-        propertyAccesses: allCollections.propertyAccesses || propertyAccesses
+        propertyAccesses: allCollections.propertyAccesses || propertyAccesses,
+        // REG-297: Top-level await tracking
+        hasTopLevelAwait
       });
       this.profiler.end('graph_build');
 

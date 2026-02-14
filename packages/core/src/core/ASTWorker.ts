@@ -125,6 +125,8 @@ interface CallSiteNode {
   targetFunctionName?: string;
   object?: string;
   method?: string;
+  /** REG-297: true if wrapped in await expression */
+  isAwaited?: boolean;
 }
 
 /**
@@ -486,6 +488,9 @@ function parseModule(filePath: string, moduleId: string, moduleName: string): AS
       const node = path.node;
       const nodeKey = `${node.start}:${node.end}`;
 
+      // REG-297: Detect isAwaited for module-level calls
+      const isAwaited = path.parentPath?.isAwaitExpression() ?? false;
+
       if (node.callee.type === 'Identifier') {
         if (processed.callSites.has(nodeKey)) return;
         processed.callSites.add(nodeKey);
@@ -502,7 +507,8 @@ function parseModule(filePath: string, moduleId: string, moduleName: string): AS
           file: filePath,
           line: getLine(node),
           parentScopeId: moduleId,
-          targetFunctionName: calleeName
+          targetFunctionName: calleeName,
+          isAwaited: isAwaited || undefined
         });
       } else if (node.callee.type === 'MemberExpression') {
         const obj = node.callee.object;
@@ -528,7 +534,8 @@ function parseModule(filePath: string, moduleId: string, moduleName: string): AS
             method: methodName,
             file: filePath,
             line: getLine(node),
-            parentScopeId: moduleId
+            parentScopeId: moduleId,
+            isAwaited: isAwaited || undefined
           });
         }
       }
