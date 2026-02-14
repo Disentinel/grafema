@@ -3707,9 +3707,12 @@ export class JSASTAnalyzer extends Plugin {
     // When a CallExpression callee is an Identifier matching a parameter name,
     // it means this function invokes that parameter (user-defined HOF pattern).
     // REG-417: Extended to handle destructured (ObjectPattern/ArrayPattern) and rest params.
+    // Also tracks property paths for OBJECT_LITERAL resolution at call sites.
     const paramNameToIndex = new Map<string, number>();
+    const paramNameToPropertyPath = new Map<string, string[]>();
     const restParamNames = new Set<string>();
     const invokedParamIndexes = new Set<number>();
+    const invokesParamBindings: { paramIndex: number; propertyPath: string[] }[] = [];
     if (functionNode) {
       for (let i = 0; i < functionNode.params.length; i++) {
         const param = functionNode.params[i];
@@ -3724,6 +3727,9 @@ export class JSASTAnalyzer extends Plugin {
             const extracted = extractNamesFromPattern(param.left);
             for (const info of extracted) {
               paramNameToIndex.set(info.name, i);
+              if (info.propertyPath) {
+                paramNameToPropertyPath.set(info.name, info.propertyPath);
+              }
             }
           }
         } else if (t.isObjectPattern(param) || t.isArrayPattern(param)) {
@@ -3731,6 +3737,9 @@ export class JSASTAnalyzer extends Plugin {
           const extracted = extractNamesFromPattern(param);
           for (const info of extracted) {
             paramNameToIndex.set(info.name, i);
+            if (info.propertyPath) {
+              paramNameToPropertyPath.set(info.name, info.propertyPath);
+            }
           }
         } else if (t.isRestElement(param) && t.isIdentifier(param.argument)) {
           // REG-417: Rest params: function(...fns) — track for MemberExpression detection
@@ -4388,9 +4397,15 @@ export class JSASTAnalyzer extends Plugin {
         const callNodeForParam = callPath.node;
         if (paramNameToIndex.size > 0) {
           if (t.isIdentifier(callNodeForParam.callee)) {
-            const paramIndex = paramNameToIndex.get(callNodeForParam.callee.name);
+            const calleeName = callNodeForParam.callee.name;
+            const paramIndex = paramNameToIndex.get(calleeName);
             if (paramIndex !== undefined) {
               invokedParamIndexes.add(paramIndex);
+              // REG-417: Record property path for destructured param bindings
+              const propertyPath = paramNameToPropertyPath.get(calleeName);
+              if (propertyPath) {
+                invokesParamBindings.push({ paramIndex, propertyPath });
+              }
             }
           } else if (
             t.isMemberExpression(callNodeForParam.callee) &&
@@ -4935,6 +4950,10 @@ export class JSASTAnalyzer extends Plugin {
       // REG-401: Store invoked parameter indexes for user-defined HOF detection
       if (invokedParamIndexes.size > 0) {
         matchingFunction.invokesParamIndexes = [...invokedParamIndexes];
+      }
+      // REG-417: Store property paths for destructured param bindings
+      if (invokesParamBindings.length > 0) {
+        matchingFunction.invokesParamBindings = invokesParamBindings;
       }
     }
   }

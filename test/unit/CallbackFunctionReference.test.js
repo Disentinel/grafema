@@ -1142,54 +1142,89 @@ function process(items, parser) {
   // REG-417: Destructured and rest parameter invocation detection
   // ============================================================================
 
-  // Analysis-time detection: verify invokesParamIndexes metadata is set
-  // correctly for destructured parameters. End-to-end callback CALLS edge
-  // resolution for destructured params requires the enricher to resolve
-  // through object/array literals at call sites — tracked separately.
-
-  describe('Destructured param invocation metadata (ObjectPattern) [REG-417]', () => {
-    it('should set invokesParamIndexes on FUNCTION when destructured param binding is called', async () => {
+  describe('Destructured param invocation — end-to-end CALLS edge (ObjectPattern) [REG-417]', () => {
+    it('should create callback CALLS edge when HOF with destructured param is called with object literal', async () => {
       await setupTest(backend, {
         'index.js': `
+function handler() { return 42; }
 function apply({ fn }) { fn(); }
+apply({ fn: handler });
 `
       });
 
       const allNodes = await backend.getAllNodes();
+      const allEdges = await backend.getAllEdges();
 
+      const handlerFunc = allNodes.find(n =>
+        n.type === 'FUNCTION' && n.name === 'handler'
+      );
       const applyFunc = allNodes.find(n =>
         n.type === 'FUNCTION' && n.name === 'apply'
       );
+      const applyCall = allNodes.find(n =>
+        n.type === 'CALL' && n.name === 'apply' && !n.object
+      );
+      assert.ok(handlerFunc, 'Should find handler FUNCTION node');
       assert.ok(applyFunc, 'Should find apply FUNCTION node');
+      assert.ok(applyCall, 'Should find apply CALL node');
 
-      // fn() inside body should detect param index 0 as invoked
+      // Metadata: invokesParamIndexes should include 0
       const invokesIndexes = applyFunc.invokesParamIndexes ?? applyFunc.metadata?.invokesParamIndexes;
       assert.ok(
         Array.isArray(invokesIndexes) && invokesIndexes.includes(0),
         `apply FUNCTION should have invokesParamIndexes containing 0, got: ${JSON.stringify(invokesIndexes)}`
       );
+
+      // End-to-end: CALLS edge from apply() call site to handler
+      const callbackCallsEdge = allEdges.find(e =>
+        e.type === 'CALLS' && e.src === applyCall.id && e.dst === handlerFunc.id
+      );
+      assert.ok(
+        callbackCallsEdge,
+        `Should have callback CALLS edge from apply CALL (${applyCall.id}) to handler FUNCTION (${handlerFunc.id})`
+      );
     });
   });
 
-  describe('Destructured param invocation metadata (nested ObjectPattern) [REG-417]', () => {
-    it('should set invokesParamIndexes for deeply nested destructured param', async () => {
+  describe('Destructured param invocation — nested ObjectPattern [REG-417]', () => {
+    it('should create callback CALLS edge for deeply nested destructured param', async () => {
       await setupTest(backend, {
         'index.js': `
-function execute({ callbacks: { onSuccess } }) { onSuccess(); }
+function onSuccess() { return 'ok'; }
+function execute({ callbacks: { onSuccess: cb } }) { cb(); }
+execute({ callbacks: { onSuccess: onSuccess } });
 `
       });
 
       const allNodes = await backend.getAllNodes();
+      const allEdges = await backend.getAllEdges();
 
+      const onSuccessFunc = allNodes.find(n =>
+        n.type === 'FUNCTION' && n.name === 'onSuccess'
+      );
       const executeFunc = allNodes.find(n =>
         n.type === 'FUNCTION' && n.name === 'execute'
       );
+      const executeCall = allNodes.find(n =>
+        n.type === 'CALL' && n.name === 'execute' && !n.object
+      );
+      assert.ok(onSuccessFunc, 'Should find onSuccess FUNCTION node');
       assert.ok(executeFunc, 'Should find execute FUNCTION node');
+      assert.ok(executeCall, 'Should find execute CALL node');
 
       const invokesIndexes = executeFunc.invokesParamIndexes ?? executeFunc.metadata?.invokesParamIndexes;
       assert.ok(
         Array.isArray(invokesIndexes) && invokesIndexes.includes(0),
         `execute FUNCTION should have invokesParamIndexes containing 0, got: ${JSON.stringify(invokesIndexes)}`
+      );
+
+      // End-to-end: CALLS edge from execute() call site to onSuccess
+      const callbackCallsEdge = allEdges.find(e =>
+        e.type === 'CALLS' && e.src === executeCall.id && e.dst === onSuccessFunc.id
+      );
+      assert.ok(
+        callbackCallsEdge,
+        `Should have callback CALLS edge from execute CALL (${executeCall.id}) to onSuccess FUNCTION (${onSuccessFunc.id})`
       );
     });
   });

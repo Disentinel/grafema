@@ -197,13 +197,20 @@ export class GraphBuilder {
     // 1. Buffer all functions (without edges)
     // REG-401: Strip invokesParamIndexes from node data and store in metadata
     for (const func of functions) {
-      const { parentScopeId: _parentScopeId, invokesParamIndexes: _invokesParamIndexes, ...funcData } = func;
+      const { parentScopeId: _parentScopeId, invokesParamIndexes: _invokesParamIndexes, invokesParamBindings: _invokesParamBindings, ...funcData } = func;
       const node = funcData as GraphNode;
       if (_invokesParamIndexes && _invokesParamIndexes.length > 0) {
         if (!node.metadata) {
           node.metadata = {};
         }
         (node.metadata as Record<string, unknown>).invokesParamIndexes = _invokesParamIndexes;
+      }
+      // REG-417: Store property paths for destructured param bindings
+      if (_invokesParamBindings && _invokesParamBindings.length > 0) {
+        if (!node.metadata) {
+          node.metadata = {};
+        }
+        (node.metadata as Record<string, unknown>).invokesParamBindings = _invokesParamBindings;
       }
       this._bufferNode(node);
     }
@@ -371,7 +378,7 @@ export class GraphBuilder {
 
     // 18.7. Buffer HAS_PROPERTY edges (OBJECT_LITERAL -> property values)
     // REG-329: Pass variableDeclarations and parameters for scope-aware variable resolution
-    this.bufferObjectPropertyEdges(objectProperties, variableDeclarations, parameters);
+    this.bufferObjectPropertyEdges(objectProperties, variableDeclarations, parameters, functions);
 
     // 19. Buffer ASSIGNED_FROM edges for data flow (some need to create EXPRESSION nodes)
     this.bufferAssignmentEdges(variableAssignments, variableDeclarations, callSites, methodCalls, functions, classInstantiations, parameters);
@@ -3476,7 +3483,8 @@ export class GraphBuilder {
   private bufferObjectPropertyEdges(
     objectProperties: ObjectPropertyInfo[],
     variableDeclarations: VariableDeclarationInfo[],
-    parameters: ParameterInfo[]
+    parameters: ParameterInfo[],
+    functions: FunctionInfo[]
   ): void {
     for (const prop of objectProperties) {
       // REG-329: Handle VARIABLE value types with scope resolution
@@ -3491,8 +3499,12 @@ export class GraphBuilder {
         const resolvedParam = !resolvedVar
           ? this.resolveParameterInScope(prop.valueName, scopePath, file, parameters)
           : null;
+        // REG-417: Fallback to function declarations (function foo() is a valid value reference)
+        const resolvedFunc = !resolvedVar && !resolvedParam
+          ? functions.find(f => f.name === prop.valueName && f.file === file)
+          : null;
 
-        const resolvedNodeId = resolvedVar?.id ?? resolvedParam?.semanticId ?? resolvedParam?.id;
+        const resolvedNodeId = resolvedVar?.id ?? resolvedParam?.semanticId ?? resolvedParam?.id ?? resolvedFunc?.id;
 
         if (resolvedNodeId) {
           this._bufferEdge({

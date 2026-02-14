@@ -40,6 +40,8 @@ export interface FunctionInfo {
   methodKind?: 'constructor' | 'method' | 'get' | 'set';
   // REG-401: Parameter invocation tracking for user-defined HOFs
   invokesParamIndexes?: number[];
+  // REG-417: Destructured parameter invocation — property paths for OBJECT_LITERAL resolution
+  invokesParamBindings?: { paramIndex: number; propertyPath: string[] }[];
 }
 
 // === PARAMETER INFO ===
