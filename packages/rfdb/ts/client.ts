@@ -31,6 +31,8 @@ import type {
   DiffSnapshotsResponse,
   FindSnapshotResponse,
   ListSnapshotsResponse,
+  CommitDelta,
+  CommitBatchResponse,
 } from '@grafema/types';
 
 interface PendingRequest {
@@ -45,6 +47,12 @@ export class RFDBClient extends EventEmitter implements IRFDBClient {
   private pending: Map<number, PendingRequest>;
   private reqId: number;
   private buffer: Buffer;
+
+  // Batch state
+  private _batching: boolean = false;
+  private _batchNodes: WireNode[] = [];
+  private _batchEdges: WireEdge[] = [];
+  private _batchFiles: Set<string> = new Set();
 
   constructor(socketPath: string = '/tmp/rfdb.sock') {
     super();
@@ -287,6 +295,14 @@ export class RFDBClient extends EventEmitter implements IRFDBClient {
       };
     });
 
+    if (this._batching) {
+      this._batchNodes.push(...wireNodes);
+      for (const node of wireNodes) {
+        if (node.file) this._batchFiles.add(node.file);
+      }
+      return { ok: true } as RFDBResponse;
+    }
+
     return this._send('addNodes', { nodes: wireNodes });
   }
 
@@ -316,6 +332,11 @@ export class RFDBClient extends EventEmitter implements IRFDBClient {
         metadata: JSON.stringify(combinedMeta),
       };
     });
+
+    if (this._batching) {
+      this._batchEdges.push(...wireEdges);
+      return { ok: true } as RFDBResponse;
+    }
 
     return this._send('addEdges', { edges: wireEdges, skipValidation });
   }
@@ -738,6 +759,7 @@ export class RFDBClient extends EventEmitter implements IRFDBClient {
   }
 
   // ===========================================================================
+<<<<<<< HEAD
   // Snapshot Operations
   // ===========================================================================
 
@@ -796,6 +818,99 @@ export class RFDBClient extends EventEmitter implements IRFDBClient {
     if (filterTag !== undefined) payload.filterTag = filterTag;
     const response = await this._send('listSnapshots', payload);
     return (response as ListSnapshotsResponse).snapshots;
+  }
+
+  // ===========================================================================
+  // Batch Operations
+  // ===========================================================================
+
+  /**
+   * Begin a batch operation.
+   * While batching, addNodes/addEdges buffer locally instead of sending to server.
+   * Call commitBatch() to send all buffered data atomically.
+   */
+  beginBatch(): void {
+    if (this._batching) throw new Error('Batch already in progress');
+    this._batching = true;
+    this._batchNodes = [];
+    this._batchEdges = [];
+    this._batchFiles = new Set();
+  }
+
+  /**
+   * Commit the current batch to the server.
+   * Sends all buffered nodes/edges with the list of changed files.
+   * Server atomically replaces old data for changed files with new data.
+   */
+  async commitBatch(tags?: string[]): Promise<CommitDelta> {
+    if (!this._batching) throw new Error('No batch in progress');
+
+    const response = await this._send('commitBatch', {
+      changedFiles: [...this._batchFiles],
+      nodes: this._batchNodes,
+      edges: this._batchEdges,
+      tags,
+    });
+
+    this._batching = false;
+    this._batchNodes = [];
+    this._batchEdges = [];
+    this._batchFiles = new Set();
+
+    return (response as CommitBatchResponse).delta;
+  }
+
+  /**
+   * Abort the current batch, discarding all buffered data.
+   */
+  abortBatch(): void {
+    this._batching = false;
+    this._batchNodes = [];
+    this._batchEdges = [];
+    this._batchFiles = new Set();
+  }
+
+  /**
+   * Check if a batch is currently in progress.
+   */
+  isBatching(): boolean {
+    return this._batching;
+  }
+
+  /**
+   * Find files that depend on the given changed files.
+   * Uses backward reachability to find dependent modules.
+   *
+   * Note: For large result sets, each reachable node requires a separate
+   * getNode RPC. A future server-side optimization could return file paths
+   * directly from the reachability query.
+   */
+  async findDependentFiles(changedFiles: string[]): Promise<string[]> {
+    const nodeIds: string[] = [];
+    for (const file of changedFiles) {
+      const ids = await this.findByAttr({ file });
+      nodeIds.push(...ids);
+    }
+
+    if (nodeIds.length === 0) return [];
+
+    const reachable = await this.reachability(
+      nodeIds,
+      2,
+      ['IMPORTS_FROM', 'DEPENDS_ON', 'CALLS'] as EdgeType[],
+      true,
+    );
+
+    const changedSet = new Set(changedFiles);
+    const files = new Set<string>();
+    for (const id of reachable) {
+      const node = await this.getNode(id);
+      if (node?.file && !changedSet.has(node.file)) {
+        files.add(node.file);
+      }
+    }
+
+    return [...files];
   }
 
   /**
