@@ -185,7 +185,9 @@ export class GraphBuilder {
       // REG-311: CATCHES_FROM tracking for catch parameter error sources
       catchesFromInfos = [],
       // Property access tracking for PROPERTY_ACCESS nodes (REG-395)
-      propertyAccesses = []
+      propertyAccesses = [],
+      // REG-297: Top-level await tracking
+      hasTopLevelAwait = false
     } = data;
 
     // Reset buffers for this build
@@ -423,6 +425,9 @@ export class GraphBuilder {
     // REG-300: Update MODULE node with import.meta metadata
     const importMetaProps = this.collectImportMetaProperties(propertyAccesses);
     await this.updateModuleImportMetaMetadata(module, graph, importMetaProps);
+
+    // REG-297: Update MODULE node with hasTopLevelAwait metadata
+    await this.updateModuleTopLevelAwaitMetadata(module, graph, hasTopLevelAwait);
 
     return { nodes: nodesCreated, edges: edgesCreated + classAssignmentEdges };
   }
@@ -1108,6 +1113,26 @@ export class GraphBuilder {
     await graph.addNode({
       ...existingNode,
       importMeta: importMetaProps
+    } as unknown as Parameters<GraphBackend['addNode']>[0]);
+  }
+
+  /**
+   * Update MODULE node with hasTopLevelAwait metadata (REG-297).
+   * Reads existing MODULE node, adds hasTopLevelAwait flag, re-adds it.
+   */
+  private async updateModuleTopLevelAwaitMetadata(
+    module: ModuleNode,
+    graph: GraphBackend,
+    hasTopLevelAwait: boolean
+  ): Promise<void> {
+    if (!hasTopLevelAwait) return;
+
+    const existingNode = await graph.getNode(module.id);
+    if (!existingNode) return;
+
+    await graph.addNode({
+      ...existingNode,
+      hasTopLevelAwait: true
     } as unknown as Parameters<GraphBackend['addNode']>[0]);
   }
 

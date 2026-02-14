@@ -1127,6 +1127,8 @@ export interface ASTCollections {
   catchesFromInfos?: CatchesFromInfo[];
   // Property access tracking for PROPERTY_ACCESS nodes (REG-395)
   propertyAccesses?: PropertyAccessInfo[];
+  // REG-297: Top-level await tracking
+  hasTopLevelAwait?: boolean;
   // TypeScript-specific collections
   interfaces?: InterfaceDeclarationInfo[];
   typeAliases?: TypeAliasInfo[];

@@ -180,6 +180,8 @@ interface CallSiteInfo {
   parentScopeId: string;
   targetFunctionName: string;
   isNew?: boolean;
+  /** REG-297: true if wrapped in await expression */
+  isAwaited?: boolean;
 }
 
 /**
@@ -200,6 +202,8 @@ interface MethodCallInfo {
   isNew?: boolean;
   /** REG-332: Annotation to suppress strict mode errors */
   grafemaIgnore?: GrafemaIgnoreAnnotation;
+  /** REG-297: true if wrapped in await expression */
+  isAwaited?: boolean;
 }
 
 /**
@@ -1182,6 +1186,9 @@ export class CallExpressionVisitor extends ASTVisitor {
         // Determine parent scope - if inside a function, use function's scope, otherwise module
         const parentScopeId = functionParent ? this.getFunctionScopeId(functionParent, module) : module.id;
 
+        // REG-297: Detect isAwaited for module-level calls (parent is AwaitExpression)
+        const isAwaited = path.parentPath?.isAwaitExpression() ?? false;
+
         // Identifier calls (direct function calls)
         // Skip if inside function - they will be processed by analyzeFunctionBody with proper scope tracking
           if (callNode.callee.type === 'Identifier') {
@@ -1210,7 +1217,8 @@ export class CallExpressionVisitor extends ASTVisitor {
               line,
               column,
               parentScopeId,
-              targetFunctionName: callee.name
+              targetFunctionName: callee.name,
+              isAwaited: isAwaited || undefined
             });
 
             // Extract arguments for PASSES_ARGUMENT edges
@@ -1308,6 +1316,7 @@ export class CallExpressionVisitor extends ASTVisitor {
                   column: methodColumn,
                   parentScopeId,
                   grafemaIgnore: grafemaIgnore ?? undefined,
+                  isAwaited: isAwaited || undefined,
                 });
 
                 // Check for array mutation methods (push, unshift, splice)

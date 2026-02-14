@@ -146,6 +146,8 @@ export interface ModuleNodeRecord extends BaseNodeRecord {
   relativePath: string;
   contentHash: string;
   language?: string;
+  /** REG-297: true if module uses top-level await */
+  hasTopLevelAwait?: boolean;
 }
 
 // Import node
