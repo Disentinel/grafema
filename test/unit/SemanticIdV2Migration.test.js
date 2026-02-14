@@ -156,7 +156,7 @@ function isSpecialFormat(id) {
 function isInfrastructureType(type) {
   const infraTypes = new Set([
     'SERVICE', 'MODULE', 'net:stdio', 'net:request',
-    'grafema:plugin', 'EXTERNAL_MODULE',
+    'grafema:plugin', 'EXTERNAL_MODULE', 'GRAPH_META',
   ]);
   return infraTypes.has(type);
 }

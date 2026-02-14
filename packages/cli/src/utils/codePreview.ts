@@ -6,12 +6,14 @@
  */
 
 import { readFileSync, existsSync } from 'fs';
+import { isAbsolute, join } from 'path';
 
 export interface CodePreviewOptions {
   file: string;
   line: number;
   contextBefore?: number;  // default: 2
   contextAfter?: number;   // default: 12
+  projectPath?: string;
 }
 
 export interface CodePreviewResult {
@@ -25,14 +27,16 @@ export interface CodePreviewResult {
  * Returns lines around the specified line number with context.
  */
 export function getCodePreview(options: CodePreviewOptions): CodePreviewResult | null {
-  const { file, line, contextBefore = 2, contextAfter = 12 } = options;
+  const { file, line, contextBefore = 2, contextAfter = 12, projectPath } = options;
 
-  if (!existsSync(file)) {
+  const absoluteFile = projectPath && !isAbsolute(file) ? join(projectPath, file) : file;
+
+  if (!existsSync(absoluteFile)) {
     return null;
   }
 
   try {
-    const content = readFileSync(file, 'utf-8');
+    const content = readFileSync(absoluteFile, 'utf-8');
     const allLines = content.split('\n');
 
     // Calculate range (1-indexed)

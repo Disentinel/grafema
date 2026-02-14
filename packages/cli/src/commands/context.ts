@@ -23,6 +23,7 @@ import {
   STRUCTURAL_EDGE_TYPES,
 } from '@grafema/core';
 import type { NodeContext, EdgeGroup } from '@grafema/core';
+import type { BaseNodeRecord } from '@grafema/types';
 import { getCodePreview, formatCodePreview } from '../utils/codePreview.js';
 import { formatLocation } from '../utils/formatNode.js';
 import { exitWithError } from '../utils/errorFormatter.js';
@@ -33,6 +34,11 @@ interface ContextOptions {
   json?: boolean;
   lines: string;
   edgeType?: string;
+}
+
+/** Extended context with CLASS member expansion (REG-411) */
+interface ContextWithMembers extends NodeContext {
+  memberContexts?: NodeContext[];
 }
 
 export const contextCommand = new Command('context')
@@ -94,8 +100,8 @@ Examples:
         ]);
       }
 
-      // 2. Build context
-      const ctx = await buildNodeContext(backend, node, { contextLines, edgeTypeFilter });
+      // 2. Build context (with CLASS member expansion)
+      const ctx = await buildContextWithMembers(backend, node, { contextLines, edgeTypeFilter });
 
       spinner.stop();
 
@@ -112,9 +118,44 @@ Examples:
   });
 
 /**
+ * Build context with CLASS member expansion (REG-411)
+ */
+async function buildContextWithMembers(
+  backend: RFDBServerBackend,
+  node: BaseNodeRecord,
+  options: { contextLines: number; edgeTypeFilter: Set<string> | null },
+): Promise<ContextWithMembers> {
+  const ctx = await buildNodeContext(backend, node, options);
+
+  let memberContexts: NodeContext[] | undefined;
+  if (node.type === 'CLASS') {
+    const outEdges = await backend.getOutgoingEdges(node.id);
+    const containsEdges = outEdges.filter(e => e.type === 'CONTAINS');
+    const members: NodeContext[] = [];
+    for (const edge of containsEdges) {
+      const memberNode = await backend.getNode(edge.dst);
+      if (memberNode && (memberNode.type === 'FUNCTION' || memberNode.type === 'METHOD')) {
+        const memberCtx = await buildNodeContext(backend, memberNode, options);
+        members.push(memberCtx);
+      }
+    }
+    members.sort((a, b) => {
+      const lineA = (a.node.line as number | undefined) ?? 0;
+      const lineB = (b.node.line as number | undefined) ?? 0;
+      return lineA - lineB;
+    });
+    if (members.length > 0) {
+      memberContexts = members;
+    }
+  }
+
+  return { ...ctx, memberContexts };
+}
+
+/**
  * Print context to stdout in grep-friendly format
  */
-function printContext(ctx: NodeContext, projectPath: string, contextLines: number): void {
+function printContext(ctx: ContextWithMembers, projectPath: string, contextLines: number): void {
   const { node, source, outgoing, incoming } = ctx;
 
   // Node header
@@ -158,8 +199,62 @@ function printContext(ctx: NodeContext, projectPath: string, contextLines: numbe
     }
   }
 
-  // Summary if no edges
-  if (outgoing.length === 0 && incoming.length === 0) {
+  // Member methods (CLASS nodes)
+  if (ctx.memberContexts && ctx.memberContexts.length > 0) {
+    console.log('');
+    console.log(`  Methods (${ctx.memberContexts.length}):`);
+    for (const memberCtx of ctx.memberContexts) {
+      console.log('');
+      console.log(`  ── [${memberCtx.node.type}] ${getNodeDisplayName(memberCtx.node)}`);
+      const memberLoc = formatLocation(
+        memberCtx.node.file,
+        memberCtx.node.line as number | undefined,
+        projectPath,
+      );
+      if (memberLoc) {
+        console.log(`     Location: ${memberLoc}`);
+      }
+
+      // Method source code
+      if (memberCtx.source) {
+        console.log('');
+        console.log(`     Source (lines ${memberCtx.source.startLine}-${memberCtx.source.endLine}):`);
+        const formatted = formatCodePreview(
+          {
+            lines: memberCtx.source.lines,
+            startLine: memberCtx.source.startLine,
+            endLine: memberCtx.source.endLine,
+          },
+          memberCtx.node.line as number | undefined,
+        );
+        for (const line of formatted) {
+          console.log(`       ${line}`);
+        }
+      }
+
+      // Method edges (non-structural only, to avoid clutter)
+      const methodOutgoing = memberCtx.outgoing.filter(g => !STRUCTURAL_EDGE_TYPES.has(g.edgeType));
+      const methodIncoming = memberCtx.incoming.filter(g => !STRUCTURAL_EDGE_TYPES.has(g.edgeType));
+
+      if (methodOutgoing.length > 0) {
+        console.log('');
+        console.log('     Outgoing edges:');
+        for (const group of methodOutgoing) {
+          printEdgeGroup(group, '->', projectPath, contextLines, '       ');
+        }
+      }
+      if (methodIncoming.length > 0) {
+        console.log('');
+        console.log('     Incoming edges:');
+        for (const group of methodIncoming) {
+          printEdgeGroup(group, '<-', projectPath, contextLines, '       ');
+        }
+      }
+    }
+  }
+
+  // Summary if no edges and no members
+  if (outgoing.length === 0 && incoming.length === 0 && !ctx.memberContexts?.length) {
     console.log('');
     console.log('  No edges found.');
   }
@@ -173,15 +268,16 @@ function printEdgeGroup(
   direction: '->' | '<-',
   projectPath: string,
   contextLines: number,
+  indent = '    ',
 ): void {
   const isStructural = STRUCTURAL_EDGE_TYPES.has(group.edgeType);
 
-  console.log(`    ${group.edgeType} (${group.edges.length}):`);
+  console.log(`${indent}${group.edgeType} (${group.edges.length}):`);
 
   for (const { edge, node } of group.edges) {
     if (!node) {
       const danglingId = direction === '->' ? edge.dst : edge.src;
-      console.log(`      ${direction} [dangling] ${danglingId}`);
+      console.log(`${indent}  ${direction} [dangling] ${danglingId}`);
       continue;
     }
 
@@ -192,7 +288,7 @@ function printEdgeGroup(
     // Edge metadata inline (if present and useful)
     const metaStr = formatEdgeMetadata(edge);
 
-    console.log(`      ${direction} [${node.type}] ${displayName}${locStr}${metaStr}`);
+    console.log(`${indent}  ${direction} [${node.type}] ${displayName}${locStr}${metaStr}`);
 
     // Code context for non-structural edges
     if (!isStructural && node.file && node.line && contextLines > 0) {
@@ -205,7 +301,7 @@ function printEdgeGroup(
       if (preview) {
         const formatted = formatCodePreview(preview, node.line as number);
         for (const line of formatted) {
-          console.log(`           ${line}`);
+          console.log(`${indent}       ${line}`);
         }
       }
     }

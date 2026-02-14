@@ -10,7 +10,8 @@
  */
 
 import { Command } from 'commander';
-import { resolve, join, relative, basename } from 'path';
+import { resolve, join, basename } from 'path';
+import { toRelativeDisplay } from '../utils/pathUtils.js';
 import { existsSync } from 'fs';
 import { RFDBServerBackend, parseSemanticId, parseSemanticIdV2, findCallsInFunction as findCallsInFunctionCore, findContainingFunction as findContainingFunctionCore } from '@grafema/core';
 import { formatNodeDisplay, formatNodeInline, formatLocation } from '../utils/formatNode.js';
@@ -76,6 +77,9 @@ export const queryCommand = new Command('query')
     '--raw',
     `Execute raw Datalog query
 
+Supports both direct queries and Datalog rules.
+Rules (containing ":-") define a violation predicate and return matching nodes.
+
 Predicates:
   type(Id, Type)        Find nodes by type or get type of node
   node(Id, Type)        Alias for type
@@ -84,10 +88,14 @@ Predicates:
   path(Src, Dst)        Check reachability between nodes
   incoming(Dst, Src, T) Find incoming edges
 
-Examples:
+Direct queries:
   grafema query --raw 'type(X, "FUNCTION")'
   grafema query --raw 'type(X, "FUNCTION"), attr(X, "name", "main")'
-  grafema query --raw 'edge(X, Y, "CALLS")'`
+  grafema query --raw 'edge(X, Y, "CALLS")'
+
+Rules (must define violation/1):
+  grafema query --raw 'violation(X) :- node(X, "FUNCTION").'
+  grafema query --raw 'violation(X) :- node(X, "http:route"), attr(X, "method", "POST").'`
   )
   .option(
     '-t, --type <nodeType>',
@@ -831,7 +839,7 @@ function formatHttpRouteDisplay(node: NodeInfo, projectPath: string): string {
 
   // Line 2: Location
   if (node.file) {
-    const relPath = relative(projectPath, node.file);
+    const relPath = toRelativeDisplay(node.file, projectPath);
     const loc = node.line ? `${relPath}:${node.line}` : relPath;
     lines.push(`  Location: ${loc}`);
   }
@@ -856,7 +864,7 @@ function formatHttpRequestDisplay(node: NodeInfo, projectPath: string): string {
 
   // Line 2: Location
   if (node.file) {
-    const relPath = relative(projectPath, node.file);
+    const relPath = toRelativeDisplay(node.file, projectPath);
     const loc = node.line ? `${relPath}:${node.line}` : relPath;
     lines.push(`  Location: ${loc}`);
   }
@@ -997,7 +1005,7 @@ function formatPluginDisplay(node: NodeInfo, projectPath: string): string {
   }
 
   if (node.file) {
-    const relPath = relative(projectPath, node.file);
+    const relPath = toRelativeDisplay(node.file, projectPath);
     lines.push(`  Source: ${relPath}`);
   }
 
@@ -1005,14 +1013,18 @@ function formatPluginDisplay(node: NodeInfo, projectPath: string): string {
 }
 
 /**
- * Execute raw Datalog query (backwards compat)
+ * Execute raw Datalog query.
+ * Routes rules (containing ":-") to checkGuarantee, direct queries to datalogQuery.
  */
 async function executeRawQuery(
   backend: RFDBServerBackend,
   query: string,
   options: QueryOptions
 ): Promise<void> {
-  const results = await backend.datalogQuery(query);
+  const isRule = query.includes(':-');
+  const results = isRule
+    ? await backend.checkGuarantee(query)
+    : await backend.datalogQuery(query);
   const limit = parseInt(options.limit, 10);
   const limited = results.slice(0, limit);
 

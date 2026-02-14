@@ -26,6 +26,7 @@ import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { NodeRecord } from '@grafema/types';
 import { getLine } from './ast/utils/location.js';
+import { resolveNodeFile } from '../../utils/resolveNodeFile.js';
 
 const traverse = (traverseModule as any).default || traverseModule;
 
@@ -103,6 +104,7 @@ export class ServiceLayerAnalyzer extends Plugin {
 
     try {
       const { graph } = context;
+      const projectPath = (context.manifest as { projectPath?: string })?.projectPath ?? '';
 
       // Получаем все модули
       const modules = await this.getModules(graph);
@@ -116,7 +118,7 @@ export class ServiceLayerAnalyzer extends Plugin {
 
       for (let i = 0; i < modules.length; i++) {
         const module = modules[i];
-        const result = await this.analyzeModule(module, graph);
+        const result = await this.analyzeModule(module, graph, projectPath);
         classesCount += result.classes;
         instancesCount += result.instances;
         registrationsCount += result.registrations;
@@ -163,10 +165,11 @@ export class ServiceLayerAnalyzer extends Plugin {
 
   private async analyzeModule(
     module: NodeRecord,
-    graph: PluginContext['graph']
+    graph: PluginContext['graph'],
+    projectPath: string
   ): Promise<AnalysisResult> {
     try {
-      const code = readFileSync(module.file!, 'utf-8');
+      const code = readFileSync(resolveNodeFile(module.file!, projectPath), 'utf-8');
 
       const ast = parse(code, {
         sourceType: 'module',

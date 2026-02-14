@@ -23,6 +23,7 @@ import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { NodeRecord } from '@grafema/types';
 import { NodeFactory } from '../../core/NodeFactory.js';
 import { getLine } from './ast/utils/location.js';
+import { resolveNodeFile } from '../../utils/resolveNodeFile.js';
 
 const traverse = (traverseModule as any).default || traverseModule;
 
@@ -60,6 +61,7 @@ export class ExpressResponseAnalyzer extends Plugin {
 
     try {
       const { graph } = context;
+      const projectPath = (context.manifest as { projectPath?: string })?.projectPath ?? '';
 
       // Get all http:route nodes
       const routes: NodeRecord[] = [];
@@ -75,7 +77,7 @@ export class ExpressResponseAnalyzer extends Plugin {
       const allEdges: Array<{ type: string; src: string; dst: string; metadata?: unknown }> = [];
 
       for (const route of routes) {
-        const result = await this.analyzeRouteResponses(route, graph, allNodes, allEdges);
+        const result = await this.analyzeRouteResponses(route, graph, projectPath, allNodes, allEdges);
         edgesCreated += result.edges;
         nodesCreated += result.nodes;
       }
@@ -103,6 +105,7 @@ export class ExpressResponseAnalyzer extends Plugin {
   private async analyzeRouteResponses(
     route: NodeRecord,
     graph: PluginContext['graph'],
+    projectPath: string,
     nodes: NodeRecord[],
     edges: Array<{ type: string; src: string; dst: string; metadata?: unknown }>
   ): Promise<{ nodes: number; edges: number }> {
@@ -126,7 +129,7 @@ export class ExpressResponseAnalyzer extends Plugin {
       }
 
       // Parse the file and find response calls in handler
-      const code = readFileSync(handlerNode.file, 'utf-8');
+      const code = readFileSync(resolveNodeFile(handlerNode.file, projectPath), 'utf-8');
       const ast = parse(code, {
         sourceType: 'module',
         plugins: ['jsx', 'typescript'] as ParserPlugin[]

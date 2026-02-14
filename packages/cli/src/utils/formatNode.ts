@@ -5,7 +5,7 @@
  * Semantic IDs are shown as the PRIMARY identifier, with location as secondary.
  */
 
-import { relative } from 'path';
+import { isAbsolute, relative } from 'path';
 
 /**
  * Format options for node display
@@ -29,7 +29,7 @@ export interface DisplayableNode {
   type: string;
   /** Human-readable name */
   name: string;
-  /** Absolute file path */
+  /** Source file path (relative to project root, or absolute for legacy) */
   file: string;
   /** Line number (optional) */
   line?: number;
@@ -123,6 +123,6 @@ export function formatLocation(
   projectPath: string
 ): string {
   if (!file) return '';
-  const relPath = relative(projectPath, file);
+  const relPath = isAbsolute(file) ? relative(projectPath, file) : file;
   return line ? `${relPath}:${line}` : relPath;
 }

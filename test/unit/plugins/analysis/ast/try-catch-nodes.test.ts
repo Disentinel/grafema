@@ -29,7 +29,7 @@ import { join } from 'path';
 import { writeFileSync, mkdirSync } from 'fs';
 import { tmpdir } from 'os';
 
-import { createTestDatabase } from '../../../../helpers/TestRFDB.js';
+import { createTestDatabase, cleanupAllTestDatabases } from '../../../../helpers/TestRFDB.js';
 import { createTestOrchestrator } from '../../../../helpers/createTestOrchestrator.js';
 import type { NodeRecord, EdgeRecord } from '@grafema/types';
 
@@ -128,9 +128,7 @@ describe('Try/Catch/Finally Nodes Analysis (REG-267 Phase 4)', () => {
     backend = await createTestDatabase(); backend = db.backend;
   });
 
-  after(async () => {
-    if (db) await db.cleanup();
-  });
+  after(cleanupAllTestDatabases);
 
   // ===========================================================================
   // GROUP 1: Try-catch creates TRY_BLOCK and CATCH_BLOCK

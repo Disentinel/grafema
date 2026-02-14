@@ -108,7 +108,8 @@ All implementation happens through subagents. Top-level agent only coordinates.
 **Review:**
 - **Kevlin Henney** (Low-level Reviewer) — Code quality, readability, test quality, naming, structure
 - **Steve Jobs** (High-level Review, auto) — Vision alignment gatekeeper. Runs automatically as subagent. Looks for fundamental errors, corner-cutting, and architectural gaps. **Default stance: REJECT.** If Steve rejects → back to implementation immediately.
-- **Вадим Решетников** (Final Review, human) — Called only AFTER Steve approves. User reviews Steve's approval to confirm or override. If Вадим rejects → back to implementation.
+- **Вадим Решетников** (Auto-review, auto) — Practical quality review. Runs automatically as subagent AFTER Steve approves. Checks edge cases, regressions, scope creep, code clarity. If Вадим-auto rejects → back to implementation.
+- **Вадим Решетников** (Final confirmation, human) — Called only AFTER both Steve and Вадим-auto approve. User sees combined review summary and confirms or overrides.
 
 **Project Management:**
 - **Andy Grove** (PM / Tech Debt) — Manages Linear, prioritizes backlog, tracks tech debt. Ruthless prioritization: what moves the needle NOW?
@@ -211,8 +212,9 @@ _tasks/
 1. Don analyzes codebase, creates `0XX-don-plan.md`
 2. Joel expands into detailed tech plan `0XX-joel-tech-plan.md`
 3. **Steve Jobs reviews** (automatic subagent) — if REJECT → back to step 1
-4. **If Steve APPROVE → call user** to review Steve's approval as Вадим
-5. Iterate until BOTH approve. If Вадим rejects → back to step 1
+4. **Вадим auto-review** (automatic subagent) — if REJECT → back to step 1
+5. **If both approve → present to user** for manual confirmation
+6. Iterate until all approve. If user rejects → back to step 1
 
 **STEP 2.5 — PREPARE (Refactor-First):**
 
@@ -249,8 +251,9 @@ Before implementation, improve the code we're about to touch. This is "Boy Scout
 4. Kevlin reviews code quality
 5. Don reviews results
 6. **Steve Jobs reviews** (automatic subagent) — if REJECT → back to step 2
-7. **If Steve APPROVE → call user** to review Steve's approval as Вадим
-8. Loop until Don, Steve, AND Вадим ALL agree task is FULLY DONE
+7. **Вадим auto-review** (automatic subagent) — if REJECT → back to step 2
+8. **If both approve → present to user** for manual confirmation
+9. Loop until Don, Steve, Вадим-auto, AND user ALL agree task is FULLY DONE
 
 **STEP 3.5 — DEMO (before reviews):**
 - Steve Jobs demos the feature
@@ -323,7 +326,7 @@ If REFACTOR:
 
 ### For Steve Jobs (High-level Review — Automatic)
 
-**Runs as subagent. Default stance: REJECT. If approves → escalate to user (Вадим).**
+**Runs as subagent. Default stance: REJECT. If approves → escalate to Вадим auto-review.**
 
 **Primary Questions:**
 - Does this align with project vision? ("AI should query the graph, not read code")
@@ -365,8 +368,39 @@ Before approving ANY plan involving data flow, enrichment, or graph traversal:
 
 **Escalation Flow:**
 1. Steve REJECT → back to implementation, no user involvement
-2. Steve APPROVE → call user with Steve's review for Вадим confirmation
-3. User (as Вадим) confirms or rejects
+2. Steve APPROVE → run Вадим auto-review (subagent)
+3. Вадим-auto REJECT → back to implementation, no user involvement
+4. Both APPROVE → present combined summary to user for manual confirmation
+
+### For Вадим Auto-Review (Practical Quality — Automatic)
+
+**Runs as subagent AFTER Steve approves. Default stance: critical but fair.**
+
+**Primary Questions:**
+- Does the code actually do what the task requires?
+- Are there edge cases, regressions, or broken assumptions?
+- Is the change minimal and focused — no scope creep, no "while I'm here" changes?
+- Are tests meaningful (not just "it doesn't crash")?
+- Would this survive a real-world codebase with messy inputs?
+
+**Checklist:**
+1. **Correctness**: Run the tests mentally. Do they cover the happy path AND failure modes?
+2. **Minimality**: Every changed line should serve the task. Flag anything extra.
+3. **Consistency**: Does the code match existing patterns in the codebase?
+4. **Commit quality**: Are commits atomic? Are messages clear?
+5. **No loose ends**: No TODOs, no "will fix later", no commented-out code.
+
+**Output format:**
+```markdown
+## Вадим Auto-Review
+
+**Verdict:** APPROVE / REJECT
+**Reason:** [1-2 sentences]
+
+If REJECT:
+- [Specific issue 1]
+- [Specific issue 2]
+```
 
 ### For Kevlin Henney (Review)
 Focus on code quality:
@@ -509,26 +543,42 @@ Do NOT start coding until Linear status is updated.
 
 ### Finishing Task
 
-1. Code ready → run Steve Jobs review automatically
+1. Code ready → run **Steve Jobs review** automatically (subagent)
 2. If Steve REJECT → fix issues, don't bother user
-3. If Steve APPROVE → call user with Steve's review summary
-4. User (as Вадим) confirms → Linear status → **In Review**
-5. User will merge and `/clear` to start next task
+3. If Steve APPROVE → run **Вадим review** automatically (subagent, see below)
+4. If Вадим-auto REJECT → fix issues, don't bother user
+5. If BOTH approve → present combined review summary to user (real Вадим)
+6. User confirms → create PR, Linear status → **In Review**
+7. CI must pass. If CI fails → fix, push, wait for green
+8. User will merge and `/clear` to start next task
 
-### Merge Process
+### Review & Merge Process
 
-**Review flow:**
-1. Steve Jobs reviews automatically (subagent) — if REJECT, fix and retry
-2. If Steve APPROVE → present Steve's review to user
-3. User (as Вадим) confirms or rejects
-4. If confirmed → merge to main, update Linear → **Done**
+**Three-stage review:**
 
-**What Steve verifies:**
-- Did we do the right thing?
-- Does it align with vision?
+| Stage | Who | Mode | On REJECT |
+|-------|-----|------|-----------|
+| 1. Steve Jobs | Subagent | Automatic | Fix, retry — no user involvement |
+| 2. Вадим (auto) | Subagent | Automatic | Fix, retry — no user involvement |
+| 3. Вадим (human) | User | Manual | Fix per feedback, retry from stage 1 |
+
+**Stage 1 — Steve Jobs (vision & architecture):**
+- Does it align with project vision?
 - No hacks or shortcuts?
 - No "MVP limitations" that defeat the feature's purpose?
 - Tests actually test what they claim?
+
+**Stage 2 — Вадим auto-review (practical quality):**
+- Does the code actually work as intended?
+- Are there edge cases or regressions missed?
+- Is the change minimal and focused (no scope creep)?
+- Would this pass code review from a senior engineer?
+- Are commit messages and PR description clear?
+
+**Stage 3 — Вадим manual (final confirmation):**
+- User sees combined Steve + Вадим-auto review summary
+- User confirms or rejects with feedback
+- If confirmed → merge to main, update Linear → **Done**
 
 After merge, task branch can be deleted (optional cleanup).
 
@@ -536,7 +586,7 @@ After merge, task branch can be deleted (optional cleanup).
 
 ```
 /Users/vadimr/
-├── grafema/              # Main repo (for Linus merge operations)
+├── grafema/              # Main repo (coordination, PR reviews, releases)
 ├── grafema-worker-1/     # Worker slot 1 (persistent)
 ├── grafema-worker-2/     # Worker slot 2 (persistent)
 ...

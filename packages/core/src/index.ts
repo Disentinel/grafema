@@ -64,8 +64,8 @@ export type {
 } from './Orchestrator.js';
 
 // Plugin base
-export { Plugin } from './plugins/Plugin.js';
-export type { PluginContext } from './plugins/Plugin.js';
+export { Plugin, createSuccessResult, createErrorResult } from './plugins/Plugin.js';
+export type { PluginContext, PluginMetadata, PluginResult } from './plugins/Plugin.js';
 
 // Graph backend
 export { GraphBackend, typeToKind, edgeTypeToNumber } from './core/GraphBackend.js';
@@ -135,6 +135,9 @@ export {
   DEFAULT_INDEX_FILES
 } from './utils/moduleResolution.js';
 export type { ModuleResolutionOptions } from './utils/moduleResolution.js';
+
+// Node file path resolution (REG-408)
+export { resolveNodeFile } from './utils/resolveNodeFile.js';
 
 // Type validation and path validation
 export {
@@ -245,6 +248,7 @@ export { RustModuleIndexer } from './plugins/indexing/RustModuleIndexer.js';
 export { JSASTAnalyzer } from './plugins/analysis/JSASTAnalyzer.js';
 export { ExpressRouteAnalyzer } from './plugins/analysis/ExpressRouteAnalyzer.js';
 export { ExpressResponseAnalyzer } from './plugins/analysis/ExpressResponseAnalyzer.js';
+export { NestJSRouteAnalyzer } from './plugins/analysis/NestJSRouteAnalyzer.js';
 export { ExpressAnalyzer } from './plugins/analysis/ExpressAnalyzer.js';
 export { SocketIOAnalyzer } from './plugins/analysis/SocketIOAnalyzer.js';
 export { DatabaseAnalyzer } from './plugins/analysis/DatabaseAnalyzer.js';
@@ -287,6 +291,7 @@ export { GlobalsRegistry, ALL_GLOBALS } from './data/globals/index.js';
 export { CallResolverValidator } from './plugins/validation/CallResolverValidator.js';
 export { EvalBanValidator } from './plugins/validation/EvalBanValidator.js';
 export { SQLInjectionValidator } from './plugins/validation/SQLInjectionValidator.js';
+export { AwaitInLoopValidator } from './plugins/validation/AwaitInLoopValidator.js';
 export { ShadowingDetector } from './plugins/validation/ShadowingDetector.js';
 export { GraphConnectivityValidator } from './plugins/validation/GraphConnectivityValidator.js';
 export { DataFlowValidator } from './plugins/validation/DataFlowValidator.js';

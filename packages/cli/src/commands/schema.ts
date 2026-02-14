@@ -10,7 +10,8 @@
  */
 
 import { Command } from 'commander';
-import { resolve, join, relative } from 'path';
+import { resolve, join } from 'path';
+import { toRelativeDisplay } from '../utils/pathUtils.js';
 import { existsSync, writeFileSync } from 'fs';
 import {
   RFDBServerBackend,
@@ -82,7 +83,7 @@ function formatInterfaceYaml(schema: InterfaceSchema): string {
 
 function formatInterfaceMarkdown(schema: InterfaceSchema, projectPath: string): string {
   const lines: string[] = [];
-  const relPath = relative(projectPath, schema.source.file);
+  const relPath = toRelativeDisplay(schema.source.file, projectPath);
 
   lines.push(`# Interface: ${schema.name}`);
   lines.push('');

@@ -20,6 +20,7 @@ import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { NodeRecord } from '@grafema/types';
 import { getLine, getColumn } from './ast/utils/location.js';
+import { resolveNodeFile } from '../../utils/resolveNodeFile.js';
 
 const traverse = (traverseModule as any).default || traverseModule;
 
@@ -228,6 +229,7 @@ export class ReactAnalyzer extends Plugin {
 
     try {
       const { graph } = context;
+      const projectPath = (context.manifest as { projectPath?: string })?.projectPath ?? '';
       const modules = await this.getModules(graph);
 
       const stats: AnalysisStats = {
@@ -246,7 +248,7 @@ export class ReactAnalyzer extends Plugin {
         }
 
         try {
-          const result = await this.analyzeModule(module, graph);
+          const result = await this.analyzeModule(module, graph, projectPath);
           stats.components += result.components;
           stats.hooks += result.hooks;
           stats.events += result.events;
@@ -287,8 +289,8 @@ export class ReactAnalyzer extends Plugin {
     return false;
   }
 
-  private async analyzeModule(module: NodeRecord, graph: PluginContext['graph']): Promise<AnalysisStats> {
-    const code = readFileSync(module.file!, 'utf-8');
+  private async analyzeModule(module: NodeRecord, graph: PluginContext['graph'], projectPath: string): Promise<AnalysisStats> {
+    const code = readFileSync(resolveNodeFile(module.file!, projectPath), 'utf-8');
     const ast = parse(code, {
       sourceType: 'module',
       plugins: ['jsx', 'typescript'] as ParserPlugin[]

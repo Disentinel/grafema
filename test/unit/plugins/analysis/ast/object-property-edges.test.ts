@@ -29,7 +29,7 @@ import { join } from 'path';
 import { writeFileSync, mkdirSync } from 'fs';
 import { tmpdir } from 'os';
 
-import { createTestDatabase } from '../../../../helpers/TestRFDB.js';
+import { createTestDatabase, cleanupAllTestDatabases } from '../../../../helpers/TestRFDB.js';
 import { createTestOrchestrator } from '../../../../helpers/createTestOrchestrator.js';
 import type { NodeRecord, EdgeRecord } from '@grafema/types';
 
@@ -112,9 +112,7 @@ describe('Object Property Edges (REG-228)', () => {
     backend = await createTestDatabase(); backend = db.backend;
   });
 
-  after(async () => {
-    if (db) await db.cleanup();
-  });
+  after(cleanupAllTestDatabases);
 
   // ===========================================================================
   // TESTS: Basic HAS_PROPERTY edge creation

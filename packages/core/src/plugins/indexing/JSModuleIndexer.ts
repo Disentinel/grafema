@@ -85,7 +85,7 @@ export class JSModuleIndexer extends Plugin {
   constructor() {
     super();
     this.walker = new Walker({
-      plugins: ['jsx', 'typescript']
+      plugins: ['jsx', 'typescript', 'decorators-legacy']
     });
     this.cache = new Map(); // Кеш зависимостей файла
     this.testPatterns = DEFAULT_TEST_PATTERNS;
@@ -373,7 +373,7 @@ export class JSModuleIndexer extends Plugin {
           id: semanticId,
           type: 'MODULE' as const,
           name: relativePath,
-          file: currentFile, // Keep absolute path for file reading in analyzers
+          file: relativePath,
           line: 0,
           contentHash: fileHash || '',
           isTest

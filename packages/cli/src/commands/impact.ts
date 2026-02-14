@@ -7,8 +7,7 @@
  */
 
 import { Command } from 'commander';
-import { resolve, join, dirname } from 'path';
-import { relative } from 'path';
+import { isAbsolute, resolve, join, dirname, relative } from 'path';
 import { existsSync } from 'fs';
 import { RFDBServerBackend, findContainingFunction as findContainingFunctionCore } from '@grafema/core';
 import { formatNodeDisplay, formatNodeInline } from '../utils/formatNode.js';
@@ -313,7 +312,7 @@ async function findCallsToNode(
  */
 function getModulePath(file: string, projectPath: string): string {
   if (!file) return '<unknown>';
-  const relPath = relative(projectPath, file);
+  const relPath = isAbsolute(file) ? relative(projectPath, file) : file;
   const dir = dirname(relPath);
   return dir === '.' ? relPath : `${dir}/*`;
 }

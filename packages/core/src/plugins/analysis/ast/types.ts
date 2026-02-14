@@ -31,6 +31,9 @@ export interface FunctionInfo {
   isCallback?: boolean;
   parentScopeId?: string;
   controlFlow?: ControlFlowMetadata;
+  // Class method fields (set by ClassVisitor)
+  isClassMethod?: boolean;
+  className?: string;
   // REG-271: Private methods support
   isPrivate?: boolean;   // true for #privateMethod
   isStatic?: boolean;    // true for static #method()
@@ -52,6 +55,9 @@ export interface ParameterInfo {
   isRest?: boolean;      // Rest parameter (e.g., function(...args))
   functionId?: string;   // Legacy field - prefer parentFunctionId
   parentFunctionId?: string;
+  // REG-399: Destructuring metadata
+  propertyPath?: string[];  // For nested object destructuring: ['data', 'user'] for ({ data: { user } })
+  arrayIndex?: number;      // For array destructuring: 0 for first element in ([first, second])
 }
 
 // === SCOPE INFO ===
@@ -265,6 +271,8 @@ export interface CallSiteInfo {
   isAwaited?: boolean;
   /** REG-311: true if inside try block (protected from propagation) */
   isInsideTry?: boolean;
+  /** REG-298: true if awaited call is inside a loop body */
+  isInsideLoop?: boolean;
 }
 
 // === METHOD CALL INFO ===
@@ -289,6 +297,8 @@ export interface MethodCallInfo {
   isAwaited?: boolean;
   /** REG-311: true if inside try block (protected from propagation) */
   isInsideTry?: boolean;
+  /** REG-298: true if awaited call is inside a loop body */
+  isInsideLoop?: boolean;
   /** REG-311: true if this is a method call (for CALL node filtering) */
   isMethodCall?: boolean;
 }
@@ -381,6 +391,13 @@ export interface TypeAliasInfo {
   line: number;
   column?: number;
   aliasOf?: string;  // строковое представление типа
+  mappedType?: boolean;
+  keyName?: string;
+  keyConstraint?: string;
+  valueType?: string;
+  mappedReadonly?: boolean | '+' | '-';
+  mappedOptional?: boolean | '+' | '-';
+  nameType?: string;
   conditionalType?: boolean;
   checkType?: string;
   extendsType?: string;
@@ -451,6 +468,10 @@ export interface CallArgumentInfo {
   functionColumn?: number;
   nestedCallLine?: number;
   nestedCallColumn?: number;
+  // REG-402: MemberExpression argument fields for this.method callback resolution
+  objectName?: string;
+  propertyName?: string;
+  enclosingClassName?: string;
 }
 
 // === IMPORT INFO ===
@@ -1122,6 +1143,8 @@ export interface ASTCollections {
   catchesFromInfos?: CatchesFromInfo[];
   // Property access tracking for PROPERTY_ACCESS nodes (REG-395)
   propertyAccesses?: PropertyAccessInfo[];
+  // REG-297: Top-level await tracking
+  hasTopLevelAwait?: boolean;
   // TypeScript-specific collections
   interfaces?: InterfaceDeclarationInfo[];
   typeAliases?: TypeAliasInfo[];

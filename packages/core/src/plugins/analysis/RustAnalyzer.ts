@@ -5,6 +5,7 @@
  */
 
 import { readFileSync } from 'fs';
+import { resolveNodeFile } from '../../utils/resolveNodeFile.js';
 import { Plugin, createSuccessResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { NodeRecord } from '@grafema/types';
@@ -190,6 +191,7 @@ export class RustAnalyzer extends Plugin {
 
   async execute(context: PluginContext): Promise<PluginResult> {
     const { graph, onProgress } = context;
+    const projectPath = (context.manifest as { projectPath?: string })?.projectPath ?? '';
     const logger = this.log(context);
 
     // Load native binding lazily on first use
@@ -230,7 +232,7 @@ export class RustAnalyzer extends Plugin {
     for (let i = 0; i < modules.length; i++) {
       const module = modules[i];
       try {
-        const code = readFileSync(module.file!, 'utf-8');
+        const code = readFileSync(resolveNodeFile(module.file!, projectPath), 'utf-8');
         const parseResult = parseRustFile(code);
 
         const result = await this.processParseResult(parseResult, module, graph);

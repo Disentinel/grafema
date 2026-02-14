@@ -12,7 +12,7 @@
 
 import { describe, it, after, beforeEach } from 'node:test';
 import assert from 'node:assert';
-import { createTestDatabase } from '../helpers/TestRFDB.js';
+import { createTestDatabase, cleanupAllTestDatabases } from '../helpers/TestRFDB.js';
 import { GuaranteeAPI, type GuaranteeGraphBackend, GuaranteeNode } from '@grafema/core';
 
 describe('GuaranteeAPI', () => {
@@ -27,9 +27,7 @@ describe('GuaranteeAPI', () => {
     api = new GuaranteeAPI(backend as unknown as GuaranteeGraphBackend);
   });
 
-  after(async () => {
-    if (db) await db.cleanup();
-  });
+  after(cleanupAllTestDatabases);
 
   describe('createGuarantee()', () => {
     it('should create a guarantee:queue node', async () => {

@@ -185,7 +185,9 @@ export class GraphBuilder {
       // REG-311: CATCHES_FROM tracking for catch parameter error sources
       catchesFromInfos = [],
       // Property access tracking for PROPERTY_ACCESS nodes (REG-395)
-      propertyAccesses = []
+      propertyAccesses = [],
+      // REG-297: Top-level await tracking
+      hasTopLevelAwait = false
     } = data;
 
     // Reset buffers for this build
@@ -427,6 +429,13 @@ export class GraphBuilder {
 
     // Handle async operations for ASSIGNED_FROM with CLASS lookups
     const classAssignmentEdges = await this.createClassAssignmentEdges(variableAssignments, graph);
+
+    // REG-300: Update MODULE node with import.meta metadata
+    const importMetaProps = this.collectImportMetaProperties(propertyAccesses);
+    await this.updateModuleImportMetaMetadata(module, graph, importMetaProps);
+
+    // REG-297: Update MODULE node with hasTopLevelAwait metadata
+    await this.updateModuleTopLevelAwaitMetadata(module, graph, hasTopLevelAwait);
 
     return { nodes: nodesCreated, edges: edgesCreated + classAssignmentEdges };
   }
@@ -1077,6 +1086,62 @@ export class GraphBuilder {
         dst: propAccess.id
       });
     }
+  }
+
+  /**
+   * Collect unique import.meta property names from property accesses (REG-300).
+   * Returns deduplicated array of property names (e.g., ["url", "env"]).
+   */
+  private collectImportMetaProperties(propertyAccesses: PropertyAccessInfo[]): string[] {
+    const metaProps = new Set<string>();
+    for (const propAccess of propertyAccesses) {
+      if (propAccess.objectName === 'import.meta') {
+        metaProps.add(propAccess.propertyName);
+      }
+    }
+    return [...metaProps];
+  }
+
+  /**
+   * Update MODULE node with import.meta metadata (REG-300).
+   * Reads existing MODULE node, adds importMeta property list, re-adds it.
+   */
+  private async updateModuleImportMetaMetadata(
+    module: ModuleNode,
+    graph: GraphBackend,
+    importMetaProps: string[]
+  ): Promise<void> {
+    if (importMetaProps.length === 0) return;
+
+    const existingNode = await graph.getNode(module.id);
+    if (!existingNode) return;
+
+    // Re-add with importMeta at top level — addNode is upsert in RFDB,
+    // and backend spreads metadata fields to top level on read
+    await graph.addNode({
+      ...existingNode,
+      importMeta: importMetaProps
+    } as unknown as Parameters<GraphBackend['addNode']>[0]);
+  }
+
+  /**
+   * Update MODULE node with hasTopLevelAwait metadata (REG-297).
+   * Reads existing MODULE node, adds hasTopLevelAwait flag, re-adds it.
+   */
+  private async updateModuleTopLevelAwaitMetadata(
+    module: ModuleNode,
+    graph: GraphBackend,
+    hasTopLevelAwait: boolean
+  ): Promise<void> {
+    if (!hasTopLevelAwait) return;
+
+    const existingNode = await graph.getNode(module.id);
+    if (!existingNode) return;
+
+    await graph.addNode({
+      ...existingNode,
+      hasTopLevelAwait: true
+    } as unknown as Parameters<GraphBackend['addNode']>[0]);
   }
 
   private bufferStdioNodes(methodCalls: MethodCallInfo[]): void {
@@ -1901,6 +1966,36 @@ export class GraphBuilder {
           }
         }
       }
+      // REG-402: MemberExpression callbacks (this.method)
+      else if (targetType === 'EXPRESSION' && arg.expressionType === 'MemberExpression') {
+        const { objectName, propertyName } = arg;
+
+        if (objectName === 'this' && propertyName && arg.enclosingClassName) {
+          // Look up target method in same class (className set during analysis via ScopeTracker)
+          const methodNode = functions.find(f =>
+            f.isClassMethod === true &&
+            f.className === arg.enclosingClassName &&
+            f.name === propertyName &&
+            f.file === file
+          );
+
+          if (methodNode) {
+            targetNodeId = methodNode.id;
+
+            // Create CALLS edge for known HOFs (same pattern as REG-400)
+            const callName = call && 'method' in call
+              ? (call as MethodCallInfo).method : call?.name;
+            if (callName && KNOWN_CALLBACK_INVOKERS.has(callName)) {
+              this._bufferEdge({
+                type: 'CALLS',
+                src: callId,
+                dst: methodNode.id,
+                metadata: { callType: 'callback' }
+              });
+            }
+          }
+        }
+      }
       else if (targetType === 'FUNCTION' && functionLine && functionColumn) {
         const funcNode = functions.find(f =>
           f.file === file && f.line === functionLine && f.column === functionColumn
@@ -2031,7 +2126,7 @@ export class GraphBuilder {
    */
   private bufferTypeAliasNodes(module: ModuleNode, typeAliases: TypeAliasInfo[]): void {
     for (const typeAlias of typeAliases) {
-      // Create TYPE node using factory
+      // Create TYPE node using factory (pass mapped type metadata if present)
       const typeNode = NodeFactory.createType(
         typeAlias.name,
         typeAlias.file,
@@ -2039,6 +2134,13 @@ export class GraphBuilder {
         typeAlias.column || 0,
         {
           aliasOf: typeAlias.aliasOf,
+          mappedType: typeAlias.mappedType,
+          keyName: typeAlias.keyName,
+          keyConstraint: typeAlias.keyConstraint,
+          valueType: typeAlias.valueType,
+          mappedReadonly: typeAlias.mappedReadonly,
+          mappedOptional: typeAlias.mappedOptional,
+          nameType: typeAlias.nameType,
           conditionalType: typeAlias.conditionalType,
           checkType: typeAlias.checkType,
           extendsType: typeAlias.extendsType,

@@ -11,7 +11,8 @@
  */
 
 import { Command } from 'commander';
-import { resolve, join, relative } from 'path';
+import { resolve, join } from 'path';
+import { toRelativeDisplay } from '../utils/pathUtils.js';
 import { existsSync } from 'fs';
 import { RFDBServerBackend } from '@grafema/core';
 import { exitWithError } from '../utils/errorFormatter.js';
@@ -142,7 +143,7 @@ Discover available types:
  * Different types show different fields.
  */
 function formatNodeForList(node: NodeInfo, nodeType: string, projectPath: string): string {
-  const relFile = node.file ? relative(projectPath, node.file) : '';
+  const relFile = node.file ? toRelativeDisplay(node.file, projectPath) : '';
   const loc = node.line ? `${relFile}:${node.line}` : relFile;
 
   // HTTP routes: METHOD PATH (location)

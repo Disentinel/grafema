@@ -934,4 +934,207 @@ register(handler);
       );
     });
   });
+
+  // ============================================================================
+  // REG-402: Method reference callbacks (this.method)
+  // ============================================================================
+  describe('Method reference callbacks (this.method) [REG-402]', () => {
+    it('should create CALLS edge from forEach to this.handler in class', async () => {
+      await setupTest(backend, {
+        'index.js': `
+class MyClass {
+  handler(item) { return item * 2; }
+
+  process(arr) {
+    arr.forEach(this.handler);
+  }
+}
+`
+      });
+
+      const allNodes = await backend.getAllNodes();
+      const allEdges = await backend.getAllEdges();
+
+      // Find the handler function (class method)
+      const handlerFunc = allNodes.find(n =>
+        n.type === 'FUNCTION' && n.name === 'handler'
+      );
+      assert.ok(handlerFunc, 'Should find handler FUNCTION node');
+
+      // Find the forEach method call
+      const forEachCall = allNodes.find(n =>
+        n.type === 'CALL' && n.method === 'forEach'
+      );
+      assert.ok(forEachCall, 'Should find forEach CALL node');
+
+      // Check CALLS edge from forEach to handler
+      const callsEdge = allEdges.find(e =>
+        e.type === 'CALLS' && e.src === forEachCall.id && e.dst === handlerFunc.id
+      );
+      assert.ok(
+        callsEdge,
+        `Should have CALLS edge from forEach (${forEachCall.id}) to handler (${handlerFunc.id})`
+      );
+    });
+
+    it('should create PASSES_ARGUMENT edge from map to this.handler', async () => {
+      await setupTest(backend, {
+        'index.js': `
+class Processor {
+  transform(x) { return x + 1; }
+
+  run(items) {
+    return items.map(this.transform);
+  }
+}
+`
+      });
+
+      const allNodes = await backend.getAllNodes();
+      const allEdges = await backend.getAllEdges();
+
+      const transformFunc = allNodes.find(n =>
+        n.type === 'FUNCTION' && n.name === 'transform'
+      );
+      assert.ok(transformFunc, 'Should find transform FUNCTION node');
+
+      const mapCall = allNodes.find(n =>
+        n.type === 'CALL' && n.method === 'map'
+      );
+      assert.ok(mapCall, 'Should find map CALL node');
+
+      // PASSES_ARGUMENT edge
+      const passesArgEdge = allEdges.find(e =>
+        e.type === 'PASSES_ARGUMENT' && e.src === mapCall.id && e.dst === transformFunc.id
+      );
+      assert.ok(
+        passesArgEdge,
+        `Should have PASSES_ARGUMENT edge from map (${mapCall.id}) to transform (${transformFunc.id})`
+      );
+
+      // CALLS edge too
+      const callsEdge = allEdges.find(e =>
+        e.type === 'CALLS' && e.src === mapCall.id && e.dst === transformFunc.id
+      );
+      assert.ok(
+        callsEdge,
+        `Should have CALLS edge from map (${mapCall.id}) to transform (${transformFunc.id})`
+      );
+    });
+
+    it('should handle multiple methods in same class used as callbacks', async () => {
+      await setupTest(backend, {
+        'index.js': `
+class Pipeline {
+  validate(item) { return item != null; }
+  transform(item) { return item * 2; }
+
+  run(data) {
+    const valid = data.filter(this.validate);
+    return valid.map(this.transform);
+  }
+}
+`
+      });
+
+      const allNodes = await backend.getAllNodes();
+      const allEdges = await backend.getAllEdges();
+
+      const validateFunc = allNodes.find(n =>
+        n.type === 'FUNCTION' && n.name === 'validate'
+      );
+      const transformFunc = allNodes.find(n =>
+        n.type === 'FUNCTION' && n.name === 'transform'
+      );
+      assert.ok(validateFunc, 'Should find validate FUNCTION node');
+      assert.ok(transformFunc, 'Should find transform FUNCTION node');
+
+      const filterCall = allNodes.find(n =>
+        n.type === 'CALL' && n.method === 'filter'
+      );
+      const mapCall = allNodes.find(n =>
+        n.type === 'CALL' && n.method === 'map'
+      );
+      assert.ok(filterCall, 'Should find filter CALL node');
+      assert.ok(mapCall, 'Should find map CALL node');
+
+      // filter -> validate (use any filter CALL node — inline duplicates may exist)
+      const filterCallIds = new Set(allNodes.filter(n => n.type === 'CALL' && n.method === 'filter').map(n => n.id));
+      const filterCallsEdge = allEdges.find(e =>
+        e.type === 'CALLS' && filterCallIds.has(e.src) && e.dst === validateFunc.id
+      );
+      assert.ok(filterCallsEdge, 'filter should have CALLS edge to validate');
+
+      // map -> transform (use any map CALL node)
+      const mapCallIds = new Set(allNodes.filter(n => n.type === 'CALL' && n.method === 'map').map(n => n.id));
+      const mapCallsEdge = allEdges.find(e =>
+        e.type === 'CALLS' && mapCallIds.has(e.src) && e.dst === transformFunc.id
+      );
+      assert.ok(mapCallsEdge, 'map should have CALLS edge to transform');
+    });
+
+    it('should NOT create CALLS edge for this.handler in non-HOF', async () => {
+      await setupTest(backend, {
+        'index.js': `
+class Service {
+  handler() { return 42; }
+
+  register() {
+    registry.add(this.handler);
+  }
+}
+`
+      });
+
+      const allNodes = await backend.getAllNodes();
+      const allEdges = await backend.getAllEdges();
+
+      const handlerFunc = allNodes.find(n =>
+        n.type === 'FUNCTION' && n.name === 'handler'
+      );
+      const addCall = allNodes.find(n =>
+        n.type === 'CALL' && n.method === 'add'
+      );
+      assert.ok(handlerFunc, 'Should find handler FUNCTION node');
+      assert.ok(addCall, 'Should find add CALL node');
+
+      // No CALLS edge (add is not a known HOF)
+      const callsEdge = allEdges.find(e =>
+        e.type === 'CALLS' && e.src === addCall.id && e.dst === handlerFunc.id
+      );
+      assert.ok(
+        !callsEdge,
+        'Should NOT have CALLS edge for add() — not a known HOF'
+      );
+    });
+
+    it('should NOT create CALLS edge for obj.method (out of scope)', async () => {
+      await setupTest(backend, {
+        'index.js': `
+function process(items, parser) {
+  items.forEach(parser.parse);
+}
+`
+      });
+
+      const allNodes = await backend.getAllNodes();
+      const allEdges = await backend.getAllEdges();
+
+      const forEachCall = allNodes.find(n =>
+        n.type === 'CALL' && n.method === 'forEach'
+      );
+      assert.ok(forEachCall, 'Should find forEach CALL node');
+
+      // No callback CALLS edge for obj.method (can't resolve without type info)
+      const callbackCallsEdges = allEdges.filter(e =>
+        e.type === 'CALLS' && e.src === forEachCall.id &&
+        e.metadata?.callType === 'callback'
+      );
+      assert.strictEqual(
+        callbackCallsEdges.length,
+        0,
+        'Should NOT have callback CALLS edge for parser.parse — no type info available'
+      );
+    });
+  });
 });

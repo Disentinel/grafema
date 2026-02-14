@@ -59,6 +59,7 @@ import { ConstructorCallNode } from '../../core/nodes/ConstructorCallNode.js';
 import { ObjectLiteralNode } from '../../core/nodes/ObjectLiteralNode.js';
 import { ArrayLiteralNode } from '../../core/nodes/ArrayLiteralNode.js';
 import { NodeFactory } from '../../core/NodeFactory.js';
+import { resolveNodeFile } from '../../utils/resolveNodeFile.js';
 import type { PluginContext, PluginResult, PluginMetadata, GraphBackend } from '@grafema/types';
 import type {
   ModuleNode,
@@ -111,6 +112,7 @@ import type {
   ASTCollections,
   ExtractedVariable,
 } from './ast/types.js';
+import { extractNamesFromPattern } from './ast/utils/extractNamesFromPattern.js';
 
 // === LOCAL TYPES ===
 
@@ -295,9 +297,9 @@ export class JSASTAnalyzer extends Plugin {
   /**
    * Вычисляет хеш содержимого файла
    */
-  calculateFileHash(filePath: string): string | null {
+  calculateFileHash(filePath: string, projectPath: string = ''): string | null {
     try {
-      const content = readFileSync(filePath, 'utf-8');
+      const content = readFileSync(resolveNodeFile(filePath, projectPath), 'utf-8');
       return createHash('sha256').update(content).digest('hex');
     } catch {
       return null;
@@ -307,7 +309,7 @@ export class JSASTAnalyzer extends Plugin {
   /**
    * Проверяет нужно ли анализировать модуль (сравнивает хеши)
    */
-  async shouldAnalyzeModule(module: ModuleNode, graph: GraphBackend, forceAnalysis: boolean): Promise<boolean> {
+  async shouldAnalyzeModule(module: ModuleNode, graph: GraphBackend, forceAnalysis: boolean, projectPath: string = ""): Promise<boolean> {
     if (forceAnalysis) {
       return true;
     }
@@ -316,7 +318,7 @@ export class JSASTAnalyzer extends Plugin {
       return true;
     }
 
-    const currentHash = this.calculateFileHash(module.file);
+    const currentHash = this.calculateFileHash(module.file, projectPath);
     if (!currentHash) {
       return true;
     }
@@ -365,7 +367,7 @@ export class JSASTAnalyzer extends Plugin {
           continue;
         }
 
-        if (await this.shouldAnalyzeModule(module, graph, forceAnalysis)) {
+        if (await this.shouldAnalyzeModule(module, graph, forceAnalysis, projectPath)) {
           modulesToAnalyze.push(module);
         } else {
           skippedCount++;
@@ -501,7 +503,7 @@ export class JSASTAnalyzer extends Plugin {
       // Convert ModuleNode to ASTModuleInfo format
       const moduleInfos: ASTModuleInfo[] = modules.map(m => ({
         id: m.id,
-        file: m.file,
+        file: resolveNodeFile(m.file, projectPath),
         name: m.name
       }));
 
@@ -546,7 +548,7 @@ export class JSASTAnalyzer extends Plugin {
           context.onProgress({
             phase: 'analysis',
             currentPlugin: 'JSASTAnalyzer',
-            message: `Processed ${result.module.file.replace(projectPath, '')}`,
+            message: `Processed ${result.module.name}`,
             totalFiles: modules.length,
             processedFiles: results.indexOf(result) + 1
           });
@@ -567,68 +569,13 @@ export class JSASTAnalyzer extends Plugin {
   /**
    * Extract variable names from destructuring patterns
    * Uses t.isX() type guards to avoid casts
+   *
+   * REG-399: Delegated to extractNamesFromPattern utility for code reuse with parameters.
+   * This method maintains the same API for backward compatibility.
    */
   extractVariableNamesFromPattern(pattern: t.Node | null | undefined, variables: ExtractedVariable[] = [], propertyPath: string[] = []): ExtractedVariable[] {
-    if (!pattern) return variables;
-
-    if (t.isIdentifier(pattern)) {
-      variables.push({
-        name: pattern.name,
-        loc: pattern.loc?.start ? { start: pattern.loc.start } : { start: { line: 0, column: 0 } },
-        propertyPath: propertyPath.length > 0 ? [...propertyPath] : undefined
-      });
-    } else if (t.isObjectPattern(pattern)) {
-      pattern.properties.forEach((prop) => {
-        if (t.isRestElement(prop)) {
-          const restVars = this.extractVariableNamesFromPattern(prop.argument, [], []);
-          restVars.forEach(v => {
-            v.isRest = true;
-            v.propertyPath = propertyPath.length > 0 ? [...propertyPath] : undefined;
-            variables.push(v);
-          });
-        } else if (t.isObjectProperty(prop) && prop.value) {
-          const key = t.isIdentifier(prop.key) ? prop.key.name :
-                     (t.isStringLiteral(prop.key) || t.isNumericLiteral(prop.key) ? String(prop.key.value) : null);
-
-          if (key !== null) {
-            const newPath = [...propertyPath, key];
-            this.extractVariableNamesFromPattern(prop.value, variables, newPath);
-          } else {
-            this.extractVariableNamesFromPattern(prop.value, variables, propertyPath);
-          }
-        }
-      });
-    } else if (t.isArrayPattern(pattern)) {
-      pattern.elements.forEach((element, index) => {
-        if (element) {
-          if (t.isRestElement(element)) {
-            const restVars = this.extractVariableNamesFromPattern(element.argument, [], []);
-            restVars.forEach(v => {
-              v.isRest = true;
-              v.arrayIndex = index;
-              v.propertyPath = propertyPath.length > 0 ? [...propertyPath] : undefined;
-              variables.push(v);
-            });
-          } else {
-            const extracted = this.extractVariableNamesFromPattern(element, [], propertyPath);
-            extracted.forEach(v => {
-              v.arrayIndex = index;
-              variables.push(v);
-            });
-          }
-        }
-      });
-    } else if (t.isRestElement(pattern)) {
-      const restVars = this.extractVariableNamesFromPattern(pattern.argument, [], propertyPath);
-      restVars.forEach(v => {
-        v.isRest = true;
-        variables.push(v);
-      });
-    } else if (t.isAssignmentPattern(pattern)) {
-      this.extractVariableNamesFromPattern(pattern.left, variables, propertyPath);
-    }
-
-    return variables;
+    // Delegate to the extracted utility function
+    return extractNamesFromPattern(pattern, variables, propertyPath);
   }
 
   /**
@@ -1417,13 +1364,13 @@ export class JSASTAnalyzer extends Plugin {
 
     try {
       this.profiler.start('file_read');
-      const code = readFileSync(module.file, 'utf-8');
+      const code = readFileSync(resolveNodeFile(module.file, projectPath), 'utf-8');
       this.profiler.end('file_read');
 
       this.profiler.start('babel_parse');
       const ast = parse(code, {
         sourceType: 'module',
-        plugins: ['jsx', 'typescript']
+        plugins: ['jsx', 'typescript', 'decorators-legacy']
       });
       this.profiler.end('babel_parse');
 
@@ -1763,6 +1710,26 @@ export class JSASTAnalyzer extends Plugin {
       traverse(ast, callExpressionVisitor.getHandlers());
       this.profiler.end('traverse_calls');
 
+      // REG-297: Detect top-level await expressions
+      this.profiler.start('traverse_top_level_await');
+      let hasTopLevelAwait = false;
+      traverse(ast, {
+        AwaitExpression(awaitPath: NodePath<t.AwaitExpression>) {
+          if (!awaitPath.getFunctionParent()) {
+            hasTopLevelAwait = true;
+            awaitPath.stop();
+          }
+        },
+        // for-await-of uses ForOfStatement.await, not AwaitExpression
+        ForOfStatement(forOfPath: NodePath<t.ForOfStatement>) {
+          if (forOfPath.node.await && !forOfPath.getFunctionParent()) {
+            hasTopLevelAwait = true;
+            forOfPath.stop();
+          }
+        }
+      });
+      this.profiler.end('traverse_top_level_await');
+
       // Property access expressions (REG-395)
       this.profiler.start('traverse_property_access');
       const propertyAccessVisitor = new PropertyAccessVisitor(module, allCollections, scopeTracker);
@@ -1958,7 +1925,9 @@ export class JSASTAnalyzer extends Plugin {
           ? allCollections.catchesFromInfos as CatchesFromInfo[]
           : catchesFromInfos,
         // Property access tracking (REG-395)
-        propertyAccesses: allCollections.propertyAccesses || propertyAccesses
+        propertyAccesses: allCollections.propertyAccesses || propertyAccesses,
+        // REG-297: Top-level await tracking
+        hasTopLevelAwait
       });
       this.profiler.end('graph_build');
 
@@ -2217,7 +2186,7 @@ export class JSASTAnalyzer extends Plugin {
     loopCounterRef: CounterRef,
     scopeTracker: ScopeTracker | undefined,
     scopeIdStack?: string[],
-    controlFlowState?: { loopCount: number }
+    controlFlowState?: { loopCount: number; loopDepth: number }
   ): { enter: (path: NodePath<t.Loop>) => void; exit: () => void } {
     return {
       enter: (path: NodePath<t.Loop>) => {
@@ -2226,6 +2195,8 @@ export class JSASTAnalyzer extends Plugin {
         // Phase 6 (REG-267): Increment loop count for cyclomatic complexity
         if (controlFlowState) {
           controlFlowState.loopCount++;
+          // REG-298: Track loop nesting depth for isInsideLoop detection
+          controlFlowState.loopDepth++;
         }
 
         // 1. Create LOOP node
@@ -2407,6 +2378,11 @@ export class JSASTAnalyzer extends Plugin {
         }
       },
       exit: () => {
+        // REG-298: Decrement loop depth counter
+        if (controlFlowState) {
+          controlFlowState.loopDepth--;
+        }
+
         // Pop loop scope from stack
         if (scopeIdStack) {
           scopeIdStack.pop();
@@ -3756,7 +3732,9 @@ export class JSASTAnalyzer extends Plugin {
       returnCount: 0,       // Track total return count for early return detection
       totalStatements: 0,   // Track if there are statements after returns
       // REG-311: Try block depth counter for O(1) isInsideTry detection
-      tryBlockDepth: 0
+      tryBlockDepth: 0,
+      // REG-298: Loop depth counter for O(1) isInsideLoop detection
+      loopDepth: 0
     };
 
     // Handle implicit return for THIS arrow function if it has an expression body
@@ -4363,6 +4341,9 @@ export class JSASTAnalyzer extends Plugin {
         // REG-311: Detect isInsideTry (O(1) via depth counter)
         const isInsideTry = controlFlowState.tryBlockDepth > 0;
 
+        // REG-298: Detect isInsideLoop (O(1) via depth counter)
+        const isInsideLoop = controlFlowState.loopDepth > 0;
+
         this.handleCallExpression(
           callPath.node,
           processedCallSites,
@@ -4375,7 +4356,8 @@ export class JSASTAnalyzer extends Plugin {
           getCurrentScopeId(),
           collections,
           isAwaited,
-          isInsideTry
+          isInsideTry,
+          isInsideLoop
         );
 
         // REG-401: Detect parameter invocation for user-defined HOF tracking
@@ -4960,7 +4942,8 @@ export class JSASTAnalyzer extends Plugin {
     parentScopeId: string,
     collections: VisitorCollections,
     isAwaited: boolean = false,
-    isInsideTry: boolean = false
+    isInsideTry: boolean = false,
+    isInsideLoop: boolean = false
   ): void {
     // Handle direct function calls (greet(), main())
     if (callNode.callee.type === 'Identifier') {
@@ -4991,7 +4974,9 @@ export class JSASTAnalyzer extends Plugin {
         targetFunctionName: calleeName,
         // REG-311: Async error tracking metadata
         isAwaited,
-        isInsideTry
+        isInsideTry,
+        // REG-298: Await-in-loop detection
+        ...(isAwaited && isInsideLoop ? { isInsideLoop } : {})
       });
     }
     // Handle method calls (obj.method(), data.process())
@@ -5036,6 +5021,8 @@ export class JSASTAnalyzer extends Plugin {
           // REG-311: Async error tracking metadata
           isAwaited,
           isInsideTry,
+          // REG-298: Await-in-loop detection
+          ...(isAwaited && isInsideLoop ? { isInsideLoop } : {}),
           isMethodCall: true
         });
 
@@ -5225,6 +5212,23 @@ export class JSASTAnalyzer extends Plugin {
         argInfo.targetType = 'CALL';
         argInfo.nestedCallLine = getLine(arg);
         argInfo.nestedCallColumn = getColumn(arg);
+      // REG-402: MemberExpression arguments (this.handler, obj.method)
+      } else if (t.isMemberExpression(arg)) {
+        argInfo.targetType = 'EXPRESSION';
+        argInfo.expressionType = 'MemberExpression';
+        if (t.isIdentifier(arg.object)) {
+          argInfo.objectName = arg.object.name;
+        } else if (t.isThisExpression(arg.object)) {
+          argInfo.objectName = 'this';
+          // Store enclosing class name for direct lookup in GraphBuilder
+          const scopeTracker = collections.scopeTracker as ScopeTracker | undefined;
+          if (scopeTracker) {
+            argInfo.enclosingClassName = scopeTracker.getEnclosingScope('CLASS');
+          }
+        }
+        if (!arg.computed && t.isIdentifier(arg.property)) {
+          argInfo.propertyName = arg.property.name;
+        }
       } else {
         argInfo.targetType = 'EXPRESSION';
         argInfo.expressionType = arg.type;
@@ -5624,34 +5628,12 @@ export class JSASTAnalyzer extends Plugin {
           valueType: 'EXPRESSION'
         };
 
-        // Determine value type and create value nodes for non-variable types (REG-392)
-        const literalValue = ExpressionEvaluator.extractLiteralValue(value);
-        if (literalValue !== null) {
-          argInfo.valueType = 'LITERAL';
-          argInfo.literalValue = literalValue;
-          const valueLine = value.loc?.start.line ?? line;
-          const valueColumn = value.loc?.start.column ?? column;
-          // Create LITERAL node if collections available
-          if (collections?.literals && collections.literalCounterRef) {
-            const literalCounterRef = collections.literalCounterRef as CounterRef;
-            const literalId = `LITERAL#indexed#${module.file}#${valueLine}:${valueColumn}:${literalCounterRef.value++}`;
-            (collections.literals as LiteralInfo[]).push({
-              id: literalId,
-              type: 'LITERAL',
-              value: literalValue,
-              valueType: typeof literalValue,
-              file: module.file,
-              line: valueLine,
-              column: valueColumn,
-              parentCallId: undefined,
-              argIndex: 0
-            } as LiteralInfo);
-            argInfo.valueNodeId = literalId;
-          }
-        } else if (value.type === 'Identifier') {
-          argInfo.valueType = 'VARIABLE';
-          argInfo.valueName = value.name;
-        } else if (value.type === 'ObjectExpression') {
+        // Determine value type and create value nodes for non-variable types
+        // IMPORTANT: Check ObjectExpression/ArrayExpression BEFORE extractLiteralValue
+        // to match the order in detectArrayMutation and extractArguments (REG-396).
+        // extractLiteralValue returns objects/arrays with all-literal properties as
+        // literal values, but we want OBJECT_LITERAL/ARRAY_LITERAL nodes instead.
+        if (value.type === 'ObjectExpression') {
           argInfo.valueType = 'OBJECT_LITERAL';
           const valueLine = value.loc?.start.line ?? line;
           const valueColumn = value.loc?.start.column ?? column;
@@ -5681,10 +5663,38 @@ export class JSASTAnalyzer extends Plugin {
             (collections.arrayLiterals as ArrayLiteralInfo[]).push(arrayNode as unknown as ArrayLiteralInfo);
             argInfo.valueNodeId = arrayNode.id;
           }
+        } else if (value.type === 'Identifier') {
+          argInfo.valueType = 'VARIABLE';
+          argInfo.valueName = value.name;
         } else if (value.type === 'CallExpression') {
           argInfo.valueType = 'CALL';
           argInfo.callLine = value.loc?.start.line;
           argInfo.callColumn = value.loc?.start.column;
+        } else {
+          const literalValue = ExpressionEvaluator.extractLiteralValue(value);
+          if (literalValue !== null) {
+            argInfo.valueType = 'LITERAL';
+            argInfo.literalValue = literalValue;
+            const valueLine = value.loc?.start.line ?? line;
+            const valueColumn = value.loc?.start.column ?? column;
+            // Create LITERAL node if collections available
+            if (collections?.literals && collections.literalCounterRef) {
+              const literalCounterRef = collections.literalCounterRef as CounterRef;
+              const literalId = `LITERAL#indexed#${module.file}#${valueLine}:${valueColumn}:${literalCounterRef.value++}`;
+              (collections.literals as LiteralInfo[]).push({
+                id: literalId,
+                type: 'LITERAL',
+                value: literalValue,
+                valueType: typeof literalValue,
+                file: module.file,
+                line: valueLine,
+                column: valueColumn,
+                parentCallId: undefined,
+                argIndex: 0
+              } as LiteralInfo);
+              argInfo.valueNodeId = literalId;
+            }
+          }
         }
 
         // Capture scope path for scope-aware lookup (REG-309)

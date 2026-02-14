@@ -8,7 +8,7 @@
  */
 
 import { Command } from 'commander';
-import { resolve, join } from 'path';
+import { isAbsolute, resolve, join } from 'path';
 import { existsSync } from 'fs';
 import { RFDBServerBackend, parseSemanticId, parseSemanticIdV2, traceValues, type ValueSource } from '@grafema/core';
 import { formatNodeDisplay, formatNodeInline } from '../utils/formatNode.js';
@@ -747,7 +747,7 @@ async function handleSinkTrace(
     const sourcesCount = pv.sources.length;
     console.log(`  - ${JSON.stringify(pv.value)} (${sourcesCount} source${sourcesCount === 1 ? '' : 's'})`);
     for (const src of pv.sources.slice(0, 3)) {
-      const relativePath = src.file.startsWith(projectPath)
+      const relativePath = isAbsolute(src.file)
         ? src.file.substring(projectPath.length + 1)
         : src.file;
       console.log(`    <- ${relativePath}:${src.line}`);
@@ -909,7 +909,7 @@ async function handleRouteTrace(
     // Format traced values
     const sources = await Promise.all(
       traced.map(async (t) => {
-        const relativePath = t.source.file.startsWith(projectPath)
+        const relativePath = isAbsolute(t.source.file)
           ? t.source.file.substring(projectPath.length + 1)
           : t.source.file;
 
