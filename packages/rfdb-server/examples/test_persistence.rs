@@ -40,6 +40,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 name: Some("getUserById".to_string()),
                 file: Some("src/api/users.js".to_string()),
                 metadata: None,
+                semantic_id: None,
             },
             NodeRecord {
                 id: node2_id,
@@ -53,6 +54,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 name: Some("UserService".to_string()),
                 file: Some("src/api/users.js".to_string()),
                 metadata: None,
+                semantic_id: None,
             },
             NodeRecord {
                 id: node3_id,
@@ -66,6 +68,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 name: Some("SELECT * FROM users".to_string()),
                 file: Some("src/api/users.js".to_string()),
                 metadata: None,
+                semantic_id: None,
             },
         ];
 
@@ -189,6 +192,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 name: Some("deleteUser".to_string()),
                 file: Some("src/api/users.js".to_string()),
                 metadata: None,
+                semantic_id: None,
             }
         ]);
 

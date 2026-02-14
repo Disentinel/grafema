@@ -363,6 +363,7 @@ mod tests {
                 name: Some("myFunction".to_string()),
                 file: Some("src/test.js".to_string()),
                 metadata: Some("{\"async\":true}".to_string()),
+                semantic_id: None,
             },
             NodeRecord {
                 id: 456,
@@ -376,6 +377,7 @@ mod tests {
                 name: Some("MyClass".to_string()),
                 file: Some("src/test.js".to_string()),
                 metadata: None,
+            semantic_id: None,
             },
         ];
 

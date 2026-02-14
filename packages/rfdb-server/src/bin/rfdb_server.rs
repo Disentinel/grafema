@@ -480,6 +480,11 @@ pub struct WireSlowQuery {
 #[serde(rename_all = "camelCase")]
 pub struct WireNode {
     pub id: String,
+    /// Semantic ID string — first-class in v3 wire format.
+    /// Populated on read from v2 storage; used on write to preserve real semantic ID.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    pub semantic_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub node_type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -603,8 +608,15 @@ fn id_to_string(id: u128) -> String {
 // ============================================================================
 
 fn wire_node_to_record(node: WireNode) -> NodeRecord {
+    // If client sends semanticId (v3), use it for both the semantic_id field
+    // and to compute the u128 hash (ensuring consistency).
+    let id = if node.semantic_id.is_some() {
+        string_to_id(node.semantic_id.as_ref().unwrap())
+    } else {
+        string_to_id(&node.id)
+    };
     NodeRecord {
-        id: string_to_id(&node.id),
+        id,
         node_type: node.node_type,
         file_id: 0,
         name_offset: 0,
@@ -615,12 +627,14 @@ fn wire_node_to_record(node: WireNode) -> NodeRecord {
         name: node.name,
         file: node.file,
         metadata: node.metadata,
+        semantic_id: node.semantic_id,
     }
 }
 
 fn record_to_wire_node(record: &NodeRecord) -> WireNode {
     WireNode {
         id: id_to_string(record.id),
+        semantic_id: record.semantic_id.clone(),
         node_type: record.node_type.clone(),
         name: record.name.clone(),
         file: record.file.clone(),
@@ -646,6 +660,27 @@ fn record_to_wire_edge(record: &EdgeRecord) -> WireEdge {
         dst: id_to_string(record.dst),
         edge_type: record.edge_type.clone(),
         metadata: record.metadata.clone(),
+    }
+}
+
+/// Resolve u128 edge endpoints to semantic ID strings using node lookups.
+/// For v3 protocol: replaces numeric src/dst with human-readable semantic IDs.
+fn resolve_edge_semantic_ids(edges: &mut [WireEdge], engine: &dyn GraphStore) {
+    for edge in edges.iter_mut() {
+        if let Ok(src_id) = edge.src.parse::<u128>() {
+            if let Some(node) = engine.get_node(src_id) {
+                if let Some(sid) = node.semantic_id {
+                    edge.src = sid;
+                }
+            }
+        }
+        if let Ok(dst_id) = edge.dst.parse::<u128>() {
+            if let Some(node) = engine.get_node(dst_id) {
+                if let Some(sid) = node.semantic_id {
+                    edge.dst = sid;
+                }
+            }
+        }
     }
 }
 
@@ -724,9 +759,9 @@ fn handle_request(
             session.protocol_version = protocol_version.unwrap_or(2);
             Response::HelloOk {
                 ok: true,
-                protocol_version: 2,
+                protocol_version: 3,
                 server_version: env!("CARGO_PKG_VERSION").to_string(),
-                features: vec!["multiDatabase".to_string(), "ephemeral".to_string()],
+                features: vec!["multiDatabase".to_string(), "ephemeral".to_string(), "semanticIds".to_string()],
             }
         }
 
@@ -953,25 +988,33 @@ fn handle_request(
         }
 
         Request::GetOutgoingEdges { id, edge_types } => {
+            let protocol = session.protocol_version;
             with_engine_read(session, |engine| {
                 let edge_types_refs: Option<Vec<&str>> = edge_types.as_ref()
                     .map(|v| v.iter().map(|s| s.as_str()).collect());
-                let edges: Vec<WireEdge> = engine.get_outgoing_edges(string_to_id(&id), edge_types_refs.as_deref())
+                let mut edges: Vec<WireEdge> = engine.get_outgoing_edges(string_to_id(&id), edge_types_refs.as_deref())
                     .into_iter()
                     .map(|e| record_to_wire_edge(&e))
                     .collect();
+                if protocol >= 3 {
+                    resolve_edge_semantic_ids(&mut edges, engine);
+                }
                 Response::Edges { edges }
             })
         }
 
         Request::GetIncomingEdges { id, edge_types } => {
+            let protocol = session.protocol_version;
             with_engine_read(session, |engine| {
                 let edge_types_refs: Option<Vec<&str>> = edge_types.as_ref()
                     .map(|v| v.iter().map(|s| s.as_str()).collect());
-                let edges: Vec<WireEdge> = engine.get_incoming_edges(string_to_id(&id), edge_types_refs.as_deref())
+                let mut edges: Vec<WireEdge> = engine.get_incoming_edges(string_to_id(&id), edge_types_refs.as_deref())
                     .into_iter()
                     .map(|e| record_to_wire_edge(&e))
                     .collect();
+                if protocol >= 3 {
+                    resolve_edge_semantic_ids(&mut edges, engine);
+                }
                 Response::Edges { edges }
             })
         }
@@ -1035,11 +1078,15 @@ fn handle_request(
         }
 
         Request::GetAllEdges => {
+            let protocol = session.protocol_version;
             with_engine_read(session, |engine| {
-                let edges: Vec<WireEdge> = engine.get_all_edges()
+                let mut edges: Vec<WireEdge> = engine.get_all_edges()
                     .into_iter()
                     .map(|e| record_to_wire_edge(&e))
                     .collect();
+                if protocol >= 3 {
+                    resolve_edge_semantic_ids(&mut edges, engine);
+                }
                 Response::Edges { edges }
             })
         }
@@ -1934,10 +1981,11 @@ mod protocol_tests {
         match response {
             Response::HelloOk { ok, protocol_version, server_version, features } => {
                 assert!(ok);
-                assert_eq!(protocol_version, 2);
+                assert_eq!(protocol_version, 3);
                 assert!(!server_version.is_empty());
                 assert!(features.contains(&"multiDatabase".to_string()));
                 assert!(features.contains(&"ephemeral".to_string()));
+                assert!(features.contains(&"semanticIds".to_string()));
             }
             _ => panic!("Expected HelloOk response"),
         }
@@ -2401,6 +2449,7 @@ mod protocol_tests {
                 file: None,
                 exported: false,
                 metadata: None,
+            semantic_id: None,
             }],
         }, &metrics);
 
@@ -2461,6 +2510,7 @@ mod protocol_tests {
                     file: Some("app.js".to_string()),
                     exported: false,
                     metadata: Some(r#"{"object":"express","method":"get"}"#.to_string()),
+                    semantic_id: None,
                 },
                 WireNode {
                     id: "2".to_string(),
@@ -2469,6 +2519,7 @@ mod protocol_tests {
                     file: Some("app.js".to_string()),
                     exported: false,
                     metadata: Some(r#"{"object":"express","method":"post"}"#.to_string()),
+                    semantic_id: None,
                 },
                 WireNode {
                     id: "3".to_string(),
@@ -2477,6 +2528,7 @@ mod protocol_tests {
                     file: Some("db.js".to_string()),
                     exported: false,
                     metadata: Some(r#"{"object":"knex","method":"query"}"#.to_string()),
+                    semantic_id: None,
                 },
             ],
         }, &None);
@@ -2584,6 +2636,7 @@ mod protocol_tests {
                     file: None,
                     exported: false,
                     metadata: Some(r#"{"object":"express","method":"get"}"#.to_string()),
+                    semantic_id: None,
                 },
                 WireNode {
                     id: "2".to_string(),
@@ -2592,6 +2645,7 @@ mod protocol_tests {
                     file: None,
                     exported: false,
                     metadata: Some(r#"{"object":"express","method":"post"}"#.to_string()),
+                    semantic_id: None,
                 },
             ],
         }, &None);
@@ -2646,8 +2700,8 @@ mod protocol_tests {
         // Add initial nodes for "app.js"
         handle_request(&manager, &mut session, Request::AddNodes {
             nodes: vec![
-                WireNode { id: "1".to_string(), node_type: Some("FUNCTION".to_string()), name: Some("foo".to_string()), file: Some("app.js".to_string()), exported: false, metadata: None },
-                WireNode { id: "2".to_string(), node_type: Some("FUNCTION".to_string()), name: Some("bar".to_string()), file: Some("app.js".to_string()), exported: false, metadata: None },
+                WireNode { semantic_id: None, id: "1".to_string(), node_type: Some("FUNCTION".to_string()), name: Some("foo".to_string()), file: Some("app.js".to_string()), exported: false, metadata: None },
+                WireNode { semantic_id: None, id: "2".to_string(), node_type: Some("FUNCTION".to_string()), name: Some("bar".to_string()), file: Some("app.js".to_string()), exported: false, metadata: None },
             ],
         }, &None);
         handle_request(&manager, &mut session, Request::Flush, &None);
@@ -2656,7 +2710,7 @@ mod protocol_tests {
         let response = handle_request(&manager, &mut session, Request::CommitBatch {
             changed_files: vec!["app.js".to_string()],
             nodes: vec![
-                WireNode { id: "3".to_string(), node_type: Some("FUNCTION".to_string()), name: Some("baz".to_string()), file: Some("app.js".to_string()), exported: false, metadata: None },
+                WireNode { semantic_id: None, id: "3".to_string(), node_type: Some("FUNCTION".to_string()), name: Some("baz".to_string()), file: Some("app.js".to_string()), exported: false, metadata: None },
             ],
             edges: vec![],
             tags: None,
@@ -2690,9 +2744,9 @@ mod protocol_tests {
         // Add nodes and edges
         handle_request(&manager, &mut session, Request::AddNodes {
             nodes: vec![
-                WireNode { id: "n1".to_string(), node_type: Some("MODULE".to_string()), name: Some("m1".to_string()), file: Some("src/a.js".to_string()), exported: false, metadata: None },
-                WireNode { id: "n2".to_string(), node_type: Some("FUNCTION".to_string()), name: Some("f1".to_string()), file: Some("src/a.js".to_string()), exported: true, metadata: None },
-                WireNode { id: "n3".to_string(), node_type: Some("MODULE".to_string()), name: Some("m2".to_string()), file: Some("src/b.js".to_string()), exported: false, metadata: None },
+                WireNode { semantic_id: None, id: "n1".to_string(), node_type: Some("MODULE".to_string()), name: Some("m1".to_string()), file: Some("src/a.js".to_string()), exported: false, metadata: None },
+                WireNode { semantic_id: None, id: "n2".to_string(), node_type: Some("FUNCTION".to_string()), name: Some("f1".to_string()), file: Some("src/a.js".to_string()), exported: true, metadata: None },
+                WireNode { semantic_id: None, id: "n3".to_string(), node_type: Some("MODULE".to_string()), name: Some("m2".to_string()), file: Some("src/b.js".to_string()), exported: false, metadata: None },
             ],
         }, &None);
         handle_request(&manager, &mut session, Request::AddEdges {
@@ -2707,7 +2761,7 @@ mod protocol_tests {
         let response = handle_request(&manager, &mut session, Request::CommitBatch {
             changed_files: vec!["src/a.js".to_string()],
             nodes: vec![
-                WireNode { id: "n4".to_string(), node_type: Some("MODULE".to_string()), name: Some("m1v2".to_string()), file: Some("src/a.js".to_string()), exported: false, metadata: None },
+                WireNode { semantic_id: None, id: "n4".to_string(), node_type: Some("MODULE".to_string()), name: Some("m1v2".to_string()), file: Some("src/a.js".to_string()), exported: false, metadata: None },
             ],
             edges: vec![],
             tags: None,
@@ -2742,7 +2796,7 @@ mod protocol_tests {
         let response = handle_request(&manager, &mut session, Request::CommitBatch {
             changed_files: vec![],
             nodes: vec![
-                WireNode { id: "x1".to_string(), node_type: Some("VARIABLE".to_string()), name: Some("x".to_string()), file: Some("new.js".to_string()), exported: false, metadata: None },
+                WireNode { semantic_id: None, id: "x1".to_string(), node_type: Some("VARIABLE".to_string()), name: Some("x".to_string()), file: Some("new.js".to_string()), exported: false, metadata: None },
             ],
             edges: vec![],
             tags: None,
@@ -2782,9 +2836,9 @@ mod protocol_tests {
         // Add nodes and edges, then flush to segments
         handle_request(&manager, &mut session, Request::AddNodes {
             nodes: vec![
-                WireNode { id: "s1".to_string(), node_type: Some("MODULE".to_string()), name: Some("mod_a".to_string()), file: Some("a.js".to_string()), exported: false, metadata: None },
-                WireNode { id: "s2".to_string(), node_type: Some("FUNCTION".to_string()), name: Some("func_b".to_string()), file: Some("a.js".to_string()), exported: true, metadata: None },
-                WireNode { id: "s3".to_string(), node_type: Some("MODULE".to_string()), name: Some("mod_c".to_string()), file: Some("c.js".to_string()), exported: false, metadata: None },
+                WireNode { semantic_id: None, id: "s1".to_string(), node_type: Some("MODULE".to_string()), name: Some("mod_a".to_string()), file: Some("a.js".to_string()), exported: false, metadata: None },
+                WireNode { semantic_id: None, id: "s2".to_string(), node_type: Some("FUNCTION".to_string()), name: Some("func_b".to_string()), file: Some("a.js".to_string()), exported: true, metadata: None },
+                WireNode { semantic_id: None, id: "s3".to_string(), node_type: Some("MODULE".to_string()), name: Some("mod_c".to_string()), file: Some("c.js".to_string()), exported: false, metadata: None },
             ],
         }, &None);
         handle_request(&manager, &mut session, Request::AddEdges {
@@ -2802,7 +2856,7 @@ mod protocol_tests {
         let response = handle_request(&manager, &mut session, Request::CommitBatch {
             changed_files: vec!["a.js".to_string()],
             nodes: vec![
-                WireNode { id: "s4".to_string(), node_type: Some("MODULE".to_string()), name: Some("mod_a_v2".to_string()), file: Some("a.js".to_string()), exported: false, metadata: None },
+                WireNode { semantic_id: None, id: "s4".to_string(), node_type: Some("MODULE".to_string()), name: Some("mod_a_v2".to_string()), file: Some("a.js".to_string()), exported: false, metadata: None },
             ],
             edges: vec![],
             tags: None,
@@ -2867,8 +2921,8 @@ mod protocol_tests {
         // Two nodes in different files, connected by an edge
         handle_request(&manager, &mut session, Request::AddNodes {
             nodes: vec![
-                WireNode { id: "d1".to_string(), node_type: Some("FUNCTION".to_string()), name: Some("a".to_string()), file: Some("x.js".to_string()), exported: false, metadata: None },
-                WireNode { id: "d2".to_string(), node_type: Some("FUNCTION".to_string()), name: Some("b".to_string()), file: Some("y.js".to_string()), exported: false, metadata: None },
+                WireNode { semantic_id: None, id: "d1".to_string(), node_type: Some("FUNCTION".to_string()), name: Some("a".to_string()), file: Some("x.js".to_string()), exported: false, metadata: None },
+                WireNode { semantic_id: None, id: "d2".to_string(), node_type: Some("FUNCTION".to_string()), name: Some("b".to_string()), file: Some("y.js".to_string()), exported: false, metadata: None },
             ],
         }, &None);
         handle_request(&manager, &mut session, Request::AddEdges {
@@ -3050,6 +3104,7 @@ mod protocol_tests {
             name: Some("dummy".to_string()),
             file: Some("dummy.js".to_string()),
             metadata: None,
+        semantic_id: None,
         }]);
         v1_engine.flush().unwrap();
         // Drop v1_engine so the file is not locked
@@ -3105,9 +3160,9 @@ mod protocol_tests {
         // Add nodes and edges
         handle_request(&manager, &mut session, Request::AddNodes {
             nodes: vec![
-                WireNode { id: "a".to_string(), node_type: Some("FUNCTION".to_string()), name: Some("a".to_string()), file: Some("a.js".to_string()), exported: false, metadata: None },
-                WireNode { id: "b".to_string(), node_type: Some("FUNCTION".to_string()), name: Some("b".to_string()), file: Some("b.js".to_string()), exported: false, metadata: None },
-                WireNode { id: "c".to_string(), node_type: Some("FUNCTION".to_string()), name: Some("c".to_string()), file: Some("c.js".to_string()), exported: false, metadata: None },
+                WireNode { semantic_id: None, id: "a".to_string(), node_type: Some("FUNCTION".to_string()), name: Some("a".to_string()), file: Some("a.js".to_string()), exported: false, metadata: None },
+                WireNode { semantic_id: None, id: "b".to_string(), node_type: Some("FUNCTION".to_string()), name: Some("b".to_string()), file: Some("b.js".to_string()), exported: false, metadata: None },
+                WireNode { semantic_id: None, id: "c".to_string(), node_type: Some("FUNCTION".to_string()), name: Some("c".to_string()), file: Some("c.js".to_string()), exported: false, metadata: None },
             ],
         }, &None);
         handle_request(&manager, &mut session, Request::AddEdges {
@@ -3143,8 +3198,8 @@ mod protocol_tests {
 
         handle_request(&manager, &mut session, Request::AddNodes {
             nodes: vec![
-                WireNode { id: "a".to_string(), node_type: Some("FUNCTION".to_string()), name: Some("a".to_string()), file: Some("a.js".to_string()), exported: false, metadata: None },
-                WireNode { id: "b".to_string(), node_type: Some("FUNCTION".to_string()), name: Some("b".to_string()), file: Some("b.js".to_string()), exported: false, metadata: None },
+                WireNode { semantic_id: None, id: "a".to_string(), node_type: Some("FUNCTION".to_string()), name: Some("a".to_string()), file: Some("a.js".to_string()), exported: false, metadata: None },
+                WireNode { semantic_id: None, id: "b".to_string(), node_type: Some("FUNCTION".to_string()), name: Some("b".to_string()), file: Some("b.js".to_string()), exported: false, metadata: None },
             ],
         }, &None);
         handle_request(&manager, &mut session, Request::AddEdges {
@@ -3177,9 +3232,9 @@ mod protocol_tests {
 
         handle_request(&manager, &mut session, Request::AddNodes {
             nodes: vec![
-                WireNode { id: "a".to_string(), node_type: Some("FUNCTION".to_string()), name: Some("a".to_string()), file: Some("a.js".to_string()), exported: false, metadata: None },
-                WireNode { id: "b".to_string(), node_type: Some("FUNCTION".to_string()), name: Some("b".to_string()), file: Some("b.js".to_string()), exported: false, metadata: None },
-                WireNode { id: "c".to_string(), node_type: Some("FUNCTION".to_string()), name: Some("c".to_string()), file: Some("c.js".to_string()), exported: false, metadata: None },
+                WireNode { semantic_id: None, id: "a".to_string(), node_type: Some("FUNCTION".to_string()), name: Some("a".to_string()), file: Some("a.js".to_string()), exported: false, metadata: None },
+                WireNode { semantic_id: None, id: "b".to_string(), node_type: Some("FUNCTION".to_string()), name: Some("b".to_string()), file: Some("b.js".to_string()), exported: false, metadata: None },
+                WireNode { semantic_id: None, id: "c".to_string(), node_type: Some("FUNCTION".to_string()), name: Some("c".to_string()), file: Some("c.js".to_string()), exported: false, metadata: None },
             ],
         }, &None);
         handle_request(&manager, &mut session, Request::AddEdges {
@@ -3214,8 +3269,8 @@ mod protocol_tests {
 
         handle_request(&manager, &mut session, Request::AddNodes {
             nodes: vec![
-                WireNode { id: "a".to_string(), node_type: Some("FUNCTION".to_string()), name: Some("a".to_string()), file: Some("a.js".to_string()), exported: false, metadata: None },
-                WireNode { id: "b".to_string(), node_type: Some("FUNCTION".to_string()), name: Some("b".to_string()), file: Some("b.js".to_string()), exported: false, metadata: None },
+                WireNode { semantic_id: None, id: "a".to_string(), node_type: Some("FUNCTION".to_string()), name: Some("a".to_string()), file: Some("a.js".to_string()), exported: false, metadata: None },
+                WireNode { semantic_id: None, id: "b".to_string(), node_type: Some("FUNCTION".to_string()), name: Some("b".to_string()), file: Some("b.js".to_string()), exported: false, metadata: None },
             ],
         }, &None);
         handle_request(&manager, &mut session, Request::AddEdges {
@@ -3256,10 +3311,10 @@ mod protocol_tests {
         // Create a graph: a.js -> target.js, b.js -> target.js
         handle_request(&manager, &mut session, Request::AddNodes {
             nodes: vec![
-                WireNode { id: "target".to_string(), node_type: Some("MODULE".to_string()), name: Some("target".to_string()), file: Some("target.js".to_string()), exported: true, metadata: None },
-                WireNode { id: "dep1".to_string(), node_type: Some("MODULE".to_string()), name: Some("dep1".to_string()), file: Some("a.js".to_string()), exported: false, metadata: None },
-                WireNode { id: "dep2".to_string(), node_type: Some("MODULE".to_string()), name: Some("dep2".to_string()), file: Some("b.js".to_string()), exported: false, metadata: None },
-                WireNode { id: "unrelated".to_string(), node_type: Some("MODULE".to_string()), name: Some("unrelated".to_string()), file: Some("c.js".to_string()), exported: false, metadata: None },
+                WireNode { semantic_id: None, id: "target".to_string(), node_type: Some("MODULE".to_string()), name: Some("target".to_string()), file: Some("target.js".to_string()), exported: true, metadata: None },
+                WireNode { semantic_id: None, id: "dep1".to_string(), node_type: Some("MODULE".to_string()), name: Some("dep1".to_string()), file: Some("a.js".to_string()), exported: false, metadata: None },
+                WireNode { semantic_id: None, id: "dep2".to_string(), node_type: Some("MODULE".to_string()), name: Some("dep2".to_string()), file: Some("b.js".to_string()), exported: false, metadata: None },
+                WireNode { semantic_id: None, id: "unrelated".to_string(), node_type: Some("MODULE".to_string()), name: Some("unrelated".to_string()), file: Some("c.js".to_string()), exported: false, metadata: None },
             ],
         }, &None);
         handle_request(&manager, &mut session, Request::AddEdges {
@@ -3295,9 +3350,9 @@ mod protocol_tests {
 
         handle_request(&manager, &mut session, Request::AddNodes {
             nodes: vec![
-                WireNode { id: "target".to_string(), node_type: Some("MODULE".to_string()), name: Some("target".to_string()), file: Some("target.js".to_string()), exported: true, metadata: None },
-                WireNode { id: "importer".to_string(), node_type: Some("MODULE".to_string()), name: Some("importer".to_string()), file: Some("imp.js".to_string()), exported: false, metadata: None },
-                WireNode { id: "caller".to_string(), node_type: Some("FUNCTION".to_string()), name: Some("caller".to_string()), file: Some("call.js".to_string()), exported: false, metadata: None },
+                WireNode { semantic_id: None, id: "target".to_string(), node_type: Some("MODULE".to_string()), name: Some("target".to_string()), file: Some("target.js".to_string()), exported: true, metadata: None },
+                WireNode { semantic_id: None, id: "importer".to_string(), node_type: Some("MODULE".to_string()), name: Some("importer".to_string()), file: Some("imp.js".to_string()), exported: false, metadata: None },
+                WireNode { semantic_id: None, id: "caller".to_string(), node_type: Some("FUNCTION".to_string()), name: Some("caller".to_string()), file: Some("call.js".to_string()), exported: false, metadata: None },
             ],
         }, &None);
         handle_request(&manager, &mut session, Request::AddEdges {
@@ -3333,7 +3388,7 @@ mod protocol_tests {
 
         handle_request(&manager, &mut session, Request::AddNodes {
             nodes: vec![
-                WireNode { id: "lonely".to_string(), node_type: Some("MODULE".to_string()), name: Some("lonely".to_string()), file: Some("lonely.js".to_string()), exported: false, metadata: None },
+                WireNode { semantic_id: None, id: "lonely".to_string(), node_type: Some("MODULE".to_string()), name: Some("lonely".to_string()), file: Some("lonely.js".to_string()), exported: false, metadata: None },
             ],
         }, &None);
 

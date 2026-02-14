@@ -402,6 +402,7 @@ impl GraphEngine {
                         name: segment.get_name(idx).map(|s| s.to_string()),
                         file: segment.get_file_path(idx).map(|s| s.to_string()),
                         metadata: segment.get_metadata(idx).map(|s| s.to_string()),
+                        semantic_id: None,
                     });
                 }
             }
@@ -1148,6 +1149,7 @@ impl GraphStore for GraphEngine {
                             name,
                             file,
                             metadata,
+                            semantic_id: None,
                         });
                     }
                 }
@@ -1777,6 +1779,7 @@ mod tests {
                 name: Some("test_node".to_string()),
                 file: None,
                 metadata: None,
+            semantic_id: None,
             };
             engine.add_nodes(vec![node]);
             engine.flush().unwrap();
@@ -1815,6 +1818,7 @@ mod tests {
             name: Some(name.to_string()),
             file: Some("test.js".to_string()),
             metadata: None,
+        semantic_id: None,
         }
     }
 
@@ -2180,6 +2184,7 @@ mod tests {
                     name: Some("funcA".to_string()),
                     file: Some("src/utils.js".to_string()),
                     metadata: None,
+                semantic_id: None,
                 },
                 NodeRecord {
                     id: 2,
@@ -2193,6 +2198,7 @@ mod tests {
                     name: Some("funcB".to_string()),
                     file: Some("src/utils.js".to_string()),
                     metadata: None,
+                semantic_id: None,
                 },
                 NodeRecord {
                     id: 3,
@@ -2206,6 +2212,7 @@ mod tests {
                     name: Some("funcC".to_string()),
                     file: Some("src/other.js".to_string()),
                     metadata: None,
+                semantic_id: None,
                 },
             ]);
 
@@ -2251,6 +2258,7 @@ mod tests {
                 name: Some("funcA".to_string()),
                 file: Some("src/utils.js".to_string()),
                 metadata: None,
+            semantic_id: None,
             },
             NodeRecord {
                 id: 2,
@@ -2264,6 +2272,7 @@ mod tests {
                 name: Some("ClassB".to_string()),
                 file: Some("src/utils.js".to_string()),
                 metadata: None,
+            semantic_id: None,
             },
             NodeRecord {
                 id: 3,
@@ -2277,6 +2286,7 @@ mod tests {
                 name: Some("funcC".to_string()),
                 file: Some("src/other.js".to_string()),
                 metadata: None,
+            semantic_id: None,
             },
         ]);
 
@@ -2325,6 +2335,7 @@ mod tests {
             name: Some("test".to_string()),
             file: None,
             metadata: None,
+        semantic_id: None,
         }]);
 
         assert_eq!(engine.node_count(), 1);
@@ -2348,6 +2359,7 @@ mod tests {
                 name: Some("foo".to_string()),
                 file: None,
                 metadata: None,
+            semantic_id: None,
             },
             NodeRecord {
                 id: 2,
@@ -2361,6 +2373,7 @@ mod tests {
                 name: Some("bar".to_string()),
                 file: None,
                 metadata: None,
+            semantic_id: None,
             },
         ]);
 
@@ -2566,6 +2579,7 @@ mod tests {
             name: Some("myFunc".to_string()),
             file: Some("src/app.js".to_string()),
             metadata: Some("{\"async\":true}".to_string()),
+            semantic_id: None,
         }]);
         engine.flush().unwrap();
 
@@ -2619,6 +2633,7 @@ mod tests {
             name: Some(name.to_string()),
             file: Some("test.js".to_string()),
             metadata: Some(metadata_json.to_string()),
+            semantic_id: None,
         }
     }
 

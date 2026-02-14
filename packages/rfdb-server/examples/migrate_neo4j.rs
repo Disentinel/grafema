@@ -55,6 +55,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             name: Some("getUserById".to_string()),
             file: Some("src/api/users.js".to_string()),
             metadata: None,
+            semantic_id: None,
         },
         NodeRecord {
             id: compute_node_id("CLASS", "UserService", "MODULE:users.js", "src/api/users.js"),
@@ -68,6 +69,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             name: Some("UserService".to_string()),
             file: Some("src/api/users.js".to_string()),
             metadata: None,
+            semantic_id: None,
         },
     ];
 

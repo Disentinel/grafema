@@ -422,6 +422,7 @@ mod database_tests {
             name: Some("test".to_string()),
             file: None,
             metadata: None,
+        semantic_id: None,
         }]);
 
         let db = Database::new("test".to_string(), Box::new(engine), false);
