@@ -199,6 +199,11 @@ interface InterfaceOptions {
 
 interface TypeOptions {
   aliasOf?: string;
+  conditionalType?: boolean;
+  checkType?: string;
+  extendsType?: string;
+  trueType?: string;
+  falseType?: string;
 }
 
 interface EnumOptions {

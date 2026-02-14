@@ -62,12 +62,16 @@ export function typeNodeToString(node: unknown): string {
       return 'symbol';
     case 'TSBigIntKeyword':
       return 'bigint';
-    case 'TSTypeReference':
+    case 'TSTypeReference': {
       const typeName = typeNode.typeName as { type: string; name?: string };
-      if (typeName?.type === 'Identifier') {
-        return typeName.name || 'unknown';
+      const baseName = typeName?.type === 'Identifier' ? (typeName.name || 'unknown') : 'unknown';
+      const typeParams = typeNode.typeParameters as { params?: unknown[] } | undefined;
+      if (typeParams?.params?.length) {
+        const paramStrs = typeParams.params.map(p => typeNodeToString(p));
+        return `${baseName}<${paramStrs.join(', ')}>`;
       }
-      return 'unknown';
+      return baseName;
+    }
     case 'TSArrayType':
       return `${typeNodeToString(typeNode.elementType)}[]`;
     case 'TSUnionType':
@@ -93,6 +97,17 @@ export function typeNodeToString(node: unknown): string {
       return `[${tupleTypes.map(t => typeNodeToString(t)).join(', ')}]`;
     case 'TSTypeLiteral':
       return 'object';
+    case 'TSConditionalType': {
+      const check = typeNodeToString(typeNode.checkType);
+      const ext = typeNodeToString(typeNode.extendsType);
+      const trueT = typeNodeToString(typeNode.trueType);
+      const falseT = typeNodeToString(typeNode.falseType);
+      return `${check} extends ${ext} ? ${trueT} : ${falseT}`;
+    }
+    case 'TSInferType': {
+      const tp = typeNode.typeParameter as { name?: string };
+      return `infer ${tp?.name || 'unknown'}`;
+    }
     default:
       return 'unknown';
   }
@@ -198,6 +213,10 @@ export class TypeScriptVisitor extends ASTVisitor {
         // Extract the type being aliased
         const aliasOf = typeNodeToString(node.typeAnnotation);
 
+        // REG-304: Detect conditional type and extract branch metadata
+        const typeAnnotation = node.typeAnnotation as { type: string; [key: string]: unknown };
+        const isConditional = typeAnnotation?.type === 'TSConditionalType';
+
         (typeAliases as TypeAliasInfo[]).push({
           semanticId: typeSemanticId,
           type: 'TYPE',
@@ -205,7 +224,14 @@ export class TypeScriptVisitor extends ASTVisitor {
           file: module.file,
           line: getLine(node),
           column: getColumn(node),
-          aliasOf
+          aliasOf,
+          ...(isConditional && {
+            conditionalType: true,
+            checkType: typeNodeToString(typeAnnotation.checkType),
+            extendsType: typeNodeToString(typeAnnotation.extendsType),
+            trueType: typeNodeToString(typeAnnotation.trueType),
+            falseType: typeNodeToString(typeAnnotation.falseType),
+          }),
         });
       },
 

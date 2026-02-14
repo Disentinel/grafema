@@ -2029,7 +2029,14 @@ export class GraphBuilder {
         typeAlias.file,
         typeAlias.line,
         typeAlias.column || 0,
-        { aliasOf: typeAlias.aliasOf }
+        {
+          aliasOf: typeAlias.aliasOf,
+          conditionalType: typeAlias.conditionalType,
+          checkType: typeAlias.checkType,
+          extendsType: typeAlias.extendsType,
+          trueType: typeAlias.trueType,
+          falseType: typeAlias.falseType,
+        }
       );
       this._bufferNode(typeNode as unknown as GraphNode);
 
