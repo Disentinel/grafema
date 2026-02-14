@@ -3727,6 +3727,23 @@ export class JSASTAnalyzer extends Plugin {
       currentFunctionId = matchingFunction.id;
     }
 
+    // REG-401: Build param name -> index map for parameter invocation detection
+    // When a CallExpression callee is an Identifier matching a parameter name,
+    // it means this function invokes that parameter (user-defined HOF pattern).
+    const paramNameToIndex = new Map<string, number>();
+    const invokedParamIndexes = new Set<number>();
+    if (functionNode) {
+      for (let i = 0; i < functionNode.params.length; i++) {
+        const param = functionNode.params[i];
+        if (t.isIdentifier(param)) {
+          paramNameToIndex.set(param.name, i);
+        } else if (t.isAssignmentPattern(param) && t.isIdentifier(param.left)) {
+          // Handle default values: function(fn = defaultFn) { fn(); }
+          paramNameToIndex.set(param.left.name, i);
+        }
+      }
+    }
+
     // Phase 6 (REG-267): Control flow tracking state for cyclomatic complexity
     const controlFlowState = {
       branchCount: 0,       // if/switch statements
@@ -4361,6 +4378,18 @@ export class JSASTAnalyzer extends Plugin {
           isInsideTry
         );
 
+        // REG-401: Detect parameter invocation for user-defined HOF tracking
+        // If callee is an Identifier matching a parameter name, record the param index.
+        // Nested functions are already skipped by FunctionDeclaration/FunctionExpression/ArrowFunction
+        // handlers calling path.skip(), so shadowed names won't be falsely matched.
+        const callNodeForParam = callPath.node;
+        if (t.isIdentifier(callNodeForParam.callee) && paramNameToIndex.size > 0) {
+          const paramIndex = paramNameToIndex.get(callNodeForParam.callee.name);
+          if (paramIndex !== undefined) {
+            invokedParamIndexes.add(paramIndex);
+          }
+        }
+
         // REG-334: Check for resolve/reject calls inside Promise executors
         const callNode = callPath.node;
         if (t.isIdentifier(callNode.callee)) {
@@ -4887,6 +4916,11 @@ export class JSASTAnalyzer extends Plugin {
         // REG-286: Sync throw tracking
         thrownBuiltinErrors: thrownBuiltinErrors.length > 0 ? thrownBuiltinErrors : undefined
       };
+
+      // REG-401: Store invoked parameter indexes for user-defined HOF detection
+      if (invokedParamIndexes.size > 0) {
+        matchingFunction.invokesParamIndexes = [...invokedParamIndexes];
+      }
     }
   }
 

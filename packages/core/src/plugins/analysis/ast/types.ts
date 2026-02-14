@@ -35,6 +35,8 @@ export interface FunctionInfo {
   isPrivate?: boolean;   // true for #privateMethod
   isStatic?: boolean;    // true for static #method()
   methodKind?: 'constructor' | 'method' | 'get' | 'set';
+  // REG-401: Parameter invocation tracking for user-defined HOFs
+  invokesParamIndexes?: number[];
 }
 
 // === PARAMETER INFO ===
