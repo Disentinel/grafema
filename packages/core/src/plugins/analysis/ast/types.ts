@@ -266,6 +266,8 @@ export interface CallSiteInfo {
   isAwaited?: boolean;
   /** REG-311: true if inside try block (protected from propagation) */
   isInsideTry?: boolean;
+  /** REG-298: true if awaited call is inside a loop body */
+  isInsideLoop?: boolean;
 }
 
 // === METHOD CALL INFO ===
@@ -290,6 +292,8 @@ export interface MethodCallInfo {
   isAwaited?: boolean;
   /** REG-311: true if inside try block (protected from propagation) */
   isInsideTry?: boolean;
+  /** REG-298: true if awaited call is inside a loop body */
+  isInsideLoop?: boolean;
   /** REG-311: true if this is a method call (for CALL node filtering) */
   isMethodCall?: boolean;
 }

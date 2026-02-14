@@ -2217,7 +2217,7 @@ export class JSASTAnalyzer extends Plugin {
     loopCounterRef: CounterRef,
     scopeTracker: ScopeTracker | undefined,
     scopeIdStack?: string[],
-    controlFlowState?: { loopCount: number }
+    controlFlowState?: { loopCount: number; loopDepth: number }
   ): { enter: (path: NodePath<t.Loop>) => void; exit: () => void } {
     return {
       enter: (path: NodePath<t.Loop>) => {
@@ -2226,6 +2226,8 @@ export class JSASTAnalyzer extends Plugin {
         // Phase 6 (REG-267): Increment loop count for cyclomatic complexity
         if (controlFlowState) {
           controlFlowState.loopCount++;
+          // REG-298: Track loop nesting depth for isInsideLoop detection
+          controlFlowState.loopDepth++;
         }
 
         // 1. Create LOOP node
@@ -2407,6 +2409,11 @@ export class JSASTAnalyzer extends Plugin {
         }
       },
       exit: () => {
+        // REG-298: Decrement loop depth counter
+        if (controlFlowState) {
+          controlFlowState.loopDepth--;
+        }
+
         // Pop loop scope from stack
         if (scopeIdStack) {
           scopeIdStack.pop();
@@ -3739,7 +3746,9 @@ export class JSASTAnalyzer extends Plugin {
       returnCount: 0,       // Track total return count for early return detection
       totalStatements: 0,   // Track if there are statements after returns
       // REG-311: Try block depth counter for O(1) isInsideTry detection
-      tryBlockDepth: 0
+      tryBlockDepth: 0,
+      // REG-298: Loop depth counter for O(1) isInsideLoop detection
+      loopDepth: 0
     };
 
     // Handle implicit return for THIS arrow function if it has an expression body
@@ -4346,6 +4355,9 @@ export class JSASTAnalyzer extends Plugin {
         // REG-311: Detect isInsideTry (O(1) via depth counter)
         const isInsideTry = controlFlowState.tryBlockDepth > 0;
 
+        // REG-298: Detect isInsideLoop (O(1) via depth counter)
+        const isInsideLoop = controlFlowState.loopDepth > 0;
+
         this.handleCallExpression(
           callPath.node,
           processedCallSites,
@@ -4358,7 +4370,8 @@ export class JSASTAnalyzer extends Plugin {
           getCurrentScopeId(),
           collections,
           isAwaited,
-          isInsideTry
+          isInsideTry,
+          isInsideLoop
         );
 
         // REG-334: Check for resolve/reject calls inside Promise executors
@@ -4926,7 +4939,8 @@ export class JSASTAnalyzer extends Plugin {
     parentScopeId: string,
     collections: VisitorCollections,
     isAwaited: boolean = false,
-    isInsideTry: boolean = false
+    isInsideTry: boolean = false,
+    isInsideLoop: boolean = false
   ): void {
     // Handle direct function calls (greet(), main())
     if (callNode.callee.type === 'Identifier') {
@@ -4957,7 +4971,9 @@ export class JSASTAnalyzer extends Plugin {
         targetFunctionName: calleeName,
         // REG-311: Async error tracking metadata
         isAwaited,
-        isInsideTry
+        isInsideTry,
+        // REG-298: Await-in-loop detection
+        ...(isAwaited && isInsideLoop ? { isInsideLoop } : {})
       });
     }
     // Handle method calls (obj.method(), data.process())
@@ -5002,6 +5018,8 @@ export class JSASTAnalyzer extends Plugin {
           // REG-311: Async error tracking metadata
           isAwaited,
           isInsideTry,
+          // REG-298: Await-in-loop detection
+          ...(isAwaited && isInsideLoop ? { isInsideLoop } : {}),
           isMethodCall: true
         });
 

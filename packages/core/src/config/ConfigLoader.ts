@@ -149,6 +149,7 @@ export const DEFAULT_CONFIG: GrafemaConfig = {
       'EvalBanValidator',
       'CallResolverValidator',
       'SQLInjectionValidator',
+      'AwaitInLoopValidator',
       'ShadowingDetector',
       'TypeScriptDeadCodeValidator',
       'BrokenImportValidator',
