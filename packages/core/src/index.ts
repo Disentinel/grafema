@@ -64,8 +64,8 @@ export type {
 } from './Orchestrator.js';
 
 // Plugin base
-export { Plugin } from './plugins/Plugin.js';
-export type { PluginContext } from './plugins/Plugin.js';
+export { Plugin, createSuccessResult, createErrorResult } from './plugins/Plugin.js';
+export type { PluginContext, PluginMetadata, PluginResult } from './plugins/Plugin.js';
 
 // Graph backend
 export { GraphBackend, typeToKind, edgeTypeToNumber } from './core/GraphBackend.js';

@@ -18,7 +18,7 @@ import { join } from 'path';
 import { writeFileSync, mkdirSync } from 'fs';
 import { tmpdir } from 'os';
 
-import { createTestDatabase } from '../../../helpers/TestRFDB.js';
+import { createTestDatabase, cleanupAllTestDatabases } from '../../../helpers/TestRFDB.js';
 import { createTestOrchestrator } from '../../../helpers/createTestOrchestrator.js';
 import type { NodeRecord, EdgeRecord } from '@grafema/types';
 
@@ -125,9 +125,7 @@ describe('FetchAnalyzer responseDataNode tracking (REG-252 Phase B)', () => {
     backend = db.backend;
   });
 
-  after(async () => {
-    if (db) await db.cleanup();
-  });
+  after(cleanupAllTestDatabases);
 
   // ===========================================================================
   // TEST 1: Basic responseDataNode with await fetch() and response.json()

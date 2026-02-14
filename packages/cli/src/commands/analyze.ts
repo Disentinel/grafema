@@ -6,6 +6,7 @@ import { Command } from 'commander';
 import { resolve, join } from 'path';
 import { existsSync, mkdirSync, readdirSync } from 'fs';
 import { pathToFileURL } from 'url';
+import { register } from 'node:module';
 import type {
   Plugin} from '@grafema/core';
 import {
@@ -121,6 +122,38 @@ const BUILTIN_PLUGINS: Record<string, () => Plugin> = {
 };
 
 /**
+ * Register ESM resolve hook so custom plugins can import @grafema/* packages.
+ *
+ * Plugins in .grafema/plugins/ do `import { Plugin } from '@grafema/core'`,
+ * but @grafema/core isn't in the target project's node_modules/.
+ * This hook redirects those imports to the CLI's bundled packages.
+ *
+ * Uses module.register() (stable Node.js 20.6+ API).
+ * Safe to call multiple times — subsequent calls add redundant hooks
+ * that short-circuit on the same specifiers.
+ */
+let pluginResolverRegistered = false;
+
+export function registerPluginResolver(): void {
+  if (pluginResolverRegistered) return;
+  pluginResolverRegistered = true;
+
+  const grafemaPackages: Record<string, string> = {};
+  for (const pkg of ['@grafema/core', '@grafema/types']) {
+    try {
+      grafemaPackages[pkg] = import.meta.resolve(pkg);
+    } catch {
+      // Package not available from CLI context — skip
+    }
+  }
+
+  register(
+    new URL('../plugins/pluginResolver.js', import.meta.url),
+    { data: { grafemaPackages } },
+  );
+}
+
+/**
  * Load custom plugins from .grafema/plugins/ directory
  */
 async function loadCustomPlugins(
@@ -131,6 +164,9 @@ async function loadCustomPlugins(
   if (!existsSync(pluginsDir)) {
     return {};
   }
+
+  // Ensure @grafema/* imports resolve for custom plugins (REG-380)
+  registerPluginResolver();
 
   const customPlugins: Record<string, () => Plugin> = {};
 

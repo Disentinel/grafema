@@ -31,6 +31,9 @@ export interface FunctionInfo {
   isCallback?: boolean;
   parentScopeId?: string;
   controlFlow?: ControlFlowMetadata;
+  // Class method fields (set by ClassVisitor)
+  isClassMethod?: boolean;
+  className?: string;
   // REG-271: Private methods support
   isPrivate?: boolean;   // true for #privateMethod
   isStatic?: boolean;    // true for static #method()
@@ -449,6 +452,10 @@ export interface CallArgumentInfo {
   functionColumn?: number;
   nestedCallLine?: number;
   nestedCallColumn?: number;
+  // REG-402: MemberExpression argument fields for this.method callback resolution
+  objectName?: string;
+  propertyName?: string;
+  enclosingClassName?: string;
 }
 
 // === IMPORT INFO ===
