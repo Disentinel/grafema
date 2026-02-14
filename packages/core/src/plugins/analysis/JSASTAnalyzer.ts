@@ -3895,7 +3895,8 @@ export class JSASTAnalyzer extends Plugin {
       },
 
       // Phase 6 (REG-267): Track throw statements for control flow metadata
-      // REG-311: Also detect async_throw rejection patterns
+      // REG-311: Detect async_throw rejection patterns
+      // REG-286: Detect sync_throw patterns for ALL functions (THROWS edges)
       ThrowStatement: (throwPath: NodePath<t.ThrowStatement>) => {
         // Skip if this throw is inside a nested function (not the function we're analyzing)
         let parent: NodePath | null = throwPath.parentPath;
@@ -3909,9 +3910,10 @@ export class JSASTAnalyzer extends Plugin {
 
         controlFlowState.hasThrow = true;
 
-        // REG-311: Track rejection patterns for async functions
+        // REG-286: Track throw patterns for ALL functions (sync and async)
+        // Async throws → REJECTS edges, sync throws → THROWS edges
         const isAsyncFunction = functionNode?.async === true;
-        if (isAsyncFunction && currentFunctionId && functionNode && functionPath) {
+        if (currentFunctionId && functionNode && functionPath) {
           const throwNode = throwPath.node;
           const arg = throwNode.argument;
           const throwLine = getLine(throwNode);
@@ -3922,7 +3924,8 @@ export class JSASTAnalyzer extends Plugin {
             rejectionPatterns.push({
               functionId: currentFunctionId,
               errorClassName: arg.callee.name,
-              rejectionType: 'async_throw',
+              rejectionType: isAsyncFunction ? 'async_throw' : 'sync_throw',
+              isAsync: isAsyncFunction,
               file: module.file,
               line: throwLine,
               column: throwColumn
@@ -3943,6 +3946,7 @@ export class JSASTAnalyzer extends Plugin {
                 functionId: currentFunctionId,
                 errorClassName: null,
                 rejectionType: 'variable_parameter',
+                isAsync: isAsyncFunction,
                 file: module.file,
                 line: throwLine,
                 column: throwColumn,
@@ -3960,6 +3964,7 @@ export class JSASTAnalyzer extends Plugin {
                 functionId: currentFunctionId,
                 errorClassName,
                 rejectionType: errorClassName ? 'variable_traced' : 'variable_unknown',
+                isAsync: isAsyncFunction,
                 file: module.file,
                 line: throwLine,
                 column: throwColumn,
@@ -4481,6 +4486,7 @@ export class JSASTAnalyzer extends Plugin {
                   functionId: targetFunctionId,
                   errorClassName: arg.callee.name,
                   rejectionType: 'executor_reject',
+                  isAsync: true,
                   file: module.file,
                   line: callLine,
                   column: callColumn
@@ -4510,6 +4516,7 @@ export class JSASTAnalyzer extends Plugin {
                     functionId: targetFunctionId,
                     errorClassName: null,
                     rejectionType: 'variable_parameter',
+                    isAsync: true,
                     file: module.file,
                     line: callLine,
                     column: callColumn,
@@ -4527,6 +4534,7 @@ export class JSASTAnalyzer extends Plugin {
                     functionId: targetFunctionId,
                     errorClassName,
                     rejectionType: errorClassName ? 'variable_traced' : 'variable_unknown',
+                    isAsync: true,
                     file: module.file,
                     line: callLine,
                     column: callColumn,
@@ -4559,6 +4567,7 @@ export class JSASTAnalyzer extends Plugin {
                 functionId: currentFunctionId,
                 errorClassName: arg.callee.name,
                 rejectionType: 'promise_reject',
+                isAsync: true,
                 file: module.file,
                 line: callLine,
                 column: callColumn
@@ -4577,6 +4586,7 @@ export class JSASTAnalyzer extends Plugin {
                   functionId: currentFunctionId,
                   errorClassName: null,
                   rejectionType: 'variable_parameter',
+                  isAsync: true,
                   file: module.file,
                   line: callLine,
                   column: callColumn,
@@ -4589,6 +4599,7 @@ export class JSASTAnalyzer extends Plugin {
                     functionId: currentFunctionId,
                     errorClassName: null,
                     rejectionType: 'variable_unknown',
+                    isAsync: true,
                     file: module.file,
                     line: callLine,
                     column: callColumn,
@@ -4608,6 +4619,7 @@ export class JSASTAnalyzer extends Plugin {
                   functionId: currentFunctionId,
                   errorClassName,
                   rejectionType: errorClassName ? 'variable_traced' : 'variable_unknown',
+                  isAsync: true,
                   file: module.file,
                   line: callLine,
                   column: callColumn,
@@ -4826,10 +4838,18 @@ export class JSASTAnalyzer extends Plugin {
 
       // REG-311: Collect rejection info for this function
       const functionRejectionPatterns = rejectionPatterns.filter(p => p.functionId === matchingFunction.id);
-      const canReject = functionRejectionPatterns.length > 0;
-      const hasAsyncThrow = functionRejectionPatterns.some(p => p.rejectionType === 'async_throw');
+      const asyncPatterns = functionRejectionPatterns.filter(p => p.isAsync);
+      const syncPatterns = functionRejectionPatterns.filter(p => !p.isAsync);
+      const canReject = asyncPatterns.length > 0;
+      const hasAsyncThrow = asyncPatterns.some(p => p.rejectionType === 'async_throw');
       const rejectedBuiltinErrors = [...new Set(
-        functionRejectionPatterns
+        asyncPatterns
+          .filter(p => p.errorClassName !== null)
+          .map(p => p.errorClassName!)
+      )];
+      // REG-286: Sync throw error tracking
+      const thrownBuiltinErrors = [...new Set(
+        syncPatterns
           .filter(p => p.errorClassName !== null)
           .map(p => p.errorClassName!)
       )];
@@ -4844,7 +4864,9 @@ export class JSASTAnalyzer extends Plugin {
         // REG-311: Async error tracking
         canReject,
         hasAsyncThrow,
-        rejectedBuiltinErrors: rejectedBuiltinErrors.length > 0 ? rejectedBuiltinErrors : undefined
+        rejectedBuiltinErrors: rejectedBuiltinErrors.length > 0 ? rejectedBuiltinErrors : undefined,
+        // REG-286: Sync throw tracking
+        thrownBuiltinErrors: thrownBuiltinErrors.length > 0 ? thrownBuiltinErrors : undefined
       };
     }
   }

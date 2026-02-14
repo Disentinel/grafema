@@ -3464,35 +3464,44 @@ export class GraphBuilder {
 
     // Process each function that has rejection patterns
     for (const [functionId, patterns] of patternsByFunction) {
-      // Collect unique error class names from this function's rejection patterns
-      const errorClassNames = new Set<string>();
+      // REG-286: Split patterns by sync/async to create correct edge types
+      // Sync throws → THROWS edges, async patterns → REJECTS edges
+      const syncErrorClasses = new Set<string>();
+      const asyncErrorClasses = new Set<string>();
       for (const pattern of patterns) {
         if (pattern.errorClassName) {
-          errorClassNames.add(pattern.errorClassName);
+          if (pattern.isAsync) {
+            asyncErrorClasses.add(pattern.errorClassName);
+          } else {
+            syncErrorClasses.add(pattern.errorClassName);
+          }
         }
       }
 
-      // Create REJECTS edges to error class nodes
-      // Note: These edges target computed CLASS IDs - they will be dangling
-      // if the class isn't declared, but that's expected behavior for
-      // built-in classes like Error, TypeError, etc.
-      for (const errorClassName of errorClassNames) {
-        // Find the function's file to compute the class ID
-        const func = functions.find(f => f.id === functionId);
-        const file = func?.file ?? '';
+      // Find the function's file to compute class IDs
+      const func = functions.find(f => f.id === functionId);
+      const file = func?.file ?? '';
+      const globalContext = { file, scopePath: [] as string[] };
 
-        // Compute potential class ID at global scope
-        // For built-in errors, this will be a dangling reference (expected)
-        const globalContext = { file, scopePath: [] as string[] };
+      // Create REJECTS edges for async error patterns (REG-311)
+      for (const errorClassName of asyncErrorClasses) {
         const classId = computeSemanticId('CLASS', errorClassName, globalContext);
-
         this._bufferEdge({
           type: 'REJECTS',
           src: functionId,
           dst: classId,
-          metadata: {
-            errorClassName
-          }
+          metadata: { errorClassName }
+        });
+      }
+
+      // Create THROWS edges for sync throw patterns (REG-286)
+      for (const errorClassName of syncErrorClasses) {
+        const classId = computeSemanticId('CLASS', errorClassName, globalContext);
+        this._bufferEdge({
+          type: 'THROWS',
+          src: functionId,
+          dst: classId,
+          metadata: { errorClassName }
         });
       }
 
