@@ -534,7 +534,12 @@ class TestDatabaseBackend {
   }
 
   async datalogQuery(query) {
-    return this._client.datalogQuery(query);
+    const results = await this._client.datalogQuery(query);
+    // Convert bindings from {X: "value"} to [{name: "X", value: "value"}]
+    // to match the format expected by tests (same as RFDBServerBackend.datalogQuery)
+    return results.map(r => ({
+      bindings: Object.entries(r.bindings).map(([name, value]) => ({ name, value }))
+    }));
   }
 
   async checkGuarantee(ruleSource) {
