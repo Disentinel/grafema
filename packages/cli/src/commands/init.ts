@@ -10,6 +10,7 @@ import { createInterface } from 'readline';
 import { fileURLToPath } from 'url';
 import { stringify as stringifyYAML } from 'yaml';
 import { DEFAULT_CONFIG, GRAFEMA_VERSION, getSchemaVersion } from '@grafema/core';
+import { installSkill } from './setup-skill.js';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 
@@ -183,6 +184,16 @@ Examples:
         );
         console.log('✓ Updated .gitignore');
       }
+    }
+
+    // Auto-install Agent Skill for AI-assisted development
+    try {
+      const installed = installSkill(projectPath);
+      if (installed) {
+        console.log('✓ Installed Agent Skill (.claude/skills/grafema-codebase-analysis/)');
+      }
+    } catch {
+      // Non-critical — don't fail init if skill install fails
     }
 
     printNextSteps();
