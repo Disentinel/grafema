@@ -1370,7 +1370,7 @@ export class JSASTAnalyzer extends Plugin {
       this.profiler.start('babel_parse');
       const ast = parse(code, {
         sourceType: 'module',
-        plugins: ['jsx', 'typescript']
+        plugins: ['jsx', 'typescript', 'decorators-legacy']
       });
       this.profiler.end('babel_parse');
 

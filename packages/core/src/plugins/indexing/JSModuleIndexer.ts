@@ -85,7 +85,7 @@ export class JSModuleIndexer extends Plugin {
   constructor() {
     super();
     this.walker = new Walker({
-      plugins: ['jsx', 'typescript']
+      plugins: ['jsx', 'typescript', 'decorators-legacy']
     });
     this.cache = new Map(); // Кеш зависимостей файла
     this.testPatterns = DEFAULT_TEST_PATTERNS;

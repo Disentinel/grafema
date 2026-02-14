@@ -124,6 +124,7 @@ export const DEFAULT_CONFIG: GrafemaConfig = {
       'JSASTAnalyzer',
       'ExpressRouteAnalyzer',
       'ExpressResponseAnalyzer',
+      'NestJSRouteAnalyzer',
       'SocketIOAnalyzer',
       'DatabaseAnalyzer',
       'FetchAnalyzer',

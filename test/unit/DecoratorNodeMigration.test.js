@@ -371,7 +371,7 @@ describe('DecoratorNode Migration (REG-106)', () => {
       if (db) await db.cleanup();
     });
 
-    it('should create DECORATED_BY edge with colon format IDs', { skip: 'Requires decorators-legacy plugin in JSASTAnalyzer' }, async () => {
+    it('should create DECORATED_BY edge with colon format IDs', async () => {
       await setupTest(backend, {
         'index.ts': `
 function Injectable() {
@@ -423,7 +423,7 @@ export class UserService {
       );
     });
 
-    it('should include targetId in persisted decorator node (BUG FIX)', { skip: 'Requires decorators-legacy plugin in JSASTAnalyzer' }, async () => {
+    it('should include targetId in persisted decorator node (BUG FIX)', async () => {
       await setupTest(backend, {
         'index.ts': `
 function Component() {
@@ -449,14 +449,14 @@ export class MyComponent {
       assert.ok(decoratorNode.targetId,
         `targetId should be present in persisted node: ${JSON.stringify(decoratorNode)}`);
 
-      // targetId should reference the decorated class
+      // targetId should reference the decorated class (uses semantic ID format)
       assert.ok(
-        decoratorNode.targetId.includes(':CLASS:MyComponent:'),
+        decoratorNode.targetId.includes('CLASS') && decoratorNode.targetId.includes('MyComponent'),
         `targetId should reference MyComponent class: ${decoratorNode.targetId}`
       );
     });
 
-    it('should create DECORATED_BY edge with correct node IDs', { skip: 'Requires decorators-legacy plugin in JSASTAnalyzer' }, async () => {
+    it('should create DECORATED_BY edge with correct node IDs', async () => {
       await setupTest(backend, {
         'index.ts': `
 function Entity() {
@@ -500,7 +500,7 @@ export class User {
         'DECORATED_BY dst should match decorator node ID');
     });
 
-    it('should handle multiple decorators on same target', { skip: 'Requires decorators-legacy plugin in JSASTAnalyzer' }, async () => {
+    it('should handle multiple decorators on same target', async () => {
       await setupTest(backend, {
         'index.ts': `
 function Injectable() {
@@ -550,7 +550,7 @@ export class ConfigService {
         `Should have 2 DECORATED_BY edges from ConfigService, found: ${decoratedByEdges.length}`);
     });
 
-    it('should handle decorators on methods', { skip: 'Requires decorators-legacy plugin in JSASTAnalyzer' }, async () => {
+    it('should handle decorators on methods', async () => {
       await setupTest(backend, {
         'index.ts': `
 function Get() {
@@ -585,7 +585,7 @@ export class Controller {
       );
     });
 
-    it('should handle decorators with arguments', { skip: 'Requires decorators-legacy plugin in JSASTAnalyzer' }, async () => {
+    it('should handle decorators with arguments', async () => {
       await setupTest(backend, {
         'index.ts': `
 function Controller(path: string) {
@@ -618,7 +618,7 @@ export class UserController {
       );
     });
 
-    it('should handle decorators on properties', { skip: 'Requires decorators-legacy plugin in JSASTAnalyzer' }, async () => {
+    it('should handle decorators on properties', async () => {
       await setupTest(backend, {
         'index.ts': `
 function Column() {
@@ -651,7 +651,7 @@ export class Entity {
       );
     });
 
-    it('should handle decorators on parameters', { skip: 'Requires decorators-legacy plugin in JSASTAnalyzer' }, async () => {
+    it('should handle decorators on parameters', { skip: 'ClassVisitor does not yet extract constructor parameter decorators' }, async () => {
       await setupTest(backend, {
         'index.ts': `
 function Inject() {
@@ -685,7 +685,7 @@ export class Service {
       );
     });
 
-    it('should NOT use DECORATOR# format in analyzed code', { skip: 'Requires decorators-legacy plugin in JSASTAnalyzer' }, async () => {
+    it('should NOT use DECORATOR# format in analyzed code', async () => {
       await setupTest(backend, {
         'index.ts': `
 function Log() {
