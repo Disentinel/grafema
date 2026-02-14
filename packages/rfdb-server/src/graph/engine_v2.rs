@@ -268,6 +268,11 @@ impl GraphEngineV2 {
 impl GraphStore for GraphEngineV2 {
     fn add_nodes(&mut self, nodes: Vec<NodeRecord>) {
         let v2_nodes: Vec<NodeRecordV2> = nodes.iter().map(node_v1_to_v2).collect();
+        // Re-adding a node in the same session must resurrect it immediately.
+        // Without this, delete->add keeps the node hidden until flush.
+        for node in &v2_nodes {
+            self.pending_tombstone_nodes.remove(&node.id);
+        }
         self.store.add_nodes(v2_nodes);
     }
 
@@ -382,6 +387,15 @@ impl GraphStore for GraphEngineV2 {
 
     fn add_edges(&mut self, edges: Vec<EdgeRecord>, skip_validation: bool) {
         let v2_edges: Vec<EdgeRecordV2> = edges.iter().map(edge_v1_to_v2).collect();
+        // Re-adding an edge in the same session must clear any pending tombstone
+        // for the same (src, dst, type) triple.
+        for edge in &v2_edges {
+            self.pending_tombstone_edges.remove(&(
+                edge.src,
+                edge.dst,
+                edge.edge_type.clone(),
+            ));
+        }
         let result = self.store.add_edges(v2_edges);
         if !skip_validation {
             if let Err(e) = result {
@@ -1320,6 +1334,60 @@ mod tests {
 
         engine.delete_edge(100, 101, "CALLS");
         assert_eq!(engine.get_outgoing_edges(100, None).len(), 0);
+    }
+
+    #[test]
+    fn test_readd_node_clears_pending_tombstone() {
+        let mut engine = GraphEngineV2::create_ephemeral();
+        let node = make_v1_node(102, "FUNCTION", "foo", "src/a.js");
+
+        engine.add_nodes(vec![node.clone()]);
+        assert!(engine.node_exists(102));
+
+        engine.delete_node(102);
+        assert!(!engine.node_exists(102));
+
+        // Re-adding the same ID in the same session should resurrect the node.
+        engine.add_nodes(vec![node]);
+        assert!(engine.node_exists(102));
+
+        engine.flush().unwrap();
+        assert!(engine.node_exists(102));
+    }
+
+    #[test]
+    fn test_readd_edge_clears_pending_tombstone() {
+        let mut engine = GraphEngineV2::create_ephemeral();
+        engine.add_nodes(vec![
+            make_v1_node(103, "FUNCTION", "srcFn", "src/a.js"),
+            make_v1_node(104, "FUNCTION", "dstFn", "src/a.js"),
+        ]);
+
+        let edge = EdgeRecord {
+            src: 103,
+            dst: 104,
+            edge_type: Some("FLOWS_INTO".to_string()),
+            version: "main".to_string(),
+            metadata: Some(r#"{"computedPropertyVar":"key"}"#.to_string()),
+            deleted: false,
+        };
+
+        engine.add_edges(vec![edge.clone()], false);
+        assert_eq!(engine.get_outgoing_edges(103, None).len(), 1);
+
+        engine.delete_edge(103, 104, "FLOWS_INTO");
+        assert_eq!(engine.get_outgoing_edges(103, None).len(), 0);
+
+        // Re-adding the same edge key in the same session should resurrect it.
+        engine.add_edges(vec![edge.clone()], false);
+        let outgoing = engine.get_outgoing_edges(103, None);
+        assert_eq!(outgoing.len(), 1);
+        assert_eq!(outgoing[0].metadata, edge.metadata);
+
+        engine.flush().unwrap();
+        let outgoing_after_flush = engine.get_outgoing_edges(103, None);
+        assert_eq!(outgoing_after_flush.len(), 1);
+        assert_eq!(outgoing_after_flush[0].metadata, edge.metadata);
     }
 
     #[test]
