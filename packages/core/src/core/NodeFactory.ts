@@ -199,6 +199,13 @@ interface InterfaceOptions {
 
 interface TypeOptions {
   aliasOf?: string;
+  mappedType?: boolean;
+  keyName?: string;
+  keyConstraint?: string;
+  valueType?: string;
+  mappedReadonly?: boolean | '+' | '-';
+  mappedOptional?: boolean | '+' | '-';
+  nameType?: string;
   conditionalType?: boolean;
   checkType?: string;
   extendsType?: string;

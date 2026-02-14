@@ -382,6 +382,13 @@ export interface TypeAliasInfo {
   line: number;
   column?: number;
   aliasOf?: string;  // строковое представление типа
+  mappedType?: boolean;
+  keyName?: string;
+  keyConstraint?: string;
+  valueType?: string;
+  mappedReadonly?: boolean | '+' | '-';
+  mappedOptional?: boolean | '+' | '-';
+  nameType?: string;
   conditionalType?: boolean;
   checkType?: string;
   extendsType?: string;
