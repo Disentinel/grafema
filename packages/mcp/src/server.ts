@@ -42,6 +42,7 @@ import {
   handleGetContext,
   handleReadProjectStructure,
   handleWriteConfig,
+  handleGetFileOverview,
 } from './handlers.js';
 import type {
   ToolResult,
@@ -64,6 +65,7 @@ import type {
   FindGuardsArgs,
   ReadProjectStructureArgs,
   WriteConfigArgs,
+  GetFileOverviewArgs,
 } from './types.js';
 
 /**
@@ -207,6 +209,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
 
       case 'get_context':
         result = await handleGetContext(asArgs<GetContextArgs>(args));
+        break;
+
+      case 'get_file_overview':
+        result = await handleGetFileOverview(asArgs<GetFileOverviewArgs>(args));
         break;
 
       case 'read_project_structure':

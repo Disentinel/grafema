@@ -109,6 +109,15 @@ export { CoverageAnalyzer } from './core/CoverageAnalyzer.js';
 export type { CoverageResult } from './core/CoverageAnalyzer.js';
 export { FileExplainer } from './core/FileExplainer.js';
 export type { FileExplainResult, EnhancedNode } from './core/FileExplainer.js';
+export { FileOverview } from './core/FileOverview.js';
+export type {
+  FileOverviewResult,
+  ImportInfo,
+  ExportInfo,
+  FunctionOverview,
+  ClassOverview,
+  VariableOverview,
+} from './core/FileOverview.js';
 
 // Hash utilities
 export { calculateFileHash, calculateFileHashAsync, calculateContentHash } from './core/HashUtils.js';
