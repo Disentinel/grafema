@@ -25,6 +25,12 @@ import type {
   OpenDatabaseResponse,
   ListDatabasesResponse,
   CurrentDatabaseResponse,
+  SnapshotRef,
+  SnapshotDiff,
+  SnapshotInfo,
+  DiffSnapshotsResponse,
+  FindSnapshotResponse,
+  ListSnapshotsResponse,
 } from '@grafema/types';
 
 interface PendingRequest {
@@ -729,6 +735,67 @@ export class RFDBClient extends EventEmitter implements IRFDBClient {
   async currentDatabase(): Promise<CurrentDatabaseResponse> {
     const response = await this._send('currentDatabase' as RFDBCommand);
     return response as CurrentDatabaseResponse;
+  }
+
+  // ===========================================================================
+  // Snapshot Operations
+  // ===========================================================================
+
+  /**
+   * Convert a SnapshotRef to wire format payload fields.
+   *
+   * - number -> { version: N }
+   * - { tag, value } -> { tagKey, tagValue }
+   */
+  private _resolveSnapshotRef(ref: SnapshotRef): Record<string, unknown> {
+    if (typeof ref === 'number') return { version: ref };
+    return { tagKey: ref.tag, tagValue: ref.value };
+  }
+
+  /**
+   * Compute diff between two snapshots.
+   * @param from - Source snapshot (version number or tag reference)
+   * @param to - Target snapshot (version number or tag reference)
+   * @returns SnapshotDiff with added/removed segments and stats
+   */
+  async diffSnapshots(from: SnapshotRef, to: SnapshotRef): Promise<SnapshotDiff> {
+    const response = await this._send('diffSnapshots', {
+      from: this._resolveSnapshotRef(from),
+      to: this._resolveSnapshotRef(to),
+    });
+    return (response as DiffSnapshotsResponse).diff;
+  }
+
+  /**
+   * Tag a snapshot with key-value metadata.
+   * @param version - Snapshot version to tag
+   * @param tags - Key-value pairs to apply (e.g. { "release": "v1.0" })
+   */
+  async tagSnapshot(version: number, tags: Record<string, string>): Promise<void> {
+    await this._send('tagSnapshot', { version, tags });
+  }
+
+  /**
+   * Find a snapshot by tag key/value pair.
+   * @param tagKey - Tag key to search for
+   * @param tagValue - Tag value to match
+   * @returns Snapshot version number, or null if not found
+   */
+  async findSnapshot(tagKey: string, tagValue: string): Promise<number | null> {
+    const response = await this._send('findSnapshot', { tagKey, tagValue });
+    return (response as FindSnapshotResponse).version;
+  }
+
+  /**
+   * List snapshots, optionally filtered by tag key.
+   * @param filterTag - Optional tag key to filter by (only snapshots with this tag)
+   * @returns Array of SnapshotInfo objects
+   */
+  async listSnapshots(filterTag?: string): Promise<SnapshotInfo[]> {
+    const payload: Record<string, unknown> = {};
+    if (filterTag !== undefined) payload.filterTag = filterTag;
+    const response = await this._send('listSnapshots', payload);
+    return (response as ListSnapshotsResponse).snapshots;
   }
 
   /**
