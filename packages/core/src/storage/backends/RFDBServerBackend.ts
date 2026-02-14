@@ -265,6 +265,8 @@ export class RFDBServerBackend {
   /**
    * Negotiate protocol version with server.
    * Requests v3 (semantic IDs), falls back to v2 if server doesn't support it.
+   * Called after ping() confirmed connectivity, so failures here indicate
+   * the server doesn't support hello/v3, not network issues.
    */
   private async _negotiateProtocol(): Promise<void> {
     if (!this.client) return;
@@ -272,7 +274,7 @@ export class RFDBServerBackend {
       const hello = await this.client.hello(3);
       this.protocolVersion = hello.protocolVersion;
     } catch {
-      // Server doesn't support hello — assume v2
+      // Server predates hello command or doesn't support v3 — safe v2 fallback
       this.protocolVersion = 2;
     }
   }

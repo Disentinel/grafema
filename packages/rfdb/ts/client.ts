@@ -699,10 +699,10 @@ export class RFDBClient extends EventEmitter implements IRFDBClient {
 
   /**
    * Negotiate protocol version with server
-   * @param protocolVersion - Protocol version to negotiate (default: 3)
+   * @param protocolVersion - Protocol version to negotiate (default: 2)
    * @returns Server capabilities including protocolVersion, serverVersion, features
    */
-  async hello(protocolVersion: number = 3): Promise<HelloResponse> {
+  async hello(protocolVersion: number = 2): Promise<HelloResponse> {
     const response = await this._send('hello' as RFDBCommand, { protocolVersion });
     return response as HelloResponse;
   }
