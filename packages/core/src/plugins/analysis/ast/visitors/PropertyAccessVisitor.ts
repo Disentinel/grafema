@@ -338,6 +338,9 @@ export class PropertyAccessVisitor extends ASTVisitor {
       baseName = (baseObject as Identifier).name;
     } else if (baseObject?.type === 'ThisExpression') {
       baseName = 'this';
+    } else if (baseObject?.type === 'MetaProperty') {
+      // import.meta → treat as base object "import.meta" (REG-300)
+      baseName = 'import.meta';
     } else {
       // Complex expression as base - not trackable as simple property access
       return [];

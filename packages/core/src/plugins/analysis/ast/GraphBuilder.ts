@@ -420,6 +420,10 @@ export class GraphBuilder {
     // Handle async operations for ASSIGNED_FROM with CLASS lookups
     const classAssignmentEdges = await this.createClassAssignmentEdges(variableAssignments, graph);
 
+    // REG-300: Update MODULE node with import.meta metadata
+    const importMetaProps = this.collectImportMetaProperties(propertyAccesses);
+    await this.updateModuleImportMetaMetadata(module, graph, importMetaProps);
+
     return { nodes: nodesCreated, edges: edgesCreated + classAssignmentEdges };
   }
 
@@ -1069,6 +1073,42 @@ export class GraphBuilder {
         dst: propAccess.id
       });
     }
+  }
+
+  /**
+   * Collect unique import.meta property names from property accesses (REG-300).
+   * Returns deduplicated array of property names (e.g., ["url", "env"]).
+   */
+  private collectImportMetaProperties(propertyAccesses: PropertyAccessInfo[]): string[] {
+    const metaProps = new Set<string>();
+    for (const propAccess of propertyAccesses) {
+      if (propAccess.objectName === 'import.meta') {
+        metaProps.add(propAccess.propertyName);
+      }
+    }
+    return [...metaProps];
+  }
+
+  /**
+   * Update MODULE node with import.meta metadata (REG-300).
+   * Reads existing MODULE node, adds importMeta property list, re-adds it.
+   */
+  private async updateModuleImportMetaMetadata(
+    module: ModuleNode,
+    graph: GraphBackend,
+    importMetaProps: string[]
+  ): Promise<void> {
+    if (importMetaProps.length === 0) return;
+
+    const existingNode = await graph.getNode(module.id);
+    if (!existingNode) return;
+
+    // Re-add with importMeta at top level — addNode is upsert in RFDB,
+    // and backend spreads metadata fields to top level on read
+    await graph.addNode({
+      ...existingNode,
+      importMeta: importMetaProps
+    } as unknown as Parameters<GraphBackend['addNode']>[0]);
   }
 
   private bufferStdioNodes(methodCalls: MethodCallInfo[]): void {
@@ -1887,6 +1927,36 @@ export class GraphBuilder {
                 type: 'CALLS',
                 src: callId,
                 dst: funcNode.id,
+                metadata: { callType: 'callback' }
+              });
+            }
+          }
+        }
+      }
+      // REG-402: MemberExpression callbacks (this.method)
+      else if (targetType === 'EXPRESSION' && arg.expressionType === 'MemberExpression') {
+        const { objectName, propertyName } = arg;
+
+        if (objectName === 'this' && propertyName && arg.enclosingClassName) {
+          // Look up target method in same class (className set during analysis via ScopeTracker)
+          const methodNode = functions.find(f =>
+            f.isClassMethod === true &&
+            f.className === arg.enclosingClassName &&
+            f.name === propertyName &&
+            f.file === file
+          );
+
+          if (methodNode) {
+            targetNodeId = methodNode.id;
+
+            // Create CALLS edge for known HOFs (same pattern as REG-400)
+            const callName = call && 'method' in call
+              ? (call as MethodCallInfo).method : call?.name;
+            if (callName && KNOWN_CALLBACK_INVOKERS.has(callName)) {
+              this._bufferEdge({
+                type: 'CALLS',
+                src: callId,
+                dst: methodNode.id,
                 metadata: { callType: 'callback' }
               });
             }

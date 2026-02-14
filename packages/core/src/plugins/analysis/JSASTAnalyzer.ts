@@ -5191,6 +5191,23 @@ export class JSASTAnalyzer extends Plugin {
         argInfo.targetType = 'CALL';
         argInfo.nestedCallLine = getLine(arg);
         argInfo.nestedCallColumn = getColumn(arg);
+      // REG-402: MemberExpression arguments (this.handler, obj.method)
+      } else if (t.isMemberExpression(arg)) {
+        argInfo.targetType = 'EXPRESSION';
+        argInfo.expressionType = 'MemberExpression';
+        if (t.isIdentifier(arg.object)) {
+          argInfo.objectName = arg.object.name;
+        } else if (t.isThisExpression(arg.object)) {
+          argInfo.objectName = 'this';
+          // Store enclosing class name for direct lookup in GraphBuilder
+          const scopeTracker = collections.scopeTracker as ScopeTracker | undefined;
+          if (scopeTracker) {
+            argInfo.enclosingClassName = scopeTracker.getEnclosingScope('CLASS');
+          }
+        }
+        if (!arg.computed && t.isIdentifier(arg.property)) {
+          argInfo.propertyName = arg.property.name;
+        }
       } else {
         argInfo.targetType = 'EXPRESSION';
         argInfo.expressionType = arg.type;

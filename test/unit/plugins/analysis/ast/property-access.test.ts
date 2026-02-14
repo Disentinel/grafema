@@ -34,7 +34,7 @@ import { join } from 'path';
 import { writeFileSync, mkdirSync } from 'fs';
 import { tmpdir } from 'os';
 
-import { createTestDatabase } from '../../../../helpers/TestRFDB.js';
+import { createTestDatabase, cleanupAllTestDatabases } from '../../../../helpers/TestRFDB.js';
 import { createTestOrchestrator } from '../../../../helpers/createTestOrchestrator.js';
 import type { NodeRecord, EdgeRecord } from '@grafema/types';
 
@@ -160,9 +160,7 @@ describe('PROPERTY_ACCESS Nodes (REG-395)', () => {
     backend = db.backend;
   });
 
-  after(async () => {
-    if (db) await db.cleanup();
-  });
+  after(cleanupAllTestDatabases);
 
   // ===========================================================================
   // TEST 1: Simple property access
@@ -897,6 +895,113 @@ obj.method();
         !methodPropAccess,
         'Should NOT have PROPERTY_ACCESS for method (it is called)'
       );
+    });
+  });
+
+  // ===========================================================================
+  // TEST: import.meta property access (REG-300)
+  // ===========================================================================
+
+  describe('import.meta property access (REG-300)', () => {
+    it('should create PROPERTY_ACCESS node for import.meta.url', async () => {
+      await setupTest(backend, {
+        'index.js': `
+const __filename = import.meta.url;
+        `
+      });
+
+      const propAccess = await findPropertyAccessNode(backend, 'url', 'import.meta');
+      assert.ok(propAccess, 'Should have PROPERTY_ACCESS for import.meta.url');
+      assert.strictEqual(propAccess!.name, 'url');
+      assert.strictEqual(
+        (propAccess as unknown as { objectName: string }).objectName,
+        'import.meta'
+      );
+    });
+
+    it('should create PROPERTY_ACCESS nodes for import.meta.env.MODE (chained)', async () => {
+      await setupTest(backend, {
+        'index.js': `
+const mode = import.meta.env.MODE;
+        `
+      });
+
+      // First link: import.meta.env
+      const envAccess = await findPropertyAccessNode(backend, 'env', 'import.meta');
+      assert.ok(envAccess, 'Should have PROPERTY_ACCESS for import.meta.env');
+
+      // Second link: import.meta.env.MODE
+      const modeAccess = await findPropertyAccessNode(backend, 'MODE', 'import.meta.env');
+      assert.ok(modeAccess, 'Should have PROPERTY_ACCESS for import.meta.env.MODE');
+    });
+
+    it('should create PROPERTY_ACCESS for import.meta.resolve() intermediate links', async () => {
+      await setupTest(backend, {
+        'index.js': `
+const resolved = import.meta.resolve('./module.js');
+        `
+      });
+
+      // import.meta.resolve() — 'resolve' is a call target, so no PROPERTY_ACCESS for it
+      // But there should be a CALL node for it
+      const callNodes = await getNodesByType(backend, 'CALL');
+      const resolveCall = callNodes.find(n =>
+        (n as unknown as { method?: string }).method === 'resolve'
+      );
+      assert.ok(resolveCall, 'Should have CALL node for import.meta.resolve()');
+
+      // No PROPERTY_ACCESS for 'resolve' since it's a call target
+      const resolvePropAccess = await findPropertyAccessNode(backend, 'resolve', 'import.meta');
+      assert.ok(!resolvePropAccess, 'Should NOT have PROPERTY_ACCESS for resolve (it is called)');
+    });
+
+    it('should store import.meta properties on MODULE node', async () => {
+      await setupTest(backend, {
+        'index.js': `
+const u = import.meta.url;
+const e = import.meta.env;
+        `
+      });
+
+      const moduleNodes = await getNodesByType(backend, 'MODULE');
+      const mod = moduleNodes.find(n => n.name?.endsWith('index.js'));
+      assert.ok(mod, 'Should have MODULE node');
+
+      // importMeta is at top level (backend spreads metadata fields)
+      const importMeta = (mod as unknown as { importMeta?: string[] }).importMeta;
+      assert.ok(importMeta, 'MODULE should have importMeta');
+      assert.ok(importMeta!.includes('url'), 'importMeta should include "url"');
+      assert.ok(importMeta!.includes('env'), 'importMeta should include "env"');
+    });
+
+    it('should handle multiple import.meta.url accesses without duplicating metadata', async () => {
+      await setupTest(backend, {
+        'index.js': `
+const a = import.meta.url;
+const b = import.meta.url;
+        `
+      });
+
+      const moduleNodes = await getNodesByType(backend, 'MODULE');
+      const mod = moduleNodes.find(n => n.name?.endsWith('index.js'));
+      const importMeta = (mod as unknown as { importMeta?: string[] }).importMeta;
+      assert.ok(importMeta, 'MODULE should have importMeta');
+      // Should be deduplicated
+      const urlCount = importMeta!.filter(p => p === 'url').length;
+      assert.strictEqual(urlCount, 1, 'importMeta should deduplicate "url"');
+    });
+
+    it('should track import.meta inside functions', async () => {
+      await setupTest(backend, {
+        'index.js': `
+function getDir() {
+  return import.meta.url;
+}
+        `
+      });
+
+      const propAccess = await findPropertyAccessNode(backend, 'url', 'import.meta');
+      assert.ok(propAccess, 'Should have PROPERTY_ACCESS for import.meta.url inside function');
     });
   });
 });

@@ -703,6 +703,18 @@ export class Orchestrator {
     });
     this.profiler.end('ENRICHMENT');
 
+    // STRICT MODE BARRIER: Check for fatal errors after ENRICHMENT (REG-391)
+    // Same barrier as single-root run() path (REG-330, REG-332)
+    if (this.strictMode) {
+      const enrichmentDiagnostics = this.diagnosticCollector.getByPhase('ENRICHMENT');
+      const strictErrors = enrichmentDiagnostics.filter(d => d.severity === 'fatal');
+
+      if (strictErrors.length > 0) {
+        this.logger.error(`Strict mode: ${strictErrors.length} unresolved reference(s) found`);
+        throw new StrictModeFailure(strictErrors, this.suppressedByIgnoreCount);
+      }
+    }
+
     // VALIDATION phase (global)
     this.profiler.start('VALIDATION');
     await this.runPhase('VALIDATION', {
