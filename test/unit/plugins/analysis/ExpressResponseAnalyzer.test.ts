@@ -18,7 +18,7 @@ import { join } from 'path';
 import { writeFileSync, mkdirSync } from 'fs';
 import { tmpdir } from 'os';
 
-import { createTestDatabase } from '../../../helpers/TestRFDB.js';
+import { createTestDatabase, cleanupAllTestDatabases } from '../../../helpers/TestRFDB.js';
 import { createTestOrchestrator } from '../../../helpers/createTestOrchestrator.js';
 import { ExpressRouteAnalyzer, ExpressResponseAnalyzer } from '@grafema/core';
 import type { NodeRecord, EdgeRecord } from '@grafema/types';
@@ -136,9 +136,7 @@ describe('ExpressResponseAnalyzer (REG-252 Phase A)', () => {
     backend = await createTestDatabase(); backend = db.backend;
   });
 
-  after(async () => {
-    if (db) await db.cleanup();
-  });
+  after(cleanupAllTestDatabases);
 
   // ===========================================================================
   // TEST 1: res.json(object) creates RESPONDS_WITH edge
