@@ -19,7 +19,7 @@
 //!   - Client creates/opens specific databases
 //!   - Each session tracks its own current database
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{Read, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
@@ -200,6 +200,16 @@ pub enum Request {
 
     // Schema declaration
     DeclareFields { fields: Vec<WireFieldDecl> },
+
+    // Batch operations
+    CommitBatch {
+        #[serde(rename = "changedFiles")]
+        changed_files: Vec<String>,
+        nodes: Vec<WireNode>,
+        edges: Vec<WireEdge>,
+        #[serde(default)]
+        tags: Option<Vec<String>>,
+    },
 }
 
 fn default_rw_mode() -> String { "rw".to_string() }
@@ -256,6 +266,11 @@ pub enum Response {
     // ========================================================================
     // Existing Responses (unchanged)
     // ========================================================================
+
+    BatchCommitted {
+        ok: bool,
+        delta: WireCommitDelta,
+    },
 
     Ok { ok: bool },
     Error { error: String },
@@ -430,6 +445,23 @@ pub struct WireFieldDecl {
     pub node_types: Option<Vec<String>>,
 }
 
+/// Structured diff returned by CommitBatch handler.
+///
+/// Simplified wire version of storage_v2::CommitDelta — focuses on what
+/// the TS pipeline needs (counts + affected types/files) without v2-specific
+/// fields like manifest_version or removed_node_ids.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WireCommitDelta {
+    pub changed_files: Vec<String>,
+    pub nodes_added: u64,
+    pub nodes_removed: u64,
+    pub edges_added: u64,
+    pub edges_removed: u64,
+    pub changed_node_types: Vec<String>,
+    pub changed_edge_types: Vec<String>,
+}
+
 // ============================================================================
 // ID Conversion (string <-> u128)
 // ============================================================================
@@ -543,6 +575,7 @@ fn get_operation_name(request: &Request) -> String {
         Request::NodeCount => "NodeCount".to_string(),
         Request::EdgeCount => "EdgeCount".to_string(),
         Request::GetStats => "GetStats".to_string(),
+        Request::CommitBatch { .. } => "CommitBatch".to_string(),
         _ => "Other".to_string(),
     }
 }
@@ -1039,7 +1072,126 @@ fn handle_request(
                 uptime_secs: metrics_snapshot.uptime_secs,
             }
         }
+
+        Request::CommitBatch { changed_files, nodes, edges, tags: _ } => {
+            with_engine_write(session, |engine| {
+                handle_commit_batch(engine, changed_files, nodes, edges)
+            })
+        }
     }
+}
+
+/// Handle CommitBatch: atomically replace nodes/edges for changed files.
+///
+/// 1. Find all existing nodes for each changed file
+/// 2. Delete their outgoing and incoming edges
+/// 3. Delete the old nodes
+/// 4. Add new nodes and edges
+/// 5. Flush to disk
+/// 6. Return delta with counts and affected types
+fn handle_commit_batch(
+    engine: &mut GraphEngine,
+    changed_files: Vec<String>,
+    nodes: Vec<WireNode>,
+    edges: Vec<WireEdge>,
+) -> Response {
+    let mut nodes_removed: u64 = 0;
+    let mut edges_removed: u64 = 0;
+    let mut changed_node_types: HashSet<String> = HashSet::new();
+    let mut changed_edge_types: HashSet<String> = HashSet::new();
+    // Dedup set to avoid double-counting edges shared between nodes in changedFiles
+    let mut deleted_edge_keys: HashSet<(u128, u128, String)> = HashSet::new();
+
+    // Phase 1: Find and delete old data for changed files
+    for file in &changed_files {
+        let attr_query = AttrQuery {
+            version: None,
+            node_type: None,
+            file_id: None,
+            file: Some(file.clone()),
+            exported: None,
+            name: None,
+            metadata_filters: vec![],
+        };
+        let old_ids = engine.find_by_attr(&attr_query);
+
+        for id in &old_ids {
+            // Track old node types
+            if let Some(node) = engine.get_node(*id) {
+                if let Some(ref nt) = node.node_type {
+                    changed_node_types.insert(nt.clone());
+                }
+            }
+
+            // Delete outgoing edges
+            for edge in engine.get_outgoing_edges(*id, None) {
+                let edge_key = (edge.src, edge.dst, edge.edge_type.clone().unwrap_or_default());
+                if deleted_edge_keys.insert(edge_key) {
+                    if let Some(ref et) = edge.edge_type {
+                        changed_edge_types.insert(et.clone());
+                    }
+                    engine.delete_edge(edge.src, edge.dst, edge.edge_type.as_deref().unwrap_or(""));
+                    edges_removed += 1;
+                }
+            }
+
+            // Delete incoming edges
+            for edge in engine.get_incoming_edges(*id, None) {
+                let edge_key = (edge.src, edge.dst, edge.edge_type.clone().unwrap_or_default());
+                if deleted_edge_keys.insert(edge_key) {
+                    if let Some(ref et) = edge.edge_type {
+                        changed_edge_types.insert(et.clone());
+                    }
+                    engine.delete_edge(edge.src, edge.dst, edge.edge_type.as_deref().unwrap_or(""));
+                    edges_removed += 1;
+                }
+            }
+
+            // Delete the node
+            engine.delete_node(*id);
+            nodes_removed += 1;
+        }
+    }
+
+    // Phase 2: Add new data
+    let nodes_added = nodes.len() as u64;
+    let edges_added = edges.len() as u64;
+
+    // Track new types
+    for node in &nodes {
+        if let Some(ref nt) = node.node_type {
+            changed_node_types.insert(nt.clone());
+        }
+    }
+    for edge in &edges {
+        if let Some(ref et) = edge.edge_type {
+            changed_edge_types.insert(et.clone());
+        }
+    }
+
+    let node_records: Vec<NodeRecord> = nodes.into_iter().map(wire_node_to_record).collect();
+    engine.add_nodes(node_records);
+
+    let edge_records: Vec<EdgeRecord> = edges.into_iter().map(wire_edge_to_record).collect();
+    engine.add_edges(edge_records, true); // skipValidation for batch
+
+    // Phase 3: Flush
+    if let Err(e) = engine.flush() {
+        return Response::Error { error: format!("Flush failed during commit: {}", e) };
+    }
+
+    // Phase 4: Build delta
+    let delta = WireCommitDelta {
+        changed_files,
+        nodes_added,
+        nodes_removed,
+        edges_added,
+        edges_removed,
+        changed_node_types: changed_node_types.into_iter().collect(),
+        changed_edge_types: changed_edge_types.into_iter().collect(),
+    };
+
+    Response::BatchCommitted { ok: true, delta }
 }
 
 /// Helper: execute read operation on current database
@@ -2173,6 +2325,281 @@ mod protocol_tests {
                 assert_eq!(ids.len(), 2, "Should find 2 express CALL nodes via field index");
             }
             _ => panic!("Expected Ids response"),
+        }
+    }
+
+    // ============================================================================
+    // CommitBatch Command
+    // ============================================================================
+
+    /// Helper: create and open an ephemeral database for testing
+    fn setup_ephemeral_db(manager: &Arc<DatabaseManager>, session: &mut ClientSession, name: &str) {
+        handle_request(manager, session, Request::CreateDatabase {
+            name: name.to_string(),
+            ephemeral: true,
+        }, &None);
+        handle_request(manager, session, Request::OpenDatabase {
+            name: name.to_string(),
+            mode: "rw".to_string(),
+        }, &None);
+    }
+
+    #[test]
+    fn test_commit_batch_replaces_nodes() {
+        let (_dir, manager) = setup_test_manager();
+        let mut session = ClientSession::new(1);
+        setup_ephemeral_db(&manager, &mut session, "batchdb");
+
+        // Add initial nodes for "app.js"
+        handle_request(&manager, &mut session, Request::AddNodes {
+            nodes: vec![
+                WireNode { id: "1".to_string(), node_type: Some("FUNCTION".to_string()), name: Some("foo".to_string()), file: Some("app.js".to_string()), exported: false, metadata: None },
+                WireNode { id: "2".to_string(), node_type: Some("FUNCTION".to_string()), name: Some("bar".to_string()), file: Some("app.js".to_string()), exported: false, metadata: None },
+            ],
+        }, &None);
+        handle_request(&manager, &mut session, Request::Flush, &None);
+
+        // CommitBatch with new nodes for same file
+        let response = handle_request(&manager, &mut session, Request::CommitBatch {
+            changed_files: vec!["app.js".to_string()],
+            nodes: vec![
+                WireNode { id: "3".to_string(), node_type: Some("FUNCTION".to_string()), name: Some("baz".to_string()), file: Some("app.js".to_string()), exported: false, metadata: None },
+            ],
+            edges: vec![],
+            tags: None,
+        }, &None);
+
+        // Verify delta
+        match response {
+            Response::BatchCommitted { ok, delta } => {
+                assert!(ok);
+                assert_eq!(delta.nodes_removed, 2);
+                assert_eq!(delta.nodes_added, 1);
+                assert_eq!(delta.changed_files, vec!["app.js".to_string()]);
+            }
+            _ => panic!("Expected BatchCommitted, got {:?}", response),
+        }
+
+        // Verify old nodes are gone, new node exists
+        let old1 = handle_request(&manager, &mut session, Request::NodeExists { id: "1".to_string() }, &None);
+        match old1 { Response::Bool { value } => assert!(!value), _ => panic!("Expected Bool") }
+
+        let new1 = handle_request(&manager, &mut session, Request::NodeExists { id: "3".to_string() }, &None);
+        match new1 { Response::Bool { value } => assert!(value), _ => panic!("Expected Bool") }
+    }
+
+    #[test]
+    fn test_commit_batch_delta_counts() {
+        let (_dir, manager) = setup_test_manager();
+        let mut session = ClientSession::new(1);
+        setup_ephemeral_db(&manager, &mut session, "batchdb2");
+
+        // Add nodes and edges
+        handle_request(&manager, &mut session, Request::AddNodes {
+            nodes: vec![
+                WireNode { id: "n1".to_string(), node_type: Some("MODULE".to_string()), name: Some("m1".to_string()), file: Some("src/a.js".to_string()), exported: false, metadata: None },
+                WireNode { id: "n2".to_string(), node_type: Some("FUNCTION".to_string()), name: Some("f1".to_string()), file: Some("src/a.js".to_string()), exported: true, metadata: None },
+                WireNode { id: "n3".to_string(), node_type: Some("MODULE".to_string()), name: Some("m2".to_string()), file: Some("src/b.js".to_string()), exported: false, metadata: None },
+            ],
+        }, &None);
+        handle_request(&manager, &mut session, Request::AddEdges {
+            edges: vec![
+                WireEdge { src: "n1".to_string(), dst: "n2".to_string(), edge_type: Some("CONTAINS".to_string()), metadata: None },
+            ],
+            skip_validation: true,
+        }, &None);
+        handle_request(&manager, &mut session, Request::Flush, &None);
+
+        // CommitBatch replacing only src/a.js
+        let response = handle_request(&manager, &mut session, Request::CommitBatch {
+            changed_files: vec!["src/a.js".to_string()],
+            nodes: vec![
+                WireNode { id: "n4".to_string(), node_type: Some("MODULE".to_string()), name: Some("m1v2".to_string()), file: Some("src/a.js".to_string()), exported: false, metadata: None },
+            ],
+            edges: vec![],
+            tags: None,
+        }, &None);
+
+        match response {
+            Response::BatchCommitted { ok, delta } => {
+                assert!(ok);
+                assert_eq!(delta.nodes_removed, 2, "Old n1 and n2 should be removed");
+                assert_eq!(delta.nodes_added, 1, "n4 added");
+                assert_eq!(delta.edges_removed, 1, "n1->n2 CONTAINS edge removed");
+                assert_eq!(delta.edges_added, 0);
+                assert!(delta.changed_node_types.contains(&"MODULE".to_string()));
+                assert!(delta.changed_node_types.contains(&"FUNCTION".to_string()));
+                assert!(delta.changed_edge_types.contains(&"CONTAINS".to_string()));
+            }
+            _ => panic!("Expected BatchCommitted"),
+        }
+
+        // Verify src/b.js node untouched
+        let n3 = handle_request(&manager, &mut session, Request::NodeExists { id: "n3".to_string() }, &None);
+        match n3 { Response::Bool { value } => assert!(value, "n3 in b.js should still exist"), _ => panic!("Expected Bool") }
+    }
+
+    #[test]
+    fn test_commit_batch_empty_changed_files() {
+        let (_dir, manager) = setup_test_manager();
+        let mut session = ClientSession::new(1);
+        setup_ephemeral_db(&manager, &mut session, "batchdb3");
+
+        // CommitBatch with no changed files — just adds
+        let response = handle_request(&manager, &mut session, Request::CommitBatch {
+            changed_files: vec![],
+            nodes: vec![
+                WireNode { id: "x1".to_string(), node_type: Some("VARIABLE".to_string()), name: Some("x".to_string()), file: Some("new.js".to_string()), exported: false, metadata: None },
+            ],
+            edges: vec![],
+            tags: None,
+        }, &None);
+
+        match response {
+            Response::BatchCommitted { ok, delta } => {
+                assert!(ok);
+                assert_eq!(delta.nodes_removed, 0);
+                assert_eq!(delta.nodes_added, 1);
+            }
+            _ => panic!("Expected BatchCommitted"),
+        }
+
+        // Verify node was added
+        let exists = handle_request(&manager, &mut session, Request::NodeExists { id: "x1".to_string() }, &None);
+        match exists { Response::Bool { value } => assert!(value), _ => panic!("Expected Bool") }
+    }
+
+    /// Non-ephemeral test: verifies segment edge deletion survives flush.
+    /// This exercises the deleted_segment_edge_keys path in GraphEngine.
+    #[test]
+    fn test_commit_batch_segment_edge_deletion() {
+        let (_dir, manager) = setup_test_manager();
+        let mut session = ClientSession::new(1);
+
+        // Create a NON-ephemeral database (data goes to disk segments on flush)
+        handle_request(&manager, &mut session, Request::CreateDatabase {
+            name: "segtest".to_string(),
+            ephemeral: false,
+        }, &None);
+        handle_request(&manager, &mut session, Request::OpenDatabase {
+            name: "segtest".to_string(),
+            mode: "rw".to_string(),
+        }, &None);
+
+        // Add nodes and edges, then flush to segments
+        handle_request(&manager, &mut session, Request::AddNodes {
+            nodes: vec![
+                WireNode { id: "s1".to_string(), node_type: Some("MODULE".to_string()), name: Some("mod_a".to_string()), file: Some("a.js".to_string()), exported: false, metadata: None },
+                WireNode { id: "s2".to_string(), node_type: Some("FUNCTION".to_string()), name: Some("func_b".to_string()), file: Some("a.js".to_string()), exported: true, metadata: None },
+                WireNode { id: "s3".to_string(), node_type: Some("MODULE".to_string()), name: Some("mod_c".to_string()), file: Some("c.js".to_string()), exported: false, metadata: None },
+            ],
+        }, &None);
+        handle_request(&manager, &mut session, Request::AddEdges {
+            edges: vec![
+                WireEdge { src: "s1".to_string(), dst: "s2".to_string(), edge_type: Some("CONTAINS".to_string()), metadata: None },
+                WireEdge { src: "s3".to_string(), dst: "s1".to_string(), edge_type: Some("IMPORTS_FROM".to_string()), metadata: None },
+            ],
+            skip_validation: true,
+        }, &None);
+
+        // Flush — nodes and edges are now in segment (on-disk), not in delta
+        handle_request(&manager, &mut session, Request::Flush, &None);
+
+        // CommitBatch replacing a.js — should delete segment edges too
+        let response = handle_request(&manager, &mut session, Request::CommitBatch {
+            changed_files: vec!["a.js".to_string()],
+            nodes: vec![
+                WireNode { id: "s4".to_string(), node_type: Some("MODULE".to_string()), name: Some("mod_a_v2".to_string()), file: Some("a.js".to_string()), exported: false, metadata: None },
+            ],
+            edges: vec![],
+            tags: None,
+        }, &None);
+
+        // Verify delta counts
+        match response {
+            Response::BatchCommitted { ok, delta } => {
+                assert!(ok);
+                assert_eq!(delta.nodes_removed, 2, "s1 and s2 should be removed");
+                assert_eq!(delta.nodes_added, 1, "s4 added");
+                assert_eq!(delta.edges_removed, 2, "s1->s2 and s3->s1 edges removed");
+            }
+            _ => panic!("Expected BatchCommitted, got {:?}", response),
+        }
+
+        // Verify old edges are actually gone (not just claimed to be removed)
+        let edges = handle_request(&manager, &mut session, Request::GetAllEdges, &None);
+        match edges {
+            Response::Edges { edges } => {
+                assert_eq!(edges.len(), 0, "All edges should be gone after commit batch");
+            }
+            _ => panic!("Expected Edges"),
+        }
+
+        // Verify countEdgesByType also reflects deletion
+        let counts = handle_request(&manager, &mut session, Request::CountEdgesByType { edge_types: None }, &None);
+        match counts {
+            Response::Counts { counts } => {
+                let total: usize = counts.values().sum();
+                assert_eq!(total, 0, "countEdgesByType should return 0 after deletion");
+            }
+            _ => panic!("Expected Counts"),
+        }
+
+        // Flush again — edges must stay gone (not reappear from segment)
+        handle_request(&manager, &mut session, Request::Flush, &None);
+
+        let edges_after_flush = handle_request(&manager, &mut session, Request::GetAllEdges, &None);
+        match edges_after_flush {
+            Response::Edges { edges } => {
+                assert_eq!(edges.len(), 0, "Edges must not reappear after second flush");
+            }
+            _ => panic!("Expected Edges"),
+        }
+
+        // Verify s3 (c.js) still exists, s1/s2 are gone
+        let s3_exists = handle_request(&manager, &mut session, Request::NodeExists { id: "s3".to_string() }, &None);
+        match s3_exists { Response::Bool { value } => assert!(value, "s3 in c.js should still exist"), _ => panic!("Expected Bool") }
+
+        let s1_exists = handle_request(&manager, &mut session, Request::NodeExists { id: "s1".to_string() }, &None);
+        match s1_exists { Response::Bool { value } => assert!(!value, "s1 should be deleted"), _ => panic!("Expected Bool") }
+    }
+
+    /// Test that shared edges between two nodes in changedFiles are not double-counted.
+    #[test]
+    fn test_commit_batch_shared_edge_dedup() {
+        let (_dir, manager) = setup_test_manager();
+        let mut session = ClientSession::new(1);
+        setup_ephemeral_db(&manager, &mut session, "dedupdb");
+
+        // Two nodes in different files, connected by an edge
+        handle_request(&manager, &mut session, Request::AddNodes {
+            nodes: vec![
+                WireNode { id: "d1".to_string(), node_type: Some("FUNCTION".to_string()), name: Some("a".to_string()), file: Some("x.js".to_string()), exported: false, metadata: None },
+                WireNode { id: "d2".to_string(), node_type: Some("FUNCTION".to_string()), name: Some("b".to_string()), file: Some("y.js".to_string()), exported: false, metadata: None },
+            ],
+        }, &None);
+        handle_request(&manager, &mut session, Request::AddEdges {
+            edges: vec![
+                WireEdge { src: "d1".to_string(), dst: "d2".to_string(), edge_type: Some("CALLS".to_string()), metadata: None },
+            ],
+            skip_validation: true,
+        }, &None);
+
+        // CommitBatch replacing BOTH files — the shared edge should be counted once
+        let response = handle_request(&manager, &mut session, Request::CommitBatch {
+            changed_files: vec!["x.js".to_string(), "y.js".to_string()],
+            nodes: vec![],
+            edges: vec![],
+            tags: None,
+        }, &None);
+
+        match response {
+            Response::BatchCommitted { ok, delta } => {
+                assert!(ok);
+                assert_eq!(delta.edges_removed, 1, "Shared edge should be counted exactly once");
+                assert_eq!(delta.nodes_removed, 2);
+            }
+            _ => panic!("Expected BatchCommitted"),
         }
     }
 }

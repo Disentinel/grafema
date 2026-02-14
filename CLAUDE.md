@@ -394,8 +394,15 @@ Focus on code quality:
 
 ## Linear Integration
 
+### Teams & Task Prefixes
+
+| Prefix | Linear Team | Scope |
+|--------|------------|-------|
+| `REG-*` | **Reginaflow** | Grafema product (JS/TS, CLI, MCP, plugins) |
+| `RFD-*` | **RFDB** | RFDB v2 storage engine (Rust, internal roadmap tasks) |
+
 When creating issues:
-- Team: **Reginaflow**
+- Team: pick by prefix (see above)
 - Project: **Grafema**
 - Format: Markdown
 - Include: goal, acceptance criteria, context

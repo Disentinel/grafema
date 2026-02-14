@@ -11,6 +11,7 @@
 
 import { describe, it, beforeEach, mock } from 'node:test';
 import assert from 'node:assert';
+import { RFDBClient } from '../dist/client.js';
 
 import type {
   SnapshotRef,
@@ -541,5 +542,100 @@ describe('Snapshot API — Wire Format', () => {
 
     assert.deepStrictEqual(payload.from, { version: 1 });
     assert.deepStrictEqual(payload.to, { tagKey: 'release', tagValue: 'v2.0' });
+  });
+});
+
+// ===========================================================================
+// Batch Operations Unit Tests (RFD-9)
+// ===========================================================================
+
+describe('RFDBClient Batch Operations', () => {
+  /**
+   * We test batch state management by creating a real RFDBClient instance
+   * (not connected) and exercising the batch methods. Since batch state is
+   * purely client-side, we don't need a server connection for these tests.
+   */
+
+  it('beginBatch sets batching state', () => {
+    // RFDBClient constructor doesn't require connection
+    const client = new RFDBClient('/tmp/test-nonexistent.sock');
+
+    assert.strictEqual(client.isBatching(), false, 'should not be batching initially');
+    client.beginBatch();
+    assert.strictEqual(client.isBatching(), true, 'should be batching after beginBatch');
+  });
+
+  it('double beginBatch throws', () => {
+    const client = new RFDBClient('/tmp/test-nonexistent.sock');
+
+    client.beginBatch();
+    assert.throws(
+      () => client.beginBatch(),
+      { message: 'Batch already in progress' },
+      'should throw on double beginBatch',
+    );
+  });
+
+  it('commitBatch without beginBatch throws', async () => {
+    const client = new RFDBClient('/tmp/test-nonexistent.sock');
+
+    await assert.rejects(
+      () => client.commitBatch(),
+      { message: 'No batch in progress' },
+      'should throw on commitBatch without beginBatch',
+    );
+  });
+
+  it('abortBatch clears batching state', () => {
+    const client = new RFDBClient('/tmp/test-nonexistent.sock');
+
+    client.beginBatch();
+    assert.strictEqual(client.isBatching(), true);
+    client.abortBatch();
+    assert.strictEqual(client.isBatching(), false, 'should not be batching after abort');
+  });
+
+  it('abortBatch when not batching is a no-op', () => {
+    const client = new RFDBClient('/tmp/test-nonexistent.sock');
+
+    // Should not throw
+    client.abortBatch();
+    assert.strictEqual(client.isBatching(), false);
+  });
+
+  it('addNodes during batch buffers locally and returns ok', async () => {
+    const client = new RFDBClient('/tmp/test-nonexistent.sock');
+    // Not connected — _send would fail, but buffering skips _send
+
+    client.beginBatch();
+    const result = await client.addNodes([
+      { id: 'n1', type: 'FUNCTION', name: 'foo', file: 'a.js' },
+      { id: 'n2', type: 'FUNCTION', name: 'bar', file: 'b.js' },
+    ]);
+
+    assert.deepStrictEqual(result, { ok: true }, 'should return ok without sending');
+    assert.strictEqual(client.isBatching(), true, 'should still be batching');
+  });
+
+  it('addEdges during batch buffers locally and returns ok', async () => {
+    const client = new RFDBClient('/tmp/test-nonexistent.sock');
+
+    client.beginBatch();
+    const result = await client.addEdges([
+      { src: 'n1', dst: 'n2', edgeType: 'CALLS', metadata: '{}' },
+    ]);
+
+    assert.deepStrictEqual(result, { ok: true }, 'should return ok without sending');
+  });
+
+  it('addNodes without batch still requires connection (legacy behavior)', async () => {
+    const client = new RFDBClient('/tmp/test-nonexistent.sock');
+    // Not connected, not batching — should throw "Not connected"
+
+    await assert.rejects(
+      () => client.addNodes([{ id: 'n1', type: 'FUNCTION', name: 'foo', file: 'a.js' }]),
+      { message: 'Not connected to RFDB server' },
+      'should require connection when not batching',
+    );
   });
 });
