@@ -118,8 +118,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build packages required for typecheck
-        run: pnpm --filter='@grafema/types' --filter='@grafema/rfdb-client' build
+      - name: Build all packages (required for cross-package typecheck)
+        run: pnpm build
 
       - name: TypeScript check
         run: pnpm typecheck
