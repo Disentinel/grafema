@@ -308,6 +308,13 @@ export interface GetContextArgs {
   edgeType?: string;
 }
 
+// === FILE OVERVIEW (REG-412) ===
+
+export interface GetFileOverviewArgs {
+  file: string;
+  include_edges?: boolean;
+}
+
 // === PROJECT STRUCTURE (REG-173) ===
 
 export interface ReadProjectStructureArgs {

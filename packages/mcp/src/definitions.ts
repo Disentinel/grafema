@@ -545,6 +545,39 @@ Structural edges (CONTAINS, HAS_SCOPE, etc.) are shown in compact form.`,
     },
   },
   {
+    name: 'get_file_overview',
+    description: `Get a structured overview of all entities in a file with their relationships.
+
+Shows imports, exports, classes, functions, and variables with key edges
+(CALLS, EXTENDS, ASSIGNED_FROM). Use this for file-level understanding
+before diving into specific nodes with get_context.
+
+Output includes:
+- Imports: module sources and imported names
+- Exports: named and default exports
+- Classes: with methods and their call targets
+- Functions: with call targets
+- Variables: with assignment sources
+
+This is the recommended first step when exploring a file.
+After using this, use get_context with specific node IDs for details.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        file: {
+          type: 'string',
+          description: 'File path (relative to project root or absolute)',
+        },
+        include_edges: {
+          type: 'boolean',
+          description:
+            'Include relationship edges like CALLS, EXTENDS (default: true). Set false for faster results.',
+        },
+      },
+      required: ['file'],
+    },
+  },
+  {
     name: 'read_project_structure',
     description: `Get the directory structure of the project.
 Returns a tree of files and directories, useful for understanding

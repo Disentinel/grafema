@@ -4,9 +4,9 @@
 
 import { ensureAnalyzed } from './analysis.js';
 import { getProjectPath, getAnalysisStatus, getOrCreateBackend, getGuaranteeManager, getGuaranteeAPI, isAnalysisRunning } from './state.js';
-import { CoverageAnalyzer, findCallsInFunction, findContainingFunction, validateServices, validatePatterns, validateWorkspace, getOnboardingInstruction, GRAFEMA_VERSION, getSchemaVersion } from '@grafema/core';
+import { CoverageAnalyzer, findCallsInFunction, findContainingFunction, validateServices, validatePatterns, validateWorkspace, getOnboardingInstruction, GRAFEMA_VERSION, getSchemaVersion, FileOverview } from '@grafema/core';
 import type { CallInfo, CallerInfo } from '@grafema/core';
-import { existsSync, readFileSync, readdirSync, statSync, writeFileSync, mkdirSync } from 'fs';
+import { existsSync, readFileSync, readdirSync, statSync, writeFileSync, mkdirSync, realpathSync } from 'fs';
 import type { Dirent } from 'fs';
 import { join, basename, relative } from 'path';
 import { stringify as stringifyYAML } from 'yaml';
@@ -38,6 +38,7 @@ import type {
   GuardInfo,
   GetFunctionDetailsArgs,
   GetContextArgs,
+  GetFileOverviewArgs,
   GraphNode,
   DatalogBinding,
   CallResult,
@@ -1556,5 +1557,118 @@ export async function handleWriteConfig(
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return errorResult(`Failed to write config: ${message}`);
+  }
+}
+
+// === FILE OVERVIEW (REG-412) ===
+
+export async function handleGetFileOverview(
+  args: GetFileOverviewArgs
+): Promise<ToolResult> {
+  const db = await ensureAnalyzed();
+  const projectPath = getProjectPath();
+  const { file, include_edges: includeEdges = true } = args;
+
+  let filePath = file;
+
+  if (!filePath.startsWith('/')) {
+    filePath = join(projectPath, filePath);
+  }
+
+  if (!existsSync(filePath)) {
+    return errorResult(
+      `File not found: ${file}\n` +
+      `Resolved to: ${filePath}\n` +
+      `Project root: ${projectPath}`
+    );
+  }
+
+  const absolutePath = realpathSync(filePath);
+  const relativePath = relative(projectPath, absolutePath);
+
+  try {
+    const overview = new FileOverview(db);
+    const result = await overview.getOverview(absolutePath, {
+      includeEdges,
+    });
+
+    result.file = relativePath;
+
+    if (result.status === 'NOT_ANALYZED') {
+      return textResult(
+        `File not analyzed: ${relativePath}\n` +
+        `Run analyze_project to build the graph.`
+      );
+    }
+
+    const lines: string[] = [];
+
+    lines.push(`Module: ${result.file}`);
+
+    if (result.imports.length > 0) {
+      const sources = result.imports.map(i => i.source);
+      lines.push(`Imports: ${sources.join(', ')}`);
+    }
+
+    if (result.exports.length > 0) {
+      const names = result.exports.map(e =>
+        e.isDefault ? `${e.name} (default)` : e.name
+      );
+      lines.push(`Exports: ${names.join(', ')}`);
+    }
+
+    if (result.classes.length > 0) {
+      lines.push('');
+      lines.push('Classes:');
+      for (const cls of result.classes) {
+        const ext = cls.extends ? ` extends ${cls.extends}` : '';
+        lines.push(`  ${cls.name}${ext} (line ${cls.line ?? '?'})`);
+        for (const m of cls.methods) {
+          const calls = m.calls.length > 0
+            ? `  -> ${m.calls.join(', ')}`
+            : '';
+          const params = m.params
+            ? `(${m.params.join(', ')})`
+            : '()';
+          lines.push(`    ${m.name}${params}${calls}`);
+        }
+      }
+    }
+
+    if (result.functions.length > 0) {
+      lines.push('');
+      lines.push('Functions:');
+      for (const fn of result.functions) {
+        const calls = fn.calls.length > 0
+          ? `  -> ${fn.calls.join(', ')}`
+          : '';
+        const params = fn.params
+          ? `(${fn.params.join(', ')})`
+          : '()';
+        const asyncStr = fn.async ? 'async ' : '';
+        lines.push(
+          `  ${asyncStr}${fn.name}${params}${calls}  (line ${fn.line ?? '?'})`
+        );
+      }
+    }
+
+    if (result.variables.length > 0) {
+      lines.push('');
+      lines.push('Variables:');
+      for (const v of result.variables) {
+        const assign = v.assignedFrom ? ` = ${v.assignedFrom}` : '';
+        lines.push(
+          `  ${v.kind} ${v.name}${assign}  (line ${v.line ?? '?'})`
+        );
+      }
+    }
+
+    return textResult(
+      lines.join('\n') + '\n\n' +
+      JSON.stringify(serializeBigInt(result), null, 2)
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return errorResult(`Failed to get file overview: ${message}`);
   }
 }

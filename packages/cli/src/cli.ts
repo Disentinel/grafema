@@ -25,6 +25,7 @@ import { coverageCommand } from './commands/coverage.js';
 import { doctorCommand } from './commands/doctor.js';
 import { schemaCommand } from './commands/schema.js';
 import { explainCommand } from './commands/explain.js';
+import { fileCommand } from './commands/file.js';
 
 // Read version from package.json
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -56,5 +57,6 @@ program.addCommand(serverCommand);
 program.addCommand(doctorCommand);
 program.addCommand(schemaCommand);
 program.addCommand(explainCommand);
+program.addCommand(fileCommand);
 
 program.parse();
