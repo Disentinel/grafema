@@ -774,9 +774,9 @@ function getSecond(a, b) {
       assert.strictEqual(source.name, 'b', 'Parameter name should be "b"');
     });
 
-    // NOTE: Destructured parameters (ObjectPattern) are not tracked as PARAMETER nodes.
-    // See createParameterNodes.ts - ObjectPattern handling is a documented gap.
-    it('should NOT create RETURNS edge for destructured parameter property return (documented gap)', async () => {
+    // REG-399: Destructured parameters now create PARAMETER nodes,
+    // so RETURNS edge is created for destructured property returns.
+    it('should create RETURNS edge for destructured parameter property return', async () => {
       const projectPath = await setupTest({
         'index.js': `
 function getName({ name }) {
@@ -794,11 +794,14 @@ function getName({ name }) {
       const func = allNodes.find(n => n.name === 'getName' && n.type === 'FUNCTION');
       assert.ok(func, 'Function "getName" should exist');
 
-      // Destructured parameters don't create PARAMETER nodes, so no RETURNS edge
       const returnsEdge = allEdges.find(e =>
         e.type === 'RETURNS' && e.dst === func.id
       );
-      assert.strictEqual(returnsEdge, undefined, 'No RETURNS edge for destructured param (documented gap)');
+      assert.ok(returnsEdge, 'RETURNS edge should exist for destructured param');
+
+      const source = allNodes.find(n => n.id === returnsEdge.src);
+      assert.ok(source, 'Source node should exist');
+      assert.strictEqual(source.name, 'name', 'Source should be destructured parameter "name"');
     });
   });
 

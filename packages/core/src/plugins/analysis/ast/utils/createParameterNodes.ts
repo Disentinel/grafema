@@ -17,6 +17,7 @@ import type {
 import type { ParameterInfo } from '../types.js';
 import type { ScopeTracker } from '../../../../core/ScopeTracker.js';
 import { computeSemanticId } from '../../../../core/SemanticId.js';
+import { extractNamesFromPattern } from './extractNamesFromPattern.js';
 
 /**
  * Create PARAMETER nodes for function parameters
@@ -25,10 +26,11 @@ import { computeSemanticId } from '../../../../core/SemanticId.js';
  * - Simple Identifier parameters: function(a, b)
  * - AssignmentPattern (default parameters): function(a = 1)
  * - RestElement (rest parameters): function(...args)
- *
- * Does NOT handle (can be added later):
- * - ObjectPattern (destructuring): function({ x, y })
- * - ArrayPattern (destructuring): function([a, b])
+ * - ObjectPattern (destructuring): function({ x, y })               // REG-399
+ * - ArrayPattern (destructuring): function([a, b])                  // REG-399
+ * - Nested destructuring: function({ data: { user } })              // REG-399
+ * - Defaults in destructuring: function({ x = 42 })                 // REG-399
+ * - Pattern-level defaults: function({ x, y } = {})                 // REG-399
  *
  * @param params - AST nodes for function parameters
  * @param functionId - ID of the parent function (for parentFunctionId field)
@@ -63,9 +65,11 @@ export function createParameterNodes(
         parentFunctionId: functionId
       });
     } else if (param.type === 'AssignmentPattern') {
-      // Default parameter: function(a = 1)
+      // Default parameter: function(a = 1) OR destructured with defaults: function({ x = 1 })
       const assignmentParam = param as AssignmentPattern;
+
       if (assignmentParam.left.type === 'Identifier') {
+        // Simple default: function(a = 1)
         const name = assignmentParam.left.name;
         const paramId = computeSemanticId('PARAMETER', name, scopeTracker.getContext(), { discriminator: index });
         parameters.push({
@@ -78,6 +82,50 @@ export function createParameterNodes(
           index: index,
           hasDefault: true,
           parentFunctionId: functionId
+        });
+      } else if (assignmentParam.left.type === 'ObjectPattern' || assignmentParam.left.type === 'ArrayPattern') {
+        // REG-399: Destructuring with default: function({ x } = {}) or function([x] = [])
+        // The pattern-level default means "if argument is undefined, use this default object/array"
+        // extractNamesFromPattern already handles nested AssignmentPattern (property-level defaults)
+        const extractedParams = extractNamesFromPattern(assignmentParam.left);
+
+        extractedParams.forEach((paramInfo, subIndex) => {
+          // Discriminator ensures unique IDs for parameters at same position
+          // Formula: index * 1000 + subIndex
+          // Example: function({ a, b }, c) — a=0, b=1, c=1000
+          const discriminator = index * 1000 + subIndex;
+
+          const paramId = computeSemanticId(
+            'PARAMETER',
+            paramInfo.name,
+            scopeTracker.getContext(),
+            { discriminator }
+          );
+
+          const paramData: ParameterInfo = {
+            id: paramId,
+            semanticId: paramId,
+            type: 'PARAMETER',
+            name: paramInfo.name,
+            file: file,
+            line: paramInfo.loc.start.line,
+            index: index,  // Original parameter position in function signature
+            hasDefault: true,  // Pattern-level default (e.g., = {})
+            parentFunctionId: functionId
+          };
+
+          // Add destructuring metadata
+          if (paramInfo.propertyPath && paramInfo.propertyPath.length > 0) {
+            paramData.propertyPath = paramInfo.propertyPath;
+          }
+          if (paramInfo.arrayIndex !== undefined) {
+            paramData.arrayIndex = paramInfo.arrayIndex;
+          }
+          if (paramInfo.isRest) {
+            paramData.isRest = true;
+          }
+
+          parameters.push(paramData);
         });
       }
     } else if ((param as Node).type === 'RestElement') {
@@ -98,7 +146,52 @@ export function createParameterNodes(
           parentFunctionId: functionId
         });
       }
+    } else if (param.type === 'ObjectPattern' || param.type === 'ArrayPattern') {
+      // REG-399: Handle destructured parameters
+      // Extract all parameter names from destructuring pattern
+      const extractedParams = extractNamesFromPattern(param);
+
+      extractedParams.forEach((paramInfo, subIndex) => {
+        // Discriminator ensures unique IDs for parameters at same position
+        // Formula: index * 1000 + subIndex
+        // Example: function({ a, b }, c) — a=0, b=1, c=1000
+        const discriminator = index * 1000 + subIndex;
+
+        const paramId = computeSemanticId(
+          'PARAMETER',
+          paramInfo.name,
+          scopeTracker.getContext(),
+          { discriminator }
+        );
+
+        const paramData: ParameterInfo = {
+          id: paramId,
+          semanticId: paramId,
+          type: 'PARAMETER',
+          name: paramInfo.name,
+          file: file,
+          line: paramInfo.loc.start.line,
+          index: index,  // Original parameter position in function signature
+          parentFunctionId: functionId
+        };
+
+        // Add destructuring metadata
+        if (paramInfo.propertyPath && paramInfo.propertyPath.length > 0) {
+          paramData.propertyPath = paramInfo.propertyPath;
+        }
+        if (paramInfo.arrayIndex !== undefined) {
+          paramData.arrayIndex = paramInfo.arrayIndex;
+        }
+        if (paramInfo.isRest) {
+          paramData.isRest = true;
+        }
+        // hasDefault already tracked by extractNamesFromPattern for property-level defaults
+        if (paramInfo.hasDefault) {
+          paramData.hasDefault = true;
+        }
+
+        parameters.push(paramData);
+      });
     }
-    // ObjectPattern and ArrayPattern (destructuring parameters) can be added later
   });
 }

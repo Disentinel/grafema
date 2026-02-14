@@ -112,6 +112,7 @@ import type {
   ASTCollections,
   ExtractedVariable,
 } from './ast/types.js';
+import { extractNamesFromPattern } from './ast/utils/extractNamesFromPattern.js';
 
 // === LOCAL TYPES ===
 
@@ -568,68 +569,13 @@ export class JSASTAnalyzer extends Plugin {
   /**
    * Extract variable names from destructuring patterns
    * Uses t.isX() type guards to avoid casts
+   *
+   * REG-399: Delegated to extractNamesFromPattern utility for code reuse with parameters.
+   * This method maintains the same API for backward compatibility.
    */
   extractVariableNamesFromPattern(pattern: t.Node | null | undefined, variables: ExtractedVariable[] = [], propertyPath: string[] = []): ExtractedVariable[] {
-    if (!pattern) return variables;
-
-    if (t.isIdentifier(pattern)) {
-      variables.push({
-        name: pattern.name,
-        loc: pattern.loc?.start ? { start: pattern.loc.start } : { start: { line: 0, column: 0 } },
-        propertyPath: propertyPath.length > 0 ? [...propertyPath] : undefined
-      });
-    } else if (t.isObjectPattern(pattern)) {
-      pattern.properties.forEach((prop) => {
-        if (t.isRestElement(prop)) {
-          const restVars = this.extractVariableNamesFromPattern(prop.argument, [], []);
-          restVars.forEach(v => {
-            v.isRest = true;
-            v.propertyPath = propertyPath.length > 0 ? [...propertyPath] : undefined;
-            variables.push(v);
-          });
-        } else if (t.isObjectProperty(prop) && prop.value) {
-          const key = t.isIdentifier(prop.key) ? prop.key.name :
-                     (t.isStringLiteral(prop.key) || t.isNumericLiteral(prop.key) ? String(prop.key.value) : null);
-
-          if (key !== null) {
-            const newPath = [...propertyPath, key];
-            this.extractVariableNamesFromPattern(prop.value, variables, newPath);
-          } else {
-            this.extractVariableNamesFromPattern(prop.value, variables, propertyPath);
-          }
-        }
-      });
-    } else if (t.isArrayPattern(pattern)) {
-      pattern.elements.forEach((element, index) => {
-        if (element) {
-          if (t.isRestElement(element)) {
-            const restVars = this.extractVariableNamesFromPattern(element.argument, [], []);
-            restVars.forEach(v => {
-              v.isRest = true;
-              v.arrayIndex = index;
-              v.propertyPath = propertyPath.length > 0 ? [...propertyPath] : undefined;
-              variables.push(v);
-            });
-          } else {
-            const extracted = this.extractVariableNamesFromPattern(element, [], propertyPath);
-            extracted.forEach(v => {
-              v.arrayIndex = index;
-              variables.push(v);
-            });
-          }
-        }
-      });
-    } else if (t.isRestElement(pattern)) {
-      const restVars = this.extractVariableNamesFromPattern(pattern.argument, [], propertyPath);
-      restVars.forEach(v => {
-        v.isRest = true;
-        variables.push(v);
-      });
-    } else if (t.isAssignmentPattern(pattern)) {
-      this.extractVariableNamesFromPattern(pattern.left, variables, propertyPath);
-    }
-
-    return variables;
+    // Delegate to the extracted utility function
+    return extractNamesFromPattern(pattern, variables, propertyPath);
   }
 
   /**
