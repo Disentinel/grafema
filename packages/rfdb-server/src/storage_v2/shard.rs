@@ -24,6 +24,89 @@ use crate::storage_v2::types::{EdgeRecordV2, NodeRecordV2, SegmentMeta, SegmentT
 use crate::storage_v2::write_buffer::WriteBuffer;
 use crate::storage_v2::writer::{EdgeSegmentWriter, NodeSegmentWriter};
 
+// ── Tombstone Set ────────────────────────────────────────────────────
+
+/// Tombstone state for a shard.
+///
+/// In-memory set of logically deleted node IDs and edge keys.
+/// Persisted in manifest, loaded on shard open.
+/// Cleared when compaction (T4.x) physically removes records.
+///
+/// Query paths check this set before returning any record.
+/// O(1) per check via HashSet.
+pub struct TombstoneSet {
+    /// Deleted node IDs. Queries skip records with these IDs.
+    pub node_ids: HashSet<u128>,
+    /// Deleted edge keys (src, dst, edge_type). Queries skip matching edges.
+    pub edge_keys: HashSet<(u128, u128, String)>,
+}
+
+impl TombstoneSet {
+    /// Create empty tombstone set.
+    pub fn new() -> Self {
+        Self {
+            node_ids: HashSet::new(),
+            edge_keys: HashSet::new(),
+        }
+    }
+
+    /// Create from manifest data (loaded on shard open).
+    pub fn from_manifest(
+        node_ids: Vec<u128>,
+        edge_keys: Vec<(u128, u128, String)>,
+    ) -> Self {
+        Self {
+            node_ids: node_ids.into_iter().collect(),
+            edge_keys: edge_keys.into_iter().collect(),
+        }
+    }
+
+    /// Check if a node ID is tombstoned.
+    #[inline]
+    pub fn contains_node(&self, id: u128) -> bool {
+        self.node_ids.contains(&id)
+    }
+
+    /// Check if an edge key is tombstoned.
+    #[inline]
+    pub fn contains_edge(&self, src: u128, dst: u128, edge_type: &str) -> bool {
+        self.edge_keys.contains(&(src, dst, edge_type.to_string()))
+    }
+
+    /// Add tombstoned node IDs (union with existing).
+    pub fn add_nodes(&mut self, ids: impl IntoIterator<Item = u128>) {
+        self.node_ids.extend(ids);
+    }
+
+    /// Add tombstoned edge keys (union with existing).
+    pub fn add_edges(&mut self, keys: impl IntoIterator<Item = (u128, u128, String)>) {
+        self.edge_keys.extend(keys);
+    }
+
+    /// Number of tombstoned nodes.
+    pub fn node_count(&self) -> usize {
+        self.node_ids.len()
+    }
+
+    /// Number of tombstoned edges.
+    pub fn edge_count(&self) -> usize {
+        self.edge_keys.len()
+    }
+
+    /// True if no tombstones.
+    pub fn is_empty(&self) -> bool {
+        self.node_ids.is_empty() && self.edge_keys.is_empty()
+    }
+}
+
+impl Default for TombstoneSet {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// ── Flush Result ─────────────────────────────────────────────────────
+
 /// Result of flushing a write buffer to disk segments.
 ///
 /// Contains metadata for manifest update. The caller is responsible for:
@@ -73,6 +156,9 @@ pub struct Shard {
 
     /// Segment descriptors for edge segments (from manifest).
     edge_descriptors: Vec<SegmentDescriptor>,
+
+    /// Tombstone state (loaded from manifest on open).
+    tombstones: TombstoneSet,
 }
 
 // -- Constructors -------------------------------------------------------------
@@ -91,6 +177,7 @@ impl Shard {
             edge_segments: Vec::new(),
             node_descriptors: Vec::new(),
             edge_descriptors: Vec::new(),
+            tombstones: TombstoneSet::new(),
         })
     }
 
@@ -130,6 +217,7 @@ impl Shard {
             edge_segments,
             node_descriptors,
             edge_descriptors,
+            tombstones: TombstoneSet::new(),
         })
     }
 
@@ -144,6 +232,7 @@ impl Shard {
             edge_segments: Vec::new(),
             node_descriptors: Vec::new(),
             edge_descriptors: Vec::new(),
+            tombstones: TombstoneSet::new(),
         }
     }
 
@@ -161,6 +250,7 @@ impl Shard {
             edge_segments: Vec::new(),
             node_descriptors: Vec::new(),
             edge_descriptors: Vec::new(),
+            tombstones: TombstoneSet::new(),
         })
     }
 
@@ -201,6 +291,7 @@ impl Shard {
             edge_segments,
             node_descriptors,
             edge_descriptors,
+            tombstones: TombstoneSet::new(),
         })
     }
 }
@@ -217,6 +308,75 @@ impl Shard {
     /// Dedup via edge_keys in WriteBuffer.
     pub fn add_edges(&mut self, records: Vec<EdgeRecordV2>) {
         self.write_buffer.add_edges(records);
+    }
+}
+
+// -- Tombstone Operations -----------------------------------------------------
+
+impl Shard {
+    /// Set tombstone state (called by MultiShardStore after commit).
+    ///
+    /// Replaces the entire tombstone set. Used when loading from manifest
+    /// or after commit_batch updates tombstones.
+    ///
+    /// Complexity: O(1) (pointer swap)
+    pub fn set_tombstones(&mut self, tombstones: TombstoneSet) {
+        self.tombstones = tombstones;
+    }
+
+    /// Get reference to current tombstone set (for reading).
+    pub fn tombstones(&self) -> &TombstoneSet {
+        &self.tombstones
+    }
+
+    /// Find edge keys (src, dst, edge_type) where src is in the given ID set.
+    ///
+    /// Uses bloom filter on each edge segment for pre-filtering:
+    /// if no src_id passes the bloom check, the entire segment is skipped.
+    /// Also scans the write buffer for unflushed edges.
+    ///
+    /// Returns Vec of (src, dst, edge_type) tuples for tombstoning.
+    ///
+    /// Complexity: O(S * (K * B + N_matching))
+    ///   where S = edge segments, K = |src_ids|, B = bloom check cost,
+    ///   N_matching = records in segments that pass bloom filter
+    pub fn find_edge_keys_by_src_ids(
+        &self,
+        src_ids: &HashSet<u128>,
+    ) -> Vec<(u128, u128, String)> {
+        let mut keys = Vec::new();
+
+        if src_ids.is_empty() {
+            return keys;
+        }
+
+        // Step 1: Scan edge segments with bloom pre-filter
+        for seg in &self.edge_segments {
+            // Bloom check: does this segment maybe contain edges from any src_id?
+            let may_match = src_ids.iter().any(|id| seg.maybe_contains_src(*id));
+            if !may_match {
+                continue;
+            }
+
+            // Scan matching segment
+            for j in 0..seg.record_count() {
+                let src = seg.get_src(j);
+                if src_ids.contains(&src) {
+                    let dst = seg.get_dst(j);
+                    let edge_type = seg.get_edge_type(j).to_string();
+                    keys.push((src, dst, edge_type));
+                }
+            }
+        }
+
+        // Step 2: Scan write buffer
+        for edge in self.write_buffer.iter_edges() {
+            if src_ids.contains(&edge.src) {
+                keys.push((edge.src, edge.dst, edge.edge_type.clone()));
+            }
+        }
+
+        keys
     }
 }
 
@@ -338,6 +498,11 @@ impl Shard {
     /// Returns owned NodeRecordV2 (cloned from buffer or reconstructed
     /// from segment).
     pub fn get_node(&self, id: u128) -> Option<NodeRecordV2> {
+        // Step 0: Tombstone check (O(1) HashSet lookup)
+        if self.tombstones.contains_node(id) {
+            return None;
+        }
+
         // Step 1: Check write buffer (O(1) HashMap lookup)
         if let Some(node) = self.write_buffer.get_node(id) {
             return Some(node.clone());
@@ -367,6 +532,11 @@ impl Shard {
     /// Check if node exists (same algorithm as get_node, avoids
     /// full record reconstruction).
     pub fn node_exists(&self, id: u128) -> bool {
+        // Tombstone check first
+        if self.tombstones.contains_node(id) {
+            return false;
+        }
+
         if self.write_buffer.get_node(id).is_some() {
             return true;
         }
@@ -409,6 +579,11 @@ impl Shard {
         // even if the buffer version doesn't match the current filter.
         for node in self.write_buffer.iter_nodes() {
             seen_ids.insert(node.id);
+
+            // Skip tombstoned nodes
+            if self.tombstones.contains_node(node.id) {
+                continue;
+            }
 
             if let Some(nt) = node_type {
                 if node.node_type != nt {
@@ -454,6 +629,12 @@ impl Shard {
                     continue;
                 }
 
+                // Skip tombstoned nodes
+                if self.tombstones.contains_node(id) {
+                    seen_ids.insert(id);
+                    continue;
+                }
+
                 // Filter check using columnar accessors
                 if let Some(nt) = node_type {
                     if seg.get_node_type(j) != nt {
@@ -489,6 +670,10 @@ impl Shard {
 
         // Step 1: Scan write buffer
         for edge in self.write_buffer.find_edges_by_src(node_id) {
+            // Skip tombstoned edges
+            if self.tombstones.contains_edge(edge.src, edge.dst, &edge.edge_type) {
+                continue;
+            }
             if let Some(types) = edge_types {
                 if !types.contains(&edge.edge_type.as_str()) {
                     continue;
@@ -519,8 +704,14 @@ impl Shard {
                 if seg.get_src(j) != node_id {
                     continue;
                 }
+                // Skip tombstoned edges
+                let dst = seg.get_dst(j);
+                let edge_type = seg.get_edge_type(j);
+                if self.tombstones.contains_edge(node_id, dst, edge_type) {
+                    continue;
+                }
                 if let Some(types) = edge_types {
-                    if !types.contains(&seg.get_edge_type(j)) {
+                    if !types.contains(&edge_type) {
                         continue;
                     }
                 }
@@ -542,6 +733,10 @@ impl Shard {
 
         // Step 1: Scan write buffer
         for edge in self.write_buffer.find_edges_by_dst(node_id) {
+            // Skip tombstoned edges
+            if self.tombstones.contains_edge(edge.src, edge.dst, &edge.edge_type) {
+                continue;
+            }
             if let Some(types) = edge_types {
                 if !types.contains(&edge.edge_type.as_str()) {
                     continue;
@@ -572,8 +767,14 @@ impl Shard {
                 if seg.get_dst(j) != node_id {
                     continue;
                 }
+                // Skip tombstoned edges
+                let src = seg.get_src(j);
+                let edge_type = seg.get_edge_type(j);
+                if self.tombstones.contains_edge(src, node_id, edge_type) {
+                    continue;
+                }
                 if let Some(types) = edge_types {
-                    if !types.contains(&seg.get_edge_type(j)) {
+                    if !types.contains(&edge_type) {
                         continue;
                     }
                 }
@@ -620,11 +821,18 @@ impl Shard {
     pub fn all_node_ids(&self) -> Vec<u128> {
         let mut ids = Vec::new();
         for node in self.write_buffer.iter_nodes() {
+            if self.tombstones.contains_node(node.id) {
+                continue;
+            }
             ids.push(node.id);
         }
         for seg in &self.node_segments {
             for j in 0..seg.record_count() {
-                ids.push(seg.get_id(j));
+                let id = seg.get_id(j);
+                if self.tombstones.contains_node(id) {
+                    continue;
+                }
+                ids.push(id);
             }
         }
         ids
@@ -1345,5 +1553,355 @@ mod tests {
         let outgoing = shard.get_outgoing_edges(persistent_id, None);
         assert_eq!(outgoing.len(), 1);
         assert_eq!(outgoing[0].edge_type, "CALLS");
+    }
+
+    // =========================================================================
+    // Tombstone Tests (RFD-8 T3.1 Commit 1)
+    // =========================================================================
+
+    #[test]
+    fn test_tombstone_set_empty() {
+        let ts = TombstoneSet::new();
+        assert!(ts.is_empty());
+        assert_eq!(ts.node_count(), 0);
+        assert_eq!(ts.edge_count(), 0);
+        assert!(!ts.contains_node(42));
+        assert!(!ts.contains_edge(1, 2, "CALLS"));
+    }
+
+    #[test]
+    fn test_tombstone_set_from_manifest() {
+        let ts = TombstoneSet::from_manifest(
+            vec![1, 2, 3],
+            vec![(10, 20, "CALLS".to_string())],
+        );
+        assert!(!ts.is_empty());
+        assert_eq!(ts.node_count(), 3);
+        assert_eq!(ts.edge_count(), 1);
+        assert!(ts.contains_node(1));
+        assert!(ts.contains_node(2));
+        assert!(ts.contains_node(3));
+        assert!(!ts.contains_node(99));
+        assert!(ts.contains_edge(10, 20, "CALLS"));
+        assert!(!ts.contains_edge(10, 20, "OTHER"));
+        assert!(!ts.contains_edge(10, 99, "CALLS"));
+    }
+
+    #[test]
+    fn test_tombstone_blocks_get_node() {
+        let mut shard = Shard::ephemeral();
+        let node = make_node("tombstone::target", "FUNCTION", "target", "file.rs");
+        let id = node.id;
+
+        shard.add_nodes(vec![node]);
+        shard.flush_with_ids(Some(1), None).unwrap();
+
+        // Before tombstone: visible
+        assert!(shard.get_node(id).is_some());
+
+        // After tombstone: invisible
+        let mut ts = TombstoneSet::new();
+        ts.add_nodes(vec![id]);
+        shard.set_tombstones(ts);
+
+        assert!(shard.get_node(id).is_none());
+    }
+
+    #[test]
+    fn test_tombstone_blocks_node_exists() {
+        let mut shard = Shard::ephemeral();
+        let node = make_node("tombstone::exists", "FUNCTION", "exists", "file.rs");
+        let id = node.id;
+
+        shard.add_nodes(vec![node]);
+        shard.flush_with_ids(Some(1), None).unwrap();
+
+        assert!(shard.node_exists(id));
+
+        let mut ts = TombstoneSet::new();
+        ts.add_nodes(vec![id]);
+        shard.set_tombstones(ts);
+
+        assert!(!shard.node_exists(id));
+    }
+
+    #[test]
+    fn test_tombstone_blocks_find_nodes() {
+        let mut shard = Shard::ephemeral();
+        let n1 = make_node("tomb::a", "FUNCTION", "a", "file.rs");
+        let n2 = make_node("tomb::b", "FUNCTION", "b", "file.rs");
+        let n3 = make_node("tomb::c", "FUNCTION", "c", "file.rs");
+        let id_b = n2.id;
+
+        shard.add_nodes(vec![n1, n2, n3]);
+        shard.flush_with_ids(Some(1), None).unwrap();
+
+        // Before tombstone: 3 nodes
+        assert_eq!(shard.find_nodes(None, None).len(), 3);
+
+        // Tombstone node B
+        let mut ts = TombstoneSet::new();
+        ts.add_nodes(vec![id_b]);
+        shard.set_tombstones(ts);
+
+        let result = shard.find_nodes(None, None);
+        assert_eq!(result.len(), 2);
+        assert!(result.iter().all(|n| n.id != id_b));
+    }
+
+    #[test]
+    fn test_tombstone_blocks_outgoing_edges() {
+        let mut shard = Shard::ephemeral();
+        let e1 = make_edge("tomb::src", "tomb::dst1", "CALLS");
+        let e2 = make_edge("tomb::src", "tomb::dst2", "CALLS");
+        let src_id = node_id("tomb::src");
+        let dst1_id = node_id("tomb::dst1");
+
+        shard.add_edges(vec![e1, e2]);
+        shard.flush_with_ids(None, Some(1)).unwrap();
+
+        // Before tombstone: 2 outgoing edges
+        assert_eq!(shard.get_outgoing_edges(src_id, None).len(), 2);
+
+        // Tombstone edge src->dst1
+        let mut ts = TombstoneSet::new();
+        ts.add_edges(vec![(src_id, dst1_id, "CALLS".to_string())]);
+        shard.set_tombstones(ts);
+
+        let result = shard.get_outgoing_edges(src_id, None);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].dst, node_id("tomb::dst2"));
+    }
+
+    #[test]
+    fn test_tombstone_blocks_incoming_edges() {
+        let mut shard = Shard::ephemeral();
+        let e1 = make_edge("tomb::src1", "tomb::target", "CALLS");
+        let e2 = make_edge("tomb::src2", "tomb::target", "CALLS");
+        let src1_id = node_id("tomb::src1");
+        let target_id = node_id("tomb::target");
+
+        shard.add_edges(vec![e1, e2]);
+        shard.flush_with_ids(None, Some(1)).unwrap();
+
+        // Before tombstone: 2 incoming edges
+        assert_eq!(shard.get_incoming_edges(target_id, None).len(), 2);
+
+        // Tombstone edge src1->target
+        let mut ts = TombstoneSet::new();
+        ts.add_edges(vec![(src1_id, target_id, "CALLS".to_string())]);
+        shard.set_tombstones(ts);
+
+        let result = shard.get_incoming_edges(target_id, None);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].src, node_id("tomb::src2"));
+    }
+
+    #[test]
+    fn test_tombstone_excludes_from_all_node_ids() {
+        let mut shard = Shard::ephemeral();
+        let mut nodes = Vec::new();
+        let mut ids = Vec::new();
+        for i in 0..5 {
+            let n = make_node(&format!("tomb::id_{}", i), "FUNCTION", "fn", "file.rs");
+            ids.push(n.id);
+            nodes.push(n);
+        }
+
+        shard.add_nodes(nodes);
+        shard.flush_with_ids(Some(1), None).unwrap();
+
+        assert_eq!(shard.all_node_ids().len(), 5);
+
+        // Tombstone 2 of the 5
+        let mut ts = TombstoneSet::new();
+        ts.add_nodes(vec![ids[1], ids[3]]);
+        shard.set_tombstones(ts);
+
+        let result = shard.all_node_ids();
+        assert_eq!(result.len(), 3);
+        assert!(!result.contains(&ids[1]));
+        assert!(!result.contains(&ids[3]));
+        assert!(result.contains(&ids[0]));
+        assert!(result.contains(&ids[2]));
+        assert!(result.contains(&ids[4]));
+    }
+
+    #[test]
+    fn test_tombstone_empty_set_no_effect() {
+        let mut shard = Shard::ephemeral();
+        let n1 = make_node("tomb::noop1", "FUNCTION", "fn1", "file.rs");
+        let n2 = make_node("tomb::noop2", "CLASS", "cls1", "file.rs");
+        let e1 = make_edge("tomb::noop1", "tomb::noop2", "CALLS");
+
+        shard.add_nodes(vec![n1.clone(), n2.clone()]);
+        shard.add_edges(vec![e1]);
+        shard.flush_with_ids(Some(1), Some(2)).unwrap();
+
+        // Set empty tombstones (should have no effect)
+        shard.set_tombstones(TombstoneSet::new());
+
+        assert!(shard.get_node(n1.id).is_some());
+        assert!(shard.get_node(n2.id).is_some());
+        assert!(shard.node_exists(n1.id));
+        assert!(shard.node_exists(n2.id));
+        assert_eq!(shard.find_nodes(None, None).len(), 2);
+        assert_eq!(shard.get_outgoing_edges(n1.id, None).len(), 1);
+        assert_eq!(shard.get_incoming_edges(n2.id, None).len(), 1);
+        assert_eq!(shard.all_node_ids().len(), 2);
+    }
+
+    #[test]
+    fn test_tombstone_set_add_union() {
+        let mut ts = TombstoneSet::new();
+        ts.add_nodes(vec![1, 2]);
+        ts.add_edges(vec![(10, 20, "CALLS".to_string())]);
+
+        assert_eq!(ts.node_count(), 2);
+        assert_eq!(ts.edge_count(), 1);
+
+        // Union with overlapping and new
+        ts.add_nodes(vec![2, 3]);
+        ts.add_edges(vec![
+            (10, 20, "CALLS".to_string()),     // duplicate
+            (30, 40, "IMPORTS".to_string()),    // new
+        ]);
+
+        assert_eq!(ts.node_count(), 3); // {1, 2, 3}
+        assert_eq!(ts.edge_count(), 2); // {(10,20,CALLS), (30,40,IMPORTS)}
+        assert!(ts.contains_node(1));
+        assert!(ts.contains_node(2));
+        assert!(ts.contains_node(3));
+        assert!(ts.contains_edge(10, 20, "CALLS"));
+        assert!(ts.contains_edge(30, 40, "IMPORTS"));
+    }
+
+    // =========================================================================
+    // find_edge_keys_by_src_ids Tests (RFD-8 T3.1 Commit 2)
+    // =========================================================================
+
+    #[test]
+    fn test_find_edge_keys_by_src_ids_from_buffer() {
+        let mut shard = Shard::ephemeral();
+
+        // Add edges with two different sources to the buffer (unflushed)
+        let e1 = make_edge("src_a", "dst1", "CALLS");
+        let e2 = make_edge("src_a", "dst2", "IMPORTS_FROM");
+        let e3 = make_edge("src_b", "dst3", "CALLS");
+
+        shard.add_edges(vec![e1.clone(), e2.clone(), e3.clone()]);
+
+        // Query for src_a only
+        let src_a_id = node_id("src_a");
+        let src_ids: HashSet<u128> = [src_a_id].into_iter().collect();
+        let keys = shard.find_edge_keys_by_src_ids(&src_ids);
+
+        assert_eq!(keys.len(), 2);
+        // Both edges from src_a should be found
+        assert!(keys.contains(&(e1.src, e1.dst, e1.edge_type.clone())));
+        assert!(keys.contains(&(e2.src, e2.dst, e2.edge_type.clone())));
+        // Edge from src_b should NOT be included
+        assert!(!keys.contains(&(e3.src, e3.dst, e3.edge_type.clone())));
+    }
+
+    #[test]
+    fn test_find_edge_keys_by_src_ids_from_segment() {
+        let mut shard = Shard::ephemeral();
+
+        let e1 = make_edge("seg_src", "seg_dst1", "CALLS");
+        let e2 = make_edge("seg_src", "seg_dst2", "IMPORTS_FROM");
+        shard.add_edges(vec![e1.clone(), e2.clone()]);
+        shard.flush_with_ids(None, Some(1)).unwrap();
+
+        // Write buffer should now be empty
+        assert_eq!(shard.write_buffer_size(), (0, 0));
+
+        let src_id = node_id("seg_src");
+        let src_ids: HashSet<u128> = [src_id].into_iter().collect();
+        let keys = shard.find_edge_keys_by_src_ids(&src_ids);
+
+        assert_eq!(keys.len(), 2);
+        assert!(keys.contains(&(e1.src, e1.dst, e1.edge_type.clone())));
+        assert!(keys.contains(&(e2.src, e2.dst, e2.edge_type.clone())));
+    }
+
+    #[test]
+    fn test_find_edge_keys_by_src_ids_bloom_skips_irrelevant() {
+        let mut shard = Shard::ephemeral();
+
+        // Segment 1: edges from src_x
+        let e1 = make_edge("bloom_src_x", "bloom_dst1", "CALLS");
+        shard.add_edges(vec![e1.clone()]);
+        shard.flush_with_ids(None, Some(1)).unwrap();
+
+        // Segment 2: edges from src_y
+        let e2 = make_edge("bloom_src_y", "bloom_dst2", "CALLS");
+        shard.add_edges(vec![e2.clone()]);
+        shard.flush_with_ids(None, Some(2)).unwrap();
+
+        // Query for src_x only — should find only e1
+        let src_x_id = node_id("bloom_src_x");
+        let src_ids: HashSet<u128> = [src_x_id].into_iter().collect();
+        let keys = shard.find_edge_keys_by_src_ids(&src_ids);
+
+        assert_eq!(keys.len(), 1);
+        assert!(keys.contains(&(e1.src, e1.dst, e1.edge_type.clone())));
+        assert!(!keys.contains(&(e2.src, e2.dst, e2.edge_type.clone())));
+    }
+
+    #[test]
+    fn test_find_edge_keys_by_src_ids_empty_input() {
+        let mut shard = Shard::ephemeral();
+
+        // Add some edges
+        shard.add_edges(vec![
+            make_edge("empty_src1", "empty_dst1", "CALLS"),
+            make_edge("empty_src2", "empty_dst2", "CALLS"),
+        ]);
+        shard.flush_with_ids(None, Some(1)).unwrap();
+
+        // Empty src_ids should return empty result
+        let src_ids: HashSet<u128> = HashSet::new();
+        let keys = shard.find_edge_keys_by_src_ids(&src_ids);
+        assert!(keys.is_empty());
+    }
+
+    #[test]
+    fn test_find_edge_keys_by_src_ids_across_segments() {
+        let mut shard = Shard::ephemeral();
+
+        // Segment 1: edges from src_a and src_b
+        let e1 = make_edge("multi_src_a", "multi_dst1", "CALLS");
+        let e2 = make_edge("multi_src_b", "multi_dst2", "IMPORTS_FROM");
+        shard.add_edges(vec![e1.clone(), e2.clone()]);
+        shard.flush_with_ids(None, Some(1)).unwrap();
+
+        // Segment 2: more edges from src_a
+        let e3 = make_edge("multi_src_a", "multi_dst3", "CONTAINS");
+        shard.add_edges(vec![e3.clone()]);
+        shard.flush_with_ids(None, Some(2)).unwrap();
+
+        // Segment 3: edges from src_c
+        let e4 = make_edge("multi_src_c", "multi_dst4", "CALLS");
+        shard.add_edges(vec![e4.clone()]);
+        shard.flush_with_ids(None, Some(3)).unwrap();
+
+        // Also add an edge to the buffer (unflushed)
+        let e5 = make_edge("multi_src_b", "multi_dst5", "CALLS");
+        shard.add_edges(vec![e5.clone()]);
+
+        // Query for src_a and src_b — should find e1, e2, e3, e5
+        let src_a_id = node_id("multi_src_a");
+        let src_b_id = node_id("multi_src_b");
+        let src_ids: HashSet<u128> = [src_a_id, src_b_id].into_iter().collect();
+        let keys = shard.find_edge_keys_by_src_ids(&src_ids);
+
+        assert_eq!(keys.len(), 4);
+        assert!(keys.contains(&(e1.src, e1.dst, e1.edge_type.clone())));
+        assert!(keys.contains(&(e2.src, e2.dst, e2.edge_type.clone())));
+        assert!(keys.contains(&(e3.src, e3.dst, e3.edge_type.clone())));
+        assert!(keys.contains(&(e5.src, e5.dst, e5.edge_type.clone())));
+        // e4 (src_c) should NOT be included
+        assert!(!keys.contains(&(e4.src, e4.dst, e4.edge_type.clone())));
     }
 }

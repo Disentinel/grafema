@@ -197,6 +197,8 @@ export interface ControlFlowMetadata {
   canReject?: boolean;         // True if function can reject (has rejection patterns)
   hasAsyncThrow?: boolean;     // True if async function has throw statements
   rejectedBuiltinErrors?: string[];  // List of builtin error class names this function can reject
+  // REG-286: Sync throw tracking
+  thrownBuiltinErrors?: string[];    // List of builtin error class names this function can throw
 }
 
 // === VARIABLE DECLARATION INFO ===
@@ -967,18 +969,23 @@ export interface PromiseResolutionInfo {
   line: number;
 }
 
-// === REJECTION PATTERN INFO (REG-311) ===
+// === REJECTION PATTERN INFO (REG-311, REG-286) ===
 /**
- * Tracks patterns that can cause Promise rejection in a function.
- * Used for REJECTS edge creation and error flow analysis.
+ * Tracks patterns that can cause errors (throws or Promise rejections) in a function.
+ * Used for THROWS/REJECTS edge creation and error flow analysis.
  *
  * Patterns detected:
  * - promise_reject: Promise.reject(new Error())
  * - executor_reject: reject(new Error()) in Promise executor
  * - async_throw: throw new Error() in async function
- * - variable_traced: reject(err) where err traced to NewExpression
- * - variable_parameter: reject(param) where param is function parameter
- * - variable_unknown: reject(x) where x couldn't be traced
+ * - sync_throw: throw new Error() in non-async function (REG-286)
+ * - variable_traced: throw/reject(err) where err traced to NewExpression
+ * - variable_parameter: throw/reject(param) where param is function parameter
+ * - variable_unknown: throw/reject(x) where x couldn't be traced
+ *
+ * Edge type selection:
+ * - isAsync=true patterns → REJECTS edge (async errors caught by .catch())
+ * - isAsync=false patterns → THROWS edge (sync errors caught by try/catch)
  */
 export interface RejectionPatternInfo {
   /** ID of the containing FUNCTION node */
@@ -990,9 +997,12 @@ export interface RejectionPatternInfo {
     | 'promise_reject'     // Promise.reject(new Error())
     | 'executor_reject'    // reject(new Error()) in Promise executor
     | 'async_throw'        // throw new Error() in async function
-    | 'variable_traced'    // reject(err) where err traced to NewExpression
-    | 'variable_parameter' // reject(param) where param is function parameter
-    | 'variable_unknown';  // reject(x) where x couldn't be traced
+    | 'sync_throw'         // throw new Error() in non-async function (REG-286)
+    | 'variable_traced'    // throw/reject(err) where err traced to NewExpression
+    | 'variable_parameter' // throw/reject(param) where param is function parameter
+    | 'variable_unknown';  // throw/reject(x) where x couldn't be traced
+  /** Whether the containing function is async (determines THROWS vs REJECTS edge) */
+  isAsync: boolean;
   /** File path */
   file: string;
   /** Line number of rejection call */

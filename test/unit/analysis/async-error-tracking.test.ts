@@ -342,7 +342,7 @@ const asyncArrowThrow = async () => {
       assert.strictEqual(pattern.errorClassName, 'TypeError', 'Should detect TypeError');
     });
 
-    it('should NOT track throw in non-async function as rejection', async () => {
+    it('should track throw in non-async function as sync_throw (REG-286)', async () => {
       await setupTest(db.backend, {
         'index.js': `
 function syncThrow() {
@@ -360,16 +360,20 @@ function syncThrow() {
       };
       assert.ok(!record.async, 'Function should not be async');
 
-      // Sync function throw should not be in rejectionPatterns (it's sync throw, not rejection)
-      const patterns = record.rejectionPatterns as unknown[] | undefined;
-      const asyncPatterns = (patterns || []).filter(
-        (p: unknown) => (p as { rejectionType: string }).rejectionType === 'async_throw'
-      );
-      assert.strictEqual(
-        asyncPatterns.length,
-        0,
-        'Sync function should not have async_throw patterns'
-      );
+      // REG-286: Sync function throw should have sync_throw pattern (not async_throw)
+      const patterns = record.rejectionPatterns as Array<{
+        rejectionType: string;
+        errorClassName: string;
+      }> | undefined;
+      assert.ok(patterns, 'Should have rejectionPatterns for sync throws');
+
+      const syncPattern = patterns.find(p => p.rejectionType === 'sync_throw');
+      assert.ok(syncPattern, 'Should have sync_throw pattern');
+      assert.strictEqual(syncPattern.errorClassName, 'Error', 'Should track Error class');
+
+      // Should NOT have async_throw patterns
+      const asyncPatterns = patterns.filter(p => p.rejectionType === 'async_throw');
+      assert.strictEqual(asyncPatterns.length, 0, 'Sync function should not have async_throw patterns');
     });
   });
 });
@@ -1408,6 +1412,246 @@ async function consumer() {
         record.rejectionPatterns,
         'Async generator should have rejectionPatterns'
       );
+    });
+  });
+});
+
+// =============================================================================
+// TESTS GROUP 7: Sync Throw Patterns (REG-286)
+// =============================================================================
+
+describe('Sync Throw Patterns and THROWS Edges (REG-286)', () => {
+  let db: Awaited<ReturnType<typeof createTestDatabase>>;
+
+  beforeEach(async () => {
+    if (db) await db.cleanup();
+    db = await createTestDatabase();
+  });
+
+  after(async () => {
+    if (db) await db.cleanup();
+  });
+
+  // ---------------------------------------------------------------------------
+  // 7.1 THROWS edge creation for sync functions
+  // ---------------------------------------------------------------------------
+
+  describe('THROWS edges for sync throw', () => {
+    it('should create THROWS edge for throw new Error() in sync function', async () => {
+      await setupTest(db.backend, {
+        'index.js': `
+function validate(input) {
+  if (!input) throw new ValidationError('Input required');
+}
+        `
+      });
+
+      const throwsEdges = await findEdgesByType(db.backend, 'THROWS');
+      assert.ok(
+        throwsEdges.length >= 1,
+        `Should have THROWS edge. Found: ${throwsEdges.length}`
+      );
+
+      // Verify edge metadata
+      const edge = throwsEdges[0] as unknown as { errorClassName?: string };
+      assert.strictEqual(
+        edge.errorClassName,
+        'ValidationError',
+        'THROWS edge should have errorClassName=ValidationError'
+      );
+    });
+
+    it('should create THROWS edge for multiple error types in one function', async () => {
+      await setupTest(db.backend, {
+        'index.js': `
+function validate(input) {
+  if (!input) throw new ValidationError('Input required');
+  if (input.length > 100) throw new RangeError('Input too long');
+}
+        `
+      });
+
+      const throwsEdges = await findEdgesByType(db.backend, 'THROWS');
+      assert.ok(
+        throwsEdges.length >= 2,
+        `Should have at least 2 THROWS edges. Found: ${throwsEdges.length}`
+      );
+
+      const errorClasses = throwsEdges.map(
+        e => (e as unknown as { errorClassName?: string }).errorClassName
+      );
+      assert.ok(errorClasses.includes('ValidationError'), 'Should have ValidationError');
+      assert.ok(errorClasses.includes('RangeError'), 'Should have RangeError');
+    });
+
+    it('should NOT create REJECTS edge for sync throw', async () => {
+      await setupTest(db.backend, {
+        'index.js': `
+function syncOnly() {
+  throw new Error('sync');
+}
+        `
+      });
+
+      const rejectsEdges = await findEdgesByType(db.backend, 'REJECTS');
+      const func = await getFunctionByName(db.backend, 'syncOnly');
+      assert.ok(func, 'Should have function');
+
+      // Filter REJECTS edges from this function
+      const funcRejects = rejectsEdges.filter(e => e.src === func.id);
+      assert.strictEqual(
+        funcRejects.length,
+        0,
+        'Sync function should NOT have REJECTS edges'
+      );
+    });
+
+    it('should create REJECTS (not THROWS) for async throw', async () => {
+      await setupTest(db.backend, {
+        'index.js': `
+async function asyncOnly() {
+  throw new Error('async');
+}
+        `
+      });
+
+      const func = await getFunctionByName(db.backend, 'asyncOnly');
+      assert.ok(func, 'Should have function');
+
+      const rejectsEdges = (await findEdgesByType(db.backend, 'REJECTS'))
+        .filter(e => e.src === func.id);
+      const throwsEdges = (await findEdgesByType(db.backend, 'THROWS'))
+        .filter(e => e.src === func.id);
+
+      assert.ok(rejectsEdges.length >= 1, 'Async throw should create REJECTS edge');
+      assert.strictEqual(throwsEdges.length, 0, 'Async throw should NOT create THROWS edge');
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // 7.2 thrownBuiltinErrors metadata
+  // ---------------------------------------------------------------------------
+
+  describe('thrownBuiltinErrors metadata', () => {
+    it('should set thrownBuiltinErrors for sync function with throws', async () => {
+      await setupTest(db.backend, {
+        'index.js': `
+function validate(input) {
+  if (!input) throw new TypeError('bad type');
+  if (input < 0) throw new RangeError('bad range');
+}
+        `
+      });
+
+      const func = await getFunctionByName(db.backend, 'validate');
+      assert.ok(func, 'Should have function');
+
+      const record = func as unknown as {
+        controlFlow?: {
+          hasThrow?: boolean;
+          thrownBuiltinErrors?: string[];
+        };
+      };
+
+      assert.ok(record.controlFlow, 'Should have controlFlow');
+      assert.strictEqual(record.controlFlow.hasThrow, true, 'hasThrow should be true');
+      assert.ok(
+        record.controlFlow.thrownBuiltinErrors,
+        'Should have thrownBuiltinErrors'
+      );
+      assert.ok(
+        record.controlFlow.thrownBuiltinErrors.includes('TypeError'),
+        'Should include TypeError'
+      );
+      assert.ok(
+        record.controlFlow.thrownBuiltinErrors.includes('RangeError'),
+        'Should include RangeError'
+      );
+    });
+
+    it('should NOT set thrownBuiltinErrors for async throws', async () => {
+      await setupTest(db.backend, {
+        'index.js': `
+async function asyncFunc() {
+  throw new Error('async fail');
+}
+        `
+      });
+
+      const func = await getFunctionByName(db.backend, 'asyncFunc');
+      assert.ok(func, 'Should have function');
+
+      const record = func as unknown as {
+        controlFlow?: {
+          thrownBuiltinErrors?: string[];
+          rejectedBuiltinErrors?: string[];
+        };
+      };
+
+      // Async throw goes to rejectedBuiltinErrors, not thrownBuiltinErrors
+      assert.ok(
+        !record.controlFlow?.thrownBuiltinErrors || record.controlFlow.thrownBuiltinErrors.length === 0,
+        'Async function should NOT have thrownBuiltinErrors'
+      );
+      assert.ok(
+        record.controlFlow?.rejectedBuiltinErrors?.includes('Error'),
+        'Async function should have rejectedBuiltinErrors'
+      );
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // 7.3 Sync throw with variable micro-trace
+  // ---------------------------------------------------------------------------
+
+  describe('Sync throw variable tracing', () => {
+    it('should trace throw err to const err = new CustomError()', async () => {
+      await setupTest(db.backend, {
+        'index.js': `
+function validate(data) {
+  const err = new CustomError('invalid');
+  throw err;
+}
+        `
+      });
+
+      const func = await getFunctionByName(db.backend, 'validate');
+      assert.ok(func, 'Should have function');
+
+      const record = func as unknown as { rejectionPatterns?: unknown[] };
+      const patterns = record.rejectionPatterns as Array<{
+        rejectionType: string;
+        errorClassName: string | null;
+      }> | undefined;
+
+      assert.ok(patterns, 'Should have rejectionPatterns');
+      const pattern = patterns.find(p => p.rejectionType === 'variable_traced');
+      assert.ok(pattern, 'Should have variable_traced pattern');
+      assert.strictEqual(pattern.errorClassName, 'CustomError', 'Should trace to CustomError');
+    });
+
+    it('should detect throw param as variable_parameter in sync function', async () => {
+      await setupTest(db.backend, {
+        'index.js': `
+function rethrow(e) {
+  throw e;
+}
+        `
+      });
+
+      const func = await getFunctionByName(db.backend, 'rethrow');
+      assert.ok(func, 'Should have function');
+
+      const record = func as unknown as { rejectionPatterns?: unknown[] };
+      const patterns = record.rejectionPatterns as Array<{
+        rejectionType: string;
+        sourceVariableName?: string;
+      }> | undefined;
+
+      assert.ok(patterns, 'Should have rejectionPatterns');
+      const pattern = patterns.find(p => p.rejectionType === 'variable_parameter');
+      assert.ok(pattern, 'Should have variable_parameter pattern');
+      assert.strictEqual(pattern.sourceVariableName, 'e', 'Should track parameter name');
     });
   });
 });
