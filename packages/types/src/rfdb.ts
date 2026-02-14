@@ -55,7 +55,14 @@ export type RFDBCommand =
   | 'listDatabases'
   | 'currentDatabase'
   // Schema declaration
-  | 'declareFields';
+  | 'declareFields'
+  // Snapshot operations
+  | 'diffSnapshots'
+  | 'tagSnapshot'
+  | 'findSnapshot'
+  | 'listSnapshots'
+  // Batch operations
+  | 'commitBatch';
 
 // === WIRE FORMAT ===
 // Nodes as sent over the wire
@@ -229,6 +236,31 @@ export interface PingResponse extends RFDBResponse {
   version: string;
 }
 
+// === BATCH OPERATIONS ===
+
+export interface CommitDelta {
+  changedFiles: string[];
+  nodesAdded: number;
+  nodesRemoved: number;
+  edgesAdded: number;
+  edgesRemoved: number;
+  changedNodeTypes: string[];
+  changedEdgeTypes: string[];
+}
+
+export interface CommitBatchRequest extends RFDBRequest {
+  cmd: 'commitBatch';
+  changedFiles: string[];
+  nodes: WireNode[];
+  edges: WireEdge[];
+  tags?: string[];
+}
+
+export interface CommitBatchResponse extends RFDBResponse {
+  ok: boolean;
+  delta: CommitDelta;
+}
+
 // === PROTOCOL V2 - MULTI-DATABASE RESPONSES ===
 
 export interface HelloResponse extends RFDBResponse {
@@ -301,6 +333,89 @@ export interface DatalogResult {
   bindings: DatalogBinding;
 }
 
+// === SNAPSHOT TYPES ===
+
+/**
+ * Reference to a snapshot — either by version number or by tag key/value pair.
+ *
+ * When used as a number, refers to the snapshot at that version.
+ * When used as an object, resolves the snapshot tagged with the given key/value.
+ */
+export type SnapshotRef = number | { tag: string; value: string };
+
+/**
+ * Aggregate statistics for a snapshot (mirrors Rust ManifestStats).
+ *
+ * Wire format: camelCase (Rust snake_case fields mapped via serde rename).
+ */
+export interface SnapshotStats {
+  totalNodes: number;
+  totalEdges: number;
+  nodeSegmentCount: number;
+  edgeSegmentCount: number;
+}
+
+/**
+ * Segment descriptor — describes a single data segment in a snapshot.
+ *
+ * Simplified view of Rust SegmentDescriptor. Exposes fields relevant to
+ * client-side diff analysis. Internal fields (segmentType, shardId) omitted.
+ *
+ * Wire format: camelCase. HashSet<String> serializes as string[].
+ */
+export interface SegmentInfo {
+  segmentId: number;
+  recordCount: number;
+  byteSize: number;
+  nodeTypes: string[];
+  filePaths: string[];
+  edgeTypes: string[];
+}
+
+/**
+ * Diff between two snapshots (from -> to).
+ *
+ * Shows which segments were added/removed and stats for both versions.
+ * Mirrors Rust SnapshotDiff (storage_v2/manifest.rs).
+ */
+export interface SnapshotDiff {
+  fromVersion: number;
+  toVersion: number;
+  addedNodeSegments: SegmentInfo[];
+  removedNodeSegments: SegmentInfo[];
+  addedEdgeSegments: SegmentInfo[];
+  removedEdgeSegments: SegmentInfo[];
+  statsFrom: SnapshotStats;
+  statsTo: SnapshotStats;
+}
+
+/**
+ * Lightweight snapshot information for list operations.
+ *
+ * Mirrors Rust SnapshotInfo (storage_v2/manifest.rs).
+ * createdAt is Unix epoch seconds (u64 in Rust).
+ */
+export interface SnapshotInfo {
+  version: number;
+  createdAt: number;
+  tags: Record<string, string>;
+  stats: SnapshotStats;
+}
+
+// Snapshot response types
+
+export interface DiffSnapshotsResponse extends RFDBResponse {
+  diff: SnapshotDiff;
+}
+
+export interface FindSnapshotResponse extends RFDBResponse {
+  version: number | null;
+}
+
+export interface ListSnapshotsResponse extends RFDBResponse {
+  snapshots: SnapshotInfo[];
+}
+
 // === CLIENT INTERFACE ===
 export interface IRFDBClient {
   readonly socketPath: string;
@@ -356,6 +471,13 @@ export interface IRFDBClient {
   datalogQuery(query: string): Promise<DatalogResult[]>;
   checkGuarantee(ruleSource: string): Promise<DatalogResult[]>;
 
+  // Batch operations
+  beginBatch(): void;
+  commitBatch(tags?: string[]): Promise<CommitDelta>;
+  abortBatch(): void;
+  isBatching(): boolean;
+  findDependentFiles(changedFiles: string[]): Promise<string[]>;
+
   // Protocol v2 - Multi-Database
   hello(protocolVersion?: number): Promise<HelloResponse>;
   createDatabase(name: string, ephemeral?: boolean): Promise<CreateDatabaseResponse>;
@@ -364,4 +486,10 @@ export interface IRFDBClient {
   dropDatabase(name: string): Promise<RFDBResponse>;
   listDatabases(): Promise<ListDatabasesResponse>;
   currentDatabase(): Promise<CurrentDatabaseResponse>;
+
+  // Snapshot operations
+  diffSnapshots(from: SnapshotRef, to: SnapshotRef): Promise<SnapshotDiff>;
+  tagSnapshot(version: number, tags: Record<string, string>): Promise<void>;
+  findSnapshot(tagKey: string, tagValue: string): Promise<number | null>;
+  listSnapshots(filterTag?: string): Promise<SnapshotInfo[]>;
 }

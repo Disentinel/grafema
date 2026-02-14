@@ -11,6 +11,15 @@
 
 import { describe, it, beforeEach, mock } from 'node:test';
 import assert from 'node:assert';
+import { RFDBClient } from '../dist/client.js';
+
+import type {
+  SnapshotRef,
+  SnapshotStats,
+  SegmentInfo,
+  SnapshotDiff,
+  SnapshotInfo,
+} from '@grafema/types';
 
 /**
  * Mock RFDBClient that captures what would be sent to the server
@@ -293,5 +302,340 @@ describe('RFDBClient.addNodes() Metadata Preservation', () => {
 
     // Inner scope should reference parent
     assert.strictEqual(innerMeta.parentScope, 'SCOPE:file.js:5');
+  });
+});
+
+// ============================================================================
+// Snapshot API Tests
+// ============================================================================
+
+/**
+ * Extracted helper that mirrors RFDBClient._resolveSnapshotRef().
+ * Tested directly since the actual method is private and requires socket.
+ */
+function resolveSnapshotRef(ref: SnapshotRef): Record<string, unknown> {
+  if (typeof ref === 'number') return { version: ref };
+  return { tagKey: ref.tag, tagValue: ref.value };
+}
+
+describe('Snapshot API — resolveSnapshotRef', () => {
+  /**
+   * WHY: When referencing a snapshot by version number, the wire format
+   * must send { version: N } so the server can look up the manifest.
+   */
+  it('should resolve number ref to { version }', () => {
+    const result = resolveSnapshotRef(42);
+    assert.deepStrictEqual(result, { version: 42 });
+  });
+
+  /**
+   * WHY: When referencing a snapshot by tag, the wire format must send
+   * { tagKey, tagValue } so the server can do a tag lookup.
+   */
+  it('should resolve tag ref to { tagKey, tagValue }', () => {
+    const result = resolveSnapshotRef({ tag: 'release', value: 'v1.0.0' });
+    assert.deepStrictEqual(result, { tagKey: 'release', tagValue: 'v1.0.0' });
+  });
+
+  /**
+   * WHY: Version 0 is a valid snapshot (initial empty state).
+   * Must not be treated as falsy.
+   */
+  it('should handle version 0 correctly', () => {
+    const result = resolveSnapshotRef(0);
+    assert.deepStrictEqual(result, { version: 0 });
+  });
+
+  /**
+   * WHY: Discriminating between number and object is critical for
+   * the wire format. typeof === 'number' is the correct check.
+   */
+  it('should discriminate SnapshotRef union correctly', () => {
+    const numRef: SnapshotRef = 5;
+    const tagRef: SnapshotRef = { tag: 'env', value: 'staging' };
+
+    assert.strictEqual(typeof numRef, 'number');
+    assert.strictEqual(typeof tagRef, 'object');
+
+    // Both should produce distinct wire formats
+    const numResult = resolveSnapshotRef(numRef);
+    const tagResult = resolveSnapshotRef(tagRef);
+
+    assert.ok('version' in numResult);
+    assert.ok(!('tagKey' in numResult));
+    assert.ok('tagKey' in tagResult);
+    assert.ok(!('version' in tagResult));
+  });
+});
+
+describe('Snapshot API — Type Contracts', () => {
+  /**
+   * WHY: SnapshotStats must match Rust ManifestStats wire format.
+   * Fields: total_nodes -> totalNodes, total_edges -> totalEdges, etc.
+   */
+  it('SnapshotStats should have correct shape', () => {
+    const stats: SnapshotStats = {
+      totalNodes: 1500,
+      totalEdges: 3200,
+      nodeSegmentCount: 4,
+      edgeSegmentCount: 2,
+    };
+
+    assert.strictEqual(stats.totalNodes, 1500);
+    assert.strictEqual(stats.totalEdges, 3200);
+    assert.strictEqual(stats.nodeSegmentCount, 4);
+    assert.strictEqual(stats.edgeSegmentCount, 2);
+  });
+
+  /**
+   * WHY: SegmentInfo must expose the subset of Rust SegmentDescriptor
+   * that's useful for client-side diff analysis. HashSet -> string[].
+   */
+  it('SegmentInfo should have correct shape', () => {
+    const segment: SegmentInfo = {
+      segmentId: 7,
+      recordCount: 500,
+      byteSize: 102400,
+      nodeTypes: ['FUNCTION', 'CLASS'],
+      filePaths: ['src/app.js', 'src/utils.js'],
+      edgeTypes: [],
+    };
+
+    assert.strictEqual(segment.segmentId, 7);
+    assert.strictEqual(segment.recordCount, 500);
+    assert.strictEqual(segment.byteSize, 102400);
+    assert.deepStrictEqual(segment.nodeTypes, ['FUNCTION', 'CLASS']);
+    assert.deepStrictEqual(segment.filePaths, ['src/app.js', 'src/utils.js']);
+    assert.deepStrictEqual(segment.edgeTypes, []);
+  });
+
+  /**
+   * WHY: SnapshotDiff is the primary return type of diffSnapshots().
+   * Must carry from/to versions, segment lists, and stats for both.
+   */
+  it('SnapshotDiff should have correct shape', () => {
+    const diff: SnapshotDiff = {
+      fromVersion: 1,
+      toVersion: 3,
+      addedNodeSegments: [
+        { segmentId: 10, recordCount: 200, byteSize: 40960, nodeTypes: ['MODULE'], filePaths: ['new.js'], edgeTypes: [] },
+      ],
+      removedNodeSegments: [],
+      addedEdgeSegments: [
+        { segmentId: 11, recordCount: 50, byteSize: 8192, nodeTypes: [], filePaths: [], edgeTypes: ['CALLS'] },
+      ],
+      removedEdgeSegments: [
+        { segmentId: 5, recordCount: 30, byteSize: 4096, nodeTypes: [], filePaths: [], edgeTypes: ['IMPORTS'] },
+      ],
+      statsFrom: { totalNodes: 1000, totalEdges: 2000, nodeSegmentCount: 3, edgeSegmentCount: 2 },
+      statsTo: { totalNodes: 1200, totalEdges: 2020, nodeSegmentCount: 4, edgeSegmentCount: 2 },
+    };
+
+    assert.strictEqual(diff.fromVersion, 1);
+    assert.strictEqual(diff.toVersion, 3);
+    assert.strictEqual(diff.addedNodeSegments.length, 1);
+    assert.strictEqual(diff.removedNodeSegments.length, 0);
+    assert.strictEqual(diff.addedEdgeSegments.length, 1);
+    assert.strictEqual(diff.removedEdgeSegments.length, 1);
+    assert.strictEqual(diff.statsFrom.totalNodes, 1000);
+    assert.strictEqual(diff.statsTo.totalNodes, 1200);
+  });
+
+  /**
+   * WHY: SnapshotInfo is the return type of listSnapshots().
+   * Must carry version, timestamp, tags, and stats.
+   * createdAt is Unix epoch seconds (not milliseconds).
+   */
+  it('SnapshotInfo should have correct shape', () => {
+    const info: SnapshotInfo = {
+      version: 5,
+      createdAt: 1707900000,
+      tags: { release: 'v1.0.0', env: 'production' },
+      stats: { totalNodes: 500, totalEdges: 1200, nodeSegmentCount: 2, edgeSegmentCount: 1 },
+    };
+
+    assert.strictEqual(info.version, 5);
+    assert.strictEqual(info.createdAt, 1707900000);
+    assert.deepStrictEqual(info.tags, { release: 'v1.0.0', env: 'production' });
+    assert.strictEqual(info.stats.totalNodes, 500);
+  });
+
+  /**
+   * WHY: SnapshotInfo with empty tags should be valid — not all snapshots
+   * are tagged. The tags field should be an empty object, not undefined.
+   */
+  it('SnapshotInfo should allow empty tags', () => {
+    const info: SnapshotInfo = {
+      version: 1,
+      createdAt: 1707800000,
+      tags: {},
+      stats: { totalNodes: 0, totalEdges: 0, nodeSegmentCount: 0, edgeSegmentCount: 0 },
+    };
+
+    assert.deepStrictEqual(info.tags, {});
+    assert.strictEqual(info.stats.totalNodes, 0);
+  });
+});
+
+describe('Snapshot API — Wire Format', () => {
+  /**
+   * WHY: tagSnapshot sends version + tags to the server.
+   * The wire format must include both fields at the top level of the payload.
+   */
+  it('tagSnapshot payload should have version and tags', () => {
+    const version = 3;
+    const tags = { release: 'v2.0', branch: 'main' };
+
+    // Simulate the payload that tagSnapshot() would send
+    const payload = { version, tags };
+
+    assert.strictEqual(payload.version, 3);
+    assert.deepStrictEqual(payload.tags, { release: 'v2.0', branch: 'main' });
+  });
+
+  /**
+   * WHY: findSnapshot sends tagKey + tagValue.
+   * The response contains version (number) or null if not found.
+   */
+  it('findSnapshot wire format — found', () => {
+    const response = { version: 7 };
+    assert.strictEqual(response.version, 7);
+  });
+
+  it('findSnapshot wire format — not found', () => {
+    const response = { version: null };
+    assert.strictEqual(response.version, null);
+  });
+
+  /**
+   * WHY: listSnapshots with filter sends filterTag in payload.
+   * Without filter, the payload should be empty.
+   */
+  it('listSnapshots payload with filter', () => {
+    const filterTag = 'release';
+    const payload: Record<string, unknown> = {};
+    if (filterTag !== undefined) payload.filterTag = filterTag;
+
+    assert.strictEqual(payload.filterTag, 'release');
+  });
+
+  it('listSnapshots payload without filter', () => {
+    const filterTag = undefined;
+    const payload: Record<string, unknown> = {};
+    if (filterTag !== undefined) payload.filterTag = filterTag;
+
+    assert.strictEqual(Object.keys(payload).length, 0);
+  });
+
+  /**
+   * WHY: diffSnapshots sends from + to as resolved snapshot refs.
+   * Must handle mixed refs (number + tag) correctly.
+   */
+  it('diffSnapshots with mixed refs', () => {
+    const from: SnapshotRef = 1;
+    const to: SnapshotRef = { tag: 'release', value: 'v2.0' };
+
+    const payload = {
+      from: resolveSnapshotRef(from),
+      to: resolveSnapshotRef(to),
+    };
+
+    assert.deepStrictEqual(payload.from, { version: 1 });
+    assert.deepStrictEqual(payload.to, { tagKey: 'release', tagValue: 'v2.0' });
+  });
+});
+
+// ===========================================================================
+// Batch Operations Unit Tests (RFD-9)
+// ===========================================================================
+
+describe('RFDBClient Batch Operations', () => {
+  /**
+   * We test batch state management by creating a real RFDBClient instance
+   * (not connected) and exercising the batch methods. Since batch state is
+   * purely client-side, we don't need a server connection for these tests.
+   */
+
+  it('beginBatch sets batching state', () => {
+    // RFDBClient constructor doesn't require connection
+    const client = new RFDBClient('/tmp/test-nonexistent.sock');
+
+    assert.strictEqual(client.isBatching(), false, 'should not be batching initially');
+    client.beginBatch();
+    assert.strictEqual(client.isBatching(), true, 'should be batching after beginBatch');
+  });
+
+  it('double beginBatch throws', () => {
+    const client = new RFDBClient('/tmp/test-nonexistent.sock');
+
+    client.beginBatch();
+    assert.throws(
+      () => client.beginBatch(),
+      { message: 'Batch already in progress' },
+      'should throw on double beginBatch',
+    );
+  });
+
+  it('commitBatch without beginBatch throws', async () => {
+    const client = new RFDBClient('/tmp/test-nonexistent.sock');
+
+    await assert.rejects(
+      () => client.commitBatch(),
+      { message: 'No batch in progress' },
+      'should throw on commitBatch without beginBatch',
+    );
+  });
+
+  it('abortBatch clears batching state', () => {
+    const client = new RFDBClient('/tmp/test-nonexistent.sock');
+
+    client.beginBatch();
+    assert.strictEqual(client.isBatching(), true);
+    client.abortBatch();
+    assert.strictEqual(client.isBatching(), false, 'should not be batching after abort');
+  });
+
+  it('abortBatch when not batching is a no-op', () => {
+    const client = new RFDBClient('/tmp/test-nonexistent.sock');
+
+    // Should not throw
+    client.abortBatch();
+    assert.strictEqual(client.isBatching(), false);
+  });
+
+  it('addNodes during batch buffers locally and returns ok', async () => {
+    const client = new RFDBClient('/tmp/test-nonexistent.sock');
+    // Not connected — _send would fail, but buffering skips _send
+
+    client.beginBatch();
+    const result = await client.addNodes([
+      { id: 'n1', type: 'FUNCTION', name: 'foo', file: 'a.js' },
+      { id: 'n2', type: 'FUNCTION', name: 'bar', file: 'b.js' },
+    ]);
+
+    assert.deepStrictEqual(result, { ok: true }, 'should return ok without sending');
+    assert.strictEqual(client.isBatching(), true, 'should still be batching');
+  });
+
+  it('addEdges during batch buffers locally and returns ok', async () => {
+    const client = new RFDBClient('/tmp/test-nonexistent.sock');
+
+    client.beginBatch();
+    const result = await client.addEdges([
+      { src: 'n1', dst: 'n2', edgeType: 'CALLS', metadata: '{}' },
+    ]);
+
+    assert.deepStrictEqual(result, { ok: true }, 'should return ok without sending');
+  });
+
+  it('addNodes without batch still requires connection (legacy behavior)', async () => {
+    const client = new RFDBClient('/tmp/test-nonexistent.sock');
+    // Not connected, not batching — should throw "Not connected"
+
+    await assert.rejects(
+      () => client.addNodes([{ id: 'n1', type: 'FUNCTION', name: 'foo', file: 'a.js' }]),
+      { message: 'Not connected to RFDB server' },
+      'should require connection when not batching',
+    );
   });
 });

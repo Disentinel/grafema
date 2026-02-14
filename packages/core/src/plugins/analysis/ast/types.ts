@@ -382,6 +382,11 @@ export interface TypeAliasInfo {
   line: number;
   column?: number;
   aliasOf?: string;  // строковое представление типа
+  conditionalType?: boolean;
+  checkType?: string;
+  extendsType?: string;
+  trueType?: string;
+  falseType?: string;
 }
 
 // === ENUM DECLARATION INFO ===
