@@ -32,7 +32,7 @@ use serde::{Deserialize, Serialize};
 use sysinfo::System;
 
 // Import from library
-use rfdb::graph::{GraphEngine, GraphStore};
+use rfdb::graph::{GraphEngine, GraphEngineV2, GraphStore};
 use rfdb::storage::{NodeRecord, EdgeRecord, AttrQuery, FieldDecl, FieldType};
 use rfdb::datalog::{parse_program, parse_atom, parse_query, Evaluator};
 use rfdb::database_manager::{DatabaseManager, DatabaseInfo, AccessMode};
@@ -210,6 +210,61 @@ pub enum Request {
         #[serde(default)]
         tags: Option<Vec<String>>,
     },
+
+    // ========================================================================
+    // Protocol v3 Commands
+    // ========================================================================
+
+    /// Begin a batch operation (session-level state)
+    BeginBatch,
+
+    /// Abort the current batch operation
+    AbortBatch,
+
+    /// Tag a snapshot version with key-value pairs (v2 engine only)
+    TagSnapshot {
+        version: u64,
+        tags: HashMap<String, String>,
+    },
+
+    /// Find a snapshot by tag key/value (v2 engine only)
+    FindSnapshot {
+        #[serde(rename = "tagKey")]
+        tag_key: String,
+        #[serde(rename = "tagValue")]
+        tag_value: String,
+    },
+
+    /// List snapshots, optionally filtered by tag key (v2 engine only)
+    ListSnapshots {
+        #[serde(rename = "filterTag")]
+        filter_tag: Option<String>,
+    },
+
+    /// Diff two snapshots (v2 engine only)
+    DiffSnapshots {
+        #[serde(rename = "fromVersion")]
+        from_version: u64,
+        #[serde(rename = "toVersion")]
+        to_version: u64,
+    },
+
+    /// Enhanced edge query with direction and optional limit
+    QueryEdges {
+        id: String,
+        /// "outgoing", "incoming", or "both"
+        direction: String,
+        #[serde(rename = "edgeTypes")]
+        edge_types: Option<Vec<String>>,
+        limit: Option<u32>,
+    },
+
+    /// Find files that depend on a node/file
+    FindDependentFiles {
+        id: String,
+        #[serde(rename = "edgeTypes")]
+        edge_types: Option<Vec<String>>,
+    },
 }
 
 fn default_rw_mode() -> String { "rw".to_string() }
@@ -285,6 +340,37 @@ pub enum Response {
     Violations { violations: Vec<WireViolation> },
     Identifier { identifier: Option<String> },
     DatalogResults { results: Vec<WireViolation> },
+
+    // ========================================================================
+    // Protocol v3 Responses
+    // ========================================================================
+
+    /// Response for BeginBatch
+    BatchStarted {
+        ok: bool,
+        #[serde(rename = "batchId")]
+        batch_id: String,
+    },
+
+    /// Response for snapshot version lookup
+    SnapshotVersion {
+        version: Option<u64>,
+    },
+
+    /// Response for ListSnapshots
+    SnapshotList {
+        snapshots: Vec<WireSnapshotInfo>,
+    },
+
+    /// Response for DiffSnapshots
+    SnapshotDiffResult {
+        diff: WireSnapshotDiff,
+    },
+
+    /// Response for FindDependentFiles
+    Files {
+        files: Vec<String>,
+    },
 
     /// Performance statistics response
     Stats {
@@ -462,6 +548,39 @@ pub struct WireCommitDelta {
     pub changed_edge_types: Vec<String>,
 }
 
+/// Snapshot info for wire protocol (v2 engine only)
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WireSnapshotInfo {
+    pub version: u64,
+    pub created_at: u64,
+    pub tags: HashMap<String, String>,
+    pub total_nodes: u64,
+    pub total_edges: u64,
+}
+
+/// Snapshot diff for wire protocol (v2 engine only)
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WireSnapshotDiff {
+    pub from_version: u64,
+    pub to_version: u64,
+    pub added_node_segments: u64,
+    pub removed_node_segments: u64,
+    pub added_edge_segments: u64,
+    pub removed_edge_segments: u64,
+    pub stats_from: WireManifestStats,
+    pub stats_to: WireManifestStats,
+}
+
+/// Manifest stats for wire protocol
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WireManifestStats {
+    pub total_nodes: u64,
+    pub total_edges: u64,
+}
+
 // ============================================================================
 // ID Conversion (string <-> u128)
 // ============================================================================
@@ -576,6 +695,12 @@ fn get_operation_name(request: &Request) -> String {
         Request::EdgeCount => "EdgeCount".to_string(),
         Request::GetStats => "GetStats".to_string(),
         Request::CommitBatch { .. } => "CommitBatch".to_string(),
+        Request::TagSnapshot { .. } => "TagSnapshot".to_string(),
+        Request::FindSnapshot { .. } => "FindSnapshot".to_string(),
+        Request::ListSnapshots { .. } => "ListSnapshots".to_string(),
+        Request::DiffSnapshots { .. } => "DiffSnapshots".to_string(),
+        Request::QueryEdges { .. } => "QueryEdges".to_string(),
+        Request::FindDependentFiles { .. } => "FindDependentFiles".to_string(),
         _ => "Other".to_string(),
     }
 }
@@ -1081,6 +1206,182 @@ fn handle_request(
         Request::CommitBatch { changed_files, nodes, edges, tags: _ } => {
             with_engine_write(session, |engine| {
                 handle_commit_batch(engine, changed_files, nodes, edges)
+            })
+        }
+
+        // ====================================================================
+        // Protocol v3 Commands
+        // ====================================================================
+
+        Request::BeginBatch => {
+            match session.begin_batch() {
+                Some(batch_id) => Response::BatchStarted { ok: true, batch_id },
+                None => Response::Error {
+                    error: format!(
+                        "Batch already in progress: {}",
+                        session.pending_batch_id.as_deref().unwrap_or("unknown")
+                    ),
+                },
+            }
+        }
+
+        Request::AbortBatch => {
+            match session.abort_batch() {
+                Some(_) => Response::Ok { ok: true },
+                None => Response::Error {
+                    error: "No batch in progress".to_string(),
+                },
+            }
+        }
+
+        Request::TagSnapshot { version, tags } => {
+            with_engine_write(session, |engine| {
+                match engine.as_any_mut().downcast_mut::<GraphEngineV2>() {
+                    Some(v2) => {
+                        match v2.tag_snapshot(version, tags) {
+                            Ok(()) => Response::Ok { ok: true },
+                            Err(e) => Response::Error { error: e.to_string() },
+                        }
+                    }
+                    None => Response::ErrorWithCode {
+                        error: "TagSnapshot requires v2 engine".to_string(),
+                        code: "V2_REQUIRED".to_string(),
+                    },
+                }
+            })
+        }
+
+        Request::FindSnapshot { tag_key, tag_value } => {
+            with_engine_read(session, |engine| {
+                match engine.as_any().downcast_ref::<GraphEngineV2>() {
+                    Some(v2) => {
+                        let version = v2.find_snapshot(&tag_key, &tag_value);
+                        Response::SnapshotVersion { version }
+                    }
+                    None => Response::ErrorWithCode {
+                        error: "FindSnapshot requires v2 engine".to_string(),
+                        code: "V2_REQUIRED".to_string(),
+                    },
+                }
+            })
+        }
+
+        Request::ListSnapshots { filter_tag } => {
+            with_engine_read(session, |engine| {
+                match engine.as_any().downcast_ref::<GraphEngineV2>() {
+                    Some(v2) => {
+                        let snapshots = v2.list_snapshots(filter_tag.as_deref());
+                        let wire_snapshots: Vec<WireSnapshotInfo> = snapshots.into_iter()
+                            .map(|s| WireSnapshotInfo {
+                                version: s.version,
+                                created_at: s.created_at,
+                                tags: s.tags,
+                                total_nodes: s.stats.total_nodes,
+                                total_edges: s.stats.total_edges,
+                            })
+                            .collect();
+                        Response::SnapshotList { snapshots: wire_snapshots }
+                    }
+                    None => Response::ErrorWithCode {
+                        error: "ListSnapshots requires v2 engine".to_string(),
+                        code: "V2_REQUIRED".to_string(),
+                    },
+                }
+            })
+        }
+
+        Request::DiffSnapshots { from_version, to_version } => {
+            with_engine_read(session, |engine| {
+                match engine.as_any().downcast_ref::<GraphEngineV2>() {
+                    Some(v2) => {
+                        match v2.diff_snapshots(from_version, to_version) {
+                            Ok(diff) => Response::SnapshotDiffResult {
+                                diff: WireSnapshotDiff {
+                                    from_version: diff.from_version,
+                                    to_version: diff.to_version,
+                                    added_node_segments: diff.added_node_segments.len() as u64,
+                                    removed_node_segments: diff.removed_node_segments.len() as u64,
+                                    added_edge_segments: diff.added_edge_segments.len() as u64,
+                                    removed_edge_segments: diff.removed_edge_segments.len() as u64,
+                                    stats_from: WireManifestStats {
+                                        total_nodes: diff.stats_from.total_nodes,
+                                        total_edges: diff.stats_from.total_edges,
+                                    },
+                                    stats_to: WireManifestStats {
+                                        total_nodes: diff.stats_to.total_nodes,
+                                        total_edges: diff.stats_to.total_edges,
+                                    },
+                                },
+                            },
+                            Err(e) => Response::Error { error: e.to_string() },
+                        }
+                    }
+                    None => Response::ErrorWithCode {
+                        error: "DiffSnapshots requires v2 engine".to_string(),
+                        code: "V2_REQUIRED".to_string(),
+                    },
+                }
+            })
+        }
+
+        Request::QueryEdges { id, direction, edge_types, limit } => {
+            with_engine_read(session, |engine| {
+                let node_id = string_to_id(&id);
+                let edge_types_refs: Option<Vec<&str>> = edge_types.as_ref()
+                    .map(|v| v.iter().map(|s| s.as_str()).collect());
+
+                let mut edges: Vec<WireEdge> = match direction.as_str() {
+                    "outgoing" => {
+                        engine.get_outgoing_edges(node_id, edge_types_refs.as_deref())
+                            .into_iter()
+                            .map(|e| record_to_wire_edge(&e))
+                            .collect()
+                    }
+                    "incoming" => {
+                        engine.get_incoming_edges(node_id, edge_types_refs.as_deref())
+                            .into_iter()
+                            .map(|e| record_to_wire_edge(&e))
+                            .collect()
+                    }
+                    "both" | _ => {
+                        let mut all = engine.get_outgoing_edges(node_id, edge_types_refs.as_deref());
+                        all.extend(engine.get_incoming_edges(node_id, edge_types_refs.as_deref()));
+                        all.into_iter()
+                            .map(|e| record_to_wire_edge(&e))
+                            .collect()
+                    }
+                };
+
+                if let Some(lim) = limit {
+                    edges.truncate(lim as usize);
+                }
+
+                Response::Edges { edges }
+            })
+        }
+
+        Request::FindDependentFiles { id, edge_types } => {
+            with_engine_read(session, |engine| {
+                let node_id = string_to_id(&id);
+                let edge_types_refs: Option<Vec<&str>> = edge_types.as_ref()
+                    .map(|v| v.iter().map(|s| s.as_str()).collect());
+
+                // Find incoming edges to this node — sources are dependents
+                let incoming = engine.get_incoming_edges(node_id, edge_types_refs.as_deref());
+
+                let mut files: HashSet<String> = HashSet::new();
+                for edge in &incoming {
+                    if let Some(node) = engine.get_node(edge.src) {
+                        if let Some(ref file) = node.file {
+                            files.insert(file.clone());
+                        }
+                    }
+                }
+
+                let mut files_vec: Vec<String> = files.into_iter().collect();
+                files_vec.sort();
+
+                Response::Files { files: files_vec }
             })
         }
     }
@@ -2592,6 +2893,495 @@ mod protocol_tests {
                 assert_eq!(delta.nodes_removed, 2);
             }
             _ => panic!("Expected BatchCommitted"),
+        }
+    }
+
+    // ============================================================================
+    // BeginBatch / AbortBatch Commands
+    // ============================================================================
+
+    #[test]
+    fn test_begin_batch() {
+        let (_dir, manager) = setup_test_manager();
+        let mut session = ClientSession::new(1);
+
+        let response = handle_request(&manager, &mut session, Request::BeginBatch, &None);
+
+        match response {
+            Response::BatchStarted { ok, batch_id } => {
+                assert!(ok);
+                assert!(!batch_id.is_empty());
+                assert!(session.pending_batch_id.is_some());
+            }
+            _ => panic!("Expected BatchStarted response"),
+        }
+    }
+
+    #[test]
+    fn test_begin_batch_already_in_progress() {
+        let (_dir, manager) = setup_test_manager();
+        let mut session = ClientSession::new(1);
+
+        // Start first batch
+        handle_request(&manager, &mut session, Request::BeginBatch, &None);
+
+        // Try to start second batch
+        let response = handle_request(&manager, &mut session, Request::BeginBatch, &None);
+
+        match response {
+            Response::Error { error } => {
+                assert!(error.contains("already in progress"));
+            }
+            _ => panic!("Expected Error response"),
+        }
+    }
+
+    #[test]
+    fn test_abort_batch() {
+        let (_dir, manager) = setup_test_manager();
+        let mut session = ClientSession::new(1);
+
+        // Start batch
+        handle_request(&manager, &mut session, Request::BeginBatch, &None);
+        assert!(session.pending_batch_id.is_some());
+
+        // Abort it
+        let response = handle_request(&manager, &mut session, Request::AbortBatch, &None);
+
+        match response {
+            Response::Ok { ok } => assert!(ok),
+            _ => panic!("Expected Ok response"),
+        }
+        assert!(session.pending_batch_id.is_none());
+    }
+
+    #[test]
+    fn test_abort_batch_none_pending() {
+        let (_dir, manager) = setup_test_manager();
+        let mut session = ClientSession::new(1);
+
+        let response = handle_request(&manager, &mut session, Request::AbortBatch, &None);
+
+        match response {
+            Response::Error { error } => {
+                assert!(error.contains("No batch"));
+            }
+            _ => panic!("Expected Error response"),
+        }
+    }
+
+    // ============================================================================
+    // Snapshot Commands (v2 engine only)
+    // ============================================================================
+
+    /// Helper: create and open an ephemeral v2 database for testing
+    fn setup_v2_ephemeral_db(manager: &Arc<DatabaseManager>, session: &mut ClientSession, name: &str) {
+        // Ephemeral databases created via DatabaseManager use v2 engine
+        handle_request(manager, session, Request::CreateDatabase {
+            name: name.to_string(),
+            ephemeral: true,
+        }, &None);
+        handle_request(manager, session, Request::OpenDatabase {
+            name: name.to_string(),
+            mode: "rw".to_string(),
+        }, &None);
+    }
+
+    #[test]
+    fn test_list_snapshots_v2() {
+        let (_dir, manager) = setup_test_manager();
+        let mut session = ClientSession::new(1);
+        setup_v2_ephemeral_db(&manager, &mut session, "snap_test");
+
+        let response = handle_request(&manager, &mut session, Request::ListSnapshots {
+            filter_tag: None,
+        }, &None);
+
+        match response {
+            Response::SnapshotList { snapshots } => {
+                // Ephemeral v2 engine may have 0 or 1 snapshots depending on impl
+                // The important thing is it doesn't error
+                assert!(snapshots.len() <= 1);
+            }
+            _ => panic!("Expected SnapshotList response, got {:?}", response),
+        }
+    }
+
+    #[test]
+    fn test_find_snapshot_v2() {
+        let (_dir, manager) = setup_test_manager();
+        let mut session = ClientSession::new(1);
+        setup_v2_ephemeral_db(&manager, &mut session, "snap_find_test");
+
+        // Find non-existent snapshot
+        let response = handle_request(&manager, &mut session, Request::FindSnapshot {
+            tag_key: "name".to_string(),
+            tag_value: "nonexistent".to_string(),
+        }, &None);
+
+        match response {
+            Response::SnapshotVersion { version } => {
+                assert!(version.is_none());
+            }
+            _ => panic!("Expected SnapshotVersion response, got {:?}", response),
+        }
+    }
+
+    #[test]
+    fn test_snapshot_ops_on_v1_engine() {
+        let dir = tempdir().unwrap();
+        let manager = Arc::new(DatabaseManager::new(dir.path().to_path_buf()));
+
+        // Create a v1 database by placing a nodes.bin marker
+        let v1_path = dir.path().join("default.rfdb");
+        std::fs::create_dir_all(&v1_path).unwrap();
+        // Create a v1 engine and flush to produce nodes.bin
+        let mut v1_engine = GraphEngine::create(&v1_path).unwrap();
+        // Add a dummy node so flush writes nodes.bin
+        v1_engine.add_nodes(vec![NodeRecord {
+            id: 1,
+            node_type: Some("DUMMY".to_string()),
+            file_id: 0,
+            name_offset: 0,
+            version: "main".to_string(),
+            exported: false,
+            replaces: None,
+            deleted: false,
+            name: Some("dummy".to_string()),
+            file: Some("dummy.js".to_string()),
+            metadata: None,
+        }]);
+        v1_engine.flush().unwrap();
+        // Drop v1_engine so the file is not locked
+        drop(v1_engine);
+
+        // Now create default from this path — detects nodes.bin and uses v1
+        manager.create_default_from_path(&v1_path).unwrap();
+
+        let mut session = ClientSession::new(1);
+        handle_request(&manager, &mut session, Request::OpenDatabase {
+            name: "default".to_string(),
+            mode: "rw".to_string(),
+        }, &None);
+
+        // ListSnapshots should return V2_REQUIRED error
+        let response = handle_request(&manager, &mut session, Request::ListSnapshots {
+            filter_tag: None,
+        }, &None);
+
+        match response {
+            Response::ErrorWithCode { error, code } => {
+                assert!(error.contains("v2 engine"));
+                assert_eq!(code, "V2_REQUIRED");
+            }
+            _ => panic!("Expected ErrorWithCode response, got {:?}", response),
+        }
+
+        // FindSnapshot should also return V2_REQUIRED error
+        let response = handle_request(&manager, &mut session, Request::FindSnapshot {
+            tag_key: "name".to_string(),
+            tag_value: "test".to_string(),
+        }, &None);
+
+        match response {
+            Response::ErrorWithCode { error, code } => {
+                assert!(error.contains("v2 engine"));
+                assert_eq!(code, "V2_REQUIRED");
+            }
+            _ => panic!("Expected ErrorWithCode response, got {:?}", response),
+        }
+    }
+
+    // ============================================================================
+    // QueryEdges Command
+    // ============================================================================
+
+    #[test]
+    fn test_query_edges_outgoing() {
+        let (_dir, manager) = setup_test_manager();
+        let mut session = ClientSession::new(1);
+        setup_ephemeral_db(&manager, &mut session, "qe_test");
+
+        // Add nodes and edges
+        handle_request(&manager, &mut session, Request::AddNodes {
+            nodes: vec![
+                WireNode { id: "a".to_string(), node_type: Some("FUNCTION".to_string()), name: Some("a".to_string()), file: Some("a.js".to_string()), exported: false, metadata: None },
+                WireNode { id: "b".to_string(), node_type: Some("FUNCTION".to_string()), name: Some("b".to_string()), file: Some("b.js".to_string()), exported: false, metadata: None },
+                WireNode { id: "c".to_string(), node_type: Some("FUNCTION".to_string()), name: Some("c".to_string()), file: Some("c.js".to_string()), exported: false, metadata: None },
+            ],
+        }, &None);
+        handle_request(&manager, &mut session, Request::AddEdges {
+            edges: vec![
+                WireEdge { src: "a".to_string(), dst: "b".to_string(), edge_type: Some("CALLS".to_string()), metadata: None },
+                WireEdge { src: "a".to_string(), dst: "c".to_string(), edge_type: Some("CALLS".to_string()), metadata: None },
+                WireEdge { src: "b".to_string(), dst: "a".to_string(), edge_type: Some("IMPORTS".to_string()), metadata: None },
+            ],
+            skip_validation: true,
+        }, &None);
+
+        // Query outgoing edges from "a"
+        let response = handle_request(&manager, &mut session, Request::QueryEdges {
+            id: "a".to_string(),
+            direction: "outgoing".to_string(),
+            edge_types: None,
+            limit: None,
+        }, &None);
+
+        match response {
+            Response::Edges { edges } => {
+                assert_eq!(edges.len(), 2, "Node 'a' should have 2 outgoing edges");
+            }
+            _ => panic!("Expected Edges response"),
+        }
+    }
+
+    #[test]
+    fn test_query_edges_incoming() {
+        let (_dir, manager) = setup_test_manager();
+        let mut session = ClientSession::new(1);
+        setup_ephemeral_db(&manager, &mut session, "qe_in_test");
+
+        handle_request(&manager, &mut session, Request::AddNodes {
+            nodes: vec![
+                WireNode { id: "a".to_string(), node_type: Some("FUNCTION".to_string()), name: Some("a".to_string()), file: Some("a.js".to_string()), exported: false, metadata: None },
+                WireNode { id: "b".to_string(), node_type: Some("FUNCTION".to_string()), name: Some("b".to_string()), file: Some("b.js".to_string()), exported: false, metadata: None },
+            ],
+        }, &None);
+        handle_request(&manager, &mut session, Request::AddEdges {
+            edges: vec![
+                WireEdge { src: "b".to_string(), dst: "a".to_string(), edge_type: Some("CALLS".to_string()), metadata: None },
+            ],
+            skip_validation: true,
+        }, &None);
+
+        let response = handle_request(&manager, &mut session, Request::QueryEdges {
+            id: "a".to_string(),
+            direction: "incoming".to_string(),
+            edge_types: None,
+            limit: None,
+        }, &None);
+
+        match response {
+            Response::Edges { edges } => {
+                assert_eq!(edges.len(), 1, "Node 'a' should have 1 incoming edge");
+            }
+            _ => panic!("Expected Edges response"),
+        }
+    }
+
+    #[test]
+    fn test_query_edges_both_with_limit() {
+        let (_dir, manager) = setup_test_manager();
+        let mut session = ClientSession::new(1);
+        setup_ephemeral_db(&manager, &mut session, "qe_both_test");
+
+        handle_request(&manager, &mut session, Request::AddNodes {
+            nodes: vec![
+                WireNode { id: "a".to_string(), node_type: Some("FUNCTION".to_string()), name: Some("a".to_string()), file: Some("a.js".to_string()), exported: false, metadata: None },
+                WireNode { id: "b".to_string(), node_type: Some("FUNCTION".to_string()), name: Some("b".to_string()), file: Some("b.js".to_string()), exported: false, metadata: None },
+                WireNode { id: "c".to_string(), node_type: Some("FUNCTION".to_string()), name: Some("c".to_string()), file: Some("c.js".to_string()), exported: false, metadata: None },
+            ],
+        }, &None);
+        handle_request(&manager, &mut session, Request::AddEdges {
+            edges: vec![
+                WireEdge { src: "a".to_string(), dst: "b".to_string(), edge_type: Some("CALLS".to_string()), metadata: None },
+                WireEdge { src: "c".to_string(), dst: "a".to_string(), edge_type: Some("CALLS".to_string()), metadata: None },
+            ],
+            skip_validation: true,
+        }, &None);
+
+        // Query both directions with limit=1
+        let response = handle_request(&manager, &mut session, Request::QueryEdges {
+            id: "a".to_string(),
+            direction: "both".to_string(),
+            edge_types: None,
+            limit: Some(1),
+        }, &None);
+
+        match response {
+            Response::Edges { edges } => {
+                assert_eq!(edges.len(), 1, "Limit should truncate to 1 edge");
+            }
+            _ => panic!("Expected Edges response"),
+        }
+    }
+
+    #[test]
+    fn test_query_edges_with_type_filter() {
+        let (_dir, manager) = setup_test_manager();
+        let mut session = ClientSession::new(1);
+        setup_ephemeral_db(&manager, &mut session, "qe_filter_test");
+
+        handle_request(&manager, &mut session, Request::AddNodes {
+            nodes: vec![
+                WireNode { id: "a".to_string(), node_type: Some("FUNCTION".to_string()), name: Some("a".to_string()), file: Some("a.js".to_string()), exported: false, metadata: None },
+                WireNode { id: "b".to_string(), node_type: Some("FUNCTION".to_string()), name: Some("b".to_string()), file: Some("b.js".to_string()), exported: false, metadata: None },
+            ],
+        }, &None);
+        handle_request(&manager, &mut session, Request::AddEdges {
+            edges: vec![
+                WireEdge { src: "a".to_string(), dst: "b".to_string(), edge_type: Some("CALLS".to_string()), metadata: None },
+                WireEdge { src: "a".to_string(), dst: "b".to_string(), edge_type: Some("IMPORTS".to_string()), metadata: None },
+            ],
+            skip_validation: true,
+        }, &None);
+
+        // Filter by CALLS only
+        let response = handle_request(&manager, &mut session, Request::QueryEdges {
+            id: "a".to_string(),
+            direction: "outgoing".to_string(),
+            edge_types: Some(vec!["CALLS".to_string()]),
+            limit: None,
+        }, &None);
+
+        match response {
+            Response::Edges { edges } => {
+                assert_eq!(edges.len(), 1, "Should only return CALLS edges");
+                assert_eq!(edges[0].edge_type.as_deref(), Some("CALLS"));
+            }
+            _ => panic!("Expected Edges response"),
+        }
+    }
+
+    // ============================================================================
+    // FindDependentFiles Command
+    // ============================================================================
+
+    #[test]
+    fn test_find_dependent_files() {
+        let (_dir, manager) = setup_test_manager();
+        let mut session = ClientSession::new(1);
+        setup_ephemeral_db(&manager, &mut session, "dep_test");
+
+        // Create a graph: a.js -> target.js, b.js -> target.js
+        handle_request(&manager, &mut session, Request::AddNodes {
+            nodes: vec![
+                WireNode { id: "target".to_string(), node_type: Some("MODULE".to_string()), name: Some("target".to_string()), file: Some("target.js".to_string()), exported: true, metadata: None },
+                WireNode { id: "dep1".to_string(), node_type: Some("MODULE".to_string()), name: Some("dep1".to_string()), file: Some("a.js".to_string()), exported: false, metadata: None },
+                WireNode { id: "dep2".to_string(), node_type: Some("MODULE".to_string()), name: Some("dep2".to_string()), file: Some("b.js".to_string()), exported: false, metadata: None },
+                WireNode { id: "unrelated".to_string(), node_type: Some("MODULE".to_string()), name: Some("unrelated".to_string()), file: Some("c.js".to_string()), exported: false, metadata: None },
+            ],
+        }, &None);
+        handle_request(&manager, &mut session, Request::AddEdges {
+            edges: vec![
+                WireEdge { src: "dep1".to_string(), dst: "target".to_string(), edge_type: Some("IMPORTS".to_string()), metadata: None },
+                WireEdge { src: "dep2".to_string(), dst: "target".to_string(), edge_type: Some("IMPORTS".to_string()), metadata: None },
+            ],
+            skip_validation: true,
+        }, &None);
+
+        let response = handle_request(&manager, &mut session, Request::FindDependentFiles {
+            id: "target".to_string(),
+            edge_types: None,
+        }, &None);
+
+        match response {
+            Response::Files { files } => {
+                assert_eq!(files.len(), 2);
+                assert!(files.contains(&"a.js".to_string()));
+                assert!(files.contains(&"b.js".to_string()));
+                // Should NOT contain c.js (unrelated)
+                assert!(!files.contains(&"c.js".to_string()));
+            }
+            _ => panic!("Expected Files response"),
+        }
+    }
+
+    #[test]
+    fn test_find_dependent_files_with_edge_type_filter() {
+        let (_dir, manager) = setup_test_manager();
+        let mut session = ClientSession::new(1);
+        setup_ephemeral_db(&manager, &mut session, "dep_filter_test");
+
+        handle_request(&manager, &mut session, Request::AddNodes {
+            nodes: vec![
+                WireNode { id: "target".to_string(), node_type: Some("MODULE".to_string()), name: Some("target".to_string()), file: Some("target.js".to_string()), exported: true, metadata: None },
+                WireNode { id: "importer".to_string(), node_type: Some("MODULE".to_string()), name: Some("importer".to_string()), file: Some("imp.js".to_string()), exported: false, metadata: None },
+                WireNode { id: "caller".to_string(), node_type: Some("FUNCTION".to_string()), name: Some("caller".to_string()), file: Some("call.js".to_string()), exported: false, metadata: None },
+            ],
+        }, &None);
+        handle_request(&manager, &mut session, Request::AddEdges {
+            edges: vec![
+                WireEdge { src: "importer".to_string(), dst: "target".to_string(), edge_type: Some("IMPORTS".to_string()), metadata: None },
+                WireEdge { src: "caller".to_string(), dst: "target".to_string(), edge_type: Some("CALLS".to_string()), metadata: None },
+            ],
+            skip_validation: true,
+        }, &None);
+
+        // Only find IMPORTS dependents
+        let response = handle_request(&manager, &mut session, Request::FindDependentFiles {
+            id: "target".to_string(),
+            edge_types: Some(vec!["IMPORTS".to_string()]),
+        }, &None);
+
+        match response {
+            Response::Files { files } => {
+                assert_eq!(files.len(), 1);
+                assert!(files.contains(&"imp.js".to_string()));
+                // call.js uses CALLS edge, should not be included
+                assert!(!files.contains(&"call.js".to_string()));
+            }
+            _ => panic!("Expected Files response"),
+        }
+    }
+
+    #[test]
+    fn test_find_dependent_files_no_deps() {
+        let (_dir, manager) = setup_test_manager();
+        let mut session = ClientSession::new(1);
+        setup_ephemeral_db(&manager, &mut session, "dep_empty_test");
+
+        handle_request(&manager, &mut session, Request::AddNodes {
+            nodes: vec![
+                WireNode { id: "lonely".to_string(), node_type: Some("MODULE".to_string()), name: Some("lonely".to_string()), file: Some("lonely.js".to_string()), exported: false, metadata: None },
+            ],
+        }, &None);
+
+        let response = handle_request(&manager, &mut session, Request::FindDependentFiles {
+            id: "lonely".to_string(),
+            edge_types: None,
+        }, &None);
+
+        match response {
+            Response::Files { files } => {
+                assert!(files.is_empty(), "Node with no incoming edges should have no dependent files");
+            }
+            _ => panic!("Expected Files response"),
+        }
+    }
+
+    // ============================================================================
+    // Backward Compatibility Stubs
+    // ============================================================================
+
+    #[test]
+    fn test_update_node_version_noop() {
+        let (_dir, manager) = setup_test_manager();
+        let mut session = ClientSession::new(1);
+        setup_ephemeral_db(&manager, &mut session, "compat_test");
+
+        let response = handle_request(&manager, &mut session, Request::UpdateNodeVersion {
+            id: "1".to_string(),
+            version: "v2".to_string(),
+        }, &None);
+
+        match response {
+            Response::Ok { ok } => assert!(ok),
+            _ => panic!("Expected Ok response for UpdateNodeVersion stub"),
+        }
+    }
+
+    #[test]
+    fn test_compact_noop() {
+        let (_dir, manager) = setup_test_manager();
+        let mut session = ClientSession::new(1);
+        setup_ephemeral_db(&manager, &mut session, "compact_test");
+
+        let response = handle_request(&manager, &mut session, Request::Compact, &None);
+
+        match response {
+            Response::Ok { ok } => assert!(ok),
+            _ => panic!("Expected Ok response for Compact"),
         }
     }
 }
