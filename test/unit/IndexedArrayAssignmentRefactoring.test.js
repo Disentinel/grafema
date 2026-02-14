@@ -477,4 +477,62 @@ arr[2] = val3;
       });
     });
   });
+
+  describe('Type classification consistency with detectArrayMutation (REG-396)', () => {
+    it('should classify arr[0] = {name: "test"} as OBJECT_LITERAL, not LITERAL', async () => {
+      await setupTest(backend, {
+        'index.js': `
+const arr = [];
+arr[0] = { name: 'test' };
+        `
+      });
+
+      const allNodes = await backend.getAllNodes();
+
+      // Should have an OBJECT_LITERAL node, not a LITERAL node with the indexed prefix
+      const objectLiteralNodes = allNodes.filter(n => n.type === 'OBJECT_LITERAL');
+      // LITERAL#indexed# is the prefix used by detectIndexedArrayAssignment
+      const indexedLiteralNodes = allNodes.filter(n =>
+        n.type === 'LITERAL' && n.id && n.id.startsWith('LITERAL#indexed#')
+      );
+
+      assert.ok(
+        objectLiteralNodes.length > 0,
+        'Expected OBJECT_LITERAL node for { name: "test" }, but found none. ' +
+        `All types: ${[...new Set(allNodes.map(n => n.type))].join(', ')}`
+      );
+      assert.strictEqual(
+        indexedLiteralNodes.length, 0,
+        'Should NOT create LITERAL#indexed# node for object expression'
+      );
+    });
+
+    it('should classify arr[0] = [1, 2, 3] as ARRAY_LITERAL, not LITERAL', async () => {
+      await setupTest(backend, {
+        'index.js': `
+const arr = [];
+arr[0] = [1, 2, 3];
+        `
+      });
+
+      const allNodes = await backend.getAllNodes();
+
+      // Should have an ARRAY_LITERAL node, not a LITERAL node with the indexed prefix
+      const arrayLiteralNodes = allNodes.filter(n => n.type === 'ARRAY_LITERAL');
+      // LITERAL#indexed# is the prefix used by detectIndexedArrayAssignment
+      const indexedLiteralNodes = allNodes.filter(n =>
+        n.type === 'LITERAL' && n.id && n.id.startsWith('LITERAL#indexed#')
+      );
+
+      assert.ok(
+        arrayLiteralNodes.length > 0,
+        'Expected ARRAY_LITERAL node for [1, 2, 3], but found none. ' +
+        `All types: ${[...new Set(allNodes.map(n => n.type))].join(', ')}`
+      );
+      assert.strictEqual(
+        indexedLiteralNodes.length, 0,
+        'Should NOT create LITERAL#indexed# node for array expression'
+      );
+    });
+  });
 });
