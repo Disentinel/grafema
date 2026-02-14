@@ -1621,6 +1621,11 @@ impl GraphStore for GraphEngine {
                     let edge_type = edges_seg.get_edge_type(idx).unwrap_or("UNKNOWN");
                     let key = (src, dst, edge_type.to_string());
 
+                    // Skip edges deleted from segment
+                    if self.deleted_segment_edge_keys.contains(&key) {
+                        continue;
+                    }
+
                     if seen_edges.contains(&key) {
                         continue;
                     }

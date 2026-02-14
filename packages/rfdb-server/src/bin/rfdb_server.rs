@@ -2535,6 +2535,16 @@ mod protocol_tests {
             _ => panic!("Expected Edges"),
         }
 
+        // Verify countEdgesByType also reflects deletion
+        let counts = handle_request(&manager, &mut session, Request::CountEdgesByType { edge_types: None }, &None);
+        match counts {
+            Response::Counts { counts } => {
+                let total: usize = counts.values().sum();
+                assert_eq!(total, 0, "countEdgesByType should return 0 after deletion");
+            }
+            _ => panic!("Expected Counts"),
+        }
+
         // Flush again — edges must stay gone (not reappear from segment)
         handle_request(&manager, &mut session, Request::Flush, &None);
 
