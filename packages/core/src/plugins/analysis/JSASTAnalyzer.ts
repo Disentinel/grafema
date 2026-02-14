@@ -5630,34 +5630,12 @@ export class JSASTAnalyzer extends Plugin {
           valueType: 'EXPRESSION'
         };
 
-        // Determine value type and create value nodes for non-variable types (REG-392)
-        const literalValue = ExpressionEvaluator.extractLiteralValue(value);
-        if (literalValue !== null) {
-          argInfo.valueType = 'LITERAL';
-          argInfo.literalValue = literalValue;
-          const valueLine = value.loc?.start.line ?? line;
-          const valueColumn = value.loc?.start.column ?? column;
-          // Create LITERAL node if collections available
-          if (collections?.literals && collections.literalCounterRef) {
-            const literalCounterRef = collections.literalCounterRef as CounterRef;
-            const literalId = `LITERAL#indexed#${module.file}#${valueLine}:${valueColumn}:${literalCounterRef.value++}`;
-            (collections.literals as LiteralInfo[]).push({
-              id: literalId,
-              type: 'LITERAL',
-              value: literalValue,
-              valueType: typeof literalValue,
-              file: module.file,
-              line: valueLine,
-              column: valueColumn,
-              parentCallId: undefined,
-              argIndex: 0
-            } as LiteralInfo);
-            argInfo.valueNodeId = literalId;
-          }
-        } else if (value.type === 'Identifier') {
-          argInfo.valueType = 'VARIABLE';
-          argInfo.valueName = value.name;
-        } else if (value.type === 'ObjectExpression') {
+        // Determine value type and create value nodes for non-variable types
+        // IMPORTANT: Check ObjectExpression/ArrayExpression BEFORE extractLiteralValue
+        // to match the order in detectArrayMutation and extractArguments (REG-396).
+        // extractLiteralValue returns objects/arrays with all-literal properties as
+        // literal values, but we want OBJECT_LITERAL/ARRAY_LITERAL nodes instead.
+        if (value.type === 'ObjectExpression') {
           argInfo.valueType = 'OBJECT_LITERAL';
           const valueLine = value.loc?.start.line ?? line;
           const valueColumn = value.loc?.start.column ?? column;
@@ -5687,10 +5665,38 @@ export class JSASTAnalyzer extends Plugin {
             (collections.arrayLiterals as ArrayLiteralInfo[]).push(arrayNode as unknown as ArrayLiteralInfo);
             argInfo.valueNodeId = arrayNode.id;
           }
+        } else if (value.type === 'Identifier') {
+          argInfo.valueType = 'VARIABLE';
+          argInfo.valueName = value.name;
         } else if (value.type === 'CallExpression') {
           argInfo.valueType = 'CALL';
           argInfo.callLine = value.loc?.start.line;
           argInfo.callColumn = value.loc?.start.column;
+        } else {
+          const literalValue = ExpressionEvaluator.extractLiteralValue(value);
+          if (literalValue !== null) {
+            argInfo.valueType = 'LITERAL';
+            argInfo.literalValue = literalValue;
+            const valueLine = value.loc?.start.line ?? line;
+            const valueColumn = value.loc?.start.column ?? column;
+            // Create LITERAL node if collections available
+            if (collections?.literals && collections.literalCounterRef) {
+              const literalCounterRef = collections.literalCounterRef as CounterRef;
+              const literalId = `LITERAL#indexed#${module.file}#${valueLine}:${valueColumn}:${literalCounterRef.value++}`;
+              (collections.literals as LiteralInfo[]).push({
+                id: literalId,
+                type: 'LITERAL',
+                value: literalValue,
+                valueType: typeof literalValue,
+                file: module.file,
+                line: valueLine,
+                column: valueColumn,
+                parentCallId: undefined,
+                argIndex: 0
+              } as LiteralInfo);
+              argInfo.valueNodeId = literalId;
+            }
+          }
         }
 
         // Capture scope path for scope-aware lookup (REG-309)
