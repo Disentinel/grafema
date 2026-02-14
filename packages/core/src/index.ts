@@ -280,6 +280,10 @@ export { ExpressHandlerLinker } from './plugins/enrichment/ExpressHandlerLinker.
 export { RejectionPropagationEnricher } from './plugins/enrichment/RejectionPropagationEnricher.js';
 export { CallbackCallResolver } from './plugins/enrichment/CallbackCallResolver.js';
 
+// Resource system (REG-256)
+export { ResourceRegistryImpl } from './core/ResourceRegistry.js';
+export { RoutingMapImpl, createRoutingMap } from './resources/RoutingMapImpl.js';
+
 // Builtin registry
 export { BuiltinRegistry } from './data/builtins/index.js';
 export type { BuiltinFunctionDef, BuiltinModuleDef, SecurityCategory } from './data/builtins/index.js';
