@@ -300,6 +300,62 @@ pub struct SegmentMeta {
     pub edge_types: HashSet<String>,
 }
 
+// ── Commit Delta ──────────────────────────────────────────────────
+
+/// Structured diff returned by `MultiShardStore::commit_batch()`.
+///
+/// Describes what changed in this commit: files, node counts, edge types.
+/// Used by the Grafema pipeline to determine which enrichment passes
+/// need to re-run.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CommitDelta {
+    /// Files that were committed in this batch.
+    pub changed_files: Vec<String>,
+
+    /// Number of nodes added (new, not in previous snapshot).
+    pub nodes_added: u64,
+
+    /// Number of nodes removed (tombstoned from previous snapshot).
+    pub nodes_removed: u64,
+
+    /// Number of nodes modified (same id, different content_hash).
+    pub nodes_modified: u64,
+
+    /// IDs of removed (tombstoned) nodes.
+    pub removed_node_ids: Vec<u128>,
+
+    /// Node types affected (from both added and removed nodes).
+    pub changed_node_types: HashSet<String>,
+
+    /// Edge types affected (from both added and tombstoned edges).
+    pub changed_edge_types: HashSet<String>,
+
+    /// Manifest version after this commit.
+    pub manifest_version: u64,
+}
+
+// ── Enrichment File Context ───────────────────────────────────────
+
+/// Construct the file context path for enrichment data.
+///
+/// Convention: `__enrichment__/{enricher}/{source_file}`
+///
+/// When `source_file` is re-analyzed, the caller includes the enrichment
+/// file context in `changed_files` so old enrichment data is tombstoned.
+///
+/// # Examples
+///
+/// ```
+/// use rfdb::storage_v2::enrichment_file_context;
+/// assert_eq!(
+///     enrichment_file_context("data-flow", "src/utils.js"),
+///     "__enrichment__/data-flow/src/utils.js"
+/// );
+/// ```
+pub fn enrichment_file_context(enricher: &str, source_file: &str) -> String {
+    format!("__enrichment__/{}/{}", enricher, source_file)
+}
+
 // ── Helpers ────────────────────────────────────────────────────────
 
 /// Compute padding bytes needed to align `offset` to `alignment`.
@@ -455,5 +511,74 @@ mod tests {
         let parsed = FooterIndex::from_bytes(&buf).unwrap();
         assert_eq!(parsed.bloom_offset, 100);
         assert_eq!(parsed.footer_index_size, 56);
+    }
+
+    // ── CommitDelta tests ─────────────────────────────────────────
+
+    #[test]
+    fn test_commit_delta_serde_roundtrip() {
+        let delta = CommitDelta {
+            changed_files: vec!["src/main.js".into(), "src/utils.js".into()],
+            nodes_added: 10,
+            nodes_removed: 3,
+            nodes_modified: 2,
+            removed_node_ids: vec![100, 200, 300],
+            changed_node_types: HashSet::from(["FUNCTION".into(), "CLASS".into()]),
+            changed_edge_types: HashSet::from(["CALLS".into()]),
+            manifest_version: 5,
+        };
+
+        let json = serde_json::to_string(&delta).unwrap();
+        let deserialized: CommitDelta = serde_json::from_str(&json).unwrap();
+        assert_eq!(delta, deserialized);
+    }
+
+    #[test]
+    fn test_commit_delta_default_values() {
+        // Zero/empty CommitDelta is constructible and round-trips.
+        let delta = CommitDelta {
+            changed_files: vec![],
+            nodes_added: 0,
+            nodes_removed: 0,
+            nodes_modified: 0,
+            removed_node_ids: vec![],
+            changed_node_types: HashSet::new(),
+            changed_edge_types: HashSet::new(),
+            manifest_version: 0,
+        };
+
+        let json = serde_json::to_string(&delta).unwrap();
+        let deserialized: CommitDelta = serde_json::from_str(&json).unwrap();
+        assert_eq!(delta, deserialized);
+        assert!(delta.changed_files.is_empty());
+        assert_eq!(delta.nodes_added, 0);
+        assert_eq!(delta.manifest_version, 0);
+    }
+
+    // ── enrichment_file_context tests ─────────────────────────────
+
+    #[test]
+    fn test_enrichment_file_context_basic() {
+        assert_eq!(
+            enrichment_file_context("data-flow", "src/utils.js"),
+            "__enrichment__/data-flow/src/utils.js"
+        );
+    }
+
+    #[test]
+    fn test_enrichment_file_context_nested_path() {
+        assert_eq!(
+            enrichment_file_context("call-graph", "src/deep/nested/module.ts"),
+            "__enrichment__/call-graph/src/deep/nested/module.ts"
+        );
+    }
+
+    #[test]
+    fn test_enrichment_file_context_multiple_enrichers() {
+        let a = enrichment_file_context("data-flow", "src/index.js");
+        let b = enrichment_file_context("call-graph", "src/index.js");
+        assert_ne!(a, b);
+        assert_eq!(a, "__enrichment__/data-flow/src/index.js");
+        assert_eq!(b, "__enrichment__/call-graph/src/index.js");
     }
 }
