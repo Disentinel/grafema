@@ -22,22 +22,66 @@ const DEFAULT_SHARD_COUNT: u16 = 4;
 
 /// Convert v2 node record to v1 (for GraphStore return values).
 fn node_v2_to_v1(v2: &NodeRecordV2) -> NodeRecord {
+    // Extract `exported` from metadata JSON (v2 stores it there).
+    let (exported, clean_metadata) = extract_exported_from_metadata(&v2.metadata);
+
     NodeRecord {
         id: v2.id,
         node_type: Some(v2.node_type.clone()),
         file_id: 0,
         name_offset: 0,
         version: "main".to_string(),
-        exported: false,
+        exported,
         replaces: None,
         deleted: false,
         name: Some(v2.name.clone()),
         file: Some(v2.file.clone()),
-        metadata: if v2.metadata.is_empty() {
+        metadata: if clean_metadata.is_empty() {
             None
         } else {
-            Some(v2.metadata.clone())
+            Some(clean_metadata)
         },
+    }
+}
+
+/// Extract `exported` field from metadata JSON, returning (exported, remaining_metadata).
+fn extract_exported_from_metadata(metadata: &str) -> (bool, String) {
+    if metadata.is_empty() {
+        return (false, String::new());
+    }
+    match serde_json::from_str::<serde_json::Value>(metadata) {
+        Ok(serde_json::Value::Object(mut map)) => {
+            let exported = map
+                .remove("__exported")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            if map.is_empty() {
+                (exported, String::new())
+            } else {
+                (exported, serde_json::to_string(&map).unwrap_or_default())
+            }
+        }
+        _ => (false, metadata.to_string()),
+    }
+}
+
+/// Inject `exported` field into metadata JSON.
+fn inject_exported_into_metadata(metadata: &str, exported: bool) -> String {
+    if !exported {
+        return metadata.to_string();
+    }
+    if metadata.is_empty() {
+        return r#"{"__exported":true}"#.to_string();
+    }
+    match serde_json::from_str::<serde_json::Value>(metadata) {
+        Ok(serde_json::Value::Object(mut map)) => {
+            map.insert(
+                "__exported".to_string(),
+                serde_json::Value::Bool(true),
+            );
+            serde_json::to_string(&map).unwrap_or_default()
+        }
+        _ => metadata.to_string(),
     }
 }
 
@@ -49,6 +93,9 @@ fn node_v1_to_v2(v1: &NodeRecord) -> NodeRecordV2 {
     let metadata = v1.metadata.as_deref().unwrap_or("");
     let semantic_id = format!("{}:{}@{}", node_type, name, file);
 
+    // Inject `exported` into metadata JSON (v2 stores it there).
+    let metadata = inject_exported_into_metadata(metadata, v1.exported);
+
     NodeRecordV2 {
         semantic_id,
         id: v1.id,
@@ -56,7 +103,7 @@ fn node_v1_to_v2(v1: &NodeRecord) -> NodeRecordV2 {
         name: name.to_string(),
         file: file.to_string(),
         content_hash: 0,
-        metadata: metadata.to_string(),
+        metadata,
     }
 }
 
@@ -771,9 +818,15 @@ mod tests {
         assert_eq!(v2.node_type, "UNKNOWN");
         assert_eq!(v2.name, "");
         assert_eq!(v2.file, "");
-        assert_eq!(v2.metadata, "");
+        // exported=true is stored in metadata as __exported
+        assert_eq!(v2.metadata, r#"{"__exported":true}"#);
         assert_eq!(v2.semantic_id, "UNKNOWN:@");
         assert_eq!(v2.content_hash, 0);
+
+        // Roundtrip: v1 -> v2 -> v1 preserves exported
+        let back = node_v2_to_v1(&v2);
+        assert!(back.exported, "exported should survive v1->v2->v1 roundtrip");
+        assert_eq!(back.metadata, None, "__exported should be stripped from metadata");
     }
 
     #[test]
