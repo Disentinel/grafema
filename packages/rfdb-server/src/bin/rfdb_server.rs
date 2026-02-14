@@ -1099,6 +1099,8 @@ fn handle_commit_batch(
     let mut edges_removed: u64 = 0;
     let mut changed_node_types: HashSet<String> = HashSet::new();
     let mut changed_edge_types: HashSet<String> = HashSet::new();
+    // Dedup set to avoid double-counting edges shared between nodes in changedFiles
+    let mut deleted_edge_keys: HashSet<(u128, u128, String)> = HashSet::new();
 
     // Phase 1: Find and delete old data for changed files
     for file in &changed_files {
@@ -1123,20 +1125,26 @@ fn handle_commit_batch(
 
             // Delete outgoing edges
             for edge in engine.get_outgoing_edges(*id, None) {
-                if let Some(ref et) = edge.edge_type {
-                    changed_edge_types.insert(et.clone());
+                let edge_key = (edge.src, edge.dst, edge.edge_type.clone().unwrap_or_default());
+                if deleted_edge_keys.insert(edge_key) {
+                    if let Some(ref et) = edge.edge_type {
+                        changed_edge_types.insert(et.clone());
+                    }
+                    engine.delete_edge(edge.src, edge.dst, edge.edge_type.as_deref().unwrap_or(""));
+                    edges_removed += 1;
                 }
-                engine.delete_edge(edge.src, edge.dst, edge.edge_type.as_deref().unwrap_or(""));
-                edges_removed += 1;
             }
 
             // Delete incoming edges
             for edge in engine.get_incoming_edges(*id, None) {
-                if let Some(ref et) = edge.edge_type {
-                    changed_edge_types.insert(et.clone());
+                let edge_key = (edge.src, edge.dst, edge.edge_type.clone().unwrap_or_default());
+                if deleted_edge_keys.insert(edge_key) {
+                    if let Some(ref et) = edge.edge_type {
+                        changed_edge_types.insert(et.clone());
+                    }
+                    engine.delete_edge(edge.src, edge.dst, edge.edge_type.as_deref().unwrap_or(""));
+                    edges_removed += 1;
                 }
-                engine.delete_edge(edge.src, edge.dst, edge.edge_type.as_deref().unwrap_or(""));
-                edges_removed += 1;
             }
 
             // Delete the node
@@ -2459,5 +2467,129 @@ mod protocol_tests {
         // Verify node was added
         let exists = handle_request(&manager, &mut session, Request::NodeExists { id: "x1".to_string() }, &None);
         match exists { Response::Bool { value } => assert!(value), _ => panic!("Expected Bool") }
+    }
+
+    /// Non-ephemeral test: verifies segment edge deletion survives flush.
+    /// This exercises the deleted_segment_edge_keys path in GraphEngine.
+    #[test]
+    fn test_commit_batch_segment_edge_deletion() {
+        let (_dir, manager) = setup_test_manager();
+        let mut session = ClientSession::new(1);
+
+        // Create a NON-ephemeral database (data goes to disk segments on flush)
+        handle_request(&manager, &mut session, Request::CreateDatabase {
+            name: "segtest".to_string(),
+            ephemeral: false,
+        }, &None);
+        handle_request(&manager, &mut session, Request::OpenDatabase {
+            name: "segtest".to_string(),
+            mode: "rw".to_string(),
+        }, &None);
+
+        // Add nodes and edges, then flush to segments
+        handle_request(&manager, &mut session, Request::AddNodes {
+            nodes: vec![
+                WireNode { id: "s1".to_string(), node_type: Some("MODULE".to_string()), name: Some("mod_a".to_string()), file: Some("a.js".to_string()), exported: false, metadata: None },
+                WireNode { id: "s2".to_string(), node_type: Some("FUNCTION".to_string()), name: Some("func_b".to_string()), file: Some("a.js".to_string()), exported: true, metadata: None },
+                WireNode { id: "s3".to_string(), node_type: Some("MODULE".to_string()), name: Some("mod_c".to_string()), file: Some("c.js".to_string()), exported: false, metadata: None },
+            ],
+        }, &None);
+        handle_request(&manager, &mut session, Request::AddEdges {
+            edges: vec![
+                WireEdge { src: "s1".to_string(), dst: "s2".to_string(), edge_type: Some("CONTAINS".to_string()), metadata: None },
+                WireEdge { src: "s3".to_string(), dst: "s1".to_string(), edge_type: Some("IMPORTS_FROM".to_string()), metadata: None },
+            ],
+            skip_validation: true,
+        }, &None);
+
+        // Flush — nodes and edges are now in segment (on-disk), not in delta
+        handle_request(&manager, &mut session, Request::Flush, &None);
+
+        // CommitBatch replacing a.js — should delete segment edges too
+        let response = handle_request(&manager, &mut session, Request::CommitBatch {
+            changed_files: vec!["a.js".to_string()],
+            nodes: vec![
+                WireNode { id: "s4".to_string(), node_type: Some("MODULE".to_string()), name: Some("mod_a_v2".to_string()), file: Some("a.js".to_string()), exported: false, metadata: None },
+            ],
+            edges: vec![],
+            tags: None,
+        }, &None);
+
+        // Verify delta counts
+        match response {
+            Response::BatchCommitted { ok, delta } => {
+                assert!(ok);
+                assert_eq!(delta.nodes_removed, 2, "s1 and s2 should be removed");
+                assert_eq!(delta.nodes_added, 1, "s4 added");
+                assert_eq!(delta.edges_removed, 2, "s1->s2 and s3->s1 edges removed");
+            }
+            _ => panic!("Expected BatchCommitted, got {:?}", response),
+        }
+
+        // Verify old edges are actually gone (not just claimed to be removed)
+        let edges = handle_request(&manager, &mut session, Request::GetAllEdges, &None);
+        match edges {
+            Response::Edges { edges } => {
+                assert_eq!(edges.len(), 0, "All edges should be gone after commit batch");
+            }
+            _ => panic!("Expected Edges"),
+        }
+
+        // Flush again — edges must stay gone (not reappear from segment)
+        handle_request(&manager, &mut session, Request::Flush, &None);
+
+        let edges_after_flush = handle_request(&manager, &mut session, Request::GetAllEdges, &None);
+        match edges_after_flush {
+            Response::Edges { edges } => {
+                assert_eq!(edges.len(), 0, "Edges must not reappear after second flush");
+            }
+            _ => panic!("Expected Edges"),
+        }
+
+        // Verify s3 (c.js) still exists, s1/s2 are gone
+        let s3_exists = handle_request(&manager, &mut session, Request::NodeExists { id: "s3".to_string() }, &None);
+        match s3_exists { Response::Bool { value } => assert!(value, "s3 in c.js should still exist"), _ => panic!("Expected Bool") }
+
+        let s1_exists = handle_request(&manager, &mut session, Request::NodeExists { id: "s1".to_string() }, &None);
+        match s1_exists { Response::Bool { value } => assert!(!value, "s1 should be deleted"), _ => panic!("Expected Bool") }
+    }
+
+    /// Test that shared edges between two nodes in changedFiles are not double-counted.
+    #[test]
+    fn test_commit_batch_shared_edge_dedup() {
+        let (_dir, manager) = setup_test_manager();
+        let mut session = ClientSession::new(1);
+        setup_ephemeral_db(&manager, &mut session, "dedupdb");
+
+        // Two nodes in different files, connected by an edge
+        handle_request(&manager, &mut session, Request::AddNodes {
+            nodes: vec![
+                WireNode { id: "d1".to_string(), node_type: Some("FUNCTION".to_string()), name: Some("a".to_string()), file: Some("x.js".to_string()), exported: false, metadata: None },
+                WireNode { id: "d2".to_string(), node_type: Some("FUNCTION".to_string()), name: Some("b".to_string()), file: Some("y.js".to_string()), exported: false, metadata: None },
+            ],
+        }, &None);
+        handle_request(&manager, &mut session, Request::AddEdges {
+            edges: vec![
+                WireEdge { src: "d1".to_string(), dst: "d2".to_string(), edge_type: Some("CALLS".to_string()), metadata: None },
+            ],
+            skip_validation: true,
+        }, &None);
+
+        // CommitBatch replacing BOTH files — the shared edge should be counted once
+        let response = handle_request(&manager, &mut session, Request::CommitBatch {
+            changed_files: vec!["x.js".to_string(), "y.js".to_string()],
+            nodes: vec![],
+            edges: vec![],
+            tags: None,
+        }, &None);
+
+        match response {
+            Response::BatchCommitted { ok, delta } => {
+                assert!(ok);
+                assert_eq!(delta.edges_removed, 1, "Shared edge should be counted exactly once");
+                assert_eq!(delta.nodes_removed, 2);
+            }
+            _ => panic!("Expected BatchCommitted"),
+        }
     }
 }
