@@ -3706,16 +3706,36 @@ export class JSASTAnalyzer extends Plugin {
     // REG-401: Build param name -> index map for parameter invocation detection
     // When a CallExpression callee is an Identifier matching a parameter name,
     // it means this function invokes that parameter (user-defined HOF pattern).
+    // REG-417: Extended to handle destructured (ObjectPattern/ArrayPattern) and rest params.
     const paramNameToIndex = new Map<string, number>();
+    const restParamNames = new Set<string>();
     const invokedParamIndexes = new Set<number>();
     if (functionNode) {
       for (let i = 0; i < functionNode.params.length; i++) {
         const param = functionNode.params[i];
         if (t.isIdentifier(param)) {
           paramNameToIndex.set(param.name, i);
-        } else if (t.isAssignmentPattern(param) && t.isIdentifier(param.left)) {
-          // Handle default values: function(fn = defaultFn) { fn(); }
-          paramNameToIndex.set(param.left.name, i);
+        } else if (t.isAssignmentPattern(param)) {
+          if (t.isIdentifier(param.left)) {
+            // Handle default values: function(fn = defaultFn) { fn(); }
+            paramNameToIndex.set(param.left.name, i);
+          } else if (t.isObjectPattern(param.left) || t.isArrayPattern(param.left)) {
+            // REG-417: Destructured with default: function({ fn } = {}) { fn(); }
+            const extracted = extractNamesFromPattern(param.left);
+            for (const info of extracted) {
+              paramNameToIndex.set(info.name, i);
+            }
+          }
+        } else if (t.isObjectPattern(param) || t.isArrayPattern(param)) {
+          // REG-417: Destructured params: function({ fn }) or function([fn])
+          const extracted = extractNamesFromPattern(param);
+          for (const info of extracted) {
+            paramNameToIndex.set(info.name, i);
+          }
+        } else if (t.isRestElement(param) && t.isIdentifier(param.argument)) {
+          // REG-417: Rest params: function(...fns) — track for MemberExpression detection
+          paramNameToIndex.set(param.argument.name, i);
+          restParamNames.add(param.argument.name);
         }
       }
     }
@@ -4362,13 +4382,26 @@ export class JSASTAnalyzer extends Plugin {
 
         // REG-401: Detect parameter invocation for user-defined HOF tracking
         // If callee is an Identifier matching a parameter name, record the param index.
+        // REG-417: Also detect rest param array access: fns[0]() via MemberExpression callee.
         // Nested functions are already skipped by FunctionDeclaration/FunctionExpression/ArrowFunction
         // handlers calling path.skip(), so shadowed names won't be falsely matched.
         const callNodeForParam = callPath.node;
-        if (t.isIdentifier(callNodeForParam.callee) && paramNameToIndex.size > 0) {
-          const paramIndex = paramNameToIndex.get(callNodeForParam.callee.name);
-          if (paramIndex !== undefined) {
-            invokedParamIndexes.add(paramIndex);
+        if (paramNameToIndex.size > 0) {
+          if (t.isIdentifier(callNodeForParam.callee)) {
+            const paramIndex = paramNameToIndex.get(callNodeForParam.callee.name);
+            if (paramIndex !== undefined) {
+              invokedParamIndexes.add(paramIndex);
+            }
+          } else if (
+            t.isMemberExpression(callNodeForParam.callee) &&
+            t.isIdentifier(callNodeForParam.callee.object) &&
+            restParamNames.has(callNodeForParam.callee.object.name)
+          ) {
+            // REG-417: Rest param invoked via array access, e.g. fns[0]()
+            const paramIndex = paramNameToIndex.get(callNodeForParam.callee.object.name);
+            if (paramIndex !== undefined) {
+              invokedParamIndexes.add(paramIndex);
+            }
           }
         }
 
