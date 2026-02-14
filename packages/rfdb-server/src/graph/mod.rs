@@ -1,11 +1,13 @@
 //! Граф API и реализация
 
 pub mod engine;
+pub mod engine_v2;
 pub mod index_set;
 pub mod traversal;
 pub mod id_gen;
 
 pub use engine::GraphEngine;
+pub use engine_v2::GraphEngineV2;
 pub use id_gen::{compute_node_id, string_id_to_u128};
 
 use crate::storage::{NodeRecord, EdgeRecord, AttrQuery};
