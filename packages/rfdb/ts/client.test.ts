@@ -639,3 +639,294 @@ describe('RFDBClient Batch Operations', () => {
     );
   });
 });
+
+// ===========================================================================
+// Protocol v3 — Semantic ID Wire Format Tests (RFD-12)
+// ===========================================================================
+
+/**
+ * Simulate RFDBServerBackend.addNodes() wire format for v3 protocol.
+ * In v3: semanticId is set on WireNode, originalId is NOT injected into metadata.
+ */
+function mapAddNodesV3(node: Record<string, unknown>): {
+  id: string;
+  nodeType: string;
+  name: string;
+  file: string;
+  exported: boolean;
+  metadata: string;
+  semanticId?: string;
+} {
+  const { id, type, nodeType, node_type, name, file, exported, ...rest } = node;
+  return {
+    id: String(id),
+    nodeType: (nodeType || node_type || type || 'UNKNOWN') as string,
+    name: (name as string) || '',
+    file: (file as string) || '',
+    exported: (exported as boolean) || false,
+    metadata: JSON.stringify(rest),
+    semanticId: String(id),
+  };
+}
+
+/**
+ * Simulate RFDBServerBackend.addNodes() wire format for v2 protocol (legacy).
+ * In v2: originalId is injected into metadata, no semanticId field.
+ */
+function mapAddNodesV2(node: Record<string, unknown>): {
+  id: string;
+  nodeType: string;
+  name: string;
+  file: string;
+  exported: boolean;
+  metadata: string;
+  semanticId?: string;
+} {
+  const { id, type, nodeType, node_type, name, file, exported, ...rest } = node;
+  return {
+    id: String(id),
+    nodeType: (nodeType || node_type || type || 'UNKNOWN') as string,
+    name: (name as string) || '',
+    file: (file as string) || '',
+    exported: (exported as boolean) || false,
+    metadata: JSON.stringify({ originalId: String(id), ...rest }),
+  };
+}
+
+/**
+ * Simulate RFDBServerBackend.addEdges() wire format for v3 protocol.
+ * In v3: _origSrc/_origDst are NOT injected into metadata.
+ */
+function mapAddEdgesV3(edge: Record<string, unknown>): {
+  src: string; dst: string; edgeType: string; metadata: string;
+} {
+  const { src, dst, type, edgeType, edge_type, metadata, ...rest } = edge;
+  const flatMetadata = {
+    ...rest,
+    ...(typeof metadata === 'object' && metadata !== null ? metadata : {}),
+  };
+  return {
+    src: String(src), dst: String(dst),
+    edgeType: (edgeType || edge_type || type || 'UNKNOWN') as string,
+    metadata: JSON.stringify(flatMetadata),
+  };
+}
+
+/**
+ * Simulate RFDBServerBackend.addEdges() wire format for v2 protocol (legacy).
+ * In v2: _origSrc/_origDst are injected into metadata.
+ */
+function mapAddEdgesV2(edge: Record<string, unknown>): {
+  src: string; dst: string; edgeType: string; metadata: string;
+} {
+  const { src, dst, type, edgeType, edge_type, metadata, ...rest } = edge;
+  const flatMetadata = {
+    _origSrc: String(src), _origDst: String(dst),
+    ...rest,
+    ...(typeof metadata === 'object' && metadata !== null ? metadata : {}),
+  };
+  return {
+    src: String(src), dst: String(dst),
+    edgeType: (edgeType || edge_type || type || 'UNKNOWN') as string,
+    metadata: JSON.stringify(flatMetadata),
+  };
+}
+
+/**
+ * Simulate RFDBServerBackend._parseNode() for both v3 and v2 protocols.
+ */
+function parseNode(wireNode: { id: string; nodeType: string; name: string; file: string; exported: boolean; metadata: string; semanticId?: string }): {
+  id: string; type: string; name: string; file: string; exported: boolean; [key: string]: unknown;
+} {
+  const metadata: Record<string, unknown> = wireNode.metadata ? JSON.parse(wireNode.metadata) : {};
+  // v3: use semanticId directly; v2: fall back to originalId metadata hack
+  const humanId = wireNode.semanticId || (metadata.originalId as string) || wireNode.id;
+  const { id: _id, type: _type, name: _name, file: _file, exported: _exported, nodeType: _nodeType, originalId: _originalId, ...safeMetadata } = metadata;
+  return { id: humanId, type: wireNode.nodeType, name: wireNode.name, file: wireNode.file, exported: wireNode.exported, ...safeMetadata };
+}
+
+/**
+ * Simulate RFDBServerBackend._parseEdge() for v3 and v2 protocols.
+ */
+function parseEdge(wireEdge: { src: string; dst: string; edgeType: string; metadata: string }, protocolVersion: number): {
+  src: string; dst: string; type: string; metadata?: Record<string, unknown>;
+} {
+  const meta: Record<string, unknown> = wireEdge.metadata ? JSON.parse(wireEdge.metadata) : {};
+  const { _origSrc, _origDst, ...rest } = meta;
+  const src = protocolVersion >= 3 ? wireEdge.src : (_origSrc as string) || wireEdge.src;
+  const dst = protocolVersion >= 3 ? wireEdge.dst : (_origDst as string) || wireEdge.dst;
+  return { src, dst, type: wireEdge.edgeType, metadata: Object.keys(rest).length > 0 ? rest : undefined };
+}
+
+describe('Protocol v3 — addNodes Wire Format (RFD-12)', () => {
+  it('v3: should set semanticId and exclude originalId from metadata', () => {
+    const wire = mapAddNodesV3({
+      id: 'src/app.js->global->FUNCTION->processData',
+      type: 'FUNCTION',
+      name: 'processData',
+      file: 'src/app.js',
+      exported: true,
+      async: true,
+    });
+
+    assert.strictEqual(wire.semanticId, 'src/app.js->global->FUNCTION->processData');
+    const meta = JSON.parse(wire.metadata);
+    assert.strictEqual(meta.originalId, undefined, 'v3 should NOT inject originalId');
+    assert.strictEqual(meta.async, true, 'extra fields should still be in metadata');
+  });
+
+  it('v2: should inject originalId into metadata, no semanticId', () => {
+    const wire = mapAddNodesV2({
+      id: 'src/app.js->global->FUNCTION->processData',
+      type: 'FUNCTION',
+      name: 'processData',
+      file: 'src/app.js',
+      exported: true,
+      async: true,
+    });
+
+    assert.strictEqual(wire.semanticId, undefined, 'v2 should NOT set semanticId');
+    const meta = JSON.parse(wire.metadata);
+    assert.strictEqual(meta.originalId, 'src/app.js->global->FUNCTION->processData', 'v2 should inject originalId');
+    assert.strictEqual(meta.async, true, 'extra fields should still be in metadata');
+  });
+});
+
+describe('Protocol v3 — addEdges Wire Format (RFD-12)', () => {
+  it('v3: should NOT inject _origSrc/_origDst into metadata', () => {
+    const wire = mapAddEdgesV3({
+      src: 'src/app.js->global->FUNCTION->processData',
+      dst: 'src/db.js->global->FUNCTION->query',
+      edgeType: 'CALLS',
+    });
+
+    const meta = JSON.parse(wire.metadata);
+    assert.strictEqual(meta._origSrc, undefined, 'v3 should NOT inject _origSrc');
+    assert.strictEqual(meta._origDst, undefined, 'v3 should NOT inject _origDst');
+  });
+
+  it('v2: should inject _origSrc/_origDst into metadata', () => {
+    const wire = mapAddEdgesV2({
+      src: 'src/app.js->global->FUNCTION->processData',
+      dst: 'src/db.js->global->FUNCTION->query',
+      edgeType: 'CALLS',
+    });
+
+    const meta = JSON.parse(wire.metadata);
+    assert.strictEqual(meta._origSrc, 'src/app.js->global->FUNCTION->processData');
+    assert.strictEqual(meta._origDst, 'src/db.js->global->FUNCTION->query');
+  });
+
+  it('v3: extra edge properties should still be in metadata', () => {
+    const wire = mapAddEdgesV3({
+      src: 'a', dst: 'b', edgeType: 'CALLS',
+      callSite: 'line:42', confidence: 0.95,
+    });
+
+    const meta = JSON.parse(wire.metadata);
+    assert.strictEqual(meta.callSite, 'line:42');
+    assert.strictEqual(meta.confidence, 0.95);
+  });
+});
+
+describe('Protocol v3 — _parseNode (RFD-12)', () => {
+  it('v3: should use semanticId for human-readable ID', () => {
+    const parsed = parseNode({
+      id: '123456789012345678901234567890',  // u128 decimal from server
+      nodeType: 'FUNCTION',
+      name: 'processData',
+      file: 'src/app.js',
+      exported: true,
+      metadata: '{"async": true}',
+      semanticId: 'src/app.js->global->FUNCTION->processData',
+    });
+
+    assert.strictEqual(parsed.id, 'src/app.js->global->FUNCTION->processData');
+    assert.strictEqual(parsed.type, 'FUNCTION');
+    assert.strictEqual(parsed.async, true);
+  });
+
+  it('v2: should fall back to originalId from metadata', () => {
+    const parsed = parseNode({
+      id: '123456789012345678901234567890',
+      nodeType: 'FUNCTION',
+      name: 'processData',
+      file: 'src/app.js',
+      exported: true,
+      metadata: '{"originalId": "src/app.js->global->FUNCTION->processData", "async": true}',
+      // no semanticId (v2)
+    });
+
+    assert.strictEqual(parsed.id, 'src/app.js->global->FUNCTION->processData');
+    assert.strictEqual(parsed.async, true);
+  });
+
+  it('fallback: should use wire id when neither semanticId nor originalId present', () => {
+    const parsed = parseNode({
+      id: '123456789',
+      nodeType: 'MODULE',
+      name: 'test',
+      file: 'test.js',
+      exported: false,
+      metadata: '{}',
+    });
+
+    assert.strictEqual(parsed.id, '123456789');
+  });
+});
+
+describe('Protocol v3 — _parseEdge (RFD-12)', () => {
+  it('v3: should use wire src/dst directly (server-resolved semantic IDs)', () => {
+    const parsed = parseEdge({
+      src: 'src/app.js->global->FUNCTION->processData',
+      dst: 'src/db.js->global->FUNCTION->query',
+      edgeType: 'CALLS',
+      metadata: '{}',
+    }, 3);
+
+    assert.strictEqual(parsed.src, 'src/app.js->global->FUNCTION->processData');
+    assert.strictEqual(parsed.dst, 'src/db.js->global->FUNCTION->query');
+  });
+
+  it('v2: should extract _origSrc/_origDst from metadata', () => {
+    const parsed = parseEdge({
+      src: '123456789',  // u128 decimal from server
+      dst: '987654321',
+      edgeType: 'CALLS',
+      metadata: '{"_origSrc": "src/app.js->global->FUNCTION->processData", "_origDst": "src/db.js->global->FUNCTION->query"}',
+    }, 2);
+
+    assert.strictEqual(parsed.src, 'src/app.js->global->FUNCTION->processData');
+    assert.strictEqual(parsed.dst, 'src/db.js->global->FUNCTION->query');
+  });
+
+  it('v3: should strip _origSrc/_origDst from metadata even if present', () => {
+    // Edge case: v3 edge that somehow has _origSrc in metadata
+    const parsed = parseEdge({
+      src: 'src/app.js->global->FUNCTION->processData',
+      dst: 'src/db.js->global->FUNCTION->query',
+      edgeType: 'CALLS',
+      metadata: '{"_origSrc": "stale", "_origDst": "stale", "callSite": "line:42"}',
+    }, 3);
+
+    // v3 uses wire src/dst directly, ignoring _origSrc/_origDst
+    assert.strictEqual(parsed.src, 'src/app.js->global->FUNCTION->processData');
+    assert.strictEqual(parsed.dst, 'src/db.js->global->FUNCTION->query');
+    // _origSrc/_origDst should be stripped from metadata
+    assert.strictEqual(parsed.metadata?.callSite, 'line:42');
+    assert.strictEqual((parsed.metadata as any)?._origSrc, undefined);
+    assert.strictEqual((parsed.metadata as any)?._origDst, undefined);
+  });
+
+  it('v2 fallback: should use wire IDs when _origSrc/_origDst not in metadata', () => {
+    const parsed = parseEdge({
+      src: '123456789',
+      dst: '987654321',
+      edgeType: 'CALLS',
+      metadata: '{}',
+    }, 2);
+
+    assert.strictEqual(parsed.src, '123456789');
+    assert.strictEqual(parsed.dst, '987654321');
+  });
+});
