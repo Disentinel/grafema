@@ -1765,4 +1765,325 @@ mod tests {
             manifest.tombstoned_edge_keys.iter().cloned().collect();
         assert!(tomb_edges.contains(&(edge.src, edge.dst, edge.edge_type.clone())));
     }
+
+    // -- Validation + Integration Tests (RFD-8 T3.1 Commit 5) --------------------
+
+    #[test]
+    fn test_commit_batch_idempotent() {
+        // Re-committing the same file with identical nodes should produce
+        // no modifications and leave the graph in the same state.
+        let mut store = MultiShardStore::ephemeral(4);
+        let mut manifest_store = ManifestStore::ephemeral();
+
+        let a = make_node_with_hash("a/fnA", "FUNCTION", "fnA", "a/file.js", 100);
+        let b = make_node_with_hash("a/fnB", "FUNCTION", "fnB", "a/file.js", 200);
+
+        // First commit
+        let delta1 = store.commit_batch(
+            vec![a.clone(), b.clone()],
+            vec![],
+            &["a/file.js".to_string()],
+            HashMap::new(),
+            &mut manifest_store,
+        ).unwrap();
+
+        assert_eq!(delta1.nodes_added, 2);
+        assert_eq!(delta1.nodes_removed, 0);
+
+        // Snapshot graph state before idempotent re-commit
+        assert!(store.node_exists(a.id));
+        assert!(store.node_exists(b.id));
+        assert_eq!(store.node_count(), 2);
+
+        // Re-commit SAME file with SAME nodes (same content_hash)
+        let delta2 = store.commit_batch(
+            vec![a.clone(), b.clone()],
+            vec![],
+            &["a/file.js".to_string()],
+            HashMap::new(),
+            &mut manifest_store,
+        ).unwrap();
+
+        // nodes_modified == 0 because content_hash is identical
+        assert_eq!(delta2.nodes_modified, 0);
+
+        // Tombstone-then-add: both nodes_removed and the re-add count reflect churn
+        // (nodes_removed == 2 from tombstoning old, nodes_added == 0 because same IDs re-added)
+        // The important assertion: graph state is logically identical
+        assert!(store.node_exists(a.id));
+        assert!(store.node_exists(b.id));
+
+        // Note: node_count() is PHYSICAL count (includes old segments), not logical.
+        // Use find_nodes to verify the LOGICAL count of visible nodes.
+        let visible = store.find_nodes(None, Some("a/file.js"));
+        assert_eq!(visible.len(), 2, "Logical visible node count should be 2");
+
+        // Verify data integrity: the nodes are still retrievable with correct values
+        let got_a = store.get_node(a.id).unwrap();
+        assert_eq!(got_a.content_hash, 100);
+        let got_b = store.get_node(b.id).unwrap();
+        assert_eq!(got_b.content_hash, 200);
+    }
+
+    #[test]
+    fn test_commit_batch_atomicity() {
+        // All 10 nodes in a single commit_batch must be visible after commit.
+        let mut store = MultiShardStore::ephemeral(4);
+        let mut manifest_store = ManifestStore::ephemeral();
+
+        let nodes: Vec<NodeRecordV2> = (0..10)
+            .map(|i| make_node(
+                &format!("a/fn{}", i),
+                "FUNCTION",
+                &format!("fn{}", i),
+                "a/file.js",
+            ))
+            .collect();
+
+        let ids: Vec<u128> = nodes.iter().map(|n| n.id).collect();
+
+        let delta = store.commit_batch(
+            nodes,
+            vec![],
+            &["a/file.js".to_string()],
+            HashMap::new(),
+            &mut manifest_store,
+        ).unwrap();
+
+        assert_eq!(delta.nodes_added, 10);
+
+        // All 10 must be queryable — no partial commit
+        for (i, id) in ids.iter().enumerate() {
+            assert!(
+                store.node_exists(*id),
+                "Node {} (fn{}) not found after atomic commit",
+                id,
+                i,
+            );
+            assert!(
+                store.get_node(*id).is_some(),
+                "get_node failed for fn{}",
+                i,
+            );
+        }
+
+        assert_eq!(store.node_count(), 10);
+    }
+
+    #[test]
+    fn test_commit_batch_tombstone_accumulation() {
+        // Tombstones accumulate across commits: re-committing file A
+        // does not affect file B, and manifest contains tombstones from
+        // all previous commits.
+        let mut store = MultiShardStore::ephemeral(4);
+        let mut manifest_store = ManifestStore::ephemeral();
+
+        // Commit 1: "a/file.js" with nodes A, B
+        let a = make_node("a/nodeA", "FUNCTION", "nodeA", "a/file.js");
+        let b = make_node("a/nodeB", "FUNCTION", "nodeB", "a/file.js");
+        store.commit_batch(
+            vec![a.clone(), b.clone()],
+            vec![],
+            &["a/file.js".to_string()],
+            HashMap::new(),
+            &mut manifest_store,
+        ).unwrap();
+
+        // Commit 2: "b/file.js" with nodes C, D (independent file)
+        let c = make_node("b/nodeC", "FUNCTION", "nodeC", "b/file.js");
+        let d = make_node("b/nodeD", "FUNCTION", "nodeD", "b/file.js");
+        store.commit_batch(
+            vec![c.clone(), d.clone()],
+            vec![],
+            &["b/file.js".to_string()],
+            HashMap::new(),
+            &mut manifest_store,
+        ).unwrap();
+
+        // Commit 3: Re-commit "a/file.js" with node E (replaces A, B)
+        let e = make_node("a/nodeE", "FUNCTION", "nodeE", "a/file.js");
+        store.commit_batch(
+            vec![e.clone()],
+            vec![],
+            &["a/file.js".to_string()],
+            HashMap::new(),
+            &mut manifest_store,
+        ).unwrap();
+
+        // Manifest should contain tombstones for A and B
+        let manifest = manifest_store.current();
+        let tomb_nodes: HashSet<u128> =
+            manifest.tombstoned_node_ids.iter().copied().collect();
+        assert!(
+            tomb_nodes.contains(&a.id),
+            "Tombstone for node A missing from manifest"
+        );
+        assert!(
+            tomb_nodes.contains(&b.id),
+            "Tombstone for node B missing from manifest"
+        );
+
+        // Nodes C, D (from file b) should NOT be tombstoned
+        assert!(
+            !tomb_nodes.contains(&c.id),
+            "Node C should not be tombstoned"
+        );
+        assert!(
+            !tomb_nodes.contains(&d.id),
+            "Node D should not be tombstoned"
+        );
+
+        // C, D still queryable
+        assert!(store.node_exists(c.id));
+        assert!(store.node_exists(d.id));
+
+        // E is queryable
+        assert!(store.node_exists(e.id));
+
+        // A, B are gone
+        assert!(!store.node_exists(a.id));
+        assert!(!store.node_exists(b.id));
+    }
+
+    #[test]
+    fn test_commit_batch_then_query_consistent() {
+        // After re-commit, ALL query methods must return consistent results:
+        // no stale data from old commit visible via any API.
+        let mut store = MultiShardStore::ephemeral(4);
+        let mut manifest_store = ManifestStore::ephemeral();
+
+        // First commit: nodes X, Y with edges X->Y and external node Z with edge Z->X
+        let x = make_node("a/fnX", "FUNCTION", "fnX", "a/file.js");
+        let y = make_node("a/fnY", "FUNCTION", "fnY", "a/file.js");
+        let z = make_node("b/fnZ", "FUNCTION", "fnZ", "b/file.js");
+        store.commit_batch(
+            vec![x.clone(), y.clone(), z.clone()],
+            vec![
+                make_edge("a/fnX", "a/fnY", "CALLS"),
+                make_edge("b/fnZ", "a/fnX", "IMPORTS_FROM"),
+            ],
+            &["a/file.js".to_string(), "b/file.js".to_string()],
+            HashMap::new(),
+            &mut manifest_store,
+        ).unwrap();
+
+        // Verify initial state
+        assert_eq!(store.get_outgoing_edges(x.id, None).len(), 1);
+        assert_eq!(store.get_incoming_edges(x.id, None).len(), 1);
+
+        // Re-commit: replace all with new nodes P, Q and edge P->Q
+        let p = make_node("a/fnP", "FUNCTION", "fnP", "a/file.js");
+        let q = make_node("b/fnQ", "FUNCTION", "fnQ", "b/file.js");
+        store.commit_batch(
+            vec![p.clone(), q.clone()],
+            vec![make_edge("a/fnP", "b/fnQ", "CALLS")],
+            &["a/file.js".to_string(), "b/file.js".to_string()],
+            HashMap::new(),
+            &mut manifest_store,
+        ).unwrap();
+
+        // get_node: old nodes gone, new nodes present
+        assert!(store.get_node(x.id).is_none(), "Stale node X visible via get_node");
+        assert!(store.get_node(y.id).is_none(), "Stale node Y visible via get_node");
+        assert!(store.get_node(z.id).is_none(), "Stale node Z visible via get_node");
+        assert!(store.get_node(p.id).is_some(), "New node P not visible via get_node");
+        assert!(store.get_node(q.id).is_some(), "New node Q not visible via get_node");
+
+        // find_nodes: only new nodes for these files
+        let file_a_nodes = store.find_nodes(None, Some("a/file.js"));
+        assert_eq!(file_a_nodes.len(), 1);
+        assert_eq!(file_a_nodes[0].id, p.id);
+
+        let file_b_nodes = store.find_nodes(None, Some("b/file.js"));
+        assert_eq!(file_b_nodes.len(), 1);
+        assert_eq!(file_b_nodes[0].id, q.id);
+
+        // get_outgoing_edges: P->Q exists, old X->Y gone
+        let p_outgoing = store.get_outgoing_edges(p.id, None);
+        assert_eq!(p_outgoing.len(), 1);
+        assert_eq!(p_outgoing[0].dst, q.id);
+
+        let x_outgoing = store.get_outgoing_edges(x.id, None);
+        assert_eq!(x_outgoing.len(), 0, "Stale edge X->Y visible via get_outgoing_edges");
+
+        // get_incoming_edges: Q has incoming from P, old X has no incoming
+        let q_incoming = store.get_incoming_edges(q.id, None);
+        assert_eq!(q_incoming.len(), 1);
+        assert_eq!(q_incoming[0].src, p.id);
+
+        let x_incoming = store.get_incoming_edges(x.id, None);
+        assert_eq!(x_incoming.len(), 0, "Stale edge Z->X visible via get_incoming_edges");
+    }
+
+    #[test]
+    fn test_commit_batch_existing_api_unchanged() {
+        // Old API (add_nodes + add_edges + flush_all) must still work
+        // exactly as before — backward compatibility with pre-commit_batch code.
+        let mut store = MultiShardStore::ephemeral(4);
+        let mut manifest_store = ManifestStore::ephemeral();
+
+        // Use ONLY the old API: add_nodes, add_edges, flush_all
+        let n1 = make_node("a/fn1", "FUNCTION", "fn1", "a/file.js");
+        let n2 = make_node("b/fn2", "FUNCTION", "fn2", "b/file.js");
+        let n3 = make_node("c/fn3", "CLASS", "cls1", "c/file.js");
+        store.add_nodes(vec![n1.clone(), n2.clone(), n3.clone()]);
+
+        let e1 = make_edge("a/fn1", "b/fn2", "CALLS");
+        let e2 = make_edge("b/fn2", "c/fn3", "IMPORTS_FROM");
+        store.add_edges(vec![e1.clone(), e2.clone()]).unwrap();
+
+        let flushed = store.flush_all(&mut manifest_store).unwrap();
+        assert!(flushed > 0, "flush_all should have flushed at least 1 shard");
+
+        // All nodes queryable via get_node
+        assert!(store.get_node(n1.id).is_some());
+        assert!(store.get_node(n2.id).is_some());
+        assert!(store.get_node(n3.id).is_some());
+
+        // node_exists works
+        assert!(store.node_exists(n1.id));
+        assert!(store.node_exists(n2.id));
+        assert!(store.node_exists(n3.id));
+
+        // find_nodes works
+        let functions = store.find_nodes(Some("FUNCTION"), None);
+        assert_eq!(functions.len(), 2);
+        let classes = store.find_nodes(Some("CLASS"), None);
+        assert_eq!(classes.len(), 1);
+
+        // Edge queries work
+        let outgoing_n1 = store.get_outgoing_edges(n1.id, None);
+        assert_eq!(outgoing_n1.len(), 1);
+        assert_eq!(outgoing_n1[0].edge_type, "CALLS");
+
+        let outgoing_n2 = store.get_outgoing_edges(n2.id, None);
+        assert_eq!(outgoing_n2.len(), 1);
+        assert_eq!(outgoing_n2[0].edge_type, "IMPORTS_FROM");
+
+        let incoming_n2 = store.get_incoming_edges(n2.id, None);
+        assert_eq!(incoming_n2.len(), 1);
+        assert_eq!(incoming_n2[0].src, n1.id);
+
+        let incoming_n3 = store.get_incoming_edges(n3.id, None);
+        assert_eq!(incoming_n3.len(), 1);
+        assert_eq!(incoming_n3[0].src, n2.id);
+
+        // Counts correct
+        assert_eq!(store.node_count(), 3);
+        assert_eq!(store.edge_count(), 2);
+
+        // Manifest committed
+        assert!(manifest_store.current().version >= 2);
+
+        // No tombstones in manifest (old API doesn't produce them)
+        let manifest = manifest_store.current();
+        assert!(
+            manifest.tombstoned_node_ids.is_empty(),
+            "Old API should not produce tombstones"
+        );
+        assert!(
+            manifest.tombstoned_edge_keys.is_empty(),
+            "Old API should not produce edge tombstones"
+        );
+    }
 }
