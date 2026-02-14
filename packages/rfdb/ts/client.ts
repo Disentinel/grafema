@@ -759,7 +759,6 @@ export class RFDBClient extends EventEmitter implements IRFDBClient {
   }
 
   // ===========================================================================
-<<<<<<< HEAD
   // Snapshot Operations
   // ===========================================================================
 
