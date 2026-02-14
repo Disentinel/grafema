@@ -107,6 +107,7 @@ import type {
   RejectionPatternInfo,
   CatchesFromInfo,
   PropertyAccessInfo,
+  TypeParameterInfo,
   CounterRef,
   ProcessedNodes,
   ASTCollections,
@@ -154,6 +155,8 @@ interface Collections {
   typeAliases: TypeAliasInfo[];
   enums: EnumDeclarationInfo[];
   decorators: DecoratorInfo[];
+  // Type parameter tracking for generics (REG-303)
+  typeParameters: TypeParameterInfo[];
   // Object/Array literal tracking
   objectLiterals: ObjectLiteralInfo[];
   objectProperties: ObjectPropertyInfo[];
@@ -269,14 +272,14 @@ export class JSASTAnalyzer extends Plugin {
           'CALL', 'IMPORT', 'EXPORT', 'LITERAL', 'EXTERNAL_MODULE',
           'net:stdio', 'net:request', 'event:listener', 'http:request',
           // TypeScript-specific nodes
-          'INTERFACE', 'TYPE', 'ENUM', 'DECORATOR'
+          'INTERFACE', 'TYPE', 'ENUM', 'DECORATOR', 'TYPE_PARAMETER'
         ],
         edges: [
           'CONTAINS', 'DECLARES', 'CALLS', 'HAS_SCOPE', 'CAPTURES', 'MODIFIES',
           'WRITES_TO', 'IMPORTS', 'INSTANCE_OF', 'HANDLED_BY', 'HAS_CALLBACK',
           'PASSES_ARGUMENT', 'MAKES_REQUEST', 'IMPORTS_FROM', 'EXPORTS_TO', 'ASSIGNED_FROM',
           // TypeScript-specific edges
-          'IMPLEMENTS', 'EXTENDS', 'DECORATED_BY',
+          'IMPLEMENTS', 'EXTENDS', 'DECORATED_BY', 'HAS_TYPE_PARAMETER',
           // Promise data flow
           'RESOLVES_TO'
         ]
@@ -1363,6 +1366,8 @@ export class JSASTAnalyzer extends Plugin {
       const typeAliases: TypeAliasInfo[] = [];
       const enums: EnumDeclarationInfo[] = [];
       const decorators: DecoratorInfo[] = [];
+      // Type parameter tracking for generics (REG-303)
+      const typeParameters: TypeParameterInfo[] = [];
       // Object/Array literal tracking for data flow
       const objectLiterals: ObjectLiteralInfo[] = [];
       const objectProperties: ObjectPropertyInfo[] = [];
@@ -1450,6 +1455,8 @@ export class JSASTAnalyzer extends Plugin {
         httpRequests, literals, variableAssignments,
         // TypeScript-specific collections
         interfaces, typeAliases, enums, decorators,
+        // Type parameter tracking for generics (REG-303)
+        typeParameters,
         // Object/Array literal tracking
         objectLiterals, objectProperties, arrayLiterals, arrayElements,
         // Array mutation tracking
@@ -1857,6 +1864,8 @@ export class JSASTAnalyzer extends Plugin {
         typeAliases,
         enums,
         decorators,
+        // Type parameter tracking for generics (REG-303)
+        typeParameters,
         // Array mutation tracking
         arrayMutations,
         // Object mutation tracking

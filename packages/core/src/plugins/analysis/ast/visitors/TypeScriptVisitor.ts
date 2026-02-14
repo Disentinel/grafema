@@ -23,7 +23,8 @@ import type {
   InterfacePropertyInfo,
   TypeAliasInfo,
   EnumDeclarationInfo,
-  EnumMemberInfo
+  EnumMemberInfo,
+  TypeParameterInfo
 } from '../types.js';
 import type { ScopeTracker } from '../../../../core/ScopeTracker.js';
 import { computeSemanticId } from '../../../../core/SemanticId.js';
@@ -161,6 +162,91 @@ export function typeNodeToString(node: unknown): string {
   }
 }
 
+/**
+ * Extracts type parameter info from a TSTypeParameterDeclaration node.
+ *
+ * Handles:
+ * - Simple: <T>
+ * - Constrained: <T extends Serializable>
+ * - Defaulted: <T = string>
+ * - Variance: <in T>, <out T>, <in out T>
+ * - Intersection constraints: <T extends A & B>
+ *
+ * @param typeParameters - Babel TSTypeParameterDeclaration node (or undefined)
+ * @param parentId - ID of the owning declaration
+ * @param parentType - 'FUNCTION' | 'CLASS' | 'INTERFACE' | 'TYPE'
+ * @param file - File path
+ * @param line - Line of the declaration
+ * @param column - Column of the declaration
+ * @returns Array of TypeParameterInfo (empty if no type params)
+ */
+export function extractTypeParameters(
+  typeParameters: unknown,
+  parentId: string,
+  parentType: 'FUNCTION' | 'CLASS' | 'INTERFACE' | 'TYPE',
+  file: string,
+  line: number,
+  column: number
+): TypeParameterInfo[] {
+  if (!typeParameters || typeof typeParameters !== 'object') return [];
+
+  const tpDecl = typeParameters as { type?: string; params?: unknown[] };
+  if (tpDecl.type !== 'TSTypeParameterDeclaration' || !Array.isArray(tpDecl.params)) return [];
+
+  const result: TypeParameterInfo[] = [];
+
+  for (const param of tpDecl.params) {
+    const tsParam = param as {
+      type?: string;
+      name?: string;
+      constraint?: unknown;
+      default?: unknown;
+      in?: boolean;
+      out?: boolean;
+      loc?: { start?: { line?: number; column?: number } };
+    };
+
+    if (tsParam.type !== 'TSTypeParameter') continue;
+
+    const paramName = tsParam.name;
+    if (!paramName) continue;
+
+    // Extract constraint via typeNodeToString
+    const constraintType = tsParam.constraint ? typeNodeToString(tsParam.constraint) : undefined;
+
+    // Extract default via typeNodeToString
+    const defaultType = tsParam.default ? typeNodeToString(tsParam.default) : undefined;
+
+    // Extract variance
+    let variance: 'in' | 'out' | 'in out' | undefined;
+    if (tsParam.in && tsParam.out) {
+      variance = 'in out';
+    } else if (tsParam.in) {
+      variance = 'in';
+    } else if (tsParam.out) {
+      variance = 'out';
+    }
+
+    // Use param's own location if available, otherwise fall back to declaration location
+    const paramLine = tsParam.loc?.start?.line ?? line;
+    const paramColumn = tsParam.loc?.start?.column ?? column;
+
+    result.push({
+      name: paramName,
+      constraintType: constraintType !== 'unknown' ? constraintType : undefined,
+      defaultType: defaultType !== 'unknown' ? defaultType : undefined,
+      variance,
+      parentId,
+      parentType,
+      file,
+      line: paramLine,
+      column: paramColumn,
+    });
+  }
+
+  return result;
+}
+
 export class TypeScriptVisitor extends ASTVisitor {
   private scopeTracker?: ScopeTracker;
 
@@ -179,7 +265,8 @@ export class TypeScriptVisitor extends ASTVisitor {
     const {
       interfaces,
       typeAliases,
-      enums
+      enums,
+      typeParameters
     } = this.collections;
     const scopeTracker = this.scopeTracker;
 
@@ -234,6 +321,22 @@ export class TypeScriptVisitor extends ASTVisitor {
           }
         }
 
+        // Extract type parameters (REG-303)
+        if (typeParameters && node.typeParameters) {
+          const interfaceId = `${module.file}:INTERFACE:${interfaceName}:${getLine(node)}`;
+          const typeParamInfos = extractTypeParameters(
+            node.typeParameters,
+            interfaceId,
+            'INTERFACE',
+            module.file,
+            getLine(node),
+            getColumn(node)
+          );
+          for (const tp of typeParamInfos) {
+            (typeParameters as TypeParameterInfo[]).push(tp);
+          }
+        }
+
         (interfaces as InterfaceDeclarationInfo[]).push({
           semanticId: interfaceSemanticId,
           type: 'INTERFACE',
@@ -260,6 +363,22 @@ export class TypeScriptVisitor extends ASTVisitor {
 
         // Extract the type being aliased
         const aliasOf = typeNodeToString(node.typeAnnotation);
+
+        // Extract type parameters (REG-303)
+        if (typeParameters && node.typeParameters) {
+          const typeId = `${module.file}:TYPE:${typeName}:${getLine(node)}`;
+          const typeParamInfos = extractTypeParameters(
+            node.typeParameters,
+            typeId,
+            'TYPE',
+            module.file,
+            getLine(node),
+            getColumn(node)
+          );
+          for (const tp of typeParamInfos) {
+            (typeParameters as TypeParameterInfo[]).push(tp);
+          }
+        }
 
         // REG-304: Detect conditional type and extract branch metadata
         const typeAnnotation = node.typeAnnotation as { type: string; [key: string]: unknown };
