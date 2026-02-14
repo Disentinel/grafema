@@ -73,6 +73,7 @@ export interface WireNode {
   file: string;
   exported: boolean;
   metadata: string; // JSON string
+  semanticId?: string; // Protocol v3: human-readable semantic ID
 }
 
 // Edges as sent over the wire

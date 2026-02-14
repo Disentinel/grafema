@@ -51,6 +51,11 @@ pub struct NodeRecord {
     /// JSON metadata (async, generator, arrowFunction, line, etc.) - stored temporarily until flush
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<String>,
+
+    /// Semantic ID string (populated from v2 storage, None for v1)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    pub semantic_id: Option<String>,
 }
 
 /// Edge record in columnar format

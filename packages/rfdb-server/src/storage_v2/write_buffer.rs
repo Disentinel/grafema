@@ -4,7 +4,7 @@
 //! NOT Send+Sync -- single-writer access assumed.
 //!
 //! Nodes are keyed by id (u128) for O(1) point lookup + upsert semantics.
-//! Edges are stored in a Vec (append-only) with a HashSet for deduplication.
+//! Edges are stored in a Vec with upsert semantics on (src, dst, edge_type).
 
 use std::collections::{HashMap, HashSet};
 
@@ -16,14 +16,14 @@ use crate::storage_v2::types::{EdgeRecordV2, NodeRecordV2};
 /// NOT Send+Sync -- single-writer access assumed.
 ///
 /// Nodes are keyed by id (u128) for O(1) point lookup + upsert semantics.
-/// Edges are stored in a Vec (append-only) with a HashSet for deduplication.
+/// Edges are stored in a Vec with upsert semantics on (src, dst, edge_type).
 pub struct WriteBuffer {
     /// Nodes keyed by u128 id. Upsert: adding a node with an existing id
     /// replaces the previous record (same as v1 delta_nodes pattern).
     nodes: HashMap<u128, NodeRecordV2>,
 
-    /// Append-only edge storage. Linear scan for queries is acceptable
-    /// because the buffer is small (flushed regularly).
+    /// Edge storage. Linear scan for queries is acceptable because the
+    /// buffer is small (flushed regularly).
     edges: Vec<EdgeRecordV2>,
 
     /// Edge dedup key: (src, dst, edge_type). Matches v1 engine's
@@ -57,14 +57,26 @@ impl WriteBuffer {
         }
     }
 
-    /// Add a single edge. Dedup: if (src, dst, edge_type) exists, skip.
-    /// Returns true if edge was added, false if duplicate.
+    /// Add a single edge.
+    ///
+    /// If (src, dst, edge_type) already exists in buffer, this performs an
+    /// upsert and replaces the existing record metadata.
+    ///
+    /// Returns true if a new edge key was inserted, false if an existing
+    /// edge record was updated in place.
     pub fn add_edge(&mut self, record: EdgeRecordV2) -> bool {
         let key = (record.src, record.dst, record.edge_type.clone());
         if self.edge_keys.insert(key) {
             self.edges.push(record);
             true
         } else {
+            if let Some(existing) = self.edges.iter_mut().find(|edge| {
+                edge.src == record.src &&
+                edge.dst == record.dst &&
+                edge.edge_type == record.edge_type
+            }) {
+                *existing = record;
+            }
             false
         }
     }
@@ -279,6 +291,23 @@ mod tests {
         assert!(!buf.add_edge(e2)); // duplicate, not added
 
         assert_eq!(buf.edge_count(), 1);
+    }
+
+    #[test]
+    fn test_edge_upsert_replaces_metadata() {
+        let mut buf = WriteBuffer::new();
+        let mut e1 = make_edge("src1", "dst1", "FLOWS_INTO");
+        e1.metadata = r#"{"resolutionStatus":"UNKNOWN_RUNTIME"}"#.to_string();
+
+        let mut e2 = make_edge("src1", "dst1", "FLOWS_INTO");
+        e2.metadata = r#"{"resolutionStatus":"RESOLVED"}"#.to_string();
+
+        assert!(buf.add_edge(e1));
+        assert!(!buf.add_edge(e2.clone())); // upsert existing key
+
+        assert_eq!(buf.edge_count(), 1);
+        let stored = buf.iter_edges().next().unwrap();
+        assert_eq!(stored.metadata, e2.metadata);
     }
 
     #[test]

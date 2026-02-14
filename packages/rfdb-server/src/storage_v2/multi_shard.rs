@@ -264,6 +264,36 @@ impl MultiShardStore {
     }
 }
 
+// ── Tombstones ────────────────────────────────────────────────────
+
+impl MultiShardStore {
+    /// Apply pending tombstones to all shards.
+    ///
+    /// Merges the given node IDs and edge keys into each shard's
+    /// existing tombstone set. Called by `GraphEngineV2::flush()` to
+    /// persist buffered `delete_node`/`delete_edge` operations.
+    pub fn set_tombstones(
+        &mut self,
+        node_ids: &HashSet<u128>,
+        edge_keys: &HashSet<(u128, u128, String)>,
+    ) {
+        for shard in &mut self.shards {
+            let mut merged_nodes: HashSet<u128> =
+                shard.tombstones().node_ids.iter().copied().collect();
+            merged_nodes.extend(node_ids.iter().copied());
+
+            let mut merged_edges: HashSet<(u128, u128, String)> =
+                shard.tombstones().edge_keys.iter().cloned().collect();
+            merged_edges.extend(edge_keys.iter().cloned());
+
+            shard.set_tombstones(TombstoneSet {
+                node_ids: merged_nodes,
+                edge_keys: merged_edges,
+            });
+        }
+    }
+}
+
 // ── Flush ──────────────────────────────────────────────────────────
 
 impl MultiShardStore {
@@ -1156,6 +1186,36 @@ mod tests {
         let outgoing = store.get_outgoing_edges(id1, None);
         assert_eq!(outgoing.len(), 1);
         assert_eq!(outgoing[0].edge_type, "CALLS");
+    }
+
+    #[test]
+    fn test_open_existing_db_preserves_metadata() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let db_path = dir.path().join("test.rfdb");
+        std::fs::create_dir_all(&db_path).unwrap();
+
+        let mut manifest_store = ManifestStore::create(&db_path).unwrap();
+
+        let mut n1 = make_node("src/a/fn1", "FUNCTION", "fn1", "src/a/file.js");
+        n1.metadata = r#"{"line":42,"async":true}"#.to_string();
+        let n2 = make_node("lib/b/fn2", "FUNCTION", "fn2", "lib/b/file.js");
+        let mut e1 = make_edge("src/a/fn1", "lib/b/fn2", "CALLS");
+        e1.metadata = r#"{"computedPropertyVar":"k","origin":"analysis"}"#.to_string();
+
+        {
+            let mut store = MultiShardStore::create(&db_path, 4).unwrap();
+            store.add_nodes(vec![n1.clone(), n2.clone()]);
+            store.add_edges(vec![e1.clone()]).unwrap();
+            store.flush_all(&mut manifest_store).unwrap();
+        }
+
+        let store = MultiShardStore::open(&db_path, &manifest_store).unwrap();
+        let loaded_n1 = store.get_node(n1.id).expect("node with metadata not found");
+        assert_eq!(loaded_n1.metadata, n1.metadata);
+
+        let outgoing = store.get_outgoing_edges(n1.id, None);
+        assert_eq!(outgoing.len(), 1);
+        assert_eq!(outgoing[0].metadata, e1.metadata);
     }
 
     #[test]

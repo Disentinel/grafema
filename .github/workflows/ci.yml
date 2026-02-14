@@ -49,7 +49,30 @@ jobs:
         run: pnpm build
 
       - name: Run tests with coverage
-        run: pnpm test:coverage
+        run: |
+          set -o pipefail
+          pnpm test:coverage 2>&1 | tee /tmp/pnpm-test-coverage.log
+
+      - name: Summarize failed tests
+        if: failure()
+        run: |
+          echo "### Failed tests (excluding TODO)" >> "$GITHUB_STEP_SUMMARY"
+          if grep -E "not ok" /tmp/pnpm-test-coverage.log | grep -v "# TODO" > /tmp/pnpm-test-failures.log; then
+            cat /tmp/pnpm-test-failures.log >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No non-TODO failing 'not ok' lines found in TAP output." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "### TAP summary" >> "$GITHUB_STEP_SUMMARY"
+          grep -E "# tests|# pass|# fail|# todo" /tmp/pnpm-test-coverage.log >> "$GITHUB_STEP_SUMMARY" || true
+
+      - name: Upload test log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-log
+          path: /tmp/pnpm-test-coverage.log
+          retention-days: 14
 
       - name: Extract coverage percentage
         if: github.ref == 'refs/heads/main'

@@ -3,7 +3,7 @@
 //! Evaluates Datalog queries against a GraphEngine.
 
 use std::collections::HashMap;
-use crate::graph::{GraphStore, GraphEngine};
+use crate::graph::GraphStore;
 use crate::datalog::types::*;
 
 /// A value in Datalog bindings
@@ -92,13 +92,13 @@ impl Bindings {
 
 /// Datalog evaluator
 pub struct Evaluator<'a> {
-    engine: &'a GraphEngine,
+    engine: &'a dyn GraphStore,
     rules: HashMap<String, Vec<Rule>>,
 }
 
 impl<'a> Evaluator<'a> {
     /// Create a new evaluator
-    pub fn new(engine: &'a GraphEngine) -> Self {
+    pub fn new(engine: &'a dyn GraphStore) -> Self {
         Evaluator {
             engine,
             rules: HashMap::new(),

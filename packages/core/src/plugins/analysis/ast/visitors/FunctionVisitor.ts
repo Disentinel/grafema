@@ -22,12 +22,12 @@ import type {
 } from '@babel/types';
 import type { NodePath } from '@babel/traverse';
 import { ASTVisitor, type VisitorModule, type VisitorCollections, type VisitorHandlers, type CounterRef } from './ASTVisitor.js';
-import { typeNodeToString } from './TypeScriptVisitor.js';
+import { typeNodeToString, extractTypeParameters } from './TypeScriptVisitor.js';
 import type { ScopeTracker } from '../../../../core/ScopeTracker.js';
 import { IdGenerator } from '../IdGenerator.js';
 import { createParameterNodes } from '../utils/createParameterNodes.js';
 import { getLine, getColumn } from '../utils/location.js';
-import type { ParameterInfo, PromiseExecutorContext } from '../types.js';
+import type { ParameterInfo, PromiseExecutorContext, TypeParameterInfo } from '../types.js';
 import { ConstructorCallNode } from '../../../../core/nodes/ConstructorCallNode.js';
 
 /**
@@ -244,6 +244,22 @@ export class FunctionVisitor extends ASTVisitor {
           start: node.start ?? undefined
         });
 
+        // Extract type parameters (REG-303)
+        const typeParametersCollection = collections.typeParameters;
+        if (typeParametersCollection && (node as any).typeParameters) {
+          const typeParamInfos = extractTypeParameters(
+            (node as any).typeParameters,
+            functionId,
+            'FUNCTION',
+            module.file,
+            line,
+            getColumn(node)
+          );
+          for (const tp of typeParamInfos) {
+            (typeParametersCollection as TypeParameterInfo[]).push(tp);
+          }
+        }
+
         // Enter function scope BEFORE creating parameters (semantic IDs need function context)
         scopeTracker.enterScope(node.id.name, 'FUNCTION');
 
@@ -318,6 +334,22 @@ export class FunctionVisitor extends ASTVisitor {
           jsdocSummary,
           start: node.start ?? undefined
         });
+
+        // Extract type parameters (REG-303)
+        const arrowTypeParamsCollection = collections.typeParameters;
+        if (arrowTypeParamsCollection && (node as any).typeParameters) {
+          const typeParamInfos = extractTypeParameters(
+            (node as any).typeParameters,
+            functionId,
+            'FUNCTION',
+            module.file,
+            line,
+            column
+          );
+          for (const tp of typeParamInfos) {
+            (arrowTypeParamsCollection as TypeParameterInfo[]).push(tp);
+          }
+        }
 
         // Enter function scope BEFORE creating parameters (semantic IDs need function context)
         scopeTracker.enterScope(functionName, 'FUNCTION');

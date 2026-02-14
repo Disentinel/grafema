@@ -30,6 +30,7 @@
 //!         name: Some("myFunction".to_string()),
 //!         file: Some("src/main.js".to_string()),
 //!         metadata: None,
+//!         semantic_id: None,
 //!     }
 //! ]);
 //!

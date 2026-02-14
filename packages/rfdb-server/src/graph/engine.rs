@@ -402,6 +402,7 @@ impl GraphEngine {
                         name: segment.get_name(idx).map(|s| s.to_string()),
                         file: segment.get_file_path(idx).map(|s| s.to_string()),
                         metadata: segment.get_metadata(idx).map(|s| s.to_string()),
+                        semantic_id: None,
                     });
                 }
             }
@@ -1148,6 +1149,7 @@ impl GraphStore for GraphEngine {
                             name,
                             file,
                             metadata,
+                            semantic_id: None,
                         });
                     }
                 }
@@ -1651,6 +1653,33 @@ impl GraphStore for GraphEngine {
 
         counts
     }
+
+    fn clear(&mut self) {
+        self.delta_log.clear();
+        self.delta_nodes.clear();
+        self.delta_edges.clear();
+        self.adjacency.clear();
+        self.reverse_adjacency.clear();
+        self.edge_keys.clear();
+        self.nodes_segment = None;
+        self.edges_segment = None;
+        self.metadata = GraphMetadata::default();
+        self.ops_since_flush = 0;
+        self.deleted_segment_ids.clear();
+        self.deleted_segment_edge_keys.clear();
+        self.index_set.clear();
+        tracing::info!("Graph cleared");
+    }
+
+    fn declare_fields(&mut self, fields: Vec<FieldDecl>) {
+        self.declared_fields = fields;
+        if let Some(ref nodes_seg) = self.nodes_segment {
+            self.index_set.rebuild_from_segment(nodes_seg, &self.declared_fields);
+        }
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any { self }
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any { self }
 }
 
 #[cfg(test)]
@@ -1750,6 +1779,7 @@ mod tests {
                 name: Some("test_node".to_string()),
                 file: None,
                 metadata: None,
+            semantic_id: None,
             };
             engine.add_nodes(vec![node]);
             engine.flush().unwrap();
@@ -1788,6 +1818,7 @@ mod tests {
             name: Some(name.to_string()),
             file: Some("test.js".to_string()),
             metadata: None,
+        semantic_id: None,
         }
     }
 
@@ -2153,6 +2184,7 @@ mod tests {
                     name: Some("funcA".to_string()),
                     file: Some("src/utils.js".to_string()),
                     metadata: None,
+                semantic_id: None,
                 },
                 NodeRecord {
                     id: 2,
@@ -2166,6 +2198,7 @@ mod tests {
                     name: Some("funcB".to_string()),
                     file: Some("src/utils.js".to_string()),
                     metadata: None,
+                semantic_id: None,
                 },
                 NodeRecord {
                     id: 3,
@@ -2179,6 +2212,7 @@ mod tests {
                     name: Some("funcC".to_string()),
                     file: Some("src/other.js".to_string()),
                     metadata: None,
+                semantic_id: None,
                 },
             ]);
 
@@ -2224,6 +2258,7 @@ mod tests {
                 name: Some("funcA".to_string()),
                 file: Some("src/utils.js".to_string()),
                 metadata: None,
+            semantic_id: None,
             },
             NodeRecord {
                 id: 2,
@@ -2237,6 +2272,7 @@ mod tests {
                 name: Some("ClassB".to_string()),
                 file: Some("src/utils.js".to_string()),
                 metadata: None,
+            semantic_id: None,
             },
             NodeRecord {
                 id: 3,
@@ -2250,6 +2286,7 @@ mod tests {
                 name: Some("funcC".to_string()),
                 file: Some("src/other.js".to_string()),
                 metadata: None,
+            semantic_id: None,
             },
         ]);
 
@@ -2298,6 +2335,7 @@ mod tests {
             name: Some("test".to_string()),
             file: None,
             metadata: None,
+        semantic_id: None,
         }]);
 
         assert_eq!(engine.node_count(), 1);
@@ -2321,6 +2359,7 @@ mod tests {
                 name: Some("foo".to_string()),
                 file: None,
                 metadata: None,
+            semantic_id: None,
             },
             NodeRecord {
                 id: 2,
@@ -2334,6 +2373,7 @@ mod tests {
                 name: Some("bar".to_string()),
                 file: None,
                 metadata: None,
+            semantic_id: None,
             },
         ]);
 
@@ -2539,6 +2579,7 @@ mod tests {
             name: Some("myFunc".to_string()),
             file: Some("src/app.js".to_string()),
             metadata: Some("{\"async\":true}".to_string()),
+            semantic_id: None,
         }]);
         engine.flush().unwrap();
 
@@ -2592,6 +2633,7 @@ mod tests {
             name: Some(name.to_string()),
             file: Some("test.js".to_string()),
             metadata: Some(metadata_json.to_string()),
+            semantic_id: None,
         }
     }
 
