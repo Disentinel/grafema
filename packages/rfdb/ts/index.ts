@@ -21,4 +21,13 @@ export type {
   AttrQuery,
   DatalogResult,
   IRFDBClient,
+  // Snapshot types
+  SnapshotRef,
+  SnapshotStats,
+  SegmentInfo,
+  SnapshotDiff,
+  SnapshotInfo,
+  DiffSnapshotsResponse,
+  FindSnapshotResponse,
+  ListSnapshotsResponse,
 } from './protocol.js';
