@@ -32,6 +32,7 @@ export { ExternalModuleNode, type ExternalModuleNodeRecord } from './ExternalMod
 // TypeScript declaration nodes
 export { InterfaceNode, type InterfaceNodeRecord, type InterfacePropertyRecord } from './InterfaceNode.js';
 export { TypeNode, type TypeNodeRecord } from './TypeNode.js';
+export { TypeParameterNode, type TypeParameterNodeRecord, type TypeParameterNodeOptions } from './TypeParameterNode.js';
 export { EnumNode, type EnumNodeRecord, type EnumMemberRecord } from './EnumNode.js';
 export { DecoratorNode, type DecoratorNodeRecord, type DecoratorTargetType } from './DecoratorNode.js';
 

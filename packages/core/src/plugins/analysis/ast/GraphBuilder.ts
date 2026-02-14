@@ -9,6 +9,7 @@ import { ImportNode } from '../../../core/nodes/ImportNode.js';
 import { InterfaceNode, type InterfaceNodeRecord } from '../../../core/nodes/InterfaceNode.js';
 import { EnumNode } from '../../../core/nodes/EnumNode.js';
 import { DecoratorNode } from '../../../core/nodes/DecoratorNode.js';
+import { TypeParameterNode } from '../../../core/nodes/TypeParameterNode.js';
 import { NetworkRequestNode } from '../../../core/nodes/NetworkRequestNode.js';
 import { NodeFactory } from '../../../core/NodeFactory.js';
 import { computeSemanticId, parseSemanticId } from '../../../core/SemanticId.js';
@@ -53,6 +54,7 @@ import type {
   RejectionPatternInfo,
   CatchesFromInfo,
   PropertyAccessInfo,
+  TypeParameterInfo,
   ASTCollections,
   GraphNode,
   GraphEdge,
@@ -75,6 +77,17 @@ const KNOWN_CALLBACK_INVOKERS = new Set([
   // DOM/Node
   'requestAnimationFrame', 'addEventListener',
 ]);
+
+/**
+ * Check if a type string represents a TypeScript primitive (no EXTENDS edge needed)
+ */
+function isPrimitiveType(typeName: string): boolean {
+  const PRIMITIVES = new Set([
+    'string', 'number', 'boolean', 'void', 'null', 'undefined',
+    'never', 'any', 'unknown', 'object', 'symbol', 'bigint', 'function'
+  ]);
+  return PRIMITIVES.has(typeName);
+}
 
 export class GraphBuilder {
   // Track singleton nodes to avoid duplicates (net:stdio, net:request, etc.)
@@ -162,6 +175,8 @@ export class GraphBuilder {
       typeAliases = [],
       enums = [],
       decorators = [],
+      // Type parameter tracking for generics (REG-303)
+      typeParameters = [],
       // Array mutation tracking for FLOWS_INTO edges
       arrayMutations = [],
       // Object mutation tracking for FLOWS_INTO edges
@@ -380,6 +395,9 @@ export class GraphBuilder {
 
     // 24. Buffer DECORATOR nodes and DECORATED_BY edges
     this.bufferDecoratorNodes(decorators);
+
+    // 24.5. Buffer TYPE_PARAMETER nodes and HAS_TYPE_PARAMETER edges (REG-303)
+    this.bufferTypeParameterNodes(typeParameters, interfaces);
 
     // 25. Buffer IMPLEMENTS edges (CLASS -> INTERFACE)
     this.bufferImplementsEdges(classDeclarations, interfaces);
@@ -2096,6 +2114,88 @@ export class GraphBuilder {
         src: decorator.targetId,
         dst: decoratorNode.id  // Use factory-generated ID (colon format)
       });
+    }
+  }
+
+  /**
+   * Buffer TYPE_PARAMETER nodes, HAS_TYPE_PARAMETER edges, and EXTENDS edges for constraints.
+   *
+   * For each type parameter:
+   * 1. Creates TYPE_PARAMETER node with constraint/default/variance metadata
+   * 2. Creates HAS_TYPE_PARAMETER edge: parent -> TYPE_PARAMETER
+   * 3. If constraint is a non-primitive type reference, creates EXTENDS edge
+   *    using external reference nodes (same pattern as bufferInterfaceNodes)
+   */
+  private bufferTypeParameterNodes(typeParameters: TypeParameterInfo[], interfaces: InterfaceDeclarationInfo[]): void {
+    // Build a lookup of interface names to their IDs for same-file resolution
+    const interfaceIdsByName = new Map<string, string>();
+    for (const iface of interfaces) {
+      const ifaceId = `${iface.file}:INTERFACE:${iface.name}:${iface.line}`;
+      interfaceIdsByName.set(iface.name, ifaceId);
+    }
+
+    for (const tp of typeParameters) {
+      // Create TYPE_PARAMETER node
+      const tpNode = TypeParameterNode.create(
+        tp.name,
+        tp.parentId,
+        tp.file,
+        tp.line,
+        tp.column,
+        {
+          constraint: tp.constraintType,
+          defaultType: tp.defaultType,
+          variance: tp.variance,
+        }
+      );
+      this._bufferNode(tpNode as unknown as GraphNode);
+
+      // HAS_TYPE_PARAMETER edge: parent -> TYPE_PARAMETER
+      this._bufferEdge({
+        type: 'HAS_TYPE_PARAMETER',
+        src: tp.parentId,
+        dst: tpNode.id
+      });
+
+      // EXTENDS edge for constraint (if constraint looks like a type reference, not a primitive)
+      if (tp.constraintType && !isPrimitiveType(tp.constraintType)) {
+        // For intersection types ("A & B"), create EXTENDS edge for each part
+        const constraintParts = tp.constraintType.includes(' & ')
+          ? tp.constraintType.split(' & ').map(s => s.trim())
+          : [tp.constraintType];
+
+        for (const part of constraintParts) {
+          // Skip primitives, unknown, union types, array types, complex types
+          if (isPrimitiveType(part) || part === 'unknown') continue;
+          if (part.includes(' | ') || part.includes('[]') || part.includes('[')) continue;
+
+          // Check if constraint type is a same-file interface
+          const sameFileId = interfaceIdsByName.get(part);
+          if (sameFileId) {
+            // Same-file interface — use its real ID
+            this._bufferEdge({
+              type: 'EXTENDS',
+              src: tpNode.id,
+              dst: sameFileId
+            });
+          } else {
+            // External type — create an external reference node (same pattern as bufferInterfaceNodes)
+            const externalInterface = NodeFactory.createInterface(
+              part,
+              tp.file,
+              tp.line,
+              0,
+              { isExternal: true }
+            );
+            this._bufferNode(externalInterface as unknown as GraphNode);
+            this._bufferEdge({
+              type: 'EXTENDS',
+              src: tpNode.id,
+              dst: externalInterface.id
+            });
+          }
+        }
+      }
     }
   }
 

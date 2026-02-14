@@ -39,6 +39,7 @@ import {
   ExternalModuleNode,
   InterfaceNode,
   TypeNode,
+  TypeParameterNode,
   EnumNode,
   DecoratorNode,
   ExpressionNode,
@@ -199,6 +200,12 @@ interface InterfaceOptions {
 
 interface TypeOptions {
   aliasOf?: string;
+}
+
+interface TypeParameterOptions {
+  constraint?: string;
+  defaultType?: string;
+  variance?: 'in' | 'out' | 'in out';
 }
 
 interface EnumOptions {
@@ -530,6 +537,29 @@ export class NodeFactory {
   }
 
   /**
+   * Create TYPE_PARAMETER node
+   *
+   * Represents a generic type parameter (<T extends Constraint = Default>).
+   *
+   * @param name - Type parameter name ("T", "K", "V")
+   * @param parentId - ID of the owning declaration (function/class/interface/type)
+   * @param file - File path
+   * @param line - Line number
+   * @param column - Column position
+   * @param options - Optional constraint, defaultType, variance
+   */
+  static createTypeParameter(
+    name: string,
+    parentId: string,
+    file: string,
+    line: number,
+    column: number,
+    options: TypeParameterOptions = {}
+  ) {
+    return brandNode(TypeParameterNode.create(name, parentId, file, line, column, options));
+  }
+
+  /**
    * Create ENUM node
    */
   static createEnum(
@@ -722,6 +752,7 @@ export class NodeFactory {
       'EXTERNAL_MODULE': ExternalModuleNode,
       'INTERFACE': InterfaceNode,
       'TYPE': TypeNode,
+      'TYPE_PARAMETER': TypeParameterNode,
       'ENUM': EnumNode,
       'DECORATOR': DecoratorNode,
       'EXPRESSION': ExpressionNode

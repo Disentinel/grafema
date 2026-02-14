@@ -26,7 +26,8 @@ import type {
 import type { NodePath } from '@babel/traverse';
 import { ASTVisitor, type VisitorModule, type VisitorCollections, type VisitorHandlers } from './ASTVisitor.js';
 import type { AnalyzeFunctionBodyCallback } from './FunctionVisitor.js';
-import type { DecoratorInfo, ParameterInfo, VariableDeclarationInfo } from '../types.js';
+import type { DecoratorInfo, ParameterInfo, VariableDeclarationInfo, TypeParameterInfo } from '../types.js';
+import { extractTypeParameters } from './TypeScriptVisitor.js';
 import { ExpressionEvaluator } from '../ExpressionEvaluator.js';
 import { createParameterNodes } from '../utils/createParameterNodes.js';
 import type { ScopeTracker } from '../../../../core/ScopeTracker.js';
@@ -204,6 +205,21 @@ export class ClassVisitor extends ASTVisitor {
           }
         }
 
+        // Extract type parameters (REG-303)
+        if (collections.typeParameters && (classNode as any).typeParameters) {
+          const typeParamInfos = extractTypeParameters(
+            (classNode as any).typeParameters,
+            classRecord.id,
+            'CLASS',
+            module.file,
+            classLine,
+            classColumn
+          );
+          for (const tp of typeParamInfos) {
+            (collections.typeParameters as TypeParameterInfo[]).push(tp);
+          }
+        }
+
         // Store ClassNodeRecord + TypeScript metadata
         (classDeclarations as ClassInfo[]).push({
           ...classRecord,
@@ -354,6 +370,21 @@ export class ClassVisitor extends ASTVisitor {
               legacyId  // Keep for debugging/migration purposes
             };
             (functions as ClassFunctionInfo[]).push(funcData);
+
+            // Extract type parameters for methods (REG-303)
+            if (collections.typeParameters && (methodNode as any).typeParameters) {
+              const typeParamInfos = extractTypeParameters(
+                (methodNode as any).typeParameters,
+                functionId,
+                'FUNCTION',
+                module.file,
+                methodLine,
+                methodColumn
+              );
+              for (const tp of typeParamInfos) {
+                (collections.typeParameters as TypeParameterInfo[]).push(tp);
+              }
+            }
 
             // Extract method decorators
             const methodNodeWithDecorators = methodNode as ClassMethod & { decorators?: Decorator[] };

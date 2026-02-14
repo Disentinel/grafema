@@ -417,6 +417,19 @@ export interface DecoratorInfo {
   targetType: 'CLASS' | 'METHOD' | 'PROPERTY' | 'PARAMETER';
 }
 
+// === TYPE PARAMETER INFO ===
+export interface TypeParameterInfo {
+  name: string;              // "T", "K", "V"
+  constraintType?: string;   // "Serializable" (string repr via typeNodeToString)
+  defaultType?: string;      // "string" (string repr via typeNodeToString)
+  variance?: 'in' | 'out' | 'in out';
+  parentId: string;          // ID of owning function/class/interface/type
+  parentType: 'FUNCTION' | 'CLASS' | 'INTERFACE' | 'TYPE';
+  file: string;
+  line: number;
+  column: number;
+}
+
 // === METHOD CALLBACK INFO ===
 export interface MethodCallbackInfo {
   methodCallId: string;
@@ -1120,6 +1133,8 @@ export interface ASTCollections {
   typeAliases?: TypeAliasInfo[];
   enums?: EnumDeclarationInfo[];
   decorators?: DecoratorInfo[];
+  // Type parameter tracking for generics (REG-303)
+  typeParameters?: TypeParameterInfo[];
   // Counter refs (used internally during collection)
   ifScopeCounterRef?: CounterRef;
   scopeCounterRef?: CounterRef;

@@ -194,6 +194,7 @@ export { ExternalModuleNode } from './core/nodes/ExternalModuleNode.js';
 export { NetworkRequestNode } from './core/nodes/NetworkRequestNode.js';
 export { InterfaceNode, type InterfacePropertyRecord } from './core/nodes/InterfaceNode.js';
 export { TypeNode } from './core/nodes/TypeNode.js';
+export { TypeParameterNode, type TypeParameterNodeRecord, type TypeParameterNodeOptions } from './core/nodes/TypeParameterNode.js';
 export { EnumNode, type EnumMemberRecord } from './core/nodes/EnumNode.js';
 export { DecoratorNode, type DecoratorTargetType } from './core/nodes/DecoratorNode.js';
 export { ExpressionNode, type ExpressionNodeOptions } from './core/nodes/ExpressionNode.js';

@@ -25,6 +25,7 @@ export const NODE_TYPE = {
   CONSTANT: 'CONSTANT',
   LITERAL: 'LITERAL',
   EXPRESSION: 'EXPRESSION',  // Generic expression node for data flow tracking
+  TYPE_PARAMETER: 'TYPE_PARAMETER',
 
   // Module system
   MODULE: 'MODULE',
