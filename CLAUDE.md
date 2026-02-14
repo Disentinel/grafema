@@ -88,6 +88,12 @@ Before proposing a new subsystem, check if existing Grafema infrastructure can b
 
 ## Process
 
+**Workflow version: v2.0** (2026-02-15)
+
+Changelog:
+- **v2.0** — Streamlined pipeline: removed Kevlin/Donald from standard flow, Joel only for Full MLA, combined Steve+Вадим auto into single Auto-Review, strengthened Uncle Bob (file-level checks), added model assignment table, parallel Kent ∥ Rob, max 3 subagents, per-task metrics tracking.
+- **v1.0** — Original MLA with all personas sequential.
+
 **CRITICAL: NO CODING AT TOP LEVEL!**
 
 All implementation happens through subagents. Top-level agent only coordinates.
@@ -96,29 +102,24 @@ All implementation happens through subagents. Top-level agent only coordinates.
 
 **Planning:**
 - **Don Melton** (Tech Lead) — "I don't care if it works, is it RIGHT?" Analyzes codebase, creates high-level plan, ensures alignment with vision. **MUST use WebSearch** to find existing approaches, prior art, and tradeoffs before proposing solutions.
-- **Joel Spolsky** (Implementation Planner) — Expands Don's plan into detailed technical specs with specific steps. Must include Big-O complexity analysis for algorithms.
+- **Joel Spolsky** (Implementation Planner) — **Full MLA only.** Expands Don's plan into detailed technical specs with specific steps. Must include Big-O complexity analysis for algorithms. Skip for Single Agent and Mini-MLA.
 
 **Code Quality:**
-- **Robert Martin** (Uncle Bob) — Clean Code guardian. Reviews code BEFORE implementation to identify local refactoring opportunities. "One level better" — not perfection, but incremental improvement.
+- **Robert Martin** (Uncle Bob) — Clean Code guardian. Reviews code BEFORE implementation at **file and method level**. Hard limits: file > 300 lines = MUST split, method > 50 lines = candidate for split. Runs in ALL configurations except Single Agent. "One level better" — not perfection, but incremental improvement.
 
 **Implementation:**
-- **Kent Beck** (Test Engineer) — TDD discipline, tests communicate intent, no mocks in production paths
+- **Kent Beck** (Test Engineer) — TDD discipline, tests communicate intent, no mocks in production paths. Can run **parallel** with Rob when test structure is clear from plan.
 - **Rob Pike** (Implementation Engineer) — Simplicity over cleverness, match existing patterns, pragmatic solutions
 
 **Review:**
-- **Kevlin Henney** (Low-level Reviewer) — Code quality, readability, test quality, naming, structure
-- **Steve Jobs** (High-level Review, auto) — Vision alignment gatekeeper. Runs automatically as subagent. Looks for fundamental errors, corner-cutting, and architectural gaps. **Default stance: REJECT.** If Steve rejects → back to implementation immediately.
-- **Вадим Решетников** (Auto-review, auto) — Practical quality review. Runs automatically as subagent AFTER Steve approves. Checks edge cases, regressions, scope creep, code clarity. If Вадим-auto rejects → back to implementation.
-- **Вадим Решетников** (Final confirmation, human) — Called only AFTER both Steve and Вадим-auto approve. User sees combined review summary and confirms or overrides.
+- **Combined Auto-Review** (auto) — Single subagent combining vision alignment + practical quality. Checks both architectural gaps AND edge cases, regressions, scope creep. Default stance: critical. If REJECT → back to implementation. If APPROVE → present to user.
+- **Вадим Решетников** (Final confirmation, human) — Called only AFTER auto-review approves. User sees review summary and confirms or overrides.
 
 **Project Management:**
 - **Andy Grove** (PM / Tech Debt) — Manages Linear, prioritizes backlog, tracks tech debt. Ruthless prioritization: what moves the needle NOW?
 
-**Product & Demo:**
-- **Steve Jobs** (Product Design / Demo) — User experience is everything. "What is this feature FOR? How does it FEEL to use it?" Challenges unnecessary complexity. Runs demo before marking task complete — if it doesn't delight, it's not done.
-
 **Support:**
-- **Donald Knuth** (Problem Solver) — When stuck, deep analysis instead of more coding. Think hard, provide analysis, don't make changes
+- **Donald Knuth** (Problem Solver) — **Only when stuck.** Deep analysis instead of more coding. Think hard, provide analysis, don't make changes. NOT part of standard pipeline.
 
 **Research / Consulting (for new features planning):**
 - **Robert Tarjan** (Graph Theory) — Graph algorithms, dependency analysis, cycle detection, strongly connected components
@@ -128,7 +129,24 @@ All implementation happens through subagents. Top-level agent only coordinates.
 
 **IMPORTANT for Research agents:** Always use **WebSearch** to find existing tools, papers, and approaches before generating recommendations. Don't hallucinate — ground your analysis in real prior art. Brief search is enough, not deep research.
 
-Whether task is not require deep hardcore reasoning - use Sonnet/Haiku for subagents (if possible).
+### Model Assignment
+
+Use the cheapest model that can handle the task. **Max 3 parallel subagents** (reduce CPU load).
+
+| Role | Model | Rationale |
+|------|-------|-----------|
+| Don (exploration phase) | **Haiku** | Codebase search, file listing, gathering context |
+| Don (planning/decisions) | **Sonnet** | Architectural decisions need reasoning |
+| Joel (Full MLA only) | **Sonnet** | Technical specs need reasoning |
+| Uncle Bob (review) | **Sonnet** | Code quality judgment needs nuance |
+| Kent (tests) | **Opus** | Writing correct tests needs top reasoning |
+| Rob (implementation) | **Opus** | Writing correct code needs top reasoning |
+| Combined Auto-Review | **Sonnet** | Checklist-based review, well-structured |
+| Andy Grove (Linear ops) | **Haiku** | Structured CRUD, template-based |
+| Save user request | **Haiku** | Formatting and file write |
+| Report formatting | **Haiku** | Template-based markdown |
+| Donald Knuth (when stuck) | **Opus** | Deep analysis by definition |
+| Research agents | **Sonnet** | Need reasoning + WebSearch |
 
 ### Lens Selection (When to Use Which Team Configuration)
 
@@ -140,28 +158,29 @@ Not every task needs full MLA. Match team size to task complexity.
 START
  ├─ Is production broken? → YES → Single agent (Rob) + post-mortem MLA later
  └─ NO
-     ├─ Is this well-understood? (clear requirements, single module, <100 LOC)
+     ├─ Is this well-understood? (clear requirements, single file, <50 LOC)
      │   → YES → Single agent (Rob)
      └─ NO
          ├─ Does it change core architecture? (affects multiple systems, long-term impact)
          │   → YES → Full MLA (all personas)
-         └─ NO → Mini-MLA (Don, Rob, Steve+Vadim)
+         └─ NO → Mini-MLA (Don, Uncle Bob, Kent ∥ Rob, Auto-Review, Vadim)
 ```
 
 **Configurations:**
 
 | Config | Team | When to Use |
 |--------|------|-------------|
-| **Single Agent** | Rob | Trivial changes, hotfixes, well-defined tasks |
-| **Mini-MLA** | Don → Rob → Steve(auto) → Vadim(user) | Medium complexity, local scope, clear boundaries |
-| **Mini-MLA + Refactor** | Don → Uncle Bob → Kent → Rob → Steve(auto) → Vadim(user) | Same as Mini-MLA, but touching messy code |
-| **Full MLA** | All personas | Architectural decisions, complex debugging, ambiguous requirements |
+| **Single Agent** | Rob (impl + tests) → Auto-Review → Vadim | Trivial changes, hotfixes, single file <50 LOC |
+| **Mini-MLA** | Don → Uncle Bob → Kent ∥ Rob → Auto-Review → Vadim | Medium complexity, local scope |
+| **Full MLA** | Don → Joel → Uncle Bob → Kent ∥ Rob → Auto-Review → Vadim | Architecture, complex debugging, ambiguous requirements |
 
-**Stopping Condition:**
+`Kent ∥ Rob` = parallel execution when test structure is clear from plan.
 
-After each expert contribution, ask: "Did this add new information?"
-- If NO for 2 consecutive experts → stop, signal saturation reached
-- Diminishing returns after 5-7 experts
+Uncle Bob runs in **all configurations except Single Agent**. 6k-line files must never happen again.
+
+**Early Exit Rule:**
+- If Don's plan shows <50 LOC single-file change with no architectural decisions → downgrade to Single Agent
+- If first 2 expert contributions converge (no new info) → stop, signal saturation
 
 **ROI Guidelines:**
 
@@ -209,19 +228,18 @@ _tasks/
 - Save user's request to `001-user-request.md` (or `0XX-user-revision.md` for follow-ups)
 
 **STEP 2 — PLAN:**
-1. Don analyzes codebase, creates `0XX-don-plan.md`
-2. Joel expands into detailed tech plan `0XX-joel-tech-plan.md`
-3. **Steve Jobs reviews** (automatic subagent) — if REJECT → back to step 1
-4. **Вадим auto-review** (automatic subagent) — if REJECT → back to step 1
-5. **If both approve → present to user** for manual confirmation
-6. Iterate until all approve. If user rejects → back to step 1
+1. Don explores codebase (Haiku subagent), then plans (Sonnet subagent) → `0XX-don-plan.md`
+2. **Full MLA only:** Joel expands into detailed tech plan `0XX-joel-tech-plan.md`
+3. **Auto-Review** (single Sonnet subagent, combined vision + practical check) — if REJECT → back to step 1
+4. **If approved → present to user** for manual confirmation
+5. Iterate until all approve. If user rejects → back to step 1
 
 **STEP 2.5 — PREPARE (Refactor-First):**
 
 Before implementation, improve the code we're about to touch. This is "Boy Scout Rule" formalized.
 
 1. Don identifies files/methods that will be modified
-2. Uncle Bob reviews ONLY those specific methods (not whole files)
+2. Uncle Bob reviews those files at **file-level** (size, SRP) AND **method-level** (complexity)
 3. If refactoring opportunity exists AND is safe:
    - Kent writes tests locking CURRENT behavior (before refactoring)
    - Rob refactors per Uncle Bob's plan
@@ -245,28 +263,72 @@ Before implementation, improve the code we're about to touch. This is "Boy Scout
 - Would take >20% of task time
 
 **STEP 3 — EXECUTE:**
-1. Kent writes tests, creates report
-2. Rob implements, creates report
-3. Donald run the code and review if results aligned with initial intent
-4. Kevlin reviews code quality
-5. Don reviews results
-6. **Steve Jobs reviews** (automatic subagent) — if REJECT → back to step 2
-7. **Вадим auto-review** (automatic subagent) — if REJECT → back to step 2
-8. **If both approve → present to user** for manual confirmation
-9. Loop until Don, Steve, Вадим-auto, AND user ALL agree task is FULLY DONE
-
-**STEP 3.5 — DEMO (before reviews):**
-- Steve Jobs demos the feature
-- If demo doesn't impress — back to implementation
-- "Would I show this on stage?" — if no, it's not ready
+1. Kent writes tests ∥ Rob implements (parallel when possible), create reports
+2. Don reviews results
+3. **Auto-Review** (single Sonnet subagent) — if REJECT → back to step 2
+4. **If approved → present to user** for manual confirmation
+5. Loop until Don, auto-review, AND user ALL agree task is FULLY DONE
 
 **STEP 4 — FINALIZE:**
+- Write **task metrics report** (see template below) → `0XX-metrics.md`
 - Update linear. Reported tech debt and current limitation MUST be added to backlog for future fix
 - If Grafema couldn't help during this task → discuss with user → possibly Linear issue
 - Check backlog, prioritize, offer next task
 - **IMPORTANT:** Task reports (`_tasks/REG-XXX/`) must be committed to main when merging the task branch. Don't forget to copy them from worker worktrees!
 
-**IMPORTANT:** PLAN step runs after EVERY execution cycle. Don must review after every agent.
+**IMPORTANT:** Don reviews results after execution, not after every individual agent.
+
+### Task Metrics (REQUIRED for every task)
+
+**Top-level agent MUST collect usage data from every subagent call** and write metrics report at STEP 4.
+
+Each `Task` tool call returns `total_tokens`, `tool_uses`, `duration_ms` in its output. Collect these.
+
+**Blended cost rates** (input+output average):
+| Model | $/M tokens |
+|-------|------------|
+| Haiku | $1.76 |
+| Sonnet | $6.60 |
+| Opus | $33.00 |
+
+**Template** (`0XX-metrics.md`):
+```markdown
+## Task Metrics: REG-XXX
+
+**Workflow:** v2.0
+**Config:** [Single Agent / Mini-MLA / Full MLA]
+**Date:** YYYY-MM-DD
+**Wall clock:** [start time] → [end time] = [duration]
+
+### Subagents
+
+| # | Agent | Model | Tokens | Tools | Duration | Est. Cost |
+|---|-------|-------|--------|-------|----------|-----------|
+| 1 | Don (explore) | Haiku | 12,000 | 5 | 8s | $0.02 |
+| 2 | Don (plan) | Sonnet | 35,000 | 3 | 25s | $0.23 |
+| ... | ... | ... | ... | ... | ... | ... |
+
+### Totals
+
+| Metric | Value |
+|--------|-------|
+| Subagents total | N |
+| By model | Haiku: N, Sonnet: N, Opus: N |
+| Total tokens (subagents) | N |
+| Est. subagent cost | $X.XX |
+| Top-level overhead | ~20-30% (not tracked) |
+| **Est. total cost** | **$X.XX** |
+| Auto-review cycles | N (how many REJECT→retry) |
+
+### Notes
+- [workflow observations, bottlenecks, what worked/didn't]
+```
+
+**Rules:**
+- Metrics are NON-OPTIONAL. Every task gets a metrics report.
+- If a subagent doesn't return usage data, note "N/A" and estimate.
+- Wall clock = time from user request to user approval (not including PR/CI).
+- Auto-review cycles count: 1 = passed first time, 2+ = had rejections.
 
 ### When Stuck
 
@@ -281,6 +343,20 @@ Before implementation, improve the code we're about to touch. This is "Boy Scout
 - Write reports to task directory with sequential numbering
 - Never write code at top level — only through designated implementation agents
 
+### For Don Melton (Tech Lead) — Request Quality Gate
+
+**BEFORE planning, check request for red flags. If any found → stop and ask user for clarification.**
+
+| Red Flag | Signal | Action |
+|----------|--------|--------|
+| **Однострочник без контекста** | Request is 1-2 sentences with no examples, no affected files, no acceptance criteria | Ask: "What specific behavior should change? Can you give a before/after example?" |
+| **Предписывает решение вместо проблемы** | Request says "build X", "create Y system", "add Z component" without explaining WHY | Ask: "What problem does this solve? Is there a simpler fix we're missing?" |
+| **Описывает симптом вместо root cause** | Request says "work around X", "handle case when Y breaks", "add fallback for Z" | Ask: "Why does X break? Have we identified the root cause?" |
+
+**If request passes gate** → proceed with exploration and planning as normal.
+
+**Data:** 89% of tasks with clear requests completed without revisions. 11% with red-flag requests required costly replanning (up to 28 report files vs normal 5-8).
+
 ### For Kent Beck (Tests)
 - Tests first, always
 - Tests must communicate intent clearly
@@ -288,9 +364,16 @@ Before implementation, improve the code we're about to touch. This is "Boy Scout
 - Find existing test patterns and match them
 
 ### For Robert Martin (Uncle Bob) — Code Quality
-Focus on LOCAL refactoring of methods we're about to modify:
 
-**Review checklist:**
+Reviews at TWO levels: **file-level** (structural) and **method-level** (local).
+
+**File-level checks (HARD LIMITS):**
+- File > 300 lines = **MUST split** before implementation. Create tech debt issue if can't split safely.
+- File > 500 lines = **CRITICAL.** Stop everything, discuss with user. This is how 6k-line files happen.
+- Single file doing 3+ unrelated things = **MUST split** (Single Responsibility)
+- Count before implementation: `wc -l` on files Don identified
+
+**Method-level checklist:**
 - Method length (>50 lines = candidate for split)
 - Parameter count (>3 = consider Parameter Object)
 - Nesting depth (>2 levels = consider early return/extract)
@@ -299,24 +382,29 @@ Focus on LOCAL refactoring of methods we're about to modify:
 
 **Output format:**
 ```markdown
-## Uncle Bob Review: [file:method]
+## Uncle Bob Review: [file]
 
-**Current state:** [brief assessment]
-**Recommendation:** [REFACTOR / SKIP]
+**File size:** [N lines] — [OK / MUST SPLIT / CRITICAL]
+**Methods to modify:** [list with line counts]
 
-If REFACTOR:
-1. [Specific action, e.g., "Extract lines 45-80 to `processItem()`"]
-2. [Specific action]
+**File-level:**
+- [Issue or OK]
+
+**Method-level:** [file:method]
+- **Recommendation:** [REFACTOR / SKIP]
+- [Specific actions]
 
 **Risk:** [LOW/MEDIUM/HIGH]
 **Estimated scope:** [lines affected]
 ```
 
 **Rules:**
-- ONLY review methods Don identified for modification
-- Propose MINIMAL changes that improve readability
-- If risk > benefit → recommend SKIP
+- Review ALL files Don identified — both file-level and method-level
+- File splits are NON-NEGOTIABLE above 300 lines
+- Propose MINIMAL method changes that improve readability
+- If method risk > benefit → recommend SKIP
 - Never propose architectural changes in PREPARE phase
+- Run on **Sonnet** model
 
 ### For Rob Pike (Implementation)
 - Read existing code before writing new code
@@ -324,22 +412,22 @@ If REFACTOR:
 - Clean, correct solution that doesn't create technical debt
 - If tests fail, fix implementation, not tests (unless tests are wrong)
 
-### For Steve Jobs (High-level Review — Automatic)
+### For Combined Auto-Review (Single Subagent — Sonnet)
 
-**Runs as subagent. Default stance: REJECT. If approves → escalate to Вадим auto-review.**
+**Replaces separate Steve Jobs + Вадим auto-review + Kevlin Henney.** One subagent, one round-trip.
 
-**Primary Questions:**
+**Runs as subagent. Default stance: critical but fair.**
+
+**Part 1 — Vision & Architecture (Steve's lens):**
 - Does this align with project vision? ("AI should query the graph, not read code")
 - Did we cut corners instead of doing it right?
-- Did we add a hack where we could do the right thing?
-- Are there fundamental architectural gaps that make this feature useless?
+- Are there fundamental architectural gaps?
 - Would shipping this embarrass us?
 
 **CRITICAL — Zero Tolerance for "MVP Limitations":**
 - If a "limitation" makes the feature work for <50% of real-world cases → **REJECT**
 - If the limitation is actually an architectural gap → **STOP, don't defer**
-- "Accept limitation for MVP" is FORBIDDEN when the limitation defeats the feature's purpose
-- Root Cause Policy: fix from roots, not symptoms. If it takes longer — it takes longer.
+- Root Cause Policy: fix from roots, not symptoms.
 
 **MANDATORY Complexity & Architecture Checklist:**
 
@@ -352,63 +440,50 @@ Before approving ANY plan involving data flow, enrichment, or graph traversal:
    - Reusing existing iteration (extending current enricher) = BEST
 
 2. **Plugin Architecture**: Does it use existing abstractions?
-   - Forward registration (analyzer marks data, stores in metadata) = **GOOD**
-   - Backward pattern scanning (enricher searches for patterns) = **BAD**
+   - Forward registration = **GOOD**, backward pattern scanning = **BAD**
    - Extending existing enricher pass = **BEST** (no extra iteration)
 
-3. **Extensibility**: Adding new library/framework support requires:
-   - Only new analyzer plugin = **GOOD**
-   - Changes to enricher = **BAD** (not abstract enough)
+3. **Extensibility**: Adding new framework support requires only new analyzer plugin = **GOOD**
 
-4. **Grafema doesn't brute-force**: If solution scans all nodes looking for patterns, it's WRONG. Grafema uses targeted queries and forward registration.
+4. **Grafema doesn't brute-force**: If solution scans all nodes looking for patterns, it's WRONG.
 
-**When in Doubt:**
-- REJECT the plan
-- Do NOT approve hoping issues will be fixed later
-
-**Escalation Flow:**
-1. Steve REJECT → back to implementation, no user involvement
-2. Steve APPROVE → run Вадим auto-review (subagent)
-3. Вадим-auto REJECT → back to implementation, no user involvement
-4. Both APPROVE → present combined summary to user for manual confirmation
-
-### For Вадим Auto-Review (Practical Quality — Automatic)
-
-**Runs as subagent AFTER Steve approves. Default stance: critical but fair.**
-
-**Primary Questions:**
+**Part 2 — Practical Quality (Вадим's lens):**
 - Does the code actually do what the task requires?
 - Are there edge cases, regressions, or broken assumptions?
-- Is the change minimal and focused — no scope creep, no "while I'm here" changes?
+- Is the change minimal and focused — no scope creep?
 - Are tests meaningful (not just "it doesn't crash")?
-- Would this survive a real-world codebase with messy inputs?
+
+**Part 3 — Code Quality (Kevlin's lens):**
+- Readability and clarity
+- Test quality and intent communication
+- Naming, structure, duplication
+- Error handling
 
 **Checklist:**
-1. **Correctness**: Run the tests mentally. Do they cover the happy path AND failure modes?
-2. **Minimality**: Every changed line should serve the task. Flag anything extra.
-3. **Consistency**: Does the code match existing patterns in the codebase?
-4. **Commit quality**: Are commits atomic? Are messages clear?
+1. **Correctness**: Do tests cover happy path AND failure modes?
+2. **Minimality**: Every changed line serves the task. Flag extras.
+3. **Consistency**: Code matches existing patterns?
+4. **Commit quality**: Atomic commits, clear messages?
 5. **No loose ends**: No TODOs, no "will fix later", no commented-out code.
 
 **Output format:**
 ```markdown
-## Вадим Auto-Review
+## Auto-Review
 
 **Verdict:** APPROVE / REJECT
-**Reason:** [1-2 sentences]
+
+**Vision & Architecture:** [OK / issues]
+**Practical Quality:** [OK / issues]
+**Code Quality:** [OK / issues]
 
 If REJECT:
 - [Specific issue 1]
 - [Specific issue 2]
 ```
 
-### For Kevlin Henney (Review)
-Focus on code quality:
-- Readability and clarity
-- Test quality and intent communication
-- Naming and structure
-- Duplication and abstraction level
-- Error handling
+**Flow:**
+- REJECT → back to implementation, no user involvement
+- APPROVE → present summary to user for manual confirmation
 
 ## Forbidden Patterns
 
@@ -543,40 +618,31 @@ Do NOT start coding until Linear status is updated.
 
 ### Finishing Task
 
-1. Code ready → run **Steve Jobs review** automatically (subagent)
-2. If Steve REJECT → fix issues, don't bother user
-3. If Steve APPROVE → run **Вадим review** automatically (subagent, see below)
-4. If Вадим-auto REJECT → fix issues, don't bother user
-5. If BOTH approve → present combined review summary to user (real Вадим)
-6. User confirms → create PR, Linear status → **In Review**
-7. CI must pass. If CI fails → fix, push, wait for green
-8. User will merge and `/clear` to start next task
+1. Code ready → run **Combined Auto-Review** (single Sonnet subagent)
+2. If REJECT → fix issues, don't bother user, re-run review
+3. If APPROVE → present review summary to user (real Вадим)
+4. User confirms → create PR, Linear status → **In Review**
+5. CI must pass. If CI fails → fix, push, wait for green
+6. User will merge and `/clear` to start next task
 
 ### Review & Merge Process
 
-**Three-stage review:**
+**Two-stage review:**
 
 | Stage | Who | Mode | On REJECT |
 |-------|-----|------|-----------|
-| 1. Steve Jobs | Subagent | Automatic | Fix, retry — no user involvement |
-| 2. Вадим (auto) | Subagent | Automatic | Fix, retry — no user involvement |
-| 3. Вадим (human) | User | Manual | Fix per feedback, retry from stage 1 |
+| 1. Auto-Review | Single Sonnet subagent | Automatic | Fix, retry — no user involvement |
+| 2. Вадим (human) | User | Manual | Fix per feedback, retry from stage 1 |
 
-**Stage 1 — Steve Jobs (vision & architecture):**
-- Does it align with project vision?
-- No hacks or shortcuts?
-- No "MVP limitations" that defeat the feature's purpose?
+**Stage 1 — Combined Auto-Review (vision + practical + code quality):**
+- Vision alignment, no hacks or shortcuts?
 - Tests actually test what they claim?
+- Edge cases, regressions, scope creep?
+- Code quality, naming, structure?
+- Commits atomic, messages clear?
 
-**Stage 2 — Вадим auto-review (practical quality):**
-- Does the code actually work as intended?
-- Are there edge cases or regressions missed?
-- Is the change minimal and focused (no scope creep)?
-- Would this pass code review from a senior engineer?
-- Are commit messages and PR description clear?
-
-**Stage 3 — Вадим manual (final confirmation):**
-- User sees combined Steve + Вадим-auto review summary
+**Stage 2 — Вадим manual (final confirmation):**
+- User sees auto-review summary
 - User confirms or rejects with feedback
 - If confirmed → merge to main, update Linear → **Done**
 
