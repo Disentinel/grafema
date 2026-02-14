@@ -53,6 +53,9 @@ export interface ParameterInfo {
   isRest?: boolean;      // Rest parameter (e.g., function(...args))
   functionId?: string;   // Legacy field - prefer parentFunctionId
   parentFunctionId?: string;
+  // REG-399: Destructuring metadata
+  propertyPath?: string[];  // For nested object destructuring: ['data', 'user'] for ({ data: { user } })
+  arrayIndex?: number;      // For array destructuring: 0 for first element in ([first, second])
 }
 
 // === SCOPE INFO ===
