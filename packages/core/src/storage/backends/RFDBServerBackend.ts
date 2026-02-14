@@ -101,6 +101,7 @@ export class RFDBServerBackend {
   private client: RFDBClient | null;
   private serverProcess: ChildProcess | null;
   connected: boolean;  // Public for compatibility
+  private protocolVersion: number = 2; // Negotiated protocol version
   private edgeTypes: Set<string>;
   private _cachedNodeCounts: Record<string, number> | undefined;
   private _cachedEdgeCounts: Record<string, number> | undefined;
@@ -162,7 +163,8 @@ export class RFDBServerBackend {
       // Verify server is responsive
       await this.client.ping();
       this.connected = true;
-      this.log(`[RFDBServerBackend] Connected to RFDB server at ${this.socketPath}`);
+      await this._negotiateProtocol();
+      this.log(`[RFDBServerBackend] Connected to RFDB server at ${this.socketPath} (protocol v${this.protocolVersion})`);
       return;
     } catch {
       // Server not running or stale socket
@@ -186,7 +188,8 @@ export class RFDBServerBackend {
     await this.client.connect();
     await this.client.ping();
     this.connected = true;
-    this.log(`[RFDBServerBackend] Connected to RFDB server at ${this.socketPath}`);
+    await this._negotiateProtocol();
+    this.log(`[RFDBServerBackend] Connected to RFDB server at ${this.socketPath} (protocol v${this.protocolVersion})`);
   }
 
   /**
@@ -260,6 +263,21 @@ export class RFDBServerBackend {
   }
 
   /**
+   * Negotiate protocol version with server.
+   * Requests v3 (semantic IDs), falls back to v2 if server doesn't support it.
+   */
+  private async _negotiateProtocol(): Promise<void> {
+    if (!this.client) return;
+    try {
+      const hello = await this.client.hello(3);
+      this.protocolVersion = hello.protocolVersion;
+    } catch {
+      // Server doesn't support hello — assume v2
+      this.protocolVersion = 2;
+    }
+  }
+
+  /**
    * Close client connection. Server continues running to serve other clients.
    */
   async close(): Promise<void> {
@@ -325,18 +343,25 @@ export class RFDBServerBackend {
     if (!this.client) throw new Error('Not connected');
     if (!nodes.length) return;
 
+    const useV3 = this.protocolVersion >= 3;
     const wireNodes: WireNode[] = nodes.map(n => {
       // Extract metadata from node
       const { id, type, nodeType, node_type, name, file, exported, ...rest } = n;
 
-      return {
+      const wire: WireNode = {
         id: String(id),
         nodeType: (nodeType || node_type || type || 'UNKNOWN') as NodeType,
         name: name || '',
         file: file || '',
         exported: exported || false,
-        metadata: JSON.stringify({ originalId: String(id), ...rest }),
+        metadata: useV3
+          ? JSON.stringify(rest)
+          : JSON.stringify({ originalId: String(id), ...rest }),
       };
+      if (useV3) {
+        wire.semanticId = String(id);
+      }
+      return wire;
     });
 
     await this.client.addNodes(wireNodes);
@@ -362,22 +387,19 @@ export class RFDBServerBackend {
       if (typeof edgeType === 'string') this.edgeTypes.add(edgeType);
     }
 
+    const useV3 = this.protocolVersion >= 3;
     const wireEdges: WireEdge[] = edges.map(e => {
       const { src, dst, type, edgeType, edge_type, etype, metadata, ...rest } = e;
 
       // Flatten metadata: spread both edge-level properties and nested metadata
-      const flatMetadata = {
-        _origSrc: String(src),
-        _origDst: String(dst),
-        ...rest,
-        ...(typeof metadata === 'object' && metadata !== null ? metadata : {})
-      };
+      const flatMetadata = useV3
+        ? { ...rest, ...(typeof metadata === 'object' && metadata !== null ? metadata : {}) }
+        : { _origSrc: String(src), _origDst: String(dst), ...rest, ...(typeof metadata === 'object' && metadata !== null ? metadata : {}) };
 
       return {
         src: String(src),
         dst: String(dst),
         edgeType: (edgeType || edge_type || etype || type || 'UNKNOWN') as EdgeType,
-        // Store flattened metadata for retrieval
         metadata: JSON.stringify(flatMetadata),
       };
     });
@@ -437,7 +459,8 @@ export class RFDBServerBackend {
       }
     }
 
-    const humanId = (metadata.originalId as string) || wireNode.id;
+    // v3: use semanticId directly; v2: fall back to originalId metadata hack
+    const humanId = wireNode.semanticId || (metadata.originalId as string) || wireNode.id;
 
     // Exclude standard fields from metadata to prevent overwriting wireNode values
     // REG-325: Metadata spread was overwriting name with LITERAL node data
@@ -467,11 +490,18 @@ export class RFDBServerBackend {
    */
   private _parseEdge(wireEdge: WireEdge): EdgeRecord {
     const meta: Record<string, unknown> = wireEdge.metadata ? JSON.parse(wireEdge.metadata) : {};
-    // Use original string IDs if stored, otherwise use wire IDs
+    // v3: server resolves src/dst to semantic IDs, use directly
+    // v2: fall back to _origSrc/_origDst metadata hack
     const { _origSrc, _origDst, ...rest } = meta;
+    const src = this.protocolVersion >= 3
+      ? wireEdge.src
+      : (_origSrc as string) || wireEdge.src;
+    const dst = this.protocolVersion >= 3
+      ? wireEdge.dst
+      : (_origDst as string) || wireEdge.dst;
     return {
-      src: (_origSrc as string) || wireEdge.src,
-      dst: (_origDst as string) || wireEdge.dst,
+      src,
+      dst,
       type: wireEdge.edgeType,
       metadata: Object.keys(rest).length > 0 ? rest : undefined,
     };
