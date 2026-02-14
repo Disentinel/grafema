@@ -1651,6 +1651,33 @@ impl GraphStore for GraphEngine {
 
         counts
     }
+
+    fn clear(&mut self) {
+        self.delta_log.clear();
+        self.delta_nodes.clear();
+        self.delta_edges.clear();
+        self.adjacency.clear();
+        self.reverse_adjacency.clear();
+        self.edge_keys.clear();
+        self.nodes_segment = None;
+        self.edges_segment = None;
+        self.metadata = GraphMetadata::default();
+        self.ops_since_flush = 0;
+        self.deleted_segment_ids.clear();
+        self.deleted_segment_edge_keys.clear();
+        self.index_set.clear();
+        tracing::info!("Graph cleared");
+    }
+
+    fn declare_fields(&mut self, fields: Vec<FieldDecl>) {
+        self.declared_fields = fields;
+        if let Some(ref nodes_seg) = self.nodes_segment {
+            self.index_set.rebuild_from_segment(nodes_seg, &self.declared_fields);
+        }
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any { self }
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any { self }
 }
 
 #[cfg(test)]

@@ -19,6 +19,8 @@ pub struct ClientSession {
     pub access_mode: AccessMode,
     /// Protocol version negotiated with client (1 = legacy, 2 = multi-db)
     pub protocol_version: u32,
+    /// Pending batch ID (set by BeginBatch, cleared by AbortBatch or CommitBatch)
+    pub pending_batch_id: Option<String>,
 }
 
 impl ClientSession {
@@ -32,6 +34,7 @@ impl ClientSession {
             current_db: None,
             access_mode: AccessMode::ReadWrite,
             protocol_version: 1, // Default to v1 for backwards compatibility
+            pending_batch_id: None,
         }
     }
 
@@ -49,6 +52,7 @@ impl ClientSession {
     pub fn clear_database(&mut self) {
         self.current_db = None;
         self.access_mode = AccessMode::ReadWrite;
+        self.pending_batch_id = None;
     }
 
     /// Get current database name
@@ -65,6 +69,28 @@ impl ClientSession {
     pub fn has_database(&self) -> bool {
         self.current_db.is_some()
     }
+
+    /// Begin a batch operation, returning the new batch ID.
+    ///
+    /// Returns None if a batch is already pending.
+    pub fn begin_batch(&mut self) -> Option<String> {
+        if self.pending_batch_id.is_some() {
+            return None;
+        }
+        let batch_id = format!("batch-{}-{}", self.id, std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis());
+        self.pending_batch_id = Some(batch_id.clone());
+        Some(batch_id)
+    }
+
+    /// Abort the current batch, returning the aborted batch ID.
+    ///
+    /// Returns None if no batch is pending.
+    pub fn abort_batch(&mut self) -> Option<String> {
+        self.pending_batch_id.take()
+    }
 }
 
 #[cfg(test)]
@@ -76,7 +102,7 @@ mod session_tests {
 
     fn make_test_database(name: &str) -> Arc<Database> {
         let dir = tempdir().unwrap();
-        let engine = GraphEngine::create(dir.path()).unwrap();
+        let engine: Box<dyn crate::graph::GraphStore> = Box::new(GraphEngine::create(dir.path()).unwrap());
         Arc::new(Database::new(name.to_string(), engine, false))
     }
 

@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use serde::{Serialize, Deserialize};
 
-use crate::graph::{GraphStore, GraphEngine};
+use crate::graph::GraphStore;
 use crate::datalog::types::*;
 use crate::datalog::eval::{Value, Bindings};
 
@@ -93,7 +93,7 @@ pub struct QueryResult {
 
 /// Evaluator with explain and profiling support
 pub struct EvaluatorExplain<'a> {
-    engine: &'a GraphEngine,
+    engine: &'a dyn GraphStore,
     rules: HashMap<String, Vec<Rule>>,
     /// Whether to collect explain steps
     explain_mode: bool,
@@ -111,7 +111,7 @@ pub struct EvaluatorExplain<'a> {
 
 impl<'a> EvaluatorExplain<'a> {
     /// Create a new evaluator
-    pub fn new(engine: &'a GraphEngine, explain_mode: bool) -> Self {
+    pub fn new(engine: &'a dyn GraphStore, explain_mode: bool) -> Self {
         EvaluatorExplain {
             engine,
             rules: HashMap::new(),
