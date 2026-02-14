@@ -33,6 +33,8 @@ import {
   PrefixEvaluator,
   InstanceOfResolver,
   HTTPConnectionEnricher,
+  ConfigRoutingMapBuilder,
+  ServiceConnectionEnricher,
   RustFFIEnricher,
   RejectionPropagationEnricher,
   // Validation
@@ -44,6 +46,7 @@ import {
   GraphConnectivityValidator,
   DataFlowValidator,
   TypeScriptDeadCodeValidator,
+  UnconnectedRouteValidator,
 } from '@grafema/core';
 
 // === MCP-SPECIFIC CONFIG ===
@@ -98,6 +101,8 @@ export const BUILTIN_PLUGINS: Record<string, PluginFactory> = {
   PrefixEvaluator: () => new PrefixEvaluator(),
   InstanceOfResolver: () => new InstanceOfResolver(),
   HTTPConnectionEnricher: () => new HTTPConnectionEnricher(),
+  ConfigRoutingMapBuilder: () => new ConfigRoutingMapBuilder(),
+  ServiceConnectionEnricher: () => new ServiceConnectionEnricher(),
   RustFFIEnricher: () => new RustFFIEnricher(),
   RejectionPropagationEnricher: () => new RejectionPropagationEnricher(),
 
@@ -110,6 +115,7 @@ export const BUILTIN_PLUGINS: Record<string, PluginFactory> = {
   GraphConnectivityValidator: () => new GraphConnectivityValidator(),
   DataFlowValidator: () => new DataFlowValidator(),
   TypeScriptDeadCodeValidator: () => new TypeScriptDeadCodeValidator(),
+  UnconnectedRouteValidator: () => new UnconnectedRouteValidator(),
 };
 
 // === CONFIG LOADING ===

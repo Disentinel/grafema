@@ -158,7 +158,8 @@ export const DEFAULT_CONFIG: GrafemaConfig = {
       'ExpressHandlerLinker',
       'PrefixEvaluator',
       'ImportExportLinker',
-      'HTTPConnectionEnricher',
+      'ConfigRoutingMapBuilder',
+      'ServiceConnectionEnricher',
       'CallbackCallResolver',
     ],
     validation: [
@@ -171,6 +172,7 @@ export const DEFAULT_CONFIG: GrafemaConfig = {
       'ShadowingDetector',
       'TypeScriptDeadCodeValidator',
       'BrokenImportValidator',
+      'UnconnectedRouteValidator',
     ],
   },
   services: [], // Empty by default (uses auto-discovery)
