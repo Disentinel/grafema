@@ -42,6 +42,14 @@ use rfdb::metrics::{Metrics, MetricsSnapshot, SLOW_QUERY_THRESHOLD_MS};
 // Global client ID counter
 static NEXT_CLIENT_ID: AtomicUsize = AtomicUsize::new(1);
 
+/// Streaming threshold: queries returning more than this many nodes
+/// will use chunked streaming instead of a single Response::Nodes.
+/// Only active when the client negotiated protocol version >= 3.
+const STREAMING_THRESHOLD: usize = 100;
+
+/// Maximum nodes per streaming chunk.
+const STREAMING_CHUNK_SIZE: usize = 500;
+
 // ============================================================================
 // Wire Protocol Types (Extended for multi-database)
 // ============================================================================
@@ -330,6 +338,14 @@ pub enum Response {
     Ok { ok: bool },
     Error { error: String },
     Node { node: Option<WireNode> },
+    /// Streaming chunk of nodes for QueryNodes.
+    /// Discriminated from Nodes by presence of `done` field.
+    NodesChunk {
+        nodes: Vec<WireNode>,
+        done: bool,
+        #[serde(rename = "chunkIndex")]
+        chunk_index: u32,
+    },
     Nodes { nodes: Vec<WireNode> },
     Edges { edges: Vec<WireEdge> },
     Ids { ids: Vec<String> },
@@ -761,7 +777,7 @@ fn handle_request(
                 ok: true,
                 protocol_version: 3,
                 server_version: env!("CARGO_PKG_VERSION").to_string(),
-                features: vec!["multiDatabase".to_string(), "ephemeral".to_string(), "semanticIds".to_string()],
+                features: vec!["multiDatabase".to_string(), "ephemeral".to_string(), "semanticIds".to_string(), "streaming".to_string()],
             }
         }
 
@@ -1661,6 +1677,117 @@ fn execute_datalog_query(
 }
 
 // ============================================================================
+// Streaming Support
+// ============================================================================
+
+/// Result of handling a request.
+///
+/// `Single(Response)` — the caller serializes and writes one response frame.
+/// `Streamed` — the handler already wrote multiple frames directly to the stream.
+#[derive(Debug)]
+enum HandleResult {
+    Single(Response),
+    Streamed,
+}
+
+/// Handle QueryNodes with streaming: write multiple NodesChunk frames
+/// directly to the stream when the result set exceeds the threshold
+/// and the client negotiated protocol v3+.
+///
+/// Returns `HandleResult::Streamed` on success (chunks written),
+/// or `HandleResult::Single(response)` for small results or errors.
+fn handle_query_nodes_streaming(
+    session: &ClientSession,
+    query: WireAttrQuery,
+    request_id: &Option<String>,
+    stream: &mut UnixStream,
+) -> HandleResult {
+    let db = match &session.current_db {
+        Some(db) => db,
+        None => return HandleResult::Single(Response::ErrorWithCode {
+            error: "No database selected. Use openDatabase first.".to_string(),
+            code: "NO_DATABASE_SELECTED".to_string(),
+        }),
+    };
+
+    let engine = db.engine.read().unwrap();
+
+    // Build AttrQuery from wire format (same as non-streaming path)
+    let metadata_filters: Vec<(String, String)> = query.extra.into_iter()
+        .filter_map(|(k, v)| {
+            match v {
+                serde_json::Value::String(s) => Some((k, s)),
+                serde_json::Value::Bool(b) => Some((k, b.to_string())),
+                serde_json::Value::Number(n) => Some((k, n.to_string())),
+                _ => None,
+            }
+        })
+        .collect();
+
+    let attr_query = AttrQuery {
+        version: None,
+        node_type: query.node_type,
+        file_id: None,
+        file: query.file,
+        exported: query.exported,
+        name: query.name,
+        metadata_filters,
+    };
+
+    let ids = engine.find_by_attr(&attr_query);
+    let total = ids.len();
+
+    // Below threshold: single response (existing behavior)
+    if total <= STREAMING_THRESHOLD {
+        let nodes: Vec<WireNode> = ids.into_iter()
+            .filter_map(|id| engine.get_node(id))
+            .map(|r| record_to_wire_node(&r))
+            .collect();
+        return HandleResult::Single(Response::Nodes { nodes });
+    }
+
+    // Streaming path: send chunks
+    let mut chunk_index: u32 = 0;
+    let num_chunks = (total + STREAMING_CHUNK_SIZE - 1) / STREAMING_CHUNK_SIZE;
+
+    for chunk_ids in ids.chunks(STREAMING_CHUNK_SIZE) {
+        let nodes: Vec<WireNode> = chunk_ids.iter()
+            .filter_map(|&id| engine.get_node(id))
+            .map(|r| record_to_wire_node(&r))
+            .collect();
+
+        let is_last = (chunk_index as usize + 1) >= num_chunks;
+        let response = Response::NodesChunk {
+            nodes,
+            done: is_last,
+            chunk_index,
+        };
+
+        let envelope = ResponseEnvelope {
+            request_id: request_id.clone(),
+            response,
+        };
+
+        let resp_bytes = match rmp_serde::to_vec_named(&envelope) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                eprintln!("[rfdb-server] Serialize error during streaming: {}", e);
+                return HandleResult::Streamed;
+            }
+        };
+
+        if let Err(e) = write_message(stream, &resp_bytes) {
+            eprintln!("[rfdb-server] Write error during streaming (implicit cancel): {}", e);
+            return HandleResult::Streamed;
+        }
+
+        chunk_index += 1;
+    }
+
+    HandleResult::Streamed
+}
+
+// ============================================================================
 // Client Connection Handler
 // ============================================================================
 
@@ -1748,7 +1875,16 @@ fn handle_client(
         let start = Instant::now();
         let op_name = get_operation_name(&request);
 
-        let response = handle_request(&manager, &mut session, request, &metrics);
+        // Streaming commands: handle directly (need stream access for multi-frame writes).
+        // Only stream when client negotiated protocol v3+.
+        let handle_result = match request {
+            Request::QueryNodes { query } if session.protocol_version >= 3 => {
+                handle_query_nodes_streaming(&session, query, &request_id, &mut stream)
+            }
+            other => {
+                HandleResult::Single(handle_request(&manager, &mut session, other, &metrics))
+            }
+        };
 
         // Record metrics if enabled
         if let Some(ref m) = metrics {
@@ -1762,20 +1898,28 @@ fn handle_client(
             }
         }
 
-        // Wrap response with requestId echo
-        let envelope = ResponseEnvelope { request_id, response };
+        // For Single responses, serialize and write the frame.
+        // Streamed responses were already written by the handler.
+        match handle_result {
+            HandleResult::Single(response) => {
+                let envelope = ResponseEnvelope { request_id, response };
 
-        let resp_bytes = match rmp_serde::to_vec_named(&envelope) {
-            Ok(bytes) => bytes,
-            Err(e) => {
-                eprintln!("[rfdb-server] Serialize error: {}", e);
-                continue;
+                let resp_bytes = match rmp_serde::to_vec_named(&envelope) {
+                    Ok(bytes) => bytes,
+                    Err(e) => {
+                        eprintln!("[rfdb-server] Serialize error: {}", e);
+                        continue;
+                    }
+                };
+
+                if let Err(e) = write_message(&mut stream, &resp_bytes) {
+                    eprintln!("[rfdb-server] Client {} write error: {}", client_id, e);
+                    break;
+                }
             }
-        };
-
-        if let Err(e) = write_message(&mut stream, &resp_bytes) {
-            eprintln!("[rfdb-server] Client {} write error: {}", client_id, e);
-            break;
+            HandleResult::Streamed => {
+                // Handler already wrote frames directly to stream
+            }
         }
 
         if is_shutdown {
@@ -3438,5 +3582,328 @@ mod protocol_tests {
             Response::Ok { ok } => assert!(ok),
             _ => panic!("Expected Ok response for Compact"),
         }
+    }
+
+    // ============================================================================
+    // Streaming (Protocol v3+)
+    // ============================================================================
+
+    /// Helper: add N nodes of the given type to the session's database.
+    fn add_n_nodes(manager: &Arc<DatabaseManager>, session: &mut ClientSession, n: usize, node_type: &str) {
+        // Add in batches to keep individual requests reasonable
+        let batch_size = 500;
+        for start in (0..n).step_by(batch_size) {
+            let end = std::cmp::min(start + batch_size, n);
+            let nodes: Vec<WireNode> = (start..end)
+                .map(|i| WireNode {
+                    id: format!("n{}", i),
+                    semantic_id: None,
+                    node_type: Some(node_type.to_string()),
+                    name: Some(format!("node_{}", i)),
+                    file: None,
+                    exported: false,
+                    metadata: None,
+                })
+                .collect();
+            handle_request(manager, session, Request::AddNodes { nodes }, &None);
+        }
+    }
+
+    #[test]
+    fn test_hello_features_includes_streaming() {
+        let (_dir, manager) = setup_test_manager();
+        let mut session = ClientSession::new(1);
+
+        let response = handle_request(&manager, &mut session, Request::Hello {
+            protocol_version: Some(3),
+            client_id: Some("streaming-test".to_string()),
+        }, &None);
+
+        match response {
+            Response::HelloOk { features, protocol_version, .. } => {
+                assert_eq!(protocol_version, 3);
+                assert!(features.contains(&"streaming".to_string()),
+                    "Hello features must include 'streaming', got: {:?}", features);
+            }
+            _ => panic!("Expected HelloOk response"),
+        }
+    }
+
+    #[test]
+    fn test_streaming_below_threshold_returns_single() {
+        let (_dir, manager) = setup_test_manager();
+        let mut session = ClientSession::new(1);
+        setup_ephemeral_db(&manager, &mut session, "stream_small");
+        session.protocol_version = 3;
+
+        // Add exactly STREAMING_THRESHOLD nodes (should NOT stream)
+        add_n_nodes(&manager, &mut session, STREAMING_THRESHOLD, "FUNCTION");
+
+        let (mut writer, _reader) = UnixStream::pair().unwrap();
+
+        let query = WireAttrQuery {
+            node_type: Some("FUNCTION".to_string()),
+            name: None,
+            file: None,
+            exported: None,
+            extra: HashMap::new(),
+        };
+
+        let result = handle_query_nodes_streaming(&session, query, &None, &mut writer);
+
+        match result {
+            HandleResult::Single(Response::Nodes { nodes }) => {
+                assert_eq!(nodes.len(), STREAMING_THRESHOLD,
+                    "At threshold, should return single response with all {} nodes", STREAMING_THRESHOLD);
+            }
+            HandleResult::Single(other) => panic!("Expected Nodes response, got: {:?}", other),
+            HandleResult::Streamed => panic!("Should not stream at threshold ({} nodes)", STREAMING_THRESHOLD),
+        }
+    }
+
+    /// Helper: read a chunk frame from a UnixStream and return (nodes_count, done, chunk_index, request_id).
+    /// Uses serde_json::Value to avoid needing Deserialize on ResponseEnvelope.
+    fn read_chunk_frame(reader: &mut UnixStream) -> Option<(usize, bool, u32, Option<String>)> {
+        let msg = match read_message(reader) {
+            Ok(Some(msg)) => msg,
+            Ok(None) => return None,
+            Err(e) => panic!("Read error: {}", e),
+        };
+        // Deserialize msgpack to JSON value
+        let value: serde_json::Value = rmp_serde::from_slice(&msg)
+            .expect("Failed to deserialize chunk frame");
+        let request_id = value.get("requestId").and_then(|v| v.as_str()).map(String::from);
+        let nodes = value.get("nodes").and_then(|v| v.as_array())
+            .expect("Chunk must have 'nodes' array");
+        let done = value.get("done").and_then(|v| v.as_bool())
+            .expect("Chunk must have 'done' bool");
+        let chunk_index = value.get("chunkIndex").and_then(|v| v.as_u64())
+            .expect("Chunk must have 'chunkIndex'") as u32;
+        Some((nodes.len(), done, chunk_index, request_id))
+    }
+
+    #[test]
+    fn test_streaming_above_threshold_sends_chunks() {
+        let (_dir, manager) = setup_test_manager();
+        let mut session = ClientSession::new(1);
+        setup_ephemeral_db(&manager, &mut session, "stream_large");
+        session.protocol_version = 3;
+
+        let node_count = STREAMING_THRESHOLD + 1; // Just above threshold
+        add_n_nodes(&manager, &mut session, node_count, "VARIABLE");
+
+        let (mut writer, mut reader) = UnixStream::pair().unwrap();
+
+        let query = WireAttrQuery {
+            node_type: Some("VARIABLE".to_string()),
+            name: None,
+            file: None,
+            exported: None,
+            extra: HashMap::new(),
+        };
+
+        // Spawn a reader thread to drain chunks concurrently.
+        // Without this, handle_query_nodes_streaming blocks on write
+        // when the socket buffer fills up.
+        let reader_handle = std::thread::spawn(move || {
+            let mut chunk_data: Vec<(usize, bool, u32)> = Vec::new();
+            let mut total_nodes = 0;
+            loop {
+                match read_chunk_frame(&mut reader) {
+                    Some((count, done, idx, req_id)) => {
+                        assert_eq!(req_id.as_deref(), Some("req-1"),
+                            "All chunks must carry the original request_id");
+                        total_nodes += count;
+                        chunk_data.push((count, done, idx));
+                        if done { break; }
+                    }
+                    None => break,
+                }
+            }
+            (chunk_data, total_nodes)
+        });
+
+        let result = handle_query_nodes_streaming(&session, query, &Some("req-1".to_string()), &mut writer);
+
+        match result {
+            HandleResult::Streamed => { /* expected */ }
+            HandleResult::Single(_) => panic!("Expected Streamed for {} nodes (above threshold {})",
+                node_count, STREAMING_THRESHOLD),
+        }
+
+        // Drop writer so reader thread sees EOF after the chunks
+        drop(writer);
+
+        let (chunk_data, total_nodes) = reader_handle.join().expect("Reader thread panicked");
+
+        assert_eq!(total_nodes, node_count,
+            "Total nodes across chunks must equal original count");
+        assert!(chunk_data.last().unwrap().1, "Last chunk must have done=true");
+
+        // Verify chunk indices are sequential 0, 1, 2, ...
+        for (i, chunk) in chunk_data.iter().enumerate() {
+            assert_eq!(chunk.2, i as u32, "Chunk index should be sequential");
+        }
+
+        // All chunks except the last should have done=false
+        for chunk in &chunk_data[..chunk_data.len() - 1] {
+            assert!(!chunk.1, "Non-last chunks must have done=false");
+        }
+    }
+
+    #[test]
+    fn test_streaming_chunk_sizes_1200_nodes() {
+        let (_dir, manager) = setup_test_manager();
+        let mut session = ClientSession::new(1);
+        setup_ephemeral_db(&manager, &mut session, "stream_1200");
+        session.protocol_version = 3;
+
+        // 1200 nodes → 3 chunks: [500, 500, 200]
+        add_n_nodes(&manager, &mut session, 1200, "CLASS");
+
+        let (mut writer, mut reader) = UnixStream::pair().unwrap();
+
+        let query = WireAttrQuery {
+            node_type: Some("CLASS".to_string()),
+            name: None,
+            file: None,
+            exported: None,
+            extra: HashMap::new(),
+        };
+
+        // Spawn reader thread to drain chunks concurrently (prevents socket buffer deadlock)
+        let reader_handle = std::thread::spawn(move || {
+            let mut chunk_sizes: Vec<usize> = Vec::new();
+            loop {
+                match read_chunk_frame(&mut reader) {
+                    Some((count, done, _, _)) => {
+                        chunk_sizes.push(count);
+                        if done { break; }
+                    }
+                    None => break,
+                }
+            }
+            chunk_sizes
+        });
+
+        let result = handle_query_nodes_streaming(&session, query, &None, &mut writer);
+        assert!(matches!(result, HandleResult::Streamed));
+        drop(writer);
+
+        let chunk_sizes = reader_handle.join().expect("Reader thread panicked");
+
+        assert_eq!(chunk_sizes.len(), 3, "1200 nodes / 500 per chunk = 3 chunks");
+        assert_eq!(chunk_sizes[0], STREAMING_CHUNK_SIZE);
+        assert_eq!(chunk_sizes[1], STREAMING_CHUNK_SIZE);
+        assert_eq!(chunk_sizes[2], 200);
+        let total: usize = chunk_sizes.iter().sum();
+        assert_eq!(total, 1200);
+    }
+
+    #[test]
+    fn test_streaming_no_database_returns_error() {
+        let (_dir, _manager) = setup_test_manager();
+        let mut session = ClientSession::new(1);
+        session.protocol_version = 3;
+        // Don't open any database
+
+        let (mut writer, _reader) = UnixStream::pair().unwrap();
+
+        let query = WireAttrQuery {
+            node_type: Some("FUNCTION".to_string()),
+            name: None,
+            file: None,
+            exported: None,
+            extra: HashMap::new(),
+        };
+
+        let result = handle_query_nodes_streaming(&session, query, &None, &mut writer);
+
+        match result {
+            HandleResult::Single(Response::ErrorWithCode { code, .. }) => {
+                assert_eq!(code, "NO_DATABASE_SELECTED");
+            }
+            other => panic!("Expected ErrorWithCode, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_protocol_v2_does_not_stream() {
+        let (_dir, manager) = setup_test_manager();
+        let mut session = ClientSession::new(1);
+        setup_ephemeral_db(&manager, &mut session, "stream_v2");
+
+        // Negotiate protocol v2 (not v3)
+        handle_request(&manager, &mut session, Request::Hello {
+            protocol_version: Some(2),
+            client_id: Some("old-client".to_string()),
+        }, &None);
+
+        // Add nodes above streaming threshold
+        add_n_nodes(&manager, &mut session, STREAMING_THRESHOLD + 50, "MODULE");
+
+        // QueryNodes through handle_request should NOT stream (protocol v2)
+        let response = handle_request(&manager, &mut session, Request::QueryNodes {
+            query: WireAttrQuery {
+                node_type: Some("MODULE".to_string()),
+                name: None,
+                file: None,
+                exported: None,
+                extra: HashMap::new(),
+            },
+        }, &None);
+
+        match response {
+            Response::Nodes { nodes } => {
+                assert_eq!(nodes.len(), STREAMING_THRESHOLD + 50,
+                    "Protocol v2 should get all nodes in single Nodes response");
+            }
+            _ => panic!("Expected Nodes response for protocol v2, got: {:?}", response),
+        }
+    }
+
+    #[test]
+    fn test_streaming_request_id_propagated() {
+        let (_dir, manager) = setup_test_manager();
+        let mut session = ClientSession::new(1);
+        setup_ephemeral_db(&manager, &mut session, "stream_reqid");
+        session.protocol_version = 3;
+
+        add_n_nodes(&manager, &mut session, STREAMING_THRESHOLD + 1, "LITERAL");
+
+        let (mut writer, mut reader) = UnixStream::pair().unwrap();
+
+        let query = WireAttrQuery {
+            node_type: Some("LITERAL".to_string()),
+            name: None,
+            file: None,
+            exported: None,
+            extra: HashMap::new(),
+        };
+
+        // Spawn reader thread to drain chunks concurrently (prevents socket buffer deadlock)
+        let reader_handle = std::thread::spawn(move || {
+            let mut chunk_count = 0;
+            loop {
+                match read_chunk_frame(&mut reader) {
+                    Some((_, done, _, req_id)) => {
+                        assert_eq!(req_id.as_deref(), Some("stream-req-42"),
+                            "Each chunk must carry the original request_id");
+                        chunk_count += 1;
+                        if done { break; }
+                    }
+                    None => break,
+                }
+            }
+            chunk_count
+        });
+
+        let req_id = Some("stream-req-42".to_string());
+        let result = handle_query_nodes_streaming(&session, query, &req_id, &mut writer);
+        assert!(matches!(result, HandleResult::Streamed));
+        drop(writer);
+
+        let chunk_count = reader_handle.join().expect("Reader thread panicked");
+        assert!(chunk_count > 0, "Should have received at least one chunk");
     }
 }

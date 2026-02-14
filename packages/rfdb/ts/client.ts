@@ -8,6 +8,7 @@
 import { createConnection, Socket } from 'net';
 import { encode, decode } from '@msgpack/msgpack';
 import { EventEmitter } from 'events';
+import { StreamQueue } from './stream-queue.js';
 
 import type {
   RFDBCommand,
@@ -33,6 +34,7 @@ import type {
   ListSnapshotsResponse,
   CommitDelta,
   CommitBatchResponse,
+  NodesChunkResponse,
 } from '@grafema/types';
 
 interface PendingRequest {
@@ -54,6 +56,11 @@ export class RFDBClient extends EventEmitter implements IRFDBClient {
   private _batchEdges: WireEdge[] = [];
   private _batchFiles: Set<string> = new Set();
 
+  // Streaming state
+  private _supportsStreaming: boolean = false;
+  private _pendingStreams: Map<number, StreamQueue<WireNode>> = new Map();
+  private _streamTimers: Map<number, ReturnType<typeof setTimeout>> = new Map();
+
   constructor(socketPath: string = '/tmp/rfdb.sock') {
     super();
     this.socketPath = socketPath;
@@ -62,6 +69,14 @@ export class RFDBClient extends EventEmitter implements IRFDBClient {
     this.pending = new Map();
     this.reqId = 0;
     this.buffer = Buffer.alloc(0);
+  }
+
+  /**
+   * Whether the connected server supports streaming responses.
+   * Set after calling hello(). Defaults to false.
+   */
+  get supportsStreaming(): boolean {
+    return this._supportsStreaming;
   }
 
   /**
@@ -96,6 +111,15 @@ export class RFDBClient extends EventEmitter implements IRFDBClient {
           reject(new Error('Connection closed'));
         }
         this.pending.clear();
+        // Fail all pending streams
+        for (const [, stream] of this._pendingStreams) {
+          stream.fail(new Error('Connection closed'));
+        }
+        this._pendingStreams.clear();
+        for (const [, timer] of this._streamTimers) {
+          clearTimeout(timer);
+        }
+        this._streamTimers.clear();
       });
 
       this.socket.on('data', (chunk: Buffer) => {
@@ -168,10 +192,11 @@ export class RFDBClient extends EventEmitter implements IRFDBClient {
   }
 
   /**
-   * Handle decoded response — match by requestId if present, else FIFO fallback
+   * Handle decoded response — match by requestId, route streaming chunks
+   * to StreamQueue or resolve single-response Promise.
    */
   private _handleResponse(response: RFDBResponse): void {
-    if (this.pending.size === 0) {
+    if (this.pending.size === 0 && this._pendingStreams.size === 0) {
       this.emit('error', new Error('Received response with no pending request'));
       return;
     }
@@ -179,16 +204,33 @@ export class RFDBClient extends EventEmitter implements IRFDBClient {
     let id: number;
 
     if (response.requestId) {
-      // Match by requestId (format: "r${number}")
       const parsed = this._parseRequestId(response.requestId);
-      if (parsed === null || !this.pending.has(parsed)) {
+      if (parsed === null) {
         this.emit('error', new Error(`Received response for unknown requestId: ${response.requestId}`));
         return;
       }
       id = parsed;
     } else {
       // FIFO fallback for servers that don't echo requestId
-      id = (this.pending.entries().next().value as [number, PendingRequest])[0];
+      if (this.pending.size > 0) {
+        id = (this.pending.entries().next().value as [number, PendingRequest])[0];
+      } else {
+        this.emit('error', new Error('Received response with no pending request'));
+        return;
+      }
+    }
+
+    // Route to streaming handler if this requestId has a StreamQueue
+    const streamQueue = this._pendingStreams.get(id);
+    if (streamQueue) {
+      this._handleStreamingResponse(id, response, streamQueue);
+      return;
+    }
+
+    // Non-streaming response — existing behavior
+    if (!this.pending.has(id)) {
+      this.emit('error', new Error(`Received response for unknown requestId: ${response.requestId}`));
+      return;
     }
 
     const { resolve, reject } = this.pending.get(id)!;
@@ -198,6 +240,82 @@ export class RFDBClient extends EventEmitter implements IRFDBClient {
       reject(new Error(response.error));
     } else {
       resolve(response);
+    }
+  }
+
+  /**
+   * Handle a response for a streaming request.
+   * Routes chunk data to StreamQueue and manages stream lifecycle.
+   * Resets per-chunk timeout on each successful chunk arrival.
+   */
+  private _handleStreamingResponse(
+    id: number,
+    response: RFDBResponse,
+    streamQueue: StreamQueue<WireNode>,
+  ): void {
+    // Error response — fail the stream
+    if (response.error) {
+      this._cleanupStream(id);
+      streamQueue.fail(new Error(response.error));
+      return;
+    }
+
+    // Streaming chunk (has `done` field)
+    if ('done' in response) {
+      const chunk = response as unknown as NodesChunkResponse;
+      const nodes = chunk.nodes || [];
+      for (const node of nodes) {
+        streamQueue.push(node);
+      }
+
+      if (chunk.done) {
+        this._cleanupStream(id);
+        streamQueue.end();
+      } else {
+        // Reset per-chunk timeout
+        this._resetStreamTimer(id, streamQueue);
+      }
+      return;
+    }
+
+    // Auto-fallback: server sent a non-streaming Nodes response
+    // (server doesn't support streaming or result was below threshold)
+    const nodesResponse = response as unknown as { nodes?: WireNode[] };
+    const nodes = nodesResponse.nodes || [];
+    for (const node of nodes) {
+      streamQueue.push(node);
+    }
+    this._cleanupStream(id);
+    streamQueue.end();
+  }
+
+  /**
+   * Reset the per-chunk timeout for a streaming request.
+   */
+  private _resetStreamTimer(id: number, streamQueue: StreamQueue<WireNode>): void {
+    const existing = this._streamTimers.get(id);
+    if (existing) clearTimeout(existing);
+
+    const timer = setTimeout(() => {
+      this._cleanupStream(id);
+      streamQueue.fail(new Error(
+        `RFDB queryNodesStream timed out after ${RFDBClient.DEFAULT_TIMEOUT_MS}ms (no chunk received)`
+      ));
+    }, RFDBClient.DEFAULT_TIMEOUT_MS);
+
+    this._streamTimers.set(id, timer);
+  }
+
+  /**
+   * Clean up all state for a completed/failed streaming request.
+   */
+  private _cleanupStream(id: number): void {
+    this._pendingStreams.delete(id);
+    this.pending.delete(id);
+    const timer = this._streamTimers.get(id);
+    if (timer) {
+      clearTimeout(timer);
+      this._streamTimers.delete(id);
     }
   }
 
@@ -567,18 +685,80 @@ export class RFDBClient extends EventEmitter implements IRFDBClient {
    * Query nodes (async generator)
    */
   async *queryNodes(query: AttrQuery): AsyncGenerator<WireNode, void, unknown> {
+    const serverQuery = this._buildServerQuery(query);
+    const response = await this._send('queryNodes', { query: serverQuery });
+    const nodes = (response as { nodes?: WireNode[] }).nodes || [];
+
+    for (const node of nodes) {
+      yield node;
+    }
+  }
+
+  /**
+   * Build a server query object from an AttrQuery.
+   */
+  private _buildServerQuery(query: AttrQuery): Record<string, unknown> {
     const serverQuery: Record<string, unknown> = {};
     if (query.nodeType) serverQuery.nodeType = query.nodeType;
     if (query.type) serverQuery.nodeType = query.type;
     if (query.name) serverQuery.name = query.name;
     if (query.file) serverQuery.file = query.file;
     if (query.exported !== undefined) serverQuery.exported = query.exported;
+    return serverQuery;
+  }
 
-    const response = await this._send('queryNodes', { query: serverQuery });
-    const nodes = (response as { nodes?: WireNode[] }).nodes || [];
+  /**
+   * Stream nodes matching query with true streaming support.
+   *
+   * Behavior depends on server capabilities:
+   * - Server supports streaming (protocol v3): receives chunked NodesChunk
+   *   responses via StreamQueue. Nodes are yielded as they arrive.
+   * - Server does NOT support streaming (fallback): delegates to queryNodes()
+   *   which yields nodes one by one from bulk response.
+   *
+   * The generator can be aborted by breaking out of the loop or calling .return().
+   */
+  async *queryNodesStream(query: AttrQuery): AsyncGenerator<WireNode, void, unknown> {
+    if (!this._supportsStreaming) {
+      yield* this.queryNodes(query);
+      return;
+    }
 
-    for (const node of nodes) {
-      yield node;
+    if (!this.connected || !this.socket) {
+      throw new Error('Not connected to RFDB server');
+    }
+
+    const serverQuery = this._buildServerQuery(query);
+    const id = this.reqId++;
+    const streamQueue = new StreamQueue<WireNode>();
+    this._pendingStreams.set(id, streamQueue);
+
+    // Build and send request manually (can't use _send which expects single response)
+    const request = { requestId: `r${id}`, cmd: 'queryNodes', query: serverQuery };
+    const msgBytes = encode(request);
+    const header = Buffer.alloc(4);
+    header.writeUInt32BE(msgBytes.length);
+
+    // Register in pending map for error routing
+    this.pending.set(id, {
+      resolve: () => { this._cleanupStream(id); },
+      reject: (error) => {
+        this._cleanupStream(id);
+        streamQueue.fail(error);
+      },
+    });
+
+    // Start per-chunk timeout (resets on each chunk in _handleStreamingResponse)
+    this._resetStreamTimer(id, streamQueue);
+
+    this.socket!.write(Buffer.concat([header, Buffer.from(msgBytes)]));
+
+    try {
+      for await (const node of streamQueue) {
+        yield node;
+      }
+    } finally {
+      this._cleanupStream(id);
     }
   }
 
@@ -702,9 +882,11 @@ export class RFDBClient extends EventEmitter implements IRFDBClient {
    * @param protocolVersion - Protocol version to negotiate (default: 2)
    * @returns Server capabilities including protocolVersion, serverVersion, features
    */
-  async hello(protocolVersion: number = 2): Promise<HelloResponse> {
+  async hello(protocolVersion: number = 3): Promise<HelloResponse> {
     const response = await this._send('hello' as RFDBCommand, { protocolVersion });
-    return response as HelloResponse;
+    const hello = response as HelloResponse;
+    this._supportsStreaming = hello.features?.includes('streaming') ?? false;
+    return hello;
   }
 
   /**

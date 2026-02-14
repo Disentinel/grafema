@@ -237,6 +237,27 @@ export interface PingResponse extends RFDBResponse {
   version: string;
 }
 
+// === STREAMING RESPONSE TYPES ===
+
+/**
+ * A chunk of nodes in a streaming QueryNodes response.
+ *
+ * Sent by the server when the result set exceeds the streaming threshold
+ * and the client negotiated protocol version >= 3.
+ * Multiple NodesChunk messages share the same requestId. The client
+ * accumulates chunks until `done === true`.
+ *
+ * Discrimination: if a response has a `done` field, it is a streaming chunk.
+ * If it does not, it is a legacy single-shot `Nodes { nodes }` response.
+ */
+export interface NodesChunkResponse extends RFDBResponse {
+  nodes: WireNode[];
+  /** true = last chunk for this requestId; false = more chunks coming */
+  done: boolean;
+  /** 0-based chunk index for ordering verification */
+  chunkIndex: number;
+}
+
 // === BATCH OPERATIONS ===
 
 export interface CommitDelta {
@@ -421,6 +442,7 @@ export interface ListSnapshotsResponse extends RFDBResponse {
 export interface IRFDBClient {
   readonly socketPath: string;
   readonly connected: boolean;
+  readonly supportsStreaming: boolean;
 
   // Connection
   connect(): Promise<void>;
@@ -443,6 +465,7 @@ export interface IRFDBClient {
   findByType(nodeType: NodeType): Promise<string[]>;
   findByAttr(query: Record<string, unknown>): Promise<string[]>;
   queryNodes(query: AttrQuery): AsyncGenerator<WireNode, void, unknown>;
+  queryNodesStream(query: AttrQuery): AsyncGenerator<WireNode, void, unknown>;
   getAllNodes(query?: AttrQuery): Promise<WireNode[]>;
   getAllEdges(): Promise<WireEdge[]>;
   isEndpoint(id: string): Promise<boolean>;
