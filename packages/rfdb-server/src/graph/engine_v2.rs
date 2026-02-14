@@ -764,6 +764,14 @@ mod tests {
         }
     }
 
+    fn assert_json_eq(actual: &str, expected: &str) {
+        let actual: serde_json::Value =
+            serde_json::from_str(actual).expect("actual must be valid JSON");
+        let expected: serde_json::Value =
+            serde_json::from_str(expected).expect("expected must be valid JSON");
+        assert_eq!(actual, expected);
+    }
+
     // ── Conversion Tests ─────────────────────────────────────────────
 
     #[test]
@@ -1139,6 +1147,76 @@ mod tests {
         // Identifier format
         let ident = engine.get_node_identifier(999).unwrap();
         assert_eq!(ident, "METHOD:process@src/worker.js");
+    }
+
+    #[test]
+    fn test_disk_roundtrip_preserves_node_and_edge_metadata() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let db_path = dir.path().join("test.rfdb");
+
+        let source = NodeRecord {
+            id: 10,
+            node_type: Some("FUNCTION".to_string()),
+            file_id: 0,
+            name_offset: 0,
+            version: "main".to_string(),
+            exported: true,
+            replaces: None,
+            deleted: false,
+            name: Some("compute".to_string()),
+            file: Some("src/a.js".to_string()),
+            metadata: Some(r#"{"line":10,"lang":"js"}"#.to_string()),
+        };
+        let target = NodeRecord {
+            id: 11,
+            node_type: Some("FUNCTION".to_string()),
+            file_id: 0,
+            name_offset: 0,
+            version: "main".to_string(),
+            exported: false,
+            replaces: None,
+            deleted: false,
+            name: Some("target".to_string()),
+            file: Some("src/b.js".to_string()),
+            metadata: Some(r#"{"line":20}"#.to_string()),
+        };
+        let edge = EdgeRecord {
+            src: source.id,
+            dst: target.id,
+            edge_type: Some("FLOWS_INTO".to_string()),
+            version: "main".to_string(),
+            metadata: Some(r#"{"computedPropertyVar":"k","argIndex":0}"#.to_string()),
+            deleted: false,
+        };
+
+        {
+            let mut engine = GraphEngineV2::create(&db_path).unwrap();
+            engine.add_nodes(vec![source.clone(), target.clone()]);
+            engine.add_edges(vec![edge.clone()], false);
+            engine.flush().unwrap();
+        }
+
+        let engine = GraphEngineV2::open(&db_path).unwrap();
+        let loaded_source = engine
+            .get_node(source.id)
+            .expect("source node not found after reopen");
+        assert!(loaded_source.exported, "exported flag must survive roundtrip");
+        let loaded_metadata = loaded_source
+            .metadata
+            .as_deref()
+            .expect("source metadata must exist");
+        assert_json_eq(
+            loaded_metadata,
+            source.metadata.as_deref().unwrap(),
+        );
+
+        let outgoing = engine.get_outgoing_edges(source.id, None);
+        assert_eq!(outgoing.len(), 1);
+        let edge_metadata = outgoing[0]
+            .metadata
+            .as_deref()
+            .expect("edge metadata must exist");
+        assert_json_eq(edge_metadata, edge.metadata.as_deref().unwrap());
     }
 
     // ── Extra Method Tests ───────────────────────────────────────────

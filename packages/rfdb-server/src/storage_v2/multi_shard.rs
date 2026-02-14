@@ -1189,6 +1189,36 @@ mod tests {
     }
 
     #[test]
+    fn test_open_existing_db_preserves_metadata() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let db_path = dir.path().join("test.rfdb");
+        std::fs::create_dir_all(&db_path).unwrap();
+
+        let mut manifest_store = ManifestStore::create(&db_path).unwrap();
+
+        let mut n1 = make_node("src/a/fn1", "FUNCTION", "fn1", "src/a/file.js");
+        n1.metadata = r#"{"line":42,"async":true}"#.to_string();
+        let n2 = make_node("lib/b/fn2", "FUNCTION", "fn2", "lib/b/file.js");
+        let mut e1 = make_edge("src/a/fn1", "lib/b/fn2", "CALLS");
+        e1.metadata = r#"{"computedPropertyVar":"k","origin":"analysis"}"#.to_string();
+
+        {
+            let mut store = MultiShardStore::create(&db_path, 4).unwrap();
+            store.add_nodes(vec![n1.clone(), n2.clone()]);
+            store.add_edges(vec![e1.clone()]).unwrap();
+            store.flush_all(&mut manifest_store).unwrap();
+        }
+
+        let store = MultiShardStore::open(&db_path, &manifest_store).unwrap();
+        let loaded_n1 = store.get_node(n1.id).expect("node with metadata not found");
+        assert_eq!(loaded_n1.metadata, n1.metadata);
+
+        let outgoing = store.get_outgoing_edges(n1.id, None);
+        assert_eq!(outgoing.len(), 1);
+        assert_eq!(outgoing[0].metadata, e1.metadata);
+    }
+
+    #[test]
     fn test_equivalence_single_vs_multi() {
         // Same data added to both a single shard and multi-shard store
         // should produce the same query results.
