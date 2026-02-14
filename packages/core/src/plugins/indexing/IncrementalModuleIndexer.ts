@@ -182,7 +182,7 @@ export class IncrementalModuleIndexer extends Plugin {
           id: semanticId,
           type: 'MODULE',
           name: relativePath,
-          file: file,
+          file: relativePath,
           contentHash: fileHash
         } as unknown as NodeRecord;
 

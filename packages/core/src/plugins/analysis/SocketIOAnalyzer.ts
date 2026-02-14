@@ -25,6 +25,7 @@ import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { NodeRecord } from '@grafema/types';
 import { getLine, getColumn } from './ast/utils/location.js';
+import { resolveNodeFile } from '../../utils/resolveNodeFile.js';
 
  
 const traverse = (traverseModule as any).default || traverseModule;
@@ -112,6 +113,7 @@ export class SocketIOAnalyzer extends Plugin {
 
     try {
       const { graph } = context;
+      const projectPath = (context.manifest as { projectPath?: string })?.projectPath ?? '';
 
       // Получаем все модули
       const modules = await this.getModules(graph);
@@ -125,7 +127,7 @@ export class SocketIOAnalyzer extends Plugin {
       // PHASE 1: Analyze modules and create emit/listener/room nodes
       for (let i = 0; i < modules.length; i++) {
         const module = modules[i];
-        const result = await this.analyzeModule(module, graph);
+        const result = await this.analyzeModule(module, graph, projectPath);
         emitsCount += result.emits;
         listenersCount += result.listeners;
         roomsCount += result.rooms;
@@ -265,10 +267,11 @@ export class SocketIOAnalyzer extends Plugin {
 
   private async analyzeModule(
     module: NodeRecord,
-    graph: PluginContext['graph']
+    graph: PluginContext['graph'],
+    projectPath: string
   ): Promise<AnalysisResult> {
     try {
-      const code = readFileSync(module.file!, 'utf-8');
+      const code = readFileSync(resolveNodeFile(module.file!, projectPath), 'utf-8');
 
       const ast = parse(code, {
         sourceType: 'module',

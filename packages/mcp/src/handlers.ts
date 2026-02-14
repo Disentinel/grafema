@@ -8,7 +8,7 @@ import { CoverageAnalyzer, findCallsInFunction, findContainingFunction, validate
 import type { CallInfo, CallerInfo, NodeContext } from '@grafema/core';
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync, mkdirSync, realpathSync } from 'fs';
 import type { Dirent } from 'fs';
-import { join, basename, relative } from 'path';
+import { isAbsolute, join, basename, relative } from 'path';
 import { stringify as stringifyYAML } from 'yaml';
 import {
   normalizeLimit,
@@ -1147,14 +1147,19 @@ export async function handleGetContext(
     : null;
 
   // 2. Build context using shared logic
+  const projectPath = getProjectPath();
   const ctx: NodeContext = await buildNodeContext(db, node, {
     contextLines: ctxLines,
     edgeTypeFilter,
+    readFileContent: (filePath: string) => {
+      const absPath = isAbsolute(filePath) ? filePath : join(projectPath, filePath);
+      if (!existsSync(absPath)) return null;
+      try { return readFileSync(absPath, 'utf-8'); } catch { return null; }
+    },
   });
 
   // 3. Format text output
-  const projectPath = getProjectPath();
-  const relFile = node.file ? relative(projectPath, node.file) : undefined;
+  const relFile = node.file ? (isAbsolute(node.file) ? relative(projectPath, node.file) : node.file) : undefined;
   const lines: string[] = [];
 
   lines.push(`[${node.type}] ${getNodeDisplayName(node)}`);
@@ -1190,7 +1195,7 @@ export async function handleGetContext(
           lines.push(`      ${dir} [dangling] ${danglingId}`);
           continue;
         }
-        const nFile = connNode.file ? relative(projectPath, connNode.file) : '';
+        const nFile = connNode.file ? (isAbsolute(connNode.file) ? relative(projectPath, connNode.file) : connNode.file) : '';
         const nLoc = nFile ? (connNode.line ? `${nFile}:${connNode.line}` : nFile) : '';
         const locStr = nLoc ? `  (${nLoc})` : '';
         const metaStr = formatEdgeMetadata(edge);
@@ -1198,9 +1203,10 @@ export async function handleGetContext(
 
         // Code context for non-structural edges
         if (!isStructural && connNode.file && connNode.line && ctxLines > 0) {
-          if (existsSync(connNode.file)) {
+          const absoluteConnFile = !isAbsolute(connNode.file) ? join(projectPath, connNode.file) : connNode.file;
+          if (existsSync(absoluteConnFile)) {
             try {
-              const content = readFileSync(connNode.file, 'utf-8');
+              const content = readFileSync(absoluteConnFile, 'utf-8');
               const allFileLines = content.split('\n');
               const nLine = connNode.line as number;
               const sLine = Math.max(1, nLine - Math.min(ctxLines, 2));

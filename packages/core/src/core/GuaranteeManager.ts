@@ -13,7 +13,7 @@
  */
 
 import { readFileSync, writeFileSync, existsSync } from 'fs';
-import { join } from 'path';
+import { join, isAbsolute, relative } from 'path';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import { minimatch } from 'minimatch';
 
@@ -534,7 +534,9 @@ export class GuaranteeManager {
 
     // Матчим patterns
     for (const module of modules) {
-      const relativePath = module.file?.replace(this.projectPath, '').replace(/^\//, '') || '';
+      const relativePath = module.file
+        ? (isAbsolute(module.file) ? relative(this.projectPath, module.file) : module.file)
+        : '';
 
       for (const pattern of patterns) {
         if (minimatch(relativePath, pattern) || minimatch(module.file || '', pattern)) {

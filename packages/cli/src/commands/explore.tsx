@@ -9,7 +9,8 @@
  */
 
 import { Command } from 'commander';
-import { resolve, join, relative } from 'path';
+import { resolve, join } from 'path';
+import { toRelativeDisplay } from '../utils/pathUtils.js';
 import { existsSync } from 'fs';
 import { execSync } from 'child_process';
 import React, { useState, useEffect } from 'react';
@@ -234,6 +235,7 @@ function Explorer({ backend, startNode, projectPath }: ExplorerProps) {
           const preview = getCodePreview({
             file: state.currentNode.file,
             line: state.currentNode.line,
+            projectPath,
           });
           if (preview) {
             const formatted = formatCodePreview(preview, state.currentNode.line);
@@ -421,7 +423,7 @@ function Explorer({ backend, startNode, projectPath }: ExplorerProps) {
 
   const formatLoc = (node: NodeInfo) => {
     if (!node.file) return '';
-    const rel = relative(projectPath, node.file);
+    const rel = toRelativeDisplay(node.file, projectPath);
     return node.line ? `${rel}:${node.line}` : rel;
   };
 
@@ -1040,7 +1042,7 @@ function outputResults(
     // Text format
     if (target) {
       console.log(`${mode === 'callers' ? 'Callers of' : 'Callees of'}: ${target.name}`);
-      console.log(`File: ${relative(projectPath, target.file)}${target.line ? `:${target.line}` : ''}`);
+      console.log(`File: ${toRelativeDisplay(target.file, projectPath)}${target.line ? `:${target.line}` : ''}`);
       console.log('');
     }
 
@@ -1048,7 +1050,7 @@ function outputResults(
       console.log(`  (no ${mode} found)`);
     } else {
       for (const node of nodes) {
-        const loc = relative(projectPath, node.file);
+        const loc = toRelativeDisplay(node.file, projectPath);
         console.log(`  ${node.type} ${node.name} (${loc}${node.line ? `:${node.line}` : ''})`);
       }
     }
@@ -1063,7 +1065,7 @@ function formatNodeForJson(node: NodeInfo, projectPath: string): object {
     id: node.id,
     type: node.type,
     name: node.name,
-    file: relative(projectPath, node.file),
+    file: toRelativeDisplay(node.file, projectPath),
     line: node.line,
     async: node.async,
     exported: node.exported,

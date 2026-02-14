@@ -16,7 +16,7 @@ import { AnalysisQueue } from './core/AnalysisQueue.js';
 import { DiagnosticCollector } from './diagnostics/DiagnosticCollector.js';
 import { StrictModeFailure } from './errors/GrafemaError.js';
 import type { Plugin, PluginContext } from './plugins/Plugin.js';
-import type { GraphBackend, PluginPhase, Logger, LogLevel, IssueSpec, ServiceDefinition, FieldDeclaration } from '@grafema/types';
+import type { GraphBackend, PluginPhase, Logger, LogLevel, IssueSpec, ServiceDefinition, FieldDeclaration, NodeRecord } from '@grafema/types';
 import { createLogger } from './logging/Logger.js';
 import { NodeFactory } from './core/NodeFactory.js';
 import { toposort } from './core/toposort.js';
@@ -372,6 +372,16 @@ export class Orchestrator {
     });
     this.logger.info('Discovery complete', { services: svcCount, entrypoints: epCount });
 
+    // REG-408: Store project metadata so graph is self-describing
+    await this.graph.addNode({
+      id: '__graph_meta__',
+      type: 'GRAPH_META',
+      name: 'graph_metadata',
+      file: '',
+      projectPath: absoluteProjectPath,
+      analyzedAt: new Date().toISOString()
+    } as unknown as NodeRecord);
+
     // Build unified list of indexing units from services AND entrypoints
     const indexingUnits = this.buildIndexingUnits(manifest);
 
@@ -595,6 +605,16 @@ export class Orchestrator {
 
     // Declare metadata fields for RFDB server-side indexing (REG-398)
     await this.declarePluginFields();
+
+    // REG-408: Store project metadata so graph is self-describing
+    await this.graph.addNode({
+      id: '__graph_meta__',
+      type: 'GRAPH_META',
+      name: 'graph_metadata',
+      file: '',
+      projectPath: workspacePath,
+      analyzedAt: new Date().toISOString()
+    } as unknown as NodeRecord);
 
     // Collect all services from all roots
     const allServices: ServiceInfo[] = [];

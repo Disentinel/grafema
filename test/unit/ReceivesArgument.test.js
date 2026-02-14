@@ -66,7 +66,7 @@ describe('RECEIVES_ARGUMENT Edges', () => {
         console.log(`  Parameter: ${paramNode?.name} file=${paramNode?.file} line=${paramNode?.line}`);
 
         // Find the parameter at line 7 (the standalone process function)
-        if (paramNode?.file?.includes('receives-argument/index.js') && paramNode?.line === 7) {
+        if (paramNode?.file?.endsWith('index.js') && paramNode?.line === 7) {
           processDataParam = paramId;
           break;
         }
@@ -212,7 +212,7 @@ describe('RECEIVES_ARGUMENT Edges', () => {
         const pId = p.bindings.find(b => b.name === 'X')?.value;
         const pNode = await backend.getNode(pId);
         console.log(`  data param at line ${pNode?.line}`);
-        if (pNode?.file?.includes('receives-argument/index.js') && pNode?.line === 24) {
+        if (pNode?.file?.endsWith('index.js') && pNode?.line === 24) {
           methodParamId = pId;
           break;
         }

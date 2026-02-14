@@ -136,6 +136,9 @@ export {
 } from './utils/moduleResolution.js';
 export type { ModuleResolutionOptions } from './utils/moduleResolution.js';
 
+// Node file path resolution (REG-408)
+export { resolveNodeFile } from './utils/resolveNodeFile.js';
+
 // Type validation and path validation
 export {
   levenshtein,

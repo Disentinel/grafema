@@ -115,7 +115,7 @@ describe('IncrementalReanalyzer (REG-97)', () => {
 
       // Detect stale modules
       const checker = new GraphFreshnessChecker();
-      const freshness = await checker.checkFreshness(backend);
+      const freshness = await checker.checkFreshness(backend, testDir);
 
       assert.strictEqual(freshness.isFresh, false,
         'Graph should be stale after modification');
@@ -138,7 +138,7 @@ describe('IncrementalReanalyzer (REG-97)', () => {
       assert.ok(barNode, 'bar function should now exist');
 
       // Verify freshness after reanalysis
-      const freshness2 = await checker.checkFreshness(backend);
+      const freshness2 = await checker.checkFreshness(backend, testDir);
       assert.strictEqual(freshness2.isFresh, true,
         'Graph should be fresh after reanalysis');
     });
@@ -172,7 +172,7 @@ export const result = calculate();`);
       `);
 
       const checker = new GraphFreshnessChecker();
-      const freshness = await checker.checkFreshness(backend);
+      const freshness = await checker.checkFreshness(backend, testDir);
 
       const reanalyzer = new IncrementalReanalyzer(backend, testDir);
       await reanalyzer.reanalyze(freshness.staleModules);
@@ -214,7 +214,7 @@ export const result = calculate();`);
       `);
 
       const checker = new GraphFreshnessChecker();
-      const freshness = await checker.checkFreshness(backend);
+      const freshness = await checker.checkFreshness(backend, testDir);
 
       const reanalyzer = new IncrementalReanalyzer(backend, testDir);
       const result = await reanalyzer.reanalyze(freshness.staleModules);
@@ -263,7 +263,7 @@ export const result = deleted() + kept();`);
       unlinkSync(toDeletePath);
 
       const checker = new GraphFreshnessChecker();
-      const freshness = await checker.checkFreshness(backend);
+      const freshness = await checker.checkFreshness(backend, testDir);
 
       assert.strictEqual(freshness.deletedCount, 1,
         'Should detect 1 deleted file');
@@ -310,7 +310,7 @@ export const result = deleted() + kept();`);
       unlinkSync(filePath);
 
       const checker = new GraphFreshnessChecker();
-      const freshness = await checker.checkFreshness(backend);
+      const freshness = await checker.checkFreshness(backend, testDir);
 
       const reanalyzer = new IncrementalReanalyzer(backend, testDir);
       await reanalyzer.reanalyze(freshness.staleModules);
@@ -360,7 +360,7 @@ export const result = deleted() + kept();`);
       `);
 
       const checker = new GraphFreshnessChecker();
-      const freshness = await checker.checkFreshness(backend);
+      const freshness = await checker.checkFreshness(backend, testDir);
 
       const reanalyzer = new IncrementalReanalyzer(backend, testDir);
       await reanalyzer.reanalyze(freshness.staleModules);
@@ -403,7 +403,7 @@ export const result = deleted() + kept();`);
       `);
 
       const checker = new GraphFreshnessChecker();
-      const freshness = await checker.checkFreshness(backend);
+      const freshness = await checker.checkFreshness(backend, testDir);
 
       const reanalyzer = new IncrementalReanalyzer(backend, testDir);
       await reanalyzer.reanalyze(freshness.staleModules);
@@ -457,7 +457,7 @@ export const result = deleted() + kept();`);
       `);
 
       const checker = new GraphFreshnessChecker();
-      const freshness = await checker.checkFreshness(backend);
+      const freshness = await checker.checkFreshness(backend, testDir);
 
       const reanalyzer = new IncrementalReanalyzer(backend, testDir);
       await reanalyzer.reanalyze(freshness.staleModules);
@@ -504,7 +504,7 @@ export const result = deleted() + kept();`);
       `);
 
       const checker = new GraphFreshnessChecker();
-      const freshness = await checker.checkFreshness(backend);
+      const freshness = await checker.checkFreshness(backend, testDir);
 
       const reanalyzer = new IncrementalReanalyzer(backend, testDir);
       const result = await reanalyzer.reanalyze(freshness.staleModules);
@@ -535,7 +535,7 @@ export const result = deleted() + kept();`);
       writeFileSync(join(testDir, 'index.js'), 'export const x = 2;');
 
       const checker = new GraphFreshnessChecker();
-      const freshness = await checker.checkFreshness(backend);
+      const freshness = await checker.checkFreshness(backend, testDir);
 
       const reanalyzer = new IncrementalReanalyzer(backend, testDir);
       const result = await reanalyzer.reanalyze(freshness.staleModules, {
@@ -571,7 +571,7 @@ export const sum = a + b;`);
       writeFileSync(join(testDir, 'b.js'), 'export const b = 20;');
 
       const checker = new GraphFreshnessChecker();
-      const freshness = await checker.checkFreshness(backend);
+      const freshness = await checker.checkFreshness(backend, testDir);
 
       const progressUpdates = [];
       const reanalyzer = new IncrementalReanalyzer(backend, testDir);
@@ -623,7 +623,7 @@ export const result = mod() + del();`);
       unlinkSync(deleted);
 
       const checker = new GraphFreshnessChecker();
-      const freshness = await checker.checkFreshness(backend);
+      const freshness = await checker.checkFreshness(backend, testDir);
 
       const reanalyzer = new IncrementalReanalyzer(backend, testDir);
       const result = await reanalyzer.reanalyze(freshness.staleModules);
@@ -675,7 +675,7 @@ export const result = mod() + del();`);
       writeFileSync(filePath, 'export const x = {{{INVALID}}}');
 
       const checker = new GraphFreshnessChecker();
-      const freshness = await checker.checkFreshness(backend);
+      const freshness = await checker.checkFreshness(backend, testDir);
 
       const reanalyzer = new IncrementalReanalyzer(backend, testDir);
 
@@ -701,7 +701,7 @@ export const result = mod() + del();`);
       writeFileSync(join(testDir, 'index.js'), 'export const x = 2;');
 
       const checker = new GraphFreshnessChecker();
-      const freshness = await checker.checkFreshness(backend);
+      const freshness = await checker.checkFreshness(backend, testDir);
 
       const reanalyzer = new IncrementalReanalyzer(backend, testDir);
 

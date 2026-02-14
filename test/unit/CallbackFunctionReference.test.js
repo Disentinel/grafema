@@ -966,15 +966,17 @@ class Pipeline {
       assert.ok(filterCall, 'Should find filter CALL node');
       assert.ok(mapCall, 'Should find map CALL node');
 
-      // filter -> validate
+      // filter -> validate (use any filter CALL node — inline duplicates may exist)
+      const filterCallIds = new Set(allNodes.filter(n => n.type === 'CALL' && n.method === 'filter').map(n => n.id));
       const filterCallsEdge = allEdges.find(e =>
-        e.type === 'CALLS' && e.src === filterCall.id && e.dst === validateFunc.id
+        e.type === 'CALLS' && filterCallIds.has(e.src) && e.dst === validateFunc.id
       );
       assert.ok(filterCallsEdge, 'filter should have CALLS edge to validate');
 
-      // map -> transform
+      // map -> transform (use any map CALL node)
+      const mapCallIds = new Set(allNodes.filter(n => n.type === 'CALL' && n.method === 'map').map(n => n.id));
       const mapCallsEdge = allEdges.find(e =>
-        e.type === 'CALLS' && e.src === mapCall.id && e.dst === transformFunc.id
+        e.type === 'CALLS' && mapCallIds.has(e.src) && e.dst === transformFunc.id
       );
       assert.ok(mapCallsEdge, 'map should have CALLS edge to transform');
     });

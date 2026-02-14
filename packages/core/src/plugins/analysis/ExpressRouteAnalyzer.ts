@@ -18,6 +18,7 @@ import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { NodeRecord } from '@grafema/types';
 import { getLine, getColumn } from './ast/utils/location.js';
+import { resolveNodeFile } from '../../utils/resolveNodeFile.js';
 
 const traverse = (traverseModule as any).default || traverseModule;
 
@@ -84,6 +85,7 @@ export class ExpressRouteAnalyzer extends Plugin {
 
     try {
       const { graph } = context;
+      const projectPath = (context.manifest as { projectPath?: string })?.projectPath ?? '';
 
       // Получаем все MODULE ноды
       const modules = await this.getModules(graph);
@@ -97,7 +99,7 @@ export class ExpressRouteAnalyzer extends Plugin {
       // Анализируем каждый модуль
       for (let i = 0; i < modules.length; i++) {
         const module = modules[i];
-        const result = await this.analyzeModule(module, graph);
+        const result = await this.analyzeModule(module, graph, projectPath);
         endpointsCreated += result.endpoints;
         middlewareCreated += result.middleware;
         edgesCreated += result.edges;
@@ -132,7 +134,8 @@ export class ExpressRouteAnalyzer extends Plugin {
 
   private async analyzeModule(
     module: NodeRecord,
-    graph: PluginContext['graph']
+    graph: PluginContext['graph'],
+    projectPath: string
   ): Promise<AnalysisResult> {
     let endpointsCreated = 0;
     let middlewareCreated = 0;
@@ -140,7 +143,7 @@ export class ExpressRouteAnalyzer extends Plugin {
 
     try {
       // Читаем файл
-      const code = readFileSync(module.file!, 'utf-8');
+      const code = readFileSync(resolveNodeFile(module.file!, projectPath), 'utf-8');
 
       // Парсим AST
       const ast = parse(code, {
