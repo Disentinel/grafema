@@ -20,6 +20,7 @@
   ],
   "scripts": {
     "build": "tsc",
+    "postbuild": "mkdir -p dist/plugins && cp src/plugins/pluginResolver.js dist/plugins/",
     "clean": "rm -rf dist",
     "start": "node dist/cli.js",
     "test": "node --import tsx --test test/*.test.ts"
