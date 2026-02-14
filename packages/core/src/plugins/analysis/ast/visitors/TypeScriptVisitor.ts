@@ -93,6 +93,65 @@ export function typeNodeToString(node: unknown): string {
       return `[${tupleTypes.map(t => typeNodeToString(t)).join(', ')}]`;
     case 'TSTypeLiteral':
       return 'object';
+    case 'TSTypeOperator': {
+      const operator = typeNode.operator as string;
+      const operand = typeNodeToString(typeNode.typeAnnotation);
+      return `${operator} ${operand}`;
+    }
+    case 'TSIndexedAccessType': {
+      const object = typeNodeToString(typeNode.objectType);
+      const index = typeNodeToString(typeNode.indexType);
+      return `${object}[${index}]`;
+    }
+    case 'TSMappedType': {
+      const tp = typeNode.typeParameter as { name?: string; constraint?: unknown };
+      const keyName = tp?.name || 'K';
+      const constraint = tp?.constraint ? typeNodeToString(tp.constraint) : '';
+      const valType = typeNode.typeAnnotation ? typeNodeToString(typeNode.typeAnnotation) : 'unknown';
+      const readonlyMod = typeNode.readonly === '-' ? '-readonly ' : typeNode.readonly ? 'readonly ' : '';
+      const optionalMod = typeNode.optional === '-' ? '-?' : typeNode.optional ? '?' : '';
+      const asClause = typeNode.nameType ? ` as ${typeNodeToString(typeNode.nameType)}` : '';
+      return `{ ${readonlyMod}[${keyName} in ${constraint}${asClause}]${optionalMod}: ${valType} }`;
+    }
+    case 'TSConditionalType': {
+      const check = typeNodeToString(typeNode.checkType);
+      const ext = typeNodeToString(typeNode.extendsType);
+      const trueType = typeNodeToString(typeNode.trueType);
+      const falseType = typeNodeToString(typeNode.falseType);
+      return `${check} extends ${ext} ? ${trueType} : ${falseType}`;
+    }
+    case 'TSTypeQuery': {
+      const exprName = typeNode.exprName as { type: string; name?: string };
+      return exprName?.type === 'Identifier' ? `typeof ${exprName.name}` : 'typeof unknown';
+    }
+    case 'TSParenthesizedType':
+      return `(${typeNodeToString(typeNode.typeAnnotation)})`;
+    case 'TSInferType': {
+      const param = typeNode.typeParameter as { name?: string };
+      return `infer ${param?.name || 'U'}`;
+    }
+    case 'TSTemplateLiteralType': {
+      const quasis = typeNode.quasis as Array<{ value?: { raw?: string } }>;
+      const typeTypes = typeNode.types as unknown[];
+      let result = '`';
+      for (let i = 0; i < quasis.length; i++) {
+        result += quasis[i]?.value?.raw || '';
+        if (i < (typeTypes?.length || 0)) {
+          result += `\${${typeNodeToString(typeTypes[i])}}`;
+        }
+      }
+      result += '`';
+      return result;
+    }
+    case 'TSRestType':
+      return `...${typeNodeToString(typeNode.typeAnnotation)}`;
+    case 'TSOptionalType':
+      return `${typeNodeToString(typeNode.typeAnnotation)}?`;
+    case 'TSNamedTupleMember': {
+      const label = (typeNode.label as { name?: string })?.name || '';
+      const elemType = typeNodeToString(typeNode.elementType);
+      return typeNode.optional ? `${label}?: ${elemType}` : `${label}: ${elemType}`;
+    }
     default:
       return 'unknown';
   }
@@ -198,7 +257,7 @@ export class TypeScriptVisitor extends ASTVisitor {
         // Extract the type being aliased
         const aliasOf = typeNodeToString(node.typeAnnotation);
 
-        (typeAliases as TypeAliasInfo[]).push({
+        const typeInfo: TypeAliasInfo = {
           semanticId: typeSemanticId,
           type: 'TYPE',
           name: typeName,
@@ -206,7 +265,33 @@ export class TypeScriptVisitor extends ASTVisitor {
           line: getLine(node),
           column: getColumn(node),
           aliasOf
-        });
+        };
+
+        // Detect mapped types: { [K in keyof T]: T[K] }
+        const annotation = node.typeAnnotation as { type: string; [key: string]: unknown };
+        if (annotation?.type === 'TSMappedType') {
+          typeInfo.mappedType = true;
+
+          const tp = annotation.typeParameter as { name?: string; constraint?: unknown };
+          if (tp?.name) typeInfo.keyName = tp.name;
+          if (tp?.constraint) typeInfo.keyConstraint = typeNodeToString(tp.constraint);
+
+          if (annotation.typeAnnotation) {
+            typeInfo.valueType = typeNodeToString(annotation.typeAnnotation);
+          }
+
+          if (annotation.readonly !== undefined && annotation.readonly !== null) {
+            typeInfo.mappedReadonly = annotation.readonly as boolean | '+' | '-';
+          }
+          if (annotation.optional !== undefined && annotation.optional !== null) {
+            typeInfo.mappedOptional = annotation.optional as boolean | '+' | '-';
+          }
+          if (annotation.nameType) {
+            typeInfo.nameType = typeNodeToString(annotation.nameType);
+          }
+        }
+
+        (typeAliases as TypeAliasInfo[]).push(typeInfo);
       },
 
       TSEnumDeclaration: (path: NodePath) => {

@@ -2023,13 +2023,22 @@ export class GraphBuilder {
    */
   private bufferTypeAliasNodes(module: ModuleNode, typeAliases: TypeAliasInfo[]): void {
     for (const typeAlias of typeAliases) {
-      // Create TYPE node using factory
+      // Create TYPE node using factory (pass mapped type metadata if present)
       const typeNode = NodeFactory.createType(
         typeAlias.name,
         typeAlias.file,
         typeAlias.line,
         typeAlias.column || 0,
-        { aliasOf: typeAlias.aliasOf }
+        {
+          aliasOf: typeAlias.aliasOf,
+          mappedType: typeAlias.mappedType,
+          keyName: typeAlias.keyName,
+          keyConstraint: typeAlias.keyConstraint,
+          valueType: typeAlias.valueType,
+          mappedReadonly: typeAlias.mappedReadonly,
+          mappedOptional: typeAlias.mappedOptional,
+          nameType: typeAlias.nameType,
+        }
       );
       this._bufferNode(typeNode as unknown as GraphNode);
 

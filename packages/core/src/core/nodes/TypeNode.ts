@@ -9,21 +9,37 @@
 
 import type { BaseNodeRecord } from '@grafema/types';
 
+type MappedModifier = boolean | '+' | '-';
+
 interface TypeNodeRecord extends BaseNodeRecord {
   type: 'TYPE';
   column: number;
   aliasOf?: string;
+  mappedType?: boolean;
+  keyName?: string;
+  keyConstraint?: string;
+  valueType?: string;
+  mappedReadonly?: MappedModifier;
+  mappedOptional?: MappedModifier;
+  nameType?: string;
 }
 
 interface TypeNodeOptions {
   aliasOf?: string;
+  mappedType?: boolean;
+  keyName?: string;
+  keyConstraint?: string;
+  valueType?: string;
+  mappedReadonly?: MappedModifier;
+  mappedOptional?: MappedModifier;
+  nameType?: string;
 }
 
 export class TypeNode {
   static readonly TYPE = 'TYPE' as const;
 
   static readonly REQUIRED = ['name', 'file', 'line', 'column'] as const;
-  static readonly OPTIONAL = ['aliasOf'] as const;
+  static readonly OPTIONAL = ['aliasOf', 'mappedType', 'keyName', 'keyConstraint', 'valueType', 'mappedReadonly', 'mappedOptional', 'nameType'] as const;
 
   /**
    * Create TYPE node
@@ -47,7 +63,7 @@ export class TypeNode {
     if (!line) throw new Error('TypeNode.create: line is required');
     if (column === undefined) throw new Error('TypeNode.create: column is required');
 
-    return {
+    const record: TypeNodeRecord = {
       id: `${file}:TYPE:${name}:${line}`,
       type: this.TYPE,
       name,
@@ -56,6 +72,18 @@ export class TypeNode {
       column,
       aliasOf: options.aliasOf
     };
+
+    if (options.mappedType) {
+      record.mappedType = true;
+      record.keyName = options.keyName;
+      record.keyConstraint = options.keyConstraint;
+      record.valueType = options.valueType;
+      if (options.mappedReadonly !== undefined) record.mappedReadonly = options.mappedReadonly;
+      if (options.mappedOptional !== undefined) record.mappedOptional = options.mappedOptional;
+      if (options.nameType !== undefined) record.nameType = options.nameType;
+    }
+
+    return record;
   }
 
   static validate(node: TypeNodeRecord): string[] {
