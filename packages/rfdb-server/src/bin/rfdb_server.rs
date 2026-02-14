@@ -803,7 +803,7 @@ fn handle_request(
             with_engine_read(session, |engine| {
                 let start: Vec<u128> = start_ids.iter().map(|s| string_to_id(s)).collect();
                 let edge_types_refs: Vec<&str> = edge_types.iter().map(|s| s.as_str()).collect();
-                let ids: Vec<String> = engine.reachability(&start, max_depth as usize, &edge_types_refs, backward)
+                let ids: Vec<String> = rfdb::graph::reachability(engine, &start, max_depth as usize, &edge_types_refs, backward)
                     .into_iter()
                     .map(id_to_string)
                     .collect();
@@ -983,7 +983,7 @@ fn handle_request(
 
         Request::IsEndpoint { id } => {
             with_engine_read(session, |engine| {
-                Response::Bool { value: engine.is_endpoint(string_to_id(&id)) }
+                Response::Bool { value: rfdb::graph::is_endpoint(engine, string_to_id(&id)) }
             })
         }
 
@@ -1035,10 +1035,15 @@ fn handle_request(
             // Get graph stats from current database (if any)
             let (node_count, edge_count, delta_size) = if let Some(ref db) = session.current_db {
                 let engine = db.engine.read().unwrap();
+                let ops = if let Some(v1) = engine.as_any().downcast_ref::<GraphEngine>() {
+                    v1.ops_since_flush as u64
+                } else {
+                    0 // v2 engine doesn't track ops_since_flush
+                };
                 (
                     engine.node_count() as u64,
                     engine.edge_count() as u64,
-                    engine.ops_since_flush as u64,
+                    ops,
                 )
             } else {
                 // No database selected - return zeros
@@ -1083,14 +1088,11 @@ fn handle_request(
 
 /// Handle CommitBatch: atomically replace nodes/edges for changed files.
 ///
-/// 1. Find all existing nodes for each changed file
-/// 2. Delete their outgoing and incoming edges
-/// 3. Delete the old nodes
-/// 4. Add new nodes and edges
-/// 5. Flush to disk
-/// 6. Return delta with counts and affected types
+/// Uses GraphStore trait methods (delete-then-add) which works correctly
+/// for both v1 and v2 engines. The v2-native commit_batch path will be
+/// activated when clients negotiate protocol v3 with semantic IDs.
 fn handle_commit_batch(
-    engine: &mut GraphEngine,
+    engine: &mut dyn GraphStore,
     changed_files: Vec<String>,
     nodes: Vec<WireNode>,
     edges: Vec<WireEdge>,
@@ -1099,10 +1101,8 @@ fn handle_commit_batch(
     let mut edges_removed: u64 = 0;
     let mut changed_node_types: HashSet<String> = HashSet::new();
     let mut changed_edge_types: HashSet<String> = HashSet::new();
-    // Dedup set to avoid double-counting edges shared between nodes in changedFiles
     let mut deleted_edge_keys: HashSet<(u128, u128, String)> = HashSet::new();
 
-    // Phase 1: Find and delete old data for changed files
     for file in &changed_files {
         let attr_query = AttrQuery {
             version: None,
@@ -1116,14 +1116,12 @@ fn handle_commit_batch(
         let old_ids = engine.find_by_attr(&attr_query);
 
         for id in &old_ids {
-            // Track old node types
             if let Some(node) = engine.get_node(*id) {
                 if let Some(ref nt) = node.node_type {
                     changed_node_types.insert(nt.clone());
                 }
             }
 
-            // Delete outgoing edges
             for edge in engine.get_outgoing_edges(*id, None) {
                 let edge_key = (edge.src, edge.dst, edge.edge_type.clone().unwrap_or_default());
                 if deleted_edge_keys.insert(edge_key) {
@@ -1135,7 +1133,6 @@ fn handle_commit_batch(
                 }
             }
 
-            // Delete incoming edges
             for edge in engine.get_incoming_edges(*id, None) {
                 let edge_key = (edge.src, edge.dst, edge.edge_type.clone().unwrap_or_default());
                 if deleted_edge_keys.insert(edge_key) {
@@ -1147,17 +1144,14 @@ fn handle_commit_batch(
                 }
             }
 
-            // Delete the node
             engine.delete_node(*id);
             nodes_removed += 1;
         }
     }
 
-    // Phase 2: Add new data
     let nodes_added = nodes.len() as u64;
     let edges_added = edges.len() as u64;
 
-    // Track new types
     for node in &nodes {
         if let Some(ref nt) = node.node_type {
             changed_node_types.insert(nt.clone());
@@ -1173,14 +1167,12 @@ fn handle_commit_batch(
     engine.add_nodes(node_records);
 
     let edge_records: Vec<EdgeRecord> = edges.into_iter().map(wire_edge_to_record).collect();
-    engine.add_edges(edge_records, true); // skipValidation for batch
+    engine.add_edges(edge_records, true);
 
-    // Phase 3: Flush
     if let Err(e) = engine.flush() {
         return Response::Error { error: format!("Flush failed during commit: {}", e) };
     }
 
-    // Phase 4: Build delta
     let delta = WireCommitDelta {
         changed_files,
         nodes_added,
@@ -1197,12 +1189,12 @@ fn handle_commit_batch(
 /// Helper: execute read operation on current database
 fn with_engine_read<F>(session: &ClientSession, f: F) -> Response
 where
-    F: FnOnce(&GraphEngine) -> Response,
+    F: FnOnce(&dyn GraphStore) -> Response,
 {
     match &session.current_db {
         Some(db) => {
             let engine = db.engine.read().unwrap();
-            f(&engine)
+            f(&**engine)
         }
         None => Response::ErrorWithCode {
             error: "No database selected. Use openDatabase first.".to_string(),
@@ -1214,7 +1206,7 @@ where
 /// Helper: execute write operation on current database
 fn with_engine_write<F>(session: &ClientSession, f: F) -> Response
 where
-    F: FnOnce(&mut GraphEngine) -> Response,
+    F: FnOnce(&mut dyn GraphStore) -> Response,
 {
     match &session.current_db {
         Some(db) => {
@@ -1225,7 +1217,7 @@ where
                 };
             }
             let mut engine = db.engine.write().unwrap();
-            f(&mut engine)
+            f(&mut **engine)
         }
         None => Response::ErrorWithCode {
             error: "No database selected. Use openDatabase first.".to_string(),
@@ -1254,7 +1246,7 @@ fn handle_close_database(manager: &DatabaseManager, session: &mut ClientSession)
 
 /// Execute a guarantee check (violation query)
 fn execute_check_guarantee(
-    engine: &GraphEngine,
+    engine: &dyn GraphStore,
     rule_source: &str,
 ) -> std::result::Result<Vec<WireViolation>, String> {
     let program = parse_program(rule_source)
@@ -1286,7 +1278,7 @@ fn execute_check_guarantee(
 
 /// Execute datalog load rules (returns count of loaded rules)
 fn execute_datalog_load_rules(
-    _engine: &GraphEngine,
+    _engine: &dyn GraphStore,
     source: &str,
 ) -> std::result::Result<u32, String> {
     let program = parse_program(source)
@@ -1297,7 +1289,7 @@ fn execute_datalog_load_rules(
 
 /// Execute a datalog query
 fn execute_datalog_query(
-    engine: &GraphEngine,
+    engine: &dyn GraphStore,
     query_source: &str,
 ) -> std::result::Result<Vec<WireViolation>, String> {
     let literals = parse_query(query_source)
