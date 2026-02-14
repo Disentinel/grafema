@@ -22,17 +22,13 @@ import { RFDBClient } from '@grafema/rfdb-client';
 import { existsSync, unlinkSync } from 'fs';
 import { spawn, type ChildProcess } from 'child_process';
 import { join, dirname } from 'path';
-import { fileURLToPath } from 'url';
-import { createRequire } from 'module';
 import { setTimeout as sleep } from 'timers/promises';
 
 import type { WireNode, WireEdge, FieldDeclaration, AttrQuery as RFDBAttrQuery } from '@grafema/types';
 import type { NodeType, EdgeType } from '@grafema/types';
+import { findRfdbBinary } from '../../utils/findRfdbBinary.js';
 import type { BaseNodeRecord, EdgeRecord } from '@grafema/types';
 import type { AttrQuery, GraphStats, GraphExport } from '../../core/GraphBackend.js';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
 
 /**
  * Options for RFDBServerBackend
@@ -201,62 +197,15 @@ export class RFDBServerBackend {
   }
 
   /**
-   * Find RFDB server binary in order of preference:
-   * 1. packages/rfdb-server/target/release (monorepo development - prioritized for dev)
-   * 2. packages/rfdb-server/target/debug
-   * 3. @grafema/rfdb npm package
-   * 4. ~/.local/bin/rfdb-server (user-installed binary)
+   * Find RFDB server binary using shared utility.
+   * Delegates to findRfdbBinary() for consistent search across all entry points.
    */
   private _findServerBinary(): string | null {
-    // 1. Check packages/rfdb-server in monorepo (prioritized for development)
-    const projectRoot = join(__dirname, '../../../../..');
-    const releaseBinary = join(projectRoot, 'packages/rfdb-server/target/release/rfdb-server');
-    if (existsSync(releaseBinary)) {
-      this.log(`[RFDBServerBackend] Found release binary: ${releaseBinary}`);
-      return releaseBinary;
+    const binaryPath = findRfdbBinary();
+    if (binaryPath) {
+      this.log(`[RFDBServerBackend] Found binary: ${binaryPath}`);
     }
-
-    // 2. Check debug build
-    const debugBinary = join(projectRoot, 'packages/rfdb-server/target/debug/rfdb-server');
-    if (existsSync(debugBinary)) {
-      this.log(`[RFDBServerBackend] Found debug binary: ${debugBinary}`);
-      return debugBinary;
-    }
-
-    // 3. Check @grafema/rfdb npm package
-    try {
-      const require = createRequire(import.meta.url);
-      const rfdbPkg = require.resolve('@grafema/rfdb');
-      const rfdbDir = dirname(rfdbPkg);
-      const platform = process.platform;
-      const arch = process.arch;
-
-      let platformDir: string;
-      if (platform === 'darwin') {
-        platformDir = arch === 'arm64' ? 'darwin-arm64' : 'darwin-x64';
-      } else if (platform === 'linux') {
-        platformDir = arch === 'arm64' ? 'linux-arm64' : 'linux-x64';
-      } else {
-        platformDir = `${platform}-${arch}`;
-      }
-
-      const npmBinary = join(rfdbDir, 'prebuilt', platformDir, 'rfdb-server');
-      if (existsSync(npmBinary)) {
-        this.log(`[RFDBServerBackend] Found binary in @grafema/rfdb: ${npmBinary}`);
-        return npmBinary;
-      }
-    } catch {
-      // @grafema/rfdb not installed
-    }
-
-    // 4. Check ~/.local/bin (user-installed binary for unsupported platforms)
-    const homeBinary = join(process.env.HOME || '', '.local', 'bin', 'rfdb-server');
-    if (existsSync(homeBinary)) {
-      this.log(`[RFDBServerBackend] Found user binary: ${homeBinary}`);
-      return homeBinary;
-    }
-
-    return null;
+    return binaryPath;
   }
 
   /**
