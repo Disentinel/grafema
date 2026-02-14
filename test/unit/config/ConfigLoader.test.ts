@@ -17,7 +17,7 @@ import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert';
 import { mkdirSync, writeFileSync, rmSync, existsSync } from 'fs';
 import { join } from 'path';
-import { loadConfig, DEFAULT_CONFIG, validateVersion, GRAFEMA_VERSION, getSchemaVersion } from '@grafema/core';
+import { loadConfig, DEFAULT_CONFIG, validateVersion, validateRouting, GRAFEMA_VERSION, getSchemaVersion } from '@grafema/core';
 
 // =============================================================================
 // Test Helpers
@@ -1337,6 +1337,256 @@ plugins:
       assert.throws(
         () => loadConfig(testDir, logger),
         /config version "99.99.99" is not compatible/
+      );
+    });
+  });
+
+  // ===========================================================================
+  // TESTS: validateRouting (REG-256)
+  // ===========================================================================
+
+  describe('validateRouting (REG-256)', () => {
+    const services = [
+      { name: 'frontend', path: 'apps/frontend' },
+      { name: 'backend', path: 'apps/backend' },
+    ];
+
+    it('should accept undefined routing', () => {
+      assert.doesNotThrow(() => validateRouting(undefined, services));
+    });
+
+    it('should accept null routing', () => {
+      assert.doesNotThrow(() => validateRouting(null, services));
+    });
+
+    it('should reject non-array routing', () => {
+      assert.throws(
+        () => validateRouting('not an array', services),
+        /routing must be an array, got string/
+      );
+    });
+
+    it('should reject rule without from', () => {
+      assert.throws(
+        () => validateRouting([{ to: 'backend' }], services),
+        /routing\[0\]\.from must be a non-empty string/
+      );
+    });
+
+    it('should reject rule without to', () => {
+      assert.throws(
+        () => validateRouting([{ from: 'frontend' }], services),
+        /routing\[0\]\.to must be a non-empty string/
+      );
+    });
+
+    it('should reject stripPrefix not starting with /', () => {
+      assert.throws(
+        () => validateRouting([{ from: 'frontend', to: 'backend', stripPrefix: 'api' }], services),
+        /routing\[0\]\.stripPrefix must start with '\/'/
+      );
+    });
+
+    it('should reject addPrefix not starting with /', () => {
+      assert.throws(
+        () => validateRouting([{ from: 'frontend', to: 'backend', addPrefix: 'v2' }], services),
+        /routing\[0\]\.addPrefix must start with '\/'/
+      );
+    });
+
+    it('should reject from referencing non-existent service', () => {
+      assert.throws(
+        () => validateRouting([{ from: 'unknown', to: 'backend' }], services),
+        /routing\[0\]\.from "unknown" does not match any service name/
+      );
+    });
+
+    it('should reject to referencing non-existent service', () => {
+      assert.throws(
+        () => validateRouting([{ from: 'frontend', to: 'unknown' }], services),
+        /routing\[0\]\.to "unknown" does not match any service name/
+      );
+    });
+
+    it('should accept valid routing rules', () => {
+      assert.doesNotThrow(() =>
+        validateRouting([
+          { from: 'frontend', to: 'backend', stripPrefix: '/api' },
+          { from: 'frontend', to: 'backend', stripPrefix: '/api', addPrefix: '/v2' },
+        ], services)
+      );
+    });
+
+    it('should accept routing with empty services array (skip cross-validation)', () => {
+      assert.doesNotThrow(() =>
+        validateRouting([
+          { from: 'any', to: 'thing' },
+        ], [])
+      );
+    });
+
+    it('should reject non-string stripPrefix', () => {
+      assert.throws(
+        () => validateRouting([{ from: 'frontend', to: 'backend', stripPrefix: 123 }], services),
+        /routing\[0\]\.stripPrefix must be a string/
+      );
+    });
+
+    it('should reject non-string addPrefix', () => {
+      assert.throws(
+        () => validateRouting([{ from: 'frontend', to: 'backend', addPrefix: true }], services),
+        /routing\[0\]\.addPrefix must be a string/
+      );
+    });
+
+    it('should reject non-object rule', () => {
+      assert.throws(
+        () => validateRouting(['not an object'], services),
+        /routing\[0\] must be an object/
+      );
+    });
+
+    it('should report correct index for validation errors', () => {
+      assert.throws(
+        () => validateRouting([
+          { from: 'frontend', to: 'backend' },
+          { from: 'frontend' }, // missing to
+        ], services),
+        /routing\[1\]\.to must be a non-empty string/
+      );
+    });
+  });
+
+  // ===========================================================================
+  // TESTS: customerFacing validation (REG-256)
+  // ===========================================================================
+
+  describe('customerFacing validation (REG-256)', () => {
+    it('should accept boolean customerFacing on service', () => {
+      mkdirSync(join(testDir, 'apps', 'backend'), { recursive: true });
+
+      const yaml = `services:
+  - name: "backend"
+    path: "apps/backend"
+    customerFacing: true
+`;
+      writeFileSync(join(grafemaDir, 'config.yaml'), yaml);
+
+      const config = loadConfig(testDir);
+
+      assert.strictEqual(config.services[0].customerFacing, true);
+    });
+
+    it('should reject non-boolean customerFacing', () => {
+      mkdirSync(join(testDir, 'apps', 'backend'), { recursive: true });
+
+      const yaml = `services:
+  - name: "backend"
+    path: "apps/backend"
+    customerFacing: "yes"
+`;
+      writeFileSync(join(grafemaDir, 'config.yaml'), yaml);
+
+      assert.throws(
+        () => loadConfig(testDir),
+        /services\[0\]\.customerFacing must be a boolean, got string/
+      );
+    });
+
+    it('should accept service without customerFacing (optional)', () => {
+      mkdirSync(join(testDir, 'apps', 'backend'), { recursive: true });
+
+      const yaml = `services:
+  - name: "backend"
+    path: "apps/backend"
+`;
+      writeFileSync(join(grafemaDir, 'config.yaml'), yaml);
+
+      const config = loadConfig(testDir);
+
+      assert.strictEqual(config.services[0].customerFacing, undefined);
+    });
+  });
+
+  // ===========================================================================
+  // TESTS: routing in mergeConfig (REG-256)
+  // ===========================================================================
+
+  describe('routing in mergeConfig (REG-256)', () => {
+    it('should pass through routing from user config', () => {
+      mkdirSync(join(testDir, 'apps', 'frontend'), { recursive: true });
+      mkdirSync(join(testDir, 'apps', 'backend'), { recursive: true });
+
+      const yaml = `services:
+  - name: "frontend"
+    path: "apps/frontend"
+  - name: "backend"
+    path: "apps/backend"
+routing:
+  - from: frontend
+    to: backend
+    stripPrefix: /api
+`;
+      writeFileSync(join(grafemaDir, 'config.yaml'), yaml);
+
+      const config = loadConfig(testDir);
+
+      assert.ok(config.routing, 'should have routing');
+      assert.strictEqual(config.routing!.length, 1);
+      assert.strictEqual(config.routing![0].from, 'frontend');
+      assert.strictEqual(config.routing![0].to, 'backend');
+      assert.strictEqual(config.routing![0].stripPrefix, '/api');
+    });
+
+    it('should default to undefined when routing not specified', () => {
+      const yaml = `plugins:
+  indexing:
+    - JSModuleIndexer
+`;
+      writeFileSync(join(grafemaDir, 'config.yaml'), yaml);
+
+      const config = loadConfig(testDir);
+
+      assert.strictEqual(config.routing, undefined);
+    });
+  });
+
+  // ===========================================================================
+  // TESTS: routing validation in loadConfig (REG-256)
+  // ===========================================================================
+
+  describe('routing validation in loadConfig (REG-256)', () => {
+    it('should throw when routing references non-existent service in YAML', () => {
+      mkdirSync(join(testDir, 'apps', 'frontend'), { recursive: true });
+
+      const yaml = `services:
+  - name: "frontend"
+    path: "apps/frontend"
+routing:
+  - from: frontend
+    to: nonexistent
+`;
+      writeFileSync(join(grafemaDir, 'config.yaml'), yaml);
+
+      assert.throws(
+        () => loadConfig(testDir),
+        /routing\[0\]\.to "nonexistent" does not match any service name/
+      );
+    });
+
+    it('should throw when routing references non-existent service in JSON', () => {
+      mkdirSync(join(testDir, 'apps', 'frontend'), { recursive: true });
+
+      const json = {
+        services: [{ name: 'frontend', path: 'apps/frontend' }],
+        routing: [{ from: 'frontend', to: 'nonexistent' }],
+      };
+      writeFileSync(join(grafemaDir, 'config.json'), JSON.stringify(json));
+
+      const logger = createLoggerMock();
+      assert.throws(
+        () => loadConfig(testDir, logger),
+        /routing\[0\]\.to "nonexistent" does not match any service name/
       );
     });
   });

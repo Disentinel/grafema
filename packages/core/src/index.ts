@@ -41,6 +41,7 @@ export {
   validateServices,
   validatePatterns,
   validateWorkspace,
+  validateRouting,
 } from './config/index.js';
 export type { GrafemaConfig } from './config/index.js';
 
