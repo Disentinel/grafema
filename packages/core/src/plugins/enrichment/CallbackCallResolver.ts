@@ -70,6 +70,8 @@ interface FunctionNode extends BaseNodeRecord {
 interface UserDefinedHOF {
   functionId: string;
   invokesParamIndexes: number[];
+  /** REG-417: Property paths for destructured param bindings (for OBJECT_LITERAL resolution) */
+  invokesParamBindings?: { paramIndex: number; propertyPath: string[] }[];
 }
 
 // === PLUGIN CLASS ===
@@ -115,9 +117,13 @@ export class CallbackCallResolver extends Plugin {
       const topLevelIndexes = (func as Record<string, unknown>).invokesParamIndexes;
       const invokesIndexes = (meta?.invokesParamIndexes ?? topLevelIndexes) as number[] | undefined;
       if (Array.isArray(invokesIndexes) && invokesIndexes.length > 0) {
+        // REG-417: Also collect invokesParamBindings for OBJECT_LITERAL resolution
+        const paramBindings = (meta?.invokesParamBindings ?? (func as Record<string, unknown>).invokesParamBindings) as
+          { paramIndex: number; propertyPath: string[] }[] | undefined;
         userDefinedHOFs.push({
           functionId: func.id,
-          invokesParamIndexes: invokesIndexes
+          invokesParamIndexes: invokesIndexes,
+          invokesParamBindings: Array.isArray(paramBindings) ? paramBindings : undefined
         });
       }
     }
@@ -265,6 +271,25 @@ export class CallbackCallResolver extends Plugin {
             targetFunctionId = await this.resolveImportToFunction(
               argTargetNode as ImportNode, graph, functionIndex
             );
+          } else if (argTargetNode.type === 'OBJECT_LITERAL' && hof.invokesParamBindings) {
+            // REG-417: Destructured param — resolve through OBJECT_LITERAL via HAS_PROPERTY edges
+            // Find matching bindings for this argIndex
+            const matchingBindings = hof.invokesParamBindings.filter(b => b.paramIndex === argIndex);
+            for (const binding of matchingBindings) {
+              const resolvedId = await this.resolveObjectLiteralProperty(
+                argTargetNode.id, binding.propertyPath, graph, functionIndex
+              );
+              if (resolvedId) {
+                await graph.addEdge({
+                  type: 'CALLS',
+                  src: callSiteId,
+                  dst: resolvedId,
+                  metadata: { callType: 'callback' }
+                });
+                hofEdgesCreated++;
+              }
+            }
+            continue; // Already handled edge creation above
           }
 
           if (targetFunctionId) {
@@ -300,6 +325,46 @@ export class CallbackCallResolver extends Plugin {
         timeMs: Date.now() - startTime
       }
     );
+  }
+
+  /**
+   * REG-417: Resolve through OBJECT_LITERAL by following HAS_PROPERTY edges along a property path.
+   * For `apply({ fn: handler })` with propertyPath ['fn'], follows:
+   * OBJECT_LITERAL → HAS_PROPERTY(propertyName='fn') → target node → resolve to FUNCTION.
+   *
+   * Returns the target FUNCTION ID, or null if the chain can't be resolved.
+   */
+  private async resolveObjectLiteralProperty(
+    objectLiteralId: string,
+    propertyPath: string[],
+    graph: PluginContext['graph'],
+    functionIndex: Map<string, Map<string, FunctionNode>>
+  ): Promise<string | null> {
+    let currentNodeId = objectLiteralId;
+
+    // Walk the property path: each step follows a HAS_PROPERTY edge
+    for (const propName of propertyPath) {
+      const hasPropertyEdges = await graph.getOutgoingEdges(currentNodeId, ['HAS_PROPERTY']);
+      // propertyName may be stored directly on edge or in metadata (backend-dependent)
+      const matchingEdge = hasPropertyEdges.find(e =>
+        (e as unknown as Record<string, unknown>).propertyName === propName || e.metadata?.propertyName === propName
+      );
+      if (!matchingEdge) return null;
+
+      currentNodeId = matchingEdge.dst;
+    }
+
+    // Now currentNodeId should point to the property value node
+    const targetNode = await graph.getNode(currentNodeId);
+    if (!targetNode) return null;
+
+    if (targetNode.type === 'FUNCTION') {
+      return targetNode.id;
+    } else if (targetNode.type === 'IMPORT') {
+      return this.resolveImportToFunction(targetNode as ImportNode, graph, functionIndex);
+    }
+
+    return null;
   }
 
   /**
