@@ -4812,6 +4812,25 @@ export class JSASTAnalyzer extends Plugin {
           scopeTracker,
           currentFunctionId || getCurrentScopeId()
         );
+      },
+      // MetaProperty: new.target (REG-301)
+      MetaProperty: (metaPath: NodePath<t.MetaProperty>) => {
+        // Initialize collections if needed
+        if (!collections.propertyAccesses) {
+          collections.propertyAccesses = [];
+        }
+        if (!collections.propertyAccessCounterRef) {
+          collections.propertyAccessCounterRef = { value: 0 };
+        }
+
+        PropertyAccessVisitor.extractMetaProperty(
+          metaPath.node,
+          module,
+          collections.propertyAccesses as PropertyAccessInfo[],
+          collections.propertyAccessCounterRef as CounterRef,
+          scopeTracker,
+          currentFunctionId || getCurrentScopeId()
+        );
       }
     });
 
