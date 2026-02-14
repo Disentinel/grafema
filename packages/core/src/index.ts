@@ -333,6 +333,7 @@ export type {
 
 // Graph Query Utilities
 export { findCallsInFunction, findContainingFunction, traceValues, aggregateValues, NONDETERMINISTIC_PATTERNS, NONDETERMINISTIC_OBJECTS } from './queries/index.js';
+export { buildNodeContext, getNodeDisplayName, formatEdgeMetadata, STRUCTURAL_EDGE_TYPES } from './queries/index.js';
 export type {
   CallInfo,
   CallerInfo,
@@ -344,6 +345,11 @@ export type {
   ValueSetResult,
   TraceValuesGraphBackend,
   NondeterministicPattern,
+  EdgeWithNode,
+  EdgeGroup,
+  SourcePreview,
+  NodeContext,
+  BuildNodeContextOptions,
 } from './queries/index.js';
 
 // Re-export types for convenience
