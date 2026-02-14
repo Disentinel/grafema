@@ -135,6 +135,44 @@ jobs:
       - name: Build all packages
         run: pnpm build
 
+      - name: Verify rfdb binaries
+        if: inputs.publish_rfdb == true
+        run: |
+          echo "Verifying rfdb-server prebuilt binaries..."
+
+          PLATFORMS=(
+            "darwin-arm64"
+            "darwin-x64"
+            "linux-arm64"
+            "linux-x64"
+          )
+
+          MISSING=0
+          for platform in "${PLATFORMS[@]}"; do
+            BINARY="packages/rfdb-server/prebuilt/$platform/rfdb-server"
+            if [ ! -f "$BINARY" ]; then
+              echo "::error::Missing binary: $BINARY"
+              MISSING=1
+            else
+              SIZE=$(du -h "$BINARY" | cut -f1)
+              BYTES=$(wc -c < "$BINARY")
+              echo "  $platform: $SIZE ($BYTES bytes)"
+              if [ "$BYTES" -lt 102400 ]; then
+                echo "::error::Binary too small: $BINARY"
+                MISSING=1
+              fi
+            fi
+          done
+
+          if [ "$MISSING" -eq 1 ]; then
+            echo ""
+            echo "::error::Cannot publish @grafema/rfdb with missing platform binaries."
+            echo "Run: ./scripts/download-rfdb-binaries.sh rfdb-v<VERSION>"
+            exit 1
+          fi
+
+          echo "All platform binaries verified."
+
       - name: Publish packages
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
