@@ -1139,6 +1139,153 @@ function process(items, parser) {
   });
 
   // ============================================================================
+  // REG-416: Aliased parameter invocation in HOFs
+  // ============================================================================
+  describe('Aliased parameter invocation in HOFs (REG-416)', () => {
+    it('should detect direct alias: const f = fn; f()', async () => {
+      await setupTest(backend, {
+        'index.js': `
+function handler() { return 42; }
+function apply(fn) {
+  const f = fn;
+  f();
+}
+apply(handler);
+`
+      });
+
+      const allNodes = await backend.getAllNodes();
+      const allEdges = await backend.getAllEdges();
+
+      const handlerFunc = allNodes.find(n =>
+        n.type === 'FUNCTION' && n.name === 'handler'
+      );
+      const applyCall = allNodes.find(n =>
+        n.type === 'CALL' && n.name === 'apply' && !n.object
+      );
+      assert.ok(handlerFunc, 'Should find handler FUNCTION node');
+      assert.ok(applyCall, 'Should find apply CALL node');
+
+      const callsEdge = allEdges.find(e =>
+        e.type === 'CALLS' && e.src === applyCall.id && e.dst === handlerFunc.id
+      );
+      assert.ok(
+        callsEdge,
+        'Should have callback CALLS edge from apply() to handler via alias f=fn'
+      );
+    });
+
+    it('should detect transitive alias: const f = fn; const g = f; g()', async () => {
+      await setupTest(backend, {
+        'index.js': `
+function handler() { return 42; }
+function apply(fn) {
+  const f = fn;
+  const g = f;
+  g();
+}
+apply(handler);
+`
+      });
+
+      const allNodes = await backend.getAllNodes();
+      const allEdges = await backend.getAllEdges();
+
+      const handlerFunc = allNodes.find(n =>
+        n.type === 'FUNCTION' && n.name === 'handler'
+      );
+      const applyCall = allNodes.find(n =>
+        n.type === 'CALL' && n.name === 'apply' && !n.object
+      );
+      assert.ok(handlerFunc, 'Should find handler FUNCTION node');
+      assert.ok(applyCall, 'Should find apply CALL node');
+
+      const callsEdge = allEdges.find(e =>
+        e.type === 'CALLS' && e.src === applyCall.id && e.dst === handlerFunc.id
+      );
+      assert.ok(
+        callsEdge,
+        'Should have callback CALLS edge via transitive alias g=f=fn'
+      );
+    });
+
+    it('should detect alias with multiple params, only aliased one invoked', async () => {
+      await setupTest(backend, {
+        'index.js': `
+function doWork() { return 42; }
+function storeIt() { return 'stored'; }
+function exec(fn, logger) {
+  const callback = fn;
+  callback();
+}
+exec(doWork, storeIt);
+`
+      });
+
+      const allNodes = await backend.getAllNodes();
+      const allEdges = await backend.getAllEdges();
+
+      const doWorkFunc = allNodes.find(n =>
+        n.type === 'FUNCTION' && n.name === 'doWork'
+      );
+      const storeItFunc = allNodes.find(n =>
+        n.type === 'FUNCTION' && n.name === 'storeIt'
+      );
+      const execCall = allNodes.find(n =>
+        n.type === 'CALL' && n.name === 'exec' && !n.object
+      );
+      assert.ok(doWorkFunc, 'Should find doWork FUNCTION node');
+      assert.ok(storeItFunc, 'Should find storeIt FUNCTION node');
+      assert.ok(execCall, 'Should find exec CALL node');
+
+      // fn (param 0) aliased as callback and invoked
+      const callsToDoWork = allEdges.find(e =>
+        e.type === 'CALLS' && e.src === execCall.id && e.dst === doWorkFunc.id
+      );
+      assert.ok(callsToDoWork, 'Should have callback CALLS edge to doWork (aliased param 0)');
+
+      // logger (param 1) not invoked
+      const callsToStoreIt = allEdges.find(e =>
+        e.type === 'CALLS' && e.src === execCall.id && e.dst === storeItFunc.id
+      );
+      assert.ok(!callsToStoreIt, 'Should NOT have callback CALLS edge to storeIt (param 1 not invoked)');
+    });
+
+    it('should NOT detect alias invocation when param is stored, not called', async () => {
+      await setupTest(backend, {
+        'index.js': `
+function handler() { return 42; }
+function store(fn) {
+  const f = fn;
+  arr.push(f);
+}
+store(handler);
+`
+      });
+
+      const allNodes = await backend.getAllNodes();
+      const allEdges = await backend.getAllEdges();
+
+      const handlerFunc = allNodes.find(n =>
+        n.type === 'FUNCTION' && n.name === 'handler'
+      );
+      const storeCall = allNodes.find(n =>
+        n.type === 'CALL' && n.name === 'store' && !n.object
+      );
+      assert.ok(handlerFunc, 'Should find handler FUNCTION node');
+      assert.ok(storeCall, 'Should find store CALL node');
+
+      const callsEdge = allEdges.find(e =>
+        e.type === 'CALLS' && e.src === storeCall.id && e.dst === handlerFunc.id
+      );
+      assert.ok(
+        !callsEdge,
+        'Should NOT have callback CALLS edge — alias f is stored, not called'
+      );
+    });
+  });
+
+  // ============================================================================
   // REG-417: Destructured and rest parameter invocation detection
   // ============================================================================
 

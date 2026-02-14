@@ -3671,6 +3671,9 @@ export class JSASTAnalyzer extends Plugin {
     const restParamNames = new Set<string>();
     const invokedParamIndexes = new Set<number>();
     const invokesParamBindings: { paramIndex: number; propertyPath: string[] }[] = [];
+    // REG-416: Track local aliases of parameters (e.g., const f = fn → f maps to fn's param index)
+    // Supports transitive aliases: const f = fn; const g = f; g() → detects param invocation.
+    const aliasToParamIndex = new Map<string, number>();
     if (functionNode) {
       for (let i = 0; i < functionNode.params.length; i++) {
         const param = functionNode.params[i];
@@ -3767,6 +3770,20 @@ export class JSASTAnalyzer extends Plugin {
           objectProperties,
           objectLiteralCounterRef
         );
+
+        // REG-416: Track parameter aliases for HOF detection
+        // When `const f = fn` where fn is a parameter, map f → param index.
+        if (paramNameToIndex.size > 0) {
+          for (const declarator of varPath.node.declarations) {
+            if (t.isIdentifier(declarator.id) && t.isIdentifier(declarator.init)) {
+              const initName = declarator.init.name;
+              const paramIndex = paramNameToIndex.get(initName) ?? aliasToParamIndex.get(initName);
+              if (paramIndex !== undefined) {
+                aliasToParamIndex.set(declarator.id.name, paramIndex);
+              }
+            }
+          }
+        }
       },
 
       // Detect indexed array assignments: arr[i] = value
@@ -4348,15 +4365,16 @@ export class JSASTAnalyzer extends Plugin {
         );
 
         // REG-401: Detect parameter invocation for user-defined HOF tracking
-        // If callee is an Identifier matching a parameter name, record the param index.
+        // If callee is an Identifier matching a parameter name or alias (REG-416),
+        // record the param index.
         // REG-417: Also detect rest param array access: fns[0]() via MemberExpression callee.
         // Nested functions are already skipped by FunctionDeclaration/FunctionExpression/ArrowFunction
         // handlers calling path.skip(), so shadowed names won't be falsely matched.
         const callNodeForParam = callPath.node;
-        if (paramNameToIndex.size > 0) {
+        if (paramNameToIndex.size > 0 || aliasToParamIndex.size > 0) {
           if (t.isIdentifier(callNodeForParam.callee)) {
             const calleeName = callNodeForParam.callee.name;
-            const paramIndex = paramNameToIndex.get(calleeName);
+            const paramIndex = paramNameToIndex.get(calleeName) ?? aliasToParamIndex.get(calleeName);
             if (paramIndex !== undefined) {
               invokedParamIndexes.add(paramIndex);
               // REG-417: Record property path for destructured param bindings
