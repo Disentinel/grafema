@@ -4,15 +4,19 @@
  * This enrichment plugin runs AFTER FunctionCallResolver (priority 80) and
  * ImportExportLinker (priority 90) to resolve imported function callbacks.
  *
- * Handles cases where a function reference is passed as an argument to another
- * function (e.g., `arr.forEach(fn)`, `setTimeout(handler, 100)`).
+ * Handles two categories of callback resolution:
  *
- * Analysis phase handles same-file callbacks (VARIABLE → FUNCTION → CALLS).
- * This enricher handles cross-file callbacks:
- *   1. CALL/METHOD_CALL → PASSES_ARGUMENT → IMPORT → follow chain → CALLS
+ * 1. **Whitelist-based (cross-file):** Known callback-invoking functions/methods
+ *    (forEach, map, setTimeout, etc.) with imported function arguments.
+ *    CALL/METHOD_CALL → PASSES_ARGUMENT → IMPORT → follow chain → CALLS
+ *
+ * 2. **User-defined HOFs (REG-401):** Functions with `invokesParamIndexes` metadata
+ *    (detected during analysis when a function calls one of its parameters).
+ *    For each HOF: find call sites → check PASSES_ARGUMENT → if argIndex matches → CALLS
  *
  * CREATES EDGES:
  * - CALL/METHOD_CALL -> CALLS -> FUNCTION (for imported callback functions)
+ * - CALL -> CALLS -> FUNCTION (for user-defined HOF callback arguments)
  */
 
 import { Plugin, createSuccessResult } from '../Plugin.js';
@@ -58,7 +62,15 @@ interface ExportNode extends BaseNodeRecord {
   source?: string;
 }
 
-type FunctionNode = BaseNodeRecord;
+interface FunctionNode extends BaseNodeRecord {
+  metadata?: Record<string, unknown>;
+}
+
+/** A user-defined HOF: function with invokesParamIndexes metadata */
+interface UserDefinedHOF {
+  functionId: string;
+  invokesParamIndexes: number[];
+}
 
 // === PLUGIN CLASS ===
 
@@ -84,7 +96,9 @@ export class CallbackCallResolver extends Plugin {
     const startTime = Date.now();
 
     // Step 1: Build Function Index - Map<file, Map<name, FunctionNode>>
+    // Also collect user-defined HOFs (functions with invokesParamIndexes metadata)
     const functionIndex = new Map<string, Map<string, FunctionNode>>();
+    const userDefinedHOFs: UserDefinedHOF[] = [];
     for await (const node of graph.queryNodes({ nodeType: 'FUNCTION' })) {
       const func = node as FunctionNode;
       if (!func.file || !func.name) continue;
@@ -93,8 +107,21 @@ export class CallbackCallResolver extends Plugin {
         functionIndex.set(func.file, new Map());
       }
       functionIndex.get(func.file)!.set(func.name, func);
+
+      // REG-401: Collect user-defined HOFs for parameter invocation resolution
+      // Check both metadata.invokesParamIndexes and top-level invokesParamIndexes
+      // (RFDB backend may flatten metadata fields to top-level)
+      const meta = func.metadata;
+      const topLevelIndexes = (func as Record<string, unknown>).invokesParamIndexes;
+      const invokesIndexes = (meta?.invokesParamIndexes ?? topLevelIndexes) as number[] | undefined;
+      if (Array.isArray(invokesIndexes) && invokesIndexes.length > 0) {
+        userDefinedHOFs.push({
+          functionId: func.id,
+          invokesParamIndexes: invokesIndexes
+        });
+      }
     }
-    logger.debug('Indexed functions', { files: functionIndex.size });
+    logger.debug('Indexed functions', { files: functionIndex.size, userDefinedHOFs: userDefinedHOFs.length });
 
     // Step 2: Build Export Index - Map<file, Map<exportKey, ExportNode>>
     const exportIndex = new Map<string, Map<string, ExportNode>>();
@@ -204,9 +231,61 @@ export class CallbackCallResolver extends Plugin {
       }
     }
 
+    // Step 4 (REG-401): Resolve callback CALLS for user-defined HOFs
+    // For each HOF with invokesParamIndexes, find call sites and create callback edges
+    let hofEdgesCreated = 0;
+    for (const hof of userDefinedHOFs) {
+      // Get incoming CALLS edges to find call sites that call this HOF
+      const incomingCalls = await graph.getIncomingEdges(hof.functionId, ['CALLS']);
+
+      for (const callEdge of incomingCalls) {
+        const callSiteId = callEdge.src;
+
+        // Get PASSES_ARGUMENT edges from this call site
+        const passesArgEdges = await graph.getOutgoingEdges(callSiteId, ['PASSES_ARGUMENT']);
+
+        for (const argEdge of passesArgEdges) {
+          // Check if this argument's index matches one of the invoked param indexes
+          const argIndex = argEdge.metadata?.argIndex;
+          if (typeof argIndex !== 'number') continue;
+          if (!hof.invokesParamIndexes.includes(argIndex)) continue;
+
+          // The target of PASSES_ARGUMENT is the argument value node
+          const argTargetNode = await graph.getNode(argEdge.dst);
+          if (!argTargetNode) continue;
+
+          // Resolve to a FUNCTION node depending on argument node type
+          let targetFunctionId: string | null = null;
+
+          if (argTargetNode.type === 'FUNCTION') {
+            // Direct function reference passed as argument
+            targetFunctionId = argTargetNode.id;
+          } else if (argTargetNode.type === 'IMPORT') {
+            // Imported function reference — follow IMPORTS_FROM → EXPORT → FUNCTION
+            targetFunctionId = await this.resolveImportToFunction(
+              argTargetNode as ImportNode, graph, functionIndex
+            );
+          }
+
+          if (targetFunctionId) {
+            await graph.addEdge({
+              type: 'CALLS',
+              src: callSiteId,
+              dst: targetFunctionId,
+              metadata: { callType: 'callback' }
+            });
+            hofEdgesCreated++;
+          }
+        }
+      }
+    }
+
+    edgesCreated += hofEdgesCreated;
+
     const totalTime = ((Date.now() - startTime) / 1000).toFixed(2);
     logger.info('Complete', {
       edgesCreated,
+      hofEdgesCreated,
       skipped,
       time: `${totalTime}s`
     });
@@ -216,9 +295,39 @@ export class CallbackCallResolver extends Plugin {
       {
         callNodesProcessed: callNodes.length,
         edgesCreated,
+        hofEdgesCreated,
         skipped,
         timeMs: Date.now() - startTime
       }
     );
+  }
+
+  /**
+   * Resolve an IMPORT node to the target FUNCTION ID by following the import chain:
+   * IMPORT → IMPORTS_FROM → EXPORT → find FUNCTION by export's local name and file.
+   *
+   * Returns null if the chain can't be resolved.
+   */
+  private async resolveImportToFunction(
+    importNode: ImportNode,
+    graph: PluginContext['graph'],
+    functionIndex: Map<string, Map<string, FunctionNode>>
+  ): Promise<string | null> {
+    const importsFromEdges = await graph.getOutgoingEdges(importNode.id, ['IMPORTS_FROM']);
+    if (importsFromEdges.length === 0) return null;
+
+    const exportNodeId = importsFromEdges[0].dst;
+    const exportNode = await graph.getNode(exportNodeId) as ExportNode | null;
+    if (!exportNode) return null;
+
+    const targetFile = exportNode.file;
+    const targetFunctionName = exportNode.local || exportNode.name;
+    if (!targetFile || !targetFunctionName) return null;
+
+    const fileFunctions = functionIndex.get(targetFile);
+    if (!fileFunctions) return null;
+
+    const targetFunction = fileFunctions.get(targetFunctionName);
+    return targetFunction?.id ?? null;
   }
 }

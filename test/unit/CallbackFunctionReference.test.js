@@ -259,7 +259,7 @@ setTimeout(tick, 1000);
   // 5. Custom higher-order function
   // ============================================================================
   describe('Custom higher-order function', () => {
-    it('should create CALLS edge from myHOF CALL to myHOF FUNCTION (direct call) but NOT callback CALLS', async () => {
+    it('should create callback CALLS edge from myHOF CALL to callback FUNCTION (REG-401: user-defined HOF)', async () => {
       await setupTest(backend, {
         'index.js': `
 function callback() { return true; }
@@ -296,14 +296,14 @@ myHOF(callback);
         'Should have CALLS edge from myHOF CALL to myHOF FUNCTION (direct call)'
       );
 
-      // NO callback CALLS edge: myHOF is not a known HOF (whitelist-based verification)
-      // Prevents false positives for store/register patterns
+      // REG-401: Callback CALLS edge SHOULD now exist because myHOF invokes its parameter fn
+      // Analysis detects fn() inside myHOF body, enricher creates callback CALLS edge
       const callbackCallEdge = allEdges.find(e =>
         e.type === 'CALLS' && e.src === myHOFCall.id && e.dst === callbackFunc.id
       );
       assert.ok(
-        !callbackCallEdge,
-        'Should NOT have callback CALLS edge for unknown HOF (whitelist-based verification)'
+        callbackCallEdge,
+        'Should have callback CALLS edge from myHOF CALL to callback FUNCTION (REG-401: parameter invocation detected)'
       );
     });
 
@@ -839,6 +839,98 @@ function setup() {
       assert.ok(
         !callsEdge,
         'Should NOT have CALLS edge for register() — not a known HOF'
+      );
+    });
+  });
+
+  // ============================================================================
+  // REG-401: User-defined HOF — multiple params, only one invoked
+  // ============================================================================
+  describe('User-defined HOF: multiple params, only one invoked (REG-401)', () => {
+    it('should create callback CALLS edge only for the invoked param', async () => {
+      await setupTest(backend, {
+        'index.js': `
+function doWork() { return 42; }
+function storeIt() { return 'stored'; }
+function myExecutor(fn, logger) { return fn(); }
+myExecutor(doWork, storeIt);
+`
+      });
+
+      const allNodes = await backend.getAllNodes();
+      const allEdges = await backend.getAllEdges();
+
+      const doWorkFunc = allNodes.find(n =>
+        n.type === 'FUNCTION' && n.name === 'doWork'
+      );
+      const storeItFunc = allNodes.find(n =>
+        n.type === 'FUNCTION' && n.name === 'storeIt'
+      );
+      const myExecutorCall = allNodes.find(n =>
+        n.type === 'CALL' && n.name === 'myExecutor' && !n.object
+      );
+      assert.ok(doWorkFunc, 'Should find doWork FUNCTION node');
+      assert.ok(storeItFunc, 'Should find storeIt FUNCTION node');
+      assert.ok(myExecutorCall, 'Should find myExecutor CALL node');
+
+      // fn (param index 0) is invoked — should have callback CALLS edge to doWork
+      const callbackEdgeToDoWork = allEdges.find(e =>
+        e.type === 'CALLS' && e.src === myExecutorCall.id && e.dst === doWorkFunc.id
+      );
+      assert.ok(
+        callbackEdgeToDoWork,
+        'Should have callback CALLS edge to doWork (param index 0 is invoked)'
+      );
+
+      // logger (param index 1) is NOT invoked — should NOT have callback CALLS edge to storeIt
+      const callbackEdgeToStoreIt = allEdges.find(e =>
+        e.type === 'CALLS' && e.src === myExecutorCall.id && e.dst === storeItFunc.id
+      );
+      assert.ok(
+        !callbackEdgeToStoreIt,
+        'Should NOT have callback CALLS edge to storeIt (param index 1 is not invoked)'
+      );
+    });
+  });
+
+  // ============================================================================
+  // REG-401: Store/register pattern — no parameter invocation detected
+  // ============================================================================
+  describe('Store pattern: no parameter invocation (REG-401)', () => {
+    it('should NOT create callback CALLS edge when function stores param without calling it', async () => {
+      await setupTest(backend, {
+        'index.js': `
+function handler() { return 42; }
+function register(fn) { globalRegistry.push(fn); }
+register(handler);
+`
+      });
+
+      const allNodes = await backend.getAllNodes();
+      const allEdges = await backend.getAllEdges();
+
+      const handlerFunc = allNodes.find(n =>
+        n.type === 'FUNCTION' && n.name === 'handler'
+      );
+      const registerCall = allNodes.find(n =>
+        n.type === 'CALL' && n.name === 'register' && !n.object
+      );
+      assert.ok(handlerFunc, 'Should find handler FUNCTION node');
+      assert.ok(registerCall, 'Should find register CALL node');
+
+      // PASSES_ARGUMENT should exist (function reference IS an argument)
+      const passesArgEdge = allEdges.find(e =>
+        e.type === 'PASSES_ARGUMENT' && e.src === registerCall.id && e.dst === handlerFunc.id
+      );
+      assert.ok(passesArgEdge, 'Should have PASSES_ARGUMENT edge');
+
+      // NO callback CALLS edge: register does NOT invoke fn (only pushes it)
+      const callbackCallsEdge = allEdges.find(e =>
+        e.type === 'CALLS' && e.src === registerCall.id && e.dst === handlerFunc.id
+      );
+      assert.ok(
+        !callbackCallsEdge,
+        'Should NOT have callback CALLS edge — register stores fn, does not invoke it'
       );
     });
   });

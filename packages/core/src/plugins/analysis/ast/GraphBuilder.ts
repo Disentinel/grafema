@@ -195,9 +195,17 @@ export class GraphBuilder {
     this._edgeBuffer = [];
 
     // 1. Buffer all functions (without edges)
+    // REG-401: Strip invokesParamIndexes from node data and store in metadata
     for (const func of functions) {
-      const { parentScopeId: _parentScopeId, ...funcData } = func;
-      this._bufferNode(funcData as GraphNode);
+      const { parentScopeId: _parentScopeId, invokesParamIndexes: _invokesParamIndexes, ...funcData } = func;
+      const node = funcData as GraphNode;
+      if (_invokesParamIndexes && _invokesParamIndexes.length > 0) {
+        if (!node.metadata) {
+          node.metadata = {};
+        }
+        (node.metadata as Record<string, unknown>).invokesParamIndexes = _invokesParamIndexes;
+      }
+      this._bufferNode(node);
     }
 
     // 2. Buffer all SCOPE (without edges)
