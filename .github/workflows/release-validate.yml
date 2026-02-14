@@ -175,13 +175,11 @@ jobs:
 
           echo "CHANGELOG.md has entry for $VERSION"
 
-  # Check for rfdb binaries (only for non-prerelease)
+  # Check for rfdb binaries
   binary-check:
     name: Binary Check (rfdb)
     runs-on: ubuntu-latest
     needs: setup
-    # Only run for stable releases that might publish @grafema/rfdb
-    if: needs.setup.outputs.is_prerelease == 'false'
     timeout-minutes: 5
 
     steps:
@@ -203,26 +201,35 @@ jobs:
           for platform in "${PLATFORMS[@]}"; do
             BINARY="packages/rfdb-server/prebuilt/$platform/rfdb-server"
             if [ ! -f "$BINARY" ]; then
-              echo "::warning::Missing binary: $BINARY"
+              echo "::error::Missing binary: $BINARY"
               MISSING=1
             else
-              echo "  Found: $platform ($(du -h "$BINARY" | cut -f1))"
+              SIZE=$(du -h "$BINARY" | cut -f1)
+              echo "  Found: $platform ($SIZE)"
+              # Sanity check: binary should be at least 100KB
+              BYTES=$(wc -c < "$BINARY")
+              if [ "$BYTES" -lt 102400 ]; then
+                echo "::error::Binary too small ($BYTES bytes): $BINARY"
+                MISSING=1
+              fi
             fi
           done
 
           if [ "$MISSING" -eq 1 ]; then
             echo ""
-            echo "::warning::Some platform binaries are missing. If publishing @grafema/rfdb, run:"
+            echo "::error::Platform binaries missing or invalid. Run before publishing:"
             echo "  ./scripts/download-rfdb-binaries.sh rfdb-v<VERSION>"
-            # Warning only, not failure - binaries might be downloaded separately
+            exit 1
           fi
+
+          echo ""
+          echo "All platform binaries present."
 
   # Final status check
   validation-complete:
     name: Validation Complete
     runs-on: ubuntu-latest
-    needs: [setup, ci-checks, version-check, changelog-check]
-    # Also wait for binary-check if it ran
+    needs: [setup, ci-checks, version-check, changelog-check, binary-check]
     if: always()
 
     steps:
@@ -231,13 +238,15 @@ jobs:
           CI_RESULT: ${{ needs.ci-checks.result }}
           VERSION_RESULT: ${{ needs.version-check.result }}
           CHANGELOG_RESULT: ${{ needs.changelog-check.result }}
+          BINARY_RESULT: ${{ needs.binary-check.result }}
         run: |
           echo "Validation Results:"
           echo "  CI Checks: $CI_RESULT"
           echo "  Version Check: $VERSION_RESULT"
           echo "  Changelog Check: $CHANGELOG_RESULT"
+          echo "  Binary Check: $BINARY_RESULT"
 
-          if [ "$CI_RESULT" != "success" ] || [ "$VERSION_RESULT" != "success" ] || [ "$CHANGELOG_RESULT" != "success" ]; then
+          if [ "$CI_RESULT" != "success" ] || [ "$VERSION_RESULT" != "success" ] || [ "$CHANGELOG_RESULT" != "success" ] || [ "$BINARY_RESULT" != "success" ]; then
             echo ""
             echo "::error::Release validation FAILED. Do NOT proceed with npm publish."
             exit 1
