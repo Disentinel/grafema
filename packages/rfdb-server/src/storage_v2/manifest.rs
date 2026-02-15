@@ -42,6 +42,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{GraphError, Result};
+use crate::storage_v2::compaction::CompactionInfo;
 use crate::storage_v2::types::{SegmentMeta, SegmentType};
 
 // ── Durability Mode ────────────────────────────────────────────────
@@ -110,6 +111,19 @@ pub struct Manifest {
     /// Cleared by compaction (T4.x).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tombstoned_edge_keys: Vec<(u128, u128, String)>,
+
+    /// L1 (compacted) node segment descriptors — at most one per shard.
+    /// Populated by compaction, empty before first compaction.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub l1_node_segments: Vec<SegmentDescriptor>,
+
+    /// L1 (compacted) edge segment descriptors — at most one per shard.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub l1_edge_segments: Vec<SegmentDescriptor>,
+
+    /// Metadata about the last compaction (None if never compacted).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_compaction: Option<CompactionInfo>,
 }
 
 // ── Segment Descriptor ─────────────────────────────────────────────
@@ -404,6 +418,8 @@ impl ManifestIndex {
             .node_segments
             .iter()
             .chain(manifest.edge_segments.iter())
+            .chain(manifest.l1_node_segments.iter())
+            .chain(manifest.l1_edge_segments.iter())
         {
             self.referenced_segments.insert(seg.segment_id);
         }
@@ -691,6 +707,9 @@ impl ManifestStore {
             parent_version: None,
             tombstoned_node_ids: Vec::new(),
             tombstoned_edge_keys: Vec::new(),
+            l1_node_segments: Vec::new(),
+            l1_edge_segments: Vec::new(),
+            last_compaction: None,
         };
 
         let mut index = ManifestIndex::new();
@@ -741,6 +760,9 @@ impl ManifestStore {
             parent_version: None,
             tombstoned_node_ids: Vec::new(),
             tombstoned_edge_keys: Vec::new(),
+            l1_node_segments: Vec::new(),
+            l1_edge_segments: Vec::new(),
+            last_compaction: None,
         };
 
         let mut index = ManifestIndex::new();
@@ -801,6 +823,9 @@ impl ManifestStore {
             parent_version: Some(self.current.version),
             tombstoned_node_ids: Vec::new(),
             tombstoned_edge_keys: Vec::new(),
+            l1_node_segments: Vec::new(),
+            l1_edge_segments: Vec::new(),
+            last_compaction: None,
         })
     }
 
@@ -1221,6 +1246,9 @@ mod tests {
             parent_version: Some(4),
             tombstoned_node_ids: Vec::new(),
             tombstoned_edge_keys: Vec::new(),
+            l1_node_segments: Vec::new(),
+            l1_edge_segments: Vec::new(),
+            last_compaction: None,
         };
 
         let json = serde_json::to_string_pretty(&manifest).unwrap();
@@ -1333,6 +1361,9 @@ mod tests {
             parent_version: None,
             tombstoned_node_ids: Vec::new(),
             tombstoned_edge_keys: Vec::new(),
+            l1_node_segments: Vec::new(),
+            l1_edge_segments: Vec::new(),
+            last_compaction: None,
         };
         index.add_snapshot(&m1);
         assert_eq!(index.latest_version, 1);
@@ -1352,6 +1383,9 @@ mod tests {
             parent_version: Some(1),
             tombstoned_node_ids: Vec::new(),
             tombstoned_edge_keys: Vec::new(),
+            l1_node_segments: Vec::new(),
+            l1_edge_segments: Vec::new(),
+            last_compaction: None,
         };
         index.add_snapshot(&m2);
         assert_eq!(index.latest_version, 2);
@@ -1375,6 +1409,9 @@ mod tests {
             parent_version: Some(4),
             tombstoned_node_ids: Vec::new(),
             tombstoned_edge_keys: Vec::new(),
+            l1_node_segments: Vec::new(),
+            l1_edge_segments: Vec::new(),
+            last_compaction: None,
         };
         index.add_snapshot(&m);
 
@@ -1403,6 +1440,9 @@ mod tests {
                 parent_version: if v > 1 { Some(v - 1) } else { None },
                 tombstoned_node_ids: Vec::new(),
                 tombstoned_edge_keys: Vec::new(),
+                l1_node_segments: Vec::new(),
+                l1_edge_segments: Vec::new(),
+                last_compaction: None,
             };
             index.add_snapshot(&m);
         }
@@ -1426,6 +1466,9 @@ mod tests {
             parent_version: None,
             tombstoned_node_ids: Vec::new(),
             tombstoned_edge_keys: Vec::new(),
+            l1_node_segments: Vec::new(),
+            l1_edge_segments: Vec::new(),
+            last_compaction: None,
         };
         index.add_snapshot(&m);
         assert_eq!(index.snapshots.len(), 1);
@@ -1643,6 +1686,9 @@ mod tests {
             parent_version: None,
             tombstoned_node_ids: Vec::new(),
             tombstoned_edge_keys: Vec::new(),
+            l1_node_segments: Vec::new(),
+            l1_edge_segments: Vec::new(),
+            last_compaction: None,
         };
 
         let result = store.commit(bad_manifest);
@@ -1838,6 +1884,9 @@ mod tests {
             parent_version: None,
             tombstoned_node_ids: Vec::new(),
             tombstoned_edge_keys: Vec::new(),
+            l1_node_segments: Vec::new(),
+            l1_edge_segments: Vec::new(),
+            last_compaction: None,
         };
 
         let to_nodes = vec![make_node_descriptor(1, 10), make_node_descriptor(2, 20)];
@@ -1852,6 +1901,9 @@ mod tests {
             parent_version: Some(1),
             tombstoned_node_ids: Vec::new(),
             tombstoned_edge_keys: Vec::new(),
+            l1_node_segments: Vec::new(),
+            l1_edge_segments: Vec::new(),
+            last_compaction: None,
         };
 
         let diff = SnapshotDiff::compute(&from, &to);
@@ -1876,6 +1928,9 @@ mod tests {
             parent_version: None,
             tombstoned_node_ids: Vec::new(),
             tombstoned_edge_keys: Vec::new(),
+            l1_node_segments: Vec::new(),
+            l1_edge_segments: Vec::new(),
+            last_compaction: None,
         };
 
         let diff = SnapshotDiff::compute(&m, &m);
@@ -1896,6 +1951,9 @@ mod tests {
             parent_version: None,
             tombstoned_node_ids: Vec::new(),
             tombstoned_edge_keys: Vec::new(),
+            l1_node_segments: Vec::new(),
+            l1_edge_segments: Vec::new(),
+            last_compaction: None,
         };
 
         // Remove segment 2, add segments 3 and 4
@@ -1911,6 +1969,9 @@ mod tests {
             parent_version: Some(1),
             tombstoned_node_ids: Vec::new(),
             tombstoned_edge_keys: Vec::new(),
+            l1_node_segments: Vec::new(),
+            l1_edge_segments: Vec::new(),
+            last_compaction: None,
         };
 
         let diff = SnapshotDiff::compute(&from, &to);
@@ -1935,6 +1996,9 @@ mod tests {
             parent_version: None,
             tombstoned_node_ids: Vec::new(),
             tombstoned_edge_keys: Vec::new(),
+            l1_node_segments: Vec::new(),
+            l1_edge_segments: Vec::new(),
+            last_compaction: None,
         };
 
         let to_nodes = vec![make_node_descriptor(2, 200)];
@@ -1948,6 +2012,9 @@ mod tests {
             parent_version: Some(1),
             tombstoned_node_ids: Vec::new(),
             tombstoned_edge_keys: Vec::new(),
+            l1_node_segments: Vec::new(),
+            l1_edge_segments: Vec::new(),
+            last_compaction: None,
         };
 
         let diff = SnapshotDiff::compute(&from, &to);
@@ -2125,6 +2192,9 @@ mod tests {
             parent_version: Some(2),
             tombstoned_node_ids: Vec::new(),
             tombstoned_edge_keys: Vec::new(),
+            l1_node_segments: Vec::new(),
+            l1_edge_segments: Vec::new(),
+            last_compaction: None,
         };
 
         let info = SnapshotInfo::from_manifest(&m);
@@ -2215,6 +2285,9 @@ mod tests {
             parent_version: Some(2),
             tombstoned_node_ids: Vec::new(),
             tombstoned_edge_keys: Vec::new(),
+            l1_node_segments: Vec::new(),
+            l1_edge_segments: Vec::new(),
+            last_compaction: None,
         };
         let manifest_path = manifest_file_path(&db_path, 3);
         atomic_write_json(&manifest_path, &manifest_v3, DurabilityMode::Relaxed).unwrap();
@@ -2421,6 +2494,9 @@ mod tests {
                 (10, 20, "CALLS".to_string()),
                 (30, 40, "IMPORTS".to_string()),
             ],
+            l1_node_segments: Vec::new(),
+            l1_edge_segments: Vec::new(),
+            last_compaction: None,
         };
 
         let json = serde_json::to_string_pretty(&manifest).unwrap();
@@ -2451,5 +2527,156 @@ mod tests {
         assert_eq!(manifest.version, 1);
         assert!(manifest.tombstoned_node_ids.is_empty());
         assert!(manifest.tombstoned_edge_keys.is_empty());
+    }
+
+    // ── Compaction / L1 Segment Tests (RFD-20) ──────────────────
+
+    #[test]
+    fn test_manifest_backward_compat_without_l1_fields() {
+        // Simulate an OLD manifest JSON created before compaction support.
+        // Must deserialize without errors; L1 fields default to empty.
+        let json = r#"{
+            "version": 5,
+            "created_at": 1707826800,
+            "node_segments": [
+                {
+                    "segment_id": 1,
+                    "segment_type": "Nodes",
+                    "record_count": 100,
+                    "byte_size": 10000,
+                    "node_types": ["FUNCTION"],
+                    "file_paths": ["src/main.rs"]
+                }
+            ],
+            "edge_segments": [
+                {
+                    "segment_id": 2,
+                    "segment_type": "Edges",
+                    "record_count": 50,
+                    "byte_size": 4000,
+                    "edge_types": ["CALLS"]
+                }
+            ],
+            "tags": {"commit_sha": "abc123"},
+            "stats": {
+                "total_nodes": 100,
+                "total_edges": 50,
+                "node_segment_count": 1,
+                "edge_segment_count": 1
+            },
+            "parent_version": 4
+        }"#;
+
+        let manifest: Manifest = serde_json::from_str(json).unwrap();
+
+        // Core fields present
+        assert_eq!(manifest.version, 5);
+        assert_eq!(manifest.node_segments.len(), 1);
+        assert_eq!(manifest.edge_segments.len(), 1);
+        assert_eq!(manifest.parent_version, Some(4));
+
+        // L1 fields default to empty / None
+        assert!(manifest.l1_node_segments.is_empty());
+        assert!(manifest.l1_edge_segments.is_empty());
+        assert!(manifest.last_compaction.is_none());
+    }
+
+    #[test]
+    fn test_manifest_with_l1_segments_roundtrip() {
+        let l1_node = SegmentDescriptor {
+            segment_id: 100,
+            segment_type: SegmentType::Nodes,
+            shard_id: Some(0),
+            record_count: 500,
+            byte_size: 50000,
+            node_types: HashSet::from(["FUNCTION".to_string(), "CLASS".to_string()]),
+            file_paths: HashSet::from(["src/main.rs".to_string(), "src/lib.rs".to_string()]),
+            edge_types: HashSet::new(),
+        };
+
+        let l1_edge = SegmentDescriptor {
+            segment_id: 101,
+            segment_type: SegmentType::Edges,
+            shard_id: Some(0),
+            record_count: 200,
+            byte_size: 16000,
+            node_types: HashSet::new(),
+            file_paths: HashSet::new(),
+            edge_types: HashSet::from(["CALLS".to_string(), "IMPORTS_FROM".to_string()]),
+        };
+
+        let compaction_info = CompactionInfo {
+            manifest_version: 5,
+            timestamp_ms: 1707826800000,
+            l0_segments_merged: 4,
+        };
+
+        let manifest = Manifest {
+            version: 6,
+            created_at: 1707826900,
+            node_segments: vec![make_node_descriptor(10, 50)],
+            edge_segments: vec![make_edge_descriptor(11, 25)],
+            tags: HashMap::new(),
+            stats: ManifestStats {
+                total_nodes: 550,
+                total_edges: 225,
+                node_segment_count: 2,
+                edge_segment_count: 2,
+            },
+            parent_version: Some(5),
+            tombstoned_node_ids: Vec::new(),
+            tombstoned_edge_keys: Vec::new(),
+            l1_node_segments: vec![l1_node],
+            l1_edge_segments: vec![l1_edge],
+            last_compaction: Some(compaction_info),
+        };
+
+        let json = serde_json::to_string_pretty(&manifest).unwrap();
+        let deserialized: Manifest = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(manifest, deserialized);
+
+        // Verify L1 fields survived roundtrip
+        assert_eq!(deserialized.l1_node_segments.len(), 1);
+        assert_eq!(deserialized.l1_node_segments[0].segment_id, 100);
+        assert_eq!(deserialized.l1_node_segments[0].record_count, 500);
+        assert!(deserialized.l1_node_segments[0].node_types.contains("FUNCTION"));
+        assert!(deserialized.l1_node_segments[0].node_types.contains("CLASS"));
+
+        assert_eq!(deserialized.l1_edge_segments.len(), 1);
+        assert_eq!(deserialized.l1_edge_segments[0].segment_id, 101);
+        assert!(deserialized.l1_edge_segments[0].edge_types.contains("CALLS"));
+
+        let lc = deserialized.last_compaction.unwrap();
+        assert_eq!(lc.manifest_version, 5);
+        assert_eq!(lc.timestamp_ms, 1707826800000);
+        assert_eq!(lc.l0_segments_merged, 4);
+    }
+
+    #[test]
+    fn test_manifest_l1_segments_skip_serializing_if_empty() {
+        // When l1 fields are empty, they should be omitted from JSON
+        // (via skip_serializing_if = "Vec::is_empty" / Option::is_none)
+        let manifest = Manifest {
+            version: 1,
+            created_at: 100,
+            node_segments: vec![],
+            edge_segments: vec![],
+            tags: HashMap::new(),
+            stats: ManifestStats::from_segments(&[], &[]),
+            parent_version: None,
+            tombstoned_node_ids: Vec::new(),
+            tombstoned_edge_keys: Vec::new(),
+            l1_node_segments: Vec::new(),
+            l1_edge_segments: Vec::new(),
+            last_compaction: None,
+        };
+
+        let json = serde_json::to_string(&manifest).unwrap();
+
+        // Fields should not appear in serialized JSON when empty
+        assert!(!json.contains("l1_node_segments"));
+        assert!(!json.contains("l1_edge_segments"));
+        assert!(!json.contains("last_compaction"));
     }
 }
