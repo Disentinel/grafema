@@ -23,7 +23,8 @@ import type { CallExpression, Identifier, MemberExpression, Node } from '@babel/
 import type { NodePath } from '@babel/traverse';
 import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
-import type { NodeRecord } from '@grafema/types';
+import type { NodeRecord, AnyBrandedNode } from '@grafema/types';
+import { NodeFactory } from '../../core/NodeFactory.js';
 import { getLine, getColumn } from './ast/utils/location.js';
 import { resolveNodeFile } from '../../utils/resolveNodeFile.js';
 
@@ -72,18 +73,6 @@ interface SocketRoomNode {
   file: string;
   line: number;
   column: number;
-}
-
-/**
- * Socket event channel node - represents a single event across all emitters/listeners
- */
-interface SocketEventNode {
-  id: string;
-  type: 'socketio:event';
-  name: string;        // Event name (e.g., "slot:booked")
-  event: string;       // Same as name, for consistency
-  file?: string;       // Not applicable - event is global
-  line?: number;       // Not applicable
 }
 
 /**
@@ -209,22 +198,16 @@ export class SocketIOAnalyzer extends Plugin {
       logger.debug('Unique events found', { count: eventNames.size });
 
       // Step 3: Create event channel node for each unique event
-      const nodes: NodeRecord[] = [];
+      const nodes: AnyBrandedNode[] = [];
       const edges: Array<{ type: string; src: string; dst: string }> = [];
       let createdCount = 0;
 
       for (const eventName of eventNames) {
         const eventNodeId = `socketio:event#${eventName}`;
 
-        // Create event channel node
-        const eventNode: SocketEventNode = {
-          id: eventNodeId,
-          type: 'socketio:event',
-          name: eventName,
-          event: eventName
-        };
-
-        nodes.push(eventNode as unknown as NodeRecord);
+        // Create event channel node via factory
+        const brandedNode = NodeFactory.createSocketIOEvent(eventName);
+        nodes.push(brandedNode);
         createdCount++;
 
         // Step 4: Connect all emits of this event to the channel
@@ -415,14 +398,16 @@ export class SocketIOAnalyzer extends Plugin {
         }
       });
 
-      // Создаём ноды в графе
-      const nodes: NodeRecord[] = [];
+      // Create branded nodes via factory
+      const nodes: AnyBrandedNode[] = [];
       const edges: Array<{ type: string; src: string; dst: string }> = [];
 
       for (const emit of emits) {
-        nodes.push(emit as unknown as NodeRecord);
+        nodes.push(NodeFactory.createSocketIOEmit(
+          emit.event, emit.objectName, emit.file, emit.line, emit.column,
+          { room: emit.room, namespace: emit.namespace, broadcast: emit.broadcast }
+        ));
 
-        // Создаём ребро от модуля к event
         edges.push({
           type: 'CONTAINS',
           src: module.id,
@@ -431,9 +416,11 @@ export class SocketIOAnalyzer extends Plugin {
       }
 
       for (const listener of listeners) {
-        nodes.push(listener as unknown as NodeRecord);
+        nodes.push(NodeFactory.createSocketIOListener(
+          listener.event, listener.objectName, listener.handlerName,
+          listener.handlerLine, listener.file, listener.line, listener.column
+        ));
 
-        // Создаём ребро от модуля к listener
         edges.push({
           type: 'CONTAINS',
           src: module.id,
@@ -462,9 +449,10 @@ export class SocketIOAnalyzer extends Plugin {
       }
 
       for (const room of rooms) {
-        nodes.push(room as unknown as NodeRecord);
+        nodes.push(NodeFactory.createSocketIORoom(
+          room.room, room.objectName, room.file, room.line, room.column
+        ));
 
-        // Создаём ребро от модуля к room
         edges.push({
           type: 'CONTAINS',
           src: module.id,

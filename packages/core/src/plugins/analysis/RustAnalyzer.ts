@@ -8,7 +8,8 @@ import { readFileSync } from 'fs';
 import { resolveNodeFile } from '../../utils/resolveNodeFile.js';
 import { Plugin, createSuccessResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
-import type { NodeRecord } from '@grafema/types';
+import type { NodeRecord, AnyBrandedNode } from '@grafema/types';
+import { NodeFactory } from '../../core/NodeFactory.js';
 
 /**
  * Rust function from parser
@@ -279,7 +280,7 @@ export class RustAnalyzer extends Plugin {
     module: NodeRecord,
     graph: PluginContext['graph']
   ): Promise<AnalysisStats> {
-    const nodes: NodeRecord[] = [];
+    const nodes: AnyBrandedNode[] = [];
     const edges: EdgeToAdd[] = [];
     let methodCount = 0;
     let callCount = 0;
@@ -291,95 +292,90 @@ export class RustAnalyzer extends Plugin {
       parentName: string
     ): void => {
       for (const call of calls || []) {
-        const callId = `RUST_CALL#${parentName}#${call.line}#${call.column}#${module.file}`;
+        const callNode = NodeFactory.createRustCall(
+          parentName,
+          module.file!,
+          call.line,
+          call.column,
+          call.callType,
+          call.argsCount,
+          {
+            name: call.name || null,
+            receiver: call.receiver || null,
+            method: call.method || null,
+            sideEffect: call.sideEffect || null,
+          }
+        );
 
-        nodes.push({
-          id: callId,
-          type: 'RUST_CALL',
-          file: module.file,
-          line: call.line,
-          column: call.column,
-          callType: call.callType, // "function" | "method" | "macro"
-          name: call.name || null,
-          receiver: call.receiver || null,
-          method: call.method || null,
-          argsCount: call.argsCount,
-          sideEffect: call.sideEffect || null // "fs:write", "panic", "io:print", etc.
-        } as unknown as NodeRecord);
-
-        edges.push({ src: parentId, dst: callId, type: 'CONTAINS' });
+        nodes.push(callNode);
+        edges.push({ src: parentId, dst: callNode.id, type: 'CONTAINS' });
         callCount++;
       }
     };
 
     // 1. Process top-level functions
     for (const fn of parseResult.functions) {
-      const nodeId = `RUST_FUNCTION#${fn.name}#${module.file}#${fn.line}`;
+      const fnNode = NodeFactory.createRustFunction(
+        fn.name,
+        module.file!,
+        fn.line,
+        fn.column,
+        {
+          pub: fn.isPub,
+          async: fn.isAsync,
+          unsafe: fn.isUnsafe,
+          const: fn.isConst,
+          napi: fn.isNapi,
+          napiJsName: fn.napiJsName || null,
+          napiConstructor: fn.napiConstructor || false,
+          napiGetter: fn.napiGetter || null,
+          napiSetter: fn.napiSetter || null,
+          params: fn.params || [],
+          returnType: fn.returnType || null,
+          unsafeBlocks: fn.unsafeBlocks?.length || 0,
+        }
+      );
 
-      nodes.push({
-        id: nodeId,
-        type: 'RUST_FUNCTION',
-        name: fn.name,
-        file: module.file,
-        line: fn.line,
-        column: fn.column,
-        pub: fn.isPub,
-        async: fn.isAsync,
-        unsafe: fn.isUnsafe,
-        const: fn.isConst,
-        napi: fn.isNapi,
-        napiJsName: fn.napiJsName || null,
-        napiConstructor: fn.napiConstructor || false,
-        napiGetter: fn.napiGetter || null,
-        napiSetter: fn.napiSetter || null,
-        params: fn.params || [],
-        returnType: fn.returnType || null,
-        unsafeBlocks: fn.unsafeBlocks?.length || 0 // Count of unsafe blocks in body
-      } as unknown as NodeRecord);
-
-      edges.push({ src: module.id, dst: nodeId, type: 'CONTAINS' });
+      nodes.push(fnNode);
+      edges.push({ src: module.id, dst: fnNode.id, type: 'CONTAINS' });
 
       // Process calls within this function
-      processCalls(fn.calls, nodeId, fn.name);
+      processCalls(fn.calls, fnNode.id, fn.name);
     }
 
     // 2. Process structs
     for (const s of parseResult.structs) {
-      const nodeId = `RUST_STRUCT#${s.name}#${module.file}#${s.line}`;
+      const structNode = NodeFactory.createRustStruct(
+        s.name,
+        module.file!,
+        s.line,
+        {
+          pub: s.isPub,
+          napi: s.isNapi,
+          fields: s.fields || [],
+        }
+      );
 
-      nodes.push({
-        id: nodeId,
-        type: 'RUST_STRUCT',
-        name: s.name,
-        file: module.file,
-        line: s.line,
-        pub: s.isPub,
-        napi: s.isNapi,
-        fields: s.fields || []
-      } as unknown as NodeRecord);
-
-      edges.push({ src: module.id, dst: nodeId, type: 'CONTAINS' });
+      nodes.push(structNode);
+      edges.push({ src: module.id, dst: structNode.id, type: 'CONTAINS' });
     }
 
     // 3. Process impl blocks and their methods
     for (const impl of parseResult.impls) {
-      const implId = `RUST_IMPL#${impl.targetType}${impl.traitName ? ':' + impl.traitName : ''}#${module.file}#${impl.line}`;
+      const implNode = NodeFactory.createRustImpl(
+        impl.targetType,
+        module.file!,
+        impl.line,
+        { traitName: impl.traitName || null }
+      );
 
-      nodes.push({
-        id: implId,
-        type: 'RUST_IMPL',
-        name: impl.targetType,
-        traitName: impl.traitName || null,
-        file: module.file,
-        line: impl.line
-      } as unknown as NodeRecord);
-
-      edges.push({ src: module.id, dst: implId, type: 'CONTAINS' });
+      nodes.push(implNode);
+      edges.push({ src: module.id, dst: implNode.id, type: 'CONTAINS' });
 
       // IMPLEMENTS edge if trait impl
       if (impl.traitName) {
         edges.push({
-          src: implId,
+          src: implNode.id,
           dst: `RUST_TRAIT#${impl.traitName}`,
           type: 'IMPLEMENTS'
         });
@@ -387,59 +383,57 @@ export class RustAnalyzer extends Plugin {
 
       // Process methods inside impl
       for (const method of impl.methods) {
-        const methodId = `RUST_METHOD#${method.name}#${module.file}#${method.line}`;
+        const methodNode = NodeFactory.createRustMethod(
+          method.name,
+          module.file!,
+          method.line,
+          method.column,
+          implNode.id,
+          impl.targetType,
+          {
+            pub: method.isPub,
+            async: method.isAsync,
+            unsafe: method.isUnsafe,
+            const: method.isConst,
+            napi: method.isNapi,
+            napiJsName: method.napiJsName || null,
+            napiConstructor: method.napiConstructor || false,
+            napiGetter: method.napiGetter || null,
+            napiSetter: method.napiSetter || null,
+            params: method.params || [],
+            returnType: method.returnType || null,
+            selfType: method.selfType || null,
+            unsafeBlocks: method.unsafeBlocks?.length || 0,
+          }
+        );
 
-        nodes.push({
-          id: methodId,
-          type: 'RUST_METHOD',
-          name: method.name,
-          file: module.file,
-          line: method.line,
-          column: method.column,
-          pub: method.isPub,
-          async: method.isAsync,
-          unsafe: method.isUnsafe,
-          const: method.isConst,
-          napi: method.isNapi,
-          napiJsName: method.napiJsName || null,
-          napiConstructor: method.napiConstructor || false,
-          napiGetter: method.napiGetter || null,
-          napiSetter: method.napiSetter || null,
-          params: method.params || [],
-          returnType: method.returnType || null,
-          selfType: method.selfType || null,
-          implId: implId,
-          implType: impl.targetType,
-          unsafeBlocks: method.unsafeBlocks?.length || 0 // Count of unsafe blocks in body
-        } as unknown as NodeRecord);
-
-        edges.push({ src: implId, dst: methodId, type: 'CONTAINS' });
+        nodes.push(methodNode);
+        edges.push({ src: implNode.id, dst: methodNode.id, type: 'CONTAINS' });
         methodCount++;
 
         // Process calls within this method
-        processCalls(method.calls, methodId, `${impl.targetType}::${method.name}`);
+        processCalls(method.calls, methodNode.id, `${impl.targetType}::${method.name}`);
       }
     }
 
     // 4. Process traits
     for (const t of parseResult.traits) {
-      const nodeId = `RUST_TRAIT#${t.name}#${module.file}#${t.line}`;
+      const traitNode = NodeFactory.createRustTrait(
+        t.name,
+        module.file!,
+        t.line,
+        {
+          pub: t.isPub,
+          methods: (t.methods || []).map(m => ({
+            name: m.name,
+            params: m.params,
+            returnType: m.returnType,
+          })),
+        }
+      );
 
-      nodes.push({
-        id: nodeId,
-        type: 'RUST_TRAIT',
-        name: t.name,
-        file: module.file,
-        line: t.line,
-        pub: t.isPub,
-        methods: (t.methods || []).map(m => ({
-          name: m.name,
-          params: m.params,
-          returnType: m.returnType
-        }))
-      } as unknown as NodeRecord);
-
-      edges.push({ src: module.id, dst: nodeId, type: 'CONTAINS' });
+      nodes.push(traitNode);
+      edges.push({ src: module.id, dst: traitNode.id, type: 'CONTAINS' });
     }
 
     // 5. Write all nodes and edges in batch

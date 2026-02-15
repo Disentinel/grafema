@@ -46,12 +46,33 @@ import {
   ArgumentExpressionNode,
   IssueNode,
   PluginNode,
+  RustModuleNode,
+  RustFunctionNode,
+  RustStructNode,
+  RustImplNode,
+  RustMethodNode,
+  RustTraitNode,
+  RustCallNode,
   type EntrypointType,
   type EntrypointTrigger,
   type DecoratorTargetType,
   type InterfacePropertyRecord,
   type EnumMemberRecord,
   type IssueSeverity,
+  type RustCallType,
+  type RustTraitMethodRecord,
+  HttpRouteNode,
+  type HttpRouteNodeOptions,
+  FetchRequestNode,
+  type FetchRequestNodeOptions,
+  ExpressMountNode,
+  type ExpressMountNodeOptions,
+  ExpressMiddlewareNode,
+  type ExpressMiddlewareNodeOptions,
+  ExternalApiNode,
+  ReactNode,
+  SocketIONode,
+  SocketConnectionNode,
 } from './nodes/index.js';
 
 import type { BaseNodeRecord } from '@grafema/types';
@@ -437,6 +458,80 @@ export class NodeFactory {
   }
 
   /**
+   * Create http:route node
+   *
+   * Represents an HTTP route endpoint from Express, NestJS, or other frameworks.
+   *
+   * @param method - HTTP method (GET, POST, PUT, DELETE, etc.)
+   * @param path - Route path (e.g., "/api/users")
+   * @param file - File path where route is defined
+   * @param line - Line number
+   * @param options - Optional framework-specific metadata
+   */
+  static createHttpRoute(method: string, path: string, file: string, line: number, options: HttpRouteNodeOptions = {}) {
+    return brandNodeInternal(HttpRouteNode.create(method, path, file, line, options));
+  }
+
+  /**
+   * Create http:request node (namespaced)
+   *
+   * Represents an HTTP request call site from fetch(), axios, or custom wrappers.
+   * NOT the same as createHttpRequest() which creates HTTP_REQUEST (uppercase) nodes.
+   *
+   * @param method - HTTP method
+   * @param url - Request URL or 'dynamic'/'unknown'
+   * @param library - Library name ('fetch', 'axios', or wrapper name)
+   * @param file - File path
+   * @param line - Line number
+   * @param column - Column number
+   * @param options - Optional fields
+   */
+  static createFetchRequest(method: string, url: string, library: string, file: string, line: number, column: number, options: FetchRequestNodeOptions = {}) {
+    return brandNodeInternal(FetchRequestNode.create(method, url, library, file, line, column, options));
+  }
+
+  /**
+   * Create express:mount node
+   *
+   * Represents an Express.js mount point (app.use('/prefix', router)).
+   *
+   * @param prefix - Mount path prefix
+   * @param file - File path
+   * @param line - Line number
+   * @param column - Column number
+   * @param options - Optional target function/variable info
+   */
+  static createExpressMount(prefix: string, file: string, line: number, column: number, options: ExpressMountNodeOptions = {}) {
+    return brandNodeInternal(ExpressMountNode.create(prefix, file, line, column, options));
+  }
+
+  /**
+   * Create express:middleware node
+   *
+   * Represents middleware in an Express.js route chain or global mount.
+   *
+   * @param name - Middleware name
+   * @param file - File path
+   * @param line - Line number
+   * @param column - Column number
+   * @param options - Optional endpoint/mount metadata
+   */
+  static createExpressMiddleware(name: string, file: string, line: number, column: number, options: ExpressMiddlewareNodeOptions = {}) {
+    return brandNodeInternal(ExpressMiddlewareNode.create(name, file, line, column, options));
+  }
+
+  /**
+   * Create EXTERNAL node for an API domain
+   *
+   * Represents an external API domain detected from HTTP request URLs.
+   *
+   * @param domain - External API domain (e.g., "api.github.com")
+   */
+  static createExternalApi(domain: string) {
+    return brandNodeInternal(ExternalApiNode.create(domain));
+  }
+
+  /**
    * Create EVENT_LISTENER node
    */
   static createEventListener(eventName: string, objectName: string | undefined, file: string, line: number, column: number, options: EventListenerOptions = {}) {
@@ -733,6 +828,345 @@ export class NodeFactory {
     return brandNodeInternal(PluginNode.create(name, phase, options));
   }
 
+  // ==========================================
+  // Rust node factory methods
+  // ==========================================
+
+  /**
+   * Create RUST_MODULE node
+   *
+   * Represents a Rust source file (.rs) in the graph.
+   *
+   * @param moduleName - Rust module name (e.g., "crate", "ffi::napi_bindings")
+   * @param file - Absolute file path
+   * @param contentHash - SHA-256 hash of file content
+   * @param prefixedPath - Relative path, possibly prefixed for multi-root workspaces
+   * @param options - Optional flags (isLib, isMod, isTest)
+   */
+  static createRustModule(
+    moduleName: string,
+    file: string,
+    contentHash: string,
+    prefixedPath: string,
+    options: { isLib?: boolean; isMod?: boolean; isTest?: boolean } = {}
+  ) {
+    return brandNodeInternal(RustModuleNode.create(moduleName, file, contentHash, prefixedPath, options));
+  }
+
+  /**
+   * Create RUST_FUNCTION node
+   *
+   * Represents a top-level Rust function.
+   *
+   * @param name - Function name
+   * @param file - File path
+   * @param line - Line number
+   * @param column - Column position
+   * @param options - Optional function attributes (pub, async, napi, etc.)
+   */
+  static createRustFunction(
+    name: string,
+    file: string,
+    line: number,
+    column: number,
+    options: {
+      pub?: boolean;
+      async?: boolean;
+      unsafe?: boolean;
+      const?: boolean;
+      napi?: boolean;
+      napiJsName?: string | null;
+      napiConstructor?: boolean;
+      napiGetter?: string | null;
+      napiSetter?: string | null;
+      params?: string[];
+      returnType?: string | null;
+      unsafeBlocks?: number;
+    } = {}
+  ) {
+    return brandNodeInternal(RustFunctionNode.create(name, file, line, column, options));
+  }
+
+  /**
+   * Create RUST_STRUCT node
+   *
+   * Represents a Rust struct definition.
+   *
+   * @param name - Struct name
+   * @param file - File path
+   * @param line - Line number
+   * @param options - Optional struct attributes (pub, napi, fields)
+   */
+  static createRustStruct(
+    name: string,
+    file: string,
+    line: number,
+    options: { pub?: boolean; napi?: boolean; fields?: unknown[] } = {}
+  ) {
+    return brandNodeInternal(RustStructNode.create(name, file, line, options));
+  }
+
+  /**
+   * Create RUST_IMPL node
+   *
+   * Represents a Rust impl block (inherent or trait impl).
+   *
+   * @param targetType - The type being implemented
+   * @param file - File path
+   * @param line - Line number
+   * @param options - Optional traitName for trait implementations
+   */
+  static createRustImpl(
+    targetType: string,
+    file: string,
+    line: number,
+    options: { traitName?: string | null } = {}
+  ) {
+    return brandNodeInternal(RustImplNode.create(targetType, file, line, options));
+  }
+
+  /**
+   * Create RUST_METHOD node
+   *
+   * Represents a method inside a Rust impl block.
+   *
+   * @param name - Method name
+   * @param file - File path
+   * @param line - Line number
+   * @param column - Column position
+   * @param implId - ID of the parent RUST_IMPL node
+   * @param implType - Target type of the parent impl block
+   * @param options - Optional method attributes
+   */
+  static createRustMethod(
+    name: string,
+    file: string,
+    line: number,
+    column: number,
+    implId: string,
+    implType: string,
+    options: {
+      pub?: boolean;
+      async?: boolean;
+      unsafe?: boolean;
+      const?: boolean;
+      napi?: boolean;
+      napiJsName?: string | null;
+      napiConstructor?: boolean;
+      napiGetter?: string | null;
+      napiSetter?: string | null;
+      params?: string[];
+      returnType?: string | null;
+      selfType?: string | null;
+      unsafeBlocks?: number;
+    } = {}
+  ) {
+    return brandNodeInternal(RustMethodNode.create(name, file, line, column, implId, implType, options));
+  }
+
+  /**
+   * Create RUST_TRAIT node
+   *
+   * Represents a Rust trait definition.
+   *
+   * @param name - Trait name
+   * @param file - File path
+   * @param line - Line number
+   * @param options - Optional trait attributes (pub, methods)
+   */
+  static createRustTrait(
+    name: string,
+    file: string,
+    line: number,
+    options: {
+      pub?: boolean;
+      methods?: RustTraitMethodRecord[];
+    } = {}
+  ) {
+    return brandNodeInternal(RustTraitNode.create(name, file, line, options));
+  }
+
+  /**
+   * Create RUST_CALL node
+   *
+   * Represents a function/method/macro call inside a Rust function or method.
+   *
+   * @param parentName - Name of the containing function/method (used in ID)
+   * @param file - File path
+   * @param line - Line number
+   * @param column - Column position
+   * @param callType - "function" | "method" | "macro"
+   * @param argsCount - Number of arguments
+   * @param options - Optional call attributes (name, receiver, method, sideEffect)
+   */
+  static createRustCall(
+    parentName: string,
+    file: string,
+    line: number,
+    column: number,
+    callType: RustCallType,
+    argsCount: number,
+    options: {
+      name?: string | null;
+      receiver?: string | null;
+      method?: string | null;
+      sideEffect?: string | null;
+    } = {}
+  ) {
+    return brandNodeInternal(RustCallNode.create(parentName, file, line, column, callType, argsCount, options));
+  }
+
+  // ==========================================
+  // React domain factory methods
+  // ==========================================
+
+  /**
+   * Brand a React domain node (react:*, dom:*, browser:*, canvas:*)
+   *
+   * React nodes have diverse shapes created by react-internal/ helper modules.
+   * This method validates required fields and brands the node for graph insertion.
+   *
+   * @param fields - Complete node fields including id, type, file, line
+   * @returns Branded node ready for graph.addNodes()
+   */
+  static createReactNode<T extends { id: string; type: string; file: string; line: number }>(fields: T) {
+    return brandNodeInternal(ReactNode.create(fields));
+  }
+
+  // ==========================================
+  // Socket.IO factory methods
+  // ==========================================
+
+  /**
+   * Create socketio:emit node
+   *
+   * @param event - Event name (e.g., "slot:booked")
+   * @param objectName - Object that emits (e.g., "io", "socket")
+   * @param file - File path
+   * @param line - Line number
+   * @param column - Column position
+   * @param options - Optional room, namespace, broadcast
+   */
+  static createSocketIOEmit(
+    event: string,
+    objectName: string,
+    file: string,
+    line: number,
+    column: number,
+    options: { room?: string | null; namespace?: string | null; broadcast?: boolean } = {}
+  ) {
+    return brandNodeInternal(SocketIONode.createEmit(event, objectName, file, line, column, options));
+  }
+
+  /**
+   * Create socketio:on listener node
+   *
+   * @param event - Event name
+   * @param objectName - Object that listens (e.g., "socket")
+   * @param handlerName - Handler function name
+   * @param handlerLine - Handler function line number
+   * @param file - File path
+   * @param line - Line number
+   * @param column - Column position
+   */
+  static createSocketIOListener(
+    event: string,
+    objectName: string,
+    handlerName: string,
+    handlerLine: number,
+    file: string,
+    line: number,
+    column: number
+  ) {
+    return brandNodeInternal(SocketIONode.createListener(event, objectName, handlerName, handlerLine, file, line, column));
+  }
+
+  /**
+   * Create socketio:room node
+   *
+   * @param roomName - Room name
+   * @param objectName - Object that joins (e.g., "socket")
+   * @param file - File path
+   * @param line - Line number
+   * @param column - Column position
+   */
+  static createSocketIORoom(
+    roomName: string,
+    objectName: string,
+    file: string,
+    line: number,
+    column: number
+  ) {
+    return brandNodeInternal(SocketIONode.createRoom(roomName, objectName, file, line, column));
+  }
+
+  /**
+   * Create socketio:event channel node (singleton per event name)
+   *
+   * @param eventName - Event name
+   */
+  static createSocketIOEvent(eventName: string) {
+    return brandNodeInternal(SocketIONode.createEvent(eventName));
+  }
+
+  // ==========================================
+  // Socket (net module) factory methods
+  // ==========================================
+
+  /**
+   * Create os:unix-socket client connection node
+   */
+  static createUnixSocket(
+    path: string,
+    file: string,
+    line: number,
+    column: number,
+    options: { library?: string } = {}
+  ) {
+    return brandNodeInternal(SocketConnectionNode.createUnixSocket(path, file, line, column, options));
+  }
+
+  /**
+   * Create net:tcp-connection client node
+   */
+  static createTcpConnection(
+    host: string,
+    port: number,
+    file: string,
+    line: number,
+    column: number,
+    options: { library?: string } = {}
+  ) {
+    return brandNodeInternal(SocketConnectionNode.createTcpConnection(host, port, file, line, column, options));
+  }
+
+  /**
+   * Create os:unix-server node
+   */
+  static createUnixServer(
+    path: string,
+    file: string,
+    line: number,
+    column: number,
+    options: { library?: string; backlog?: number } = {}
+  ) {
+    return brandNodeInternal(SocketConnectionNode.createUnixServer(path, file, line, column, options));
+  }
+
+  /**
+   * Create net:tcp-server node
+   */
+  static createTcpServer(
+    host: string,
+    port: number,
+    file: string,
+    line: number,
+    column: number,
+    options: { library?: string; backlog?: number } = {}
+  ) {
+    return brandNodeInternal(SocketConnectionNode.createTcpServer(host, port, file, line, column, options));
+  }
+
   /**
    * Validate node by its type
    */
@@ -767,7 +1201,14 @@ export class NodeFactory {
       'TYPE_PARAMETER': TypeParameterNode,
       'ENUM': EnumNode,
       'DECORATOR': DecoratorNode,
-      'EXPRESSION': ExpressionNode
+      'EXPRESSION': ExpressionNode,
+      'RUST_MODULE': RustModuleNode,
+      'RUST_FUNCTION': RustFunctionNode,
+      'RUST_STRUCT': RustStructNode,
+      'RUST_IMPL': RustImplNode,
+      'RUST_METHOD': RustMethodNode,
+      'RUST_TRAIT': RustTraitNode,
+      'RUST_CALL': RustCallNode,
     };
 
     // Handle issue:* types dynamically
@@ -778,6 +1219,21 @@ export class NodeFactory {
     // Handle grafema:plugin type
     if (PluginNode.isPluginType(node.type)) {
       return PluginNode.validate(node);
+    }
+
+    // Handle React domain types (react:*, dom:*, browser:*, canvas:*)
+    if (ReactNode.isReactDomainType(node.type)) {
+      return ReactNode.validate(node);
+    }
+
+    // Handle Socket.IO types (socketio:*)
+    if (SocketIONode.isSocketIOType(node.type)) {
+      return SocketIONode.validate(node);
+    }
+
+    // Handle socket types (os:unix-*, net:tcp-*)
+    if (SocketConnectionNode.isSocketType(node.type)) {
+      return SocketConnectionNode.validate(node);
     }
 
     const validator = validators[node.type];
