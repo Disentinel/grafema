@@ -26,7 +26,7 @@ jobs:
   # Job 1: Run all tests
   test:
     name: Tests
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     timeout-minutes: 10
 
     steps:
@@ -132,7 +132,7 @@ jobs:
   # Job 2: TypeScript and ESLint
   typecheck-lint:
     name: Typecheck & Lint
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     timeout-minutes: 10
 
     steps:
@@ -163,7 +163,7 @@ jobs:
   # Job 3: Build all packages
   build:
     name: Build
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     timeout-minutes: 10
 
     steps:
@@ -198,7 +198,7 @@ jobs:
   # Job 4: Version sync check
   version-sync:
     name: Version Sync
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     timeout-minutes: 5
 
     steps:
