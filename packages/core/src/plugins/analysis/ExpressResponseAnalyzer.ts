@@ -20,7 +20,7 @@ import type { CallExpression, Identifier, MemberExpression, Node, ArrowFunctionE
 import type { NodePath } from '@babel/traverse';
 import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
-import type { NodeRecord } from '@grafema/types';
+import type { NodeRecord, AnyBrandedNode } from '@grafema/types';
 import { NodeFactory } from '../../core/NodeFactory.js';
 import { getLine } from './ast/utils/location.js';
 import { resolveNodeFile } from '../../utils/resolveNodeFile.js';
@@ -73,7 +73,7 @@ export class ExpressResponseAnalyzer extends Plugin {
 
       let edgesCreated = 0;
       let nodesCreated = 0;
-      const allNodes: NodeRecord[] = [];
+      const allNodes: AnyBrandedNode[] = [];
       const allEdges: Array<{ type: string; src: string; dst: string; metadata?: unknown }> = [];
 
       for (const route of routes) {
@@ -106,7 +106,7 @@ export class ExpressResponseAnalyzer extends Plugin {
     route: NodeRecord,
     graph: PluginContext['graph'],
     projectPath: string,
-    nodes: NodeRecord[],
+    nodes: AnyBrandedNode[],
     edges: Array<{ type: string; src: string; dst: string; metadata?: unknown }>
   ): Promise<{ nodes: number; edges: number }> {
     let edgesCreated = 0;
@@ -354,7 +354,7 @@ export class ExpressResponseAnalyzer extends Plugin {
     call: ResponseCallInfo,
     routeId: string,
     handlerSemanticId: string,
-    nodes: NodeRecord[]
+    nodes: AnyBrandedNode[]
   ): Promise<{ nodeId: string; nodesCreated: number }> {
     const { argLine, argColumn, argType, identifierName } = call;
 
@@ -579,7 +579,7 @@ export class ExpressResponseAnalyzer extends Plugin {
     column: number,
     astType: string,
     _routeId: string,
-    nodes: NodeRecord[]
+    nodes: AnyBrandedNode[]
   ): string {
     const counter = this.responseNodeCounter++;
 
@@ -589,33 +589,33 @@ export class ExpressResponseAnalyzer extends Plugin {
         const node = NodeFactory.createObjectLiteral(file, line, column, {
           argIndex: counter
         });
-        nodes.push(node as NodeRecord);
+        nodes.push(node);
         return node.id;
       }
       case 'Identifier': {
         const node = NodeFactory.createVariableDeclaration('<response>', file, line, column, {
           counter
         });
-        nodes.push(node as NodeRecord);
+        nodes.push(node);
         return node.id;
       }
       case 'CallExpression': {
         const node = NodeFactory.createCallSite('<response>', file, line, column, {
           counter
         });
-        nodes.push(node as NodeRecord);
+        nodes.push(node);
         return node.id;
       }
       case 'ArrayExpression': {
         const node = NodeFactory.createArrayLiteral(file, line, column, {
           argIndex: counter
         });
-        nodes.push(node as NodeRecord);
+        nodes.push(node);
         return node.id;
       }
       default: {
         const node = NodeFactory.createExpression(astType, file, line, column);
-        nodes.push(node as NodeRecord);
+        nodes.push(node);
         return node.id;
       }
     }

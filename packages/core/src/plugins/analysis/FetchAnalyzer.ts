@@ -18,19 +18,17 @@ import type { NodePath } from '@babel/traverse';
 import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { NodeRecord } from '@grafema/types';
-import { NetworkRequestNode } from '../../core/nodes/NetworkRequestNode.js';
+import type { AnyBrandedNode } from '@grafema/types';
+import { NodeFactory } from '../../core/NodeFactory.js';
 import { getLine, getColumn } from './ast/utils/location.js';
 import { resolveNodeFile } from '../../utils/resolveNodeFile.js';
 
 const traverse = (traverseModule as any).default || traverseModule;
 
 /**
- * HTTP request node
+ * Collected HTTP request info (before creating branded nodes)
  */
-interface HttpRequestNode {
-  id: string;
-  type: 'http:request';
-  name: string;  // Human-readable name like "GET /api/users"
+interface HttpRequestInfo {
   method: string;
   methodSource: MethodSource;
   url: string;
@@ -38,7 +36,6 @@ interface HttpRequestNode {
   file: string;
   line: number;
   column: number;
-  staticUrl: 'yes' | 'no';
   responseDataNode?: string | null;  // ID of CALL node for response.json(), response.text(), etc.
 }
 
@@ -51,7 +48,7 @@ const RESPONSE_CONSUMPTION_METHODS = ['json', 'text', 'blob', 'arrayBuffer', 'fo
  * Fetch call info with response variable name (for responseDataNode tracking)
  */
 interface FetchCallInfo {
-  request: HttpRequestNode;
+  request: HttpRequestInfo;
   responseVarName: string | null;
 }
 
@@ -89,7 +86,7 @@ export class FetchAnalyzer extends Plugin {
       const projectPath = (context.manifest as { projectPath?: string })?.projectPath ?? '';
 
       // Create net:request singleton once before processing modules
-      const networkNode = NetworkRequestNode.create();
+      const networkNode = NodeFactory.createNetworkRequest();
       await graph.addNode(networkNode);
       this.networkNodeCreated = true;
       this.networkNodeId = networkNode.id;
@@ -148,7 +145,7 @@ export class FetchAnalyzer extends Plugin {
     projectPath: string
   ): Promise<AnalysisResult> {
     // Batch arrays for nodes and edges
-    const nodes: NodeRecord[] = [];
+    const nodes: AnyBrandedNode[] = [];
     const edges: Array<{ type: string; src: string; dst: string }> = [];
 
     try {
@@ -205,10 +202,7 @@ export class FetchAnalyzer extends Plugin {
             const method = methodInfo.method;
             const line = getLine(node);
 
-            const request: HttpRequestNode = {
-              id: `http:request#${method}:${url}#${module.file}#${line}`,
-              type: 'http:request',
-              name: `${method} ${url}`,
+            const request: HttpRequestInfo = {
               method: method,
               methodSource: methodInfo.source,
               url: url,
@@ -216,7 +210,6 @@ export class FetchAnalyzer extends Plugin {
               file: module.file!,
               line: line,
               column: getColumn(node),
-              staticUrl: url !== 'dynamic' && url !== 'unknown' ? 'yes' : 'no'
             };
 
             // Extract response variable name for responseDataNode tracking
@@ -241,10 +234,7 @@ export class FetchAnalyzer extends Plugin {
             const url = this.extractURL(urlArg);
             const line = getLine(node);
 
-            const request: HttpRequestNode = {
-              id: `http:request#${method}:${url}#${module.file}#${line}`,
-              type: 'http:request',
-              name: `${method} ${url}`,
+            const request: HttpRequestInfo = {
               method: method,
               methodSource: 'explicit',
               url: url,
@@ -252,7 +242,6 @@ export class FetchAnalyzer extends Plugin {
               file: module.file!,
               line: line,
               column: getColumn(node),
-              staticUrl: url !== 'dynamic' && url !== 'unknown' ? 'yes' : 'no'
             };
 
             // Axios uses response.data, not response.json() - out of scope for v1.0
@@ -282,10 +271,7 @@ export class FetchAnalyzer extends Plugin {
               const method = methodInfo.method;
               const line = getLine(node);
 
-              const request: HttpRequestNode = {
-                id: `http:request#${method.toUpperCase()}:${url}#${module.file}#${line}`,
-                type: 'http:request',
-                name: `${method.toUpperCase()} ${url}`,
+              const request: HttpRequestInfo = {
                 method: method.toUpperCase(),
                 methodSource: methodInfo.source,
                 url: url,
@@ -293,7 +279,6 @@ export class FetchAnalyzer extends Plugin {
                 file: module.file!,
                 line: line,
                 column: getColumn(node),
-                staticUrl: url !== 'dynamic' && url !== 'unknown' ? 'yes' : 'no'
               };
 
               // Axios uses response.data, not response.json() - out of scope for v1.0
@@ -319,10 +304,7 @@ export class FetchAnalyzer extends Plugin {
               const method = methodInfo.method;
               const line = getLine(node);
 
-              const request: HttpRequestNode = {
-                id: `http:request#${method}:${url}#${module.file}#${line}`,
-                type: 'http:request',
-                name: `${method} ${url}`,
+              const request: HttpRequestInfo = {
                 method: method,
                 methodSource: methodInfo.source,
                 url: url,
@@ -330,7 +312,6 @@ export class FetchAnalyzer extends Plugin {
                 file: module.file!,
                 line: line,
                 column: getColumn(node),
-                staticUrl: url !== 'dynamic' && url !== 'unknown' ? 'yes' : 'no'
               };
 
               // Custom wrappers may use fetch-like response.json() pattern
@@ -345,9 +326,6 @@ export class FetchAnalyzer extends Plugin {
         }
       });
 
-      // Extract httpRequests for external API handling
-      const httpRequests = fetchCalls.map(fc => fc.request);
-
       // Pre-fetch FUNCTION and CALL nodes for this file once (avoid N+1 IPC queries)
       const fileFunctions: NodeRecord[] = [];
       for await (const fn of graph.queryNodes({ type: 'FUNCTION', file: module.file! })) {
@@ -358,35 +336,49 @@ export class FetchAnalyzer extends Plugin {
         fileCalls.push(cn);
       }
 
+      // Track created request node IDs with their URLs for EXTERNAL linking
+      const createdRequests: Array<{ id: string; url: string }> = [];
+
       // Создаём HTTP_REQUEST ноды
       for (const fetchCall of fetchCalls) {
         const request = fetchCall.request;
 
         // Find responseDataNode if we have a response variable name
+        let responseDataNode: string | null | undefined;
         if (fetchCall.responseVarName) {
-          const responseDataNodeId = this.findResponseJsonCallInMemory(
+          responseDataNode = this.findResponseJsonCallInMemory(
             fileCalls,
             fetchCall.responseVarName,
             request.line
           );
-          if (responseDataNodeId) {
-            request.responseDataNode = responseDataNodeId;
-          }
         }
 
-        nodes.push(request as unknown as NodeRecord);
+        const brandedNode = NodeFactory.createFetchRequest(
+          request.method,
+          request.url,
+          request.library,
+          request.file,
+          request.line,
+          request.column,
+          {
+            methodSource: request.methodSource,
+            responseDataNode: responseDataNode || undefined,
+          }
+        );
+        nodes.push(brandedNode);
+        createdRequests.push({ id: brandedNode.id, url: request.url });
 
         // Создаём ребро от модуля к request
         edges.push({
           type: 'CONTAINS',
           src: module.id,
-          dst: request.id
+          dst: brandedNode.id
         });
 
         // http:request --CALLS--> net:request singleton
         edges.push({
           type: 'CALLS',
-          src: request.id,
+          src: brandedNode.id,
           dst: this.networkNodeId!
         });
 
@@ -408,7 +400,7 @@ export class FetchAnalyzer extends Plugin {
           edges.push({
             type: 'MAKES_REQUEST',
             src: closestFunction.id,
-            dst: request.id
+            dst: brandedNode.id
           });
         }
 
@@ -424,7 +416,7 @@ export class FetchAnalyzer extends Plugin {
           edges.push({
             type: 'MAKES_REQUEST',
             src: matchingCall.id,
-            dst: request.id
+            dst: brandedNode.id
           });
         }
       }
@@ -436,16 +428,11 @@ export class FetchAnalyzer extends Plugin {
         // Проверяем что нода ещё не создана
         const existingApi = await graph.getNode(apiId);
         if (!existingApi) {
-          nodes.push({
-            id: apiId,
-            type: 'EXTERNAL',
-            domain: apiDomain,
-            name: apiDomain
-          } as unknown as NodeRecord);
+          nodes.push(NodeFactory.createExternalApi(apiDomain));
         }
 
         // Создаём рёбра от http:request к EXTERNAL
-        const apiRequests = httpRequests.filter(r => r.url.includes(apiDomain));
+        const apiRequests = createdRequests.filter(r => r.url.includes(apiDomain));
 
         for (const request of apiRequests) {
           edges.push({

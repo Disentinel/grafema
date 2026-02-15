@@ -20,6 +20,7 @@ import type { Plugin, PluginContext } from './plugins/Plugin.js';
 import type { GraphBackend, Logger, LogLevel, ServiceDefinition, FieldDeclaration, NodeRecord, RoutingRule } from '@grafema/types';
 import { createLogger } from './logging/Logger.js';
 import { NodeFactory } from './core/NodeFactory.js';
+import { brandNodeInternal } from './core/brandNodeInternal.js';
 import { toposort } from './core/toposort.js';
 import { PhaseRunner } from './PhaseRunner.js';
 import type { ProgressCallback } from './PhaseRunner.js';
@@ -386,14 +387,14 @@ export class Orchestrator {
     this.logger.info('Discovery complete', { services: svcCount, entrypoints: epCount });
 
     // REG-408: Store project metadata so graph is self-describing
-    await this.graph.addNode({
+    await this.graph.addNode(brandNodeInternal({
       id: '__graph_meta__',
-      type: 'GRAPH_META',
+      type: 'GRAPH_META' as NodeRecord['type'],
       name: 'graph_metadata',
       file: '',
       projectPath: absoluteProjectPath,
       analyzedAt: new Date().toISOString()
-    } as unknown as NodeRecord);
+    }));
 
     // Build unified list of indexing units from services AND entrypoints
     const indexingUnits = this.buildIndexingUnits(manifest);
@@ -623,14 +624,14 @@ export class Orchestrator {
     await this.declarePluginFields();
 
     // REG-408: Store project metadata so graph is self-describing
-    await this.graph.addNode({
+    await this.graph.addNode(brandNodeInternal({
       id: '__graph_meta__',
-      type: 'GRAPH_META',
+      type: 'GRAPH_META' as NodeRecord['type'],
       name: 'graph_metadata',
       file: '',
       projectPath: workspacePath,
       analyzedAt: new Date().toISOString()
-    } as unknown as NodeRecord);
+    }));
 
     // Collect all services from all roots
     const allServices: ServiceInfo[] = [];

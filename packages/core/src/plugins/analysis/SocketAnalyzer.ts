@@ -23,7 +23,8 @@ import type { CallExpression, Identifier, MemberExpression, NewExpression, Node 
 import type { NodePath } from '@babel/traverse';
 import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
-import type { NodeRecord } from '@grafema/types';
+import type { NodeRecord, AnyBrandedNode } from '@grafema/types';
+import { NodeFactory } from '../../core/NodeFactory.js';
 import { getLine, getColumn } from './ast/utils/location.js';
 import { getTraverseFunction } from './ast/utils/babelTraverse.js';
 import { resolveNodeFile } from '../../utils/resolveNodeFile.js';
@@ -127,7 +128,7 @@ export class SocketAnalyzer extends Plugin {
     graph: PluginContext['graph'],
     projectPath: string
   ): Promise<AnalysisResult> {
-    const nodes: NodeRecord[] = [];
+    const nodes: AnyBrandedNode[] = [];
     const edges: Array<{ type: string; src: string; dst: string }> = [];
 
     try {
@@ -171,9 +172,9 @@ export class SocketAnalyzer extends Plugin {
         fileCalls.push(cn);
       }
 
-      // Create nodes and edges
+      // Create branded nodes and edges
       for (const socketNode of socketNodes) {
-        nodes.push(socketNode as unknown as NodeRecord);
+        nodes.push(this.brandSocketNode(socketNode));
 
         // CONTAINS: MODULE -> socket node
         edges.push({ type: 'CONTAINS', src: module.id, dst: socketNode.id });
@@ -514,6 +515,34 @@ export class SocketAnalyzer extends Plugin {
     }
 
     return null;
+  }
+
+  /**
+   * Brand a socket node using the appropriate factory method.
+   */
+  private brandSocketNode(socketNode: SocketNode): AnyBrandedNode {
+    switch (socketNode.type) {
+      case 'os:unix-socket':
+        return NodeFactory.createUnixSocket(
+          socketNode.path!, socketNode.file, socketNode.line, socketNode.column,
+          { library: socketNode.library }
+        );
+      case 'net:tcp-connection':
+        return NodeFactory.createTcpConnection(
+          socketNode.host!, socketNode.port!, socketNode.file, socketNode.line, socketNode.column,
+          { library: socketNode.library }
+        );
+      case 'os:unix-server':
+        return NodeFactory.createUnixServer(
+          socketNode.path!, socketNode.file, socketNode.line, socketNode.column,
+          { library: socketNode.library, backlog: socketNode.backlog }
+        );
+      case 'net:tcp-server':
+        return NodeFactory.createTcpServer(
+          socketNode.host!, socketNode.port!, socketNode.file, socketNode.line, socketNode.column,
+          { library: socketNode.library, backlog: socketNode.backlog }
+        );
+    }
   }
 
   /**

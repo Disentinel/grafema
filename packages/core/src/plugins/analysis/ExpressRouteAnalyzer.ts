@@ -17,35 +17,31 @@ import type { NodePath } from '@babel/traverse';
 import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { NodeRecord } from '@grafema/types';
+import type { AnyBrandedNode } from '@grafema/types';
+import { NodeFactory } from '../../core/NodeFactory.js';
 import { getLine, getColumn } from './ast/utils/location.js';
 import { resolveNodeFile } from '../../utils/resolveNodeFile.js';
 
 const traverse = (traverseModule as any).default || traverseModule;
 
 /**
- * Endpoint node
+ * Collected endpoint info (before creating branded nodes)
  */
-interface EndpointNode {
-  id: string;
-  type: 'http:route';
+interface EndpointInfo {
   method: string;
   path: string;
   file: string;
   line: number;
   column: number;
   routerName: string;
-  handlerLine: number;
-  handlerColumn: number;
   handlerStart?: number;  // Byte offset for inline handlers
   handlerName?: string;   // Function name for named handler references
 }
 
 /**
- * Middleware node
+ * Collected middleware info (before creating branded nodes)
  */
-interface MiddlewareNode {
-  id: string;
-  type: 'express:middleware';
+interface MiddlewareInfo {
   name: string;
   file: string;
   line: number;
@@ -151,8 +147,8 @@ export class ExpressRouteAnalyzer extends Plugin {
         plugins: ['jsx', 'typescript'] as ParserPlugin[]
       });
 
-      const endpoints: EndpointNode[] = [];
-      const middlewares: MiddlewareNode[] = [];
+      const endpoints: EndpointInfo[] = [];
+      const middlewares: MiddlewareInfo[] = [];
 
       // Находим все переменные созданные от express() или express.Router()
       const expressVars = new Set(['app', 'router']);
@@ -253,9 +249,6 @@ export class ExpressRouteAnalyzer extends Plugin {
                   // Все предыдущие - middleware
                   const middlewareHandlers = handlers.slice(0, -1);
 
-                  // Создаём http:route
-                  const endpointId = `http:route#${method.toUpperCase()}:${routePath}#${module.file}#${getLine(node)}`;
-
                   // Determine handler identification for HANDLED_BY linking:
                   // - Inline functions (arrow/function expressions): use byte offset (start)
                   // - Named references (Identifier): use function name
@@ -269,23 +262,18 @@ export class ExpressRouteAnalyzer extends Plugin {
                   }
 
                   endpoints.push({
-                    id: endpointId,
-                    type: 'http:route',
                     method: method.toUpperCase(),
                     path: routePath,
                     file: module.file!,
                     line: getLine(node),
                     column: getColumn(node),
                     routerName: objectName,
-                    handlerLine: actualHandler.loc
-                      ? getLine(actualHandler)
-                      : getLine(node),
-                    handlerColumn: actualHandler.loc
-                      ? getColumn(actualHandler)
-                      : getColumn(node),
                     handlerStart,
                     handlerName
                   });
+
+                  // Compute endpoint ID (matches factory output) for middleware linking
+                  const endpointId = `http:route#${method.toUpperCase()}:${routePath}#${module.file}#${getLine(node)}`;
 
                   // Обрабатываем middleware
                   middlewareHandlers.forEach((mw, index) => {
@@ -309,11 +297,7 @@ export class ExpressRouteAnalyzer extends Plugin {
                     }
 
                     if (middlewareName) {
-                      const middlewareId = `express:middleware#${middlewareName}#${module.file}#${getLine(mwNode)}`;
-
                       middlewares.push({
-                        id: middlewareId,
-                        type: 'express:middleware',
                         name: middlewareName,
                         file: module.file!,
                         line: mwNode.loc ? getLine(mwNode) : getLine(node),
@@ -354,11 +338,7 @@ export class ExpressRouteAnalyzer extends Plugin {
                   }
 
                   if (middlewareName) {
-                    const middlewareId = `express:middleware#${middlewareName}#${module.file}#${getLine(node)}`;
-
                     middlewares.push({
-                      id: middlewareId,
-                      type: 'express:middleware',
                       name: middlewareName,
                       file: module.file!,
                       line: getLine(node),
@@ -375,30 +355,35 @@ export class ExpressRouteAnalyzer extends Plugin {
       });
 
       // Collect all nodes and edges for batch operations
-      const nodes: NodeRecord[] = [];
+      const nodes: AnyBrandedNode[] = [];
       const edges: Array<{ type: string; src: string; dst: string }> = [];
 
       // Prepare ENDPOINT nodes
       for (const endpoint of endpoints) {
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        const { handlerLine: _hl, handlerColumn: _hc, handlerStart, handlerName, routerName, ...endpointData } = endpoint;
-
         // Store handler identification in metadata for ExpressHandlerLinker enricher
-        const nodeData = {
-          ...endpointData,
-          metadata: {
-            ...(handlerStart !== undefined && { handlerStart }),
-            ...(handlerName !== undefined && { handlerName })
+        const metadata: Record<string, unknown> = {};
+        if (endpoint.handlerStart !== undefined) metadata.handlerStart = endpoint.handlerStart;
+        if (endpoint.handlerName !== undefined) metadata.handlerName = endpoint.handlerName;
+
+        const brandedNode = NodeFactory.createHttpRoute(
+          endpoint.method,
+          endpoint.path,
+          endpoint.file,
+          endpoint.line,
+          {
+            column: endpoint.column,
+            routerName: endpoint.routerName,
+            metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
           }
-        };
-        nodes.push(nodeData as unknown as NodeRecord);
+        );
+        nodes.push(brandedNode);
         endpointsCreated++;
 
         // MODULE -> CONTAINS -> ENDPOINT
         edges.push({
           type: 'CONTAINS',
           src: module.id,
-          dst: endpoint.id
+          dst: brandedNode.id
         });
         edgesCreated++;
 
@@ -406,28 +391,38 @@ export class ExpressRouteAnalyzer extends Plugin {
         // using handlerStart (byte offset) or handlerName stored in node metadata
       }
 
-      // Prepare MIDDLEWARE nodes
+      // Prepare MIDDLEWARE nodes - track branded IDs for edge creation
+      const middlewareNodeIds: string[] = [];
       for (const middleware of middlewares) {
-        const { endpointId, order: _order, ...middlewareData } = middleware;
-
-        nodes.push(middlewareData as unknown as NodeRecord);
+        const brandedNode = NodeFactory.createExpressMiddleware(
+          middleware.name,
+          middleware.file,
+          middleware.line,
+          middleware.column,
+          {
+            mountPath: middleware.mountPath,
+            isGlobal: middleware.isGlobal,
+          }
+        );
+        nodes.push(brandedNode);
+        middlewareNodeIds.push(brandedNode.id);
         middlewareCreated++;
 
         // MODULE -> CONTAINS -> MIDDLEWARE
         edges.push({
           type: 'CONTAINS',
           src: module.id,
-          dst: middleware.id
+          dst: brandedNode.id
         });
         edgesCreated++;
 
         // Если есть связанный endpoint
-        if (endpointId) {
+        if (middleware.endpointId) {
           // ENDPOINT -> USES_MIDDLEWARE -> MIDDLEWARE
           edges.push({
             type: 'USES_MIDDLEWARE',
-            src: endpointId,
-            dst: middleware.id
+            src: middleware.endpointId,
+            dst: brandedNode.id
           });
           edgesCreated++;
         }
@@ -437,7 +432,9 @@ export class ExpressRouteAnalyzer extends Plugin {
       await graph.addNodes(nodes);
 
       // Query for HANDLED_BY edges (needs nodes to exist first)
-      for (const middleware of middlewares) {
+      for (let i = 0; i < middlewares.length; i++) {
+        const middleware = middlewares[i];
+        const middlewareId = middlewareNodeIds[i];
         // Ищем FUNCTION ноду для middleware (если это именованная функция)
         if (!middleware.name.startsWith('inline:')) {
           for await (const fn of graph.queryNodes({
@@ -448,7 +445,7 @@ export class ExpressRouteAnalyzer extends Plugin {
             // MIDDLEWARE -> HANDLED_BY -> FUNCTION
             edges.push({
               type: 'HANDLED_BY',
-              src: middleware.id,
+              src: middlewareId,
               dst: fn.id
             });
             edgesCreated++;

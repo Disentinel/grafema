@@ -20,10 +20,10 @@
  * - @Get(), @Post(), @Put(), @Patch(), @Delete(), @Options(), @Head()
  */
 
-import { relative } from 'path';
 import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { NodeFilter } from '@grafema/types';
+import { NodeFactory } from '../../core/NodeFactory.js';
 
 const HTTP_DECORATOR_METHODS: Record<string, string> = {
   Get: 'GET',
@@ -121,8 +121,6 @@ export class NestJSRouteAnalyzer extends Plugin {
 
     try {
       const { graph } = context;
-      const projectPath = context.config?.projectPath || '';
-
       // Single pass: collect all DECORATOR nodes, partition by relevance
       const controllers: ControllerInfo[] = [];
       const httpMethods: HttpMethodInfo[] = [];
@@ -187,7 +185,6 @@ export class NestJSRouteAnalyzer extends Plugin {
 
         const moduleId = moduleCache.get(controller.file);
         const className = classNode.name || 'UnknownController';
-        const relFile = relative(projectPath, controller.file) || controller.file;
 
         for (const method of matching) {
           const methodNode = await graph.getNode(method.targetId);
@@ -196,26 +193,25 @@ export class NestJSRouteAnalyzer extends Plugin {
           for (const basePath of controller.basePaths) {
             for (const methodPath of method.methodPaths) {
               const fullPath = joinRoutePath(basePath, methodPath);
-              const routeId = `http:route:nestjs:${relFile}:${method.line}:${method.httpMethod}:${fullPath}`;
-
-              await graph.addNode({
-                id: routeId,
-                type: 'http:route',
-                name: `${method.httpMethod} ${fullPath}`,
-                method: method.httpMethod,
-                path: fullPath,
-                file: controller.file,
-                line: method.line,
-                framework: 'nestjs',
-                handlerName: `${className}.${methodName}`,
-              });
+              const routeNode = NodeFactory.createHttpRoute(
+                method.httpMethod,
+                fullPath,
+                controller.file,
+                method.line,
+                {
+                  name: `${method.httpMethod} ${fullPath}`,
+                  framework: 'nestjs',
+                  handlerName: `${className}.${methodName}`,
+                }
+              );
+              await graph.addNode(routeNode);
               nodesCreated++;
 
               if (moduleId) {
                 await graph.addEdge({
                   type: 'CONTAINS',
                   src: moduleId,
-                  dst: routeId,
+                  dst: routeNode.id,
                 });
                 edgesCreated++;
               }

@@ -18,6 +18,7 @@ import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { BaseNodeRecord, ServiceDefinition, RoutingMap, OrchestratorConfig } from '@grafema/types';
 import { ROUTING_MAP_RESOURCE_ID } from '@grafema/types';
+import { brandNodeInternal } from '../../core/brandNodeInternal.js';
 import { StrictModeError, ValidationError } from '../../errors/GrafemaError.js';
 
 /**
@@ -338,10 +339,10 @@ export class ServiceConnectionEnricher extends Plugin {
       if (!route.file) continue;
       const serviceName = this.getServiceForFile(route.file, serviceMap);
       if (serviceName && cfServices.has(serviceName)) {
-        await graph.addNode({
+        await graph.addNode(brandNodeInternal({
           ...route,
           customerFacing: true,
-        });
+        }));
         // Update the in-memory object for later validation
         route.customerFacing = true;
         count++;

@@ -23,6 +23,7 @@ import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { GraphBackend } from '@grafema/types';
 import type { NodeRecord } from '@grafema/types';
+import { brandNodeInternal } from '../../core/brandNodeInternal.js';
 import type { VersionedNode } from '../../core/VersionManager.js';
 import { versionManager } from '../../core/VersionManager.js';
 import { VCSPluginFactory } from '../vcs/index.js';
@@ -273,7 +274,7 @@ export class IncrementalAnalysisPlugin extends Plugin {
     // 4a. ADDED nodes - create with __local version
     for (const node of changes.added) {
       const enrichedNode = versionManager.enrichNodeWithVersion(node, '__local');
-      await graph.addNode(enrichedNode as unknown as NodeRecord);
+      await graph.addNode(brandNodeInternal(enrichedNode as unknown as NodeRecord));
     }
 
     // 4b. MODIFIED nodes - create __local version + REPLACES edge
@@ -283,7 +284,7 @@ export class IncrementalAnalysisPlugin extends Plugin {
         replacesId: mainNodeId
       });
 
-      await graph.addNode(enrichedNode as unknown as NodeRecord);
+      await graph.addNode(brandNodeInternal(enrichedNode as unknown as NodeRecord));
 
       // Create REPLACES edge
       const replacesEdge = versionManager.createReplacesEdge(enrichedNode.id!, mainNodeId);
