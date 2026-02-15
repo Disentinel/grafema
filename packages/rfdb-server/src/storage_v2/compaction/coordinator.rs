@@ -269,11 +269,11 @@ mod tests {
 
         let e1 = make_edge("src1", "dst1", "CALLS");
         let e2 = make_edge("src2", "dst2", "IMPORTS_FROM");
-        shard.add_edges(vec![e1.clone(), e2.clone()]);
+        shard.upsert_edges(vec![e1.clone(), e2.clone()]);
         shard.flush_with_ids(None, Some(1)).unwrap();
 
         let e3 = make_edge("src3", "dst3", "CALLS");
-        shard.add_edges(vec![e3.clone()]);
+        shard.upsert_edges(vec![e3.clone()]);
         shard.flush_with_ids(None, Some(2)).unwrap();
 
         let result = compact_shard(&shard).unwrap();
