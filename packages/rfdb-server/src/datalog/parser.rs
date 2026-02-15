@@ -306,5 +306,13 @@ pub fn parse_program(input: &str) -> Result<Program, ParseError> {
 /// a full rule definition.
 pub fn parse_query(input: &str) -> Result<Vec<Literal>, ParseError> {
     let mut parser = Parser::new(input);
-    parser.parse_query()
+    let result = parser.parse_query()?;
+    parser.skip_whitespace();
+    if parser.pos < parser.input.len() {
+        return Err(ParseError::new(
+            &format!("unexpected input after query: '{}'", parser.remaining()),
+            parser.pos,
+        ));
+    }
+    Ok(result)
 }
