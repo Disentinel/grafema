@@ -32,6 +32,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{GraphError, Result};
 use crate::storage_v2::compaction::{CompactionConfig, CompactionResult};
+use crate::storage_v2::index::{build_inverted_indexes, GlobalIndex, IndexEntry, InvertedIndex};
 use crate::storage_v2::manifest::{ManifestStore, SegmentDescriptor};
 use crate::storage_v2::segment::{EdgeSegmentV2, NodeSegmentV2};
 use crate::storage_v2::shard::{Shard, TombstoneSet};
@@ -112,6 +113,10 @@ pub struct MultiShardStore {
     /// Reverse index: node_id -> shard_id.
     /// Built during add_nodes() and rebuilt from all_node_ids() on open().
     node_to_shard: HashMap<u128, u16>,
+
+    /// Global index for O(log N) point lookups across shards.
+    /// Built during compaction from all shards' L1 entries.
+    global_index: Option<GlobalIndex>,
 }
 
 // ── Constructors ───────────────────────────────────────────────────
@@ -141,6 +146,7 @@ impl MultiShardStore {
             planner: ShardPlanner::new(shard_count),
             shards,
             node_to_shard: HashMap::new(),
+            global_index: None,
         })
     }
 
@@ -249,6 +255,7 @@ impl MultiShardStore {
             planner: ShardPlanner::new(config.shard_count),
             shards,
             node_to_shard,
+            global_index: None,
         })
     }
 
@@ -265,6 +272,7 @@ impl MultiShardStore {
             planner: ShardPlanner::new(shard_count),
             shards,
             node_to_shard: HashMap::new(),
+            global_index: None,
         }
     }
 }
@@ -431,11 +439,26 @@ impl MultiShardStore {
 
 impl MultiShardStore {
     /// Get node by id. Checks node_to_shard first for O(1) routing,
-    /// falls back to fan-out if not found in index.
+    /// then global index for O(log N) L1 lookup, falls back to fan-out.
     pub fn get_node(&self, id: u128) -> Option<NodeRecordV2> {
-        // Fast path: node_to_shard has the mapping
+        // Fast path: node_to_shard has the mapping (covers write buffer + L0)
         if let Some(&shard_id) = self.node_to_shard.get(&id) {
             return self.shards[shard_id as usize].get_node(id);
+        }
+
+        // O(log N) path: global index for L1 direct lookup
+        if let Some(global_idx) = &self.global_index {
+            if let Some(entry) = global_idx.lookup(id) {
+                let shard = &self.shards[entry.shard as usize];
+                if let Some(l1) = shard.l1_node_segment() {
+                    // Check tombstone before returning
+                    if !shard.tombstones().contains_node(id) {
+                        return Some(l1.get_record(entry.offset as usize));
+                    } else {
+                        return None;
+                    }
+                }
+            }
         }
 
         // Slow path: fan-out (node might exist in a segment not yet
@@ -767,7 +790,11 @@ impl MultiShardStore {
     /// 1. Check if L0 segment count >= config threshold
     /// 2. Merge L0 + existing L1 into new L1 segment (in-memory)
     /// 3. Write L1 segment files to shard directory (or in-memory for ephemeral)
-    /// 4. Swap shard state: set L1, clear L0 + tombstones
+    /// 4. Build inverted indexes (by_type, by_file) for the L1 node segment
+    /// 5. Swap shard state: set L1, clear L0 + tombstones
+    ///
+    /// After all shards are processed:
+    /// 6. Build global index from all L1 entries for O(log N) point lookups
     ///
     /// Then commit a new manifest with:
     /// - L0 segments removed (compacted into L1)
@@ -798,31 +825,53 @@ impl MultiShardStore {
         // Track which shards were compacted so we know which L0 segments to remove
         let mut compacted_shard_ids: HashSet<u16> = HashSet::new();
 
+        // Collect entries for global index from all compacted shards
+        let mut global_index_entries: Vec<IndexEntry> = Vec::new();
+
         for shard_idx in 0..self.shards.len() {
-            let shard = &self.shards[shard_idx];
             let shard_id = shard_idx as u16;
 
-            if !should_compact(shard, config) {
+            // Capture shard properties before mutable borrows
+            let shard_path_owned = self.shards[shard_idx].path().map(|p| p.to_path_buf());
+
+            if !should_compact(&self.shards[shard_idx], config) {
                 // Preserve existing L1 descriptors for non-compacted shards
-                if let Some(desc) = shard.l1_node_descriptor() {
+                if let Some(desc) = self.shards[shard_idx].l1_node_descriptor() {
                     l1_node_descs.push(desc.clone());
                 }
-                if let Some(desc) = shard.l1_edge_descriptor() {
+                if let Some(desc) = self.shards[shard_idx].l1_edge_descriptor() {
                     l1_edge_descs.push(desc.clone());
+                }
+                // Collect existing L1 entries for global index
+                if let Some(l1_seg) = self.shards[shard_idx].l1_node_segment() {
+                    let l1_seg_id = self.shards[shard_idx]
+                        .l1_node_descriptor()
+                        .map_or(0, |d| d.segment_id);
+                    for i in 0..l1_seg.record_count() {
+                        global_index_entries.push(IndexEntry::new(
+                            l1_seg.get_id(i),
+                            l1_seg_id,
+                            i as u32,
+                            shard_id,
+                        ));
+                    }
                 }
                 continue;
             }
 
             // Compact this shard
-            let result = compact_shard(shard)?;
+            let result = compact_shard(&self.shards[shard_idx])?;
 
             // Build L1 node segment (if any merged nodes)
             let mut l1_node_seg: Option<NodeSegmentV2> = None;
             let mut l1_node_desc: Option<SegmentDescriptor> = None;
+            let mut by_type_idx: Option<InvertedIndex> = None;
+            let mut by_file_idx: Option<InvertedIndex> = None;
+
             if let (Some(bytes), Some(meta)) = (&result.node_segment_bytes, &result.node_meta) {
                 let seg_id = manifest_store.next_segment_id();
 
-                let seg = if let Some(shard_path) = shard.path() {
+                let seg = if let Some(shard_path) = &shard_path_owned {
                     let seg_path = shard_path.join(format!("seg_{:06}_nodes.seg", seg_id));
                     std::fs::write(&seg_path, bytes)?;
                     NodeSegmentV2::open(&seg_path)?
@@ -833,6 +882,19 @@ impl MultiShardStore {
                 let desc = SegmentDescriptor::from_meta(
                     seg_id, SegmentType::Nodes, Some(shard_id), meta.clone(),
                 );
+
+                // Build inverted indexes from the L1 segment
+                let records: Vec<NodeRecordV2> = seg.iter().collect();
+                let built = build_inverted_indexes(&records, shard_id, seg_id)?;
+                by_type_idx = Some(InvertedIndex::from_bytes(&built.by_type)?);
+                by_file_idx = Some(InvertedIndex::from_bytes(&built.by_file)?);
+
+                // Collect entries for global index
+                for (offset, record) in records.iter().enumerate() {
+                    global_index_entries.push(IndexEntry::new(
+                        record.id, seg_id, offset as u32, shard_id,
+                    ));
+                }
 
                 l1_node_descs.push(desc.clone());
                 total_nodes_merged += meta.record_count;
@@ -846,7 +908,7 @@ impl MultiShardStore {
             if let (Some(bytes), Some(meta)) = (&result.edge_segment_bytes, &result.edge_meta) {
                 let seg_id = manifest_store.next_segment_id();
 
-                let seg = if let Some(shard_path) = shard.path() {
+                let seg = if let Some(shard_path) = &shard_path_owned {
                     let seg_path = shard_path.join(format!("seg_{:06}_edges.seg", seg_id));
                     std::fs::write(&seg_path, bytes)?;
                     EdgeSegmentV2::open(&seg_path)?
@@ -864,11 +926,12 @@ impl MultiShardStore {
                 l1_edge_desc = Some(desc);
             }
 
-            // Set L1 segments on shard (both node and edge at once)
+            // Set L1 segments and indexes on shard
             self.shards[shard_idx].set_l1_segments(
                 l1_node_seg, l1_node_desc,
                 l1_edge_seg, l1_edge_desc,
             );
+            self.shards[shard_idx].set_l1_indexes(by_type_idx, by_file_idx);
 
             total_tombstones_removed += result.tombstones_removed;
             compacted_shard_ids.insert(shard_id);
@@ -883,6 +946,11 @@ impl MultiShardStore {
                 tombstones_removed: 0,
                 duration_ms: start.elapsed().as_millis() as u64,
             });
+        }
+
+        // Build global index from all L1 entries (compacted + preserved)
+        if !global_index_entries.is_empty() {
+            self.global_index = Some(GlobalIndex::build(global_index_entries));
         }
 
         // Build new manifest: keep L0 segments for non-compacted shards only
@@ -2375,5 +2443,191 @@ mod tests {
             manifest.tombstoned_edge_keys.is_empty(),
             "Old API should not produce edge tombstones"
         );
+    }
+
+    // -- Compaction Index Integration Tests ------------------------------------
+
+    #[test]
+    fn test_compact_builds_indexes() {
+        // Setup: ephemeral store with 1 shard, add enough data to trigger compaction
+        let mut store = MultiShardStore::ephemeral(1);
+        let config = CompactionConfig { segment_threshold: 4 };
+
+        let n1 = make_node("fn_a", "FUNCTION", "a", "src/lib.rs");
+        let n2 = make_node("fn_b", "FUNCTION", "b", "src/lib.rs");
+        let n3 = make_node("cls_c", "CLASS", "c", "src/main.rs");
+
+        // Create 4 L0 segments to trigger compaction
+        store.add_nodes(vec![n1.clone()]);
+        store.shards[0].flush_with_ids(Some(1), None).unwrap();
+
+        store.add_nodes(vec![n2.clone()]);
+        store.shards[0].flush_with_ids(Some(2), None).unwrap();
+
+        store.add_nodes(vec![n3.clone()]);
+        store.shards[0].flush_with_ids(Some(3), None).unwrap();
+
+        // 4th flush to hit threshold
+        let n4 = make_node("fn_d", "FUNCTION", "d", "src/lib.rs");
+        store.add_nodes(vec![n4.clone()]);
+        store.shards[0].flush_with_ids(Some(4), None).unwrap();
+
+        assert_eq!(store.shards[0].l0_node_segment_count(), 4);
+
+        // Create a dummy manifest store for compact
+        let tmp = tempfile::tempdir().unwrap();
+        let mut manifest_store = ManifestStore::create(tmp.path()).unwrap();
+
+        let result = store.compact(&mut manifest_store, &config).unwrap();
+        assert_eq!(result.shards_compacted, vec![0]);
+        assert_eq!(result.nodes_merged, 4);
+
+        // Verify shard has L1 segment
+        assert!(store.shards[0].l1_node_segment().is_some());
+
+        // Verify inverted indexes were built
+        let by_type_idx = store.shards[0].l1_by_type_index();
+        assert!(by_type_idx.is_some(), "by_type index should exist after compaction");
+        let by_type = by_type_idx.unwrap();
+        assert_eq!(by_type.lookup("FUNCTION").len(), 3); // fn_a, fn_b, fn_d
+        assert_eq!(by_type.lookup("CLASS").len(), 1);     // cls_c
+
+        let by_file_idx = store.shards[0].l1_by_file_index();
+        assert!(by_file_idx.is_some(), "by_file index should exist after compaction");
+        let by_file = by_file_idx.unwrap();
+        assert_eq!(by_file.lookup("src/lib.rs").len(), 3);  // fn_a, fn_b, fn_d
+        assert_eq!(by_file.lookup("src/main.rs").len(), 1); // cls_c
+
+        // Verify global index was built
+        assert!(store.global_index.is_some(), "global index should exist after compaction");
+        let global = store.global_index.as_ref().unwrap();
+        assert_eq!(global.len(), 4);
+        assert!(global.lookup(n1.id).is_some());
+        assert!(global.lookup(n2.id).is_some());
+        assert!(global.lookup(n3.id).is_some());
+        assert!(global.lookup(n4.id).is_some());
+    }
+
+    #[test]
+    fn test_find_nodes_uses_index() {
+        // Setup: compact, then find_nodes should return correct results
+        // via the inverted index path
+        let mut store = MultiShardStore::ephemeral(1);
+        let config = CompactionConfig { segment_threshold: 4 };
+
+        let nodes = vec![
+            make_node("fn_1", "FUNCTION", "one", "src/a.rs"),
+            make_node("fn_2", "FUNCTION", "two", "src/a.rs"),
+            make_node("cls_3", "CLASS", "three", "src/b.rs"),
+            make_node("met_4", "METHOD", "four", "src/a.rs"),
+        ];
+
+        // Add nodes across 4 flushes to trigger compaction
+        for (i, node) in nodes.iter().enumerate() {
+            store.add_nodes(vec![node.clone()]);
+            store.shards[0].flush_with_ids(Some(i as u64 + 1), None).unwrap();
+        }
+
+        let tmp = tempfile::tempdir().unwrap();
+        let mut manifest_store = ManifestStore::create(tmp.path()).unwrap();
+        store.compact(&mut manifest_store, &config).unwrap();
+
+        // After compaction, all data is in L1 with indexes
+        assert!(store.shards[0].l1_by_type_index().is_some());
+
+        // find_nodes by node_type should use inverted index
+        let funcs = store.find_nodes(Some("FUNCTION"), None);
+        assert_eq!(funcs.len(), 2);
+        let func_ids: HashSet<u128> = funcs.iter().map(|n| n.id).collect();
+        assert!(func_ids.contains(&nodes[0].id));
+        assert!(func_ids.contains(&nodes[1].id));
+
+        let classes = store.find_nodes(Some("CLASS"), None);
+        assert_eq!(classes.len(), 1);
+        assert_eq!(classes[0].id, nodes[2].id);
+
+        let methods = store.find_nodes(Some("METHOD"), None);
+        assert_eq!(methods.len(), 1);
+        assert_eq!(methods[0].id, nodes[3].id);
+
+        // find_nodes by file should use inverted index
+        let a_nodes = store.find_nodes(None, Some("src/a.rs"));
+        assert_eq!(a_nodes.len(), 3); // fn_1, fn_2, met_4
+
+        let b_nodes = store.find_nodes(None, Some("src/b.rs"));
+        assert_eq!(b_nodes.len(), 1);
+        assert_eq!(b_nodes[0].id, nodes[2].id);
+
+        // Combined filter: node_type + file
+        let funcs_in_a = store.find_nodes(Some("FUNCTION"), Some("src/a.rs"));
+        assert_eq!(funcs_in_a.len(), 2);
+
+        let funcs_in_b = store.find_nodes(Some("FUNCTION"), Some("src/b.rs"));
+        assert_eq!(funcs_in_b.len(), 0);
+
+        // Missing type returns empty
+        let none = store.find_nodes(Some("NONEXISTENT"), None);
+        assert!(none.is_empty());
+
+        // get_node via global index
+        let got = store.get_node(nodes[0].id);
+        assert!(got.is_some());
+        assert_eq!(got.unwrap().name, "one");
+
+        // get_node for missing ID
+        assert!(store.get_node(999).is_none());
+    }
+
+    #[test]
+    fn test_global_index_point_lookup_after_compact() {
+        let mut store = MultiShardStore::ephemeral(2);
+        let config = CompactionConfig { segment_threshold: 4 };
+
+        // Add nodes to different shards (files in different dirs)
+        let _n1 = make_node("fn_a", "FUNCTION", "a", "src/a.rs");
+        let _n2 = make_node("fn_b", "FUNCTION", "b", "lib/b.rs");
+
+        // Create 4 L0 segments per shard to trigger compaction
+        for i in 0..4 {
+            store.add_nodes(vec![
+                make_node(&format!("fn_{}_a", i), "FUNCTION", "x", "src/a.rs"),
+                make_node(&format!("fn_{}_b", i), "FUNCTION", "x", "lib/b.rs"),
+            ]);
+            // Flush all shards
+            for shard_idx in 0..2 {
+                let (wb_n, _) = store.shards[shard_idx].write_buffer_size();
+                if wb_n > 0 {
+                    store.shards[shard_idx]
+                        .flush_with_ids(Some(i as u64 * 10 + shard_idx as u64 + 1), None)
+                        .unwrap();
+                }
+            }
+        }
+
+        let tmp = tempfile::tempdir().unwrap();
+        let mut manifest_store = ManifestStore::create(tmp.path()).unwrap();
+        let result = store.compact(&mut manifest_store, &config).unwrap();
+
+        // At least some shards should have been compacted
+        assert!(!result.shards_compacted.is_empty());
+
+        // Global index should exist
+        assert!(store.global_index.is_some());
+        let global = store.global_index.as_ref().unwrap();
+        assert!(global.len() > 0);
+
+        // Every node should be findable via global index
+        for i in 0..4 {
+            let id_a = node_id(&format!("fn_{}_a", i));
+            let id_b = node_id(&format!("fn_{}_b", i));
+            assert!(
+                global.lookup(id_a).is_some(),
+                "global index should contain fn_{}_a", i
+            );
+            assert!(
+                global.lookup(id_b).is_some(),
+                "global index should contain fn_{}_b", i
+            );
+        }
     }
 }
