@@ -86,6 +86,8 @@ pub struct EdgeRecord {
 /// Query for filtering nodes by attributes
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AttrQuery {
+    /// Deprecated node-level version filter.
+    /// Kept for wire compatibility; v2 query engine ignores this field.
     pub version: Option<String>,
     /// Node type as string. Supports wildcard: "http:*" for all http types
     pub node_type: Option<String>,
@@ -105,6 +107,8 @@ impl AttrQuery {
         Self::default()
     }
 
+    /// Deprecated builder for legacy node-level version filter.
+    /// Kept for API compatibility; v2 query engine ignores this field.
     pub fn version(mut self, v: impl Into<String>) -> Self {
         self.version = Some(v.into());
         self

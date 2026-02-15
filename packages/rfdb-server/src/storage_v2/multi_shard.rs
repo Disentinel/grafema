@@ -474,6 +474,52 @@ impl MultiShardStore {
 
         results
     }
+
+    /// Find node IDs by exact node type.
+    ///
+    /// Nodes are uniquely assigned to one shard, so no cross-shard dedup is
+    /// needed on this fast path.
+    pub fn find_node_ids_by_type(&self, node_type: &str) -> Vec<u128> {
+        let mut results = Vec::new();
+        for shard in &self.shards {
+            results.extend(shard.find_node_ids_by_type(node_type));
+        }
+        results
+    }
+
+    /// Find node IDs matching AttrQuery-compatible filters without cloning records.
+    ///
+    /// Same logical filters as `GraphEngineV2::find_by_attr`, but returns IDs
+    /// directly for lower allocation overhead on hot query paths.
+    pub fn find_node_ids_by_attr(
+        &self,
+        node_type: Option<&str>,
+        node_type_prefix: Option<&str>,
+        file: Option<&str>,
+        name: Option<&str>,
+        exported: Option<bool>,
+        metadata_filters: &[(String, String)],
+    ) -> Vec<u128> {
+        let mut seen: HashSet<u128> = HashSet::new();
+        let mut results: Vec<u128> = Vec::new();
+
+        for shard in &self.shards {
+            for id in shard.find_node_ids_by_attr(
+                node_type,
+                node_type_prefix,
+                file,
+                name,
+                exported,
+                metadata_filters,
+            ) {
+                if seen.insert(id) {
+                    results.push(id);
+                }
+            }
+        }
+
+        results
+    }
 }
 
 // ── Neighbor Queries ───────────────────────────────────────────────
