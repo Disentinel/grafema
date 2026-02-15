@@ -33,6 +33,7 @@ fn create_test_graph(node_count: usize, edge_count: usize) -> (TempDir, GraphEng
             name: Some(format!("func_{}", i)),
             file: Some(format!("src/file_{}.js", i % 100)),
             metadata: None,
+            semantic_id: None,
         })
         .collect();
 
@@ -78,6 +79,7 @@ fn create_multi_type_graph(node_count: usize) -> (TempDir, GraphEngine) {
             name: Some(format!("item_{}", i)),
             file: Some(format!("src/file_{}.js", i % 100)),
             metadata: None,
+            semantic_id: None,
         })
         .collect();
 
@@ -100,6 +102,7 @@ fn make_nodes(count: usize) -> Vec<NodeRecord> {
             name: Some(format!("func_{}", i)),
             file: Some(format!("src/file_{}.js", i % 100)),
             metadata: None,
+            semantic_id: None,
         })
         .collect()
 }
@@ -422,6 +425,7 @@ fn bench_compact(c: &mut Criterion) {
                                 name: Some(format!("class_{}", i)),
                                 file: Some("src/extra.js".to_string()),
                                 metadata: None,
+                                semantic_id: None,
                             })
                             .collect(),
                     );
