@@ -11,13 +11,26 @@
  */
 
 import { existsSync, statSync } from 'fs';
-import { dirname, resolve, join } from 'path';
+import { dirname, extname, resolve, join } from 'path';
 
 /**
  * Default file extensions to try when resolving modules.
  * Order: exact match first, then JS variants, then TS variants.
  */
 export const DEFAULT_EXTENSIONS = ['', '.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx'];
+
+/**
+ * TypeScript extension redirects (REG-426).
+ * Maps JS-family extensions to their TS equivalents.
+ * Used when an import specifies a .js extension but only a .ts file exists.
+ * This matches TypeScript's own module resolution behavior for ESM.
+ */
+const TS_EXTENSION_REDIRECTS: Record<string, string[]> = {
+  '.js': ['.ts', '.tsx'],
+  '.jsx': ['.tsx'],
+  '.mjs': ['.mts'],
+  '.cjs': ['.cts'],
+};
 
 /**
  * Default index files to try when resolving directory imports.
@@ -174,6 +187,20 @@ export function resolveModulePath(
         continue;
       }
       return testPath;
+    }
+  }
+
+  // TypeScript extension redirect (REG-426):
+  // import './foo.js' → try ./foo.ts when ./foo.js doesn't exist
+  const ext = extname(normalizedPath);
+  const tsAlternatives = TS_EXTENSION_REDIRECTS[ext];
+  if (tsAlternatives) {
+    const withoutExt = normalizedPath.slice(0, -ext.length);
+    for (const tsExt of tsAlternatives) {
+      const testPath = withoutExt + tsExt;
+      if (pathExists(testPath, useFilesystem, fileIndex)) {
+        return testPath;
+      }
     }
   }
 

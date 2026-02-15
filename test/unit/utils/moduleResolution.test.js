@@ -737,6 +737,184 @@ describe('Module Resolution Utility (REG-320)', () => {
   });
 
   // ===========================================================================
+  // TypeScript Extension Redirect (REG-426)
+  // ===========================================================================
+
+  describe('TypeScript Extension Redirect (REG-426)', () => {
+
+    describe('.js → .ts redirect (filesystem)', () => {
+      it('should resolve .js import to .ts file when .js does not exist', async (t) => {
+        if (!implementationAvailable) {
+          t.skip('Module resolution utility not yet implemented');
+          return;
+        }
+
+        const tsFile = createFile('ts-redirect/utils.ts', 'export const x: number = 1;');
+        // basePath already has .js extension (from import './utils.js')
+        const basePath = join(testDir, 'ts-redirect/utils.js');
+
+        const result = resolveModulePath(basePath, { useFilesystem: true });
+        assert.strictEqual(result, tsFile);
+      });
+
+      it('should prefer .js file when it exists (no redirect needed)', async (t) => {
+        if (!implementationAvailable) {
+          t.skip('Module resolution utility not yet implemented');
+          return;
+        }
+
+        const jsFile = createFile('ts-no-redirect/utils.js', 'export const x = 1;');
+        createFile('ts-no-redirect/utils.ts', 'export const x: number = 1;');
+        const basePath = join(testDir, 'ts-no-redirect/utils.js');
+
+        const result = resolveModulePath(basePath, { useFilesystem: true });
+        assert.strictEqual(result, jsFile, 'Should prefer existing .js over .ts redirect');
+      });
+
+      it('should resolve .js to .tsx when .ts does not exist', async (t) => {
+        if (!implementationAvailable) {
+          t.skip('Module resolution utility not yet implemented');
+          return;
+        }
+
+        const tsxFile = createFile('tsx-redirect/Component.tsx', 'export const C = () => <div/>;');
+        const basePath = join(testDir, 'tsx-redirect/Component.js');
+
+        const result = resolveModulePath(basePath, { useFilesystem: true });
+        assert.strictEqual(result, tsxFile);
+      });
+    });
+
+    describe('.jsx → .tsx redirect (filesystem)', () => {
+      it('should resolve .jsx import to .tsx file', async (t) => {
+        if (!implementationAvailable) {
+          t.skip('Module resolution utility not yet implemented');
+          return;
+        }
+
+        const tsxFile = createFile('jsx-redirect/Component.tsx', 'export const C = () => <div/>;');
+        const basePath = join(testDir, 'jsx-redirect/Component.jsx');
+
+        const result = resolveModulePath(basePath, { useFilesystem: true });
+        assert.strictEqual(result, tsxFile);
+      });
+    });
+
+    describe('.mjs → .mts redirect (filesystem)', () => {
+      it('should resolve .mjs import to .mts file', async (t) => {
+        if (!implementationAvailable) {
+          t.skip('Module resolution utility not yet implemented');
+          return;
+        }
+
+        const mtsFile = createFile('mjs-redirect/module.mts', 'export const x = 1;');
+        const basePath = join(testDir, 'mjs-redirect/module.mjs');
+
+        const result = resolveModulePath(basePath, { useFilesystem: true });
+        assert.strictEqual(result, mtsFile);
+      });
+    });
+
+    describe('.cjs → .cts redirect (filesystem)', () => {
+      it('should resolve .cjs import to .cts file', async (t) => {
+        if (!implementationAvailable) {
+          t.skip('Module resolution utility not yet implemented');
+          return;
+        }
+
+        const ctsFile = createFile('cjs-redirect/module.cts', 'export const x = 1;');
+        const basePath = join(testDir, 'cjs-redirect/module.cjs');
+
+        const result = resolveModulePath(basePath, { useFilesystem: true });
+        assert.strictEqual(result, ctsFile);
+      });
+    });
+
+    describe('In-memory mode (fileIndex)', () => {
+      it('should resolve .js to .ts in fileIndex', async (t) => {
+        if (!implementationAvailable) {
+          t.skip('Module resolution utility not yet implemented');
+          return;
+        }
+
+        const fileIndex = new Set([
+          '/project/src/utils.ts'
+        ]);
+
+        const result = resolveModulePath('/project/src/utils.js', {
+          useFilesystem: false,
+          fileIndex
+        });
+        assert.strictEqual(result, '/project/src/utils.ts');
+      });
+
+      it('should prefer existing .js in fileIndex over .ts redirect', async (t) => {
+        if (!implementationAvailable) {
+          t.skip('Module resolution utility not yet implemented');
+          return;
+        }
+
+        const fileIndex = new Set([
+          '/project/src/utils.js',
+          '/project/src/utils.ts'
+        ]);
+
+        const result = resolveModulePath('/project/src/utils.js', {
+          useFilesystem: false,
+          fileIndex
+        });
+        assert.strictEqual(result, '/project/src/utils.js',
+          'Should prefer .js when it exists in fileIndex');
+      });
+    });
+
+    describe('resolveRelativeSpecifier with redirect', () => {
+      it('should resolve relative .js import to .ts file', async (t) => {
+        if (!implementationAvailable) {
+          t.skip('Module resolution utility not yet implemented');
+          return;
+        }
+
+        const tsFile = createFile('rel-redirect/errors/GrafemaError.ts', 'export class GrafemaError {}');
+
+        const result = resolveRelativeSpecifier(
+          './errors/GrafemaError.js',
+          join(testDir, 'rel-redirect/index.ts'),
+          { useFilesystem: true }
+        );
+        assert.strictEqual(result, tsFile);
+      });
+    });
+
+    describe('No false positives', () => {
+      it('should return null when neither .js nor .ts exists', async (t) => {
+        if (!implementationAvailable) {
+          t.skip('Module resolution utility not yet implemented');
+          return;
+        }
+
+        const basePath = join(testDir, 'no-files/nonexistent.js');
+        const result = resolveModulePath(basePath, { useFilesystem: true });
+        assert.strictEqual(result, null);
+      });
+
+      it('should not redirect non-JS extensions', async (t) => {
+        if (!implementationAvailable) {
+          t.skip('Module resolution utility not yet implemented');
+          return;
+        }
+
+        // .coffee should not redirect to anything
+        createFile('no-redirect/module.ts', 'export const x = 1;');
+        const basePath = join(testDir, 'no-redirect/module.coffee');
+
+        const result = resolveModulePath(basePath, { useFilesystem: true });
+        assert.strictEqual(result, null, 'Should not redirect .coffee to .ts');
+      });
+    });
+  });
+
+  // ===========================================================================
   // Edge Cases
   // ===========================================================================
 
