@@ -22,6 +22,7 @@ import { PhaseRunner } from './PhaseRunner.js';
 import type { ProgressCallback } from './PhaseRunner.js';
 import { GraphInitializer } from './GraphInitializer.js';
 import { DiscoveryManager } from './DiscoveryManager.js';
+import { GuaranteeChecker } from './GuaranteeChecker.js';
 export type { ProgressInfo, ProgressCallback } from './PhaseRunner.js';
 
 // Re-export types from OrchestratorTypes (REG-462)
@@ -78,6 +79,8 @@ export class Orchestrator {
   private graphInitializer!: GraphInitializer;
   /** Service/entrypoint discovery (REG-462) */
   private discoveryManager!: DiscoveryManager;
+  /** Guarantee checking after enrichment (REG-462) */
+  private guaranteeChecker!: GuaranteeChecker;
 
   constructor(options: OrchestratorOptions = {}) {
     this.graph = options.graph!;
@@ -134,6 +137,11 @@ export class Orchestrator {
     // Initialize discovery manager (REG-462: extracted from Orchestrator)
     this.discoveryManager = new DiscoveryManager(
       this.plugins, this.graph, this.config, this.logger, this.onProgress, this.configServices,
+    );
+
+    // Initialize guarantee checker (REG-462: extracted from Orchestrator)
+    this.guaranteeChecker = new GuaranteeChecker(
+      this.graph, this.diagnosticCollector, this.profiler, this.onProgress, this.logger,
     );
 
     // Modified auto-add logic: SKIP auto-add if config services provided (REG-174)
@@ -374,7 +382,7 @@ export class Orchestrator {
     }
 
     // GUARANTEE CHECK: Verify invariants after enrichment, before validation (RFD-18)
-    await this.runGuaranteeCheck(enrichmentTypes, absoluteProjectPath);
+    await this.guaranteeChecker.check(enrichmentTypes, absoluteProjectPath);
 
     // PHASE 4: VALIDATION - проверка корректности графа (глобально)
     const validationStart = Date.now();
@@ -542,7 +550,7 @@ export class Orchestrator {
     }
 
     // GUARANTEE CHECK: Verify invariants after enrichment, before validation (RFD-18)
-    await this.runGuaranteeCheck(enrichmentTypes, workspacePath);
+    await this.guaranteeChecker.check(enrichmentTypes, workspacePath);
 
     // VALIDATION phase (global)
     this.profiler.start('VALIDATION');
@@ -601,72 +609,6 @@ export class Orchestrator {
    */
   buildIndexingUnits(manifest: DiscoveryManifest): IndexingUnit[] {
     return this.discoveryManager.buildIndexingUnits(manifest);
-  }
-
-  /**
-   * Run guarantee checks after enrichment, before validation (RFD-18).
-   * Uses selective checking when enrichment produced type changes,
-   * falls back to checkAll when no type info is available.
-   */
-  private async runGuaranteeCheck(changedTypes: Set<string>, projectPath: string): Promise<void> {
-    const { GuaranteeManager } = await import('./core/GuaranteeManager.js');
-
-    const manager = new GuaranteeManager(this.graph as any, projectPath);
-    const guarantees = await manager.list();
-
-    if (guarantees.length === 0) {
-      this.logger.debug('No guarantees to check');
-      this.checkCoverageGaps(changedTypes);
-      return;
-    }
-
-    const startTime = Date.now();
-    this.profiler.start('GUARANTEE_CHECK');
-    this.onProgress({ phase: 'guarantee', currentPlugin: 'GuaranteeCheck', message: 'Checking guarantees...' });
-
-    const result = changedTypes.size > 0
-      ? await manager.checkSelective(changedTypes)
-      : await manager.checkAll();
-
-    // Collect violations into diagnostics
-    for (const r of result.results) {
-      if (!r.passed && !r.error) {
-        for (const violation of r.violations) {
-          this.diagnosticCollector.add({
-            code: 'GUARANTEE_VIOLATION',
-            severity: r.severity === 'error' ? 'fatal' : 'warning',
-            message: `Guarantee "${r.name}" violated: ${violation.type} ${violation.name || violation.nodeId}`,
-            phase: 'ENRICHMENT',
-            plugin: 'GuaranteeCheck',
-            file: violation.file,
-            line: violation.line,
-          });
-        }
-      }
-    }
-
-    this.profiler.end('GUARANTEE_CHECK');
-    this.logger.info('GUARANTEE_CHECK complete', {
-      duration: ((Date.now() - startTime) / 1000).toFixed(2),
-      total: result.total,
-      checked: result.results.length,
-      passed: result.passed,
-      failed: result.failed,
-    });
-
-    this.checkCoverageGaps(changedTypes);
-  }
-
-  /**
-   * Coverage monitoring canary (RFD-18).
-   * Logs a warning if enrichment produced no type changes at all,
-   * which may indicate a coverage gap (content changed but analysis unchanged).
-   * Full per-file delta tracking requires per-file deltas (RFD-19+).
-   */
-  private checkCoverageGaps(changedTypes: Set<string>): void {
-    if (changedTypes.size === 0) {
-      this.logger.debug('Coverage canary: enrichment produced no type changes');
-    }
   }
 
   /**
