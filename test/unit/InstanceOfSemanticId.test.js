@@ -84,11 +84,11 @@ describe('REG-205: INSTANCE_OF semantic ID format', () => {
   });
 
   describe('GraphBuilder source code verification', () => {
-    it('should NOT have legacy :CLASS: format in GraphBuilder (REG-205 fix)', () => {
-      const file = 'packages/core/src/plugins/analysis/ast/GraphBuilder.ts';
+    it('should NOT have legacy :CLASS: format in graph builders (REG-205 fix)', () => {
+      // REG-423: bufferClassNodes extracted to TypeSystemBuilder
+      const dir = 'packages/core/src/plugins/analysis/ast/builders';
 
-      // Look for the legacy pattern in bufferClassNodes
-      const grepCommand = `grep -n ":CLASS:" ${file} || true`;
+      const grepCommand = `grep -rn ":CLASS:" ${dir} --include="*.ts" || true`;
 
       let result;
       try {
@@ -105,19 +105,20 @@ describe('REG-205: INSTANCE_OF semantic ID format', () => {
         .filter(line => !line.includes('*'))
         .filter(line => line.includes(':CLASS:'));
 
-      // AFTER FIX: There should be NO :CLASS: in GraphBuilder code
+      // AFTER FIX: There should be NO :CLASS: in builder code
       // (only computeSemanticId should be used)
       assert.strictEqual(
         codeLines.length,
         0,
-        `GraphBuilder should NOT have legacy :CLASS: format.\n` +
+        `Builders should NOT have legacy :CLASS: format.\n` +
         `Found ${codeLines.length} occurrences:\n${codeLines.join('\n')}\n` +
         `Should use computeSemanticId('CLASS', ...) instead.`
       );
     });
 
     it('should use computeSemanticId for CLASS edge destinations (REG-205 fix)', () => {
-      const file = 'packages/core/src/plugins/analysis/ast/GraphBuilder.ts';
+      // REG-423: bufferClassNodes extracted to TypeSystemBuilder
+      const file = 'packages/core/src/plugins/analysis/ast/builders/TypeSystemBuilder.ts';
 
       // Check if computeSemanticId is imported
       const importCheck = `grep "computeSemanticId" ${file} || true`;
@@ -136,7 +137,7 @@ describe('REG-205: INSTANCE_OF semantic ID format', () => {
 
       assert.ok(
         hasImport,
-        `GraphBuilder should import computeSemanticId from SemanticId.js\n` +
+        `TypeSystemBuilder should import computeSemanticId from SemanticId.js\n` +
         `Current imports containing 'computeSemanticId': ${importResult || '(none)'}`
       );
     });
