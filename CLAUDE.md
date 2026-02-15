@@ -81,6 +81,8 @@ Before proposing a new subsystem, check if existing Grafema infrastructure can b
 - When exploring unfamiliar code: query the graph first, not the files
 - If you find yourself reading code because Grafema can't answer your question — that's a product gap
 
+**RFDB auto-start:** The MCP server auto-starts RFDB when needed. No manual `rfdb-server` command required — `RFDBServerBackend` spawns it on first connection attempt (detached, survives MCP exit). Binary is found via `findRfdbBinary()` (monorepo build, PATH, `~/.local/bin`).
+
 **When Grafema falls short:**
 1. Note what you were trying to do
 2. Ask user if this should become a feature/issue
@@ -135,7 +137,7 @@ Use the cheapest model that can handle the task. **Max 3 parallel subagents** (r
 
 | Role | Model | Rationale |
 |------|-------|-----------|
-| Don (exploration phase) | **Haiku** | Codebase search, file listing, gathering context |
+| Don (exploration phase) | **Sonnet** | Codebase search needs reasoning for accurate results |
 | Don (planning/decisions) | **Sonnet** | Architectural decisions need reasoning |
 | Joel (Full MLA only) | **Sonnet** | Technical specs need reasoning |
 | Uncle Bob (review) | **Sonnet** | Code quality judgment needs nuance |
@@ -228,7 +230,7 @@ _tasks/
 - Save user's request to `001-user-request.md` (or `0XX-user-revision.md` for follow-ups)
 
 **STEP 2 — PLAN:**
-1. Don explores codebase (Haiku subagent), then plans (Sonnet subagent) → `0XX-don-plan.md`
+1. Don explores codebase (Sonnet subagent), then plans (Sonnet subagent) → `0XX-don-plan.md`
 2. **Full MLA only:** Joel expands into detailed tech plan `0XX-joel-tech-plan.md`
 3. **Auto-Review** (single Sonnet subagent, combined vision + practical check) — if REJECT → back to step 1
 4. **If approved → present to user** for manual confirmation
@@ -304,7 +306,7 @@ Each `Task` tool call returns `total_tokens`, `tool_uses`, `duration_ms` in its 
 
 | # | Agent | Model | Tokens | Tools | Duration | Est. Cost |
 |---|-------|-------|--------|-------|----------|-----------|
-| 1 | Don (explore) | Haiku | 12,000 | 5 | 8s | $0.02 |
+| 1 | Don (explore) | Sonnet | 35,000 | 8 | 15s | $0.23 |
 | 2 | Don (plan) | Sonnet | 35,000 | 3 | 25s | $0.23 |
 | ... | ... | ... | ... | ... | ... | ... |
 

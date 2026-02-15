@@ -37,6 +37,8 @@ Add to your project's `.mcp.json`:
 }
 ```
 
+The RFDB graph database server is auto-started on first query if not already running. No manual setup needed beyond adding the MCP configuration.
+
 ### Claude Desktop configuration
 
 Add to `~/.config/claude/claude_desktop_config.json`:
