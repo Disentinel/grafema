@@ -1,2 +1,10 @@
 export type { AnalyzerDelegate } from './AnalyzerDelegate.js';
 export { FunctionBodyHandler } from './FunctionBodyHandler.js';
+export { ReturnYieldHandler } from './ReturnYieldHandler.js';
+export { ThrowHandler } from './ThrowHandler.js';
+export { VariableHandler } from './VariableHandler.js';
+export { NestedFunctionHandler } from './NestedFunctionHandler.js';
+export { PropertyAccessHandler } from './PropertyAccessHandler.js';
+export { NewExpressionHandler } from './NewExpressionHandler.js';
+export { CallExpressionHandler } from './CallExpressionHandler.js';
+export { ControlFlowHandler } from './ControlFlowHandler.js';
