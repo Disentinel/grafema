@@ -46,6 +46,7 @@ export type RFDBCommand =
   | 'datalogClearRules'
   | 'datalogQuery'
   | 'checkGuarantee'
+  | 'executeDatalog'
   // Protocol v2 - Multi-Database Commands
   | 'hello'
   | 'createDatabase'
@@ -330,6 +331,7 @@ export interface AttrQuery {
   name?: string;
   file?: string;
   exported?: boolean;
+  /** @deprecated Node-level version filter is legacy. In v2, use snapshot/tag APIs for history. */
   version?: string;
   /** Extra fields are matched against node metadata JSON (e.g. object, method, async) */
   [key: string]: string | boolean | number | undefined;
@@ -494,6 +496,7 @@ export interface IRFDBClient {
   datalogClearRules(): Promise<RFDBResponse>;
   datalogQuery(query: string): Promise<DatalogResult[]>;
   checkGuarantee(ruleSource: string): Promise<DatalogResult[]>;
+  executeDatalog(source: string): Promise<DatalogResult[]>;
 
   // Batch operations
   beginBatch(): void;

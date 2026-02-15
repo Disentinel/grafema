@@ -37,7 +37,7 @@ use crate::storage_v2::manifest::{ManifestStore, SegmentDescriptor};
 use crate::storage_v2::segment::{EdgeSegmentV2, NodeSegmentV2};
 use crate::storage_v2::shard::{Shard, TombstoneSet};
 use crate::storage_v2::shard_planner::ShardPlanner;
-use crate::storage_v2::types::{CommitDelta, EdgeRecordV2, NodeRecordV2, SegmentType};
+use crate::storage_v2::types::{CommitDelta, EdgeRecordV2, NodeRecordV2, SegmentType, extract_file_context};
 
 // ── Database Config ────────────────────────────────────────────────
 
@@ -117,6 +117,11 @@ pub struct MultiShardStore {
     /// Global index for O(log N) point lookups across shards.
     /// Built during compaction from all shards' L1 entries.
     global_index: Option<GlobalIndex>,
+
+    /// Enrichment edge index: maps source node ID to shard IDs
+    /// containing enrichment edges FROM that node.
+    /// Used for cross-shard edge queries.
+    enrichment_edge_to_shard: HashMap<u128, HashSet<u16>>,
 }
 
 // ── Constructors ───────────────────────────────────────────────────
@@ -147,6 +152,7 @@ impl MultiShardStore {
             shards,
             node_to_shard: HashMap::new(),
             global_index: None,
+            enrichment_edge_to_shard: HashMap::new(),
         })
     }
 
@@ -250,12 +256,24 @@ impl MultiShardStore {
             }
         }
 
+        // Rebuild enrichment_edge_to_shard by scanning edge metadata
+        let mut enrichment_edge_to_shard: HashMap<u128, HashSet<u16>> = HashMap::new();
+        for (shard_id, shard) in shards.iter().enumerate() {
+            for src_id in shard.find_enrichment_edge_src_ids() {
+                enrichment_edge_to_shard
+                    .entry(src_id)
+                    .or_default()
+                    .insert(shard_id as u16);
+            }
+        }
+
         Ok(Self {
             db_path: Some(db_path.to_path_buf()),
             planner: ShardPlanner::new(config.shard_count),
             shards,
             node_to_shard,
             global_index: None,
+            enrichment_edge_to_shard,
         })
     }
 
@@ -273,6 +291,7 @@ impl MultiShardStore {
             shards,
             node_to_shard: HashMap::new(),
             global_index: None,
+            enrichment_edge_to_shard: HashMap::new(),
         }
     }
 }
@@ -298,17 +317,33 @@ impl MultiShardStore {
         }
     }
 
-    /// Add edges, routing each to the shard owning the source node.
+    /// Add edges, routing each to the appropriate shard.
     ///
-    /// Returns error if any edge's source node is not found in
-    /// `node_to_shard` (node must be added before its outgoing edges).
+    /// Routing logic:
+    /// - If edge metadata has `__file_context` → route to enrichment shard
+    ///   (determined by hashing the file_context path via `ShardPlanner`)
+    /// - Otherwise → route to source node's shard (existing behavior)
+    ///
+    /// Returns error if any non-enrichment edge's source node is not found
+    /// in `node_to_shard` (node must be added before its outgoing edges).
     pub fn add_edges(&mut self, records: Vec<EdgeRecordV2>) -> Result<()> {
         let mut by_shard: HashMap<u16, Vec<EdgeRecordV2>> = HashMap::new();
         for edge in records {
-            let shard_id = self.node_to_shard.get(&edge.src)
-                .copied()
-                .ok_or(GraphError::NodeNotFound(edge.src))?;
-            by_shard.entry(shard_id).or_default().push(edge);
+            if let Some(file_context) = extract_file_context(&edge.metadata) {
+                // Enrichment edge: route to shard determined by file_context
+                let shard_id = self.planner.compute_shard_id(&file_context);
+                self.enrichment_edge_to_shard
+                    .entry(edge.src)
+                    .or_default()
+                    .insert(shard_id);
+                by_shard.entry(shard_id).or_default().push(edge);
+            } else {
+                // Normal edge: route to source node's shard
+                let shard_id = self.node_to_shard.get(&edge.src)
+                    .copied()
+                    .ok_or(GraphError::NodeNotFound(edge.src))?;
+                by_shard.entry(shard_id).or_default().push(edge);
+            }
         }
 
         for (shard_id, edges) in by_shard {
@@ -509,6 +544,52 @@ impl MultiShardStore {
 
         results
     }
+
+    /// Find node IDs by exact node type.
+    ///
+    /// Nodes are uniquely assigned to one shard, so no cross-shard dedup is
+    /// needed on this fast path.
+    pub fn find_node_ids_by_type(&self, node_type: &str) -> Vec<u128> {
+        let mut results = Vec::new();
+        for shard in &self.shards {
+            results.extend(shard.find_node_ids_by_type(node_type));
+        }
+        results
+    }
+
+    /// Find node IDs matching AttrQuery-compatible filters without cloning records.
+    ///
+    /// Same logical filters as `GraphEngineV2::find_by_attr`, but returns IDs
+    /// directly for lower allocation overhead on hot query paths.
+    pub fn find_node_ids_by_attr(
+        &self,
+        node_type: Option<&str>,
+        node_type_prefix: Option<&str>,
+        file: Option<&str>,
+        name: Option<&str>,
+        exported: Option<bool>,
+        metadata_filters: &[(String, String)],
+    ) -> Vec<u128> {
+        let mut seen: HashSet<u128> = HashSet::new();
+        let mut results: Vec<u128> = Vec::new();
+
+        for shard in &self.shards {
+            for id in shard.find_node_ids_by_attr(
+                node_type,
+                node_type_prefix,
+                file,
+                name,
+                exported,
+                metadata_filters,
+            ) {
+                if seen.insert(id) {
+                    results.push(id);
+                }
+            }
+        }
+
+        results
+    }
 }
 
 // ── Neighbor Queries ───────────────────────────────────────────────
@@ -516,24 +597,41 @@ impl MultiShardStore {
 impl MultiShardStore {
     /// Get outgoing edges from a node.
     ///
-    /// Edges are stored in the shard owning the source node, so this
-    /// can be a targeted query when node_to_shard has the mapping.
-    /// Falls back to fan-out otherwise.
+    /// Normal edges are stored in the shard owning the source node.
+    /// Enrichment edges may be in different shards (tracked by
+    /// `enrichment_edge_to_shard` index). Both are queried and merged.
+    /// Falls back to fan-out if node not in any index.
     pub fn get_outgoing_edges(
         &self,
         node_id: u128,
         edge_types: Option<&[&str]>,
     ) -> Vec<EdgeRecordV2> {
-        // Fast path: edges live in the source node's shard
-        if let Some(&shard_id) = self.node_to_shard.get(&node_id) {
-            return self.shards[shard_id as usize]
-                .get_outgoing_edges(node_id, edge_types);
+        let source_shard = self.node_to_shard.get(&node_id).copied();
+        let enrichment_shards = self.enrichment_edge_to_shard.get(&node_id);
+
+        // If node is in neither index, fall back to fan-out
+        if source_shard.is_none() && enrichment_shards.is_none() {
+            let mut results = Vec::new();
+            for shard in &self.shards {
+                results.extend(shard.get_outgoing_edges(node_id, edge_types));
+            }
+            return results;
         }
 
-        // Slow path: fan-out
+        // Collect unique shard IDs to query
+        let mut shard_ids: HashSet<u16> = HashSet::new();
+        if let Some(sid) = source_shard {
+            shard_ids.insert(sid);
+        }
+        if let Some(enrichment) = enrichment_shards {
+            shard_ids.extend(enrichment);
+        }
+
         let mut results = Vec::new();
-        for shard in &self.shards {
-            results.extend(shard.get_outgoing_edges(node_id, edge_types));
+        for sid in shard_ids {
+            results.extend(
+                self.shards[sid as usize].get_outgoing_edges(node_id, edge_types),
+            );
         }
         results
     }
@@ -576,6 +674,39 @@ impl MultiShardStore {
         }
         keys
     }
+
+    /// Like `find_edge_keys_by_src_ids` but excludes enrichment edges
+    /// (edges with `__file_context` in metadata).
+    ///
+    /// Used during normal file re-analysis to avoid tombstoning
+    /// enrichment edges that belong to their enrichment file context.
+    pub fn find_non_enrichment_edge_keys_by_src_ids(
+        &self,
+        src_ids: &HashSet<u128>,
+    ) -> Vec<(u128, u128, String)> {
+        let mut keys = Vec::new();
+        for shard in &self.shards {
+            keys.extend(shard.find_non_enrichment_edge_keys_by_src_ids(src_ids));
+        }
+        keys
+    }
+
+    /// Find edge keys (src, dst, edge_type) where edge metadata contains
+    /// the given `__file_context`, across all shards.
+    ///
+    /// Fan-out to all shards, concatenate results.
+    /// Must check ALL shards because edges might have been previously
+    /// added to the wrong shard (before enrichment routing was added).
+    pub fn find_edge_keys_by_file_context(
+        &self,
+        file_context: &str,
+    ) -> Vec<(u128, u128, String)> {
+        let mut keys = Vec::new();
+        for shard in &self.shards {
+            keys.extend(shard.find_edge_keys_by_file_context(file_context));
+        }
+        keys
+    }
 }
 
 // ── Batch Commit ───────────────────────────────────────────────────
@@ -608,7 +739,21 @@ impl MultiShardStore {
         manifest_store: &mut ManifestStore,
     ) -> Result<CommitDelta> {
         // ── Phase 1: Snapshot old state for delta ──
+        // Separate enrichment file contexts from normal files.
+        // Enrichment file contexts start with "__enrichment__/".
+        let mut normal_files: Vec<&String> = Vec::new();
+        let mut enrichment_contexts: Vec<&String> = Vec::new();
+        for file in changed_files {
+            if file.starts_with("__enrichment__/") {
+                enrichment_contexts.push(file);
+            } else {
+                normal_files.push(file);
+            }
+        }
+
         let mut old_nodes_by_id: HashMap<u128, NodeRecordV2> = HashMap::new();
+        // Snapshot nodes for ALL changed files (including enrichment contexts,
+        // which may have nodes in backward-compatible mode).
         for file in changed_files {
             for node in self.find_nodes(None, Some(file)) {
                 old_nodes_by_id.insert(node.id, node);
@@ -617,12 +762,40 @@ impl MultiShardStore {
         let old_node_ids: HashSet<u128> = old_nodes_by_id.keys().copied().collect();
 
         // ── Phase 2: Compute tombstones ──
-        // 2a. Node tombstones = all old nodes for changed files
+        // 2a. Node tombstones = all old nodes for ALL changed files
         let tombstone_node_ids: HashSet<u128> = old_node_ids.clone();
 
-        // 2b. Edge tombstones = edges with src in tombstoned nodes (bloom-assisted)
-        let tombstone_edge_keys: Vec<(u128, u128, String)> =
-            self.find_edge_keys_by_src_ids(&tombstone_node_ids);
+        // 2b. Edge tombstones: depends on file type.
+        //
+        // For normal files: tombstone non-enrichment edges from those nodes.
+        //   Enrichment edges from these nodes are NOT tombstoned — they
+        //   belong to their enrichment file context.
+        //
+        // For enrichment file contexts:
+        //   - Tombstone ALL edges from enrichment-file nodes (if any, backward compat)
+        //   - PLUS edges matching the __file_context metadata (surgical tombstoning)
+        let normal_file_node_ids: HashSet<u128> = old_nodes_by_id
+            .iter()
+            .filter(|(_, n)| !n.file.starts_with("__enrichment__/"))
+            .map(|(id, _)| *id)
+            .collect();
+        let enrichment_file_node_ids: HashSet<u128> = old_nodes_by_id
+            .iter()
+            .filter(|(_, n)| n.file.starts_with("__enrichment__/"))
+            .map(|(id, _)| *id)
+            .collect();
+
+        let mut tombstone_edge_keys: Vec<(u128, u128, String)> =
+            self.find_non_enrichment_edge_keys_by_src_ids(&normal_file_node_ids);
+
+        if !enrichment_file_node_ids.is_empty() {
+            tombstone_edge_keys.extend(
+                self.find_edge_keys_by_src_ids(&enrichment_file_node_ids),
+            );
+        }
+        for ctx in &enrichment_contexts {
+            tombstone_edge_keys.extend(self.find_edge_keys_by_file_context(ctx));
+        }
 
         // ── Phase 3: Collect changed types ──
         let mut changed_node_types: HashSet<String> = HashSet::new();
@@ -2629,5 +2802,484 @@ mod tests {
                 "global index should contain fn_{}_b", i
             );
         }
+    }
+
+    // -- RFD-15: Enrichment Virtual Shards Tests ----------------------------------
+
+    fn make_enrichment_edge(
+        src_semantic: &str,
+        dst_semantic: &str,
+        edge_type: &str,
+        file_context: &str,
+    ) -> EdgeRecordV2 {
+        use crate::storage_v2::types::enrichment_edge_metadata;
+        let src = node_id(src_semantic);
+        let dst = node_id(dst_semantic);
+        EdgeRecordV2 {
+            src,
+            dst,
+            edge_type: edge_type.to_string(),
+            metadata: enrichment_edge_metadata(file_context, ""),
+        }
+    }
+
+    #[test]
+    fn test_add_edges_enrichment_routes_to_enrichment_shard() {
+        use crate::storage_v2::types::enrichment_file_context;
+
+        let mut store = MultiShardStore::ephemeral(4);
+
+        // Create a node in file "src/a.js"
+        let n1 = make_node("src/a/fn1", "FUNCTION", "fn1", "src/a/file.js");
+        let n2 = make_node("src/b/fn2", "FUNCTION", "fn2", "src/b/file.js");
+        store.add_nodes(vec![n1.clone(), n2.clone()]);
+
+        let file_context = enrichment_file_context("data-flow", "src/a/file.js");
+
+        // Create an enrichment edge with file_context
+        let enr_edge = make_enrichment_edge(
+            "src/a/fn1",
+            "src/b/fn2",
+            "FLOWS_INTO",
+            &file_context,
+        );
+        store.add_edges(vec![enr_edge.clone()]).unwrap();
+
+        // The enrichment edge should be routed by file_context, not by
+        // source node's shard. Verify it's queryable.
+        let outgoing = store.get_outgoing_edges(n1.id, None);
+        assert!(
+            outgoing.iter().any(|e| e.edge_type == "FLOWS_INTO"),
+            "Enrichment edge should be queryable via get_outgoing_edges"
+        );
+
+        // The enrichment_edge_to_shard index should be populated
+        let enrichment_shard_id = store.planner.compute_shard_id(&file_context);
+        let source_shard_id = *store.node_to_shard.get(&n1.id).unwrap();
+
+        // Verify the edge was routed to the enrichment shard (which may or
+        // may not differ from the source shard depending on hash distribution).
+        // What we CAN verify: the enrichment_edge_to_shard index has the entry.
+        let enrichment_shards = store.enrichment_edge_to_shard.get(&n1.id).unwrap();
+        assert!(
+            enrichment_shards.contains(&enrichment_shard_id),
+            "enrichment_edge_to_shard should map src to enrichment shard ({}), got {:?}",
+            enrichment_shard_id,
+            enrichment_shards,
+        );
+
+        // If enrichment shard differs from source shard, the edge should
+        // NOT be in the source shard's write buffer.
+        if enrichment_shard_id != source_shard_id {
+            let source_only = store.shards[source_shard_id as usize]
+                .get_outgoing_edges(n1.id, Some(&["FLOWS_INTO"]));
+            assert!(
+                source_only.is_empty(),
+                "Enrichment edge should NOT be in source node's shard"
+            );
+        }
+    }
+
+    #[test]
+    fn test_add_edges_normal_still_routes_to_source_shard() {
+        let mut store = MultiShardStore::ephemeral(4);
+
+        let n1 = make_node("src/a/fn1", "FUNCTION", "fn1", "src/a/file.js");
+        let n2 = make_node("src/b/fn2", "FUNCTION", "fn2", "src/b/file.js");
+        store.add_nodes(vec![n1.clone(), n2.clone()]);
+
+        // Normal edge (no file_context metadata)
+        let normal_edge = make_edge("src/a/fn1", "src/b/fn2", "CALLS");
+        store.add_edges(vec![normal_edge.clone()]).unwrap();
+
+        // Verify the edge is in the source node's shard
+        let source_shard_id = *store.node_to_shard.get(&n1.id).unwrap();
+        let from_source = store.shards[source_shard_id as usize]
+            .get_outgoing_edges(n1.id, Some(&["CALLS"]));
+        assert_eq!(from_source.len(), 1);
+        assert_eq!(from_source[0].edge_type, "CALLS");
+
+        // enrichment_edge_to_shard should NOT have an entry for this node
+        // (no enrichment edges added)
+        assert!(
+            store.enrichment_edge_to_shard.get(&n1.id).is_none(),
+            "Normal edges should not create enrichment_edge_to_shard entries"
+        );
+    }
+
+    #[test]
+    fn test_get_outgoing_edges_includes_enrichment() {
+        use crate::storage_v2::types::enrichment_file_context;
+
+        let mut store = MultiShardStore::ephemeral(4);
+
+        let n_a = make_node("src/a/fn_a", "FUNCTION", "fn_a", "src/a/file.js");
+        let n_b = make_node("src/b/fn_b", "FUNCTION", "fn_b", "src/b/file.js");
+        store.add_nodes(vec![n_a.clone(), n_b.clone()]);
+
+        // Add normal edge A->B
+        let normal_edge = make_edge("src/a/fn_a", "src/b/fn_b", "CALLS");
+        store.add_edges(vec![normal_edge]).unwrap();
+
+        // Add enrichment edge A->B with different edge_type and file_context
+        let file_context = enrichment_file_context("data-flow", "src/a/file.js");
+        let enr_edge = make_enrichment_edge(
+            "src/a/fn_a",
+            "src/b/fn_b",
+            "FLOWS_INTO",
+            &file_context,
+        );
+        store.add_edges(vec![enr_edge]).unwrap();
+
+        // get_outgoing_edges(A) should return BOTH edges
+        let outgoing = store.get_outgoing_edges(n_a.id, None);
+        assert_eq!(
+            outgoing.len(),
+            2,
+            "Should return both normal and enrichment edges, got {}",
+            outgoing.len()
+        );
+
+        let edge_types: HashSet<&str> = outgoing.iter().map(|e| e.edge_type.as_str()).collect();
+        assert!(edge_types.contains("CALLS"), "Should include normal CALLS edge");
+        assert!(edge_types.contains("FLOWS_INTO"), "Should include enrichment FLOWS_INTO edge");
+    }
+
+    #[test]
+    fn test_get_outgoing_edges_enrichment_only() {
+        use crate::storage_v2::types::enrichment_file_context;
+
+        let mut store = MultiShardStore::ephemeral(4);
+
+        let n_a = make_node("src/a/fn_a", "FUNCTION", "fn_a", "src/a/file.js");
+        let n_b = make_node("src/b/fn_b", "FUNCTION", "fn_b", "src/b/file.js");
+        store.add_nodes(vec![n_a.clone(), n_b.clone()]);
+
+        // Add ONLY enrichment edge (no normal outgoing edges from A)
+        let file_context = enrichment_file_context("data-flow", "src/a/file.js");
+        let enr_edge = make_enrichment_edge(
+            "src/a/fn_a",
+            "src/b/fn_b",
+            "FLOWS_INTO",
+            &file_context,
+        );
+        store.add_edges(vec![enr_edge]).unwrap();
+
+        // Should still find the enrichment edge via get_outgoing_edges
+        let outgoing = store.get_outgoing_edges(n_a.id, None);
+        assert_eq!(
+            outgoing.len(),
+            1,
+            "Should find enrichment-only edges via index"
+        );
+        assert_eq!(outgoing[0].edge_type, "FLOWS_INTO");
+    }
+
+    #[test]
+    fn test_commit_batch_enrichment_surgical_deletion() {
+        use crate::storage_v2::types::enrichment_file_context;
+
+        let mut store = MultiShardStore::ephemeral(4);
+        let mut manifest_store = ManifestStore::ephemeral();
+
+        // Step a: Commit nodes A, B to src/a.js
+        let a = make_node("src/a/fn_a", "FUNCTION", "fn_a", "src/a/file.js");
+        let b = make_node("src/a/fn_b", "FUNCTION", "fn_b", "src/a/file.js");
+        store.commit_batch(
+            vec![a.clone(), b.clone()],
+            vec![],
+            &["src/a/file.js".to_string()],
+            HashMap::new(),
+            &mut manifest_store,
+        ).unwrap();
+
+        // Step b: Commit enrichment edges A->B (FLOWS_INTO) with file_context
+        let file_context = enrichment_file_context("data-flow", "src/a/file.js");
+        let enr_edge_v1 = make_enrichment_edge(
+            "src/a/fn_a",
+            "src/a/fn_b",
+            "FLOWS_INTO",
+            &file_context,
+        );
+        store.commit_batch(
+            vec![],
+            vec![enr_edge_v1.clone()],
+            &[file_context.clone()],
+            HashMap::new(),
+            &mut manifest_store,
+        ).unwrap();
+
+        // Verify enrichment edge exists
+        let outgoing = store.get_outgoing_edges(a.id, Some(&["FLOWS_INTO"]));
+        assert_eq!(outgoing.len(), 1, "Enrichment edge should exist after first commit");
+
+        // Step c: Commit NEW enrichment edges A->B (FLOWS_INTO_V2) with same file_context
+        let enr_edge_v2 = make_enrichment_edge(
+            "src/a/fn_a",
+            "src/a/fn_b",
+            "FLOWS_INTO_V2",
+            &file_context,
+        );
+        store.commit_batch(
+            vec![],
+            vec![enr_edge_v2.clone()],
+            &[file_context.clone()],
+            HashMap::new(),
+            &mut manifest_store,
+        ).unwrap();
+
+        // Step d: Verify
+        // Old FLOWS_INTO edge should be tombstoned
+        let old_edges = store.get_outgoing_edges(a.id, Some(&["FLOWS_INTO"]));
+        assert_eq!(
+            old_edges.len(),
+            0,
+            "Old FLOWS_INTO edge should be tombstoned"
+        );
+
+        // New FLOWS_INTO_V2 edge should exist
+        let new_edges = store.get_outgoing_edges(a.id, Some(&["FLOWS_INTO_V2"]));
+        assert_eq!(
+            new_edges.len(),
+            1,
+            "New FLOWS_INTO_V2 edge should exist"
+        );
+
+        // Nodes A and B should still exist (not tombstoned)
+        assert!(store.node_exists(a.id), "Node A should still exist");
+        assert!(store.node_exists(b.id), "Node B should still exist");
+    }
+
+    #[test]
+    fn test_commit_batch_enrichment_preserves_other_enrichers() {
+        use crate::storage_v2::types::enrichment_file_context;
+
+        let mut store = MultiShardStore::ephemeral(4);
+        let mut manifest_store = ManifestStore::ephemeral();
+
+        // Step a: Commit nodes A, B to src/a.js
+        let a = make_node("src/a/fn_a", "FUNCTION", "fn_a", "src/a/file.js");
+        let b = make_node("src/a/fn_b", "FUNCTION", "fn_b", "src/a/file.js");
+        store.commit_batch(
+            vec![a.clone(), b.clone()],
+            vec![],
+            &["src/a/file.js".to_string()],
+            HashMap::new(),
+            &mut manifest_store,
+        ).unwrap();
+
+        // Step b: Commit enrichment edges from enricher1
+        let ctx1 = enrichment_file_context("enricher1", "src/a/file.js");
+        let enr1 = make_enrichment_edge(
+            "src/a/fn_a",
+            "src/a/fn_b",
+            "ENRICHER1_EDGE",
+            &ctx1,
+        );
+        store.commit_batch(
+            vec![],
+            vec![enr1.clone()],
+            &[ctx1.clone()],
+            HashMap::new(),
+            &mut manifest_store,
+        ).unwrap();
+
+        // Step c: Commit enrichment edges from enricher2
+        let ctx2 = enrichment_file_context("enricher2", "src/a/file.js");
+        let enr2 = make_enrichment_edge(
+            "src/a/fn_a",
+            "src/a/fn_b",
+            "ENRICHER2_EDGE",
+            &ctx2,
+        );
+        store.commit_batch(
+            vec![],
+            vec![enr2.clone()],
+            &[ctx2.clone()],
+            HashMap::new(),
+            &mut manifest_store,
+        ).unwrap();
+
+        // Both enricher edges should exist
+        let all_outgoing = store.get_outgoing_edges(a.id, None);
+        let edge_types: HashSet<&str> = all_outgoing.iter().map(|e| e.edge_type.as_str()).collect();
+        assert!(edge_types.contains("ENRICHER1_EDGE"), "enricher1 edge should exist");
+        assert!(edge_types.contains("ENRICHER2_EDGE"), "enricher2 edge should exist");
+
+        // Step d: Re-commit enricher1 with new edges
+        let enr1_v2 = make_enrichment_edge(
+            "src/a/fn_a",
+            "src/a/fn_b",
+            "ENRICHER1_EDGE_V2",
+            &ctx1,
+        );
+        store.commit_batch(
+            vec![],
+            vec![enr1_v2.clone()],
+            &[ctx1.clone()],
+            HashMap::new(),
+            &mut manifest_store,
+        ).unwrap();
+
+        // enricher1's old edge should be gone, new edge should exist
+        let outgoing = store.get_outgoing_edges(a.id, None);
+        let edge_types: HashSet<&str> = outgoing.iter().map(|e| e.edge_type.as_str()).collect();
+        assert!(
+            !edge_types.contains("ENRICHER1_EDGE"),
+            "enricher1 old edge should be tombstoned"
+        );
+        assert!(
+            edge_types.contains("ENRICHER1_EDGE_V2"),
+            "enricher1 new edge should exist"
+        );
+
+        // enricher2's edge should be PRESERVED
+        assert!(
+            edge_types.contains("ENRICHER2_EDGE"),
+            "enricher2 edge should be preserved"
+        );
+    }
+
+    #[test]
+    fn test_commit_batch_enrichment_preserves_normal_edges() {
+        use crate::storage_v2::types::enrichment_file_context;
+
+        let mut store = MultiShardStore::ephemeral(4);
+        let mut manifest_store = ManifestStore::ephemeral();
+
+        // Step a: Commit nodes A, B with normal edge (CALLS)
+        let a = make_node("src/a/fn_a", "FUNCTION", "fn_a", "src/a/file.js");
+        let b = make_node("src/a/fn_b", "FUNCTION", "fn_b", "src/a/file.js");
+        let normal_edge = make_edge("src/a/fn_a", "src/a/fn_b", "CALLS");
+        store.commit_batch(
+            vec![a.clone(), b.clone()],
+            vec![normal_edge.clone()],
+            &["src/a/file.js".to_string()],
+            HashMap::new(),
+            &mut manifest_store,
+        ).unwrap();
+
+        // Step b: Commit enrichment edges with file_context
+        let file_context = enrichment_file_context("data-flow", "src/a/file.js");
+        let enr_edge = make_enrichment_edge(
+            "src/a/fn_a",
+            "src/a/fn_b",
+            "FLOWS_INTO",
+            &file_context,
+        );
+        store.commit_batch(
+            vec![],
+            vec![enr_edge.clone()],
+            &[file_context.clone()],
+            HashMap::new(),
+            &mut manifest_store,
+        ).unwrap();
+
+        // Both edges exist
+        let outgoing = store.get_outgoing_edges(a.id, None);
+        let edge_types: HashSet<&str> = outgoing.iter().map(|e| e.edge_type.as_str()).collect();
+        assert!(edge_types.contains("CALLS"), "Normal edge should exist");
+        assert!(edge_types.contains("FLOWS_INTO"), "Enrichment edge should exist");
+
+        // Step c: Re-commit enrichment with new edges
+        let enr_edge_v2 = make_enrichment_edge(
+            "src/a/fn_a",
+            "src/a/fn_b",
+            "FLOWS_INTO_V2",
+            &file_context,
+        );
+        store.commit_batch(
+            vec![],
+            vec![enr_edge_v2.clone()],
+            &[file_context.clone()],
+            HashMap::new(),
+            &mut manifest_store,
+        ).unwrap();
+
+        // Normal CALLS edge should still exist
+        let outgoing = store.get_outgoing_edges(a.id, None);
+        let edge_types: HashSet<&str> = outgoing.iter().map(|e| e.edge_type.as_str()).collect();
+        assert!(
+            edge_types.contains("CALLS"),
+            "Normal CALLS edge should be preserved after enrichment re-commit"
+        );
+        assert!(
+            edge_types.contains("FLOWS_INTO_V2"),
+            "New enrichment edge should exist"
+        );
+        assert!(
+            !edge_types.contains("FLOWS_INTO"),
+            "Old enrichment edge should be tombstoned"
+        );
+    }
+
+    #[test]
+    fn test_commit_batch_normal_file_preserves_enrichment_edges() {
+        use crate::storage_v2::types::enrichment_file_context;
+
+        let mut store = MultiShardStore::ephemeral(4);
+        let mut manifest_store = ManifestStore::ephemeral();
+
+        // Step a: Commit nodes A, B to src/a.js with normal edge A->B
+        let a = make_node("src/a/fn_a", "FUNCTION", "fn_a", "src/a/file.js");
+        let b = make_node("src/a/fn_b", "FUNCTION", "fn_b", "src/a/file.js");
+        let normal_edge = make_edge("src/a/fn_a", "src/a/fn_b", "CALLS");
+        store.commit_batch(
+            vec![a.clone(), b.clone()],
+            vec![normal_edge.clone()],
+            &["src/a/file.js".to_string()],
+            HashMap::new(),
+            &mut manifest_store,
+        ).unwrap();
+
+        // Step b: Commit enrichment edges for src/a.js
+        let file_context = enrichment_file_context("data-flow", "src/a/file.js");
+        let enr_edge = make_enrichment_edge(
+            "src/a/fn_a",
+            "src/a/fn_b",
+            "FLOWS_INTO",
+            &file_context,
+        );
+        store.commit_batch(
+            vec![],
+            vec![enr_edge.clone()],
+            &[file_context.clone()],
+            HashMap::new(),
+            &mut manifest_store,
+        ).unwrap();
+
+        // Both edges exist
+        let outgoing = store.get_outgoing_edges(a.id, None);
+        assert_eq!(outgoing.len(), 2, "Both normal and enrichment edges should exist");
+
+        // Step c: Re-commit src/a.js (normal file) with same nodes and edge
+        let a_v2 = make_node("src/a/fn_a", "FUNCTION", "fn_a", "src/a/file.js");
+        let b_v2 = make_node("src/a/fn_b", "FUNCTION", "fn_b", "src/a/file.js");
+        let normal_edge_v2 = make_edge("src/a/fn_a", "src/a/fn_b", "CALLS");
+        store.commit_batch(
+            vec![a_v2.clone(), b_v2.clone()],
+            vec![normal_edge_v2.clone()],
+            &["src/a/file.js".to_string()],
+            HashMap::new(),
+            &mut manifest_store,
+        ).unwrap();
+
+        // Normal edge should be replaced (old tombstoned, new added)
+        let outgoing = store.get_outgoing_edges(a.id, None);
+        let edge_types: HashSet<&str> = outgoing.iter().map(|e| e.edge_type.as_str()).collect();
+        assert!(
+            edge_types.contains("CALLS"),
+            "Normal CALLS edge should exist after re-commit"
+        );
+
+        // Enrichment edge should be PRESERVED (belongs to enrichment file context)
+        assert!(
+            edge_types.contains("FLOWS_INTO"),
+            "Enrichment FLOWS_INTO edge should be preserved after normal file re-commit"
+        );
+
+        // Nodes should still exist
+        assert!(store.node_exists(a.id), "Node A should still exist");
+        assert!(store.node_exists(b.id), "Node B should still exist");
     }
 }

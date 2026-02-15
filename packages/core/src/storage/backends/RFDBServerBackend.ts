@@ -24,7 +24,7 @@ import { spawn, type ChildProcess } from 'child_process';
 import { join, dirname } from 'path';
 import { setTimeout as sleep } from 'timers/promises';
 
-import type { WireNode, WireEdge, FieldDeclaration, AttrQuery as RFDBAttrQuery } from '@grafema/types';
+import type { WireNode, WireEdge, FieldDeclaration, CommitDelta, AttrQuery as RFDBAttrQuery } from '@grafema/types';
 import type { NodeType, EdgeType } from '@grafema/types';
 import { findRfdbBinary } from '../../utils/findRfdbBinary.js';
 import type { BaseNodeRecord, EdgeRecord } from '@grafema/types';
@@ -733,6 +733,48 @@ export class RFDBServerBackend {
     return results.map(r => ({
       bindings: Object.entries(r.bindings).map(([name, value]) => ({ name, value }))
     }));
+  }
+
+  /**
+   * Execute unified Datalog query or program.
+   * Auto-detects whether input is rules or direct query.
+   */
+  async executeDatalog(source: string): Promise<Array<{ bindings: Array<{ name: string; value: string }> }>> {
+    if (!this.client) throw new Error('Not connected');
+    const results = await this.client.executeDatalog(source);
+    return results.map(r => ({
+      bindings: Object.entries(r.bindings).map(([name, value]) => ({ name, value }))
+    }));
+  }
+
+  // ===========================================================================
+  // Batch Operations (RFD-16: CommitBatch protocol)
+  // ===========================================================================
+
+  /**
+   * Begin a batch operation. While batching, addNodes/addEdges buffer locally.
+   * Call commitBatch() to send all buffered data atomically.
+   */
+  beginBatch(): void {
+    if (!this.client) throw new Error('Not connected to RFDB server');
+    this.client.beginBatch();
+  }
+
+  /**
+   * Commit the current batch to the server atomically.
+   * Returns a CommitDelta describing what changed.
+   */
+  async commitBatch(tags?: string[]): Promise<CommitDelta> {
+    if (!this.client) throw new Error('Not connected to RFDB server');
+    return this.client.commitBatch(tags);
+  }
+
+  /**
+   * Abort the current batch, discarding all buffered data.
+   */
+  abortBatch(): void {
+    if (!this.client) throw new Error('Not connected to RFDB server');
+    this.client.abortBatch();
   }
 
   // ===========================================================================

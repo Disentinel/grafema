@@ -18,9 +18,10 @@ import type { EdgeType } from '@grafema/types';
 
 describe('buildDependencyGraph', () => {
 
-  it('should return empty array for empty input', () => {
+  it('should return empty items and consumerIndex for empty input', () => {
     const result = buildDependencyGraph([]);
-    assert.deepStrictEqual(result, []);
+    assert.deepStrictEqual(result.items, []);
+    assert.strictEqual(result.consumerIndex.size, 0);
   });
 
   it('should return item with no deps when plugin has no consumes/produces', () => {
@@ -31,9 +32,10 @@ describe('buildDependencyGraph', () => {
         },
       },
     ]);
-    assert.deepStrictEqual(result, [
+    assert.deepStrictEqual(result.items, [
       { id: 'LonePlugin', dependencies: [] },
     ]);
+    assert.strictEqual(result.consumerIndex.size, 0);
   });
 
   it('should create dependency when A produces CALLS and B consumes CALLS', () => {
@@ -53,7 +55,7 @@ describe('buildDependencyGraph', () => {
     ]);
 
     // Consumer should depend on Producer
-    const consumerItem = result.find(item => item.id === 'Consumer');
+    const consumerItem = result.items.find(item => item.id === 'Consumer');
     assert.ok(consumerItem, 'Consumer should be in result');
     assert.ok(
       consumerItem.dependencies.includes('Producer'),
@@ -61,9 +63,14 @@ describe('buildDependencyGraph', () => {
     );
 
     // Producer should have no deps (from consumes/produces logic)
-    const producerItem = result.find(item => item.id === 'Producer');
+    const producerItem = result.items.find(item => item.id === 'Producer');
     assert.ok(producerItem, 'Producer should be in result');
     assert.deepStrictEqual(producerItem.dependencies, []);
+
+    // Consumer index should map CALLS -> Consumer
+    assert.ok(result.consumerIndex.has('CALLS'), 'consumerIndex should have CALLS key');
+    assert.ok(result.consumerIndex.get('CALLS')!.has('Consumer'),
+      'CALLS consumers should include Consumer');
   });
 
   it('should exclude self-reference when plugin both consumes and produces same edge type', () => {
@@ -77,7 +84,7 @@ describe('buildDependencyGraph', () => {
       },
     ]);
 
-    const item = result.find(r => r.id === 'SelfRef');
+    const item = result.items.find(r => r.id === 'SelfRef');
     assert.ok(item, 'SelfRef should be in result');
     // Must NOT have self-dependency
     assert.ok(
@@ -109,7 +116,7 @@ describe('buildDependencyGraph', () => {
       },
     ]);
 
-    const consumerItem = result.find(item => item.id === 'Consumer');
+    const consumerItem = result.items.find(item => item.id === 'Consumer');
     assert.ok(consumerItem, 'Consumer should be in result');
     assert.ok(
       consumerItem.dependencies.includes('ProducerA'),
@@ -138,7 +145,7 @@ describe('buildDependencyGraph', () => {
       },
     ]);
 
-    const consumerItem = result.find(item => item.id === 'Consumer');
+    const consumerItem = result.items.find(item => item.id === 'Consumer');
     assert.ok(consumerItem, 'Consumer should be in result');
     // Should have both the inferred dep (ProducerA) and explicit dep (External)
     assert.ok(
@@ -161,7 +168,7 @@ describe('buildDependencyGraph', () => {
       },
     ]);
 
-    const item = result.find(r => r.id === 'V1Plugin');
+    const item = result.items.find(r => r.id === 'V1Plugin');
     assert.ok(item, 'V1Plugin should be in result');
     assert.deepStrictEqual(
       item.dependencies.sort(),
@@ -193,7 +200,7 @@ describe('buildDependencyGraph', () => {
       },
     ]);
 
-    const order = toposort(graph);
+    const order = toposort(graph.items);
 
     assert.ok(
       order.indexOf('Linker') < order.indexOf('Resolver'),
@@ -323,7 +330,7 @@ describe('buildDependencyGraph', () => {
       },
     ]);
 
-    const order = toposort(graph);
+    const order = toposort(graph.items);
 
     // Verify the key ordering constraints:
     assert.ok(
@@ -470,12 +477,12 @@ describe('Enricher metadata validation', () => {
 
     // toposort throws CycleError if cycles exist
     assert.doesNotThrow(
-      () => toposort(graph),
+      () => toposort(graph.items),
       'Enricher dependency graph should be acyclic'
     );
 
     // Also verify we get all plugins in the result
-    const order = toposort(graph);
+    const order = toposort(graph.items);
     assert.strictEqual(
       order.length,
       plugins.length,
