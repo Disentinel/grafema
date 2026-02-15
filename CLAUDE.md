@@ -109,7 +109,7 @@ If graph doesn't have the answer → fallback to direct file reads. **Note the g
 - Graph useful for: finding call sites, checking impact, understanding dependencies
 - But writing code requires reading the actual files
 
-**Auto-Review — use graph for verification:**
+**4-Review — use graph for verification:**
 - `get_stats` to check graph health after changes
 - `check_guarantees` if guarantees are defined
 
@@ -152,9 +152,10 @@ Every task metrics report (`0XX-metrics.md`) MUST include a **Grafema Dogfooding
 
 ## Process
 
-**Workflow version: v2.0** (2026-02-15)
+**Workflow version: v2.1** (2026-02-16)
 
 Changelog:
+- **v2.1** — RFD-4 post-mortem fix. Added Dijkstra (plan verification — catches edge cases before they cascade into spec/implementation). Split Combined Auto-Review into 4 independent reviewers: Steve (vision), Вадим auto (completeness), Uncle Bob (code quality), Dijkstra (correctness). Reviews run in 2 batches of 2 parallel.
 - **v2.0** — Streamlined pipeline: removed Kevlin/Donald from standard flow, Joel only for Full MLA, combined Steve+Вадим auto into single Auto-Review, strengthened Uncle Bob (file-level checks), added model assignment table, parallel Kent ∥ Rob, max 3 subagents, per-task metrics tracking.
 - **v1.0** — Original MLA with all personas sequential.
 
@@ -168,16 +169,22 @@ All implementation happens through subagents. Top-level agent only coordinates.
 - **Don Melton** (Tech Lead) — "I don't care if it works, is it RIGHT?" Analyzes codebase, creates high-level plan, ensures alignment with vision. **MUST use WebSearch** to find existing approaches, prior art, and tradeoffs before proposing solutions.
 - **Joel Spolsky** (Implementation Planner) — **Full MLA only.** Expands Don's plan into detailed technical specs with specific steps. Must include Big-O complexity analysis for algorithms. Skip for Single Agent and Mini-MLA.
 
+**Plan Verification:**
+- **Edsger Dijkstra** (Plan Verifier) — "Testing shows the presence, not the absence of bugs." Mandatory verification of the final plan (Don's for Mini-MLA, Joel's for Full MLA). For every filter, condition, or classification: enumerates ALL input categories, not just the happy path. Catches edge cases BEFORE they cascade into implementation. Runs in Mini-MLA and Full MLA.
+
 **Code Quality:**
-- **Robert Martin** (Uncle Bob) — Clean Code guardian. Reviews code BEFORE implementation at **file and method level**. Hard limits: file > 300 lines = MUST split, method > 50 lines = candidate for split. Runs in ALL configurations except Single Agent. "One level better" — not perfection, but incremental improvement.
+- **Robert Martin** (Uncle Bob) — Clean Code guardian. Reviews code BEFORE implementation at **file and method level** (STEP 2.5) AND AFTER implementation (review phase). Hard limits: file > 300 lines = MUST split, method > 50 lines = candidate for split. Runs in ALL configurations except Single Agent.
 
 **Implementation:**
 - **Kent Beck** (Test Engineer) — TDD discipline, tests communicate intent, no mocks in production paths. Can run **parallel** with Rob when test structure is clear from plan.
 - **Rob Pike** (Implementation Engineer) — Simplicity over cleverness, match existing patterns, pragmatic solutions
 
-**Review:**
-- **Combined Auto-Review** (auto) — Single subagent combining vision alignment + practical quality. Checks both architectural gaps AND edge cases, regressions, scope creep. Default stance: critical. If REJECT → back to implementation. If APPROVE → present to user.
-- **Вадим Решетников** (Final confirmation, human) — Called only AFTER auto-review approves. User sees review summary and confirms or overrides.
+**Review (4 independent perspectives — 2 batches of 2 parallel subagents):**
+- **Steve Jobs** (Vision) — Does this align with project vision? Did we cut corners? Complexity & architecture checklist. Would shipping this embarrass us?
+- **Вадим auto** (Completeness) — Does the code do what the task requires? Edge cases, regressions, scope creep. Tests meaningful? Commits atomic?
+- **Robert Martin** (Code Quality) — Structure, naming, duplication, readability. File/method size limits.
+- **Edsger Dijkstra** (Correctness) — For every function: enumerate ALL possible inputs. For every condition: what passes that shouldn't? What's blocked that should pass?
+- **Вадим Решетников** (Final confirmation, human) — Called only AFTER all 4 reviewers approve. User sees combined review summary and confirms or overrides.
 
 **Project Management:**
 - **Andy Grove** (PM / Tech Debt) — Manages Linear, prioritizes backlog, tracks tech debt. Ruthless prioritization: what moves the needle NOW?
@@ -202,10 +209,14 @@ Use the cheapest model that can handle the task. **Max 3 parallel subagents** (r
 | Don (exploration phase) | **Sonnet** | Codebase search needs reasoning for accurate results |
 | Don (planning/decisions) | **Sonnet** | Architectural decisions need reasoning |
 | Joel (Full MLA only) | **Sonnet** | Technical specs need reasoning |
-| Uncle Bob (review) | **Sonnet** | Code quality judgment needs nuance |
+| Dijkstra (plan verification) | **Sonnet** | Edge case enumeration needs careful reasoning |
+| Uncle Bob (STEP 2.5 review) | **Sonnet** | Code quality judgment needs nuance |
 | Kent (tests) | **Opus** | Writing correct tests needs top reasoning |
 | Rob (implementation) | **Opus** | Writing correct code needs top reasoning |
-| Combined Auto-Review | **Sonnet** | Checklist-based review, well-structured |
+| Steve (vision review) | **Sonnet** | Architecture judgment |
+| Вадим auto (completeness review) | **Sonnet** | Practical quality check |
+| Uncle Bob (code quality review) | **Sonnet** | Structure/naming check |
+| Dijkstra (correctness review) | **Sonnet** | Edge case verification |
 | Andy Grove (Linear ops) | **Haiku** | Structured CRUD, template-based |
 | Save user request | **Haiku** | Formatting and file write |
 | Report formatting | **Haiku** | Template-based markdown |
@@ -227,20 +238,22 @@ START
      └─ NO
          ├─ Does it change core architecture? (affects multiple systems, long-term impact)
          │   → YES → Full MLA (all personas)
-         └─ NO → Mini-MLA (Don, Uncle Bob, Kent ∥ Rob, Auto-Review, Vadim)
+         └─ NO → Mini-MLA (Don, Dijkstra, Uncle Bob, Kent ∥ Rob, 4-Review, Vadim)
 ```
 
 **Configurations:**
 
 | Config | Team | When to Use |
 |--------|------|-------------|
-| **Single Agent** | Rob (impl + tests) → Auto-Review → Vadim | Trivial changes, hotfixes, single file <50 LOC |
-| **Mini-MLA** | Don → Uncle Bob → Kent ∥ Rob → Auto-Review → Vadim | Medium complexity, local scope |
-| **Full MLA** | Don → Joel → Uncle Bob → Kent ∥ Rob → Auto-Review → Vadim | Architecture, complex debugging, ambiguous requirements |
+| **Single Agent** | Rob (impl + tests) → 4-Review → Vadim | Trivial changes, hotfixes, single file <50 LOC |
+| **Mini-MLA** | Don → Dijkstra → Uncle Bob → Kent ∥ Rob → 4-Review → Vadim | Medium complexity, local scope |
+| **Full MLA** | Don → Joel → Dijkstra → Uncle Bob → Kent ∥ Rob → 4-Review → Vadim | Architecture, complex debugging, ambiguous requirements |
 
 `Kent ∥ Rob` = parallel execution when test structure is clear from plan.
+`4-Review` = Steve ∥ Вадим auto, then Dijkstra ∥ Uncle Bob (2 batches of 2 parallel subagents).
 
-Uncle Bob runs in **all configurations except Single Agent**. 6k-line files must never happen again.
+Dijkstra runs in **all configurations except Single Agent** — verifies the final plan before implementation.
+Uncle Bob runs in **all configurations except Single Agent** — PREPARE (before) + review (after).
 
 **Early Exit Rule:**
 - If Don's plan shows <50 LOC single-file change with no architectural decisions → downgrade to Single Agent
@@ -294,9 +307,9 @@ _tasks/
 **STEP 2 — PLAN:**
 1. Don explores codebase (Sonnet subagent), then plans (Sonnet subagent) → `0XX-don-plan.md`
 2. **Full MLA only:** Joel expands into detailed tech plan `0XX-joel-tech-plan.md`
-3. **Auto-Review** (single Sonnet subagent, combined vision + practical check) — if REJECT → back to step 1
-4. **If approved → present to user** for manual confirmation
-5. Iterate until all approve. If user rejects → back to step 1
+3. **Dijkstra verifies the final plan** (Don's for Mini-MLA, Joel's for Full MLA) → `0XX-dijkstra-verification.md` — if REJECT → back to planner with specific gaps
+4. **If Dijkstra approved → present to user** for manual confirmation
+5. Iterate until Dijkstra AND user approve. If user rejects → back to step 1
 
 **STEP 2.5 — PREPARE (Refactor-First):**
 
@@ -328,10 +341,13 @@ Before implementation, improve the code we're about to touch. This is "Boy Scout
 
 **STEP 3 — EXECUTE:**
 1. Kent writes tests ∥ Rob implements (parallel when possible), create reports
-2. Don reviews results
-3. **Auto-Review** (single Sonnet subagent) — if REJECT → back to step 2
-4. **If approved → present to user** for manual confirmation
-5. Loop until Don, auto-review, AND user ALL agree task is FULLY DONE
+2. **4-Review** (2 batches of 2 parallel subagents):
+   - Batch 1: Вадим auto (completeness) ∥ Steve (vision)
+   - Batch 2: Dijkstra (correctness) ∥ Uncle Bob (code quality)
+   - ANY reviewer REJECT → back to implementation, fix issues, re-run ALL 4 reviews
+   - ALL 4 approve → present combined summary to user
+3. **Вадим (human)** confirms or rejects with feedback
+4. Loop until all 4 reviewers AND user ALL agree task is FULLY DONE
 
 **STEP 4 — FINALIZE:**
 - Write **task metrics report** (see template below) → `0XX-metrics.md`
@@ -340,7 +356,7 @@ Before implementation, improve the code we're about to touch. This is "Boy Scout
 - Check backlog, prioritize, offer next task
 - **IMPORTANT:** Task reports (`_tasks/REG-XXX/`) must be committed to main when merging the task branch. Don't forget to copy them from worker worktrees!
 
-**IMPORTANT:** Don reviews results after execution, not after every individual agent.
+**IMPORTANT:** 4-Review runs after ALL implementation is complete, not after every individual agent.
 
 ### Task Metrics (REQUIRED for every task)
 
@@ -382,7 +398,7 @@ Each `Task` tool call returns `total_tokens`, `tool_uses`, `duration_ms` in its 
 | Est. subagent cost | $X.XX |
 | Top-level overhead | ~20-30% (not tracked) |
 | **Est. total cost** | **$X.XX** |
-| Auto-review cycles | N (how many REJECT→retry) |
+| 4-Review cycles | N (how many REJECT→retry across all 4 reviewers) |
 
 ### Grafema Dogfooding
 
@@ -406,7 +422,7 @@ Each `Task` tool call returns `total_tokens`, `tool_uses`, `duration_ms` in its 
 - Metrics are NON-OPTIONAL. Every task gets a metrics report.
 - If a subagent doesn't return usage data, note "N/A" and estimate.
 - Wall clock = time from user request to user approval (not including PR/CI).
-- Auto-review cycles count: 1 = passed first time, 2+ = had rejections.
+- 4-Review cycles count: 1 = all 4 passed first time, 2+ = had rejections.
 
 ### When Stuck
 
@@ -441,7 +457,9 @@ Each `Task` tool call returns `total_tokens`, `tool_uses`, `duration_ms` in its 
 - No mocks in production code paths
 - Find existing test patterns and match them
 
-### For Robert Martin (Uncle Bob) — Code Quality
+### For Robert Martin (Uncle Bob) — PREPARE Phase (STEP 2.5)
+
+**This section covers the pre-implementation review. For post-implementation code quality review, see the "For Robert Martin (Uncle Bob) — Code Quality (PREPARE + Review)" section below.**
 
 Reviews at TWO levels: **file-level** (structural) and **method-level** (local).
 
@@ -460,7 +478,7 @@ Reviews at TWO levels: **file-level** (structural) and **method-level** (local).
 
 **Output format:**
 ```markdown
-## Uncle Bob Review: [file]
+## Uncle Bob PREPARE Review: [file]
 
 **File size:** [N lines] — [OK / MUST SPLIT / CRITICAL]
 **Methods to modify:** [list with line counts]
@@ -490,13 +508,10 @@ Reviews at TWO levels: **file-level** (structural) and **method-level** (local).
 - Clean, correct solution that doesn't create technical debt
 - If tests fail, fix implementation, not tests (unless tests are wrong)
 
-### For Combined Auto-Review (Single Subagent — Sonnet)
+### For Steve Jobs (Vision Review)
 
-**Replaces separate Steve Jobs + Вадим auto-review + Kevlin Henney.** One subagent, one round-trip.
+**Focus: ONE thing only — vision alignment and architecture.**
 
-**Runs as subagent. Default stance: critical but fair.**
-
-**Part 1 — Vision & Architecture (Steve's lens):**
 - Does this align with project vision? ("AI should query the graph, not read code")
 - Did we cut corners instead of doing it right?
 - Are there fundamental architectural gaps?
@@ -525,43 +540,167 @@ Before approving ANY plan involving data flow, enrichment, or graph traversal:
 
 4. **Grafema doesn't brute-force**: If solution scans all nodes looking for patterns, it's WRONG.
 
-**Part 2 — Practical Quality (Вадим's lens):**
-- Does the code actually do what the task requires?
-- Are there edge cases, regressions, or broken assumptions?
-- Is the change minimal and focused — no scope creep?
-- Are tests meaningful (not just "it doesn't crash")?
-
-**Part 3 — Code Quality (Kevlin's lens):**
-- Readability and clarity
-- Test quality and intent communication
-- Naming, structure, duplication
-- Error handling
-
-**Checklist:**
-1. **Correctness**: Do tests cover happy path AND failure modes?
-2. **Minimality**: Every changed line serves the task. Flag extras.
-3. **Consistency**: Code matches existing patterns?
-4. **Commit quality**: Atomic commits, clear messages?
-5. **No loose ends**: No TODOs, no "will fix later", no commented-out code.
-
 **Output format:**
 ```markdown
-## Auto-Review
+## Steve Jobs — Vision Review
 
 **Verdict:** APPROVE / REJECT
 
-**Vision & Architecture:** [OK / issues]
-**Practical Quality:** [OK / issues]
-**Code Quality:** [OK / issues]
+**Vision alignment:** [OK / issues]
+**Architecture:** [OK / issues]
 
 If REJECT:
-- [Specific issue 1]
-- [Specific issue 2]
+- [Specific issue]
 ```
 
-**Flow:**
-- REJECT → back to implementation, no user involvement
-- APPROVE → present summary to user for manual confirmation
+### For Вадим auto (Completeness Review)
+
+**Focus: ONE thing only — does the code deliver what the task asked for?**
+
+- Does the code actually do what the task requires? Check against original request.
+- Are there edge cases or regressions?
+- Is the change minimal and focused — no scope creep?
+- Are tests meaningful (not just "it doesn't crash")? Do they cover happy path AND failure modes?
+- Commit quality: atomic commits, clear messages, no loose ends (TODOs, commented-out code).
+
+**Output format:**
+```markdown
+## Вадим auto — Completeness Review
+
+**Verdict:** APPROVE / REJECT
+
+**Feature completeness:** [OK / issues]
+**Test coverage:** [OK / issues]
+**Commit quality:** [OK / issues]
+
+If REJECT:
+- [Specific issue]
+```
+
+### For Edsger Dijkstra (Plan Verification & Correctness Review)
+
+**Two roles: (A) Plan verification after Don/Joel, (B) Correctness review after implementation.**
+
+**Core principle: "I don't THINK it handles all cases — I PROVE it, by enumeration."**
+
+**(A) Plan Verification — runs after Don (Mini-MLA) or Joel (Full MLA), before implementation:**
+
+For EVERY filter, condition, or classification rule in the plan:
+
+1. **Input Universe**: List ALL possible input categories. Not just the ones the plan mentions.
+   Example from RFD-4 failure: Don listed anonymous scopes as "if, for, try, catch, else, finally, switch, while".
+   Dijkstra would ask: "What ELSE lives on the scope stack?" → functions (named), classes, anonymous functions, arrow functions.
+   The omission of "anonymous functions" caused a 2-hour-post-merge revert.
+
+2. **Completeness Table**: For every classification/filter, build explicit table:
+   | Input | Expected behavior | Handled by plan? |
+   |-------|------------------|-----------------|
+   | ... | ... | YES / NO / UNCLEAR |
+   If any row is NO or UNCLEAR → REJECT with specific gap.
+
+3. **Preconditions**: What must be true for the algorithm to work? Are those preconditions guaranteed?
+
+4. **Edge cases by construction**:
+   - Empty input
+   - Single element
+   - All identical
+   - Maximum realistic size
+   - Boundary between categories
+
+**Output format (Plan Verification):**
+```markdown
+## Dijkstra Plan Verification
+
+**Verdict:** APPROVE / REJECT
+
+**Completeness tables:** [N tables built for N classification rules]
+
+**Gaps found:**
+- [Specific gap: what input category is missing from plan]
+
+**Precondition issues:**
+- [What assumption is unverified]
+```
+
+**(B) Correctness Review — runs after implementation, parallel with Uncle Bob:**
+
+For EVERY function/method changed or added:
+
+1. **Input enumeration**: What types/values can each parameter receive?
+   - Don't trust type annotations blindly — what actually gets passed at call sites?
+
+2. **Condition completeness**: For every `if/switch/filter`:
+   - What passes? What's blocked? What falls through?
+   - Is there an input that matches NO branch?
+
+3. **Loop termination**: Can every loop terminate? What about empty collections?
+
+4. **Invariant verification**: After the function runs, what must be true?
+   Is that actually guaranteed by the code?
+
+**Output format (Correctness Review):**
+```markdown
+## Dijkstra Correctness Review
+
+**Verdict:** APPROVE / REJECT
+
+**Functions reviewed:** [list with verdict per function]
+
+**Issues found:**
+- [function:line] — [specific input that breaks it]
+```
+
+**Rules:**
+- NEVER say "looks correct" without showing your enumeration
+- If you cannot enumerate all input categories for a condition → REJECT (you don't understand it well enough)
+
+### For Robert Martin (Uncle Bob) — Code Quality (PREPARE + Review)
+
+**Two roles: (A) Pre-implementation review (STEP 2.5), (B) Post-implementation code quality review.**
+
+**(A) Pre-implementation** — see STEP 2.5 PREPARE section above.
+
+**(B) Post-implementation Code Quality Review:**
+
+Reviews at TWO levels: **file-level** (structural) and **method-level** (local).
+
+**File-level checks (HARD LIMITS):**
+- File > 500 lines = **MUST split**. Create tech debt issue if can't split safely.
+- File > 700 lines = **CRITICAL.** Stop everything, discuss with user.
+- Single file doing 3+ unrelated things = **MUST split** (Single Responsibility)
+
+**Method-level checklist:**
+- Method length (>50 lines = candidate for split)
+- Parameter count (>3 = consider Parameter Object)
+- Nesting depth (>2 levels = consider early return/extract)
+- Duplication (same pattern 3+ times = extract helper)
+- Naming clarity (can you understand without reading body?)
+
+**Also checks:**
+- Readability and clarity
+- Test quality and intent communication
+- Naming, structure, duplication
+- Code matches existing patterns?
+
+**Output format:**
+```markdown
+## Uncle Bob — Code Quality Review
+
+**Verdict:** APPROVE / REJECT
+
+**File sizes:** [OK / issues]
+**Method quality:** [OK / issues]
+**Patterns & naming:** [OK / issues]
+
+If REJECT:
+- [Specific issue]
+```
+
+**4-Review flow:**
+- Batch 1: Вадим auto ∥ Steve — run in parallel
+- Batch 2: Dijkstra ∥ Uncle Bob — run in parallel after batch 1
+- ANY REJECT → back to implementation, no user involvement
+- ALL 4 APPROVE → present combined summary to user for manual confirmation
 
 ## Forbidden Patterns
 
@@ -696,9 +835,9 @@ Do NOT start coding until Linear status is updated.
 
 ### Finishing Task
 
-1. Code ready → run **Combined Auto-Review** (single Sonnet subagent)
-2. If REJECT → fix issues, don't bother user, re-run review
-3. If APPROVE → present review summary to user (real Вадим)
+1. Code ready → run **4-Review** (Batch 1: Вадим auto ∥ Steve, Batch 2: Dijkstra ∥ Uncle Bob)
+2. If ANY REJECT → fix issues, don't bother user, re-run ALL 4 reviews
+3. If ALL 4 APPROVE → present combined review summary to user (real Вадим)
 4. User confirms → create PR, Linear status → **In Review**
 5. CI must pass. If CI fails → fix, push, wait for green
 6. User will merge and `/clear` to start next task
@@ -707,20 +846,22 @@ Do NOT start coding until Linear status is updated.
 
 **Two-stage review:**
 
-| Stage | Who | Mode | On REJECT |
-|-------|-----|------|-----------|
-| 1. Auto-Review | Single Sonnet subagent | Automatic | Fix, retry — no user involvement |
-| 2. Вадим (human) | User | Manual | Fix per feedback, retry from stage 1 |
+| Stage | Who | Focus | On REJECT |
+|-------|-----|-------|-----------|
+| 1a. Вадим auto | Completeness | Does it deliver what was asked? | Fix, retry all 4 |
+| 1b. Steve | Vision | Architecture, vision alignment | Fix, retry all 4 |
+| 1c. Dijkstra | Correctness | Edge cases, input enumeration | Fix, retry all 4 |
+| 1d. Uncle Bob | Code quality | Structure, naming, readability | Fix, retry all 4 |
+| 2. Вадим (human) | Final | Confirms or overrides | Fix per feedback, retry from stage 1 |
 
-**Stage 1 — Combined Auto-Review (vision + practical + code quality):**
-- Vision alignment, no hacks or shortcuts?
-- Tests actually test what they claim?
-- Edge cases, regressions, scope creep?
-- Code quality, naming, structure?
-- Commits atomic, messages clear?
+**Stage 1 — 4-Review (2 batches of 2 parallel):**
+- Batch 1: Вадим auto ∥ Steve
+- Batch 2: Dijkstra ∥ Uncle Bob
+- Each reviewer focuses on ONE perspective — no multi-tasking
+- ANY REJECT → fix, then re-run ALL 4 (not just the failed one)
 
 **Stage 2 — Вадим manual (final confirmation):**
-- User sees auto-review summary
+- User sees combined review summary from all 4 reviewers
 - User confirms or rejects with feedback
 - If confirmed → merge to main, update Linear → **Done**
 
