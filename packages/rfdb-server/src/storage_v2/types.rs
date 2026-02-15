@@ -356,6 +356,45 @@ pub fn enrichment_file_context(enricher: &str, source_file: &str) -> String {
     format!("__enrichment__/{}/{}", enricher, source_file)
 }
 
+/// Build edge metadata with enrichment file context.
+///
+/// If `existing_metadata` is non-empty, parses it as JSON and adds
+/// `__file_context`. If empty, creates `{"__file_context": "..."}`.
+///
+/// # Panics
+/// Panics if `existing_metadata` is non-empty but not valid JSON.
+pub fn enrichment_edge_metadata(file_context: &str, existing_metadata: &str) -> String {
+    let mut obj = if existing_metadata.is_empty() {
+        serde_json::Map::new()
+    } else {
+        let v: serde_json::Value =
+            serde_json::from_str(existing_metadata).expect("existing_metadata is not valid JSON");
+        match v {
+            serde_json::Value::Object(map) => map,
+            _ => panic!("existing_metadata is not a JSON object"),
+        }
+    };
+    obj.insert(
+        "__file_context".to_string(),
+        serde_json::Value::String(file_context.to_string()),
+    );
+    serde_json::to_string(&serde_json::Value::Object(obj)).unwrap()
+}
+
+/// Extract enrichment file context from edge metadata.
+///
+/// Returns `None` if metadata is empty, not valid JSON, or lacks
+/// `__file_context`.
+pub fn extract_file_context(metadata: &str) -> Option<String> {
+    if metadata.is_empty() {
+        return None;
+    }
+    let v: serde_json::Value = serde_json::from_str(metadata).ok()?;
+    v.get("__file_context")
+        .and_then(|val| val.as_str())
+        .map(|s| s.to_string())
+}
+
 // ── Helpers ────────────────────────────────────────────────────────
 
 /// Compute padding bytes needed to align `offset` to `alignment`.
@@ -580,5 +619,38 @@ mod tests {
         assert_ne!(a, b);
         assert_eq!(a, "__enrichment__/data-flow/src/index.js");
         assert_eq!(b, "__enrichment__/call-graph/src/index.js");
+    }
+
+    // ── enrichment_edge_metadata / extract_file_context tests ────
+
+    #[test]
+    fn test_enrichment_edge_metadata_roundtrip() {
+        let ctx = "__enrichment__/data-flow/src/utils.js";
+        let meta = enrichment_edge_metadata(ctx, "");
+        let extracted = extract_file_context(&meta);
+        assert_eq!(extracted, Some(ctx.to_string()));
+    }
+
+    #[test]
+    fn test_extract_file_context_empty_metadata() {
+        assert_eq!(extract_file_context(""), None);
+    }
+
+    #[test]
+    fn test_extract_file_context_no_field() {
+        let meta = r#"{"weight": 42}"#;
+        assert_eq!(extract_file_context(meta), None);
+    }
+
+    #[test]
+    fn test_enrichment_edge_metadata_preserves_existing() {
+        let existing = r#"{"weight": 42, "label": "heavy"}"#;
+        let ctx = "__enrichment__/call-graph/src/main.js";
+        let merged = enrichment_edge_metadata(ctx, existing);
+
+        let parsed: serde_json::Value = serde_json::from_str(&merged).unwrap();
+        assert_eq!(parsed["__file_context"], ctx);
+        assert_eq!(parsed["weight"], 42);
+        assert_eq!(parsed["label"], "heavy");
     }
 }
