@@ -18,6 +18,15 @@ import { formatNodeDisplay, formatNodeInline, formatLocation } from '../utils/fo
 import { exitWithError } from '../utils/errorFormatter.js';
 import { Spinner } from '../utils/spinner.js';
 
+// Node type constants to avoid magic string duplication
+const HTTP_ROUTE_TYPE = 'http:route';
+const HTTP_REQUEST_TYPE = 'http:request';
+const SOCKETIO_EVENT_TYPE = 'socketio:event';
+const SOCKETIO_EMIT_TYPE = 'socketio:emit';
+const SOCKETIO_ON_TYPE = 'socketio:on';
+const GRAFEMA_PLUGIN_TYPE = 'grafema:plugin';
+const PROPERTY_ACCESS_TYPE = 'PROPERTY_ACCESS';
+
 interface QueryOptions {
   project: string;
   json?: boolean;
@@ -143,14 +152,18 @@ Examples:
     spinner.start();
 
     try {
+      const limit = parseInt(options.limit, 10);
+      if (isNaN(limit) || limit < 1) {
+        spinner.stop();
+        exitWithError('Invalid limit', ['Use a positive number, e.g.: --limit 10']);
+      }
+
       // Raw Datalog mode
       if (options.raw) {
         spinner.stop();
-        await executeRawQuery(backend, pattern, options);
+        await executeRawQuery(backend, pattern, limit, options.json);
         return;
       }
-
-      const limit = parseInt(options.limit, 10);
 
       // Parse query with scope support
       let query: ParsedQuery;
@@ -253,28 +266,31 @@ function parsePattern(pattern: string): { type: string | null; name: string } {
       fn: 'FUNCTION',
       func: 'FUNCTION',
       class: 'CLASS',
+      interface: 'INTERFACE',
+      type: 'TYPE',
+      enum: 'ENUM',
       module: 'MODULE',
       variable: 'VARIABLE',
       var: 'VARIABLE',
       const: 'CONSTANT',
       constant: 'CONSTANT',
       // HTTP route aliases
-      route: 'http:route',
-      endpoint: 'http:route',
+      route: HTTP_ROUTE_TYPE,
+      endpoint: HTTP_ROUTE_TYPE,
       // HTTP request aliases
-      request: 'http:request',
-      fetch: 'http:request',
-      api: 'http:request',
+      request: HTTP_REQUEST_TYPE,
+      fetch: HTTP_REQUEST_TYPE,
+      api: HTTP_REQUEST_TYPE,
       // Socket.IO aliases
-      event: 'socketio:event',
-      emit: 'socketio:emit',
-      on: 'socketio:on',
-      listener: 'socketio:on',
+      event: SOCKETIO_EVENT_TYPE,
+      emit: SOCKETIO_EMIT_TYPE,
+      on: SOCKETIO_ON_TYPE,
+      listener: SOCKETIO_ON_TYPE,
       // Grafema internal
-      plugin: 'grafema:plugin',
+      plugin: GRAFEMA_PLUGIN_TYPE,
       // Property access aliases (REG-395)
-      property: 'PROPERTY_ACCESS',
-      prop: 'PROPERTY_ACCESS',
+      property: PROPERTY_ACCESS_TYPE,
+      prop: PROPERTY_ACCESS_TYPE,
     };
 
     if (typeMap[typeWord]) {
@@ -378,6 +394,9 @@ export function isFileScope(scope: string): boolean {
  * @returns true if ID matches all constraints
  */
 export function matchesScope(semanticId: string, file: string | null, scopes: string[]): boolean {
+  // No constraints = everything matches (regardless of ID format)
+  if (file === null && scopes.length === 0) return true;
+
   // Try v2 parsing first
   const parsedV2 = parseSemanticIdV2(semanticId);
   if (parsedV2) {
@@ -521,7 +540,7 @@ function matchesSearchPattern(
   const lowerPattern = pattern.toLowerCase();
 
   // HTTP routes: search method and path
-  if (nodeType === 'http:route') {
+  if (nodeType === HTTP_ROUTE_TYPE) {
     const method = (node.method || '').toLowerCase();
     const path = (node.path || '').toLowerCase();
 
@@ -547,7 +566,7 @@ function matchesSearchPattern(
   }
 
   // HTTP requests: search method and url
-  if (nodeType === 'http:request') {
+  if (nodeType === HTTP_REQUEST_TYPE) {
     const method = (node.method || '').toLowerCase();
     const url = (node.url || '').toLowerCase();
 
@@ -573,13 +592,13 @@ function matchesSearchPattern(
   }
 
   // Socket.IO event channels: search name field (standard)
-  if (nodeType === 'socketio:event') {
+  if (nodeType === SOCKETIO_EVENT_TYPE) {
     const nodeName = (node.name || '').toLowerCase();
     return nodeName.includes(lowerPattern);
   }
 
   // Socket.IO emit/on: search event field
-  if (nodeType === 'socketio:emit' || nodeType === 'socketio:on') {
+  if (nodeType === SOCKETIO_EMIT_TYPE || nodeType === SOCKETIO_ON_TYPE) {
     const eventName = (node.event || '').toLowerCase();
     return eventName.includes(lowerPattern);
   }
@@ -603,19 +622,22 @@ async function findNodes(
     : [
         'FUNCTION',
         'CLASS',
+        'INTERFACE',
+        'TYPE',
+        'ENUM',
         'MODULE',
         'VARIABLE',
         'CONSTANT',
-        'http:route',
-        'http:request',
-        'socketio:event',
-        'socketio:emit',
-        'socketio:on',
-        'PROPERTY_ACCESS'
+        HTTP_ROUTE_TYPE,
+        HTTP_REQUEST_TYPE,
+        SOCKETIO_EVENT_TYPE,
+        SOCKETIO_EMIT_TYPE,
+        SOCKETIO_ON_TYPE,
+        PROPERTY_ACCESS_TYPE,
       ];
 
   for (const nodeType of searchTypes) {
-    for await (const node of backend.queryNodes({ nodeType: nodeType as any })) {
+    for await (const node of backend.queryNodes({ nodeType })) {
       // Type-aware field matching (name)
       const nameMatches = matchesSearchPattern(node, nodeType, query.name);
       if (!nameMatches) continue;
@@ -636,24 +658,24 @@ async function findNodes(
       nodeInfo.scopeContext = extractScopeContext(node.id);
 
       // Include method and path for http:route nodes
-      if (nodeType === 'http:route') {
+      if (nodeType === HTTP_ROUTE_TYPE) {
         nodeInfo.method = node.method as string | undefined;
         nodeInfo.path = node.path as string | undefined;
       }
 
       // Include method and url for http:request nodes
-      if (nodeType === 'http:request') {
+      if (nodeType === HTTP_REQUEST_TYPE) {
         nodeInfo.method = node.method as string | undefined;
         nodeInfo.url = node.url as string | undefined;
       }
 
       // Include event field for Socket.IO nodes
-      if (nodeType === 'socketio:event' || nodeType === 'socketio:emit' || nodeType === 'socketio:on') {
+      if (nodeType === SOCKETIO_EVENT_TYPE || nodeType === SOCKETIO_EMIT_TYPE || nodeType === SOCKETIO_ON_TYPE) {
         nodeInfo.event = node.event as string | undefined;
       }
 
       // Include emit-specific fields
-      if (nodeType === 'socketio:emit') {
+      if (nodeType === SOCKETIO_EMIT_TYPE) {
         nodeInfo.room = node.room as string | undefined;
         nodeInfo.namespace = node.namespace as string | undefined;
         nodeInfo.broadcast = node.broadcast as boolean | undefined;
@@ -661,13 +683,13 @@ async function findNodes(
       }
 
       // Include listener-specific fields
-      if (nodeType === 'socketio:on') {
+      if (nodeType === SOCKETIO_ON_TYPE) {
         nodeInfo.objectName = node.objectName as string | undefined;
         nodeInfo.handlerName = node.handlerName as string | undefined;
       }
 
       // Include plugin-specific fields
-      if (nodeType === 'grafema:plugin') {
+      if (nodeType === GRAFEMA_PLUGIN_TYPE) {
         nodeInfo.phase = node.phase as string | undefined;
         nodeInfo.priority = node.priority as number | undefined;
         nodeInfo.builtin = node.builtin as boolean | undefined;
@@ -677,7 +699,7 @@ async function findNodes(
       }
 
       // Include objectName for PROPERTY_ACCESS nodes (REG-395)
-      if (nodeType === 'PROPERTY_ACCESS') {
+      if (nodeType === PROPERTY_ACCESS_TYPE) {
         nodeInfo.objectName = node.objectName as string | undefined;
       }
 
@@ -787,31 +809,31 @@ async function getCallees(
  */
 async function displayNode(node: NodeInfo, projectPath: string, backend: RFDBServerBackend): Promise<void> {
   // Special formatting for HTTP routes
-  if (node.type === 'http:route' && node.method && node.path) {
+  if (node.type === HTTP_ROUTE_TYPE && node.method && node.path) {
     console.log(formatHttpRouteDisplay(node, projectPath));
     return;
   }
 
   // Special formatting for HTTP requests
-  if (node.type === 'http:request') {
+  if (node.type === HTTP_REQUEST_TYPE) {
     console.log(formatHttpRequestDisplay(node, projectPath));
     return;
   }
 
   // Special formatting for Socket.IO event channels
-  if (node.type === 'socketio:event') {
+  if (node.type === SOCKETIO_EVENT_TYPE) {
     console.log(await formatSocketEventDisplay(node, projectPath, backend));
     return;
   }
 
   // Special formatting for Socket.IO emit/on
-  if (node.type === 'socketio:emit' || node.type === 'socketio:on') {
+  if (node.type === SOCKETIO_EMIT_TYPE || node.type === SOCKETIO_ON_TYPE) {
     console.log(formatSocketIONodeDisplay(node, projectPath));
     return;
   }
 
   // Special formatting for Grafema plugin nodes
-  if (node.type === 'grafema:plugin') {
+  if (node.type === GRAFEMA_PLUGIN_TYPE) {
     console.log(formatPluginDisplay(node, projectPath));
     return;
   }
@@ -951,7 +973,7 @@ function formatSocketIONodeDisplay(node: NodeInfo, projectPath: string): string 
   }
 
   // Emit-specific fields
-  if (node.type === 'socketio:emit') {
+  if (node.type === SOCKETIO_EMIT_TYPE) {
     if (node.room) {
       lines.push(`  Room: ${node.room}`);
     }
@@ -964,7 +986,7 @@ function formatSocketIONodeDisplay(node: NodeInfo, projectPath: string): string 
   }
 
   // Listener-specific fields
-  if (node.type === 'socketio:on' && node.handlerName) {
+  if (node.type === SOCKETIO_ON_TYPE && node.handlerName) {
     lines.push(`  Handler: ${node.handlerName}`);
   }
 
@@ -1055,13 +1077,13 @@ export function getUnknownPredicates(query: string): string[] {
 async function executeRawQuery(
   backend: RFDBServerBackend,
   query: string,
-  options: QueryOptions
+  limit: number,
+  json?: boolean
 ): Promise<void> {
   const results = await backend.executeDatalog(query);
-  const limit = parseInt(options.limit, 10);
   const limited = results.slice(0, limit);
 
-  if (options.json) {
+  if (json) {
     console.log(JSON.stringify(limited, null, 2));
   } else {
     if (limited.length === 0) {

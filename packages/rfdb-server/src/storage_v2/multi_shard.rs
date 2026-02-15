@@ -34,7 +34,7 @@ use crate::error::{GraphError, Result};
 use crate::storage_v2::compaction::{CompactionConfig, CompactionResult};
 use crate::storage_v2::index::{build_inverted_indexes, GlobalIndex, IndexEntry, InvertedIndex};
 use crate::storage_v2::manifest::{ManifestStore, SegmentDescriptor};
-use crate::storage_v2::segment::{EdgeSegmentV2, NodeSegmentV2};
+use crate::storage_v2::segment::{self, EdgeSegmentV2, NodeSegmentV2};
 use crate::storage_v2::shard::{Shard, TombstoneSet};
 use crate::storage_v2::shard_planner::ShardPlanner;
 use crate::storage_v2::types::{CommitDelta, EdgeRecordV2, NodeRecordV2, SegmentType, extract_file_context};
@@ -981,8 +981,27 @@ impl MultiShardStore {
         manifest_store: &mut ManifestStore,
         config: &CompactionConfig,
     ) -> Result<CompactionResult> {
-        use crate::storage_v2::compaction::coordinator::{compact_shard, should_compact};
+        self.compact_with_threads(manifest_store, config, None)
+    }
+
+    /// Run compaction with an explicit thread count (None = auto-detect).
+    ///
+    /// Three-phase architecture for parallel compaction:
+    /// 1. Sequential: classify shards, preserve L1 data for non-compacted shards
+    /// 2. Parallel: run `compact_shard()` on shards needing compaction (via rayon)
+    /// 3. Sequential: write results to disk, update shard state, commit manifest
+    pub fn compact_with_threads(
+        &mut self,
+        manifest_store: &mut ManifestStore,
+        config: &CompactionConfig,
+        thread_count: Option<usize>,
+    ) -> Result<CompactionResult> {
+        use crate::storage_v2::compaction::coordinator::{
+            compact_shard, should_compact, ShardCompactionResult,
+        };
         use crate::storage_v2::compaction::CompactionInfo;
+        use crate::storage_v2::resource::ResourceManager;
+        use rayon::prelude::*;
         use std::time::Instant;
 
         let start = Instant::now();
@@ -1001,11 +1020,13 @@ impl MultiShardStore {
         // Collect entries for global index from all compacted shards
         let mut global_index_entries: Vec<IndexEntry> = Vec::new();
 
+        // ── Phase 1: Classify shards ────────────────────────────────────
+        // Collect non-compacted shard data and identify compaction targets.
+
+        let mut shards_to_compact: Vec<usize> = Vec::new();
+
         for shard_idx in 0..self.shards.len() {
             let shard_id = shard_idx as u16;
-
-            // Capture shard properties before mutable borrows
-            let shard_path_owned = self.shards[shard_idx].path().map(|p| p.to_path_buf());
 
             if !should_compact(&self.shards[shard_idx], config) {
                 // Preserve existing L1 descriptors for non-compacted shards
@@ -1032,8 +1053,70 @@ impl MultiShardStore {
                 continue;
             }
 
-            // Compact this shard
-            let result = compact_shard(&self.shards[shard_idx])?;
+            shards_to_compact.push(shard_idx);
+        }
+
+        // ── Prefetch segment files ─────────────────────────────────────
+        // Hint the OS to asynchronously read segment files into the page
+        // cache before compaction begins. Best-effort: errors are ignored.
+
+        for &shard_idx in &shards_to_compact {
+            if let Some(shard_path) = self.shards[shard_idx].path() {
+                for desc in self.shards[shard_idx].l0_node_descriptors() {
+                    let p = shard_path.join(format!("seg_{:06}_nodes.seg", desc.segment_id));
+                    segment::prefetch_file(&p).ok();
+                }
+                for desc in self.shards[shard_idx].l0_edge_descriptors() {
+                    let p = shard_path.join(format!("seg_{:06}_edges.seg", desc.segment_id));
+                    segment::prefetch_file(&p).ok();
+                }
+                if let Some(desc) = self.shards[shard_idx].l1_node_descriptor() {
+                    let p = shard_path.join(format!("seg_{:06}_nodes.seg", desc.segment_id));
+                    segment::prefetch_file(&p).ok();
+                }
+                if let Some(desc) = self.shards[shard_idx].l1_edge_descriptor() {
+                    let p = shard_path.join(format!("seg_{:06}_edges.seg", desc.segment_id));
+                    segment::prefetch_file(&p).ok();
+                }
+            }
+        }
+
+        // ── Phase 2: Parallel compaction ────────────────────────────────
+        // Run compact_shard() in parallel using rayon. Each call reads
+        // from &Shard and returns owned ShardCompactionResult.
+
+        let threads = thread_count
+            .unwrap_or_else(|| ResourceManager::auto_tune().compaction_threads);
+
+        let compaction_results: Vec<(usize, Result<ShardCompactionResult>)> = if threads <= 1
+            || shards_to_compact.len() <= 1
+        {
+            // Sequential path: no thread pool overhead for single shard/thread
+            shards_to_compact
+                .iter()
+                .map(|&idx| (idx, compact_shard(&self.shards[idx])))
+                .collect()
+        } else {
+            let pool = rayon::ThreadPoolBuilder::new()
+                .num_threads(threads)
+                .build()
+                .map_err(|e| GraphError::Compaction(format!("rayon pool: {e}")))?;
+
+            pool.install(|| {
+                shards_to_compact
+                    .par_iter()
+                    .map(|&idx| (idx, compact_shard(&self.shards[idx])))
+                    .collect()
+            })
+        };
+
+        // ── Phase 3: Apply results (sequential) ────────────────────────
+        // Write segments to disk, update shard state, build indexes.
+
+        for (shard_idx, result) in compaction_results {
+            let result = result?;
+            let shard_id = shard_idx as u16;
+            let shard_path_owned = self.shards[shard_idx].path().map(|p| p.to_path_buf());
 
             // Build L1 node segment (if any merged nodes)
             let mut l1_node_seg: Option<NodeSegmentV2> = None;
@@ -1198,6 +1281,21 @@ impl MultiShardStore {
     /// Number of shards.
     pub fn shard_count(&self) -> u16 {
         self.shards.len() as u16
+    }
+
+    /// Check if any shard's write buffer exceeds the given limits.
+    ///
+    /// Used by `GraphEngineV2` to trigger auto-flush after `add_nodes()`.
+    /// Returns true if any shard's buffer exceeds node count or byte limits.
+    pub fn any_shard_needs_flush(&self, node_limit: usize, byte_limit: usize) -> bool {
+        self.shards
+            .iter()
+            .any(|s| s.write_buffer_exceeds(node_limit, byte_limit))
+    }
+
+    /// Total node count across all write buffers (unflushed records only).
+    pub fn total_write_buffer_nodes(&self) -> usize {
+        self.shards.iter().map(|s| s.write_buffer_size().0).sum()
     }
 
     /// Per-shard statistics for monitoring.
@@ -3281,5 +3379,87 @@ mod tests {
         // Nodes should still exist
         assert!(store.node_exists(a.id), "Node A should still exist");
         assert!(store.node_exists(b.id), "Node B should still exist");
+    }
+
+    // -- Parallel Compaction Tests ------------------------------------------------
+
+    #[test]
+    fn test_parallel_compaction_correctness() {
+        // Verify parallel compaction (threads=4) produces identical results
+        // to sequential compaction (threads=1).
+        let config = CompactionConfig { segment_threshold: 2 };
+
+        // Build identical stores for sequential and parallel runs
+        let build_store = || {
+            let mut store = MultiShardStore::ephemeral(4);
+            // Distribute nodes across shards via different directories
+            for batch in 0..2 {
+                let nodes: Vec<NodeRecordV2> = (0..20)
+                    .map(|i| {
+                        make_node(
+                            &format!("dir_{}/fn_{}_{}", i % 4, i, batch),
+                            if i % 3 == 0 { "CLASS" } else { "FUNCTION" },
+                            &format!("fn_{}_{}", i, batch),
+                            &format!("dir_{}/file.js", i % 4),
+                        )
+                    })
+                    .collect();
+                store.add_nodes(nodes);
+
+                // Flush all shards to create L0 segments
+                for shard in &mut store.shards {
+                    let seg_id = (batch * 4 + 1) as u64;
+                    shard.flush_with_ids(Some(seg_id + shard.shard_id().unwrap_or(0) as u64), None).unwrap();
+                }
+            }
+            store
+        };
+
+        // Sequential compaction
+        let mut store_seq = build_store();
+        let tmp_seq = tempfile::tempdir().unwrap();
+        let mut manifest_seq = ManifestStore::create(tmp_seq.path()).unwrap();
+        let result_seq = store_seq
+            .compact_with_threads(&mut manifest_seq, &config, Some(1))
+            .unwrap();
+
+        // Parallel compaction
+        let mut store_par = build_store();
+        let tmp_par = tempfile::tempdir().unwrap();
+        let mut manifest_par = ManifestStore::create(tmp_par.path()).unwrap();
+        let result_par = store_par
+            .compact_with_threads(&mut manifest_par, &config, Some(4))
+            .unwrap();
+
+        // Compare results: same number of shards compacted
+        assert_eq!(
+            result_seq.shards_compacted.len(),
+            result_par.shards_compacted.len(),
+            "same number of shards compacted"
+        );
+        assert_eq!(result_seq.nodes_merged, result_par.nodes_merged, "same nodes merged");
+        assert_eq!(result_seq.edges_merged, result_par.edges_merged, "same edges merged");
+
+        // Compare node counts per shard in L1 segments
+        for i in 0..4 {
+            let l1_seq = store_seq.shards[i].l1_node_segment();
+            let l1_par = store_par.shards[i].l1_node_segment();
+
+            match (l1_seq, l1_par) {
+                (Some(s), Some(p)) => {
+                    assert_eq!(
+                        s.record_count(),
+                        p.record_count(),
+                        "shard {i}: same L1 node count"
+                    );
+                    // Verify same records (sorted by id, so order is deterministic)
+                    for j in 0..s.record_count() {
+                        assert_eq!(s.get_id(j), p.get_id(j), "shard {i} record {j}: same id");
+                    }
+                }
+                (None, None) => {} // Both empty, OK
+                _ => panic!("shard {i}: L1 mismatch (one has segments, other doesn't)"),
+            }
+        }
     }
 }
