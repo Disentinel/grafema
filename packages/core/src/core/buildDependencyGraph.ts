@@ -24,7 +24,18 @@
 import type { IPlugin, EdgeType } from '@grafema/types';
 import type { ToposortItem } from './toposort.js';
 
-export function buildDependencyGraph(plugins: IPlugin[]): ToposortItem[] {
+/**
+ * Result of building the enricher dependency graph.
+ * Contains both the toposort items and a consumer index
+ * for downstream propagation (RFD-17).
+ */
+export interface EnricherDependencyInfo {
+  items: ToposortItem[];
+  /** Maps edgeType → set of enricher names that consume that type */
+  consumerIndex: Map<string, Set<string>>;
+}
+
+export function buildDependencyGraph(plugins: IPlugin[]): EnricherDependencyInfo {
   // Step 1: Build producer index — Map<EdgeType, pluginNames[]>
   const producers = new Map<EdgeType, string[]>();
 
@@ -42,13 +53,24 @@ export function buildDependencyGraph(plugins: IPlugin[]): ToposortItem[] {
   }
 
   // Step 2: For each plugin, compute deps from consumes + explicit
-  return plugins.map(plugin => {
+  // Also build consumer index for downstream propagation (RFD-17)
+  const consumerIndex = new Map<string, Set<string>>();
+
+  const items = plugins.map(plugin => {
     const meta = plugin.metadata;
     const deps = new Set<string>();
 
     // Layer 1: Automatic inference from consumes/produces
     if (meta.consumes) {
       for (const edgeType of meta.consumes) {
+        // Register in consumer index (RFD-17)
+        let consumers = consumerIndex.get(edgeType);
+        if (!consumers) {
+          consumers = new Set();
+          consumerIndex.set(edgeType, consumers);
+        }
+        consumers.add(meta.name);
+
         const edgeProducers = producers.get(edgeType);
         if (!edgeProducers) continue;
         for (const producerName of edgeProducers) {
@@ -71,4 +93,6 @@ export function buildDependencyGraph(plugins: IPlugin[]): ToposortItem[] {
       dependencies: [...deps],
     };
   });
+
+  return { items, consumerIndex };
 }
