@@ -1211,7 +1211,6 @@
       "exported": false,
       "file": "",
       "name": "graph_metadata",
-      "projectPath": "/Users/vadim/grafema-worker-11/test/fixtures/02-api-service",
       "type": "GRAPH_META"
     },
     {
@@ -1717,8 +1716,7 @@
       "discoveryMethod": "simple",
       "entrypoint": "src/index.js",
       "exported": false,
-      "file": "/Users/vadim/grafema-worker-11/test/fixtures/02-api-service",
-      "filePath": "/Users/vadim/grafema-worker-11/test/fixtures/02-api-service",
+      "file": "/test/fixtures/02-api-service",
       "kind": "SERVICE",
       "name": "@test/api-service",
       "type": "SERVICE",

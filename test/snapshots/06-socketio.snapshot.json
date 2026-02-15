@@ -1301,7 +1301,6 @@
       "exported": false,
       "file": "",
       "name": "graph_metadata",
-      "projectPath": "/Users/vadim/grafema-worker-11/test/fixtures/06-socketio",
       "type": "GRAPH_META"
     },
     {
@@ -1904,8 +1903,7 @@
       "discoveryMethod": "simple",
       "entrypoint": "index.js",
       "exported": false,
-      "file": "/Users/vadim/grafema-worker-11/test/fixtures/06-socketio",
-      "filePath": "/Users/vadim/grafema-worker-11/test/fixtures/06-socketio",
+      "file": "/test/fixtures/06-socketio",
       "kind": "SERVICE",
       "name": "socketio-fixture",
       "type": "SERVICE",

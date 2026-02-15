@@ -2875,7 +2875,6 @@
       "exported": false,
       "file": "",
       "name": "graph_metadata",
-      "projectPath": "/Users/vadim/grafema-worker-11/test/fixtures/04-control-flow",
       "type": "GRAPH_META"
     },
     {
@@ -4631,8 +4630,7 @@
       "discoveryMethod": "simple",
       "entrypoint": "index.js",
       "exported": false,
-      "file": "/Users/vadim/grafema-worker-11/test/fixtures/04-control-flow",
-      "filePath": "/Users/vadim/grafema-worker-11/test/fixtures/04-control-flow",
+      "file": "/test/fixtures/04-control-flow",
       "kind": "SERVICE",
       "name": "control-flow-fixture",
       "type": "SERVICE",

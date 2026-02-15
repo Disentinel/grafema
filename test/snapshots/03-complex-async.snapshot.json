@@ -15001,7 +15001,6 @@
       "exported": false,
       "file": "",
       "name": "graph_metadata",
-      "projectPath": "/Users/vadim/grafema-worker-11/test/fixtures/03-complex-async",
       "type": "GRAPH_META"
     },
     {
@@ -25190,8 +25189,7 @@
       "discoveryMethod": "simple",
       "entrypoint": "app.js",
       "exported": false,
-      "file": "/Users/vadim/grafema-worker-11/test/fixtures/03-complex-async",
-      "filePath": "/Users/vadim/grafema-worker-11/test/fixtures/03-complex-async",
+      "file": "/test/fixtures/03-complex-async",
       "kind": "SERVICE",
       "name": "complex-async-backend",
       "type": "SERVICE",

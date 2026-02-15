@@ -1025,7 +1025,6 @@
       "exported": false,
       "file": "",
       "name": "graph_metadata",
-      "projectPath": "/Users/vadim/grafema-worker-11/test/fixtures/07-http-requests",
       "type": "GRAPH_META"
     },
     {
@@ -1446,8 +1445,7 @@
       "discoveryMethod": "simple",
       "entrypoint": "index.js",
       "exported": false,
-      "file": "/Users/vadim/grafema-worker-11/test/fixtures/07-http-requests",
-      "filePath": "/Users/vadim/grafema-worker-11/test/fixtures/07-http-requests",
+      "file": "/test/fixtures/07-http-requests",
       "kind": "SERVICE",
       "name": "http-requests-fixture",
       "type": "SERVICE",

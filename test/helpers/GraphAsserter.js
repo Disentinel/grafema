@@ -408,7 +408,18 @@ export class GraphAsserter {
       'bodyScopeId',    // internal ID reference
       'contentHash',    // changes with file content
       'analyzedAt',     // timestamp, changes between runs
+      'projectPath',    // absolute path, differs per environment
+      'filePath',       // absolute path, differs per environment
     ]);
+
+    // Normalize absolute paths to relative for environment independence
+    const cwd = process.cwd();
+    const normalizePath = (v) => {
+      if (typeof v === 'string' && v.startsWith('/') && v.includes('/test/fixtures/')) {
+        return v.slice(v.indexOf('/test/fixtures/'));
+      }
+      return v;
+    };
 
     const nodes = this._getNodes().map(n => {
       const entries = [];
@@ -416,7 +427,7 @@ export class GraphAsserter {
         if (SNAPSHOT_SKIP_PROPS.has(key)) continue;
         if (typeof value === 'bigint') continue;
         if (value === undefined) continue;
-        entries.push([key, value]);
+        entries.push([key, normalizePath(value)]);
       }
       // Sort keys alphabetically for deterministic JSON output
       entries.sort((a, b) => a[0].localeCompare(b[0]));

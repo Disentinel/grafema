@@ -3192,7 +3192,6 @@
       "exported": false,
       "file": "",
       "name": "graph_metadata",
-      "projectPath": "/Users/vadim/grafema-worker-11/test/fixtures/nodejs-builtins",
       "type": "GRAPH_META"
     },
     {
@@ -5061,8 +5060,7 @@
       "discoveryMethod": "simple",
       "entrypoint": "index.js",
       "exported": false,
-      "file": "/Users/vadim/grafema-worker-11/test/fixtures/nodejs-builtins",
-      "filePath": "/Users/vadim/grafema-worker-11/test/fixtures/nodejs-builtins",
+      "file": "/test/fixtures/nodejs-builtins",
       "kind": "SERVICE",
       "name": "nodejs-builtins-fixture",
       "type": "SERVICE",
