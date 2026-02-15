@@ -87,7 +87,7 @@ Use 'grafema context <id>' to dive deeper into any specific entity.
 
     try {
       const overview = new FileOverview(backend);
-      const result = await overview.getOverview(absoluteFilePath, {
+      const result = await overview.getOverview(relativeFilePath, {
         includeEdges: options.edges !== false,
       });
 

@@ -253,6 +253,9 @@ function parsePattern(pattern: string): { type: string | null; name: string } {
       fn: 'FUNCTION',
       func: 'FUNCTION',
       class: 'CLASS',
+      interface: 'INTERFACE',
+      type: 'TYPE',
+      enum: 'ENUM',
       module: 'MODULE',
       variable: 'VARIABLE',
       var: 'VARIABLE',
@@ -378,6 +381,9 @@ export function isFileScope(scope: string): boolean {
  * @returns true if ID matches all constraints
  */
 export function matchesScope(semanticId: string, file: string | null, scopes: string[]): boolean {
+  // No constraints = everything matches (regardless of ID format)
+  if (file === null && scopes.length === 0) return true;
+
   // Try v2 parsing first
   const parsedV2 = parseSemanticIdV2(semanticId);
   if (parsedV2) {
@@ -603,6 +609,9 @@ async function findNodes(
     : [
         'FUNCTION',
         'CLASS',
+        'INTERFACE',
+        'TYPE',
+        'ENUM',
         'MODULE',
         'VARIABLE',
         'CONSTANT',

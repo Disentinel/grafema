@@ -86,8 +86,8 @@ If a file shows NOT_ANALYZED:
 
     try {
       const explainer = new FileExplainer(backend);
-      // Query with absolute path since graph stores absolute paths
-      const result = await explainer.explain(absoluteFilePath);
+      // Query with relative path since MODULE nodes store relative file paths
+      const result = await explainer.explain(relativeFilePath);
 
       // Override file in result for display purposes (show relative path)
       result.file = relativeFilePath;
