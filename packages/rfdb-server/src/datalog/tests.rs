@@ -335,6 +335,28 @@ mod parser_tests {
         let literals = parse_query("node(X, \"A\"), edge(X, Y, \"CALLS\"), node(Y, \"B\")").unwrap();
         assert_eq!(literals.len(), 3);
     }
+
+    #[test]
+    fn test_parse_query_rejects_unconsumed_input() {
+        // A rule sent as a query should fail, not silently ignore the body
+        let err = parse_query("violation(X) :- node(X, \"http:route\").").unwrap_err();
+        assert!(
+            err.message.contains("unexpected input after query"),
+            "expected 'unexpected input' error, got: {}",
+            err.message,
+        );
+        assert_eq!(err.position, 13); // position of ":-"
+    }
+
+    #[test]
+    fn test_parse_query_accepts_valid_input() {
+        // Trailing whitespace should be fine
+        assert!(parse_query("node(X, \"http:route\")  ").is_ok());
+        // Single atom
+        assert!(parse_query("node(X, \"type\")").is_ok());
+        // Conjunction
+        assert!(parse_query("node(X, \"A\"), attr(X, \"k\", V)").is_ok());
+    }
 }
 
 // ============================================================================
