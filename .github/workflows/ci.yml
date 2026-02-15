@@ -21,8 +21,7 @@ on:
 
 env:
   NODE_VERSION: '22'
-  # Each self-hosted runner needs its own dirs to avoid conflicts when running in parallel
-  PNPM_HOME: ${{ github.workspace }}/.pnpm-home
+  # Each self-hosted runner needs its own pnpm store to avoid reflink conflicts
   PNPM_STORE_DIR: ${{ github.workspace }}/.pnpm-store
   # Limit Cargo parallelism — 4 concurrent runners sharing one machine
   CARGO_BUILD_JOBS: '2'
@@ -40,6 +39,8 @@ jobs:
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
+        with:
+          dest: ${{ github.workspace }}/.pnpm-home
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -146,6 +147,8 @@ jobs:
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
+        with:
+          dest: ${{ github.workspace }}/.pnpm-home
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -177,6 +180,8 @@ jobs:
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
+        with:
+          dest: ${{ github.workspace }}/.pnpm-home
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
