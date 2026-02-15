@@ -1,608 +1,599 @@
 {
   "nodes": [
     {
-      "type": "BRANCH",
+      "branchType": "if",
+      "exported": false,
+      "file": "src/db.js",
       "name": "",
-      "file": "src/db.js",
-      "exported": false,
       "semanticId": "db.js->Database->query->BRANCH->if#0",
-      "branchType": "if"
+      "type": "BRANCH"
     },
     {
-      "type": "CALL",
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
+      "file": "src/index.js",
+      "method": "get",
       "name": "app.get",
-      "file": "src/index.js",
-      "exported": false,
       "object": "app",
-      "method": "get",
-      "computed": false,
-      "computedPropertyVar": null
+      "type": "CALL"
     },
     {
-      "type": "CALL",
-      "name": "app.listen",
-      "file": "src/index.js",
+      "computed": false,
+      "computedPropertyVar": null,
       "exported": false,
-      "object": "app",
+      "file": "src/index.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
       "method": "listen",
+      "name": "app.listen",
+      "object": "app",
+      "type": "CALL"
+    },
+    {
       "computed": false,
       "computedPropertyVar": null,
-      "isAwaited": false,
-      "isInsideTry": false,
-      "isMethodCall": true
-    },
-    {
-      "type": "CALL",
-      "name": "app.use",
-      "file": "src/index.js",
       "exported": false,
-      "object": "app",
-      "method": "use",
-      "computed": false,
-      "computedPropertyVar": null
-    },
-    {
-      "type": "CALL",
-      "name": "app.use",
       "file": "src/index.js",
-      "exported": false,
-      "object": "app",
       "method": "use",
-      "computed": false,
-      "computedPropertyVar": null
-    },
-    {
-      "type": "CALL",
       "name": "app.use",
-      "file": "src/index.js",
-      "exported": false,
       "object": "app",
-      "method": "use",
-      "computed": false,
-      "computedPropertyVar": null
+      "type": "CALL"
     },
     {
-      "type": "CALL",
-      "name": "console.log",
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
+      "file": "src/index.js",
+      "method": "use",
+      "name": "app.use",
+      "object": "app",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
+      "file": "src/index.js",
+      "method": "use",
+      "name": "app.use",
+      "object": "app",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
       "file": "src/db.js",
-      "exported": false,
-      "object": "console",
-      "method": "log",
-      "computed": false,
-      "computedPropertyVar": null,
       "isAwaited": false,
       "isInsideTry": false,
-      "isMethodCall": true
+      "isMethodCall": true,
+      "method": "log",
+      "name": "console.log",
+      "object": "console",
+      "type": "CALL"
     },
     {
-      "type": "CALL",
-      "name": "console.log",
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
       "file": "src/db.js",
-      "exported": false,
-      "object": "console",
-      "method": "log",
-      "computed": false,
-      "computedPropertyVar": null,
       "isAwaited": false,
       "isInsideTry": false,
-      "isMethodCall": true
+      "isMethodCall": true,
+      "method": "log",
+      "name": "console.log",
+      "object": "console",
+      "type": "CALL"
     },
     {
-      "type": "CALL",
-      "name": "console.log",
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
       "file": "src/index.js",
-      "exported": false,
-      "object": "console",
-      "method": "log",
-      "computed": false,
-      "computedPropertyVar": null,
       "isAwaited": false,
       "isInsideTry": false,
-      "isMethodCall": true
+      "isMethodCall": true,
+      "method": "log",
+      "name": "console.log",
+      "object": "console",
+      "type": "CALL"
     },
     {
-      "type": "CALL",
-      "name": "console.log",
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
       "file": "src/index.js",
-      "exported": false,
-      "object": "console",
-      "method": "log",
-      "computed": false,
-      "computedPropertyVar": null,
       "isAwaited": false,
       "isInsideTry": false,
-      "isMethodCall": true
+      "isMethodCall": true,
+      "method": "log",
+      "name": "console.log",
+      "object": "console",
+      "type": "CALL"
     },
     {
-      "type": "CALL",
-      "name": "console.log",
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
       "file": "src/index.js",
-      "exported": false,
-      "object": "console",
-      "method": "log",
-      "computed": false,
-      "computedPropertyVar": null,
       "isAwaited": false,
       "isInsideTry": false,
-      "isMethodCall": true
+      "isMethodCall": true,
+      "method": "log",
+      "name": "console.log",
+      "object": "console",
+      "type": "CALL"
     },
     {
-      "type": "CALL",
-      "name": "console.log",
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
       "file": "src/routes/orders.js",
-      "exported": false,
-      "object": "console",
-      "method": "log",
-      "computed": false,
-      "computedPropertyVar": null,
       "isAwaited": false,
       "isInsideTry": false,
-      "isMethodCall": true
+      "isMethodCall": true,
+      "method": "log",
+      "name": "console.log",
+      "object": "console",
+      "type": "CALL"
     },
     {
-      "type": "CALL",
-      "name": "console.log",
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
       "file": "src/routes/orders.js",
-      "exported": false,
-      "object": "console",
-      "method": "log",
-      "computed": false,
-      "computedPropertyVar": null,
       "isAwaited": false,
       "isInsideTry": false,
-      "isMethodCall": true
-    },
-    {
-      "type": "CALL",
+      "isMethodCall": true,
+      "method": "log",
       "name": "console.log",
-      "file": "src/routes/users.js",
-      "exported": false,
       "object": "console",
-      "method": "log",
-      "computed": false,
-      "computedPropertyVar": null,
-      "isAwaited": false,
-      "isInsideTry": false,
-      "isMethodCall": true
+      "type": "CALL"
     },
     {
-      "type": "CALL",
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
+      "file": "src/routes/users.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "log",
       "name": "console.log",
-      "file": "src/routes/users.js",
-      "exported": false,
       "object": "console",
-      "method": "log",
-      "computed": false,
-      "computedPropertyVar": null,
-      "isAwaited": false,
-      "isInsideTry": false,
-      "isMethodCall": true
+      "type": "CALL"
     },
     {
-      "type": "CALL",
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
+      "file": "src/routes/users.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "log",
       "name": "console.log",
-      "file": "src/routes/users.js",
-      "exported": false,
       "object": "console",
-      "method": "log",
-      "computed": false,
-      "computedPropertyVar": null,
-      "isAwaited": false,
-      "isInsideTry": false,
-      "isMethodCall": true
+      "type": "CALL"
     },
     {
-      "type": "CALL",
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
+      "file": "src/routes/users.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "log",
+      "name": "console.log",
+      "object": "console",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "src/db.js",
+      "isNew": true,
       "name": "Database",
-      "file": "src/db.js",
-      "exported": false,
-      "isNew": true
+      "type": "CALL"
     },
     {
-      "type": "CALL",
-      "name": "db.connect",
-      "file": "src/index.js",
+      "computed": false,
+      "computedPropertyVar": null,
       "exported": false,
-      "object": "db",
+      "file": "src/index.js",
+      "isAwaited": true,
+      "isInsideTry": false,
+      "isMethodCall": true,
       "method": "connect",
-      "computed": false,
-      "computedPropertyVar": null,
-      "isAwaited": true,
-      "isInsideTry": false,
-      "isMethodCall": true
+      "name": "db.connect",
+      "object": "db",
+      "type": "CALL"
     },
     {
-      "type": "CALL",
-      "name": "db.query",
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
       "file": "src/routes/orders.js",
-      "exported": false,
-      "object": "db",
-      "method": "query",
-      "computed": false,
-      "computedPropertyVar": null,
       "isAwaited": true,
       "isInsideTry": false,
-      "isMethodCall": true
+      "isMethodCall": true,
+      "method": "query",
+      "name": "db.query",
+      "object": "db",
+      "type": "CALL"
     },
     {
-      "type": "CALL",
-      "name": "db.query",
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
       "file": "src/routes/orders.js",
-      "exported": false,
-      "object": "db",
-      "method": "query",
-      "computed": false,
-      "computedPropertyVar": null,
       "isAwaited": true,
       "isInsideTry": false,
-      "isMethodCall": true
-    },
-    {
-      "type": "CALL",
+      "isMethodCall": true,
+      "method": "query",
       "name": "db.query",
-      "file": "src/routes/users.js",
-      "exported": false,
       "object": "db",
-      "method": "query",
-      "computed": false,
-      "computedPropertyVar": null,
-      "isAwaited": true,
-      "isInsideTry": false,
-      "isMethodCall": true
+      "type": "CALL"
     },
     {
-      "type": "CALL",
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
+      "file": "src/routes/users.js",
+      "isAwaited": true,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "query",
       "name": "db.query",
-      "file": "src/routes/users.js",
-      "exported": false,
       "object": "db",
-      "method": "query",
-      "computed": false,
-      "computedPropertyVar": null,
-      "isAwaited": true,
-      "isInsideTry": false,
-      "isMethodCall": true
+      "type": "CALL"
     },
     {
-      "type": "CALL",
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
+      "file": "src/routes/users.js",
+      "isAwaited": true,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "query",
       "name": "db.query",
-      "file": "src/routes/users.js",
-      "exported": false,
       "object": "db",
-      "method": "query",
-      "computed": false,
-      "computedPropertyVar": null,
-      "isAwaited": true,
-      "isInsideTry": false,
-      "isMethodCall": true
+      "type": "CALL"
     },
     {
-      "type": "CALL",
-      "name": "Error",
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
+      "file": "src/routes/users.js",
+      "isAwaited": true,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "query",
+      "name": "db.query",
+      "object": "db",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
       "file": "src/db.js",
-      "exported": false,
-      "isNew": true
+      "isNew": true,
+      "name": "Error",
+      "type": "CALL"
     },
     {
-      "type": "CALL",
+      "exported": false,
+      "file": "src/index.js",
       "name": "express",
-      "file": "src/index.js",
-      "exported": false
+      "type": "CALL"
     },
     {
-      "type": "CALL",
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
+      "file": "src/index.js",
+      "method": "json",
       "name": "express.json",
-      "file": "src/index.js",
-      "exported": false,
       "object": "express",
-      "method": "json",
-      "computed": false,
-      "computedPropertyVar": null
+      "type": "CALL"
     },
     {
-      "type": "CALL",
-      "name": "express.Router",
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
       "file": "src/routes/orders.js",
-      "exported": false,
-      "object": "express",
-      "method": "Router",
-      "computed": false,
-      "computedPropertyVar": null,
       "isAwaited": false,
       "isInsideTry": false,
-      "isMethodCall": true
-    },
-    {
-      "type": "CALL",
+      "isMethodCall": true,
+      "method": "Router",
       "name": "express.Router",
-      "file": "src/routes/users.js",
-      "exported": false,
       "object": "express",
-      "method": "Router",
-      "computed": false,
-      "computedPropertyVar": null,
-      "isAwaited": false,
-      "isInsideTry": false,
-      "isMethodCall": true
+      "type": "CALL"
     },
     {
-      "type": "CALL",
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
+      "file": "src/routes/users.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "Router",
+      "name": "express.Router",
+      "object": "express",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "src/index.js",
       "name": "getOrdersRoute",
-      "file": "src/index.js",
-      "exported": false
+      "type": "CALL"
     },
     {
-      "type": "CALL",
+      "exported": false,
+      "file": "src/index.js",
       "name": "getUsersRoute",
-      "file": "src/index.js",
-      "exported": false
+      "type": "CALL"
     },
     {
-      "type": "CALL",
-      "name": "JSON.stringify",
-      "file": "src/routes/orders.js",
+      "computed": false,
+      "computedPropertyVar": null,
       "exported": false,
-      "object": "JSON",
+      "file": "src/routes/orders.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
       "method": "stringify",
-      "computed": false,
-      "computedPropertyVar": null,
-      "isAwaited": false,
-      "isInsideTry": false,
-      "isMethodCall": true
+      "name": "JSON.stringify",
+      "object": "JSON",
+      "type": "CALL"
     },
     {
-      "type": "CALL",
-      "name": "res.json",
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
       "file": "src/index.js",
-      "exported": false,
-      "object": "res",
-      "method": "json",
-      "computed": false,
-      "computedPropertyVar": null,
       "isAwaited": false,
       "isInsideTry": false,
-      "isMethodCall": true
+      "isMethodCall": true,
+      "method": "json",
+      "name": "res.json",
+      "object": "res",
+      "type": "CALL"
     },
     {
-      "type": "CALL",
-      "name": "res.json",
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
       "file": "src/routes/orders.js",
-      "exported": false,
-      "object": "res",
-      "method": "json",
-      "computed": false,
-      "computedPropertyVar": null,
       "isAwaited": false,
       "isInsideTry": false,
-      "isMethodCall": true
+      "isMethodCall": true,
+      "method": "json",
+      "name": "res.json",
+      "object": "res",
+      "type": "CALL"
     },
     {
-      "type": "CALL",
-      "name": "res.json",
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
       "file": "src/routes/orders.js",
-      "exported": false,
-      "object": "res",
-      "method": "json",
-      "computed": false,
-      "computedPropertyVar": null,
       "isAwaited": false,
       "isInsideTry": false,
-      "isMethodCall": true
-    },
-    {
-      "type": "CALL",
+      "isMethodCall": true,
+      "method": "json",
       "name": "res.json",
-      "file": "src/routes/users.js",
-      "exported": false,
       "object": "res",
-      "method": "json",
-      "computed": false,
-      "computedPropertyVar": null,
-      "isAwaited": false,
-      "isInsideTry": false,
-      "isMethodCall": true
+      "type": "CALL"
     },
     {
-      "type": "CALL",
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
+      "file": "src/routes/users.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "json",
       "name": "res.json",
-      "file": "src/routes/users.js",
-      "exported": false,
       "object": "res",
-      "method": "json",
-      "computed": false,
-      "computedPropertyVar": null,
-      "isAwaited": false,
-      "isInsideTry": false,
-      "isMethodCall": true
+      "type": "CALL"
     },
     {
-      "type": "CALL",
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
+      "file": "src/routes/users.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "json",
       "name": "res.json",
-      "file": "src/routes/users.js",
-      "exported": false,
       "object": "res",
-      "method": "json",
-      "computed": false,
-      "computedPropertyVar": null,
-      "isAwaited": false,
-      "isInsideTry": false,
-      "isMethodCall": true
+      "type": "CALL"
     },
     {
-      "type": "CALL",
-      "name": "router.get",
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
+      "file": "src/routes/users.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "json",
+      "name": "res.json",
+      "object": "res",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
       "file": "src/routes/orders.js",
-      "exported": false,
-      "object": "router",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
       "method": "get",
-      "computed": false,
-      "computedPropertyVar": null,
-      "isAwaited": false,
-      "isInsideTry": false,
-      "isMethodCall": true
-    },
-    {
-      "type": "CALL",
       "name": "router.get",
-      "file": "src/routes/users.js",
-      "exported": false,
       "object": "router",
-      "method": "get",
-      "computed": false,
-      "computedPropertyVar": null,
-      "isAwaited": false,
-      "isInsideTry": false,
-      "isMethodCall": true
+      "type": "CALL"
     },
     {
-      "type": "CALL",
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
+      "file": "src/routes/users.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "get",
       "name": "router.get",
-      "file": "src/routes/users.js",
-      "exported": false,
       "object": "router",
-      "method": "get",
-      "computed": false,
-      "computedPropertyVar": null,
-      "isAwaited": false,
-      "isInsideTry": false,
-      "isMethodCall": true
+      "type": "CALL"
     },
     {
-      "type": "CALL",
-      "name": "router.post",
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
+      "file": "src/routes/users.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "get",
+      "name": "router.get",
+      "object": "router",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
       "file": "src/routes/orders.js",
-      "exported": false,
-      "object": "router",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
       "method": "post",
-      "computed": false,
-      "computedPropertyVar": null,
-      "isAwaited": false,
-      "isInsideTry": false,
-      "isMethodCall": true
-    },
-    {
-      "type": "CALL",
       "name": "router.post",
-      "file": "src/routes/users.js",
-      "exported": false,
       "object": "router",
-      "method": "post",
-      "computed": false,
-      "computedPropertyVar": null,
-      "isAwaited": false,
-      "isInsideTry": false,
-      "isMethodCall": true
+      "type": "CALL"
     },
     {
-      "type": "CALL",
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
+      "file": "src/routes/users.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "post",
+      "name": "router.post",
+      "object": "router",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "src/index.js",
       "name": "start",
-      "file": "src/index.js",
-      "exported": false
+      "type": "CALL"
     },
     {
-      "type": "CLASS",
-      "name": "Database",
-      "file": "db.js",
-      "exported": false
-    },
-    {
-      "type": "CONSTANT",
-      "name": "PORT",
-      "file": "src/index.js",
       "exported": false,
+      "file": "db.js",
+      "name": "Database",
+      "type": "CLASS"
+    },
+    {
+      "exported": false,
+      "file": "src/index.js",
+      "name": "PORT",
+      "type": "CONSTANT",
       "value": 3000
     },
     {
-      "type": "CONSTRUCTOR_CALL",
-      "name": "new Database()",
-      "file": "src/db.js",
-      "exported": false,
       "className": "Database",
-      "isBuiltin": false
+      "exported": false,
+      "file": "src/db.js",
+      "isBuiltin": false,
+      "name": "new Database()",
+      "type": "CONSTRUCTOR_CALL"
     },
     {
-      "type": "CONSTRUCTOR_CALL",
-      "name": "new Error()",
-      "file": "src/db.js",
-      "exported": false,
       "className": "Error",
-      "isBuiltin": true
+      "exported": false,
+      "file": "src/db.js",
+      "isBuiltin": true,
+      "name": "new Error()",
+      "type": "CONSTRUCTOR_CALL"
     },
     {
-      "type": "EXPORT",
-      "name": "default",
-      "file": "src/db.js",
-      "exported": false,
-      "exportKind": "value",
-      "local": "default",
       "default": true,
-      "exportType": "default"
+      "exported": false,
+      "exportKind": "value",
+      "exportType": "default",
+      "file": "src/db.js",
+      "local": "default",
+      "name": "default",
+      "type": "EXPORT"
     },
     {
-      "type": "EXPORT",
-      "name": "getOrdersRoute",
+      "default": false,
+      "exported": false,
+      "exportKind": "value",
+      "exportType": "named",
       "file": "src/routes/orders.js",
-      "exported": false,
-      "exportKind": "value",
       "local": "getOrdersRoute",
-      "default": false,
-      "exportType": "named"
+      "name": "getOrdersRoute",
+      "type": "EXPORT"
     },
     {
-      "type": "EXPORT",
-      "name": "getUsersRoute",
-      "file": "src/routes/users.js",
+      "default": false,
       "exported": false,
       "exportKind": "value",
+      "exportType": "named",
+      "file": "src/routes/users.js",
       "local": "getUsersRoute",
-      "default": false,
-      "exportType": "named"
+      "name": "getUsersRoute",
+      "type": "EXPORT"
     },
     {
-      "type": "EXPRESSION",
+      "exported": false,
+      "expressionType": "ArrayExpression",
+      "file": "src/db.js",
       "name": "ArrayExpression",
-      "file": "src/db.js",
-      "exported": false,
-      "expressionType": "ArrayExpression"
+      "type": "EXPRESSION"
     },
     {
-      "type": "EXPRESSION",
+      "exported": false,
+      "expressionType": "UnaryExpression",
+      "file": "src/db.js",
       "name": "UnaryExpression",
-      "file": "src/db.js",
-      "exported": false,
-      "expressionType": "UnaryExpression"
+      "type": "EXPRESSION"
     },
     {
-      "type": "EXTERNAL_MODULE",
-      "name": "express",
+      "exported": false,
       "file": "",
-      "exported": false
+      "name": "express",
+      "type": "EXTERNAL_MODULE"
     },
     {
-      "type": "FUNCTION",
-      "name": "anonymous[0]",
-      "file": "src/index.js",
-      "exported": false,
-      "async": false,
       "arrowFunction": true,
+      "async": false,
       "controlFlow": {
-        "hasBranches": false,
-        "hasLoops": false,
-        "hasTryCatch": false,
-        "hasEarlyReturn": false,
-        "hasThrow": false,
-        "cyclomaticComplexity": 1,
         "canReject": false,
-        "hasAsyncThrow": false
-      }
-    },
-    {
-      "type": "FUNCTION",
-      "name": "anonymous[0]",
-      "file": "src/index.js",
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
       "exported": false,
-      "async": false,
-      "arrowFunction": true,
+      "file": "src/index.js",
+      "name": "anonymous[0]",
       "params": [
         "req",
         "res"
@@ -613,405 +604,433 @@
       ],
       "returnType": "void",
       "signature": "(req: any, res: any) => void",
-      "controlFlow": {
-        "hasBranches": false,
-        "hasLoops": false,
-        "hasTryCatch": false,
-        "hasEarlyReturn": false,
-        "hasThrow": false,
-        "cyclomaticComplexity": 1,
-        "canReject": false,
-        "hasAsyncThrow": false
-      }
+      "type": "FUNCTION"
     },
     {
-      "type": "FUNCTION",
+      "arrowFunction": true,
+      "async": false,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "src/index.js",
       "name": "anonymous[0]",
-      "file": "src/routes/orders.js",
-      "exported": false,
-      "async": true,
-      "arrowFunction": true,
-      "controlFlow": {
-        "hasBranches": false,
-        "hasLoops": false,
-        "hasTryCatch": false,
-        "hasEarlyReturn": false,
-        "hasThrow": false,
-        "cyclomaticComplexity": 1,
-        "canReject": false,
-        "hasAsyncThrow": false
-      }
+      "type": "FUNCTION"
     },
     {
-      "type": "FUNCTION",
+      "arrowFunction": true,
+      "async": true,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "src/routes/orders.js",
       "name": "anonymous[0]",
-      "file": "src/routes/users.js",
-      "exported": false,
-      "async": true,
-      "arrowFunction": true,
-      "controlFlow": {
-        "hasBranches": false,
-        "hasLoops": false,
-        "hasTryCatch": false,
-        "hasEarlyReturn": false,
-        "hasThrow": false,
-        "cyclomaticComplexity": 1,
-        "canReject": false,
-        "hasAsyncThrow": false
-      }
+      "type": "FUNCTION"
     },
     {
-      "type": "FUNCTION",
-      "name": "anonymous[1]",
+      "arrowFunction": true,
+      "async": true,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "src/routes/users.js",
+      "name": "anonymous[0]",
+      "type": "FUNCTION"
+    },
+    {
+      "arrowFunction": true,
+      "async": true,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
       "file": "src/routes/orders.js",
-      "exported": false,
-      "async": true,
-      "arrowFunction": true,
-      "controlFlow": {
-        "hasBranches": false,
-        "hasLoops": false,
-        "hasTryCatch": false,
-        "hasEarlyReturn": false,
-        "hasThrow": false,
-        "cyclomaticComplexity": 1,
-        "canReject": false,
-        "hasAsyncThrow": false
-      }
-    },
-    {
-      "type": "FUNCTION",
       "name": "anonymous[1]",
-      "file": "src/routes/users.js",
-      "exported": false,
-      "async": true,
-      "arrowFunction": true,
-      "controlFlow": {
-        "hasBranches": false,
-        "hasLoops": false,
-        "hasTryCatch": false,
-        "hasEarlyReturn": false,
-        "hasThrow": false,
-        "cyclomaticComplexity": 1,
-        "canReject": false,
-        "hasAsyncThrow": false
-      }
+      "type": "FUNCTION"
     },
     {
-      "type": "FUNCTION",
+      "arrowFunction": true,
+      "async": true,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "src/routes/users.js",
+      "name": "anonymous[1]",
+      "type": "FUNCTION"
+    },
+    {
+      "arrowFunction": true,
+      "async": true,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "src/routes/users.js",
       "name": "anonymous[2]",
-      "file": "src/routes/users.js",
-      "exported": false,
-      "async": true,
-      "arrowFunction": true,
-      "controlFlow": {
-        "hasBranches": false,
-        "hasLoops": false,
-        "hasTryCatch": false,
-        "hasEarlyReturn": false,
-        "hasThrow": false,
-        "cyclomaticComplexity": 1,
-        "canReject": false,
-        "hasAsyncThrow": false
-      }
+      "type": "FUNCTION"
     },
     {
-      "type": "FUNCTION",
-      "name": "connect",
-      "file": "src/db.js",
-      "exported": false,
       "async": true,
+      "className": "Database",
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "src/db.js",
       "generator": false,
       "isClassMethod": true,
-      "className": "Database",
-      "methodKind": "method",
       "legacyId": "FUNCTION#Database.connect#src/db.js#6:2",
-      "controlFlow": {
-        "hasBranches": false,
-        "hasLoops": false,
-        "hasTryCatch": false,
-        "hasEarlyReturn": false,
-        "hasThrow": false,
-        "cyclomaticComplexity": 1,
-        "canReject": false,
-        "hasAsyncThrow": false
-      }
-    },
-    {
-      "type": "FUNCTION",
-      "name": "constructor",
-      "file": "src/db.js",
-      "exported": false,
-      "async": false,
-      "generator": false,
-      "isClassMethod": true,
-      "className": "Database",
-      "methodKind": "constructor",
-      "legacyId": "FUNCTION#Database.constructor#src/db.js#2:2",
-      "controlFlow": {
-        "hasBranches": false,
-        "hasLoops": false,
-        "hasTryCatch": false,
-        "hasEarlyReturn": false,
-        "hasThrow": false,
-        "cyclomaticComplexity": 1,
-        "canReject": false,
-        "hasAsyncThrow": false
-      }
-    },
-    {
-      "type": "FUNCTION",
-      "name": "getOrdersRoute",
-      "file": "src/routes/orders.js",
-      "exported": false,
-      "async": false,
-      "generator": false,
-      "params": [],
-      "paramTypes": [],
-      "returnType": "void",
-      "signature": "() => void",
-      "controlFlow": {
-        "hasBranches": false,
-        "hasLoops": false,
-        "hasTryCatch": false,
-        "hasEarlyReturn": false,
-        "hasThrow": false,
-        "cyclomaticComplexity": 1,
-        "canReject": false,
-        "hasAsyncThrow": false
-      }
-    },
-    {
-      "type": "FUNCTION",
-      "name": "getUsersRoute",
-      "file": "src/routes/users.js",
-      "exported": false,
-      "async": false,
-      "generator": false,
-      "params": [],
-      "paramTypes": [],
-      "returnType": "void",
-      "signature": "() => void",
-      "controlFlow": {
-        "hasBranches": false,
-        "hasLoops": false,
-        "hasTryCatch": false,
-        "hasEarlyReturn": false,
-        "hasThrow": false,
-        "cyclomaticComplexity": 1,
-        "canReject": false,
-        "hasAsyncThrow": false
-      }
-    },
-    {
-      "type": "FUNCTION",
-      "name": "query",
-      "file": "src/db.js",
-      "exported": false,
-      "async": true,
-      "generator": false,
-      "isClassMethod": true,
-      "className": "Database",
       "methodKind": "method",
-      "legacyId": "FUNCTION#Database.query#src/db.js#12:2",
+      "name": "connect",
+      "type": "FUNCTION"
+    },
+    {
+      "async": false,
+      "className": "Database",
       "controlFlow": {
-        "hasBranches": true,
-        "hasLoops": false,
-        "hasTryCatch": false,
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
         "hasEarlyReturn": false,
-        "hasThrow": true,
-        "cyclomaticComplexity": 2,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "src/db.js",
+      "generator": false,
+      "isClassMethod": true,
+      "legacyId": "FUNCTION#Database.constructor#src/db.js#2:2",
+      "methodKind": "constructor",
+      "name": "constructor",
+      "type": "FUNCTION"
+    },
+    {
+      "async": false,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "src/routes/orders.js",
+      "generator": false,
+      "name": "getOrdersRoute",
+      "params": [],
+      "paramTypes": [],
+      "returnType": "void",
+      "signature": "() => void",
+      "type": "FUNCTION"
+    },
+    {
+      "async": false,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "src/routes/users.js",
+      "generator": false,
+      "name": "getUsersRoute",
+      "params": [],
+      "paramTypes": [],
+      "returnType": "void",
+      "signature": "() => void",
+      "type": "FUNCTION"
+    },
+    {
+      "async": true,
+      "className": "Database",
+      "controlFlow": {
         "canReject": true,
+        "cyclomaticComplexity": 2,
         "hasAsyncThrow": true,
+        "hasBranches": true,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": true,
+        "hasTryCatch": false,
         "rejectedBuiltinErrors": [
           "Error"
         ]
       },
+      "exported": false,
+      "file": "src/db.js",
+      "generator": false,
+      "isClassMethod": true,
+      "legacyId": "FUNCTION#Database.query#src/db.js#12:2",
+      "methodKind": "method",
+      "name": "query",
       "rejectionPatterns": [
         {
-          "rejectionType": "async_throw",
+          "column": 6,
           "errorClassName": "Error",
           "line": 14,
-          "column": 6
+          "rejectionType": "async_throw"
         }
-      ]
+      ],
+      "type": "FUNCTION"
     },
     {
-      "type": "FUNCTION",
-      "name": "start",
-      "file": "src/index.js",
-      "exported": false,
       "async": true,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "src/index.js",
       "generator": false,
+      "name": "start",
       "params": [],
       "paramTypes": [],
       "returnType": "void",
       "signature": "() => Promise<void>",
-      "controlFlow": {
-        "hasBranches": false,
-        "hasLoops": false,
-        "hasTryCatch": false,
-        "hasEarlyReturn": false,
-        "hasThrow": false,
-        "cyclomaticComplexity": 1,
-        "canReject": false,
-        "hasAsyncThrow": false
-      }
+      "type": "FUNCTION"
     },
     {
-      "type": "grafema:plugin",
-      "name": "ArgumentParameterLinker",
-      "file": "",
-      "exported": false,
-      "phase": "ENRICHMENT",
-      "priority": 0,
       "builtin": true,
-      "createsNodes": [],
+      "creates": {
+        "edges": [
+          "RECEIVES_ARGUMENT"
+        ],
+        "nodes": []
+      },
       "createsEdges": [
         "RECEIVES_ARGUMENT"
       ],
+      "createsNodes": [],
       "dependencies": [
         "JSASTAnalyzer",
         "MethodCallResolver"
       ],
-      "creates": {
-        "nodes": [],
-        "edges": [
-          "RECEIVES_ARGUMENT"
-        ]
-      }
-    },
-    {
-      "type": "grafema:plugin",
-      "name": "CallbackCallResolver",
-      "file": "",
       "exported": false,
+      "file": "",
+      "name": "ArgumentParameterLinker",
       "phase": "ENRICHMENT",
       "priority": 0,
+      "type": "grafema:plugin"
+    },
+    {
       "builtin": true,
-      "createsNodes": [],
+      "creates": {
+        "edges": [
+          "CALLS"
+        ],
+        "nodes": []
+      },
       "createsEdges": [
         "CALLS"
       ],
+      "createsNodes": [],
       "dependencies": [
         "ImportExportLinker",
         "FunctionCallResolver"
       ],
-      "creates": {
-        "nodes": [],
-        "edges": [
-          "CALLS"
-        ]
-      }
+      "exported": false,
+      "file": "",
+      "name": "CallbackCallResolver",
+      "phase": "ENRICHMENT",
+      "priority": 0,
+      "type": "grafema:plugin"
     },
     {
-      "type": "grafema:plugin",
-      "name": "FetchAnalyzer",
-      "file": "",
-      "exported": false,
-      "phase": "ANALYSIS",
-      "priority": 0,
       "builtin": true,
-      "createsNodes": [
-        "http:request",
-        "EXTERNAL"
-      ],
+      "creates": {
+        "edges": [
+          "CONTAINS",
+          "MAKES_REQUEST",
+          "CALLS_API"
+        ],
+        "nodes": [
+          "http:request",
+          "EXTERNAL"
+        ]
+      },
       "createsEdges": [
         "CONTAINS",
         "MAKES_REQUEST",
         "CALLS_API"
       ],
+      "createsNodes": [
+        "http:request",
+        "EXTERNAL"
+      ],
       "dependencies": [
         "JSModuleIndexer",
         "JSASTAnalyzer"
       ],
-      "creates": {
-        "nodes": [
-          "http:request",
-          "EXTERNAL"
-        ],
-        "edges": [
-          "CONTAINS",
-          "MAKES_REQUEST",
-          "CALLS_API"
-        ]
-      }
+      "exported": false,
+      "file": "",
+      "name": "FetchAnalyzer",
+      "phase": "ANALYSIS",
+      "priority": 0,
+      "type": "grafema:plugin"
     },
     {
-      "type": "grafema:plugin",
-      "name": "ImportExportLinker",
-      "file": "",
-      "exported": false,
-      "phase": "ENRICHMENT",
-      "priority": 0,
       "builtin": true,
-      "createsNodes": [],
+      "creates": {
+        "edges": [
+          "IMPORTS",
+          "IMPORTS_FROM"
+        ],
+        "nodes": []
+      },
       "createsEdges": [
         "IMPORTS",
         "IMPORTS_FROM"
       ],
+      "createsNodes": [],
       "dependencies": [
         "JSASTAnalyzer"
       ],
-      "creates": {
-        "nodes": [],
-        "edges": [
-          "IMPORTS",
-          "IMPORTS_FROM"
-        ]
-      }
-    },
-    {
-      "type": "grafema:plugin",
-      "name": "InstanceOfResolver",
-      "file": "",
       "exported": false,
+      "file": "",
+      "name": "ImportExportLinker",
       "phase": "ENRICHMENT",
       "priority": 0,
+      "type": "grafema:plugin"
+    },
+    {
       "builtin": true,
-      "createsNodes": [],
+      "creates": {
+        "edges": [
+          "INSTANCE_OF"
+        ],
+        "nodes": []
+      },
       "createsEdges": [
         "INSTANCE_OF"
       ],
+      "createsNodes": [],
       "dependencies": [
         "JSASTAnalyzer"
       ],
-      "creates": {
-        "nodes": [],
-        "edges": [
-          "INSTANCE_OF"
-        ]
-      }
+      "exported": false,
+      "file": "",
+      "name": "InstanceOfResolver",
+      "phase": "ENRICHMENT",
+      "priority": 0,
+      "type": "grafema:plugin"
     },
     {
-      "type": "grafema:plugin",
-      "name": "JSASTAnalyzer",
-      "file": "",
-      "exported": false,
-      "phase": "ANALYSIS",
-      "priority": 0,
       "builtin": true,
-      "createsNodes": [
-        "FUNCTION",
-        "CLASS",
-        "METHOD",
-        "VARIABLE",
-        "CONSTANT",
-        "SCOPE",
-        "CALL",
-        "IMPORT",
-        "EXPORT",
-        "LITERAL",
-        "EXTERNAL_MODULE",
-        "net:stdio",
-        "net:request",
-        "event:listener",
-        "http:request",
-        "INTERFACE",
-        "TYPE",
-        "ENUM",
-        "DECORATOR",
-        "TYPE_PARAMETER"
-      ],
+      "creates": {
+        "edges": [
+          "CONTAINS",
+          "DECLARES",
+          "CALLS",
+          "HAS_SCOPE",
+          "CAPTURES",
+          "MODIFIES",
+          "WRITES_TO",
+          "IMPORTS",
+          "INSTANCE_OF",
+          "HANDLED_BY",
+          "HAS_CALLBACK",
+          "PASSES_ARGUMENT",
+          "MAKES_REQUEST",
+          "IMPORTS_FROM",
+          "EXPORTS_TO",
+          "ASSIGNED_FROM",
+          "IMPLEMENTS",
+          "EXTENDS",
+          "DECORATED_BY",
+          "HAS_TYPE_PARAMETER",
+          "RESOLVES_TO"
+        ],
+        "nodes": [
+          "FUNCTION",
+          "CLASS",
+          "METHOD",
+          "VARIABLE",
+          "CONSTANT",
+          "SCOPE",
+          "CALL",
+          "IMPORT",
+          "EXPORT",
+          "LITERAL",
+          "EXTERNAL_MODULE",
+          "net:stdio",
+          "net:request",
+          "event:listener",
+          "http:request",
+          "INTERFACE",
+          "TYPE",
+          "ENUM",
+          "DECORATOR",
+          "TYPE_PARAMETER"
+        ]
+      },
       "createsEdges": [
         "CONTAINS",
         "DECLARES",
@@ -1035,772 +1054,753 @@
         "HAS_TYPE_PARAMETER",
         "RESOLVES_TO"
       ],
+      "createsNodes": [
+        "FUNCTION",
+        "CLASS",
+        "METHOD",
+        "VARIABLE",
+        "CONSTANT",
+        "SCOPE",
+        "CALL",
+        "IMPORT",
+        "EXPORT",
+        "LITERAL",
+        "EXTERNAL_MODULE",
+        "net:stdio",
+        "net:request",
+        "event:listener",
+        "http:request",
+        "INTERFACE",
+        "TYPE",
+        "ENUM",
+        "DECORATOR",
+        "TYPE_PARAMETER"
+      ],
       "dependencies": [
         "JSModuleIndexer"
       ],
-      "creates": {
-        "nodes": [
-          "FUNCTION",
-          "CLASS",
-          "METHOD",
-          "VARIABLE",
-          "CONSTANT",
-          "SCOPE",
-          "CALL",
-          "IMPORT",
-          "EXPORT",
-          "LITERAL",
-          "EXTERNAL_MODULE",
-          "net:stdio",
-          "net:request",
-          "event:listener",
-          "http:request",
-          "INTERFACE",
-          "TYPE",
-          "ENUM",
-          "DECORATOR",
-          "TYPE_PARAMETER"
-        ],
-        "edges": [
-          "CONTAINS",
-          "DECLARES",
-          "CALLS",
-          "HAS_SCOPE",
-          "CAPTURES",
-          "MODIFIES",
-          "WRITES_TO",
-          "IMPORTS",
-          "INSTANCE_OF",
-          "HANDLED_BY",
-          "HAS_CALLBACK",
-          "PASSES_ARGUMENT",
-          "MAKES_REQUEST",
-          "IMPORTS_FROM",
-          "EXPORTS_TO",
-          "ASSIGNED_FROM",
-          "IMPLEMENTS",
-          "EXTENDS",
-          "DECORATED_BY",
-          "HAS_TYPE_PARAMETER",
-          "RESOLVES_TO"
-        ]
-      }
+      "exported": false,
+      "file": "",
+      "name": "JSASTAnalyzer",
+      "phase": "ANALYSIS",
+      "priority": 0,
+      "type": "grafema:plugin"
     },
     {
-      "type": "grafema:plugin",
-      "name": "JSModuleIndexer",
-      "file": "",
-      "exported": false,
-      "phase": "INDEXING",
-      "priority": 0,
       "builtin": true,
-      "createsNodes": [
-        "MODULE"
-      ],
+      "creates": {
+        "edges": [
+          "CONTAINS",
+          "DEPENDS_ON"
+        ],
+        "nodes": [
+          "MODULE"
+        ]
+      },
       "createsEdges": [
         "CONTAINS",
         "DEPENDS_ON"
       ],
+      "createsNodes": [
+        "MODULE"
+      ],
       "dependencies": [],
-      "creates": {
-        "nodes": [
-          "MODULE"
-        ],
-        "edges": [
-          "CONTAINS",
-          "DEPENDS_ON"
-        ]
-      }
+      "exported": false,
+      "file": "",
+      "name": "JSModuleIndexer",
+      "phase": "INDEXING",
+      "priority": 0,
+      "type": "grafema:plugin"
     },
     {
-      "type": "grafema:plugin",
-      "name": "MethodCallResolver",
-      "file": "",
-      "exported": false,
-      "phase": "ENRICHMENT",
-      "priority": 0,
       "builtin": true,
-      "createsNodes": [],
+      "creates": {
+        "edges": [
+          "CALLS"
+        ],
+        "nodes": []
+      },
       "createsEdges": [
         "CALLS"
       ],
+      "createsNodes": [],
       "dependencies": [
         "ImportExportLinker"
       ],
-      "creates": {
-        "nodes": [],
-        "edges": [
-          "CALLS"
-        ]
-      }
-    },
-    {
-      "type": "grafema:plugin",
-      "name": "NodejsBuiltinsResolver",
-      "file": "",
       "exported": false,
+      "file": "",
+      "name": "MethodCallResolver",
       "phase": "ENRICHMENT",
       "priority": 0,
+      "type": "grafema:plugin"
+    },
+    {
       "builtin": true,
-      "createsNodes": [
-        "EXTERNAL_FUNCTION",
-        "EXTERNAL_MODULE"
-      ],
+      "creates": {
+        "edges": [
+          "CALLS",
+          "IMPORTS_FROM"
+        ],
+        "nodes": [
+          "EXTERNAL_FUNCTION",
+          "EXTERNAL_MODULE"
+        ]
+      },
       "createsEdges": [
         "CALLS",
         "IMPORTS_FROM"
+      ],
+      "createsNodes": [
+        "EXTERNAL_FUNCTION",
+        "EXTERNAL_MODULE"
       ],
       "dependencies": [
         "JSASTAnalyzer",
         "ImportExportLinker"
       ],
-      "creates": {
-        "nodes": [
-          "EXTERNAL_FUNCTION",
-          "EXTERNAL_MODULE"
-        ],
-        "edges": [
-          "CALLS",
-          "IMPORTS_FROM"
-        ]
-      }
-    },
-    {
-      "type": "grafema:plugin",
-      "name": "RejectionPropagationEnricher",
-      "file": "",
       "exported": false,
+      "file": "",
+      "name": "NodejsBuiltinsResolver",
       "phase": "ENRICHMENT",
       "priority": 0,
+      "type": "grafema:plugin"
+    },
+    {
       "builtin": true,
-      "createsNodes": [],
+      "creates": {
+        "edges": [
+          "REJECTS"
+        ],
+        "nodes": []
+      },
       "createsEdges": [
         "REJECTS"
       ],
+      "createsNodes": [],
       "dependencies": [
         "JSASTAnalyzer"
       ],
-      "creates": {
-        "nodes": [],
-        "edges": [
-          "REJECTS"
-        ]
-      }
+      "exported": false,
+      "file": "",
+      "name": "RejectionPropagationEnricher",
+      "phase": "ENRICHMENT",
+      "priority": 0,
+      "type": "grafema:plugin"
     },
     {
-      "type": "grafema:plugin",
-      "name": "SimpleProjectDiscovery",
-      "file": "",
-      "exported": false,
-      "phase": "DISCOVERY",
-      "priority": 0,
       "builtin": true,
+      "creates": {
+        "edges": [],
+        "nodes": [
+          "SERVICE"
+        ]
+      },
+      "createsEdges": [],
       "createsNodes": [
         "SERVICE"
       ],
-      "createsEdges": [],
       "dependencies": [],
-      "creates": {
-        "nodes": [
-          "SERVICE"
-        ],
-        "edges": []
-      }
-    },
-    {
-      "type": "GRAPH_META",
-      "name": "graph_metadata",
+      "exported": false,
       "file": "",
-      "exported": false,
-      "projectPath": "/Users/vadim/grafema/test/fixtures/02-api-service"
+      "name": "SimpleProjectDiscovery",
+      "phase": "DISCOVERY",
+      "priority": 0,
+      "type": "grafema:plugin"
     },
     {
-      "type": "IMPORT",
-      "name": "db",
-      "file": "src/index.js",
       "exported": false,
+      "file": "",
+      "name": "graph_metadata",
+      "projectPath": "/Users/vadim/grafema-worker-11/test/fixtures/02-api-service",
+      "type": "GRAPH_META"
+    },
+    {
+      "exported": false,
+      "file": "src/index.js",
+      "importBinding": "value",
+      "imported": "default",
+      "importType": "default",
+      "local": "db",
+      "name": "db",
+      "sideEffect": false,
       "source": "./db.js",
-      "importType": "default",
-      "importBinding": "value",
-      "imported": "default",
-      "local": "db",
-      "sideEffect": false
+      "type": "IMPORT"
     },
     {
-      "type": "IMPORT",
-      "name": "db",
+      "exported": false,
       "file": "src/routes/orders.js",
-      "exported": false,
-      "source": "../db.js",
-      "importType": "default",
       "importBinding": "value",
       "imported": "default",
+      "importType": "default",
       "local": "db",
-      "sideEffect": false
-    },
-    {
-      "type": "IMPORT",
       "name": "db",
-      "file": "src/routes/users.js",
-      "exported": false,
+      "sideEffect": false,
       "source": "../db.js",
-      "importType": "default",
-      "importBinding": "value",
-      "imported": "default",
-      "local": "db",
-      "sideEffect": false
+      "type": "IMPORT"
     },
     {
-      "type": "IMPORT",
-      "name": "express",
-      "file": "src/index.js",
       "exported": false,
-      "source": "express",
-      "importType": "default",
-      "importBinding": "value",
-      "imported": "default",
-      "local": "express",
-      "sideEffect": false
-    },
-    {
-      "type": "IMPORT",
-      "name": "express",
-      "file": "src/routes/orders.js",
-      "exported": false,
-      "source": "express",
-      "importType": "default",
-      "importBinding": "value",
-      "imported": "default",
-      "local": "express",
-      "sideEffect": false
-    },
-    {
-      "type": "IMPORT",
-      "name": "express",
       "file": "src/routes/users.js",
-      "exported": false,
-      "source": "express",
-      "importType": "default",
       "importBinding": "value",
       "imported": "default",
-      "local": "express",
-      "sideEffect": false
+      "importType": "default",
+      "local": "db",
+      "name": "db",
+      "sideEffect": false,
+      "source": "../db.js",
+      "type": "IMPORT"
     },
     {
-      "type": "IMPORT",
-      "name": "getOrdersRoute",
-      "file": "src/index.js",
       "exported": false,
-      "source": "./routes/orders.js",
-      "importType": "named",
+      "file": "src/index.js",
+      "importBinding": "value",
+      "imported": "default",
+      "importType": "default",
+      "local": "express",
+      "name": "express",
+      "sideEffect": false,
+      "source": "express",
+      "type": "IMPORT"
+    },
+    {
+      "exported": false,
+      "file": "src/routes/orders.js",
+      "importBinding": "value",
+      "imported": "default",
+      "importType": "default",
+      "local": "express",
+      "name": "express",
+      "sideEffect": false,
+      "source": "express",
+      "type": "IMPORT"
+    },
+    {
+      "exported": false,
+      "file": "src/routes/users.js",
+      "importBinding": "value",
+      "imported": "default",
+      "importType": "default",
+      "local": "express",
+      "name": "express",
+      "sideEffect": false,
+      "source": "express",
+      "type": "IMPORT"
+    },
+    {
+      "exported": false,
+      "file": "src/index.js",
       "importBinding": "value",
       "imported": "getOrdersRoute",
+      "importType": "named",
       "local": "getOrdersRoute",
-      "sideEffect": false
+      "name": "getOrdersRoute",
+      "sideEffect": false,
+      "source": "./routes/orders.js",
+      "type": "IMPORT"
     },
     {
-      "type": "IMPORT",
-      "name": "getUsersRoute",
-      "file": "src/index.js",
       "exported": false,
-      "source": "./routes/users.js",
-      "importType": "named",
+      "file": "src/index.js",
       "importBinding": "value",
       "imported": "getUsersRoute",
+      "importType": "named",
       "local": "getUsersRoute",
-      "sideEffect": false
+      "name": "getUsersRoute",
+      "sideEffect": false,
+      "source": "./routes/users.js",
+      "type": "IMPORT"
     },
     {
-      "type": "LITERAL",
-      "name": "",
-      "file": "src/db.js",
       "exported": false,
+      "file": "src/db.js",
+      "name": "",
+      "type": "LITERAL",
       "value": "Connecting to database...",
       "valueType": "string"
     },
     {
-      "type": "LITERAL",
-      "name": "",
-      "file": "src/index.js",
       "exported": false,
+      "file": "src/index.js",
+      "name": "",
+      "type": "LITERAL",
       "value": "/api/orders",
       "valueType": "string"
     },
     {
-      "type": "LITERAL",
-      "name": "",
-      "file": "src/index.js",
       "exported": false,
+      "file": "src/index.js",
+      "name": "",
+      "type": "LITERAL",
       "value": "/api/users",
       "valueType": "string"
     },
     {
-      "type": "LITERAL",
-      "name": "",
-      "file": "src/index.js",
       "exported": false,
+      "file": "src/index.js",
+      "name": "",
+      "type": "LITERAL",
       "value": "/health",
       "valueType": "string"
     },
     {
-      "type": "LITERAL",
-      "name": "",
-      "file": "src/index.js",
       "exported": false,
+      "file": "src/index.js",
+      "name": "",
+      "type": "LITERAL",
       "value": "Database connected",
       "valueType": "string"
     },
     {
-      "type": "LITERAL",
-      "name": "",
-      "file": "src/index.js",
       "exported": false,
+      "file": "src/index.js",
+      "name": "",
+      "type": "LITERAL",
       "value": "Health check requested",
       "valueType": "string"
     },
     {
-      "type": "LITERAL",
-      "name": "",
-      "file": "src/index.js",
       "exported": false,
+      "file": "src/index.js",
+      "name": "",
+      "type": "LITERAL",
       "value": 3000,
       "valueType": "number"
     },
     {
-      "type": "LITERAL",
-      "name": "",
-      "file": "src/routes/orders.js",
       "exported": false,
+      "file": "src/routes/orders.js",
+      "name": "",
+      "type": "LITERAL",
       "value": "/",
       "valueType": "string"
     },
     {
-      "type": "LITERAL",
-      "name": "",
-      "file": "src/routes/orders.js",
       "exported": false,
+      "file": "src/routes/orders.js",
+      "name": "",
+      "type": "LITERAL",
       "value": "/",
       "valueType": "string"
     },
     {
-      "type": "LITERAL",
-      "name": "",
-      "file": "src/routes/orders.js",
       "exported": false,
+      "file": "src/routes/orders.js",
+      "name": "",
+      "type": "LITERAL",
       "value": "Fetching all orders",
       "valueType": "string"
     },
     {
-      "type": "LITERAL",
-      "name": "",
-      "file": "src/routes/orders.js",
       "exported": false,
+      "file": "src/routes/orders.js",
+      "name": "",
+      "type": "LITERAL",
       "value": "INSERT INTO orders (user_id, items) VALUES (?, ?)",
       "valueType": "string"
     },
     {
-      "type": "LITERAL",
-      "name": "",
-      "file": "src/routes/orders.js",
       "exported": false,
+      "file": "src/routes/orders.js",
+      "name": "",
+      "type": "LITERAL",
       "value": "SELECT * FROM orders",
       "valueType": "string"
     },
     {
-      "type": "LITERAL",
-      "name": "",
-      "file": "src/routes/users.js",
       "exported": false,
+      "file": "src/routes/users.js",
+      "name": "",
+      "type": "LITERAL",
       "value": "/:id",
       "valueType": "string"
     },
     {
-      "type": "LITERAL",
-      "name": "",
-      "file": "src/routes/users.js",
       "exported": false,
+      "file": "src/routes/users.js",
+      "name": "",
+      "type": "LITERAL",
       "value": "/",
       "valueType": "string"
     },
     {
-      "type": "LITERAL",
-      "name": "",
-      "file": "src/routes/users.js",
       "exported": false,
+      "file": "src/routes/users.js",
+      "name": "",
+      "type": "LITERAL",
       "value": "/",
       "valueType": "string"
     },
     {
-      "type": "LITERAL",
-      "name": "",
-      "file": "src/routes/users.js",
       "exported": false,
+      "file": "src/routes/users.js",
+      "name": "",
+      "type": "LITERAL",
       "value": "Fetching all users",
       "valueType": "string"
     },
     {
-      "type": "LITERAL",
-      "name": "",
-      "file": "src/routes/users.js",
       "exported": false,
+      "file": "src/routes/users.js",
+      "name": "",
+      "type": "LITERAL",
       "value": "INSERT INTO users (name, email) VALUES (?, ?)",
       "valueType": "string"
     },
     {
-      "type": "LITERAL",
-      "name": "",
-      "file": "src/routes/users.js",
       "exported": false,
+      "file": "src/routes/users.js",
+      "name": "",
+      "type": "LITERAL",
       "value": "SELECT * FROM users WHERE id = ?",
       "valueType": "string"
     },
     {
-      "type": "LITERAL",
-      "name": "",
-      "file": "src/routes/users.js",
       "exported": false,
+      "file": "src/routes/users.js",
+      "name": "",
+      "type": "LITERAL",
       "value": "SELECT * FROM users",
       "valueType": "string"
     },
     {
-      "type": "MODULE",
+      "exported": false,
+      "file": "src/db.js",
+      "isTest": true,
       "name": "src/db.js",
-      "file": "src/db.js",
-      "exported": false,
-      "isTest": true
+      "type": "MODULE"
     },
     {
-      "type": "MODULE",
+      "exported": false,
+      "file": "src/index.js",
+      "isTest": true,
       "name": "src/index.js",
-      "file": "src/index.js",
-      "exported": false,
-      "isTest": true
+      "type": "MODULE"
     },
     {
-      "type": "MODULE",
+      "exported": false,
+      "file": "src/routes/orders.js",
+      "isTest": true,
       "name": "src/routes/orders.js",
-      "file": "src/routes/orders.js",
-      "exported": false,
-      "isTest": true
+      "type": "MODULE"
     },
     {
-      "type": "MODULE",
+      "exported": false,
+      "file": "src/routes/users.js",
+      "isTest": true,
       "name": "src/routes/users.js",
-      "file": "src/routes/users.js",
-      "exported": false,
-      "isTest": true
+      "type": "MODULE"
     },
     {
-      "type": "net:request",
+      "exported": false,
+      "file": "__builtin__",
       "name": "__network__",
-      "file": "__builtin__",
-      "exported": false
+      "type": "net:request"
     },
     {
-      "type": "net:stdio",
+      "description": "Standard input/output stream",
+      "exported": false,
+      "file": "__builtin__",
       "name": "__stdio__",
-      "file": "__builtin__",
-      "exported": false,
-      "description": "Standard input/output stream"
+      "type": "net:stdio"
     },
     {
-      "type": "PARAMETER",
-      "name": "params",
-      "file": "src/db.js",
       "exported": false,
-      "semanticId": "db.js->Database->query->PARAMETER->params#1",
-      "index": 1,
+      "file": "src/db.js",
       "hasDefault": true,
-      "parentFunctionId": "db.js->Database->FUNCTION->query"
-    },
-    {
-      "type": "PARAMETER",
-      "name": "req",
-      "file": "src/index.js",
-      "exported": false,
-      "semanticId": "index.js->anonymous[0]->PARAMETER->req#0",
-      "index": 0,
-      "parentFunctionId": "index.js->global->FUNCTION->anonymous[0]"
-    },
-    {
-      "type": "PARAMETER",
-      "name": "res",
-      "file": "src/index.js",
-      "exported": false,
-      "semanticId": "index.js->anonymous[0]->PARAMETER->res#1",
       "index": 1,
-      "parentFunctionId": "index.js->global->FUNCTION->anonymous[0]"
-    },
-    {
-      "type": "PARAMETER",
-      "name": "sql",
-      "file": "src/db.js",
-      "exported": false,
-      "semanticId": "db.js->Database->query->PARAMETER->sql#0",
-      "index": 0,
-      "parentFunctionId": "db.js->Database->FUNCTION->query"
-    },
-    {
-      "type": "PROPERTY_ACCESS",
-      "name": "body",
-      "file": "src/routes/orders.js",
-      "exported": false,
-      "objectName": "req",
-      "semanticId": "orders.js->getOrdersRoute->anonymous[1]->PROPERTY_ACCESS->req.body#0"
-    },
-    {
-      "type": "PROPERTY_ACCESS",
-      "name": "body",
-      "file": "src/routes/users.js",
-      "exported": false,
-      "objectName": "req",
-      "semanticId": "users.js->getUsersRoute->anonymous[2]->PROPERTY_ACCESS->req.body#0"
-    },
-    {
-      "type": "PROPERTY_ACCESS",
-      "name": "connected",
-      "file": "src/db.js",
-      "exported": false,
-      "objectName": "this",
-      "semanticId": "db.js->Database->query->if#0->PROPERTY_ACCESS->this.connected#0"
-    },
-    {
-      "type": "PROPERTY_ACCESS",
-      "name": "insertId",
-      "file": "src/routes/orders.js",
-      "exported": false,
-      "objectName": "result",
-      "semanticId": "orders.js->getOrdersRoute->anonymous[1]->PROPERTY_ACCESS->result.insertId#0"
-    },
-    {
-      "type": "PROPERTY_ACCESS",
-      "name": "insertId",
-      "file": "src/routes/users.js",
-      "exported": false,
-      "objectName": "result",
-      "semanticId": "users.js->getUsersRoute->anonymous[2]->PROPERTY_ACCESS->result.insertId#0"
-    },
-    {
-      "type": "PROPERTY_ACCESS",
       "name": "params",
-      "file": "src/routes/users.js",
-      "exported": false,
-      "objectName": "req",
-      "semanticId": "users.js->getUsersRoute->anonymous[1]->PROPERTY_ACCESS->req.params#0"
+      "parentFunctionId": "db.js->Database->FUNCTION->query",
+      "semanticId": "db.js->Database->query->PARAMETER->params#1",
+      "type": "PARAMETER"
     },
     {
-      "type": "SCOPE",
-      "name": "anonymous[0]:body",
-      "file": "src/index.js",
       "exported": false,
+      "file": "src/index.js",
+      "index": 0,
+      "name": "req",
+      "parentFunctionId": "index.js->global->FUNCTION->anonymous[0]",
+      "semanticId": "index.js->anonymous[0]->PARAMETER->req#0",
+      "type": "PARAMETER"
+    },
+    {
+      "exported": false,
+      "file": "src/index.js",
+      "index": 1,
+      "name": "res",
+      "parentFunctionId": "index.js->global->FUNCTION->anonymous[0]",
+      "semanticId": "index.js->anonymous[0]->PARAMETER->res#1",
+      "type": "PARAMETER"
+    },
+    {
+      "exported": false,
+      "file": "src/db.js",
+      "index": 0,
+      "name": "sql",
+      "parentFunctionId": "db.js->Database->FUNCTION->query",
+      "semanticId": "db.js->Database->query->PARAMETER->sql#0",
+      "type": "PARAMETER"
+    },
+    {
+      "exported": false,
+      "file": "src/routes/orders.js",
+      "name": "body",
+      "objectName": "req",
+      "semanticId": "orders.js->getOrdersRoute->anonymous[1]->PROPERTY_ACCESS->req.body#0",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "exported": false,
+      "file": "src/routes/users.js",
+      "name": "body",
+      "objectName": "req",
+      "semanticId": "users.js->getUsersRoute->anonymous[2]->PROPERTY_ACCESS->req.body#0",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "exported": false,
+      "file": "src/db.js",
+      "name": "connected",
+      "objectName": "this",
+      "semanticId": "db.js->Database->query->if#0->PROPERTY_ACCESS->this.connected#0",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "exported": false,
+      "file": "src/routes/orders.js",
+      "name": "insertId",
+      "objectName": "result",
+      "semanticId": "orders.js->getOrdersRoute->anonymous[1]->PROPERTY_ACCESS->result.insertId#0",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "exported": false,
+      "file": "src/routes/users.js",
+      "name": "insertId",
+      "objectName": "result",
+      "semanticId": "users.js->getUsersRoute->anonymous[2]->PROPERTY_ACCESS->result.insertId#0",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "exported": false,
+      "file": "src/routes/users.js",
+      "name": "params",
+      "objectName": "req",
+      "semanticId": "users.js->getUsersRoute->anonymous[1]->PROPERTY_ACCESS->req.params#0",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "src/index.js",
+      "name": "anonymous[0]:body",
       "scopeType": "arrow_body",
       "semanticId": "start:arrow_body[0]",
-      "conditional": false
+      "type": "SCOPE"
     },
     {
-      "type": "SCOPE",
-      "name": "anonymous[0]:body",
+      "exported": false,
       "file": "src/index.js",
-      "exported": false,
-      "scopeType": "function-body"
+      "name": "anonymous[0]:body",
+      "scopeType": "function-body",
+      "type": "SCOPE"
     },
     {
-      "type": "SCOPE",
-      "name": "anonymous[0]:body",
-      "file": "src/routes/orders.js",
+      "conditional": false,
       "exported": false,
+      "file": "src/routes/orders.js",
+      "name": "anonymous[0]:body",
       "scopeType": "arrow_body",
       "semanticId": "getOrdersRoute:arrow_body[0]",
-      "conditional": false
+      "type": "SCOPE"
     },
     {
-      "type": "SCOPE",
-      "name": "anonymous[0]:body",
-      "file": "src/routes/users.js",
+      "conditional": false,
       "exported": false,
+      "file": "src/routes/users.js",
+      "name": "anonymous[0]:body",
       "scopeType": "arrow_body",
       "semanticId": "getUsersRoute:arrow_body[0]",
-      "conditional": false
+      "type": "SCOPE"
     },
     {
-      "type": "SCOPE",
-      "name": "anonymous[1]:body",
-      "file": "src/routes/orders.js",
+      "conditional": false,
       "exported": false,
+      "file": "src/routes/orders.js",
+      "name": "anonymous[1]:body",
       "scopeType": "arrow_body",
       "semanticId": "getOrdersRoute:arrow_body[1]",
-      "conditional": false
+      "type": "SCOPE"
     },
     {
-      "type": "SCOPE",
-      "name": "anonymous[1]:body",
-      "file": "src/routes/users.js",
+      "conditional": false,
       "exported": false,
+      "file": "src/routes/users.js",
+      "name": "anonymous[1]:body",
       "scopeType": "arrow_body",
       "semanticId": "getUsersRoute:arrow_body[1]",
-      "conditional": false
+      "type": "SCOPE"
     },
     {
-      "type": "SCOPE",
-      "name": "anonymous[2]:body",
-      "file": "src/routes/users.js",
+      "conditional": false,
       "exported": false,
+      "file": "src/routes/users.js",
+      "name": "anonymous[2]:body",
       "scopeType": "arrow_body",
       "semanticId": "getUsersRoute:arrow_body[2]",
-      "conditional": false
+      "type": "SCOPE"
     },
     {
-      "type": "SCOPE",
+      "conditional": false,
+      "exported": false,
+      "file": "src/db.js",
       "name": "Database.connect:body",
-      "file": "src/db.js",
-      "exported": false,
+      "scopeType": "method_body",
       "semanticId": "db.js->Database->connect->SCOPE->body",
-      "scopeType": "method_body",
-      "conditional": false
+      "type": "SCOPE"
     },
     {
-      "type": "SCOPE",
+      "conditional": false,
+      "exported": false,
+      "file": "src/db.js",
       "name": "Database.constructor:body",
-      "file": "src/db.js",
-      "exported": false,
+      "scopeType": "method_body",
       "semanticId": "db.js->Database->constructor->SCOPE->body",
-      "scopeType": "method_body",
-      "conditional": false
+      "type": "SCOPE"
     },
     {
-      "type": "SCOPE",
+      "conditional": false,
+      "exported": false,
+      "file": "src/db.js",
       "name": "Database.query:body",
-      "file": "src/db.js",
-      "exported": false,
-      "semanticId": "db.js->Database->query->SCOPE->body",
       "scopeType": "method_body",
-      "conditional": false
+      "semanticId": "db.js->Database->query->SCOPE->body",
+      "type": "SCOPE"
     },
     {
-      "type": "SCOPE",
-      "name": "getOrdersRoute:body",
+      "conditional": false,
+      "exported": false,
       "file": "src/routes/orders.js",
-      "exported": false,
+      "name": "getOrdersRoute:body",
       "scopeType": "function_body",
-      "conditional": false
+      "type": "SCOPE"
     },
     {
-      "type": "SCOPE",
-      "name": "getUsersRoute:body",
+      "conditional": false,
+      "exported": false,
       "file": "src/routes/users.js",
-      "exported": false,
+      "name": "getUsersRoute:body",
       "scopeType": "function_body",
-      "conditional": false
+      "type": "SCOPE"
     },
     {
-      "type": "SCOPE",
-      "name": "if:13:4:0",
-      "file": "src/db.js",
+      "condition": "!this.connected",
+      "conditional": true,
       "exported": false,
+      "file": "src/db.js",
+      "name": "if:13:4:0",
       "scopeType": "if_statement",
       "semanticId": "Database->query:if_statement[0]",
-      "conditional": true,
-      "condition": "!this.connected"
+      "type": "SCOPE"
     },
     {
-      "type": "SCOPE",
-      "name": "start:body",
+      "conditional": false,
+      "exported": false,
       "file": "src/index.js",
-      "exported": false,
+      "name": "start:body",
       "scopeType": "function_body",
-      "conditional": false
+      "type": "SCOPE"
     },
     {
-      "type": "SERVICE",
-      "name": "@test/api-service",
-      "file": "/Users/vadim/grafema/test/fixtures/02-api-service",
-      "exported": false,
-      "kind": "SERVICE",
-      "filePath": "/Users/vadim/grafema/test/fixtures/02-api-service",
-      "version": "1.0.0",
-      "entrypoint": "src/index.js",
-      "discoveryMethod": "simple",
       "dependencies": [
         "express"
-      ]
+      ],
+      "discoveryMethod": "simple",
+      "entrypoint": "src/index.js",
+      "exported": false,
+      "file": "/Users/vadim/grafema-worker-11/test/fixtures/02-api-service",
+      "filePath": "/Users/vadim/grafema-worker-11/test/fixtures/02-api-service",
+      "kind": "SERVICE",
+      "name": "@test/api-service",
+      "type": "SERVICE",
+      "version": "1.0.0"
     },
     {
-      "type": "VARIABLE",
-      "name": "app",
+      "exported": false,
       "file": "src/index.js",
-      "exported": false
+      "name": "app",
+      "type": "VARIABLE"
     },
     {
-      "type": "VARIABLE",
+      "exported": false,
+      "file": "src/routes/users.js",
       "name": "email",
-      "file": "src/routes/users.js",
-      "exported": false
+      "type": "VARIABLE"
     },
     {
-      "type": "VARIABLE",
+      "exported": false,
+      "file": "src/routes/users.js",
       "name": "id",
-      "file": "src/routes/users.js",
-      "exported": false
+      "type": "VARIABLE"
     },
     {
-      "type": "VARIABLE",
+      "exported": false,
+      "file": "src/routes/orders.js",
       "name": "items",
-      "file": "src/routes/orders.js",
-      "exported": false
+      "type": "VARIABLE"
     },
     {
-      "type": "VARIABLE",
+      "exported": false,
+      "file": "src/routes/users.js",
       "name": "name",
-      "file": "src/routes/users.js",
-      "exported": false
+      "type": "VARIABLE"
     },
     {
-      "type": "VARIABLE",
+      "exported": false,
+      "file": "src/routes/orders.js",
       "name": "orders",
-      "file": "src/routes/orders.js",
-      "exported": false
+      "type": "VARIABLE"
     },
     {
-      "type": "VARIABLE",
+      "exported": false,
+      "file": "src/routes/orders.js",
       "name": "result",
-      "file": "src/routes/orders.js",
-      "exported": false
+      "type": "VARIABLE"
     },
     {
-      "type": "VARIABLE",
+      "exported": false,
+      "file": "src/routes/users.js",
       "name": "result",
-      "file": "src/routes/users.js",
-      "exported": false
+      "type": "VARIABLE"
     },
     {
-      "type": "VARIABLE",
-      "name": "router",
+      "exported": false,
       "file": "src/routes/orders.js",
-      "exported": false
-    },
-    {
-      "type": "VARIABLE",
       "name": "router",
-      "file": "src/routes/users.js",
-      "exported": false
+      "type": "VARIABLE"
     },
     {
-      "type": "VARIABLE",
+      "exported": false,
+      "file": "src/routes/users.js",
+      "name": "router",
+      "type": "VARIABLE"
+    },
+    {
+      "exported": false,
+      "file": "src/routes/users.js",
       "name": "user",
-      "file": "src/routes/users.js",
-      "exported": false
+      "type": "VARIABLE"
     },
     {
-      "type": "VARIABLE",
-      "name": "userId",
+      "exported": false,
       "file": "src/routes/orders.js",
-      "exported": false
+      "name": "userId",
+      "type": "VARIABLE"
     },
     {
-      "type": "VARIABLE",
-      "name": "users",
+      "exported": false,
       "file": "src/routes/users.js",
-      "exported": false
+      "name": "users",
+      "type": "VARIABLE"
     }
   ],
   "edges": [

@@ -411,22 +411,21 @@ export class GraphAsserter {
     ]);
 
     const nodes = this._getNodes().map(n => {
-      const props = {};
+      const entries = [];
       for (const [key, value] of Object.entries(n)) {
         if (SNAPSHOT_SKIP_PROPS.has(key)) continue;
-        // Skip BigInt values — they are internal ID references
         if (typeof value === 'bigint') continue;
-        // Skip undefined values
         if (value === undefined) continue;
-        props[key] = value;
+        entries.push([key, value]);
       }
-      return props;
+      // Sort keys alphabetically for deterministic JSON output
+      entries.sort((a, b) => a[0].localeCompare(b[0]));
+      return Object.fromEntries(entries);
     }).sort((a, b) => {
       const keyA = `${a.type}:${a.name}`;
       const keyB = `${b.type}:${b.name}`;
       const cmp = keyA.localeCompare(keyB);
       if (cmp !== 0) return cmp;
-      // Stable tiebreaker: file, then full JSON representation
       const fileCmp = (a.file || '').localeCompare(b.file || '');
       if (fileCmp !== 0) return fileCmp;
       return JSON.stringify(a).localeCompare(JSON.stringify(b));
