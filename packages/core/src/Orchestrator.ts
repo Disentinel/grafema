@@ -220,69 +220,11 @@ export class Orchestrator {
 
     this.logger.info('Processing indexing units', { count: unitsToProcess.length, strategy: 'Phase-by-phase with DFS' });
 
-    // PHASE 1: INDEXING - каждый сервис строит своё дерево зависимостей от entrypoint
-    const indexingStart = Date.now();
+    // PHASE 1: INDEXING
     this.profiler.start('INDEXING');
-    this.onProgress({
-      phase: 'indexing',
-      currentPlugin: 'Starting indexing...',
-      message: 'Building dependency trees...',
-      totalFiles: unitsToProcess.length,
-      processedFiles: 0
-    });
-
-    // Параллельная обработка units батчами
-    const BATCH_SIZE = this.workerCount;
-    let processedUnits = 0;
-
-    for (let batchStart = 0; batchStart < unitsToProcess.length; batchStart += BATCH_SIZE) {
-      const batch = unitsToProcess.slice(batchStart, batchStart + BATCH_SIZE);
-
-      this.onProgress({
-        phase: 'indexing',
-        currentPlugin: 'JSModuleIndexer',
-        message: `[${processedUnits + 1}-${processedUnits + batch.length}/${unitsToProcess.length}] Batch indexing...`,
-        totalFiles: unitsToProcess.length,
-        processedFiles: processedUnits
-      });
-
-      // Параллельно обрабатываем батч units
-      await Promise.all(batch.map(async (unit, idx) => {
-        const unitStart = Date.now();
-
-        const unitManifest: UnitManifest = {
-          projectPath: manifest.projectPath,
-          service: {
-            ...unit,  // Pass all unit fields
-            id: unit.id,
-            name: unit.name,
-            path: unit.path
-          },
-          modules: []
-        };
-
-        await this.runPhase('INDEXING', {
-          manifest: unitManifest,
-          graph: this.graph,
-          workerCount: 1,
-        });
-        const unitTime = ((Date.now() - unitStart) / 1000).toFixed(2);
-        this.logger.debug('INDEXING complete', { unit: unit.name, duration: unitTime });
-
-        this.onProgress({
-          phase: 'indexing',
-          currentPlugin: 'JSModuleIndexer',
-          message: `Indexed ${unit.name || unit.path} (${unitTime}s)`,
-          totalFiles: unitsToProcess.length,
-          processedFiles: processedUnits + idx + 1,
-          servicesAnalyzed: processedUnits + idx + 1
-        });
-      }));
-
-      processedUnits += batch.length;
-    }
+    this.onProgress({ phase: 'indexing', currentPlugin: 'Starting indexing...', message: 'Building dependency trees...', totalFiles: unitsToProcess.length, processedFiles: 0 });
+    await this.runBatchPhase('INDEXING', unitsToProcess, manifest);
     this.profiler.end('INDEXING');
-    this.logger.info('INDEXING phase complete', { duration: ((Date.now() - indexingStart) / 1000).toFixed(2) });
 
     // Skip remaining phases if indexOnly mode (for coverage)
     if (this.indexOnly) {
@@ -291,118 +233,21 @@ export class Orchestrator {
       return manifest;
     }
 
-    // PHASE 2: ANALYSIS - все units (параллельно батчами)
-    const analysisStart = Date.now();
+    // PHASE 2: ANALYSIS
     this.profiler.start('ANALYSIS');
-    this.onProgress({
-      phase: 'analysis',
-      currentPlugin: 'Starting analysis...',
-      message: 'Analyzing all units...',
-      totalFiles: unitsToProcess.length,
-      processedFiles: 0
-    });
-
-    // Check if parallel analysis is enabled (new functionality under flag)
+    this.onProgress({ phase: 'analysis', currentPlugin: 'Starting analysis...', message: 'Analyzing all units...', totalFiles: unitsToProcess.length, processedFiles: 0 });
     if (this.parallelRunner) {
       await this.parallelRunner.run(manifest);
     } else {
-      // BACKWARD COMPATIBLE: per-unit batch processing (как в JS baseline)
-      processedUnits = 0;
-
-      for (let batchStart = 0; batchStart < unitsToProcess.length; batchStart += BATCH_SIZE) {
-        const batch = unitsToProcess.slice(batchStart, batchStart + BATCH_SIZE);
-
-        this.onProgress({
-          phase: 'analysis',
-          currentPlugin: 'Analyzers',
-          message: `[${processedUnits + 1}-${processedUnits + batch.length}/${unitsToProcess.length}] Batch analyzing...`,
-          totalFiles: unitsToProcess.length,
-          processedFiles: processedUnits
-        });
-
-        // Параллельно анализируем батч units
-        await Promise.all(batch.map(async (unit, idx) => {
-          const unitStart = Date.now();
-          const unitManifest: UnitManifest = {
-            projectPath: manifest.projectPath,
-            service: {
-              ...unit,
-              id: unit.id,
-              name: unit.name,
-              path: unit.path
-            },
-            modules: []
-          };
-
-          await this.runPhase('ANALYSIS', {
-          manifest: unitManifest,
-          graph: this.graph,
-          workerCount: 1,
-        });
-          const unitTime = ((Date.now() - unitStart) / 1000).toFixed(2);
-          this.logger.debug('ANALYSIS complete', { unit: unit.name, duration: unitTime });
-
-          this.onProgress({
-            phase: 'analysis',
-            currentPlugin: 'Analyzers',
-            message: `Analyzed ${unit.name || unit.path} (${unitTime}s)`,
-            totalFiles: unitsToProcess.length,
-            processedFiles: processedUnits + idx + 1,
-            servicesAnalyzed: processedUnits + idx + 1
-          });
-        }));
-
-        processedUnits += batch.length;
-      }
+      await this.runBatchPhase('ANALYSIS', unitsToProcess, manifest);
     }
-
     this.profiler.end('ANALYSIS');
-    this.logger.info('ANALYSIS phase complete', { duration: ((Date.now() - analysisStart) / 1000).toFixed(2) });
 
-    // PHASE 3: ENRICHMENT - post-processing, граф traversal, вычисления (глобально)
-    const enrichmentStart = Date.now();
-    this.profiler.start('ENRICHMENT');
-    this.onProgress({ phase: 'enrichment', currentPlugin: 'Starting enrichment...', message: 'Enriching graph data...', totalFiles: 0, processedFiles: 0 });
-    const enrichmentTypes = await this.runPhase('ENRICHMENT', { manifest, graph: this.graph, workerCount: this.workerCount });
-    this.profiler.end('ENRICHMENT');
-    this.logger.info('ENRICHMENT phase complete', { duration: ((Date.now() - enrichmentStart) / 1000).toFixed(2) });
-
-    // STRICT MODE BARRIER: Check for fatal errors after ENRICHMENT (REG-330, REG-332)
-    if (this.strictMode) {
-      const enrichmentDiagnostics = this.diagnosticCollector.getByPhase('ENRICHMENT');
-      const strictErrors = enrichmentDiagnostics.filter(d => d.severity === 'fatal');
-
-      if (strictErrors.length > 0) {
-        this.logger.error(`Strict mode: ${strictErrors.length} unresolved reference(s) found`);
-        // REG-357: Pass suppressedByIgnore count from enrichment plugin results
-        throw new StrictModeFailure(strictErrors, this.phaseRunner.getSuppressedByIgnoreCount());
-      }
-    }
-
-    // GUARANTEE CHECK: Verify invariants after enrichment, before validation (RFD-18)
-    await this.guaranteeChecker.check(enrichmentTypes, absoluteProjectPath);
-
-    // PHASE 4: VALIDATION - проверка корректности графа (глобально)
-    const validationStart = Date.now();
-    this.profiler.start('VALIDATION');
-    this.onProgress({ phase: 'validation', currentPlugin: 'Starting validation...', message: 'Validating graph structure...', totalFiles: 0, processedFiles: 0 });
-    await this.runPhase('VALIDATION', { manifest, graph: this.graph, workerCount: this.workerCount });
-    this.profiler.end('VALIDATION');
-    this.logger.info('VALIDATION phase complete', { duration: ((Date.now() - validationStart) / 1000).toFixed(2) });
-
-    // Flush graph to ensure all edges are persisted and queryable
-    if (this.graph.flush) {
-      await this.graph.flush();
-    }
+    // PHASES 3-4: ENRICHMENT → strict barrier → guarantee → VALIDATION → flush
+    await this.runPipelineEpilogue(manifest, absoluteProjectPath);
 
     const totalTime = ((Date.now() - totalStartTime) / 1000).toFixed(2);
     this.logger.info('Analysis complete', { duration: totalTime, units: unitsToProcess.length });
-
-    // Print profiling summary
-    this.profiler.printSummary();
-
-    // REG-256: Clear resources after run
-    this.resourceRegistry.clear();
 
     return manifest;
   }
@@ -449,50 +294,11 @@ export class Orchestrator {
       // Build indexing units for this root
       const units = this.discoveryManager.buildIndexingUnits(rootManifest);
 
-      // INDEXING phase for this root
-      for (const unit of units) {
-        const unitManifest: UnitManifest = {
-          projectPath: rootAbsolutePath,
-          service: {
-            ...unit,
-            id: unit.id,
-            name: unit.name,
-            path: unit.path
-          },
-          modules: [],
-          rootPrefix: rootName,  // REG-76: Pass root prefix
-        };
-
-        await this.runPhase('INDEXING', {
-          manifest: unitManifest,
-          graph: this.graph,
-          workerCount: 1,
-          rootPrefix: rootName,  // Pass to context
-        });
-      }
-
-      // ANALYSIS phase for this root
+      // INDEXING + ANALYSIS phases for this root
+      const rootOpts = { rootPrefix: rootName };
+      await this.runBatchPhase('INDEXING', units, rootManifest, rootOpts);
       if (!this.indexOnly) {
-        for (const unit of units) {
-          const unitManifest: UnitManifest = {
-            projectPath: rootAbsolutePath,
-            service: {
-              ...unit,
-              id: unit.id,
-              name: unit.name,
-              path: unit.path
-            },
-            modules: [],
-            rootPrefix: rootName,
-          };
-
-          await this.runPhase('ANALYSIS', {
-            manifest: unitManifest,
-            graph: this.graph,
-            workerCount: 1,
-            rootPrefix: rootName,
-          });
-        }
+        await this.runBatchPhase('ANALYSIS', units, rootManifest, rootOpts);
       }
 
       // Collect services with root prefix in path for unified manifest
@@ -526,17 +332,87 @@ export class Orchestrator {
       return unifiedManifest;
     }
 
-    // ENRICHMENT phase (global - operates on unified graph)
-    this.profiler.start('ENRICHMENT');
-    const enrichmentTypes = await this.runPhase('ENRICHMENT', {
-      manifest: unifiedManifest,
-      graph: this.graph,
-      workerCount: this.workerCount
-    });
-    this.profiler.end('ENRICHMENT');
+    // ENRICHMENT → strict barrier → guarantee → VALIDATION → flush
+    await this.runPipelineEpilogue(unifiedManifest, workspacePath);
 
-    // STRICT MODE BARRIER: Check for fatal errors after ENRICHMENT (REG-391)
-    // Same barrier as single-root run() path (REG-330, REG-332)
+    const totalTime = ((Date.now() - totalStartTime) / 1000).toFixed(2);
+    this.logger.info('Multi-root analysis complete', { duration: totalTime, roots: roots.length, services: allServices.length });
+
+    return unifiedManifest;
+  }
+
+  /**
+   * Run a per-unit phase (INDEXING or ANALYSIS) in batches.
+   * Common batch processing logic extracted from run() (REG-462).
+   */
+  private async runBatchPhase(
+    phaseName: string,
+    units: IndexingUnit[],
+    manifest: DiscoveryManifest,
+    options?: { rootPrefix?: string },
+  ): Promise<void> {
+    const phase = phaseName.toLowerCase() as 'indexing' | 'analysis';
+    const pluginLabel = phaseName === 'INDEXING' ? 'JSModuleIndexer' : 'Analyzers';
+    const BATCH_SIZE = this.workerCount;
+    let processedUnits = 0;
+
+    for (let batchStart = 0; batchStart < units.length; batchStart += BATCH_SIZE) {
+      const batch = units.slice(batchStart, batchStart + BATCH_SIZE);
+
+      this.onProgress({
+        phase,
+        currentPlugin: pluginLabel,
+        message: `[${processedUnits + 1}-${processedUnits + batch.length}/${units.length}] Batch ${phase}...`,
+        totalFiles: units.length,
+        processedFiles: processedUnits
+      });
+
+      await Promise.all(batch.map(async (unit, idx) => {
+        const unitStart = Date.now();
+        const unitManifest: UnitManifest = {
+          projectPath: manifest.projectPath,
+          service: { ...unit, id: unit.id, name: unit.name, path: unit.path },
+          modules: [],
+          rootPrefix: options?.rootPrefix,
+        };
+
+        await this.runPhase(phaseName, {
+          manifest: unitManifest,
+          graph: this.graph,
+          workerCount: 1,
+          ...(options?.rootPrefix ? { rootPrefix: options.rootPrefix } : {}),
+        });
+        const unitTime = ((Date.now() - unitStart) / 1000).toFixed(2);
+        this.logger.debug(`${phaseName} complete`, { unit: unit.name, duration: unitTime });
+
+        this.onProgress({
+          phase,
+          currentPlugin: pluginLabel,
+          message: `${unit.name || unit.path} (${unitTime}s)`,
+          totalFiles: units.length,
+          processedFiles: processedUnits + idx + 1,
+          servicesAnalyzed: processedUnits + idx + 1
+        });
+      }));
+
+      processedUnits += batch.length;
+    }
+  }
+
+  /**
+   * Run post-indexing pipeline: ENRICHMENT → strict barrier → guarantee → VALIDATION → flush.
+   * Common epilogue shared by run() and runMultiRoot() (REG-462).
+   */
+  private async runPipelineEpilogue(manifest: DiscoveryManifest, projectPath: string): Promise<void> {
+    // ENRICHMENT phase (global)
+    const enrichmentStart = Date.now();
+    this.profiler.start('ENRICHMENT');
+    this.onProgress({ phase: 'enrichment', currentPlugin: 'Starting enrichment...', message: 'Enriching graph data...', totalFiles: 0, processedFiles: 0 });
+    const enrichmentTypes = await this.runPhase('ENRICHMENT', { manifest, graph: this.graph, workerCount: this.workerCount });
+    this.profiler.end('ENRICHMENT');
+    this.logger.info('ENRICHMENT phase complete', { duration: ((Date.now() - enrichmentStart) / 1000).toFixed(2) });
+
+    // STRICT MODE BARRIER (REG-330, REG-332)
     if (this.strictMode) {
       const enrichmentDiagnostics = this.diagnosticCollector.getByPhase('ENRICHMENT');
       const strictErrors = enrichmentDiagnostics.filter(d => d.severity === 'fatal');
@@ -547,36 +423,23 @@ export class Orchestrator {
       }
     }
 
-    // GUARANTEE CHECK: Verify invariants after enrichment, before validation (RFD-18)
-    await this.guaranteeChecker.check(enrichmentTypes, workspacePath);
+    // GUARANTEE CHECK (RFD-18)
+    await this.guaranteeChecker.check(enrichmentTypes, projectPath);
 
     // VALIDATION phase (global)
+    const validationStart = Date.now();
     this.profiler.start('VALIDATION');
-    await this.runPhase('VALIDATION', {
-      manifest: unifiedManifest,
-      graph: this.graph,
-      workerCount: this.workerCount
-    });
+    this.onProgress({ phase: 'validation', currentPlugin: 'Starting validation...', message: 'Validating graph structure...', totalFiles: 0, processedFiles: 0 });
+    await this.runPhase('VALIDATION', { manifest, graph: this.graph, workerCount: this.workerCount });
     this.profiler.end('VALIDATION');
+    this.logger.info('VALIDATION phase complete', { duration: ((Date.now() - validationStart) / 1000).toFixed(2) });
 
-    // Flush graph
+    // Flush and cleanup
     if (this.graph.flush) {
       await this.graph.flush();
     }
-
-    const totalTime = ((Date.now() - totalStartTime) / 1000).toFixed(2);
-    this.logger.info('Multi-root analysis complete', {
-      duration: totalTime,
-      roots: roots.length,
-      services: allServices.length
-    });
-
     this.profiler.printSummary();
-
-    // REG-256: Clear resources after run
     this.resourceRegistry.clear();
-
-    return unifiedManifest;
   }
 
   /**
