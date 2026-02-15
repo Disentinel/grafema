@@ -62,13 +62,3 @@ export function isBrandedNode<T extends BaseNodeRecord>(
   // The actual enforcement happens at compile time.
   return true;
 }
-
-/**
- * Internal helper for NodeFactory to brand a node.
- * This should ONLY be used inside NodeFactory methods.
- *
- * @internal
- */
-export function brandNode<T extends BaseNodeRecord>(node: T): BrandedNode<T> {
-  return node as BrandedNode<T>;
-}
