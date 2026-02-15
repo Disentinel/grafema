@@ -444,8 +444,8 @@ Each `Task` tool call returns `total_tokens`, `tool_uses`, `duration_ms` in its 
 Reviews at TWO levels: **file-level** (structural) and **method-level** (local).
 
 **File-level checks (HARD LIMITS):**
-- File > 300 lines = **MUST split** before implementation. Create tech debt issue if can't split safely.
-- File > 500 lines = **CRITICAL.** Stop everything, discuss with user. This is how 6k-line files happen.
+- File > 500 lines = **MUST split** before implementation. Create tech debt issue if can't split safely.
+- File > 700 lines = **CRITICAL.** Stop everything, discuss with user. This is how 6k-line files happen.
 - Single file doing 3+ unrelated things = **MUST split** (Single Responsibility)
 - Count before implementation: `wc -l` on files Don identified
 
