@@ -43,7 +43,7 @@ import {
   handleReadProjectStructure,
   handleWriteConfig,
   handleGetFileOverview,
-} from './handlers.js';
+} from './handlers/index.js';
 import type {
   ToolResult,
   ReportIssueArgs,
