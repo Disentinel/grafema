@@ -5,7 +5,12 @@
 #
 # Runs on:
 #   - PRs to main that touch rfdb-server code (with 'benchmark' label)
-#   - Pushes to main (baseline update only, no comparison)
+#   - Pushes to main (baseline update + badge)
+#
+# Produces:
+#   - PR comment with benchmark comparison table
+#   - Step summary visible in Actions tab
+#   - Performance badge (updated on main push)
 
 name: RFDB Benchmarks
 
@@ -24,6 +29,10 @@ on:
       - 'packages/rfdb-server/src/**'
       - 'packages/rfdb-server/benches/**'
       - 'packages/rfdb-server/Cargo.toml'
+
+permissions:
+  contents: read
+  pull-requests: write
 
 jobs:
   benchmark:
@@ -58,9 +67,11 @@ jobs:
       - name: Install critcmp
         run: cargo install critcmp
 
-      - name: Run benchmarks (PR branch)
+      - name: Run benchmarks (current branch)
         working-directory: packages/rfdb-server
         run: cargo bench --bench graph_operations -- --save-baseline pr
+
+      # --- PR comparison flow ---
 
       - name: Checkout main branch for baseline
         if: github.event_name == 'pull_request'
@@ -74,12 +85,96 @@ jobs:
         working-directory: packages/rfdb-server
         run: cargo bench --bench graph_operations -- --save-baseline main
 
-      - name: Compare and check for regressions
+      - name: Generate comparison
         if: github.event_name == 'pull_request'
         working-directory: packages/rfdb-server
+        run: critcmp main pr > /tmp/bench-comparison.txt
+
+      - name: Check for regressions
+        if: github.event_name == 'pull_request'
+        id: regression
+        working-directory: packages/rfdb-server
         run: |
-          echo "## Benchmark Comparison: main vs pr"
-          echo ""
-          critcmp main pr | tee /tmp/bench-comparison.txt
-          echo ""
-          bash ../../scripts/check-bench-regression.sh /tmp/bench-comparison.txt 1.20
+          if bash ../../scripts/check-bench-regression.sh /tmp/bench-comparison.txt 1.20; then
+            echo "passed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "passed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Generate benchmark report
+        if: github.event_name == 'pull_request'
+        run: |
+          bash scripts/bench-report.sh /tmp/bench-comparison.txt 1.20 > /tmp/bench-report.md || true
+
+      - name: Post benchmark results to PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const report = fs.readFileSync('/tmp/bench-report.md', 'utf8');
+            const marker = '<!-- rfdb-bench-report -->';
+            const body = `${marker}\n${report}`;
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const existing = comments.find(c => c.body.includes(marker));
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
+
+      - name: Write to step summary
+        if: github.event_name == 'pull_request'
+        run: cat /tmp/bench-report.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Fail on regression
+        if: github.event_name == 'pull_request' && steps.regression.outputs.passed == 'false'
+        run: |
+          echo "Performance regression detected. See PR comment for details."
+          exit 1
+
+      # --- Main branch: compute score + update badge ---
+
+      - name: Compute benchmark score
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        id: score
+        working-directory: packages/rfdb-server
+        run: |
+          score=$(bash ../../scripts/bench-score.sh target/criterion)
+          echo "value=$score" >> "$GITHUB_OUTPUT"
+          echo "Benchmark score: $score"
+
+      - name: Write score to step summary
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          echo "## RFDB Benchmark Score" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "**${{ steps.score.outputs.value }}**" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Update benchmark badge
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.COVERAGE_GIST_ID != ''
+        uses: schneegans/dynamic-badges-action@v1.7.0
+        with:
+          auth: ${{ secrets.GIST_TOKEN }}
+          gistID: ${{ vars.COVERAGE_GIST_ID }}
+          filename: rfdb-benchmark.json
+          label: benchmark
+          message: ${{ steps.score.outputs.value }}
+          color: brightgreen

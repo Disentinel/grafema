@@ -1,7 +1,7 @@
 import { readFileSync, existsSync, statSync } from 'fs';
 import { join, basename } from 'path';
 import { parse as parseYAML } from 'yaml';
-import type { ServiceDefinition } from '@grafema/types';
+import type { ServiceDefinition, RoutingRule } from '@grafema/types';
 import { GRAFEMA_VERSION, getSchemaVersion } from '../version.js';
 
 /**
@@ -70,6 +70,23 @@ export interface GrafemaConfig {
    * See OrchestratorConfig.exclude for documentation.
    */
   exclude?: string[];
+
+  /**
+   * Routing rules for cross-service URL mapping (REG-256).
+   * Describes how infrastructure (nginx, gateway) transforms URLs between services.
+   *
+   * @example
+   * ```yaml
+   * routing:
+   *   - from: frontend
+   *     to: backend
+   *     stripPrefix: /api
+   *   - from: frontend
+   *     to: auth-service
+   *     stripPrefix: /auth
+   * ```
+   */
+  routing?: RoutingRule[];
 
   /**
    * Enable strict mode for fail-fast debugging.
@@ -141,7 +158,8 @@ export const DEFAULT_CONFIG: GrafemaConfig = {
       'ExpressHandlerLinker',
       'PrefixEvaluator',
       'ImportExportLinker',
-      'HTTPConnectionEnricher',
+      'ConfigRoutingMapBuilder',
+      'ServiceConnectionEnricher',
       'CallbackCallResolver',
     ],
     validation: [
@@ -154,6 +172,7 @@ export const DEFAULT_CONFIG: GrafemaConfig = {
       'ShadowingDetector',
       'TypeScriptDeadCodeValidator',
       'BrokenImportValidator',
+      'UnconnectedRouteValidator',
     ],
   },
   services: [], // Empty by default (uses auto-discovery)
@@ -221,6 +240,9 @@ export function loadConfig(
     // Validate workspace.roots if present (THROWS on error) - REG-76
     validateWorkspace(parsed.workspace, projectPath);
 
+    // Validate routing rules if present (THROWS on error) - REG-256
+    validateRouting(parsed.routing, (parsed.services || []) as ServiceDefinition[]);
+
     // Merge with defaults (user config may be partial)
     return mergeConfig(DEFAULT_CONFIG, parsed);
   }
@@ -253,6 +275,9 @@ export function loadConfig(
 
     // Validate workspace.roots if present (THROWS on error) - REG-76
     validateWorkspace(parsed.workspace, projectPath);
+
+    // Validate routing rules if present (THROWS on error) - REG-256
+    validateRouting(parsed.routing, (parsed.services || []) as ServiceDefinition[]);
 
     return mergeConfig(DEFAULT_CONFIG, parsed);
   }
@@ -369,6 +394,13 @@ export function validateServices(services: unknown, projectPath: string): void {
         throw new Error(`Config error: services[${i}].entryPoint cannot be empty or whitespace-only`);
       }
     }
+
+    // customerFacing validation (optional field) - must be boolean if provided (REG-256)
+    if (svc.customerFacing !== undefined) {
+      if (typeof svc.customerFacing !== 'boolean') {
+        throw new Error(`Config error: services[${i}].customerFacing must be a boolean, got ${typeof svc.customerFacing}`);
+      }
+    }
   }
 }
 
@@ -451,6 +483,84 @@ export function validateWorkspace(workspace: unknown, projectPath: string): void
 }
 
 /**
+ * Validate routing rules structure (REG-256).
+ * THROWS on error (fail loudly per project convention).
+ *
+ * Validation rules:
+ * 1. Must be an array if provided
+ * 2. Each rule must have 'from' and 'to' as non-empty strings
+ * 3. 'stripPrefix' must start with '/' if provided
+ * 4. 'addPrefix' must start with '/' if provided
+ * 5. 'from' and 'to' must reference services defined in the services array
+ *
+ * @param routing - Parsed routing rules (may be undefined)
+ * @param services - Parsed services array (for cross-validation)
+ */
+export function validateRouting(routing: unknown, services: ServiceDefinition[]): void {
+  if (routing === undefined || routing === null) return;
+
+  if (!Array.isArray(routing)) {
+    throw new Error(`Config error: routing must be an array, got ${typeof routing}`);
+  }
+
+  const serviceNames = new Set(services.map(s => s.name));
+
+  for (let i = 0; i < routing.length; i++) {
+    const rule = routing[i];
+
+    if (typeof rule !== 'object' || rule === null) {
+      throw new Error(`Config error: routing[${i}] must be an object`);
+    }
+
+    // from — required
+    if (typeof rule.from !== 'string' || !rule.from.trim()) {
+      throw new Error(`Config error: routing[${i}].from must be a non-empty string`);
+    }
+
+    // to — required
+    if (typeof rule.to !== 'string' || !rule.to.trim()) {
+      throw new Error(`Config error: routing[${i}].to must be a non-empty string`);
+    }
+
+    // Cross-validate against services (only if services are defined)
+    if (serviceNames.size > 0) {
+      if (!serviceNames.has(rule.from)) {
+        throw new Error(
+          `Config error: routing[${i}].from "${rule.from}" does not match any service name. ` +
+          `Available: ${[...serviceNames].join(', ')}`
+        );
+      }
+      if (!serviceNames.has(rule.to)) {
+        throw new Error(
+          `Config error: routing[${i}].to "${rule.to}" does not match any service name. ` +
+          `Available: ${[...serviceNames].join(', ')}`
+        );
+      }
+    }
+
+    // stripPrefix — optional, must start with /
+    if (rule.stripPrefix !== undefined) {
+      if (typeof rule.stripPrefix !== 'string') {
+        throw new Error(`Config error: routing[${i}].stripPrefix must be a string`);
+      }
+      if (!rule.stripPrefix.startsWith('/')) {
+        throw new Error(`Config error: routing[${i}].stripPrefix must start with '/'`);
+      }
+    }
+
+    // addPrefix — optional, must start with /
+    if (rule.addPrefix !== undefined) {
+      if (typeof rule.addPrefix !== 'string') {
+        throw new Error(`Config error: routing[${i}].addPrefix must be a string`);
+      }
+      if (!rule.addPrefix.startsWith('/')) {
+        throw new Error(`Config error: routing[${i}].addPrefix must start with '/'`);
+      }
+    }
+  }
+}
+
+/**
  * Validate include/exclude patterns.
  * THROWS on error (fail loudly per project convention).
  *
@@ -527,6 +637,8 @@ function mergeConfig(
     include: user.include ?? undefined,
     exclude: user.exclude ?? undefined,
     strict: user.strict ?? defaults.strict,
+    // Routing rules: pass through if specified (REG-256)
+    routing: user.routing ?? undefined,
     // Workspace config: pass through if specified (REG-76)
     workspace: user.workspace ?? undefined,
   };

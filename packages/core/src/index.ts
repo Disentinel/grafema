@@ -41,6 +41,7 @@ export {
   validateServices,
   validatePatterns,
   validateWorkspace,
+  validateRouting,
 } from './config/index.js';
 export type { GrafemaConfig } from './config/index.js';
 
@@ -280,6 +281,12 @@ export { ClosureCaptureEnricher } from './plugins/enrichment/ClosureCaptureEnric
 export { ExpressHandlerLinker } from './plugins/enrichment/ExpressHandlerLinker.js';
 export { RejectionPropagationEnricher } from './plugins/enrichment/RejectionPropagationEnricher.js';
 export { CallbackCallResolver } from './plugins/enrichment/CallbackCallResolver.js';
+export { ConfigRoutingMapBuilder } from './plugins/enrichment/ConfigRoutingMapBuilder.js';
+export { ServiceConnectionEnricher } from './plugins/enrichment/ServiceConnectionEnricher.js';
+
+// Resource system (REG-256)
+export { ResourceRegistryImpl } from './core/ResourceRegistry.js';
+export { RoutingMapImpl, createRoutingMap } from './resources/RoutingMapImpl.js';
 
 // Builtin registry
 export { BuiltinRegistry } from './data/builtins/index.js';
@@ -298,6 +305,7 @@ export { GraphConnectivityValidator } from './plugins/validation/GraphConnectivi
 export { DataFlowValidator } from './plugins/validation/DataFlowValidator.js';
 export { TypeScriptDeadCodeValidator } from './plugins/validation/TypeScriptDeadCodeValidator.js';
 export { BrokenImportValidator } from './plugins/validation/BrokenImportValidator.js';
+export { UnconnectedRouteValidator } from './plugins/validation/UnconnectedRouteValidator.js';
 
 // Discovery plugins
 export { SimpleProjectDiscovery } from './plugins/discovery/SimpleProjectDiscovery.js';

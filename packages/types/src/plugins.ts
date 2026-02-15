@@ -5,6 +5,8 @@
 import type { NodeType, NodeRecord } from './nodes.js';
 import type { EdgeType, EdgeRecord } from './edges.js';
 import type { FieldDeclaration } from './rfdb.js';
+import type { ResourceRegistry } from './resources.js';
+import type { RoutingRule } from './routing.js';
 
 // === LOG LEVEL ===
 /**
@@ -125,6 +127,13 @@ export interface PluginContext {
    * - Multi root ("backend"): "backend/src/utils.js->global->FUNCTION->foo"
    */
   rootPrefix?: string;
+
+  /**
+   * Resource registry for shared data between plugins (REG-256).
+   * Plugins can read/write typed Resources through this registry.
+   * Available in all phases. Created by Orchestrator at run start.
+   */
+  resources?: ResourceRegistry;
 }
 
 // === PLUGIN RESULT ===
@@ -202,6 +211,12 @@ export interface OrchestratorConfig {
    * Note: node_modules is already excluded by default in JSModuleIndexer.
    */
   exclude?: string[];
+
+  /**
+   * Routing rules from config for cross-service URL mapping (REG-256).
+   * Passed through to plugins via PluginContext.config.
+   */
+  routing?: RoutingRule[];
 }
 
 /**
@@ -228,6 +243,14 @@ export interface ServiceDefinition {
    * If omitted, auto-detected via resolveSourceEntrypoint() or package.json.main
    */
   entryPoint?: string;
+
+  /**
+   * Mark this service as customer-facing (REG-256).
+   * Routes in customer-facing services are expected to have frontend consumers.
+   * Unconnected routes in customer-facing services raise issue:connectivity warnings.
+   * Default: false (no issues for unconnected routes).
+   */
+  customerFacing?: boolean;
 }
 
 // === GRAPH BACKEND INTERFACE ===

@@ -33,6 +33,8 @@ import {
   MountPointResolver,
   PrefixEvaluator,
   HTTPConnectionEnricher,
+  ConfigRoutingMapBuilder,
+  ServiceConnectionEnricher,
   RejectionPropagationEnricher,
   // Validation
   CallResolverValidator,
@@ -42,6 +44,7 @@ import {
   ShadowingDetector,
   GraphConnectivityValidator,
   DataFlowValidator,
+  UnconnectedRouteValidator,
 } from '@grafema/core';
 import type { ParallelConfig ,
   Plugin} from '@grafema/core';
@@ -175,6 +178,8 @@ async function run(): Promise<void> {
       MountPointResolver: () => new MountPointResolver(),
       PrefixEvaluator: () => new PrefixEvaluator(),
       HTTPConnectionEnricher: () => new HTTPConnectionEnricher(),
+      ConfigRoutingMapBuilder: () => new ConfigRoutingMapBuilder(),
+      ServiceConnectionEnricher: () => new ServiceConnectionEnricher(),
       RejectionPropagationEnricher: () => new RejectionPropagationEnricher(),
       CallResolverValidator: () => new CallResolverValidator(),
       EvalBanValidator: () => new EvalBanValidator(),
@@ -183,6 +188,7 @@ async function run(): Promise<void> {
       ShadowingDetector: () => new ShadowingDetector(),
       GraphConnectivityValidator: () => new GraphConnectivityValidator(),
       DataFlowValidator: () => new DataFlowValidator(),
+      UnconnectedRouteValidator: () => new UnconnectedRouteValidator(),
     };
 
     // Add custom plugins
