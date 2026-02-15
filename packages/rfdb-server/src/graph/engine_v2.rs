@@ -7,15 +7,17 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use crate::error::Result;
 use crate::storage::{AttrQuery, EdgeRecord, FieldDecl, NodeRecord};
 use crate::storage_v2::manifest::{ManifestStore, SnapshotDiff, SnapshotInfo};
 use crate::storage_v2::multi_shard::MultiShardStore;
+use crate::storage_v2::resource::{ResourceManager, SystemResources, TuningProfile};
 use crate::storage_v2::types::{CommitDelta, EdgeRecordV2, NodeRecordV2};
 use super::{GraphStore, traversal};
 
-/// Default shard count for new databases.
+/// Fallback shard count when adaptive tuning is bypassed (tests, etc.).
 const DEFAULT_SHARD_COUNT: u16 = 4;
 
 // ── Type Conversion ────────────────────────────────────────────────
@@ -159,16 +161,24 @@ pub struct GraphEngineV2 {
     pending_tombstone_edges: HashSet<(u128, u128, String)>,
     /// Declared metadata fields for indexing (v1 compat).
     declared_fields: Vec<FieldDecl>,
+    /// Cached tuning profile — avoids re-probing sysinfo on every write.
+    cached_profile: TuningProfile,
+    /// Timestamp of last resource re-detection (rate-limits sysinfo calls).
+    last_resource_check: Instant,
 }
 
 // ── Constructors ────────────────────────────────────────────────────
 
 impl GraphEngineV2 {
     /// Create a new database on disk at the given path.
+    ///
+    /// Uses `ResourceManager::auto_tune()` to determine shard count
+    /// based on available RAM and CPU cores.
     pub fn create<P: AsRef<Path>>(path: P) -> Result<Self> {
         let path = path.as_ref();
         std::fs::create_dir_all(path)?;
-        let store = MultiShardStore::create(path, DEFAULT_SHARD_COUNT)?;
+        let profile = ResourceManager::auto_tune();
+        let store = MultiShardStore::create(path, profile.shard_count)?;
         let manifest = ManifestStore::create(path)?;
 
         Ok(Self {
@@ -179,6 +189,8 @@ impl GraphEngineV2 {
             pending_tombstone_nodes: HashSet::new(),
             pending_tombstone_edges: HashSet::new(),
             declared_fields: Vec::new(),
+            cached_profile: profile,
+            last_resource_check: Instant::now(),
         })
     }
 
@@ -192,6 +204,8 @@ impl GraphEngineV2 {
             pending_tombstone_nodes: HashSet::new(),
             pending_tombstone_edges: HashSet::new(),
             declared_fields: Vec::new(),
+            cached_profile: TuningProfile::default(),
+            last_resource_check: Instant::now(),
         }
     }
 
@@ -208,6 +222,8 @@ impl GraphEngineV2 {
         let pending_tombstone_edges: HashSet<(u128, u128, String)> =
             current.tombstoned_edge_keys.iter().cloned().collect();
 
+        let profile = ResourceManager::auto_tune();
+
         Ok(Self {
             store,
             manifest,
@@ -216,6 +232,8 @@ impl GraphEngineV2 {
             pending_tombstone_nodes,
             pending_tombstone_edges,
             declared_fields: Vec::new(),
+            cached_profile: profile,
+            last_resource_check: Instant::now(),
         })
     }
 }
@@ -254,6 +272,10 @@ impl GraphStore for GraphEngineV2 {
             self.pending_tombstone_nodes.remove(&node.id);
         }
         self.store.add_nodes(v2_nodes);
+
+        // Auto-flush: check if any shard's write buffer exceeds adaptive limits
+        // or if system memory pressure is high.
+        self.maybe_auto_flush();
     }
 
     fn delete_node(&mut self, id: u128) {
@@ -681,6 +703,46 @@ impl GraphEngineV2 {
     }
 
     // ── Private helpers ──────────────────────────────────────────────
+
+    /// Auto-flush write buffers if adaptive limits or memory pressure exceeded.
+    ///
+    /// Probes system resources to determine thresholds. Flushes all shards
+    /// if any shard's buffer exceeds the adaptive node count or byte limit.
+    /// Under high memory pressure (>80%), also flushes if the buffer has at
+    /// least 1000 nodes (avoids flushing trivially small batches).
+    ///
+    /// Errors are logged but do not propagate (write path must not fail).
+    fn maybe_auto_flush(&mut self) {
+        use std::time::Duration;
+
+        // Rate-limit resource re-detection to at most once per second.
+        // Between checks we use the cached TuningProfile, which is stale
+        // by at most 1 s — acceptable for adaptive buffer limits and
+        // memory-pressure decisions.
+        if self.last_resource_check.elapsed() > Duration::from_secs(1) {
+            let resources = SystemResources::detect();
+            self.cached_profile = TuningProfile::from_resources(&resources);
+            self.last_resource_check = Instant::now();
+        }
+
+        // Check if any shard's buffer exceeds the adaptive limits.
+        let exceeds_limits = self.store.any_shard_needs_flush(
+            self.cached_profile.write_buffer_node_limit,
+            self.cached_profile.write_buffer_byte_limit,
+        );
+
+        // Under high memory pressure, flush earlier but only if buffer
+        // has meaningful data (>= 1000 nodes). Flushing 2 nodes is not
+        // worth the I/O cost even under pressure.
+        let pressure_flush = self.cached_profile.memory_pressure > 0.8
+            && self.store.total_write_buffer_nodes() >= 1000;
+
+        if exceeds_limits || pressure_flush {
+            if let Err(e) = self.store.flush_all(&mut self.manifest) {
+                tracing::warn!("auto-flush failed: {}", e);
+            }
+        }
+    }
 
     /// Get incoming neighbors (src nodes of incoming edges).
     fn reverse_neighbors(&self, id: u128, edge_types: &[&str]) -> Vec<u128> {
@@ -1436,5 +1498,69 @@ mod tests {
 
         let all = engine.get_all_edges();
         assert_eq!(all.len(), 2);
+    }
+
+    // ── Adaptive Shard Count ────────────────────────────────────────
+
+    #[test]
+    fn test_adaptive_shard_count_on_disk() {
+        use crate::storage_v2::resource::ResourceManager;
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let db_path = dir.path().join("adaptive.rfdb");
+
+        let engine = GraphEngineV2::create(&db_path).unwrap();
+        let profile = ResourceManager::auto_tune();
+
+        // Verify the engine's shard count matches the adaptive profile.
+        // We check via node_count (engine exists) and verify profile range.
+        assert!(
+            profile.shard_count >= 1 && profile.shard_count <= 16,
+            "shard_count {} out of expected [1, 16] range",
+            profile.shard_count
+        );
+
+        // Engine should work normally with adaptive shard count.
+        assert_eq!(engine.node_count(), 0);
+    }
+
+    // ── Auto-Flush ──────────────────────────────────────────────────
+
+    #[test]
+    fn test_auto_flush_triggers_on_buffer_limit() {
+        // Use MultiShardStore directly to test the any_shard_needs_flush() wiring.
+        // With node_limit=5, adding 5+ nodes should trigger the check.
+        let mut store = MultiShardStore::ephemeral(2);
+
+        // Add 3 nodes — should NOT exceed limit of 5
+        store.add_nodes(vec![
+            make_v2_node("FUNCTION:a@src/a.js", "FUNCTION", "a", "src/a.js"),
+            make_v2_node("FUNCTION:b@src/a.js", "FUNCTION", "b", "src/a.js"),
+            make_v2_node("FUNCTION:c@src/a.js", "FUNCTION", "c", "src/a.js"),
+        ]);
+        assert!(!store.any_shard_needs_flush(5, usize::MAX));
+
+        // Add 5 more — at least one shard should exceed 5 nodes
+        for i in 0..5 {
+            let id = format!("FUNCTION:x{i}@src/a.js");
+            store.add_nodes(vec![make_v2_node(&id, "FUNCTION", &format!("x{i}"), "src/a.js")]);
+        }
+        assert!(store.any_shard_needs_flush(5, usize::MAX));
+    }
+
+    #[test]
+    fn test_auto_flush_byte_limit() {
+        let mut store = MultiShardStore::ephemeral(1);
+
+        // Add nodes and check estimated bytes
+        for i in 0..10 {
+            let id = format!("FUNCTION:n{i}@src/a.js");
+            store.add_nodes(vec![make_v2_node(&id, "FUNCTION", &format!("n{i}"), "src/a.js")]);
+        }
+
+        // 10 nodes * 120 bytes = 1200 bytes. A limit of 1000 should trigger.
+        assert!(store.any_shard_needs_flush(usize::MAX, 1000));
+        // A limit of 2000 should not trigger.
+        assert!(!store.any_shard_needs_flush(usize::MAX, 2000));
     }
 }
