@@ -9,7 +9,7 @@
 import { describe, it } from 'node:test';
 import { strict as assert } from 'node:assert';
 
-import * as handlers from '../../packages/mcp/dist/handlers.js';
+import * as handlers from '../../packages/mcp/dist/handlers/index.js';
 
 const EXPECTED_HANDLERS = [
   'handleQueryGraph',
