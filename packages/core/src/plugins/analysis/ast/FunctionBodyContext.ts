@@ -61,6 +61,7 @@ export interface FunctionBodyContext {
   funcLine: number;
   funcColumn: number;
   currentFunctionId: string | null;
+  matchingFunction: FunctionInfo | undefined;
   // Module & scope
   module: VisitorModule;
   collections: VisitorCollections;
@@ -261,7 +262,7 @@ export function createFunctionBodyContext(
   };
 
   return {
-    funcPath, funcNode, functionNode, functionPath, funcLine, funcColumn, currentFunctionId,
+    funcPath, funcNode, functionNode, functionPath, funcLine, funcColumn, currentFunctionId, matchingFunction,
     module, collections, parentScopeId, scopeIdStack, getCurrentScopeId, scopeTracker,
     functions, scopes, variableDeclarations, callSites, methodCalls,
     eventListeners, methodCallbacks, classInstantiations, constructorCalls,
