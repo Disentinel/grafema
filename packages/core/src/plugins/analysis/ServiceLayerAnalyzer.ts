@@ -24,9 +24,10 @@ import type {
 import type { NodePath } from '@babel/traverse';
 import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
-import type { NodeRecord } from '@grafema/types';
+import type { NodeRecord, AnyBrandedNode } from '@grafema/types';
 import { getLine } from './ast/utils/location.js';
 import { resolveNodeFile } from '../../utils/resolveNodeFile.js';
+import { NodeFactory } from '../../core/NodeFactory.js';
 
 const traverse = (traverseModule as any).default || traverseModule;
 
@@ -307,12 +308,17 @@ export class ServiceLayerAnalyzer extends Plugin {
       });
 
       // Batch nodes and edges for IPC optimization
-      const nodes: Array<unknown> = [];
+      const nodes: AnyBrandedNode[] = [];
       const edges: Array<{ type: string; src: string; dst: string }> = [];
 
       // Collect all nodes
       for (const serviceClass of serviceClasses) {
-        nodes.push(serviceClass as unknown as NodeRecord);
+        nodes.push(NodeFactory.createServiceClass(
+          serviceClass.name,
+          serviceClass.file,
+          serviceClass.line,
+          serviceClass.methods
+        ));
         edges.push({
           type: 'CONTAINS',
           src: module.id,
@@ -321,7 +327,11 @@ export class ServiceLayerAnalyzer extends Plugin {
       }
 
       for (const instance of serviceInstances) {
-        nodes.push(instance as unknown as NodeRecord);
+        nodes.push(NodeFactory.createServiceInstance(
+          instance.serviceClass,
+          instance.file,
+          instance.line
+        ));
         edges.push({
           type: 'CONTAINS',
           src: module.id,
@@ -330,7 +340,12 @@ export class ServiceLayerAnalyzer extends Plugin {
       }
 
       for (const registration of serviceRegistrations) {
-        nodes.push(registration as unknown as NodeRecord);
+        nodes.push(NodeFactory.createServiceRegistration(
+          registration.serviceName,
+          registration.objectName,
+          registration.file,
+          registration.line
+        ));
         edges.push({
           type: 'CONTAINS',
           src: module.id,
@@ -339,7 +354,11 @@ export class ServiceLayerAnalyzer extends Plugin {
       }
 
       for (const usage of serviceUsages) {
-        nodes.push(usage as unknown as NodeRecord);
+        nodes.push(NodeFactory.createServiceUsage(
+          usage.serviceName,
+          usage.file,
+          usage.line
+        ));
         edges.push({
           type: 'CONTAINS',
           src: module.id,
@@ -348,7 +367,7 @@ export class ServiceLayerAnalyzer extends Plugin {
       }
 
       // First flush: add all nodes to graph
-      await graph.addNodes(nodes as NodeRecord[]);
+      await graph.addNodes(nodes);
 
       // Create INSTANTIATES edges (requires querying graph)
       for (const instance of serviceInstances) {

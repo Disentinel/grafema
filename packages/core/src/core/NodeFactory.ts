@@ -37,6 +37,8 @@ import {
   ClassNode,
   ExportNode,
   ExternalModuleNode,
+  ExternalFunctionNode,
+  type ExternalFunctionOptions,
   InterfaceNode,
   TypeNode,
   TypeParameterNode,
@@ -73,6 +75,8 @@ import {
   ReactNode,
   SocketIONode,
   SocketConnectionNode,
+  DatabaseNode,
+  ServiceLayerNode,
 } from './nodes/index.js';
 
 import type { BaseNodeRecord } from '@grafema/types';
@@ -615,6 +619,20 @@ export class NodeFactory {
    */
   static createExternalModule(source: string) {
     return brandNodeInternal(ExternalModuleNode.create(source));
+  }
+
+  /**
+   * Create EXTERNAL_FUNCTION node
+   *
+   * Represents a function from a Node.js built-in module (e.g., fs.readFile).
+   * Created lazily when calls to builtin functions are detected.
+   *
+   * @param moduleName - Normalized module name (e.g., 'fs', 'path', 'crypto')
+   * @param functionName - Function name (e.g., 'readFile', 'join')
+   * @param options - Optional security category and pure flag
+   */
+  static createExternalFunction(moduleName: string, functionName: string, options: ExternalFunctionOptions = {}) {
+    return brandNodeInternal(ExternalFunctionNode.create(moduleName, functionName, options));
   }
 
   /**
@@ -1167,6 +1185,130 @@ export class NodeFactory {
     return brandNodeInternal(SocketConnectionNode.createTcpServer(host, port, file, line, column, options));
   }
 
+  // ==========================================
+  // Database domain factory methods (db:*)
+  // ==========================================
+
+  /**
+   * Create db:connection node (singleton per database name)
+   *
+   * @param name - Database name (e.g., '__database__')
+   */
+  static createDbConnection(name: string) {
+    return brandNodeInternal(DatabaseNode.createConnection(name));
+  }
+
+  /**
+   * Create db:query node (DatabaseAnalyzer variant)
+   *
+   * @param file - File path
+   * @param queryCounter - Sequential query counter within the file
+   * @param sql - Raw SQL string
+   * @param operation - SQL operation type (SELECT, INSERT, etc.)
+   * @param options - Additional query metadata
+   */
+  static createDbQuery(
+    file: string,
+    queryCounter: number,
+    sql: string,
+    operation: string,
+    options: {
+      sqlSnippet?: string;
+      tableName?: string | null;
+      object?: string;
+      method?: string;
+      line?: number;
+      column?: number;
+    } = {}
+  ) {
+    return brandNodeInternal(DatabaseNode.createQuery(file, queryCounter, sql, operation, options));
+  }
+
+  /**
+   * Create db:query node (SQLiteAnalyzer variant)
+   *
+   * @param file - File path
+   * @param method - SQLite method name (e.g., 'all', 'get', 'run')
+   * @param line - Line number
+   * @param query - Raw SQL string
+   * @param operationType - SQL operation type
+   * @param options - Additional query metadata
+   */
+  static createSQLiteQuery(
+    file: string,
+    method: string,
+    line: number,
+    query: string,
+    operationType: string,
+    options: {
+      params?: string | null;
+      tableName?: string | null;
+      column?: number;
+      promiseWrapped?: boolean;
+    } = {}
+  ) {
+    return brandNodeInternal(DatabaseNode.createSQLiteQuery(file, method, line, query, operationType, options));
+  }
+
+  /**
+   * Create db:table node (singleton per table name)
+   *
+   * @param tableName - Table name
+   */
+  static createDbTable(tableName: string) {
+    return brandNodeInternal(DatabaseNode.createTable(tableName));
+  }
+
+  // ==========================================
+  // Service Layer factory methods (SERVICE_*)
+  // ==========================================
+
+  /**
+   * Create SERVICE_CLASS node
+   *
+   * @param className - Service class name (e.g., 'UserService')
+   * @param file - File path
+   * @param line - Line number
+   * @param methods - List of method names
+   */
+  static createServiceClass(className: string, file: string, line: number, methods: string[]) {
+    return brandNodeInternal(ServiceLayerNode.createClass(className, file, line, methods));
+  }
+
+  /**
+   * Create SERVICE_INSTANCE node
+   *
+   * @param serviceClass - Name of the service class being instantiated
+   * @param file - File path
+   * @param line - Line number
+   */
+  static createServiceInstance(serviceClass: string, file: string, line: number) {
+    return brandNodeInternal(ServiceLayerNode.createInstance(serviceClass, file, line));
+  }
+
+  /**
+   * Create SERVICE_REGISTRATION node
+   *
+   * @param serviceName - Registered service name
+   * @param objectName - Object used for registration (e.g., 'app')
+   * @param file - File path
+   * @param line - Line number
+   */
+  static createServiceRegistration(serviceName: string, objectName: string, file: string, line: number) {
+    return brandNodeInternal(ServiceLayerNode.createRegistration(serviceName, objectName, file, line));
+  }
+
+  /**
+   * Create SERVICE_USAGE node
+   *
+   * @param serviceName - Name of the service being used
+   * @param file - File path
+   * @param line - Line number
+   */
+  static createServiceUsage(serviceName: string, file: string, line: number) {
+    return brandNodeInternal(ServiceLayerNode.createUsage(serviceName, file, line));
+  }
+
   /**
    * Validate node by its type
    */
@@ -1196,6 +1338,7 @@ export class NodeFactory {
       'CLASS': ClassNode,
       'EXPORT': ExportNode,
       'EXTERNAL_MODULE': ExternalModuleNode,
+      'EXTERNAL_FUNCTION': ExternalFunctionNode,
       'INTERFACE': InterfaceNode,
       'TYPE': TypeNode,
       'TYPE_PARAMETER': TypeParameterNode,
@@ -1234,6 +1377,16 @@ export class NodeFactory {
     // Handle socket types (os:unix-*, net:tcp-*)
     if (SocketConnectionNode.isSocketType(node.type)) {
       return SocketConnectionNode.validate(node);
+    }
+
+    // Handle database domain types (db:*)
+    if (DatabaseNode.isDatabaseType(node.type)) {
+      return DatabaseNode.validate(node);
+    }
+
+    // Handle service layer types (SERVICE_*)
+    if (ServiceLayerNode.isServiceLayerType(node.type)) {
+      return ServiceLayerNode.validate(node);
     }
 
     const validator = validators[node.type];

@@ -196,6 +196,7 @@ export { MethodNode } from './core/nodes/MethodNode.js';
 export { ExportNode } from './core/nodes/ExportNode.js';
 export { VariableDeclarationNode } from './core/nodes/VariableDeclarationNode.js';
 export { ExternalModuleNode } from './core/nodes/ExternalModuleNode.js';
+export { ExternalFunctionNode, type ExternalFunctionNodeRecord, type ExternalFunctionOptions } from './core/nodes/ExternalFunctionNode.js';
 export { NetworkRequestNode } from './core/nodes/NetworkRequestNode.js';
 export { InterfaceNode, type InterfacePropertyRecord } from './core/nodes/InterfaceNode.js';
 export { TypeNode } from './core/nodes/TypeNode.js';

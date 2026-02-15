@@ -11,10 +11,11 @@ import type { CallExpression, Identifier } from '@babel/types';
 import type { NodePath } from '@babel/traverse';
 import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
-import type { NodeRecord } from '@grafema/types';
+import type { NodeRecord, AnyBrandedNode } from '@grafema/types';
 import { getLine, getColumn } from './ast/utils/location.js';
 import { getTraverseFunction } from './ast/utils/babelTraverse.js';
 import { resolveNodeFile } from '../../utils/resolveNodeFile.js';
+import { NodeFactory } from '../../core/NodeFactory.js';
 
 const traverse = getTraverseFunction(traverseModule);
 
@@ -241,21 +242,31 @@ export class DatabaseAnalyzer extends Plugin {
       // Collect all nodes and edges for batch operations
       if (databaseQueries.length > 0) {
         const databaseId = 'EXTERNAL_DATABASE:__database__';
-        const nodes: NodeRecord[] = [];
+        const nodes: AnyBrandedNode[] = [];
         const edges: Array<{ type: string; src: string; dst: string }> = [];
 
         const existingDb = await graph.getNode(databaseId);
         if (!existingDb) {
-          nodes.push({
-            id: databaseId,
-            type: 'db:connection',
-            name: '__database__'
-          } as NodeRecord);
+          nodes.push(NodeFactory.createDbConnection('__database__'));
         }
 
         // Prepare DATABASE_QUERY and TABLE nodes
-        for (const query of databaseQueries) {
-          nodes.push(query as unknown as NodeRecord);
+        for (let qi = 0; qi < databaseQueries.length; qi++) {
+          const query = databaseQueries[qi];
+          nodes.push(NodeFactory.createDbQuery(
+            query.file,
+            qi,
+            query.sql,
+            query.operation,
+            {
+              sqlSnippet: query.sqlSnippet,
+              tableName: query.tableName,
+              object: query.object,
+              method: query.method,
+              line: query.line,
+              column: query.column,
+            }
+          ));
           queriesCreated++;
 
           // Prepare TABLE node if has tableName
@@ -263,11 +274,7 @@ export class DatabaseAnalyzer extends Plugin {
             const tableId = `TABLE:${query.tableName}`;
 
             if (!createdTables.has(tableId)) {
-              nodes.push({
-                id: tableId,
-                type: 'db:table',
-                name: query.tableName
-              } as NodeRecord);
+              nodes.push(NodeFactory.createDbTable(query.tableName));
               tablesCreated++;
               createdTables.add(tableId);
             }

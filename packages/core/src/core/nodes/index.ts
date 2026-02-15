@@ -28,6 +28,7 @@ export { ArrayLiteralNode, type ArrayLiteralNodeRecord, type ArrayLiteralNodeOpt
 export { ImportNode, type ImportNodeRecord, type ImportBinding, type ImportType } from './ImportNode.js';
 export { ExportNode, type ExportNodeRecord, type ExportKind } from './ExportNode.js';
 export { ExternalModuleNode, type ExternalModuleNodeRecord } from './ExternalModuleNode.js';
+export { ExternalFunctionNode, type ExternalFunctionNodeRecord, type ExternalFunctionOptions } from './ExternalFunctionNode.js';
 
 // TypeScript declaration nodes
 export { InterfaceNode, type InterfaceNodeRecord, type InterfacePropertyRecord } from './InterfaceNode.js';
@@ -84,6 +85,23 @@ export {
   type TcpServerNodeRecord,
   type AnySocketNodeRecord,
 } from './SocketNode.js';
+
+// Database domain nodes (db:*)
+export {
+  DatabaseNode,
+  type DbConnectionNodeRecord,
+  type DbQueryNodeRecord,
+  type DbTableNodeRecord,
+} from './DatabaseNode.js';
+
+// Service Layer domain nodes (SERVICE_*)
+export {
+  ServiceLayerNode,
+  type ServiceClassNodeRecord,
+  type ServiceInstanceNodeRecord,
+  type ServiceRegistrationNodeRecord,
+  type ServiceUsageNodeRecord,
+} from './ServiceLayerNode.js';
 
 // Guarantee nodes (contract-based)
 export { GuaranteeNode, type GuaranteeNodeRecord, type GuaranteePriority, type GuaranteeStatus, type GuaranteeType } from './GuaranteeNode.js';

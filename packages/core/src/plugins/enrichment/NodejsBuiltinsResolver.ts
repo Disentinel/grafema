@@ -23,6 +23,7 @@ import { Plugin, createSuccessResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { BaseNodeRecord } from '@grafema/types';
 import { BuiltinRegistry } from '../../data/builtins/BuiltinRegistry.js';
+import { NodeFactory } from '../../core/NodeFactory.js';
 
 /**
  * Call node with method properties
@@ -99,13 +100,7 @@ export class NodejsBuiltinsResolver extends Plugin {
           // Check if node already exists in graph
           const existingNode = await graph.getNode(moduleNodeId);
           if (!existingNode) {
-            await graph.addNode({
-              id: moduleNodeId,
-              type: 'EXTERNAL_MODULE',
-              name: normalizedSource,
-              file: '',
-              line: 0
-            });
+            await graph.addNode(NodeFactory.createExternalModule(normalizedSource));
             externalModulesCreated++;
           }
           createdExternalModules.add(normalizedSource);
@@ -182,16 +177,14 @@ export class NodejsBuiltinsResolver extends Plugin {
         // Check if node already exists in graph
         const existingNode = await graph.getNode(externalFuncId);
         if (!existingNode) {
-          await graph.addNode({
-            id: externalFuncId,
-            type: 'EXTERNAL_FUNCTION',
-            name: `${this.registry.normalizeModule(moduleName)}.${functionName}`,
-            file: '',
-            line: 0,
-            isBuiltin: true,
-            ...(funcDef.security && { security: funcDef.security }),
-            ...(funcDef.pure !== undefined && { pure: funcDef.pure })
-          });
+          await graph.addNode(NodeFactory.createExternalFunction(
+            this.registry.normalizeModule(moduleName),
+            functionName,
+            {
+              ...(funcDef.security && { security: funcDef.security }),
+              ...(funcDef.pure !== undefined && { pure: funcDef.pure })
+            }
+          ));
           nodesCreated++;
         }
         createdExternalFunctions.add(externalFuncId);
