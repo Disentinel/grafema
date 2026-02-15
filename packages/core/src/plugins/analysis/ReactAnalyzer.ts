@@ -18,7 +18,8 @@ import type { NodePath } from '@babel/traverse';
 import type { Node, CallExpression, JSXElement, JSXAttribute, VariableDeclarator, FunctionDeclaration } from '@babel/types';
 import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
-import type { NodeRecord } from '@grafema/types';
+import type { NodeRecord, AnyBrandedNode } from '@grafema/types';
+import { NodeFactory } from '../../core/NodeFactory.js';
 import { getLine, getColumn } from './ast/utils/location.js';
 import { resolveNodeFile } from '../../utils/resolveNodeFile.js';
 import { REACT_HOOKS } from './react-internal/types.js';
@@ -271,12 +272,12 @@ export class ReactAnalyzer extends Plugin {
     graph: PluginContext['graph'],
     moduleId: string | null
   ): Promise<void> {
-    const nodes: NodeRecord[] = [];
+    const nodes: AnyBrandedNode[] = [];
     const edges: Array<{ type: string; src: string; dst: string; [key: string]: unknown }> = [];
 
     // Collect component nodes and DEFINES edges
     for (const component of analysis.components) {
-      nodes.push(component as unknown as NodeRecord);
+      nodes.push(NodeFactory.createReactNode(component));
       if (moduleId) {
         edges.push({
           type: 'DEFINES',
@@ -288,22 +289,22 @@ export class ReactAnalyzer extends Plugin {
 
     // Collect hook nodes
     for (const hook of analysis.hooks) {
-      nodes.push(hook as unknown as NodeRecord);
+      nodes.push(NodeFactory.createReactNode(hook));
     }
 
     // Collect event nodes
     for (const event of analysis.events) {
-      nodes.push(event as unknown as NodeRecord);
+      nodes.push(NodeFactory.createReactNode(event));
     }
 
     // Collect browser API nodes
     for (const api of analysis.browserAPIs) {
-      nodes.push(api as unknown as NodeRecord);
+      nodes.push(NodeFactory.createReactNode(api));
     }
 
     // Collect issue nodes
     for (const issue of analysis.issues) {
-      nodes.push(issue as unknown as NodeRecord);
+      nodes.push(NodeFactory.createReactNode(issue));
     }
 
     // Collect edges from analysis

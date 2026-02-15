@@ -20,9 +20,10 @@ import type { CallExpression, Identifier, Node } from '@babel/types';
 import type { NodePath } from '@babel/traverse';
 import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
-import type { NodeRecord } from '@grafema/types';
+import type { NodeRecord, AnyBrandedNode } from '@grafema/types';
+import { brandNodeInternal } from '../../core/brandNodeInternal.js';
 
- 
+
 const traverse = (traverseModule as any).default || traverseModule;
 
 /**
@@ -75,7 +76,7 @@ export class SystemDbAnalyzer extends Plugin {
       logger.info('Analyzing modules for system_db patterns', { count: modules.length });
 
       // Collect all nodes and edges across ALL modules
-      const allNodes: NodeRecord[] = [];
+      const allNodes: AnyBrandedNode[] = [];
       const allEdges: Array<{ type: string; src: string; dst: string }> = [];
 
       for (const module of modules) {
@@ -184,17 +185,17 @@ export class SystemDbAnalyzer extends Plugin {
               line: reg.line
             });
 
-            allNodes.push({
+            allNodes.push(brandNodeInternal({
               id: nodeId,
-              type: 'SYSTEM_DB_VIEW_REGISTRATION',
+              type: 'SYSTEM_DB_VIEW_REGISTRATION' as NodeRecord['type'],
               name: `${reg.type}('${reg.viewName}', '${reg.serverName}')`,
-              file: module.file,
+              file: module.file!,
               line: reg.line,
               column: reg.column,
               viewName: reg.viewName,
               serverName: reg.serverName,
               callType: reg.type
-            } as unknown as NodeRecord);
+            }));
             nodesCreated++;
 
             // Link MODULE -> REGISTERS_VIEW -> REGISTRATION
@@ -210,15 +211,15 @@ export class SystemDbAnalyzer extends Plugin {
           for (const sub of subscriptions) {
             const nodeId = `${module.file}:SYSTEM_DB_SUBSCRIPTION:${sub.line}`;
 
-            allNodes.push({
+            allNodes.push(brandNodeInternal({
               id: nodeId,
-              type: 'SYSTEM_DB_SUBSCRIPTION',
+              type: 'SYSTEM_DB_SUBSCRIPTION' as NodeRecord['type'],
               name: `subscribe([${sub.servers.join(', ')}])`,
-              file: module.file,
+              file: module.file!,
               line: sub.line,
               column: sub.column,
               servers: sub.servers
-            } as unknown as NodeRecord);
+            }));
             nodesCreated++;
 
             // Link MODULE -> CHECKS_VIEWS -> SUBSCRIPTION

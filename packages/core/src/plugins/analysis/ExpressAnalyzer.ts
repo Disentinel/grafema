@@ -13,7 +13,8 @@ import type { NodePath } from '@babel/traverse';
 import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { NodeRecord } from '@grafema/types';
-import { NetworkRequestNode } from '../../core/nodes/NetworkRequestNode.js';
+import type { AnyBrandedNode } from '@grafema/types';
+import { NodeFactory } from '../../core/NodeFactory.js';
 import { getLine, getColumn } from './ast/utils/location.js';
 import { getTraverseFunction } from './ast/utils/babelTraverse.js';
 import { resolveNodeFile } from '../../utils/resolveNodeFile.js';
@@ -21,11 +22,9 @@ import { resolveNodeFile } from '../../utils/resolveNodeFile.js';
 const traverse = getTraverseFunction(traverseModule);
 
 /**
- * Endpoint node
+ * Collected endpoint info (before creating branded nodes)
  */
-interface EndpointNode {
-  id: string;
-  type: 'http:route';
+interface EndpointInfo {
   method: string;
   path: string;
   localPath: string;
@@ -36,11 +35,9 @@ interface EndpointNode {
 }
 
 /**
- * Mount point node
+ * Collected mount point info (before creating branded nodes)
  */
-interface MountPointNode {
-  id: string;
-  type: 'express:mount';
+interface MountPointInfo {
   prefix: string;
   targetFunction: string | null;
   targetVariable: string | null;
@@ -89,12 +86,12 @@ export class ExpressAnalyzer extends Plugin {
       const projectPath = (context.manifest as { projectPath?: string })?.projectPath ?? '';
 
       // Batch arrays
-      const nodes: NodeRecord[] = [];
+      const nodes: AnyBrandedNode[] = [];
       const edges: Array<{type: string; src: string; dst: string; [key: string]: unknown}> = [];
 
       // Create net:request singleton (GraphBackend handles deduplication)
-      const networkNode = NetworkRequestNode.create();
-      nodes.push(networkNode as unknown as NodeRecord);
+      const networkNode = NodeFactory.createNetworkRequest();
+      nodes.push(networkNode);
 
       // Получаем все MODULE ноды
       const modules = await this.getModules(graph);
@@ -142,7 +139,7 @@ export class ExpressAnalyzer extends Plugin {
     graph: PluginContext['graph'],
     projectPath: string,
     networkId: string,
-    nodes: NodeRecord[],
+    nodes: AnyBrandedNode[],
     edges: Array<{type: string; src: string; dst: string; [key: string]: unknown}>
   ): Promise<AnalysisResult> {
     let endpointsCreated = 0;
@@ -157,8 +154,8 @@ export class ExpressAnalyzer extends Plugin {
         plugins: ['jsx'] as ParserPlugin[]
       });
 
-      const endpoints: EndpointNode[] = [];
-      const mountPoints: MountPointNode[] = [];
+      const endpoints: EndpointInfo[] = [];
+      const mountPoints: MountPointInfo[] = [];
       const imports: ImportInfo[] = [];
 
       // Собираем импорты для резолвинга mount points
@@ -219,8 +216,6 @@ export class ExpressAnalyzer extends Plugin {
               if (routePath) {
                 const method = methodName.toUpperCase();
                 endpoints.push({
-                  id: `http:route#${method}:${routePath}#${module.file}#${getLine(node)}`,
-                  type: 'http:route',
                   method: method,
                   path: routePath,
                   localPath: routePath,
@@ -297,8 +292,6 @@ export class ExpressAnalyzer extends Plugin {
               // Создаём mount point
               if ((targetFunction || targetVariable) && prefix) {
                 mountPoints.push({
-                  id: `express:mount#${prefix}#${module.file}#${getLine(node)}`,
-                  type: 'express:mount',
                   prefix: prefix,
                   targetFunction: targetFunction,
                   targetVariable: targetVariable,
@@ -315,21 +308,32 @@ export class ExpressAnalyzer extends Plugin {
 
       // Создаём ENDPOINT ноды
       for (const endpoint of endpoints) {
-        nodes.push(endpoint as unknown as NodeRecord);
+        const brandedNode = NodeFactory.createHttpRoute(
+          endpoint.method,
+          endpoint.path,
+          endpoint.file,
+          endpoint.line,
+          {
+            column: endpoint.column,
+            localPath: endpoint.localPath,
+            mountedOn: endpoint.mountedOn,
+          }
+        );
+        nodes.push(brandedNode);
         endpointsCreated++;
 
         // MODULE --EXPOSES--> ENDPOINT
         edges.push({
           type: 'EXPOSES',
           src: module.id,
-          dst: endpoint.id
+          dst: brandedNode.id
         });
         edgesCreated++;
 
         // ENDPOINT --INTERACTS_WITH--> EXTERNAL_NETWORK
         edges.push({
           type: 'INTERACTS_WITH',
-          src: endpoint.id,
+          src: brandedNode.id,
           dst: networkId
         });
         edgesCreated++;
@@ -337,19 +341,30 @@ export class ExpressAnalyzer extends Plugin {
 
       // Создаём MOUNT_POINT ноды
       for (const mountPoint of mountPoints) {
-        nodes.push(mountPoint as unknown as NodeRecord);
+        const brandedNode = NodeFactory.createExpressMount(
+          mountPoint.prefix,
+          mountPoint.file,
+          mountPoint.line,
+          mountPoint.column,
+          {
+            targetFunction: mountPoint.targetFunction,
+            targetVariable: mountPoint.targetVariable,
+            mountedOn: mountPoint.mountedOn,
+          }
+        );
+        nodes.push(brandedNode);
         mountPointsCreated++;
 
         // MODULE --DEFINES--> MOUNT_POINT
         edges.push({
           type: 'DEFINES',
           src: module.id,
-          dst: mountPoint.id
+          dst: brandedNode.id
         });
         edgesCreated++;
 
         // Создаём MOUNTS рёбра
-        const mountEdges = await this.createMountEdges(mountPoint, module, imports, graph, projectPath, edges);
+        const mountEdges = await this.createMountEdges(brandedNode.id, mountPoint, module, imports, graph, projectPath, edges);
         edgesCreated += mountEdges;
       }
     } catch {
@@ -367,7 +382,8 @@ export class ExpressAnalyzer extends Plugin {
    * Создать MOUNTS рёбра для mount point
    */
   private async createMountEdges(
-    mountPoint: MountPointNode,
+    mountNodeId: string,
+    mountPoint: MountPointInfo,
     module: NodeRecord,
     imports: ImportInfo[],
     graph: PluginContext['graph'],
@@ -412,7 +428,7 @@ export class ExpressAnalyzer extends Plugin {
       if (targetModule) {
         edges.push({
           type: 'MOUNTS',
-          src: mountPoint.id,
+          src: mountNodeId,
           dst: targetModuleId
         });
         edgesCreated++;

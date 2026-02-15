@@ -10,7 +10,7 @@
 import { DiscoveryPlugin } from './DiscoveryPlugin.js';
 import { createSuccessResult, createErrorResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
-import type { NodeRecord } from '@grafema/types';
+import { NodeFactory } from '../../core/NodeFactory.js';
 import { readdirSync, statSync, existsSync } from 'fs';
 import { join } from 'path';
 
@@ -82,19 +82,11 @@ export class MonorepoServiceDiscovery extends DiscoveryPlugin {
           continue;
         }
 
-        // Создаём SERVICE ноду
-        const serviceId = `service:${entry}`;
-        // Cast through unknown since we're creating a dynamic service node
-        const serviceNode = {
-          id: serviceId,
-          type: 'SERVICE',
-          name: entry,
-          path: fullPath,
-          metadata: {
-            discoveryMethod: 'monorepo',
-            servicePath: fullPath
-          }
-        } as unknown as NodeRecord;
+        // Создаём SERVICE ноду via NodeFactory for proper branding
+        const serviceNode = NodeFactory.createService(entry, fullPath, {
+          discoveryMethod: 'monorepo',
+        });
+        const serviceId = serviceNode.id;
 
         await graph.addNode(serviceNode);
 

@@ -6,7 +6,9 @@
 export * from './nodes.js';
 
 // Branded node types (type-safe node creation)
-export * from './branded.js';
+// Selective export: brandNode() is intentionally NOT exported (internal only)
+export type { BrandedNode, AnyBrandedNode, UnbrandedNode } from './branded.js';
+export { isBrandedNode } from './branded.js';
 
 // Edge types
 export * from './edges.js';

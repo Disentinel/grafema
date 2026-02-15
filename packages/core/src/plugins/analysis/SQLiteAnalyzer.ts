@@ -16,9 +16,10 @@ import type { CallExpression, Identifier, MemberExpression, Node } from '@babel/
 import type { NodePath } from '@babel/traverse';
 import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
-import type { NodeRecord } from '@grafema/types';
+import type { NodeRecord, AnyBrandedNode } from '@grafema/types';
 import { getLine, getColumn } from './ast/utils/location.js';
 import { resolveNodeFile } from '../../utils/resolveNodeFile.js';
+import { NodeFactory } from '../../core/NodeFactory.js';
 
 const traverse = (traverseModule as any).default || traverseModule;
 
@@ -272,14 +273,23 @@ export class SQLiteAnalyzer extends Plugin {
       });
 
       // Создаём DATABASE_QUERY ноды
-      const nodes: NodeRecord[] = [];
+      const nodes: AnyBrandedNode[] = [];
       const edges: Array<{ type: string; src: string; dst: string }> = [];
 
       for (const query of queries) {
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        const { promiseWrapped, ...queryData } = query;
-
-        nodes.push(queryData as unknown as NodeRecord);
+        nodes.push(NodeFactory.createSQLiteQuery(
+          query.file,
+          query.method.toLowerCase(),
+          query.line,
+          query.query,
+          query.operationType,
+          {
+            params: query.params,
+            tableName: query.tableName,
+            column: query.column,
+            promiseWrapped: query.promiseWrapped,
+          }
+        ));
         queriesCreated++;
 
         // MODULE -> CONTAINS -> DATABASE_QUERY

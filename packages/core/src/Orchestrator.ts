@@ -20,6 +20,7 @@ import type { Plugin, PluginContext } from './plugins/Plugin.js';
 import type { GraphBackend, Logger, LogLevel, ServiceDefinition, FieldDeclaration, NodeRecord, RoutingRule } from '@grafema/types';
 import { createLogger } from './logging/Logger.js';
 import { NodeFactory } from './core/NodeFactory.js';
+import { brandNodeInternal } from './core/brandNodeInternal.js';
 import { toposort } from './core/toposort.js';
 import { PhaseRunner } from './PhaseRunner.js';
 import type { ProgressCallback } from './PhaseRunner.js';
@@ -229,6 +230,21 @@ export class Orchestrator {
   }
 
   /**
+   * Create GRAPH_META node with project metadata.
+   * Called once at the start of analysis (single-root or multi-root).
+   */
+  private async createGraphMetaNode(projectPath: string): Promise<void> {
+    await this.graph.addNode(brandNodeInternal({
+      id: '__graph_meta__',
+      type: 'GRAPH_META' as NodeRecord['type'],
+      name: 'graph_metadata',
+      file: '',
+      projectPath: projectPath,
+      analyzedAt: new Date().toISOString()
+    }));
+  }
+
+  /**
    * Register all loaded plugins as grafema:plugin nodes in the graph.
    *
    * Creates a node for each plugin with its metadata (phase, priority,
@@ -386,14 +402,7 @@ export class Orchestrator {
     this.logger.info('Discovery complete', { services: svcCount, entrypoints: epCount });
 
     // REG-408: Store project metadata so graph is self-describing
-    await this.graph.addNode({
-      id: '__graph_meta__',
-      type: 'GRAPH_META',
-      name: 'graph_metadata',
-      file: '',
-      projectPath: absoluteProjectPath,
-      analyzedAt: new Date().toISOString()
-    } as unknown as NodeRecord);
+    await this.createGraphMetaNode(absoluteProjectPath);
 
     // Build unified list of indexing units from services AND entrypoints
     const indexingUnits = this.buildIndexingUnits(manifest);
@@ -626,14 +635,7 @@ export class Orchestrator {
     await this.declarePluginFields();
 
     // REG-408: Store project metadata so graph is self-describing
-    await this.graph.addNode({
-      id: '__graph_meta__',
-      type: 'GRAPH_META',
-      name: 'graph_metadata',
-      file: '',
-      projectPath: workspacePath,
-      analyzedAt: new Date().toISOString()
-    } as unknown as NodeRecord);
+    await this.createGraphMetaNode(workspacePath);
 
     // Collect all services from all roots
     const allServices: ServiceInfo[] = [];

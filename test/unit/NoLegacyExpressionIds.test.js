@@ -273,7 +273,7 @@ describe('EXPRESSION node ID format validation', () => {
     });
 
     it('NodeFactory should reference ArgumentExpressionNode', () => {
-      const file = 'packages/core/src/core/NodeFactory.ts';
+      const file = 'packages/core/src/core/factories/CoreFactory.ts';
       const grepCommand = `grep "ArgumentExpressionNode" ${file} || true`;
 
       let result;

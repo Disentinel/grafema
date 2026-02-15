@@ -17,6 +17,7 @@ import type { BaseNodeRecord } from '@grafema/types';
 import { dirname, resolve } from 'path';
 import { StrictModeError } from '../../errors/GrafemaError.js';
 import { resolveModulePath as resolveModulePathUtil } from '../../utils/moduleResolution.js';
+import { NodeFactory } from '../../core/NodeFactory.js';
 
 // === INTERFACES ===
 
@@ -233,16 +234,10 @@ export class FunctionCallResolver extends Plugin {
           const externalModuleId = `EXTERNAL_MODULE:${externalResult.packageName}`;
 
           // Check if node exists
-          let externalNode = await graph.getNode(externalModuleId);
+          const externalNode = await graph.getNode(externalModuleId);
           if (!externalNode) {
             // Create EXTERNAL_MODULE node
-            await graph.addNode({
-              id: externalModuleId,
-              type: 'EXTERNAL_MODULE',
-              name: externalResult.packageName,
-              file: '',
-              line: 0
-            });
+            await graph.addNode(NodeFactory.createExternalModule(externalResult.packageName));
           }
 
           // Create CALLS edge with metadata

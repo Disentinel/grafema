@@ -18,6 +18,7 @@ import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { BaseNodeRecord, ServiceDefinition, RoutingMap, OrchestratorConfig } from '@grafema/types';
 import { ROUTING_MAP_RESOURCE_ID } from '@grafema/types';
+import { brandNodeInternal } from '../../core/brandNodeInternal.js';
 import { StrictModeError, ValidationError } from '../../errors/GrafemaError.js';
 
 /**
@@ -338,10 +339,14 @@ export class ServiceConnectionEnricher extends Plugin {
       if (!route.file) continue;
       const serviceName = this.getServiceForFile(route.file, serviceMap);
       if (serviceName && cfServices.has(serviceName)) {
-        await graph.addNode({
+        // LEGITIMATE USE: brandNodeInternal() is correct here because:
+        // 1. This node was already created and validated by ExpressRouteAnalyzer
+        // 2. We're enriching it with customerFacing metadata, not creating a new node
+        // 3. The original node structure and type remain unchanged
+        await graph.addNode(brandNodeInternal({
           ...route,
           customerFacing: true,
-        });
+        }));
         // Update the in-memory object for later validation
         route.customerFacing = true;
         count++;

@@ -28,6 +28,7 @@ export { ArrayLiteralNode, type ArrayLiteralNodeRecord, type ArrayLiteralNodeOpt
 export { ImportNode, type ImportNodeRecord, type ImportBinding, type ImportType } from './ImportNode.js';
 export { ExportNode, type ExportNodeRecord, type ExportKind } from './ExportNode.js';
 export { ExternalModuleNode, type ExternalModuleNodeRecord } from './ExternalModuleNode.js';
+export { ExternalFunctionNode, type ExternalFunctionNodeRecord, type ExternalFunctionOptions } from './ExternalFunctionNode.js';
 
 // TypeScript declaration nodes
 export { InterfaceNode, type InterfaceNodeRecord, type InterfacePropertyRecord } from './InterfaceNode.js';
@@ -46,6 +47,61 @@ export { NetworkRequestNode, type NetworkRequestNodeRecord } from './NetworkRequ
 export { EventListenerNode, type EventListenerNodeRecord } from './EventListenerNode.js';
 export { HttpRequestNode, type HttpRequestNodeRecord } from './HttpRequestNode.js';
 export { DatabaseQueryNode, type DatabaseQueryNodeRecord } from './DatabaseQueryNode.js';
+
+// HTTP/Express namespaced nodes
+export { HttpRouteNode, type HttpRouteNodeRecord, type HttpRouteNodeOptions } from './HttpRouteNode.js';
+export { FetchRequestNode, type FetchRequestNodeRecord, type FetchRequestNodeOptions } from './FetchRequestNode.js';
+export { ExpressMountNode, type ExpressMountNodeRecord, type ExpressMountNodeOptions } from './ExpressMountNode.js';
+export { ExpressMiddlewareNode, type ExpressMiddlewareNodeRecord, type ExpressMiddlewareNodeOptions } from './ExpressMiddlewareNode.js';
+export { ExternalApiNode, type ExternalApiNodeRecord } from './ExternalApiNode.js';
+
+// Rust nodes
+export { RustModuleNode, type RustModuleNodeRecord } from './RustModuleNode.js';
+export { RustFunctionNode, type RustFunctionNodeRecord } from './RustFunctionNode.js';
+export { RustStructNode, type RustStructNodeRecord } from './RustStructNode.js';
+export { RustImplNode, type RustImplNodeRecord } from './RustImplNode.js';
+export { RustMethodNode, type RustMethodNodeRecord } from './RustMethodNode.js';
+export { RustTraitNode, type RustTraitNodeRecord, type RustTraitMethodRecord } from './RustTraitNode.js';
+export { RustCallNode, type RustCallNodeRecord, type RustCallType } from './RustCallNode.js';
+
+// React domain nodes (react:*, dom:*, browser:*, canvas:*)
+export { ReactNode, type ReactNodeRecord } from './ReactNode.js';
+
+// Socket.IO domain nodes (socketio:*)
+export {
+  SocketIONode,
+  type SocketIOEmitNodeRecord,
+  type SocketIOListenerNodeRecord,
+  type SocketIORoomNodeRecord,
+  type SocketIOEventNodeRecord,
+} from './SocketIONode.js';
+
+// Socket domain nodes (os:unix-*, net:tcp-*)
+export {
+  SocketNode as SocketConnectionNode,
+  type UnixSocketNodeRecord,
+  type TcpConnectionNodeRecord,
+  type UnixServerNodeRecord,
+  type TcpServerNodeRecord,
+  type AnySocketNodeRecord,
+} from './SocketNode.js';
+
+// Database domain nodes (db:*)
+export {
+  DatabaseNode,
+  type DbConnectionNodeRecord,
+  type DbQueryNodeRecord,
+  type DbTableNodeRecord,
+} from './DatabaseNode.js';
+
+// Service Layer domain nodes (SERVICE_*)
+export {
+  ServiceLayerNode,
+  type ServiceClassNodeRecord,
+  type ServiceInstanceNodeRecord,
+  type ServiceRegistrationNodeRecord,
+  type ServiceUsageNodeRecord,
+} from './ServiceLayerNode.js';
 
 // Guarantee nodes (contract-based)
 export { GuaranteeNode, type GuaranteeNodeRecord, type GuaranteePriority, type GuaranteeStatus, type GuaranteeType } from './GuaranteeNode.js';

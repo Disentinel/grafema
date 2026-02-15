@@ -8,7 +8,7 @@ import { resolve, relative, basename, join } from 'path';
 import { createHash } from 'crypto';
 import { Plugin, createSuccessResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
-import type { NodeRecord } from '@grafema/types';
+import { NodeFactory } from '../../core/NodeFactory.js';
 
 // Test file patterns for Rust
 const RUST_TEST_PATTERNS: RegExp[] = [
@@ -126,18 +126,19 @@ export class RustModuleIndexer extends Plugin {
         const prefixedPath = context.rootPrefix
           ? `${context.rootPrefix}/${baseRelativePath}`
           : baseRelativePath;
-        const nodeId = `RUST_MODULE#${moduleName}#${prefixedPath}`;
 
-        await graph.addNode({
-          id: nodeId,
-          type: 'RUST_MODULE',
-          name: moduleName,
-          file: filePath,
-          contentHash: hash,
-          isLib: basename(filePath) === 'lib.rs',
-          isMod: basename(filePath) === 'mod.rs',
-          isTest: this.isTestFile(filePath)
-        } as unknown as NodeRecord);
+        const node = NodeFactory.createRustModule(
+          moduleName,
+          filePath,
+          hash,
+          prefixedPath,
+          {
+            isLib: basename(filePath) === 'lib.rs',
+            isMod: basename(filePath) === 'mod.rs',
+            isTest: this.isTestFile(filePath),
+          }
+        );
+        await graph.addNode(node);
 
         nodesCreated++;
 

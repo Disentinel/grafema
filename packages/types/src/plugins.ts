@@ -4,6 +4,7 @@
 
 import type { NodeType, NodeRecord } from './nodes.js';
 import type { EdgeType, EdgeRecord } from './edges.js';
+import type { AnyBrandedNode } from './branded.js';
 import type { FieldDeclaration, CommitDelta } from './rfdb.js';
 import type { ResourceRegistry } from './resources.js';
 import type { RoutingRule } from './routing.js';
@@ -254,17 +255,6 @@ export interface ServiceDefinition {
 }
 
 // === GRAPH BACKEND INTERFACE ===
-// Flexible input types for graph operations
-export interface InputNode {
-  id: string;
-  type?: string;
-  nodeType?: string;
-  name?: string;
-  file?: string;
-  line?: number;
-  [key: string]: unknown;
-}
-
 export interface InputEdge {
   src: string;
   dst: string;
@@ -274,9 +264,9 @@ export interface InputEdge {
 
 // Minimal interface for graph operations
 export interface GraphBackend {
-  addNode(node: InputNode): Promise<void> | void;
+  addNode(node: AnyBrandedNode): Promise<void> | void;
   addEdge(edge: InputEdge): Promise<void> | void;
-  addNodes(nodes: InputNode[]): Promise<void> | void;
+  addNodes(nodes: AnyBrandedNode[]): Promise<void> | void;
   addEdges(edges: InputEdge[]): Promise<void> | void;
 
   getNode(id: string): Promise<NodeRecord | null>;

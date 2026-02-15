@@ -8,6 +8,7 @@ import { join, resolve, dirname, relative, basename } from 'path';
 import { createHash } from 'crypto';
 import { minimatch } from 'minimatch';
 import { Plugin, createErrorResult } from '../Plugin.js';
+import { NodeFactory } from '../../core/NodeFactory.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 // @ts-expect-error - no type declarations for node-source-walk
 import Walker from 'node-source-walk';
@@ -370,19 +371,12 @@ export class JSModuleIndexer extends Plugin {
         const relativePath = context.rootPrefix
           ? `${context.rootPrefix}/${baseRelativePath}`
           : baseRelativePath;
-        const semanticId = `${relativePath}->global->MODULE->module`;
-
-        // Construct MODULE node manually to preserve absolute file path for analyzers
+        // Create MODULE node via NodeFactory for proper branding
         const isTest = this.isTestFile(currentFile);
-        const moduleNode = {
-          id: semanticId,
-          type: 'MODULE' as const,
-          name: relativePath,
-          file: relativePath,
-          line: 0,
-          contentHash: fileHash || '',
-          isTest
-        };
+        const moduleNode = NodeFactory.createModuleWithContext(
+          { file: relativePath, scopePath: [] },
+          { contentHash: fileHash || '', isTest }
+        );
         const moduleId = moduleNode.id;
 
         logger.debug('Creating MODULE node', { moduleId: moduleNode.id });

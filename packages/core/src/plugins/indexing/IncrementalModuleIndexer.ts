@@ -13,7 +13,7 @@ import type { NodePath } from '@babel/traverse';
 import type { ImportDeclaration, CallExpression, Identifier } from '@babel/types';
 import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
-import type { NodeRecord } from '@grafema/types';
+import { NodeFactory } from '../../core/NodeFactory.js';
 import { resolveModulePath } from '../../utils/moduleResolution.js';
 
  
@@ -176,15 +176,10 @@ export class IncrementalModuleIndexer extends Plugin {
         const relativePath = context.rootPrefix
           ? `${context.rootPrefix}/${baseRelativePath}`
           : baseRelativePath;
-        const semanticId = `${relativePath}->global->MODULE->module`;
-
-        const moduleNode: NodeRecord = {
-          id: semanticId,
-          type: 'MODULE',
-          name: relativePath,
-          file: relativePath,
-          contentHash: fileHash
-        } as unknown as NodeRecord;
+        const moduleNode = NodeFactory.createModuleWithContext(
+          { file: relativePath, scopePath: [] },
+          { contentHash: fileHash || '' }
+        );
 
         await graph.addNode(moduleNode);
         nodesCreated++;

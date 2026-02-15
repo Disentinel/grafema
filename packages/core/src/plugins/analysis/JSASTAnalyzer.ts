@@ -59,6 +59,7 @@ import { ConstructorCallNode } from '../../core/nodes/ConstructorCallNode.js';
 import { ObjectLiteralNode } from '../../core/nodes/ObjectLiteralNode.js';
 import { ArrayLiteralNode } from '../../core/nodes/ArrayLiteralNode.js';
 import { NodeFactory } from '../../core/NodeFactory.js';
+import { brandNodeInternal } from '../../core/brandNodeInternal.js';
 import { resolveNodeFile } from '../../utils/resolveNodeFile.js';
 import type { PluginContext, PluginResult, PluginMetadata, GraphBackend } from '@grafema/types';
 import type {
@@ -314,13 +315,13 @@ export class JSASTAnalyzer extends Plugin {
     }
 
     if (currentHash !== module.contentHash) {
-      await graph.addNode({
+      await graph.addNode(brandNodeInternal({
         id: module.id,
-        type: 'MODULE',
+        type: 'MODULE' as const,
         name: module.name,
         file: module.file,
         contentHash: currentHash
-      });
+      }));
       return true;
     }
 
