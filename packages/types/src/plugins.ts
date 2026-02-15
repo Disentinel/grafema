@@ -52,6 +52,12 @@ export interface PluginMetadata {
   dependencies?: string[];
   /** Metadata fields this plugin writes. Used for RFDB server-side indexing. */
   fields?: FieldDeclaration[];
+  /**
+   * Package names this analyzer covers (for coverage tracking).
+   * Only used by package-specific analyzers.
+   * Examples: ['sqlite3'], ['@prisma/client'], ['lodash']
+   */
+  covers?: string[];
   /** Edge types this plugin reads from the graph (RFD-2). Used for automatic dependency inference. */
   consumes?: EdgeType[];
   /** Edge types this plugin creates/modifies (RFD-2). Used for automatic dependency inference. */
