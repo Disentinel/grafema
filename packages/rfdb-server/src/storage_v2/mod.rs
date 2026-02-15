@@ -14,6 +14,7 @@ pub mod write_buffer;
 pub mod shard;
 pub mod shard_planner;
 pub mod multi_shard;
+pub mod compaction;
 
 pub use types::*;
 pub use string_table::StringTableV2;
@@ -30,3 +31,4 @@ pub use write_buffer::WriteBuffer;
 pub use shard::{Shard, FlushResult, TombstoneSet};
 pub use shard_planner::ShardPlanner;
 pub use multi_shard::{DatabaseConfig, MultiShardStore, ShardStats};
+pub use compaction::{CompactionConfig, CompactionInfo, CompactionResult};
