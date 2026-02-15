@@ -866,6 +866,15 @@ export class RFDBClient extends EventEmitter implements IRFDBClient {
   }
 
   /**
+   * Execute unified Datalog — handles both direct queries and rule-based programs.
+   * Auto-detects the head predicate instead of hardcoding violation(X).
+   */
+  async executeDatalog(source: string): Promise<DatalogResult[]> {
+    const response = await this._send('executeDatalog', { source });
+    return (response as { results?: DatalogResult[] }).results || [];
+  }
+
+  /**
    * Ping the server
    */
   async ping(): Promise<string | false> {

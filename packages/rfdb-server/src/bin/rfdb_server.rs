@@ -200,6 +200,7 @@ pub enum Request {
     DatalogLoadRules { source: String },
     DatalogClearRules,
     DatalogQuery { query: String },
+    ExecuteDatalog { source: String },
 
     // Node utility
     IsEndpoint { id: String },
@@ -1171,6 +1172,15 @@ fn handle_request(
             })
         }
 
+        Request::ExecuteDatalog { source } => {
+            with_engine_read(session, |engine| {
+                match execute_datalog(engine, &source) {
+                    Ok(results) => Response::DatalogResults { results },
+                    Err(e) => Response::Error { error: e },
+                }
+            })
+        }
+
         Request::IsEndpoint { id } => {
             with_engine_read(session, |engine| {
                 Response::Bool { value: rfdb::graph::is_endpoint(engine, string_to_id(&id)) }
@@ -1690,6 +1700,62 @@ fn execute_datalog_query(
 
     let evaluator = Evaluator::new(engine);
 
+    let bindings = evaluator.eval_query(&literals);
+
+    let results: Vec<WireViolation> = bindings.into_iter()
+        .map(|b| {
+            let mut map = std::collections::HashMap::new();
+            for (k, v) in b.iter() {
+                map.insert(k.clone(), v.as_str());
+            }
+            WireViolation { bindings: map }
+        })
+        .collect();
+
+    Ok(results)
+}
+
+/// Execute unified Datalog — auto-detects rules vs direct query.
+///
+/// If the source parses as a program with rules, load the rules and query
+/// using the head predicate of the first rule. Otherwise, fall back to
+/// parsing as a direct query.
+fn execute_datalog(
+    engine: &dyn GraphStore,
+    source: &str,
+) -> std::result::Result<Vec<WireViolation>, String> {
+    // Try parsing as a program first
+    if let Ok(program) = parse_program(source) {
+        if !program.rules().is_empty() {
+            let mut evaluator = Evaluator::new(engine);
+
+            for rule in program.rules() {
+                evaluator.add_rule(rule.clone());
+            }
+
+            // Query using the head atom of the first rule
+            let head = program.rules()[0].head();
+            let bindings = evaluator.query(head);
+
+            let results: Vec<WireViolation> = bindings.into_iter()
+                .map(|b| {
+                    let mut map = std::collections::HashMap::new();
+                    for (k, v) in b.iter() {
+                        map.insert(k.clone(), v.as_str());
+                    }
+                    WireViolation { bindings: map }
+                })
+                .collect();
+
+            return Ok(results);
+        }
+    }
+
+    // Fall back to direct query
+    let literals = parse_query(source)
+        .map_err(|e| format!("Datalog parse error: {}", e))?;
+
+    let evaluator = Evaluator::new(engine);
     let bindings = evaluator.eval_query(&literals);
 
     let results: Vec<WireViolation> = bindings.into_iter()
