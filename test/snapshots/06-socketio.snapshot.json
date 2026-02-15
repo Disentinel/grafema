@@ -1,0 +1,3113 @@
+{
+  "nodes": [
+    {
+      "exported": false,
+      "file": "server.js",
+      "isAwaited": true,
+      "isInsideTry": false,
+      "name": "bookSlot",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
+      "file": "client.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "log",
+      "name": "console.log",
+      "object": "console",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
+      "file": "client.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "log",
+      "name": "console.log",
+      "object": "console",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
+      "file": "client.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "log",
+      "name": "console.log",
+      "object": "console",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
+      "file": "server.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "log",
+      "name": "console.log",
+      "object": "console",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
+      "file": "server.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "log",
+      "name": "console.log",
+      "object": "console",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
+      "file": "client.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "now",
+      "name": "Date.now",
+      "object": "Date",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
+      "file": "server.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "now",
+      "name": "Date.now",
+      "object": "Date",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "name": "displayMessage",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "name": "getCurrentUser",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "name": "io",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
+      "file": "server.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "emit",
+      "name": "io.emit",
+      "object": "io",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
+      "file": "server.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "emit",
+      "name": "io.emit",
+      "object": "io",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
+      "file": "server.js",
+      "method": "emit",
+      "name": "io.emit",
+      "object": "io",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
+      "file": "server.js",
+      "method": "of",
+      "name": "io.of",
+      "object": "io",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
+      "file": "server.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "to",
+      "name": "io.to",
+      "object": "io",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
+      "file": "server.js",
+      "method": "to",
+      "name": "io.to",
+      "object": "io",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "index.js",
+      "name": "require",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "index.js",
+      "name": "require",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "server.js",
+      "name": "require",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "server.js",
+      "name": "require",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "server.js",
+      "name": "setInterval",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "name": "setParticipants",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "name": "setSlots",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "name": "showTypingIndicator",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "server.js",
+      "isMethodCall": true,
+      "method": "emit",
+      "name": "socket.broadcast.emit",
+      "object": "socket.broadcast",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
+      "file": "client.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "emit",
+      "name": "socket.emit",
+      "object": "socket",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
+      "file": "client.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "emit",
+      "name": "socket.emit",
+      "object": "socket",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
+      "file": "server.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "emit",
+      "name": "socket.emit",
+      "object": "socket",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
+      "file": "server.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "join",
+      "name": "socket.join",
+      "object": "socket",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
+      "file": "server.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "join",
+      "name": "socket.join",
+      "object": "socket",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
+      "file": "client.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "on",
+      "name": "socket.on",
+      "object": "socket",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
+      "file": "server.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "on",
+      "name": "socket.on",
+      "object": "socket",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
+      "file": "server.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "on",
+      "name": "socket.on",
+      "object": "socket",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
+      "file": "server.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "on",
+      "name": "socket.on",
+      "object": "socket",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
+      "file": "server.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "on",
+      "name": "socket.on",
+      "object": "socket",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
+      "file": "server.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "to",
+      "name": "socket.to",
+      "object": "socket",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
+      "file": "server.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "emitToGig",
+      "name": "socketService.emitToGig",
+      "object": "socketService",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "name": "updateUI",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "name": "useEffect",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "name": "useSocket",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "name": "useSocket",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "name": "connect",
+      "object": "socket",
+      "type": "event:listener"
+    },
+    {
+      "exported": false,
+      "file": "server.js",
+      "name": "connection",
+      "object": "io",
+      "type": "event:listener"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "name": "disconnect",
+      "object": "socket",
+      "type": "event:listener"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "name": "message:received",
+      "object": "socket",
+      "type": "event:listener"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "name": "slot:booked",
+      "object": "socket",
+      "type": "event:listener"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "name": "user:typing",
+      "object": "socket",
+      "type": "event:listener"
+    },
+    {
+      "exported": false,
+      "expressionType": "ArrayExpression",
+      "file": "client.js",
+      "name": "ArrayExpression",
+      "type": "EXPRESSION"
+    },
+    {
+      "exported": false,
+      "expressionType": "ArrowFunctionExpression",
+      "file": "client.js",
+      "name": "ArrowFunctionExpression",
+      "type": "EXPRESSION"
+    },
+    {
+      "arrowFunction": true,
+      "async": false,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "client.js",
+      "name": "anonymous[0]",
+      "params": [],
+      "paramTypes": [],
+      "returnType": "void",
+      "signature": "() => void",
+      "type": "FUNCTION"
+    },
+    {
+      "arrowFunction": true,
+      "async": false,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "client.js",
+      "name": "anonymous[0]",
+      "type": "FUNCTION"
+    },
+    {
+      "arrowFunction": true,
+      "async": false,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "client.js",
+      "name": "anonymous[0]",
+      "type": "FUNCTION"
+    },
+    {
+      "arrowFunction": true,
+      "async": false,
+      "exported": false,
+      "file": "client.js",
+      "name": "anonymous[0]",
+      "type": "FUNCTION"
+    },
+    {
+      "arrowFunction": true,
+      "async": false,
+      "exported": false,
+      "file": "client.js",
+      "name": "anonymous[0]",
+      "type": "FUNCTION"
+    },
+    {
+      "arrowFunction": true,
+      "async": false,
+      "exported": false,
+      "file": "client.js",
+      "name": "anonymous[0]",
+      "type": "FUNCTION"
+    },
+    {
+      "arrowFunction": true,
+      "async": false,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "server.js",
+      "name": "anonymous[0]",
+      "params": [
+        "socket"
+      ],
+      "paramTypes": [
+        "any"
+      ],
+      "returnType": "void",
+      "signature": "(socket: any) => void",
+      "type": "FUNCTION"
+    },
+    {
+      "arrowFunction": true,
+      "async": true,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "server.js",
+      "name": "anonymous[0]",
+      "type": "FUNCTION"
+    },
+    {
+      "arrowFunction": true,
+      "async": false,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "client.js",
+      "name": "anonymous[1]",
+      "params": [
+        "data"
+      ],
+      "paramTypes": [
+        "any"
+      ],
+      "returnType": "void",
+      "signature": "(data: any) => void",
+      "type": "FUNCTION"
+    },
+    {
+      "arrowFunction": true,
+      "async": false,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "client.js",
+      "name": "anonymous[1]",
+      "type": "FUNCTION"
+    },
+    {
+      "arrowFunction": true,
+      "async": false,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "server.js",
+      "name": "anonymous[1]",
+      "params": [],
+      "paramTypes": [],
+      "returnType": "void",
+      "signature": "() => void",
+      "type": "FUNCTION"
+    },
+    {
+      "arrowFunction": true,
+      "async": false,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "server.js",
+      "name": "anonymous[1]",
+      "type": "FUNCTION"
+    },
+    {
+      "arrowFunction": true,
+      "async": false,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "client.js",
+      "name": "anonymous[2]",
+      "params": [
+        "msg"
+      ],
+      "paramTypes": [
+        "any"
+      ],
+      "returnType": "void",
+      "signature": "(msg: any) => void",
+      "type": "FUNCTION"
+    },
+    {
+      "arrowFunction": true,
+      "async": false,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "server.js",
+      "name": "anonymous[2]",
+      "type": "FUNCTION"
+    },
+    {
+      "arrowFunction": true,
+      "async": false,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "client.js",
+      "name": "anonymous[3]",
+      "params": [
+        "data"
+      ],
+      "paramTypes": [
+        "any"
+      ],
+      "returnType": "void",
+      "signature": "(data: any) => void",
+      "type": "FUNCTION"
+    },
+    {
+      "arrowFunction": true,
+      "async": false,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "server.js",
+      "name": "anonymous[3]",
+      "type": "FUNCTION"
+    },
+    {
+      "arrowFunction": true,
+      "async": false,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "client.js",
+      "name": "anonymous[4]",
+      "params": [],
+      "paramTypes": [],
+      "returnType": "void",
+      "signature": "() => void",
+      "type": "FUNCTION"
+    },
+    {
+      "async": false,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "client.js",
+      "generator": false,
+      "name": "bookSlot",
+      "params": [
+        "slotId"
+      ],
+      "paramTypes": [
+        "any"
+      ],
+      "returnType": "void",
+      "signature": "(slotId: any) => void",
+      "type": "FUNCTION"
+    },
+    {
+      "async": false,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "client.js",
+      "generator": false,
+      "name": "GigView",
+      "params": [],
+      "paramTypes": [],
+      "returnType": "void",
+      "signature": "() => void",
+      "type": "FUNCTION"
+    },
+    {
+      "async": false,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "server.js",
+      "generator": false,
+      "name": "notifySlotBooked",
+      "params": [
+        "gigId",
+        "data"
+      ],
+      "paramTypes": [
+        "any",
+        "any"
+      ],
+      "returnType": "void",
+      "signature": "(gigId: any, data: any) => void",
+      "type": "FUNCTION"
+    },
+    {
+      "async": false,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "client.js",
+      "generator": false,
+      "name": "sendMessage",
+      "params": [
+        "text"
+      ],
+      "paramTypes": [
+        "any"
+      ],
+      "returnType": "void",
+      "signature": "(text: any) => void",
+      "type": "FUNCTION"
+    },
+    {
+      "async": false,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "client.js",
+      "generator": false,
+      "name": "useSocket",
+      "params": [
+        "event",
+        "handler"
+      ],
+      "paramTypes": [
+        "any",
+        "any"
+      ],
+      "returnType": "void",
+      "signature": "(event: any, handler: any) => void",
+      "type": "FUNCTION"
+    },
+    {
+      "builtin": true,
+      "creates": {
+        "edges": [
+          "RECEIVES_ARGUMENT"
+        ],
+        "nodes": []
+      },
+      "createsEdges": [
+        "RECEIVES_ARGUMENT"
+      ],
+      "createsNodes": [],
+      "dependencies": [
+        "JSASTAnalyzer",
+        "MethodCallResolver"
+      ],
+      "exported": false,
+      "file": "",
+      "name": "ArgumentParameterLinker",
+      "phase": "ENRICHMENT",
+      "priority": 0,
+      "type": "grafema:plugin"
+    },
+    {
+      "builtin": true,
+      "creates": {
+        "edges": [
+          "CALLS"
+        ],
+        "nodes": []
+      },
+      "createsEdges": [
+        "CALLS"
+      ],
+      "createsNodes": [],
+      "dependencies": [
+        "ImportExportLinker",
+        "FunctionCallResolver"
+      ],
+      "exported": false,
+      "file": "",
+      "name": "CallbackCallResolver",
+      "phase": "ENRICHMENT",
+      "priority": 0,
+      "type": "grafema:plugin"
+    },
+    {
+      "builtin": true,
+      "creates": {
+        "edges": [
+          "CONTAINS",
+          "MAKES_REQUEST",
+          "CALLS_API"
+        ],
+        "nodes": [
+          "http:request",
+          "EXTERNAL"
+        ]
+      },
+      "createsEdges": [
+        "CONTAINS",
+        "MAKES_REQUEST",
+        "CALLS_API"
+      ],
+      "createsNodes": [
+        "http:request",
+        "EXTERNAL"
+      ],
+      "dependencies": [
+        "JSModuleIndexer",
+        "JSASTAnalyzer"
+      ],
+      "exported": false,
+      "file": "",
+      "name": "FetchAnalyzer",
+      "phase": "ANALYSIS",
+      "priority": 0,
+      "type": "grafema:plugin"
+    },
+    {
+      "builtin": true,
+      "creates": {
+        "edges": [
+          "IMPORTS",
+          "IMPORTS_FROM"
+        ],
+        "nodes": []
+      },
+      "createsEdges": [
+        "IMPORTS",
+        "IMPORTS_FROM"
+      ],
+      "createsNodes": [],
+      "dependencies": [
+        "JSASTAnalyzer"
+      ],
+      "exported": false,
+      "file": "",
+      "name": "ImportExportLinker",
+      "phase": "ENRICHMENT",
+      "priority": 0,
+      "type": "grafema:plugin"
+    },
+    {
+      "builtin": true,
+      "creates": {
+        "edges": [
+          "INSTANCE_OF"
+        ],
+        "nodes": []
+      },
+      "createsEdges": [
+        "INSTANCE_OF"
+      ],
+      "createsNodes": [],
+      "dependencies": [
+        "JSASTAnalyzer"
+      ],
+      "exported": false,
+      "file": "",
+      "name": "InstanceOfResolver",
+      "phase": "ENRICHMENT",
+      "priority": 0,
+      "type": "grafema:plugin"
+    },
+    {
+      "builtin": true,
+      "creates": {
+        "edges": [
+          "CONTAINS",
+          "DECLARES",
+          "CALLS",
+          "HAS_SCOPE",
+          "CAPTURES",
+          "MODIFIES",
+          "WRITES_TO",
+          "IMPORTS",
+          "INSTANCE_OF",
+          "HANDLED_BY",
+          "HAS_CALLBACK",
+          "PASSES_ARGUMENT",
+          "MAKES_REQUEST",
+          "IMPORTS_FROM",
+          "EXPORTS_TO",
+          "ASSIGNED_FROM",
+          "IMPLEMENTS",
+          "EXTENDS",
+          "DECORATED_BY",
+          "HAS_TYPE_PARAMETER",
+          "RESOLVES_TO"
+        ],
+        "nodes": [
+          "FUNCTION",
+          "CLASS",
+          "METHOD",
+          "VARIABLE",
+          "CONSTANT",
+          "SCOPE",
+          "CALL",
+          "IMPORT",
+          "EXPORT",
+          "LITERAL",
+          "EXTERNAL_MODULE",
+          "net:stdio",
+          "net:request",
+          "event:listener",
+          "http:request",
+          "INTERFACE",
+          "TYPE",
+          "ENUM",
+          "DECORATOR",
+          "TYPE_PARAMETER"
+        ]
+      },
+      "createsEdges": [
+        "CONTAINS",
+        "DECLARES",
+        "CALLS",
+        "HAS_SCOPE",
+        "CAPTURES",
+        "MODIFIES",
+        "WRITES_TO",
+        "IMPORTS",
+        "INSTANCE_OF",
+        "HANDLED_BY",
+        "HAS_CALLBACK",
+        "PASSES_ARGUMENT",
+        "MAKES_REQUEST",
+        "IMPORTS_FROM",
+        "EXPORTS_TO",
+        "ASSIGNED_FROM",
+        "IMPLEMENTS",
+        "EXTENDS",
+        "DECORATED_BY",
+        "HAS_TYPE_PARAMETER",
+        "RESOLVES_TO"
+      ],
+      "createsNodes": [
+        "FUNCTION",
+        "CLASS",
+        "METHOD",
+        "VARIABLE",
+        "CONSTANT",
+        "SCOPE",
+        "CALL",
+        "IMPORT",
+        "EXPORT",
+        "LITERAL",
+        "EXTERNAL_MODULE",
+        "net:stdio",
+        "net:request",
+        "event:listener",
+        "http:request",
+        "INTERFACE",
+        "TYPE",
+        "ENUM",
+        "DECORATOR",
+        "TYPE_PARAMETER"
+      ],
+      "dependencies": [
+        "JSModuleIndexer"
+      ],
+      "exported": false,
+      "file": "",
+      "name": "JSASTAnalyzer",
+      "phase": "ANALYSIS",
+      "priority": 0,
+      "type": "grafema:plugin"
+    },
+    {
+      "builtin": true,
+      "creates": {
+        "edges": [
+          "CONTAINS",
+          "DEPENDS_ON"
+        ],
+        "nodes": [
+          "MODULE"
+        ]
+      },
+      "createsEdges": [
+        "CONTAINS",
+        "DEPENDS_ON"
+      ],
+      "createsNodes": [
+        "MODULE"
+      ],
+      "dependencies": [],
+      "exported": false,
+      "file": "",
+      "name": "JSModuleIndexer",
+      "phase": "INDEXING",
+      "priority": 0,
+      "type": "grafema:plugin"
+    },
+    {
+      "builtin": true,
+      "creates": {
+        "edges": [
+          "CALLS"
+        ],
+        "nodes": []
+      },
+      "createsEdges": [
+        "CALLS"
+      ],
+      "createsNodes": [],
+      "dependencies": [
+        "ImportExportLinker"
+      ],
+      "exported": false,
+      "file": "",
+      "name": "MethodCallResolver",
+      "phase": "ENRICHMENT",
+      "priority": 0,
+      "type": "grafema:plugin"
+    },
+    {
+      "builtin": true,
+      "creates": {
+        "edges": [
+          "CALLS",
+          "IMPORTS_FROM"
+        ],
+        "nodes": [
+          "EXTERNAL_FUNCTION",
+          "EXTERNAL_MODULE"
+        ]
+      },
+      "createsEdges": [
+        "CALLS",
+        "IMPORTS_FROM"
+      ],
+      "createsNodes": [
+        "EXTERNAL_FUNCTION",
+        "EXTERNAL_MODULE"
+      ],
+      "dependencies": [
+        "JSASTAnalyzer",
+        "ImportExportLinker"
+      ],
+      "exported": false,
+      "file": "",
+      "name": "NodejsBuiltinsResolver",
+      "phase": "ENRICHMENT",
+      "priority": 0,
+      "type": "grafema:plugin"
+    },
+    {
+      "builtin": true,
+      "creates": {
+        "edges": [
+          "REJECTS"
+        ],
+        "nodes": []
+      },
+      "createsEdges": [
+        "REJECTS"
+      ],
+      "createsNodes": [],
+      "dependencies": [
+        "JSASTAnalyzer"
+      ],
+      "exported": false,
+      "file": "",
+      "name": "RejectionPropagationEnricher",
+      "phase": "ENRICHMENT",
+      "priority": 0,
+      "type": "grafema:plugin"
+    },
+    {
+      "builtin": true,
+      "creates": {
+        "edges": [],
+        "nodes": [
+          "SERVICE"
+        ]
+      },
+      "createsEdges": [],
+      "createsNodes": [
+        "SERVICE"
+      ],
+      "dependencies": [],
+      "exported": false,
+      "file": "",
+      "name": "SimpleProjectDiscovery",
+      "phase": "DISCOVERY",
+      "priority": 0,
+      "type": "grafema:plugin"
+    },
+    {
+      "exported": false,
+      "file": "",
+      "name": "graph_metadata",
+      "type": "GRAPH_META"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": "Connected to server",
+      "valueType": "string"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": "Disconnected from server",
+      "valueType": "string"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": "http://localhost:3000",
+      "valueType": "string"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": "message",
+      "valueType": "string"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": "Slot booked:",
+      "valueType": "string"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": "slot:book",
+      "valueType": "string"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": null,
+      "valueType": "object"
+    },
+    {
+      "exported": false,
+      "file": "index.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": "./client.js",
+      "valueType": "string"
+    },
+    {
+      "exported": false,
+      "file": "index.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": "./server.js",
+      "valueType": "string"
+    },
+    {
+      "exported": false,
+      "file": "server.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": "./services/socketService",
+      "valueType": "string"
+    },
+    {
+      "exported": false,
+      "file": "server.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": "/admin",
+      "valueType": "string"
+    },
+    {
+      "exported": false,
+      "file": "server.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": "disconnect",
+      "valueType": "string"
+    },
+    {
+      "exported": false,
+      "file": "server.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": "gig:123",
+      "valueType": "string"
+    },
+    {
+      "exported": false,
+      "file": "server.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": "gig:123",
+      "valueType": "string"
+    },
+    {
+      "exported": false,
+      "file": "server.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": "gig:123",
+      "valueType": "string"
+    },
+    {
+      "exported": false,
+      "file": "server.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": "gig:123",
+      "valueType": "string"
+    },
+    {
+      "exported": false,
+      "file": "server.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": "heartbeat",
+      "valueType": "string"
+    },
+    {
+      "exported": false,
+      "file": "server.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": "message",
+      "valueType": "string"
+    },
+    {
+      "exported": false,
+      "file": "server.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": "online",
+      "valueType": "string"
+    },
+    {
+      "exported": false,
+      "file": "server.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": "server:ready",
+      "valueType": "string"
+    },
+    {
+      "exported": false,
+      "file": "server.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": "slot:book",
+      "valueType": "string"
+    },
+    {
+      "exported": false,
+      "file": "server.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": "slot:booked",
+      "valueType": "string"
+    },
+    {
+      "exported": false,
+      "file": "server.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": "slot:booked",
+      "valueType": "string"
+    },
+    {
+      "exported": false,
+      "file": "server.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": "socket.io",
+      "valueType": "string"
+    },
+    {
+      "exported": false,
+      "file": "server.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": "User connected:",
+      "valueType": "string"
+    },
+    {
+      "exported": false,
+      "file": "server.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": "User disconnected:",
+      "valueType": "string"
+    },
+    {
+      "exported": false,
+      "file": "server.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": "user:left",
+      "valueType": "string"
+    },
+    {
+      "exported": false,
+      "file": "server.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": "user:typing",
+      "valueType": "string"
+    },
+    {
+      "exported": false,
+      "file": "server.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": "user:typing",
+      "valueType": "string"
+    },
+    {
+      "exported": false,
+      "file": "server.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": 30000,
+      "valueType": "number"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "isTest": true,
+      "name": "client.js",
+      "type": "MODULE"
+    },
+    {
+      "exported": false,
+      "file": "index.js",
+      "isTest": true,
+      "name": "index.js",
+      "type": "MODULE"
+    },
+    {
+      "exported": false,
+      "file": "server.js",
+      "isTest": true,
+      "name": "server.js",
+      "type": "MODULE"
+    },
+    {
+      "exported": false,
+      "file": "__builtin__",
+      "name": "__network__",
+      "type": "net:request"
+    },
+    {
+      "description": "Standard input/output stream",
+      "exported": false,
+      "file": "__builtin__",
+      "name": "__stdio__",
+      "type": "net:stdio"
+    },
+    {
+      "argIndex": 1,
+      "exported": false,
+      "file": "server.js",
+      "name": "<object>",
+      "parentCallId": "server.js->global->CALL->io.emit#0",
+      "type": "OBJECT_LITERAL"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "index": 0,
+      "name": "data",
+      "parentFunctionId": "client.js->global->FUNCTION->anonymous[1]",
+      "semanticId": "client.js->anonymous[1]->PARAMETER->data#0",
+      "type": "PARAMETER"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "index": 0,
+      "name": "data",
+      "parentFunctionId": "client.js->global->FUNCTION->anonymous[3]",
+      "semanticId": "client.js->anonymous[3]->PARAMETER->data#0",
+      "type": "PARAMETER"
+    },
+    {
+      "exported": false,
+      "file": "server.js",
+      "index": 1,
+      "name": "data",
+      "parentFunctionId": "server.js->global->FUNCTION->notifySlotBooked",
+      "semanticId": "server.js->notifySlotBooked->PARAMETER->data#1",
+      "type": "PARAMETER"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "index": 0,
+      "name": "event",
+      "parentFunctionId": "client.js->global->FUNCTION->useSocket",
+      "semanticId": "client.js->useSocket->PARAMETER->event#0",
+      "type": "PARAMETER"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "index": 0,
+      "name": "gigId",
+      "parentFunctionId": "client.js->global->FUNCTION->GigView",
+      "propertyPath": [
+        "gigId"
+      ],
+      "semanticId": "client.js->GigView->PARAMETER->gigId#0",
+      "type": "PARAMETER"
+    },
+    {
+      "exported": false,
+      "file": "server.js",
+      "index": 0,
+      "name": "gigId",
+      "parentFunctionId": "server.js->global->FUNCTION->notifySlotBooked",
+      "semanticId": "server.js->notifySlotBooked->PARAMETER->gigId#0",
+      "type": "PARAMETER"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "index": 1,
+      "name": "handler",
+      "parentFunctionId": "client.js->global->FUNCTION->useSocket",
+      "semanticId": "client.js->useSocket->PARAMETER->handler#1",
+      "type": "PARAMETER"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "index": 0,
+      "name": "msg",
+      "parentFunctionId": "client.js->global->FUNCTION->anonymous[2]",
+      "semanticId": "client.js->anonymous[2]->PARAMETER->msg#0",
+      "type": "PARAMETER"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "index": 0,
+      "name": "slotId",
+      "parentFunctionId": "client.js->global->FUNCTION->bookSlot",
+      "semanticId": "client.js->bookSlot->PARAMETER->slotId#0",
+      "type": "PARAMETER"
+    },
+    {
+      "exported": false,
+      "file": "server.js",
+      "index": 0,
+      "name": "socket",
+      "parentFunctionId": "server.js->global->FUNCTION->anonymous[0]",
+      "semanticId": "server.js->anonymous[0]->PARAMETER->socket#0",
+      "type": "PARAMETER"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "index": 0,
+      "name": "text",
+      "parentFunctionId": "client.js->global->FUNCTION->sendMessage",
+      "semanticId": "client.js->sendMessage->PARAMETER->text#0",
+      "type": "PARAMETER"
+    },
+    {
+      "exported": false,
+      "file": "server.js",
+      "name": "broadcast",
+      "objectName": "socket",
+      "semanticId": "server.js->anonymous[0]->anonymous[2]->PROPERTY_ACCESS->socket.broadcast#0",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "exported": false,
+      "file": "server.js",
+      "name": "id",
+      "objectName": "socket",
+      "semanticId": "server.js->anonymous[0]->anonymous[3]->PROPERTY_ACCESS->socket.id#0",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "exported": false,
+      "file": "server.js",
+      "name": "id",
+      "objectName": "socket",
+      "semanticId": "server.js->anonymous[0]->PROPERTY_ACCESS->socket.id#0",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "name": "userId",
+      "objectName": "data",
+      "semanticId": "client.js->anonymous[3]->PROPERTY_ACCESS->data.userId#0",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "exported": false,
+      "file": "server.js",
+      "name": "userId",
+      "objectName": "socket",
+      "semanticId": "server.js->anonymous[0]->anonymous[2]->PROPERTY_ACCESS->socket.userId#0",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "exported": false,
+      "file": "server.js",
+      "name": "userId",
+      "objectName": "socket",
+      "semanticId": "server.js->anonymous[0]->anonymous[3]->PROPERTY_ACCESS->socket.userId#0",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "exported": false,
+      "file": "server.js",
+      "name": "userId",
+      "objectName": "socket",
+      "semanticId": "server.js->anonymous[0]->PROPERTY_ACCESS->socket.userId#0",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "client.js",
+      "name": "anonymous[0]:body",
+      "scopeType": "arrow_body",
+      "semanticId": "GigView:arrow_body[0]",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "client.js",
+      "name": "anonymous[0]:body",
+      "scopeType": "arrow_body",
+      "semanticId": "useSocket:arrow_body[0]",
+      "type": "SCOPE"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "name": "anonymous[0]:body",
+      "scopeType": "function-body",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "server.js",
+      "name": "anonymous[0]:body",
+      "scopeType": "arrow_body",
+      "semanticId": "anonymous[0]:arrow_body[0]",
+      "type": "SCOPE"
+    },
+    {
+      "exported": false,
+      "file": "server.js",
+      "name": "anonymous[0]:body",
+      "scopeType": "function-body",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "client.js",
+      "name": "anonymous[1]:body",
+      "scopeType": "arrow_body",
+      "semanticId": "GigView:arrow_body[1]",
+      "type": "SCOPE"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "name": "anonymous[1]:body",
+      "scopeType": "function-body",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "server.js",
+      "name": "anonymous[1]:body",
+      "scopeType": "arrow_body",
+      "semanticId": "anonymous[0]:arrow_body[1]",
+      "type": "SCOPE"
+    },
+    {
+      "exported": false,
+      "file": "server.js",
+      "name": "anonymous[1]:body",
+      "scopeType": "function-body",
+      "type": "SCOPE"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "name": "anonymous[2]:body",
+      "scopeType": "function-body",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "server.js",
+      "name": "anonymous[2]:body",
+      "scopeType": "arrow_body",
+      "semanticId": "anonymous[0]:arrow_body[2]",
+      "type": "SCOPE"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "name": "anonymous[3]:body",
+      "scopeType": "function-body",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "server.js",
+      "name": "anonymous[3]:body",
+      "scopeType": "arrow_body",
+      "semanticId": "anonymous[0]:arrow_body[3]",
+      "type": "SCOPE"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "name": "anonymous[4]:body",
+      "scopeType": "function-body",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "client.js",
+      "name": "bookSlot:body",
+      "scopeType": "function_body",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "client.js",
+      "name": "GigView:body",
+      "scopeType": "function_body",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "server.js",
+      "name": "notifySlotBooked:body",
+      "scopeType": "function_body",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "client.js",
+      "name": "sendMessage:body",
+      "scopeType": "function_body",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "client.js",
+      "name": "useSocket:body",
+      "scopeType": "function_body",
+      "type": "SCOPE"
+    },
+    {
+      "dependencies": [
+        "socket.io",
+        "socket.io-client"
+      ],
+      "discoveryMethod": "simple",
+      "entrypoint": "index.js",
+      "exported": false,
+      "file": "/test/fixtures/06-socketio",
+      "kind": "SERVICE",
+      "name": "socketio-fixture",
+      "type": "SERVICE",
+      "version": "1.0.0"
+    },
+    {
+      "exported": false,
+      "file": "server.js",
+      "name": "io",
+      "type": "VARIABLE"
+    },
+    {
+      "exported": false,
+      "file": "server.js",
+      "name": "result",
+      "type": "VARIABLE"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "name": "socket",
+      "type": "VARIABLE"
+    },
+    {
+      "exported": false,
+      "file": "server.js",
+      "name": "socketService",
+      "type": "VARIABLE"
+    }
+  ],
+  "edges": [
+    {
+      "from": "CALL:console.log",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.log",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.log",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.log",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.log",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.log",
+      "type": "WRITES_TO",
+      "to": "net:stdio:__stdio__"
+    },
+    {
+      "from": "CALL:console.log",
+      "type": "WRITES_TO",
+      "to": "net:stdio:__stdio__"
+    },
+    {
+      "from": "CALL:console.log",
+      "type": "WRITES_TO",
+      "to": "net:stdio:__stdio__"
+    },
+    {
+      "from": "CALL:console.log",
+      "type": "WRITES_TO",
+      "to": "net:stdio:__stdio__"
+    },
+    {
+      "from": "CALL:console.log",
+      "type": "WRITES_TO",
+      "to": "net:stdio:__stdio__"
+    },
+    {
+      "from": "CALL:io",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:io.emit",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:io.emit",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:io.emit",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:io.emit",
+      "type": "PASSES_ARGUMENT",
+      "to": "OBJECT_LITERAL:<object>",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:io.emit",
+      "type": "USES",
+      "to": "VARIABLE:io"
+    },
+    {
+      "from": "CALL:io.emit",
+      "type": "USES",
+      "to": "VARIABLE:io"
+    },
+    {
+      "from": "CALL:io.emit",
+      "type": "USES",
+      "to": "VARIABLE:io"
+    },
+    {
+      "from": "CALL:io.of",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:io.of",
+      "type": "USES",
+      "to": "VARIABLE:io"
+    },
+    {
+      "from": "CALL:io.to",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:io.to",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:io.to",
+      "type": "USES",
+      "to": "VARIABLE:io"
+    },
+    {
+      "from": "CALL:io.to",
+      "type": "USES",
+      "to": "VARIABLE:io"
+    },
+    {
+      "from": "CALL:require",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:require",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:require",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:require",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:setInterval",
+      "type": "PASSES_ARGUMENT",
+      "to": "FUNCTION:anonymous[1]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:setInterval",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:socket.broadcast.emit",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:socket.broadcast.emit",
+      "type": "USES",
+      "to": "PARAMETER:socket"
+    },
+    {
+      "from": "CALL:socket.emit",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:socket.emit",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:socket.emit",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:socket.emit",
+      "type": "PASSES_ARGUMENT",
+      "to": "VARIABLE:result",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:socket.emit",
+      "type": "USES",
+      "to": "PARAMETER:socket"
+    },
+    {
+      "from": "CALL:socket.emit",
+      "type": "USES",
+      "to": "VARIABLE:socket"
+    },
+    {
+      "from": "CALL:socket.emit",
+      "type": "USES",
+      "to": "VARIABLE:socket"
+    },
+    {
+      "from": "CALL:socket.join",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:socket.join",
+      "type": "USES",
+      "to": "PARAMETER:socket"
+    },
+    {
+      "from": "CALL:socket.join",
+      "type": "USES",
+      "to": "PARAMETER:socket"
+    },
+    {
+      "from": "CALL:socket.on",
+      "type": "PASSES_ARGUMENT",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:socket.on",
+      "type": "PASSES_ARGUMENT",
+      "to": "FUNCTION:anonymous[1]",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:socket.on",
+      "type": "PASSES_ARGUMENT",
+      "to": "FUNCTION:anonymous[2]",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:socket.on",
+      "type": "PASSES_ARGUMENT",
+      "to": "FUNCTION:anonymous[3]",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:socket.on",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:socket.on",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:socket.on",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:socket.on",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:socket.on",
+      "type": "USES",
+      "to": "PARAMETER:socket"
+    },
+    {
+      "from": "CALL:socket.on",
+      "type": "USES",
+      "to": "PARAMETER:socket"
+    },
+    {
+      "from": "CALL:socket.on",
+      "type": "USES",
+      "to": "PARAMETER:socket"
+    },
+    {
+      "from": "CALL:socket.on",
+      "type": "USES",
+      "to": "PARAMETER:socket"
+    },
+    {
+      "from": "CALL:socket.on",
+      "type": "USES",
+      "to": "VARIABLE:socket"
+    },
+    {
+      "from": "CALL:socket.to",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:socket.to",
+      "type": "USES",
+      "to": "PARAMETER:socket"
+    },
+    {
+      "from": "CALL:socketService.emitToGig",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:socketService.emitToGig",
+      "type": "USES",
+      "to": "VARIABLE:socketService"
+    },
+    {
+      "from": "CALL:useSocket",
+      "type": "CALLS",
+      "to": "FUNCTION:useSocket"
+    },
+    {
+      "from": "CALL:useSocket",
+      "type": "CALLS",
+      "to": "FUNCTION:useSocket"
+    },
+    {
+      "from": "event:listener:connect",
+      "type": "HANDLED_BY",
+      "to": "FUNCTION:anonymous[0]"
+    },
+    {
+      "from": "event:listener:connection",
+      "type": "HANDLED_BY",
+      "to": "FUNCTION:anonymous[0]"
+    },
+    {
+      "from": "event:listener:disconnect",
+      "type": "HANDLED_BY",
+      "to": "FUNCTION:anonymous[4]"
+    },
+    {
+      "from": "event:listener:message:received",
+      "type": "HANDLED_BY",
+      "to": "FUNCTION:anonymous[2]"
+    },
+    {
+      "from": "event:listener:slot:booked",
+      "type": "HANDLED_BY",
+      "to": "FUNCTION:anonymous[1]"
+    },
+    {
+      "from": "event:listener:user:typing",
+      "type": "HANDLED_BY",
+      "to": "FUNCTION:anonymous[3]"
+    },
+    {
+      "from": "EXPRESSION:ArrayExpression",
+      "type": "RETURNS",
+      "to": "FUNCTION:anonymous[0]"
+    },
+    {
+      "from": "EXPRESSION:ArrowFunctionExpression",
+      "type": "RETURNS",
+      "to": "FUNCTION:anonymous[0]"
+    },
+    {
+      "from": "FUNCTION:anonymous[0]",
+      "type": "CONTAINS",
+      "to": "PROPERTY_ACCESS:id"
+    },
+    {
+      "from": "FUNCTION:anonymous[0]",
+      "type": "CONTAINS",
+      "to": "PROPERTY_ACCESS:userId"
+    },
+    {
+      "from": "FUNCTION:anonymous[0]",
+      "type": "HAS_PARAMETER",
+      "to": "PARAMETER:socket",
+      "metadata": {
+        "index": 0
+      }
+    },
+    {
+      "from": "FUNCTION:anonymous[0]",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:anonymous[0]:body"
+    },
+    {
+      "from": "FUNCTION:anonymous[0]",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:anonymous[0]:body"
+    },
+    {
+      "from": "FUNCTION:anonymous[0]",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:anonymous[0]:body"
+    },
+    {
+      "from": "FUNCTION:anonymous[0]",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:anonymous[0]:body"
+    },
+    {
+      "from": "FUNCTION:anonymous[0]",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:anonymous[0]:body"
+    },
+    {
+      "from": "FUNCTION:anonymous[1]",
+      "type": "HAS_PARAMETER",
+      "to": "PARAMETER:data",
+      "metadata": {
+        "index": 0
+      }
+    },
+    {
+      "from": "FUNCTION:anonymous[1]",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:anonymous[1]:body"
+    },
+    {
+      "from": "FUNCTION:anonymous[1]",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:anonymous[1]:body"
+    },
+    {
+      "from": "FUNCTION:anonymous[1]",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:anonymous[1]:body"
+    },
+    {
+      "from": "FUNCTION:anonymous[1]",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:anonymous[1]:body"
+    },
+    {
+      "from": "FUNCTION:anonymous[2]",
+      "type": "CONTAINS",
+      "to": "PROPERTY_ACCESS:broadcast"
+    },
+    {
+      "from": "FUNCTION:anonymous[2]",
+      "type": "CONTAINS",
+      "to": "PROPERTY_ACCESS:userId"
+    },
+    {
+      "from": "FUNCTION:anonymous[2]",
+      "type": "HAS_PARAMETER",
+      "to": "PARAMETER:msg",
+      "metadata": {
+        "index": 0
+      }
+    },
+    {
+      "from": "FUNCTION:anonymous[2]",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:anonymous[2]:body"
+    },
+    {
+      "from": "FUNCTION:anonymous[2]",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:anonymous[2]:body"
+    },
+    {
+      "from": "FUNCTION:anonymous[3]",
+      "type": "CONTAINS",
+      "to": "PROPERTY_ACCESS:id"
+    },
+    {
+      "from": "FUNCTION:anonymous[3]",
+      "type": "CONTAINS",
+      "to": "PROPERTY_ACCESS:userId"
+    },
+    {
+      "from": "FUNCTION:anonymous[3]",
+      "type": "CONTAINS",
+      "to": "PROPERTY_ACCESS:userId"
+    },
+    {
+      "from": "FUNCTION:anonymous[3]",
+      "type": "HAS_PARAMETER",
+      "to": "PARAMETER:data",
+      "metadata": {
+        "index": 0
+      }
+    },
+    {
+      "from": "FUNCTION:anonymous[3]",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:anonymous[3]:body"
+    },
+    {
+      "from": "FUNCTION:anonymous[3]",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:anonymous[3]:body"
+    },
+    {
+      "from": "FUNCTION:anonymous[4]",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:anonymous[4]:body"
+    },
+    {
+      "from": "FUNCTION:bookSlot",
+      "type": "HAS_PARAMETER",
+      "to": "PARAMETER:slotId",
+      "metadata": {
+        "index": 0
+      }
+    },
+    {
+      "from": "FUNCTION:bookSlot",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:bookSlot:body"
+    },
+    {
+      "from": "FUNCTION:GigView",
+      "type": "HAS_PARAMETER",
+      "to": "PARAMETER:gigId",
+      "metadata": {
+        "index": 0
+      }
+    },
+    {
+      "from": "FUNCTION:GigView",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:GigView:body"
+    },
+    {
+      "from": "FUNCTION:notifySlotBooked",
+      "type": "HAS_PARAMETER",
+      "to": "PARAMETER:data",
+      "metadata": {
+        "index": 1
+      }
+    },
+    {
+      "from": "FUNCTION:notifySlotBooked",
+      "type": "HAS_PARAMETER",
+      "to": "PARAMETER:gigId",
+      "metadata": {
+        "index": 0
+      }
+    },
+    {
+      "from": "FUNCTION:notifySlotBooked",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:notifySlotBooked:body"
+    },
+    {
+      "from": "FUNCTION:sendMessage",
+      "type": "HAS_PARAMETER",
+      "to": "PARAMETER:text",
+      "metadata": {
+        "index": 0
+      }
+    },
+    {
+      "from": "FUNCTION:sendMessage",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:sendMessage:body"
+    },
+    {
+      "from": "FUNCTION:useSocket",
+      "type": "HAS_PARAMETER",
+      "to": "PARAMETER:event",
+      "metadata": {
+        "index": 0
+      }
+    },
+    {
+      "from": "FUNCTION:useSocket",
+      "type": "HAS_PARAMETER",
+      "to": "PARAMETER:handler",
+      "metadata": {
+        "index": 1
+      }
+    },
+    {
+      "from": "FUNCTION:useSocket",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:useSocket:body"
+    },
+    {
+      "from": "grafema:plugin:ArgumentParameterLinker",
+      "type": "DEPENDS_ON",
+      "to": "grafema:plugin:JSASTAnalyzer"
+    },
+    {
+      "from": "grafema:plugin:ArgumentParameterLinker",
+      "type": "DEPENDS_ON",
+      "to": "grafema:plugin:MethodCallResolver"
+    },
+    {
+      "from": "grafema:plugin:CallbackCallResolver",
+      "type": "DEPENDS_ON",
+      "to": "grafema:plugin:ImportExportLinker"
+    },
+    {
+      "from": "grafema:plugin:FetchAnalyzer",
+      "type": "DEPENDS_ON",
+      "to": "grafema:plugin:JSASTAnalyzer"
+    },
+    {
+      "from": "grafema:plugin:FetchAnalyzer",
+      "type": "DEPENDS_ON",
+      "to": "grafema:plugin:JSModuleIndexer"
+    },
+    {
+      "from": "grafema:plugin:ImportExportLinker",
+      "type": "DEPENDS_ON",
+      "to": "grafema:plugin:JSASTAnalyzer"
+    },
+    {
+      "from": "grafema:plugin:InstanceOfResolver",
+      "type": "DEPENDS_ON",
+      "to": "grafema:plugin:JSASTAnalyzer"
+    },
+    {
+      "from": "grafema:plugin:JSASTAnalyzer",
+      "type": "DEPENDS_ON",
+      "to": "grafema:plugin:JSModuleIndexer"
+    },
+    {
+      "from": "grafema:plugin:MethodCallResolver",
+      "type": "DEPENDS_ON",
+      "to": "grafema:plugin:ImportExportLinker"
+    },
+    {
+      "from": "grafema:plugin:NodejsBuiltinsResolver",
+      "type": "DEPENDS_ON",
+      "to": "grafema:plugin:ImportExportLinker"
+    },
+    {
+      "from": "grafema:plugin:NodejsBuiltinsResolver",
+      "type": "DEPENDS_ON",
+      "to": "grafema:plugin:JSASTAnalyzer"
+    },
+    {
+      "from": "grafema:plugin:RejectionPropagationEnricher",
+      "type": "DEPENDS_ON",
+      "to": "grafema:plugin:JSASTAnalyzer"
+    },
+    {
+      "from": "LITERAL:",
+      "type": "RETURNS",
+      "to": "FUNCTION:GigView"
+    },
+    {
+      "from": "MODULE:client.js",
+      "type": "CONTAINS",
+      "to": "CALL:io"
+    },
+    {
+      "from": "MODULE:client.js",
+      "type": "CONTAINS",
+      "to": "event:listener:connect"
+    },
+    {
+      "from": "MODULE:client.js",
+      "type": "CONTAINS",
+      "to": "event:listener:disconnect"
+    },
+    {
+      "from": "MODULE:client.js",
+      "type": "CONTAINS",
+      "to": "event:listener:message:received"
+    },
+    {
+      "from": "MODULE:client.js",
+      "type": "CONTAINS",
+      "to": "event:listener:slot:booked"
+    },
+    {
+      "from": "MODULE:client.js",
+      "type": "CONTAINS",
+      "to": "event:listener:user:typing"
+    },
+    {
+      "from": "MODULE:client.js",
+      "type": "CONTAINS",
+      "to": "FUNCTION:anonymous[0]"
+    },
+    {
+      "from": "MODULE:client.js",
+      "type": "CONTAINS",
+      "to": "FUNCTION:anonymous[1]"
+    },
+    {
+      "from": "MODULE:client.js",
+      "type": "CONTAINS",
+      "to": "FUNCTION:anonymous[2]"
+    },
+    {
+      "from": "MODULE:client.js",
+      "type": "CONTAINS",
+      "to": "FUNCTION:anonymous[3]"
+    },
+    {
+      "from": "MODULE:client.js",
+      "type": "CONTAINS",
+      "to": "FUNCTION:anonymous[4]"
+    },
+    {
+      "from": "MODULE:client.js",
+      "type": "CONTAINS",
+      "to": "FUNCTION:bookSlot"
+    },
+    {
+      "from": "MODULE:client.js",
+      "type": "CONTAINS",
+      "to": "FUNCTION:GigView"
+    },
+    {
+      "from": "MODULE:client.js",
+      "type": "CONTAINS",
+      "to": "FUNCTION:sendMessage"
+    },
+    {
+      "from": "MODULE:client.js",
+      "type": "CONTAINS",
+      "to": "FUNCTION:useSocket"
+    },
+    {
+      "from": "MODULE:client.js",
+      "type": "DECLARES",
+      "to": "VARIABLE:socket"
+    },
+    {
+      "from": "MODULE:index.js",
+      "type": "CONTAINS",
+      "to": "CALL:require"
+    },
+    {
+      "from": "MODULE:index.js",
+      "type": "CONTAINS",
+      "to": "CALL:require"
+    },
+    {
+      "from": "MODULE:index.js",
+      "type": "DEPENDS_ON",
+      "to": "MODULE:client.js",
+      "metadata": {
+        "version": "main"
+      }
+    },
+    {
+      "from": "MODULE:index.js",
+      "type": "DEPENDS_ON",
+      "to": "MODULE:server.js",
+      "metadata": {
+        "version": "main"
+      }
+    },
+    {
+      "from": "MODULE:server.js",
+      "type": "CONTAINS",
+      "to": "CALL:io.emit"
+    },
+    {
+      "from": "MODULE:server.js",
+      "type": "CONTAINS",
+      "to": "CALL:io.of"
+    },
+    {
+      "from": "MODULE:server.js",
+      "type": "CONTAINS",
+      "to": "CALL:io.to"
+    },
+    {
+      "from": "MODULE:server.js",
+      "type": "CONTAINS",
+      "to": "CALL:require"
+    },
+    {
+      "from": "MODULE:server.js",
+      "type": "CONTAINS",
+      "to": "CALL:require"
+    },
+    {
+      "from": "MODULE:server.js",
+      "type": "CONTAINS",
+      "to": "CALL:setInterval"
+    },
+    {
+      "from": "MODULE:server.js",
+      "type": "CONTAINS",
+      "to": "event:listener:connection"
+    },
+    {
+      "from": "MODULE:server.js",
+      "type": "CONTAINS",
+      "to": "FUNCTION:anonymous[0]"
+    },
+    {
+      "from": "MODULE:server.js",
+      "type": "CONTAINS",
+      "to": "FUNCTION:anonymous[1]"
+    },
+    {
+      "from": "MODULE:server.js",
+      "type": "CONTAINS",
+      "to": "FUNCTION:notifySlotBooked"
+    },
+    {
+      "from": "MODULE:server.js",
+      "type": "DECLARES",
+      "to": "VARIABLE:io"
+    },
+    {
+      "from": "MODULE:server.js",
+      "type": "DECLARES",
+      "to": "VARIABLE:socketService"
+    },
+    {
+      "from": "MODULE:server.js",
+      "type": "DEPENDS_ON",
+      "to": "<unresolved:services/socketService->global->MODULE->module>",
+      "metadata": {
+        "version": "main"
+      }
+    },
+    {
+      "from": "OBJECT_LITERAL:<object>",
+      "type": "HAS_PROPERTY",
+      "to": "LITERAL:",
+      "metadata": {
+        "propertyName": "status"
+      }
+    },
+    {
+      "from": "SCOPE:anonymous[0]:body",
+      "type": "CONTAINS",
+      "to": "CALL:bookSlot"
+    },
+    {
+      "from": "SCOPE:anonymous[0]:body",
+      "type": "CONTAINS",
+      "to": "CALL:console.log"
+    },
+    {
+      "from": "SCOPE:anonymous[0]:body",
+      "type": "CONTAINS",
+      "to": "CALL:console.log"
+    },
+    {
+      "from": "SCOPE:anonymous[0]:body",
+      "type": "CONTAINS",
+      "to": "CALL:setSlots"
+    },
+    {
+      "from": "SCOPE:anonymous[0]:body",
+      "type": "CONTAINS",
+      "to": "CALL:socket.emit"
+    },
+    {
+      "from": "SCOPE:anonymous[0]:body",
+      "type": "CONTAINS",
+      "to": "CALL:socket.join"
+    },
+    {
+      "from": "SCOPE:anonymous[0]:body",
+      "type": "CONTAINS",
+      "to": "CALL:socket.join"
+    },
+    {
+      "from": "SCOPE:anonymous[0]:body",
+      "type": "CONTAINS",
+      "to": "CALL:socket.on"
+    },
+    {
+      "from": "SCOPE:anonymous[0]:body",
+      "type": "CONTAINS",
+      "to": "CALL:socket.on"
+    },
+    {
+      "from": "SCOPE:anonymous[0]:body",
+      "type": "CONTAINS",
+      "to": "CALL:socket.on"
+    },
+    {
+      "from": "SCOPE:anonymous[0]:body",
+      "type": "CONTAINS",
+      "to": "CALL:socket.on"
+    },
+    {
+      "from": "SCOPE:anonymous[0]:body",
+      "type": "CONTAINS",
+      "to": "CALL:socket.on"
+    },
+    {
+      "from": "SCOPE:anonymous[0]:body",
+      "type": "CONTAINS",
+      "to": "CALL:socket.to"
+    },
+    {
+      "from": "SCOPE:anonymous[0]:body",
+      "type": "CONTAINS",
+      "to": "FUNCTION:anonymous[0]"
+    },
+    {
+      "from": "SCOPE:anonymous[0]:body",
+      "type": "CONTAINS",
+      "to": "FUNCTION:anonymous[0]"
+    },
+    {
+      "from": "SCOPE:anonymous[0]:body",
+      "type": "CONTAINS",
+      "to": "FUNCTION:anonymous[0]"
+    },
+    {
+      "from": "SCOPE:anonymous[0]:body",
+      "type": "CONTAINS",
+      "to": "FUNCTION:anonymous[1]"
+    },
+    {
+      "from": "SCOPE:anonymous[0]:body",
+      "type": "CONTAINS",
+      "to": "FUNCTION:anonymous[2]"
+    },
+    {
+      "from": "SCOPE:anonymous[0]:body",
+      "type": "CONTAINS",
+      "to": "FUNCTION:anonymous[3]"
+    },
+    {
+      "from": "SCOPE:anonymous[0]:body",
+      "type": "DECLARES",
+      "to": "VARIABLE:result"
+    },
+    {
+      "from": "SCOPE:anonymous[1]:body",
+      "type": "CONTAINS",
+      "to": "CALL:console.log"
+    },
+    {
+      "from": "SCOPE:anonymous[1]:body",
+      "type": "CONTAINS",
+      "to": "CALL:Date.now"
+    },
+    {
+      "from": "SCOPE:anonymous[1]:body",
+      "type": "CONTAINS",
+      "to": "CALL:io.emit"
+    },
+    {
+      "from": "SCOPE:anonymous[1]:body",
+      "type": "CONTAINS",
+      "to": "CALL:io.to"
+    },
+    {
+      "from": "SCOPE:anonymous[1]:body",
+      "type": "CONTAINS",
+      "to": "CALL:setParticipants"
+    },
+    {
+      "from": "SCOPE:anonymous[1]:body",
+      "type": "CONTAINS",
+      "to": "CALL:updateUI"
+    },
+    {
+      "from": "SCOPE:anonymous[1]:body",
+      "type": "CONTAINS",
+      "to": "FUNCTION:anonymous[0]"
+    },
+    {
+      "from": "SCOPE:anonymous[2]:body",
+      "type": "CONTAINS",
+      "to": "CALL:displayMessage"
+    },
+    {
+      "from": "SCOPE:anonymous[2]:body",
+      "type": "CONTAINS",
+      "to": "CALL:socket.broadcast.emit"
+    },
+    {
+      "from": "SCOPE:anonymous[3]:body",
+      "type": "CONTAINS",
+      "to": "CALL:console.log"
+    },
+    {
+      "from": "SCOPE:anonymous[3]:body",
+      "type": "CONTAINS",
+      "to": "CALL:io.emit"
+    },
+    {
+      "from": "SCOPE:anonymous[3]:body",
+      "type": "CONTAINS",
+      "to": "CALL:showTypingIndicator"
+    },
+    {
+      "from": "SCOPE:anonymous[4]:body",
+      "type": "CONTAINS",
+      "to": "CALL:console.log"
+    },
+    {
+      "from": "SCOPE:bookSlot:body",
+      "type": "CONTAINS",
+      "to": "CALL:getCurrentUser"
+    },
+    {
+      "from": "SCOPE:bookSlot:body",
+      "type": "CONTAINS",
+      "to": "CALL:socket.emit"
+    },
+    {
+      "from": "SCOPE:GigView:body",
+      "type": "CONTAINS",
+      "to": "CALL:useSocket"
+    },
+    {
+      "from": "SCOPE:GigView:body",
+      "type": "CONTAINS",
+      "to": "CALL:useSocket"
+    },
+    {
+      "from": "SCOPE:GigView:body",
+      "type": "CONTAINS",
+      "to": "FUNCTION:anonymous[0]"
+    },
+    {
+      "from": "SCOPE:GigView:body",
+      "type": "CONTAINS",
+      "to": "FUNCTION:anonymous[1]"
+    },
+    {
+      "from": "SCOPE:notifySlotBooked:body",
+      "type": "CONTAINS",
+      "to": "CALL:socketService.emitToGig"
+    },
+    {
+      "from": "SCOPE:sendMessage:body",
+      "type": "CONTAINS",
+      "to": "CALL:Date.now"
+    },
+    {
+      "from": "SCOPE:sendMessage:body",
+      "type": "CONTAINS",
+      "to": "CALL:socket.emit"
+    },
+    {
+      "from": "SCOPE:useSocket:body",
+      "type": "CONTAINS",
+      "to": "CALL:useEffect"
+    },
+    {
+      "from": "SCOPE:useSocket:body",
+      "type": "CONTAINS",
+      "to": "FUNCTION:anonymous[0]"
+    },
+    {
+      "from": "SERVICE:socketio-fixture",
+      "type": "CONTAINS",
+      "to": "MODULE:client.js",
+      "metadata": {
+        "version": "main"
+      }
+    },
+    {
+      "from": "SERVICE:socketio-fixture",
+      "type": "CONTAINS",
+      "to": "MODULE:index.js",
+      "metadata": {
+        "version": "main"
+      }
+    },
+    {
+      "from": "SERVICE:socketio-fixture",
+      "type": "CONTAINS",
+      "to": "MODULE:server.js",
+      "metadata": {
+        "version": "main"
+      }
+    },
+    {
+      "from": "VARIABLE:result",
+      "type": "ASSIGNED_FROM",
+      "to": "CALL:bookSlot"
+    },
+    {
+      "from": "VARIABLE:socket",
+      "type": "ASSIGNED_FROM",
+      "to": "CALL:io"
+    },
+    {
+      "from": "VARIABLE:socketService",
+      "type": "ASSIGNED_FROM",
+      "to": "CALL:require"
+    }
+  ]
+}

@@ -1,0 +1,2579 @@
+{
+  "nodes": [
+    {
+      "branchType": "if",
+      "exported": false,
+      "file": "client.js",
+      "name": "",
+      "semanticId": "client.js->authFetch->BRANCH->if#0",
+      "type": "BRANCH"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "isAwaited": true,
+      "isInsideTry": false,
+      "name": "authFetch",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
+      "file": "client.js",
+      "isAwaited": true,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "get",
+      "name": "axios.get",
+      "object": "axios",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
+      "file": "client.js",
+      "isAwaited": true,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "get",
+      "name": "axios.get",
+      "object": "axios",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
+      "file": "client.js",
+      "isAwaited": true,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "post",
+      "name": "axios.post",
+      "object": "axios",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "name": "fetch",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "name": "fetch",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "name": "fetch",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "name": "fetch",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "name": "fetch",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "isAwaited": true,
+      "isInsideTry": false,
+      "name": "fetch",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "isAwaited": true,
+      "isInsideTry": false,
+      "name": "fetch",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "isAwaited": true,
+      "isInsideTry": false,
+      "name": "fetch",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "isAwaited": true,
+      "isInsideTry": false,
+      "name": "fetch",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "isNew": true,
+      "name": "Headers",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
+      "file": "client.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "set",
+      "name": "headers.set",
+      "object": "headers",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
+      "file": "client.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "stringify",
+      "name": "JSON.stringify",
+      "object": "JSON",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
+      "file": "client.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "getItem",
+      "name": "localStorage.getItem",
+      "object": "localStorage",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
+      "file": "client.js",
+      "isAwaited": true,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "all",
+      "name": "Promise.all",
+      "object": "Promise",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
+      "file": "client.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "json",
+      "name": "response.json",
+      "object": "response",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
+      "file": "client.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "json",
+      "name": "response.json",
+      "object": "response",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
+      "file": "client.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "json",
+      "name": "response.json",
+      "object": "response",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
+      "file": "client.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "json",
+      "name": "response.json",
+      "object": "response",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
+      "file": "client.js",
+      "isAwaited": true,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "json",
+      "name": "response.json",
+      "object": "response",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "name": "headers",
+      "type": "CONSTANT"
+    },
+    {
+      "className": "Headers",
+      "exported": false,
+      "file": "client.js",
+      "isBuiltin": true,
+      "name": "new Headers()",
+      "type": "CONSTRUCTOR_CALL"
+    },
+    {
+      "computed": false,
+      "exported": false,
+      "expressionType": "MemberExpression",
+      "file": "client.js",
+      "name": "data.gigs",
+      "object": "data",
+      "property": "gigs",
+      "type": "EXPRESSION"
+    },
+    {
+      "exported": false,
+      "expressionType": "Identifier",
+      "file": "client.js",
+      "name": "Identifier",
+      "type": "EXPRESSION"
+    },
+    {
+      "exported": false,
+      "expressionType": "ObjectExpression",
+      "file": "client.js",
+      "name": "ObjectExpression",
+      "type": "EXPRESSION"
+    },
+    {
+      "arrayIndex": 0,
+      "computed": true,
+      "exported": false,
+      "expressionType": "MemberExpression",
+      "file": "client.js",
+      "name": "Promise.all().0",
+      "object": "Promise.all()",
+      "property": "0",
+      "type": "EXPRESSION"
+    },
+    {
+      "arrayIndex": 1,
+      "computed": true,
+      "exported": false,
+      "expressionType": "MemberExpression",
+      "file": "client.js",
+      "name": "Promise.all().1",
+      "object": "Promise.all()",
+      "property": "1",
+      "type": "EXPRESSION"
+    },
+    {
+      "arrayIndex": 2,
+      "computed": true,
+      "exported": false,
+      "expressionType": "MemberExpression",
+      "file": "client.js",
+      "name": "Promise.all().2",
+      "object": "Promise.all()",
+      "property": "2",
+      "type": "EXPRESSION"
+    },
+    {
+      "computed": false,
+      "exported": false,
+      "expressionType": "MemberExpression",
+      "file": "client.js",
+      "name": "response.data",
+      "object": "response",
+      "property": "data",
+      "type": "EXPRESSION"
+    },
+    {
+      "computed": false,
+      "exported": false,
+      "expressionType": "MemberExpression",
+      "file": "client.js",
+      "name": "response.data",
+      "object": "response",
+      "property": "data",
+      "type": "EXPRESSION"
+    },
+    {
+      "computed": false,
+      "exported": false,
+      "expressionType": "MemberExpression",
+      "file": "client.js",
+      "name": "response.data",
+      "object": "response",
+      "property": "data",
+      "type": "EXPRESSION"
+    },
+    {
+      "domain": "api.spotify.com",
+      "exported": false,
+      "file": "",
+      "name": "api.spotify.com",
+      "type": "EXTERNAL"
+    },
+    {
+      "domain": "gitlab.com",
+      "exported": false,
+      "file": "",
+      "name": "gitlab.com",
+      "type": "EXTERNAL"
+    },
+    {
+      "arrowFunction": true,
+      "async": false,
+      "exported": false,
+      "file": "client.js",
+      "name": "anonymous[0]",
+      "type": "FUNCTION"
+    },
+    {
+      "arrowFunction": true,
+      "async": false,
+      "exported": false,
+      "file": "client.js",
+      "name": "anonymous[0]",
+      "type": "FUNCTION"
+    },
+    {
+      "arrowFunction": true,
+      "async": false,
+      "exported": false,
+      "file": "client.js",
+      "name": "anonymous[1]",
+      "type": "FUNCTION"
+    },
+    {
+      "arrowFunction": true,
+      "async": false,
+      "exported": false,
+      "file": "client.js",
+      "name": "anonymous[1]",
+      "type": "FUNCTION"
+    },
+    {
+      "arrowFunction": true,
+      "async": false,
+      "exported": false,
+      "file": "client.js",
+      "name": "anonymous[2]",
+      "type": "FUNCTION"
+    },
+    {
+      "arrowFunction": true,
+      "async": true,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 2,
+        "hasAsyncThrow": false,
+        "hasBranches": true,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "client.js",
+      "name": "authFetch",
+      "params": [
+        "url",
+        "options?"
+      ],
+      "paramTypes": [
+        "any",
+        "any"
+      ],
+      "returnType": "void",
+      "signature": "(url: any, options?: any) => Promise<void>",
+      "type": "FUNCTION"
+    },
+    {
+      "async": true,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "client.js",
+      "generator": false,
+      "name": "createUser",
+      "params": [
+        "userData"
+      ],
+      "paramTypes": [
+        "any"
+      ],
+      "returnType": "void",
+      "signature": "(userData: any) => Promise<void>",
+      "type": "FUNCTION"
+    },
+    {
+      "async": true,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "client.js",
+      "generator": false,
+      "name": "createUserAxios",
+      "params": [
+        "userData"
+      ],
+      "paramTypes": [
+        "any"
+      ],
+      "returnType": "void",
+      "signature": "(userData: any) => Promise<void>",
+      "type": "FUNCTION"
+    },
+    {
+      "async": true,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "client.js",
+      "generator": false,
+      "name": "fetchAndProcess",
+      "params": [],
+      "paramTypes": [],
+      "returnType": "void",
+      "signature": "() => Promise<void>",
+      "type": "FUNCTION"
+    },
+    {
+      "async": true,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "client.js",
+      "generator": false,
+      "name": "fetchGig",
+      "params": [
+        "gigId"
+      ],
+      "paramTypes": [
+        "any"
+      ],
+      "returnType": "void",
+      "signature": "(gigId: any) => Promise<void>",
+      "type": "FUNCTION"
+    },
+    {
+      "async": true,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "client.js",
+      "generator": false,
+      "name": "fetchGitlab",
+      "params": [],
+      "paramTypes": [],
+      "returnType": "void",
+      "signature": "() => Promise<void>",
+      "type": "FUNCTION"
+    },
+    {
+      "async": true,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "client.js",
+      "generator": false,
+      "name": "fetchMultiple",
+      "params": [],
+      "paramTypes": [],
+      "returnType": "void",
+      "signature": "() => Promise<void>",
+      "type": "FUNCTION"
+    },
+    {
+      "async": true,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "client.js",
+      "generator": false,
+      "name": "fetchProtectedData",
+      "params": [],
+      "paramTypes": [],
+      "returnType": "void",
+      "signature": "() => Promise<void>",
+      "type": "FUNCTION"
+    },
+    {
+      "async": true,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "client.js",
+      "generator": false,
+      "jsdocSummary": "HTTP Requests - test fixture",
+      "name": "fetchUsers",
+      "params": [],
+      "paramTypes": [],
+      "returnType": "void",
+      "signature": "() => Promise<void>",
+      "type": "FUNCTION"
+    },
+    {
+      "async": true,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "client.js",
+      "generator": false,
+      "name": "getUsersAxios",
+      "params": [],
+      "paramTypes": [],
+      "returnType": "void",
+      "signature": "() => Promise<void>",
+      "type": "FUNCTION"
+    },
+    {
+      "async": true,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "client.js",
+      "generator": false,
+      "name": "searchSpotify",
+      "params": [
+        "query"
+      ],
+      "paramTypes": [
+        "any"
+      ],
+      "returnType": "void",
+      "signature": "(query: any) => Promise<void>",
+      "type": "FUNCTION"
+    },
+    {
+      "builtin": true,
+      "creates": {
+        "edges": [
+          "RECEIVES_ARGUMENT"
+        ],
+        "nodes": []
+      },
+      "createsEdges": [
+        "RECEIVES_ARGUMENT"
+      ],
+      "createsNodes": [],
+      "dependencies": [
+        "JSASTAnalyzer",
+        "MethodCallResolver"
+      ],
+      "exported": false,
+      "file": "",
+      "name": "ArgumentParameterLinker",
+      "phase": "ENRICHMENT",
+      "priority": 0,
+      "type": "grafema:plugin"
+    },
+    {
+      "builtin": true,
+      "creates": {
+        "edges": [
+          "CALLS"
+        ],
+        "nodes": []
+      },
+      "createsEdges": [
+        "CALLS"
+      ],
+      "createsNodes": [],
+      "dependencies": [
+        "ImportExportLinker",
+        "FunctionCallResolver"
+      ],
+      "exported": false,
+      "file": "",
+      "name": "CallbackCallResolver",
+      "phase": "ENRICHMENT",
+      "priority": 0,
+      "type": "grafema:plugin"
+    },
+    {
+      "builtin": true,
+      "creates": {
+        "edges": [
+          "CONTAINS",
+          "MAKES_REQUEST",
+          "CALLS_API"
+        ],
+        "nodes": [
+          "http:request",
+          "EXTERNAL"
+        ]
+      },
+      "createsEdges": [
+        "CONTAINS",
+        "MAKES_REQUEST",
+        "CALLS_API"
+      ],
+      "createsNodes": [
+        "http:request",
+        "EXTERNAL"
+      ],
+      "dependencies": [
+        "JSModuleIndexer",
+        "JSASTAnalyzer"
+      ],
+      "exported": false,
+      "file": "",
+      "name": "FetchAnalyzer",
+      "phase": "ANALYSIS",
+      "priority": 0,
+      "type": "grafema:plugin"
+    },
+    {
+      "builtin": true,
+      "creates": {
+        "edges": [
+          "IMPORTS",
+          "IMPORTS_FROM"
+        ],
+        "nodes": []
+      },
+      "createsEdges": [
+        "IMPORTS",
+        "IMPORTS_FROM"
+      ],
+      "createsNodes": [],
+      "dependencies": [
+        "JSASTAnalyzer"
+      ],
+      "exported": false,
+      "file": "",
+      "name": "ImportExportLinker",
+      "phase": "ENRICHMENT",
+      "priority": 0,
+      "type": "grafema:plugin"
+    },
+    {
+      "builtin": true,
+      "creates": {
+        "edges": [
+          "INSTANCE_OF"
+        ],
+        "nodes": []
+      },
+      "createsEdges": [
+        "INSTANCE_OF"
+      ],
+      "createsNodes": [],
+      "dependencies": [
+        "JSASTAnalyzer"
+      ],
+      "exported": false,
+      "file": "",
+      "name": "InstanceOfResolver",
+      "phase": "ENRICHMENT",
+      "priority": 0,
+      "type": "grafema:plugin"
+    },
+    {
+      "builtin": true,
+      "creates": {
+        "edges": [
+          "CONTAINS",
+          "DECLARES",
+          "CALLS",
+          "HAS_SCOPE",
+          "CAPTURES",
+          "MODIFIES",
+          "WRITES_TO",
+          "IMPORTS",
+          "INSTANCE_OF",
+          "HANDLED_BY",
+          "HAS_CALLBACK",
+          "PASSES_ARGUMENT",
+          "MAKES_REQUEST",
+          "IMPORTS_FROM",
+          "EXPORTS_TO",
+          "ASSIGNED_FROM",
+          "IMPLEMENTS",
+          "EXTENDS",
+          "DECORATED_BY",
+          "HAS_TYPE_PARAMETER",
+          "RESOLVES_TO"
+        ],
+        "nodes": [
+          "FUNCTION",
+          "CLASS",
+          "METHOD",
+          "VARIABLE",
+          "CONSTANT",
+          "SCOPE",
+          "CALL",
+          "IMPORT",
+          "EXPORT",
+          "LITERAL",
+          "EXTERNAL_MODULE",
+          "net:stdio",
+          "net:request",
+          "event:listener",
+          "http:request",
+          "INTERFACE",
+          "TYPE",
+          "ENUM",
+          "DECORATOR",
+          "TYPE_PARAMETER"
+        ]
+      },
+      "createsEdges": [
+        "CONTAINS",
+        "DECLARES",
+        "CALLS",
+        "HAS_SCOPE",
+        "CAPTURES",
+        "MODIFIES",
+        "WRITES_TO",
+        "IMPORTS",
+        "INSTANCE_OF",
+        "HANDLED_BY",
+        "HAS_CALLBACK",
+        "PASSES_ARGUMENT",
+        "MAKES_REQUEST",
+        "IMPORTS_FROM",
+        "EXPORTS_TO",
+        "ASSIGNED_FROM",
+        "IMPLEMENTS",
+        "EXTENDS",
+        "DECORATED_BY",
+        "HAS_TYPE_PARAMETER",
+        "RESOLVES_TO"
+      ],
+      "createsNodes": [
+        "FUNCTION",
+        "CLASS",
+        "METHOD",
+        "VARIABLE",
+        "CONSTANT",
+        "SCOPE",
+        "CALL",
+        "IMPORT",
+        "EXPORT",
+        "LITERAL",
+        "EXTERNAL_MODULE",
+        "net:stdio",
+        "net:request",
+        "event:listener",
+        "http:request",
+        "INTERFACE",
+        "TYPE",
+        "ENUM",
+        "DECORATOR",
+        "TYPE_PARAMETER"
+      ],
+      "dependencies": [
+        "JSModuleIndexer"
+      ],
+      "exported": false,
+      "file": "",
+      "name": "JSASTAnalyzer",
+      "phase": "ANALYSIS",
+      "priority": 0,
+      "type": "grafema:plugin"
+    },
+    {
+      "builtin": true,
+      "creates": {
+        "edges": [
+          "CONTAINS",
+          "DEPENDS_ON"
+        ],
+        "nodes": [
+          "MODULE"
+        ]
+      },
+      "createsEdges": [
+        "CONTAINS",
+        "DEPENDS_ON"
+      ],
+      "createsNodes": [
+        "MODULE"
+      ],
+      "dependencies": [],
+      "exported": false,
+      "file": "",
+      "name": "JSModuleIndexer",
+      "phase": "INDEXING",
+      "priority": 0,
+      "type": "grafema:plugin"
+    },
+    {
+      "builtin": true,
+      "creates": {
+        "edges": [
+          "CALLS"
+        ],
+        "nodes": []
+      },
+      "createsEdges": [
+        "CALLS"
+      ],
+      "createsNodes": [],
+      "dependencies": [
+        "ImportExportLinker"
+      ],
+      "exported": false,
+      "file": "",
+      "name": "MethodCallResolver",
+      "phase": "ENRICHMENT",
+      "priority": 0,
+      "type": "grafema:plugin"
+    },
+    {
+      "builtin": true,
+      "creates": {
+        "edges": [
+          "CALLS",
+          "IMPORTS_FROM"
+        ],
+        "nodes": [
+          "EXTERNAL_FUNCTION",
+          "EXTERNAL_MODULE"
+        ]
+      },
+      "createsEdges": [
+        "CALLS",
+        "IMPORTS_FROM"
+      ],
+      "createsNodes": [
+        "EXTERNAL_FUNCTION",
+        "EXTERNAL_MODULE"
+      ],
+      "dependencies": [
+        "JSASTAnalyzer",
+        "ImportExportLinker"
+      ],
+      "exported": false,
+      "file": "",
+      "name": "NodejsBuiltinsResolver",
+      "phase": "ENRICHMENT",
+      "priority": 0,
+      "type": "grafema:plugin"
+    },
+    {
+      "builtin": true,
+      "creates": {
+        "edges": [
+          "REJECTS"
+        ],
+        "nodes": []
+      },
+      "createsEdges": [
+        "REJECTS"
+      ],
+      "createsNodes": [],
+      "dependencies": [
+        "JSASTAnalyzer"
+      ],
+      "exported": false,
+      "file": "",
+      "name": "RejectionPropagationEnricher",
+      "phase": "ENRICHMENT",
+      "priority": 0,
+      "type": "grafema:plugin"
+    },
+    {
+      "builtin": true,
+      "creates": {
+        "edges": [],
+        "nodes": [
+          "SERVICE"
+        ]
+      },
+      "createsEdges": [],
+      "createsNodes": [
+        "SERVICE"
+      ],
+      "dependencies": [],
+      "exported": false,
+      "file": "",
+      "name": "SimpleProjectDiscovery",
+      "phase": "DISCOVERY",
+      "priority": 0,
+      "type": "grafema:plugin"
+    },
+    {
+      "exported": false,
+      "file": "",
+      "name": "graph_metadata",
+      "type": "GRAPH_META"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "library": "fetch",
+      "method": "GET",
+      "methodSource": "default",
+      "name": "GET /api/gigs",
+      "staticUrl": "yes",
+      "type": "http:request",
+      "url": "/api/gigs"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "library": "fetch",
+      "method": "GET",
+      "methodSource": "default",
+      "name": "GET /api/gigs",
+      "staticUrl": "yes",
+      "type": "http:request",
+      "url": "/api/gigs"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "library": "fetch",
+      "method": "GET",
+      "methodSource": "default",
+      "name": "GET /api/gigs/${...}",
+      "responseDataNode": "client.js->fetchGig->CALL->response.json#0",
+      "staticUrl": "yes",
+      "type": "http:request",
+      "url": "/api/gigs/${...}"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "library": "authFetch",
+      "method": "GET",
+      "methodSource": "default",
+      "name": "GET /api/protected",
+      "responseDataNode": "client.js->fetchProtectedData->CALL->response.json#0",
+      "staticUrl": "yes",
+      "type": "http:request",
+      "url": "/api/protected"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "library": "fetch",
+      "method": "GET",
+      "methodSource": "default",
+      "name": "GET /api/tracks",
+      "staticUrl": "yes",
+      "type": "http:request",
+      "url": "/api/tracks"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "library": "axios",
+      "method": "GET",
+      "methodSource": "explicit",
+      "name": "GET /api/users",
+      "staticUrl": "yes",
+      "type": "http:request",
+      "url": "/api/users"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "library": "fetch",
+      "method": "GET",
+      "methodSource": "default",
+      "name": "GET /api/users",
+      "responseDataNode": "client.js->fetchUsers->CALL->response.json#0",
+      "staticUrl": "yes",
+      "type": "http:request",
+      "url": "/api/users"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "library": "fetch",
+      "method": "GET",
+      "methodSource": "default",
+      "name": "GET /api/users",
+      "staticUrl": "yes",
+      "type": "http:request",
+      "url": "/api/users"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "library": "fetch",
+      "method": "GET",
+      "methodSource": "default",
+      "name": "GET dynamic",
+      "staticUrl": "no",
+      "type": "http:request",
+      "url": "dynamic"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "library": "fetch",
+      "method": "GET",
+      "methodSource": "default",
+      "name": "GET https://api.spotify.com/v1/search?q=${...}",
+      "responseDataNode": "client.js->searchSpotify->CALL->response.json#0",
+      "staticUrl": "yes",
+      "type": "http:request",
+      "url": "https://api.spotify.com/v1/search?q=${...}"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "library": "axios",
+      "method": "GET",
+      "methodSource": "explicit",
+      "name": "GET https://gitlab.com/api/v4/projects",
+      "staticUrl": "yes",
+      "type": "http:request",
+      "url": "https://gitlab.com/api/v4/projects"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "library": "axios",
+      "method": "POST",
+      "methodSource": "explicit",
+      "name": "POST /api/users",
+      "staticUrl": "yes",
+      "type": "http:request",
+      "url": "/api/users"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "library": "fetch",
+      "method": "POST",
+      "methodSource": "explicit",
+      "name": "POST /api/users",
+      "responseDataNode": "client.js->createUser->CALL->response.json#0",
+      "staticUrl": "yes",
+      "type": "http:request",
+      "url": "/api/users"
+    },
+    {
+      "exported": false,
+      "file": "index.js",
+      "importBinding": "value",
+      "imported": "*",
+      "importType": "namespace",
+      "local": "./client.js",
+      "name": "./client.js",
+      "sideEffect": true,
+      "source": "./client.js",
+      "type": "IMPORT"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": "/api/users",
+      "valueType": "string"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": "/api/users",
+      "valueType": "string"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": "auth_token",
+      "valueType": "string"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": "Authorization",
+      "valueType": "string"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": "https://gitlab.com/api/v4/projects",
+      "valueType": "string"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "isTest": true,
+      "name": "client.js",
+      "type": "MODULE"
+    },
+    {
+      "exported": false,
+      "file": "index.js",
+      "isTest": true,
+      "name": "index.js",
+      "type": "MODULE"
+    },
+    {
+      "exported": false,
+      "file": "__builtin__",
+      "name": "__network__",
+      "type": "net:request"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "index": 0,
+      "name": "gigId",
+      "parentFunctionId": "client.js->global->FUNCTION->fetchGig",
+      "semanticId": "client.js->fetchGig->PARAMETER->gigId#0",
+      "type": "PARAMETER"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "hasDefault": true,
+      "index": 1,
+      "name": "options",
+      "parentFunctionId": "client.js->global->FUNCTION->authFetch",
+      "semanticId": "client.js->authFetch->PARAMETER->options#1",
+      "type": "PARAMETER"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "index": 0,
+      "name": "query",
+      "parentFunctionId": "client.js->global->FUNCTION->searchSpotify",
+      "semanticId": "client.js->searchSpotify->PARAMETER->query#0",
+      "type": "PARAMETER"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "index": 0,
+      "name": "url",
+      "parentFunctionId": "client.js->global->FUNCTION->authFetch",
+      "semanticId": "client.js->authFetch->PARAMETER->url#0",
+      "type": "PARAMETER"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "index": 0,
+      "name": "userData",
+      "parentFunctionId": "client.js->global->FUNCTION->createUser",
+      "semanticId": "client.js->createUser->PARAMETER->userData#0",
+      "type": "PARAMETER"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "index": 0,
+      "name": "userData",
+      "parentFunctionId": "client.js->global->FUNCTION->createUserAxios",
+      "semanticId": "client.js->createUserAxios->PARAMETER->userData#0",
+      "type": "PARAMETER"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "name": "data",
+      "objectName": "response",
+      "semanticId": "client.js->createUserAxios->PROPERTY_ACCESS->response.data#0",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "name": "data",
+      "objectName": "response",
+      "semanticId": "client.js->fetchGitlab->PROPERTY_ACCESS->response.data#0",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "name": "data",
+      "objectName": "response",
+      "semanticId": "client.js->getUsersAxios->PROPERTY_ACCESS->response.data#0",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "name": "headers",
+      "objectName": "options",
+      "semanticId": "client.js->authFetch->PROPERTY_ACCESS->options.headers#0",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "name": "authFetch:body",
+      "scopeType": "function-body",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "client.js",
+      "name": "createUser:body",
+      "scopeType": "function_body",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "client.js",
+      "name": "createUserAxios:body",
+      "scopeType": "function_body",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "client.js",
+      "name": "fetchAndProcess:body",
+      "scopeType": "function_body",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "client.js",
+      "name": "fetchGig:body",
+      "scopeType": "function_body",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "client.js",
+      "name": "fetchGitlab:body",
+      "scopeType": "function_body",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "client.js",
+      "name": "fetchMultiple:body",
+      "scopeType": "function_body",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "client.js",
+      "name": "fetchProtectedData:body",
+      "scopeType": "function_body",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "client.js",
+      "name": "fetchUsers:body",
+      "scopeType": "function_body",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "client.js",
+      "name": "getUsersAxios:body",
+      "scopeType": "function_body",
+      "type": "SCOPE"
+    },
+    {
+      "condition": "token",
+      "conditional": true,
+      "constraints": [
+        {
+          "negated": false,
+          "operator": "truthy",
+          "variable": "token"
+        }
+      ],
+      "exported": false,
+      "file": "client.js",
+      "name": "if:66:2:0",
+      "scopeType": "if_statement",
+      "semanticId": "authFetch:if_statement[0]",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "client.js",
+      "name": "searchSpotify:body",
+      "scopeType": "function_body",
+      "type": "SCOPE"
+    },
+    {
+      "dependencies": [
+        "axios"
+      ],
+      "discoveryMethod": "simple",
+      "entrypoint": "index.js",
+      "exported": false,
+      "file": "/test/fixtures/07-http-requests",
+      "kind": "SERVICE",
+      "name": "http-requests-fixture",
+      "type": "SERVICE",
+      "version": "1.0.0"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "name": "authFetch",
+      "type": "VARIABLE"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "name": "data",
+      "type": "VARIABLE"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "name": "gigs",
+      "type": "VARIABLE"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "name": "gigs",
+      "type": "VARIABLE"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "name": "response",
+      "type": "VARIABLE"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "name": "response",
+      "type": "VARIABLE"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "name": "response",
+      "type": "VARIABLE"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "name": "response",
+      "type": "VARIABLE"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "name": "response",
+      "type": "VARIABLE"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "name": "response",
+      "type": "VARIABLE"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "name": "response",
+      "type": "VARIABLE"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "name": "response",
+      "type": "VARIABLE"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "name": "token",
+      "type": "VARIABLE"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "name": "tracks",
+      "type": "VARIABLE"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "name": "users",
+      "type": "VARIABLE"
+    }
+  ],
+  "edges": [
+    {
+      "from": "BRANCH:",
+      "type": "CONTAINS",
+      "to": "SCOPE:if:66:2:0"
+    },
+    {
+      "from": "BRANCH:",
+      "type": "HAS_CONDITION",
+      "to": "EXPRESSION:Identifier"
+    },
+    {
+      "from": "BRANCH:",
+      "type": "HAS_CONSEQUENT",
+      "to": "SCOPE:if:66:2:0"
+    },
+    {
+      "from": "CALL:authFetch",
+      "type": "CALLS",
+      "to": "FUNCTION:authFetch"
+    },
+    {
+      "from": "CALL:authFetch",
+      "type": "MAKES_REQUEST",
+      "to": "http:request:GET /api/protected"
+    },
+    {
+      "from": "CALL:axios.get",
+      "type": "MAKES_REQUEST",
+      "to": "http:request:GET /api/users"
+    },
+    {
+      "from": "CALL:axios.get",
+      "type": "MAKES_REQUEST",
+      "to": "http:request:GET https://gitlab.com/api/v4/projects"
+    },
+    {
+      "from": "CALL:axios.get",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:axios.get",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:axios.post",
+      "type": "MAKES_REQUEST",
+      "to": "http:request:POST /api/users"
+    },
+    {
+      "from": "CALL:axios.post",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:fetch",
+      "type": "MAKES_REQUEST",
+      "to": "http:request:GET /api/gigs"
+    },
+    {
+      "from": "CALL:fetch",
+      "type": "MAKES_REQUEST",
+      "to": "http:request:GET /api/gigs"
+    },
+    {
+      "from": "CALL:fetch",
+      "type": "MAKES_REQUEST",
+      "to": "http:request:GET /api/gigs/${...}"
+    },
+    {
+      "from": "CALL:fetch",
+      "type": "MAKES_REQUEST",
+      "to": "http:request:GET /api/tracks"
+    },
+    {
+      "from": "CALL:fetch",
+      "type": "MAKES_REQUEST",
+      "to": "http:request:GET /api/users"
+    },
+    {
+      "from": "CALL:fetch",
+      "type": "MAKES_REQUEST",
+      "to": "http:request:GET /api/users"
+    },
+    {
+      "from": "CALL:fetch",
+      "type": "MAKES_REQUEST",
+      "to": "http:request:GET dynamic"
+    },
+    {
+      "from": "CALL:fetch",
+      "type": "MAKES_REQUEST",
+      "to": "http:request:GET https://api.spotify.com/v1/search?q=${...}"
+    },
+    {
+      "from": "CALL:fetch",
+      "type": "MAKES_REQUEST",
+      "to": "http:request:POST /api/users"
+    },
+    {
+      "from": "CALL:fetch",
+      "type": "RETURNS",
+      "to": "FUNCTION:authFetch"
+    },
+    {
+      "from": "CALL:headers.set",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:headers.set",
+      "type": "USES",
+      "to": "CONSTANT:headers"
+    },
+    {
+      "from": "CALL:localStorage.getItem",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:response.json",
+      "type": "RETURNS",
+      "to": "FUNCTION:createUser"
+    },
+    {
+      "from": "CALL:response.json",
+      "type": "RETURNS",
+      "to": "FUNCTION:fetchGig"
+    },
+    {
+      "from": "CALL:response.json",
+      "type": "RETURNS",
+      "to": "FUNCTION:fetchProtectedData"
+    },
+    {
+      "from": "CALL:response.json",
+      "type": "RETURNS",
+      "to": "FUNCTION:searchSpotify"
+    },
+    {
+      "from": "CALL:response.json",
+      "type": "USES",
+      "to": "VARIABLE:response"
+    },
+    {
+      "from": "CALL:response.json",
+      "type": "USES",
+      "to": "VARIABLE:response"
+    },
+    {
+      "from": "CALL:response.json",
+      "type": "USES",
+      "to": "VARIABLE:response"
+    },
+    {
+      "from": "CALL:response.json",
+      "type": "USES",
+      "to": "VARIABLE:response"
+    },
+    {
+      "from": "CALL:response.json",
+      "type": "USES",
+      "to": "VARIABLE:response"
+    },
+    {
+      "from": "CONSTANT:headers",
+      "type": "ASSIGNED_FROM",
+      "to": "CONSTRUCTOR_CALL:new Headers()"
+    },
+    {
+      "from": "CONSTANT:headers",
+      "type": "INSTANCE_OF",
+      "to": "<unresolved:client.js->global->CLASS->Headers>"
+    },
+    {
+      "from": "EXPRESSION:data.gigs",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:data"
+    },
+    {
+      "from": "EXPRESSION:data.gigs",
+      "type": "RETURNS",
+      "to": "FUNCTION:anonymous[1]"
+    },
+    {
+      "from": "EXPRESSION:ObjectExpression",
+      "type": "RETURNS",
+      "to": "FUNCTION:fetchMultiple"
+    },
+    {
+      "from": "EXPRESSION:Promise.all().0",
+      "type": "DERIVES_FROM",
+      "to": "CALL:Promise.all"
+    },
+    {
+      "from": "EXPRESSION:Promise.all().1",
+      "type": "DERIVES_FROM",
+      "to": "CALL:Promise.all"
+    },
+    {
+      "from": "EXPRESSION:Promise.all().2",
+      "type": "DERIVES_FROM",
+      "to": "CALL:Promise.all"
+    },
+    {
+      "from": "EXPRESSION:response.data",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:response"
+    },
+    {
+      "from": "EXPRESSION:response.data",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:response"
+    },
+    {
+      "from": "EXPRESSION:response.data",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:response"
+    },
+    {
+      "from": "EXPRESSION:response.data",
+      "type": "RETURNS",
+      "to": "FUNCTION:createUserAxios"
+    },
+    {
+      "from": "EXPRESSION:response.data",
+      "type": "RETURNS",
+      "to": "FUNCTION:fetchGitlab"
+    },
+    {
+      "from": "EXPRESSION:response.data",
+      "type": "RETURNS",
+      "to": "FUNCTION:getUsersAxios"
+    },
+    {
+      "from": "FUNCTION:anonymous[0]",
+      "type": "MAKES_REQUEST",
+      "to": "http:request:GET /api/users"
+    },
+    {
+      "from": "FUNCTION:anonymous[1]",
+      "type": "MAKES_REQUEST",
+      "to": "http:request:GET /api/gigs"
+    },
+    {
+      "from": "FUNCTION:anonymous[2]",
+      "type": "MAKES_REQUEST",
+      "to": "http:request:GET /api/tracks"
+    },
+    {
+      "from": "FUNCTION:authFetch",
+      "type": "CONTAINS",
+      "to": "PROPERTY_ACCESS:headers"
+    },
+    {
+      "from": "FUNCTION:authFetch",
+      "type": "HAS_PARAMETER",
+      "to": "PARAMETER:options",
+      "metadata": {
+        "index": 1
+      }
+    },
+    {
+      "from": "FUNCTION:authFetch",
+      "type": "HAS_PARAMETER",
+      "to": "PARAMETER:url",
+      "metadata": {
+        "index": 0
+      }
+    },
+    {
+      "from": "FUNCTION:authFetch",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:authFetch:body"
+    },
+    {
+      "from": "FUNCTION:authFetch",
+      "type": "MAKES_REQUEST",
+      "to": "http:request:GET dynamic"
+    },
+    {
+      "from": "FUNCTION:createUser",
+      "type": "HAS_PARAMETER",
+      "to": "PARAMETER:userData",
+      "metadata": {
+        "index": 0
+      }
+    },
+    {
+      "from": "FUNCTION:createUser",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:createUser:body"
+    },
+    {
+      "from": "FUNCTION:createUser",
+      "type": "MAKES_REQUEST",
+      "to": "http:request:POST /api/users"
+    },
+    {
+      "from": "FUNCTION:createUserAxios",
+      "type": "CONTAINS",
+      "to": "PROPERTY_ACCESS:data"
+    },
+    {
+      "from": "FUNCTION:createUserAxios",
+      "type": "HAS_PARAMETER",
+      "to": "PARAMETER:userData",
+      "metadata": {
+        "index": 0
+      }
+    },
+    {
+      "from": "FUNCTION:createUserAxios",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:createUserAxios:body"
+    },
+    {
+      "from": "FUNCTION:createUserAxios",
+      "type": "MAKES_REQUEST",
+      "to": "http:request:POST /api/users"
+    },
+    {
+      "from": "FUNCTION:fetchAndProcess",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:fetchAndProcess:body"
+    },
+    {
+      "from": "FUNCTION:fetchAndProcess",
+      "type": "MAKES_REQUEST",
+      "to": "http:request:GET /api/gigs"
+    },
+    {
+      "from": "FUNCTION:fetchGig",
+      "type": "HAS_PARAMETER",
+      "to": "PARAMETER:gigId",
+      "metadata": {
+        "index": 0
+      }
+    },
+    {
+      "from": "FUNCTION:fetchGig",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:fetchGig:body"
+    },
+    {
+      "from": "FUNCTION:fetchGig",
+      "type": "MAKES_REQUEST",
+      "to": "http:request:GET /api/gigs/${...}"
+    },
+    {
+      "from": "FUNCTION:fetchGitlab",
+      "type": "CONTAINS",
+      "to": "PROPERTY_ACCESS:data"
+    },
+    {
+      "from": "FUNCTION:fetchGitlab",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:fetchGitlab:body"
+    },
+    {
+      "from": "FUNCTION:fetchGitlab",
+      "type": "MAKES_REQUEST",
+      "to": "http:request:GET https://gitlab.com/api/v4/projects"
+    },
+    {
+      "from": "FUNCTION:fetchMultiple",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:fetchMultiple:body"
+    },
+    {
+      "from": "FUNCTION:fetchProtectedData",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:fetchProtectedData:body"
+    },
+    {
+      "from": "FUNCTION:fetchProtectedData",
+      "type": "MAKES_REQUEST",
+      "to": "http:request:GET /api/protected"
+    },
+    {
+      "from": "FUNCTION:fetchUsers",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:fetchUsers:body"
+    },
+    {
+      "from": "FUNCTION:fetchUsers",
+      "type": "MAKES_REQUEST",
+      "to": "http:request:GET /api/users"
+    },
+    {
+      "from": "FUNCTION:getUsersAxios",
+      "type": "CONTAINS",
+      "to": "PROPERTY_ACCESS:data"
+    },
+    {
+      "from": "FUNCTION:getUsersAxios",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:getUsersAxios:body"
+    },
+    {
+      "from": "FUNCTION:getUsersAxios",
+      "type": "MAKES_REQUEST",
+      "to": "http:request:GET /api/users"
+    },
+    {
+      "from": "FUNCTION:searchSpotify",
+      "type": "HAS_PARAMETER",
+      "to": "PARAMETER:query",
+      "metadata": {
+        "index": 0
+      }
+    },
+    {
+      "from": "FUNCTION:searchSpotify",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:searchSpotify:body"
+    },
+    {
+      "from": "FUNCTION:searchSpotify",
+      "type": "MAKES_REQUEST",
+      "to": "http:request:GET https://api.spotify.com/v1/search?q=${...}"
+    },
+    {
+      "from": "grafema:plugin:ArgumentParameterLinker",
+      "type": "DEPENDS_ON",
+      "to": "grafema:plugin:JSASTAnalyzer"
+    },
+    {
+      "from": "grafema:plugin:ArgumentParameterLinker",
+      "type": "DEPENDS_ON",
+      "to": "grafema:plugin:MethodCallResolver"
+    },
+    {
+      "from": "grafema:plugin:CallbackCallResolver",
+      "type": "DEPENDS_ON",
+      "to": "grafema:plugin:ImportExportLinker"
+    },
+    {
+      "from": "grafema:plugin:FetchAnalyzer",
+      "type": "DEPENDS_ON",
+      "to": "grafema:plugin:JSASTAnalyzer"
+    },
+    {
+      "from": "grafema:plugin:FetchAnalyzer",
+      "type": "DEPENDS_ON",
+      "to": "grafema:plugin:JSModuleIndexer"
+    },
+    {
+      "from": "grafema:plugin:ImportExportLinker",
+      "type": "DEPENDS_ON",
+      "to": "grafema:plugin:JSASTAnalyzer"
+    },
+    {
+      "from": "grafema:plugin:InstanceOfResolver",
+      "type": "DEPENDS_ON",
+      "to": "grafema:plugin:JSASTAnalyzer"
+    },
+    {
+      "from": "grafema:plugin:JSASTAnalyzer",
+      "type": "DEPENDS_ON",
+      "to": "grafema:plugin:JSModuleIndexer"
+    },
+    {
+      "from": "grafema:plugin:MethodCallResolver",
+      "type": "DEPENDS_ON",
+      "to": "grafema:plugin:ImportExportLinker"
+    },
+    {
+      "from": "grafema:plugin:NodejsBuiltinsResolver",
+      "type": "DEPENDS_ON",
+      "to": "grafema:plugin:ImportExportLinker"
+    },
+    {
+      "from": "grafema:plugin:NodejsBuiltinsResolver",
+      "type": "DEPENDS_ON",
+      "to": "grafema:plugin:JSASTAnalyzer"
+    },
+    {
+      "from": "grafema:plugin:RejectionPropagationEnricher",
+      "type": "DEPENDS_ON",
+      "to": "grafema:plugin:JSASTAnalyzer"
+    },
+    {
+      "from": "http:request:GET /api/gigs",
+      "type": "CALLS",
+      "to": "net:request:__network__"
+    },
+    {
+      "from": "http:request:GET /api/gigs",
+      "type": "CALLS",
+      "to": "net:request:__network__"
+    },
+    {
+      "from": "http:request:GET /api/gigs/${...}",
+      "type": "CALLS",
+      "to": "net:request:__network__"
+    },
+    {
+      "from": "http:request:GET /api/protected",
+      "type": "CALLS",
+      "to": "net:request:__network__"
+    },
+    {
+      "from": "http:request:GET /api/tracks",
+      "type": "CALLS",
+      "to": "net:request:__network__"
+    },
+    {
+      "from": "http:request:GET /api/users",
+      "type": "CALLS",
+      "to": "net:request:__network__"
+    },
+    {
+      "from": "http:request:GET /api/users",
+      "type": "CALLS",
+      "to": "net:request:__network__"
+    },
+    {
+      "from": "http:request:GET /api/users",
+      "type": "CALLS",
+      "to": "net:request:__network__"
+    },
+    {
+      "from": "http:request:GET dynamic",
+      "type": "CALLS",
+      "to": "net:request:__network__"
+    },
+    {
+      "from": "http:request:GET https://api.spotify.com/v1/search?q=${...}",
+      "type": "CALLS_API",
+      "to": "EXTERNAL:api.spotify.com"
+    },
+    {
+      "from": "http:request:GET https://api.spotify.com/v1/search?q=${...}",
+      "type": "CALLS",
+      "to": "net:request:__network__"
+    },
+    {
+      "from": "http:request:GET https://gitlab.com/api/v4/projects",
+      "type": "CALLS_API",
+      "to": "EXTERNAL:gitlab.com"
+    },
+    {
+      "from": "http:request:GET https://gitlab.com/api/v4/projects",
+      "type": "CALLS",
+      "to": "net:request:__network__"
+    },
+    {
+      "from": "http:request:POST /api/users",
+      "type": "CALLS",
+      "to": "net:request:__network__"
+    },
+    {
+      "from": "http:request:POST /api/users",
+      "type": "CALLS",
+      "to": "net:request:__network__"
+    },
+    {
+      "from": "MODULE:client.js",
+      "type": "CONTAINS",
+      "to": "FUNCTION:authFetch"
+    },
+    {
+      "from": "MODULE:client.js",
+      "type": "CONTAINS",
+      "to": "FUNCTION:createUser"
+    },
+    {
+      "from": "MODULE:client.js",
+      "type": "CONTAINS",
+      "to": "FUNCTION:createUserAxios"
+    },
+    {
+      "from": "MODULE:client.js",
+      "type": "CONTAINS",
+      "to": "FUNCTION:fetchAndProcess"
+    },
+    {
+      "from": "MODULE:client.js",
+      "type": "CONTAINS",
+      "to": "FUNCTION:fetchGig"
+    },
+    {
+      "from": "MODULE:client.js",
+      "type": "CONTAINS",
+      "to": "FUNCTION:fetchGitlab"
+    },
+    {
+      "from": "MODULE:client.js",
+      "type": "CONTAINS",
+      "to": "FUNCTION:fetchMultiple"
+    },
+    {
+      "from": "MODULE:client.js",
+      "type": "CONTAINS",
+      "to": "FUNCTION:fetchProtectedData"
+    },
+    {
+      "from": "MODULE:client.js",
+      "type": "CONTAINS",
+      "to": "FUNCTION:fetchUsers"
+    },
+    {
+      "from": "MODULE:client.js",
+      "type": "CONTAINS",
+      "to": "FUNCTION:getUsersAxios"
+    },
+    {
+      "from": "MODULE:client.js",
+      "type": "CONTAINS",
+      "to": "FUNCTION:searchSpotify"
+    },
+    {
+      "from": "MODULE:client.js",
+      "type": "CONTAINS",
+      "to": "http:request:GET /api/gigs"
+    },
+    {
+      "from": "MODULE:client.js",
+      "type": "CONTAINS",
+      "to": "http:request:GET /api/gigs"
+    },
+    {
+      "from": "MODULE:client.js",
+      "type": "CONTAINS",
+      "to": "http:request:GET /api/gigs/${...}"
+    },
+    {
+      "from": "MODULE:client.js",
+      "type": "CONTAINS",
+      "to": "http:request:GET /api/protected"
+    },
+    {
+      "from": "MODULE:client.js",
+      "type": "CONTAINS",
+      "to": "http:request:GET /api/tracks"
+    },
+    {
+      "from": "MODULE:client.js",
+      "type": "CONTAINS",
+      "to": "http:request:GET /api/users"
+    },
+    {
+      "from": "MODULE:client.js",
+      "type": "CONTAINS",
+      "to": "http:request:GET /api/users"
+    },
+    {
+      "from": "MODULE:client.js",
+      "type": "CONTAINS",
+      "to": "http:request:GET /api/users"
+    },
+    {
+      "from": "MODULE:client.js",
+      "type": "CONTAINS",
+      "to": "http:request:GET dynamic"
+    },
+    {
+      "from": "MODULE:client.js",
+      "type": "CONTAINS",
+      "to": "http:request:GET https://api.spotify.com/v1/search?q=${...}"
+    },
+    {
+      "from": "MODULE:client.js",
+      "type": "CONTAINS",
+      "to": "http:request:GET https://gitlab.com/api/v4/projects"
+    },
+    {
+      "from": "MODULE:client.js",
+      "type": "CONTAINS",
+      "to": "http:request:POST /api/users"
+    },
+    {
+      "from": "MODULE:client.js",
+      "type": "CONTAINS",
+      "to": "http:request:POST /api/users"
+    },
+    {
+      "from": "MODULE:client.js",
+      "type": "DECLARES",
+      "to": "VARIABLE:authFetch"
+    },
+    {
+      "from": "MODULE:index.js",
+      "type": "CONTAINS",
+      "to": "IMPORT:./client.js"
+    },
+    {
+      "from": "MODULE:index.js",
+      "type": "DEPENDS_ON",
+      "to": "MODULE:client.js",
+      "metadata": {
+        "version": "main"
+      }
+    },
+    {
+      "from": "MODULE:index.js",
+      "type": "IMPORTS",
+      "to": "MODULE:client.js"
+    },
+    {
+      "from": "SCOPE:authFetch:body",
+      "type": "CONTAINS",
+      "to": "BRANCH:"
+    },
+    {
+      "from": "SCOPE:authFetch:body",
+      "type": "CONTAINS",
+      "to": "CALL:fetch"
+    },
+    {
+      "from": "SCOPE:authFetch:body",
+      "type": "CONTAINS",
+      "to": "CALL:Headers"
+    },
+    {
+      "from": "SCOPE:authFetch:body",
+      "type": "CONTAINS",
+      "to": "CALL:localStorage.getItem"
+    },
+    {
+      "from": "SCOPE:authFetch:body",
+      "type": "DECLARES",
+      "to": "CONSTANT:headers"
+    },
+    {
+      "from": "SCOPE:authFetch:body",
+      "type": "DECLARES",
+      "to": "VARIABLE:token"
+    },
+    {
+      "from": "SCOPE:createUser:body",
+      "type": "CONTAINS",
+      "to": "CALL:fetch"
+    },
+    {
+      "from": "SCOPE:createUser:body",
+      "type": "CONTAINS",
+      "to": "CALL:JSON.stringify"
+    },
+    {
+      "from": "SCOPE:createUser:body",
+      "type": "CONTAINS",
+      "to": "CALL:response.json"
+    },
+    {
+      "from": "SCOPE:createUser:body",
+      "type": "DECLARES",
+      "to": "VARIABLE:response"
+    },
+    {
+      "from": "SCOPE:createUserAxios:body",
+      "type": "CONTAINS",
+      "to": "CALL:axios.post"
+    },
+    {
+      "from": "SCOPE:createUserAxios:body",
+      "type": "DECLARES",
+      "to": "VARIABLE:response"
+    },
+    {
+      "from": "SCOPE:fetchAndProcess:body",
+      "type": "CONTAINS",
+      "to": "CALL:fetch"
+    },
+    {
+      "from": "SCOPE:fetchAndProcess:body",
+      "type": "CONTAINS",
+      "to": "FUNCTION:anonymous[0]"
+    },
+    {
+      "from": "SCOPE:fetchAndProcess:body",
+      "type": "CONTAINS",
+      "to": "FUNCTION:anonymous[1]"
+    },
+    {
+      "from": "SCOPE:fetchAndProcess:body",
+      "type": "DECLARES",
+      "to": "VARIABLE:gigs"
+    },
+    {
+      "from": "SCOPE:fetchGig:body",
+      "type": "CONTAINS",
+      "to": "CALL:fetch"
+    },
+    {
+      "from": "SCOPE:fetchGig:body",
+      "type": "CONTAINS",
+      "to": "CALL:response.json"
+    },
+    {
+      "from": "SCOPE:fetchGig:body",
+      "type": "DECLARES",
+      "to": "VARIABLE:response"
+    },
+    {
+      "from": "SCOPE:fetchGitlab:body",
+      "type": "CONTAINS",
+      "to": "CALL:axios.get"
+    },
+    {
+      "from": "SCOPE:fetchGitlab:body",
+      "type": "DECLARES",
+      "to": "VARIABLE:response"
+    },
+    {
+      "from": "SCOPE:fetchMultiple:body",
+      "type": "CONTAINS",
+      "to": "CALL:fetch"
+    },
+    {
+      "from": "SCOPE:fetchMultiple:body",
+      "type": "CONTAINS",
+      "to": "CALL:fetch"
+    },
+    {
+      "from": "SCOPE:fetchMultiple:body",
+      "type": "CONTAINS",
+      "to": "CALL:fetch"
+    },
+    {
+      "from": "SCOPE:fetchMultiple:body",
+      "type": "CONTAINS",
+      "to": "CALL:Promise.all"
+    },
+    {
+      "from": "SCOPE:fetchMultiple:body",
+      "type": "CONTAINS",
+      "to": "FUNCTION:anonymous[0]"
+    },
+    {
+      "from": "SCOPE:fetchMultiple:body",
+      "type": "CONTAINS",
+      "to": "FUNCTION:anonymous[1]"
+    },
+    {
+      "from": "SCOPE:fetchMultiple:body",
+      "type": "CONTAINS",
+      "to": "FUNCTION:anonymous[2]"
+    },
+    {
+      "from": "SCOPE:fetchMultiple:body",
+      "type": "DECLARES",
+      "to": "VARIABLE:gigs"
+    },
+    {
+      "from": "SCOPE:fetchMultiple:body",
+      "type": "DECLARES",
+      "to": "VARIABLE:tracks"
+    },
+    {
+      "from": "SCOPE:fetchMultiple:body",
+      "type": "DECLARES",
+      "to": "VARIABLE:users"
+    },
+    {
+      "from": "SCOPE:fetchProtectedData:body",
+      "type": "CONTAINS",
+      "to": "CALL:authFetch"
+    },
+    {
+      "from": "SCOPE:fetchProtectedData:body",
+      "type": "CONTAINS",
+      "to": "CALL:response.json"
+    },
+    {
+      "from": "SCOPE:fetchProtectedData:body",
+      "type": "DECLARES",
+      "to": "VARIABLE:response"
+    },
+    {
+      "from": "SCOPE:fetchUsers:body",
+      "type": "CONTAINS",
+      "to": "CALL:fetch"
+    },
+    {
+      "from": "SCOPE:fetchUsers:body",
+      "type": "CONTAINS",
+      "to": "CALL:response.json"
+    },
+    {
+      "from": "SCOPE:fetchUsers:body",
+      "type": "DECLARES",
+      "to": "VARIABLE:data"
+    },
+    {
+      "from": "SCOPE:fetchUsers:body",
+      "type": "DECLARES",
+      "to": "VARIABLE:response"
+    },
+    {
+      "from": "SCOPE:getUsersAxios:body",
+      "type": "CONTAINS",
+      "to": "CALL:axios.get"
+    },
+    {
+      "from": "SCOPE:getUsersAxios:body",
+      "type": "DECLARES",
+      "to": "VARIABLE:response"
+    },
+    {
+      "from": "SCOPE:if:66:2:0",
+      "type": "CONTAINS",
+      "to": "CALL:headers.set"
+    },
+    {
+      "from": "SCOPE:searchSpotify:body",
+      "type": "CONTAINS",
+      "to": "CALL:fetch"
+    },
+    {
+      "from": "SCOPE:searchSpotify:body",
+      "type": "CONTAINS",
+      "to": "CALL:response.json"
+    },
+    {
+      "from": "SCOPE:searchSpotify:body",
+      "type": "DECLARES",
+      "to": "VARIABLE:response"
+    },
+    {
+      "from": "SERVICE:http-requests-fixture",
+      "type": "CONTAINS",
+      "to": "MODULE:client.js",
+      "metadata": {
+        "version": "main"
+      }
+    },
+    {
+      "from": "SERVICE:http-requests-fixture",
+      "type": "CONTAINS",
+      "to": "MODULE:index.js",
+      "metadata": {
+        "version": "main"
+      }
+    },
+    {
+      "from": "VARIABLE:authFetch",
+      "type": "ASSIGNED_FROM",
+      "to": "FUNCTION:authFetch"
+    },
+    {
+      "from": "VARIABLE:data",
+      "type": "ASSIGNED_FROM",
+      "to": "CALL:response.json"
+    },
+    {
+      "from": "VARIABLE:data",
+      "type": "RETURNS",
+      "to": "FUNCTION:fetchUsers"
+    },
+    {
+      "from": "VARIABLE:gigs",
+      "type": "ASSIGNED_FROM",
+      "to": "EXPRESSION:Promise.all().1"
+    },
+    {
+      "from": "VARIABLE:gigs",
+      "type": "RETURNS",
+      "to": "FUNCTION:fetchAndProcess"
+    },
+    {
+      "from": "VARIABLE:response",
+      "type": "ASSIGNED_FROM",
+      "to": "CALL:authFetch"
+    },
+    {
+      "from": "VARIABLE:response",
+      "type": "ASSIGNED_FROM",
+      "to": "CALL:axios.get"
+    },
+    {
+      "from": "VARIABLE:response",
+      "type": "ASSIGNED_FROM",
+      "to": "CALL:axios.get"
+    },
+    {
+      "from": "VARIABLE:response",
+      "type": "ASSIGNED_FROM",
+      "to": "CALL:axios.post"
+    },
+    {
+      "from": "VARIABLE:response",
+      "type": "ASSIGNED_FROM",
+      "to": "CALL:fetch"
+    },
+    {
+      "from": "VARIABLE:response",
+      "type": "ASSIGNED_FROM",
+      "to": "CALL:fetch"
+    },
+    {
+      "from": "VARIABLE:response",
+      "type": "ASSIGNED_FROM",
+      "to": "CALL:fetch"
+    },
+    {
+      "from": "VARIABLE:response",
+      "type": "ASSIGNED_FROM",
+      "to": "CALL:fetch"
+    },
+    {
+      "from": "VARIABLE:token",
+      "type": "ASSIGNED_FROM",
+      "to": "CALL:localStorage.getItem"
+    },
+    {
+      "from": "VARIABLE:tracks",
+      "type": "ASSIGNED_FROM",
+      "to": "EXPRESSION:Promise.all().2"
+    },
+    {
+      "from": "VARIABLE:users",
+      "type": "ASSIGNED_FROM",
+      "to": "EXPRESSION:Promise.all().0"
+    }
+  ]
+}

@@ -1,0 +1,8130 @@
+{
+  "nodes": [
+    {
+      "branchType": "if",
+      "exported": false,
+      "file": "aliased-imports.js",
+      "name": "",
+      "semanticId": "aliased-imports.js->loadWithAlias->anonymous[0]->anonymous[0]->BRANCH->if#0",
+      "type": "BRANCH"
+    },
+    {
+      "branchType": "if",
+      "exported": false,
+      "file": "aliased-imports.js",
+      "name": "",
+      "semanticId": "aliased-imports.js->saveWithAlias->anonymous[0]->anonymous[0]->BRANCH->if#1",
+      "type": "BRANCH"
+    },
+    {
+      "branchType": "if",
+      "exported": false,
+      "file": "index.js",
+      "name": "",
+      "semanticId": "index.js->loadConfig->anonymous[0]->anonymous[0]->BRANCH->if#0",
+      "type": "BRANCH"
+    },
+    {
+      "branchType": "if",
+      "exported": false,
+      "file": "index.js",
+      "name": "",
+      "semanticId": "index.js->saveData->anonymous[0]->BRANCH->if#1",
+      "type": "BRANCH"
+    },
+    {
+      "branchType": "if",
+      "exported": false,
+      "file": "namespace-import.js",
+      "name": "",
+      "semanticId": "namespace-import.js->loadViaNamespace->anonymous[0]->anonymous[0]->BRANCH->if#0",
+      "type": "BRANCH"
+    },
+    {
+      "branchType": "if",
+      "exported": false,
+      "file": "node-prefix.js",
+      "name": "",
+      "semanticId": "node-prefix.js->createWorker->BRANCH->if#0",
+      "type": "BRANCH"
+    },
+    {
+      "branchType": "if",
+      "exported": false,
+      "file": "unused-imports.js",
+      "name": "",
+      "semanticId": "unused-imports.js->onlyReadFile->anonymous[0]->anonymous[0]->BRANCH->if#0",
+      "type": "BRANCH"
+    },
+    {
+      "exported": false,
+      "file": "fs-promises.js",
+      "isAwaited": true,
+      "isInsideTry": true,
+      "name": "access",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "index.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "name": "basename",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "index.js",
+      "isMethodCall": true,
+      "method": "on",
+      "name": "child.stdout.on",
+      "object": "child.stdout",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
+      "file": "index.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "error",
+      "name": "console.error",
+      "object": "console",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
+      "file": "index.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "log",
+      "name": "console.log",
+      "object": "console",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "fs-promises.js",
+      "isAwaited": true,
+      "isInsideTry": false,
+      "name": "copyFile",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "unused-imports.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "name": "createHash",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "index.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "name": "createServer",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "node-prefix.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "name": "createServer",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "node-prefix.js",
+      "isNew": true,
+      "name": "EventEmitter",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "index.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "name": "exec",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
+      "file": "namespace-import.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "existsSync",
+      "name": "fs.existsSync",
+      "object": "fs",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
+      "file": "namespace-import.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "readFile",
+      "name": "fs.readFile",
+      "object": "fs",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
+      "file": "namespace-import.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "writeFileSync",
+      "name": "fs.writeFileSync",
+      "object": "fs",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "aliased-imports.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "name": "hash",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "index.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "name": "join",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "node-prefix.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "name": "join",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "unused-imports.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "name": "join",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
+      "file": "fs-promises.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "parse",
+      "name": "JSON.parse",
+      "object": "JSON",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
+      "file": "index.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "parse",
+      "name": "JSON.parse",
+      "object": "JSON",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
+      "file": "fs-promises.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "stringify",
+      "name": "JSON.stringify",
+      "object": "JSON",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
+      "file": "index.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "stringify",
+      "name": "JSON.stringify",
+      "object": "JSON",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "fs-promises.js",
+      "isAwaited": true,
+      "isInsideTry": false,
+      "name": "mkdir",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
+      "file": "namespace-import.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "join",
+      "name": "path.join",
+      "object": "path",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
+      "file": "namespace-import.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "parse",
+      "name": "path.parse",
+      "object": "path",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "aliased-imports.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "name": "pathJoin",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "aliased-imports.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "name": "pathResolve",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "aliased-imports.js",
+      "isNew": true,
+      "name": "Promise",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "aliased-imports.js",
+      "isNew": true,
+      "name": "Promise",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "index.js",
+      "isNew": true,
+      "name": "Promise",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "namespace-import.js",
+      "isNew": true,
+      "name": "Promise",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "unused-imports.js",
+      "isNew": true,
+      "name": "Promise",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "fs-promises.js",
+      "isAwaited": true,
+      "isInsideTry": false,
+      "name": "readdir",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "index.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "name": "readdir",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "fs-promises.js",
+      "isAwaited": true,
+      "isInsideTry": false,
+      "name": "readFile",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "index.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "name": "readFile",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "node-prefix.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "name": "readFile",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "unused-imports.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "name": "readFile",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "aliased-imports.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "name": "reject",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "aliased-imports.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "name": "reject",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "index.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "name": "reject",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "namespace-import.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "name": "reject",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "unused-imports.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "name": "reject",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
+      "file": "index.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "end",
+      "name": "res.end",
+      "object": "res",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
+      "file": "index.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "writeHead",
+      "name": "res.writeHead",
+      "object": "res",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "aliased-imports.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "name": "resolve",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "aliased-imports.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "name": "resolve",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "index.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "name": "resolve",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "index.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "name": "resolve",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "namespace-import.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "name": "resolve",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "node-prefix.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "name": "resolve",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "unused-imports.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "name": "resolve",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "unused-imports.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "name": "resolve",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "aliased-imports.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "name": "rf",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "fs-promises.js",
+      "isAwaited": true,
+      "isInsideTry": false,
+      "name": "rm",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
+      "file": "index.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "listen",
+      "name": "server.listen",
+      "object": "server",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "index.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "name": "spawn",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "fs-promises.js",
+      "isAwaited": true,
+      "isInsideTry": false,
+      "name": "stat",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
+      "file": "namespace-import.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "format",
+      "name": "url.format",
+      "object": "url",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
+      "file": "namespace-import.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "parse",
+      "name": "url.parse",
+      "object": "url",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
+      "file": "namespace-import.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "inspect",
+      "name": "util.inspect",
+      "object": "util",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "exported": false,
+      "file": "namespace-import.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "promisify",
+      "name": "util.promisify",
+      "object": "util",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "aliased-imports.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "name": "wf",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "node-prefix.js",
+      "isNew": true,
+      "name": "Worker",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "fs-promises.js",
+      "isAwaited": true,
+      "isInsideTry": false,
+      "name": "writeFile",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "index.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "name": "writeFile",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "node-prefix.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "name": "writeFile",
+      "type": "CALL"
+    },
+    {
+      "exported": false,
+      "file": "fs-promises.js",
+      "name": "",
+      "semanticId": "fs-promises.js->checkAccess->CATCH_BLOCK->catch#0",
+      "type": "CATCH_BLOCK"
+    },
+    {
+      "className": "EventEmitter",
+      "exported": false,
+      "file": "node-prefix.js",
+      "isBuiltin": false,
+      "name": "new EventEmitter()",
+      "type": "CONSTRUCTOR_CALL"
+    },
+    {
+      "className": "Promise",
+      "exported": false,
+      "file": "aliased-imports.js",
+      "isBuiltin": true,
+      "name": "new Promise()",
+      "type": "CONSTRUCTOR_CALL"
+    },
+    {
+      "className": "Promise",
+      "exported": false,
+      "file": "aliased-imports.js",
+      "isBuiltin": true,
+      "name": "new Promise()",
+      "type": "CONSTRUCTOR_CALL"
+    },
+    {
+      "className": "Promise",
+      "exported": false,
+      "file": "index.js",
+      "isBuiltin": true,
+      "name": "new Promise()",
+      "type": "CONSTRUCTOR_CALL"
+    },
+    {
+      "className": "Promise",
+      "exported": false,
+      "file": "namespace-import.js",
+      "isBuiltin": true,
+      "name": "new Promise()",
+      "type": "CONSTRUCTOR_CALL"
+    },
+    {
+      "className": "Promise",
+      "exported": false,
+      "file": "unused-imports.js",
+      "isBuiltin": true,
+      "name": "new Promise()",
+      "type": "CONSTRUCTOR_CALL"
+    },
+    {
+      "className": "Worker",
+      "exported": false,
+      "file": "node-prefix.js",
+      "isBuiltin": true,
+      "name": "new Worker()",
+      "type": "CONSTRUCTOR_CALL"
+    },
+    {
+      "default": false,
+      "exported": false,
+      "exportKind": "value",
+      "exportType": "named",
+      "file": "index.js",
+      "local": "buildPath",
+      "name": "buildPath",
+      "type": "EXPORT"
+    },
+    {
+      "default": false,
+      "exported": false,
+      "exportKind": "value",
+      "exportType": "named",
+      "file": "aliased-imports.js",
+      "local": "buildPathWithAlias",
+      "name": "buildPathWithAlias",
+      "type": "EXPORT"
+    },
+    {
+      "default": false,
+      "exported": false,
+      "exportKind": "value",
+      "exportType": "named",
+      "file": "node-prefix.js",
+      "local": "buildWithNodePrefix",
+      "name": "buildWithNodePrefix",
+      "type": "EXPORT"
+    },
+    {
+      "default": false,
+      "exported": false,
+      "exportKind": "value",
+      "exportType": "named",
+      "file": "fs-promises.js",
+      "local": "checkAccess",
+      "name": "checkAccess",
+      "type": "EXPORT"
+    },
+    {
+      "default": false,
+      "exported": false,
+      "exportKind": "value",
+      "exportType": "named",
+      "file": "fs-promises.js",
+      "local": "copy",
+      "name": "copy",
+      "type": "EXPORT"
+    },
+    {
+      "default": false,
+      "exported": false,
+      "exportKind": "value",
+      "exportType": "named",
+      "file": "node-prefix.js",
+      "local": "createEmitter",
+      "name": "createEmitter",
+      "type": "EXPORT"
+    },
+    {
+      "default": false,
+      "exported": false,
+      "exportKind": "value",
+      "exportType": "named",
+      "file": "node-prefix.js",
+      "local": "createServerWithNodePrefix",
+      "name": "createServerWithNodePrefix",
+      "type": "EXPORT"
+    },
+    {
+      "default": false,
+      "exported": false,
+      "exportKind": "value",
+      "exportType": "named",
+      "file": "node-prefix.js",
+      "local": "createWorker",
+      "name": "createWorker",
+      "type": "EXPORT"
+    },
+    {
+      "default": false,
+      "exported": false,
+      "exportKind": "value",
+      "exportType": "named",
+      "file": "fs-promises.js",
+      "local": "ensureDir",
+      "name": "ensureDir",
+      "type": "EXPORT"
+    },
+    {
+      "default": false,
+      "exported": false,
+      "exportKind": "value",
+      "exportType": "named",
+      "file": "namespace-import.js",
+      "local": "existsViaNamespace",
+      "name": "existsViaNamespace",
+      "type": "EXPORT"
+    },
+    {
+      "default": false,
+      "exported": false,
+      "exportKind": "value",
+      "exportType": "named",
+      "file": "namespace-import.js",
+      "local": "formatUrl",
+      "name": "formatUrl",
+      "type": "EXPORT"
+    },
+    {
+      "default": false,
+      "exported": false,
+      "exportKind": "value",
+      "exportType": "named",
+      "file": "index.js",
+      "local": "getFilename",
+      "name": "getFilename",
+      "type": "EXPORT"
+    },
+    {
+      "default": false,
+      "exported": false,
+      "exportKind": "value",
+      "exportType": "named",
+      "file": "fs-promises.js",
+      "local": "getStats",
+      "name": "getStats",
+      "type": "EXPORT"
+    },
+    {
+      "default": false,
+      "exported": false,
+      "exportKind": "value",
+      "exportType": "named",
+      "file": "aliased-imports.js",
+      "local": "hashWithAlias",
+      "name": "hashWithAlias",
+      "type": "EXPORT"
+    },
+    {
+      "default": false,
+      "exported": false,
+      "exportKind": "value",
+      "exportType": "named",
+      "file": "namespace-import.js",
+      "local": "inspectObject",
+      "name": "inspectObject",
+      "type": "EXPORT"
+    },
+    {
+      "default": false,
+      "exported": false,
+      "exportKind": "value",
+      "exportType": "named",
+      "file": "namespace-import.js",
+      "local": "joinViaNamespace",
+      "name": "joinViaNamespace",
+      "type": "EXPORT"
+    },
+    {
+      "default": false,
+      "exported": false,
+      "exportKind": "value",
+      "exportType": "named",
+      "file": "fs-promises.js",
+      "local": "listDir",
+      "name": "listDir",
+      "type": "EXPORT"
+    },
+    {
+      "default": false,
+      "exported": false,
+      "exportKind": "value",
+      "exportType": "named",
+      "file": "index.js",
+      "local": "listFiles",
+      "name": "listFiles",
+      "type": "EXPORT"
+    },
+    {
+      "default": false,
+      "exported": false,
+      "exportKind": "value",
+      "exportType": "named",
+      "file": "fs-promises.js",
+      "local": "loadAsync",
+      "name": "loadAsync",
+      "type": "EXPORT"
+    },
+    {
+      "default": false,
+      "exported": false,
+      "exportKind": "value",
+      "exportType": "named",
+      "file": "index.js",
+      "local": "loadConfig",
+      "name": "loadConfig",
+      "type": "EXPORT"
+    },
+    {
+      "default": false,
+      "exported": false,
+      "exportKind": "value",
+      "exportType": "named",
+      "file": "namespace-import.js",
+      "local": "loadViaNamespace",
+      "name": "loadViaNamespace",
+      "type": "EXPORT"
+    },
+    {
+      "default": false,
+      "exported": false,
+      "exportKind": "value",
+      "exportType": "named",
+      "file": "aliased-imports.js",
+      "local": "loadWithAlias",
+      "name": "loadWithAlias",
+      "type": "EXPORT"
+    },
+    {
+      "default": false,
+      "exported": false,
+      "exportKind": "value",
+      "exportType": "named",
+      "file": "node-prefix.js",
+      "local": "loadWithNodePrefix",
+      "name": "loadWithNodePrefix",
+      "type": "EXPORT"
+    },
+    {
+      "default": false,
+      "exported": false,
+      "exportKind": "value",
+      "exportType": "named",
+      "file": "unused-imports.js",
+      "local": "onlyCreateHash",
+      "name": "onlyCreateHash",
+      "type": "EXPORT"
+    },
+    {
+      "default": false,
+      "exported": false,
+      "exportKind": "value",
+      "exportType": "named",
+      "file": "unused-imports.js",
+      "local": "onlyJoinAndResolve",
+      "name": "onlyJoinAndResolve",
+      "type": "EXPORT"
+    },
+    {
+      "default": false,
+      "exported": false,
+      "exportKind": "value",
+      "exportType": "named",
+      "file": "unused-imports.js",
+      "local": "onlyReadFile",
+      "name": "onlyReadFile",
+      "type": "EXPORT"
+    },
+    {
+      "default": false,
+      "exported": false,
+      "exportKind": "value",
+      "exportType": "named",
+      "file": "namespace-import.js",
+      "local": "parseUrl",
+      "name": "parseUrl",
+      "type": "EXPORT"
+    },
+    {
+      "default": false,
+      "exported": false,
+      "exportKind": "value",
+      "exportType": "named",
+      "file": "namespace-import.js",
+      "local": "parseViaNamespace",
+      "name": "parseViaNamespace",
+      "type": "EXPORT"
+    },
+    {
+      "default": false,
+      "exported": false,
+      "exportKind": "value",
+      "exportType": "named",
+      "file": "namespace-import.js",
+      "local": "promisifyCallback",
+      "name": "promisifyCallback",
+      "type": "EXPORT"
+    },
+    {
+      "default": false,
+      "exported": false,
+      "exportKind": "value",
+      "exportType": "named",
+      "file": "fs-promises.js",
+      "local": "removeFile",
+      "name": "removeFile",
+      "type": "EXPORT"
+    },
+    {
+      "default": false,
+      "exported": false,
+      "exportKind": "value",
+      "exportType": "named",
+      "file": "index.js",
+      "local": "runCommand",
+      "name": "runCommand",
+      "type": "EXPORT"
+    },
+    {
+      "default": false,
+      "exported": false,
+      "exportKind": "value",
+      "exportType": "named",
+      "file": "fs-promises.js",
+      "local": "saveAsync",
+      "name": "saveAsync",
+      "type": "EXPORT"
+    },
+    {
+      "default": false,
+      "exported": false,
+      "exportKind": "value",
+      "exportType": "named",
+      "file": "index.js",
+      "local": "saveData",
+      "name": "saveData",
+      "type": "EXPORT"
+    },
+    {
+      "default": false,
+      "exported": false,
+      "exportKind": "value",
+      "exportType": "named",
+      "file": "aliased-imports.js",
+      "local": "saveWithAlias",
+      "name": "saveWithAlias",
+      "type": "EXPORT"
+    },
+    {
+      "default": false,
+      "exported": false,
+      "exportKind": "value",
+      "exportType": "named",
+      "file": "node-prefix.js",
+      "local": "saveWithNodePrefix",
+      "name": "saveWithNodePrefix",
+      "type": "EXPORT"
+    },
+    {
+      "default": false,
+      "exported": false,
+      "exportKind": "value",
+      "exportType": "named",
+      "file": "index.js",
+      "local": "spawnProcess",
+      "name": "spawnProcess",
+      "type": "EXPORT"
+    },
+    {
+      "default": false,
+      "exported": false,
+      "exportKind": "value",
+      "exportType": "named",
+      "file": "index.js",
+      "local": "startServer",
+      "name": "startServer",
+      "type": "EXPORT"
+    },
+    {
+      "default": false,
+      "exported": false,
+      "exportKind": "value",
+      "exportType": "named",
+      "file": "namespace-import.js",
+      "local": "writeViaNamespace",
+      "name": "writeViaNamespace",
+      "type": "EXPORT"
+    },
+    {
+      "exported": false,
+      "expressionType": "AwaitExpression",
+      "file": "fs-promises.js",
+      "name": "AwaitExpression",
+      "type": "EXPRESSION"
+    },
+    {
+      "exported": false,
+      "expressionType": "AwaitExpression",
+      "file": "fs-promises.js",
+      "name": "AwaitExpression",
+      "type": "EXPRESSION"
+    },
+    {
+      "exported": false,
+      "expressionType": "Identifier",
+      "file": "aliased-imports.js",
+      "name": "Identifier",
+      "type": "EXPRESSION"
+    },
+    {
+      "exported": false,
+      "expressionType": "Identifier",
+      "file": "aliased-imports.js",
+      "name": "Identifier",
+      "type": "EXPRESSION"
+    },
+    {
+      "exported": false,
+      "expressionType": "Identifier",
+      "file": "index.js",
+      "name": "Identifier",
+      "type": "EXPRESSION"
+    },
+    {
+      "exported": false,
+      "expressionType": "Identifier",
+      "file": "index.js",
+      "name": "Identifier",
+      "type": "EXPRESSION"
+    },
+    {
+      "exported": false,
+      "expressionType": "Identifier",
+      "file": "namespace-import.js",
+      "name": "Identifier",
+      "type": "EXPRESSION"
+    },
+    {
+      "exported": false,
+      "expressionType": "Identifier",
+      "file": "node-prefix.js",
+      "name": "Identifier",
+      "type": "EXPRESSION"
+    },
+    {
+      "exported": false,
+      "expressionType": "Identifier",
+      "file": "unused-imports.js",
+      "name": "Identifier",
+      "type": "EXPRESSION"
+    },
+    {
+      "exported": false,
+      "expressionType": "NewExpression",
+      "file": "aliased-imports.js",
+      "name": "NewExpression",
+      "type": "EXPRESSION"
+    },
+    {
+      "exported": false,
+      "expressionType": "NewExpression",
+      "file": "aliased-imports.js",
+      "name": "NewExpression",
+      "type": "EXPRESSION"
+    },
+    {
+      "exported": false,
+      "expressionType": "NewExpression",
+      "file": "index.js",
+      "name": "NewExpression",
+      "type": "EXPRESSION"
+    },
+    {
+      "exported": false,
+      "expressionType": "NewExpression",
+      "file": "namespace-import.js",
+      "name": "NewExpression",
+      "type": "EXPRESSION"
+    },
+    {
+      "exported": false,
+      "expressionType": "NewExpression",
+      "file": "node-prefix.js",
+      "name": "NewExpression",
+      "type": "EXPRESSION"
+    },
+    {
+      "exported": false,
+      "expressionType": "NewExpression",
+      "file": "node-prefix.js",
+      "name": "NewExpression",
+      "type": "EXPRESSION"
+    },
+    {
+      "exported": false,
+      "expressionType": "NewExpression",
+      "file": "unused-imports.js",
+      "name": "NewExpression",
+      "type": "EXPRESSION"
+    },
+    {
+      "exported": false,
+      "file": "",
+      "isBuiltin": true,
+      "name": "child_process.exec",
+      "pure": false,
+      "security": "exec",
+      "type": "EXTERNAL_FUNCTION"
+    },
+    {
+      "exported": false,
+      "file": "",
+      "isBuiltin": true,
+      "name": "child_process.spawn",
+      "pure": false,
+      "security": "exec",
+      "type": "EXTERNAL_FUNCTION"
+    },
+    {
+      "exported": false,
+      "file": "",
+      "isBuiltin": true,
+      "name": "crypto.createHash",
+      "pure": false,
+      "security": "crypto",
+      "type": "EXTERNAL_FUNCTION"
+    },
+    {
+      "exported": false,
+      "file": "",
+      "isBuiltin": true,
+      "name": "events.EventEmitter",
+      "pure": false,
+      "type": "EXTERNAL_FUNCTION"
+    },
+    {
+      "exported": false,
+      "file": "",
+      "isBuiltin": true,
+      "name": "fs.existsSync",
+      "pure": false,
+      "security": "file-io",
+      "type": "EXTERNAL_FUNCTION"
+    },
+    {
+      "exported": false,
+      "file": "",
+      "isBuiltin": true,
+      "name": "fs.readdir",
+      "pure": false,
+      "security": "file-io",
+      "type": "EXTERNAL_FUNCTION"
+    },
+    {
+      "exported": false,
+      "file": "",
+      "isBuiltin": true,
+      "name": "fs.readFile",
+      "pure": false,
+      "security": "file-io",
+      "type": "EXTERNAL_FUNCTION"
+    },
+    {
+      "exported": false,
+      "file": "",
+      "isBuiltin": true,
+      "name": "fs.writeFile",
+      "pure": false,
+      "security": "file-io",
+      "type": "EXTERNAL_FUNCTION"
+    },
+    {
+      "exported": false,
+      "file": "",
+      "isBuiltin": true,
+      "name": "fs.writeFileSync",
+      "pure": false,
+      "security": "file-io",
+      "type": "EXTERNAL_FUNCTION"
+    },
+    {
+      "exported": false,
+      "file": "",
+      "isBuiltin": true,
+      "name": "fs/promises.access",
+      "pure": false,
+      "security": "file-io",
+      "type": "EXTERNAL_FUNCTION"
+    },
+    {
+      "exported": false,
+      "file": "",
+      "isBuiltin": true,
+      "name": "fs/promises.copyFile",
+      "pure": false,
+      "security": "file-io",
+      "type": "EXTERNAL_FUNCTION"
+    },
+    {
+      "exported": false,
+      "file": "",
+      "isBuiltin": true,
+      "name": "fs/promises.mkdir",
+      "pure": false,
+      "security": "file-io",
+      "type": "EXTERNAL_FUNCTION"
+    },
+    {
+      "exported": false,
+      "file": "",
+      "isBuiltin": true,
+      "name": "fs/promises.readdir",
+      "pure": false,
+      "security": "file-io",
+      "type": "EXTERNAL_FUNCTION"
+    },
+    {
+      "exported": false,
+      "file": "",
+      "isBuiltin": true,
+      "name": "fs/promises.readFile",
+      "pure": false,
+      "security": "file-io",
+      "type": "EXTERNAL_FUNCTION"
+    },
+    {
+      "exported": false,
+      "file": "",
+      "isBuiltin": true,
+      "name": "fs/promises.rm",
+      "pure": false,
+      "security": "file-io",
+      "type": "EXTERNAL_FUNCTION"
+    },
+    {
+      "exported": false,
+      "file": "",
+      "isBuiltin": true,
+      "name": "fs/promises.stat",
+      "pure": false,
+      "security": "file-io",
+      "type": "EXTERNAL_FUNCTION"
+    },
+    {
+      "exported": false,
+      "file": "",
+      "isBuiltin": true,
+      "name": "fs/promises.writeFile",
+      "pure": false,
+      "security": "file-io",
+      "type": "EXTERNAL_FUNCTION"
+    },
+    {
+      "exported": false,
+      "file": "",
+      "isBuiltin": true,
+      "name": "http.createServer",
+      "pure": false,
+      "security": "net",
+      "type": "EXTERNAL_FUNCTION"
+    },
+    {
+      "exported": false,
+      "file": "",
+      "isBuiltin": true,
+      "name": "path.basename",
+      "pure": true,
+      "type": "EXTERNAL_FUNCTION"
+    },
+    {
+      "exported": false,
+      "file": "",
+      "isBuiltin": true,
+      "name": "path.join",
+      "pure": true,
+      "type": "EXTERNAL_FUNCTION"
+    },
+    {
+      "exported": false,
+      "file": "",
+      "isBuiltin": true,
+      "name": "path.parse",
+      "pure": true,
+      "type": "EXTERNAL_FUNCTION"
+    },
+    {
+      "exported": false,
+      "file": "",
+      "isBuiltin": true,
+      "name": "path.resolve",
+      "pure": true,
+      "type": "EXTERNAL_FUNCTION"
+    },
+    {
+      "exported": false,
+      "file": "",
+      "isBuiltin": true,
+      "name": "url.format",
+      "pure": true,
+      "type": "EXTERNAL_FUNCTION"
+    },
+    {
+      "exported": false,
+      "file": "",
+      "isBuiltin": true,
+      "name": "url.parse",
+      "pure": true,
+      "type": "EXTERNAL_FUNCTION"
+    },
+    {
+      "exported": false,
+      "file": "",
+      "isBuiltin": true,
+      "name": "util.inspect",
+      "pure": true,
+      "type": "EXTERNAL_FUNCTION"
+    },
+    {
+      "exported": false,
+      "file": "",
+      "isBuiltin": true,
+      "name": "util.promisify",
+      "pure": true,
+      "type": "EXTERNAL_FUNCTION"
+    },
+    {
+      "exported": false,
+      "file": "",
+      "isBuiltin": true,
+      "name": "worker_threads.Worker",
+      "pure": false,
+      "type": "EXTERNAL_FUNCTION"
+    },
+    {
+      "exported": false,
+      "file": "",
+      "name": "child_process",
+      "type": "EXTERNAL_MODULE"
+    },
+    {
+      "exported": false,
+      "file": "",
+      "name": "crypto",
+      "type": "EXTERNAL_MODULE"
+    },
+    {
+      "exported": false,
+      "file": "",
+      "name": "events",
+      "type": "EXTERNAL_MODULE"
+    },
+    {
+      "exported": false,
+      "file": "",
+      "name": "fs",
+      "type": "EXTERNAL_MODULE"
+    },
+    {
+      "exported": false,
+      "file": "",
+      "name": "fs/promises",
+      "type": "EXTERNAL_MODULE"
+    },
+    {
+      "exported": false,
+      "file": "",
+      "name": "http",
+      "type": "EXTERNAL_MODULE"
+    },
+    {
+      "exported": false,
+      "file": "",
+      "name": "path",
+      "type": "EXTERNAL_MODULE"
+    },
+    {
+      "exported": false,
+      "file": "",
+      "name": "url",
+      "type": "EXTERNAL_MODULE"
+    },
+    {
+      "exported": false,
+      "file": "",
+      "name": "util",
+      "type": "EXTERNAL_MODULE"
+    },
+    {
+      "exported": false,
+      "file": "",
+      "name": "worker_threads",
+      "type": "EXTERNAL_MODULE"
+    },
+    {
+      "arrowFunction": true,
+      "async": false,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "aliased-imports.js",
+      "name": "anonymous[0]",
+      "type": "FUNCTION"
+    },
+    {
+      "arrowFunction": true,
+      "async": false,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "aliased-imports.js",
+      "name": "anonymous[0]",
+      "type": "FUNCTION"
+    },
+    {
+      "arrowFunction": true,
+      "async": false,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 2,
+        "hasAsyncThrow": false,
+        "hasBranches": true,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "aliased-imports.js",
+      "name": "anonymous[0]",
+      "type": "FUNCTION"
+    },
+    {
+      "arrowFunction": true,
+      "async": false,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 2,
+        "hasAsyncThrow": false,
+        "hasBranches": true,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "aliased-imports.js",
+      "name": "anonymous[0]",
+      "type": "FUNCTION"
+    },
+    {
+      "arrowFunction": true,
+      "async": false,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "index.js",
+      "name": "anonymous[0]",
+      "type": "FUNCTION"
+    },
+    {
+      "arrowFunction": true,
+      "async": false,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "index.js",
+      "name": "anonymous[0]",
+      "type": "FUNCTION"
+    },
+    {
+      "arrowFunction": true,
+      "async": false,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "index.js",
+      "name": "anonymous[0]",
+      "type": "FUNCTION"
+    },
+    {
+      "arrowFunction": true,
+      "async": false,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 2,
+        "hasAsyncThrow": false,
+        "hasBranches": true,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "index.js",
+      "name": "anonymous[0]",
+      "type": "FUNCTION"
+    },
+    {
+      "arrowFunction": true,
+      "async": false,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 2,
+        "hasAsyncThrow": false,
+        "hasBranches": true,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "index.js",
+      "name": "anonymous[0]",
+      "type": "FUNCTION"
+    },
+    {
+      "arrowFunction": true,
+      "async": false,
+      "exported": false,
+      "file": "index.js",
+      "name": "anonymous[0]",
+      "type": "FUNCTION"
+    },
+    {
+      "arrowFunction": true,
+      "async": false,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "namespace-import.js",
+      "name": "anonymous[0]",
+      "type": "FUNCTION"
+    },
+    {
+      "arrowFunction": true,
+      "async": false,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 2,
+        "hasAsyncThrow": false,
+        "hasBranches": true,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "namespace-import.js",
+      "name": "anonymous[0]",
+      "type": "FUNCTION"
+    },
+    {
+      "arrowFunction": true,
+      "async": false,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "unused-imports.js",
+      "name": "anonymous[0]",
+      "type": "FUNCTION"
+    },
+    {
+      "arrowFunction": true,
+      "async": false,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 2,
+        "hasAsyncThrow": false,
+        "hasBranches": true,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "unused-imports.js",
+      "name": "anonymous[0]",
+      "type": "FUNCTION"
+    },
+    {
+      "async": false,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "index.js",
+      "generator": false,
+      "name": "buildPath",
+      "params": [
+        "base",
+        "...segments"
+      ],
+      "paramTypes": [
+        "any",
+        "any[]"
+      ],
+      "returnType": "void",
+      "signature": "(base: any, ...segments: any[]) => void",
+      "type": "FUNCTION"
+    },
+    {
+      "async": false,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "aliased-imports.js",
+      "generator": false,
+      "name": "buildPathWithAlias",
+      "params": [
+        "base",
+        "segment"
+      ],
+      "paramTypes": [
+        "any",
+        "any"
+      ],
+      "returnType": "void",
+      "signature": "(base: any, segment: any) => void",
+      "type": "FUNCTION"
+    },
+    {
+      "async": false,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "node-prefix.js",
+      "generator": false,
+      "name": "buildWithNodePrefix",
+      "params": [
+        "base",
+        "segment"
+      ],
+      "paramTypes": [
+        "any",
+        "any"
+      ],
+      "returnType": "void",
+      "signature": "(base: any, segment: any) => void",
+      "type": "FUNCTION"
+    },
+    {
+      "async": true,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": true,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": true
+      },
+      "exported": false,
+      "file": "fs-promises.js",
+      "generator": false,
+      "name": "checkAccess",
+      "params": [
+        "path"
+      ],
+      "paramTypes": [
+        "any"
+      ],
+      "returnType": "void",
+      "signature": "(path: any) => Promise<void>",
+      "type": "FUNCTION"
+    },
+    {
+      "async": true,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "fs-promises.js",
+      "generator": false,
+      "name": "copy",
+      "params": [
+        "src",
+        "dest"
+      ],
+      "paramTypes": [
+        "any",
+        "any"
+      ],
+      "returnType": "void",
+      "signature": "(src: any, dest: any) => Promise<void>",
+      "type": "FUNCTION"
+    },
+    {
+      "async": false,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "node-prefix.js",
+      "generator": false,
+      "name": "createEmitter",
+      "params": [],
+      "paramTypes": [],
+      "returnType": "void",
+      "signature": "() => void",
+      "type": "FUNCTION"
+    },
+    {
+      "async": false,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "node-prefix.js",
+      "generator": false,
+      "name": "createServerWithNodePrefix",
+      "params": [
+        "handler"
+      ],
+      "paramTypes": [
+        "any"
+      ],
+      "returnType": "void",
+      "signature": "(handler: any) => void",
+      "type": "FUNCTION"
+    },
+    {
+      "async": false,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 2,
+        "hasAsyncThrow": false,
+        "hasBranches": true,
+        "hasEarlyReturn": true,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "node-prefix.js",
+      "generator": false,
+      "name": "createWorker",
+      "params": [
+        "script"
+      ],
+      "paramTypes": [
+        "any"
+      ],
+      "returnType": "void",
+      "signature": "(script: any) => void",
+      "type": "FUNCTION"
+    },
+    {
+      "async": true,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "fs-promises.js",
+      "generator": false,
+      "name": "ensureDir",
+      "params": [
+        "path"
+      ],
+      "paramTypes": [
+        "any"
+      ],
+      "returnType": "void",
+      "signature": "(path: any) => Promise<void>",
+      "type": "FUNCTION"
+    },
+    {
+      "async": false,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "namespace-import.js",
+      "generator": false,
+      "name": "existsViaNamespace",
+      "params": [
+        "filePath"
+      ],
+      "paramTypes": [
+        "any"
+      ],
+      "returnType": "void",
+      "signature": "(filePath: any) => void",
+      "type": "FUNCTION"
+    },
+    {
+      "async": false,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "namespace-import.js",
+      "generator": false,
+      "name": "formatUrl",
+      "params": [
+        "urlObj"
+      ],
+      "paramTypes": [
+        "any"
+      ],
+      "returnType": "void",
+      "signature": "(urlObj: any) => void",
+      "type": "FUNCTION"
+    },
+    {
+      "async": false,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "index.js",
+      "generator": false,
+      "name": "getFilename",
+      "params": [
+        "fullPath"
+      ],
+      "paramTypes": [
+        "any"
+      ],
+      "returnType": "void",
+      "signature": "(fullPath: any) => void",
+      "type": "FUNCTION"
+    },
+    {
+      "async": true,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "fs-promises.js",
+      "generator": false,
+      "name": "getStats",
+      "params": [
+        "path"
+      ],
+      "paramTypes": [
+        "any"
+      ],
+      "returnType": "void",
+      "signature": "(path: any) => Promise<void>",
+      "type": "FUNCTION"
+    },
+    {
+      "async": false,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "aliased-imports.js",
+      "generator": false,
+      "name": "hashWithAlias",
+      "params": [
+        "data"
+      ],
+      "paramTypes": [
+        "any"
+      ],
+      "returnType": "void",
+      "signature": "(data: any) => void",
+      "type": "FUNCTION"
+    },
+    {
+      "async": false,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "namespace-import.js",
+      "generator": false,
+      "name": "inspectObject",
+      "params": [
+        "obj"
+      ],
+      "paramTypes": [
+        "any"
+      ],
+      "returnType": "void",
+      "signature": "(obj: any) => void",
+      "type": "FUNCTION"
+    },
+    {
+      "async": false,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "namespace-import.js",
+      "generator": false,
+      "name": "joinViaNamespace",
+      "params": [
+        "...segments"
+      ],
+      "paramTypes": [
+        "any[]"
+      ],
+      "returnType": "void",
+      "signature": "(...segments: any[]) => void",
+      "type": "FUNCTION"
+    },
+    {
+      "async": true,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "fs-promises.js",
+      "generator": false,
+      "name": "listDir",
+      "params": [
+        "path"
+      ],
+      "paramTypes": [
+        "any"
+      ],
+      "returnType": "void",
+      "signature": "(path: any) => Promise<void>",
+      "type": "FUNCTION"
+    },
+    {
+      "async": false,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "index.js",
+      "generator": false,
+      "name": "listFiles",
+      "params": [
+        "dir",
+        "callback"
+      ],
+      "paramTypes": [
+        "any",
+        "any"
+      ],
+      "returnType": "void",
+      "signature": "(dir: any, callback: any) => void",
+      "type": "FUNCTION"
+    },
+    {
+      "async": true,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "fs-promises.js",
+      "generator": false,
+      "name": "loadAsync",
+      "params": [
+        "path"
+      ],
+      "paramTypes": [
+        "any"
+      ],
+      "returnType": "void",
+      "signature": "(path: any) => Promise<void>",
+      "type": "FUNCTION"
+    },
+    {
+      "async": true,
+      "controlFlow": {
+        "canReject": true,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "index.js",
+      "generator": false,
+      "name": "loadConfig",
+      "params": [
+        "configPath"
+      ],
+      "paramTypes": [
+        "any"
+      ],
+      "rejectionPatterns": [
+        {
+          "column": 15,
+          "errorClassName": null,
+          "line": 23,
+          "rejectionType": "variable_unknown",
+          "sourceVariableName": "err",
+          "tracePath": [
+            "err"
+          ]
+        }
+      ],
+      "returnType": "void",
+      "signature": "(configPath: any) => Promise<void>",
+      "type": "FUNCTION"
+    },
+    {
+      "async": false,
+      "controlFlow": {
+        "canReject": true,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "namespace-import.js",
+      "generator": false,
+      "name": "loadViaNamespace",
+      "params": [
+        "filePath"
+      ],
+      "paramTypes": [
+        "any"
+      ],
+      "rejectionPatterns": [
+        {
+          "column": 15,
+          "errorClassName": null,
+          "line": 17,
+          "rejectionType": "variable_unknown",
+          "sourceVariableName": "err",
+          "tracePath": [
+            "err"
+          ]
+        }
+      ],
+      "returnType": "void",
+      "signature": "(filePath: any) => void",
+      "type": "FUNCTION"
+    },
+    {
+      "async": false,
+      "controlFlow": {
+        "canReject": true,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "aliased-imports.js",
+      "generator": false,
+      "name": "loadWithAlias",
+      "params": [
+        "path"
+      ],
+      "paramTypes": [
+        "any"
+      ],
+      "rejectionPatterns": [
+        {
+          "column": 15,
+          "errorClassName": null,
+          "line": 16,
+          "rejectionType": "variable_unknown",
+          "sourceVariableName": "err",
+          "tracePath": [
+            "err"
+          ]
+        }
+      ],
+      "returnType": "void",
+      "signature": "(path: any) => void",
+      "type": "FUNCTION"
+    },
+    {
+      "async": false,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "node-prefix.js",
+      "generator": false,
+      "name": "loadWithNodePrefix",
+      "params": [
+        "path",
+        "callback"
+      ],
+      "paramTypes": [
+        "any",
+        "any"
+      ],
+      "returnType": "void",
+      "signature": "(path: any, callback: any) => void",
+      "type": "FUNCTION"
+    },
+    {
+      "async": false,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "unused-imports.js",
+      "generator": false,
+      "name": "onlyCreateHash",
+      "params": [
+        "data"
+      ],
+      "paramTypes": [
+        "any"
+      ],
+      "returnType": "void",
+      "signature": "(data: any) => void",
+      "type": "FUNCTION"
+    },
+    {
+      "async": false,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "unused-imports.js",
+      "generator": false,
+      "name": "onlyJoinAndResolve",
+      "params": [
+        "base",
+        "segment"
+      ],
+      "paramTypes": [
+        "any",
+        "any"
+      ],
+      "returnType": "void",
+      "signature": "(base: any, segment: any) => void",
+      "type": "FUNCTION"
+    },
+    {
+      "async": false,
+      "controlFlow": {
+        "canReject": true,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "unused-imports.js",
+      "generator": false,
+      "name": "onlyReadFile",
+      "params": [
+        "path"
+      ],
+      "paramTypes": [
+        "any"
+      ],
+      "rejectionPatterns": [
+        {
+          "column": 15,
+          "errorClassName": null,
+          "line": 17,
+          "rejectionType": "variable_unknown",
+          "sourceVariableName": "err",
+          "tracePath": [
+            "err"
+          ]
+        }
+      ],
+      "returnType": "void",
+      "signature": "(path: any) => void",
+      "type": "FUNCTION"
+    },
+    {
+      "async": false,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "namespace-import.js",
+      "generator": false,
+      "name": "parseUrl",
+      "params": [
+        "urlString"
+      ],
+      "paramTypes": [
+        "any"
+      ],
+      "returnType": "void",
+      "signature": "(urlString: any) => void",
+      "type": "FUNCTION"
+    },
+    {
+      "async": false,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "namespace-import.js",
+      "generator": false,
+      "name": "parseViaNamespace",
+      "params": [
+        "filePath"
+      ],
+      "paramTypes": [
+        "any"
+      ],
+      "returnType": "void",
+      "signature": "(filePath: any) => void",
+      "type": "FUNCTION"
+    },
+    {
+      "async": false,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "namespace-import.js",
+      "generator": false,
+      "name": "promisifyCallback",
+      "params": [
+        "fn"
+      ],
+      "paramTypes": [
+        "any"
+      ],
+      "returnType": "void",
+      "signature": "(fn: any) => void",
+      "type": "FUNCTION"
+    },
+    {
+      "async": true,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "fs-promises.js",
+      "generator": false,
+      "name": "removeFile",
+      "params": [
+        "path"
+      ],
+      "paramTypes": [
+        "any"
+      ],
+      "returnType": "void",
+      "signature": "(path: any) => Promise<void>",
+      "type": "FUNCTION"
+    },
+    {
+      "async": false,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "index.js",
+      "generator": false,
+      "name": "runCommand",
+      "params": [
+        "cmd"
+      ],
+      "paramTypes": [
+        "any"
+      ],
+      "returnType": "void",
+      "signature": "(cmd: any) => void",
+      "type": "FUNCTION"
+    },
+    {
+      "async": true,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "fs-promises.js",
+      "generator": false,
+      "name": "saveAsync",
+      "params": [
+        "path",
+        "data"
+      ],
+      "paramTypes": [
+        "any",
+        "any"
+      ],
+      "returnType": "void",
+      "signature": "(path: any, data: any) => Promise<void>",
+      "type": "FUNCTION"
+    },
+    {
+      "async": false,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "index.js",
+      "generator": false,
+      "name": "saveData",
+      "params": [
+        "filePath",
+        "data"
+      ],
+      "paramTypes": [
+        "any",
+        "any"
+      ],
+      "returnType": "void",
+      "signature": "(filePath: any, data: any) => void",
+      "type": "FUNCTION"
+    },
+    {
+      "async": false,
+      "controlFlow": {
+        "canReject": true,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "aliased-imports.js",
+      "generator": false,
+      "name": "saveWithAlias",
+      "params": [
+        "path",
+        "content"
+      ],
+      "paramTypes": [
+        "any",
+        "any"
+      ],
+      "rejectionPatterns": [
+        {
+          "column": 15,
+          "errorClassName": null,
+          "line": 26,
+          "rejectionType": "variable_unknown",
+          "sourceVariableName": "err",
+          "tracePath": [
+            "err"
+          ]
+        }
+      ],
+      "returnType": "void",
+      "signature": "(path: any, content: any) => void",
+      "type": "FUNCTION"
+    },
+    {
+      "async": false,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "node-prefix.js",
+      "generator": false,
+      "name": "saveWithNodePrefix",
+      "params": [
+        "path",
+        "content",
+        "callback"
+      ],
+      "paramTypes": [
+        "any",
+        "any",
+        "any"
+      ],
+      "returnType": "void",
+      "signature": "(path: any, content: any, callback: any) => void",
+      "type": "FUNCTION"
+    },
+    {
+      "async": false,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "index.js",
+      "generator": false,
+      "name": "spawnProcess",
+      "params": [
+        "command",
+        "args"
+      ],
+      "paramTypes": [
+        "any",
+        "any"
+      ],
+      "returnType": "void",
+      "signature": "(command: any, args: any) => void",
+      "type": "FUNCTION"
+    },
+    {
+      "async": false,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "index.js",
+      "generator": false,
+      "name": "startServer",
+      "params": [
+        "port"
+      ],
+      "paramTypes": [
+        "any"
+      ],
+      "returnType": "void",
+      "signature": "(port: any) => void",
+      "type": "FUNCTION"
+    },
+    {
+      "async": false,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "namespace-import.js",
+      "generator": false,
+      "name": "writeViaNamespace",
+      "params": [
+        "filePath",
+        "content"
+      ],
+      "paramTypes": [
+        "any",
+        "any"
+      ],
+      "returnType": "void",
+      "signature": "(filePath: any, content: any) => void",
+      "type": "FUNCTION"
+    },
+    {
+      "builtin": true,
+      "creates": {
+        "edges": [
+          "RECEIVES_ARGUMENT"
+        ],
+        "nodes": []
+      },
+      "createsEdges": [
+        "RECEIVES_ARGUMENT"
+      ],
+      "createsNodes": [],
+      "dependencies": [
+        "JSASTAnalyzer",
+        "MethodCallResolver"
+      ],
+      "exported": false,
+      "file": "",
+      "name": "ArgumentParameterLinker",
+      "phase": "ENRICHMENT",
+      "priority": 0,
+      "type": "grafema:plugin"
+    },
+    {
+      "builtin": true,
+      "creates": {
+        "edges": [
+          "CALLS"
+        ],
+        "nodes": []
+      },
+      "createsEdges": [
+        "CALLS"
+      ],
+      "createsNodes": [],
+      "dependencies": [
+        "ImportExportLinker",
+        "FunctionCallResolver"
+      ],
+      "exported": false,
+      "file": "",
+      "name": "CallbackCallResolver",
+      "phase": "ENRICHMENT",
+      "priority": 0,
+      "type": "grafema:plugin"
+    },
+    {
+      "builtin": true,
+      "creates": {
+        "edges": [
+          "CONTAINS",
+          "MAKES_REQUEST",
+          "CALLS_API"
+        ],
+        "nodes": [
+          "http:request",
+          "EXTERNAL"
+        ]
+      },
+      "createsEdges": [
+        "CONTAINS",
+        "MAKES_REQUEST",
+        "CALLS_API"
+      ],
+      "createsNodes": [
+        "http:request",
+        "EXTERNAL"
+      ],
+      "dependencies": [
+        "JSModuleIndexer",
+        "JSASTAnalyzer"
+      ],
+      "exported": false,
+      "file": "",
+      "name": "FetchAnalyzer",
+      "phase": "ANALYSIS",
+      "priority": 0,
+      "type": "grafema:plugin"
+    },
+    {
+      "builtin": true,
+      "creates": {
+        "edges": [
+          "IMPORTS",
+          "IMPORTS_FROM"
+        ],
+        "nodes": []
+      },
+      "createsEdges": [
+        "IMPORTS",
+        "IMPORTS_FROM"
+      ],
+      "createsNodes": [],
+      "dependencies": [
+        "JSASTAnalyzer"
+      ],
+      "exported": false,
+      "file": "",
+      "name": "ImportExportLinker",
+      "phase": "ENRICHMENT",
+      "priority": 0,
+      "type": "grafema:plugin"
+    },
+    {
+      "builtin": true,
+      "creates": {
+        "edges": [
+          "INSTANCE_OF"
+        ],
+        "nodes": []
+      },
+      "createsEdges": [
+        "INSTANCE_OF"
+      ],
+      "createsNodes": [],
+      "dependencies": [
+        "JSASTAnalyzer"
+      ],
+      "exported": false,
+      "file": "",
+      "name": "InstanceOfResolver",
+      "phase": "ENRICHMENT",
+      "priority": 0,
+      "type": "grafema:plugin"
+    },
+    {
+      "builtin": true,
+      "creates": {
+        "edges": [
+          "CONTAINS",
+          "DECLARES",
+          "CALLS",
+          "HAS_SCOPE",
+          "CAPTURES",
+          "MODIFIES",
+          "WRITES_TO",
+          "IMPORTS",
+          "INSTANCE_OF",
+          "HANDLED_BY",
+          "HAS_CALLBACK",
+          "PASSES_ARGUMENT",
+          "MAKES_REQUEST",
+          "IMPORTS_FROM",
+          "EXPORTS_TO",
+          "ASSIGNED_FROM",
+          "IMPLEMENTS",
+          "EXTENDS",
+          "DECORATED_BY",
+          "HAS_TYPE_PARAMETER",
+          "RESOLVES_TO"
+        ],
+        "nodes": [
+          "FUNCTION",
+          "CLASS",
+          "METHOD",
+          "VARIABLE",
+          "CONSTANT",
+          "SCOPE",
+          "CALL",
+          "IMPORT",
+          "EXPORT",
+          "LITERAL",
+          "EXTERNAL_MODULE",
+          "net:stdio",
+          "net:request",
+          "event:listener",
+          "http:request",
+          "INTERFACE",
+          "TYPE",
+          "ENUM",
+          "DECORATOR",
+          "TYPE_PARAMETER"
+        ]
+      },
+      "createsEdges": [
+        "CONTAINS",
+        "DECLARES",
+        "CALLS",
+        "HAS_SCOPE",
+        "CAPTURES",
+        "MODIFIES",
+        "WRITES_TO",
+        "IMPORTS",
+        "INSTANCE_OF",
+        "HANDLED_BY",
+        "HAS_CALLBACK",
+        "PASSES_ARGUMENT",
+        "MAKES_REQUEST",
+        "IMPORTS_FROM",
+        "EXPORTS_TO",
+        "ASSIGNED_FROM",
+        "IMPLEMENTS",
+        "EXTENDS",
+        "DECORATED_BY",
+        "HAS_TYPE_PARAMETER",
+        "RESOLVES_TO"
+      ],
+      "createsNodes": [
+        "FUNCTION",
+        "CLASS",
+        "METHOD",
+        "VARIABLE",
+        "CONSTANT",
+        "SCOPE",
+        "CALL",
+        "IMPORT",
+        "EXPORT",
+        "LITERAL",
+        "EXTERNAL_MODULE",
+        "net:stdio",
+        "net:request",
+        "event:listener",
+        "http:request",
+        "INTERFACE",
+        "TYPE",
+        "ENUM",
+        "DECORATOR",
+        "TYPE_PARAMETER"
+      ],
+      "dependencies": [
+        "JSModuleIndexer"
+      ],
+      "exported": false,
+      "file": "",
+      "name": "JSASTAnalyzer",
+      "phase": "ANALYSIS",
+      "priority": 0,
+      "type": "grafema:plugin"
+    },
+    {
+      "builtin": true,
+      "creates": {
+        "edges": [
+          "CONTAINS",
+          "DEPENDS_ON"
+        ],
+        "nodes": [
+          "MODULE"
+        ]
+      },
+      "createsEdges": [
+        "CONTAINS",
+        "DEPENDS_ON"
+      ],
+      "createsNodes": [
+        "MODULE"
+      ],
+      "dependencies": [],
+      "exported": false,
+      "file": "",
+      "name": "JSModuleIndexer",
+      "phase": "INDEXING",
+      "priority": 0,
+      "type": "grafema:plugin"
+    },
+    {
+      "builtin": true,
+      "creates": {
+        "edges": [
+          "CALLS"
+        ],
+        "nodes": []
+      },
+      "createsEdges": [
+        "CALLS"
+      ],
+      "createsNodes": [],
+      "dependencies": [
+        "ImportExportLinker"
+      ],
+      "exported": false,
+      "file": "",
+      "name": "MethodCallResolver",
+      "phase": "ENRICHMENT",
+      "priority": 0,
+      "type": "grafema:plugin"
+    },
+    {
+      "builtin": true,
+      "creates": {
+        "edges": [
+          "CALLS",
+          "IMPORTS_FROM"
+        ],
+        "nodes": [
+          "EXTERNAL_FUNCTION",
+          "EXTERNAL_MODULE"
+        ]
+      },
+      "createsEdges": [
+        "CALLS",
+        "IMPORTS_FROM"
+      ],
+      "createsNodes": [
+        "EXTERNAL_FUNCTION",
+        "EXTERNAL_MODULE"
+      ],
+      "dependencies": [
+        "JSASTAnalyzer",
+        "ImportExportLinker"
+      ],
+      "exported": false,
+      "file": "",
+      "name": "NodejsBuiltinsResolver",
+      "phase": "ENRICHMENT",
+      "priority": 0,
+      "type": "grafema:plugin"
+    },
+    {
+      "builtin": true,
+      "creates": {
+        "edges": [
+          "REJECTS"
+        ],
+        "nodes": []
+      },
+      "createsEdges": [
+        "REJECTS"
+      ],
+      "createsNodes": [],
+      "dependencies": [
+        "JSASTAnalyzer"
+      ],
+      "exported": false,
+      "file": "",
+      "name": "RejectionPropagationEnricher",
+      "phase": "ENRICHMENT",
+      "priority": 0,
+      "type": "grafema:plugin"
+    },
+    {
+      "builtin": true,
+      "creates": {
+        "edges": [],
+        "nodes": [
+          "SERVICE"
+        ]
+      },
+      "createsEdges": [],
+      "createsNodes": [
+        "SERVICE"
+      ],
+      "dependencies": [],
+      "exported": false,
+      "file": "",
+      "name": "SimpleProjectDiscovery",
+      "phase": "DISCOVERY",
+      "priority": 0,
+      "type": "grafema:plugin"
+    },
+    {
+      "exported": false,
+      "file": "",
+      "name": "graph_metadata",
+      "type": "GRAPH_META"
+    },
+    {
+      "exported": false,
+      "file": "index.js",
+      "importBinding": "value",
+      "imported": "*",
+      "importType": "namespace",
+      "local": "./aliased-imports.js",
+      "name": "./aliased-imports.js",
+      "sideEffect": true,
+      "source": "./aliased-imports.js",
+      "type": "IMPORT"
+    },
+    {
+      "exported": false,
+      "file": "index.js",
+      "importBinding": "value",
+      "imported": "*",
+      "importType": "namespace",
+      "local": "./fs-promises.js",
+      "name": "./fs-promises.js",
+      "sideEffect": true,
+      "source": "./fs-promises.js",
+      "type": "IMPORT"
+    },
+    {
+      "exported": false,
+      "file": "index.js",
+      "importBinding": "value",
+      "imported": "*",
+      "importType": "namespace",
+      "local": "./namespace-import.js",
+      "name": "./namespace-import.js",
+      "sideEffect": true,
+      "source": "./namespace-import.js",
+      "type": "IMPORT"
+    },
+    {
+      "exported": false,
+      "file": "index.js",
+      "importBinding": "value",
+      "imported": "*",
+      "importType": "namespace",
+      "local": "./node-prefix.js",
+      "name": "./node-prefix.js",
+      "sideEffect": true,
+      "source": "./node-prefix.js",
+      "type": "IMPORT"
+    },
+    {
+      "exported": false,
+      "file": "index.js",
+      "importBinding": "value",
+      "imported": "*",
+      "importType": "namespace",
+      "local": "./unused-imports.js",
+      "name": "./unused-imports.js",
+      "sideEffect": true,
+      "source": "./unused-imports.js",
+      "type": "IMPORT"
+    },
+    {
+      "exported": false,
+      "file": "fs-promises.js",
+      "importBinding": "value",
+      "imported": "access",
+      "importType": "named",
+      "local": "access",
+      "name": "access",
+      "sideEffect": false,
+      "source": "fs/promises",
+      "type": "IMPORT"
+    },
+    {
+      "exported": false,
+      "file": "unused-imports.js",
+      "importBinding": "value",
+      "imported": "appendFile",
+      "importType": "named",
+      "local": "appendFile",
+      "name": "appendFile",
+      "sideEffect": false,
+      "source": "fs",
+      "type": "IMPORT"
+    },
+    {
+      "exported": false,
+      "file": "index.js",
+      "importBinding": "value",
+      "imported": "basename",
+      "importType": "named",
+      "local": "basename",
+      "name": "basename",
+      "sideEffect": false,
+      "source": "path",
+      "type": "IMPORT"
+    },
+    {
+      "exported": false,
+      "file": "unused-imports.js",
+      "importBinding": "value",
+      "imported": "chmod",
+      "importType": "named",
+      "local": "chmod",
+      "name": "chmod",
+      "sideEffect": false,
+      "source": "fs",
+      "type": "IMPORT"
+    },
+    {
+      "exported": false,
+      "file": "fs-promises.js",
+      "importBinding": "value",
+      "imported": "copyFile",
+      "importType": "named",
+      "local": "copyFile",
+      "name": "copyFile",
+      "sideEffect": false,
+      "source": "fs/promises",
+      "type": "IMPORT"
+    },
+    {
+      "exported": false,
+      "file": "unused-imports.js",
+      "importBinding": "value",
+      "imported": "createHash",
+      "importType": "named",
+      "local": "createHash",
+      "name": "createHash",
+      "sideEffect": false,
+      "source": "crypto",
+      "type": "IMPORT"
+    },
+    {
+      "exported": false,
+      "file": "index.js",
+      "importBinding": "value",
+      "imported": "createServer",
+      "importType": "named",
+      "local": "createServer",
+      "name": "createServer",
+      "sideEffect": false,
+      "source": "http",
+      "type": "IMPORT"
+    },
+    {
+      "exported": false,
+      "file": "node-prefix.js",
+      "importBinding": "value",
+      "imported": "createServer",
+      "importType": "named",
+      "local": "createServer",
+      "name": "createServer",
+      "sideEffect": false,
+      "source": "node:http",
+      "type": "IMPORT"
+    },
+    {
+      "exported": false,
+      "file": "node-prefix.js",
+      "importBinding": "value",
+      "imported": "EventEmitter",
+      "importType": "named",
+      "local": "EventEmitter",
+      "name": "EventEmitter",
+      "sideEffect": false,
+      "source": "node:events",
+      "type": "IMPORT"
+    },
+    {
+      "exported": false,
+      "file": "index.js",
+      "importBinding": "value",
+      "imported": "exec",
+      "importType": "named",
+      "local": "exec",
+      "name": "exec",
+      "sideEffect": false,
+      "source": "child_process",
+      "type": "IMPORT"
+    },
+    {
+      "exported": false,
+      "file": "namespace-import.js",
+      "importBinding": "value",
+      "imported": "*",
+      "importType": "namespace",
+      "local": "fs",
+      "name": "fs",
+      "sideEffect": false,
+      "source": "fs",
+      "type": "IMPORT"
+    },
+    {
+      "exported": false,
+      "file": "aliased-imports.js",
+      "importBinding": "value",
+      "imported": "createHash",
+      "importType": "named",
+      "local": "hash",
+      "name": "hash",
+      "sideEffect": false,
+      "source": "crypto",
+      "type": "IMPORT"
+    },
+    {
+      "exported": false,
+      "file": "unused-imports.js",
+      "importBinding": "value",
+      "imported": "isAbsolute",
+      "importType": "named",
+      "local": "isAbsolute",
+      "name": "isAbsolute",
+      "sideEffect": false,
+      "source": "path",
+      "type": "IMPORT"
+    },
+    {
+      "exported": false,
+      "file": "node-prefix.js",
+      "importBinding": "value",
+      "imported": "isMainThread",
+      "importType": "named",
+      "local": "isMainThread",
+      "name": "isMainThread",
+      "sideEffect": false,
+      "source": "node:worker_threads",
+      "type": "IMPORT"
+    },
+    {
+      "exported": false,
+      "file": "index.js",
+      "importBinding": "value",
+      "imported": "join",
+      "importType": "named",
+      "local": "join",
+      "name": "join",
+      "sideEffect": false,
+      "source": "path",
+      "type": "IMPORT"
+    },
+    {
+      "exported": false,
+      "file": "node-prefix.js",
+      "importBinding": "value",
+      "imported": "join",
+      "importType": "named",
+      "local": "join",
+      "name": "join",
+      "sideEffect": false,
+      "source": "node:path",
+      "type": "IMPORT"
+    },
+    {
+      "exported": false,
+      "file": "unused-imports.js",
+      "importBinding": "value",
+      "imported": "join",
+      "importType": "named",
+      "local": "join",
+      "name": "join",
+      "sideEffect": false,
+      "source": "path",
+      "type": "IMPORT"
+    },
+    {
+      "exported": false,
+      "file": "fs-promises.js",
+      "importBinding": "value",
+      "imported": "mkdir",
+      "importType": "named",
+      "local": "mkdir",
+      "name": "mkdir",
+      "sideEffect": false,
+      "source": "fs/promises",
+      "type": "IMPORT"
+    },
+    {
+      "exported": false,
+      "file": "unused-imports.js",
+      "importBinding": "value",
+      "imported": "normalize",
+      "importType": "named",
+      "local": "normalize",
+      "name": "normalize",
+      "sideEffect": false,
+      "source": "path",
+      "type": "IMPORT"
+    },
+    {
+      "exported": false,
+      "file": "namespace-import.js",
+      "importBinding": "value",
+      "imported": "*",
+      "importType": "namespace",
+      "local": "path",
+      "name": "path",
+      "sideEffect": false,
+      "source": "path",
+      "type": "IMPORT"
+    },
+    {
+      "exported": false,
+      "file": "aliased-imports.js",
+      "importBinding": "value",
+      "imported": "join",
+      "importType": "named",
+      "local": "pathJoin",
+      "name": "pathJoin",
+      "sideEffect": false,
+      "source": "path",
+      "type": "IMPORT"
+    },
+    {
+      "exported": false,
+      "file": "aliased-imports.js",
+      "importBinding": "value",
+      "imported": "resolve",
+      "importType": "named",
+      "local": "pathResolve",
+      "name": "pathResolve",
+      "sideEffect": false,
+      "source": "path",
+      "type": "IMPORT"
+    },
+    {
+      "exported": false,
+      "file": "unused-imports.js",
+      "importBinding": "value",
+      "imported": "randomBytes",
+      "importType": "named",
+      "local": "randomBytes",
+      "name": "randomBytes",
+      "sideEffect": false,
+      "source": "crypto",
+      "type": "IMPORT"
+    },
+    {
+      "exported": false,
+      "file": "fs-promises.js",
+      "importBinding": "value",
+      "imported": "readdir",
+      "importType": "named",
+      "local": "readdir",
+      "name": "readdir",
+      "sideEffect": false,
+      "source": "fs/promises",
+      "type": "IMPORT"
+    },
+    {
+      "exported": false,
+      "file": "index.js",
+      "importBinding": "value",
+      "imported": "readdir",
+      "importType": "named",
+      "local": "readdir",
+      "name": "readdir",
+      "sideEffect": false,
+      "source": "fs",
+      "type": "IMPORT"
+    },
+    {
+      "exported": false,
+      "file": "fs-promises.js",
+      "importBinding": "value",
+      "imported": "readFile",
+      "importType": "named",
+      "local": "readFile",
+      "name": "readFile",
+      "sideEffect": false,
+      "source": "fs/promises",
+      "type": "IMPORT"
+    },
+    {
+      "exported": false,
+      "file": "index.js",
+      "importBinding": "value",
+      "imported": "readFile",
+      "importType": "named",
+      "local": "readFile",
+      "name": "readFile",
+      "sideEffect": false,
+      "source": "fs",
+      "type": "IMPORT"
+    },
+    {
+      "exported": false,
+      "file": "node-prefix.js",
+      "importBinding": "value",
+      "imported": "readFile",
+      "importType": "named",
+      "local": "readFile",
+      "name": "readFile",
+      "sideEffect": false,
+      "source": "node:fs",
+      "type": "IMPORT"
+    },
+    {
+      "exported": false,
+      "file": "unused-imports.js",
+      "importBinding": "value",
+      "imported": "readFile",
+      "importType": "named",
+      "local": "readFile",
+      "name": "readFile",
+      "sideEffect": false,
+      "source": "fs",
+      "type": "IMPORT"
+    },
+    {
+      "exported": false,
+      "file": "unused-imports.js",
+      "importBinding": "value",
+      "imported": "relative",
+      "importType": "named",
+      "local": "relative",
+      "name": "relative",
+      "sideEffect": false,
+      "source": "path",
+      "type": "IMPORT"
+    },
+    {
+      "exported": false,
+      "file": "index.js",
+      "importBinding": "value",
+      "imported": "resolve",
+      "importType": "named",
+      "local": "resolve",
+      "name": "resolve",
+      "sideEffect": false,
+      "source": "path",
+      "type": "IMPORT"
+    },
+    {
+      "exported": false,
+      "file": "node-prefix.js",
+      "importBinding": "value",
+      "imported": "resolve",
+      "importType": "named",
+      "local": "resolve",
+      "name": "resolve",
+      "sideEffect": false,
+      "source": "node:path",
+      "type": "IMPORT"
+    },
+    {
+      "exported": false,
+      "file": "unused-imports.js",
+      "importBinding": "value",
+      "imported": "resolve",
+      "importType": "named",
+      "local": "resolve",
+      "name": "resolve",
+      "sideEffect": false,
+      "source": "path",
+      "type": "IMPORT"
+    },
+    {
+      "exported": false,
+      "file": "aliased-imports.js",
+      "importBinding": "value",
+      "imported": "readFile",
+      "importType": "named",
+      "local": "rf",
+      "name": "rf",
+      "sideEffect": false,
+      "source": "fs",
+      "type": "IMPORT"
+    },
+    {
+      "exported": false,
+      "file": "fs-promises.js",
+      "importBinding": "value",
+      "imported": "rm",
+      "importType": "named",
+      "local": "rm",
+      "name": "rm",
+      "sideEffect": false,
+      "source": "fs/promises",
+      "type": "IMPORT"
+    },
+    {
+      "exported": false,
+      "file": "unused-imports.js",
+      "importBinding": "value",
+      "imported": "scrypt",
+      "importType": "named",
+      "local": "scrypt",
+      "name": "scrypt",
+      "sideEffect": false,
+      "source": "crypto",
+      "type": "IMPORT"
+    },
+    {
+      "exported": false,
+      "file": "index.js",
+      "importBinding": "value",
+      "imported": "spawn",
+      "importType": "named",
+      "local": "spawn",
+      "name": "spawn",
+      "sideEffect": false,
+      "source": "child_process",
+      "type": "IMPORT"
+    },
+    {
+      "exported": false,
+      "file": "fs-promises.js",
+      "importBinding": "value",
+      "imported": "stat",
+      "importType": "named",
+      "local": "stat",
+      "name": "stat",
+      "sideEffect": false,
+      "source": "fs/promises",
+      "type": "IMPORT"
+    },
+    {
+      "exported": false,
+      "file": "unused-imports.js",
+      "importBinding": "value",
+      "imported": "truncate",
+      "importType": "named",
+      "local": "truncate",
+      "name": "truncate",
+      "sideEffect": false,
+      "source": "fs",
+      "type": "IMPORT"
+    },
+    {
+      "exported": false,
+      "file": "namespace-import.js",
+      "importBinding": "value",
+      "imported": "*",
+      "importType": "namespace",
+      "local": "url",
+      "name": "url",
+      "sideEffect": false,
+      "source": "url",
+      "type": "IMPORT"
+    },
+    {
+      "exported": false,
+      "file": "namespace-import.js",
+      "importBinding": "value",
+      "imported": "*",
+      "importType": "namespace",
+      "local": "util",
+      "name": "util",
+      "sideEffect": false,
+      "source": "util",
+      "type": "IMPORT"
+    },
+    {
+      "exported": false,
+      "file": "aliased-imports.js",
+      "importBinding": "value",
+      "imported": "writeFile",
+      "importType": "named",
+      "local": "wf",
+      "name": "wf",
+      "sideEffect": false,
+      "source": "fs",
+      "type": "IMPORT"
+    },
+    {
+      "exported": false,
+      "file": "node-prefix.js",
+      "importBinding": "value",
+      "imported": "Worker",
+      "importType": "named",
+      "local": "Worker",
+      "name": "Worker",
+      "sideEffect": false,
+      "source": "node:worker_threads",
+      "type": "IMPORT"
+    },
+    {
+      "exported": false,
+      "file": "fs-promises.js",
+      "importBinding": "value",
+      "imported": "writeFile",
+      "importType": "named",
+      "local": "writeFile",
+      "name": "writeFile",
+      "sideEffect": false,
+      "source": "fs/promises",
+      "type": "IMPORT"
+    },
+    {
+      "exported": false,
+      "file": "index.js",
+      "importBinding": "value",
+      "imported": "writeFile",
+      "importType": "named",
+      "local": "writeFile",
+      "name": "writeFile",
+      "sideEffect": false,
+      "source": "fs",
+      "type": "IMPORT"
+    },
+    {
+      "exported": false,
+      "file": "node-prefix.js",
+      "importBinding": "value",
+      "imported": "writeFile",
+      "importType": "named",
+      "local": "writeFile",
+      "name": "writeFile",
+      "sideEffect": false,
+      "source": "node:fs",
+      "type": "IMPORT"
+    },
+    {
+      "exported": false,
+      "file": "unused-imports.js",
+      "importBinding": "value",
+      "imported": "writeFile",
+      "importType": "named",
+      "local": "writeFile",
+      "name": "writeFile",
+      "sideEffect": false,
+      "source": "fs",
+      "type": "IMPORT"
+    },
+    {
+      "exported": false,
+      "file": "fs-promises.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": 2,
+      "valueType": "number"
+    },
+    {
+      "exported": false,
+      "file": "fs-promises.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": false,
+      "valueType": "boolean"
+    },
+    {
+      "exported": false,
+      "file": "fs-promises.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": true,
+      "valueType": "boolean"
+    },
+    {
+      "exported": false,
+      "file": "index.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": "data",
+      "valueType": "string"
+    },
+    {
+      "exported": false,
+      "file": "index.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": "Hello",
+      "valueType": "string"
+    },
+    {
+      "exported": false,
+      "file": "index.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": "Write failed:",
+      "valueType": "string"
+    },
+    {
+      "exported": false,
+      "file": "index.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": 200,
+      "valueType": "number"
+    },
+    {
+      "exported": false,
+      "file": "namespace-import.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": "utf8",
+      "valueType": "string"
+    },
+    {
+      "exported": false,
+      "file": "node-prefix.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": null,
+      "valueType": "object"
+    },
+    {
+      "exported": false,
+      "file": "aliased-imports.js",
+      "isTest": true,
+      "name": "aliased-imports.js",
+      "type": "MODULE"
+    },
+    {
+      "exported": false,
+      "file": "fs-promises.js",
+      "isTest": true,
+      "name": "fs-promises.js",
+      "type": "MODULE"
+    },
+    {
+      "exported": false,
+      "file": "index.js",
+      "isTest": true,
+      "name": "index.js",
+      "type": "MODULE"
+    },
+    {
+      "exported": false,
+      "file": "namespace-import.js",
+      "isTest": true,
+      "name": "namespace-import.js",
+      "type": "MODULE"
+    },
+    {
+      "exported": false,
+      "file": "node-prefix.js",
+      "isTest": true,
+      "name": "node-prefix.js",
+      "type": "MODULE"
+    },
+    {
+      "exported": false,
+      "file": "unused-imports.js",
+      "isTest": true,
+      "name": "unused-imports.js",
+      "type": "MODULE"
+    },
+    {
+      "exported": false,
+      "file": "__builtin__",
+      "name": "__network__",
+      "type": "net:request"
+    },
+    {
+      "description": "Standard input/output stream",
+      "exported": false,
+      "file": "__builtin__",
+      "name": "__stdio__",
+      "type": "net:stdio"
+    },
+    {
+      "exported": false,
+      "file": "index.js",
+      "index": 1,
+      "name": "args",
+      "parentFunctionId": "index.js->global->FUNCTION->spawnProcess",
+      "semanticId": "index.js->spawnProcess->PARAMETER->args#1",
+      "type": "PARAMETER"
+    },
+    {
+      "exported": false,
+      "file": "aliased-imports.js",
+      "index": 0,
+      "name": "base",
+      "parentFunctionId": "aliased-imports.js->global->FUNCTION->buildPathWithAlias",
+      "semanticId": "aliased-imports.js->buildPathWithAlias->PARAMETER->base#0",
+      "type": "PARAMETER"
+    },
+    {
+      "exported": false,
+      "file": "index.js",
+      "index": 0,
+      "name": "base",
+      "parentFunctionId": "index.js->global->FUNCTION->buildPath",
+      "semanticId": "index.js->buildPath->PARAMETER->base#0",
+      "type": "PARAMETER"
+    },
+    {
+      "exported": false,
+      "file": "node-prefix.js",
+      "index": 0,
+      "name": "base",
+      "parentFunctionId": "node-prefix.js->global->FUNCTION->buildWithNodePrefix",
+      "semanticId": "node-prefix.js->buildWithNodePrefix->PARAMETER->base#0",
+      "type": "PARAMETER"
+    },
+    {
+      "exported": false,
+      "file": "unused-imports.js",
+      "index": 0,
+      "name": "base",
+      "parentFunctionId": "unused-imports.js->global->FUNCTION->onlyJoinAndResolve",
+      "semanticId": "unused-imports.js->onlyJoinAndResolve->PARAMETER->base#0",
+      "type": "PARAMETER"
+    },
+    {
+      "exported": false,
+      "file": "index.js",
+      "index": 1,
+      "name": "callback",
+      "parentFunctionId": "index.js->global->FUNCTION->listFiles",
+      "semanticId": "index.js->listFiles->PARAMETER->callback#1",
+      "type": "PARAMETER"
+    },
+    {
+      "exported": false,
+      "file": "node-prefix.js",
+      "index": 1,
+      "name": "callback",
+      "parentFunctionId": "node-prefix.js->global->FUNCTION->loadWithNodePrefix",
+      "semanticId": "node-prefix.js->loadWithNodePrefix->PARAMETER->callback#1",
+      "type": "PARAMETER"
+    },
+    {
+      "exported": false,
+      "file": "node-prefix.js",
+      "index": 2,
+      "name": "callback",
+      "parentFunctionId": "node-prefix.js->global->FUNCTION->saveWithNodePrefix",
+      "semanticId": "node-prefix.js->saveWithNodePrefix->PARAMETER->callback#2",
+      "type": "PARAMETER"
+    },
+    {
+      "exported": false,
+      "file": "index.js",
+      "index": 0,
+      "name": "cmd",
+      "parentFunctionId": "index.js->global->FUNCTION->runCommand",
+      "semanticId": "index.js->runCommand->PARAMETER->cmd#0",
+      "type": "PARAMETER"
+    },
+    {
+      "exported": false,
+      "file": "index.js",
+      "index": 0,
+      "name": "command",
+      "parentFunctionId": "index.js->global->FUNCTION->spawnProcess",
+      "semanticId": "index.js->spawnProcess->PARAMETER->command#0",
+      "type": "PARAMETER"
+    },
+    {
+      "exported": false,
+      "file": "index.js",
+      "index": 0,
+      "name": "configPath",
+      "parentFunctionId": "index.js->global->FUNCTION->loadConfig",
+      "semanticId": "index.js->loadConfig->PARAMETER->configPath#0",
+      "type": "PARAMETER"
+    },
+    {
+      "exported": false,
+      "file": "aliased-imports.js",
+      "index": 1,
+      "name": "content",
+      "parentFunctionId": "aliased-imports.js->global->FUNCTION->saveWithAlias",
+      "semanticId": "aliased-imports.js->saveWithAlias->PARAMETER->content#1",
+      "type": "PARAMETER"
+    },
+    {
+      "exported": false,
+      "file": "namespace-import.js",
+      "index": 1,
+      "name": "content",
+      "parentFunctionId": "namespace-import.js->global->FUNCTION->writeViaNamespace",
+      "semanticId": "namespace-import.js->writeViaNamespace->PARAMETER->content#1",
+      "type": "PARAMETER"
+    },
+    {
+      "exported": false,
+      "file": "node-prefix.js",
+      "index": 1,
+      "name": "content",
+      "parentFunctionId": "node-prefix.js->global->FUNCTION->saveWithNodePrefix",
+      "semanticId": "node-prefix.js->saveWithNodePrefix->PARAMETER->content#1",
+      "type": "PARAMETER"
+    },
+    {
+      "exported": false,
+      "file": "aliased-imports.js",
+      "index": 0,
+      "name": "data",
+      "parentFunctionId": "aliased-imports.js->global->FUNCTION->hashWithAlias",
+      "semanticId": "aliased-imports.js->hashWithAlias->PARAMETER->data#0",
+      "type": "PARAMETER"
+    },
+    {
+      "exported": false,
+      "file": "fs-promises.js",
+      "index": 1,
+      "name": "data",
+      "parentFunctionId": "fs-promises.js->global->FUNCTION->saveAsync",
+      "semanticId": "fs-promises.js->saveAsync->PARAMETER->data#1",
+      "type": "PARAMETER"
+    },
+    {
+      "exported": false,
+      "file": "index.js",
+      "index": 1,
+      "name": "data",
+      "parentFunctionId": "index.js->global->FUNCTION->saveData",
+      "semanticId": "index.js->saveData->PARAMETER->data#1",
+      "type": "PARAMETER"
+    },
+    {
+      "exported": false,
+      "file": "unused-imports.js",
+      "index": 0,
+      "name": "data",
+      "parentFunctionId": "unused-imports.js->global->FUNCTION->onlyCreateHash",
+      "semanticId": "unused-imports.js->onlyCreateHash->PARAMETER->data#0",
+      "type": "PARAMETER"
+    },
+    {
+      "exported": false,
+      "file": "fs-promises.js",
+      "index": 1,
+      "name": "dest",
+      "parentFunctionId": "fs-promises.js->global->FUNCTION->copy",
+      "semanticId": "fs-promises.js->copy->PARAMETER->dest#1",
+      "type": "PARAMETER"
+    },
+    {
+      "exported": false,
+      "file": "index.js",
+      "index": 0,
+      "name": "dir",
+      "parentFunctionId": "index.js->global->FUNCTION->listFiles",
+      "semanticId": "index.js->listFiles->PARAMETER->dir#0",
+      "type": "PARAMETER"
+    },
+    {
+      "exported": false,
+      "file": "index.js",
+      "index": 0,
+      "name": "filePath",
+      "parentFunctionId": "index.js->global->FUNCTION->saveData",
+      "semanticId": "index.js->saveData->PARAMETER->filePath#0",
+      "type": "PARAMETER"
+    },
+    {
+      "exported": false,
+      "file": "namespace-import.js",
+      "index": 0,
+      "name": "filePath",
+      "parentFunctionId": "namespace-import.js->global->FUNCTION->existsViaNamespace",
+      "semanticId": "namespace-import.js->existsViaNamespace->PARAMETER->filePath#0",
+      "type": "PARAMETER"
+    },
+    {
+      "exported": false,
+      "file": "namespace-import.js",
+      "index": 0,
+      "name": "filePath",
+      "parentFunctionId": "namespace-import.js->global->FUNCTION->loadViaNamespace",
+      "semanticId": "namespace-import.js->loadViaNamespace->PARAMETER->filePath#0",
+      "type": "PARAMETER"
+    },
+    {
+      "exported": false,
+      "file": "namespace-import.js",
+      "index": 0,
+      "name": "filePath",
+      "parentFunctionId": "namespace-import.js->global->FUNCTION->parseViaNamespace",
+      "semanticId": "namespace-import.js->parseViaNamespace->PARAMETER->filePath#0",
+      "type": "PARAMETER"
+    },
+    {
+      "exported": false,
+      "file": "namespace-import.js",
+      "index": 0,
+      "name": "filePath",
+      "parentFunctionId": "namespace-import.js->global->FUNCTION->writeViaNamespace",
+      "semanticId": "namespace-import.js->writeViaNamespace->PARAMETER->filePath#0",
+      "type": "PARAMETER"
+    },
+    {
+      "exported": false,
+      "file": "namespace-import.js",
+      "index": 0,
+      "name": "fn",
+      "parentFunctionId": "namespace-import.js->global->FUNCTION->promisifyCallback",
+      "semanticId": "namespace-import.js->promisifyCallback->PARAMETER->fn#0",
+      "type": "PARAMETER"
+    },
+    {
+      "exported": false,
+      "file": "index.js",
+      "index": 0,
+      "name": "fullPath",
+      "parentFunctionId": "index.js->global->FUNCTION->getFilename",
+      "semanticId": "index.js->getFilename->PARAMETER->fullPath#0",
+      "type": "PARAMETER"
+    },
+    {
+      "exported": false,
+      "file": "node-prefix.js",
+      "index": 0,
+      "name": "handler",
+      "parentFunctionId": "node-prefix.js->global->FUNCTION->createServerWithNodePrefix",
+      "semanticId": "node-prefix.js->createServerWithNodePrefix->PARAMETER->handler#0",
+      "type": "PARAMETER"
+    },
+    {
+      "exported": false,
+      "file": "namespace-import.js",
+      "index": 0,
+      "name": "obj",
+      "parentFunctionId": "namespace-import.js->global->FUNCTION->inspectObject",
+      "semanticId": "namespace-import.js->inspectObject->PARAMETER->obj#0",
+      "type": "PARAMETER"
+    },
+    {
+      "exported": false,
+      "file": "aliased-imports.js",
+      "index": 0,
+      "name": "path",
+      "parentFunctionId": "aliased-imports.js->global->FUNCTION->loadWithAlias",
+      "semanticId": "aliased-imports.js->loadWithAlias->PARAMETER->path#0",
+      "type": "PARAMETER"
+    },
+    {
+      "exported": false,
+      "file": "aliased-imports.js",
+      "index": 0,
+      "name": "path",
+      "parentFunctionId": "aliased-imports.js->global->FUNCTION->saveWithAlias",
+      "semanticId": "aliased-imports.js->saveWithAlias->PARAMETER->path#0",
+      "type": "PARAMETER"
+    },
+    {
+      "exported": false,
+      "file": "fs-promises.js",
+      "index": 0,
+      "name": "path",
+      "parentFunctionId": "fs-promises.js->global->FUNCTION->checkAccess",
+      "semanticId": "fs-promises.js->checkAccess->PARAMETER->path#0",
+      "type": "PARAMETER"
+    },
+    {
+      "exported": false,
+      "file": "fs-promises.js",
+      "index": 0,
+      "name": "path",
+      "parentFunctionId": "fs-promises.js->global->FUNCTION->ensureDir",
+      "semanticId": "fs-promises.js->ensureDir->PARAMETER->path#0",
+      "type": "PARAMETER"
+    },
+    {
+      "exported": false,
+      "file": "fs-promises.js",
+      "index": 0,
+      "name": "path",
+      "parentFunctionId": "fs-promises.js->global->FUNCTION->getStats",
+      "semanticId": "fs-promises.js->getStats->PARAMETER->path#0",
+      "type": "PARAMETER"
+    },
+    {
+      "exported": false,
+      "file": "fs-promises.js",
+      "index": 0,
+      "name": "path",
+      "parentFunctionId": "fs-promises.js->global->FUNCTION->listDir",
+      "semanticId": "fs-promises.js->listDir->PARAMETER->path#0",
+      "type": "PARAMETER"
+    },
+    {
+      "exported": false,
+      "file": "fs-promises.js",
+      "index": 0,
+      "name": "path",
+      "parentFunctionId": "fs-promises.js->global->FUNCTION->loadAsync",
+      "semanticId": "fs-promises.js->loadAsync->PARAMETER->path#0",
+      "type": "PARAMETER"
+    },
+    {
+      "exported": false,
+      "file": "fs-promises.js",
+      "index": 0,
+      "name": "path",
+      "parentFunctionId": "fs-promises.js->global->FUNCTION->removeFile",
+      "semanticId": "fs-promises.js->removeFile->PARAMETER->path#0",
+      "type": "PARAMETER"
+    },
+    {
+      "exported": false,
+      "file": "fs-promises.js",
+      "index": 0,
+      "name": "path",
+      "parentFunctionId": "fs-promises.js->global->FUNCTION->saveAsync",
+      "semanticId": "fs-promises.js->saveAsync->PARAMETER->path#0",
+      "type": "PARAMETER"
+    },
+    {
+      "exported": false,
+      "file": "node-prefix.js",
+      "index": 0,
+      "name": "path",
+      "parentFunctionId": "node-prefix.js->global->FUNCTION->loadWithNodePrefix",
+      "semanticId": "node-prefix.js->loadWithNodePrefix->PARAMETER->path#0",
+      "type": "PARAMETER"
+    },
+    {
+      "exported": false,
+      "file": "node-prefix.js",
+      "index": 0,
+      "name": "path",
+      "parentFunctionId": "node-prefix.js->global->FUNCTION->saveWithNodePrefix",
+      "semanticId": "node-prefix.js->saveWithNodePrefix->PARAMETER->path#0",
+      "type": "PARAMETER"
+    },
+    {
+      "exported": false,
+      "file": "unused-imports.js",
+      "index": 0,
+      "name": "path",
+      "parentFunctionId": "unused-imports.js->global->FUNCTION->onlyReadFile",
+      "semanticId": "unused-imports.js->onlyReadFile->PARAMETER->path#0",
+      "type": "PARAMETER"
+    },
+    {
+      "exported": false,
+      "file": "index.js",
+      "index": 0,
+      "name": "port",
+      "parentFunctionId": "index.js->global->FUNCTION->startServer",
+      "semanticId": "index.js->startServer->PARAMETER->port#0",
+      "type": "PARAMETER"
+    },
+    {
+      "exported": false,
+      "file": "node-prefix.js",
+      "index": 0,
+      "name": "script",
+      "parentFunctionId": "node-prefix.js->global->FUNCTION->createWorker",
+      "semanticId": "node-prefix.js->createWorker->PARAMETER->script#0",
+      "type": "PARAMETER"
+    },
+    {
+      "exported": false,
+      "file": "aliased-imports.js",
+      "index": 1,
+      "name": "segment",
+      "parentFunctionId": "aliased-imports.js->global->FUNCTION->buildPathWithAlias",
+      "semanticId": "aliased-imports.js->buildPathWithAlias->PARAMETER->segment#1",
+      "type": "PARAMETER"
+    },
+    {
+      "exported": false,
+      "file": "node-prefix.js",
+      "index": 1,
+      "name": "segment",
+      "parentFunctionId": "node-prefix.js->global->FUNCTION->buildWithNodePrefix",
+      "semanticId": "node-prefix.js->buildWithNodePrefix->PARAMETER->segment#1",
+      "type": "PARAMETER"
+    },
+    {
+      "exported": false,
+      "file": "unused-imports.js",
+      "index": 1,
+      "name": "segment",
+      "parentFunctionId": "unused-imports.js->global->FUNCTION->onlyJoinAndResolve",
+      "semanticId": "unused-imports.js->onlyJoinAndResolve->PARAMETER->segment#1",
+      "type": "PARAMETER"
+    },
+    {
+      "exported": false,
+      "file": "index.js",
+      "index": 1,
+      "isRest": true,
+      "name": "segments",
+      "parentFunctionId": "index.js->global->FUNCTION->buildPath",
+      "semanticId": "index.js->buildPath->PARAMETER->segments#1",
+      "type": "PARAMETER"
+    },
+    {
+      "exported": false,
+      "file": "namespace-import.js",
+      "index": 0,
+      "isRest": true,
+      "name": "segments",
+      "parentFunctionId": "namespace-import.js->global->FUNCTION->joinViaNamespace",
+      "semanticId": "namespace-import.js->joinViaNamespace->PARAMETER->segments#0",
+      "type": "PARAMETER"
+    },
+    {
+      "exported": false,
+      "file": "fs-promises.js",
+      "index": 0,
+      "name": "src",
+      "parentFunctionId": "fs-promises.js->global->FUNCTION->copy",
+      "semanticId": "fs-promises.js->copy->PARAMETER->src#0",
+      "type": "PARAMETER"
+    },
+    {
+      "exported": false,
+      "file": "namespace-import.js",
+      "index": 0,
+      "name": "urlObj",
+      "parentFunctionId": "namespace-import.js->global->FUNCTION->formatUrl",
+      "semanticId": "namespace-import.js->formatUrl->PARAMETER->urlObj#0",
+      "type": "PARAMETER"
+    },
+    {
+      "exported": false,
+      "file": "namespace-import.js",
+      "index": 0,
+      "name": "urlString",
+      "parentFunctionId": "namespace-import.js->global->FUNCTION->parseUrl",
+      "semanticId": "namespace-import.js->parseUrl->PARAMETER->urlString#0",
+      "type": "PARAMETER"
+    },
+    {
+      "exported": false,
+      "file": "index.js",
+      "name": "stdout",
+      "objectName": "child",
+      "semanticId": "index.js->spawnProcess->PROPERTY_ACCESS->child.stdout#0",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "exported": false,
+      "file": "fs-promises.js",
+      "name": "",
+      "scopeType": "catch-block",
+      "semanticId": "checkAccess:catch-block[0]",
+      "type": "SCOPE"
+    },
+    {
+      "exported": false,
+      "file": "fs-promises.js",
+      "name": "",
+      "scopeType": "try-block",
+      "semanticId": "checkAccess:try-block[0]",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "aliased-imports.js",
+      "name": "anonymous[0]:body",
+      "scopeType": "arrow_body",
+      "semanticId": "loadWithAlias->anonymous[0]:arrow_body[0]",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "aliased-imports.js",
+      "name": "anonymous[0]:body",
+      "scopeType": "arrow_body",
+      "semanticId": "loadWithAlias:arrow_body[0]",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "aliased-imports.js",
+      "name": "anonymous[0]:body",
+      "scopeType": "arrow_body",
+      "semanticId": "saveWithAlias->anonymous[0]:arrow_body[0]",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "aliased-imports.js",
+      "name": "anonymous[0]:body",
+      "scopeType": "arrow_body",
+      "semanticId": "saveWithAlias:arrow_body[0]",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "index.js",
+      "name": "anonymous[0]:body",
+      "scopeType": "arrow_body",
+      "semanticId": "loadConfig->anonymous[0]:arrow_body[0]",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "index.js",
+      "name": "anonymous[0]:body",
+      "scopeType": "arrow_body",
+      "semanticId": "loadConfig:arrow_body[0]",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "index.js",
+      "name": "anonymous[0]:body",
+      "scopeType": "arrow_body",
+      "semanticId": "runCommand:arrow_body[0]",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "index.js",
+      "name": "anonymous[0]:body",
+      "scopeType": "arrow_body",
+      "semanticId": "saveData:arrow_body[0]",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "index.js",
+      "name": "anonymous[0]:body",
+      "scopeType": "arrow_body",
+      "semanticId": "startServer:arrow_body[0]",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "namespace-import.js",
+      "name": "anonymous[0]:body",
+      "scopeType": "arrow_body",
+      "semanticId": "loadViaNamespace->anonymous[0]:arrow_body[0]",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "namespace-import.js",
+      "name": "anonymous[0]:body",
+      "scopeType": "arrow_body",
+      "semanticId": "loadViaNamespace:arrow_body[0]",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "unused-imports.js",
+      "name": "anonymous[0]:body",
+      "scopeType": "arrow_body",
+      "semanticId": "onlyReadFile->anonymous[0]:arrow_body[0]",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "unused-imports.js",
+      "name": "anonymous[0]:body",
+      "scopeType": "arrow_body",
+      "semanticId": "onlyReadFile:arrow_body[0]",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "index.js",
+      "name": "buildPath:body",
+      "scopeType": "function_body",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "aliased-imports.js",
+      "name": "buildPathWithAlias:body",
+      "scopeType": "function_body",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "node-prefix.js",
+      "name": "buildWithNodePrefix:body",
+      "scopeType": "function_body",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "fs-promises.js",
+      "name": "checkAccess:body",
+      "scopeType": "function_body",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "fs-promises.js",
+      "name": "copy:body",
+      "scopeType": "function_body",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "node-prefix.js",
+      "name": "createEmitter:body",
+      "scopeType": "function_body",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "node-prefix.js",
+      "name": "createServerWithNodePrefix:body",
+      "scopeType": "function_body",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "node-prefix.js",
+      "name": "createWorker:body",
+      "scopeType": "function_body",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": true,
+      "constraints": [
+        {
+          "excludes": true,
+          "negated": true,
+          "operator": "falsy",
+          "variable": "err"
+        }
+      ],
+      "exported": false,
+      "file": "aliased-imports.js",
+      "name": "else:17:11:1",
+      "scopeType": "else_statement",
+      "semanticId": "loadWithAlias->anonymous[0]->anonymous[0]->if#0:else_statement[0]",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": true,
+      "constraints": [
+        {
+          "excludes": true,
+          "negated": true,
+          "operator": "falsy",
+          "variable": "err"
+        }
+      ],
+      "exported": false,
+      "file": "namespace-import.js",
+      "name": "else:18:11:1",
+      "scopeType": "else_statement",
+      "semanticId": "loadViaNamespace->anonymous[0]->anonymous[0]->if#0:else_statement[0]",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": true,
+      "constraints": [
+        {
+          "excludes": true,
+          "negated": true,
+          "operator": "falsy",
+          "variable": "err"
+        }
+      ],
+      "exported": false,
+      "file": "unused-imports.js",
+      "name": "else:18:11:1",
+      "scopeType": "else_statement",
+      "semanticId": "onlyReadFile->anonymous[0]->anonymous[0]->if#0:else_statement[0]",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": true,
+      "constraints": [
+        {
+          "excludes": true,
+          "negated": true,
+          "operator": "falsy",
+          "variable": "err"
+        }
+      ],
+      "exported": false,
+      "file": "index.js",
+      "name": "else:24:11:1",
+      "scopeType": "else_statement",
+      "semanticId": "loadConfig->anonymous[0]->anonymous[0]->if#0:else_statement[0]",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": true,
+      "constraints": [
+        {
+          "excludes": true,
+          "negated": true,
+          "operator": "falsy",
+          "variable": "err"
+        }
+      ],
+      "exported": false,
+      "file": "aliased-imports.js",
+      "name": "else:27:11:3",
+      "scopeType": "else_statement",
+      "semanticId": "saveWithAlias->anonymous[0]->anonymous[0]->if#0:else_statement[0]",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "fs-promises.js",
+      "name": "ensureDir:body",
+      "scopeType": "function_body",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "namespace-import.js",
+      "name": "existsViaNamespace:body",
+      "scopeType": "function_body",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "namespace-import.js",
+      "name": "formatUrl:body",
+      "scopeType": "function_body",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "index.js",
+      "name": "getFilename:body",
+      "scopeType": "function_body",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "fs-promises.js",
+      "name": "getStats:body",
+      "scopeType": "function_body",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "aliased-imports.js",
+      "name": "hashWithAlias:body",
+      "scopeType": "function_body",
+      "type": "SCOPE"
+    },
+    {
+      "condition": "err",
+      "conditional": true,
+      "constraints": [
+        {
+          "negated": false,
+          "operator": "truthy",
+          "variable": "err"
+        }
+      ],
+      "exported": false,
+      "file": "aliased-imports.js",
+      "name": "if:16:6:0",
+      "scopeType": "if_statement",
+      "semanticId": "loadWithAlias->anonymous[0]->anonymous[0]:if_statement[0]",
+      "type": "SCOPE"
+    },
+    {
+      "condition": "err",
+      "conditional": true,
+      "constraints": [
+        {
+          "negated": false,
+          "operator": "truthy",
+          "variable": "err"
+        }
+      ],
+      "exported": false,
+      "file": "namespace-import.js",
+      "name": "if:17:6:0",
+      "scopeType": "if_statement",
+      "semanticId": "loadViaNamespace->anonymous[0]->anonymous[0]:if_statement[0]",
+      "type": "SCOPE"
+    },
+    {
+      "condition": "err",
+      "conditional": true,
+      "constraints": [
+        {
+          "negated": false,
+          "operator": "truthy",
+          "variable": "err"
+        }
+      ],
+      "exported": false,
+      "file": "unused-imports.js",
+      "name": "if:17:6:0",
+      "scopeType": "if_statement",
+      "semanticId": "onlyReadFile->anonymous[0]->anonymous[0]:if_statement[0]",
+      "type": "SCOPE"
+    },
+    {
+      "condition": "err",
+      "conditional": true,
+      "constraints": [
+        {
+          "negated": false,
+          "operator": "truthy",
+          "variable": "err"
+        }
+      ],
+      "exported": false,
+      "file": "index.js",
+      "name": "if:23:6:0",
+      "scopeType": "if_statement",
+      "semanticId": "loadConfig->anonymous[0]->anonymous[0]:if_statement[0]",
+      "type": "SCOPE"
+    },
+    {
+      "condition": "err",
+      "conditional": true,
+      "constraints": [
+        {
+          "negated": false,
+          "operator": "truthy",
+          "variable": "err"
+        }
+      ],
+      "exported": false,
+      "file": "aliased-imports.js",
+      "name": "if:26:6:2",
+      "scopeType": "if_statement",
+      "semanticId": "saveWithAlias->anonymous[0]->anonymous[0]:if_statement[0]",
+      "type": "SCOPE"
+    },
+    {
+      "condition": "err",
+      "conditional": true,
+      "constraints": [
+        {
+          "negated": false,
+          "operator": "truthy",
+          "variable": "err"
+        }
+      ],
+      "exported": false,
+      "file": "index.js",
+      "name": "if:32:4:2",
+      "scopeType": "if_statement",
+      "semanticId": "saveData->anonymous[0]:if_statement[0]",
+      "type": "SCOPE"
+    },
+    {
+      "condition": "isMainThread",
+      "conditional": true,
+      "constraints": [
+        {
+          "negated": false,
+          "operator": "truthy",
+          "variable": "isMainThread"
+        }
+      ],
+      "exported": false,
+      "file": "node-prefix.js",
+      "name": "if:36:2:0",
+      "scopeType": "if_statement",
+      "semanticId": "createWorker:if_statement[0]",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "namespace-import.js",
+      "name": "inspectObject:body",
+      "scopeType": "function_body",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "namespace-import.js",
+      "name": "joinViaNamespace:body",
+      "scopeType": "function_body",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "fs-promises.js",
+      "name": "listDir:body",
+      "scopeType": "function_body",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "index.js",
+      "name": "listFiles:body",
+      "scopeType": "function_body",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "fs-promises.js",
+      "name": "loadAsync:body",
+      "scopeType": "function_body",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "index.js",
+      "name": "loadConfig:body",
+      "scopeType": "function_body",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "namespace-import.js",
+      "name": "loadViaNamespace:body",
+      "scopeType": "function_body",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "aliased-imports.js",
+      "name": "loadWithAlias:body",
+      "scopeType": "function_body",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "node-prefix.js",
+      "name": "loadWithNodePrefix:body",
+      "scopeType": "function_body",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "unused-imports.js",
+      "name": "onlyCreateHash:body",
+      "scopeType": "function_body",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "unused-imports.js",
+      "name": "onlyJoinAndResolve:body",
+      "scopeType": "function_body",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "unused-imports.js",
+      "name": "onlyReadFile:body",
+      "scopeType": "function_body",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "namespace-import.js",
+      "name": "parseUrl:body",
+      "scopeType": "function_body",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "namespace-import.js",
+      "name": "parseViaNamespace:body",
+      "scopeType": "function_body",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "namespace-import.js",
+      "name": "promisifyCallback:body",
+      "scopeType": "function_body",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "fs-promises.js",
+      "name": "removeFile:body",
+      "scopeType": "function_body",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "index.js",
+      "name": "runCommand:body",
+      "scopeType": "function_body",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "fs-promises.js",
+      "name": "saveAsync:body",
+      "scopeType": "function_body",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "index.js",
+      "name": "saveData:body",
+      "scopeType": "function_body",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "aliased-imports.js",
+      "name": "saveWithAlias:body",
+      "scopeType": "function_body",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "node-prefix.js",
+      "name": "saveWithNodePrefix:body",
+      "scopeType": "function_body",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "index.js",
+      "name": "spawnProcess:body",
+      "scopeType": "function_body",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "index.js",
+      "name": "startServer:body",
+      "scopeType": "function_body",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "namespace-import.js",
+      "name": "writeViaNamespace:body",
+      "scopeType": "function_body",
+      "type": "SCOPE"
+    },
+    {
+      "dependencies": [],
+      "discoveryMethod": "simple",
+      "entrypoint": "index.js",
+      "exported": false,
+      "file": "/test/fixtures/nodejs-builtins",
+      "kind": "SERVICE",
+      "name": "nodejs-builtins-fixture",
+      "type": "SERVICE",
+      "version": "1.0.0"
+    },
+    {
+      "exported": false,
+      "file": "fs-promises.js",
+      "name": "",
+      "semanticId": "fs-promises.js->checkAccess->TRY_BLOCK->try#0",
+      "type": "TRY_BLOCK"
+    },
+    {
+      "exported": false,
+      "file": "index.js",
+      "name": "child",
+      "type": "VARIABLE"
+    },
+    {
+      "exported": false,
+      "file": "fs-promises.js",
+      "name": "content",
+      "type": "VARIABLE"
+    },
+    {
+      "exported": false,
+      "file": "index.js",
+      "name": "full",
+      "type": "VARIABLE"
+    },
+    {
+      "exported": false,
+      "file": "aliased-imports.js",
+      "name": "joined",
+      "type": "VARIABLE"
+    },
+    {
+      "exported": false,
+      "file": "index.js",
+      "name": "server",
+      "type": "VARIABLE"
+    }
+  ],
+  "edges": [
+    {
+      "from": "BRANCH:",
+      "type": "CONTAINS",
+      "to": "SCOPE:else:17:11:1"
+    },
+    {
+      "from": "BRANCH:",
+      "type": "CONTAINS",
+      "to": "SCOPE:else:18:11:1"
+    },
+    {
+      "from": "BRANCH:",
+      "type": "CONTAINS",
+      "to": "SCOPE:else:18:11:1"
+    },
+    {
+      "from": "BRANCH:",
+      "type": "CONTAINS",
+      "to": "SCOPE:else:24:11:1"
+    },
+    {
+      "from": "BRANCH:",
+      "type": "CONTAINS",
+      "to": "SCOPE:else:27:11:3"
+    },
+    {
+      "from": "BRANCH:",
+      "type": "CONTAINS",
+      "to": "SCOPE:if:16:6:0"
+    },
+    {
+      "from": "BRANCH:",
+      "type": "CONTAINS",
+      "to": "SCOPE:if:17:6:0"
+    },
+    {
+      "from": "BRANCH:",
+      "type": "CONTAINS",
+      "to": "SCOPE:if:17:6:0"
+    },
+    {
+      "from": "BRANCH:",
+      "type": "CONTAINS",
+      "to": "SCOPE:if:23:6:0"
+    },
+    {
+      "from": "BRANCH:",
+      "type": "CONTAINS",
+      "to": "SCOPE:if:26:6:2"
+    },
+    {
+      "from": "BRANCH:",
+      "type": "CONTAINS",
+      "to": "SCOPE:if:32:4:2"
+    },
+    {
+      "from": "BRANCH:",
+      "type": "CONTAINS",
+      "to": "SCOPE:if:36:2:0"
+    },
+    {
+      "from": "BRANCH:",
+      "type": "HAS_ALTERNATE",
+      "to": "SCOPE:else:17:11:1"
+    },
+    {
+      "from": "BRANCH:",
+      "type": "HAS_ALTERNATE",
+      "to": "SCOPE:else:18:11:1"
+    },
+    {
+      "from": "BRANCH:",
+      "type": "HAS_ALTERNATE",
+      "to": "SCOPE:else:18:11:1"
+    },
+    {
+      "from": "BRANCH:",
+      "type": "HAS_ALTERNATE",
+      "to": "SCOPE:else:24:11:1"
+    },
+    {
+      "from": "BRANCH:",
+      "type": "HAS_ALTERNATE",
+      "to": "SCOPE:else:27:11:3"
+    },
+    {
+      "from": "BRANCH:",
+      "type": "HAS_CONDITION",
+      "to": "EXPRESSION:Identifier"
+    },
+    {
+      "from": "BRANCH:",
+      "type": "HAS_CONDITION",
+      "to": "EXPRESSION:Identifier"
+    },
+    {
+      "from": "BRANCH:",
+      "type": "HAS_CONDITION",
+      "to": "EXPRESSION:Identifier"
+    },
+    {
+      "from": "BRANCH:",
+      "type": "HAS_CONDITION",
+      "to": "EXPRESSION:Identifier"
+    },
+    {
+      "from": "BRANCH:",
+      "type": "HAS_CONDITION",
+      "to": "EXPRESSION:Identifier"
+    },
+    {
+      "from": "BRANCH:",
+      "type": "HAS_CONDITION",
+      "to": "EXPRESSION:Identifier"
+    },
+    {
+      "from": "BRANCH:",
+      "type": "HAS_CONDITION",
+      "to": "EXPRESSION:Identifier"
+    },
+    {
+      "from": "BRANCH:",
+      "type": "HAS_CONSEQUENT",
+      "to": "SCOPE:if:16:6:0"
+    },
+    {
+      "from": "BRANCH:",
+      "type": "HAS_CONSEQUENT",
+      "to": "SCOPE:if:17:6:0"
+    },
+    {
+      "from": "BRANCH:",
+      "type": "HAS_CONSEQUENT",
+      "to": "SCOPE:if:17:6:0"
+    },
+    {
+      "from": "BRANCH:",
+      "type": "HAS_CONSEQUENT",
+      "to": "SCOPE:if:23:6:0"
+    },
+    {
+      "from": "BRANCH:",
+      "type": "HAS_CONSEQUENT",
+      "to": "SCOPE:if:26:6:2"
+    },
+    {
+      "from": "BRANCH:",
+      "type": "HAS_CONSEQUENT",
+      "to": "SCOPE:if:32:4:2"
+    },
+    {
+      "from": "BRANCH:",
+      "type": "HAS_CONSEQUENT",
+      "to": "SCOPE:if:36:2:0"
+    },
+    {
+      "from": "CALL:access",
+      "type": "CALLS",
+      "to": "EXTERNAL_FUNCTION:fs/promises.access"
+    },
+    {
+      "from": "CALL:basename",
+      "type": "CALLS",
+      "to": "EXTERNAL_FUNCTION:path.basename"
+    },
+    {
+      "from": "CALL:basename",
+      "type": "RETURNS",
+      "to": "FUNCTION:getFilename"
+    },
+    {
+      "from": "CALL:child.stdout.on",
+      "type": "PASSES_ARGUMENT",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:child.stdout.on",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:child.stdout.on",
+      "type": "USES",
+      "to": "VARIABLE:child"
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "WRITES_TO",
+      "to": "net:stdio:__stdio__"
+    },
+    {
+      "from": "CALL:console.log",
+      "type": "WRITES_TO",
+      "to": "net:stdio:__stdio__"
+    },
+    {
+      "from": "CALL:copyFile",
+      "type": "CALLS",
+      "to": "EXTERNAL_FUNCTION:fs/promises.copyFile"
+    },
+    {
+      "from": "CALL:createHash",
+      "type": "CALLS",
+      "to": "EXTERNAL_FUNCTION:crypto.createHash"
+    },
+    {
+      "from": "CALL:createServer",
+      "type": "CALLS",
+      "to": "EXTERNAL_FUNCTION:http.createServer"
+    },
+    {
+      "from": "CALL:createServer",
+      "type": "CALLS",
+      "to": "EXTERNAL_FUNCTION:http.createServer"
+    },
+    {
+      "from": "CALL:createServer",
+      "type": "RETURNS",
+      "to": "FUNCTION:createServerWithNodePrefix"
+    },
+    {
+      "from": "CALL:EventEmitter",
+      "type": "CALLS",
+      "to": "EXTERNAL_FUNCTION:events.EventEmitter"
+    },
+    {
+      "from": "CALL:exec",
+      "type": "CALLS",
+      "to": "EXTERNAL_FUNCTION:child_process.exec"
+    },
+    {
+      "from": "CALL:fs.existsSync",
+      "type": "CALLS",
+      "to": "EXTERNAL_FUNCTION:fs.existsSync"
+    },
+    {
+      "from": "CALL:fs.existsSync",
+      "type": "RETURNS",
+      "to": "FUNCTION:existsViaNamespace"
+    },
+    {
+      "from": "CALL:fs.readFile",
+      "type": "CALLS",
+      "to": "EXTERNAL_FUNCTION:fs.readFile"
+    },
+    {
+      "from": "CALL:fs.readFile",
+      "type": "PASSES_ARGUMENT",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 2
+      }
+    },
+    {
+      "from": "CALL:fs.readFile",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:fs.writeFileSync",
+      "type": "CALLS",
+      "to": "EXTERNAL_FUNCTION:fs.writeFileSync"
+    },
+    {
+      "from": "CALL:hash",
+      "type": "CALLS",
+      "to": "EXTERNAL_FUNCTION:crypto.createHash"
+    },
+    {
+      "from": "CALL:join",
+      "type": "CALLS",
+      "to": "EXTERNAL_FUNCTION:path.join"
+    },
+    {
+      "from": "CALL:join",
+      "type": "CALLS",
+      "to": "EXTERNAL_FUNCTION:path.join"
+    },
+    {
+      "from": "CALL:join",
+      "type": "CALLS",
+      "to": "EXTERNAL_FUNCTION:path.join"
+    },
+    {
+      "from": "CALL:JSON.parse",
+      "type": "PASSES_ARGUMENT",
+      "to": "VARIABLE:content",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:JSON.parse",
+      "type": "RETURNS",
+      "to": "FUNCTION:loadAsync"
+    },
+    {
+      "from": "CALL:JSON.stringify",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 2
+      }
+    },
+    {
+      "from": "CALL:mkdir",
+      "type": "CALLS",
+      "to": "EXTERNAL_FUNCTION:fs/promises.mkdir"
+    },
+    {
+      "from": "CALL:path.join",
+      "type": "CALLS",
+      "to": "EXTERNAL_FUNCTION:path.join"
+    },
+    {
+      "from": "CALL:path.join",
+      "type": "RETURNS",
+      "to": "FUNCTION:joinViaNamespace"
+    },
+    {
+      "from": "CALL:path.parse",
+      "type": "CALLS",
+      "to": "EXTERNAL_FUNCTION:path.parse"
+    },
+    {
+      "from": "CALL:path.parse",
+      "type": "RETURNS",
+      "to": "FUNCTION:parseViaNamespace"
+    },
+    {
+      "from": "CALL:pathJoin",
+      "type": "CALLS",
+      "to": "EXTERNAL_FUNCTION:path.join"
+    },
+    {
+      "from": "CALL:pathResolve",
+      "type": "CALLS",
+      "to": "EXTERNAL_FUNCTION:path.resolve"
+    },
+    {
+      "from": "CALL:pathResolve",
+      "type": "RETURNS",
+      "to": "FUNCTION:buildPathWithAlias"
+    },
+    {
+      "from": "CALL:readdir",
+      "type": "CALLS",
+      "to": "EXTERNAL_FUNCTION:fs.readdir"
+    },
+    {
+      "from": "CALL:readdir",
+      "type": "CALLS",
+      "to": "EXTERNAL_FUNCTION:fs/promises.readdir"
+    },
+    {
+      "from": "CALL:readFile",
+      "type": "CALLS",
+      "to": "EXTERNAL_FUNCTION:fs.readFile"
+    },
+    {
+      "from": "CALL:readFile",
+      "type": "CALLS",
+      "to": "EXTERNAL_FUNCTION:fs.readFile"
+    },
+    {
+      "from": "CALL:readFile",
+      "type": "CALLS",
+      "to": "EXTERNAL_FUNCTION:fs.readFile"
+    },
+    {
+      "from": "CALL:readFile",
+      "type": "CALLS",
+      "to": "EXTERNAL_FUNCTION:fs/promises.readFile"
+    },
+    {
+      "from": "CALL:reject",
+      "type": "RESOLVES_TO",
+      "to": "CONSTRUCTOR_CALL:new Promise()",
+      "metadata": {
+        "isReject": true
+      }
+    },
+    {
+      "from": "CALL:reject",
+      "type": "RESOLVES_TO",
+      "to": "CONSTRUCTOR_CALL:new Promise()",
+      "metadata": {
+        "isReject": true
+      }
+    },
+    {
+      "from": "CALL:reject",
+      "type": "RESOLVES_TO",
+      "to": "CONSTRUCTOR_CALL:new Promise()",
+      "metadata": {
+        "isReject": true
+      }
+    },
+    {
+      "from": "CALL:reject",
+      "type": "RESOLVES_TO",
+      "to": "CONSTRUCTOR_CALL:new Promise()",
+      "metadata": {
+        "isReject": true
+      }
+    },
+    {
+      "from": "CALL:reject",
+      "type": "RESOLVES_TO",
+      "to": "CONSTRUCTOR_CALL:new Promise()",
+      "metadata": {
+        "isReject": true
+      }
+    },
+    {
+      "from": "CALL:res.end",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:res.writeHead",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:resolve",
+      "type": "CALLS",
+      "to": "EXTERNAL_FUNCTION:path.resolve"
+    },
+    {
+      "from": "CALL:resolve",
+      "type": "CALLS",
+      "to": "EXTERNAL_FUNCTION:path.resolve"
+    },
+    {
+      "from": "CALL:resolve",
+      "type": "CALLS",
+      "to": "EXTERNAL_FUNCTION:path.resolve"
+    },
+    {
+      "from": "CALL:resolve",
+      "type": "CALLS",
+      "to": "EXTERNAL_FUNCTION:path.resolve"
+    },
+    {
+      "from": "CALL:resolve",
+      "type": "CALLS",
+      "to": "EXTERNAL_FUNCTION:path.resolve"
+    },
+    {
+      "from": "CALL:resolve",
+      "type": "PASSES_ARGUMENT",
+      "to": "CALL:JSON.parse",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:resolve",
+      "type": "RESOLVES_TO",
+      "to": "CONSTRUCTOR_CALL:new Promise()",
+      "metadata": {
+        "isReject": false
+      }
+    },
+    {
+      "from": "CALL:resolve",
+      "type": "RESOLVES_TO",
+      "to": "CONSTRUCTOR_CALL:new Promise()",
+      "metadata": {
+        "isReject": false
+      }
+    },
+    {
+      "from": "CALL:resolve",
+      "type": "RESOLVES_TO",
+      "to": "CONSTRUCTOR_CALL:new Promise()",
+      "metadata": {
+        "isReject": false
+      }
+    },
+    {
+      "from": "CALL:resolve",
+      "type": "RESOLVES_TO",
+      "to": "CONSTRUCTOR_CALL:new Promise()",
+      "metadata": {
+        "isReject": false
+      }
+    },
+    {
+      "from": "CALL:resolve",
+      "type": "RESOLVES_TO",
+      "to": "CONSTRUCTOR_CALL:new Promise()",
+      "metadata": {
+        "isReject": false
+      }
+    },
+    {
+      "from": "CALL:resolve",
+      "type": "RETURNS",
+      "to": "FUNCTION:buildPath"
+    },
+    {
+      "from": "CALL:resolve",
+      "type": "RETURNS",
+      "to": "FUNCTION:buildWithNodePrefix"
+    },
+    {
+      "from": "CALL:resolve",
+      "type": "RETURNS",
+      "to": "FUNCTION:onlyJoinAndResolve"
+    },
+    {
+      "from": "CALL:rf",
+      "type": "CALLS",
+      "to": "EXTERNAL_FUNCTION:fs.readFile"
+    },
+    {
+      "from": "CALL:rm",
+      "type": "CALLS",
+      "to": "EXTERNAL_FUNCTION:fs/promises.rm"
+    },
+    {
+      "from": "CALL:server.listen",
+      "type": "USES",
+      "to": "VARIABLE:server"
+    },
+    {
+      "from": "CALL:spawn",
+      "type": "CALLS",
+      "to": "EXTERNAL_FUNCTION:child_process.spawn"
+    },
+    {
+      "from": "CALL:stat",
+      "type": "CALLS",
+      "to": "EXTERNAL_FUNCTION:fs/promises.stat"
+    },
+    {
+      "from": "CALL:url.format",
+      "type": "CALLS",
+      "to": "EXTERNAL_FUNCTION:url.format"
+    },
+    {
+      "from": "CALL:url.format",
+      "type": "RETURNS",
+      "to": "FUNCTION:formatUrl"
+    },
+    {
+      "from": "CALL:url.parse",
+      "type": "CALLS",
+      "to": "EXTERNAL_FUNCTION:url.parse"
+    },
+    {
+      "from": "CALL:url.parse",
+      "type": "RETURNS",
+      "to": "FUNCTION:parseUrl"
+    },
+    {
+      "from": "CALL:util.inspect",
+      "type": "CALLS",
+      "to": "EXTERNAL_FUNCTION:util.inspect"
+    },
+    {
+      "from": "CALL:util.inspect",
+      "type": "RETURNS",
+      "to": "FUNCTION:inspectObject"
+    },
+    {
+      "from": "CALL:util.promisify",
+      "type": "CALLS",
+      "to": "EXTERNAL_FUNCTION:util.promisify"
+    },
+    {
+      "from": "CALL:util.promisify",
+      "type": "RETURNS",
+      "to": "FUNCTION:promisifyCallback"
+    },
+    {
+      "from": "CALL:wf",
+      "type": "CALLS",
+      "to": "EXTERNAL_FUNCTION:fs.writeFile"
+    },
+    {
+      "from": "CALL:Worker",
+      "type": "CALLS",
+      "to": "EXTERNAL_FUNCTION:worker_threads.Worker"
+    },
+    {
+      "from": "CALL:writeFile",
+      "type": "CALLS",
+      "to": "EXTERNAL_FUNCTION:fs.writeFile"
+    },
+    {
+      "from": "CALL:writeFile",
+      "type": "CALLS",
+      "to": "EXTERNAL_FUNCTION:fs.writeFile"
+    },
+    {
+      "from": "CALL:writeFile",
+      "type": "CALLS",
+      "to": "EXTERNAL_FUNCTION:fs/promises.writeFile"
+    },
+    {
+      "from": "CATCH_BLOCK:",
+      "type": "CONTAINS",
+      "to": "SCOPE:"
+    },
+    {
+      "from": "EXPRESSION:AwaitExpression",
+      "type": "RETURNS",
+      "to": "FUNCTION:getStats"
+    },
+    {
+      "from": "EXPRESSION:AwaitExpression",
+      "type": "RETURNS",
+      "to": "FUNCTION:listDir"
+    },
+    {
+      "from": "EXPRESSION:NewExpression",
+      "type": "RETURNS",
+      "to": "FUNCTION:createEmitter"
+    },
+    {
+      "from": "EXPRESSION:NewExpression",
+      "type": "RETURNS",
+      "to": "FUNCTION:createWorker"
+    },
+    {
+      "from": "EXPRESSION:NewExpression",
+      "type": "RETURNS",
+      "to": "FUNCTION:loadConfig"
+    },
+    {
+      "from": "EXPRESSION:NewExpression",
+      "type": "RETURNS",
+      "to": "FUNCTION:loadViaNamespace"
+    },
+    {
+      "from": "EXPRESSION:NewExpression",
+      "type": "RETURNS",
+      "to": "FUNCTION:loadWithAlias"
+    },
+    {
+      "from": "EXPRESSION:NewExpression",
+      "type": "RETURNS",
+      "to": "FUNCTION:onlyReadFile"
+    },
+    {
+      "from": "EXPRESSION:NewExpression",
+      "type": "RETURNS",
+      "to": "FUNCTION:saveWithAlias"
+    },
+    {
+      "from": "FUNCTION:anonymous[0]",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:anonymous[0]:body"
+    },
+    {
+      "from": "FUNCTION:anonymous[0]",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:anonymous[0]:body"
+    },
+    {
+      "from": "FUNCTION:anonymous[0]",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:anonymous[0]:body"
+    },
+    {
+      "from": "FUNCTION:anonymous[0]",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:anonymous[0]:body"
+    },
+    {
+      "from": "FUNCTION:anonymous[0]",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:anonymous[0]:body"
+    },
+    {
+      "from": "FUNCTION:anonymous[0]",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:anonymous[0]:body"
+    },
+    {
+      "from": "FUNCTION:anonymous[0]",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:anonymous[0]:body"
+    },
+    {
+      "from": "FUNCTION:anonymous[0]",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:anonymous[0]:body"
+    },
+    {
+      "from": "FUNCTION:anonymous[0]",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:anonymous[0]:body"
+    },
+    {
+      "from": "FUNCTION:anonymous[0]",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:anonymous[0]:body"
+    },
+    {
+      "from": "FUNCTION:anonymous[0]",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:anonymous[0]:body"
+    },
+    {
+      "from": "FUNCTION:anonymous[0]",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:anonymous[0]:body"
+    },
+    {
+      "from": "FUNCTION:anonymous[0]",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:anonymous[0]:body"
+    },
+    {
+      "from": "FUNCTION:buildPath",
+      "type": "HAS_PARAMETER",
+      "to": "PARAMETER:base",
+      "metadata": {
+        "index": 0
+      }
+    },
+    {
+      "from": "FUNCTION:buildPath",
+      "type": "HAS_PARAMETER",
+      "to": "PARAMETER:segments",
+      "metadata": {
+        "index": 1
+      }
+    },
+    {
+      "from": "FUNCTION:buildPath",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:buildPath:body"
+    },
+    {
+      "from": "FUNCTION:buildPathWithAlias",
+      "type": "HAS_PARAMETER",
+      "to": "PARAMETER:base",
+      "metadata": {
+        "index": 0
+      }
+    },
+    {
+      "from": "FUNCTION:buildPathWithAlias",
+      "type": "HAS_PARAMETER",
+      "to": "PARAMETER:segment",
+      "metadata": {
+        "index": 1
+      }
+    },
+    {
+      "from": "FUNCTION:buildPathWithAlias",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:buildPathWithAlias:body"
+    },
+    {
+      "from": "FUNCTION:buildWithNodePrefix",
+      "type": "HAS_PARAMETER",
+      "to": "PARAMETER:base",
+      "metadata": {
+        "index": 0
+      }
+    },
+    {
+      "from": "FUNCTION:buildWithNodePrefix",
+      "type": "HAS_PARAMETER",
+      "to": "PARAMETER:segment",
+      "metadata": {
+        "index": 1
+      }
+    },
+    {
+      "from": "FUNCTION:buildWithNodePrefix",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:buildWithNodePrefix:body"
+    },
+    {
+      "from": "FUNCTION:checkAccess",
+      "type": "HAS_PARAMETER",
+      "to": "PARAMETER:path",
+      "metadata": {
+        "index": 0
+      }
+    },
+    {
+      "from": "FUNCTION:checkAccess",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:checkAccess:body"
+    },
+    {
+      "from": "FUNCTION:copy",
+      "type": "HAS_PARAMETER",
+      "to": "PARAMETER:dest",
+      "metadata": {
+        "index": 1
+      }
+    },
+    {
+      "from": "FUNCTION:copy",
+      "type": "HAS_PARAMETER",
+      "to": "PARAMETER:src",
+      "metadata": {
+        "index": 0
+      }
+    },
+    {
+      "from": "FUNCTION:copy",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:copy:body"
+    },
+    {
+      "from": "FUNCTION:createEmitter",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:createEmitter:body"
+    },
+    {
+      "from": "FUNCTION:createServerWithNodePrefix",
+      "type": "HAS_PARAMETER",
+      "to": "PARAMETER:handler",
+      "metadata": {
+        "index": 0
+      }
+    },
+    {
+      "from": "FUNCTION:createServerWithNodePrefix",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:createServerWithNodePrefix:body"
+    },
+    {
+      "from": "FUNCTION:createWorker",
+      "type": "HAS_PARAMETER",
+      "to": "PARAMETER:script",
+      "metadata": {
+        "index": 0
+      }
+    },
+    {
+      "from": "FUNCTION:createWorker",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:createWorker:body"
+    },
+    {
+      "from": "FUNCTION:ensureDir",
+      "type": "HAS_PARAMETER",
+      "to": "PARAMETER:path",
+      "metadata": {
+        "index": 0
+      }
+    },
+    {
+      "from": "FUNCTION:ensureDir",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:ensureDir:body"
+    },
+    {
+      "from": "FUNCTION:existsViaNamespace",
+      "type": "HAS_PARAMETER",
+      "to": "PARAMETER:filePath",
+      "metadata": {
+        "index": 0
+      }
+    },
+    {
+      "from": "FUNCTION:existsViaNamespace",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:existsViaNamespace:body"
+    },
+    {
+      "from": "FUNCTION:formatUrl",
+      "type": "HAS_PARAMETER",
+      "to": "PARAMETER:urlObj",
+      "metadata": {
+        "index": 0
+      }
+    },
+    {
+      "from": "FUNCTION:formatUrl",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:formatUrl:body"
+    },
+    {
+      "from": "FUNCTION:getFilename",
+      "type": "HAS_PARAMETER",
+      "to": "PARAMETER:fullPath",
+      "metadata": {
+        "index": 0
+      }
+    },
+    {
+      "from": "FUNCTION:getFilename",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:getFilename:body"
+    },
+    {
+      "from": "FUNCTION:getStats",
+      "type": "HAS_PARAMETER",
+      "to": "PARAMETER:path",
+      "metadata": {
+        "index": 0
+      }
+    },
+    {
+      "from": "FUNCTION:getStats",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:getStats:body"
+    },
+    {
+      "from": "FUNCTION:hashWithAlias",
+      "type": "HAS_PARAMETER",
+      "to": "PARAMETER:data",
+      "metadata": {
+        "index": 0
+      }
+    },
+    {
+      "from": "FUNCTION:hashWithAlias",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:hashWithAlias:body"
+    },
+    {
+      "from": "FUNCTION:inspectObject",
+      "type": "HAS_PARAMETER",
+      "to": "PARAMETER:obj",
+      "metadata": {
+        "index": 0
+      }
+    },
+    {
+      "from": "FUNCTION:inspectObject",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:inspectObject:body"
+    },
+    {
+      "from": "FUNCTION:joinViaNamespace",
+      "type": "HAS_PARAMETER",
+      "to": "PARAMETER:segments",
+      "metadata": {
+        "index": 0
+      }
+    },
+    {
+      "from": "FUNCTION:joinViaNamespace",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:joinViaNamespace:body"
+    },
+    {
+      "from": "FUNCTION:listDir",
+      "type": "HAS_PARAMETER",
+      "to": "PARAMETER:path",
+      "metadata": {
+        "index": 0
+      }
+    },
+    {
+      "from": "FUNCTION:listDir",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:listDir:body"
+    },
+    {
+      "from": "FUNCTION:listFiles",
+      "type": "HAS_PARAMETER",
+      "to": "PARAMETER:callback",
+      "metadata": {
+        "index": 1
+      }
+    },
+    {
+      "from": "FUNCTION:listFiles",
+      "type": "HAS_PARAMETER",
+      "to": "PARAMETER:dir",
+      "metadata": {
+        "index": 0
+      }
+    },
+    {
+      "from": "FUNCTION:listFiles",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:listFiles:body"
+    },
+    {
+      "from": "FUNCTION:loadAsync",
+      "type": "HAS_PARAMETER",
+      "to": "PARAMETER:path",
+      "metadata": {
+        "index": 0
+      }
+    },
+    {
+      "from": "FUNCTION:loadAsync",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:loadAsync:body"
+    },
+    {
+      "from": "FUNCTION:loadConfig",
+      "type": "HAS_PARAMETER",
+      "to": "PARAMETER:configPath",
+      "metadata": {
+        "index": 0
+      }
+    },
+    {
+      "from": "FUNCTION:loadConfig",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:loadConfig:body"
+    },
+    {
+      "from": "FUNCTION:loadViaNamespace",
+      "type": "HAS_PARAMETER",
+      "to": "PARAMETER:filePath",
+      "metadata": {
+        "index": 0
+      }
+    },
+    {
+      "from": "FUNCTION:loadViaNamespace",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:loadViaNamespace:body"
+    },
+    {
+      "from": "FUNCTION:loadWithAlias",
+      "type": "HAS_PARAMETER",
+      "to": "PARAMETER:path",
+      "metadata": {
+        "index": 0
+      }
+    },
+    {
+      "from": "FUNCTION:loadWithAlias",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:loadWithAlias:body"
+    },
+    {
+      "from": "FUNCTION:loadWithNodePrefix",
+      "type": "HAS_PARAMETER",
+      "to": "PARAMETER:callback",
+      "metadata": {
+        "index": 1
+      }
+    },
+    {
+      "from": "FUNCTION:loadWithNodePrefix",
+      "type": "HAS_PARAMETER",
+      "to": "PARAMETER:path",
+      "metadata": {
+        "index": 0
+      }
+    },
+    {
+      "from": "FUNCTION:loadWithNodePrefix",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:loadWithNodePrefix:body"
+    },
+    {
+      "from": "FUNCTION:onlyCreateHash",
+      "type": "HAS_PARAMETER",
+      "to": "PARAMETER:data",
+      "metadata": {
+        "index": 0
+      }
+    },
+    {
+      "from": "FUNCTION:onlyCreateHash",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:onlyCreateHash:body"
+    },
+    {
+      "from": "FUNCTION:onlyJoinAndResolve",
+      "type": "HAS_PARAMETER",
+      "to": "PARAMETER:base",
+      "metadata": {
+        "index": 0
+      }
+    },
+    {
+      "from": "FUNCTION:onlyJoinAndResolve",
+      "type": "HAS_PARAMETER",
+      "to": "PARAMETER:segment",
+      "metadata": {
+        "index": 1
+      }
+    },
+    {
+      "from": "FUNCTION:onlyJoinAndResolve",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:onlyJoinAndResolve:body"
+    },
+    {
+      "from": "FUNCTION:onlyReadFile",
+      "type": "HAS_PARAMETER",
+      "to": "PARAMETER:path",
+      "metadata": {
+        "index": 0
+      }
+    },
+    {
+      "from": "FUNCTION:onlyReadFile",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:onlyReadFile:body"
+    },
+    {
+      "from": "FUNCTION:parseUrl",
+      "type": "HAS_PARAMETER",
+      "to": "PARAMETER:urlString",
+      "metadata": {
+        "index": 0
+      }
+    },
+    {
+      "from": "FUNCTION:parseUrl",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:parseUrl:body"
+    },
+    {
+      "from": "FUNCTION:parseViaNamespace",
+      "type": "HAS_PARAMETER",
+      "to": "PARAMETER:filePath",
+      "metadata": {
+        "index": 0
+      }
+    },
+    {
+      "from": "FUNCTION:parseViaNamespace",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:parseViaNamespace:body"
+    },
+    {
+      "from": "FUNCTION:promisifyCallback",
+      "type": "HAS_PARAMETER",
+      "to": "PARAMETER:fn",
+      "metadata": {
+        "index": 0
+      }
+    },
+    {
+      "from": "FUNCTION:promisifyCallback",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:promisifyCallback:body"
+    },
+    {
+      "from": "FUNCTION:removeFile",
+      "type": "HAS_PARAMETER",
+      "to": "PARAMETER:path",
+      "metadata": {
+        "index": 0
+      }
+    },
+    {
+      "from": "FUNCTION:removeFile",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:removeFile:body"
+    },
+    {
+      "from": "FUNCTION:runCommand",
+      "type": "HAS_PARAMETER",
+      "to": "PARAMETER:cmd",
+      "metadata": {
+        "index": 0
+      }
+    },
+    {
+      "from": "FUNCTION:runCommand",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:runCommand:body"
+    },
+    {
+      "from": "FUNCTION:saveAsync",
+      "type": "HAS_PARAMETER",
+      "to": "PARAMETER:data",
+      "metadata": {
+        "index": 1
+      }
+    },
+    {
+      "from": "FUNCTION:saveAsync",
+      "type": "HAS_PARAMETER",
+      "to": "PARAMETER:path",
+      "metadata": {
+        "index": 0
+      }
+    },
+    {
+      "from": "FUNCTION:saveAsync",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:saveAsync:body"
+    },
+    {
+      "from": "FUNCTION:saveData",
+      "type": "HAS_PARAMETER",
+      "to": "PARAMETER:data",
+      "metadata": {
+        "index": 1
+      }
+    },
+    {
+      "from": "FUNCTION:saveData",
+      "type": "HAS_PARAMETER",
+      "to": "PARAMETER:filePath",
+      "metadata": {
+        "index": 0
+      }
+    },
+    {
+      "from": "FUNCTION:saveData",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:saveData:body"
+    },
+    {
+      "from": "FUNCTION:saveWithAlias",
+      "type": "HAS_PARAMETER",
+      "to": "PARAMETER:content",
+      "metadata": {
+        "index": 1
+      }
+    },
+    {
+      "from": "FUNCTION:saveWithAlias",
+      "type": "HAS_PARAMETER",
+      "to": "PARAMETER:path",
+      "metadata": {
+        "index": 0
+      }
+    },
+    {
+      "from": "FUNCTION:saveWithAlias",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:saveWithAlias:body"
+    },
+    {
+      "from": "FUNCTION:saveWithNodePrefix",
+      "type": "HAS_PARAMETER",
+      "to": "PARAMETER:callback",
+      "metadata": {
+        "index": 2
+      }
+    },
+    {
+      "from": "FUNCTION:saveWithNodePrefix",
+      "type": "HAS_PARAMETER",
+      "to": "PARAMETER:content",
+      "metadata": {
+        "index": 1
+      }
+    },
+    {
+      "from": "FUNCTION:saveWithNodePrefix",
+      "type": "HAS_PARAMETER",
+      "to": "PARAMETER:path",
+      "metadata": {
+        "index": 0
+      }
+    },
+    {
+      "from": "FUNCTION:saveWithNodePrefix",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:saveWithNodePrefix:body"
+    },
+    {
+      "from": "FUNCTION:spawnProcess",
+      "type": "CONTAINS",
+      "to": "PROPERTY_ACCESS:stdout"
+    },
+    {
+      "from": "FUNCTION:spawnProcess",
+      "type": "HAS_PARAMETER",
+      "to": "PARAMETER:args",
+      "metadata": {
+        "index": 1
+      }
+    },
+    {
+      "from": "FUNCTION:spawnProcess",
+      "type": "HAS_PARAMETER",
+      "to": "PARAMETER:command",
+      "metadata": {
+        "index": 0
+      }
+    },
+    {
+      "from": "FUNCTION:spawnProcess",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:spawnProcess:body"
+    },
+    {
+      "from": "FUNCTION:startServer",
+      "type": "HAS_PARAMETER",
+      "to": "PARAMETER:port",
+      "metadata": {
+        "index": 0
+      }
+    },
+    {
+      "from": "FUNCTION:startServer",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:startServer:body"
+    },
+    {
+      "from": "FUNCTION:writeViaNamespace",
+      "type": "HAS_PARAMETER",
+      "to": "PARAMETER:content",
+      "metadata": {
+        "index": 1
+      }
+    },
+    {
+      "from": "FUNCTION:writeViaNamespace",
+      "type": "HAS_PARAMETER",
+      "to": "PARAMETER:filePath",
+      "metadata": {
+        "index": 0
+      }
+    },
+    {
+      "from": "FUNCTION:writeViaNamespace",
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:writeViaNamespace:body"
+    },
+    {
+      "from": "grafema:plugin:ArgumentParameterLinker",
+      "type": "DEPENDS_ON",
+      "to": "grafema:plugin:JSASTAnalyzer"
+    },
+    {
+      "from": "grafema:plugin:ArgumentParameterLinker",
+      "type": "DEPENDS_ON",
+      "to": "grafema:plugin:MethodCallResolver"
+    },
+    {
+      "from": "grafema:plugin:CallbackCallResolver",
+      "type": "DEPENDS_ON",
+      "to": "grafema:plugin:ImportExportLinker"
+    },
+    {
+      "from": "grafema:plugin:FetchAnalyzer",
+      "type": "DEPENDS_ON",
+      "to": "grafema:plugin:JSASTAnalyzer"
+    },
+    {
+      "from": "grafema:plugin:FetchAnalyzer",
+      "type": "DEPENDS_ON",
+      "to": "grafema:plugin:JSModuleIndexer"
+    },
+    {
+      "from": "grafema:plugin:ImportExportLinker",
+      "type": "DEPENDS_ON",
+      "to": "grafema:plugin:JSASTAnalyzer"
+    },
+    {
+      "from": "grafema:plugin:InstanceOfResolver",
+      "type": "DEPENDS_ON",
+      "to": "grafema:plugin:JSASTAnalyzer"
+    },
+    {
+      "from": "grafema:plugin:JSASTAnalyzer",
+      "type": "DEPENDS_ON",
+      "to": "grafema:plugin:JSModuleIndexer"
+    },
+    {
+      "from": "grafema:plugin:MethodCallResolver",
+      "type": "DEPENDS_ON",
+      "to": "grafema:plugin:ImportExportLinker"
+    },
+    {
+      "from": "grafema:plugin:NodejsBuiltinsResolver",
+      "type": "DEPENDS_ON",
+      "to": "grafema:plugin:ImportExportLinker"
+    },
+    {
+      "from": "grafema:plugin:NodejsBuiltinsResolver",
+      "type": "DEPENDS_ON",
+      "to": "grafema:plugin:JSASTAnalyzer"
+    },
+    {
+      "from": "grafema:plugin:RejectionPropagationEnricher",
+      "type": "DEPENDS_ON",
+      "to": "grafema:plugin:JSASTAnalyzer"
+    },
+    {
+      "from": "IMPORT:access",
+      "type": "IMPORTS_FROM",
+      "to": "EXTERNAL_MODULE:fs/promises"
+    },
+    {
+      "from": "IMPORT:appendFile",
+      "type": "IMPORTS_FROM",
+      "to": "EXTERNAL_MODULE:fs"
+    },
+    {
+      "from": "IMPORT:basename",
+      "type": "IMPORTS_FROM",
+      "to": "EXTERNAL_MODULE:path"
+    },
+    {
+      "from": "IMPORT:chmod",
+      "type": "IMPORTS_FROM",
+      "to": "EXTERNAL_MODULE:fs"
+    },
+    {
+      "from": "IMPORT:copyFile",
+      "type": "IMPORTS_FROM",
+      "to": "EXTERNAL_MODULE:fs/promises"
+    },
+    {
+      "from": "IMPORT:createHash",
+      "type": "IMPORTS_FROM",
+      "to": "EXTERNAL_MODULE:crypto"
+    },
+    {
+      "from": "IMPORT:createServer",
+      "type": "IMPORTS_FROM",
+      "to": "EXTERNAL_MODULE:http"
+    },
+    {
+      "from": "IMPORT:createServer",
+      "type": "IMPORTS_FROM",
+      "to": "EXTERNAL_MODULE:http"
+    },
+    {
+      "from": "IMPORT:EventEmitter",
+      "type": "IMPORTS_FROM",
+      "to": "EXTERNAL_MODULE:events"
+    },
+    {
+      "from": "IMPORT:exec",
+      "type": "IMPORTS_FROM",
+      "to": "EXTERNAL_MODULE:child_process"
+    },
+    {
+      "from": "IMPORT:fs",
+      "type": "IMPORTS_FROM",
+      "to": "EXTERNAL_MODULE:fs"
+    },
+    {
+      "from": "IMPORT:hash",
+      "type": "IMPORTS_FROM",
+      "to": "EXTERNAL_MODULE:crypto"
+    },
+    {
+      "from": "IMPORT:isAbsolute",
+      "type": "IMPORTS_FROM",
+      "to": "EXTERNAL_MODULE:path"
+    },
+    {
+      "from": "IMPORT:isMainThread",
+      "type": "IMPORTS_FROM",
+      "to": "EXTERNAL_MODULE:worker_threads"
+    },
+    {
+      "from": "IMPORT:join",
+      "type": "IMPORTS_FROM",
+      "to": "EXTERNAL_MODULE:path"
+    },
+    {
+      "from": "IMPORT:join",
+      "type": "IMPORTS_FROM",
+      "to": "EXTERNAL_MODULE:path"
+    },
+    {
+      "from": "IMPORT:join",
+      "type": "IMPORTS_FROM",
+      "to": "EXTERNAL_MODULE:path"
+    },
+    {
+      "from": "IMPORT:mkdir",
+      "type": "IMPORTS_FROM",
+      "to": "EXTERNAL_MODULE:fs/promises"
+    },
+    {
+      "from": "IMPORT:normalize",
+      "type": "IMPORTS_FROM",
+      "to": "EXTERNAL_MODULE:path"
+    },
+    {
+      "from": "IMPORT:path",
+      "type": "IMPORTS_FROM",
+      "to": "EXTERNAL_MODULE:path"
+    },
+    {
+      "from": "IMPORT:pathJoin",
+      "type": "IMPORTS_FROM",
+      "to": "EXTERNAL_MODULE:path"
+    },
+    {
+      "from": "IMPORT:pathResolve",
+      "type": "IMPORTS_FROM",
+      "to": "EXTERNAL_MODULE:path"
+    },
+    {
+      "from": "IMPORT:randomBytes",
+      "type": "IMPORTS_FROM",
+      "to": "EXTERNAL_MODULE:crypto"
+    },
+    {
+      "from": "IMPORT:readdir",
+      "type": "IMPORTS_FROM",
+      "to": "EXTERNAL_MODULE:fs"
+    },
+    {
+      "from": "IMPORT:readdir",
+      "type": "IMPORTS_FROM",
+      "to": "EXTERNAL_MODULE:fs/promises"
+    },
+    {
+      "from": "IMPORT:readFile",
+      "type": "IMPORTS_FROM",
+      "to": "EXTERNAL_MODULE:fs"
+    },
+    {
+      "from": "IMPORT:readFile",
+      "type": "IMPORTS_FROM",
+      "to": "EXTERNAL_MODULE:fs"
+    },
+    {
+      "from": "IMPORT:readFile",
+      "type": "IMPORTS_FROM",
+      "to": "EXTERNAL_MODULE:fs"
+    },
+    {
+      "from": "IMPORT:readFile",
+      "type": "IMPORTS_FROM",
+      "to": "EXTERNAL_MODULE:fs/promises"
+    },
+    {
+      "from": "IMPORT:relative",
+      "type": "IMPORTS_FROM",
+      "to": "EXTERNAL_MODULE:path"
+    },
+    {
+      "from": "IMPORT:resolve",
+      "type": "IMPORTS_FROM",
+      "to": "EXTERNAL_MODULE:path"
+    },
+    {
+      "from": "IMPORT:resolve",
+      "type": "IMPORTS_FROM",
+      "to": "EXTERNAL_MODULE:path"
+    },
+    {
+      "from": "IMPORT:resolve",
+      "type": "IMPORTS_FROM",
+      "to": "EXTERNAL_MODULE:path"
+    },
+    {
+      "from": "IMPORT:rf",
+      "type": "IMPORTS_FROM",
+      "to": "EXTERNAL_MODULE:fs"
+    },
+    {
+      "from": "IMPORT:rm",
+      "type": "IMPORTS_FROM",
+      "to": "EXTERNAL_MODULE:fs/promises"
+    },
+    {
+      "from": "IMPORT:scrypt",
+      "type": "IMPORTS_FROM",
+      "to": "EXTERNAL_MODULE:crypto"
+    },
+    {
+      "from": "IMPORT:spawn",
+      "type": "IMPORTS_FROM",
+      "to": "EXTERNAL_MODULE:child_process"
+    },
+    {
+      "from": "IMPORT:stat",
+      "type": "IMPORTS_FROM",
+      "to": "EXTERNAL_MODULE:fs/promises"
+    },
+    {
+      "from": "IMPORT:truncate",
+      "type": "IMPORTS_FROM",
+      "to": "EXTERNAL_MODULE:fs"
+    },
+    {
+      "from": "IMPORT:url",
+      "type": "IMPORTS_FROM",
+      "to": "EXTERNAL_MODULE:url"
+    },
+    {
+      "from": "IMPORT:util",
+      "type": "IMPORTS_FROM",
+      "to": "EXTERNAL_MODULE:util"
+    },
+    {
+      "from": "IMPORT:wf",
+      "type": "IMPORTS_FROM",
+      "to": "EXTERNAL_MODULE:fs"
+    },
+    {
+      "from": "IMPORT:Worker",
+      "type": "IMPORTS_FROM",
+      "to": "EXTERNAL_MODULE:worker_threads"
+    },
+    {
+      "from": "IMPORT:writeFile",
+      "type": "IMPORTS_FROM",
+      "to": "EXTERNAL_MODULE:fs"
+    },
+    {
+      "from": "IMPORT:writeFile",
+      "type": "IMPORTS_FROM",
+      "to": "EXTERNAL_MODULE:fs"
+    },
+    {
+      "from": "IMPORT:writeFile",
+      "type": "IMPORTS_FROM",
+      "to": "EXTERNAL_MODULE:fs"
+    },
+    {
+      "from": "IMPORT:writeFile",
+      "type": "IMPORTS_FROM",
+      "to": "EXTERNAL_MODULE:fs/promises"
+    },
+    {
+      "from": "LITERAL:",
+      "type": "RETURNS",
+      "to": "FUNCTION:checkAccess"
+    },
+    {
+      "from": "LITERAL:",
+      "type": "RETURNS",
+      "to": "FUNCTION:checkAccess"
+    },
+    {
+      "from": "LITERAL:",
+      "type": "RETURNS",
+      "to": "FUNCTION:createWorker"
+    },
+    {
+      "from": "MODULE:aliased-imports.js",
+      "type": "CONTAINS",
+      "to": "EXPORT:buildPathWithAlias"
+    },
+    {
+      "from": "MODULE:aliased-imports.js",
+      "type": "CONTAINS",
+      "to": "EXPORT:hashWithAlias"
+    },
+    {
+      "from": "MODULE:aliased-imports.js",
+      "type": "CONTAINS",
+      "to": "EXPORT:loadWithAlias"
+    },
+    {
+      "from": "MODULE:aliased-imports.js",
+      "type": "CONTAINS",
+      "to": "EXPORT:saveWithAlias"
+    },
+    {
+      "from": "MODULE:aliased-imports.js",
+      "type": "CONTAINS",
+      "to": "FUNCTION:buildPathWithAlias"
+    },
+    {
+      "from": "MODULE:aliased-imports.js",
+      "type": "CONTAINS",
+      "to": "FUNCTION:hashWithAlias"
+    },
+    {
+      "from": "MODULE:aliased-imports.js",
+      "type": "CONTAINS",
+      "to": "FUNCTION:loadWithAlias"
+    },
+    {
+      "from": "MODULE:aliased-imports.js",
+      "type": "CONTAINS",
+      "to": "FUNCTION:saveWithAlias"
+    },
+    {
+      "from": "MODULE:aliased-imports.js",
+      "type": "CONTAINS",
+      "to": "IMPORT:hash"
+    },
+    {
+      "from": "MODULE:aliased-imports.js",
+      "type": "CONTAINS",
+      "to": "IMPORT:pathJoin"
+    },
+    {
+      "from": "MODULE:aliased-imports.js",
+      "type": "CONTAINS",
+      "to": "IMPORT:pathResolve"
+    },
+    {
+      "from": "MODULE:aliased-imports.js",
+      "type": "CONTAINS",
+      "to": "IMPORT:rf"
+    },
+    {
+      "from": "MODULE:aliased-imports.js",
+      "type": "CONTAINS",
+      "to": "IMPORT:wf"
+    },
+    {
+      "from": "MODULE:aliased-imports.js",
+      "type": "IMPORTS",
+      "to": "EXTERNAL_MODULE:crypto"
+    },
+    {
+      "from": "MODULE:aliased-imports.js",
+      "type": "IMPORTS",
+      "to": "EXTERNAL_MODULE:fs"
+    },
+    {
+      "from": "MODULE:aliased-imports.js",
+      "type": "IMPORTS",
+      "to": "EXTERNAL_MODULE:path"
+    },
+    {
+      "from": "MODULE:fs-promises.js",
+      "type": "CONTAINS",
+      "to": "EXPORT:checkAccess"
+    },
+    {
+      "from": "MODULE:fs-promises.js",
+      "type": "CONTAINS",
+      "to": "EXPORT:copy"
+    },
+    {
+      "from": "MODULE:fs-promises.js",
+      "type": "CONTAINS",
+      "to": "EXPORT:ensureDir"
+    },
+    {
+      "from": "MODULE:fs-promises.js",
+      "type": "CONTAINS",
+      "to": "EXPORT:getStats"
+    },
+    {
+      "from": "MODULE:fs-promises.js",
+      "type": "CONTAINS",
+      "to": "EXPORT:listDir"
+    },
+    {
+      "from": "MODULE:fs-promises.js",
+      "type": "CONTAINS",
+      "to": "EXPORT:loadAsync"
+    },
+    {
+      "from": "MODULE:fs-promises.js",
+      "type": "CONTAINS",
+      "to": "EXPORT:removeFile"
+    },
+    {
+      "from": "MODULE:fs-promises.js",
+      "type": "CONTAINS",
+      "to": "EXPORT:saveAsync"
+    },
+    {
+      "from": "MODULE:fs-promises.js",
+      "type": "CONTAINS",
+      "to": "FUNCTION:checkAccess"
+    },
+    {
+      "from": "MODULE:fs-promises.js",
+      "type": "CONTAINS",
+      "to": "FUNCTION:copy"
+    },
+    {
+      "from": "MODULE:fs-promises.js",
+      "type": "CONTAINS",
+      "to": "FUNCTION:ensureDir"
+    },
+    {
+      "from": "MODULE:fs-promises.js",
+      "type": "CONTAINS",
+      "to": "FUNCTION:getStats"
+    },
+    {
+      "from": "MODULE:fs-promises.js",
+      "type": "CONTAINS",
+      "to": "FUNCTION:listDir"
+    },
+    {
+      "from": "MODULE:fs-promises.js",
+      "type": "CONTAINS",
+      "to": "FUNCTION:loadAsync"
+    },
+    {
+      "from": "MODULE:fs-promises.js",
+      "type": "CONTAINS",
+      "to": "FUNCTION:removeFile"
+    },
+    {
+      "from": "MODULE:fs-promises.js",
+      "type": "CONTAINS",
+      "to": "FUNCTION:saveAsync"
+    },
+    {
+      "from": "MODULE:fs-promises.js",
+      "type": "CONTAINS",
+      "to": "IMPORT:access"
+    },
+    {
+      "from": "MODULE:fs-promises.js",
+      "type": "CONTAINS",
+      "to": "IMPORT:copyFile"
+    },
+    {
+      "from": "MODULE:fs-promises.js",
+      "type": "CONTAINS",
+      "to": "IMPORT:mkdir"
+    },
+    {
+      "from": "MODULE:fs-promises.js",
+      "type": "CONTAINS",
+      "to": "IMPORT:readdir"
+    },
+    {
+      "from": "MODULE:fs-promises.js",
+      "type": "CONTAINS",
+      "to": "IMPORT:readFile"
+    },
+    {
+      "from": "MODULE:fs-promises.js",
+      "type": "CONTAINS",
+      "to": "IMPORT:rm"
+    },
+    {
+      "from": "MODULE:fs-promises.js",
+      "type": "CONTAINS",
+      "to": "IMPORT:stat"
+    },
+    {
+      "from": "MODULE:fs-promises.js",
+      "type": "CONTAINS",
+      "to": "IMPORT:writeFile"
+    },
+    {
+      "from": "MODULE:fs-promises.js",
+      "type": "IMPORTS",
+      "to": "EXTERNAL_MODULE:fs/promises"
+    },
+    {
+      "from": "MODULE:index.js",
+      "type": "CONTAINS",
+      "to": "EXPORT:buildPath"
+    },
+    {
+      "from": "MODULE:index.js",
+      "type": "CONTAINS",
+      "to": "EXPORT:getFilename"
+    },
+    {
+      "from": "MODULE:index.js",
+      "type": "CONTAINS",
+      "to": "EXPORT:listFiles"
+    },
+    {
+      "from": "MODULE:index.js",
+      "type": "CONTAINS",
+      "to": "EXPORT:loadConfig"
+    },
+    {
+      "from": "MODULE:index.js",
+      "type": "CONTAINS",
+      "to": "EXPORT:runCommand"
+    },
+    {
+      "from": "MODULE:index.js",
+      "type": "CONTAINS",
+      "to": "EXPORT:saveData"
+    },
+    {
+      "from": "MODULE:index.js",
+      "type": "CONTAINS",
+      "to": "EXPORT:spawnProcess"
+    },
+    {
+      "from": "MODULE:index.js",
+      "type": "CONTAINS",
+      "to": "EXPORT:startServer"
+    },
+    {
+      "from": "MODULE:index.js",
+      "type": "CONTAINS",
+      "to": "FUNCTION:buildPath"
+    },
+    {
+      "from": "MODULE:index.js",
+      "type": "CONTAINS",
+      "to": "FUNCTION:getFilename"
+    },
+    {
+      "from": "MODULE:index.js",
+      "type": "CONTAINS",
+      "to": "FUNCTION:listFiles"
+    },
+    {
+      "from": "MODULE:index.js",
+      "type": "CONTAINS",
+      "to": "FUNCTION:loadConfig"
+    },
+    {
+      "from": "MODULE:index.js",
+      "type": "CONTAINS",
+      "to": "FUNCTION:runCommand"
+    },
+    {
+      "from": "MODULE:index.js",
+      "type": "CONTAINS",
+      "to": "FUNCTION:saveData"
+    },
+    {
+      "from": "MODULE:index.js",
+      "type": "CONTAINS",
+      "to": "FUNCTION:spawnProcess"
+    },
+    {
+      "from": "MODULE:index.js",
+      "type": "CONTAINS",
+      "to": "FUNCTION:startServer"
+    },
+    {
+      "from": "MODULE:index.js",
+      "type": "CONTAINS",
+      "to": "IMPORT:./aliased-imports.js"
+    },
+    {
+      "from": "MODULE:index.js",
+      "type": "CONTAINS",
+      "to": "IMPORT:./fs-promises.js"
+    },
+    {
+      "from": "MODULE:index.js",
+      "type": "CONTAINS",
+      "to": "IMPORT:./namespace-import.js"
+    },
+    {
+      "from": "MODULE:index.js",
+      "type": "CONTAINS",
+      "to": "IMPORT:./node-prefix.js"
+    },
+    {
+      "from": "MODULE:index.js",
+      "type": "CONTAINS",
+      "to": "IMPORT:./unused-imports.js"
+    },
+    {
+      "from": "MODULE:index.js",
+      "type": "CONTAINS",
+      "to": "IMPORT:basename"
+    },
+    {
+      "from": "MODULE:index.js",
+      "type": "CONTAINS",
+      "to": "IMPORT:createServer"
+    },
+    {
+      "from": "MODULE:index.js",
+      "type": "CONTAINS",
+      "to": "IMPORT:exec"
+    },
+    {
+      "from": "MODULE:index.js",
+      "type": "CONTAINS",
+      "to": "IMPORT:join"
+    },
+    {
+      "from": "MODULE:index.js",
+      "type": "CONTAINS",
+      "to": "IMPORT:readdir"
+    },
+    {
+      "from": "MODULE:index.js",
+      "type": "CONTAINS",
+      "to": "IMPORT:readFile"
+    },
+    {
+      "from": "MODULE:index.js",
+      "type": "CONTAINS",
+      "to": "IMPORT:resolve"
+    },
+    {
+      "from": "MODULE:index.js",
+      "type": "CONTAINS",
+      "to": "IMPORT:spawn"
+    },
+    {
+      "from": "MODULE:index.js",
+      "type": "CONTAINS",
+      "to": "IMPORT:writeFile"
+    },
+    {
+      "from": "MODULE:index.js",
+      "type": "DEPENDS_ON",
+      "to": "MODULE:aliased-imports.js",
+      "metadata": {
+        "version": "main"
+      }
+    },
+    {
+      "from": "MODULE:index.js",
+      "type": "DEPENDS_ON",
+      "to": "MODULE:fs-promises.js",
+      "metadata": {
+        "version": "main"
+      }
+    },
+    {
+      "from": "MODULE:index.js",
+      "type": "DEPENDS_ON",
+      "to": "MODULE:namespace-import.js",
+      "metadata": {
+        "version": "main"
+      }
+    },
+    {
+      "from": "MODULE:index.js",
+      "type": "DEPENDS_ON",
+      "to": "MODULE:node-prefix.js",
+      "metadata": {
+        "version": "main"
+      }
+    },
+    {
+      "from": "MODULE:index.js",
+      "type": "DEPENDS_ON",
+      "to": "MODULE:unused-imports.js",
+      "metadata": {
+        "version": "main"
+      }
+    },
+    {
+      "from": "MODULE:index.js",
+      "type": "IMPORTS",
+      "to": "EXTERNAL_MODULE:child_process"
+    },
+    {
+      "from": "MODULE:index.js",
+      "type": "IMPORTS",
+      "to": "EXTERNAL_MODULE:fs"
+    },
+    {
+      "from": "MODULE:index.js",
+      "type": "IMPORTS",
+      "to": "EXTERNAL_MODULE:http"
+    },
+    {
+      "from": "MODULE:index.js",
+      "type": "IMPORTS",
+      "to": "EXTERNAL_MODULE:path"
+    },
+    {
+      "from": "MODULE:index.js",
+      "type": "IMPORTS",
+      "to": "MODULE:aliased-imports.js"
+    },
+    {
+      "from": "MODULE:index.js",
+      "type": "IMPORTS",
+      "to": "MODULE:fs-promises.js"
+    },
+    {
+      "from": "MODULE:index.js",
+      "type": "IMPORTS",
+      "to": "MODULE:namespace-import.js"
+    },
+    {
+      "from": "MODULE:index.js",
+      "type": "IMPORTS",
+      "to": "MODULE:node-prefix.js"
+    },
+    {
+      "from": "MODULE:index.js",
+      "type": "IMPORTS",
+      "to": "MODULE:unused-imports.js"
+    },
+    {
+      "from": "MODULE:namespace-import.js",
+      "type": "CONTAINS",
+      "to": "EXPORT:existsViaNamespace"
+    },
+    {
+      "from": "MODULE:namespace-import.js",
+      "type": "CONTAINS",
+      "to": "EXPORT:formatUrl"
+    },
+    {
+      "from": "MODULE:namespace-import.js",
+      "type": "CONTAINS",
+      "to": "EXPORT:inspectObject"
+    },
+    {
+      "from": "MODULE:namespace-import.js",
+      "type": "CONTAINS",
+      "to": "EXPORT:joinViaNamespace"
+    },
+    {
+      "from": "MODULE:namespace-import.js",
+      "type": "CONTAINS",
+      "to": "EXPORT:loadViaNamespace"
+    },
+    {
+      "from": "MODULE:namespace-import.js",
+      "type": "CONTAINS",
+      "to": "EXPORT:parseUrl"
+    },
+    {
+      "from": "MODULE:namespace-import.js",
+      "type": "CONTAINS",
+      "to": "EXPORT:parseViaNamespace"
+    },
+    {
+      "from": "MODULE:namespace-import.js",
+      "type": "CONTAINS",
+      "to": "EXPORT:promisifyCallback"
+    },
+    {
+      "from": "MODULE:namespace-import.js",
+      "type": "CONTAINS",
+      "to": "EXPORT:writeViaNamespace"
+    },
+    {
+      "from": "MODULE:namespace-import.js",
+      "type": "CONTAINS",
+      "to": "FUNCTION:existsViaNamespace"
+    },
+    {
+      "from": "MODULE:namespace-import.js",
+      "type": "CONTAINS",
+      "to": "FUNCTION:formatUrl"
+    },
+    {
+      "from": "MODULE:namespace-import.js",
+      "type": "CONTAINS",
+      "to": "FUNCTION:inspectObject"
+    },
+    {
+      "from": "MODULE:namespace-import.js",
+      "type": "CONTAINS",
+      "to": "FUNCTION:joinViaNamespace"
+    },
+    {
+      "from": "MODULE:namespace-import.js",
+      "type": "CONTAINS",
+      "to": "FUNCTION:loadViaNamespace"
+    },
+    {
+      "from": "MODULE:namespace-import.js",
+      "type": "CONTAINS",
+      "to": "FUNCTION:parseUrl"
+    },
+    {
+      "from": "MODULE:namespace-import.js",
+      "type": "CONTAINS",
+      "to": "FUNCTION:parseViaNamespace"
+    },
+    {
+      "from": "MODULE:namespace-import.js",
+      "type": "CONTAINS",
+      "to": "FUNCTION:promisifyCallback"
+    },
+    {
+      "from": "MODULE:namespace-import.js",
+      "type": "CONTAINS",
+      "to": "FUNCTION:writeViaNamespace"
+    },
+    {
+      "from": "MODULE:namespace-import.js",
+      "type": "CONTAINS",
+      "to": "IMPORT:fs"
+    },
+    {
+      "from": "MODULE:namespace-import.js",
+      "type": "CONTAINS",
+      "to": "IMPORT:path"
+    },
+    {
+      "from": "MODULE:namespace-import.js",
+      "type": "CONTAINS",
+      "to": "IMPORT:url"
+    },
+    {
+      "from": "MODULE:namespace-import.js",
+      "type": "CONTAINS",
+      "to": "IMPORT:util"
+    },
+    {
+      "from": "MODULE:namespace-import.js",
+      "type": "IMPORTS",
+      "to": "EXTERNAL_MODULE:fs"
+    },
+    {
+      "from": "MODULE:namespace-import.js",
+      "type": "IMPORTS",
+      "to": "EXTERNAL_MODULE:path"
+    },
+    {
+      "from": "MODULE:namespace-import.js",
+      "type": "IMPORTS",
+      "to": "EXTERNAL_MODULE:url"
+    },
+    {
+      "from": "MODULE:namespace-import.js",
+      "type": "IMPORTS",
+      "to": "EXTERNAL_MODULE:util"
+    },
+    {
+      "from": "MODULE:node-prefix.js",
+      "type": "CONTAINS",
+      "to": "EXPORT:buildWithNodePrefix"
+    },
+    {
+      "from": "MODULE:node-prefix.js",
+      "type": "CONTAINS",
+      "to": "EXPORT:createEmitter"
+    },
+    {
+      "from": "MODULE:node-prefix.js",
+      "type": "CONTAINS",
+      "to": "EXPORT:createServerWithNodePrefix"
+    },
+    {
+      "from": "MODULE:node-prefix.js",
+      "type": "CONTAINS",
+      "to": "EXPORT:createWorker"
+    },
+    {
+      "from": "MODULE:node-prefix.js",
+      "type": "CONTAINS",
+      "to": "EXPORT:loadWithNodePrefix"
+    },
+    {
+      "from": "MODULE:node-prefix.js",
+      "type": "CONTAINS",
+      "to": "EXPORT:saveWithNodePrefix"
+    },
+    {
+      "from": "MODULE:node-prefix.js",
+      "type": "CONTAINS",
+      "to": "FUNCTION:buildWithNodePrefix"
+    },
+    {
+      "from": "MODULE:node-prefix.js",
+      "type": "CONTAINS",
+      "to": "FUNCTION:createEmitter"
+    },
+    {
+      "from": "MODULE:node-prefix.js",
+      "type": "CONTAINS",
+      "to": "FUNCTION:createServerWithNodePrefix"
+    },
+    {
+      "from": "MODULE:node-prefix.js",
+      "type": "CONTAINS",
+      "to": "FUNCTION:createWorker"
+    },
+    {
+      "from": "MODULE:node-prefix.js",
+      "type": "CONTAINS",
+      "to": "FUNCTION:loadWithNodePrefix"
+    },
+    {
+      "from": "MODULE:node-prefix.js",
+      "type": "CONTAINS",
+      "to": "FUNCTION:saveWithNodePrefix"
+    },
+    {
+      "from": "MODULE:node-prefix.js",
+      "type": "CONTAINS",
+      "to": "IMPORT:createServer"
+    },
+    {
+      "from": "MODULE:node-prefix.js",
+      "type": "CONTAINS",
+      "to": "IMPORT:EventEmitter"
+    },
+    {
+      "from": "MODULE:node-prefix.js",
+      "type": "CONTAINS",
+      "to": "IMPORT:isMainThread"
+    },
+    {
+      "from": "MODULE:node-prefix.js",
+      "type": "CONTAINS",
+      "to": "IMPORT:join"
+    },
+    {
+      "from": "MODULE:node-prefix.js",
+      "type": "CONTAINS",
+      "to": "IMPORT:readFile"
+    },
+    {
+      "from": "MODULE:node-prefix.js",
+      "type": "CONTAINS",
+      "to": "IMPORT:resolve"
+    },
+    {
+      "from": "MODULE:node-prefix.js",
+      "type": "CONTAINS",
+      "to": "IMPORT:Worker"
+    },
+    {
+      "from": "MODULE:node-prefix.js",
+      "type": "CONTAINS",
+      "to": "IMPORT:writeFile"
+    },
+    {
+      "from": "MODULE:node-prefix.js",
+      "type": "IMPORTS",
+      "to": "EXTERNAL_MODULE:events"
+    },
+    {
+      "from": "MODULE:node-prefix.js",
+      "type": "IMPORTS",
+      "to": "EXTERNAL_MODULE:fs"
+    },
+    {
+      "from": "MODULE:node-prefix.js",
+      "type": "IMPORTS",
+      "to": "EXTERNAL_MODULE:http"
+    },
+    {
+      "from": "MODULE:node-prefix.js",
+      "type": "IMPORTS",
+      "to": "EXTERNAL_MODULE:path"
+    },
+    {
+      "from": "MODULE:node-prefix.js",
+      "type": "IMPORTS",
+      "to": "EXTERNAL_MODULE:worker_threads"
+    },
+    {
+      "from": "MODULE:unused-imports.js",
+      "type": "CONTAINS",
+      "to": "EXPORT:onlyCreateHash"
+    },
+    {
+      "from": "MODULE:unused-imports.js",
+      "type": "CONTAINS",
+      "to": "EXPORT:onlyJoinAndResolve"
+    },
+    {
+      "from": "MODULE:unused-imports.js",
+      "type": "CONTAINS",
+      "to": "EXPORT:onlyReadFile"
+    },
+    {
+      "from": "MODULE:unused-imports.js",
+      "type": "CONTAINS",
+      "to": "FUNCTION:onlyCreateHash"
+    },
+    {
+      "from": "MODULE:unused-imports.js",
+      "type": "CONTAINS",
+      "to": "FUNCTION:onlyJoinAndResolve"
+    },
+    {
+      "from": "MODULE:unused-imports.js",
+      "type": "CONTAINS",
+      "to": "FUNCTION:onlyReadFile"
+    },
+    {
+      "from": "MODULE:unused-imports.js",
+      "type": "CONTAINS",
+      "to": "IMPORT:appendFile"
+    },
+    {
+      "from": "MODULE:unused-imports.js",
+      "type": "CONTAINS",
+      "to": "IMPORT:chmod"
+    },
+    {
+      "from": "MODULE:unused-imports.js",
+      "type": "CONTAINS",
+      "to": "IMPORT:createHash"
+    },
+    {
+      "from": "MODULE:unused-imports.js",
+      "type": "CONTAINS",
+      "to": "IMPORT:isAbsolute"
+    },
+    {
+      "from": "MODULE:unused-imports.js",
+      "type": "CONTAINS",
+      "to": "IMPORT:join"
+    },
+    {
+      "from": "MODULE:unused-imports.js",
+      "type": "CONTAINS",
+      "to": "IMPORT:normalize"
+    },
+    {
+      "from": "MODULE:unused-imports.js",
+      "type": "CONTAINS",
+      "to": "IMPORT:randomBytes"
+    },
+    {
+      "from": "MODULE:unused-imports.js",
+      "type": "CONTAINS",
+      "to": "IMPORT:readFile"
+    },
+    {
+      "from": "MODULE:unused-imports.js",
+      "type": "CONTAINS",
+      "to": "IMPORT:relative"
+    },
+    {
+      "from": "MODULE:unused-imports.js",
+      "type": "CONTAINS",
+      "to": "IMPORT:resolve"
+    },
+    {
+      "from": "MODULE:unused-imports.js",
+      "type": "CONTAINS",
+      "to": "IMPORT:scrypt"
+    },
+    {
+      "from": "MODULE:unused-imports.js",
+      "type": "CONTAINS",
+      "to": "IMPORT:truncate"
+    },
+    {
+      "from": "MODULE:unused-imports.js",
+      "type": "CONTAINS",
+      "to": "IMPORT:writeFile"
+    },
+    {
+      "from": "MODULE:unused-imports.js",
+      "type": "IMPORTS",
+      "to": "EXTERNAL_MODULE:crypto"
+    },
+    {
+      "from": "MODULE:unused-imports.js",
+      "type": "IMPORTS",
+      "to": "EXTERNAL_MODULE:fs"
+    },
+    {
+      "from": "MODULE:unused-imports.js",
+      "type": "IMPORTS",
+      "to": "EXTERNAL_MODULE:path"
+    },
+    {
+      "from": "SCOPE:",
+      "type": "CONTAINS",
+      "to": "CALL:access"
+    },
+    {
+      "from": "SCOPE:anonymous[0]:body",
+      "type": "CONTAINS",
+      "to": "BRANCH:"
+    },
+    {
+      "from": "SCOPE:anonymous[0]:body",
+      "type": "CONTAINS",
+      "to": "BRANCH:"
+    },
+    {
+      "from": "SCOPE:anonymous[0]:body",
+      "type": "CONTAINS",
+      "to": "BRANCH:"
+    },
+    {
+      "from": "SCOPE:anonymous[0]:body",
+      "type": "CONTAINS",
+      "to": "BRANCH:"
+    },
+    {
+      "from": "SCOPE:anonymous[0]:body",
+      "type": "CONTAINS",
+      "to": "BRANCH:"
+    },
+    {
+      "from": "SCOPE:anonymous[0]:body",
+      "type": "CONTAINS",
+      "to": "BRANCH:"
+    },
+    {
+      "from": "SCOPE:anonymous[0]:body",
+      "type": "CONTAINS",
+      "to": "CALL:console.log"
+    },
+    {
+      "from": "SCOPE:anonymous[0]:body",
+      "type": "CONTAINS",
+      "to": "CALL:fs.readFile"
+    },
+    {
+      "from": "SCOPE:anonymous[0]:body",
+      "type": "CONTAINS",
+      "to": "CALL:readFile"
+    },
+    {
+      "from": "SCOPE:anonymous[0]:body",
+      "type": "CONTAINS",
+      "to": "CALL:readFile"
+    },
+    {
+      "from": "SCOPE:anonymous[0]:body",
+      "type": "CONTAINS",
+      "to": "CALL:res.end"
+    },
+    {
+      "from": "SCOPE:anonymous[0]:body",
+      "type": "CONTAINS",
+      "to": "CALL:res.writeHead"
+    },
+    {
+      "from": "SCOPE:anonymous[0]:body",
+      "type": "CONTAINS",
+      "to": "CALL:rf"
+    },
+    {
+      "from": "SCOPE:anonymous[0]:body",
+      "type": "CONTAINS",
+      "to": "CALL:wf"
+    },
+    {
+      "from": "SCOPE:anonymous[0]:body",
+      "type": "CONTAINS",
+      "to": "FUNCTION:anonymous[0]"
+    },
+    {
+      "from": "SCOPE:anonymous[0]:body",
+      "type": "CONTAINS",
+      "to": "FUNCTION:anonymous[0]"
+    },
+    {
+      "from": "SCOPE:anonymous[0]:body",
+      "type": "CONTAINS",
+      "to": "FUNCTION:anonymous[0]"
+    },
+    {
+      "from": "SCOPE:anonymous[0]:body",
+      "type": "CONTAINS",
+      "to": "FUNCTION:anonymous[0]"
+    },
+    {
+      "from": "SCOPE:anonymous[0]:body",
+      "type": "CONTAINS",
+      "to": "FUNCTION:anonymous[0]"
+    },
+    {
+      "from": "SCOPE:buildPath:body",
+      "type": "CONTAINS",
+      "to": "CALL:join"
+    },
+    {
+      "from": "SCOPE:buildPath:body",
+      "type": "CONTAINS",
+      "to": "CALL:resolve"
+    },
+    {
+      "from": "SCOPE:buildPath:body",
+      "type": "DECLARES",
+      "to": "VARIABLE:full"
+    },
+    {
+      "from": "SCOPE:buildPathWithAlias:body",
+      "type": "CONTAINS",
+      "to": "CALL:pathJoin"
+    },
+    {
+      "from": "SCOPE:buildPathWithAlias:body",
+      "type": "CONTAINS",
+      "to": "CALL:pathResolve"
+    },
+    {
+      "from": "SCOPE:buildPathWithAlias:body",
+      "type": "DECLARES",
+      "to": "VARIABLE:joined"
+    },
+    {
+      "from": "SCOPE:buildWithNodePrefix:body",
+      "type": "CONTAINS",
+      "to": "CALL:join"
+    },
+    {
+      "from": "SCOPE:buildWithNodePrefix:body",
+      "type": "CONTAINS",
+      "to": "CALL:resolve"
+    },
+    {
+      "from": "SCOPE:checkAccess:body",
+      "type": "CONTAINS",
+      "to": "TRY_BLOCK:"
+    },
+    {
+      "from": "SCOPE:copy:body",
+      "type": "CONTAINS",
+      "to": "CALL:copyFile"
+    },
+    {
+      "from": "SCOPE:createEmitter:body",
+      "type": "CONTAINS",
+      "to": "CALL:EventEmitter"
+    },
+    {
+      "from": "SCOPE:createServerWithNodePrefix:body",
+      "type": "CONTAINS",
+      "to": "CALL:createServer"
+    },
+    {
+      "from": "SCOPE:createWorker:body",
+      "type": "CONTAINS",
+      "to": "BRANCH:"
+    },
+    {
+      "from": "SCOPE:ensureDir:body",
+      "type": "CONTAINS",
+      "to": "CALL:mkdir"
+    },
+    {
+      "from": "SCOPE:existsViaNamespace:body",
+      "type": "CONTAINS",
+      "to": "CALL:fs.existsSync"
+    },
+    {
+      "from": "SCOPE:formatUrl:body",
+      "type": "CONTAINS",
+      "to": "CALL:url.format"
+    },
+    {
+      "from": "SCOPE:getFilename:body",
+      "type": "CONTAINS",
+      "to": "CALL:basename"
+    },
+    {
+      "from": "SCOPE:getStats:body",
+      "type": "CONTAINS",
+      "to": "CALL:stat"
+    },
+    {
+      "from": "SCOPE:hashWithAlias:body",
+      "type": "CONTAINS",
+      "to": "CALL:hash"
+    },
+    {
+      "from": "SCOPE:if:16:6:0",
+      "type": "CONTAINS",
+      "to": "CALL:reject"
+    },
+    {
+      "from": "SCOPE:if:16:6:0",
+      "type": "CONTAINS",
+      "to": "CALL:resolve"
+    },
+    {
+      "from": "SCOPE:if:17:6:0",
+      "type": "CONTAINS",
+      "to": "CALL:reject"
+    },
+    {
+      "from": "SCOPE:if:17:6:0",
+      "type": "CONTAINS",
+      "to": "CALL:reject"
+    },
+    {
+      "from": "SCOPE:if:17:6:0",
+      "type": "CONTAINS",
+      "to": "CALL:resolve"
+    },
+    {
+      "from": "SCOPE:if:17:6:0",
+      "type": "CONTAINS",
+      "to": "CALL:resolve"
+    },
+    {
+      "from": "SCOPE:if:23:6:0",
+      "type": "CONTAINS",
+      "to": "CALL:JSON.parse"
+    },
+    {
+      "from": "SCOPE:if:23:6:0",
+      "type": "CONTAINS",
+      "to": "CALL:reject"
+    },
+    {
+      "from": "SCOPE:if:23:6:0",
+      "type": "CONTAINS",
+      "to": "CALL:resolve"
+    },
+    {
+      "from": "SCOPE:if:26:6:2",
+      "type": "CONTAINS",
+      "to": "CALL:reject"
+    },
+    {
+      "from": "SCOPE:if:26:6:2",
+      "type": "CONTAINS",
+      "to": "CALL:resolve"
+    },
+    {
+      "from": "SCOPE:if:32:4:2",
+      "type": "CONTAINS",
+      "to": "CALL:console.error"
+    },
+    {
+      "from": "SCOPE:if:36:2:0",
+      "type": "CONTAINS",
+      "to": "CALL:Worker"
+    },
+    {
+      "from": "SCOPE:inspectObject:body",
+      "type": "CONTAINS",
+      "to": "CALL:util.inspect"
+    },
+    {
+      "from": "SCOPE:joinViaNamespace:body",
+      "type": "CONTAINS",
+      "to": "CALL:path.join"
+    },
+    {
+      "from": "SCOPE:listDir:body",
+      "type": "CONTAINS",
+      "to": "CALL:readdir"
+    },
+    {
+      "from": "SCOPE:listFiles:body",
+      "type": "CONTAINS",
+      "to": "CALL:readdir"
+    },
+    {
+      "from": "SCOPE:loadAsync:body",
+      "type": "CONTAINS",
+      "to": "CALL:JSON.parse"
+    },
+    {
+      "from": "SCOPE:loadAsync:body",
+      "type": "CONTAINS",
+      "to": "CALL:readFile"
+    },
+    {
+      "from": "SCOPE:loadAsync:body",
+      "type": "DECLARES",
+      "to": "VARIABLE:content"
+    },
+    {
+      "from": "SCOPE:loadConfig:body",
+      "type": "CONTAINS",
+      "to": "CALL:Promise"
+    },
+    {
+      "from": "SCOPE:loadConfig:body",
+      "type": "CONTAINS",
+      "to": "FUNCTION:anonymous[0]"
+    },
+    {
+      "from": "SCOPE:loadViaNamespace:body",
+      "type": "CONTAINS",
+      "to": "CALL:Promise"
+    },
+    {
+      "from": "SCOPE:loadViaNamespace:body",
+      "type": "CONTAINS",
+      "to": "FUNCTION:anonymous[0]"
+    },
+    {
+      "from": "SCOPE:loadWithAlias:body",
+      "type": "CONTAINS",
+      "to": "CALL:Promise"
+    },
+    {
+      "from": "SCOPE:loadWithAlias:body",
+      "type": "CONTAINS",
+      "to": "FUNCTION:anonymous[0]"
+    },
+    {
+      "from": "SCOPE:loadWithNodePrefix:body",
+      "type": "CONTAINS",
+      "to": "CALL:readFile"
+    },
+    {
+      "from": "SCOPE:onlyCreateHash:body",
+      "type": "CONTAINS",
+      "to": "CALL:createHash"
+    },
+    {
+      "from": "SCOPE:onlyJoinAndResolve:body",
+      "type": "CONTAINS",
+      "to": "CALL:join"
+    },
+    {
+      "from": "SCOPE:onlyJoinAndResolve:body",
+      "type": "CONTAINS",
+      "to": "CALL:resolve"
+    },
+    {
+      "from": "SCOPE:onlyReadFile:body",
+      "type": "CONTAINS",
+      "to": "CALL:Promise"
+    },
+    {
+      "from": "SCOPE:onlyReadFile:body",
+      "type": "CONTAINS",
+      "to": "FUNCTION:anonymous[0]"
+    },
+    {
+      "from": "SCOPE:parseUrl:body",
+      "type": "CONTAINS",
+      "to": "CALL:url.parse"
+    },
+    {
+      "from": "SCOPE:parseViaNamespace:body",
+      "type": "CONTAINS",
+      "to": "CALL:path.parse"
+    },
+    {
+      "from": "SCOPE:promisifyCallback:body",
+      "type": "CONTAINS",
+      "to": "CALL:util.promisify"
+    },
+    {
+      "from": "SCOPE:removeFile:body",
+      "type": "CONTAINS",
+      "to": "CALL:rm"
+    },
+    {
+      "from": "SCOPE:runCommand:body",
+      "type": "CONTAINS",
+      "to": "CALL:exec"
+    },
+    {
+      "from": "SCOPE:runCommand:body",
+      "type": "CONTAINS",
+      "to": "FUNCTION:anonymous[0]"
+    },
+    {
+      "from": "SCOPE:saveAsync:body",
+      "type": "CONTAINS",
+      "to": "CALL:JSON.stringify"
+    },
+    {
+      "from": "SCOPE:saveAsync:body",
+      "type": "CONTAINS",
+      "to": "CALL:writeFile"
+    },
+    {
+      "from": "SCOPE:saveData:body",
+      "type": "CONTAINS",
+      "to": "CALL:JSON.stringify"
+    },
+    {
+      "from": "SCOPE:saveData:body",
+      "type": "CONTAINS",
+      "to": "CALL:writeFile"
+    },
+    {
+      "from": "SCOPE:saveData:body",
+      "type": "CONTAINS",
+      "to": "FUNCTION:anonymous[0]"
+    },
+    {
+      "from": "SCOPE:saveWithAlias:body",
+      "type": "CONTAINS",
+      "to": "CALL:Promise"
+    },
+    {
+      "from": "SCOPE:saveWithAlias:body",
+      "type": "CONTAINS",
+      "to": "FUNCTION:anonymous[0]"
+    },
+    {
+      "from": "SCOPE:saveWithNodePrefix:body",
+      "type": "CONTAINS",
+      "to": "CALL:writeFile"
+    },
+    {
+      "from": "SCOPE:spawnProcess:body",
+      "type": "CONTAINS",
+      "to": "CALL:child.stdout.on"
+    },
+    {
+      "from": "SCOPE:spawnProcess:body",
+      "type": "CONTAINS",
+      "to": "CALL:spawn"
+    },
+    {
+      "from": "SCOPE:spawnProcess:body",
+      "type": "CONTAINS",
+      "to": "FUNCTION:anonymous[0]"
+    },
+    {
+      "from": "SCOPE:spawnProcess:body",
+      "type": "DECLARES",
+      "to": "VARIABLE:child"
+    },
+    {
+      "from": "SCOPE:startServer:body",
+      "type": "CONTAINS",
+      "to": "CALL:createServer"
+    },
+    {
+      "from": "SCOPE:startServer:body",
+      "type": "CONTAINS",
+      "to": "CALL:server.listen"
+    },
+    {
+      "from": "SCOPE:startServer:body",
+      "type": "CONTAINS",
+      "to": "FUNCTION:anonymous[0]"
+    },
+    {
+      "from": "SCOPE:startServer:body",
+      "type": "DECLARES",
+      "to": "VARIABLE:server"
+    },
+    {
+      "from": "SCOPE:writeViaNamespace:body",
+      "type": "CONTAINS",
+      "to": "CALL:fs.writeFileSync"
+    },
+    {
+      "from": "SERVICE:nodejs-builtins-fixture",
+      "type": "CONTAINS",
+      "to": "MODULE:aliased-imports.js",
+      "metadata": {
+        "version": "main"
+      }
+    },
+    {
+      "from": "SERVICE:nodejs-builtins-fixture",
+      "type": "CONTAINS",
+      "to": "MODULE:fs-promises.js",
+      "metadata": {
+        "version": "main"
+      }
+    },
+    {
+      "from": "SERVICE:nodejs-builtins-fixture",
+      "type": "CONTAINS",
+      "to": "MODULE:index.js",
+      "metadata": {
+        "version": "main"
+      }
+    },
+    {
+      "from": "SERVICE:nodejs-builtins-fixture",
+      "type": "CONTAINS",
+      "to": "MODULE:namespace-import.js",
+      "metadata": {
+        "version": "main"
+      }
+    },
+    {
+      "from": "SERVICE:nodejs-builtins-fixture",
+      "type": "CONTAINS",
+      "to": "MODULE:node-prefix.js",
+      "metadata": {
+        "version": "main"
+      }
+    },
+    {
+      "from": "SERVICE:nodejs-builtins-fixture",
+      "type": "CONTAINS",
+      "to": "MODULE:unused-imports.js",
+      "metadata": {
+        "version": "main"
+      }
+    },
+    {
+      "from": "TRY_BLOCK:",
+      "type": "CONTAINS",
+      "to": "SCOPE:"
+    },
+    {
+      "from": "TRY_BLOCK:",
+      "type": "HAS_CATCH",
+      "to": "CATCH_BLOCK:"
+    },
+    {
+      "from": "VARIABLE:child",
+      "type": "ASSIGNED_FROM",
+      "to": "CALL:spawn"
+    },
+    {
+      "from": "VARIABLE:child",
+      "type": "RETURNS",
+      "to": "FUNCTION:spawnProcess"
+    },
+    {
+      "from": "VARIABLE:content",
+      "type": "ASSIGNED_FROM",
+      "to": "CALL:readFile"
+    },
+    {
+      "from": "VARIABLE:full",
+      "type": "ASSIGNED_FROM",
+      "to": "CALL:join"
+    },
+    {
+      "from": "VARIABLE:joined",
+      "type": "ASSIGNED_FROM",
+      "to": "CALL:pathJoin"
+    },
+    {
+      "from": "VARIABLE:server",
+      "type": "ASSIGNED_FROM",
+      "to": "CALL:createServer"
+    },
+    {
+      "from": "VARIABLE:server",
+      "type": "RETURNS",
+      "to": "FUNCTION:startServer"
+    }
+  ]
+}
