@@ -18,6 +18,7 @@ use std::io::{BufWriter, Cursor};
 use std::path::{Path, PathBuf};
 
 use crate::error::Result;
+use crate::storage_v2::index::InvertedIndex;
 use crate::storage_v2::manifest::SegmentDescriptor;
 use crate::storage_v2::segment::{EdgeSegmentV2, NodeSegmentV2};
 use crate::storage_v2::types::{EdgeRecordV2, NodeRecordV2, SegmentMeta, SegmentType};
@@ -159,6 +160,25 @@ pub struct Shard {
 
     /// Tombstone state (loaded from manifest on open).
     tombstones: TombstoneSet,
+
+    /// L1 (compacted) node segment — sorted, deduplicated, tombstones removed.
+    /// None if shard has never been compacted.
+    l1_node_segment: Option<NodeSegmentV2>,
+
+    /// L1 node segment descriptor (for manifest tracking / zone map pruning).
+    l1_node_descriptor: Option<SegmentDescriptor>,
+
+    /// L1 (compacted) edge segment.
+    l1_edge_segment: Option<EdgeSegmentV2>,
+
+    /// L1 edge segment descriptor.
+    l1_edge_descriptor: Option<SegmentDescriptor>,
+
+    /// Inverted index: node_type -> IndexEntry list (built during compaction).
+    l1_by_type_index: Option<InvertedIndex>,
+
+    /// Inverted index: file -> IndexEntry list (built during compaction).
+    l1_by_file_index: Option<InvertedIndex>,
 }
 
 // -- Constructors -------------------------------------------------------------
@@ -178,6 +198,12 @@ impl Shard {
             node_descriptors: Vec::new(),
             edge_descriptors: Vec::new(),
             tombstones: TombstoneSet::new(),
+            l1_node_segment: None,
+            l1_node_descriptor: None,
+            l1_edge_segment: None,
+            l1_edge_descriptor: None,
+            l1_by_type_index: None,
+            l1_by_file_index: None,
         })
     }
 
@@ -218,6 +244,12 @@ impl Shard {
             node_descriptors,
             edge_descriptors,
             tombstones: TombstoneSet::new(),
+            l1_node_segment: None,
+            l1_node_descriptor: None,
+            l1_edge_segment: None,
+            l1_edge_descriptor: None,
+            l1_by_type_index: None,
+            l1_by_file_index: None,
         })
     }
 
@@ -233,6 +265,12 @@ impl Shard {
             node_descriptors: Vec::new(),
             edge_descriptors: Vec::new(),
             tombstones: TombstoneSet::new(),
+            l1_node_segment: None,
+            l1_node_descriptor: None,
+            l1_edge_segment: None,
+            l1_edge_descriptor: None,
+            l1_by_type_index: None,
+            l1_by_file_index: None,
         }
     }
 
@@ -251,6 +289,12 @@ impl Shard {
             node_descriptors: Vec::new(),
             edge_descriptors: Vec::new(),
             tombstones: TombstoneSet::new(),
+            l1_node_segment: None,
+            l1_node_descriptor: None,
+            l1_edge_segment: None,
+            l1_edge_descriptor: None,
+            l1_by_type_index: None,
+            l1_by_file_index: None,
         })
     }
 
@@ -292,6 +336,12 @@ impl Shard {
             node_descriptors,
             edge_descriptors,
             tombstones: TombstoneSet::new(),
+            l1_node_segment: None,
+            l1_node_descriptor: None,
+            l1_edge_segment: None,
+            l1_edge_descriptor: None,
+            l1_by_type_index: None,
+            l1_by_file_index: None,
         })
     }
 }
@@ -327,6 +377,11 @@ impl Shard {
     /// Get reference to current tombstone set (for reading).
     pub fn tombstones(&self) -> &TombstoneSet {
         &self.tombstones
+    }
+
+    /// Get mutable reference to tombstone set.
+    pub fn tombstones_mut(&mut self) -> &mut TombstoneSet {
+        &mut self.tombstones
     }
 
     /// Find edge keys (src, dst, edge_type) where src is in the given ID set.
@@ -371,7 +426,7 @@ impl Shard {
             return keys;
         }
 
-        // Step 1: Scan edge segments with bloom pre-filter
+        // Step 1: Scan L0 edge segments with bloom pre-filter
         for seg in &self.edge_segments {
             // Bloom check: does this segment maybe contain edges from any src_id?
             let may_match = src_ids.iter().any(|id| seg.maybe_contains_src(*id));
@@ -396,7 +451,22 @@ impl Shard {
             }
         }
 
-        // Step 2: Scan write buffer
+        // Step 2: Scan L1 edge segment
+        if let Some(l1_seg) = &self.l1_edge_segment {
+            let may_match = src_ids.iter().any(|id| l1_seg.maybe_contains_src(*id));
+            if may_match {
+                for j in 0..l1_seg.record_count() {
+                    let src = l1_seg.get_src(j);
+                    if src_ids.contains(&src) {
+                        let dst = l1_seg.get_dst(j);
+                        let edge_type = l1_seg.get_edge_type(j).to_string();
+                        keys.push((src, dst, edge_type));
+                    }
+                }
+            }
+        }
+
+        // Step 3: Scan write buffer
         for edge in self.write_buffer.iter_edges() {
             if src_ids.contains(&edge.src) {
                 if exclude_enrichment {
@@ -479,6 +549,109 @@ impl Shard {
         }
 
         src_ids
+    }
+}
+
+// -- L1 Accessors + Management ------------------------------------------------
+
+impl Shard {
+    /// Number of L0 node segments.
+    pub fn l0_node_segment_count(&self) -> usize {
+        self.node_segments.len()
+    }
+
+    /// Number of L0 edge segments.
+    pub fn l0_edge_segment_count(&self) -> usize {
+        self.edge_segments.len()
+    }
+
+    /// Whether this shard has been compacted (has L1 segments).
+    pub fn has_l1(&self) -> bool {
+        self.l1_node_segment.is_some() || self.l1_edge_segment.is_some()
+    }
+
+    /// Get shard ID.
+    pub fn shard_id(&self) -> Option<u16> {
+        self.shard_id
+    }
+
+    /// Get shard directory path.
+    pub fn path(&self) -> Option<&Path> {
+        self.path.as_deref()
+    }
+
+    /// Get L1 node descriptor.
+    pub fn l1_node_descriptor(&self) -> Option<&SegmentDescriptor> {
+        self.l1_node_descriptor.as_ref()
+    }
+
+    /// Get L1 edge descriptor.
+    pub fn l1_edge_descriptor(&self) -> Option<&SegmentDescriptor> {
+        self.l1_edge_descriptor.as_ref()
+    }
+
+    /// Get references to L0 node segments (for merge).
+    pub fn l0_node_segments(&self) -> &[NodeSegmentV2] {
+        &self.node_segments
+    }
+
+    /// Get references to L0 edge segments (for merge).
+    pub fn l0_edge_segments(&self) -> &[EdgeSegmentV2] {
+        &self.edge_segments
+    }
+
+    /// Get L1 node segment (for merge input during re-compaction).
+    pub fn l1_node_segment(&self) -> Option<&NodeSegmentV2> {
+        self.l1_node_segment.as_ref()
+    }
+
+    /// Get L1 edge segment (for merge input during re-compaction).
+    pub fn l1_edge_segment(&self) -> Option<&EdgeSegmentV2> {
+        self.l1_edge_segment.as_ref()
+    }
+
+    /// Set L1 segments after compaction or on shard open.
+    pub fn set_l1_segments(
+        &mut self,
+        node_segment: Option<NodeSegmentV2>,
+        node_descriptor: Option<SegmentDescriptor>,
+        edge_segment: Option<EdgeSegmentV2>,
+        edge_descriptor: Option<SegmentDescriptor>,
+    ) {
+        self.l1_node_segment = node_segment;
+        self.l1_node_descriptor = node_descriptor;
+        self.l1_edge_segment = edge_segment;
+        self.l1_edge_descriptor = edge_descriptor;
+    }
+
+    /// Set inverted indexes for L1 node segment (built during compaction).
+    pub fn set_l1_indexes(
+        &mut self,
+        by_type_index: Option<InvertedIndex>,
+        by_file_index: Option<InvertedIndex>,
+    ) {
+        self.l1_by_type_index = by_type_index;
+        self.l1_by_file_index = by_file_index;
+    }
+
+    /// Get reference to L1 by_type inverted index (for query optimization).
+    pub fn l1_by_type_index(&self) -> Option<&InvertedIndex> {
+        self.l1_by_type_index.as_ref()
+    }
+
+    /// Get reference to L1 by_file inverted index (for query optimization).
+    pub fn l1_by_file_index(&self) -> Option<&InvertedIndex> {
+        self.l1_by_file_index.as_ref()
+    }
+
+    /// Clear L0 segments after compaction (they've been merged into L1).
+    /// Also clears tombstones since they were applied during merge.
+    pub fn clear_l0_after_compaction(&mut self) {
+        self.node_segments.clear();
+        self.node_descriptors.clear();
+        self.edge_segments.clear();
+        self.edge_descriptors.clear();
+        self.tombstones = TombstoneSet::new();
     }
 }
 
@@ -610,7 +783,7 @@ impl Shard {
             return Some(node.clone());
         }
 
-        // Step 2: Scan segments newest-to-oldest
+        // Step 2: Scan L0 segments newest-to-oldest
         for i in (0..self.node_segments.len()).rev() {
             let seg = &self.node_segments[i];
 
@@ -627,7 +800,18 @@ impl Shard {
             }
         }
 
-        // Step 3: Not found
+        // Step 3: Check L1 node segment (oldest, compacted)
+        if let Some(l1_seg) = &self.l1_node_segment {
+            if l1_seg.maybe_contains(id) {
+                for j in 0..l1_seg.record_count() {
+                    if l1_seg.get_id(j) == id {
+                        return Some(l1_seg.get_record(j));
+                    }
+                }
+            }
+        }
+
+        // Step 4: Not found
         None
     }
 
@@ -643,6 +827,7 @@ impl Shard {
             return true;
         }
 
+        // L0 segments newest-to-oldest
         for i in (0..self.node_segments.len()).rev() {
             let seg = &self.node_segments[i];
             if !seg.maybe_contains(id) {
@@ -651,6 +836,17 @@ impl Shard {
             for j in 0..seg.record_count() {
                 if seg.get_id(j) == id {
                     return true;
+                }
+            }
+        }
+
+        // L1 segment (oldest, compacted)
+        if let Some(l1_seg) = &self.l1_node_segment {
+            if l1_seg.maybe_contains(id) {
+                for j in 0..l1_seg.record_count() {
+                    if l1_seg.get_id(j) == id {
+                        return true;
+                    }
                 }
             }
         }
@@ -793,7 +989,7 @@ impl Shard {
             results.push(node.clone());
         }
 
-        // Step 2: Scan segments newest-to-oldest
+        // Step 2: Scan L0 segments newest-to-oldest
         for i in (0..self.node_segments.len()).rev() {
             let desc = &self.node_descriptors[i];
             let seg = &self.node_segments[i];
@@ -847,7 +1043,123 @@ impl Shard {
             }
         }
 
+        // Step 3: Scan L1 node segment (oldest, compacted)
+        if let (Some(l1_desc), Some(l1_seg)) =
+            (&self.l1_node_descriptor, &self.l1_node_segment)
+        {
+            // Zone map pruning at descriptor level
+            if l1_desc.may_contain(node_type, file, None) {
+                // Try inverted index path: use by_type or by_file index
+                // to avoid full L1 scan when a filter is specified.
+                let used_index = self.find_nodes_via_l1_index(
+                    l1_seg,
+                    node_type,
+                    file,
+                    &mut seen_ids,
+                    &mut results,
+                );
+
+                if !used_index {
+                    // Fallback: full L1 scan (no applicable index)
+                    let type_ok =
+                        node_type.map_or(true, |nt| l1_seg.contains_node_type(nt));
+                    let file_ok = file.map_or(true, |f| l1_seg.contains_file(f));
+
+                    if type_ok && file_ok {
+                        for j in 0..l1_seg.record_count() {
+                            let id = l1_seg.get_id(j);
+
+                            if seen_ids.contains(&id) {
+                                continue;
+                            }
+
+                            if self.tombstones.contains_node(id) {
+                                seen_ids.insert(id);
+                                continue;
+                            }
+
+                            if let Some(nt) = node_type {
+                                if l1_seg.get_node_type(j) != nt {
+                                    continue;
+                                }
+                            }
+                            if let Some(f) = file {
+                                if l1_seg.get_file(j) != f {
+                                    continue;
+                                }
+                            }
+
+                            seen_ids.insert(id);
+                            results.push(l1_seg.get_record(j));
+                        }
+                    }
+                }
+            }
+        }
+
         results
+    }
+
+    /// Try to use inverted index for L1 node lookup.
+    ///
+    /// Returns true if an index was used (caller should skip full L1 scan).
+    /// Returns false if no applicable index exists (caller falls back to scan).
+    ///
+    /// Strategy:
+    /// - If node_type filter is set and by_type index exists, use it
+    /// - If file filter is set and by_file index exists, use it
+    /// - Both filters: use the more selective one (by_type), then post-filter
+    fn find_nodes_via_l1_index(
+        &self,
+        l1_seg: &NodeSegmentV2,
+        node_type: Option<&str>,
+        file: Option<&str>,
+        seen_ids: &mut HashSet<u128>,
+        results: &mut Vec<NodeRecordV2>,
+    ) -> bool {
+        // Prefer by_type index when node_type filter is specified
+        if let (Some(nt), Some(by_type_idx)) = (node_type, &self.l1_by_type_index) {
+            let index_entries = by_type_idx.lookup(nt);
+            for entry in index_entries {
+                if seen_ids.contains(&entry.node_id) {
+                    continue;
+                }
+                if self.tombstones.contains_node(entry.node_id) {
+                    seen_ids.insert(entry.node_id);
+                    continue;
+                }
+                // Post-filter by file if needed
+                let record = l1_seg.get_record(entry.offset as usize);
+                if let Some(f) = file {
+                    if record.file != f {
+                        continue;
+                    }
+                }
+                seen_ids.insert(record.id);
+                results.push(record);
+            }
+            return true;
+        }
+
+        // Fall back to by_file index when only file filter is specified
+        if let (Some(f), Some(by_file_idx)) = (file, &self.l1_by_file_index) {
+            let index_entries = by_file_idx.lookup(f);
+            for entry in index_entries {
+                if seen_ids.contains(&entry.node_id) {
+                    continue;
+                }
+                if self.tombstones.contains_node(entry.node_id) {
+                    seen_ids.insert(entry.node_id);
+                    continue;
+                }
+                let record = l1_seg.get_record(entry.offset as usize);
+                seen_ids.insert(record.id);
+                results.push(record);
+            }
+            return true;
+        }
+
+        false
     }
 
     /// Find node IDs by exact node type, avoiding full record clones.
@@ -1023,9 +1335,12 @@ impl Shard {
         edge_types: Option<&[&str]>,
     ) -> Vec<EdgeRecordV2> {
         let mut results: Vec<EdgeRecordV2> = Vec::new();
+        // Track seen edge keys for dedup across L0 and L1
+        let mut seen_edge_keys: HashSet<(u128, u128, String)> = HashSet::new();
 
-        // Step 1: Scan write buffer
+        // Step 1: Scan write buffer (authoritative, newest)
         for edge in self.write_buffer.find_edges_by_src(node_id) {
+            seen_edge_keys.insert((edge.src, edge.dst, edge.edge_type.clone()));
             // Skip tombstoned edges
             if self.tombstones.contains_edge(edge.src, edge.dst, &edge.edge_type) {
                 continue;
@@ -1038,7 +1353,7 @@ impl Shard {
             results.push(edge.clone());
         }
 
-        // Step 2: Scan edge segments
+        // Step 2: Scan L0 edge segments
         for i in 0..self.edge_segments.len() {
             let seg = &self.edge_segments[i];
 
@@ -1060,9 +1375,17 @@ impl Shard {
                 if seg.get_src(j) != node_id {
                     continue;
                 }
-                // Skip tombstoned edges
                 let dst = seg.get_dst(j);
                 let edge_type = seg.get_edge_type(j);
+                let key = (node_id, dst, edge_type.to_string());
+
+                // Dedup: skip if already seen (buffer wins)
+                if seen_edge_keys.contains(&key) {
+                    continue;
+                }
+                seen_edge_keys.insert(key);
+
+                // Skip tombstoned edges
                 if self.tombstones.contains_edge(node_id, dst, edge_type) {
                     continue;
                 }
@@ -1072,6 +1395,40 @@ impl Shard {
                     }
                 }
                 results.push(seg.get_record(j));
+            }
+        }
+
+        // Step 3: Scan L1 edge segment (oldest, compacted)
+        if let Some(l1_seg) = &self.l1_edge_segment {
+            if l1_seg.maybe_contains_src(node_id) {
+                let type_ok = edge_types.map_or(true, |types| {
+                    types.iter().any(|t| l1_seg.contains_edge_type(t))
+                });
+                if type_ok {
+                    for j in 0..l1_seg.record_count() {
+                        if l1_seg.get_src(j) != node_id {
+                            continue;
+                        }
+                        let dst = l1_seg.get_dst(j);
+                        let edge_type = l1_seg.get_edge_type(j);
+                        let key = (node_id, dst, edge_type.to_string());
+
+                        if seen_edge_keys.contains(&key) {
+                            continue;
+                        }
+                        seen_edge_keys.insert(key);
+
+                        if self.tombstones.contains_edge(node_id, dst, edge_type) {
+                            continue;
+                        }
+                        if let Some(types) = edge_types {
+                            if !types.contains(&edge_type) {
+                                continue;
+                            }
+                        }
+                        results.push(l1_seg.get_record(j));
+                    }
+                }
             }
         }
 
@@ -1086,9 +1443,12 @@ impl Shard {
         edge_types: Option<&[&str]>,
     ) -> Vec<EdgeRecordV2> {
         let mut results: Vec<EdgeRecordV2> = Vec::new();
+        // Track seen edge keys for dedup across L0 and L1
+        let mut seen_edge_keys: HashSet<(u128, u128, String)> = HashSet::new();
 
-        // Step 1: Scan write buffer
+        // Step 1: Scan write buffer (authoritative, newest)
         for edge in self.write_buffer.find_edges_by_dst(node_id) {
+            seen_edge_keys.insert((edge.src, edge.dst, edge.edge_type.clone()));
             // Skip tombstoned edges
             if self.tombstones.contains_edge(edge.src, edge.dst, &edge.edge_type) {
                 continue;
@@ -1101,7 +1461,7 @@ impl Shard {
             results.push(edge.clone());
         }
 
-        // Step 2: Scan edge segments
+        // Step 2: Scan L0 edge segments
         for i in 0..self.edge_segments.len() {
             let seg = &self.edge_segments[i];
 
@@ -1123,9 +1483,17 @@ impl Shard {
                 if seg.get_dst(j) != node_id {
                     continue;
                 }
-                // Skip tombstoned edges
                 let src = seg.get_src(j);
                 let edge_type = seg.get_edge_type(j);
+                let key = (src, node_id, edge_type.to_string());
+
+                // Dedup: skip if already seen (buffer wins)
+                if seen_edge_keys.contains(&key) {
+                    continue;
+                }
+                seen_edge_keys.insert(key);
+
+                // Skip tombstoned edges
                 if self.tombstones.contains_edge(src, node_id, edge_type) {
                     continue;
                 }
@@ -1138,6 +1506,40 @@ impl Shard {
             }
         }
 
+        // Step 3: Scan L1 edge segment (oldest, compacted)
+        if let Some(l1_seg) = &self.l1_edge_segment {
+            if l1_seg.maybe_contains_dst(node_id) {
+                let type_ok = edge_types.map_or(true, |types| {
+                    types.iter().any(|t| l1_seg.contains_edge_type(t))
+                });
+                if type_ok {
+                    for j in 0..l1_seg.record_count() {
+                        if l1_seg.get_dst(j) != node_id {
+                            continue;
+                        }
+                        let src = l1_seg.get_src(j);
+                        let edge_type = l1_seg.get_edge_type(j);
+                        let key = (src, node_id, edge_type.to_string());
+
+                        if seen_edge_keys.contains(&key) {
+                            continue;
+                        }
+                        seen_edge_keys.insert(key);
+
+                        if self.tombstones.contains_edge(src, node_id, edge_type) {
+                            continue;
+                        }
+                        if let Some(types) = edge_types {
+                            if !types.contains(&edge_type) {
+                                continue;
+                            }
+                        }
+                        results.push(l1_seg.get_record(j));
+                    }
+                }
+            }
+        }
+
         results
     }
 }
@@ -1145,23 +1547,28 @@ impl Shard {
 // -- Stats --------------------------------------------------------------------
 
 impl Shard {
-    /// Total node count (write buffer + all node segments).
+    /// Total node count (write buffer + all node segments + L1).
     /// Note: may overcount if same node ID exists in multiple segments
     /// (exact count requires dedup scan). For stats purposes only.
     pub fn node_count(&self) -> usize {
-        let seg_count: usize = self.node_segments.iter().map(|s| s.record_count()).sum();
-        self.write_buffer.node_count() + seg_count
+        let l0_count: usize = self.node_segments.iter().map(|s| s.record_count()).sum();
+        let l1_count = self.l1_node_segment.as_ref().map_or(0, |s| s.record_count());
+        self.write_buffer.node_count() + l0_count + l1_count
     }
 
-    /// Total edge count (write buffer + all edge segments).
+    /// Total edge count (write buffer + all edge segments + L1).
     pub fn edge_count(&self) -> usize {
-        let seg_count: usize = self.edge_segments.iter().map(|s| s.record_count()).sum();
-        self.write_buffer.edge_count() + seg_count
+        let l0_count: usize = self.edge_segments.iter().map(|s| s.record_count()).sum();
+        let l1_count = self.l1_edge_segment.as_ref().map_or(0, |s| s.record_count());
+        self.write_buffer.edge_count() + l0_count + l1_count
     }
 
     /// Number of loaded segments: (node_segments, edge_segments).
+    /// Includes L1 segments in the count.
     pub fn segment_count(&self) -> (usize, usize) {
-        (self.node_segments.len(), self.edge_segments.len())
+        let node_count = self.node_segments.len() + if self.l1_node_segment.is_some() { 1 } else { 0 };
+        let edge_count = self.edge_segments.len() + if self.l1_edge_segment.is_some() { 1 } else { 0 };
+        (node_count, edge_count)
     }
 
     /// Write buffer size: (nodes, edges).
@@ -1176,21 +1583,47 @@ impl Shard {
     /// (~200 bytes each).
     pub fn all_node_ids(&self) -> Vec<u128> {
         let mut ids = Vec::new();
+        let mut seen = HashSet::new();
+
+        // Write buffer (authoritative, newest)
         for node in self.write_buffer.iter_nodes() {
+            seen.insert(node.id);
             if self.tombstones.contains_node(node.id) {
                 continue;
             }
             ids.push(node.id);
         }
+
+        // L0 segments
         for seg in &self.node_segments {
             for j in 0..seg.record_count() {
                 let id = seg.get_id(j);
+                if seen.contains(&id) {
+                    continue;
+                }
+                seen.insert(id);
                 if self.tombstones.contains_node(id) {
                     continue;
                 }
                 ids.push(id);
             }
         }
+
+        // L1 segment (oldest, compacted)
+        if let Some(l1_seg) = &self.l1_node_segment {
+            for j in 0..l1_seg.record_count() {
+                let id = l1_seg.get_id(j);
+                if seen.contains(&id) {
+                    continue;
+                }
+                seen.insert(id);
+                if self.tombstones.contains_node(id) {
+                    continue;
+                }
+                ids.push(id);
+            }
+        }
+
         ids
     }
 }

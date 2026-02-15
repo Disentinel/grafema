@@ -525,7 +525,9 @@ impl GraphStore for GraphEngineV2 {
     }
 
     fn compact(&mut self) -> Result<()> {
-        // No-op for v2 storage (compaction is handled differently)
+        use crate::storage_v2::compaction::CompactionConfig;
+        let config = CompactionConfig::default();
+        self.store.compact(&mut self.manifest, &config)?;
         Ok(())
     }
 
