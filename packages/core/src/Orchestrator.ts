@@ -17,29 +17,13 @@ import { DiagnosticCollector } from './diagnostics/DiagnosticCollector.js';
 import { StrictModeFailure } from './errors/GrafemaError.js';
 import { ResourceRegistryImpl } from './core/ResourceRegistry.js';
 import type { Plugin, PluginContext } from './plugins/Plugin.js';
-import type { GraphBackend, PluginPhase, Logger, LogLevel, IssueSpec, ServiceDefinition, FieldDeclaration, NodeRecord, RoutingRule } from '@grafema/types';
+import type { GraphBackend, Logger, LogLevel, ServiceDefinition, FieldDeclaration, NodeRecord, RoutingRule } from '@grafema/types';
 import { createLogger } from './logging/Logger.js';
 import { NodeFactory } from './core/NodeFactory.js';
 import { toposort } from './core/toposort.js';
-import { buildDependencyGraph } from './core/buildDependencyGraph.js';
-import type { IssueSeverity } from './core/nodes/IssueNode.js';
-
-/**
- * Progress callback info
- */
-export interface ProgressInfo {
-  phase: string;
-  currentPlugin?: string;
-  message?: string;
-  totalFiles?: number;
-  processedFiles?: number;
-  servicesAnalyzed?: number;
-}
-
-/**
- * Progress callback type
- */
-export type ProgressCallback = (info: ProgressInfo) => void;
+import { PhaseRunner } from './PhaseRunner.js';
+import type { ProgressCallback } from './PhaseRunner.js';
+export type { ProgressInfo, ProgressCallback } from './PhaseRunner.js';
 
 /**
  * Parallel analysis config
@@ -178,12 +162,12 @@ export class Orchestrator {
   private strictMode: boolean;
   /** Multi-root workspace roots (REG-76) */
   private workspaceRoots: string[] | undefined;
-  /** REG-357: Accumulated suppressedByIgnore from enrichment plugins */
-  private suppressedByIgnoreCount: number = 0;
   /** Resource registry for inter-plugin communication (REG-256) */
   private resourceRegistry = new ResourceRegistryImpl();
   /** Routing rules from config (REG-256) */
   private routing: RoutingRule[] | undefined;
+  /** Phase executor (extracted from runPhase, RFD-16) */
+  private phaseRunner!: PhaseRunner;
 
   constructor(options: OrchestratorOptions = {}) {
     this.graph = options.graph!;
@@ -220,6 +204,19 @@ export class Orchestrator {
 
     // Routing rules from config (REG-256)
     this.routing = options.routing;
+
+    // Initialize phase runner (RFD-16: extracted from runPhase)
+    this.phaseRunner = new PhaseRunner({
+      plugins: this.plugins,
+      onProgress: this.onProgress,
+      forceAnalysis: this.forceAnalysis,
+      logger: this.logger,
+      strictMode: this.strictMode,
+      diagnosticCollector: this.diagnosticCollector,
+      resourceRegistry: this.resourceRegistry,
+      configServices: this.configServices,
+      routing: this.routing,
+    });
 
     // Modified auto-add logic: SKIP auto-add if config services provided (REG-174)
     const hasDiscovery = this.plugins.some(p => p.metadata?.phase === 'DISCOVERY');
@@ -323,7 +320,7 @@ export class Orchestrator {
     const totalStartTime = Date.now();
 
     // REG-357: Reset suppressed count for each run
-    this.suppressedByIgnoreCount = 0;
+    this.phaseRunner.resetSuppressedByIgnoreCount();
 
     // REG-256: Reset resource registry for each run
     this.resourceRegistry.clear();
@@ -572,7 +569,7 @@ export class Orchestrator {
       if (strictErrors.length > 0) {
         this.logger.error(`Strict mode: ${strictErrors.length} unresolved reference(s) found`);
         // REG-357: Pass suppressedByIgnore count from enrichment plugin results
-        throw new StrictModeFailure(strictErrors, this.suppressedByIgnoreCount);
+        throw new StrictModeFailure(strictErrors, this.phaseRunner.getSuppressedByIgnoreCount());
       }
     }
 
@@ -750,7 +747,7 @@ export class Orchestrator {
 
       if (strictErrors.length > 0) {
         this.logger.error(`Strict mode: ${strictErrors.length} unresolved reference(s) found`);
-        throw new StrictModeFailure(strictErrors, this.suppressedByIgnoreCount);
+        throw new StrictModeFailure(strictErrors, this.phaseRunner.getSuppressedByIgnoreCount());
       }
     }
 
@@ -995,156 +992,7 @@ export class Orchestrator {
    * Запустить плагины для конкретной фазы
    */
   async runPhase(phaseName: string, context: Partial<PluginContext> & { graph: PluginContext['graph'] }): Promise<void> {
-    // Фильтруем плагины для данной фазы
-    const phasePlugins = this.plugins.filter(plugin =>
-      plugin.metadata.phase === phaseName
-    );
-
-    // Topological sort by dependencies (REG-367, RFD-2)
-    const pluginMap = new Map(phasePlugins.map(p => [p.metadata.name, p]));
-    const sortedIds = phaseName === 'ENRICHMENT'
-      ? toposort(buildDependencyGraph(phasePlugins))
-      : toposort(
-          phasePlugins.map(p => ({
-            id: p.metadata.name,
-            dependencies: p.metadata.dependencies ?? [],
-          }))
-        );
-    phasePlugins.length = 0;
-    for (const id of sortedIds) {
-      const plugin = pluginMap.get(id);
-      if (plugin) phasePlugins.push(plugin);
-    }
-
-    // Выполняем плагины последовательно
-    for (let i = 0; i < phasePlugins.length; i++) {
-      const plugin = phasePlugins[i];
-      this.onProgress({
-        phase: phaseName.toLowerCase(),
-        currentPlugin: plugin.metadata.name,
-        message: `Running plugin ${i + 1}/${phasePlugins.length}: ${plugin.metadata.name}`
-      });
-      // Передаем onProgress и forceAnalysis в контекст для плагинов
-      const pluginContext: PluginContext = {
-        ...context,
-        onProgress: this.onProgress as unknown as PluginContext['onProgress'],
-        forceAnalysis: this.forceAnalysis,
-        logger: this.logger,
-        strictMode: this.strictMode, // REG-330: Pass strict mode flag
-        // REG-76: Pass rootPrefix for multi-root workspace support
-        rootPrefix: (context as { rootPrefix?: string }).rootPrefix,
-        // REG-256: Pass resource registry for inter-plugin communication
-        resources: this.resourceRegistry,
-      };
-
-      // REG-256: Ensure config is available with routing and services for all plugins
-      if (!pluginContext.config) {
-        pluginContext.config = {
-          projectPath: (context as { manifest?: { projectPath?: string } }).manifest?.projectPath ?? '',
-          services: this.configServices,
-          routing: this.routing,
-        };
-      } else {
-        // Merge routing and services into existing config
-        const cfg = pluginContext.config as unknown as Record<string, unknown>;
-        if (this.routing && !cfg.routing) {
-          cfg.routing = this.routing;
-        }
-        if (this.configServices && !cfg.services) {
-          cfg.services = this.configServices;
-        }
-      }
-
-      // Add reportIssue for VALIDATION phase
-      if (phaseName === 'VALIDATION') {
-        pluginContext.reportIssue = async (issue: IssueSpec): Promise<string> => {
-          const node = NodeFactory.createIssue(
-            issue.category,
-            issue.severity as IssueSeverity,
-            issue.message,
-            plugin.metadata.name,
-            issue.file,
-            issue.line,
-            issue.column || 0,
-            { context: issue.context }
-          );
-          await context.graph.addNode(node);
-          if (issue.targetNodeId) {
-            await context.graph.addEdge({
-              src: node.id,
-              dst: issue.targetNodeId,
-              type: 'AFFECTS',
-            });
-          }
-          return node.id;
-        };
-      }
-
-      try {
-        const result = await plugin.execute(pluginContext);
-
-        // Collect errors into diagnostics
-        this.diagnosticCollector.addFromPluginResult(
-          phaseName as PluginPhase,
-          plugin.metadata.name,
-          result
-        );
-
-        // REG-357: Collect suppressedByIgnore from ENRICHMENT plugin results
-        if (phaseName === 'ENRICHMENT' && result.metadata) {
-          const suppressed = (result.metadata as Record<string, unknown>).suppressedByIgnore;
-          if (typeof suppressed === 'number') {
-            this.suppressedByIgnoreCount += suppressed;
-          }
-        }
-
-        // Log plugin completion with warning if errors occurred
-        if (!result.success) {
-          console.warn(`[Orchestrator] Plugin ${plugin.metadata.name} reported failure`, {
-            errors: result.errors.length,
-            warnings: result.warnings.length,
-          });
-        }
-
-        // Check for fatal errors - STOP immediately
-        // REG-357: In strict mode ENRICHMENT, don't halt on strict mode errors.
-        // The strict mode barrier after ENRICHMENT handles them collectively.
-        if (this.diagnosticCollector.hasFatal()) {
-          const allDiagnostics = this.diagnosticCollector.getAll();
-          const fatals = allDiagnostics.filter(d => d.severity === 'fatal');
-
-          // Skip halt only if ALL fatals are strict mode errors during ENRICHMENT.
-          // If any non-strict fatal exists, halt immediately.
-          const allStrictErrors = fatals.every(d => d.code.startsWith('STRICT_'));
-          if (!(this.strictMode && phaseName === 'ENRICHMENT' && allStrictErrors)) {
-            const fatal = fatals[0];
-            throw new Error(`Fatal error in ${plugin.metadata.name}: ${fatal?.message || 'Unknown fatal error'}`);
-          }
-        }
-      } catch (e) {
-        // Plugin threw an exception (not just returned errors)
-        const error = e instanceof Error ? e : new Error(String(e));
-
-        // Don't re-add if this was already a fatal error we threw
-        if (!this.diagnosticCollector.hasFatal()) {
-          this.diagnosticCollector.add({
-            code: 'ERR_PLUGIN_THREW',
-            severity: 'fatal',
-            message: error.message,
-            phase: phaseName as PluginPhase,
-            plugin: plugin.metadata.name,
-          });
-        }
-        throw error; // Re-throw to stop analysis
-      }
-
-      // Send completion for this plugin
-      this.onProgress({
-        phase: phaseName.toLowerCase(),
-        currentPlugin: plugin.metadata.name,
-        message: `✓ ${plugin.metadata.name} complete`
-      });
-    }
+    return this.phaseRunner.runPhase(phaseName, context);
   }
 
   /**
