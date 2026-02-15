@@ -34,29 +34,19 @@ jobs:
     timeout-minutes: 10
 
     steps:
-      - name: Raise file descriptor limit
-        run: ulimit -n 65536
-
-      - name: Clean workspace
-        run: rm -rf node_modules .pnpm-store .pnpm-home
-
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          clean: true
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          dest: ${{ github.workspace }}/.pnpm-home
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
 
+      - name: Enable pnpm via corepack
+        run: corepack enable && corepack prepare
+
       - name: Install dependencies
-        run: ulimit -n 65536 && pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile
 
       - name: Build (required for tests)
         run: pnpm build
@@ -149,29 +139,19 @@ jobs:
     timeout-minutes: 10
 
     steps:
-      - name: Raise file descriptor limit
-        run: ulimit -n 65536
-
-      - name: Clean workspace
-        run: rm -rf node_modules .pnpm-store .pnpm-home
-
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          clean: true
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          dest: ${{ github.workspace }}/.pnpm-home
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
 
+      - name: Enable pnpm via corepack
+        run: corepack enable && corepack prepare
+
       - name: Install dependencies
-        run: ulimit -n 65536 && pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile
 
       - name: Build all packages (required for cross-package typecheck)
         run: pnpm build
@@ -189,29 +169,19 @@ jobs:
     timeout-minutes: 10
 
     steps:
-      - name: Raise file descriptor limit
-        run: ulimit -n 65536
-
-      - name: Clean workspace
-        run: rm -rf node_modules .pnpm-store .pnpm-home
-
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          clean: true
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          dest: ${{ github.workspace }}/.pnpm-home
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
 
+      - name: Enable pnpm via corepack
+        run: corepack enable && corepack prepare
+
       - name: Install dependencies
-        run: ulimit -n 65536 && pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile
 
       - name: Build all packages
         run: pnpm build
