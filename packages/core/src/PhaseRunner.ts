@@ -116,9 +116,27 @@ export class PhaseRunner {
       if (plugin) phasePlugins.push(plugin);
     }
 
+    // Delta-driven selective enrichment (RFD-16 Phase 3)
+    // Track accumulated changed types for ENRICHMENT skip optimization
+    const accumulatedTypes = new Set<string>();
+    const supportsBatch = !!(context.graph.beginBatch && context.graph.commitBatch);
+
     // Execute plugins sequentially
     for (let i = 0; i < phasePlugins.length; i++) {
       const plugin = phasePlugins[i];
+
+      // Selective enrichment: skip enrichers whose consumed types didn't change
+      if (phaseName === 'ENRICHMENT' && supportsBatch) {
+        const consumes = plugin.metadata.consumes ?? [];
+        const isLevel0 = consumes.length === 0;
+        if (!isLevel0 && !consumes.some(t => accumulatedTypes.has(t))) {
+          logger.debug(
+            `[SKIP] ${plugin.metadata.name} — no changes in consumed types [${consumes.join(', ')}]`
+          );
+          continue;
+        }
+      }
+
       onProgress({
         phase: phaseName.toLowerCase(),
         currentPlugin: plugin.metadata.name,
@@ -183,12 +201,15 @@ export class PhaseRunner {
       try {
         const { result, delta } = await this.runPluginWithBatch(plugin, pluginContext, phaseName);
 
-        // Log batch delta when available
+        // Log batch delta and accumulate types for selective enrichment
         if (delta) {
           logger.debug(
             `[${plugin.metadata.name}] batch: +${delta.nodesAdded} nodes, +${delta.edgesAdded} edges, ` +
             `-${delta.nodesRemoved} nodes, -${delta.edgesRemoved} edges`
           );
+          // Accumulate changed types for downstream enricher skip checks
+          for (const t of delta.changedNodeTypes) accumulatedTypes.add(t);
+          for (const t of delta.changedEdgeTypes) accumulatedTypes.add(t);
         }
 
         // Collect errors into diagnostics
