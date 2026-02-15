@@ -18,6 +18,7 @@ use std::io::{BufWriter, Cursor};
 use std::path::{Path, PathBuf};
 
 use crate::error::Result;
+use crate::storage_v2::index::InvertedIndex;
 use crate::storage_v2::manifest::SegmentDescriptor;
 use crate::storage_v2::segment::{EdgeSegmentV2, NodeSegmentV2};
 use crate::storage_v2::types::{EdgeRecordV2, NodeRecordV2, SegmentMeta, SegmentType};
@@ -172,6 +173,12 @@ pub struct Shard {
 
     /// L1 edge segment descriptor.
     l1_edge_descriptor: Option<SegmentDescriptor>,
+
+    /// Inverted index: node_type -> IndexEntry list (built during compaction).
+    l1_by_type_index: Option<InvertedIndex>,
+
+    /// Inverted index: file -> IndexEntry list (built during compaction).
+    l1_by_file_index: Option<InvertedIndex>,
 }
 
 // -- Constructors -------------------------------------------------------------
@@ -195,6 +202,8 @@ impl Shard {
             l1_node_descriptor: None,
             l1_edge_segment: None,
             l1_edge_descriptor: None,
+            l1_by_type_index: None,
+            l1_by_file_index: None,
         })
     }
 
@@ -239,6 +248,8 @@ impl Shard {
             l1_node_descriptor: None,
             l1_edge_segment: None,
             l1_edge_descriptor: None,
+            l1_by_type_index: None,
+            l1_by_file_index: None,
         })
     }
 
@@ -258,6 +269,8 @@ impl Shard {
             l1_node_descriptor: None,
             l1_edge_segment: None,
             l1_edge_descriptor: None,
+            l1_by_type_index: None,
+            l1_by_file_index: None,
         }
     }
 
@@ -280,6 +293,8 @@ impl Shard {
             l1_node_descriptor: None,
             l1_edge_segment: None,
             l1_edge_descriptor: None,
+            l1_by_type_index: None,
+            l1_by_file_index: None,
         })
     }
 
@@ -325,6 +340,8 @@ impl Shard {
             l1_node_descriptor: None,
             l1_edge_segment: None,
             l1_edge_descriptor: None,
+            l1_by_type_index: None,
+            l1_by_file_index: None,
         })
     }
 }
@@ -503,6 +520,26 @@ impl Shard {
         self.l1_node_descriptor = node_descriptor;
         self.l1_edge_segment = edge_segment;
         self.l1_edge_descriptor = edge_descriptor;
+    }
+
+    /// Set inverted indexes for L1 node segment (built during compaction).
+    pub fn set_l1_indexes(
+        &mut self,
+        by_type_index: Option<InvertedIndex>,
+        by_file_index: Option<InvertedIndex>,
+    ) {
+        self.l1_by_type_index = by_type_index;
+        self.l1_by_file_index = by_file_index;
+    }
+
+    /// Get reference to L1 by_type inverted index (for query optimization).
+    pub fn l1_by_type_index(&self) -> Option<&InvertedIndex> {
+        self.l1_by_type_index.as_ref()
+    }
+
+    /// Get reference to L1 by_file inverted index (for query optimization).
+    pub fn l1_by_file_index(&self) -> Option<&InvertedIndex> {
+        self.l1_by_file_index.as_ref()
     }
 
     /// Clear L0 segments after compaction (they've been merged into L1).
@@ -817,42 +854,117 @@ impl Shard {
         {
             // Zone map pruning at descriptor level
             if l1_desc.may_contain(node_type, file, None) {
-                // Zone map pruning at segment level
-                let type_ok = node_type.map_or(true, |nt| l1_seg.contains_node_type(nt));
-                let file_ok = file.map_or(true, |f| l1_seg.contains_file(f));
+                // Try inverted index path: use by_type or by_file index
+                // to avoid full L1 scan when a filter is specified.
+                let used_index = self.find_nodes_via_l1_index(
+                    l1_seg,
+                    node_type,
+                    file,
+                    &mut seen_ids,
+                    &mut results,
+                );
 
-                if type_ok && file_ok {
-                    for j in 0..l1_seg.record_count() {
-                        let id = l1_seg.get_id(j);
+                if !used_index {
+                    // Fallback: full L1 scan (no applicable index)
+                    let type_ok =
+                        node_type.map_or(true, |nt| l1_seg.contains_node_type(nt));
+                    let file_ok = file.map_or(true, |f| l1_seg.contains_file(f));
 
-                        if seen_ids.contains(&id) {
-                            continue;
-                        }
+                    if type_ok && file_ok {
+                        for j in 0..l1_seg.record_count() {
+                            let id = l1_seg.get_id(j);
 
-                        if self.tombstones.contains_node(id) {
+                            if seen_ids.contains(&id) {
+                                continue;
+                            }
+
+                            if self.tombstones.contains_node(id) {
+                                seen_ids.insert(id);
+                                continue;
+                            }
+
+                            if let Some(nt) = node_type {
+                                if l1_seg.get_node_type(j) != nt {
+                                    continue;
+                                }
+                            }
+                            if let Some(f) = file {
+                                if l1_seg.get_file(j) != f {
+                                    continue;
+                                }
+                            }
+
                             seen_ids.insert(id);
-                            continue;
+                            results.push(l1_seg.get_record(j));
                         }
-
-                        if let Some(nt) = node_type {
-                            if l1_seg.get_node_type(j) != nt {
-                                continue;
-                            }
-                        }
-                        if let Some(f) = file {
-                            if l1_seg.get_file(j) != f {
-                                continue;
-                            }
-                        }
-
-                        seen_ids.insert(id);
-                        results.push(l1_seg.get_record(j));
                     }
                 }
             }
         }
 
         results
+    }
+
+    /// Try to use inverted index for L1 node lookup.
+    ///
+    /// Returns true if an index was used (caller should skip full L1 scan).
+    /// Returns false if no applicable index exists (caller falls back to scan).
+    ///
+    /// Strategy:
+    /// - If node_type filter is set and by_type index exists, use it
+    /// - If file filter is set and by_file index exists, use it
+    /// - Both filters: use the more selective one (by_type), then post-filter
+    fn find_nodes_via_l1_index(
+        &self,
+        l1_seg: &NodeSegmentV2,
+        node_type: Option<&str>,
+        file: Option<&str>,
+        seen_ids: &mut HashSet<u128>,
+        results: &mut Vec<NodeRecordV2>,
+    ) -> bool {
+        // Prefer by_type index when node_type filter is specified
+        if let (Some(nt), Some(by_type_idx)) = (node_type, &self.l1_by_type_index) {
+            let index_entries = by_type_idx.lookup(nt);
+            for entry in index_entries {
+                if seen_ids.contains(&entry.node_id) {
+                    continue;
+                }
+                if self.tombstones.contains_node(entry.node_id) {
+                    seen_ids.insert(entry.node_id);
+                    continue;
+                }
+                // Post-filter by file if needed
+                let record = l1_seg.get_record(entry.offset as usize);
+                if let Some(f) = file {
+                    if record.file != f {
+                        continue;
+                    }
+                }
+                seen_ids.insert(record.id);
+                results.push(record);
+            }
+            return true;
+        }
+
+        // Fall back to by_file index when only file filter is specified
+        if let (Some(f), Some(by_file_idx)) = (file, &self.l1_by_file_index) {
+            let index_entries = by_file_idx.lookup(f);
+            for entry in index_entries {
+                if seen_ids.contains(&entry.node_id) {
+                    continue;
+                }
+                if self.tombstones.contains_node(entry.node_id) {
+                    seen_ids.insert(entry.node_id);
+                    continue;
+                }
+                let record = l1_seg.get_record(entry.offset as usize);
+                seen_ids.insert(record.id);
+                results.push(record);
+            }
+            return true;
+        }
+
+        false
     }
 }
 
