@@ -31,7 +31,9 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{GraphError, Result};
+use crate::storage_v2::compaction::{CompactionConfig, CompactionResult};
 use crate::storage_v2::manifest::{ManifestStore, SegmentDescriptor};
+use crate::storage_v2::segment::{EdgeSegmentV2, NodeSegmentV2};
 use crate::storage_v2::shard::{Shard, TombstoneSet};
 use crate::storage_v2::shard_planner::ShardPlanner;
 use crate::storage_v2::types::{CommitDelta, EdgeRecordV2, NodeRecordV2, SegmentType};
@@ -173,19 +175,64 @@ impl MultiShardStore {
                 .push(desc.clone());
         }
 
+        // Group L1 segment descriptors by shard_id
+        let mut l1_node_descs_by_shard: HashMap<u16, SegmentDescriptor> = HashMap::new();
+        let mut l1_edge_descs_by_shard: HashMap<u16, SegmentDescriptor> = HashMap::new();
+
+        for desc in &current.l1_node_segments {
+            let shard_id = desc.shard_id.unwrap_or(0);
+            l1_node_descs_by_shard.insert(shard_id, desc.clone());
+        }
+        for desc in &current.l1_edge_segments {
+            let shard_id = desc.shard_id.unwrap_or(0);
+            l1_edge_descs_by_shard.insert(shard_id, desc.clone());
+        }
+
         // Open each shard
         let mut shards = Vec::with_capacity(config.shard_count as usize);
         for i in 0..config.shard_count {
             let shard_path = shard_dir(db_path, i);
             let node_descs = node_descs_by_shard.remove(&i).unwrap_or_default();
             let edge_descs = edge_descs_by_shard.remove(&i).unwrap_or_default();
-            let shard = Shard::open_for_shard(
+            let mut shard = Shard::open_for_shard(
                 &shard_path,
                 db_path,
                 i,
                 node_descs,
                 edge_descs,
             )?;
+
+            // Load L1 segments if present in manifest
+            let l1_node_desc = l1_node_descs_by_shard.remove(&i);
+            let l1_edge_desc = l1_edge_descs_by_shard.remove(&i);
+
+            let l1_node_seg = if let Some(desc) = &l1_node_desc {
+                let seg_path = shard_path.join(
+                    format!("seg_{:06}_nodes.seg", desc.segment_id),
+                );
+                Some(NodeSegmentV2::open(&seg_path)?)
+            } else {
+                None
+            };
+
+            let l1_edge_seg = if let Some(desc) = &l1_edge_desc {
+                let seg_path = shard_path.join(
+                    format!("seg_{:06}_edges.seg", desc.segment_id),
+                );
+                Some(EdgeSegmentV2::open(&seg_path)?)
+            } else {
+                None
+            };
+
+            if l1_node_seg.is_some() || l1_edge_seg.is_some() {
+                shard.set_l1_segments(
+                    l1_node_seg,
+                    l1_node_desc,
+                    l1_edge_seg,
+                    l1_edge_desc,
+                );
+            }
+
             shards.push(shard);
         }
 
@@ -707,6 +754,189 @@ impl MultiShardStore {
             changed_node_types,
             changed_edge_types,
             manifest_version,
+        })
+    }
+}
+
+// ── Compaction ─────────────────────────────────────────────────────
+
+impl MultiShardStore {
+    /// Run compaction on all shards that exceed the L0 segment threshold.
+    ///
+    /// For each shard:
+    /// 1. Check if L0 segment count >= config threshold
+    /// 2. Merge L0 + existing L1 into new L1 segment (in-memory)
+    /// 3. Write L1 segment files to shard directory (or in-memory for ephemeral)
+    /// 4. Swap shard state: set L1, clear L0 + tombstones
+    ///
+    /// Then commit a new manifest with:
+    /// - L0 segments removed (compacted into L1)
+    /// - L1 segment descriptors added
+    /// - Tombstones cleared
+    /// - CompactionInfo recorded
+    ///
+    /// Returns CompactionResult with stats.
+    pub fn compact(
+        &mut self,
+        manifest_store: &mut ManifestStore,
+        config: &CompactionConfig,
+    ) -> Result<CompactionResult> {
+        use crate::storage_v2::compaction::coordinator::{compact_shard, should_compact};
+        use crate::storage_v2::compaction::CompactionInfo;
+        use std::time::Instant;
+
+        let start = Instant::now();
+        let mut shards_compacted = Vec::new();
+        let mut total_nodes_merged: u64 = 0;
+        let mut total_edges_merged: u64 = 0;
+        let mut total_tombstones_removed: u64 = 0;
+
+        // Collect L1 descriptors for manifest
+        let mut l1_node_descs: Vec<SegmentDescriptor> = Vec::new();
+        let mut l1_edge_descs: Vec<SegmentDescriptor> = Vec::new();
+
+        // Track which shards were compacted so we know which L0 segments to remove
+        let mut compacted_shard_ids: HashSet<u16> = HashSet::new();
+
+        for shard_idx in 0..self.shards.len() {
+            let shard = &self.shards[shard_idx];
+            let shard_id = shard_idx as u16;
+
+            if !should_compact(shard, config) {
+                // Preserve existing L1 descriptors for non-compacted shards
+                if let Some(desc) = shard.l1_node_descriptor() {
+                    l1_node_descs.push(desc.clone());
+                }
+                if let Some(desc) = shard.l1_edge_descriptor() {
+                    l1_edge_descs.push(desc.clone());
+                }
+                continue;
+            }
+
+            // Compact this shard
+            let result = compact_shard(shard)?;
+
+            // Build L1 node segment (if any merged nodes)
+            let mut l1_node_seg: Option<NodeSegmentV2> = None;
+            let mut l1_node_desc: Option<SegmentDescriptor> = None;
+            if let (Some(bytes), Some(meta)) = (&result.node_segment_bytes, &result.node_meta) {
+                let seg_id = manifest_store.next_segment_id();
+
+                let seg = if let Some(shard_path) = shard.path() {
+                    let seg_path = shard_path.join(format!("seg_{:06}_nodes.seg", seg_id));
+                    std::fs::write(&seg_path, bytes)?;
+                    NodeSegmentV2::open(&seg_path)?
+                } else {
+                    NodeSegmentV2::from_bytes(bytes)?
+                };
+
+                let desc = SegmentDescriptor::from_meta(
+                    seg_id, SegmentType::Nodes, Some(shard_id), meta.clone(),
+                );
+
+                l1_node_descs.push(desc.clone());
+                total_nodes_merged += meta.record_count;
+                l1_node_seg = Some(seg);
+                l1_node_desc = Some(desc);
+            }
+
+            // Build L1 edge segment (if any merged edges)
+            let mut l1_edge_seg: Option<EdgeSegmentV2> = None;
+            let mut l1_edge_desc: Option<SegmentDescriptor> = None;
+            if let (Some(bytes), Some(meta)) = (&result.edge_segment_bytes, &result.edge_meta) {
+                let seg_id = manifest_store.next_segment_id();
+
+                let seg = if let Some(shard_path) = shard.path() {
+                    let seg_path = shard_path.join(format!("seg_{:06}_edges.seg", seg_id));
+                    std::fs::write(&seg_path, bytes)?;
+                    EdgeSegmentV2::open(&seg_path)?
+                } else {
+                    EdgeSegmentV2::from_bytes(bytes)?
+                };
+
+                let desc = SegmentDescriptor::from_meta(
+                    seg_id, SegmentType::Edges, Some(shard_id), meta.clone(),
+                );
+
+                l1_edge_descs.push(desc.clone());
+                total_edges_merged += meta.record_count;
+                l1_edge_seg = Some(seg);
+                l1_edge_desc = Some(desc);
+            }
+
+            // Set L1 segments on shard (both node and edge at once)
+            self.shards[shard_idx].set_l1_segments(
+                l1_node_seg, l1_node_desc,
+                l1_edge_seg, l1_edge_desc,
+            );
+
+            total_tombstones_removed += result.tombstones_removed;
+            compacted_shard_ids.insert(shard_id);
+            shards_compacted.push(shard_id);
+        }
+
+        if compacted_shard_ids.is_empty() {
+            return Ok(CompactionResult {
+                shards_compacted: Vec::new(),
+                nodes_merged: 0,
+                edges_merged: 0,
+                tombstones_removed: 0,
+                duration_ms: start.elapsed().as_millis() as u64,
+            });
+        }
+
+        // Build new manifest: keep L0 segments for non-compacted shards only
+        let current = manifest_store.current();
+        let remaining_node_segs: Vec<SegmentDescriptor> = current
+            .node_segments
+            .iter()
+            .filter(|d| !compacted_shard_ids.contains(&d.shard_id.unwrap_or(0)))
+            .cloned()
+            .collect();
+        let remaining_edge_segs: Vec<SegmentDescriptor> = current
+            .edge_segments
+            .iter()
+            .filter(|d| !compacted_shard_ids.contains(&d.shard_id.unwrap_or(0)))
+            .cloned()
+            .collect();
+
+        // Create manifest with remaining L0 segments
+        let mut manifest = manifest_store.create_manifest(
+            remaining_node_segs,
+            remaining_edge_segs,
+            None,
+        )?;
+
+        // Inject L1 descriptors and compaction info
+        manifest.l1_node_segments = l1_node_descs;
+        manifest.l1_edge_segments = l1_edge_descs;
+        manifest.last_compaction = Some(CompactionInfo {
+            manifest_version: manifest.version,
+            timestamp_ms: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64,
+            l0_segments_merged: compacted_shard_ids.len() as u32,
+        });
+
+        // Clear tombstones in manifest for compacted shards
+        // (tombstones were applied during merge)
+        manifest.tombstoned_node_ids.clear();
+        manifest.tombstoned_edge_keys.clear();
+
+        manifest_store.commit(manifest)?;
+
+        // Clear L0 segments from compacted shards (after manifest commit)
+        for &shard_id in &compacted_shard_ids {
+            self.shards[shard_id as usize].clear_l0_after_compaction();
+        }
+
+        Ok(CompactionResult {
+            shards_compacted,
+            nodes_merged: total_nodes_merged,
+            edges_merged: total_edges_merged,
+            tombstones_removed: total_tombstones_removed,
+            duration_ms: start.elapsed().as_millis() as u64,
         })
     }
 }
