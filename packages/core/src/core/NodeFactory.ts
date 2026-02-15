@@ -55,7 +55,7 @@ import {
 } from './nodes/index.js';
 
 import type { BaseNodeRecord } from '@grafema/types';
-import { brandNode } from '@grafema/types';
+import { brandNodeInternal } from './brandNodeInternal.js';
 import type { ScopeContext } from './SemanticId.js';
 
 interface ServiceOptions {
@@ -260,14 +260,14 @@ export class NodeFactory {
    * Create SERVICE node
    */
   static createService(name: string, projectPath: string, options: ServiceOptions = {}) {
-    return brandNode(ServiceNode.create(name, projectPath, options));
+    return brandNodeInternal(ServiceNode.create(name, projectPath, options));
   }
 
   /**
    * Create ENTRYPOINT node
    */
   static createEntrypoint(file: string, entrypointType: EntrypointType, options: EntrypointOptions = {}) {
-    return brandNode(EntrypointNode.create(file, entrypointType, options));
+    return brandNodeInternal(EntrypointNode.create(file, entrypointType, options));
   }
 
   /**
@@ -280,7 +280,7 @@ export class NodeFactory {
     const contentHash = options.contentHash || this._hashFile(filePath);
     const relativePath = relative(projectPath, filePath) || basename(filePath);
 
-    return brandNode(ModuleNode.create(relativePath, relativePath, contentHash, options));
+    return brandNodeInternal(ModuleNode.create(relativePath, relativePath, contentHash, options));
   }
 
   /**
@@ -293,28 +293,28 @@ export class NodeFactory {
    * @returns ModuleNodeRecord with semantic ID
    */
   static createModuleWithContext(context: ScopeContext, options: ModuleContextOptions = {}) {
-    return brandNode(ModuleNode.createWithContext(context, options));
+    return brandNodeInternal(ModuleNode.createWithContext(context, options));
   }
 
   /**
    * Create FUNCTION node
    */
   static createFunction(name: string, file: string, line: number, column: number, options: FunctionOptions = {}) {
-    return brandNode(FunctionNode.create(name, file, line, column, options));
+    return brandNodeInternal(FunctionNode.create(name, file, line, column, options));
   }
 
   /**
    * Create SCOPE node
    */
   static createScope(scopeType: string, file: string, line: number, options: ScopeOptions = {}) {
-    return brandNode(ScopeNode.create(scopeType, file, line, options));
+    return brandNodeInternal(ScopeNode.create(scopeType, file, line, options));
   }
 
   /**
    * Create BRANCH node
    */
   static createBranch(branchType: 'switch' | 'if' | 'ternary', file: string, line: number, column: number, options: { parentScopeId?: string; counter?: number } = {}) {
-    return brandNode(BranchNode.create(branchType, file, line, column, options));
+    return brandNodeInternal(BranchNode.create(branchType, file, line, column, options));
   }
 
   /**
@@ -330,21 +330,21 @@ export class NodeFactory {
     column: number,
     options: { parentBranchId?: string; counter?: number } = {}
   ) {
-    return brandNode(CaseNode.create(value, isDefault, fallsThrough, isEmpty, file, line, column, options));
+    return brandNodeInternal(CaseNode.create(value, isDefault, fallsThrough, isEmpty, file, line, column, options));
   }
 
   /**
    * Create CALL_SITE node
    */
   static createCallSite(targetName: string, file: string, line: number, column: number, options: CallSiteOptions = {}) {
-    return brandNode(CallSiteNode.create(targetName, file, line, column, options));
+    return brandNodeInternal(CallSiteNode.create(targetName, file, line, column, options));
   }
 
   /**
    * Create METHOD_CALL node
    */
   static createMethodCall(objectName: string | undefined, methodName: string, file: string, line: number, column: number, options: MethodCallOptions = {}) {
-    return brandNode(MethodCallNode.create(objectName, methodName, file, line, column, options));
+    return brandNodeInternal(MethodCallNode.create(objectName, methodName, file, line, column, options));
   }
 
   /**
@@ -360,7 +360,7 @@ export class NodeFactory {
    * @param options - Optional counter for disambiguation
    */
   static createConstructorCall(className: string, file: string, line: number, column: number, options: ConstructorCallOptions = {}) {
-    return brandNode(ConstructorCallNode.create(className, file, line, column, options));
+    return brandNodeInternal(ConstructorCallNode.create(className, file, line, column, options));
   }
 
   /**
@@ -384,42 +384,42 @@ export class NodeFactory {
    * Create VARIABLE_DECLARATION node
    */
   static createVariableDeclaration(name: string, file: string, line: number, column: number, options: VariableOptions = {}) {
-    return brandNode(VariableDeclarationNode.create(name, file, line, column, options));
+    return brandNodeInternal(VariableDeclarationNode.create(name, file, line, column, options));
   }
 
   /**
    * Create CONSTANT node
    */
   static createConstant(name: string, file: string, line: number, column: number, options: ConstantOptions = {}) {
-    return brandNode(ConstantNode.create(name, file, line, column, options));
+    return brandNodeInternal(ConstantNode.create(name, file, line, column, options));
   }
 
   /**
    * Create LITERAL node
    */
   static createLiteral(value: unknown, file: string, line: number, column: number, options: LiteralOptions = {}) {
-    return brandNode(LiteralNode.create(value, file, line, column, options));
+    return brandNodeInternal(LiteralNode.create(value, file, line, column, options));
   }
 
   /**
    * Create OBJECT_LITERAL node
    */
   static createObjectLiteral(file: string, line: number, column: number, options: ObjectLiteralOptions = {}) {
-    return brandNode(ObjectLiteralNode.create(file, line, column, options));
+    return brandNodeInternal(ObjectLiteralNode.create(file, line, column, options));
   }
 
   /**
    * Create ARRAY_LITERAL node
    */
   static createArrayLiteral(file: string, line: number, column: number, options: ArrayLiteralOptions = {}) {
-    return brandNode(ArrayLiteralNode.create(file, line, column, options));
+    return brandNodeInternal(ArrayLiteralNode.create(file, line, column, options));
   }
 
   /**
    * Create EXTERNAL_STDIO node (singleton)
    */
   static createExternalStdio() {
-    return brandNode(ExternalStdioNode.create());
+    return brandNodeInternal(ExternalStdioNode.create());
   }
 
   /**
@@ -433,28 +433,28 @@ export class NodeFactory {
    * @returns NetworkRequestNodeRecord - singleton node
    */
   static createNetworkRequest() {
-    return brandNode(NetworkRequestNode.create());
+    return brandNodeInternal(NetworkRequestNode.create());
   }
 
   /**
    * Create EVENT_LISTENER node
    */
   static createEventListener(eventName: string, objectName: string | undefined, file: string, line: number, column: number, options: EventListenerOptions = {}) {
-    return brandNode(EventListenerNode.create(eventName, objectName, file, line, column, options));
+    return brandNodeInternal(EventListenerNode.create(eventName, objectName, file, line, column, options));
   }
 
   /**
    * Create HTTP_REQUEST node
    */
   static createHttpRequest(url: string | undefined, method: string | undefined, file: string, line: number, column: number, options: HttpRequestOptions = {}) {
-    return brandNode(HttpRequestNode.create(url, method, file, line, column, options));
+    return brandNodeInternal(HttpRequestNode.create(url, method, file, line, column, options));
   }
 
   /**
    * Create DATABASE_QUERY node
    */
   static createDatabaseQuery(query: string | undefined, operation: string | undefined, file: string, line: number, column: number, options: DatabaseQueryOptions = {}) {
-    return brandNode(DatabaseQueryNode.create(query, operation, file, line, column, options));
+    return brandNodeInternal(DatabaseQueryNode.create(query, operation, file, line, column, options));
   }
 
   /**
@@ -481,7 +481,7 @@ export class NodeFactory {
     source: string,
     options: ImportOptions = {}
   ) {
-    return brandNode(ImportNode.create(name, file, line, column, source, options));
+    return brandNodeInternal(ImportNode.create(name, file, line, column, source, options));
   }
 
   /**
@@ -494,7 +494,7 @@ export class NodeFactory {
     column: number,
     options: ClassOptions = {}
   ) {
-    return brandNode(ClassNode.create(name, file, line, column, options));
+    return brandNodeInternal(ClassNode.create(name, file, line, column, options));
   }
 
   /**
@@ -507,7 +507,7 @@ export class NodeFactory {
     column: number,
     options: ExportOptions = {}
   ) {
-    return brandNode(ExportNode.create(name, file, line, column, options));
+    return brandNodeInternal(ExportNode.create(name, file, line, column, options));
   }
 
   /**
@@ -519,7 +519,7 @@ export class NodeFactory {
    * @param source - Module name (e.g., 'lodash', '@tanstack/react-query', 'node:fs')
    */
   static createExternalModule(source: string) {
-    return brandNode(ExternalModuleNode.create(source));
+    return brandNodeInternal(ExternalModuleNode.create(source));
   }
 
   /**
@@ -532,7 +532,7 @@ export class NodeFactory {
     column: number,
     options: InterfaceOptions = {}
   ) {
-    return brandNode(InterfaceNode.create(name, file, line, column, options));
+    return brandNodeInternal(InterfaceNode.create(name, file, line, column, options));
   }
 
   /**
@@ -545,7 +545,7 @@ export class NodeFactory {
     column: number,
     options: TypeOptions = {}
   ) {
-    return brandNode(TypeNode.create(name, file, line, column, options));
+    return brandNodeInternal(TypeNode.create(name, file, line, column, options));
   }
 
   /**
@@ -568,7 +568,7 @@ export class NodeFactory {
     column: number,
     options: TypeParameterOptions = {}
   ) {
-    return brandNode(TypeParameterNode.create(name, parentId, file, line, column, options));
+    return brandNodeInternal(TypeParameterNode.create(name, parentId, file, line, column, options));
   }
 
   /**
@@ -581,7 +581,7 @@ export class NodeFactory {
     column: number,
     options: EnumOptions = {}
   ) {
-    return brandNode(EnumNode.create(name, file, line, column, options));
+    return brandNodeInternal(EnumNode.create(name, file, line, column, options));
   }
 
   /**
@@ -596,7 +596,7 @@ export class NodeFactory {
     targetType: DecoratorTargetType,
     options: DecoratorOptions = {}
   ) {
-    return brandNode(DecoratorNode.create(name, file, line, column, targetId, targetType, options));
+    return brandNodeInternal(DecoratorNode.create(name, file, line, column, targetId, targetType, options));
   }
 
   /**
@@ -609,7 +609,7 @@ export class NodeFactory {
     column: number,
     options: ExpressionOptions = {}
   ) {
-    return brandNode(ExpressionNode.create(expressionType, file, line, column, options));
+    return brandNodeInternal(ExpressionNode.create(expressionType, file, line, column, options));
   }
 
   /**
@@ -652,7 +652,7 @@ export class NodeFactory {
     column: number,
     options: ExpressionOptions & { id: string }
   ) {
-    return brandNode(ExpressionNode.createFromMetadata(expressionType, file, line, column, options));
+    return brandNodeInternal(ExpressionNode.createFromMetadata(expressionType, file, line, column, options));
   }
 
   /**
@@ -675,7 +675,7 @@ export class NodeFactory {
     column: number,
     options: ArgumentExpressionOptions
   ) {
-    return brandNode(ArgumentExpressionNode.create(expressionType, file, line, column, options));
+    return brandNodeInternal(ArgumentExpressionNode.create(expressionType, file, line, column, options));
   }
 
   /**
@@ -703,7 +703,7 @@ export class NodeFactory {
     column: number = 0,
     options: { context?: Record<string, unknown> } = {}
   ) {
-    return brandNode(IssueNode.create(category, severity, message, plugin, file, line, column, options));
+    return brandNodeInternal(IssueNode.create(category, severity, message, plugin, file, line, column, options));
   }
 
   /**
@@ -730,7 +730,7 @@ export class NodeFactory {
       dependencies?: string[];
     } = {}
   ) {
-    return brandNode(PluginNode.create(name, phase, options));
+    return brandNodeInternal(PluginNode.create(name, phase, options));
   }
 
   /**
