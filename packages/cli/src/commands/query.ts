@@ -1014,17 +1014,14 @@ function formatPluginDisplay(node: NodeInfo, projectPath: string): string {
 
 /**
  * Execute raw Datalog query.
- * Routes rules (containing ":-") to checkGuarantee, direct queries to datalogQuery.
+ * Uses unified executeDatalog endpoint which auto-detects rules vs direct queries.
  */
 async function executeRawQuery(
   backend: RFDBServerBackend,
   query: string,
   options: QueryOptions
 ): Promise<void> {
-  const isRule = query.includes(':-');
-  const results = isRule
-    ? await backend.checkGuarantee(query)
-    : await backend.datalogQuery(query);
+  const results = await backend.executeDatalog(query);
   const limit = parseInt(options.limit, 10);
   const limited = results.slice(0, limit);
 

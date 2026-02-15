@@ -735,6 +735,18 @@ export class RFDBServerBackend {
     }));
   }
 
+  /**
+   * Execute unified Datalog query or program.
+   * Auto-detects whether input is rules or direct query.
+   */
+  async executeDatalog(source: string): Promise<Array<{ bindings: Array<{ name: string; value: string }> }>> {
+    if (!this.client) throw new Error('Not connected');
+    const results = await this.client.executeDatalog(source);
+    return results.map(r => ({
+      bindings: Object.entries(r.bindings).map(([name, value]) => ({ name, value }))
+    }));
+  }
+
   // ===========================================================================
   // Export/Import
   // ===========================================================================

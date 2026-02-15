@@ -551,6 +551,13 @@ class TestDatabaseBackend {
     }));
   }
 
+  async executeDatalog(source) {
+    const results = await this._client.executeDatalog(source);
+    return results.map(r => ({
+      bindings: Object.entries(r.bindings).map(([name, value]) => ({ name, value }))
+    }));
+  }
+
   // === Additional methods for compatibility with RFDBServerBackend ===
   async findNodes(predicate) {
     const allNodes = await this.getAllNodes();

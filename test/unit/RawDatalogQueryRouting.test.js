@@ -9,6 +9,14 @@
  * - Direct query returns nodes via datalogQuery
  * - Rule query returns violations via checkGuarantee
  * - Both paths return consistent results for the same node type
+ *
+ * RFD-28: Unified executeDatalog endpoint
+ *
+ * Verifies that `backend.executeDatalog(source)` auto-detects input type:
+ * - Direct queries (no ":-") → same results as datalogQuery
+ * - Rules (containing ":-") → same results as checkGuarantee
+ * - Custom head predicates → returns bindings for all variables (not just X)
+ * - Multi-rule programs → queries head predicate of first rule
  */
 
 import { describe, it, after, beforeEach } from 'node:test';
@@ -130,6 +138,111 @@ describe('RawDatalogQueryRouting (REG-381)', () => {
 
       for (const q of ruleQueries) {
         assert.ok(q.includes(':-'), `"${q}" should be detected as rule`);
+      }
+    });
+  });
+
+  describe('executeDatalog — unified endpoint (RFD-28)', () => {
+    it('should return same results as datalogQuery for a direct query', async () => {
+      const directResults = await backend.datalogQuery('node(X, "FUNCTION")');
+      const unifiedResults = await backend.executeDatalog('node(X, "FUNCTION")');
+
+      assert.strictEqual(
+        unifiedResults.length,
+        directResults.length,
+        `executeDatalog returned ${unifiedResults.length} but datalogQuery returned ${directResults.length} for direct query`
+      );
+
+      for (const r of unifiedResults) {
+        assert.ok(r.bindings.some(b => b.name === 'X'), 'Should have X binding');
+      }
+    });
+
+    it('should return same results as checkGuarantee for a rule', async () => {
+      const ruleSource = 'violation(X) :- node(X, "FUNCTION").';
+      const guaranteeResults = await backend.checkGuarantee(ruleSource);
+      const unifiedResults = await backend.executeDatalog(ruleSource);
+
+      assert.strictEqual(
+        unifiedResults.length,
+        guaranteeResults.length,
+        `executeDatalog returned ${unifiedResults.length} but checkGuarantee returned ${guaranteeResults.length} for rule`
+      );
+
+      for (const r of unifiedResults) {
+        assert.ok(r.bindings.some(b => b.name === 'X'), 'Should have X binding');
+      }
+    });
+
+    it('should support custom head predicate with multiple bindings', async () => {
+      const ruleSource = 'found(X, N) :- node(X, "FUNCTION"), attr(X, "name", N).';
+      const results = await backend.executeDatalog(ruleSource);
+
+      assert.ok(results.length > 0, 'Custom head predicate should find FUNCTION nodes with names');
+
+      for (const r of results) {
+        const bindingNames = r.bindings.map(b => b.name);
+        assert.ok(bindingNames.includes('X'), 'Should have X binding from found(X, N)');
+        assert.ok(bindingNames.includes('N'), 'Should have N binding from found(X, N)');
+
+        const nBinding = r.bindings.find(b => b.name === 'N');
+        assert.ok(
+          nBinding.value && nBinding.value.length > 0,
+          'N binding should have a non-empty function name'
+        );
+      }
+    });
+
+    it('should match both legacy endpoints for MODULE type', async () => {
+      const directResults = await backend.datalogQuery('node(X, "MODULE")');
+      const guaranteeResults = await backend.checkGuarantee(
+        'violation(X) :- node(X, "MODULE").'
+      );
+      const unifiedDirect = await backend.executeDatalog('node(X, "MODULE")');
+      const unifiedRule = await backend.executeDatalog(
+        'violation(X) :- node(X, "MODULE").'
+      );
+
+      assert.strictEqual(
+        unifiedDirect.length,
+        directResults.length,
+        'Unified direct query should match datalogQuery for MODULE'
+      );
+
+      assert.strictEqual(
+        unifiedRule.length,
+        guaranteeResults.length,
+        'Unified rule should match checkGuarantee for MODULE'
+      );
+
+      assert.strictEqual(
+        unifiedDirect.length,
+        unifiedRule.length,
+        'Unified endpoint should return same count regardless of input form'
+      );
+    });
+
+    it('should query head predicate of first rule in multi-rule program', async () => {
+      const multiRuleSource = [
+        'reachable(X) :- node(X, "FUNCTION").',
+        'reachable(X) :- node(X, "MODULE").',
+      ].join('\n');
+
+      const results = await backend.executeDatalog(multiRuleSource);
+
+      // Should find both FUNCTION and MODULE nodes via the reachable head predicate
+      const functionCount = (await backend.datalogQuery('node(X, "FUNCTION")')).length;
+      const moduleCount = (await backend.datalogQuery('node(X, "MODULE")')).length;
+
+      assert.ok(results.length > 0, 'Multi-rule program should return results');
+      assert.strictEqual(
+        results.length,
+        functionCount + moduleCount,
+        `Multi-rule reachable(X) should find all FUNCTION (${functionCount}) + MODULE (${moduleCount}) nodes`
+      );
+
+      for (const r of results) {
+        assert.ok(r.bindings.some(b => b.name === 'X'), 'Should have X binding');
       }
     });
   });

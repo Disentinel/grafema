@@ -46,6 +46,7 @@ export type RFDBCommand =
   | 'datalogClearRules'
   | 'datalogQuery'
   | 'checkGuarantee'
+  | 'executeDatalog'
   // Protocol v2 - Multi-Database Commands
   | 'hello'
   | 'createDatabase'
@@ -494,6 +495,7 @@ export interface IRFDBClient {
   datalogClearRules(): Promise<RFDBResponse>;
   datalogQuery(query: string): Promise<DatalogResult[]>;
   checkGuarantee(ruleSource: string): Promise<DatalogResult[]>;
+  executeDatalog(source: string): Promise<DatalogResult[]>;
 
   // Batch operations
   beginBatch(): void;
