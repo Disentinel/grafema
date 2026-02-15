@@ -5,11 +5,25 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::storage_v2::resource::TuningProfile;
+
 /// Configuration for compaction trigger policy.
 #[derive(Debug, Clone)]
 pub struct CompactionConfig {
     /// Minimum L0 segment count per shard to trigger compaction (default: 4)
     pub segment_threshold: usize,
+}
+
+impl CompactionConfig {
+    /// Create compaction config from an adaptive tuning profile.
+    ///
+    /// Uses `profile.segment_threshold` which ranges from 2 (low memory,
+    /// compact early) to 8 (high memory, batch more before compacting).
+    pub fn from_profile(profile: &TuningProfile) -> Self {
+        Self {
+            segment_threshold: profile.segment_threshold,
+        }
+    }
 }
 
 impl Default for CompactionConfig {
@@ -109,5 +123,59 @@ mod tests {
         assert_eq!(result.edges_merged, 500);
         assert_eq!(result.tombstones_removed, 50);
         assert_eq!(result.duration_ms, 250);
+    }
+
+    #[test]
+    fn test_compaction_config_from_profile_low_memory() {
+        use crate::storage_v2::resource::{SystemResources, TuningProfile};
+
+        // 1 GB RAM -> segment_threshold = 2
+        let res = SystemResources {
+            total_memory_bytes: 1024 * 1024 * 1024,
+            available_memory_bytes: 512 * 1024 * 1024,
+            cpu_count: 2,
+        };
+        let profile = TuningProfile::from_resources(&res);
+        let config = CompactionConfig::from_profile(&profile);
+
+        assert_eq!(config.segment_threshold, 2);
+    }
+
+    #[test]
+    fn test_compaction_config_from_profile_high_memory() {
+        use crate::storage_v2::resource::{SystemResources, TuningProfile};
+
+        // 64 GB RAM -> segment_threshold = 8
+        let res = SystemResources {
+            total_memory_bytes: 64 * 1024 * 1024 * 1024,
+            available_memory_bytes: 32 * 1024 * 1024 * 1024,
+            cpu_count: 16,
+        };
+        let profile = TuningProfile::from_resources(&res);
+        let config = CompactionConfig::from_profile(&profile);
+
+        assert_eq!(config.segment_threshold, 8);
+    }
+
+    #[test]
+    fn test_compaction_config_from_profile_range() {
+        use crate::storage_v2::resource::{SystemResources, TuningProfile};
+
+        // Test various memory sizes, threshold should always be in [2, 8]
+        for &total_gb in &[0.5, 1.0, 4.0, 8.0, 16.0, 64.0, 256.0] {
+            let res = SystemResources {
+                total_memory_bytes: (total_gb * 1024.0 * 1024.0 * 1024.0) as u64,
+                available_memory_bytes: (total_gb * 512.0 * 1024.0 * 1024.0) as u64,
+                cpu_count: 4,
+            };
+            let profile = TuningProfile::from_resources(&res);
+            let config = CompactionConfig::from_profile(&profile);
+
+            assert!(
+                config.segment_threshold >= 2 && config.segment_threshold <= 8,
+                "threshold {} out of [2, 8] range for {total_gb} GB",
+                config.segment_threshold
+            );
+        }
     }
 }
