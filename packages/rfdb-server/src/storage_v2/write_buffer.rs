@@ -10,6 +10,24 @@ use std::collections::{HashMap, HashSet};
 
 use crate::storage_v2::types::{EdgeRecordV2, NodeRecordV2};
 
+/// Result of a single edge upsert operation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EdgeWriteOp {
+    /// A new edge key was inserted into the buffer.
+    Inserted,
+    /// An existing edge record was updated in place (same src, dst, edge_type).
+    Updated,
+}
+
+/// Aggregate stats from a batch edge upsert operation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UpsertStats {
+    /// Number of new edge keys inserted.
+    pub inserted: usize,
+    /// Number of existing edge records updated in place.
+    pub updated: usize,
+}
+
 /// In-memory accumulation buffer for records before flush.
 ///
 /// Analogous to LSM-tree memtable. NOT sorted (L0 segments are unsorted).
@@ -57,18 +75,18 @@ impl WriteBuffer {
         }
     }
 
-    /// Add a single edge.
+    /// Upsert a single edge.
     ///
-    /// If (src, dst, edge_type) already exists in buffer, this performs an
-    /// upsert and replaces the existing record metadata.
+    /// If (src, dst, edge_type) already exists in buffer, replaces the
+    /// existing record metadata (upsert).
     ///
-    /// Returns true if a new edge key was inserted, false if an existing
-    /// edge record was updated in place.
-    pub fn add_edge(&mut self, record: EdgeRecordV2) -> bool {
+    /// Returns `EdgeWriteOp::Inserted` if a new edge key was inserted,
+    /// `EdgeWriteOp::Updated` if an existing edge record was updated in place.
+    pub fn upsert_edge(&mut self, record: EdgeRecordV2) -> EdgeWriteOp {
         let key = (record.src, record.dst, record.edge_type.clone());
         if self.edge_keys.insert(key) {
             self.edges.push(record);
-            true
+            EdgeWriteOp::Inserted
         } else {
             if let Some(existing) = self.edges.iter_mut().find(|edge| {
                 edge.src == record.src &&
@@ -77,20 +95,22 @@ impl WriteBuffer {
             }) {
                 *existing = record;
             }
-            false
+            EdgeWriteOp::Updated
         }
     }
 
-    /// Add multiple edges. Each is deduped individually.
-    /// Returns number of edges actually added (excluding duplicates).
-    pub fn add_edges(&mut self, records: Vec<EdgeRecordV2>) -> usize {
-        let mut added = 0;
+    /// Upsert multiple edges. Each is deduped individually.
+    ///
+    /// Returns `UpsertStats` with counts of inserted vs updated edges.
+    pub fn upsert_edges(&mut self, records: Vec<EdgeRecordV2>) -> UpsertStats {
+        let mut stats = UpsertStats { inserted: 0, updated: 0 };
         for record in records {
-            if self.add_edge(record) {
-                added += 1;
+            match self.upsert_edge(record) {
+                EdgeWriteOp::Inserted => stats.inserted += 1,
+                EdgeWriteOp::Updated => stats.updated += 1,
             }
         }
-        added
+        stats
     }
 
     // -- Read Operations (for merge with segments) ----------------------------
@@ -245,13 +265,13 @@ mod tests {
     }
 
     #[test]
-    fn test_add_get_edges() {
+    fn test_upsert_edges() {
         let mut buf = WriteBuffer::new();
         let e1 = make_edge("src1", "dst1", "CALLS");
         let e2 = make_edge("src2", "dst2", "IMPORTS_FROM");
 
-        assert!(buf.add_edge(e1.clone()));
-        assert!(buf.add_edge(e2.clone()));
+        assert_eq!(buf.upsert_edge(e1.clone()), EdgeWriteOp::Inserted);
+        assert_eq!(buf.upsert_edge(e2.clone()), EdgeWriteOp::Inserted);
 
         assert_eq!(buf.edge_count(), 2);
         let edges: Vec<&EdgeRecordV2> = buf.iter_edges().collect();
@@ -287,8 +307,8 @@ mod tests {
         let e1 = make_edge("src1", "dst1", "CALLS");
         let e2 = make_edge("src1", "dst1", "CALLS"); // same (src, dst, type)
 
-        assert!(buf.add_edge(e1));
-        assert!(!buf.add_edge(e2)); // duplicate, not added
+        assert_eq!(buf.upsert_edge(e1), EdgeWriteOp::Inserted);
+        assert_eq!(buf.upsert_edge(e2), EdgeWriteOp::Updated); // duplicate, updated
 
         assert_eq!(buf.edge_count(), 1);
     }
@@ -302,8 +322,8 @@ mod tests {
         let mut e2 = make_edge("src1", "dst1", "FLOWS_INTO");
         e2.metadata = r#"{"resolutionStatus":"RESOLVED"}"#.to_string();
 
-        assert!(buf.add_edge(e1));
-        assert!(!buf.add_edge(e2.clone())); // upsert existing key
+        assert_eq!(buf.upsert_edge(e1), EdgeWriteOp::Inserted);
+        assert_eq!(buf.upsert_edge(e2.clone()), EdgeWriteOp::Updated); // upsert existing key
 
         assert_eq!(buf.edge_count(), 1);
         let stored = buf.iter_edges().next().unwrap();
@@ -334,9 +354,9 @@ mod tests {
         let e1 = make_edge("id1", "id2", "CALLS");
         let e2 = make_edge("id1", "id3", "IMPORTS_FROM");
         let e3 = make_edge("id3", "id2", "CALLS");
-        buf.add_edge(e1.clone());
-        buf.add_edge(e2.clone());
-        buf.add_edge(e3.clone());
+        buf.upsert_edge(e1.clone());
+        buf.upsert_edge(e2.clone());
+        buf.upsert_edge(e3.clone());
 
         // find_edges_by_src
         let from_id1 = buf.find_edges_by_src(e1.src);
@@ -358,8 +378,8 @@ mod tests {
         let mut buf = WriteBuffer::new();
         buf.add_node(make_node("id1", "FUNCTION", "fn1", "file.rs"));
         buf.add_node(make_node("id2", "CLASS", "cls1", "file.rs"));
-        buf.add_edge(make_edge("id1", "id2", "CALLS"));
-        buf.add_edge(make_edge("id2", "id1", "IMPORTS_FROM"));
+        buf.upsert_edge(make_edge("id1", "id2", "CALLS"));
+        buf.upsert_edge(make_edge("id2", "id1", "IMPORTS_FROM"));
 
         assert_eq!(buf.node_count(), 2);
         assert_eq!(buf.edge_count(), 2);
@@ -381,9 +401,21 @@ mod tests {
         let e1 = make_edge("src1", "dst1", "CALLS");
         let e2 = make_edge("src1", "dst1", "IMPORTS_FROM");
 
-        assert!(buf.add_edge(e1));
-        assert!(buf.add_edge(e2)); // different edge_type, should be added
+        assert_eq!(buf.upsert_edge(e1), EdgeWriteOp::Inserted);
+        assert_eq!(buf.upsert_edge(e2), EdgeWriteOp::Inserted); // different edge_type, should be inserted
 
+        assert_eq!(buf.edge_count(), 2);
+    }
+
+    #[test]
+    fn test_upsert_edges_batch_stats() {
+        let mut buf = WriteBuffer::new();
+        let e1 = make_edge("src1", "dst1", "CALLS");
+        let e2 = make_edge("src2", "dst2", "IMPORTS_FROM");
+        let e3 = make_edge("src1", "dst1", "CALLS"); // duplicate of e1
+
+        let stats = buf.upsert_edges(vec![e1, e2, e3]);
+        assert_eq!(stats, UpsertStats { inserted: 2, updated: 1 });
         assert_eq!(buf.edge_count(), 2);
     }
 }
