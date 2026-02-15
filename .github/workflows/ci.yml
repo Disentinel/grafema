@@ -34,8 +34,13 @@ jobs:
     timeout-minutes: 10
 
     steps:
+      - name: Clean workspace
+        run: rm -rf node_modules .pnpm-store .pnpm-home
+
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          clean: true
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -46,10 +51,9 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          # cache: 'pnpm' — disabled for self-hosted, each runner has its own local store
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --child-concurrency=2
 
       - name: Build (required for tests)
         run: pnpm build
@@ -142,8 +146,13 @@ jobs:
     timeout-minutes: 10
 
     steps:
+      - name: Clean workspace
+        run: rm -rf node_modules .pnpm-store .pnpm-home
+
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          clean: true
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -154,10 +163,9 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          # cache: 'pnpm' — disabled for self-hosted, each runner has its own local store
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --child-concurrency=2
 
       - name: Build all packages (required for cross-package typecheck)
         run: pnpm build
@@ -175,8 +183,13 @@ jobs:
     timeout-minutes: 10
 
     steps:
+      - name: Clean workspace
+        run: rm -rf node_modules .pnpm-store .pnpm-home
+
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          clean: true
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -187,10 +200,9 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          # cache: 'pnpm' — disabled for self-hosted, each runner has its own local store
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --child-concurrency=2
 
       - name: Build all packages
         run: pnpm build
