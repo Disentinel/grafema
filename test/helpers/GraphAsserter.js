@@ -411,14 +411,19 @@ export class GraphAsserter {
     ]);
 
     const nodes = this._getNodes().map(n => {
-      const props = {};
+      const filtered = {};
       for (const [key, value] of Object.entries(n)) {
         if (SNAPSHOT_SKIP_PROPS.has(key)) continue;
         // Skip BigInt values — they are internal ID references
         if (typeof value === 'bigint') continue;
         // Skip undefined values
         if (value === undefined) continue;
-        props[key] = value;
+        filtered[key] = value;
+      }
+      // Sort keys for deterministic property ordering
+      const props = {};
+      for (const key of Object.keys(filtered).sort()) {
+        props[key] = filtered[key];
       }
       return props;
     }).sort((a, b) => {
