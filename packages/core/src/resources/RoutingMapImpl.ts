@@ -8,7 +8,7 @@ import type { RoutingMap, RoutingRule, MatchContext, MatchResult } from '@grafem
  *
  * Complexity:
  * - addRule: O(r) dedup check where r = rules for the pair
- * - findMatch: O(p * r * log r) where p = pairs from service, r = rules per pair
+ * - findMatch: O(p * r + c * log c) where p = pairs from service, r = rules per pair, c = matching candidates
  * - findRulesForPair: O(1) map lookup + O(r) copy
  */
 export class RoutingMapImpl implements RoutingMap {

@@ -16,7 +16,7 @@
 
 import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
-import type { BaseNodeRecord, ServiceDefinition, RoutingMap, OrchestratorConfig, RoutingRule } from '@grafema/types';
+import type { BaseNodeRecord, ServiceDefinition, RoutingMap, OrchestratorConfig } from '@grafema/types';
 import { ROUTING_MAP_RESOURCE_ID } from '@grafema/types';
 import { StrictModeError, ValidationError } from '../../errors/GrafemaError.js';
 
@@ -99,7 +99,7 @@ export class ServiceConnectionEnricher extends Plugin {
       }
 
       // 3. Mark customerFacing on route nodes
-      const config = context.config as OrchestratorConfig & { routing?: RoutingRule[] };
+      const config = context.config as OrchestratorConfig;
       const services = (config?.services ?? []) as ServiceDefinition[];
 
       // 4. Collect all http:route (backend endpoints)
