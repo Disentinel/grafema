@@ -34,6 +34,9 @@ jobs:
     timeout-minutes: 10
 
     steps:
+      - name: Raise file descriptor limit
+        run: ulimit -n 65536
+
       - name: Clean workspace
         run: rm -rf node_modules .pnpm-store .pnpm-home
 
@@ -53,7 +56,7 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile --child-concurrency=2
+        run: ulimit -n 65536 && pnpm install --frozen-lockfile
 
       - name: Build (required for tests)
         run: pnpm build
@@ -146,6 +149,9 @@ jobs:
     timeout-minutes: 10
 
     steps:
+      - name: Raise file descriptor limit
+        run: ulimit -n 65536
+
       - name: Clean workspace
         run: rm -rf node_modules .pnpm-store .pnpm-home
 
@@ -165,7 +171,7 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile --child-concurrency=2
+        run: ulimit -n 65536 && pnpm install --frozen-lockfile
 
       - name: Build all packages (required for cross-package typecheck)
         run: pnpm build
@@ -183,6 +189,9 @@ jobs:
     timeout-minutes: 10
 
     steps:
+      - name: Raise file descriptor limit
+        run: ulimit -n 65536
+
       - name: Clean workspace
         run: rm -rf node_modules .pnpm-store .pnpm-home
 
@@ -202,7 +211,7 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile --child-concurrency=2
+        run: ulimit -n 65536 && pnpm install --frozen-lockfile
 
       - name: Build all packages
         run: pnpm build
