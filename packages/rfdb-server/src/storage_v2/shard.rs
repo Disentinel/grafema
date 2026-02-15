@@ -344,6 +344,27 @@ impl Shard {
         &self,
         src_ids: &HashSet<u128>,
     ) -> Vec<(u128, u128, String)> {
+        self.find_edge_keys_by_src_ids_impl(src_ids, false)
+    }
+
+    /// Like `find_edge_keys_by_src_ids` but excludes enrichment edges
+    /// (edges with `__file_context` in metadata).
+    ///
+    /// Used during normal file re-analysis: we tombstone edges from
+    /// the file's nodes but NOT enrichment edges (those belong to
+    /// their enrichment file context).
+    pub fn find_non_enrichment_edge_keys_by_src_ids(
+        &self,
+        src_ids: &HashSet<u128>,
+    ) -> Vec<(u128, u128, String)> {
+        self.find_edge_keys_by_src_ids_impl(src_ids, true)
+    }
+
+    fn find_edge_keys_by_src_ids_impl(
+        &self,
+        src_ids: &HashSet<u128>,
+        exclude_enrichment: bool,
+    ) -> Vec<(u128, u128, String)> {
         let mut keys = Vec::new();
 
         if src_ids.is_empty() {
@@ -362,6 +383,12 @@ impl Shard {
             for j in 0..seg.record_count() {
                 let src = seg.get_src(j);
                 if src_ids.contains(&src) {
+                    if exclude_enrichment {
+                        let metadata = seg.get_metadata(j);
+                        if crate::storage_v2::types::extract_file_context(metadata).is_some() {
+                            continue;
+                        }
+                    }
                     let dst = seg.get_dst(j);
                     let edge_type = seg.get_edge_type(j).to_string();
                     keys.push((src, dst, edge_type));
@@ -372,11 +399,86 @@ impl Shard {
         // Step 2: Scan write buffer
         for edge in self.write_buffer.iter_edges() {
             if src_ids.contains(&edge.src) {
+                if exclude_enrichment {
+                    if crate::storage_v2::types::extract_file_context(&edge.metadata).is_some() {
+                        continue;
+                    }
+                }
                 keys.push((edge.src, edge.dst, edge.edge_type.clone()));
             }
         }
 
         keys
+    }
+
+    /// Find edge keys (src, dst, edge_type) where edge metadata contains
+    /// the given `__file_context`.
+    ///
+    /// Scans write buffer + all loaded edge segments.
+    /// No bloom filter shortcut (metadata not indexed).
+    ///
+    /// Returns Vec of (src, dst, edge_type) tuples for tombstoning.
+    ///
+    /// Complexity: O(S * N + B)
+    ///   where S = edge segments, N = records per segment, B = write buffer edges
+    pub fn find_edge_keys_by_file_context(
+        &self,
+        file_context: &str,
+    ) -> Vec<(u128, u128, String)> {
+        let mut keys = Vec::new();
+
+        // Step 1: Scan edge segments (no bloom shortcut — metadata not indexed)
+        for seg in &self.edge_segments {
+            for j in 0..seg.record_count() {
+                let metadata = seg.get_metadata(j);
+                if let Some(ctx) = crate::storage_v2::types::extract_file_context(metadata) {
+                    if ctx == file_context {
+                        let src = seg.get_src(j);
+                        let dst = seg.get_dst(j);
+                        let edge_type = seg.get_edge_type(j).to_string();
+                        keys.push((src, dst, edge_type));
+                    }
+                }
+            }
+        }
+
+        // Step 2: Scan write buffer
+        for edge in self.write_buffer.iter_edges() {
+            if let Some(ctx) = crate::storage_v2::types::extract_file_context(&edge.metadata) {
+                if ctx == file_context {
+                    keys.push((edge.src, edge.dst, edge.edge_type.clone()));
+                }
+            }
+        }
+
+        keys
+    }
+    /// Return source node IDs of all enrichment edges (edges with `__file_context`
+    /// in metadata).
+    ///
+    /// Used by `MultiShardStore::open()` to rebuild the `enrichment_edge_to_shard`
+    /// index. Scans write buffer + all edge segments.
+    pub fn find_enrichment_edge_src_ids(&self) -> Vec<u128> {
+        let mut src_ids = Vec::new();
+
+        // Scan edge segments
+        for seg in &self.edge_segments {
+            for j in 0..seg.record_count() {
+                let metadata = seg.get_metadata(j);
+                if crate::storage_v2::types::extract_file_context(metadata).is_some() {
+                    src_ids.push(seg.get_src(j));
+                }
+            }
+        }
+
+        // Scan write buffer
+        for edge in self.write_buffer.iter_edges() {
+            if crate::storage_v2::types::extract_file_context(&edge.metadata).is_some() {
+                src_ids.push(edge.src);
+            }
+        }
+
+        src_ids
     }
 }
 
