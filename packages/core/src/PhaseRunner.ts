@@ -6,7 +6,7 @@
  */
 
 import type { Plugin, PluginContext } from './plugins/Plugin.js';
-import type { PluginPhase, Logger, IssueSpec, ServiceDefinition, RoutingRule, ResourceRegistry } from '@grafema/types';
+import type { PluginPhase, PluginResult, Logger, IssueSpec, ServiceDefinition, RoutingRule, ResourceRegistry, CommitDelta } from '@grafema/types';
 import { NodeFactory } from './core/NodeFactory.js';
 import { toposort } from './core/toposort.js';
 import { buildDependencyGraph } from './core/buildDependencyGraph.js';
@@ -56,6 +56,40 @@ export class PhaseRunner {
 
   resetSuppressedByIgnoreCount(): void {
     this.suppressedByIgnoreCount = 0;
+  }
+
+  /**
+   * Execute a plugin wrapped in a CommitBatch.
+   * If the backend doesn't support batching, falls back to direct execution.
+   * Returns the PluginResult and an optional CommitDelta.
+   */
+  private async runPluginWithBatch(
+    plugin: Plugin,
+    pluginContext: PluginContext,
+    phaseName: string,
+  ): Promise<{ result: PluginResult; delta: CommitDelta | null }> {
+    const graph = pluginContext.graph;
+
+    // Fallback: backend doesn't support batching
+    if (!graph.beginBatch || !graph.commitBatch || !graph.abortBatch) {
+      const result = await plugin.execute(pluginContext);
+      return { result, delta: null };
+    }
+
+    const tags = [plugin.metadata.name, phaseName];
+    // File tags from manifest path (available in ANALYSIS, not ENRICHMENT)
+    const manifest = (pluginContext as { manifest?: { path?: string } }).manifest;
+    if (manifest?.path) tags.push(manifest.path);
+
+    graph.beginBatch();
+    try {
+      const result = await plugin.execute(pluginContext);
+      const delta = await graph.commitBatch(tags);
+      return { result, delta };
+    } catch (error) {
+      graph.abortBatch();
+      throw error;
+    }
   }
 
   async runPhase(phaseName: string, context: Partial<PluginContext> & { graph: PluginContext['graph'] }): Promise<void> {
@@ -147,7 +181,15 @@ export class PhaseRunner {
       }
 
       try {
-        const result = await plugin.execute(pluginContext);
+        const { result, delta } = await this.runPluginWithBatch(plugin, pluginContext, phaseName);
+
+        // Log batch delta when available
+        if (delta) {
+          logger.debug(
+            `[${plugin.metadata.name}] batch: +${delta.nodesAdded} nodes, +${delta.edgesAdded} edges, ` +
+            `-${delta.nodesRemoved} nodes, -${delta.edgesRemoved} edges`
+          );
+        }
 
         // Collect errors into diagnostics
         diagnosticCollector.addFromPluginResult(
