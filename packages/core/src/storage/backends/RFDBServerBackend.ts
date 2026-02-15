@@ -461,8 +461,9 @@ export class RFDBServerBackend {
       }
     }
 
-    // v3: use semanticId directly; v2: fall back to originalId metadata hack
-    const humanId = wireNode.semanticId || (metadata.originalId as string) || wireNode.id;
+    // Prefer metadata.semanticId (original v1 format preserved by RFDB server),
+    // then v3 semanticId, then v2 originalId metadata hack, then raw id
+    const humanId = (metadata.semanticId as string) || wireNode.semanticId || (metadata.originalId as string) || wireNode.id;
 
     // Exclude standard fields from metadata to prevent overwriting wireNode values
     // REG-325: Metadata spread was overwriting name with LITERAL node data
@@ -474,6 +475,7 @@ export class RFDBServerBackend {
       exported: _exported,
       nodeType: _nodeType,
       originalId: _originalId,  // Already extracted above
+      semanticId: _semanticId,  // Exclude from safeMetadata (used for humanId above)
       ...safeMetadata
     } = metadata;
 
