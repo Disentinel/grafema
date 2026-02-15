@@ -43,6 +43,7 @@ export type {
   CountResponse,
   CountsByTypeResponse,
   PingResponse,
+  NodesChunkResponse,
 
   // Query types
   AttrQuery,

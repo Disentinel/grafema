@@ -10,6 +10,7 @@
 
 // Client
 export { RFDBClient } from './client.js';
+export { StreamQueue } from './stream-queue.js';
 
 // Protocol types (re-exported from @grafema/types for convenience)
 export type {
