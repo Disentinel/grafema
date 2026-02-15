@@ -67,6 +67,7 @@ export type {
 // Plugin base
 export { Plugin, createSuccessResult, createErrorResult } from './plugins/Plugin.js';
 export type { PluginContext, PluginMetadata, PluginResult } from './plugins/Plugin.js';
+export { InfraAnalyzer } from './plugins/InfraAnalyzer.js';
 
 // Graph backend
 export { GraphBackend, typeToKind, edgeTypeToNumber } from './core/GraphBackend.js';
@@ -291,6 +292,7 @@ export { ServiceConnectionEnricher } from './plugins/enrichment/ServiceConnectio
 // Resource system (REG-256)
 export { ResourceRegistryImpl } from './core/ResourceRegistry.js';
 export { RoutingMapImpl, createRoutingMap } from './resources/RoutingMapImpl.js';
+export { InfraResourceMapImpl, createInfraResourceMap } from './resources/InfraResourceMapImpl.js';
 
 // Builtin registry
 export { BuiltinRegistry } from './data/builtins/index.js';
