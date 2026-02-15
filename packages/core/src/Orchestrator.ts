@@ -15,8 +15,9 @@ import { Profiler } from './core/Profiler.js';
 import { AnalysisQueue } from './core/AnalysisQueue.js';
 import { DiagnosticCollector } from './diagnostics/DiagnosticCollector.js';
 import { StrictModeFailure } from './errors/GrafemaError.js';
+import { ResourceRegistryImpl } from './core/ResourceRegistry.js';
 import type { Plugin, PluginContext } from './plugins/Plugin.js';
-import type { GraphBackend, PluginPhase, Logger, LogLevel, IssueSpec, ServiceDefinition, FieldDeclaration, NodeRecord } from '@grafema/types';
+import type { GraphBackend, PluginPhase, Logger, LogLevel, IssueSpec, ServiceDefinition, FieldDeclaration, NodeRecord, RoutingRule } from '@grafema/types';
 import { createLogger } from './logging/Logger.js';
 import { NodeFactory } from './core/NodeFactory.js';
 import { toposort } from './core/toposort.js';
@@ -82,6 +83,11 @@ export interface OrchestratorOptions {
    * If provided, each root is indexed with rootPrefix in context.
    */
   workspaceRoots?: string[];
+  /**
+   * Routing rules from config (REG-256).
+   * Passed through to plugins via PluginContext.config.routing.
+   */
+  routing?: RoutingRule[];
 }
 
 /**
@@ -174,6 +180,10 @@ export class Orchestrator {
   private workspaceRoots: string[] | undefined;
   /** REG-357: Accumulated suppressedByIgnore from enrichment plugins */
   private suppressedByIgnoreCount: number = 0;
+  /** Resource registry for inter-plugin communication (REG-256) */
+  private resourceRegistry = new ResourceRegistryImpl();
+  /** Routing rules from config (REG-256) */
+  private routing: RoutingRule[] | undefined;
 
   constructor(options: OrchestratorOptions = {}) {
     this.graph = options.graph!;
@@ -207,6 +217,9 @@ export class Orchestrator {
 
     // Multi-root workspace configuration (REG-76)
     this.workspaceRoots = options.workspaceRoots;
+
+    // Routing rules from config (REG-256)
+    this.routing = options.routing;
 
     // Modified auto-add logic: SKIP auto-add if config services provided (REG-174)
     const hasDiscovery = this.plugins.some(p => p.metadata?.phase === 'DISCOVERY');
@@ -311,6 +324,9 @@ export class Orchestrator {
 
     // REG-357: Reset suppressed count for each run
     this.suppressedByIgnoreCount = 0;
+
+    // REG-256: Reset resource registry for each run
+    this.resourceRegistry.clear();
 
     // Resolve to absolute path
     const absoluteProjectPath = projectPath.startsWith('/') ? projectPath : resolve(projectPath);
@@ -579,6 +595,9 @@ export class Orchestrator {
     // Print profiling summary
     this.profiler.printSummary();
 
+    // REG-256: Clear resources after run
+    this.resourceRegistry.clear();
+
     return manifest;
   }
 
@@ -757,6 +776,10 @@ export class Orchestrator {
     });
 
     this.profiler.printSummary();
+
+    // REG-256: Clear resources after run
+    this.resourceRegistry.clear();
+
     return unifiedManifest;
   }
 
@@ -1010,7 +1033,27 @@ export class Orchestrator {
         strictMode: this.strictMode, // REG-330: Pass strict mode flag
         // REG-76: Pass rootPrefix for multi-root workspace support
         rootPrefix: (context as { rootPrefix?: string }).rootPrefix,
+        // REG-256: Pass resource registry for inter-plugin communication
+        resources: this.resourceRegistry,
       };
+
+      // REG-256: Ensure config is available with routing and services for all plugins
+      if (!pluginContext.config) {
+        pluginContext.config = {
+          projectPath: (context as { manifest?: { projectPath?: string } }).manifest?.projectPath ?? '',
+          services: this.configServices,
+          routing: this.routing,
+        };
+      } else {
+        // Merge routing and services into existing config
+        const cfg = pluginContext.config as unknown as Record<string, unknown>;
+        if (this.routing && !cfg.routing) {
+          cfg.routing = this.routing;
+        }
+        if (this.configServices && !cfg.services) {
+          cfg.services = this.configServices;
+        }
+      }
 
       // Add reportIssue for VALIDATION phase
       if (phaseName === 'VALIDATION') {

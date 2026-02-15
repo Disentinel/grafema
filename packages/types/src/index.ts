@@ -16,3 +16,9 @@ export * from './plugins.js';
 
 // RFDB protocol types
 export * from './rfdb.js';
+
+// Resource types (REG-256)
+export * from './resources.js';
+
+// Routing types (REG-256)
+export * from './routing.js';

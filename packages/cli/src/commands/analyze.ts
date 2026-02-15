@@ -48,6 +48,8 @@ import {
   ImportExportLinker,
   FunctionCallResolver,
   HTTPConnectionEnricher,
+  ConfigRoutingMapBuilder,
+  ServiceConnectionEnricher,
   RustFFIEnricher,
   RejectionPropagationEnricher,
   CallbackCallResolver,
@@ -61,6 +63,7 @@ import {
   DataFlowValidator,
   TypeScriptDeadCodeValidator,
   BrokenImportValidator,
+  UnconnectedRouteValidator,
 } from '@grafema/core';
 import type { LogLevel, GraphBackend } from '@grafema/types';
 import { ProgressRenderer } from '../utils/progressRenderer.js';
@@ -110,6 +113,8 @@ const BUILTIN_PLUGINS: Record<string, () => Plugin> = {
   ImportExportLinker: () => new ImportExportLinker() as Plugin,
   FunctionCallResolver: () => new FunctionCallResolver() as Plugin,
   HTTPConnectionEnricher: () => new HTTPConnectionEnricher() as Plugin,
+  ConfigRoutingMapBuilder: () => new ConfigRoutingMapBuilder() as Plugin,
+  ServiceConnectionEnricher: () => new ServiceConnectionEnricher() as Plugin,
   RustFFIEnricher: () => new RustFFIEnricher() as Plugin,
   RejectionPropagationEnricher: () => new RejectionPropagationEnricher() as Plugin,
   CallbackCallResolver: () => new CallbackCallResolver() as Plugin,
@@ -123,6 +128,7 @@ const BUILTIN_PLUGINS: Record<string, () => Plugin> = {
   DataFlowValidator: () => new DataFlowValidator() as Plugin,
   TypeScriptDeadCodeValidator: () => new TypeScriptDeadCodeValidator() as Plugin,
   BrokenImportValidator: () => new BrokenImportValidator() as Plugin,
+  UnconnectedRouteValidator: () => new UnconnectedRouteValidator() as Plugin,
 };
 
 /**
