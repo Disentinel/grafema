@@ -24,3 +24,6 @@ export * from './resources.js';
 
 // Routing types (REG-256)
 export * from './routing.js';
+
+// Infrastructure types (USG Phase 1)
+export * from './infrastructure.js';
