@@ -99,6 +99,22 @@ export const EDGE_TYPE = {
   // Issues
   AFFECTS: 'AFFECTS',
 
+  // === Cross-Layer Edges (USG) ===
+  // Code -> Abstract Resources
+  DEPLOYED_TO: 'DEPLOYED_TO',
+  SCHEDULED_BY: 'SCHEDULED_BY',
+  EXPOSED_VIA: 'EXPOSED_VIA',
+  USES_CONFIG: 'USES_CONFIG',
+  USES_SECRET: 'USES_SECRET',
+  PUBLISHES_TO: 'PUBLISHES_TO',
+  SUBSCRIBES_TO: 'SUBSCRIBES_TO',
+  MONITORED_BY: 'MONITORED_BY',
+  MEASURED_BY: 'MEASURED_BY',
+  LOGS_TO: 'LOGS_TO',
+  INVOKES_FUNCTION: 'INVOKES_FUNCTION',
+  // Abstract -> Concrete (tool provenance)
+  PROVISIONED_BY: 'PROVISIONED_BY',
+
   // Unknown/fallback
   UNKNOWN: 'UNKNOWN',
 } as const;

@@ -8,6 +8,7 @@ import type { AnyBrandedNode } from './branded.js';
 import type { FieldDeclaration, CommitDelta } from './rfdb.js';
 import type { ResourceRegistry } from './resources.js';
 import type { RoutingRule } from './routing.js';
+import type { InfrastructureConfig } from './infrastructure.js';
 
 // === LOG LEVEL ===
 /**
@@ -218,6 +219,9 @@ export interface OrchestratorConfig {
    * Passed through to plugins via PluginContext.config.
    */
   routing?: RoutingRule[];
+
+  /** Infrastructure analysis configuration (USG Phase 1) */
+  infrastructure?: InfrastructureConfig;
 }
 
 /**
