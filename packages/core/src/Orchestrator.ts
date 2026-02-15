@@ -3,14 +3,13 @@
  * Полностью абстрактный - специфичная логика в плагинах
  */
 
-import { readFileSync, existsSync, unlinkSync } from 'fs';
+import { existsSync, unlinkSync } from 'fs';
 import { join, dirname, resolve, basename } from 'path';
 import { fileURLToPath } from 'url';
 import type { ChildProcess } from 'child_process';
 import { spawn, execSync } from 'child_process';
 import { setTimeout as sleep } from 'timers/promises';
 import { SimpleProjectDiscovery } from './plugins/discovery/SimpleProjectDiscovery.js';
-import { resolveSourceEntrypoint } from './plugins/discovery/resolveSourceEntrypoint.js';
 import { Profiler } from './core/Profiler.js';
 import { AnalysisQueue } from './core/AnalysisQueue.js';
 import { DiagnosticCollector } from './diagnostics/DiagnosticCollector.js';
@@ -19,11 +18,10 @@ import { ResourceRegistryImpl } from './core/ResourceRegistry.js';
 import type { Plugin, PluginContext } from './plugins/Plugin.js';
 import type { GraphBackend, Logger, ServiceDefinition, RoutingRule } from '@grafema/types';
 import { createLogger } from './logging/Logger.js';
-import { NodeFactory } from './core/NodeFactory.js';
-import { toposort } from './core/toposort.js';
 import { PhaseRunner } from './PhaseRunner.js';
 import type { ProgressCallback } from './PhaseRunner.js';
 import { GraphInitializer } from './GraphInitializer.js';
+import { DiscoveryManager } from './DiscoveryManager.js';
 export type { ProgressInfo, ProgressCallback } from './PhaseRunner.js';
 
 // Re-export types from OrchestratorTypes (REG-462)
@@ -78,6 +76,8 @@ export class Orchestrator {
   private phaseRunner!: PhaseRunner;
   /** Graph setup: plugin nodes, field declarations, meta node (REG-462) */
   private graphInitializer!: GraphInitializer;
+  /** Service/entrypoint discovery (REG-462) */
+  private discoveryManager!: DiscoveryManager;
 
   constructor(options: OrchestratorOptions = {}) {
     this.graph = options.graph!;
@@ -131,6 +131,11 @@ export class Orchestrator {
     // Initialize graph initializer (REG-462: extracted from Orchestrator)
     this.graphInitializer = new GraphInitializer(this.graph, this.plugins, this.logger);
 
+    // Initialize discovery manager (REG-462: extracted from Orchestrator)
+    this.discoveryManager = new DiscoveryManager(
+      this.plugins, this.graph, this.config, this.logger, this.onProgress, this.configServices,
+    );
+
     // Modified auto-add logic: SKIP auto-add if config services provided (REG-174)
     const hasDiscovery = this.plugins.some(p => p.metadata?.phase === 'DISCOVERY');
     const hasConfigServices = this.configServices && this.configServices.length > 0;
@@ -174,29 +179,9 @@ export class Orchestrator {
 
     this.onProgress({ phase: 'discovery', currentPlugin: 'Starting discovery...', message: 'Discovering services...', totalFiles: 0, processedFiles: 0 });
 
-    // PHASE 0: DISCOVERY - запуск плагинов фазы DISCOVERY (or use entrypoint override)
+    // PHASE 0: DISCOVERY
     this.profiler.start('DISCOVERY');
-    let manifest: DiscoveryManifest;
-    if (this.entrypoint) {
-      // Skip discovery, create synthetic manifest with single service
-      const entrypointPath = this.entrypoint.startsWith('/')
-        ? this.entrypoint
-        : join(absoluteProjectPath, this.entrypoint);
-      const serviceName = this.entrypoint.split('/').pop()?.replace(/\.[^.]+$/, '') || 'main';
-      manifest = {
-        services: [{
-          id: `service:${serviceName}`,
-          name: serviceName,
-          path: entrypointPath,
-          metadata: { entrypoint: entrypointPath }
-        }],
-        entrypoints: [],
-        projectPath: absoluteProjectPath
-      };
-      this.logger.info('Using entrypoint override', { entrypoint: this.entrypoint, resolved: entrypointPath });
-    } else {
-      manifest = await this.discover(absoluteProjectPath);
-    }
+    const manifest = await this.discoveryManager.discover(absoluteProjectPath, this.entrypoint);
     this.profiler.end('DISCOVERY');
 
     const epCount = manifest.entrypoints?.length || 0;
@@ -211,7 +196,7 @@ export class Orchestrator {
     this.logger.info('Discovery complete', { services: svcCount, entrypoints: epCount });
 
     // Build unified list of indexing units from services AND entrypoints
-    const indexingUnits = this.buildIndexingUnits(manifest);
+    const indexingUnits = this.discoveryManager.buildIndexingUnits(manifest);
 
     // Filter if specified
     let unitsToProcess: IndexingUnit[];
@@ -453,10 +438,10 @@ export class Orchestrator {
       });
 
       // Discover services in this root
-      const rootManifest = await this.discoverInRoot(rootAbsolutePath, rootName);
+      const rootManifest = await this.discoveryManager.discoverInRoot(rootAbsolutePath);
 
       // Build indexing units for this root
-      const units = this.buildIndexingUnits(rootManifest);
+      const units = this.discoveryManager.buildIndexingUnits(rootManifest);
 
       // INDEXING phase for this root
       for (const unit of units) {
@@ -589,214 +574,6 @@ export class Orchestrator {
   }
 
   /**
-   * Discover services in a specific root directory.
-   * Uses the same discovery logic but scoped to the root.
-   */
-  private async discoverInRoot(rootPath: string, _rootName: string): Promise<DiscoveryManifest> {
-    // For now, use the same discovery mechanism
-    // rootName is available for future use if needed
-    return this.discover(rootPath);
-  }
-
-  /**
-   * Build unified list of indexing units from services and entrypoints
-   * Each unit has: id, name, path, type, and original data
-   */
-  buildIndexingUnits(manifest: DiscoveryManifest): IndexingUnit[] {
-    const units: IndexingUnit[] = [];
-    const seenPaths = new Set<string>();
-
-    // 1. Add services first (they have priority)
-    for (const service of manifest.services || []) {
-      const path = service.path || service.metadata?.entrypoint;
-      if (path && !seenPaths.has(path)) {
-        seenPaths.add(path);
-        units.push({
-          ...service,  // Spread first to allow overrides
-          id: service.id,
-          name: service.name,
-          path: path,
-          type: 'service' as const,
-        });
-      }
-    }
-
-    // 2. Add entrypoints that aren't already covered by services
-    for (const ep of manifest.entrypoints || []) {
-      const path = ep.file;
-      if (path && !seenPaths.has(path)) {
-        seenPaths.add(path);
-        units.push({
-          ...ep,  // Spread first to allow overrides
-          id: ep.id,
-          name: ep.name || ep.file.split('/').pop()!,
-          path: path,
-          type: 'entrypoint' as const,
-          entrypointType: ep.type,
-          trigger: ep.trigger,
-        });
-      }
-    }
-
-    this.logger.debug('Built indexing units', {
-      total: units.length,
-      services: units.filter(u => u.type === 'service').length,
-      entrypoints: units.filter(u => u.type === 'entrypoint').length
-    });
-    return units;
-  }
-
-  /**
-   * PHASE 0: Discovery - запуск плагинов DISCOVERY фазы.
-   * If config services are provided, they take precedence and plugins are skipped.
-   */
-  async discover(projectPath: string): Promise<DiscoveryManifest> {
-    // REG-174: If config provided services, use them directly instead of running discovery plugins
-    if (this.configServices && this.configServices.length > 0) {
-      this.logger.info('Using config-provided services (skipping discovery plugins)', {
-        serviceCount: this.configServices.length
-      });
-
-      const services: ServiceInfo[] = [];
-      // For each config service:
-      // 1. Resolve path relative to project root (validation ensures paths are relative)
-      // 2. Auto-detect entrypoint from package.json if not specified
-      // 3. Fall back to 'index.js' if detection fails
-      for (const configSvc of this.configServices) {
-        // All paths are relative (absolute paths rejected by ConfigLoader validation)
-        const servicePath = join(projectPath, configSvc.path);
-
-        // Resolve entrypoint
-        let entrypoint: string;
-        if (configSvc.entryPoint) {
-          entrypoint = configSvc.entryPoint;
-        } else {
-          // Auto-detect if not provided
-          const packageJsonPath = join(servicePath, 'package.json');
-          if (existsSync(packageJsonPath)) {
-            try {
-              const pkg = JSON.parse(readFileSync(packageJsonPath, 'utf-8'));
-              entrypoint = resolveSourceEntrypoint(servicePath, pkg) ?? pkg.main ?? 'index.js';
-            } catch (e) {
-              const message = e instanceof Error ? e.message : String(e);
-              this.logger.warn('Failed to read package.json for auto-detection', {
-                service: configSvc.name,
-                path: packageJsonPath,
-                error: message
-              });
-              entrypoint = 'index.js';
-            }
-          } else {
-            entrypoint = 'index.js';
-          }
-        }
-
-        // Create SERVICE node
-        const serviceNode = NodeFactory.createService(configSvc.name, servicePath, {
-          discoveryMethod: 'config',
-          entrypoint: entrypoint,
-        });
-        await this.graph.addNode(serviceNode);
-
-        services.push({
-          id: serviceNode.id,
-          name: configSvc.name,
-          path: servicePath,
-          metadata: {
-            entrypoint: join(servicePath, entrypoint),
-          },
-        });
-
-        this.logger.info('Registered config service', {
-          name: configSvc.name,
-          path: servicePath,
-          entrypoint: entrypoint
-        });
-      }
-
-      return {
-        services,
-        entrypoints: [],  // Config services don't provide entrypoints
-        projectPath: projectPath
-      };
-    }
-
-    // ORIGINAL CODE: Run discovery plugins if no config services
-    const context = {
-      projectPath,
-      graph: this.graph,
-      config: this.config,
-      phase: 'DISCOVERY',
-      logger: this.logger,
-    };
-
-    // Фильтруем плагины для фазы DISCOVERY
-    const discoveryPlugins = this.plugins.filter(p => p.metadata.phase === 'DISCOVERY');
-
-    // Topological sort by dependencies (REG-367)
-    const discoveryPluginMap = new Map(discoveryPlugins.map(p => [p.metadata.name, p]));
-    const sortedDiscoveryIds = toposort(
-      discoveryPlugins.map(p => ({
-        id: p.metadata.name,
-        dependencies: p.metadata.dependencies ?? [],
-      }))
-    );
-    discoveryPlugins.length = 0;
-    for (const id of sortedDiscoveryIds) {
-      const plugin = discoveryPluginMap.get(id);
-      if (plugin) discoveryPlugins.push(plugin);
-    }
-
-    const allServices: ServiceInfo[] = [];
-    const allEntrypoints: EntrypointInfo[] = [];
-
-    // Выполняем каждый плагин
-    for (let i = 0; i < discoveryPlugins.length; i++) {
-      const plugin = discoveryPlugins[i];
-
-      this.onProgress({
-        phase: 'discovery',
-        currentPlugin: plugin.metadata.name,
-        message: `Running ${plugin.metadata.name}... (${i + 1}/${discoveryPlugins.length})`
-      });
-
-      const result = await plugin.execute(context as PluginContext);
-
-      if (result.success && result.metadata?.services) {
-        allServices.push(...(result.metadata.services as ServiceInfo[]));
-      }
-
-      // Collect entrypoints from new-style plugins
-      if (result.success && result.metadata?.entrypoints) {
-        allEntrypoints.push(...(result.metadata.entrypoints as EntrypointInfo[]));
-      }
-
-      // Warn if plugin created nodes but didn't return services/entrypoints in metadata
-      // This catches common mistake of not returning services via result.metadata.services
-      if (result.success && result.created.nodes > 0 &&
-          !result.metadata?.services && !result.metadata?.entrypoints) {
-        this.logger.warn('Discovery plugin created nodes but returned no services/entrypoints in metadata', {
-          plugin: plugin.metadata.name,
-          nodesCreated: result.created.nodes,
-          hint: 'Services must be returned via result.metadata.services for Orchestrator to index them'
-        });
-      }
-
-      this.onProgress({
-        phase: 'discovery',
-        currentPlugin: plugin.metadata.name,
-        message: `✓ ${plugin.metadata.name} complete`
-      });
-    }
-
-    return {
-      services: allServices,
-      entrypoints: allEntrypoints,
-      projectPath: projectPath
-    };
-  }
-
-  /**
    * Запустить плагины для конкретной фазы
    */
   async runPhase(phaseName: string, context: Partial<PluginContext> & { graph: PluginContext['graph'] }): Promise<Set<string>> {
@@ -808,6 +585,22 @@ export class Orchestrator {
    */
   getDiagnostics(): DiagnosticCollector {
     return this.diagnosticCollector;
+  }
+
+  /**
+   * Run discovery for a project path.
+   * Delegates to DiscoveryManager. Public API for MCP and other callers.
+   */
+  async discover(projectPath: string): Promise<DiscoveryManifest> {
+    return this.discoveryManager.discover(projectPath);
+  }
+
+  /**
+   * Build unified list of indexing units from manifest.
+   * Delegates to DiscoveryManager. Public API for external callers.
+   */
+  buildIndexingUnits(manifest: DiscoveryManifest): IndexingUnit[] {
+    return this.discoveryManager.buildIndexingUnits(manifest);
   }
 
   /**
