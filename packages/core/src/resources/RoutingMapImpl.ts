@@ -3,32 +3,33 @@ import type { RoutingMap, RoutingRule, MatchContext, MatchResult } from '@grafem
 /**
  * Default implementation of RoutingMap.
  *
- * Stores rules indexed by service pair for O(1) pair lookup.
- * For typical workloads (1-20 rules), this is optimal.
+ * Stores rules in a nested Map<fromService, Map<toService, RoutingRule[]>>
+ * for O(1) lookup by fromService in findMatch.
  *
  * Complexity:
  * - addRule: O(r) dedup check where r = rules for the pair
- * - findMatch: O(p * r + c * log c) where p = pairs from service, r = rules per pair, c = matching candidates
- * - findRulesForPair: O(1) map lookup + O(r) copy
+ * - findMatch: O(t * r + c * log c) where t = target services for fromService, r = rules per pair, c = matching candidates
+ * - findRulesForPair: O(1) nested map lookup + O(r) copy
  */
 export class RoutingMapImpl implements RoutingMap {
   readonly id = 'routing:map' as const;
 
-  /** Rules indexed by "from:to" key for O(1) lookup by service pair */
-  private rulesByPair = new Map<string, RoutingRule[]>();
+  /** Rules indexed by fromService → toService → rules[] for O(1) lookup by service */
+  private rulesByFrom = new Map<string, Map<string, RoutingRule[]>>();
   /** All rules in insertion order */
   private allRules: RoutingRule[] = [];
 
-  private pairKey(from: string, to: string): string {
-    return `${from}:${to}`;
-  }
-
   addRule(rule: RoutingRule): void {
-    const key = this.pairKey(rule.from, rule.to);
-    let rules = this.rulesByPair.get(key);
+    let toMap = this.rulesByFrom.get(rule.from);
+    if (!toMap) {
+      toMap = new Map();
+      this.rulesByFrom.set(rule.from, toMap);
+    }
+
+    let rules = toMap.get(rule.to);
     if (!rules) {
       rules = [];
-      this.rulesByPair.set(key, rules);
+      toMap.set(rule.to, rules);
     }
 
     // Deduplicate: skip if identical rule already exists
@@ -48,13 +49,13 @@ export class RoutingMapImpl implements RoutingMap {
   }
 
   findMatch(context: MatchContext): MatchResult | null {
+    const toMap = this.rulesByFrom.get(context.fromService);
+    if (!toMap) return null;
+
     // Collect all matching candidates across all target services
     const candidates: { rule: RoutingRule; transformedUrl: string }[] = [];
-    const prefix = context.fromService + ':';
 
-    for (const [key, rules] of this.rulesByPair.entries()) {
-      if (!key.startsWith(prefix)) continue;
-
+    for (const rules of toMap.values()) {
       for (const rule of rules) {
         const transformed = this.applyRule(context.requestUrl, rule);
         if (transformed !== null) {
@@ -82,7 +83,7 @@ export class RoutingMapImpl implements RoutingMap {
   }
 
   findRulesForPair(fromService: string, toService: string): RoutingRule[] {
-    return [...(this.rulesByPair.get(this.pairKey(fromService, toService)) ?? [])];
+    return [...(this.rulesByFrom.get(fromService)?.get(toService) ?? [])];
   }
 
   getAllRules(): RoutingRule[] {
