@@ -234,37 +234,6 @@ impl GraphEngineV2 {
             .collect()
     }
 
-    /// Check if metadata matches all filters from AttrQuery.
-    fn metadata_matches(metadata: &str, filters: &[(String, String)]) -> bool {
-        if filters.is_empty() {
-            return true;
-        }
-        if metadata.is_empty() {
-            return false;
-        }
-        let parsed: serde_json::Value = match serde_json::from_str(metadata) {
-            Ok(v) => v,
-            Err(_) => return false,
-        };
-        for (key, value) in filters {
-            match parsed.get(key) {
-                Some(v) => {
-                    // Compare as string representation
-                    let v_str = match v {
-                        serde_json::Value::String(s) => s.clone(),
-                        serde_json::Value::Bool(b) => b.to_string(),
-                        serde_json::Value::Number(n) => n.to_string(),
-                        other => other.to_string(),
-                    };
-                    if v_str != *value {
-                        return false;
-                    }
-                }
-                None => return false,
-            }
-        }
-        true
-    }
 }
 
 // ── GraphStore Implementation ───────────────────────────────────────
@@ -327,66 +296,51 @@ impl GraphStore for GraphEngineV2 {
     }
 
     fn find_by_attr(&self, query: &AttrQuery) -> Vec<u128> {
-        // Use store.find_nodes with type and file filters
         let node_type_filter = query.node_type.as_deref();
-        let file_filter = query.file.as_deref();
 
-        // Handle wildcard node_type — find_nodes doesn't support wildcards
-        let (use_type, wildcard_prefix) = match node_type_filter {
+        // Handle wildcard node_type — storage path accepts exact+prefix separately.
+        let (exact_type, wildcard_prefix) = match node_type_filter {
             Some(t) if t.ends_with('*') => (None, Some(t.trim_end_matches('*'))),
             other => (other, None),
         };
 
-        let nodes = self.store.find_nodes(use_type, file_filter);
+        let mut ids = self.store.find_node_ids_by_attr(
+            exact_type,
+            wildcard_prefix,
+            query.file.as_deref(),
+            query.name.as_deref(),
+            query.exported,
+            &query.metadata_filters,
+        );
 
-        nodes
-            .into_iter()
-            .filter(|n| {
-                // Exclude tombstoned
-                if self.is_node_tombstoned(n.id) {
-                    return false;
-                }
-                // Wildcard type filter
-                if let Some(prefix) = wildcard_prefix {
-                    if !n.node_type.starts_with(prefix) {
-                        return false;
-                    }
-                }
-                // Name filter
-                if let Some(ref name) = query.name {
-                    if n.name != *name {
-                        return false;
-                    }
-                }
-                // Metadata filters
-                if !Self::metadata_matches(&n.metadata, &query.metadata_filters) {
-                    return false;
-                }
-                true
-            })
-            .map(|n| n.id)
-            .collect()
+        if self.pending_tombstone_nodes.is_empty() {
+            return ids;
+        }
+
+        ids.retain(|id| !self.is_node_tombstoned(*id));
+        ids
     }
 
     fn find_by_type(&self, node_type: &str) -> Vec<u128> {
-        if node_type.ends_with('*') {
-            // Wildcard: "http:*" → find all, filter by prefix
-            let prefix = node_type.trim_end_matches('*');
-            self.store
-                .find_nodes(None, None)
-                .into_iter()
-                .filter(|n| n.node_type.starts_with(prefix) && !self.is_node_tombstoned(n.id))
-                .map(|n| n.id)
-                .collect()
+        let mut ids = if node_type.ends_with('*') {
+            self.store.find_node_ids_by_attr(
+                None,
+                Some(node_type.trim_end_matches('*')),
+                None,
+                None,
+                None,
+                &[],
+            )
         } else {
-            // Exact match
-            self.store
-                .find_nodes(Some(node_type), None)
-                .into_iter()
-                .filter(|n| !self.is_node_tombstoned(n.id))
-                .map(|n| n.id)
-                .collect()
+            self.store.find_node_ids_by_type(node_type)
+        };
+
+        if self.pending_tombstone_nodes.is_empty() {
+            return ids;
         }
+
+        ids.retain(|id| !self.is_node_tombstoned(*id));
+        ids
     }
 
     fn add_edges(&mut self, edges: Vec<EdgeRecord>, skip_validation: bool) {
@@ -957,6 +911,7 @@ mod tests {
 
         let mut node = make_v1_node(20, "FUNCTION", "handler", "src/routes.js");
         node.metadata = Some(r#"{"async":true}"#.to_string());
+        node.exported = true;
         engine.add_nodes(vec![
             node,
             make_v1_node(21, "FUNCTION", "helper", "src/utils.js"),
@@ -979,6 +934,24 @@ mod tests {
         let result = engine.find_by_attr(&query);
         assert_eq!(result.len(), 1);
         assert!(result.contains(&20));
+
+        // Find by exported=true (stored as __exported in v2 metadata)
+        let query = AttrQuery::new().exported(true);
+        let result = engine.find_by_attr(&query);
+        assert_eq!(result.len(), 1);
+        assert!(result.contains(&20));
+
+        // Find by exported=false
+        let query = AttrQuery::new().exported(false);
+        let result = engine.find_by_attr(&query);
+        assert_eq!(result.len(), 1);
+        assert!(result.contains(&21));
+
+        // Version is ignored in v2 (snapshot-level history, no per-node version column)
+        let query = AttrQuery::new().version("dev").name("helper");
+        let result = engine.find_by_attr(&query);
+        assert_eq!(result.len(), 1);
+        assert!(result.contains(&21));
     }
 
     #[test]

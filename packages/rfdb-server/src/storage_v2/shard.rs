@@ -560,6 +560,99 @@ impl Shard {
 // -- Attribute Search ---------------------------------------------------------
 
 impl Shard {
+    /// Fast check for v1-compat exported marker in v2 metadata.
+    ///
+    /// v2 stores exported as `__exported=true` in metadata JSON.
+    /// Use substring fast path and JSON parse fallback for robustness.
+    fn metadata_has_exported_true(metadata: &str) -> bool {
+        if metadata.is_empty() {
+            return false;
+        }
+        if metadata.contains(r#""__exported":true"#) {
+            return true;
+        }
+        if !metadata.contains("__exported") {
+            return false;
+        }
+        serde_json::from_str::<serde_json::Value>(metadata)
+            .ok()
+            .and_then(|v| v.get("__exported").and_then(|x| x.as_bool()))
+            .unwrap_or(false)
+    }
+
+    /// Check if metadata matches all filter pairs.
+    fn metadata_matches(metadata: &str, filters: &[(String, String)]) -> bool {
+        if filters.is_empty() {
+            return true;
+        }
+        if metadata.is_empty() {
+            return false;
+        }
+        let parsed: serde_json::Value = match serde_json::from_str(metadata) {
+            Ok(v) => v,
+            Err(_) => return false,
+        };
+        for (key, value) in filters {
+            match parsed.get(key) {
+                Some(v) => {
+                    let v_str = match v {
+                        serde_json::Value::String(s) => s.clone(),
+                        serde_json::Value::Bool(b) => b.to_string(),
+                        serde_json::Value::Number(n) => n.to_string(),
+                        other => other.to_string(),
+                    };
+                    if v_str != *value {
+                        return false;
+                    }
+                }
+                None => return false,
+            }
+        }
+        true
+    }
+
+    /// Match node fields against AttrQuery-compatible filters.
+    fn matches_attr_filters(
+        node_type_value: &str,
+        file_value: &str,
+        name_value: &str,
+        metadata_value: &str,
+        node_type: Option<&str>,
+        node_type_prefix: Option<&str>,
+        file: Option<&str>,
+        name: Option<&str>,
+        exported: Option<bool>,
+        metadata_filters: &[(String, String)],
+    ) -> bool {
+        if let Some(nt) = node_type {
+            if node_type_value != nt {
+                return false;
+            }
+        }
+        if let Some(prefix) = node_type_prefix {
+            if !node_type_value.starts_with(prefix) {
+                return false;
+            }
+        }
+        if let Some(f) = file {
+            if file_value != f {
+                return false;
+            }
+        }
+        if let Some(n) = name {
+            if name_value != n {
+                return false;
+            }
+        }
+        if let Some(exp) = exported {
+            let is_exported = Self::metadata_has_exported_true(metadata_value);
+            if is_exported != exp {
+                return false;
+            }
+        }
+        Self::metadata_matches(metadata_value, metadata_filters)
+    }
+
     /// Find nodes matching optional node_type and/or file filters.
     /// Both None = return all nodes (use with caution).
     ///
@@ -649,6 +742,167 @@ impl Shard {
 
                 seen_ids.insert(id);
                 results.push(seg.get_record(j));
+            }
+        }
+
+        results
+    }
+
+    /// Find node IDs by exact node type, avoiding full record clones.
+    ///
+    /// Optimized hot path for `find_by_type(\"EXACT\")`.
+    pub fn find_node_ids_by_type(&self, node_type: &str) -> Vec<u128> {
+        let mut seen_ids: HashSet<u128> = HashSet::new();
+        let mut results: Vec<u128> = Vec::new();
+
+        // Step 1: write buffer shadows all older segment versions.
+        for node in self.write_buffer.iter_nodes() {
+            seen_ids.insert(node.id);
+            if self.tombstones.contains_node(node.id) {
+                continue;
+            }
+            if node.node_type == node_type {
+                results.push(node.id);
+            }
+        }
+
+        // Step 2: segments newest-to-oldest.
+        for i in (0..self.node_segments.len()).rev() {
+            let desc = &self.node_descriptors[i];
+            let seg = &self.node_segments[i];
+
+            if !desc.may_contain(Some(node_type), None, None) {
+                continue;
+            }
+            if !seg.contains_node_type(node_type) {
+                continue;
+            }
+
+            for j in 0..seg.record_count() {
+                let id = seg.get_id(j);
+                if seen_ids.contains(&id) {
+                    continue;
+                }
+                if self.tombstones.contains_node(id) {
+                    seen_ids.insert(id);
+                    continue;
+                }
+                if seg.get_node_type(j) != node_type {
+                    continue;
+                }
+                seen_ids.insert(id);
+                results.push(id);
+            }
+        }
+
+        results
+    }
+
+    /// Find node IDs matching AttrQuery-compatible filters without cloning records.
+    ///
+    /// This is an optimized path for `find_by_type` / `find_by_attr` in v2:
+    /// - Scans only needed columns (`id`, `node_type`, `file`, `name`, `metadata`)
+    /// - Avoids `NodeRecordV2` allocation/cloning per match
+    /// - Preserves write-buffer and newest-segment dedup semantics from `find_nodes`
+    pub fn find_node_ids_by_attr(
+        &self,
+        node_type: Option<&str>,
+        node_type_prefix: Option<&str>,
+        file: Option<&str>,
+        name: Option<&str>,
+        exported: Option<bool>,
+        metadata_filters: &[(String, String)],
+    ) -> Vec<u128> {
+        let mut seen_ids: HashSet<u128> = HashSet::new();
+        let mut results: Vec<u128> = Vec::new();
+
+        // Step 1: Scan write buffer (authoritative, scanned first)
+        for node in self.write_buffer.iter_nodes() {
+            // Mark ALL buffer node IDs as seen so segment versions are shadowed,
+            // even if the buffer version doesn't match the current filter.
+            seen_ids.insert(node.id);
+
+            if self.tombstones.contains_node(node.id) {
+                continue;
+            }
+
+            if Self::matches_attr_filters(
+                &node.node_type,
+                &node.file,
+                &node.name,
+                &node.metadata,
+                node_type,
+                node_type_prefix,
+                file,
+                name,
+                exported,
+                metadata_filters,
+            ) {
+                results.push(node.id);
+            }
+        }
+
+        // Step 2: Scan segments newest-to-oldest
+        for i in (0..self.node_segments.len()).rev() {
+            let desc = &self.node_descriptors[i];
+            let seg = &self.node_segments[i];
+
+            // Descriptor-level zone map pruning.
+            if let Some(nt) = node_type {
+                if !desc.may_contain(Some(nt), file, None) {
+                    continue;
+                }
+            } else if !desc.may_contain(None, file, None) {
+                continue;
+            }
+            if let Some(prefix) = node_type_prefix {
+                if !desc.node_types.is_empty() && !desc.node_types.iter().any(|t| t.starts_with(prefix)) {
+                    continue;
+                }
+            }
+
+            // Segment-level zone map pruning where exact checks are available.
+            if let Some(nt) = node_type {
+                if !seg.contains_node_type(nt) {
+                    continue;
+                }
+            }
+            if let Some(f) = file {
+                if !seg.contains_file(f) {
+                    continue;
+                }
+            }
+
+            for j in 0..seg.record_count() {
+                let id = seg.get_id(j);
+
+                // Dedup: buffer/newer segment wins.
+                if seen_ids.contains(&id) {
+                    continue;
+                }
+
+                if self.tombstones.contains_node(id) {
+                    seen_ids.insert(id);
+                    continue;
+                }
+
+                if !Self::matches_attr_filters(
+                    seg.get_node_type(j),
+                    seg.get_file(j),
+                    seg.get_name(j),
+                    seg.get_metadata(j),
+                    node_type,
+                    node_type_prefix,
+                    file,
+                    name,
+                    exported,
+                    metadata_filters,
+                ) {
+                    continue;
+                }
+
+                seen_ids.insert(id);
+                results.push(id);
             }
         }
 
