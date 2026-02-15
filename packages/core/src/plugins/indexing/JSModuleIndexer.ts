@@ -282,9 +282,14 @@ export class JSModuleIndexer extends Plugin {
       const entrypoint = service.metadata?.entrypoint || service.path;
 
       // Резолвим entrypoint относительно projectPath
-      const absoluteEntrypoint = entrypoint.startsWith('/')
+      const rawEntrypoint = entrypoint.startsWith('/')
         ? entrypoint
         : join(projectPath, entrypoint);
+
+      // Resolve entrypoint to actual file (handles .js → .ts redirect, REG-427)
+      const absoluteEntrypoint = existsSync(rawEntrypoint)
+        ? rawEntrypoint
+        : (resolveModulePathUtil(rawEntrypoint, { useFilesystem: true }) ?? rawEntrypoint);
 
       logger.info('Building dependency tree', { service: service.name });
 
