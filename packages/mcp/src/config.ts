@@ -28,11 +28,15 @@ import {
   MethodCallResolver,
   ArgumentParameterLinker,
   AliasTracker,
+  ClosureCaptureEnricher,
   ValueDomainAnalyzer,
   MountPointResolver,
+  ExpressHandlerLinker,
   PrefixEvaluator,
+  ImportExportLinker,
   InstanceOfResolver,
   HTTPConnectionEnricher,
+  CallbackCallResolver,
   RustFFIEnricher,
   RejectionPropagationEnricher,
   // Validation
@@ -44,6 +48,7 @@ import {
   GraphConnectivityValidator,
   DataFlowValidator,
   TypeScriptDeadCodeValidator,
+  BrokenImportValidator,
 } from '@grafema/core';
 
 // === MCP-SPECIFIC CONFIG ===
@@ -93,11 +98,15 @@ export const BUILTIN_PLUGINS: Record<string, PluginFactory> = {
   MethodCallResolver: () => new MethodCallResolver(),
   ArgumentParameterLinker: () => new ArgumentParameterLinker(),
   AliasTracker: () => new AliasTracker(),
+  ClosureCaptureEnricher: () => new ClosureCaptureEnricher(),
   ValueDomainAnalyzer: () => new ValueDomainAnalyzer(),
   MountPointResolver: () => new MountPointResolver(),
+  ExpressHandlerLinker: () => new ExpressHandlerLinker(),
   PrefixEvaluator: () => new PrefixEvaluator(),
+  ImportExportLinker: () => new ImportExportLinker(),
   InstanceOfResolver: () => new InstanceOfResolver(),
   HTTPConnectionEnricher: () => new HTTPConnectionEnricher(),
+  CallbackCallResolver: () => new CallbackCallResolver(),
   RustFFIEnricher: () => new RustFFIEnricher(),
   RejectionPropagationEnricher: () => new RejectionPropagationEnricher(),
 
@@ -110,6 +119,7 @@ export const BUILTIN_PLUGINS: Record<string, PluginFactory> = {
   GraphConnectivityValidator: () => new GraphConnectivityValidator(),
   DataFlowValidator: () => new DataFlowValidator(),
   TypeScriptDeadCodeValidator: () => new TypeScriptDeadCodeValidator(),
+  BrokenImportValidator: () => new BrokenImportValidator(),
 };
 
 // === CONFIG LOADING ===
