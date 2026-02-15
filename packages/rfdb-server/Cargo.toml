@@ -77,6 +77,10 @@ harness = false
 name = "neo4j_comparison"
 harness = false
 
+[[bench]]
+name = "v1_v2_comparison"
+harness = false
+
 [profile.release]
 opt-level = 3
 lto = "fat"
