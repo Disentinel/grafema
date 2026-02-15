@@ -175,9 +175,10 @@ describe('EXPRESSION node ID format validation', () => {
   });
 
   describe('GraphBuilder validation', () => {
-    it('GraphBuilder should validate colon-based EXPRESSION IDs', () => {
-      const file = 'packages/core/src/plugins/analysis/ast/GraphBuilder.ts';
-      const grepCommand = `grep ":EXPRESSION:" ${file} || true`;
+    it('Graph builders should validate colon-based EXPRESSION IDs', () => {
+      // REG-423: Expression buffering extracted to domain builders
+      const dir = 'packages/core/src/plugins/analysis/ast/builders';
+      const grepCommand = `grep -r ":EXPRESSION:" ${dir} --include="*.ts" || true`;
 
       let result;
       try {
@@ -188,13 +189,14 @@ describe('EXPRESSION node ID format validation', () => {
 
       assert.ok(
         result.length > 0,
-        'GraphBuilder should validate :EXPRESSION: ID format'
+        'Graph builders should validate :EXPRESSION: ID format'
       );
     });
 
-    it('GraphBuilder should not create EXPRESSION nodes with legacy format', () => {
-      const file = 'packages/core/src/plugins/analysis/ast/GraphBuilder.ts';
-      const grepCommand = `grep "EXPRESSION#" ${file} || true`;
+    it('Graph builders should not create EXPRESSION nodes with legacy format', () => {
+      // REG-423: Expression buffering extracted to domain builders
+      const dir = 'packages/core/src/plugins/analysis/ast/builders';
+      const grepCommand = `grep -r "EXPRESSION#" ${dir} --include="*.ts" || true`;
 
       let result;
       try {
@@ -212,7 +214,7 @@ describe('EXPRESSION node ID format validation', () => {
       assert.strictEqual(
         matches.length,
         0,
-        'GraphBuilder should not use EXPRESSION# format'
+        'Graph builders should not use EXPRESSION# format'
       );
     });
   });
