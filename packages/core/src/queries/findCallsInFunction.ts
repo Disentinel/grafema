@@ -42,6 +42,15 @@ interface GraphBackend {
 }
 
 /**
+ * Maximum BFS depth for downward scope traversal.
+ *
+ * Each depth level = one CONTAINS hop through nested scopes.
+ * Typical function bodies: 2-5 scope levels (if → loop → try → ...).
+ * Set to 10 to cover deep nesting while bounding traversal in malformed graphs.
+ */
+const DEFAULT_MAX_SCOPE_DEPTH = 10;
+
+/**
  * Find all CALL and METHOD_CALL nodes inside a function.
  *
  * @param backend - Graph backend for queries
@@ -55,7 +64,7 @@ export async function findCallsInFunction(
   options: FindCallsOptions = {}
 ): Promise<CallInfo[]> {
   const {
-    maxDepth = 10,
+    maxDepth = DEFAULT_MAX_SCOPE_DEPTH,
     transitive = false,
     transitiveDepth = 5,
   } = options;
@@ -183,7 +192,7 @@ async function collectTransitiveCalls(
 
   // Find calls in this function (non-transitive to avoid recursion)
   const innerCalls = await findCallsInFunction(backend, functionId, {
-    maxDepth: 10,
+    maxDepth: DEFAULT_MAX_SCOPE_DEPTH,
     transitive: false,
   });
 
