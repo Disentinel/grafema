@@ -77,6 +77,12 @@ export const NAMESPACED_TYPE = {
   // Network
   NET_REQUEST: 'net:request',
   NET_STDIO: 'net:stdio',
+  NET_TCP_CONNECTION: 'net:tcp-connection',
+  NET_TCP_SERVER: 'net:tcp-server',
+
+  // OS-level IPC (Unix domain sockets)
+  OS_UNIX_SOCKET: 'os:unix-socket',
+  OS_UNIX_SERVER: 'os:unix-server',
 
   // Events
   EVENT_LISTENER: 'event:listener',
@@ -310,6 +316,40 @@ export interface PluginNodeRecord extends BaseNodeRecord {
   dependencies: string[];
 }
 
+// Unix domain socket client (OS IPC)
+export interface OsUnixSocketNodeRecord extends BaseNodeRecord {
+  type: 'os:unix-socket';
+  protocol: 'unix';
+  path: string;
+  library: string;
+}
+
+// Unix domain socket server (OS IPC listener)
+export interface OsUnixServerNodeRecord extends BaseNodeRecord {
+  type: 'os:unix-server';
+  protocol: 'unix';
+  path: string;
+  backlog?: number;
+}
+
+// TCP socket connection (network client)
+export interface NetTcpConnectionNodeRecord extends BaseNodeRecord {
+  type: 'net:tcp-connection';
+  protocol: 'tcp';
+  host?: string;
+  port: number;
+  library: string;
+}
+
+// TCP socket server (network listener)
+export interface NetTcpServerNodeRecord extends BaseNodeRecord {
+  type: 'net:tcp-server';
+  protocol: 'tcp';
+  host?: string;
+  port: number;
+  backlog?: number;
+}
+
 // Union of all node types
 export type NodeRecord =
   | FunctionNodeRecord
@@ -334,6 +374,10 @@ export type NodeRecord =
   | EventListenerNodeRecord
   | GuaranteeNodeRecord
   | PluginNodeRecord
+  | OsUnixSocketNodeRecord
+  | OsUnixServerNodeRecord
+  | NetTcpConnectionNodeRecord
+  | NetTcpServerNodeRecord
   | BaseNodeRecord; // fallback for custom types
 
 // === HELPER FUNCTIONS ===
@@ -360,5 +404,5 @@ export function isEndpointType(nodeType: string): boolean {
 export function isSideEffectType(nodeType: string): boolean {
   if (nodeType === NODE_TYPE.SIDE_EFFECT) return true;
   const ns = getNamespace(nodeType);
-  return ns === 'db' || ns === 'fs' || ns === 'net';
+  return ns === 'db' || ns === 'fs' || ns === 'net' || ns === 'os';
 }
