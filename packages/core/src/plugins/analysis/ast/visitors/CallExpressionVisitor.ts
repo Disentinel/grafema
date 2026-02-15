@@ -8,1069 +8,50 @@
  * - Constructor calls: new Foo(), new Function()
  */
 
-import type { Node, CallExpression, NewExpression, Identifier, MemberExpression, ObjectExpression, ArrayExpression, ObjectProperty, Comment } from '@babel/types';
+import type { Node, CallExpression, NewExpression, Identifier, MemberExpression } from '@babel/types';
 import type { NodePath } from '@babel/traverse';
 import { ASTVisitor, type VisitorModule, type VisitorCollections, type VisitorHandlers, type CounterRef } from './ASTVisitor.js';
-import { ExpressionEvaluator } from '../ExpressionEvaluator.js';
-import type { ArrayMutationInfo, ArrayMutationArgument, ObjectMutationInfo, ObjectMutationValue, GrafemaIgnoreAnnotation } from '../types.js';
 import type { ScopeTracker } from '../../../../core/ScopeTracker.js';
-import { computeSemanticId } from '../../../../core/SemanticId.js';
+import { MutationDetector } from './MutationDetector.js';
 import { IdGenerator } from '../IdGenerator.js';
-import { NodeFactory } from '../../../../core/NodeFactory.js';
-import { ObjectLiteralNode } from '../../../../core/nodes/ObjectLiteralNode.js';
-import { ArrayLiteralNode } from '../../../../core/nodes/ArrayLiteralNode.js';
 import { getLine, getColumn } from '../utils/location.js';
-
-/**
- * Pattern for grafema-ignore comments (REG-332)
- * Matches:
- *   // grafema-ignore STRICT_UNRESOLVED_METHOD
- *   // grafema-ignore STRICT_UNRESOLVED_METHOD - known library call
- *   /* grafema-ignore STRICT_UNRESOLVED_METHOD * /  (block comments)
- */
-const GRAFEMA_IGNORE_PATTERN = /grafema-ignore(?:-next-line)?\s+([\w_]+)(?:\s+-\s+(.+))?/;
-
-/**
- * Check node's leadingComments for grafema-ignore annotation.
- */
-function checkNodeComments(node: Node): GrafemaIgnoreAnnotation | null {
-  const comments = (node as { leadingComments?: Comment[] }).leadingComments;
-  if (!comments || comments.length === 0) return null;
-
-  // Check comments from last to first (closest to node wins)
-  for (let i = comments.length - 1; i >= 0; i--) {
-    const comment = comments[i];
-    const text = comment.value.trim();
-    const match = text.match(GRAFEMA_IGNORE_PATTERN);
-    if (match) {
-      return {
-        code: match[1],
-        reason: match[2]?.trim(),
-      };
-    }
-  }
-
-  return null;
+import { getGrafemaIgnore } from './call-expression-helpers.js';
+import { ArgumentExtractor } from './ArgumentExtractor.js';
+import type {
+  ArgumentInfo, CallSiteInfo, MethodCallInfo, EventListenerInfo,
+  MethodCallbackInfo, LiteralInfo,
+} from './call-expression-types.js';
+/** Dedup tracking used by handler methods. */
+interface HandlerProcessedNodes {
+  callSites: Set<string>;
+  methodCalls: Set<string>;
+  eventListeners: Set<string>;
+  [key: string]: Set<string>;
 }
 
-/**
- * Check if a call has a grafema-ignore comment for suppressing strict mode errors.
- * Babel attaches leading comments to statements (VariableDeclaration, ExpressionStatement),
- * not to nested CallExpression nodes. So we check:
- * 1. The call node itself (rare, but possible for standalone calls)
- * 2. The parent statement (VariableDeclaration, ExpressionStatement, etc.)
- *
- * @param path - Babel NodePath for the CallExpression
- * @returns GrafemaIgnoreAnnotation if found, null otherwise
- */
-function getGrafemaIgnore(path: NodePath): GrafemaIgnoreAnnotation | null {
-  // First check the call node itself
-  const callResult = checkNodeComments(path.node);
-  if (callResult) return callResult;
-
-  // Then check parent statement (where Babel typically attaches comments)
-  const statementPath = path.getStatementParent();
-  if (statementPath) {
-    return checkNodeComments(statementPath.node);
-  }
-
-  return null;
-}
-
-/**
- * Object literal info for OBJECT_LITERAL nodes
- */
-interface ObjectLiteralInfo {
-  id: string;
-  type: 'OBJECT_LITERAL';
-  file: string;
-  line: number;
-  column: number;
-  parentCallId?: string;
-  argIndex?: number;
-  isSpread?: boolean;
-}
-
-/**
- * Object property info for HAS_PROPERTY edges
- */
-interface ObjectPropertyInfo {
-  objectId: string;
-  propertyName: string;
-  valueNodeId?: string;
-  valueType: 'LITERAL' | 'VARIABLE' | 'CALL' | 'EXPRESSION' | 'OBJECT_LITERAL' | 'ARRAY_LITERAL' | 'SPREAD';
-  valueName?: string;
-  literalValue?: unknown;
-  file: string;
-  line: number;
-  column: number;
-  callLine?: number;
-  callColumn?: number;
-  nestedObjectId?: string;
-  nestedArrayId?: string;
-  // REG-329: Scope path for variable resolution
-  valueScopePath?: string[];
-}
-
-/**
- * Array literal info for ARRAY_LITERAL nodes
- */
-interface ArrayLiteralInfo {
-  id: string;
-  type: 'ARRAY_LITERAL';
-  file: string;
-  line: number;
-  column: number;
-  parentCallId?: string;
-  argIndex?: number;
-}
-
-/**
- * Array element info for HAS_ELEMENT edges
- */
-interface ArrayElementInfo {
-  arrayId: string;
-  index: number;
-  valueNodeId?: string;
-  valueType: 'LITERAL' | 'VARIABLE' | 'CALL' | 'EXPRESSION' | 'OBJECT_LITERAL' | 'ARRAY_LITERAL' | 'SPREAD';
-  valueName?: string;
-  literalValue?: unknown;
-  file: string;
-  line: number;
-  column: number;
-  callLine?: number;
-  callColumn?: number;
-  nestedObjectId?: string;
-  nestedArrayId?: string;
-}
-
-/**
- * Argument info for PASSES_ARGUMENT edges
- */
-interface ArgumentInfo {
-  callId: string;
-  argIndex: number;
-  file: string;
-  line: number;
-  column: number;
-  isSpread?: boolean;
-  targetType?: string;
-  targetId?: string;
-  targetName?: string;
-  literalValue?: unknown;
-  functionLine?: number;
-  functionColumn?: number;
-  nestedCallLine?: number;
-  nestedCallColumn?: number;
-  objectName?: string;
-  propertyName?: string;
-  expressionType?: string;
-}
-
-/**
- * Call site info
- */
-interface CallSiteInfo {
-  id: string;
-  type: 'CALL';
-  name: string;
-  file: string;
-  line: number;
-  column: number;
-  parentScopeId: string;
-  targetFunctionName: string;
-  isNew?: boolean;
-  /** REG-297: true if wrapped in await expression */
-  isAwaited?: boolean;
-}
-
-/**
- * Method call info
- */
-interface MethodCallInfo {
-  id: string;
-  type: 'CALL';
-  name: string;
-  object: string;
-  method: string;
-  computed?: boolean;
-  computedPropertyVar?: string | null;
-  file: string;
-  line: number;
-  column: number;
-  parentScopeId: string;
-  isNew?: boolean;
-  /** REG-332: Annotation to suppress strict mode errors */
-  grafemaIgnore?: GrafemaIgnoreAnnotation;
-  /** REG-297: true if wrapped in await expression */
-  isAwaited?: boolean;
-}
-
-/**
- * Event listener info
- */
-interface EventListenerInfo {
-  id: string;
-  type: 'event:listener';
-  name: string;
-  object: string;
-  file: string;
-  line: number;
-  parentScopeId: string;
-  callbackArg: Node;
-}
-
-/**
- * Method callback info
- */
-interface MethodCallbackInfo {
-  methodCallId: string;
-  callbackLine: number;
-  callbackColumn: number;
-  callbackType: string;
-}
-
-/**
- * Literal node info
- */
-interface LiteralInfo {
-  id: string;
-  type: 'LITERAL' | 'EXPRESSION';
-  value?: unknown;
-  valueType?: string;
-  expressionType?: string;
-  operator?: string;
-  name?: string;
-  file: string;
-  line: number;
-  column: number;
-  parentCallId: string;
-  argIndex: number;
+/** Shared state for handler methods, extracted once in getHandlers(). */
+interface HandlerState {
+  module: VisitorModule;
+  callSites: CallSiteInfo[];
+  methodCalls: MethodCallInfo[];
+  eventListeners: EventListenerInfo[];
+  methodCallbacks: MethodCallbackInfo[];
+  literals: LiteralInfo[];
+  callArguments: ArgumentInfo[];
+  callSiteCounterRef: CounterRef;
+  literalCounterRef: CounterRef;
+  processedNodes: HandlerProcessedNodes;
+  scopeTracker?: ScopeTracker;
 }
 
 export class CallExpressionVisitor extends ASTVisitor {
   private scopeTracker?: ScopeTracker;
 
-  /**
-   * @param module - Current module being analyzed
-   * @param collections - Must contain arrays and counter refs
-   * @param scopeTracker - Optional ScopeTracker for semantic ID generation
-   */
   constructor(module: VisitorModule, collections: VisitorCollections, scopeTracker?: ScopeTracker) {
     super(module, collections);
     this.scopeTracker = scopeTracker;
   }
 
-  /**
-   * Extract argument information for PASSES_ARGUMENT edges
-   */
-  extractArguments(
-    args: CallExpression['arguments'],
-    callId: string,
-    module: VisitorModule,
-    callArguments: ArgumentInfo[],
-    literals: LiteralInfo[],
-    literalCounterRef: CounterRef
-  ): void {
-    args.forEach((arg, index) => {
-      const argInfo: ArgumentInfo = {
-        callId,
-        argIndex: index,
-        file: module.file,
-        line: arg.loc?.start.line || 0,
-        column: arg.loc?.start.column || 0
-      };
-
-      // Check for spread: ...arg
-      let actualArg: Node = arg;
-      if (arg.type === 'SpreadElement') {
-        argInfo.isSpread = true;
-        actualArg = arg.argument;  // Get the actual argument
-      }
-
-      // Object literal - check BEFORE extractLiteralValue to handle object-typed args properly
-      if (actualArg.type === 'ObjectExpression') {
-        const objectExpr = actualArg as ObjectExpression;
-        // Initialize collections if not exist (must assign back to this.collections!)
-        if (!this.collections.objectLiteralCounterRef) {
-          this.collections.objectLiteralCounterRef = { value: 0 };
-        }
-        if (!this.collections.objectLiterals) {
-          this.collections.objectLiterals = [];
-        }
-        if (!this.collections.objectProperties) {
-          this.collections.objectProperties = [];
-        }
-        const objectLiteralCounterRef = this.collections.objectLiteralCounterRef as CounterRef;
-
-        // Use factory to create OBJECT_LITERAL node
-        const objectNode = ObjectLiteralNode.create(
-          module.file,
-          argInfo.line,
-          argInfo.column,
-          {
-            parentCallId: callId,
-            argIndex: index,
-            counter: objectLiteralCounterRef.value++
-          }
-        );
-        // Factory guarantees line is set, cast to ObjectLiteralInfo
-        (this.collections.objectLiterals as ObjectLiteralInfo[]).push(objectNode as unknown as ObjectLiteralInfo);
-        const objectId = objectNode.id;
-
-        // Extract properties
-        this.extractObjectProperties(
-          objectExpr,
-          objectId,
-          module,
-          this.collections.objectProperties as ObjectPropertyInfo[],
-          this.collections.objectLiterals as ObjectLiteralInfo[],
-          objectLiteralCounterRef,
-          literals as LiteralInfo[],
-          literalCounterRef
-        );
-
-        argInfo.targetType = 'OBJECT_LITERAL';
-        argInfo.targetId = objectId;
-      }
-      // Array literal - check BEFORE extractLiteralValue to handle array-typed args properly
-      else if (actualArg.type === 'ArrayExpression') {
-        const arrayExpr = actualArg as ArrayExpression;
-        // Initialize collections if not exist (must assign back to this.collections!)
-        if (!this.collections.arrayLiteralCounterRef) {
-          this.collections.arrayLiteralCounterRef = { value: 0 };
-        }
-        if (!this.collections.arrayLiterals) {
-          this.collections.arrayLiterals = [];
-        }
-        if (!this.collections.arrayElements) {
-          this.collections.arrayElements = [];
-        }
-        if (!this.collections.objectLiteralCounterRef) {
-          this.collections.objectLiteralCounterRef = { value: 0 };
-        }
-        if (!this.collections.objectLiterals) {
-          this.collections.objectLiterals = [];
-        }
-        if (!this.collections.objectProperties) {
-          this.collections.objectProperties = [];
-        }
-        const arrayLiteralCounterRef = this.collections.arrayLiteralCounterRef as CounterRef;
-
-        // Use factory to create ARRAY_LITERAL node
-        const arrayNode = ArrayLiteralNode.create(
-          module.file,
-          argInfo.line,
-          argInfo.column,
-          {
-            parentCallId: callId,
-            argIndex: index,
-            counter: arrayLiteralCounterRef.value++
-          }
-        );
-        // Factory guarantees line is set, cast to ArrayLiteralInfo
-        (this.collections.arrayLiterals as ArrayLiteralInfo[]).push(arrayNode as unknown as ArrayLiteralInfo);
-        const arrayId = arrayNode.id;
-
-        // Extract elements
-        this.extractArrayElements(
-          arrayExpr,
-          arrayId,
-          module,
-          this.collections.arrayElements as ArrayElementInfo[],
-          this.collections.arrayLiterals as ArrayLiteralInfo[],
-          arrayLiteralCounterRef,
-          this.collections.objectLiterals as ObjectLiteralInfo[],
-          this.collections.objectLiteralCounterRef as CounterRef,
-          this.collections.objectProperties as ObjectPropertyInfo[],
-          literals as LiteralInfo[],
-          literalCounterRef
-        );
-
-        argInfo.targetType = 'ARRAY_LITERAL';
-        argInfo.targetId = arrayId;
-      }
-      // Literal value (primitives only - objects/arrays handled above)
-      else {
-        const literalValue = ExpressionEvaluator.extractLiteralValue(actualArg);
-        if (literalValue !== null) {
-          const literalId = `LITERAL#arg${index}#${module.file}#${argInfo.line}:${argInfo.column}:${literalCounterRef.value++}`;
-          literals.push({
-            id: literalId,
-            type: 'LITERAL',
-            value: literalValue,
-            valueType: typeof literalValue,
-            file: module.file,
-            line: argInfo.line,
-            column: argInfo.column,
-            parentCallId: callId,
-            argIndex: index
-          });
-          argInfo.targetType = 'LITERAL';
-          argInfo.targetId = literalId;
-          argInfo.literalValue = literalValue;
-        }
-        // Variable reference
-        else if (actualArg.type === 'Identifier') {
-        argInfo.targetType = 'VARIABLE';
-        argInfo.targetName = (actualArg as Identifier).name;  // Will be resolved in GraphBuilder
-      }
-      // Function expression (callback)
-      else if (actualArg.type === 'ArrowFunctionExpression' || actualArg.type === 'FunctionExpression') {
-        argInfo.targetType = 'FUNCTION';
-        argInfo.functionLine = actualArg.loc?.start.line;
-        argInfo.functionColumn = actualArg.loc?.start.column;
-      }
-      // Call expression (nested call)
-      else if (actualArg.type === 'CallExpression') {
-        argInfo.targetType = 'CALL';
-        // Nested calls will be processed separately, link by position
-        argInfo.nestedCallLine = actualArg.loc?.start.line;
-        argInfo.nestedCallColumn = actualArg.loc?.start.column;
-      }
-      // Member expression: obj.prop or obj[x]
-      else if (actualArg.type === 'MemberExpression') {
-        const memberExpr = actualArg as MemberExpression;
-        argInfo.targetType = 'EXPRESSION';
-        argInfo.expressionType = 'MemberExpression';
-        if (memberExpr.object.type === 'Identifier') {
-          argInfo.objectName = memberExpr.object.name;
-        }
-        if (!memberExpr.computed && memberExpr.property.type === 'Identifier') {
-          argInfo.propertyName = memberExpr.property.name;
-        }
-      }
-      // Binary/Logical expression: a + b, a && b
-      else if (actualArg.type === 'BinaryExpression' || actualArg.type === 'LogicalExpression') {
-        const expr = actualArg as { operator?: string; type: string };
-        const operator = expr.operator || '?';
-        const counter = literalCounterRef.value++;
-
-        // Create EXPRESSION node via NodeFactory
-        const expressionNode = NodeFactory.createArgumentExpression(
-          actualArg.type,
-          module.file,
-          argInfo.line,
-          argInfo.column,
-          {
-            parentCallId: callId,
-            argIndex: index,
-            operator,
-            counter
-          }
-        );
-
-        literals.push(expressionNode as LiteralInfo);
-
-        argInfo.targetType = 'EXPRESSION';
-        argInfo.targetId = expressionNode.id;
-        argInfo.expressionType = actualArg.type;
-
-        // Track DERIVES_FROM edges for identifiers in expression
-        const identifiers = this.extractIdentifiers(actualArg);
-        const { variableAssignments } = this.collections;
-        if (variableAssignments) {
-          for (const identName of identifiers) {
-            variableAssignments.push({
-              variableId: expressionNode.id,
-              sourceId: null,
-              sourceName: identName,
-              sourceType: 'DERIVES_FROM_VARIABLE',
-              file: module.file
-            });
-          }
-        }
-      }
-      // Other expression types (fallback for unhandled expression types)
-      else {
-        argInfo.targetType = 'EXPRESSION';
-        argInfo.expressionType = actualArg.type;
-      }
-      }
-
-      callArguments.push(argInfo);
-    });
-  }
-
-  /**
-   * Extract all Identifier names from an expression (recursively)
-   * Used for BinaryExpression/LogicalExpression to track DERIVES_FROM edges
-   */
-  extractIdentifiers(node: Node | null | undefined, identifiers: Set<string> = new Set()): string[] {
-    if (!node) return Array.from(identifiers);
-
-    if (node.type === 'Identifier') {
-      identifiers.add((node as Identifier).name);
-    } else if (node.type === 'BinaryExpression' || node.type === 'LogicalExpression') {
-      const expr = node as { left: Node; right: Node };
-      this.extractIdentifiers(expr.left, identifiers);
-      this.extractIdentifiers(expr.right, identifiers);
-    } else if (node.type === 'UnaryExpression') {
-      const expr = node as { argument: Node };
-      this.extractIdentifiers(expr.argument, identifiers);
-    } else if (node.type === 'ConditionalExpression') {
-      const expr = node as { test: Node; consequent: Node; alternate: Node };
-      this.extractIdentifiers(expr.test, identifiers);
-      this.extractIdentifiers(expr.consequent, identifiers);
-      this.extractIdentifiers(expr.alternate, identifiers);
-    } else if (node.type === 'MemberExpression') {
-      const memberExpr = node as MemberExpression;
-      // For obj.prop - track obj (but not prop as it's a property name)
-      if (memberExpr.object.type === 'Identifier') {
-        identifiers.add(memberExpr.object.name);
-      } else {
-        this.extractIdentifiers(memberExpr.object, identifiers);
-      }
-    } else if (node.type === 'CallExpression') {
-      const callExpr = node as CallExpression;
-      // For func() - track func if identifier, and all arguments
-      if (callExpr.callee.type === 'Identifier') {
-        identifiers.add((callExpr.callee as Identifier).name);
-      }
-      for (const arg of callExpr.arguments) {
-        if (arg.type !== 'SpreadElement') {
-          this.extractIdentifiers(arg, identifiers);
-        } else {
-          this.extractIdentifiers(arg.argument, identifiers);
-        }
-      }
-    }
-
-    return Array.from(identifiers);
-  }
-
-  /**
-   * Extract object properties and create ObjectPropertyInfo records
-   */
-  extractObjectProperties(
-    objectExpr: ObjectExpression,
-    objectId: string,
-    module: VisitorModule,
-    objectProperties: ObjectPropertyInfo[],
-    objectLiterals: ObjectLiteralInfo[],
-    objectLiteralCounterRef: CounterRef,
-    literals: LiteralInfo[],
-    literalCounterRef: CounterRef
-  ): void {
-    for (const prop of objectExpr.properties) {
-      const propLine = prop.loc?.start.line || 0;
-      const propColumn = prop.loc?.start.column || 0;
-
-      // Handle spread properties: { ...other }
-      if (prop.type === 'SpreadElement') {
-        const spreadArg = prop.argument;
-        const propertyInfo: ObjectPropertyInfo = {
-          objectId,
-          propertyName: '<spread>',
-          valueType: 'SPREAD',
-          file: module.file,
-          line: propLine,
-          column: propColumn
-        };
-
-        if (spreadArg.type === 'Identifier') {
-          propertyInfo.valueName = spreadArg.name;
-          propertyInfo.valueType = 'VARIABLE';
-          // REG-329: Capture scope path for spread variable resolution
-          propertyInfo.valueScopePath = this.scopeTracker?.getContext().scopePath ?? [];
-        }
-
-        objectProperties.push(propertyInfo);
-        continue;
-      }
-
-      // Handle regular properties
-      if (prop.type === 'ObjectProperty') {
-        const objProp = prop as ObjectProperty;
-        let propertyName: string;
-
-        // Get property name
-        if (objProp.key.type === 'Identifier') {
-          propertyName = objProp.key.name;
-        } else if (objProp.key.type === 'StringLiteral') {
-          propertyName = objProp.key.value;
-        } else if (objProp.key.type === 'NumericLiteral') {
-          propertyName = String(objProp.key.value);
-        } else {
-          propertyName = '<computed>';
-        }
-
-        const propertyInfo: ObjectPropertyInfo = {
-          objectId,
-          propertyName,
-          file: module.file,
-          line: propLine,
-          column: propColumn,
-          valueType: 'EXPRESSION'
-        };
-
-        const value = objProp.value;
-
-        // Nested object literal - check BEFORE extractLiteralValue
-        if (value.type === 'ObjectExpression') {
-          // Use factory - do NOT pass argIndex for nested literals (uses 'obj' suffix)
-          const nestedObjectNode = ObjectLiteralNode.create(
-            module.file,
-            value.loc?.start.line || 0,
-            value.loc?.start.column || 0,
-            {
-              counter: objectLiteralCounterRef.value++
-            }
-          );
-          objectLiterals.push(nestedObjectNode as unknown as ObjectLiteralInfo);
-          const nestedObjectId = nestedObjectNode.id;
-
-          // Recursively extract nested properties
-          this.extractObjectProperties(
-            value,
-            nestedObjectId,
-            module,
-            objectProperties,
-            objectLiterals,
-            objectLiteralCounterRef,
-            literals,
-            literalCounterRef
-          );
-
-          propertyInfo.valueType = 'OBJECT_LITERAL';
-          propertyInfo.nestedObjectId = nestedObjectId;
-          propertyInfo.valueNodeId = nestedObjectId;
-        }
-        // Nested array literal - check BEFORE extractLiteralValue
-        else if (value.type === 'ArrayExpression') {
-          const arrayLiteralCounterRef = (this.collections.arrayLiteralCounterRef ?? { value: 0 }) as CounterRef;
-          const arrayLiterals = this.collections.arrayLiterals ?? [];
-          const arrayElements = this.collections.arrayElements ?? [];
-
-          // Use factory - do NOT pass argIndex for nested literals (uses 'arr' suffix)
-          const nestedArrayNode = ArrayLiteralNode.create(
-            module.file,
-            value.loc?.start.line || 0,
-            value.loc?.start.column || 0,
-            {
-              counter: arrayLiteralCounterRef.value++
-            }
-          );
-          (arrayLiterals as ArrayLiteralInfo[]).push(nestedArrayNode as unknown as ArrayLiteralInfo);
-          const nestedArrayId = nestedArrayNode.id;
-
-          // Recursively extract array elements
-          this.extractArrayElements(
-            value,
-            nestedArrayId,
-            module,
-            arrayElements as ArrayElementInfo[],
-            arrayLiterals as ArrayLiteralInfo[],
-            arrayLiteralCounterRef,
-            objectLiterals,
-            objectLiteralCounterRef,
-            objectProperties,
-            literals,
-            literalCounterRef
-          );
-
-          propertyInfo.valueType = 'ARRAY_LITERAL';
-          propertyInfo.nestedArrayId = nestedArrayId;
-          propertyInfo.valueNodeId = nestedArrayId;
-        }
-        // Literal value (primitives only - objects/arrays handled above)
-        else {
-          const literalValue = ExpressionEvaluator.extractLiteralValue(value);
-          // Handle both non-null literals AND explicit null literals (NullLiteral)
-          if (literalValue !== null || value.type === 'NullLiteral') {
-            const literalId = `LITERAL#${propertyName}#${module.file}#${propLine}:${propColumn}:${literalCounterRef.value++}`;
-            literals.push({
-              id: literalId,
-              type: 'LITERAL',
-              value: literalValue,
-              valueType: typeof literalValue,
-              file: module.file,
-              line: propLine,
-              column: propColumn,
-              parentCallId: objectId,
-              argIndex: 0
-            });
-            propertyInfo.valueType = 'LITERAL';
-            propertyInfo.valueNodeId = literalId;
-            propertyInfo.literalValue = literalValue;
-          }
-          // Variable reference
-          else if (value.type === 'Identifier') {
-            propertyInfo.valueType = 'VARIABLE';
-            propertyInfo.valueName = value.name;
-            // REG-329: Capture scope path for scope-aware variable resolution
-            propertyInfo.valueScopePath = this.scopeTracker?.getContext().scopePath ?? [];
-          }
-          // Call expression
-          else if (value.type === 'CallExpression') {
-            propertyInfo.valueType = 'CALL';
-            propertyInfo.callLine = value.loc?.start.line;
-            propertyInfo.callColumn = value.loc?.start.column;
-          }
-          // Other expressions
-          else {
-            propertyInfo.valueType = 'EXPRESSION';
-          }
-        }
-
-        objectProperties.push(propertyInfo);
-      }
-      // Handle object methods: { foo() {} }
-      else if (prop.type === 'ObjectMethod') {
-        const propertyName = prop.key.type === 'Identifier' ? prop.key.name : '<computed>';
-        objectProperties.push({
-          objectId,
-          propertyName,
-          valueType: 'EXPRESSION',
-          file: module.file,
-          line: propLine,
-          column: propColumn
-        });
-      }
-    }
-  }
-
-  /**
-   * Extract array elements and create ArrayElementInfo records
-   */
-  extractArrayElements(
-    arrayExpr: ArrayExpression,
-    arrayId: string,
-    module: VisitorModule,
-    arrayElements: ArrayElementInfo[],
-    arrayLiterals: ArrayLiteralInfo[],
-    arrayLiteralCounterRef: CounterRef,
-    objectLiterals: ObjectLiteralInfo[],
-    objectLiteralCounterRef: CounterRef,
-    objectProperties: ObjectPropertyInfo[],
-    literals: LiteralInfo[],
-    literalCounterRef: CounterRef
-  ): void {
-    arrayExpr.elements.forEach((element, index) => {
-      if (!element) return;  // Skip holes in arrays
-
-      const elemLine = element.loc?.start.line || 0;
-      const elemColumn = element.loc?.start.column || 0;
-
-      const elementInfo: ArrayElementInfo = {
-        arrayId,
-        index,
-        file: module.file,
-        line: elemLine,
-        column: elemColumn,
-        valueType: 'EXPRESSION'
-      };
-
-      // Handle spread elements: [...arr]
-      if (element.type === 'SpreadElement') {
-        const spreadArg = element.argument;
-        elementInfo.valueType = 'SPREAD';
-        if (spreadArg.type === 'Identifier') {
-          elementInfo.valueName = spreadArg.name;
-        }
-        arrayElements.push(elementInfo);
-        return;
-      }
-
-      // Nested object literal - check BEFORE extractLiteralValue
-      if (element.type === 'ObjectExpression') {
-        // Use factory - do NOT pass argIndex for nested literals (uses 'obj' suffix)
-        const nestedObjectNode = ObjectLiteralNode.create(
-          module.file,
-          elemLine,
-          elemColumn,
-          {
-            counter: objectLiteralCounterRef.value++
-          }
-        );
-        objectLiterals.push(nestedObjectNode as unknown as ObjectLiteralInfo);
-        const nestedObjectId = nestedObjectNode.id;
-
-        // Recursively extract properties
-        this.extractObjectProperties(
-          element,
-          nestedObjectId,
-          module,
-          objectProperties,
-          objectLiterals,
-          objectLiteralCounterRef,
-          literals,
-          literalCounterRef
-        );
-
-        elementInfo.valueType = 'OBJECT_LITERAL';
-        elementInfo.nestedObjectId = nestedObjectId;
-        elementInfo.valueNodeId = nestedObjectId;
-      }
-      // Nested array literal - check BEFORE extractLiteralValue
-      else if (element.type === 'ArrayExpression') {
-        // Use factory - do NOT pass argIndex for nested literals (uses 'arr' suffix)
-        const nestedArrayNode = ArrayLiteralNode.create(
-          module.file,
-          elemLine,
-          elemColumn,
-          {
-            counter: arrayLiteralCounterRef.value++
-          }
-        );
-        arrayLiterals.push(nestedArrayNode as unknown as ArrayLiteralInfo);
-        const nestedArrayId = nestedArrayNode.id;
-
-        // Recursively extract elements
-        this.extractArrayElements(
-          element,
-          nestedArrayId,
-          module,
-          arrayElements,
-          arrayLiterals,
-          arrayLiteralCounterRef,
-          objectLiterals,
-          objectLiteralCounterRef,
-          objectProperties,
-          literals,
-          literalCounterRef
-        );
-
-        elementInfo.valueType = 'ARRAY_LITERAL';
-        elementInfo.nestedArrayId = nestedArrayId;
-        elementInfo.valueNodeId = nestedArrayId;
-      }
-      // Literal value (primitives only - objects/arrays handled above)
-      else {
-        const literalValue = ExpressionEvaluator.extractLiteralValue(element);
-        if (literalValue !== null) {
-          const literalId = `LITERAL#elem${index}#${module.file}#${elemLine}:${elemColumn}:${literalCounterRef.value++}`;
-          literals.push({
-            id: literalId,
-            type: 'LITERAL',
-            value: literalValue,
-            valueType: typeof literalValue,
-            file: module.file,
-            line: elemLine,
-            column: elemColumn,
-            parentCallId: arrayId,
-            argIndex: index
-          });
-          elementInfo.valueType = 'LITERAL';
-          elementInfo.valueNodeId = literalId;
-          elementInfo.literalValue = literalValue;
-        }
-        // Variable reference
-        else if (element.type === 'Identifier') {
-          elementInfo.valueType = 'VARIABLE';
-          elementInfo.valueName = element.name;
-        }
-        // Call expression
-        else if (element.type === 'CallExpression') {
-          elementInfo.valueType = 'CALL';
-          elementInfo.callLine = element.loc?.start.line;
-          elementInfo.callColumn = element.loc?.start.column;
-        }
-        // Other expressions
-        else {
-          elementInfo.valueType = 'EXPRESSION';
-        }
-      }
-
-      arrayElements.push(elementInfo);
-    });
-  }
-
-  /**
-   * Detect array mutation calls (push, unshift, splice) and collect mutation info
-   * for later FLOWS_INTO edge creation in GraphBuilder
-   *
-   * REG-117: Added isNested, baseObjectName, propertyName for nested mutations
-   */
-  private detectArrayMutation(
-    callNode: CallExpression,
-    arrayName: string,
-    method: 'push' | 'unshift' | 'splice',
-    module: VisitorModule,
-    isNested?: boolean,
-    baseObjectName?: string,
-    propertyName?: string
-  ): void {
-    // Initialize collection if not exists
-    if (!this.collections.arrayMutations) {
-      this.collections.arrayMutations = [];
-    }
-    const arrayMutations = this.collections.arrayMutations as ArrayMutationInfo[];
-
-    const mutationArgs: ArrayMutationArgument[] = [];
-
-    // For splice, only arguments from index 2 onwards are insertions
-    // splice(start, deleteCount, item1, item2, ...)
-    callNode.arguments.forEach((arg, index) => {
-      // Skip start and deleteCount for splice
-      if (method === 'splice' && index < 2) return;
-
-      const argInfo: ArrayMutationArgument = {
-        argIndex: method === 'splice' ? index - 2 : index,
-        isSpread: arg.type === 'SpreadElement',
-        valueType: 'EXPRESSION'  // Default
-      };
-
-      let actualArg = arg;
-      if (arg.type === 'SpreadElement') {
-        actualArg = arg.argument;
-      }
-
-      // Determine value type and store coordinates for node lookup in GraphBuilder.
-      // IMPORTANT: Check ObjectExpression/ArrayExpression BEFORE extractLiteralValue
-      // to match the order in extractArguments (which creates the actual nodes).
-      // extractLiteralValue returns objects/arrays with all-literal properties as
-      // literal values, but extractArguments creates OBJECT_LITERAL/ARRAY_LITERAL nodes.
-      if (actualArg.type === 'ObjectExpression') {
-        argInfo.valueType = 'OBJECT_LITERAL';
-        argInfo.valueLine = actualArg.loc?.start.line;
-        argInfo.valueColumn = actualArg.loc?.start.column;
-      } else if (actualArg.type === 'ArrayExpression') {
-        argInfo.valueType = 'ARRAY_LITERAL';
-        argInfo.valueLine = actualArg.loc?.start.line;
-        argInfo.valueColumn = actualArg.loc?.start.column;
-      } else if (actualArg.type === 'Identifier') {
-        argInfo.valueType = 'VARIABLE';
-        argInfo.valueName = actualArg.name;
-      } else if (actualArg.type === 'CallExpression') {
-        argInfo.valueType = 'CALL';
-        argInfo.callLine = actualArg.loc?.start.line;
-        argInfo.callColumn = actualArg.loc?.start.column;
-      } else {
-        const literalValue = ExpressionEvaluator.extractLiteralValue(actualArg);
-        if (literalValue !== null) {
-          argInfo.valueType = 'LITERAL';
-          argInfo.literalValue = literalValue;
-          argInfo.valueLine = actualArg.loc?.start.line;
-          argInfo.valueColumn = actualArg.loc?.start.column;
-        }
-      }
-
-      mutationArgs.push(argInfo);
-    });
-
-    // Only record if there are actual insertions
-    if (mutationArgs.length > 0) {
-      const line = callNode.loc?.start.line ?? 0;
-      const column = callNode.loc?.start.column ?? 0;
-
-      // Generate semantic ID for array mutation if scopeTracker available
-      const scopeTracker = this.scopeTracker;
-      let mutationId: string | undefined;
-      // Capture scope path for scope-aware lookup (REG-309)
-      const scopePath = scopeTracker?.getContext().scopePath ?? [];
-
-      if (scopeTracker) {
-        const discriminator = scopeTracker.getItemCounter(`ARRAY_MUTATION:${arrayName}.${method}`);
-        mutationId = computeSemanticId('ARRAY_MUTATION', `${arrayName}.${method}`, scopeTracker.getContext(), { discriminator });
-      }
-
-      arrayMutations.push({
-        id: mutationId,
-        arrayName,
-        mutationScopePath: scopePath,
-        mutationMethod: method,
-        file: module.file,
-        line,
-        column,
-        insertedValues: mutationArgs,
-        // REG-117: Nested mutation fields
-        isNested,
-        baseObjectName,
-        propertyName
-      });
-    }
-  }
-
-  /**
-   * Detect Object.assign(target, source1, source2, ...) calls
-   * Creates ObjectMutationInfo for FLOWS_INTO edge generation in GraphBuilder
-   *
-   * @param callNode - The call expression node
-   * @param module - Current module being analyzed
-   */
-  private detectObjectAssign(
-    callNode: CallExpression,
-    module: VisitorModule
-  ): void {
-    // Need at least 2 arguments: target and at least one source
-    if (callNode.arguments.length < 2) return;
-
-    // Initialize object mutations collection if not exists
-    if (!this.collections.objectMutations) {
-      this.collections.objectMutations = [];
-    }
-    const objectMutations = this.collections.objectMutations as ObjectMutationInfo[];
-
-    // First argument is target
-    const targetArg = callNode.arguments[0];
-    let targetName: string;
-
-    if (targetArg.type === 'Identifier') {
-      targetName = targetArg.name;
-    } else if (targetArg.type === 'ObjectExpression') {
-      targetName = '<anonymous>';
-    } else {
-      return;
-    }
-
-    const line = callNode.loc?.start.line ?? 0;
-    const column = callNode.loc?.start.column ?? 0;
-
-    for (let i = 1; i < callNode.arguments.length; i++) {
-      let arg = callNode.arguments[i];
-      let isSpread = false;
-
-      if (arg.type === 'SpreadElement') {
-        isSpread = true;
-        arg = arg.argument;
-      }
-
-      const valueInfo: ObjectMutationValue = {
-        valueType: 'EXPRESSION',
-        argIndex: i - 1,
-        isSpread
-      };
-
-      const literalValue = ExpressionEvaluator.extractLiteralValue(arg);
-      if (literalValue !== null) {
-        valueInfo.valueType = 'LITERAL';
-        valueInfo.literalValue = literalValue;
-      } else if (arg.type === 'Identifier') {
-        valueInfo.valueType = 'VARIABLE';
-        valueInfo.valueName = arg.name;
-      } else if (arg.type === 'ObjectExpression') {
-        valueInfo.valueType = 'OBJECT_LITERAL';
-      } else if (arg.type === 'ArrayExpression') {
-        valueInfo.valueType = 'ARRAY_LITERAL';
-      } else if (arg.type === 'CallExpression') {
-        valueInfo.valueType = 'CALL';
-        valueInfo.callLine = arg.loc?.start.line;
-        valueInfo.callColumn = arg.loc?.start.column;
-      }
-
-      // Capture scope path for scope-aware lookup (REG-309)
-      const scopePath = this.scopeTracker?.getContext().scopePath ?? [];
-
-      let mutationId: string | undefined;
-      if (this.scopeTracker) {
-        const discriminator = this.scopeTracker.getItemCounter(`OBJECT_MUTATION:Object.assign:${targetName}`);
-        mutationId = computeSemanticId('OBJECT_MUTATION', `Object.assign:${targetName}`, this.scopeTracker.getContext(), { discriminator });
-      }
-
-      objectMutations.push({
-        id: mutationId,
-        objectName: targetName,
-        mutationScopePath: scopePath,
-        propertyName: '<assign>',
-        mutationType: 'assign',
-        file: module.file,
-        line,
-        column,
-        value: valueInfo
-      });
-    }
-  }
 
   /**
    * Extract full dotted name from a MemberExpression chain.
@@ -1166,361 +147,350 @@ export class CallExpressionVisitor extends ASTVisitor {
   }
 
   getHandlers(): VisitorHandlers {
-    const { module } = this;
-    const callSites = this.collections.callSites ?? [];
-    const methodCalls = this.collections.methodCalls ?? [];
-    const eventListeners = this.collections.eventListeners ?? [];
-    const methodCallbacks = this.collections.methodCallbacks ?? [];
-    const literals = this.collections.literals ?? [];
-    const callArguments = this.collections.callArguments ?? [];
-    const callSiteCounterRef = (this.collections.callSiteCounterRef ?? { value: 0 }) as CounterRef;
-    const literalCounterRef = (this.collections.literalCounterRef ?? { value: 0 }) as CounterRef;
-    const processedNodes = this.collections.processedNodes ?? { callSites: new Set(), methodCalls: new Set(), eventListeners: new Set() };
-    const scopeTracker = this.scopeTracker;
+    const s: HandlerState = {
+      module: this.module,
+      callSites: (this.collections.callSites ?? []) as CallSiteInfo[],
+      methodCalls: (this.collections.methodCalls ?? []) as MethodCallInfo[],
+      eventListeners: (this.collections.eventListeners ?? []) as EventListenerInfo[],
+      methodCallbacks: (this.collections.methodCallbacks ?? []) as MethodCallbackInfo[],
+      literals: (this.collections.literals ?? []) as LiteralInfo[],
+      callArguments: (this.collections.callArguments ?? []) as ArgumentInfo[],
+      callSiteCounterRef: (this.collections.callSiteCounterRef ?? { value: 0 }) as CounterRef,
+      literalCounterRef: (this.collections.literalCounterRef ?? { value: 0 }) as CounterRef,
+      processedNodes: this.collections.processedNodes ?? { callSites: new Set(), methodCalls: new Set(), eventListeners: new Set() },
+      scopeTracker: this.scopeTracker,
+    };
 
     return {
       CallExpression: (path: NodePath) => {
         const callNode = path.node as CallExpression;
         const functionParent = path.getFunctionParent();
 
-        // Determine parent scope - if inside a function, use function's scope, otherwise module
-        const parentScopeId = functionParent ? this.getFunctionScopeId(functionParent, module) : module.id;
+        // Skip if inside function - handled by analyzeFunctionBody
+        if (functionParent) return;
 
-        // REG-297: Detect isAwaited for module-level calls (parent is AwaitExpression)
+        const parentScopeId = s.module.id;
         const isAwaited = path.parentPath?.isAwaitExpression() ?? false;
 
-        // Identifier calls (direct function calls)
-        // Skip if inside function - they will be processed by analyzeFunctionBody with proper scope tracking
-          if (callNode.callee.type === 'Identifier') {
-            if (functionParent) {
-              return;
-            }
-            const callee = callNode.callee as Identifier;
-
-            const line = getLine(callNode);
-            const column = getColumn(callNode);
-
-            // Generate ID using centralized IdGenerator
-            const idGenerator = new IdGenerator(scopeTracker);
-            const callId = idGenerator.generate(
-              'CALL', callee.name, module.file,
-              line, column,
-              callSiteCounterRef,
-              { useDiscriminator: true, discriminatorKey: `CALL:${callee.name}` }
-            );
-
-            (callSites as CallSiteInfo[]).push({
-              id: callId,
-              type: 'CALL',
-              name: callee.name,
-              file: module.file,
-              line,
-              column,
-              parentScopeId,
-              targetFunctionName: callee.name,
-              isAwaited: isAwaited || undefined
-            });
-
-            // Extract arguments for PASSES_ARGUMENT edges
-            if (callNode.arguments.length > 0) {
-              this.extractArguments(
-                callNode.arguments,
-                callId,
-                module,
-                callArguments as ArgumentInfo[],
-                literals as LiteralInfo[],
-                literalCounterRef
-              );
-            }
-          }
-          // MemberExpression calls (method calls)
-          // Skip if inside function - they will be processed by analyzeFunctionBody with proper scope tracking
-          else if (callNode.callee.type === 'MemberExpression') {
-            if (functionParent) {
-              return;
-            }
-            const memberCallee = callNode.callee as MemberExpression;
-            const object = memberCallee.object;
-            const property = memberCallee.property;
-            const isComputed = memberCallee.computed;
-
-            if ((object.type === 'Identifier' || object.type === 'ThisExpression') && property.type === 'Identifier') {
-              const objectName = object.type === 'Identifier' ? (object as Identifier).name : 'this';
-              // For computed access obj[x](), methodName is '<computed>' but we save the variable name
-              const methodName = isComputed ? '<computed>' : (property as Identifier).name;
-              const computedPropertyVar = isComputed ? (property as Identifier).name : null;
-
-              // Special handling for .on() event handlers
-              if (methodName === 'on' && callNode.arguments.length >= 2) {
-                const firstArg = callNode.arguments[0];
-                const secondArg = callNode.arguments[1];
-
-                if (firstArg.type === 'StringLiteral') {
-                  const eventName = firstArg.value;
-
-                  // Dedup check
-                  const nodeKey = `${callNode.start}:${callNode.end}`;
-                  if (processedNodes.eventListeners.has(nodeKey)) {
-                    return;
-                  }
-                  processedNodes.eventListeners.add(nodeKey);
-
-                  const eventLine = getLine(callNode);
-                  const eventColumn = getColumn(callNode);
-
-                  (eventListeners as EventListenerInfo[]).push({
-                    id: `event:listener#${eventName}#${module.file}#${eventLine}:${eventColumn}:${callSiteCounterRef.value++}`,
-                    type: 'event:listener',
-                    name: eventName,
-                    object: objectName,
-                    file: module.file,
-                    line: eventLine,
-                    parentScopeId,
-                    callbackArg: secondArg
-                  });
-                }
-              } else {
-                // Regular method call
-                const nodeKey = `${callNode.start}:${callNode.end}`;
-                if (processedNodes.methodCalls.has(nodeKey)) {
-                  return;
-                }
-                processedNodes.methodCalls.add(nodeKey);
-
-                const fullName = `${objectName}.${methodName}`;
-                const methodLine = getLine(callNode);
-                const methodColumn = getColumn(callNode);
-
-                // Generate ID using centralized IdGenerator
-                const idGenerator = new IdGenerator(scopeTracker);
-                const methodCallId = idGenerator.generate(
-                  'CALL', fullName, module.file,
-                  methodLine, methodColumn,
-                  callSiteCounterRef,
-                  { useDiscriminator: true, discriminatorKey: `CALL:${fullName}` }
-                );
-
-                // REG-332: Check for grafema-ignore comment
-                const grafemaIgnore = getGrafemaIgnore(path);
-
-                (methodCalls as MethodCallInfo[]).push({
-                  id: methodCallId,
-                  type: 'CALL',
-                  name: fullName,
-                  object: objectName,
-                  method: methodName,
-                  computed: isComputed,
-                  computedPropertyVar,  // Variable name used in obj[x]() calls
-                  file: module.file,
-                  line: methodLine,
-                  column: methodColumn,
-                  parentScopeId,
-                  grafemaIgnore: grafemaIgnore ?? undefined,
-                  isAwaited: isAwaited || undefined,
-                });
-
-                // Check for array mutation methods (push, unshift, splice)
-                const ARRAY_MUTATION_METHODS = ['push', 'unshift', 'splice'];
-                if (ARRAY_MUTATION_METHODS.includes(methodName)) {
-                  this.detectArrayMutation(
-                    callNode,
-                    objectName,
-                    methodName as 'push' | 'unshift' | 'splice',
-                    module
-                  );
-                }
-
-                // Check for Object.assign() calls
-                if (objectName === 'Object' && methodName === 'assign') {
-                  this.detectObjectAssign(callNode, module);
-                }
-
-                // Extract arguments for PASSES_ARGUMENT edges
-                if (callNode.arguments.length > 0) {
-                  this.extractArguments(
-                    callNode.arguments,
-                    methodCallId,
-                    module,
-                    callArguments as ArgumentInfo[],
-                    literals as LiteralInfo[],
-                    literalCounterRef
-                  );
-
-                  // Also track callbacks for HAS_CALLBACK edges
-                  callNode.arguments.forEach((arg) => {
-                    if (arg.type === 'ArrowFunctionExpression' || arg.type === 'FunctionExpression') {
-                      (methodCallbacks as MethodCallbackInfo[]).push({
-                        methodCallId,
-                        callbackLine: getLine(arg),
-                        callbackColumn: getColumn(arg),
-                        callbackType: arg.type
-                      });
-                    }
-                  });
-                }
-              }
-            }
-            // REG-117: Nested array mutations like obj.arr.push(item)
-            // REG-395: General nested method calls like a.b.c() or obj.nested.method()
-            // object is MemberExpression, property is the method name
-            else if (object.type === 'MemberExpression' && property.type === 'Identifier') {
-              const nestedMember = object as MemberExpression;
-              const methodName = isComputed ? '<computed>' : (property as Identifier).name;
-              const ARRAY_MUTATION_METHODS = ['push', 'unshift', 'splice'];
-
-              if (ARRAY_MUTATION_METHODS.includes(methodName)) {
-                // Extract base object and property from nested MemberExpression
-                const base = nestedMember.object;
-                const prop = nestedMember.property;
-
-                // Only handle single-level nesting: obj.arr.push() or this.items.push()
-                if ((base.type === 'Identifier' || base.type === 'ThisExpression') &&
-                    !nestedMember.computed &&
-                    prop.type === 'Identifier') {
-                  const baseObjectName = base.type === 'Identifier' ? (base as Identifier).name : 'this';
-                  const propertyName = (prop as Identifier).name;
-
-                  this.detectArrayMutation(
-                    callNode,
-                    `${baseObjectName}.${propertyName}`,  // arrayName for ID purposes
-                    methodName as 'push' | 'unshift' | 'splice',
-                    module,
-                    true,          // isNested
-                    baseObjectName,
-                    propertyName
-                  );
-                }
-              }
-
-              // REG-395: Create CALL node for nested method calls like a.b.c()
-              // Extract full object name by walking the MemberExpression chain
-              const objectName = CallExpressionVisitor.extractMemberExpressionName(nestedMember);
-              if (objectName) {
-                const nodeKey = `${callNode.start}:${callNode.end}`;
-                if (!processedNodes.methodCalls.has(nodeKey)) {
-                  processedNodes.methodCalls.add(nodeKey);
-
-                  const fullName = `${objectName}.${methodName}`;
-                  const methodLine = getLine(callNode);
-                  const methodColumn = getColumn(callNode);
-
-                  const idGenerator = new IdGenerator(scopeTracker);
-                  const methodCallId = idGenerator.generate(
-                    'CALL', fullName, module.file,
-                    methodLine, methodColumn,
-                    callSiteCounterRef,
-                    { useDiscriminator: true, discriminatorKey: `CALL:${fullName}` }
-                  );
-
-                  const grafemaIgnore = getGrafemaIgnore(path);
-
-                  (methodCalls as MethodCallInfo[]).push({
-                    id: methodCallId,
-                    type: 'CALL',
-                    name: fullName,
-                    object: objectName,
-                    method: methodName,
-                    file: module.file,
-                    line: methodLine,
-                    column: methodColumn,
-                    parentScopeId,
-                    grafemaIgnore: grafemaIgnore ?? undefined,
-                  });
-                }
-              }
-            }
-          }
+        if (callNode.callee.type === 'Identifier') {
+          this.handleDirectCall(callNode, s, parentScopeId, isAwaited);
+        } else if (callNode.callee.type === 'MemberExpression') {
+          this.handleMemberCall(path, callNode, s, parentScopeId, isAwaited);
+        }
       },
 
-      // NewExpression: new Foo(), new Function(), new Map(), etc.
-      // Skip if inside function - they will be processed by analyzeFunctionBody with proper scope tracking
-      NewExpression: (path: NodePath) => {
-        const newNode = path.node as NewExpression;
-        const functionParent = path.getFunctionParent();
+      NewExpression: (path: NodePath) => this.handleNewExpression(path, s),
+    };
+  }
 
-        // Skip if inside function - handled by analyzeFunctionBody
-        if (functionParent) {
-          return;
-        }
+  /** Handle direct function calls: foo() */
+  private handleDirectCall(
+    callNode: CallExpression, s: HandlerState,
+    parentScopeId: string, isAwaited: boolean
+  ): void {
+    const callee = callNode.callee as Identifier;
+    const line = getLine(callNode);
+    const column = getColumn(callNode);
 
-        const parentScopeId = module.id;
+    const idGenerator = new IdGenerator(s.scopeTracker);
+    const callId = idGenerator.generate(
+      'CALL', callee.name, s.module.file,
+      line, column,
+      s.callSiteCounterRef,
+      { useDiscriminator: true, discriminatorKey: `CALL:${callee.name}` }
+    );
 
-        // Dedup check
-        const nodeKey = `new:${newNode.start}:${newNode.end}`;
-        if (processedNodes.methodCalls.has(nodeKey)) {
-          return;
-        }
-        processedNodes.methodCalls.add(nodeKey);
+    s.callSites.push({
+      id: callId,
+      type: 'CALL',
+      name: callee.name,
+      file: s.module.file,
+      line,
+      column,
+      parentScopeId,
+      targetFunctionName: callee.name,
+      isAwaited: isAwaited || undefined
+    });
 
-        // new Foo() - Identifier callee
-        if (newNode.callee.type === 'Identifier') {
-          const callee = newNode.callee as Identifier;
-          const constructorName = callee.name;
-          const newLine = getLine(newNode);
-          const newColumn = getColumn(newNode);
+    if (callNode.arguments.length > 0) {
+      ArgumentExtractor.extract(
+        callNode.arguments, callId, s.module,
+        s.callArguments, s.literals, s.literalCounterRef,
+        this.collections, s.scopeTracker
+      );
+    }
+  }
 
-          // Generate ID using centralized IdGenerator
-          const idGenerator = new IdGenerator(scopeTracker);
-          const newCallId = idGenerator.generate(
-            'CALL', `new:${constructorName}`, module.file,
-            newLine, newColumn,
-            callSiteCounterRef,
-            { useDiscriminator: true, discriminatorKey: `CALL:new:${constructorName}` }
-          );
+  /** Handle method calls: obj.method(), obj.on('event', handler), obj.arr.push() */
+  private handleMemberCall(
+    path: NodePath, callNode: CallExpression, s: HandlerState,
+    parentScopeId: string, isAwaited: boolean
+  ): void {
+    const memberCallee = callNode.callee as MemberExpression;
+    const object = memberCallee.object;
+    const property = memberCallee.property;
+    const isComputed = memberCallee.computed;
 
-          (callSites as CallSiteInfo[]).push({
-            id: newCallId,
-            type: 'CALL',
-            name: constructorName,
-            file: module.file,
-            line: newLine,
-            column: newColumn,
-            parentScopeId,
-            targetFunctionName: constructorName,
-            isNew: true  // Mark as constructor call
+    if ((object.type === 'Identifier' || object.type === 'ThisExpression') && property.type === 'Identifier') {
+      this.handleSimpleMethodCall(path, callNode, s, parentScopeId, isAwaited,
+        memberCallee, object, property as Identifier, isComputed);
+    }
+    // REG-117/REG-395: Nested method calls like obj.arr.push() or a.b.c()
+    else if (object.type === 'MemberExpression' && property.type === 'Identifier') {
+      this.handleNestedMethodCall(path, callNode, s, parentScopeId,
+        object as MemberExpression, property as Identifier, isComputed);
+    }
+  }
+
+  /** Handle simple method calls: obj.method() or obj.on('event', handler) */
+  private handleSimpleMethodCall(
+    path: NodePath, callNode: CallExpression, s: HandlerState,
+    parentScopeId: string, isAwaited: boolean,
+    memberCallee: MemberExpression, object: Node, property: Identifier, isComputed: boolean
+  ): void {
+    const objectName = object.type === 'Identifier' ? (object as Identifier).name : 'this';
+    const methodName = isComputed ? '<computed>' : property.name;
+    const computedPropertyVar = isComputed ? property.name : null;
+
+    // Special handling for .on() event handlers
+    if (methodName === 'on' && callNode.arguments.length >= 2) {
+      const firstArg = callNode.arguments[0];
+      const secondArg = callNode.arguments[1];
+
+      if (firstArg.type === 'StringLiteral') {
+        const nodeKey = `${callNode.start}:${callNode.end}`;
+        if (s.processedNodes.eventListeners.has(nodeKey)) return;
+        s.processedNodes.eventListeners.add(nodeKey);
+
+        const eventLine = getLine(callNode);
+        const eventColumn = getColumn(callNode);
+
+        s.eventListeners.push({
+          id: `event:listener#${firstArg.value}#${s.module.file}#${eventLine}:${eventColumn}:${s.callSiteCounterRef.value++}`,
+          type: 'event:listener',
+          name: firstArg.value,
+          object: objectName,
+          file: s.module.file,
+          line: eventLine,
+          parentScopeId,
+          callbackArg: secondArg
+        });
+      }
+      return;
+    }
+
+    // Regular method call
+    const nodeKey = `${callNode.start}:${callNode.end}`;
+    if (s.processedNodes.methodCalls.has(nodeKey)) return;
+    s.processedNodes.methodCalls.add(nodeKey);
+
+    const fullName = `${objectName}.${methodName}`;
+    const methodLine = getLine(callNode);
+    const methodColumn = getColumn(callNode);
+
+    const idGenerator = new IdGenerator(s.scopeTracker);
+    const methodCallId = idGenerator.generate(
+      'CALL', fullName, s.module.file,
+      methodLine, methodColumn,
+      s.callSiteCounterRef,
+      { useDiscriminator: true, discriminatorKey: `CALL:${fullName}` }
+    );
+
+    const grafemaIgnore = getGrafemaIgnore(path);
+
+    s.methodCalls.push({
+      id: methodCallId,
+      type: 'CALL',
+      name: fullName,
+      object: objectName,
+      method: methodName,
+      computed: isComputed,
+      computedPropertyVar,
+      file: s.module.file,
+      line: methodLine,
+      column: methodColumn,
+      parentScopeId,
+      grafemaIgnore: grafemaIgnore ?? undefined,
+      isAwaited: isAwaited || undefined,
+    });
+
+    // Check for array mutation methods (push, unshift, splice)
+    const ARRAY_MUTATION_METHODS = ['push', 'unshift', 'splice'];
+    if (ARRAY_MUTATION_METHODS.includes(methodName)) {
+      MutationDetector.detectArrayMutation(
+        callNode, objectName,
+        methodName as 'push' | 'unshift' | 'splice',
+        s.module, this.collections, s.scopeTracker
+      );
+    }
+
+    // Check for Object.assign() calls
+    if (objectName === 'Object' && methodName === 'assign') {
+      MutationDetector.detectObjectAssign(callNode, s.module, this.collections, s.scopeTracker);
+    }
+
+    // Extract arguments for PASSES_ARGUMENT edges
+    if (callNode.arguments.length > 0) {
+      ArgumentExtractor.extract(
+        callNode.arguments, methodCallId, s.module,
+        s.callArguments, s.literals, s.literalCounterRef,
+        this.collections, s.scopeTracker
+      );
+
+      // Also track callbacks for HAS_CALLBACK edges
+      callNode.arguments.forEach((arg) => {
+        if (arg.type === 'ArrowFunctionExpression' || arg.type === 'FunctionExpression') {
+          s.methodCallbacks.push({
+            methodCallId,
+            callbackLine: getLine(arg),
+            callbackColumn: getColumn(arg),
+            callbackType: arg.type
           });
         }
-        // new obj.Constructor() - MemberExpression callee
-        else if (newNode.callee.type === 'MemberExpression') {
-          const memberCallee = newNode.callee as MemberExpression;
-          const object = memberCallee.object;
-          const property = memberCallee.property;
+      });
+    }
+  }
 
-          if (object.type === 'Identifier' && property.type === 'Identifier') {
-            const objectName = (object as Identifier).name;
-            const constructorName = (property as Identifier).name;
-            const fullName = `${objectName}.${constructorName}`;
-            const memberNewLine = getLine(newNode);
-            const memberNewColumn = getColumn(newNode);
+  /** Handle nested method calls: obj.arr.push(), a.b.c() (REG-117, REG-395) */
+  private handleNestedMethodCall(
+    path: NodePath, callNode: CallExpression, s: HandlerState,
+    parentScopeId: string,
+    nestedMember: MemberExpression, property: Identifier, isComputed: boolean
+  ): void {
+    const methodName = isComputed ? '<computed>' : property.name;
+    const ARRAY_MUTATION_METHODS = ['push', 'unshift', 'splice'];
 
-            // Generate ID using centralized IdGenerator
-            const idGenerator = new IdGenerator(scopeTracker);
-            const newMethodCallId = idGenerator.generate(
-              'CALL', `new:${fullName}`, module.file,
-              memberNewLine, memberNewColumn,
-              callSiteCounterRef,
-              { useDiscriminator: true, discriminatorKey: `CALL:new:${fullName}` }
-            );
+    if (ARRAY_MUTATION_METHODS.includes(methodName)) {
+      const base = nestedMember.object;
+      const prop = nestedMember.property;
 
-            // REG-332: Check for grafema-ignore comment
-            const grafemaIgnore = getGrafemaIgnore(path);
+      if ((base.type === 'Identifier' || base.type === 'ThisExpression') &&
+          !nestedMember.computed && prop.type === 'Identifier') {
+        const baseObjectName = base.type === 'Identifier' ? (base as Identifier).name : 'this';
+        const propertyName = (prop as Identifier).name;
 
-            (methodCalls as MethodCallInfo[]).push({
-              id: newMethodCallId,
-              type: 'CALL',
-              name: fullName,
-              object: objectName,
-              method: constructorName,
-              file: module.file,
-              line: memberNewLine,
-              column: memberNewColumn,
-              parentScopeId,
-              isNew: true,  // Mark as constructor call
-              grafemaIgnore: grafemaIgnore ?? undefined,
-            });
-          }
-        }
+        MutationDetector.detectArrayMutation(
+          callNode,
+          `${baseObjectName}.${propertyName}`,
+          methodName as 'push' | 'unshift' | 'splice',
+          s.module, this.collections, s.scopeTracker,
+          true, baseObjectName, propertyName
+        );
       }
-    };
+    }
+
+    // REG-395: Create CALL node for nested method calls like a.b.c()
+    const objectName = CallExpressionVisitor.extractMemberExpressionName(nestedMember);
+    if (objectName) {
+      const nodeKey = `${callNode.start}:${callNode.end}`;
+      if (!s.processedNodes.methodCalls.has(nodeKey)) {
+        s.processedNodes.methodCalls.add(nodeKey);
+
+        const fullName = `${objectName}.${methodName}`;
+        const methodLine = getLine(callNode);
+        const methodColumn = getColumn(callNode);
+
+        const idGenerator = new IdGenerator(s.scopeTracker);
+        const methodCallId = idGenerator.generate(
+          'CALL', fullName, s.module.file,
+          methodLine, methodColumn,
+          s.callSiteCounterRef,
+          { useDiscriminator: true, discriminatorKey: `CALL:${fullName}` }
+        );
+
+        const grafemaIgnore = getGrafemaIgnore(path);
+
+        s.methodCalls.push({
+          id: methodCallId,
+          type: 'CALL',
+          name: fullName,
+          object: objectName,
+          method: methodName,
+          file: s.module.file,
+          line: methodLine,
+          column: methodColumn,
+          parentScopeId,
+          grafemaIgnore: grafemaIgnore ?? undefined,
+        });
+      }
+    }
+  }
+
+  /** Handle new expressions: new Foo(), new obj.Constructor() */
+  private handleNewExpression(path: NodePath, s: HandlerState): void {
+    const newNode = path.node as NewExpression;
+    const functionParent = path.getFunctionParent();
+
+    // Skip if inside function - handled by analyzeFunctionBody
+    if (functionParent) return;
+
+    const parentScopeId = s.module.id;
+
+    // Dedup check
+    const nodeKey = `new:${newNode.start}:${newNode.end}`;
+    if (s.processedNodes.methodCalls.has(nodeKey)) return;
+    s.processedNodes.methodCalls.add(nodeKey);
+
+    if (newNode.callee.type === 'Identifier') {
+      const constructorName = (newNode.callee as Identifier).name;
+      const newLine = getLine(newNode);
+      const newColumn = getColumn(newNode);
+
+      const idGenerator = new IdGenerator(s.scopeTracker);
+      const newCallId = idGenerator.generate(
+        'CALL', `new:${constructorName}`, s.module.file,
+        newLine, newColumn,
+        s.callSiteCounterRef,
+        { useDiscriminator: true, discriminatorKey: `CALL:new:${constructorName}` }
+      );
+
+      s.callSites.push({
+        id: newCallId,
+        type: 'CALL',
+        name: constructorName,
+        file: s.module.file,
+        line: newLine,
+        column: newColumn,
+        parentScopeId,
+        targetFunctionName: constructorName,
+        isNew: true
+      });
+    } else if (newNode.callee.type === 'MemberExpression') {
+      const memberCallee = newNode.callee as MemberExpression;
+      const object = memberCallee.object;
+      const property = memberCallee.property;
+
+      if (object.type === 'Identifier' && property.type === 'Identifier') {
+        const objectName = (object as Identifier).name;
+        const constructorName = (property as Identifier).name;
+        const fullName = `${objectName}.${constructorName}`;
+        const memberNewLine = getLine(newNode);
+        const memberNewColumn = getColumn(newNode);
+
+        const idGenerator = new IdGenerator(s.scopeTracker);
+        const newMethodCallId = idGenerator.generate(
+          'CALL', `new:${fullName}`, s.module.file,
+          memberNewLine, memberNewColumn,
+          s.callSiteCounterRef,
+          { useDiscriminator: true, discriminatorKey: `CALL:new:${fullName}` }
+        );
+
+        const grafemaIgnore = getGrafemaIgnore(path);
+
+        s.methodCalls.push({
+          id: newMethodCallId,
+          type: 'CALL',
+          name: fullName,
+          object: objectName,
+          method: constructorName,
+          file: s.module.file,
+          line: memberNewLine,
+          column: memberNewColumn,
+          parentScopeId,
+          isNew: true,
+          grafemaIgnore: grafemaIgnore ?? undefined,
+        });
+      }
+    }
   }
 }

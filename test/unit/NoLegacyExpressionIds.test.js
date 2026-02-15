@@ -132,8 +132,9 @@ describe('EXPRESSION node ID format validation', () => {
   });
 
   describe('NodeFactory usage in key files', () => {
-    it('CallExpressionVisitor should use NodeFactory.createArgumentExpression()', () => {
-      const file = 'packages/core/src/plugins/analysis/ast/visitors/CallExpressionVisitor.ts';
+    it('ArgumentExtractor should use NodeFactory.createArgumentExpression()', () => {
+      // REG-424: extractArguments moved from CallExpressionVisitor to ArgumentExtractor
+      const file = 'packages/core/src/plugins/analysis/ast/visitors/ArgumentExtractor.ts';
       const grepCommand = `grep -c "NodeFactory.createArgumentExpression" ${file} || echo "0"`;
 
       let result;
@@ -153,7 +154,8 @@ describe('EXPRESSION node ID format validation', () => {
 
     it('key files should import NodeFactory', () => {
       const files = [
-        'packages/core/src/plugins/analysis/ast/visitors/CallExpressionVisitor.ts',
+        // REG-424: NodeFactory usage moved from CallExpressionVisitor to ArgumentExtractor
+        'packages/core/src/plugins/analysis/ast/visitors/ArgumentExtractor.ts',
       ];
 
       for (const file of files) {
