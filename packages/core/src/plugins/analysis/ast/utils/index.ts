@@ -10,3 +10,5 @@ export {
   UNKNOWN_LOCATION,
   type NodeLocation
 } from './location.js';
+export { getMemberExpressionName } from './getMemberExpressionName.js';
+export { getExpressionValue } from './getExpressionValue.js';
