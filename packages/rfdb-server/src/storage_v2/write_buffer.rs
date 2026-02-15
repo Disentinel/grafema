@@ -175,6 +175,30 @@ impl WriteBuffer {
         self.edges.len()
     }
 
+    /// Estimate memory usage in bytes.
+    ///
+    /// Approximate cost per entry:
+    /// - Node: ~120 bytes (100 data + 20 HashMap overhead)
+    /// - Edge: ~50 bytes (40 data + 10 Vec overhead)
+    /// - Edge key: ~48 bytes (dedup HashSet entry)
+    pub fn estimated_memory_bytes(&self) -> usize {
+        const NODE_BYTES: usize = 120;
+        const EDGE_BYTES: usize = 50;
+        const EDGE_KEY_BYTES: usize = 48;
+
+        self.nodes.len() * NODE_BYTES
+            + self.edges.len() * EDGE_BYTES
+            + self.edge_keys.len() * EDGE_KEY_BYTES
+    }
+
+    /// Check if buffer exceeds the given adaptive limits.
+    ///
+    /// Returns true if node count >= `node_limit` or estimated memory
+    /// >= `byte_limit`. Callers use this to decide when to flush.
+    pub fn exceeds_limits(&self, node_limit: usize, byte_limit: usize) -> bool {
+        self.nodes.len() >= node_limit || self.estimated_memory_bytes() >= byte_limit
+    }
+
     /// True if buffer contains no nodes AND no edges.
     pub fn is_empty(&self) -> bool {
         self.nodes.is_empty() && self.edges.is_empty()
@@ -417,5 +441,57 @@ mod tests {
         let stats = buf.upsert_edges(vec![e1, e2, e3]);
         assert_eq!(stats, UpsertStats { inserted: 2, updated: 1 });
         assert_eq!(buf.edge_count(), 2);
+    }
+
+    // ── Memory Estimation ───────────────────────────────────────────
+
+    #[test]
+    fn test_estimated_memory_bytes_empty() {
+        let buf = WriteBuffer::new();
+        assert_eq!(buf.estimated_memory_bytes(), 0);
+    }
+
+    #[test]
+    fn test_estimated_memory_bytes_nodes_only() {
+        let mut buf = WriteBuffer::new();
+        buf.add_node(make_node("id1", "FUNCTION", "fn1", "file.rs"));
+        buf.add_node(make_node("id2", "CLASS", "cls1", "file.rs"));
+
+        // 2 nodes * 120 bytes = 240
+        assert_eq!(buf.estimated_memory_bytes(), 240);
+    }
+
+    #[test]
+    fn test_estimated_memory_bytes_mixed() {
+        let mut buf = WriteBuffer::new();
+        buf.add_node(make_node("id1", "FUNCTION", "fn1", "file.rs"));
+        buf.upsert_edge(make_edge("id1", "id2", "CALLS"));
+
+        // 1 node * 120 + 1 edge * 50 + 1 edge_key * 48 = 218
+        assert_eq!(buf.estimated_memory_bytes(), 218);
+    }
+
+    #[test]
+    fn test_estimated_memory_bytes_proportional() {
+        let mut buf = WriteBuffer::new();
+
+        // Add 10 nodes
+        for i in 0..10 {
+            let id = format!("node_{i}");
+            buf.add_node(make_node(&id, "FUNCTION", &id, "file.rs"));
+        }
+
+        let mem_10 = buf.estimated_memory_bytes();
+
+        // Add 10 more nodes
+        for i in 10..20 {
+            let id = format!("node_{i}");
+            buf.add_node(make_node(&id, "FUNCTION", &id, "file.rs"));
+        }
+
+        let mem_20 = buf.estimated_memory_bytes();
+
+        // Memory should roughly double (exactly double for nodes-only case)
+        assert_eq!(mem_20, mem_10 * 2);
     }
 }
