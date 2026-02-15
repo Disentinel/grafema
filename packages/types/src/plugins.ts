@@ -4,7 +4,7 @@
 
 import type { NodeType, NodeRecord } from './nodes.js';
 import type { EdgeType, EdgeRecord } from './edges.js';
-import type { FieldDeclaration } from './rfdb.js';
+import type { FieldDeclaration, CommitDelta } from './rfdb.js';
 import type { ResourceRegistry } from './resources.js';
 import type { RoutingRule } from './routing.js';
 
@@ -311,6 +311,11 @@ export interface GraphBackend {
 
   // Schema declaration
   declareFields?(fields: FieldDeclaration[]): Promise<number>;
+
+  // Batch operations (RFD-16: CommitBatch protocol)
+  beginBatch?(): void;
+  commitBatch?(tags?: string[]): Promise<CommitDelta>;
+  abortBatch?(): void;
 }
 
 export interface NodeFilter {
