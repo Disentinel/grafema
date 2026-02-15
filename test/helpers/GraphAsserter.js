@@ -385,6 +385,82 @@ export class GraphAsserter {
       }).sort((a, b) => `${a.from}-${a.type}-${a.to}`.localeCompare(`${b.from}-${b.type}-${b.to}`))
     };
   }
+
+  /**
+   * Enriched snapshot for behavior-locking tests.
+   * Captures all semantic properties (skips positional/internal data).
+   * Use for golden file comparison in refactoring safety net tests.
+   *
+   * Uses a blocklist approach: skip known unstable/positional properties,
+   * include everything else. New properties added to node types are
+   * automatically captured.
+   */
+  toEnrichedSnapshot() {
+    const SNAPSHOT_SKIP_PROPS = new Set([
+      'id',             // internal ID, changes between runs
+      'line',           // positional
+      'column',         // positional
+      'start',          // byte offset
+      'end',            // byte offset
+      'loc',            // location object
+      'range',          // range array
+      'parentScopeId',  // internal ID reference
+      'bodyScopeId',    // internal ID reference
+      'contentHash',    // changes with file content
+      'analyzedAt',     // timestamp, changes between runs
+    ]);
+
+    const nodes = this._getNodes().map(n => {
+      const props = {};
+      for (const [key, value] of Object.entries(n)) {
+        if (SNAPSHOT_SKIP_PROPS.has(key)) continue;
+        // Skip BigInt values — they are internal ID references
+        if (typeof value === 'bigint') continue;
+        // Skip undefined values
+        if (value === undefined) continue;
+        props[key] = value;
+      }
+      return props;
+    }).sort((a, b) => {
+      const keyA = `${a.type}:${a.name}`;
+      const keyB = `${b.type}:${b.name}`;
+      const cmp = keyA.localeCompare(keyB);
+      if (cmp !== 0) return cmp;
+      // Stable tiebreaker: file, then full JSON representation
+      const fileCmp = (a.file || '').localeCompare(b.file || '');
+      if (fileCmp !== 0) return fileCmp;
+      return JSON.stringify(a).localeCompare(JSON.stringify(b));
+    });
+
+    const edges = this._getEdges().map(e => {
+      const srcId = e.fromId || e.src;
+      const dstId = e.toId || e.dst;
+      const from = this._findNodeByEdgeId(srcId);
+      const to = this._findNodeByEdgeId(dstId);
+
+      const entry = {
+        from: from ? `${from.type}:${from.name}` : `<unresolved:${srcId}>`,
+        type: e.type,
+        to: to ? `${to.type}:${to.name}` : `<unresolved:${dstId}>`,
+      };
+
+      // Include metadata if present and non-empty
+      if (e.metadata && typeof e.metadata === 'object' && Object.keys(e.metadata).length > 0) {
+        entry.metadata = e.metadata;
+      }
+
+      return entry;
+    }).sort((a, b) => {
+      const keyA = `${a.from}-${a.type}-${a.to}`;
+      const keyB = `${b.from}-${b.type}-${b.to}`;
+      const cmp = keyA.localeCompare(keyB);
+      if (cmp !== 0) return cmp;
+      // Stable tiebreaker: full JSON representation
+      return JSON.stringify(a).localeCompare(JSON.stringify(b));
+    });
+
+    return { nodes, edges };
+  }
 }
 
 /**
