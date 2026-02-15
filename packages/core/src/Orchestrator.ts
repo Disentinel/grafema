@@ -3,15 +3,9 @@
  * Полностью абстрактный - специфичная логика в плагинах
  */
 
-import { existsSync, unlinkSync } from 'fs';
-import { join, dirname, resolve, basename } from 'path';
-import { fileURLToPath } from 'url';
-import type { ChildProcess } from 'child_process';
-import { spawn, execSync } from 'child_process';
-import { setTimeout as sleep } from 'timers/promises';
+import { join, resolve, basename } from 'path';
 import { SimpleProjectDiscovery } from './plugins/discovery/SimpleProjectDiscovery.js';
 import { Profiler } from './core/Profiler.js';
-import { AnalysisQueue } from './core/AnalysisQueue.js';
 import { DiagnosticCollector } from './diagnostics/DiagnosticCollector.js';
 import { StrictModeFailure } from './errors/GrafemaError.js';
 import { ResourceRegistryImpl } from './core/ResourceRegistry.js';
@@ -23,6 +17,7 @@ import type { ProgressCallback } from './PhaseRunner.js';
 import { GraphInitializer } from './GraphInitializer.js';
 import { DiscoveryManager } from './DiscoveryManager.js';
 import { GuaranteeChecker } from './GuaranteeChecker.js';
+import { ParallelAnalysisRunner } from './ParallelAnalysisRunner.js';
 export type { ProgressInfo, ProgressCallback } from './PhaseRunner.js';
 
 // Re-export types from OrchestratorTypes (REG-462)
@@ -58,9 +53,6 @@ export class Orchestrator {
   private indexOnly: boolean;
   private profiler: Profiler;
   private parallelConfig: ParallelConfig | null;
-  private analysisQueue: AnalysisQueue | null;
-  private rfdbServerProcess: ChildProcess | null;
-  private _serverWasExternal: boolean;
   private diagnosticCollector: DiagnosticCollector;
   private logger: Logger;
   /** Config-provided services (REG-174) */
@@ -81,6 +73,8 @@ export class Orchestrator {
   private discoveryManager!: DiscoveryManager;
   /** Guarantee checking after enrichment (REG-462) */
   private guaranteeChecker!: GuaranteeChecker;
+  /** Parallel analysis runner (REG-462) */
+  private parallelRunner: ParallelAnalysisRunner | null = null;
 
   constructor(options: OrchestratorOptions = {}) {
     this.graph = options.graph!;
@@ -96,9 +90,6 @@ export class Orchestrator {
 
     // Parallel/queue-based analysis config
     this.parallelConfig = options.parallel || null;
-    this.analysisQueue = null;
-    this.rfdbServerProcess = null;
-    this._serverWasExternal = false;
 
     // Initialize diagnostic collector
     this.diagnosticCollector = new DiagnosticCollector();
@@ -143,6 +134,13 @@ export class Orchestrator {
     this.guaranteeChecker = new GuaranteeChecker(
       this.graph, this.diagnosticCollector, this.profiler, this.onProgress, this.logger,
     );
+
+    // Initialize parallel runner if enabled (REG-462: extracted from Orchestrator)
+    if (this.parallelConfig?.enabled) {
+      this.parallelRunner = new ParallelAnalysisRunner(
+        this.graph, this.plugins, this.parallelConfig, this.onProgress, this.logger,
+      );
+    }
 
     // Modified auto-add logic: SKIP auto-add if config services provided (REG-174)
     const hasDiscovery = this.plugins.some(p => p.metadata?.phase === 'DISCOVERY');
@@ -305,8 +303,8 @@ export class Orchestrator {
     });
 
     // Check if parallel analysis is enabled (new functionality under flag)
-    if (this.parallelConfig?.enabled) {
-      await this.runParallelAnalysis(manifest);
+    if (this.parallelRunner) {
+      await this.parallelRunner.run(manifest);
     } else {
       // BACKWARD COMPATIBLE: per-unit batch processing (как в JS baseline)
       processedUnits = 0;
@@ -611,173 +609,4 @@ export class Orchestrator {
     return this.discoveryManager.buildIndexingUnits(manifest);
   }
 
-  /**
-   * Run queue-based parallel analysis using worker_threads and RFDB server
-   *
-   * Architecture:
-   * - Tasks are queued per-file with list of applicable plugins
-   * - Workers pick tasks, run plugins, write directly to RFDB
-   * - Barrier waits for all tasks before ENRICHMENT phase
-   */
-  async runParallelAnalysis(manifest: DiscoveryManifest): Promise<void> {
-    const socketPath = this.parallelConfig!.socketPath || '/tmp/rfdb.sock';
-    const maxWorkers = this.parallelConfig!.maxWorkers || null;
-
-    // Get the database path from the main graph backend
-    const mainDbPath = (this.graph as unknown as { dbPath?: string }).dbPath || join(manifest.projectPath, '.grafema', 'graph.rfdb');
-
-    this.logger.debug('Starting queue-based parallel analysis', { database: mainDbPath });
-
-    // Start RFDB server using the SAME database as main graph
-    await this.startRfdbServer(socketPath, mainDbPath);
-
-    // Get ANALYSIS plugins that should run in workers
-    const analysisPlugins = this.plugins
-      .filter(p => p.metadata?.phase === 'ANALYSIS')
-      .map(p => p.metadata.name);
-
-    this.logger.debug('Analysis plugins', { plugins: analysisPlugins });
-
-    // Create analysis queue
-    this.analysisQueue = new AnalysisQueue({
-      socketPath,
-      maxWorkers: maxWorkers || undefined,
-      plugins: analysisPlugins,
-    });
-
-    // Start workers
-    await this.analysisQueue.start();
-
-    // Get all MODULE nodes from graph and queue them
-    let moduleCount = 0;
-    for await (const node of this.graph.queryNodes({ type: 'MODULE' })) {
-      // Skip non-JS/TS files
-      if (!node.file?.match(/\.(js|jsx|ts|tsx|mjs|cjs)$/)) continue;
-
-      this.analysisQueue.addTask({
-        file: node.file,
-        moduleId: node.id,
-        moduleName: node.name as string,
-        plugins: analysisPlugins, // All plugins for now; workers filter by imports
-      });
-      moduleCount++;
-    }
-
-    this.logger.debug('Queued modules for analysis', { count: moduleCount });
-
-    // Subscribe to progress events
-    this.analysisQueue.on('taskCompleted', ({ file, stats, duration }: { file: string; stats?: { nodes?: number }; duration: number }) => {
-      this.onProgress({
-        phase: 'analysis',
-        currentPlugin: 'AnalysisQueue',
-        message: `${file.split('/').pop()} (${stats?.nodes || 0} nodes, ${duration}ms)`,
-      });
-    });
-
-    this.analysisQueue.on('taskFailed', ({ file, error }: { file: string; error: string }) => {
-      this.logger.error('Analysis failed', { file, error });
-    });
-
-    // Wait for all tasks to complete (barrier)
-    const stats = await this.analysisQueue.waitForCompletion();
-
-    this.logger.debug('Queue complete', {
-      nodesCreated: stats.nodesCreated,
-      edgesCreated: stats.edgesCreated,
-      succeeded: stats.tasksCompleted,
-      failed: stats.tasksFailed
-    });
-
-    // Stop workers and server
-    await this.analysisQueue.stop();
-    this.analysisQueue = null;
-    await this.stopRfdbServer();
-  }
-
-  /**
-   * Start RFDB server process (or connect to existing one)
-   * @param socketPath - Unix socket path for the server
-   * @param dbPath - Database path (should be same as main graph)
-   */
-  async startRfdbServer(socketPath: string, dbPath: string): Promise<void> {
-    // Check if server is already running (socket exists and is connectable)
-    if (existsSync(socketPath)) {
-      // Try to connect to existing server
-      try {
-        const { RFDBClient } = await import('@grafema/rfdb-client');
-        const testClient = new RFDBClient(socketPath);
-        await testClient.connect();
-        await testClient.ping();
-        await testClient.close();
-        this.logger.debug('Using existing RFDB server', { socketPath });
-        this.rfdbServerProcess = null; // Mark that we didn't start the server
-        this._serverWasExternal = true;
-        return;
-      } catch {
-        // Socket exists but server not responding, remove stale socket
-        this.logger.debug('Stale socket found, removing');
-        unlinkSync(socketPath);
-      }
-    }
-
-    // Check if server binary exists
-    const projectRoot = join(dirname(fileURLToPath(import.meta.url)), '../..');
-    const serverBinary = join(projectRoot, 'packages/rfdb-server/target/release/rfdb-server');
-    const debugBinary = join(projectRoot, 'packages/rfdb-server/target/debug/rfdb-server');
-
-    let binaryPath = existsSync(serverBinary) ? serverBinary : debugBinary;
-
-    if (!existsSync(binaryPath)) {
-      this.logger.debug('RFDB server binary not found, building', { path: binaryPath });
-      execSync('cargo build --bin rfdb-server', {
-        cwd: join(projectRoot, 'packages/rfdb-server'),
-        stdio: 'inherit',
-      });
-      binaryPath = debugBinary;
-    }
-
-    this.logger.debug('Starting RFDB server', { binary: binaryPath, database: dbPath });
-    this.rfdbServerProcess = spawn(binaryPath, [dbPath, '--socket', socketPath], {
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    this._serverWasExternal = false;
-
-    this.rfdbServerProcess.stderr?.on('data', (data: Buffer) => {
-      const msg = data.toString().trim();
-      if (!msg.includes('FLUSH') && !msg.includes('WRITER')) {
-        this.logger.debug('rfdb-server', { message: msg });
-      }
-    });
-
-    // Wait for server to start
-    let attempts = 0;
-    while (!existsSync(socketPath) && attempts < 30) {
-      await sleep(100);
-      attempts++;
-    }
-
-    if (!existsSync(socketPath)) {
-      throw new Error('RFDB server failed to start');
-    }
-
-    this.logger.debug('RFDB server started', { socketPath });
-  }
-
-  /**
-   * Stop RFDB server process (only if we started it)
-   */
-  async stopRfdbServer(): Promise<void> {
-    // Don't stop external server (started by MCP or another process)
-    if (this._serverWasExternal) {
-      this.logger.debug('Leaving external RFDB server running');
-      return;
-    }
-
-    if (this.rfdbServerProcess) {
-      this.rfdbServerProcess.kill('SIGTERM');
-      await sleep(200);
-      this.rfdbServerProcess = null;
-      this.logger.debug('RFDB server stopped');
-    }
-  }
 }
