@@ -201,13 +201,20 @@ impl GraphEngineV2 {
         let manifest = ManifestStore::open(path)?;
         let store = MultiShardStore::open(path, &manifest)?;
 
+        // Restore tombstones from manifest so deleted nodes/edges stay deleted.
+        let current = manifest.current();
+        let pending_tombstone_nodes: HashSet<u128> =
+            current.tombstoned_node_ids.iter().copied().collect();
+        let pending_tombstone_edges: HashSet<(u128, u128, String)> =
+            current.tombstoned_edge_keys.iter().cloned().collect();
+
         Ok(Self {
             store,
             manifest,
             path: Some(path.to_path_buf()),
             ephemeral: false,
-            pending_tombstone_nodes: HashSet::new(),
-            pending_tombstone_edges: HashSet::new(),
+            pending_tombstone_nodes,
+            pending_tombstone_edges,
             declared_fields: Vec::new(),
         })
     }
@@ -672,8 +679,16 @@ impl GraphEngineV2 {
         changed_files: &[String],
         tags: HashMap<String, String>,
     ) -> Result<CommitDelta> {
-        self.store
-            .commit_batch(nodes, edges, changed_files, tags, &mut self.manifest)
+        let delta = self.store
+            .commit_batch(nodes, edges, changed_files, tags, &mut self.manifest)?;
+
+        // Reload tombstones from manifest so node_count()/edge_count()
+        // and tombstone filtering stay correct within the same session.
+        let current = self.manifest.current();
+        self.pending_tombstone_nodes = current.tombstoned_node_ids.iter().copied().collect();
+        self.pending_tombstone_edges = current.tombstoned_edge_keys.iter().cloned().collect();
+
+        Ok(delta)
     }
 
     /// Tag an existing snapshot.
