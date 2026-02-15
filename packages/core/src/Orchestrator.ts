@@ -17,13 +17,13 @@ import { DiagnosticCollector } from './diagnostics/DiagnosticCollector.js';
 import { StrictModeFailure } from './errors/GrafemaError.js';
 import { ResourceRegistryImpl } from './core/ResourceRegistry.js';
 import type { Plugin, PluginContext } from './plugins/Plugin.js';
-import type { GraphBackend, Logger, ServiceDefinition, FieldDeclaration, NodeRecord, RoutingRule } from '@grafema/types';
+import type { GraphBackend, Logger, ServiceDefinition, RoutingRule } from '@grafema/types';
 import { createLogger } from './logging/Logger.js';
 import { NodeFactory } from './core/NodeFactory.js';
-import { brandNodeInternal } from './core/brandNodeInternal.js';
 import { toposort } from './core/toposort.js';
 import { PhaseRunner } from './PhaseRunner.js';
 import type { ProgressCallback } from './PhaseRunner.js';
+import { GraphInitializer } from './GraphInitializer.js';
 export type { ProgressInfo, ProgressCallback } from './PhaseRunner.js';
 
 // Re-export types from OrchestratorTypes (REG-462)
@@ -76,6 +76,8 @@ export class Orchestrator {
   private routing: RoutingRule[] | undefined;
   /** Phase executor (extracted from runPhase, RFD-16) */
   private phaseRunner!: PhaseRunner;
+  /** Graph setup: plugin nodes, field declarations, meta node (REG-462) */
+  private graphInitializer!: GraphInitializer;
 
   constructor(options: OrchestratorOptions = {}) {
     this.graph = options.graph!;
@@ -126,6 +128,9 @@ export class Orchestrator {
       routing: this.routing,
     });
 
+    // Initialize graph initializer (REG-462: extracted from Orchestrator)
+    this.graphInitializer = new GraphInitializer(this.graph, this.plugins, this.logger);
+
     // Modified auto-add logic: SKIP auto-add if config services provided (REG-174)
     const hasDiscovery = this.plugins.some(p => p.metadata?.phase === 'DISCOVERY');
     const hasConfigServices = this.configServices && this.configServices.length > 0;
@@ -134,106 +139,6 @@ export class Orchestrator {
       // Only auto-add if NO discovery plugins AND NO config services
       this.plugins.unshift(new SimpleProjectDiscovery());
     }
-  }
-
-  /**
-   * Create GRAPH_META node with project metadata.
-   * Called once at the start of analysis (single-root or multi-root).
-   */
-  private async createGraphMetaNode(projectPath: string): Promise<void> {
-    await this.graph.addNode(brandNodeInternal({
-      id: '__graph_meta__',
-      type: 'GRAPH_META' as NodeRecord['type'],
-      name: 'graph_metadata',
-      file: '',
-      projectPath: projectPath,
-      analyzedAt: new Date().toISOString()
-    }));
-  }
-
-  /**
-   * Register all loaded plugins as grafema:plugin nodes in the graph.
-   *
-   * Creates a node for each plugin with its metadata (phase, priority,
-   * creates, dependencies). Also creates DEPENDS_ON edges between
-   * plugins that declare dependencies.
-   *
-   * Called once at the start of run(), before any analysis phase.
-   * Complexity: O(p) where p = number of plugins (typically 20-35).
-   */
-  private async registerPluginNodes(): Promise<void> {
-    const pluginNodes: Array<{ id: string; name: string; dependencies: string[] }> = [];
-
-    for (const plugin of this.plugins) {
-      const meta = plugin.metadata;
-      if (!meta?.name) continue;
-
-      const sourceFile = (plugin.config?.sourceFile as string) || '';
-      const isBuiltin = !sourceFile;
-
-      const node = NodeFactory.createPlugin(meta.name, meta.phase, {
-        file: sourceFile,
-        builtin: isBuiltin,
-        createsNodes: (meta.creates?.nodes as string[]) ?? [],
-        createsEdges: (meta.creates?.edges as string[]) ?? [],
-        dependencies: meta.dependencies ?? [],
-      });
-
-      await this.graph.addNode(node);
-      pluginNodes.push({
-        id: node.id,
-        name: meta.name,
-        dependencies: meta.dependencies ?? [],
-      });
-    }
-
-    // Create DEPENDS_ON edges between plugins
-    const nameToId = new Map<string, string>();
-    for (const pn of pluginNodes) {
-      nameToId.set(pn.name, pn.id);
-    }
-
-    for (const pn of pluginNodes) {
-      for (const dep of pn.dependencies) {
-        const depId = nameToId.get(dep);
-        if (depId) {
-          await this.graph.addEdge({
-            src: pn.id,
-            dst: depId,
-            type: 'DEPENDS_ON',
-          });
-        }
-      }
-    }
-
-    this.logger.debug('Registered plugin nodes', {
-      count: pluginNodes.length,
-      edges: pluginNodes.reduce((sum, pn) => sum + pn.dependencies.filter(d => nameToId.has(d)).length, 0),
-    });
-  }
-
-  /**
-   * Collect field declarations from all plugins and send to RFDB for indexing.
-   * Deduplicates by field name (last declaration wins if nodeTypes differ).
-   * Called once before analysis to enable server-side metadata indexing.
-   */
-  private async declarePluginFields(): Promise<void> {
-    if (!this.graph.declareFields) return;
-
-    const fieldMap = new Map<string, FieldDeclaration>();
-    for (const plugin of this.plugins) {
-      const fields = plugin.metadata?.fields;
-      if (!fields) continue;
-      for (const field of fields) {
-        fieldMap.set(field.name, field);
-      }
-    }
-
-    if (fieldMap.size === 0) return;
-
-    const fields = [...fieldMap.values()];
-    const count = await this.graph.declareFields(fields);
-    this.logger.debug('Declared metadata fields for indexing', { fields: count });
   }
 
   /**
@@ -264,11 +169,8 @@ export class Orchestrator {
       this.logger.info('Graph cleared successfully');
     }
 
-    // Register plugin pipeline as grafema:plugin nodes (REG-386)
-    await this.registerPluginNodes();
-
-    // Declare metadata fields for RFDB server-side indexing (REG-398)
-    await this.declarePluginFields();
+    // Initialize graph: plugin nodes, field declarations (REG-386, REG-398)
+    await this.graphInitializer.init(absoluteProjectPath);
 
     this.onProgress({ phase: 'discovery', currentPlugin: 'Starting discovery...', message: 'Discovering services...', totalFiles: 0, processedFiles: 0 });
 
@@ -307,9 +209,6 @@ export class Orchestrator {
       processedFiles: 0
     });
     this.logger.info('Discovery complete', { services: svcCount, entrypoints: epCount });
-
-    // REG-408: Store project metadata so graph is self-describing
-    await this.createGraphMetaNode(absoluteProjectPath);
 
     // Build unified list of indexing units from services AND entrypoints
     const indexingUnits = this.buildIndexingUnits(manifest);
@@ -535,14 +434,8 @@ export class Orchestrator {
       this.logger.info('Graph cleared successfully');
     }
 
-    // Register plugin pipeline as grafema:plugin nodes (REG-386)
-    await this.registerPluginNodes();
-
-    // Declare metadata fields for RFDB server-side indexing (REG-398)
-    await this.declarePluginFields();
-
-    // REG-408: Store project metadata so graph is self-describing
-    await this.createGraphMetaNode(workspacePath);
+    // Initialize graph: plugin nodes, field declarations, meta node (REG-386, REG-398, REG-408)
+    await this.graphInitializer.init(workspacePath);
 
     // Collect all services from all roots
     const allServices: ServiceInfo[] = [];
