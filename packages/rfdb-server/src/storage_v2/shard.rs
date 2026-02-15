@@ -600,6 +600,16 @@ impl Shard {
         &self.edge_segments
     }
 
+    /// Get L0 node segment descriptors (for prefetch, manifest tracking).
+    pub fn l0_node_descriptors(&self) -> &[SegmentDescriptor] {
+        &self.node_descriptors
+    }
+
+    /// Get L0 edge segment descriptors (for prefetch, manifest tracking).
+    pub fn l0_edge_descriptors(&self) -> &[SegmentDescriptor] {
+        &self.edge_descriptors
+    }
+
     /// Get L1 node segment (for merge input during re-compaction).
     pub fn l1_node_segment(&self) -> Option<&NodeSegmentV2> {
         self.l1_node_segment.as_ref()
@@ -1574,6 +1584,14 @@ impl Shard {
     /// Write buffer size: (nodes, edges).
     pub fn write_buffer_size(&self) -> (usize, usize) {
         (self.write_buffer.node_count(), self.write_buffer.edge_count())
+    }
+
+    /// Check if write buffer exceeds the given adaptive limits.
+    ///
+    /// Used by `MultiShardStore::any_shard_needs_flush()` to determine
+    /// if auto-flush should be triggered after `add_nodes()`.
+    pub fn write_buffer_exceeds(&self, node_limit: usize, byte_limit: usize) -> bool {
+        self.write_buffer.exceeds_limits(node_limit, byte_limit)
     }
 
     /// Return all node IDs (write buffer + segments).
