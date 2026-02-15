@@ -767,6 +767,7 @@ dependencies = [
  "blake3",
  "criterion",
  "crossbeam-channel",
+ "libc",
  "memmap2",
  "napi",
  "napi-derive",

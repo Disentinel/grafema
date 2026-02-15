@@ -14,6 +14,36 @@ use crate::storage_v2::string_table::StringTableV2;
 use crate::storage_v2::types::*;
 use crate::storage_v2::zone_map::ZoneMap;
 
+// ── Prefetch ──────────────────────────────────────────────────────
+
+/// Hint the OS to prefetch a file into the page cache.
+///
+/// On Linux: issues `posix_fadvise(FADV_WILLNEED)` on the file descriptor,
+/// causing the kernel to initiate asynchronous readahead.
+/// On other platforms: opens the file (populating page cache) but issues
+/// no advisory — still beneficial as a cache-warming side effect.
+///
+/// This is useful before compaction, where we know we'll read entire
+/// segment files. Errors are intentionally ignored by callers — prefetch
+/// is a best-effort optimization with no correctness impact.
+pub fn prefetch_file(path: &Path) -> std::io::Result<()> {
+    let file = File::open(path)?;
+
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::io::AsRawFd;
+        let fd = file.as_raw_fd();
+        // POSIX_FADV_WILLNEED: initiate readahead for the entire file.
+        // offset=0, len=0 means "entire file".
+        unsafe {
+            libc::posix_fadvise(fd, 0, 0, libc::POSIX_FADV_WILLNEED);
+        }
+    }
+
+    let _ = file; // Keep file open until fadvise completes on Linux
+    Ok(())
+}
+
 // ── Helper Functions ───────────────────────────────────────────────
 
 /// Read u32 from byte slice at offset (little-endian).
@@ -1021,5 +1051,28 @@ mod tests {
         let seg = NodeSegmentV2::open(temp.path()).unwrap();
         assert_eq!(seg.record_count(), 1);
         assert_eq!(seg.get_record(0), node);
+    }
+
+    // ── Prefetch Smoke Test ───────────────────────────────────────────
+
+    #[test]
+    fn test_prefetch_file_smoke() {
+        use tempfile::NamedTempFile;
+
+        // Write a segment file to disk
+        let node = make_node("id", "FUNCTION", "name", "file.rs");
+        let bytes = write_node_segment(vec![node]);
+
+        let mut temp = NamedTempFile::new().unwrap();
+        use std::io::Write;
+        temp.write_all(&bytes).unwrap();
+        temp.flush().unwrap();
+
+        // prefetch_file should not crash on a valid file
+        super::prefetch_file(temp.path()).unwrap();
+
+        // prefetch_file on a nonexistent path should return an error (not crash)
+        let result = super::prefetch_file(Path::new("/nonexistent/path/file.seg"));
+        assert!(result.is_err());
     }
 }
