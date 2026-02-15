@@ -7,4 +7,6 @@ export { NestedFunctionHandler } from './NestedFunctionHandler.js';
 export { PropertyAccessHandler } from './PropertyAccessHandler.js';
 export { NewExpressionHandler } from './NewExpressionHandler.js';
 export { CallExpressionHandler } from './CallExpressionHandler.js';
-export { ControlFlowHandler } from './ControlFlowHandler.js';
+export { LoopHandler } from './LoopHandler.js';
+export { TryCatchHandler } from './TryCatchHandler.js';
+export { BranchHandler } from './BranchHandler.js';
