@@ -56,6 +56,7 @@ export class SQLiteAnalyzer extends Plugin {
     return {
       name: 'SQLiteAnalyzer',
       phase: 'ANALYSIS',
+      covers: ['sqlite3', 'better-sqlite3'],
       creates: {
         nodes: ['db:query'],
         edges: ['CONTAINS', 'EXECUTES_QUERY']

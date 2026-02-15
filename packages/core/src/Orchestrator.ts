@@ -18,6 +18,7 @@ import { GraphInitializer } from './GraphInitializer.js';
 import { DiscoveryManager } from './DiscoveryManager.js';
 import { GuaranteeChecker } from './GuaranteeChecker.js';
 import { ParallelAnalysisRunner } from './ParallelAnalysisRunner.js';
+import { COVERED_PACKAGES_RESOURCE_ID, createCoveredPackagesResource } from './plugins/validation/PackageCoverageValidator.js';
 export type { ProgressInfo, ProgressCallback } from './PhaseRunner.js';
 
 // Re-export types from OrchestratorTypes (REG-462)
@@ -426,6 +427,9 @@ export class Orchestrator {
     // GUARANTEE CHECK (RFD-18)
     await this.guaranteeChecker.check(enrichmentTypes, projectPath);
 
+    // REG-259: Compute covered packages from plugin metadata before validation
+    this.storeCoveredPackages();
+
     // VALIDATION phase (global)
     const validationStart = Date.now();
     this.profiler.start('VALIDATION');
@@ -462,6 +466,29 @@ export class Orchestrator {
    */
   async discover(projectPath: string): Promise<DiscoveryManifest> {
     return this.discoveryManager.discover(projectPath);
+  }
+
+  /**
+   * REG-259: Collect package names from plugin `covers` metadata
+   * and store them in the ResourceRegistry for PackageCoverageValidator.
+   */
+  private storeCoveredPackages(): void {
+    const coveredPackages = new Set<string>();
+    for (const plugin of this.plugins) {
+      const covers = plugin.metadata?.covers ?? [];
+      for (const pkg of covers) {
+        coveredPackages.add(pkg);
+      }
+    }
+
+    this.resourceRegistry.getOrCreate(COVERED_PACKAGES_RESOURCE_ID, () =>
+      createCoveredPackagesResource(coveredPackages)
+    );
+
+    this.logger.debug('Stored covered packages for validation', {
+      count: coveredPackages.size,
+      packages: [...coveredPackages],
+    });
   }
 
   /**

@@ -54,6 +54,7 @@ import {
   TypeScriptDeadCodeValidator,
   BrokenImportValidator,
   UnconnectedRouteValidator,
+  PackageCoverageValidator,
 } from '@grafema/core';
 
 export const BUILTIN_PLUGINS: Record<string, () => Plugin> = {
@@ -103,4 +104,5 @@ export const BUILTIN_PLUGINS: Record<string, () => Plugin> = {
   TypeScriptDeadCodeValidator: () => new TypeScriptDeadCodeValidator() as Plugin,
   BrokenImportValidator: () => new BrokenImportValidator() as Plugin,
   UnconnectedRouteValidator: () => new UnconnectedRouteValidator() as Plugin,
+  PackageCoverageValidator: () => new PackageCoverageValidator() as Plugin,
 };

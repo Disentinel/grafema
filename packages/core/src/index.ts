@@ -312,6 +312,8 @@ export { DataFlowValidator } from './plugins/validation/DataFlowValidator.js';
 export { TypeScriptDeadCodeValidator } from './plugins/validation/TypeScriptDeadCodeValidator.js';
 export { BrokenImportValidator } from './plugins/validation/BrokenImportValidator.js';
 export { UnconnectedRouteValidator } from './plugins/validation/UnconnectedRouteValidator.js';
+export { PackageCoverageValidator, COVERED_PACKAGES_RESOURCE_ID, createCoveredPackagesResource } from './plugins/validation/PackageCoverageValidator.js';
+export type { CoveredPackagesResource } from './plugins/validation/PackageCoverageValidator.js';
 
 // Discovery plugins
 export { SimpleProjectDiscovery } from './plugins/discovery/SimpleProjectDiscovery.js';

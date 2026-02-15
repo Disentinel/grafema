@@ -173,6 +173,7 @@ export const DEFAULT_CONFIG: GrafemaConfig = {
       'TypeScriptDeadCodeValidator',
       'BrokenImportValidator',
       'UnconnectedRouteValidator',
+      'PackageCoverageValidator',
     ],
   },
   services: [], // Empty by default (uses auto-discovery)
