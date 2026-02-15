@@ -27,7 +27,8 @@ import { setTimeout as sleep } from 'timers/promises';
 import type { WireNode, WireEdge, FieldDeclaration, CommitDelta, AttrQuery as RFDBAttrQuery } from '@grafema/types';
 import type { NodeType, EdgeType } from '@grafema/types';
 import { findRfdbBinary } from '../../utils/findRfdbBinary.js';
-import type { BaseNodeRecord, EdgeRecord } from '@grafema/types';
+import type { BaseNodeRecord, EdgeRecord, AnyBrandedNode } from '@grafema/types';
+import { brandNodeInternal } from '../../core/brandNodeInternal.js';
 import type { AttrQuery, GraphStats, GraphExport } from '../../core/GraphBackend.js';
 
 /**
@@ -447,7 +448,7 @@ export class RFDBServerBackend {
   /**
    * Parse a node from wire format to JS format
    */
-  private _parseNode(wireNode: WireNode): BaseNodeRecord {
+  private _parseNode(wireNode: WireNode): AnyBrandedNode {
     const metadata: Record<string, unknown> = wireNode.metadata ? JSON.parse(wireNode.metadata) : {};
 
     // Parse nested JSON strings
@@ -477,7 +478,7 @@ export class RFDBServerBackend {
       ...safeMetadata
     } = metadata;
 
-    return {
+    const parsed = {
       id: humanId,
       type: wireNode.nodeType,
       name: wireNode.name,
@@ -485,6 +486,9 @@ export class RFDBServerBackend {
       exported: wireNode.exported,
       ...safeMetadata,
     };
+
+    // Re-brand nodes coming from database
+    return brandNodeInternal(parsed);
   }
 
   /**

@@ -4,6 +4,7 @@
  */
 
 import type { GraphBackend, NodeRecord } from '@grafema/types';
+import { brandNodeInternal } from '../../../core/brandNodeInternal.js';
 import { parseSemanticId } from '../../../core/SemanticId.js';
 import type {
   ModuleNode,
@@ -101,8 +102,9 @@ export class GraphBuilder {
    */
   private async _flushNodes(graph: GraphBackend): Promise<number> {
     if (this._nodeBuffer.length > 0) {
-      // Cast to unknown first since GraphNode is more permissive than NodeRecord
-      await graph.addNodes(this._nodeBuffer as unknown as NodeRecord[]);
+      // Brand nodes before flushing - they're validated by builders
+      const brandedNodes = this._nodeBuffer.map(node => brandNodeInternal(node as unknown as NodeRecord));
+      await graph.addNodes(brandedNodes);
       const count = this._nodeBuffer.length;
       this._nodeBuffer = [];
       return count;
