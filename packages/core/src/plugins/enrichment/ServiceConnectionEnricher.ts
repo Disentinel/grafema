@@ -339,6 +339,10 @@ export class ServiceConnectionEnricher extends Plugin {
       if (!route.file) continue;
       const serviceName = this.getServiceForFile(route.file, serviceMap);
       if (serviceName && cfServices.has(serviceName)) {
+        // LEGITIMATE USE: brandNodeInternal() is correct here because:
+        // 1. This node was already created and validated by ExpressRouteAnalyzer
+        // 2. We're enriching it with customerFacing metadata, not creating a new node
+        // 3. The original node structure and type remain unchanged
         await graph.addNode(brandNodeInternal({
           ...route,
           customerFacing: true,

@@ -235,6 +235,10 @@ export class MountPointResolver extends Plugin {
             fullPath: route.fullPath || fullPath
           };
 
+          // LEGITIMATE USE: brandNodeInternal() is correct here because:
+          // 1. This node was already created and validated by ExpressRouteAnalyzer
+          // 2. We're enriching it with mount path data, not creating a new node
+          // 3. The original node structure and type remain unchanged
           await graph.addNode(brandNodeInternal(updatedRoute as BaseNodeRecord));
           routesUpdated++;
         }
