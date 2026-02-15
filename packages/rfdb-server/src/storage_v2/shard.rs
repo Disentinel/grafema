@@ -304,10 +304,10 @@ impl Shard {
         self.write_buffer.add_nodes(records);
     }
 
-    /// Add edges to write buffer. Immediately queryable.
+    /// Upsert edges into write buffer. Immediately queryable.
     /// Dedup via edge_keys in WriteBuffer.
-    pub fn add_edges(&mut self, records: Vec<EdgeRecordV2>) {
-        self.write_buffer.add_edges(records);
+    pub fn upsert_edges(&mut self, records: Vec<EdgeRecordV2>) {
+        self.write_buffer.upsert_edges(records);
     }
 }
 
@@ -1309,9 +1309,9 @@ mod tests {
     }
 
     #[test]
-    fn test_add_edges_flush_ephemeral() {
+    fn test_upsert_edges_flush_ephemeral() {
         let mut shard = Shard::ephemeral();
-        shard.add_edges(vec![
+        shard.upsert_edges(vec![
             make_edge("src1", "dst1", "CALLS"),
             make_edge("src2", "dst2", "IMPORTS_FROM"),
         ]);
@@ -1337,13 +1337,13 @@ mod tests {
 
         // First flush
         shard.add_nodes(vec![make_node("id1", "FUNCTION", "fn1", "file.rs")]);
-        shard.add_edges(vec![make_edge("src1", "dst1", "CALLS")]);
+        shard.upsert_edges(vec![make_edge("src1", "dst1", "CALLS")]);
         shard.flush_with_ids(Some(1), Some(2)).unwrap();
         assert_eq!(shard.segment_count(), (1, 1));
 
         // Second flush
         shard.add_nodes(vec![make_node("id2", "CLASS", "cls1", "file2.rs")]);
-        shard.add_edges(vec![make_edge("src2", "dst2", "IMPORTS_FROM")]);
+        shard.upsert_edges(vec![make_edge("src2", "dst2", "IMPORTS_FROM")]);
         shard.flush_with_ids(Some(3), Some(4)).unwrap();
         assert_eq!(shard.segment_count(), (2, 2));
     }
@@ -1355,7 +1355,7 @@ mod tests {
             make_node("id1", "FUNCTION", "fn1", "src/main.rs"),
             make_node("id2", "CLASS", "cls1", "src/lib.rs"),
         ]);
-        shard.add_edges(vec![make_edge("id1", "id2", "CALLS")]);
+        shard.upsert_edges(vec![make_edge("id1", "id2", "CALLS")]);
 
         let result = shard.flush_with_ids(Some(1), Some(2)).unwrap().unwrap();
 
@@ -1380,7 +1380,7 @@ mod tests {
         let mut shard = Shard::create(&shard_path).unwrap();
 
         shard.add_nodes(vec![make_node("id1", "FUNCTION", "fn1", "file.rs")]);
-        shard.add_edges(vec![make_edge("src1", "dst1", "CALLS")]);
+        shard.upsert_edges(vec![make_edge("src1", "dst1", "CALLS")]);
 
         let result = shard.flush_with_ids(Some(1), Some(2)).unwrap().unwrap();
 
@@ -1403,7 +1403,7 @@ mod tests {
             make_node("id1", "FUNCTION", "fn1", "file.rs"),
             make_node("id2", "CLASS", "cls1", "file.rs"),
         ]);
-        shard.add_edges(vec![make_edge("src1", "dst1", "CALLS")]);
+        shard.upsert_edges(vec![make_edge("src1", "dst1", "CALLS")]);
 
         assert_eq!(shard.write_buffer_size(), (2, 1));
         shard.flush_with_ids(Some(1), Some(2)).unwrap();
@@ -1577,7 +1577,7 @@ mod tests {
         let e2 = make_edge("src1", "dst2", "IMPORTS_FROM");
         let e3 = make_edge("src2", "dst1", "CALLS");
 
-        shard.add_edges(vec![e1.clone(), e2.clone(), e3.clone()]);
+        shard.upsert_edges(vec![e1.clone(), e2.clone(), e3.clone()]);
 
         let src1_id = node_id("src1");
         let outgoing = shard.get_outgoing_edges(src1_id, None);
@@ -1595,7 +1595,7 @@ mod tests {
         let e1 = make_edge("src1", "dst1", "CALLS");
         let e2 = make_edge("src1", "dst2", "IMPORTS_FROM");
 
-        shard.add_edges(vec![e1.clone(), e2.clone()]);
+        shard.upsert_edges(vec![e1.clone(), e2.clone()]);
         shard.flush_with_ids(None, Some(1)).unwrap();
 
         let src1_id = node_id("src1");
@@ -1611,7 +1611,7 @@ mod tests {
         let e3 = make_edge("src3", "dst1", "CALLS");
         let e4 = make_edge("src4", "dst2", "CALLS");
 
-        shard.add_edges(vec![e1, e2, e3, e4]);
+        shard.upsert_edges(vec![e1, e2, e3, e4]);
 
         let dst1_id = node_id("dst1");
         let incoming_all = shard.get_incoming_edges(dst1_id, None);
@@ -1630,15 +1630,15 @@ mod tests {
         let mut shard = Shard::ephemeral();
 
         // Flush edges to segment 1
-        shard.add_edges(vec![make_edge("src1", "dst1", "CALLS")]);
+        shard.upsert_edges(vec![make_edge("src1", "dst1", "CALLS")]);
         shard.flush_with_ids(None, Some(1)).unwrap();
 
         // Flush more edges to segment 2
-        shard.add_edges(vec![make_edge("src1", "dst2", "IMPORTS_FROM")]);
+        shard.upsert_edges(vec![make_edge("src1", "dst2", "IMPORTS_FROM")]);
         shard.flush_with_ids(None, Some(2)).unwrap();
 
         // Add more edges to buffer
-        shard.add_edges(vec![make_edge("src1", "dst3", "CONTAINS")]);
+        shard.upsert_edges(vec![make_edge("src1", "dst3", "CONTAINS")]);
 
         let src1_id = node_id("src1");
         let outgoing = shard.get_outgoing_edges(src1_id, None);
@@ -1735,7 +1735,7 @@ mod tests {
         // Step 3: Add edges
         let e1 = make_edge("app::main", "app::helper", "CALLS");
         let e2 = make_edge("app::main", "app::Config", "USES");
-        shard.add_edges(vec![e1.clone(), e2.clone()]);
+        shard.upsert_edges(vec![e1.clone(), e2.clone()]);
 
         // Step 4: Flush
         shard.flush_with_ids(Some(1), Some(2)).unwrap();
@@ -1750,7 +1750,7 @@ mod tests {
         // Step 6: Add more data and flush again
         let n4 = make_node("app::Logger", "CLASS", "Logger", "src/logger.rs");
         shard.add_nodes(vec![n4.clone()]);
-        shard.add_edges(vec![make_edge("app::main", "app::Logger", "USES")]);
+        shard.upsert_edges(vec![make_edge("app::main", "app::Logger", "USES")]);
         shard.flush_with_ids(Some(3), Some(4)).unwrap();
         assert_eq!(shard.segment_count(), (2, 2));
 
@@ -1833,7 +1833,7 @@ mod tests {
         {
             let mut shard = Shard::create(&shard_path).unwrap();
             shard.add_nodes(vec![node.clone()]);
-            shard.add_edges(vec![make_edge("persistent", "other", "CALLS")]);
+            shard.upsert_edges(vec![make_edge("persistent", "other", "CALLS")]);
             flush_result = shard.flush_with_ids(Some(1), Some(2)).unwrap().unwrap();
         }
 
@@ -2013,7 +2013,7 @@ mod tests {
         let src_id = node_id("tomb::src");
         let dst1_id = node_id("tomb::dst1");
 
-        shard.add_edges(vec![e1, e2]);
+        shard.upsert_edges(vec![e1, e2]);
         shard.flush_with_ids(None, Some(1)).unwrap();
 
         // Before tombstone: 2 outgoing edges
@@ -2037,7 +2037,7 @@ mod tests {
         let src1_id = node_id("tomb::src1");
         let target_id = node_id("tomb::target");
 
-        shard.add_edges(vec![e1, e2]);
+        shard.upsert_edges(vec![e1, e2]);
         shard.flush_with_ids(None, Some(1)).unwrap();
 
         // Before tombstone: 2 incoming edges
@@ -2091,7 +2091,7 @@ mod tests {
         let e1 = make_edge("tomb::noop1", "tomb::noop2", "CALLS");
 
         shard.add_nodes(vec![n1.clone(), n2.clone()]);
-        shard.add_edges(vec![e1]);
+        shard.upsert_edges(vec![e1]);
         shard.flush_with_ids(Some(1), Some(2)).unwrap();
 
         // Set empty tombstones (should have no effect)
@@ -2145,7 +2145,7 @@ mod tests {
         let e2 = make_edge("src_a", "dst2", "IMPORTS_FROM");
         let e3 = make_edge("src_b", "dst3", "CALLS");
 
-        shard.add_edges(vec![e1.clone(), e2.clone(), e3.clone()]);
+        shard.upsert_edges(vec![e1.clone(), e2.clone(), e3.clone()]);
 
         // Query for src_a only
         let src_a_id = node_id("src_a");
@@ -2166,7 +2166,7 @@ mod tests {
 
         let e1 = make_edge("seg_src", "seg_dst1", "CALLS");
         let e2 = make_edge("seg_src", "seg_dst2", "IMPORTS_FROM");
-        shard.add_edges(vec![e1.clone(), e2.clone()]);
+        shard.upsert_edges(vec![e1.clone(), e2.clone()]);
         shard.flush_with_ids(None, Some(1)).unwrap();
 
         // Write buffer should now be empty
@@ -2187,12 +2187,12 @@ mod tests {
 
         // Segment 1: edges from src_x
         let e1 = make_edge("bloom_src_x", "bloom_dst1", "CALLS");
-        shard.add_edges(vec![e1.clone()]);
+        shard.upsert_edges(vec![e1.clone()]);
         shard.flush_with_ids(None, Some(1)).unwrap();
 
         // Segment 2: edges from src_y
         let e2 = make_edge("bloom_src_y", "bloom_dst2", "CALLS");
-        shard.add_edges(vec![e2.clone()]);
+        shard.upsert_edges(vec![e2.clone()]);
         shard.flush_with_ids(None, Some(2)).unwrap();
 
         // Query for src_x only — should find only e1
@@ -2210,7 +2210,7 @@ mod tests {
         let mut shard = Shard::ephemeral();
 
         // Add some edges
-        shard.add_edges(vec![
+        shard.upsert_edges(vec![
             make_edge("empty_src1", "empty_dst1", "CALLS"),
             make_edge("empty_src2", "empty_dst2", "CALLS"),
         ]);
@@ -2229,22 +2229,22 @@ mod tests {
         // Segment 1: edges from src_a and src_b
         let e1 = make_edge("multi_src_a", "multi_dst1", "CALLS");
         let e2 = make_edge("multi_src_b", "multi_dst2", "IMPORTS_FROM");
-        shard.add_edges(vec![e1.clone(), e2.clone()]);
+        shard.upsert_edges(vec![e1.clone(), e2.clone()]);
         shard.flush_with_ids(None, Some(1)).unwrap();
 
         // Segment 2: more edges from src_a
         let e3 = make_edge("multi_src_a", "multi_dst3", "CONTAINS");
-        shard.add_edges(vec![e3.clone()]);
+        shard.upsert_edges(vec![e3.clone()]);
         shard.flush_with_ids(None, Some(2)).unwrap();
 
         // Segment 3: edges from src_c
         let e4 = make_edge("multi_src_c", "multi_dst4", "CALLS");
-        shard.add_edges(vec![e4.clone()]);
+        shard.upsert_edges(vec![e4.clone()]);
         shard.flush_with_ids(None, Some(3)).unwrap();
 
         // Also add an edge to the buffer (unflushed)
         let e5 = make_edge("multi_src_b", "multi_dst5", "CALLS");
-        shard.add_edges(vec![e5.clone()]);
+        shard.upsert_edges(vec![e5.clone()]);
 
         // Query for src_a and src_b — should find e1, e2, e3, e5
         let src_a_id = node_id("multi_src_a");

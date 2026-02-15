@@ -361,10 +361,10 @@ impl GraphStore for GraphEngineV2 {
                 edge.edge_type.clone(),
             ));
         }
-        let result = self.store.add_edges(v2_edges);
+        let result = self.store.upsert_edges(v2_edges);
         if !skip_validation {
             if let Err(e) = result {
-                tracing::warn!("add_edges error: {}", e);
+                tracing::warn!("upsert_edges error: {}", e);
             }
         }
         // If skip_validation, silently ignore errors

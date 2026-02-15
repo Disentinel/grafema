@@ -89,7 +89,7 @@ pub struct ShardStats {
 ///
 /// Provides the same query interface as a single shard:
 /// - `add_nodes()`: routes each node to its shard by file directory hash
-/// - `add_edges()`: routes each edge to the shard owning edge.src
+/// - `upsert_edges()`: routes each edge to the shard owning edge.src
 /// - `get_node()`, `find_nodes()`, edge queries: fan out to all shards, merge
 ///
 /// NOT Send+Sync by default. For multi-threaded access, wrap in
@@ -262,7 +262,7 @@ impl MultiShardStore {
         }
     }
 
-    /// Add edges, routing each to the appropriate shard.
+    /// Upsert edges, routing each to the appropriate shard.
     ///
     /// Routing logic:
     /// - If edge metadata has `__file_context` → route to enrichment shard
@@ -271,7 +271,7 @@ impl MultiShardStore {
     ///
     /// Returns error if any non-enrichment edge's source node is not found
     /// in `node_to_shard` (node must be added before its outgoing edges).
-    pub fn add_edges(&mut self, records: Vec<EdgeRecordV2>) -> Result<()> {
+    pub fn upsert_edges(&mut self, records: Vec<EdgeRecordV2>) -> Result<()> {
         let mut by_shard: HashMap<u16, Vec<EdgeRecordV2>> = HashMap::new();
         for edge in records {
             if let Some(file_context) = extract_file_context(&edge.metadata) {
@@ -292,7 +292,7 @@ impl MultiShardStore {
         }
 
         for (shard_id, edges) in by_shard {
-            self.shards[shard_id as usize].add_edges(edges);
+            self.shards[shard_id as usize].upsert_edges(edges);
         }
 
         Ok(())
@@ -766,11 +766,11 @@ impl MultiShardStore {
         }
 
         // ── Phase 5: Add new data ──
-        // Clone edges before add_edges (which takes ownership).
+        // Clone edges before upsert_edges (which takes ownership).
         // We need the clone for Phase 5.5 edge tombstone removal.
         let edges_clone: Vec<EdgeRecordV2> = edges.clone();
         self.add_nodes(nodes.clone());
-        self.add_edges(edges)?;
+        self.upsert_edges(edges)?;
 
         // ── Phase 5.5: Remove re-added IDs from tombstones ──
         // New data supersedes tombstones for the same IDs.
@@ -1052,7 +1052,7 @@ mod tests {
     }
 
     #[test]
-    fn test_add_edges_routes_to_source_shard() {
+    fn test_upsert_edges_routes_to_source_shard() {
         let mut store = MultiShardStore::ephemeral(4);
 
         let n1 = make_node("src/a/fn1", "FUNCTION", "fn1", "src/a/file.js");
@@ -1061,7 +1061,7 @@ mod tests {
 
         // Edge from n1 -> n2 should land in n1's shard
         let edge = make_edge("src/a/fn1", "src/b/fn2", "CALLS");
-        store.add_edges(vec![edge.clone()]).unwrap();
+        store.upsert_edges(vec![edge.clone()]).unwrap();
 
         // Query outgoing edges from n1 — should find the edge
         let outgoing = store.get_outgoing_edges(n1.id, None);
@@ -1070,7 +1070,7 @@ mod tests {
     }
 
     #[test]
-    fn test_add_edges_src_not_found() {
+    fn test_upsert_edges_src_not_found() {
         let mut store = MultiShardStore::ephemeral(4);
 
         // Try to add edge without adding source node first
@@ -1081,7 +1081,7 @@ mod tests {
             metadata: String::new(),
         };
 
-        let result = store.add_edges(vec![edge]);
+        let result = store.upsert_edges(vec![edge]);
         assert!(result.is_err());
         match result.unwrap_err() {
             GraphError::NodeNotFound(id) => assert_eq!(id, 999),
@@ -1204,7 +1204,7 @@ mod tests {
 
         // Cross-shard edge: n1 -> n2
         let edge = make_edge("src/a/caller", "lib/b/callee", "CALLS");
-        store.add_edges(vec![edge]).unwrap();
+        store.upsert_edges(vec![edge]).unwrap();
 
         // Outgoing from n1 should work
         let outgoing = store.get_outgoing_edges(n1.id, None);
@@ -1249,7 +1249,7 @@ mod tests {
                 metadata: String::new(),
             })
             .collect();
-        store.add_edges(edges).unwrap();
+        store.upsert_edges(edges).unwrap();
 
         // Incoming edges to target should find all 4 (from different shards)
         let incoming = store.get_incoming_edges(target.id, None);
@@ -1269,7 +1269,7 @@ mod tests {
 
         assert_eq!(store.node_count(), 2);
 
-        store.add_edges(vec![
+        store.upsert_edges(vec![
             make_edge("a/fn1", "b/fn2", "CALLS"),
         ]).unwrap();
 
@@ -1337,7 +1337,7 @@ mod tests {
             let n1 = make_node("src/a/fn1", "FUNCTION", "fn1", "src/a/file.js");
             let n2 = make_node("lib/b/fn2", "FUNCTION", "fn2", "lib/b/file.js");
             store.add_nodes(vec![n1, n2]);
-            store.add_edges(vec![
+            store.upsert_edges(vec![
                 make_edge("src/a/fn1", "lib/b/fn2", "CALLS"),
             ]).unwrap();
             store.flush_all(&mut manifest_store).unwrap();
@@ -1378,7 +1378,7 @@ mod tests {
         {
             let mut store = MultiShardStore::create(&db_path, 4).unwrap();
             store.add_nodes(vec![n1.clone(), n2.clone()]);
-            store.add_edges(vec![e1.clone()]).unwrap();
+            store.upsert_edges(vec![e1.clone()]).unwrap();
             store.flush_all(&mut manifest_store).unwrap();
         }
 
@@ -1424,9 +1424,9 @@ mod tests {
             .collect();
 
         single.add_nodes(nodes.clone());
-        single.add_edges(edges.clone());
+        single.upsert_edges(edges.clone());
         multi.add_nodes(nodes);
-        multi.add_edges(edges).unwrap();
+        multi.upsert_edges(edges).unwrap();
 
         // Node counts must match
         assert_eq!(single.node_count(), multi.node_count());
@@ -1517,7 +1517,7 @@ mod tests {
         store.add_nodes(vec![
             make_node("b/fn2", "FUNCTION", "fn2", "b/file.js"),
         ]);
-        store.add_edges(vec![
+        store.upsert_edges(vec![
             make_edge("a/fn1", "b/fn2", "CALLS"),
         ]).unwrap();
         store.flush_all(&mut manifest_store).unwrap();
@@ -1549,7 +1549,7 @@ mod tests {
         let e1 = make_edge("src/a/caller", "lib/b/callee", "CALLS");
         let e2 = make_edge("src/a/caller", "pkg/c/other", "IMPORTS_FROM");
         let e3 = make_edge("lib/b/callee", "pkg/c/other", "CALLS");
-        store.add_edges(vec![e1.clone(), e2.clone(), e3.clone()]).unwrap();
+        store.upsert_edges(vec![e1.clone(), e2.clone(), e3.clone()]).unwrap();
 
         // Flush all shards
         store.flush_all(&mut manifest_store).unwrap();
@@ -1582,7 +1582,7 @@ mod tests {
         let n3 = make_node("c/fn3", "FUNCTION", "fn3", "c/file.js");
         store.add_nodes(vec![n1.clone(), n2.clone(), n3.clone()]);
 
-        store.add_edges(vec![
+        store.upsert_edges(vec![
             make_edge("a/fn1", "b/fn2", "CALLS"),
             make_edge("a/fn1", "c/fn3", "IMPORTS_FROM"),
         ]).unwrap();
@@ -2250,12 +2250,12 @@ mod tests {
 
     #[test]
     fn test_commit_batch_existing_api_unchanged() {
-        // Old API (add_nodes + add_edges + flush_all) must still work
+        // Old API (add_nodes + upsert_edges + flush_all) must still work
         // exactly as before — backward compatibility with pre-commit_batch code.
         let mut store = MultiShardStore::ephemeral(4);
         let mut manifest_store = ManifestStore::ephemeral();
 
-        // Use ONLY the old API: add_nodes, add_edges, flush_all
+        // Use ONLY the old API: add_nodes, upsert_edges, flush_all
         let n1 = make_node("a/fn1", "FUNCTION", "fn1", "a/file.js");
         let n2 = make_node("b/fn2", "FUNCTION", "fn2", "b/file.js");
         let n3 = make_node("c/fn3", "CLASS", "cls1", "c/file.js");
@@ -2263,7 +2263,7 @@ mod tests {
 
         let e1 = make_edge("a/fn1", "b/fn2", "CALLS");
         let e2 = make_edge("b/fn2", "c/fn3", "IMPORTS_FROM");
-        store.add_edges(vec![e1.clone(), e2.clone()]).unwrap();
+        store.upsert_edges(vec![e1.clone(), e2.clone()]).unwrap();
 
         let flushed = store.flush_all(&mut manifest_store).unwrap();
         assert!(flushed > 0, "flush_all should have flushed at least 1 shard");
@@ -2340,7 +2340,7 @@ mod tests {
     }
 
     #[test]
-    fn test_add_edges_enrichment_routes_to_enrichment_shard() {
+    fn test_upsert_edges_enrichment_routes_to_enrichment_shard() {
         use crate::storage_v2::types::enrichment_file_context;
 
         let mut store = MultiShardStore::ephemeral(4);
@@ -2359,7 +2359,7 @@ mod tests {
             "FLOWS_INTO",
             &file_context,
         );
-        store.add_edges(vec![enr_edge.clone()]).unwrap();
+        store.upsert_edges(vec![enr_edge.clone()]).unwrap();
 
         // The enrichment edge should be routed by file_context, not by
         // source node's shard. Verify it's queryable.
@@ -2397,7 +2397,7 @@ mod tests {
     }
 
     #[test]
-    fn test_add_edges_normal_still_routes_to_source_shard() {
+    fn test_upsert_edges_normal_still_routes_to_source_shard() {
         let mut store = MultiShardStore::ephemeral(4);
 
         let n1 = make_node("src/a/fn1", "FUNCTION", "fn1", "src/a/file.js");
@@ -2406,7 +2406,7 @@ mod tests {
 
         // Normal edge (no file_context metadata)
         let normal_edge = make_edge("src/a/fn1", "src/b/fn2", "CALLS");
-        store.add_edges(vec![normal_edge.clone()]).unwrap();
+        store.upsert_edges(vec![normal_edge.clone()]).unwrap();
 
         // Verify the edge is in the source node's shard
         let source_shard_id = *store.node_to_shard.get(&n1.id).unwrap();
@@ -2435,7 +2435,7 @@ mod tests {
 
         // Add normal edge A->B
         let normal_edge = make_edge("src/a/fn_a", "src/b/fn_b", "CALLS");
-        store.add_edges(vec![normal_edge]).unwrap();
+        store.upsert_edges(vec![normal_edge]).unwrap();
 
         // Add enrichment edge A->B with different edge_type and file_context
         let file_context = enrichment_file_context("data-flow", "src/a/file.js");
@@ -2445,7 +2445,7 @@ mod tests {
             "FLOWS_INTO",
             &file_context,
         );
-        store.add_edges(vec![enr_edge]).unwrap();
+        store.upsert_edges(vec![enr_edge]).unwrap();
 
         // get_outgoing_edges(A) should return BOTH edges
         let outgoing = store.get_outgoing_edges(n_a.id, None);
@@ -2479,7 +2479,7 @@ mod tests {
             "FLOWS_INTO",
             &file_context,
         );
-        store.add_edges(vec![enr_edge]).unwrap();
+        store.upsert_edges(vec![enr_edge]).unwrap();
 
         // Should still find the enrichment edge via get_outgoing_edges
         let outgoing = store.get_outgoing_edges(n_a.id, None);
