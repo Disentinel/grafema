@@ -1034,6 +1034,42 @@ function formatPluginDisplay(node: NodeInfo, projectPath: string): string {
   return lines.join('\n');
 }
 
+/** Built-in Datalog predicates supported by RFDB server */
+export const BUILTIN_PREDICATES = new Set([
+  'node', 'type', 'edge', 'incoming', 'path',
+  'attr', 'attr_edge',
+  'neq', 'starts_with', 'not_starts_with',
+]);
+
+/** Extract predicate names from a Datalog query string */
+export function extractPredicates(query: string): string[] {
+  const regex = /\b([a-z_][a-z0-9_]*)\s*\(/g;
+  const predicates = new Set<string>();
+  let match;
+  while ((match = regex.exec(query)) !== null) {
+    predicates.add(match[1]);
+  }
+  return [...predicates];
+}
+
+/** Extract predicate names defined as rule heads (word(...) :-) */
+export function extractRuleHeads(query: string): Set<string> {
+  const regex = /\b([a-z_][a-z0-9_]*)\s*\([^)]*\)\s*:-/g;
+  const heads = new Set<string>();
+  let match;
+  while ((match = regex.exec(query)) !== null) {
+    heads.add(match[1]);
+  }
+  return heads;
+}
+
+/** Find predicates in a query that are not built-in and not user-defined rule heads */
+export function getUnknownPredicates(query: string): string[] {
+  const predicates = extractPredicates(query);
+  const ruleHeads = extractRuleHeads(query);
+  return predicates.filter(p => !BUILTIN_PREDICATES.has(p) && !ruleHeads.has(p));
+}
+
 /**
  * Execute raw Datalog query.
  * Uses unified executeDatalog endpoint which auto-detects rules vs direct queries.
@@ -1059,6 +1095,16 @@ async function executeRawQuery(
         const bindings = result.bindings.map((b) => `${b.name}=${b.value}`).join(', ');
         console.log(`  { ${bindings} }`);
       }
+    }
+  }
+
+  // Show warning for unknown predicates (on stderr, works in both text and JSON mode)
+  if (limited.length === 0) {
+    const unknown = getUnknownPredicates(query);
+    if (unknown.length > 0) {
+      const unknownList = unknown.map(p => `'${p}'`).join(', ');
+      const builtinList = [...BUILTIN_PREDICATES].join(', ');
+      console.error(`Note: unknown predicate ${unknownList}. Built-in predicates: ${builtinList}`);
     }
   }
 }
