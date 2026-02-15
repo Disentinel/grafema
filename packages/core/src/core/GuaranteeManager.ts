@@ -344,6 +344,72 @@ export class GuaranteeManager {
   }
 
   /**
+   * Extract type references from a Datalog rule.
+   * Matches node(X, "TYPE") and edge(X, Y, "TYPE") patterns.
+   * Returns unique types array. If nothing parseable, returns empty array.
+   */
+  extractRelevantTypes(rule: string): string[] {
+    const types = new Set<string>();
+
+    // Match node(X, "TYPE") patterns
+    const nodePattern = /node\(\s*\w+\s*,\s*"([^"]+)"\s*\)/g;
+    let match;
+    while ((match = nodePattern.exec(rule)) !== null) {
+      types.add(match[1]);
+    }
+
+    // Match edge(X, Y, "TYPE") patterns
+    const edgePattern = /edge\(\s*\w+\s*,\s*\w+\s*,\s*"([^"]+)"\s*\)/g;
+    while ((match = edgePattern.exec(rule)) !== null) {
+      types.add(match[1]);
+    }
+
+    return [...types];
+  }
+
+  /**
+   * Selectively check guarantees whose relevant types overlap with changedTypes.
+   * Guarantees with no parseable types are always checked (conservative).
+   * Returns CheckAllResult with total = all guarantees count,
+   * but results only for the checked subset.
+   */
+  async checkSelective(changedTypes: Set<string>): Promise<CheckAllResult> {
+    const guarantees = await this.list();
+    const results: GuaranteeCheckResult[] = [];
+    let passedCount = 0;
+    let failedCount = 0;
+    let errorCount = 0;
+
+    for (const g of guarantees) {
+      const relevantTypes = this.extractRelevantTypes(g.rule);
+      // If no types parseable, check conservatively; otherwise check only if overlap
+      const shouldCheck = relevantTypes.length === 0 ||
+        relevantTypes.some(t => changedTypes.has(t));
+
+      if (!shouldCheck) continue;
+
+      const result = await this.check(g.id);
+      results.push(result);
+
+      if (result.error) {
+        errorCount++;
+      } else if (result.passed) {
+        passedCount++;
+      } else {
+        failedCount++;
+      }
+    }
+
+    return {
+      total: guarantees.length,
+      passed: passedCount,
+      failed: failedCount,
+      errors: errorCount,
+      results
+    };
+  }
+
+  /**
    * Удалить гарантию
    */
   async delete(guaranteeId: string): Promise<void> {

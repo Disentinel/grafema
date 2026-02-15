@@ -265,7 +265,7 @@ export class PhaseRunner {
     }
   }
 
-  async runPhase(phaseName: string, context: Partial<PluginContext> & { graph: PluginContext['graph'] }): Promise<void> {
+  async runPhase(phaseName: string, context: Partial<PluginContext> & { graph: PluginContext['graph'] }): Promise<Set<string>> {
     const { plugins, onProgress, logger } = this.deps;
 
     // Filter plugins for this phase
@@ -305,7 +305,7 @@ export class PhaseRunner {
     // RFD-17: Use queue-based propagation for ENRICHMENT with batch support
     if (phaseName === 'ENRICHMENT' && supportsBatch && consumerIndex) {
       await this.runEnrichmentWithPropagation(phasePlugins, pluginMap, sortedIds, consumerIndex, context);
-      return;
+      return new Set<string>();
     }
 
     // Track accumulated changed types for ENRICHMENT skip optimization (fallback path)
@@ -346,6 +346,8 @@ export class PhaseRunner {
         message: `✓ ${plugin.metadata.name} complete`
       });
     }
+
+    return accumulatedTypes;
   }
 
   /**

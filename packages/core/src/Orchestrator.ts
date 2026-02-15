@@ -557,7 +557,7 @@ export class Orchestrator {
     const enrichmentStart = Date.now();
     this.profiler.start('ENRICHMENT');
     this.onProgress({ phase: 'enrichment', currentPlugin: 'Starting enrichment...', message: 'Enriching graph data...', totalFiles: 0, processedFiles: 0 });
-    await this.runPhase('ENRICHMENT', { manifest, graph: this.graph, workerCount: this.workerCount });
+    const enrichmentTypes = await this.runPhase('ENRICHMENT', { manifest, graph: this.graph, workerCount: this.workerCount });
     this.profiler.end('ENRICHMENT');
     this.logger.info('ENRICHMENT phase complete', { duration: ((Date.now() - enrichmentStart) / 1000).toFixed(2) });
 
@@ -572,6 +572,9 @@ export class Orchestrator {
         throw new StrictModeFailure(strictErrors, this.phaseRunner.getSuppressedByIgnoreCount());
       }
     }
+
+    // GUARANTEE CHECK: Verify invariants after enrichment, before validation (RFD-18)
+    await this.runGuaranteeCheck(enrichmentTypes, absoluteProjectPath);
 
     // PHASE 4: VALIDATION - проверка корректности графа (глобально)
     const validationStart = Date.now();
@@ -732,7 +735,7 @@ export class Orchestrator {
 
     // ENRICHMENT phase (global - operates on unified graph)
     this.profiler.start('ENRICHMENT');
-    await this.runPhase('ENRICHMENT', {
+    const enrichmentTypes = await this.runPhase('ENRICHMENT', {
       manifest: unifiedManifest,
       graph: this.graph,
       workerCount: this.workerCount
@@ -750,6 +753,9 @@ export class Orchestrator {
         throw new StrictModeFailure(strictErrors, this.phaseRunner.getSuppressedByIgnoreCount());
       }
     }
+
+    // GUARANTEE CHECK: Verify invariants after enrichment, before validation (RFD-18)
+    await this.runGuaranteeCheck(enrichmentTypes, workspacePath);
 
     // VALIDATION phase (global)
     this.profiler.start('VALIDATION');
@@ -991,7 +997,7 @@ export class Orchestrator {
   /**
    * Запустить плагины для конкретной фазы
    */
-  async runPhase(phaseName: string, context: Partial<PluginContext> & { graph: PluginContext['graph'] }): Promise<void> {
+  async runPhase(phaseName: string, context: Partial<PluginContext> & { graph: PluginContext['graph'] }): Promise<Set<string>> {
     return this.phaseRunner.runPhase(phaseName, context);
   }
 
@@ -1000,6 +1006,72 @@ export class Orchestrator {
    */
   getDiagnostics(): DiagnosticCollector {
     return this.diagnosticCollector;
+  }
+
+  /**
+   * Run guarantee checks after enrichment, before validation (RFD-18).
+   * Uses selective checking when enrichment produced type changes,
+   * falls back to checkAll when no type info is available.
+   */
+  private async runGuaranteeCheck(changedTypes: Set<string>, projectPath: string): Promise<void> {
+    const { GuaranteeManager } = await import('./core/GuaranteeManager.js');
+
+    const manager = new GuaranteeManager(this.graph as any, projectPath);
+    const guarantees = await manager.list();
+
+    if (guarantees.length === 0) {
+      this.logger.debug('No guarantees to check');
+      this.checkCoverageGaps(changedTypes);
+      return;
+    }
+
+    const startTime = Date.now();
+    this.profiler.start('GUARANTEE_CHECK');
+    this.onProgress({ phase: 'guarantee', currentPlugin: 'GuaranteeCheck', message: 'Checking guarantees...' });
+
+    const result = changedTypes.size > 0
+      ? await manager.checkSelective(changedTypes)
+      : await manager.checkAll();
+
+    // Collect violations into diagnostics
+    for (const r of result.results) {
+      if (!r.passed && !r.error) {
+        for (const violation of r.violations) {
+          this.diagnosticCollector.add({
+            code: 'GUARANTEE_VIOLATION',
+            severity: r.severity === 'error' ? 'fatal' : 'warning',
+            message: `Guarantee "${r.name}" violated: ${violation.type} ${violation.name || violation.nodeId}`,
+            phase: 'ENRICHMENT',
+            plugin: 'GuaranteeCheck',
+            file: violation.file,
+            line: violation.line,
+          });
+        }
+      }
+    }
+
+    this.profiler.end('GUARANTEE_CHECK');
+    this.logger.info('GUARANTEE_CHECK complete', {
+      duration: ((Date.now() - startTime) / 1000).toFixed(2),
+      total: result.total,
+      checked: result.results.length,
+      passed: result.passed,
+      failed: result.failed,
+    });
+
+    this.checkCoverageGaps(changedTypes);
+  }
+
+  /**
+   * Coverage monitoring canary (RFD-18).
+   * Logs a warning if enrichment produced no type changes at all,
+   * which may indicate a coverage gap (content changed but analysis unchanged).
+   * Full per-file delta tracking requires per-file deltas (RFD-19+).
+   */
+  private checkCoverageGaps(changedTypes: Set<string>): void {
+    if (changedTypes.size === 0) {
+      this.logger.debug('Coverage canary: enrichment produced no type changes');
+    }
   }
 
   /**
