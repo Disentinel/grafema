@@ -69,9 +69,6 @@ export class DatabaseAnalyzer extends Plugin {
       const modules = await this.getModules(graph);
       logger.info('Processing modules', { count: modules.length });
 
-      // Получаем все FUNCTION ноды для связывания
-      const functions = await this.getFunctions(graph);
-
       let queriesCreated = 0;
       let tablesCreated = 0;
       let edgesCreated = 0;
@@ -80,6 +77,7 @@ export class DatabaseAnalyzer extends Plugin {
       // Анализируем каждый модуль
       for (let i = 0; i < modules.length; i++) {
         const module = modules[i];
+        const functions = await this.getFunctions(graph, module.file!);
         const result = await this.analyzeModule(module, functions, graph, projectPath);
         queriesCreated += result.queries;
         tablesCreated += result.tables;
@@ -120,9 +118,9 @@ export class DatabaseAnalyzer extends Plugin {
   /**
    * Получить все FUNCTION ноды из графа
    */
-  private async getFunctions(graph: PluginContext['graph']): Promise<NodeRecord[]> {
+  private async getFunctions(graph: PluginContext['graph'], file: string): Promise<NodeRecord[]> {
     const functions: NodeRecord[] = [];
-    for await (const node of graph.queryNodes({ type: 'FUNCTION' })) {
+    for await (const node of graph.queryNodes({ type: 'FUNCTION', file })) {
       functions.push(node);
     }
     return functions;
