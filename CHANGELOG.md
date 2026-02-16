@@ -6,11 +6,54 @@ All notable changes to this project will be documented in this file.
 
 ### Highlights
 
-- **Semantic IDs v2** — Scope-aware format for precise node identification across files
-- **Orchestrator decomposition** — 800+ line monolith split into focused modules (GraphInitializer, DiscoveryManager, GuaranteeChecker, ParallelAnalysisRunner)
-- **RFDB adaptive tuning** — Auto-detects hardware resources and tunes write buffers, compaction, and prefetch
-- **Infrastructure type system** — Foundation for infrastructure-as-code analysis (Kubernetes, Terraform, Docker)
-- **Package coverage tracking** — Identifies which npm packages lack analyzer plugins
+- **RFDB v2 — Complete storage engine rewrite** — 23,800 lines of new Rust code across 6 milestones and 25 tasks. Columnar segment format with zone maps and bloom filters, manifest-based snapshot chain for incremental analysis, directory-based sharding, tombstones with atomic batch commit, LSM-style background compaction, and adaptive resource tuning. This is a ground-up rewrite of the graph database, not an incremental update.
+- **Enrichment pipeline integration** — Orchestrator now uses batch protocol with virtual shards, dependency-driven propagation, and post-enrichment guarantee checking — all wired through the new RFDB v2 storage layer.
+- **Semantic IDs v2** — Scope-aware format (`file->TYPE->name[in:parent]`) for precise node identification across files.
+- **Orchestrator decomposition** — 800+ line monolith split into focused modules (GraphInitializer, DiscoveryManager, GuaranteeChecker, ParallelAnalysisRunner).
+- **Infrastructure type system** — Foundation for infrastructure-as-code analysis (Kubernetes, Terraform, Docker).
+
+### RFDB v2 Storage Engine (Rust)
+
+Complete rewrite of the graph database. 61 files changed, 23,800 lines added.
+
+**M1 — Foundation:**
+- **RFD-1**: Immutable columnar segment format with zone maps and bloom filters
+- **RFD-3**: Client request IDs for concurrent request matching
+- **RFD-4**: Semantic ID v2 wire format (scope-aware)
+
+**M2 — Storage Engine:**
+- **RFD-5**: Manifest + snapshot chain for incremental analysis
+- **RFD-6**: Single-shard read/write with columnar storage
+- **RFD-7**: Multi-shard storage layer with parallel fan-out queries
+
+**M3 — Incremental Core:**
+- **RFD-8**: Tombstones + atomic batch commit protocol
+- **RFD-9**: Client batch API (CommitBatch wire command)
+- **RFD-10**: Client snapshot API types and methods
+
+**M4 — Integration Gate:**
+- **RFD-11**: Wire protocol v3 with polymorphic `dyn GraphStore` backend
+- **RFD-12**: Native semantic ID wire format (v3 protocol)
+- **RFD-13**: Streaming response support for large result sets
+- **RFD-14**: Integration gate validation — equivalence tests, crash recovery, stress tests
+
+**M5 — Enrichment Pipeline:**
+- **RFD-15**: Enrichment virtual shards for surgical edge deletion by file context
+- **RFD-16**: Orchestrator batch protocol — PhaseRunner, runPluginWithBatch, delta-driven selective enrichment
+- **RFD-17**: Queue-based enrichment dependency propagation with consumer index
+- **RFD-18**: Post-enrichment guarantee checking with selective filtering
+- **RFD-19**: Enrichment pipeline integration tests and benchmark
+
+**M6 — Performance:**
+- **RFD-20**: LSM-style background compaction — L1 segments, inverted indexes, global index for O(log N) lookups
+- **RFD-21**: Adaptive resource tuning — auto-detect CPU, memory, disk type; tune write buffers, compaction parallelism, prefetch strategy
+- **RFD-22**: Comprehensive benchmark suite — 16 groups (node/edge read/write, traversal, mutation, maintenance), memory profiler, bench report tool
+
+**Additional:**
+- **RFD-27**: Fix parse_query to reject unconsumed input
+- **RFD-28**: Unified `executeDatalog` endpoint with auto-detection (query vs rule)
+- **RFD-29**: Upsert semantics for edges — EdgeWriteOp/UpsertStats types
+- **RFD-31**: Optimize v2 find queries, deprecate AttrQuery.version
 
 ### Architecture
 
@@ -19,6 +62,7 @@ All notable changes to this project will be documented in this file.
 - **REG-464**: Migrate semantic IDs to v2 scope-aware format
 - **REG-368**: Split NodeFactory into domain-specific factories (CoreFactory, InfraFactory, etc.)
 - **REG-461**: Decompose MCP handlers.ts into domain modules
+- **REG-422/423**: Extract 10 domain builders from GraphBuilder.ts, inline handler classes
 - **REG-430**: Remove dead HTTPConnectionEnricher import
 - **REG-239**: Extract named constants for BFS depth limits
 
@@ -27,23 +71,21 @@ All notable changes to this project will be documented in this file.
 - **REG-259**: Package coverage tracking via PackageCoverageValidator
 - **REG-363**: Infrastructure type system — InfraResourceMap and InfraAnalyzer base class for IaC analysis
 - **REG-242**: Warn about unknown Datalog predicates in `--raw` queries
-
-### RFDB
-
-- **RFD-21**: Adaptive tuning — resource detection, auto-flush write buffers, parallel compaction, prefetch strategy
-- **RFD-22**: Comprehensive benchmark suite — 16 benchmark groups, memory profiler, bench report tool
-- **RFD-18**: Post-enrichment guarantee checking with selective filtering
-- **RFD-19**: Enrichment pipeline integration tests and benchmark
+- **REG-432**: Socket connection analysis (Unix/TCP)
+- **REG-371/374/375/376**: Branded node contracts for Rust, Database, ServiceLayer, External nodes
 
 ### Bug Fixes
 
 - **REG-445**: Restore CLI query functionality broken by RFDB v3 semantic ID format
 - Fix streaming desync and semanticId stripping in RFDB client
 - Skip edges with unknown source instead of aborting batch (rfdb-server)
+- Clear v2 tombstones when records are re-added
+- Upsert v2 edge metadata for duplicate edge keys
+- Preserve `exported` field in v2 type conversion
 
 ### Documentation
 
-- **REG-361**: Audit and update documentation across all packages
+- **REG-361**: Audit and update documentation across all packages (8 READMEs updated)
 - MLA workflow v2.1 — add Dijkstra plan verifier, split auto-review into 4 perspectives
 - Define Paid-Ready quality bar (REG-75)
 
