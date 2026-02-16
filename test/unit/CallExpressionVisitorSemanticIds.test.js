@@ -9,7 +9,9 @@
  * 4. Array mutations get semantic IDs
  * 5. IDs are stable across line number changes
  *
- * Format: {file}->{scope_path}->CALL->{calleeName}#N
+ * Format v2: {file}->CALL->{calleeName} (top-level, unique)
+ *            {file}->CALL->{calleeName}[h:xxxx] (top-level, collision)
+ *            {file}->{parent}->CALL->{calleeName}#N (nested in function, collision)
  *
  * TDD: Tests written first per Kent Beck's methodology.
  *
@@ -71,10 +73,10 @@ helper();
 
       assert.ok(callNode, 'CALL node "helper" not found');
 
-      // Semantic ID format: file->global->CALL->name#N
-      // Should NOT contain line numbers (no colons)
+      // Semantic ID format v2: file->CALL->name (top-level, unique call)
+      // Should NOT contain line numbers (no colons, except [h:xxxx] hash)
       assert.ok(
-        !callNode.id.includes(':'),
+        !(/:\d+:\d+/.test(callNode.id)),
         `ID should not contain line:column format. Got: ${callNode.id}`
       );
       assert.ok(
@@ -90,11 +92,11 @@ helper();
         `ID should contain callee name. Got: ${callNode.id}`
       );
 
-      // Expected format: index.js->global->CALL->helper#0
+      // Expected format v2: index.js->CALL->helper (no global scope, no discriminator for unique call)
       assert.strictEqual(
         callNode.id,
-        'index.js->global->CALL->helper#0',
-        `Expected semantic ID format with discriminator`
+        'index.js->CALL->helper',
+        `Expected semantic ID format`
       );
     });
 
@@ -115,22 +117,16 @@ log('third');
 
       assert.strictEqual(logCalls.length, 3, 'Should have 3 log calls');
 
-      // Extract discriminators from IDs
+      // Extract IDs
       const ids = logCalls.map(c => c.id).sort();
 
-      // Should have different discriminators
-      assert.ok(
-        ids.some(id => id.includes('#0')),
-        'Should have call with discriminator #0'
-      );
-      assert.ok(
-        ids.some(id => id.includes('#1')),
-        'Should have call with discriminator #1'
-      );
-      assert.ok(
-        ids.some(id => id.includes('#2')),
-        'Should have call with discriminator #2'
-      );
+      // V2: multiple calls to same function at top-level use content hash [h:xxxx]
+      ids.forEach(id => {
+        assert.ok(
+          id.includes('[h:'),
+          `Top-level collision should use hash discriminator. Got: ${id}`
+        );
+      });
 
       // All IDs should be unique
       const uniqueIds = new Set(ids);
@@ -231,9 +227,10 @@ db.query('SELECT *');
         methodCall.id.includes('db.query') || methodCall.id.includes('query'),
         `ID should contain method reference. Got: ${methodCall.id}`
       );
+      // V2: top-level unique call has no discriminator
       assert.ok(
-        methodCall.id.includes('#'),
-        `ID should have discriminator. Got: ${methodCall.id}`
+        methodCall.id.includes('CALL'),
+        `ID should include CALL type. Got: ${methodCall.id}`
       );
     });
 
@@ -259,10 +256,10 @@ console.log('three');
 
       assert.strictEqual(uniqueIds.size, 3, 'All method call IDs should be unique');
 
-      // Should have discriminators 0, 1, 2
-      assert.ok(ids.some(id => id.includes('#0')), 'Should have #0');
-      assert.ok(ids.some(id => id.includes('#1')), 'Should have #1');
-      assert.ok(ids.some(id => id.includes('#2')), 'Should have #2');
+      // V2: top-level collisions use content hash [h:xxxx]
+      ids.forEach(id => {
+        assert.ok(id.includes('[h:'), `Should use hash discriminator. Got: ${id}`);
+      });
     });
 
     it('should include scope path for nested method calls', async () => {
@@ -284,7 +281,7 @@ function handler(data) {
 
       assert.ok(processCall, 'Method call "process" not found');
 
-      // Should include function and if scope
+      // V2: Should include function scope and if scope
       assert.ok(
         processCall.id.includes('handler'),
         `ID should include function scope. Got: ${processCall.id}`
@@ -316,10 +313,10 @@ const result = array.map(x => x * 2).filter(x => x > 5);
       assert.ok(mapCall || filterCall, 'At least one chained method call should be found');
 
       if (mapCall) {
-        assert.ok(mapCall.id.includes('#'), `Map call should have discriminator: ${mapCall.id}`);
+        assert.ok(mapCall.id.includes('CALL'), `Map call should have CALL type: ${mapCall.id}`);
       }
       if (filterCall) {
-        assert.ok(filterCall.id.includes('#'), `Filter call should have discriminator: ${filterCall.id}`);
+        assert.ok(filterCall.id.includes('CALL'), `Filter call should have CALL type: ${filterCall.id}`);
       }
     });
   });
@@ -423,12 +420,12 @@ arr.push(item);
 
       if (pushCall) {
         assert.ok(
-          pushCall.id.includes('#'),
-          `Push call should have discriminator. Got: ${pushCall.id}`
+          pushCall.id.includes('CALL'),
+          `Push call should have CALL type. Got: ${pushCall.id}`
         );
         assert.ok(
-          !pushCall.id.includes(':'),
-          `ID should not have line:column. Got: ${pushCall.id}`
+          !(/:\d+:\d+/.test(pushCall.id)),
+          `ID should not have line:column format. Got: ${pushCall.id}`
         );
       }
 
@@ -465,8 +462,8 @@ arr.unshift(first);
 
       if (unshiftCall) {
         assert.ok(
-          unshiftCall.id.includes('#'),
-          `Unshift call should have discriminator. Got: ${unshiftCall.id}`
+          unshiftCall.id.includes('CALL'),
+          `Unshift call should have CALL type. Got: ${unshiftCall.id}`
         );
       }
 
@@ -503,8 +500,8 @@ arr.splice(1, 0, inserted);
 
       if (spliceCall) {
         assert.ok(
-          spliceCall.id.includes('#'),
-          `Splice call should have discriminator. Got: ${spliceCall.id}`
+          spliceCall.id.includes('CALL'),
+          `Splice call should have CALL type. Got: ${spliceCall.id}`
         );
       }
 
@@ -573,10 +570,10 @@ arr.push('c');
         const uniqueIds = new Set(ids);
         assert.strictEqual(uniqueIds.size, 3, 'All push calls should have unique IDs');
 
-        // Should have discriminators
-        assert.ok(ids.some(id => id.includes('#0')), 'Should have #0');
-        assert.ok(ids.some(id => id.includes('#1')), 'Should have #1');
-        assert.ok(ids.some(id => id.includes('#2')), 'Should have #2');
+        // V2: top-level collisions use content hash [h:xxxx]
+        ids.forEach(id => {
+          assert.ok(id.includes('[h:'), `Should use hash discriminator. Got: ${id}`);
+        });
       }
     });
   });
@@ -786,7 +783,7 @@ function complex(data) {
       );
 
       if (processCall) {
-        // Should have deep scope path
+        // V2: deep scope path preserved for control flow
         assert.ok(
           processCall.id.includes('complex'),
           `Process call should include function scope. Got: ${processCall.id}`
@@ -823,9 +820,10 @@ const handler = (x) => process(x);
       );
 
       assert.ok(processCall, 'Process call in arrow function should be found');
+      // V2: call inside named arrow function gets #N discriminator
       assert.ok(
-        processCall.id.includes('#'),
-        `Call should have discriminator. Got: ${processCall.id}`
+        processCall.id.includes('CALL'),
+        `Call should have CALL type. Got: ${processCall.id}`
       );
     });
 

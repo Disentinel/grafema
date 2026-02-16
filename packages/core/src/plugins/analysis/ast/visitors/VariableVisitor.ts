@@ -64,6 +64,7 @@ interface VariableDeclarationInfo {
   line: number;
   parentScopeId: string;
   value?: unknown;
+  scopePath?: string[];
 }
 
 /**
@@ -181,7 +182,6 @@ export class VariableVisitor extends ASTVisitor {
     const literals = (this.collections.literals ?? []) as unknown[];
     const variableAssignments = this.collections.variableAssignments ?? [];
     const scopes = (this.collections.scopes ?? []) as unknown[];
-    const varDeclCounterRef = (this.collections.varDeclCounterRef ?? { value: 0 }) as CounterRef;
     const literalCounterRef = (this.collections.literalCounterRef ?? { value: 0 }) as CounterRef;
     const scopeCounterRef = (this.collections.scopeCounterRef ?? { value: 0 }) as CounterRef;
     // Object literal tracking collections (REG-328)
@@ -256,14 +256,9 @@ export class VariableVisitor extends ASTVisitor {
 
               // Generate ID using centralized IdGenerator
               const idGenerator = new IdGenerator(scopeTracker);
-              const varId = idGenerator.generate(
-                nodeType,
-                varInfo.name,
-                module.file,
-                varInfo.loc.start.line,
-                varInfo.loc.start.column,
-                varDeclCounterRef as CounterRef
-              );
+              const varId = idGenerator.generateV2Simple(nodeType, varInfo.name, module.file);
+
+              const currentScopePath = scopeTracker?.getContext().scopePath ?? [];
 
               if (shouldBeConstant) {
                 // CONSTANT node
@@ -273,7 +268,8 @@ export class VariableVisitor extends ASTVisitor {
                   name: varInfo.name,
                   file: module.file,
                   line: varInfo.loc.start.line,
-                  parentScopeId: module.id
+                  parentScopeId: module.id,
+                  scopePath: currentScopePath
                 };
 
                 if (isLiteral) {
@@ -303,7 +299,8 @@ export class VariableVisitor extends ASTVisitor {
                   name: varInfo.name,
                   file: module.file,
                   line: varInfo.loc.start.line,
-                  parentScopeId: module.id
+                  parentScopeId: module.id,
+                  scopePath: currentScopePath
                 });
               }
 

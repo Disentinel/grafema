@@ -1252,8 +1252,11 @@
       "file": "client.js",
       "index": 0,
       "name": "gigId",
-      "parentFunctionId": "client.js->global->FUNCTION->fetchGig",
-      "semanticId": "client.js->fetchGig->PARAMETER->gigId#0",
+      "parentFunctionId": "client.js->FUNCTION->fetchGig",
+      "scopePath": [
+        "fetchGig"
+      ],
+      "semanticId": "client.js->PARAMETER->gigId[in:fetchGig]",
       "type": "PARAMETER"
     },
     {
@@ -1262,8 +1265,11 @@
       "hasDefault": true,
       "index": 1,
       "name": "options",
-      "parentFunctionId": "client.js->global->FUNCTION->authFetch",
-      "semanticId": "client.js->authFetch->PARAMETER->options#1",
+      "parentFunctionId": "client.js->FUNCTION->authFetch",
+      "scopePath": [
+        "authFetch"
+      ],
+      "semanticId": "client.js->PARAMETER->options[in:authFetch]#1",
       "type": "PARAMETER"
     },
     {
@@ -1271,8 +1277,11 @@
       "file": "client.js",
       "index": 0,
       "name": "query",
-      "parentFunctionId": "client.js->global->FUNCTION->searchSpotify",
-      "semanticId": "client.js->searchSpotify->PARAMETER->query#0",
+      "parentFunctionId": "client.js->FUNCTION->searchSpotify",
+      "scopePath": [
+        "searchSpotify"
+      ],
+      "semanticId": "client.js->PARAMETER->query[in:searchSpotify]",
       "type": "PARAMETER"
     },
     {
@@ -1280,8 +1289,11 @@
       "file": "client.js",
       "index": 0,
       "name": "url",
-      "parentFunctionId": "client.js->global->FUNCTION->authFetch",
-      "semanticId": "client.js->authFetch->PARAMETER->url#0",
+      "parentFunctionId": "client.js->FUNCTION->authFetch",
+      "scopePath": [
+        "authFetch"
+      ],
+      "semanticId": "client.js->PARAMETER->url[in:authFetch]",
       "type": "PARAMETER"
     },
     {
@@ -1289,8 +1301,11 @@
       "file": "client.js",
       "index": 0,
       "name": "userData",
-      "parentFunctionId": "client.js->global->FUNCTION->createUser",
-      "semanticId": "client.js->createUser->PARAMETER->userData#0",
+      "parentFunctionId": "client.js->FUNCTION->createUser",
+      "scopePath": [
+        "createUser"
+      ],
+      "semanticId": "client.js->PARAMETER->userData[in:createUser]",
       "type": "PARAMETER"
     },
     {
@@ -1298,8 +1313,11 @@
       "file": "client.js",
       "index": 0,
       "name": "userData",
-      "parentFunctionId": "client.js->global->FUNCTION->createUserAxios",
-      "semanticId": "client.js->createUserAxios->PARAMETER->userData#0",
+      "parentFunctionId": "client.js->FUNCTION->createUserAxios",
+      "scopePath": [
+        "createUserAxios"
+      ],
+      "semanticId": "client.js->PARAMETER->userData[in:createUserAxios]",
       "type": "PARAMETER"
     },
     {
@@ -1307,7 +1325,7 @@
       "file": "client.js",
       "name": "data",
       "objectName": "response",
-      "semanticId": "client.js->createUserAxios->PROPERTY_ACCESS->response.data#0",
+      "semanticId": "client.js->PROPERTY_ACCESS->response.data[in:createUserAxios]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -1315,7 +1333,7 @@
       "file": "client.js",
       "name": "data",
       "objectName": "response",
-      "semanticId": "client.js->fetchGitlab->PROPERTY_ACCESS->response.data#0",
+      "semanticId": "client.js->PROPERTY_ACCESS->response.data[in:fetchGitlab]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -1323,7 +1341,7 @@
       "file": "client.js",
       "name": "data",
       "objectName": "response",
-      "semanticId": "client.js->getUsersAxios->PROPERTY_ACCESS->response.data#0",
+      "semanticId": "client.js->PROPERTY_ACCESS->response.data[in:getUsersAxios]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -1331,7 +1349,7 @@
       "file": "client.js",
       "name": "headers",
       "objectName": "options",
-      "semanticId": "client.js->authFetch->PROPERTY_ACCESS->options.headers#0",
+      "semanticId": "client.js->PROPERTY_ACCESS->options.headers[in:authFetch]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -1455,6 +1473,7 @@
       "exported": false,
       "file": "client.js",
       "name": "authFetch",
+      "scopePath": [],
       "type": "VARIABLE"
     },
     {

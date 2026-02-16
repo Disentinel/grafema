@@ -264,14 +264,14 @@ export { UserService };
 
       assert.ok(findUserMethod, 'Method findUser should be found');
 
-      // Semantic ID should include class scope: file->UserService->FUNCTION->findUser
+      // v2 semantic ID format: file->FUNCTION->findUser[in:UserService]
       assert.ok(
         !hasLegacyFormat(findUserMethod.id),
         `Method ID should not have legacy format: ${findUserMethod.id}`
       );
       assert.ok(
-        findUserMethod.id.includes('->UserService->') && findUserMethod.id.includes('->findUser'),
-        `Method ID should include class scope: ${findUserMethod.id}`
+        findUserMethod.id.includes('[in:UserService]') && findUserMethod.id.includes('->findUser'),
+        `Method ID should include class scope via [in:UserService]: ${findUserMethod.id}`
       );
     });
 
@@ -295,14 +295,14 @@ export { Database };
 
       assert.ok(constructor, 'Constructor should be found');
 
-      // Semantic ID: file->Database->FUNCTION->constructor
+      // v2 semantic ID: file->FUNCTION->constructor[in:Database]
       assert.ok(
         !hasLegacyFormat(constructor.id),
         `Constructor ID should not have legacy format: ${constructor.id}`
       );
       assert.ok(
-        constructor.id.includes('->Database->'),
-        `Constructor ID should include class scope: ${constructor.id}`
+        constructor.id.includes('[in:Database]'),
+        `Constructor ID should include class scope via [in:Database]: ${constructor.id}`
       );
     });
   });

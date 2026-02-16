@@ -1582,7 +1582,7 @@
       "exported": false,
       "file": "server.js",
       "name": "<object>",
-      "parentCallId": "server.js->global->CALL->io.emit#0",
+      "parentCallId": "server.js->CALL->io.emit",
       "type": "OBJECT_LITERAL"
     },
     {
@@ -1590,17 +1590,11 @@
       "file": "client.js",
       "index": 0,
       "name": "data",
-      "parentFunctionId": "client.js->global->FUNCTION->anonymous[1]",
-      "semanticId": "client.js->anonymous[1]->PARAMETER->data#0",
-      "type": "PARAMETER"
-    },
-    {
-      "exported": false,
-      "file": "client.js",
-      "index": 0,
-      "name": "data",
-      "parentFunctionId": "client.js->global->FUNCTION->anonymous[3]",
-      "semanticId": "client.js->anonymous[3]->PARAMETER->data#0",
+      "parentFunctionId": "client.js->FUNCTION->anonymous[3]",
+      "scopePath": [
+        "anonymous[3]"
+      ],
+      "semanticId": "client.js->PARAMETER->data",
       "type": "PARAMETER"
     },
     {
@@ -1608,8 +1602,11 @@
       "file": "server.js",
       "index": 1,
       "name": "data",
-      "parentFunctionId": "server.js->global->FUNCTION->notifySlotBooked",
-      "semanticId": "server.js->notifySlotBooked->PARAMETER->data#1",
+      "parentFunctionId": "server.js->FUNCTION->notifySlotBooked",
+      "scopePath": [
+        "notifySlotBooked"
+      ],
+      "semanticId": "server.js->PARAMETER->data[in:notifySlotBooked]#1",
       "type": "PARAMETER"
     },
     {
@@ -1617,8 +1614,11 @@
       "file": "client.js",
       "index": 0,
       "name": "event",
-      "parentFunctionId": "client.js->global->FUNCTION->useSocket",
-      "semanticId": "client.js->useSocket->PARAMETER->event#0",
+      "parentFunctionId": "client.js->FUNCTION->useSocket",
+      "scopePath": [
+        "useSocket"
+      ],
+      "semanticId": "client.js->PARAMETER->event[in:useSocket]",
       "type": "PARAMETER"
     },
     {
@@ -1626,11 +1626,14 @@
       "file": "client.js",
       "index": 0,
       "name": "gigId",
-      "parentFunctionId": "client.js->global->FUNCTION->GigView",
+      "parentFunctionId": "client.js->FUNCTION->GigView",
       "propertyPath": [
         "gigId"
       ],
-      "semanticId": "client.js->GigView->PARAMETER->gigId#0",
+      "scopePath": [
+        "GigView"
+      ],
+      "semanticId": "client.js->PARAMETER->gigId[in:GigView]",
       "type": "PARAMETER"
     },
     {
@@ -1638,8 +1641,11 @@
       "file": "server.js",
       "index": 0,
       "name": "gigId",
-      "parentFunctionId": "server.js->global->FUNCTION->notifySlotBooked",
-      "semanticId": "server.js->notifySlotBooked->PARAMETER->gigId#0",
+      "parentFunctionId": "server.js->FUNCTION->notifySlotBooked",
+      "scopePath": [
+        "notifySlotBooked"
+      ],
+      "semanticId": "server.js->PARAMETER->gigId[in:notifySlotBooked]",
       "type": "PARAMETER"
     },
     {
@@ -1647,8 +1653,11 @@
       "file": "client.js",
       "index": 1,
       "name": "handler",
-      "parentFunctionId": "client.js->global->FUNCTION->useSocket",
-      "semanticId": "client.js->useSocket->PARAMETER->handler#1",
+      "parentFunctionId": "client.js->FUNCTION->useSocket",
+      "scopePath": [
+        "useSocket"
+      ],
+      "semanticId": "client.js->PARAMETER->handler[in:useSocket]#1",
       "type": "PARAMETER"
     },
     {
@@ -1656,8 +1665,11 @@
       "file": "client.js",
       "index": 0,
       "name": "msg",
-      "parentFunctionId": "client.js->global->FUNCTION->anonymous[2]",
-      "semanticId": "client.js->anonymous[2]->PARAMETER->msg#0",
+      "parentFunctionId": "client.js->FUNCTION->anonymous[2]",
+      "scopePath": [
+        "anonymous[2]"
+      ],
+      "semanticId": "client.js->PARAMETER->msg",
       "type": "PARAMETER"
     },
     {
@@ -1665,8 +1677,11 @@
       "file": "client.js",
       "index": 0,
       "name": "slotId",
-      "parentFunctionId": "client.js->global->FUNCTION->bookSlot",
-      "semanticId": "client.js->bookSlot->PARAMETER->slotId#0",
+      "parentFunctionId": "client.js->FUNCTION->bookSlot",
+      "scopePath": [
+        "bookSlot"
+      ],
+      "semanticId": "client.js->PARAMETER->slotId[in:bookSlot]",
       "type": "PARAMETER"
     },
     {
@@ -1674,8 +1689,11 @@
       "file": "server.js",
       "index": 0,
       "name": "socket",
-      "parentFunctionId": "server.js->global->FUNCTION->anonymous[0]",
-      "semanticId": "server.js->anonymous[0]->PARAMETER->socket#0",
+      "parentFunctionId": "server.js->FUNCTION->anonymous[0]",
+      "scopePath": [
+        "anonymous[0]"
+      ],
+      "semanticId": "server.js->PARAMETER->socket",
       "type": "PARAMETER"
     },
     {
@@ -1683,8 +1701,11 @@
       "file": "client.js",
       "index": 0,
       "name": "text",
-      "parentFunctionId": "client.js->global->FUNCTION->sendMessage",
-      "semanticId": "client.js->sendMessage->PARAMETER->text#0",
+      "parentFunctionId": "client.js->FUNCTION->sendMessage",
+      "scopePath": [
+        "sendMessage"
+      ],
+      "semanticId": "client.js->PARAMETER->text[in:sendMessage]",
       "type": "PARAMETER"
     },
     {
@@ -1692,7 +1713,7 @@
       "file": "server.js",
       "name": "broadcast",
       "objectName": "socket",
-      "semanticId": "server.js->anonymous[0]->anonymous[2]->PROPERTY_ACCESS->socket.broadcast#0",
+      "semanticId": "server.js->PROPERTY_ACCESS->socket.broadcast",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -1700,15 +1721,7 @@
       "file": "server.js",
       "name": "id",
       "objectName": "socket",
-      "semanticId": "server.js->anonymous[0]->anonymous[3]->PROPERTY_ACCESS->socket.id#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "server.js",
-      "name": "id",
-      "objectName": "socket",
-      "semanticId": "server.js->anonymous[0]->PROPERTY_ACCESS->socket.id#0",
+      "semanticId": "server.js->PROPERTY_ACCESS->socket.id",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -1716,7 +1729,7 @@
       "file": "client.js",
       "name": "userId",
       "objectName": "data",
-      "semanticId": "client.js->anonymous[3]->PROPERTY_ACCESS->data.userId#0",
+      "semanticId": "client.js->PROPERTY_ACCESS->data.userId",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -1724,23 +1737,7 @@
       "file": "server.js",
       "name": "userId",
       "objectName": "socket",
-      "semanticId": "server.js->anonymous[0]->anonymous[2]->PROPERTY_ACCESS->socket.userId#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "server.js",
-      "name": "userId",
-      "objectName": "socket",
-      "semanticId": "server.js->anonymous[0]->anonymous[3]->PROPERTY_ACCESS->socket.userId#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "server.js",
-      "name": "userId",
-      "objectName": "socket",
-      "semanticId": "server.js->anonymous[0]->PROPERTY_ACCESS->socket.userId#0",
+      "semanticId": "server.js->PROPERTY_ACCESS->socket.userId",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -1762,13 +1759,6 @@
       "type": "SCOPE"
     },
     {
-      "exported": false,
-      "file": "client.js",
-      "name": "anonymous[0]:body",
-      "scopeType": "function-body",
-      "type": "SCOPE"
-    },
-    {
       "conditional": false,
       "exported": false,
       "file": "server.js",
@@ -1778,26 +1768,12 @@
       "type": "SCOPE"
     },
     {
-      "exported": false,
-      "file": "server.js",
-      "name": "anonymous[0]:body",
-      "scopeType": "function-body",
-      "type": "SCOPE"
-    },
-    {
       "conditional": false,
       "exported": false,
       "file": "client.js",
       "name": "anonymous[1]:body",
       "scopeType": "arrow_body",
       "semanticId": "GigView:arrow_body[1]",
-      "type": "SCOPE"
-    },
-    {
-      "exported": false,
-      "file": "client.js",
-      "name": "anonymous[1]:body",
-      "scopeType": "function-body",
       "type": "SCOPE"
     },
     {
@@ -1817,26 +1793,12 @@
       "type": "SCOPE"
     },
     {
-      "exported": false,
-      "file": "client.js",
-      "name": "anonymous[2]:body",
-      "scopeType": "function-body",
-      "type": "SCOPE"
-    },
-    {
       "conditional": false,
       "exported": false,
       "file": "server.js",
       "name": "anonymous[2]:body",
       "scopeType": "arrow_body",
       "semanticId": "anonymous[0]:arrow_body[2]",
-      "type": "SCOPE"
-    },
-    {
-      "exported": false,
-      "file": "client.js",
-      "name": "anonymous[3]:body",
-      "scopeType": "function-body",
       "type": "SCOPE"
     },
     {
@@ -1913,6 +1875,7 @@
       "exported": false,
       "file": "server.js",
       "name": "io",
+      "scopePath": [],
       "type": "VARIABLE"
     },
     {
@@ -1925,12 +1888,14 @@
       "exported": false,
       "file": "client.js",
       "name": "socket",
+      "scopePath": [],
       "type": "VARIABLE"
     },
     {
       "exported": false,
       "file": "server.js",
       "name": "socketService",
+      "scopePath": [],
       "type": "VARIABLE"
     }
   ],
@@ -2421,12 +2386,12 @@
     {
       "from": "FUNCTION:anonymous[0]",
       "type": "HAS_SCOPE",
-      "to": "SCOPE:anonymous[0]:body"
+      "to": "SCOPE:anonymous[1]:body"
     },
     {
       "from": "FUNCTION:anonymous[0]",
       "type": "HAS_SCOPE",
-      "to": "SCOPE:anonymous[0]:body"
+      "to": "SCOPE:anonymous[4]:body"
     },
     {
       "from": "FUNCTION:anonymous[1]",
@@ -2454,7 +2419,7 @@
     {
       "from": "FUNCTION:anonymous[1]",
       "type": "HAS_SCOPE",
-      "to": "SCOPE:anonymous[1]:body"
+      "to": "SCOPE:anonymous[4]:body"
     },
     {
       "from": "FUNCTION:anonymous[2]",
@@ -2482,7 +2447,7 @@
     {
       "from": "FUNCTION:anonymous[2]",
       "type": "HAS_SCOPE",
-      "to": "SCOPE:anonymous[2]:body"
+      "to": "SCOPE:anonymous[4]:body"
     },
     {
       "from": "FUNCTION:anonymous[3]",
@@ -2515,7 +2480,7 @@
     {
       "from": "FUNCTION:anonymous[3]",
       "type": "HAS_SCOPE",
-      "to": "SCOPE:anonymous[3]:body"
+      "to": "SCOPE:anonymous[4]:body"
     },
     {
       "from": "FUNCTION:anonymous[4]",
@@ -2858,52 +2823,12 @@
     {
       "from": "SCOPE:anonymous[0]:body",
       "type": "CONTAINS",
-      "to": "CALL:console.log"
-    },
-    {
-      "from": "SCOPE:anonymous[0]:body",
-      "type": "CONTAINS",
-      "to": "CALL:console.log"
-    },
-    {
-      "from": "SCOPE:anonymous[0]:body",
-      "type": "CONTAINS",
       "to": "CALL:setSlots"
     },
     {
       "from": "SCOPE:anonymous[0]:body",
       "type": "CONTAINS",
       "to": "CALL:socket.emit"
-    },
-    {
-      "from": "SCOPE:anonymous[0]:body",
-      "type": "CONTAINS",
-      "to": "CALL:socket.join"
-    },
-    {
-      "from": "SCOPE:anonymous[0]:body",
-      "type": "CONTAINS",
-      "to": "CALL:socket.join"
-    },
-    {
-      "from": "SCOPE:anonymous[0]:body",
-      "type": "CONTAINS",
-      "to": "CALL:socket.on"
-    },
-    {
-      "from": "SCOPE:anonymous[0]:body",
-      "type": "CONTAINS",
-      "to": "CALL:socket.on"
-    },
-    {
-      "from": "SCOPE:anonymous[0]:body",
-      "type": "CONTAINS",
-      "to": "CALL:socket.on"
-    },
-    {
-      "from": "SCOPE:anonymous[0]:body",
-      "type": "CONTAINS",
-      "to": "CALL:socket.on"
     },
     {
       "from": "SCOPE:anonymous[0]:body",
@@ -2924,26 +2849,6 @@
       "from": "SCOPE:anonymous[0]:body",
       "type": "CONTAINS",
       "to": "FUNCTION:anonymous[0]"
-    },
-    {
-      "from": "SCOPE:anonymous[0]:body",
-      "type": "CONTAINS",
-      "to": "FUNCTION:anonymous[0]"
-    },
-    {
-      "from": "SCOPE:anonymous[0]:body",
-      "type": "CONTAINS",
-      "to": "FUNCTION:anonymous[1]"
-    },
-    {
-      "from": "SCOPE:anonymous[0]:body",
-      "type": "CONTAINS",
-      "to": "FUNCTION:anonymous[2]"
-    },
-    {
-      "from": "SCOPE:anonymous[0]:body",
-      "type": "CONTAINS",
-      "to": "FUNCTION:anonymous[3]"
     },
     {
       "from": "SCOPE:anonymous[0]:body",
@@ -2978,7 +2883,32 @@
     {
       "from": "SCOPE:anonymous[1]:body",
       "type": "CONTAINS",
-      "to": "CALL:updateUI"
+      "to": "CALL:socket.join"
+    },
+    {
+      "from": "SCOPE:anonymous[1]:body",
+      "type": "CONTAINS",
+      "to": "CALL:socket.join"
+    },
+    {
+      "from": "SCOPE:anonymous[1]:body",
+      "type": "CONTAINS",
+      "to": "CALL:socket.on"
+    },
+    {
+      "from": "SCOPE:anonymous[1]:body",
+      "type": "CONTAINS",
+      "to": "CALL:socket.on"
+    },
+    {
+      "from": "SCOPE:anonymous[1]:body",
+      "type": "CONTAINS",
+      "to": "CALL:socket.on"
+    },
+    {
+      "from": "SCOPE:anonymous[1]:body",
+      "type": "CONTAINS",
+      "to": "CALL:socket.on"
     },
     {
       "from": "SCOPE:anonymous[1]:body",
@@ -2986,9 +2916,24 @@
       "to": "FUNCTION:anonymous[0]"
     },
     {
-      "from": "SCOPE:anonymous[2]:body",
+      "from": "SCOPE:anonymous[1]:body",
       "type": "CONTAINS",
-      "to": "CALL:displayMessage"
+      "to": "FUNCTION:anonymous[0]"
+    },
+    {
+      "from": "SCOPE:anonymous[1]:body",
+      "type": "CONTAINS",
+      "to": "FUNCTION:anonymous[1]"
+    },
+    {
+      "from": "SCOPE:anonymous[1]:body",
+      "type": "CONTAINS",
+      "to": "FUNCTION:anonymous[2]"
+    },
+    {
+      "from": "SCOPE:anonymous[1]:body",
+      "type": "CONTAINS",
+      "to": "FUNCTION:anonymous[3]"
     },
     {
       "from": "SCOPE:anonymous[2]:body",
@@ -3006,14 +2951,34 @@
       "to": "CALL:io.emit"
     },
     {
-      "from": "SCOPE:anonymous[3]:body",
+      "from": "SCOPE:anonymous[4]:body",
+      "type": "CONTAINS",
+      "to": "CALL:console.log"
+    },
+    {
+      "from": "SCOPE:anonymous[4]:body",
+      "type": "CONTAINS",
+      "to": "CALL:console.log"
+    },
+    {
+      "from": "SCOPE:anonymous[4]:body",
+      "type": "CONTAINS",
+      "to": "CALL:console.log"
+    },
+    {
+      "from": "SCOPE:anonymous[4]:body",
+      "type": "CONTAINS",
+      "to": "CALL:displayMessage"
+    },
+    {
+      "from": "SCOPE:anonymous[4]:body",
       "type": "CONTAINS",
       "to": "CALL:showTypingIndicator"
     },
     {
       "from": "SCOPE:anonymous[4]:body",
       "type": "CONTAINS",
-      "to": "CALL:console.log"
+      "to": "CALL:updateUI"
     },
     {
       "from": "SCOPE:bookSlot:body",

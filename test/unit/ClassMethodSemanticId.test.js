@@ -6,7 +6,7 @@
  * Verifies that class methods, property functions, constructors, static methods,
  * and getters/setters all produce semantic IDs (not legacy FUNCTION# format).
  *
- * Expected format: {file}->{className}->FUNCTION->{methodName}
+ * Expected format v2: {file}->FUNCTION->{methodName}[in:{className}]
  *
  * TDD: Tests written first per Kent Beck's methodology.
  * These tests will FAIL initially - implementation comes after.
@@ -134,10 +134,10 @@ class UserService {
         `Method ID should include class name. Got: ${methodNode.id}`
       );
 
-      // Expected exact format
+      // Expected exact format v2: file->FUNCTION->name[in:class]
       assert.ok(
-        methodNode.id.endsWith('->UserService->FUNCTION->getUser'),
-        `Expected ID to end with "->UserService->FUNCTION->getUser". Got: ${methodNode.id}`
+        methodNode.id.endsWith('->FUNCTION->getUser[in:UserService]'),
+        `Expected ID to end with "->FUNCTION->getUser[in:UserService]". Got: ${methodNode.id}`
       );
     });
 
@@ -237,10 +237,10 @@ class Handler {
         `Property function ID should include class name. Got: ${processNode.id}`
       );
 
-      // Expected exact format
+      // Expected exact format v2: file->FUNCTION->name[in:class]
       assert.ok(
-        processNode.id.endsWith('->Handler->FUNCTION->process'),
-        `Expected ID to end with "->Handler->FUNCTION->process". Got: ${processNode.id}`
+        processNode.id.endsWith('->FUNCTION->process[in:Handler]'),
+        `Expected ID to end with "->FUNCTION->process[in:Handler]". Got: ${processNode.id}`
       );
     });
 
@@ -324,10 +324,10 @@ class MyClass {
         `Constructor ID should include class name. Got: ${constructorNode.id}`
       );
 
-      // Expected exact format
+      // Expected exact format v2: file->FUNCTION->name[in:class]
       assert.ok(
-        constructorNode.id.endsWith('->MyClass->FUNCTION->constructor'),
-        `Expected ID to end with "->MyClass->FUNCTION->constructor". Got: ${constructorNode.id}`
+        constructorNode.id.endsWith('->FUNCTION->constructor[in:MyClass]'),
+        `Expected ID to end with "->FUNCTION->constructor[in:MyClass]". Got: ${constructorNode.id}`
       );
     });
 
@@ -402,10 +402,10 @@ class Utils {
         `Static method ID should include class name. Got: ${formatNode.id}`
       );
 
-      // Expected exact format
+      // Expected exact format v2: file->FUNCTION->name[in:class]
       assert.ok(
-        formatNode.id.endsWith('->Utils->FUNCTION->format'),
-        `Expected ID to end with "->Utils->FUNCTION->format". Got: ${formatNode.id}`
+        formatNode.id.endsWith('->FUNCTION->format[in:Utils]'),
+        `Expected ID to end with "->FUNCTION->format[in:Utils]". Got: ${formatNode.id}`
       );
     });
 
@@ -485,10 +485,10 @@ class Config {
         `Getter ID should include class name. Got: ${getterNode.id}`
       );
 
-      // Expected exact format
+      // Expected exact format v2: file->FUNCTION->name[in:class]
       assert.ok(
-        getterNode.id.endsWith('->Config->FUNCTION->value'),
-        `Expected ID to end with "->Config->FUNCTION->value". Got: ${getterNode.id}`
+        getterNode.id.endsWith('->FUNCTION->value[in:Config]'),
+        `Expected ID to end with "->FUNCTION->value[in:Config]". Got: ${getterNode.id}`
       );
     });
 

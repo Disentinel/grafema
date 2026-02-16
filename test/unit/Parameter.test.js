@@ -374,15 +374,15 @@ describe('PARAMETER nodes', () => {
         'Parameters in same function should have different IDs'
       );
 
-      // IDs should end with #index pattern
-      // Expected: ...->PARAMETER->name#0 and ...->PARAMETER->greeting#1
+      // V2: first param has no suffix, subsequent params get #index
+      // Expected: ...->PARAMETER->name[in:greet] and ...->PARAMETER->greeting[in:greet]#1
       assert.ok(
-        nameParam.id.match(/#\d+$/),
-        `PARAMETER ID should end with #index pattern. Got: ${nameParam.id}`
+        nameParam.id.includes('->PARAMETER->name'),
+        `PARAMETER ID should include name. Got: ${nameParam.id}`
       );
       assert.ok(
         greetingParam.id.match(/#\d+$/),
-        `PARAMETER ID should end with #index pattern. Got: ${greetingParam.id}`
+        `Subsequent PARAMETER ID should end with #index pattern. Got: ${greetingParam.id}`
       );
     });
 
@@ -429,11 +429,11 @@ describe('PARAMETER nodes', () => {
       const configParam = paramNodes.find(p => p.name === 'config');
       assert.ok(configParam, '"config" parameter should exist');
 
-      // Semantic ID should include class name in scope
-      // Expected format: index.js->ConfigService->constructor->PARAMETER->config#0
+      // V2: Semantic ID uses [in:constructor] suffix (method name, not class name)
+      // Expected format: index.js->PARAMETER->config[in:constructor]
       assert.ok(
-        configParam.id.includes('ConfigService'),
-        `Class PARAMETER ID should include class name in scope. Got: ${configParam.id}`
+        configParam.id.includes('constructor'),
+        `Class PARAMETER ID should include constructor in scope. Got: ${configParam.id}`
       );
     });
   });

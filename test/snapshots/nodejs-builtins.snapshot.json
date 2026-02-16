@@ -3950,8 +3950,11 @@
       "file": "index.js",
       "index": 1,
       "name": "args",
-      "parentFunctionId": "index.js->global->FUNCTION->spawnProcess",
-      "semanticId": "index.js->spawnProcess->PARAMETER->args#1",
+      "parentFunctionId": "index.js->FUNCTION->spawnProcess",
+      "scopePath": [
+        "spawnProcess"
+      ],
+      "semanticId": "index.js->PARAMETER->args[in:spawnProcess]#1",
       "type": "PARAMETER"
     },
     {
@@ -3959,8 +3962,11 @@
       "file": "aliased-imports.js",
       "index": 0,
       "name": "base",
-      "parentFunctionId": "aliased-imports.js->global->FUNCTION->buildPathWithAlias",
-      "semanticId": "aliased-imports.js->buildPathWithAlias->PARAMETER->base#0",
+      "parentFunctionId": "aliased-imports.js->FUNCTION->buildPathWithAlias",
+      "scopePath": [
+        "buildPathWithAlias"
+      ],
+      "semanticId": "aliased-imports.js->PARAMETER->base[in:buildPathWithAlias]",
       "type": "PARAMETER"
     },
     {
@@ -3968,8 +3974,11 @@
       "file": "index.js",
       "index": 0,
       "name": "base",
-      "parentFunctionId": "index.js->global->FUNCTION->buildPath",
-      "semanticId": "index.js->buildPath->PARAMETER->base#0",
+      "parentFunctionId": "index.js->FUNCTION->buildPath",
+      "scopePath": [
+        "buildPath"
+      ],
+      "semanticId": "index.js->PARAMETER->base[in:buildPath]",
       "type": "PARAMETER"
     },
     {
@@ -3977,8 +3986,11 @@
       "file": "node-prefix.js",
       "index": 0,
       "name": "base",
-      "parentFunctionId": "node-prefix.js->global->FUNCTION->buildWithNodePrefix",
-      "semanticId": "node-prefix.js->buildWithNodePrefix->PARAMETER->base#0",
+      "parentFunctionId": "node-prefix.js->FUNCTION->buildWithNodePrefix",
+      "scopePath": [
+        "buildWithNodePrefix"
+      ],
+      "semanticId": "node-prefix.js->PARAMETER->base[in:buildWithNodePrefix]",
       "type": "PARAMETER"
     },
     {
@@ -3986,8 +3998,11 @@
       "file": "unused-imports.js",
       "index": 0,
       "name": "base",
-      "parentFunctionId": "unused-imports.js->global->FUNCTION->onlyJoinAndResolve",
-      "semanticId": "unused-imports.js->onlyJoinAndResolve->PARAMETER->base#0",
+      "parentFunctionId": "unused-imports.js->FUNCTION->onlyJoinAndResolve",
+      "scopePath": [
+        "onlyJoinAndResolve"
+      ],
+      "semanticId": "unused-imports.js->PARAMETER->base[in:onlyJoinAndResolve]",
       "type": "PARAMETER"
     },
     {
@@ -3995,8 +4010,11 @@
       "file": "index.js",
       "index": 1,
       "name": "callback",
-      "parentFunctionId": "index.js->global->FUNCTION->listFiles",
-      "semanticId": "index.js->listFiles->PARAMETER->callback#1",
+      "parentFunctionId": "index.js->FUNCTION->listFiles",
+      "scopePath": [
+        "listFiles"
+      ],
+      "semanticId": "index.js->PARAMETER->callback[in:listFiles]#1",
       "type": "PARAMETER"
     },
     {
@@ -4004,8 +4022,11 @@
       "file": "node-prefix.js",
       "index": 1,
       "name": "callback",
-      "parentFunctionId": "node-prefix.js->global->FUNCTION->loadWithNodePrefix",
-      "semanticId": "node-prefix.js->loadWithNodePrefix->PARAMETER->callback#1",
+      "parentFunctionId": "node-prefix.js->FUNCTION->loadWithNodePrefix",
+      "scopePath": [
+        "loadWithNodePrefix"
+      ],
+      "semanticId": "node-prefix.js->PARAMETER->callback[in:loadWithNodePrefix]#1",
       "type": "PARAMETER"
     },
     {
@@ -4013,8 +4034,11 @@
       "file": "node-prefix.js",
       "index": 2,
       "name": "callback",
-      "parentFunctionId": "node-prefix.js->global->FUNCTION->saveWithNodePrefix",
-      "semanticId": "node-prefix.js->saveWithNodePrefix->PARAMETER->callback#2",
+      "parentFunctionId": "node-prefix.js->FUNCTION->saveWithNodePrefix",
+      "scopePath": [
+        "saveWithNodePrefix"
+      ],
+      "semanticId": "node-prefix.js->PARAMETER->callback[in:saveWithNodePrefix]#2",
       "type": "PARAMETER"
     },
     {
@@ -4022,8 +4046,11 @@
       "file": "index.js",
       "index": 0,
       "name": "cmd",
-      "parentFunctionId": "index.js->global->FUNCTION->runCommand",
-      "semanticId": "index.js->runCommand->PARAMETER->cmd#0",
+      "parentFunctionId": "index.js->FUNCTION->runCommand",
+      "scopePath": [
+        "runCommand"
+      ],
+      "semanticId": "index.js->PARAMETER->cmd[in:runCommand]",
       "type": "PARAMETER"
     },
     {
@@ -4031,8 +4058,11 @@
       "file": "index.js",
       "index": 0,
       "name": "command",
-      "parentFunctionId": "index.js->global->FUNCTION->spawnProcess",
-      "semanticId": "index.js->spawnProcess->PARAMETER->command#0",
+      "parentFunctionId": "index.js->FUNCTION->spawnProcess",
+      "scopePath": [
+        "spawnProcess"
+      ],
+      "semanticId": "index.js->PARAMETER->command[in:spawnProcess]",
       "type": "PARAMETER"
     },
     {
@@ -4040,8 +4070,11 @@
       "file": "index.js",
       "index": 0,
       "name": "configPath",
-      "parentFunctionId": "index.js->global->FUNCTION->loadConfig",
-      "semanticId": "index.js->loadConfig->PARAMETER->configPath#0",
+      "parentFunctionId": "index.js->FUNCTION->loadConfig",
+      "scopePath": [
+        "loadConfig"
+      ],
+      "semanticId": "index.js->PARAMETER->configPath[in:loadConfig]",
       "type": "PARAMETER"
     },
     {
@@ -4049,8 +4082,11 @@
       "file": "aliased-imports.js",
       "index": 1,
       "name": "content",
-      "parentFunctionId": "aliased-imports.js->global->FUNCTION->saveWithAlias",
-      "semanticId": "aliased-imports.js->saveWithAlias->PARAMETER->content#1",
+      "parentFunctionId": "aliased-imports.js->FUNCTION->saveWithAlias",
+      "scopePath": [
+        "saveWithAlias"
+      ],
+      "semanticId": "aliased-imports.js->PARAMETER->content[in:saveWithAlias]#1",
       "type": "PARAMETER"
     },
     {
@@ -4058,8 +4094,11 @@
       "file": "namespace-import.js",
       "index": 1,
       "name": "content",
-      "parentFunctionId": "namespace-import.js->global->FUNCTION->writeViaNamespace",
-      "semanticId": "namespace-import.js->writeViaNamespace->PARAMETER->content#1",
+      "parentFunctionId": "namespace-import.js->FUNCTION->writeViaNamespace",
+      "scopePath": [
+        "writeViaNamespace"
+      ],
+      "semanticId": "namespace-import.js->PARAMETER->content[in:writeViaNamespace]#1",
       "type": "PARAMETER"
     },
     {
@@ -4067,8 +4106,11 @@
       "file": "node-prefix.js",
       "index": 1,
       "name": "content",
-      "parentFunctionId": "node-prefix.js->global->FUNCTION->saveWithNodePrefix",
-      "semanticId": "node-prefix.js->saveWithNodePrefix->PARAMETER->content#1",
+      "parentFunctionId": "node-prefix.js->FUNCTION->saveWithNodePrefix",
+      "scopePath": [
+        "saveWithNodePrefix"
+      ],
+      "semanticId": "node-prefix.js->PARAMETER->content[in:saveWithNodePrefix]#1",
       "type": "PARAMETER"
     },
     {
@@ -4076,8 +4118,11 @@
       "file": "aliased-imports.js",
       "index": 0,
       "name": "data",
-      "parentFunctionId": "aliased-imports.js->global->FUNCTION->hashWithAlias",
-      "semanticId": "aliased-imports.js->hashWithAlias->PARAMETER->data#0",
+      "parentFunctionId": "aliased-imports.js->FUNCTION->hashWithAlias",
+      "scopePath": [
+        "hashWithAlias"
+      ],
+      "semanticId": "aliased-imports.js->PARAMETER->data[in:hashWithAlias]",
       "type": "PARAMETER"
     },
     {
@@ -4085,8 +4130,11 @@
       "file": "fs-promises.js",
       "index": 1,
       "name": "data",
-      "parentFunctionId": "fs-promises.js->global->FUNCTION->saveAsync",
-      "semanticId": "fs-promises.js->saveAsync->PARAMETER->data#1",
+      "parentFunctionId": "fs-promises.js->FUNCTION->saveAsync",
+      "scopePath": [
+        "saveAsync"
+      ],
+      "semanticId": "fs-promises.js->PARAMETER->data[in:saveAsync]#1",
       "type": "PARAMETER"
     },
     {
@@ -4094,8 +4142,11 @@
       "file": "index.js",
       "index": 1,
       "name": "data",
-      "parentFunctionId": "index.js->global->FUNCTION->saveData",
-      "semanticId": "index.js->saveData->PARAMETER->data#1",
+      "parentFunctionId": "index.js->FUNCTION->saveData",
+      "scopePath": [
+        "saveData"
+      ],
+      "semanticId": "index.js->PARAMETER->data[in:saveData]#1",
       "type": "PARAMETER"
     },
     {
@@ -4103,8 +4154,11 @@
       "file": "unused-imports.js",
       "index": 0,
       "name": "data",
-      "parentFunctionId": "unused-imports.js->global->FUNCTION->onlyCreateHash",
-      "semanticId": "unused-imports.js->onlyCreateHash->PARAMETER->data#0",
+      "parentFunctionId": "unused-imports.js->FUNCTION->onlyCreateHash",
+      "scopePath": [
+        "onlyCreateHash"
+      ],
+      "semanticId": "unused-imports.js->PARAMETER->data[in:onlyCreateHash]",
       "type": "PARAMETER"
     },
     {
@@ -4112,8 +4166,11 @@
       "file": "fs-promises.js",
       "index": 1,
       "name": "dest",
-      "parentFunctionId": "fs-promises.js->global->FUNCTION->copy",
-      "semanticId": "fs-promises.js->copy->PARAMETER->dest#1",
+      "parentFunctionId": "fs-promises.js->FUNCTION->copy",
+      "scopePath": [
+        "copy"
+      ],
+      "semanticId": "fs-promises.js->PARAMETER->dest[in:copy]#1",
       "type": "PARAMETER"
     },
     {
@@ -4121,8 +4178,11 @@
       "file": "index.js",
       "index": 0,
       "name": "dir",
-      "parentFunctionId": "index.js->global->FUNCTION->listFiles",
-      "semanticId": "index.js->listFiles->PARAMETER->dir#0",
+      "parentFunctionId": "index.js->FUNCTION->listFiles",
+      "scopePath": [
+        "listFiles"
+      ],
+      "semanticId": "index.js->PARAMETER->dir[in:listFiles]",
       "type": "PARAMETER"
     },
     {
@@ -4130,8 +4190,11 @@
       "file": "index.js",
       "index": 0,
       "name": "filePath",
-      "parentFunctionId": "index.js->global->FUNCTION->saveData",
-      "semanticId": "index.js->saveData->PARAMETER->filePath#0",
+      "parentFunctionId": "index.js->FUNCTION->saveData",
+      "scopePath": [
+        "saveData"
+      ],
+      "semanticId": "index.js->PARAMETER->filePath[in:saveData]",
       "type": "PARAMETER"
     },
     {
@@ -4139,8 +4202,11 @@
       "file": "namespace-import.js",
       "index": 0,
       "name": "filePath",
-      "parentFunctionId": "namespace-import.js->global->FUNCTION->existsViaNamespace",
-      "semanticId": "namespace-import.js->existsViaNamespace->PARAMETER->filePath#0",
+      "parentFunctionId": "namespace-import.js->FUNCTION->existsViaNamespace",
+      "scopePath": [
+        "existsViaNamespace"
+      ],
+      "semanticId": "namespace-import.js->PARAMETER->filePath[in:existsViaNamespace]",
       "type": "PARAMETER"
     },
     {
@@ -4148,8 +4214,11 @@
       "file": "namespace-import.js",
       "index": 0,
       "name": "filePath",
-      "parentFunctionId": "namespace-import.js->global->FUNCTION->loadViaNamespace",
-      "semanticId": "namespace-import.js->loadViaNamespace->PARAMETER->filePath#0",
+      "parentFunctionId": "namespace-import.js->FUNCTION->loadViaNamespace",
+      "scopePath": [
+        "loadViaNamespace"
+      ],
+      "semanticId": "namespace-import.js->PARAMETER->filePath[in:loadViaNamespace]",
       "type": "PARAMETER"
     },
     {
@@ -4157,8 +4226,11 @@
       "file": "namespace-import.js",
       "index": 0,
       "name": "filePath",
-      "parentFunctionId": "namespace-import.js->global->FUNCTION->parseViaNamespace",
-      "semanticId": "namespace-import.js->parseViaNamespace->PARAMETER->filePath#0",
+      "parentFunctionId": "namespace-import.js->FUNCTION->parseViaNamespace",
+      "scopePath": [
+        "parseViaNamespace"
+      ],
+      "semanticId": "namespace-import.js->PARAMETER->filePath[in:parseViaNamespace]",
       "type": "PARAMETER"
     },
     {
@@ -4166,8 +4238,11 @@
       "file": "namespace-import.js",
       "index": 0,
       "name": "filePath",
-      "parentFunctionId": "namespace-import.js->global->FUNCTION->writeViaNamespace",
-      "semanticId": "namespace-import.js->writeViaNamespace->PARAMETER->filePath#0",
+      "parentFunctionId": "namespace-import.js->FUNCTION->writeViaNamespace",
+      "scopePath": [
+        "writeViaNamespace"
+      ],
+      "semanticId": "namespace-import.js->PARAMETER->filePath[in:writeViaNamespace]",
       "type": "PARAMETER"
     },
     {
@@ -4175,8 +4250,11 @@
       "file": "namespace-import.js",
       "index": 0,
       "name": "fn",
-      "parentFunctionId": "namespace-import.js->global->FUNCTION->promisifyCallback",
-      "semanticId": "namespace-import.js->promisifyCallback->PARAMETER->fn#0",
+      "parentFunctionId": "namespace-import.js->FUNCTION->promisifyCallback",
+      "scopePath": [
+        "promisifyCallback"
+      ],
+      "semanticId": "namespace-import.js->PARAMETER->fn[in:promisifyCallback]",
       "type": "PARAMETER"
     },
     {
@@ -4184,8 +4262,11 @@
       "file": "index.js",
       "index": 0,
       "name": "fullPath",
-      "parentFunctionId": "index.js->global->FUNCTION->getFilename",
-      "semanticId": "index.js->getFilename->PARAMETER->fullPath#0",
+      "parentFunctionId": "index.js->FUNCTION->getFilename",
+      "scopePath": [
+        "getFilename"
+      ],
+      "semanticId": "index.js->PARAMETER->fullPath[in:getFilename]",
       "type": "PARAMETER"
     },
     {
@@ -4193,8 +4274,11 @@
       "file": "node-prefix.js",
       "index": 0,
       "name": "handler",
-      "parentFunctionId": "node-prefix.js->global->FUNCTION->createServerWithNodePrefix",
-      "semanticId": "node-prefix.js->createServerWithNodePrefix->PARAMETER->handler#0",
+      "parentFunctionId": "node-prefix.js->FUNCTION->createServerWithNodePrefix",
+      "scopePath": [
+        "createServerWithNodePrefix"
+      ],
+      "semanticId": "node-prefix.js->PARAMETER->handler[in:createServerWithNodePrefix]",
       "type": "PARAMETER"
     },
     {
@@ -4202,8 +4286,11 @@
       "file": "namespace-import.js",
       "index": 0,
       "name": "obj",
-      "parentFunctionId": "namespace-import.js->global->FUNCTION->inspectObject",
-      "semanticId": "namespace-import.js->inspectObject->PARAMETER->obj#0",
+      "parentFunctionId": "namespace-import.js->FUNCTION->inspectObject",
+      "scopePath": [
+        "inspectObject"
+      ],
+      "semanticId": "namespace-import.js->PARAMETER->obj[in:inspectObject]",
       "type": "PARAMETER"
     },
     {
@@ -4211,8 +4298,11 @@
       "file": "aliased-imports.js",
       "index": 0,
       "name": "path",
-      "parentFunctionId": "aliased-imports.js->global->FUNCTION->loadWithAlias",
-      "semanticId": "aliased-imports.js->loadWithAlias->PARAMETER->path#0",
+      "parentFunctionId": "aliased-imports.js->FUNCTION->loadWithAlias",
+      "scopePath": [
+        "loadWithAlias"
+      ],
+      "semanticId": "aliased-imports.js->PARAMETER->path[in:loadWithAlias]",
       "type": "PARAMETER"
     },
     {
@@ -4220,8 +4310,11 @@
       "file": "aliased-imports.js",
       "index": 0,
       "name": "path",
-      "parentFunctionId": "aliased-imports.js->global->FUNCTION->saveWithAlias",
-      "semanticId": "aliased-imports.js->saveWithAlias->PARAMETER->path#0",
+      "parentFunctionId": "aliased-imports.js->FUNCTION->saveWithAlias",
+      "scopePath": [
+        "saveWithAlias"
+      ],
+      "semanticId": "aliased-imports.js->PARAMETER->path[in:saveWithAlias]",
       "type": "PARAMETER"
     },
     {
@@ -4229,8 +4322,11 @@
       "file": "fs-promises.js",
       "index": 0,
       "name": "path",
-      "parentFunctionId": "fs-promises.js->global->FUNCTION->checkAccess",
-      "semanticId": "fs-promises.js->checkAccess->PARAMETER->path#0",
+      "parentFunctionId": "fs-promises.js->FUNCTION->checkAccess",
+      "scopePath": [
+        "checkAccess"
+      ],
+      "semanticId": "fs-promises.js->PARAMETER->path[in:checkAccess]",
       "type": "PARAMETER"
     },
     {
@@ -4238,8 +4334,11 @@
       "file": "fs-promises.js",
       "index": 0,
       "name": "path",
-      "parentFunctionId": "fs-promises.js->global->FUNCTION->ensureDir",
-      "semanticId": "fs-promises.js->ensureDir->PARAMETER->path#0",
+      "parentFunctionId": "fs-promises.js->FUNCTION->ensureDir",
+      "scopePath": [
+        "ensureDir"
+      ],
+      "semanticId": "fs-promises.js->PARAMETER->path[in:ensureDir]",
       "type": "PARAMETER"
     },
     {
@@ -4247,8 +4346,11 @@
       "file": "fs-promises.js",
       "index": 0,
       "name": "path",
-      "parentFunctionId": "fs-promises.js->global->FUNCTION->getStats",
-      "semanticId": "fs-promises.js->getStats->PARAMETER->path#0",
+      "parentFunctionId": "fs-promises.js->FUNCTION->getStats",
+      "scopePath": [
+        "getStats"
+      ],
+      "semanticId": "fs-promises.js->PARAMETER->path[in:getStats]",
       "type": "PARAMETER"
     },
     {
@@ -4256,8 +4358,11 @@
       "file": "fs-promises.js",
       "index": 0,
       "name": "path",
-      "parentFunctionId": "fs-promises.js->global->FUNCTION->listDir",
-      "semanticId": "fs-promises.js->listDir->PARAMETER->path#0",
+      "parentFunctionId": "fs-promises.js->FUNCTION->listDir",
+      "scopePath": [
+        "listDir"
+      ],
+      "semanticId": "fs-promises.js->PARAMETER->path[in:listDir]",
       "type": "PARAMETER"
     },
     {
@@ -4265,8 +4370,11 @@
       "file": "fs-promises.js",
       "index": 0,
       "name": "path",
-      "parentFunctionId": "fs-promises.js->global->FUNCTION->loadAsync",
-      "semanticId": "fs-promises.js->loadAsync->PARAMETER->path#0",
+      "parentFunctionId": "fs-promises.js->FUNCTION->loadAsync",
+      "scopePath": [
+        "loadAsync"
+      ],
+      "semanticId": "fs-promises.js->PARAMETER->path[in:loadAsync]",
       "type": "PARAMETER"
     },
     {
@@ -4274,8 +4382,11 @@
       "file": "fs-promises.js",
       "index": 0,
       "name": "path",
-      "parentFunctionId": "fs-promises.js->global->FUNCTION->removeFile",
-      "semanticId": "fs-promises.js->removeFile->PARAMETER->path#0",
+      "parentFunctionId": "fs-promises.js->FUNCTION->removeFile",
+      "scopePath": [
+        "removeFile"
+      ],
+      "semanticId": "fs-promises.js->PARAMETER->path[in:removeFile]",
       "type": "PARAMETER"
     },
     {
@@ -4283,8 +4394,11 @@
       "file": "fs-promises.js",
       "index": 0,
       "name": "path",
-      "parentFunctionId": "fs-promises.js->global->FUNCTION->saveAsync",
-      "semanticId": "fs-promises.js->saveAsync->PARAMETER->path#0",
+      "parentFunctionId": "fs-promises.js->FUNCTION->saveAsync",
+      "scopePath": [
+        "saveAsync"
+      ],
+      "semanticId": "fs-promises.js->PARAMETER->path[in:saveAsync]",
       "type": "PARAMETER"
     },
     {
@@ -4292,8 +4406,11 @@
       "file": "node-prefix.js",
       "index": 0,
       "name": "path",
-      "parentFunctionId": "node-prefix.js->global->FUNCTION->loadWithNodePrefix",
-      "semanticId": "node-prefix.js->loadWithNodePrefix->PARAMETER->path#0",
+      "parentFunctionId": "node-prefix.js->FUNCTION->loadWithNodePrefix",
+      "scopePath": [
+        "loadWithNodePrefix"
+      ],
+      "semanticId": "node-prefix.js->PARAMETER->path[in:loadWithNodePrefix]",
       "type": "PARAMETER"
     },
     {
@@ -4301,8 +4418,11 @@
       "file": "node-prefix.js",
       "index": 0,
       "name": "path",
-      "parentFunctionId": "node-prefix.js->global->FUNCTION->saveWithNodePrefix",
-      "semanticId": "node-prefix.js->saveWithNodePrefix->PARAMETER->path#0",
+      "parentFunctionId": "node-prefix.js->FUNCTION->saveWithNodePrefix",
+      "scopePath": [
+        "saveWithNodePrefix"
+      ],
+      "semanticId": "node-prefix.js->PARAMETER->path[in:saveWithNodePrefix]",
       "type": "PARAMETER"
     },
     {
@@ -4310,8 +4430,11 @@
       "file": "unused-imports.js",
       "index": 0,
       "name": "path",
-      "parentFunctionId": "unused-imports.js->global->FUNCTION->onlyReadFile",
-      "semanticId": "unused-imports.js->onlyReadFile->PARAMETER->path#0",
+      "parentFunctionId": "unused-imports.js->FUNCTION->onlyReadFile",
+      "scopePath": [
+        "onlyReadFile"
+      ],
+      "semanticId": "unused-imports.js->PARAMETER->path[in:onlyReadFile]",
       "type": "PARAMETER"
     },
     {
@@ -4319,8 +4442,11 @@
       "file": "index.js",
       "index": 0,
       "name": "port",
-      "parentFunctionId": "index.js->global->FUNCTION->startServer",
-      "semanticId": "index.js->startServer->PARAMETER->port#0",
+      "parentFunctionId": "index.js->FUNCTION->startServer",
+      "scopePath": [
+        "startServer"
+      ],
+      "semanticId": "index.js->PARAMETER->port[in:startServer]",
       "type": "PARAMETER"
     },
     {
@@ -4328,8 +4454,11 @@
       "file": "node-prefix.js",
       "index": 0,
       "name": "script",
-      "parentFunctionId": "node-prefix.js->global->FUNCTION->createWorker",
-      "semanticId": "node-prefix.js->createWorker->PARAMETER->script#0",
+      "parentFunctionId": "node-prefix.js->FUNCTION->createWorker",
+      "scopePath": [
+        "createWorker"
+      ],
+      "semanticId": "node-prefix.js->PARAMETER->script[in:createWorker]",
       "type": "PARAMETER"
     },
     {
@@ -4337,8 +4466,11 @@
       "file": "aliased-imports.js",
       "index": 1,
       "name": "segment",
-      "parentFunctionId": "aliased-imports.js->global->FUNCTION->buildPathWithAlias",
-      "semanticId": "aliased-imports.js->buildPathWithAlias->PARAMETER->segment#1",
+      "parentFunctionId": "aliased-imports.js->FUNCTION->buildPathWithAlias",
+      "scopePath": [
+        "buildPathWithAlias"
+      ],
+      "semanticId": "aliased-imports.js->PARAMETER->segment[in:buildPathWithAlias]#1",
       "type": "PARAMETER"
     },
     {
@@ -4346,8 +4478,11 @@
       "file": "node-prefix.js",
       "index": 1,
       "name": "segment",
-      "parentFunctionId": "node-prefix.js->global->FUNCTION->buildWithNodePrefix",
-      "semanticId": "node-prefix.js->buildWithNodePrefix->PARAMETER->segment#1",
+      "parentFunctionId": "node-prefix.js->FUNCTION->buildWithNodePrefix",
+      "scopePath": [
+        "buildWithNodePrefix"
+      ],
+      "semanticId": "node-prefix.js->PARAMETER->segment[in:buildWithNodePrefix]#1",
       "type": "PARAMETER"
     },
     {
@@ -4355,8 +4490,11 @@
       "file": "unused-imports.js",
       "index": 1,
       "name": "segment",
-      "parentFunctionId": "unused-imports.js->global->FUNCTION->onlyJoinAndResolve",
-      "semanticId": "unused-imports.js->onlyJoinAndResolve->PARAMETER->segment#1",
+      "parentFunctionId": "unused-imports.js->FUNCTION->onlyJoinAndResolve",
+      "scopePath": [
+        "onlyJoinAndResolve"
+      ],
+      "semanticId": "unused-imports.js->PARAMETER->segment[in:onlyJoinAndResolve]#1",
       "type": "PARAMETER"
     },
     {
@@ -4365,8 +4503,11 @@
       "index": 1,
       "isRest": true,
       "name": "segments",
-      "parentFunctionId": "index.js->global->FUNCTION->buildPath",
-      "semanticId": "index.js->buildPath->PARAMETER->segments#1",
+      "parentFunctionId": "index.js->FUNCTION->buildPath",
+      "scopePath": [
+        "buildPath"
+      ],
+      "semanticId": "index.js->PARAMETER->segments[in:buildPath]#1",
       "type": "PARAMETER"
     },
     {
@@ -4375,8 +4516,11 @@
       "index": 0,
       "isRest": true,
       "name": "segments",
-      "parentFunctionId": "namespace-import.js->global->FUNCTION->joinViaNamespace",
-      "semanticId": "namespace-import.js->joinViaNamespace->PARAMETER->segments#0",
+      "parentFunctionId": "namespace-import.js->FUNCTION->joinViaNamespace",
+      "scopePath": [
+        "joinViaNamespace"
+      ],
+      "semanticId": "namespace-import.js->PARAMETER->segments[in:joinViaNamespace]",
       "type": "PARAMETER"
     },
     {
@@ -4384,8 +4528,11 @@
       "file": "fs-promises.js",
       "index": 0,
       "name": "src",
-      "parentFunctionId": "fs-promises.js->global->FUNCTION->copy",
-      "semanticId": "fs-promises.js->copy->PARAMETER->src#0",
+      "parentFunctionId": "fs-promises.js->FUNCTION->copy",
+      "scopePath": [
+        "copy"
+      ],
+      "semanticId": "fs-promises.js->PARAMETER->src[in:copy]",
       "type": "PARAMETER"
     },
     {
@@ -4393,8 +4540,11 @@
       "file": "namespace-import.js",
       "index": 0,
       "name": "urlObj",
-      "parentFunctionId": "namespace-import.js->global->FUNCTION->formatUrl",
-      "semanticId": "namespace-import.js->formatUrl->PARAMETER->urlObj#0",
+      "parentFunctionId": "namespace-import.js->FUNCTION->formatUrl",
+      "scopePath": [
+        "formatUrl"
+      ],
+      "semanticId": "namespace-import.js->PARAMETER->urlObj[in:formatUrl]",
       "type": "PARAMETER"
     },
     {
@@ -4402,8 +4552,11 @@
       "file": "namespace-import.js",
       "index": 0,
       "name": "urlString",
-      "parentFunctionId": "namespace-import.js->global->FUNCTION->parseUrl",
-      "semanticId": "namespace-import.js->parseUrl->PARAMETER->urlString#0",
+      "parentFunctionId": "namespace-import.js->FUNCTION->parseUrl",
+      "scopePath": [
+        "parseUrl"
+      ],
+      "semanticId": "namespace-import.js->PARAMETER->urlString[in:parseUrl]",
       "type": "PARAMETER"
     },
     {
@@ -4411,7 +4564,7 @@
       "file": "index.js",
       "name": "stdout",
       "objectName": "child",
-      "semanticId": "index.js->spawnProcess->PROPERTY_ACCESS->child.stdout#0",
+      "semanticId": "index.js->PROPERTY_ACCESS->child.stdout[in:spawnProcess]",
       "type": "PROPERTY_ACCESS"
     },
     {

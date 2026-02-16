@@ -27,7 +27,7 @@ import type {
   TypeParameterInfo
 } from '../types.js';
 import type { ScopeTracker } from '../../../../core/ScopeTracker.js';
-import { computeSemanticId } from '../../../../core/SemanticId.js';
+import { computeSemanticIdV2 } from '../../../../core/SemanticId.js';
 import { getLine, getColumn } from '../utils/location.js';
 
 /**
@@ -280,7 +280,7 @@ export class TypeScriptVisitor extends ASTVisitor {
         // Generate semantic ID if scopeTracker available
         let interfaceSemanticId: string | undefined;
         if (scopeTracker) {
-          interfaceSemanticId = computeSemanticId('INTERFACE', interfaceName, scopeTracker.getContext());
+          interfaceSemanticId = computeSemanticIdV2('INTERFACE', interfaceName, module.file, scopeTracker.getNamedParent());
         }
 
         // Extract extends
@@ -358,7 +358,7 @@ export class TypeScriptVisitor extends ASTVisitor {
         // Generate semantic ID if scopeTracker available
         let typeSemanticId: string | undefined;
         if (scopeTracker) {
-          typeSemanticId = computeSemanticId('TYPE', typeName, scopeTracker.getContext());
+          typeSemanticId = computeSemanticIdV2('TYPE', typeName, module.file, scopeTracker.getNamedParent());
         }
 
         // Extract the type being aliased
@@ -437,7 +437,7 @@ export class TypeScriptVisitor extends ASTVisitor {
         // Generate semantic ID if scopeTracker available
         let enumSemanticId: string | undefined;
         if (scopeTracker) {
-          enumSemanticId = computeSemanticId('ENUM', enumName, scopeTracker.getContext());
+          enumSemanticId = computeSemanticIdV2('ENUM', enumName, module.file, scopeTracker.getNamedParent());
         }
 
         // Extract members
