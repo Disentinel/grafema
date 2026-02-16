@@ -1,6 +1,8 @@
 # @grafema/api
 
-GraphQL API server for Grafema code analysis toolkit.
+> GraphQL API server for Grafema code analysis toolkit
+
+**Warning: This package is in beta stage and the API may change between minor versions.**
 
 ## Overview
 

@@ -2,7 +2,7 @@
 
 > MCP server for Grafema code analysis toolkit
 
-**Warning: This package is in early alpha stage and is not recommended for production use.**
+**Warning: This package is in beta stage and the API may change between minor versions.**
 
 ## Installation
 
@@ -12,15 +12,9 @@ npm install @grafema/mcp
 
 ## Overview
 
-Model Context Protocol (MCP) server that exposes Grafema's code analysis capabilities to AI assistants like Claude. Enables AI agents to query code graphs, trace data flow, and check invariants.
+Model Context Protocol (MCP) server that exposes Grafema's code analysis capabilities to AI assistants like Claude. Enables AI agents to query code graphs, trace data flow, and check invariants — without reading source code.
 
 ## Quick Start
-
-### Running the server
-
-```bash
-npx grafema-mcp --project /path/to/your/project
-```
 
 ### Claude Code configuration
 
@@ -37,7 +31,7 @@ Add to your project's `.mcp.json`:
 }
 ```
 
-The RFDB graph database server is auto-started on first query if not already running. No manual setup needed beyond adding the MCP configuration.
+The RFDB graph database server is auto-started on first query. No manual setup needed.
 
 ### Claude Desktop configuration
 
@@ -54,17 +48,55 @@ Add to `~/.config/claude/claude_desktop_config.json`:
 }
 ```
 
-## Available Tools
+## Available Tools (24)
 
+### Graph Queries
 | Tool | Description |
 |------|-------------|
 | `query_graph` | Execute Datalog queries on the code graph |
+| `find_nodes` | Find nodes by type, name, or file |
 | `find_calls` | Find all calls to a function or method |
-| `trace_alias` | Trace variable aliases to their source |
-| `get_value_set` | Analyze possible values of a variable |
-| `trace_data_flow` | Trace data flow from source to sink |
-| `check_invariant` | Verify code invariants via Datalog |
-| `analyze_project` | Trigger full or incremental analysis |
+| `get_stats` | Get graph statistics (node/edge counts by type) |
+| `get_schema` | Get available node and edge types |
+
+### Navigation
+| Tool | Description |
+|------|-------------|
+| `get_function_details` | Comprehensive function details (calls, calledBy, parameters) |
+| `get_file_overview` | Structured overview of all entities in a file |
+| `get_context` | Deep context for a node (source code + graph neighborhood) |
+| `find_guards` | Find conditional guards protecting a node |
+| `read_project_structure` | Directory structure of the project |
+
+### Data Flow
+| Tool | Description |
+|------|-------------|
+| `trace_alias` | Trace alias chains to the original source |
+| `trace_dataflow` | Trace data flow from/to a variable or expression |
+
+### Analysis
+| Tool | Description |
+|------|-------------|
+| `analyze_project` | Run full or incremental analysis |
+| `get_analysis_status` | Current analysis status and progress |
+| `get_coverage` | Analysis coverage for a path |
+| `discover_services` | Discover services without full analysis |
+
+### Guarantees
+| Tool | Description |
+|------|-------------|
+| `check_invariant` | Check a code invariant via Datalog rule |
+| `create_guarantee` | Create a Datalog-based or contract-based guarantee |
+| `list_guarantees` | List all defined guarantees |
+| `check_guarantees` | Run all or specific guarantees |
+| `delete_guarantee` | Delete a guarantee by name |
+
+### Utilities
+| Tool | Description |
+|------|-------------|
+| `get_documentation` | Documentation about Grafema usage |
+| `report_issue` | Report a bug to GitHub (requires GITHUB_TOKEN) |
+| `write_config` | Write or update .grafema/config.yaml |
 
 ## Example Queries
 
@@ -73,7 +105,7 @@ Add to `~/.config/claude/claude_desktop_config.json`:
 query_graph("node(X, 'db:query')")
 
 // Trace where user input flows
-trace_data_flow({ from: "req.body", file: "api/users.js" })
+trace_dataflow({ from: "req.body", file: "api/users.js" })
 
 // Check for eval usage
 check_invariant("violation(X) :- node(X, 'CALL'), attr(X, 'name', 'eval')")
@@ -83,9 +115,6 @@ check_invariant("violation(X) :- node(X, 'CALL'), attr(X, 'name', 'eval')")
 
 ### GitHub Token (for bug reporting)
 
-The `report_issue` tool can automatically create GitHub issues if `GITHUB_TOKEN` is set.
-
-**Option 1: In `.mcp.json`**
 ```json
 {
   "mcpServers": {
@@ -99,13 +128,6 @@ The `report_issue` tool can automatically create GitHub issues if `GITHUB_TOKEN`
   }
 }
 ```
-
-**Option 2: Environment variable**
-```bash
-export GITHUB_TOKEN=ghp_your_token_here
-```
-
-To create a token: https://github.com/settings/tokens/new (needs `repo` scope for public repos, or `public_repo` for public only).
 
 ## License
 

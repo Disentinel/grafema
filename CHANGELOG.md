@@ -2,6 +2,58 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.6-beta] - 2026-02-16
+
+### Highlights
+
+- **Semantic IDs v2** — Scope-aware format for precise node identification across files
+- **Orchestrator decomposition** — 800+ line monolith split into focused modules (GraphInitializer, DiscoveryManager, GuaranteeChecker, ParallelAnalysisRunner)
+- **RFDB adaptive tuning** — Auto-detects hardware resources and tunes write buffers, compaction, and prefetch
+- **Infrastructure type system** — Foundation for infrastructure-as-code analysis (Kubernetes, Terraform, Docker)
+- **Package coverage tracking** — Identifies which npm packages lack analyzer plugins
+
+### Architecture
+
+- **REG-462**: Decompose Orchestrator into GraphInitializer, DiscoveryManager, GuaranteeChecker, ParallelAnalysisRunner
+- **REG-463**: Split MethodCallResolver.ts into focused modules
+- **REG-464**: Migrate semantic IDs to v2 scope-aware format
+- **REG-368**: Split NodeFactory into domain-specific factories (CoreFactory, InfraFactory, etc.)
+- **REG-461**: Decompose MCP handlers.ts into domain modules
+- **REG-430**: Remove dead HTTPConnectionEnricher import
+- **REG-239**: Extract named constants for BFS depth limits
+
+### New Capabilities
+
+- **REG-259**: Package coverage tracking via PackageCoverageValidator
+- **REG-363**: Infrastructure type system — InfraResourceMap and InfraAnalyzer base class for IaC analysis
+- **REG-242**: Warn about unknown Datalog predicates in `--raw` queries
+
+### RFDB
+
+- **RFD-21**: Adaptive tuning — resource detection, auto-flush write buffers, parallel compaction, prefetch strategy
+- **RFD-22**: Comprehensive benchmark suite — 16 benchmark groups, memory profiler, bench report tool
+- **RFD-18**: Post-enrichment guarantee checking with selective filtering
+- **RFD-19**: Enrichment pipeline integration tests and benchmark
+
+### Bug Fixes
+
+- **REG-445**: Restore CLI query functionality broken by RFDB v3 semantic ID format
+- Fix streaming desync and semanticId stripping in RFDB client
+- Skip edges with unknown source instead of aborting batch (rfdb-server)
+
+### Documentation
+
+- **REG-361**: Audit and update documentation across all packages
+- MLA workflow v2.1 — add Dijkstra plan verifier, split auto-review into 4 perspectives
+- Define Paid-Ready quality bar (REG-75)
+
+### Infrastructure
+
+- **REG-241**: Code quality improvements in CLI query.ts
+- CI: Fix self-hosted runner concurrency, switch to corepack, return to ubuntu-latest
+
+---
+
 ## [0.2.5-beta] - 2026-02-09
 
 ### Highlights

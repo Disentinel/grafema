@@ -2,6 +2,8 @@
 
 > Grafema command-line interface for building and querying the code graph.
 
+**Warning: This package is in beta stage and the API may change between minor versions.**
+
 ## Quick Start
 
 ```bash
@@ -59,15 +61,25 @@ npx @grafema/cli check --list-categories
 npx @grafema/cli doctor                # Validate local setup
 ```
 
+### Server management
+
+```bash
+npx @grafema/cli server start          # Start RFDB server
+npx @grafema/cli server stop           # Stop RFDB server
+npx @grafema/cli server status         # Check server status
+```
+
 ### Misc
 
 ```bash
 npx @grafema/cli coverage               # Coverage stats
 npx @grafema/cli impact                 # Impact analysis
 npx @grafema/cli explore                # Interactive explorer (TUI)
+npx @grafema/cli analyze --log-file analysis.log  # Log to file
 ```
 
 ## Notes
 
 - All commands accept `--project <path>` to point at a specific repo.
 - `npx @grafema/cli` works without global install and is preferred for docs/examples.
+- Unknown Datalog predicates in `--raw` queries will show a warning with suggestions.

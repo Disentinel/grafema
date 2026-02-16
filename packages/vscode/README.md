@@ -1,14 +1,15 @@
-# Grafema Explore - VS Code Extension
+# Grafema Explore — VS Code Extension
 
 Interactive graph navigation for Grafema code analysis.
 
 ## Features
 
-- **Find Node at Cursor** (Cmd+Shift+G) - Find the graph node at your cursor position
-- **Explore Edges** - Expand nodes to see incoming/outgoing edges
-- **Navigate Graph** - Click on edges to explore connected nodes
-- **Go to Source** - Click on any node to jump to its location in code
-- **Path Highlighting** - Green markers show your navigation trail
+- **Find Node at Cursor** (Cmd+Shift+G) — Find the graph node at your cursor position
+- **Explore Edges** — Expand nodes to see incoming/outgoing edges
+- **Navigate Graph** — Click on edges to explore connected nodes
+- **Go to Source** — Click on any node to jump to its location in code
+- **Path Highlighting** — Green markers show your navigation trail
+- **Copy Tree State** — Copy the current exploration tree for debugging
 
 ## Requirements
 
@@ -29,6 +30,12 @@ cd packages/vscode
 3. Press **Cmd+Shift+G** (Mac) or **Ctrl+Shift+G** (Windows/Linux) to find the node at cursor
 4. Expand nodes to explore their edges
 5. Click on nodes to navigate to source code
+
+## Configuration
+
+| Setting | Description | Default |
+|---------|-------------|---------|
+| `grafema.rfdbBinaryPath` | Custom path to rfdb-server binary | Auto-detected |
 
 ## Development
 

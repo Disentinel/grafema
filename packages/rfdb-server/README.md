@@ -4,7 +4,7 @@
 
 *Named after the author's wife Regina (Rega for short). The Hebrew word רגע (rega, "moment") conveniently fits the concept — a flow of discrete moments captured in the graph.*
 
-**Warning: This package is in early alpha stage and is not recommended for production use.**
+**Warning: This package is in beta stage and the API may change between minor versions.**
 
 ## Installation
 
@@ -14,9 +14,8 @@ npm install @grafema/rfdb
 
 Prebuilt binaries are included for:
 - macOS x64 (Intel)
-- macOS arm64 (Apple Silicon) - coming soon
-- Linux x64 - coming soon
-- Linux arm64 - coming soon
+- macOS arm64 (Apple Silicon)
+- Linux x64
 
 For other platforms, build from source (requires Rust):
 
@@ -31,11 +30,8 @@ cargo build --release
 ### As a CLI
 
 ```bash
-# Start the server (db-path is required, socket is optional)
+# Start the server
 npx rfdb-server ./my-graph.rfdb --socket /tmp/rfdb.sock
-
-# Or if installed globally
-rfdb-server ./my-graph.rfdb --socket /tmp/rfdb.sock
 
 # Using default socket path (/tmp/rfdb.sock)
 rfdb-server ./my-graph.rfdb
@@ -71,7 +67,7 @@ server.kill();
 
 ## With Grafema
 
-RFDB (Rega Flow Database) is optional for Grafema. By default, Grafema uses an in-memory backend. To use RFDB for persistent storage:
+RFDB is the default storage backend for Grafema. The MCP server and CLI auto-start RFDB when needed.
 
 ```javascript
 const { Orchestrator, RFDBServerBackend } = require('@grafema/core');
@@ -84,20 +80,22 @@ const orchestrator = new Orchestrator({
 
 ## Features
 
-- **Columnar storage**: Efficient storage for graph nodes and edges
-- **Deterministic IDs**: BLAKE3 hash-based node identification
-- **Zero-copy access**: Memory-mapped files for fast reads
-- **BFS/DFS traversal**: Fast graph traversal algorithms
-- **Version-aware**: Support for incremental analysis
+- **Adaptive tuning** — Auto-detects CPU cores, memory, and disk type; tunes write buffers, compaction parallelism, and prefetch strategy
+- **Columnar storage** — Efficient storage for graph nodes and edges
+- **Deterministic IDs** — BLAKE3 hash-based node identification
+- **Zero-copy access** — Memory-mapped files for fast reads
+- **BFS/DFS traversal** — Fast graph traversal algorithms
+- **Parallel compaction** — Multi-threaded background compaction
 
 ## Protocol
 
 RFDB server communicates via Unix socket using MessagePack-encoded messages. The protocol supports:
 
-- `add_nodes` / `add_edges` - Batch insert operations
-- `get_node` / `find_by_attr` - Query operations
-- `bfs` / `dfs` - Graph traversal
-- `flush` / `compact` - Persistence operations
+- `add_nodes` / `add_edges` — Batch insert operations
+- `get_node` / `find_by_attr` — Query operations
+- `bfs` / `dfs` — Graph traversal
+- `flush` / `compact` — Persistence operations
+- `compact_with_stats` — Compaction with statistics reporting
 
 ## Building from source
 
@@ -132,7 +130,7 @@ cargo bench --bench graph_operations -- --save-baseline my-baseline
 cargo bench --bench graph_operations -- --baseline my-baseline
 ```
 
-### Benchmark Coverage
+### Benchmark Coverage (16 groups)
 
 | Category | Operations |
 |----------|-----------|
@@ -143,37 +141,34 @@ cargo bench --bench graph_operations -- --baseline my-baseline
 | **Mutation** | delete_node, delete_edge |
 | **Traversal** | bfs, reachability (forward/backward) |
 | **Maintenance** | flush, compact |
+| **Analysis** | reanalysis_cost, compaction |
+
+### Additional Tools
+
+```bash
+# Memory profiling
+cargo run --bin memory_profile
+
+# Benchmark report generation
+cargo run --bin bench_report
+```
 
 ### CI Regression Detection
 
 Benchmarks run on PRs with the `benchmark` label (comparing PR vs main branch).
 Regressions >20% will fail the workflow.
 
-To trigger on your PR: add the `benchmark` label.
-
 ### What to Do If Benchmarks Regress
 
-If CI reports a regression on your PR:
-
-1. **Check if it's noise** — re-run the workflow. CI runners have variable load; spurious regressions happen.
-2. **Reproduce locally** — save baselines before/after your change and compare with `critcmp`:
+1. **Check if it's noise** — re-run the workflow
+2. **Reproduce locally** — save baselines before/after:
    ```bash
    git stash && cargo bench --bench graph_operations -- --save-baseline before
    git stash pop && cargo bench --bench graph_operations -- --save-baseline after
    cargo install critcmp && critcmp before after
    ```
-3. **Identify the cause** — look at which operations regressed. A regression in `add_nodes` suggests storage overhead; `bfs`/`reachability` point to traversal changes.
-4. **Fix or justify** — if the regression is real, fix it. If it's an acceptable trade-off (e.g., +15% write latency for 10x better reads), document the trade-off in the PR description.
-
-### Comparing Before/After Changes
-
-```bash
-# Before making changes
-cargo bench --bench graph_operations -- --save-baseline before
-
-# Make changes, then compare
-cargo bench --bench graph_operations -- --baseline before
-```
+3. **Identify the cause** — `add_nodes` regression = storage overhead; `bfs`/`reachability` = traversal changes
+4. **Fix or justify** — document trade-offs in PR description
 
 ## License
 
