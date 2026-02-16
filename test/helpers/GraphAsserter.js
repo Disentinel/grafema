@@ -412,8 +412,22 @@ export class GraphAsserter {
       'filePath',       // absolute path, differs per environment
     ]);
 
+    // Deep-sort object keys for deterministic JSON output across platforms.
+    // RFDB may return nested objects (e.g., controlFlow) with different key
+    // ordering on macOS vs Linux due to Rust HashMap serialization.
+    const deepSortKeys = (obj) => {
+      if (Array.isArray(obj)) return obj.map(deepSortKeys);
+      if (obj && typeof obj === 'object') {
+        const sorted = {};
+        for (const key of Object.keys(obj).sort()) {
+          sorted[key] = deepSortKeys(obj[key]);
+        }
+        return sorted;
+      }
+      return obj;
+    };
+
     // Normalize absolute paths to relative for environment independence
-    const cwd = process.cwd();
     const normalizePath = (v) => {
       if (typeof v === 'string' && v.startsWith('/') && v.includes('/test/fixtures/')) {
         return v.slice(v.indexOf('/test/fixtures/'));
@@ -427,7 +441,7 @@ export class GraphAsserter {
         if (SNAPSHOT_SKIP_PROPS.has(key)) continue;
         if (typeof value === 'bigint') continue;
         if (value === undefined) continue;
-        entries.push([key, normalizePath(value)]);
+        entries.push([key, deepSortKeys(normalizePath(value))]);
       }
       // Sort keys alphabetically for deterministic JSON output
       entries.sort((a, b) => a[0].localeCompare(b[0]));
@@ -439,9 +453,6 @@ export class GraphAsserter {
       if (cmp !== 0) return cmp;
       const fileCmp = (a.file || '').localeCompare(b.file || '');
       if (fileCmp !== 0) return fileCmp;
-      // Use semanticId as stable tiebreaker (deterministic per-file from AST traversal)
-      const sidCmp = (a.semanticId || '').localeCompare(b.semanticId || '');
-      if (sidCmp !== 0) return sidCmp;
       return JSON.stringify(a).localeCompare(JSON.stringify(b));
     });
 

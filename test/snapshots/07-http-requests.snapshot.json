@@ -410,14 +410,14 @@
       "arrowFunction": true,
       "async": true,
       "controlFlow": {
-        "hasBranches": true,
-        "hasLoops": false,
-        "hasTryCatch": false,
-        "hasEarlyReturn": false,
-        "hasThrow": false,
-        "cyclomaticComplexity": 2,
         "canReject": false,
-        "hasAsyncThrow": false
+        "cyclomaticComplexity": 2,
+        "hasAsyncThrow": false,
+        "hasBranches": true,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
       },
       "exported": false,
       "file": "client.js",
@@ -437,14 +437,14 @@
     {
       "async": true,
       "controlFlow": {
-        "hasBranches": false,
-        "hasLoops": false,
-        "hasTryCatch": false,
-        "hasEarlyReturn": false,
-        "hasThrow": false,
-        "cyclomaticComplexity": 1,
         "canReject": false,
-        "hasAsyncThrow": false
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
       },
       "exported": false,
       "file": "client.js",
@@ -463,14 +463,14 @@
     {
       "async": true,
       "controlFlow": {
-        "hasBranches": false,
-        "hasLoops": false,
-        "hasTryCatch": false,
-        "hasEarlyReturn": false,
-        "hasThrow": false,
-        "cyclomaticComplexity": 1,
         "canReject": false,
-        "hasAsyncThrow": false
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
       },
       "exported": false,
       "file": "client.js",
@@ -489,14 +489,14 @@
     {
       "async": true,
       "controlFlow": {
-        "hasBranches": false,
-        "hasLoops": false,
-        "hasTryCatch": false,
-        "hasEarlyReturn": false,
-        "hasThrow": false,
-        "cyclomaticComplexity": 1,
         "canReject": false,
-        "hasAsyncThrow": false
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
       },
       "exported": false,
       "file": "client.js",
@@ -511,14 +511,14 @@
     {
       "async": true,
       "controlFlow": {
-        "hasBranches": false,
-        "hasLoops": false,
-        "hasTryCatch": false,
-        "hasEarlyReturn": false,
-        "hasThrow": false,
-        "cyclomaticComplexity": 1,
         "canReject": false,
-        "hasAsyncThrow": false
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
       },
       "exported": false,
       "file": "client.js",
@@ -537,14 +537,14 @@
     {
       "async": true,
       "controlFlow": {
-        "hasBranches": false,
-        "hasLoops": false,
-        "hasTryCatch": false,
-        "hasEarlyReturn": false,
-        "hasThrow": false,
-        "cyclomaticComplexity": 1,
         "canReject": false,
-        "hasAsyncThrow": false
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
       },
       "exported": false,
       "file": "client.js",
@@ -559,14 +559,14 @@
     {
       "async": true,
       "controlFlow": {
-        "hasBranches": false,
-        "hasLoops": false,
-        "hasTryCatch": false,
-        "hasEarlyReturn": false,
-        "hasThrow": false,
-        "cyclomaticComplexity": 1,
         "canReject": false,
-        "hasAsyncThrow": false
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
       },
       "exported": false,
       "file": "client.js",
@@ -581,14 +581,14 @@
     {
       "async": true,
       "controlFlow": {
-        "hasBranches": false,
-        "hasLoops": false,
-        "hasTryCatch": false,
-        "hasEarlyReturn": false,
-        "hasThrow": false,
-        "cyclomaticComplexity": 1,
         "canReject": false,
-        "hasAsyncThrow": false
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
       },
       "exported": false,
       "file": "client.js",
@@ -603,14 +603,14 @@
     {
       "async": true,
       "controlFlow": {
-        "hasBranches": false,
-        "hasLoops": false,
-        "hasTryCatch": false,
-        "hasEarlyReturn": false,
-        "hasThrow": false,
-        "cyclomaticComplexity": 1,
         "canReject": false,
-        "hasAsyncThrow": false
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
       },
       "exported": false,
       "file": "client.js",
@@ -626,14 +626,14 @@
     {
       "async": true,
       "controlFlow": {
-        "hasBranches": false,
-        "hasLoops": false,
-        "hasTryCatch": false,
-        "hasEarlyReturn": false,
-        "hasThrow": false,
-        "cyclomaticComplexity": 1,
         "canReject": false,
-        "hasAsyncThrow": false
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
       },
       "exported": false,
       "file": "client.js",
@@ -648,14 +648,14 @@
     {
       "async": true,
       "controlFlow": {
-        "hasBranches": false,
-        "hasLoops": false,
-        "hasTryCatch": false,
-        "hasEarlyReturn": false,
-        "hasThrow": false,
-        "cyclomaticComplexity": 1,
         "canReject": false,
-        "hasAsyncThrow": false
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
       },
       "exported": false,
       "file": "client.js",
@@ -674,10 +674,10 @@
     {
       "builtin": true,
       "creates": {
-        "nodes": [],
         "edges": [
           "RECEIVES_ARGUMENT"
-        ]
+        ],
+        "nodes": []
       },
       "createsEdges": [
         "RECEIVES_ARGUMENT"
@@ -697,10 +697,10 @@
     {
       "builtin": true,
       "creates": {
-        "nodes": [],
         "edges": [
           "CALLS"
-        ]
+        ],
+        "nodes": []
       },
       "createsEdges": [
         "CALLS"
@@ -720,14 +720,14 @@
     {
       "builtin": true,
       "creates": {
-        "nodes": [
-          "http:request",
-          "EXTERNAL"
-        ],
         "edges": [
           "CONTAINS",
           "MAKES_REQUEST",
           "CALLS_API"
+        ],
+        "nodes": [
+          "http:request",
+          "EXTERNAL"
         ]
       },
       "createsEdges": [
@@ -753,11 +753,11 @@
     {
       "builtin": true,
       "creates": {
-        "nodes": [],
         "edges": [
           "IMPORTS",
           "IMPORTS_FROM"
-        ]
+        ],
+        "nodes": []
       },
       "createsEdges": [
         "IMPORTS",
@@ -777,10 +777,10 @@
     {
       "builtin": true,
       "creates": {
-        "nodes": [],
         "edges": [
           "INSTANCE_OF"
-        ]
+        ],
+        "nodes": []
       },
       "createsEdges": [
         "INSTANCE_OF"
@@ -799,28 +799,6 @@
     {
       "builtin": true,
       "creates": {
-        "nodes": [
-          "FUNCTION",
-          "CLASS",
-          "METHOD",
-          "VARIABLE",
-          "CONSTANT",
-          "SCOPE",
-          "CALL",
-          "IMPORT",
-          "EXPORT",
-          "LITERAL",
-          "EXTERNAL_MODULE",
-          "net:stdio",
-          "net:request",
-          "event:listener",
-          "http:request",
-          "INTERFACE",
-          "TYPE",
-          "ENUM",
-          "DECORATOR",
-          "TYPE_PARAMETER"
-        ],
         "edges": [
           "CONTAINS",
           "DECLARES",
@@ -843,6 +821,28 @@
           "DECORATED_BY",
           "HAS_TYPE_PARAMETER",
           "RESOLVES_TO"
+        ],
+        "nodes": [
+          "FUNCTION",
+          "CLASS",
+          "METHOD",
+          "VARIABLE",
+          "CONSTANT",
+          "SCOPE",
+          "CALL",
+          "IMPORT",
+          "EXPORT",
+          "LITERAL",
+          "EXTERNAL_MODULE",
+          "net:stdio",
+          "net:request",
+          "event:listener",
+          "http:request",
+          "INTERFACE",
+          "TYPE",
+          "ENUM",
+          "DECORATOR",
+          "TYPE_PARAMETER"
         ]
       },
       "createsEdges": [
@@ -903,12 +903,12 @@
     {
       "builtin": true,
       "creates": {
-        "nodes": [
-          "MODULE"
-        ],
         "edges": [
           "CONTAINS",
           "DEPENDS_ON"
+        ],
+        "nodes": [
+          "MODULE"
         ]
       },
       "createsEdges": [
@@ -929,10 +929,10 @@
     {
       "builtin": true,
       "creates": {
-        "nodes": [],
         "edges": [
           "CALLS"
-        ]
+        ],
+        "nodes": []
       },
       "createsEdges": [
         "CALLS"
@@ -951,13 +951,13 @@
     {
       "builtin": true,
       "creates": {
-        "nodes": [
-          "EXTERNAL_FUNCTION",
-          "EXTERNAL_MODULE"
-        ],
         "edges": [
           "CALLS",
           "IMPORTS_FROM"
+        ],
+        "nodes": [
+          "EXTERNAL_FUNCTION",
+          "EXTERNAL_MODULE"
         ]
       },
       "createsEdges": [
@@ -982,10 +982,10 @@
     {
       "builtin": true,
       "creates": {
-        "nodes": [],
         "edges": [
           "REJECTS"
-        ]
+        ],
+        "nodes": []
       },
       "createsEdges": [
         "REJECTS"
@@ -1004,10 +1004,10 @@
     {
       "builtin": true,
       "creates": {
+        "edges": [],
         "nodes": [
           "SERVICE"
-        ],
-        "edges": []
+        ]
       },
       "createsEdges": [],
       "createsNodes": [
@@ -1436,9 +1436,9 @@
       "conditional": true,
       "constraints": [
         {
-          "variable": "token",
+          "negated": false,
           "operator": "truthy",
-          "negated": false
+          "variable": "token"
         }
       ],
       "exported": false,

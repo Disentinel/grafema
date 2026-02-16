@@ -583,14 +583,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "hasBranches": false,
-        "hasLoops": false,
-        "hasTryCatch": false,
-        "hasEarlyReturn": false,
-        "hasThrow": false,
-        "cyclomaticComplexity": 1,
         "canReject": false,
-        "hasAsyncThrow": false
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
       },
       "exported": false,
       "file": "src/index.js",
@@ -611,14 +611,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "hasBranches": false,
-        "hasLoops": false,
-        "hasTryCatch": false,
-        "hasEarlyReturn": false,
-        "hasThrow": false,
-        "cyclomaticComplexity": 1,
         "canReject": false,
-        "hasAsyncThrow": false
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
       },
       "exported": false,
       "file": "src/index.js",
@@ -629,14 +629,14 @@
       "arrowFunction": true,
       "async": true,
       "controlFlow": {
-        "hasBranches": false,
-        "hasLoops": false,
-        "hasTryCatch": false,
-        "hasEarlyReturn": false,
-        "hasThrow": false,
-        "cyclomaticComplexity": 1,
         "canReject": false,
-        "hasAsyncThrow": false
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
       },
       "exported": false,
       "file": "src/routes/orders.js",
@@ -647,14 +647,14 @@
       "arrowFunction": true,
       "async": true,
       "controlFlow": {
-        "hasBranches": false,
-        "hasLoops": false,
-        "hasTryCatch": false,
-        "hasEarlyReturn": false,
-        "hasThrow": false,
-        "cyclomaticComplexity": 1,
         "canReject": false,
-        "hasAsyncThrow": false
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
       },
       "exported": false,
       "file": "src/routes/users.js",
@@ -665,14 +665,14 @@
       "arrowFunction": true,
       "async": true,
       "controlFlow": {
-        "hasBranches": false,
-        "hasLoops": false,
-        "hasTryCatch": false,
-        "hasEarlyReturn": false,
-        "hasThrow": false,
-        "cyclomaticComplexity": 1,
         "canReject": false,
-        "hasAsyncThrow": false
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
       },
       "exported": false,
       "file": "src/routes/orders.js",
@@ -683,14 +683,14 @@
       "arrowFunction": true,
       "async": true,
       "controlFlow": {
-        "hasBranches": false,
-        "hasLoops": false,
-        "hasTryCatch": false,
-        "hasEarlyReturn": false,
-        "hasThrow": false,
-        "cyclomaticComplexity": 1,
         "canReject": false,
-        "hasAsyncThrow": false
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
       },
       "exported": false,
       "file": "src/routes/users.js",
@@ -701,14 +701,14 @@
       "arrowFunction": true,
       "async": true,
       "controlFlow": {
-        "hasBranches": false,
-        "hasLoops": false,
-        "hasTryCatch": false,
-        "hasEarlyReturn": false,
-        "hasThrow": false,
-        "cyclomaticComplexity": 1,
         "canReject": false,
-        "hasAsyncThrow": false
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
       },
       "exported": false,
       "file": "src/routes/users.js",
@@ -719,14 +719,14 @@
       "async": true,
       "className": "Database",
       "controlFlow": {
-        "hasBranches": false,
-        "hasLoops": false,
-        "hasTryCatch": false,
-        "hasEarlyReturn": false,
-        "hasThrow": false,
-        "cyclomaticComplexity": 1,
         "canReject": false,
-        "hasAsyncThrow": false
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
       },
       "exported": false,
       "file": "src/db.js",
@@ -741,14 +741,14 @@
       "async": false,
       "className": "Database",
       "controlFlow": {
-        "hasBranches": false,
-        "hasLoops": false,
-        "hasTryCatch": false,
-        "hasEarlyReturn": false,
-        "hasThrow": false,
-        "cyclomaticComplexity": 1,
         "canReject": false,
-        "hasAsyncThrow": false
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
       },
       "exported": false,
       "file": "src/db.js",
@@ -762,14 +762,14 @@
     {
       "async": false,
       "controlFlow": {
-        "hasBranches": false,
-        "hasLoops": false,
-        "hasTryCatch": false,
-        "hasEarlyReturn": false,
-        "hasThrow": false,
-        "cyclomaticComplexity": 1,
         "canReject": false,
-        "hasAsyncThrow": false
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
       },
       "exported": false,
       "file": "src/routes/orders.js",
@@ -784,14 +784,14 @@
     {
       "async": false,
       "controlFlow": {
-        "hasBranches": false,
-        "hasLoops": false,
-        "hasTryCatch": false,
-        "hasEarlyReturn": false,
-        "hasThrow": false,
-        "cyclomaticComplexity": 1,
         "canReject": false,
-        "hasAsyncThrow": false
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
       },
       "exported": false,
       "file": "src/routes/users.js",
@@ -807,14 +807,14 @@
       "async": true,
       "className": "Database",
       "controlFlow": {
-        "hasBranches": true,
-        "hasLoops": false,
-        "hasTryCatch": false,
-        "hasEarlyReturn": false,
-        "hasThrow": true,
-        "cyclomaticComplexity": 2,
         "canReject": true,
+        "cyclomaticComplexity": 2,
         "hasAsyncThrow": true,
+        "hasBranches": true,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": true,
+        "hasTryCatch": false,
         "rejectedBuiltinErrors": [
           "Error"
         ]
@@ -828,10 +828,10 @@
       "name": "query",
       "rejectionPatterns": [
         {
-          "rejectionType": "async_throw",
+          "column": 6,
           "errorClassName": "Error",
           "line": 14,
-          "column": 6
+          "rejectionType": "async_throw"
         }
       ],
       "type": "FUNCTION"
@@ -839,14 +839,14 @@
     {
       "async": true,
       "controlFlow": {
-        "hasBranches": false,
-        "hasLoops": false,
-        "hasTryCatch": false,
-        "hasEarlyReturn": false,
-        "hasThrow": false,
-        "cyclomaticComplexity": 1,
         "canReject": false,
-        "hasAsyncThrow": false
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
       },
       "exported": false,
       "file": "src/index.js",
@@ -861,10 +861,10 @@
     {
       "builtin": true,
       "creates": {
-        "nodes": [],
         "edges": [
           "RECEIVES_ARGUMENT"
-        ]
+        ],
+        "nodes": []
       },
       "createsEdges": [
         "RECEIVES_ARGUMENT"
@@ -884,10 +884,10 @@
     {
       "builtin": true,
       "creates": {
-        "nodes": [],
         "edges": [
           "CALLS"
-        ]
+        ],
+        "nodes": []
       },
       "createsEdges": [
         "CALLS"
@@ -907,14 +907,14 @@
     {
       "builtin": true,
       "creates": {
-        "nodes": [
-          "http:request",
-          "EXTERNAL"
-        ],
         "edges": [
           "CONTAINS",
           "MAKES_REQUEST",
           "CALLS_API"
+        ],
+        "nodes": [
+          "http:request",
+          "EXTERNAL"
         ]
       },
       "createsEdges": [
@@ -940,11 +940,11 @@
     {
       "builtin": true,
       "creates": {
-        "nodes": [],
         "edges": [
           "IMPORTS",
           "IMPORTS_FROM"
-        ]
+        ],
+        "nodes": []
       },
       "createsEdges": [
         "IMPORTS",
@@ -964,10 +964,10 @@
     {
       "builtin": true,
       "creates": {
-        "nodes": [],
         "edges": [
           "INSTANCE_OF"
-        ]
+        ],
+        "nodes": []
       },
       "createsEdges": [
         "INSTANCE_OF"
@@ -986,28 +986,6 @@
     {
       "builtin": true,
       "creates": {
-        "nodes": [
-          "FUNCTION",
-          "CLASS",
-          "METHOD",
-          "VARIABLE",
-          "CONSTANT",
-          "SCOPE",
-          "CALL",
-          "IMPORT",
-          "EXPORT",
-          "LITERAL",
-          "EXTERNAL_MODULE",
-          "net:stdio",
-          "net:request",
-          "event:listener",
-          "http:request",
-          "INTERFACE",
-          "TYPE",
-          "ENUM",
-          "DECORATOR",
-          "TYPE_PARAMETER"
-        ],
         "edges": [
           "CONTAINS",
           "DECLARES",
@@ -1030,6 +1008,28 @@
           "DECORATED_BY",
           "HAS_TYPE_PARAMETER",
           "RESOLVES_TO"
+        ],
+        "nodes": [
+          "FUNCTION",
+          "CLASS",
+          "METHOD",
+          "VARIABLE",
+          "CONSTANT",
+          "SCOPE",
+          "CALL",
+          "IMPORT",
+          "EXPORT",
+          "LITERAL",
+          "EXTERNAL_MODULE",
+          "net:stdio",
+          "net:request",
+          "event:listener",
+          "http:request",
+          "INTERFACE",
+          "TYPE",
+          "ENUM",
+          "DECORATOR",
+          "TYPE_PARAMETER"
         ]
       },
       "createsEdges": [
@@ -1090,12 +1090,12 @@
     {
       "builtin": true,
       "creates": {
-        "nodes": [
-          "MODULE"
-        ],
         "edges": [
           "CONTAINS",
           "DEPENDS_ON"
+        ],
+        "nodes": [
+          "MODULE"
         ]
       },
       "createsEdges": [
@@ -1116,10 +1116,10 @@
     {
       "builtin": true,
       "creates": {
-        "nodes": [],
         "edges": [
           "CALLS"
-        ]
+        ],
+        "nodes": []
       },
       "createsEdges": [
         "CALLS"
@@ -1138,13 +1138,13 @@
     {
       "builtin": true,
       "creates": {
-        "nodes": [
-          "EXTERNAL_FUNCTION",
-          "EXTERNAL_MODULE"
-        ],
         "edges": [
           "CALLS",
           "IMPORTS_FROM"
+        ],
+        "nodes": [
+          "EXTERNAL_FUNCTION",
+          "EXTERNAL_MODULE"
         ]
       },
       "createsEdges": [
@@ -1169,10 +1169,10 @@
     {
       "builtin": true,
       "creates": {
-        "nodes": [],
         "edges": [
           "REJECTS"
-        ]
+        ],
+        "nodes": []
       },
       "createsEdges": [
         "REJECTS"
@@ -1191,10 +1191,10 @@
     {
       "builtin": true,
       "creates": {
+        "edges": [],
         "nodes": [
           "SERVICE"
-        ],
-        "edges": []
+        ]
       },
       "createsEdges": [],
       "createsNodes": [
@@ -1603,19 +1603,19 @@
       "type": "PROPERTY_ACCESS"
     },
     {
-      "exported": false,
-      "file": "src/index.js",
-      "name": "anonymous[0]:body",
-      "scopeType": "function-body",
-      "type": "SCOPE"
-    },
-    {
       "conditional": false,
       "exported": false,
       "file": "src/index.js",
       "name": "anonymous[0]:body",
       "scopeType": "arrow_body",
       "semanticId": "start:arrow_body[0]",
+      "type": "SCOPE"
+    },
+    {
+      "exported": false,
+      "file": "src/index.js",
+      "name": "anonymous[0]:body",
+      "scopeType": "function-body",
       "type": "SCOPE"
     },
     {
