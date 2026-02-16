@@ -371,15 +371,13 @@ export class ServiceLayerAnalyzer extends Plugin {
 
       // Create INSTANTIATES edges (requires querying graph)
       for (const instance of serviceInstances) {
-        for await (const n of graph.queryNodes({ type: 'SERVICE_CLASS' })) {
-          if (n.name === instance.serviceClass) {
-            edges.push({
-              type: 'INSTANTIATES',
-              src: instance.id,
-              dst: n.id
-            });
-            break;
-          }
+        for await (const n of graph.queryNodes({ type: 'SERVICE_CLASS', name: instance.serviceClass })) {
+          edges.push({
+            type: 'INSTANTIATES',
+            src: instance.id,
+            dst: n.id
+          });
+          break;
         }
       }
 

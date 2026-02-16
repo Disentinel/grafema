@@ -528,11 +528,9 @@ export class GraphBuilder {
         const file = parts.length >= 3 ? parts[2] : null;
 
         let classNode: { id: string; name: string; file?: string } | null = null;
-        for await (const node of graph.queryNodes({ type: 'CLASS' })) {
-          if (node.name === className && (!file || node.file === file)) {
-            classNode = node as { id: string; name: string; file?: string };
-            break;
-          }
+        for await (const node of graph.queryNodes(file ? { type: 'CLASS', name: className, file } : { type: 'CLASS', name: className })) {
+          classNode = node as { id: string; name: string; file?: string };
+          break;
         }
 
         if (classNode) {
