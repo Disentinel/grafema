@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.7] - 2026-02-16
+
+### Bug Fixes
+
+- **Progress display**: Show service-level progress (e.g., "50/767 services | auth-service") during indexing/analysis instead of confusing module counts that were overwritten per-service DFS run
+
+### Known Issues
+
+- **RFD-39**: RFDB `node_count()`/`edge_count()` report inflated numbers after memory-triggered flush (data is correct, only counts are wrong). Fix tracked separately.
+
 ## [0.2.6-beta] - 2026-02-16
 
 ### Highlights
