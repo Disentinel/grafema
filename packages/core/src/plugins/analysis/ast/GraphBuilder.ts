@@ -1,6 +1,7 @@
 /**
  * GraphBuilder - orchestrator that delegates to domain-specific builders
- * OPTIMIZED: Uses batched writes to reduce FFI overhead
+ * Writes nodes/edges directly to graph during RFDBClient batch window.
+ * Only FUNCTION nodes are deferred (pending metadata mutation by ModuleRuntimeBuilder).
  */
 
 import type { GraphBackend, NodeRecord } from '@grafema/types';
@@ -36,8 +37,19 @@ export class GraphBuilder {
   // Track singleton nodes to avoid duplicates (net:stdio, net:request, etc.)
   private _createdSingletons: Set<string> = new Set();
 
-  // Batching buffers for optimized writes
-  private _nodeBuffer: GraphNode[] = [];
+  // Graph reference for direct writes (set during build(), cleared after)
+  private _graph: GraphBackend | null = null;
+
+  // Pending function nodes (deferred until domain builders can mutate metadata)
+  private _pendingFunctions: Map<string, GraphNode> = new Map();
+
+  // Sync batch mode: push directly to RFDBClient batch arrays (no intermediate buffer)
+  private _useSyncBatch: boolean = false;
+  private _directNodeCount: number = 0;
+  private _directEdgeCount: number = 0;
+
+  // Fallback buffers (when graph.batchNode is not available)
+  private _nodeBuffer: unknown[] = [];
   private _edgeBuffer: GraphEdge[] = [];
 
   // Domain builders
@@ -72,7 +84,7 @@ export class GraphBuilder {
       bufferEdge: (edge) => this._bufferEdge(edge),
       isCreated: (key) => this._createdSingletons.has(key),
       markCreated: (key) => { this._createdSingletons.add(key); },
-      findBufferedNode: (id) => this._nodeBuffer.find(n => n.id === id),
+      findBufferedNode: (id) => this._pendingFunctions.get(id),
       findFunctionByName: (functions, name, file, callScopeId) =>
         this.findFunctionByName(functions, name, file, callScopeId),
       resolveVariableInScope: (name, scopePath, file, variables) =>
@@ -84,46 +96,79 @@ export class GraphBuilder {
   }
 
   /**
-   * Buffer a node for batched writing
+   * Buffer a node for batched writing.
+   * INVARIANT: Only FUNCTION nodes are deferred (stored in _pendingFunctions)
+   * because ModuleRuntimeBuilder mutates their metadata (rejectionPatterns)
+   * after buffering. All other nodes go to sync batch or fallback buffer.
    */
   private _bufferNode(node: GraphNode): void {
-    this._nodeBuffer.push(node);
+    if (!this._graph) throw new Error('_bufferNode called outside build() — _graph is null');
+    const branded = brandNodeInternal(node as unknown as NodeRecord);
+    if ((node as Record<string, unknown>).type === 'FUNCTION') {
+      this._pendingFunctions.set(node.id, branded as unknown as GraphNode);
+    } else if (this._useSyncBatch) {
+      this._graph.batchNode!(branded as unknown as Parameters<NonNullable<GraphBackend['batchNode']>>[0]);
+      this._directNodeCount++;
+    } else {
+      this._nodeBuffer.push(branded);
+    }
   }
 
   /**
-   * Buffer an edge for batched writing
+   * Buffer an edge for batched writing.
    */
   private _bufferEdge(edge: GraphEdge): void {
-    this._edgeBuffer.push(edge);
+    if (!this._graph) throw new Error('_bufferEdge called outside build() — _graph is null');
+    if (this._useSyncBatch) {
+      this._graph.batchEdge!(edge as unknown as Parameters<NonNullable<GraphBackend['batchEdge']>>[0]);
+      this._directEdgeCount++;
+    } else {
+      this._edgeBuffer.push(edge);
+    }
   }
 
   /**
-   * Flush all buffered nodes to the graph
+   * Flush pending function nodes to the graph.
+   * In sync batch mode, pushes each to batchNode. In fallback mode, uses addNodes.
+   * Returns count of function nodes flushed.
    */
-  private async _flushNodes(graph: GraphBackend): Promise<number> {
+  private async _flushPendingFunctions(graph: GraphBackend): Promise<number> {
+    const pendingFunctions = Array.from(this._pendingFunctions.values());
+    if (pendingFunctions.length === 0) return 0;
+
+    // Nodes already branded in _bufferNode() — no need to brand again
+    if (this._useSyncBatch) {
+      for (const node of pendingFunctions) {
+        graph.batchNode!(node as unknown as Parameters<NonNullable<GraphBackend['batchNode']>>[0]);
+      }
+    } else {
+      await graph.addNodes(pendingFunctions as unknown as Parameters<GraphBackend['addNodes']>[0]);
+    }
+
+    const count = pendingFunctions.length;
+    this._pendingFunctions.clear();
+    return count;
+  }
+
+  /**
+   * Flush fallback buffers (only used when sync batch is not available).
+   */
+  private async _flushFallbackBuffers(graph: GraphBackend): Promise<{ nodes: number; edges: number }> {
+    let nodesCreated = 0;
     if (this._nodeBuffer.length > 0) {
-      // Brand nodes before flushing - they're validated by builders
-      const brandedNodes = this._nodeBuffer.map(node => brandNodeInternal(node as unknown as NodeRecord));
-      await graph.addNodes(brandedNodes);
-      const count = this._nodeBuffer.length;
-      this._nodeBuffer = [];
-      return count;
+      await graph.addNodes(this._nodeBuffer as unknown as Parameters<GraphBackend['addNodes']>[0]);
+      nodesCreated = this._nodeBuffer.length;
     }
-    return 0;
-  }
 
-  /**
-   * Flush all buffered edges to the graph
-   * Note: skip_validation=true because nodes were just flushed
-   */
-  private async _flushEdges(graph: GraphBackend): Promise<number> {
+    let edgesCreated = 0;
     if (this._edgeBuffer.length > 0) {
-      await (graph as GraphBackend & { addEdges(e: GraphEdge[], skip?: boolean): Promise<void> }).addEdges(this._edgeBuffer, true /* skip_validation */);
-      const count = this._edgeBuffer.length;
-      this._edgeBuffer = [];
-      return count;
+      await (graph as GraphBackend & { addEdges(e: GraphEdge[], skip?: boolean): Promise<void> }).addEdges(this._edgeBuffer, true);
+      edgesCreated = this._edgeBuffer.length;
     }
-    return 0;
+
+    this._nodeBuffer = [];
+    this._edgeBuffer = [];
+    return { nodes: nodesCreated, edges: edgesCreated };
   }
 
   /**
@@ -150,7 +195,12 @@ export class GraphBuilder {
       hasTopLevelAwait = false
     } = data;
 
-    // Reset buffers for this build
+    // Reset state for this build
+    this._graph = graph;
+    this._pendingFunctions.clear();
+    this._useSyncBatch = typeof graph.batchNode === 'function' && typeof graph.batchEdge === 'function';
+    this._directNodeCount = 0;
+    this._directEdgeCount = 0;
     this._nodeBuffer = [];
     this._edgeBuffer = [];
 
@@ -275,9 +325,20 @@ export class GraphBuilder {
     this._typeSystemBuilder.buffer(module, data);
     this._moduleRuntimeBuilder.buffer(module, data);
 
-    // FLUSH: Write all nodes first, then edges in single batch calls
-    const nodesCreated = await this._flushNodes(graph);
-    const edgesCreated = await this._flushEdges(graph);
+    // FLUSH: Write pending function nodes (after domain builders mutated metadata)
+    const functionsCount = await this._flushPendingFunctions(graph);
+
+    // Flush fallback buffers if not using sync batch
+    let fallbackNodes = 0;
+    let fallbackEdges = 0;
+    if (!this._useSyncBatch) {
+      const fallback = await this._flushFallbackBuffers(graph);
+      fallbackNodes = fallback.nodes;
+      fallbackEdges = fallback.edges;
+    }
+
+    const nodesCreated = this._useSyncBatch ? this._directNodeCount + functionsCount : fallbackNodes + functionsCount;
+    const edgesCreated = this._useSyncBatch ? this._directEdgeCount : fallbackEdges;
 
     // Handle async operations for ASSIGNED_FROM with CLASS lookups
     const classAssignmentEdges = await this.createClassAssignmentEdges(variableAssignments, graph);
@@ -288,6 +349,8 @@ export class GraphBuilder {
 
     // REG-297: Update MODULE node with hasTopLevelAwait metadata
     await this.updateModuleTopLevelAwaitMetadata(module, graph, hasTopLevelAwait);
+
+    this._graph = null; // release reference
 
     return { nodes: nodesCreated, edges: edgesCreated + classAssignmentEdges };
   }

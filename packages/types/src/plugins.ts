@@ -316,6 +316,10 @@ export interface GraphBackend {
   beginBatch?(): void;
   commitBatch?(tags?: string[]): Promise<CommitDelta>;
   abortBatch?(): void;
+
+  // Synchronous batch operations (REG-483: direct batch insertion)
+  batchNode?(node: AnyBrandedNode): void;
+  batchEdge?(edge: InputEdge): void;
 }
 
 export interface NodeFilter {
