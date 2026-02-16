@@ -70,6 +70,7 @@ export class ExpressAnalyzer extends Plugin {
     return {
       name: 'ExpressAnalyzer',
       phase: 'ANALYSIS',
+      covers: ['express'],
       creates: {
         nodes: ['http:route', 'express:mount'],
         edges: ['EXPOSES', 'MOUNTS', 'DEFINES']

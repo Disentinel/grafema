@@ -48,6 +48,7 @@ export class ExpressResponseAnalyzer extends Plugin {
     return {
       name: 'ExpressResponseAnalyzer',
       phase: 'ANALYSIS',
+      covers: ['express'],
       creates: {
         nodes: [],
         edges: ['RESPONDS_WITH']

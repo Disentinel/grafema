@@ -108,6 +108,7 @@ export class NestJSRouteAnalyzer extends Plugin {
     return {
       name: 'NestJSRouteAnalyzer',
       phase: 'ANALYSIS',
+      covers: ['@nestjs/common', '@nestjs/core'],
       creates: {
         nodes: ['http:route'],
         edges: ['CONTAINS']
