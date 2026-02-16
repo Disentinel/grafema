@@ -1,0 +1,328 @@
+//! Benchmark report generator: parses Criterion JSON and produces
+//! a unified v1 vs v2 comparison matrix in Markdown.
+//!
+//! Run after `cargo bench`:
+//!   cargo run --release --bin bench_report
+//!
+//! Output: target/bench-report.md
+
+use std::collections::BTreeMap;
+use std::fs;
+use std::path::{Path, PathBuf};
+
+// ── Types ──────────────────────────────────────────────────────────────
+
+#[derive(Debug)]
+struct BenchResult {
+    mean_ns: f64,
+    std_dev_ns: f64,
+}
+
+#[derive(Debug)]
+struct ComparisonRow {
+    operation: String,
+    size: String,
+    v1: Option<BenchResult>,
+    v2: Option<BenchResult>,
+}
+
+// ── JSON parsing (manual, no serde dependency for binary) ──────────────
+
+fn parse_estimates_json(path: &Path) -> Option<BenchResult> {
+    let content = fs::read_to_string(path).ok()?;
+    let json: serde_json::Value = serde_json::from_str(&content).ok()?;
+
+    let mean_ns = json
+        .get("mean")?
+        .get("point_estimate")?
+        .as_f64()?;
+    let std_dev_ns = json
+        .get("std_dev")?
+        .get("point_estimate")?
+        .as_f64()?;
+
+    Some(BenchResult { mean_ns, std_dev_ns })
+}
+
+// ── Discovery ──────────────────────────────────────────────────────────
+
+fn discover_benchmarks(criterion_dir: &Path) -> BTreeMap<String, BTreeMap<String, BenchResult>> {
+    // Structure: criterion_dir/GROUP_NAME/SIZE/new/estimates.json
+    // e.g.: criterion_dir/v1__add_nodes/1000/new/estimates.json
+    let mut groups: BTreeMap<String, BTreeMap<String, BenchResult>> = BTreeMap::new();
+
+    let entries = match fs::read_dir(criterion_dir) {
+        Ok(e) => e,
+        Err(_) => return groups,
+    };
+
+    for entry in entries.flatten() {
+        let group_name = entry.file_name().to_string_lossy().to_string();
+        if group_name.starts_with('.') || group_name == "report" {
+            continue;
+        }
+
+        let group_path = entry.path();
+        if !group_path.is_dir() {
+            continue;
+        }
+
+        let sub_entries = match fs::read_dir(&group_path) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+
+        for sub_entry in sub_entries.flatten() {
+            let size_name = sub_entry.file_name().to_string_lossy().to_string();
+            if size_name.starts_with('.') || size_name == "report" {
+                continue;
+            }
+
+            let estimates_path = sub_entry.path().join("new").join("estimates.json");
+            if let Some(result) = parse_estimates_json(&estimates_path) {
+                groups
+                    .entry(group_name.clone())
+                    .or_default()
+                    .insert(size_name, result);
+            }
+        }
+    }
+
+    groups
+}
+
+// ── Report generation ──────────────────────────────────────────────────
+
+fn format_time(ns: f64) -> String {
+    if ns < 1_000.0 {
+        format!("{:.0} ns", ns)
+    } else if ns < 1_000_000.0 {
+        format!("{:.1} µs", ns / 1_000.0)
+    } else if ns < 1_000_000_000.0 {
+        format!("{:.1} ms", ns / 1_000_000.0)
+    } else {
+        format!("{:.2} s", ns / 1_000_000_000.0)
+    }
+}
+
+fn format_speedup(v1_ns: f64, v2_ns: f64) -> String {
+    if v2_ns <= 0.0 || v1_ns <= 0.0 {
+        return "N/A".to_string();
+    }
+    let ratio = v1_ns / v2_ns;
+    if ratio >= 1.0 {
+        format!("{:.1}x faster", ratio)
+    } else {
+        format!("{:.1}x slower", 1.0 / ratio)
+    }
+}
+
+fn build_comparison_table(
+    groups: &BTreeMap<String, BTreeMap<String, BenchResult>>,
+    operations: &[&str],
+) -> Vec<ComparisonRow> {
+    let mut rows = Vec::new();
+
+    for op in operations {
+        let v1_key = format!("v1/{}", op);
+        let v2_key = format!("v2/{}", op);
+
+        let v1_group = groups.get(&v1_key);
+        let v2_group = groups.get(&v2_key);
+
+        // Collect all sizes from both groups
+        let mut sizes: Vec<String> = Vec::new();
+        if let Some(g) = v1_group {
+            sizes.extend(g.keys().cloned());
+        }
+        if let Some(g) = v2_group {
+            for k in g.keys() {
+                if !sizes.contains(k) {
+                    sizes.push(k.clone());
+                }
+            }
+        }
+        // Sort sizes numerically
+        sizes.sort_by_key(|s| s.parse::<u64>().unwrap_or(0));
+
+        for size in &sizes {
+            rows.push(ComparisonRow {
+                operation: op.to_string(),
+                size: size.clone(),
+                v1: v1_group.and_then(|g| g.get(size)).map(|r| BenchResult {
+                    mean_ns: r.mean_ns,
+                    std_dev_ns: r.std_dev_ns,
+                }),
+                v2: v2_group.and_then(|g| g.get(size)).map(|r| BenchResult {
+                    mean_ns: r.mean_ns,
+                    std_dev_ns: r.std_dev_ns,
+                }),
+            });
+        }
+    }
+
+    rows
+}
+
+fn generate_markdown(
+    groups: &BTreeMap<String, BTreeMap<String, BenchResult>>,
+) -> String {
+    let mut md = String::new();
+
+    md.push_str("# RFDB Performance Report\n\n");
+    md.push_str("Generated by `bench_report`. Run `cargo bench` first.\n\n");
+
+    // ── Write Throughput ───────────────────────────────────
+    md.push_str("## Write Throughput\n\n");
+    md.push_str("| Operation | Size | v1 | v2 | Comparison |\n");
+    md.push_str("|-----------|------|----|----|------------|\n");
+
+    let write_ops = ["add_nodes", "flush"];
+    let rows = build_comparison_table(groups, &write_ops);
+    for row in &rows {
+        let v1_str = row.v1.as_ref().map_or("-".to_string(), |r| format_time(r.mean_ns));
+        let v2_str = row.v2.as_ref().map_or("-".to_string(), |r| format_time(r.mean_ns));
+        let cmp = match (&row.v1, &row.v2) {
+            (Some(v1), Some(v2)) => format_speedup(v1.mean_ns, v2.mean_ns),
+            _ => "-".to_string(),
+        };
+        md.push_str(&format!(
+            "| {} | {} | {} | {} | {} |\n",
+            row.operation, row.size, v1_str, v2_str, cmp
+        ));
+    }
+    md.push('\n');
+
+    // ── Query Latency ─────────────────────────────────────
+    md.push_str("## Query Latency\n\n");
+    md.push_str("| Operation | Size | v1 | v2 | Comparison |\n");
+    md.push_str("|-----------|------|----|----|------------|\n");
+
+    let query_ops = [
+        "get_node",
+        "find_by_type",
+        "find_by_type_narrow",
+        "find_by_type_wildcard",
+        "find_by_attr",
+        "bfs",
+        "neighbors",
+        "get_outgoing_edges",
+        "get_incoming_edges",
+        "reachability",
+        "reachability_backward",
+    ];
+    let rows = build_comparison_table(groups, &query_ops);
+    for row in &rows {
+        let v1_str = row.v1.as_ref().map_or("-".to_string(), |r| format_time(r.mean_ns));
+        let v2_str = row.v2.as_ref().map_or("-".to_string(), |r| format_time(r.mean_ns));
+        let cmp = match (&row.v1, &row.v2) {
+            (Some(v1), Some(v2)) => format_speedup(v1.mean_ns, v2.mean_ns),
+            _ => "-".to_string(),
+        };
+        md.push_str(&format!(
+            "| {} | {} | {} | {} | {} |\n",
+            row.operation, row.size, v1_str, v2_str, cmp
+        ));
+    }
+    md.push('\n');
+
+    // ── Mutation ──────────────────────────────────────────
+    md.push_str("## Mutation Operations\n\n");
+    md.push_str("| Operation | Size | v1 | v2 | Comparison |\n");
+    md.push_str("|-----------|------|----|----|------------|\n");
+
+    let mutation_ops = ["delete_node", "delete_edge", "commit_batch"];
+    let rows = build_comparison_table(groups, &mutation_ops);
+    for row in &rows {
+        let v1_str = row.v1.as_ref().map_or("-".to_string(), |r| format_time(r.mean_ns));
+        let v2_str = row.v2.as_ref().map_or("-".to_string(), |r| format_time(r.mean_ns));
+        let cmp = match (&row.v1, &row.v2) {
+            (Some(v1), Some(v2)) => format_speedup(v1.mean_ns, v2.mean_ns),
+            _ => "-".to_string(),
+        };
+        md.push_str(&format!(
+            "| {} | {} | {} | {} | {} |\n",
+            row.operation, row.size, v1_str, v2_str, cmp
+        ));
+    }
+    md.push('\n');
+
+    // ── Re-analysis Cost ─────────────────────────────────
+    md.push_str("## Re-analysis Cost\n\n");
+    md.push_str("| Files | v1 (add+flush) | v2 (commit_batch) | Comparison |\n");
+    md.push_str("|-------|----------------|-------------------|------------|\n");
+
+    let reanalysis_ops = ["reanalysis"];
+    let rows = build_comparison_table(groups, &reanalysis_ops);
+    for row in &rows {
+        let v1_str = row.v1.as_ref().map_or("-".to_string(), |r| format_time(r.mean_ns));
+        let v2_str = row.v2.as_ref().map_or("-".to_string(), |r| format_time(r.mean_ns));
+        let cmp = match (&row.v1, &row.v2) {
+            (Some(v1), Some(v2)) => format_speedup(v1.mean_ns, v2.mean_ns),
+            _ => "-".to_string(),
+        };
+        md.push_str(&format!(
+            "| {} files | {} | {} | {} |\n",
+            row.size, v1_str, v2_str, cmp
+        ));
+    }
+    md.push('\n');
+
+    // ── Compaction ────────────────────────────────────────
+    md.push_str("## Compaction Throughput\n\n");
+    md.push_str("| L0 Segments | Time |\n");
+    md.push_str("|-------------|------|\n");
+
+    let compact_group_names: Vec<_> = groups
+        .keys()
+        .filter(|k| k.starts_with("compact"))
+        .collect();
+    for key in &compact_group_names {
+        if let Some(sizes) = groups.get(*key) {
+            for (size, result) in sizes {
+                md.push_str(&format!(
+                    "| {} ({}) | {} |\n",
+                    key, size, format_time(result.mean_ns)
+                ));
+            }
+        }
+    }
+    md.push('\n');
+
+    md.push_str("---\n");
+    md.push_str("*Generated by `cargo run --release --bin bench_report`*\n");
+
+    md
+}
+
+// ── Main ───────────────────────────────────────────────────────────────
+
+fn main() {
+    let criterion_dir = PathBuf::from("target/criterion");
+
+    if !criterion_dir.exists() {
+        eprintln!("Error: target/criterion/ not found.");
+        eprintln!("Run `cargo bench` first to generate benchmark data.");
+        std::process::exit(1);
+    }
+
+    let groups = discover_benchmarks(&criterion_dir);
+
+    if groups.is_empty() {
+        eprintln!("Warning: no benchmark results found in target/criterion/");
+        eprintln!("Run `cargo bench` first.");
+        std::process::exit(1);
+    }
+
+    eprintln!("Found {} benchmark groups", groups.len());
+
+    let markdown = generate_markdown(&groups);
+
+    let output_path = PathBuf::from("target/bench-report.md");
+    fs::write(&output_path, &markdown).expect("failed to write report");
+
+    eprintln!("Report written to {}", output_path.display());
+
+    // Also print to stdout
+    print!("{}", markdown);
+}

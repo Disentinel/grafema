@@ -53,6 +53,7 @@ fn bench_rust_vs_neo4j_add_nodes(c: &mut Criterion) {
             name: Some(format!("func_{}", i)),
             file: Some("src/test.js".to_string()),
             metadata: None,
+            semantic_id: None,
         })
         .collect();
 
@@ -98,6 +99,7 @@ fn bench_rust_vs_neo4j_find_by_type(c: &mut Criterion) {
             name: Some(format!("func_{}", i)),
             file: Some("src/test.js".to_string()),
             metadata: None,
+            semantic_id: None,
         })
         .collect();
 
@@ -145,6 +147,7 @@ fn bench_rust_vs_neo4j_bfs(c: &mut Criterion) {
             name: Some(format!("func_{}", i)),
             file: Some("src/test.js".to_string()),
             metadata: None,
+            semantic_id: None,
         })
         .collect();
 
