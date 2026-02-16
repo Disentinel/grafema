@@ -305,18 +305,17 @@ export class SQLiteAnalyzer extends Plugin {
       // Flush nodes first so queryNodes can find them
       await graph.addNodes(nodes);
 
-      // Find containing functions (reads FUNCTION nodes from JSASTAnalyzer)
+      // Fetch functions once per module, scoped by file
+      const fileFunctions: NodeRecord[] = [];
+      for await (const n of graph.queryNodes({ type: 'FUNCTION', file: module.file })) {
+        fileFunctions.push(n);
+      }
+
+      // Find containing functions
       for (const query of queries) {
-        const containingFunctions: NodeRecord[] = [];
-        for await (const n of graph.queryNodes({ type: 'FUNCTION' })) {
-          if (
-            n.file === module.file &&
-            (n.line ?? 0) <= query.line &&
-            query.line - (n.line ?? 0) < 100
-          ) {
-            containingFunctions.push(n);
-          }
-        }
+        const containingFunctions = fileFunctions.filter(
+          n => (n.line ?? 0) <= query.line && query.line - (n.line ?? 0) < 100
+        );
 
         if (containingFunctions.length > 0) {
           // Берём ближайшую функцию
