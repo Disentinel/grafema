@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.8] - 2026-02-16
+
+### Bug Fixes
+
+- **CommitBatch chunking**: Large codebases (4k+ modules) caused ECONNRESET during analysis — a single CommitBatch message exceeded the server's 100MB limit (1.1GB observed). `RFDBClient.commitBatch()` now automatically splits into 10k-item chunks, with the first chunk handling atomic file replacement and subsequent chunks being additive only.
+
 ## [0.2.7] - 2026-02-16
 
 ### Bug Fixes
