@@ -14,6 +14,7 @@ use crate::storage::{AttrQuery, EdgeRecord, FieldDecl, NodeRecord};
 use crate::storage_v2::manifest::{ManifestStore, SnapshotDiff, SnapshotInfo};
 use crate::storage_v2::multi_shard::MultiShardStore;
 use crate::storage_v2::resource::{ResourceManager, SystemResources, TuningProfile};
+use crate::storage_v2::compaction::{CompactionConfig, CompactionResult};
 use crate::storage_v2::types::{CommitDelta, EdgeRecordV2, NodeRecordV2};
 use super::{GraphStore, traversal};
 
@@ -547,7 +548,6 @@ impl GraphStore for GraphEngineV2 {
     }
 
     fn compact(&mut self) -> Result<()> {
-        use crate::storage_v2::compaction::CompactionConfig;
         let config = CompactionConfig::default();
         self.store.compact(&mut self.manifest, &config)?;
         Ok(())
@@ -667,6 +667,16 @@ impl GraphEngineV2 {
         self.pending_tombstone_edges = current.tombstoned_edge_keys.iter().cloned().collect();
 
         Ok(delta)
+    }
+
+    /// Compact with statistics returned (for benchmarks and diagnostics).
+    ///
+    /// Unlike `GraphStore::compact()` which returns `Result<()>`, this method
+    /// exposes the full `CompactionResult` including nodes_merged, edges_merged,
+    /// tombstones_removed, and duration_ms.
+    pub fn compact_with_stats(&mut self) -> Result<CompactionResult> {
+        let config = CompactionConfig::default();
+        self.store.compact(&mut self.manifest, &config)
     }
 
     /// Tag an existing snapshot.
