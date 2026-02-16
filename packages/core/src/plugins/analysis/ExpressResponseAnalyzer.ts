@@ -417,33 +417,20 @@ export class ExpressResponseAnalyzer extends Plugin {
     // Extract scope prefix from handler semantic ID
     const handlerScopePrefix = this.extractScopePrefix(handlerSemanticId);
 
-    // Query VARIABLE nodes
-    for await (const node of graph.queryNodes({ type: 'VARIABLE' })) {
-      if (node.name === name && node.file === file) {
-        // Check if in handler scope and declared before usage
+    // Check VARIABLE and CONSTANT in handler scope
+    for (const type of ['VARIABLE', 'CONSTANT']) {
+      for await (const node of graph.queryNodes({ type, name, file })) {
         if (node.id.startsWith(handlerScopePrefix) && (node.line as number) <= useLine) {
           return node.id;
         }
       }
     }
 
-    // Query CONSTANT nodes
-    for await (const node of graph.queryNodes({ type: 'CONSTANT' })) {
-      if (node.name === name && node.file === file) {
-        if (node.id.startsWith(handlerScopePrefix) && (node.line as number) <= useLine) {
-          return node.id;
-        }
-      }
-    }
-
-    // Query PARAMETER nodes
-    for await (const node of graph.queryNodes({ type: 'PARAMETER' })) {
-      if (node.name === name && node.file === file) {
-        // Parameters belong to the function directly
-        const parentFunctionId = (node as NodeRecord & { parentFunctionId?: string }).parentFunctionId;
-        if (parentFunctionId === handlerSemanticId) {
-          return node.id;
-        }
+    // Check PARAMETER nodes
+    for await (const node of graph.queryNodes({ type: 'PARAMETER', name, file })) {
+      const parentFunctionId = (node as NodeRecord & { parentFunctionId?: string }).parentFunctionId;
+      if (parentFunctionId === handlerSemanticId) {
+        return node.id;
       }
     }
 
@@ -451,21 +438,8 @@ export class ExpressResponseAnalyzer extends Plugin {
     // For module-level constants, they should be accessible from any function in the file
     const modulePrefix = this.extractModulePrefix(handlerSemanticId);
     if (modulePrefix) {
-      // Check module-level VARIABLE
-      for await (const node of graph.queryNodes({ type: 'VARIABLE' })) {
-        if (node.name === name && node.file === file) {
-          // Module-level variables have IDs like "file.js->VARIABLE->name" (3 parts)
-          // Function-local variables have IDs like "file.js->funcName->VARIABLE->name" (4+ parts)
-          // Only match true module-level variables by checking structure
-          if (this.isModuleLevelId(node.id, modulePrefix) && (node.line as number) <= useLine) {
-            return node.id;
-          }
-        }
-      }
-
-      // Check module-level CONSTANT
-      for await (const node of graph.queryNodes({ type: 'CONSTANT' })) {
-        if (node.name === name && node.file === file) {
+      for (const type of ['VARIABLE', 'CONSTANT']) {
+        for await (const node of graph.queryNodes({ type, name, file })) {
           if (this.isModuleLevelId(node.id, modulePrefix) && (node.line as number) <= useLine) {
             return node.id;
           }
