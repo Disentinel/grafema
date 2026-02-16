@@ -38,6 +38,7 @@ projects/
 tmp/
 
 # NPM auth
+.npmrc
 .npmrc.local
 .rfguard/
 

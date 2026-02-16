@@ -299,15 +299,24 @@ if [ "$PUBLISH" = true ]; then
     echo ""
     echo -e "${BLUE}=== Publishing to npm ===${NC}"
 
-    # Check for NPM_TOKEN
-    if [ -z "$NPM_TOKEN" ]; then
+    # Set up .npmrc with auth token for publishing.
+    # pnpm publish reads auth from .npmrc, not from env vars.
+    NPMRC_CREATED=false
+    if [ ! -f "$ROOT_DIR/.npmrc" ]; then
         if [ -f "$ROOT_DIR/.npmrc.local" ]; then
-            export NPM_TOKEN=$(grep '_authToken=' "$ROOT_DIR/.npmrc.local" | cut -d'=' -f2)
+            cp "$ROOT_DIR/.npmrc.local" "$ROOT_DIR/.npmrc"
+            NPMRC_CREATED=true
             echo "Using token from .npmrc.local"
+        elif [ -n "$NPM_TOKEN" ]; then
+            echo "//registry.npmjs.org/:_authToken=$NPM_TOKEN" > "$ROOT_DIR/.npmrc"
+            NPMRC_CREATED=true
+            echo "Using token from NPM_TOKEN env var"
         else
-            echo -e "${RED}ERROR: NPM_TOKEN not set and .npmrc.local not found${NC}"
+            echo -e "${RED}ERROR: No .npmrc, .npmrc.local, or NPM_TOKEN found${NC}"
             exit 1
         fi
+    else
+        echo "Using existing .npmrc"
     fi
 
     # Determine dist-tag based on version
@@ -338,6 +347,13 @@ if [ "$PUBLISH" = true ]; then
     done
 
     cd "$ROOT_DIR"
+
+    # Clean up temporary .npmrc (don't leave secrets in working dir)
+    if [ "$NPMRC_CREATED" = true ] && [ -f "$ROOT_DIR/.npmrc" ]; then
+        rm "$ROOT_DIR/.npmrc"
+        echo "Cleaned up temporary .npmrc"
+    fi
+
     echo -e "${GREEN}[x] All packages published${NC}"
 fi
 
