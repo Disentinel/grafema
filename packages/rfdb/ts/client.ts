@@ -1049,19 +1049,61 @@ export class RFDBClient extends EventEmitter implements IRFDBClient {
    */
   async commitBatch(tags?: string[]): Promise<CommitDelta> {
     if (!this._batching) throw new Error('No batch in progress');
-    const response = await this._send('commitBatch', {
-      changedFiles: [...this._batchFiles],
-      nodes: this._batchNodes,
-      edges: this._batchEdges,
-      tags,
-    });
+
+    const allNodes = this._batchNodes;
+    const allEdges = this._batchEdges;
+    const changedFiles = [...this._batchFiles];
 
     this._batching = false;
     this._batchNodes = [];
     this._batchEdges = [];
     this._batchFiles = new Set();
 
-    return (response as CommitBatchResponse).delta;
+    // Chunk large batches to stay under server's 100MB message limit.
+    // First chunk includes changedFiles (triggers old data deletion),
+    // subsequent chunks use empty changedFiles (additive only).
+    const CHUNK = 10_000;
+    if (allNodes.length <= CHUNK && allEdges.length <= CHUNK) {
+      const response = await this._send('commitBatch', {
+        changedFiles, nodes: allNodes, edges: allEdges, tags,
+      });
+      return (response as CommitBatchResponse).delta;
+    }
+
+    const merged: CommitDelta = {
+      changedFiles,
+      nodesAdded: 0, nodesRemoved: 0,
+      edgesAdded: 0, edgesRemoved: 0,
+      changedNodeTypes: [], changedEdgeTypes: [],
+    };
+    const nodeTypes = new Set<string>();
+    const edgeTypes = new Set<string>();
+
+    const maxI = Math.max(
+      Math.ceil(allNodes.length / CHUNK),
+      Math.ceil(allEdges.length / CHUNK),
+      1,
+    );
+
+    for (let i = 0; i < maxI; i++) {
+      const nodes = allNodes.slice(i * CHUNK, (i + 1) * CHUNK);
+      const edges = allEdges.slice(i * CHUNK, (i + 1) * CHUNK);
+      const response = await this._send('commitBatch', {
+        changedFiles: i === 0 ? changedFiles : [],
+        nodes, edges, tags,
+      });
+      const d = (response as CommitBatchResponse).delta;
+      merged.nodesAdded += d.nodesAdded;
+      merged.nodesRemoved += d.nodesRemoved;
+      merged.edgesAdded += d.edgesAdded;
+      merged.edgesRemoved += d.edgesRemoved;
+      for (const t of d.changedNodeTypes) nodeTypes.add(t);
+      for (const t of d.changedEdgeTypes) edgeTypes.add(t);
+    }
+
+    merged.changedNodeTypes = [...nodeTypes];
+    merged.changedEdgeTypes = [...edgeTypes];
+    return merged;
   }
 
   /**
