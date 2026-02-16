@@ -44,7 +44,10 @@ tmp/
 # Coverage
 coverage/
 
-# Grafema (covered by .grafema/* above)
+# Nested .grafema analysis artifacts (packages, test fixtures)
+**/.grafema/graph.rfdb/
+**/.grafema/rfdb.sock
+**/.grafema/diagnostics.log
 .eslintcache
 
 # SWE-bench artifacts
