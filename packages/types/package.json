@@ -1,6 +1,6 @@
 {
   "name": "@grafema/types",
-  "version": "0.2.5-beta",
+  "version": "0.2.6-beta",
   "description": "Type definitions for Grafema code analysis toolkit",
   "type": "module",
   "main": "./dist/index.js",
