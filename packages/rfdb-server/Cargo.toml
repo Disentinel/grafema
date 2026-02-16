@@ -72,6 +72,14 @@ proptest = "1.4"
 name = "rfdb-server"
 path = "src/bin/rfdb_server.rs"
 
+[[bin]]
+name = "memory_profile"
+path = "src/bin/memory_profile.rs"
+
+[[bin]]
+name = "bench_report"
+path = "src/bin/bench_report.rs"
+
 [[bench]]
 name = "graph_operations"
 harness = false
@@ -82,6 +90,14 @@ harness = false
 
 [[bench]]
 name = "v1_v2_comparison"
+harness = false
+
+[[bench]]
+name = "reanalysis_cost"
+harness = false
+
+[[bench]]
+name = "compaction_bench"
 harness = false
 
 [profile.release]
