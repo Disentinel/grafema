@@ -12,8 +12,10 @@ import type { Node, CallExpression, NewExpression, Identifier, MemberExpression 
 import type { NodePath } from '@babel/traverse';
 import { ASTVisitor, type VisitorModule, type VisitorCollections, type VisitorHandlers, type CounterRef } from './ASTVisitor.js';
 import type { ScopeTracker } from '../../../../core/ScopeTracker.js';
+import type { ContentHashHints } from '../../../../core/SemanticId.js';
 import { MutationDetector } from './MutationDetector.js';
 import { IdGenerator } from '../IdGenerator.js';
+import { ExpressionEvaluator } from '../ExpressionEvaluator.js';
 import { getLine, getColumn } from '../utils/location.js';
 import { getGrafemaIgnore } from './call-expression-helpers.js';
 import { ArgumentExtractor } from './ArgumentExtractor.js';
@@ -44,12 +46,30 @@ interface HandlerState {
   scopeTracker?: ScopeTracker;
 }
 
+/**
+ * Extract the first literal argument value from a CallExpression for content hash hints.
+ */
+function extractFirstLiteralArg(node: CallExpression | NewExpression): string | undefined {
+  if (node.arguments.length === 0) return undefined;
+  const firstArg = node.arguments[0];
+  if (!firstArg) return undefined;
+
+  const actualArg = firstArg.type === 'SpreadElement' ? firstArg.argument : firstArg;
+  const literalValue = ExpressionEvaluator.extractLiteralValue(actualArg);
+  if (literalValue !== null) {
+    return String(literalValue);
+  }
+  return undefined;
+}
+
 export class CallExpressionVisitor extends ASTVisitor {
   private scopeTracker?: ScopeTracker;
+  private sharedIdGenerator?: IdGenerator;
 
-  constructor(module: VisitorModule, collections: VisitorCollections, scopeTracker?: ScopeTracker) {
+  constructor(module: VisitorModule, collections: VisitorCollections, scopeTracker?: ScopeTracker, sharedIdGenerator?: IdGenerator) {
     super(module, collections);
     this.scopeTracker = scopeTracker;
+    this.sharedIdGenerator = sharedIdGenerator;
   }
 
 
@@ -192,16 +212,8 @@ export class CallExpressionVisitor extends ASTVisitor {
     const line = getLine(callNode);
     const column = getColumn(callNode);
 
-    const idGenerator = new IdGenerator(s.scopeTracker);
-    const callId = idGenerator.generate(
-      'CALL', callee.name, s.module.file,
-      line, column,
-      s.callSiteCounterRef,
-      { useDiscriminator: true, discriminatorKey: `CALL:${callee.name}` }
-    );
-
-    s.callSites.push({
-      id: callId,
+    const callInfo: CallSiteInfo = {
+      id: '', // Placeholder — resolved by generateV2 or set below
       type: 'CALL',
       name: callee.name,
       file: s.module.file,
@@ -210,7 +222,26 @@ export class CallExpressionVisitor extends ASTVisitor {
       parentScopeId,
       targetFunctionName: callee.name,
       isAwaited: isAwaited || undefined
-    });
+    };
+
+    if (this.sharedIdGenerator) {
+      const contentHints: ContentHashHints = {
+        arity: callNode.arguments.length,
+        firstLiteralArg: extractFirstLiteralArg(callNode)
+      };
+      this.sharedIdGenerator.generateV2('CALL', callee.name, s.module.file, contentHints, callInfo);
+    } else {
+      const idGenerator = new IdGenerator(s.scopeTracker);
+      callInfo.id = idGenerator.generate(
+        'CALL', callee.name, s.module.file,
+        line, column,
+        s.callSiteCounterRef,
+        { useDiscriminator: true, discriminatorKey: `CALL:${callee.name}` }
+      );
+    }
+    const callId = callInfo.id;
+
+    s.callSites.push(callInfo);
 
     if (callNode.arguments.length > 0) {
       ArgumentExtractor.extract(
@@ -288,18 +319,10 @@ export class CallExpressionVisitor extends ASTVisitor {
     const methodLine = getLine(callNode);
     const methodColumn = getColumn(callNode);
 
-    const idGenerator = new IdGenerator(s.scopeTracker);
-    const methodCallId = idGenerator.generate(
-      'CALL', fullName, s.module.file,
-      methodLine, methodColumn,
-      s.callSiteCounterRef,
-      { useDiscriminator: true, discriminatorKey: `CALL:${fullName}` }
-    );
-
     const grafemaIgnore = getGrafemaIgnore(path);
 
-    s.methodCalls.push({
-      id: methodCallId,
+    const methodCallInfo: MethodCallInfo = {
+      id: '', // Placeholder — resolved by generateV2 or set below
       type: 'CALL',
       name: fullName,
       object: objectName,
@@ -312,7 +335,26 @@ export class CallExpressionVisitor extends ASTVisitor {
       parentScopeId,
       grafemaIgnore: grafemaIgnore ?? undefined,
       isAwaited: isAwaited || undefined,
-    });
+    };
+
+    if (this.sharedIdGenerator) {
+      const contentHints: ContentHashHints = {
+        arity: callNode.arguments.length,
+        firstLiteralArg: extractFirstLiteralArg(callNode)
+      };
+      this.sharedIdGenerator.generateV2('CALL', fullName, s.module.file, contentHints, methodCallInfo);
+    } else {
+      const idGenerator = new IdGenerator(s.scopeTracker);
+      methodCallInfo.id = idGenerator.generate(
+        'CALL', fullName, s.module.file,
+        methodLine, methodColumn,
+        s.callSiteCounterRef,
+        { useDiscriminator: true, discriminatorKey: `CALL:${fullName}` }
+      );
+    }
+    const methodCallId = methodCallInfo.id;
+
+    s.methodCalls.push(methodCallInfo);
 
     // Check for array mutation methods (push, unshift, splice)
     const ARRAY_MUTATION_METHODS = ['push', 'unshift', 'splice'];
@@ -390,18 +432,10 @@ export class CallExpressionVisitor extends ASTVisitor {
         const methodLine = getLine(callNode);
         const methodColumn = getColumn(callNode);
 
-        const idGenerator = new IdGenerator(s.scopeTracker);
-        const methodCallId = idGenerator.generate(
-          'CALL', fullName, s.module.file,
-          methodLine, methodColumn,
-          s.callSiteCounterRef,
-          { useDiscriminator: true, discriminatorKey: `CALL:${fullName}` }
-        );
-
         const grafemaIgnore = getGrafemaIgnore(path);
 
-        s.methodCalls.push({
-          id: methodCallId,
+        const methodCallInfo: MethodCallInfo = {
+          id: '', // Placeholder — resolved by generateV2 or set below
           type: 'CALL',
           name: fullName,
           object: objectName,
@@ -411,7 +445,25 @@ export class CallExpressionVisitor extends ASTVisitor {
           column: methodColumn,
           parentScopeId,
           grafemaIgnore: grafemaIgnore ?? undefined,
-        });
+        };
+
+        if (this.sharedIdGenerator) {
+          const contentHints: ContentHashHints = {
+            arity: callNode.arguments.length,
+            firstLiteralArg: extractFirstLiteralArg(callNode)
+          };
+          this.sharedIdGenerator.generateV2('CALL', fullName, s.module.file, contentHints, methodCallInfo);
+        } else {
+          const idGenerator = new IdGenerator(s.scopeTracker);
+          methodCallInfo.id = idGenerator.generate(
+            'CALL', fullName, s.module.file,
+            methodLine, methodColumn,
+            s.callSiteCounterRef,
+            { useDiscriminator: true, discriminatorKey: `CALL:${fullName}` }
+          );
+        }
+
+        s.methodCalls.push(methodCallInfo);
       }
     }
   }
@@ -436,16 +488,8 @@ export class CallExpressionVisitor extends ASTVisitor {
       const newLine = getLine(newNode);
       const newColumn = getColumn(newNode);
 
-      const idGenerator = new IdGenerator(s.scopeTracker);
-      const newCallId = idGenerator.generate(
-        'CALL', `new:${constructorName}`, s.module.file,
-        newLine, newColumn,
-        s.callSiteCounterRef,
-        { useDiscriminator: true, discriminatorKey: `CALL:new:${constructorName}` }
-      );
-
-      s.callSites.push({
-        id: newCallId,
+      const callInfo: CallSiteInfo = {
+        id: '', // Placeholder — resolved by generateV2 or set below
         type: 'CALL',
         name: constructorName,
         file: s.module.file,
@@ -454,7 +498,25 @@ export class CallExpressionVisitor extends ASTVisitor {
         parentScopeId,
         targetFunctionName: constructorName,
         isNew: true
-      });
+      };
+
+      if (this.sharedIdGenerator) {
+        const contentHints: ContentHashHints = {
+          arity: newNode.arguments.length,
+          firstLiteralArg: undefined  // constructor args not used for hash
+        };
+        this.sharedIdGenerator.generateV2('CALL', `new:${constructorName}`, s.module.file, contentHints, callInfo);
+      } else {
+        const idGenerator = new IdGenerator(s.scopeTracker);
+        callInfo.id = idGenerator.generate(
+          'CALL', `new:${constructorName}`, s.module.file,
+          newLine, newColumn,
+          s.callSiteCounterRef,
+          { useDiscriminator: true, discriminatorKey: `CALL:new:${constructorName}` }
+        );
+      }
+
+      s.callSites.push(callInfo);
     } else if (newNode.callee.type === 'MemberExpression') {
       const memberCallee = newNode.callee as MemberExpression;
       const object = memberCallee.object;
@@ -467,18 +529,10 @@ export class CallExpressionVisitor extends ASTVisitor {
         const memberNewLine = getLine(newNode);
         const memberNewColumn = getColumn(newNode);
 
-        const idGenerator = new IdGenerator(s.scopeTracker);
-        const newMethodCallId = idGenerator.generate(
-          'CALL', `new:${fullName}`, s.module.file,
-          memberNewLine, memberNewColumn,
-          s.callSiteCounterRef,
-          { useDiscriminator: true, discriminatorKey: `CALL:new:${fullName}` }
-        );
-
         const grafemaIgnore = getGrafemaIgnore(path);
 
-        s.methodCalls.push({
-          id: newMethodCallId,
+        const methodCallInfo: MethodCallInfo = {
+          id: '', // Placeholder — resolved by generateV2 or set below
           type: 'CALL',
           name: fullName,
           object: objectName,
@@ -489,7 +543,25 @@ export class CallExpressionVisitor extends ASTVisitor {
           parentScopeId,
           isNew: true,
           grafemaIgnore: grafemaIgnore ?? undefined,
-        });
+        };
+
+        if (this.sharedIdGenerator) {
+          const contentHints: ContentHashHints = {
+            arity: newNode.arguments.length,
+            firstLiteralArg: undefined  // constructor args not used for hash
+          };
+          this.sharedIdGenerator.generateV2('CALL', `new:${fullName}`, s.module.file, contentHints, methodCallInfo);
+        } else {
+          const idGenerator = new IdGenerator(s.scopeTracker);
+          methodCallInfo.id = idGenerator.generate(
+            'CALL', `new:${fullName}`, s.module.file,
+            memberNewLine, memberNewColumn,
+            s.callSiteCounterRef,
+            { useDiscriminator: true, discriminatorKey: `CALL:new:${fullName}` }
+          );
+        }
+
+        s.methodCalls.push(methodCallInfo);
       }
     }
   }

@@ -6411,6 +6411,7 @@
       "exported": false,
       "file": "app.js",
       "name": "app",
+      "scopePath": [],
       "type": "CONSTANT"
     },
     {
@@ -6431,6 +6432,7 @@
       "exported": false,
       "file": "app.js",
       "name": "config",
+      "scopePath": [],
       "type": "CONSTANT"
     },
     {
@@ -6636,6 +6638,7 @@
       "exported": false,
       "file": "middleware/auth.js",
       "name": "SECRET_KEY",
+      "scopePath": [],
       "type": "CONSTANT",
       "value": "secret-key"
     },
@@ -6673,6 +6676,7 @@
       "exported": false,
       "file": "models/User.js",
       "name": "userSchema",
+      "scopePath": [],
       "type": "CONSTANT"
     },
     {
@@ -17214,8 +17218,11 @@
       "hasDefault": true,
       "index": 1,
       "name": "accumulator",
-      "parentFunctionId": "asyncHelpers.js->global->FUNCTION->recursivePromiseChain",
-      "semanticId": "asyncHelpers.js->recursivePromiseChain->PARAMETER->accumulator#1",
+      "parentFunctionId": "utils/asyncHelpers.js->FUNCTION->recursivePromiseChain",
+      "scopePath": [
+        "recursivePromiseChain"
+      ],
+      "semanticId": "utils/asyncHelpers.js->PARAMETER->accumulator[in:recursivePromiseChain]#1",
       "type": "PARAMETER"
     },
     {
@@ -17223,8 +17230,11 @@
       "file": "models/User.js",
       "index": 0,
       "name": "activeUsers",
-      "parentFunctionId": "User.js->global->FUNCTION->anonymous[5]",
-      "semanticId": "User.js->anonymous[5]->PARAMETER->activeUsers#0",
+      "parentFunctionId": "models/User.js->FUNCTION->anonymous[5]",
+      "scopePath": [
+        "anonymous[5]"
+      ],
+      "semanticId": "models/User.js->PARAMETER->activeUsers",
       "type": "PARAMETER"
     },
     {
@@ -17233,8 +17243,11 @@
       "index": 1,
       "isRest": true,
       "name": "args",
-      "parentFunctionId": "asyncHelpers.js->global->FUNCTION->callbackToPromise",
-      "semanticId": "asyncHelpers.js->callbackToPromise->PARAMETER->args#1",
+      "parentFunctionId": "utils/asyncHelpers.js->FUNCTION->callbackToPromise",
+      "scopePath": [
+        "callbackToPromise"
+      ],
+      "semanticId": "utils/asyncHelpers.js->PARAMETER->args[in:callbackToPromise]#1",
       "type": "PARAMETER"
     },
     {
@@ -17243,8 +17256,11 @@
       "hasDefault": true,
       "index": 2,
       "name": "baseDelay",
-      "parentFunctionId": "asyncHelpers.js->global->FUNCTION->retryWithBackoff",
-      "semanticId": "asyncHelpers.js->retryWithBackoff->PARAMETER->baseDelay#2",
+      "parentFunctionId": "utils/asyncHelpers.js->FUNCTION->retryWithBackoff",
+      "scopePath": [
+        "retryWithBackoff"
+      ],
+      "semanticId": "utils/asyncHelpers.js->PARAMETER->baseDelay[in:retryWithBackoff]#2",
       "type": "PARAMETER"
     },
     {
@@ -17252,8 +17268,11 @@
       "file": "services/dataProcessor.js",
       "index": 1,
       "name": "batchSize",
-      "parentFunctionId": "dataProcessor.js->global->FUNCTION->processInBatches",
-      "semanticId": "dataProcessor.js->processInBatches->PARAMETER->batchSize#1",
+      "parentFunctionId": "services/dataProcessor.js->FUNCTION->processInBatches",
+      "scopePath": [
+        "processInBatches"
+      ],
+      "semanticId": "services/dataProcessor.js->PARAMETER->batchSize[in:processInBatches]#1",
       "type": "PARAMETER"
     },
     {
@@ -17261,8 +17280,11 @@
       "file": "app.js",
       "index": 0,
       "name": "callback",
-      "parentFunctionId": "app.js->global->FUNCTION->connectServices",
-      "semanticId": "app.js->connectServices->PARAMETER->callback#0",
+      "parentFunctionId": "app.js->FUNCTION->connectServices",
+      "scopePath": [
+        "connectServices"
+      ],
+      "semanticId": "app.js->PARAMETER->callback[in:connectServices]",
       "type": "PARAMETER"
     },
     {
@@ -17270,8 +17292,11 @@
       "file": "middleware/auth.js",
       "index": 1,
       "name": "callback",
-      "parentFunctionId": "auth.js->global->FUNCTION->refreshSession",
-      "semanticId": "auth.js->refreshSession->PARAMETER->callback#1",
+      "parentFunctionId": "middleware/auth.js->FUNCTION->refreshSession",
+      "scopePath": [
+        "refreshSession"
+      ],
+      "semanticId": "middleware/auth.js->PARAMETER->callback[in:refreshSession]#1",
       "type": "PARAMETER"
     },
     {
@@ -17279,8 +17304,11 @@
       "file": "middleware/auth.js",
       "index": 1,
       "name": "callback",
-      "parentFunctionId": "auth.js->global->FUNCTION->verifyTokenCallback",
-      "semanticId": "auth.js->verifyTokenCallback->PARAMETER->callback#1",
+      "parentFunctionId": "middleware/auth.js->FUNCTION->verifyTokenCallback",
+      "scopePath": [
+        "verifyTokenCallback"
+      ],
+      "semanticId": "middleware/auth.js->PARAMETER->callback[in:verifyTokenCallback]#1",
       "type": "PARAMETER"
     },
     {
@@ -17288,8 +17316,12 @@
       "file": "services/dataProcessor.js",
       "index": 1,
       "name": "callback",
-      "parentFunctionId": "dataProcessor.js->DataProcessor->FUNCTION->processComplex",
-      "semanticId": "dataProcessor.js->DataProcessor->processComplex->PARAMETER->callback#1",
+      "parentFunctionId": "services/dataProcessor.js->FUNCTION->processComplex[in:DataProcessor]",
+      "scopePath": [
+        "DataProcessor",
+        "processComplex"
+      ],
+      "semanticId": "services/dataProcessor.js->PARAMETER->callback[in:processComplex]#1",
       "type": "PARAMETER"
     },
     {
@@ -17297,8 +17329,12 @@
       "file": "services/dataProcessor.js",
       "index": 1,
       "name": "callback",
-      "parentFunctionId": "dataProcessor.js->DataProcessor->FUNCTION->processWithCallbacks",
-      "semanticId": "dataProcessor.js->DataProcessor->processWithCallbacks->PARAMETER->callback#1",
+      "parentFunctionId": "services/dataProcessor.js->FUNCTION->processWithCallbacks[in:DataProcessor]",
+      "scopePath": [
+        "DataProcessor",
+        "processWithCallbacks"
+      ],
+      "semanticId": "services/dataProcessor.js->PARAMETER->callback[in:processWithCallbacks]#1",
       "type": "PARAMETER"
     },
     {
@@ -17306,8 +17342,11 @@
       "file": "services/dataProcessor.js",
       "index": 2,
       "name": "callback",
-      "parentFunctionId": "dataProcessor.js->global->FUNCTION->processInBatches",
-      "semanticId": "dataProcessor.js->processInBatches->PARAMETER->callback#2",
+      "parentFunctionId": "services/dataProcessor.js->FUNCTION->processInBatches",
+      "scopePath": [
+        "processInBatches"
+      ],
+      "semanticId": "services/dataProcessor.js->PARAMETER->callback[in:processInBatches]#2",
       "type": "PARAMETER"
     },
     {
@@ -17315,8 +17354,11 @@
       "file": "utils/asyncHelpers.js",
       "index": 1,
       "name": "callback",
-      "parentFunctionId": "asyncHelpers.js->global->FUNCTION->callbackHell",
-      "semanticId": "asyncHelpers.js->callbackHell->PARAMETER->callback#1",
+      "parentFunctionId": "utils/asyncHelpers.js->FUNCTION->callbackHell",
+      "scopePath": [
+        "callbackHell"
+      ],
+      "semanticId": "utils/asyncHelpers.js->PARAMETER->callback[in:callbackHell]#1",
       "type": "PARAMETER"
     },
     {
@@ -17324,8 +17366,11 @@
       "file": "utils/asyncHelpers.js",
       "index": 2,
       "name": "callback",
-      "parentFunctionId": "asyncHelpers.js->global->FUNCTION->processBatch",
-      "semanticId": "asyncHelpers.js->processBatch->PARAMETER->callback#2",
+      "parentFunctionId": "utils/asyncHelpers.js->FUNCTION->processBatch",
+      "scopePath": [
+        "processBatch"
+      ],
+      "semanticId": "utils/asyncHelpers.js->PARAMETER->callback[in:processBatch]#2",
       "type": "PARAMETER"
     },
     {
@@ -17333,8 +17378,11 @@
       "file": "utils/asyncHelpers.js",
       "index": 1,
       "name": "concurrency",
-      "parentFunctionId": "asyncHelpers.js->global->FUNCTION->promisePool",
-      "semanticId": "asyncHelpers.js->promisePool->PARAMETER->concurrency#1",
+      "parentFunctionId": "utils/asyncHelpers.js->FUNCTION->promisePool",
+      "scopePath": [
+        "promisePool"
+      ],
+      "semanticId": "utils/asyncHelpers.js->PARAMETER->concurrency[in:promisePool]#1",
       "type": "PARAMETER"
     },
     {
@@ -17342,8 +17390,11 @@
       "file": "app.js",
       "index": 1,
       "name": "count",
-      "parentFunctionId": "app.js->global->FUNCTION->fetchDataStream",
-      "semanticId": "app.js->fetchDataStream->PARAMETER->count#1",
+      "parentFunctionId": "app.js->FUNCTION->fetchDataStream",
+      "scopePath": [
+        "fetchDataStream"
+      ],
+      "semanticId": "app.js->PARAMETER->count[in:fetchDataStream]#1",
       "type": "PARAMETER"
     },
     {
@@ -17351,8 +17402,11 @@
       "file": "services/dataProcessor.js",
       "index": 0,
       "name": "count",
-      "parentFunctionId": "dataProcessor.js->global->FUNCTION->createAsyncProcessors",
-      "semanticId": "dataProcessor.js->createAsyncProcessors->PARAMETER->count#0",
+      "parentFunctionId": "services/dataProcessor.js->FUNCTION->createAsyncProcessors",
+      "scopePath": [
+        "createAsyncProcessors"
+      ],
+      "semanticId": "services/dataProcessor.js->PARAMETER->count[in:createAsyncProcessors]",
       "type": "PARAMETER"
     },
     {
@@ -17360,8 +17414,11 @@
       "file": "services/dataProcessor.js",
       "index": 0,
       "name": "count",
-      "parentFunctionId": "dataProcessor.js->global->FUNCTION->createProcessors",
-      "semanticId": "dataProcessor.js->createProcessors->PARAMETER->count#0",
+      "parentFunctionId": "services/dataProcessor.js->FUNCTION->createProcessors",
+      "scopePath": [
+        "createProcessors"
+      ],
+      "semanticId": "services/dataProcessor.js->PARAMETER->count[in:createProcessors]",
       "type": "PARAMETER"
     },
     {
@@ -17369,8 +17426,11 @@
       "file": "utils/asyncHelpers.js",
       "index": 0,
       "name": "count",
-      "parentFunctionId": "asyncHelpers.js->global->FUNCTION->executePromiseGenerator",
-      "semanticId": "asyncHelpers.js->executePromiseGenerator->PARAMETER->count#0",
+      "parentFunctionId": "utils/asyncHelpers.js->FUNCTION->executePromiseGenerator",
+      "scopePath": [
+        "executePromiseGenerator"
+      ],
+      "semanticId": "utils/asyncHelpers.js->PARAMETER->count[in:executePromiseGenerator]",
       "type": "PARAMETER"
     },
     {
@@ -17378,8 +17438,11 @@
       "file": "utils/asyncHelpers.js",
       "index": 0,
       "name": "count",
-      "parentFunctionId": "asyncHelpers.js->global->FUNCTION->promiseGenerator",
-      "semanticId": "asyncHelpers.js->promiseGenerator->PARAMETER->count#0",
+      "parentFunctionId": "utils/asyncHelpers.js->FUNCTION->promiseGenerator",
+      "scopePath": [
+        "promiseGenerator"
+      ],
+      "semanticId": "utils/asyncHelpers.js->PARAMETER->count[in:promiseGenerator]",
       "type": "PARAMETER"
     },
     {
@@ -17387,8 +17450,11 @@
       "file": "utils/asyncHelpers.js",
       "index": 0,
       "name": "data",
-      "parentFunctionId": "asyncHelpers.js->global->FUNCTION->callbackHell",
-      "semanticId": "asyncHelpers.js->callbackHell->PARAMETER->data#0",
+      "parentFunctionId": "utils/asyncHelpers.js->FUNCTION->callbackHell",
+      "scopePath": [
+        "callbackHell"
+      ],
+      "semanticId": "utils/asyncHelpers.js->PARAMETER->data[in:callbackHell]",
       "type": "PARAMETER"
     },
     {
@@ -17396,8 +17462,12 @@
       "file": "services/dataProcessor.js",
       "index": 0,
       "name": "dataIds",
-      "parentFunctionId": "dataProcessor.js->DataProcessor->FUNCTION->processDataStream",
-      "semanticId": "dataProcessor.js->DataProcessor->processDataStream->PARAMETER->dataIds#0",
+      "parentFunctionId": "services/dataProcessor.js->FUNCTION->processDataStream[in:DataProcessor]",
+      "scopePath": [
+        "DataProcessor",
+        "processDataStream"
+      ],
+      "semanticId": "services/dataProcessor.js->PARAMETER->dataIds[in:processDataStream]",
       "type": "PARAMETER"
     },
     {
@@ -17405,8 +17475,11 @@
       "file": "utils/asyncHelpers.js",
       "index": 1,
       "name": "delay",
-      "parentFunctionId": "asyncHelpers.js->global->FUNCTION->debouncePromise",
-      "semanticId": "asyncHelpers.js->debouncePromise->PARAMETER->delay#1",
+      "parentFunctionId": "utils/asyncHelpers.js->FUNCTION->debouncePromise",
+      "scopePath": [
+        "debouncePromise"
+      ],
+      "semanticId": "utils/asyncHelpers.js->PARAMETER->delay[in:debouncePromise]#1",
       "type": "PARAMETER"
     },
     {
@@ -17414,8 +17487,11 @@
       "file": "app.js",
       "index": 0,
       "name": "err",
-      "parentFunctionId": "app.js->AppConfig->FUNCTION->handleError",
-      "semanticId": "app.js->AppConfig->handleError->PARAMETER->err#0",
+      "parentFunctionId": "app.js->FUNCTION->anonymous[5]",
+      "scopePath": [
+        "anonymous[5]"
+      ],
+      "semanticId": "app.js->PARAMETER->err",
       "type": "PARAMETER"
     },
     {
@@ -17423,8 +17499,12 @@
       "file": "app.js",
       "index": 0,
       "name": "err",
-      "parentFunctionId": "app.js->AppConfig->FUNCTION->logError",
-      "semanticId": "app.js->AppConfig->logError->PARAMETER->err#0",
+      "parentFunctionId": "app.js->FUNCTION->handleError[in:AppConfig]",
+      "scopePath": [
+        "AppConfig",
+        "handleError"
+      ],
+      "semanticId": "app.js->PARAMETER->err[in:handleError]",
       "type": "PARAMETER"
     },
     {
@@ -17432,17 +17512,12 @@
       "file": "app.js",
       "index": 0,
       "name": "err",
-      "parentFunctionId": "app.js->global->FUNCTION->anonymous[0]",
-      "semanticId": "app.js->anonymous[0]->PARAMETER->err#0",
-      "type": "PARAMETER"
-    },
-    {
-      "exported": false,
-      "file": "app.js",
-      "index": 0,
-      "name": "err",
-      "parentFunctionId": "app.js->global->FUNCTION->anonymous[5]",
-      "semanticId": "app.js->anonymous[5]->PARAMETER->err#0",
+      "parentFunctionId": "app.js->FUNCTION->logError[in:AppConfig]",
+      "scopePath": [
+        "AppConfig",
+        "logError"
+      ],
+      "semanticId": "app.js->PARAMETER->err[in:logError]",
       "type": "PARAMETER"
     },
     {
@@ -17450,17 +17525,11 @@
       "file": "models/User.js",
       "index": 0,
       "name": "err",
-      "parentFunctionId": "User.js->global->FUNCTION->anonymous[3]",
-      "semanticId": "User.js->anonymous[3]->PARAMETER->err#0",
-      "type": "PARAMETER"
-    },
-    {
-      "exported": false,
-      "file": "models/User.js",
-      "index": 0,
-      "name": "err",
-      "parentFunctionId": "User.js->global->FUNCTION->anonymous[6]",
-      "semanticId": "User.js->anonymous[6]->PARAMETER->err#0",
+      "parentFunctionId": "models/User.js->FUNCTION->anonymous[6]",
+      "scopePath": [
+        "anonymous[6]"
+      ],
+      "semanticId": "models/User.js->PARAMETER->err",
       "type": "PARAMETER"
     },
     {
@@ -17468,8 +17537,11 @@
       "file": "services/dataProcessor.js",
       "index": 0,
       "name": "err",
-      "parentFunctionId": "dataProcessor.js->global->FUNCTION->anonymous[4]",
-      "semanticId": "dataProcessor.js->anonymous[4]->PARAMETER->err#0",
+      "parentFunctionId": "services/dataProcessor.js->FUNCTION->anonymous[4]",
+      "scopePath": [
+        "anonymous[4]"
+      ],
+      "semanticId": "services/dataProcessor.js->PARAMETER->err",
       "type": "PARAMETER"
     },
     {
@@ -17477,8 +17549,11 @@
       "file": "utils/asyncHelpers.js",
       "index": 1,
       "name": "fallbackFn",
-      "parentFunctionId": "asyncHelpers.js->global->FUNCTION->withErrorRecovery",
-      "semanticId": "asyncHelpers.js->withErrorRecovery->PARAMETER->fallbackFn#1",
+      "parentFunctionId": "utils/asyncHelpers.js->FUNCTION->withErrorRecovery",
+      "scopePath": [
+        "withErrorRecovery"
+      ],
+      "semanticId": "utils/asyncHelpers.js->PARAMETER->fallbackFn[in:withErrorRecovery]#1",
       "type": "PARAMETER"
     },
     {
@@ -17486,8 +17561,11 @@
       "file": "utils/asyncHelpers.js",
       "index": 0,
       "name": "fn",
-      "parentFunctionId": "asyncHelpers.js->global->FUNCTION->callbackToPromise",
-      "semanticId": "asyncHelpers.js->callbackToPromise->PARAMETER->fn#0",
+      "parentFunctionId": "utils/asyncHelpers.js->FUNCTION->callbackToPromise",
+      "scopePath": [
+        "callbackToPromise"
+      ],
+      "semanticId": "utils/asyncHelpers.js->PARAMETER->fn[in:callbackToPromise]",
       "type": "PARAMETER"
     },
     {
@@ -17495,8 +17573,11 @@
       "file": "utils/asyncHelpers.js",
       "index": 0,
       "name": "fn",
-      "parentFunctionId": "asyncHelpers.js->global->FUNCTION->debouncePromise",
-      "semanticId": "asyncHelpers.js->debouncePromise->PARAMETER->fn#0",
+      "parentFunctionId": "utils/asyncHelpers.js->FUNCTION->debouncePromise",
+      "scopePath": [
+        "debouncePromise"
+      ],
+      "semanticId": "utils/asyncHelpers.js->PARAMETER->fn[in:debouncePromise]",
       "type": "PARAMETER"
     },
     {
@@ -17504,8 +17585,11 @@
       "file": "utils/asyncHelpers.js",
       "index": 0,
       "name": "fn",
-      "parentFunctionId": "asyncHelpers.js->global->FUNCTION->retryWithBackoff",
-      "semanticId": "asyncHelpers.js->retryWithBackoff->PARAMETER->fn#0",
+      "parentFunctionId": "utils/asyncHelpers.js->FUNCTION->retryWithBackoff",
+      "scopePath": [
+        "retryWithBackoff"
+      ],
+      "semanticId": "utils/asyncHelpers.js->PARAMETER->fn[in:retryWithBackoff]",
       "type": "PARAMETER"
     },
     {
@@ -17513,8 +17597,11 @@
       "file": "utils/asyncHelpers.js",
       "index": 0,
       "name": "fn",
-      "parentFunctionId": "asyncHelpers.js->global->FUNCTION->withErrorRecovery",
-      "semanticId": "asyncHelpers.js->withErrorRecovery->PARAMETER->fn#0",
+      "parentFunctionId": "utils/asyncHelpers.js->FUNCTION->withErrorRecovery",
+      "scopePath": [
+        "withErrorRecovery"
+      ],
+      "semanticId": "utils/asyncHelpers.js->PARAMETER->fn[in:withErrorRecovery]",
       "type": "PARAMETER"
     },
     {
@@ -17522,8 +17609,11 @@
       "file": "utils/asyncHelpers.js",
       "index": 0,
       "name": "ids",
-      "parentFunctionId": "asyncHelpers.js->global->FUNCTION->mixedParallelSequential",
-      "semanticId": "asyncHelpers.js->mixedParallelSequential->PARAMETER->ids#0",
+      "parentFunctionId": "utils/asyncHelpers.js->FUNCTION->mixedParallelSequential",
+      "scopePath": [
+        "mixedParallelSequential"
+      ],
+      "semanticId": "utils/asyncHelpers.js->PARAMETER->ids[in:mixedParallelSequential]",
       "type": "PARAMETER"
     },
     {
@@ -17531,8 +17621,11 @@
       "file": "app.js",
       "index": 0,
       "name": "items",
-      "parentFunctionId": "app.js->global->FUNCTION->processDataGenerator",
-      "semanticId": "app.js->processDataGenerator->PARAMETER->items#0",
+      "parentFunctionId": "app.js->FUNCTION->processDataGenerator",
+      "scopePath": [
+        "processDataGenerator"
+      ],
+      "semanticId": "app.js->PARAMETER->items[in:processDataGenerator]",
       "type": "PARAMETER"
     },
     {
@@ -17540,8 +17633,12 @@
       "file": "services/dataProcessor.js",
       "index": 0,
       "name": "items",
-      "parentFunctionId": "dataProcessor.js->DataProcessor->FUNCTION->delegateProcess",
-      "semanticId": "dataProcessor.js->DataProcessor->delegateProcess->PARAMETER->items#0",
+      "parentFunctionId": "services/dataProcessor.js->FUNCTION->delegateProcess[in:DataProcessor]",
+      "scopePath": [
+        "DataProcessor",
+        "delegateProcess"
+      ],
+      "semanticId": "services/dataProcessor.js->PARAMETER->items[in:delegateProcess]",
       "type": "PARAMETER"
     },
     {
@@ -17549,8 +17646,12 @@
       "file": "services/dataProcessor.js",
       "index": 0,
       "name": "items",
-      "parentFunctionId": "dataProcessor.js->DataProcessor->FUNCTION->processBatch",
-      "semanticId": "dataProcessor.js->DataProcessor->processBatch->PARAMETER->items#0",
+      "parentFunctionId": "services/dataProcessor.js->FUNCTION->processBatch[in:DataProcessor]",
+      "scopePath": [
+        "DataProcessor",
+        "processBatch"
+      ],
+      "semanticId": "services/dataProcessor.js->PARAMETER->items[in:processBatch]",
       "type": "PARAMETER"
     },
     {
@@ -17558,8 +17659,12 @@
       "file": "services/dataProcessor.js",
       "index": 0,
       "name": "items",
-      "parentFunctionId": "dataProcessor.js->DataProcessor->FUNCTION->processComplex",
-      "semanticId": "dataProcessor.js->DataProcessor->processComplex->PARAMETER->items#0",
+      "parentFunctionId": "services/dataProcessor.js->FUNCTION->processComplex[in:DataProcessor]",
+      "scopePath": [
+        "DataProcessor",
+        "processComplex"
+      ],
+      "semanticId": "services/dataProcessor.js->PARAMETER->items[in:processComplex]",
       "type": "PARAMETER"
     },
     {
@@ -17567,8 +17672,11 @@
       "file": "services/dataProcessor.js",
       "index": 0,
       "name": "items",
-      "parentFunctionId": "dataProcessor.js->DataProcessor->FUNCTION->processWithCallbacks",
-      "semanticId": "dataProcessor.js->DataProcessor->processWithCallbacks->PARAMETER->items#0",
+      "parentFunctionId": "services/dataProcessor.js->FUNCTION->processInBatches",
+      "scopePath": [
+        "processInBatches"
+      ],
+      "semanticId": "services/dataProcessor.js->PARAMETER->items[in:processInBatches]",
       "type": "PARAMETER"
     },
     {
@@ -17576,8 +17684,12 @@
       "file": "services/dataProcessor.js",
       "index": 0,
       "name": "items",
-      "parentFunctionId": "dataProcessor.js->DataProcessor->FUNCTION->processWithErrorHandling",
-      "semanticId": "dataProcessor.js->DataProcessor->processWithErrorHandling->PARAMETER->items#0",
+      "parentFunctionId": "services/dataProcessor.js->FUNCTION->processWithCallbacks[in:DataProcessor]",
+      "scopePath": [
+        "DataProcessor",
+        "processWithCallbacks"
+      ],
+      "semanticId": "services/dataProcessor.js->PARAMETER->items[in:processWithCallbacks]",
       "type": "PARAMETER"
     },
     {
@@ -17585,8 +17697,12 @@
       "file": "services/dataProcessor.js",
       "index": 0,
       "name": "items",
-      "parentFunctionId": "dataProcessor.js->DataProcessor->FUNCTION->processWithPromises",
-      "semanticId": "dataProcessor.js->DataProcessor->processWithPromises->PARAMETER->items#0",
+      "parentFunctionId": "services/dataProcessor.js->FUNCTION->processWithErrorHandling[in:DataProcessor]",
+      "scopePath": [
+        "DataProcessor",
+        "processWithErrorHandling"
+      ],
+      "semanticId": "services/dataProcessor.js->PARAMETER->items[in:processWithErrorHandling]",
       "type": "PARAMETER"
     },
     {
@@ -17594,8 +17710,12 @@
       "file": "services/dataProcessor.js",
       "index": 0,
       "name": "items",
-      "parentFunctionId": "dataProcessor.js->global->FUNCTION->processInBatches",
-      "semanticId": "dataProcessor.js->processInBatches->PARAMETER->items#0",
+      "parentFunctionId": "services/dataProcessor.js->FUNCTION->processWithPromises[in:DataProcessor]",
+      "scopePath": [
+        "DataProcessor",
+        "processWithPromises"
+      ],
+      "semanticId": "services/dataProcessor.js->PARAMETER->items[in:processWithPromises]",
       "type": "PARAMETER"
     },
     {
@@ -17603,8 +17723,11 @@
       "file": "utils/asyncHelpers.js",
       "index": 0,
       "name": "items",
-      "parentFunctionId": "asyncHelpers.js->global->FUNCTION->processBatch",
-      "semanticId": "asyncHelpers.js->processBatch->PARAMETER->items#0",
+      "parentFunctionId": "utils/asyncHelpers.js->FUNCTION->processBatch",
+      "scopePath": [
+        "processBatch"
+      ],
+      "semanticId": "utils/asyncHelpers.js->PARAMETER->items[in:processBatch]",
       "type": "PARAMETER"
     },
     {
@@ -17612,8 +17735,12 @@
       "file": "services/dataProcessor.js",
       "index": 1,
       "name": "limit",
-      "parentFunctionId": "dataProcessor.js->DataProcessor->FUNCTION->fetchUsersStream",
-      "semanticId": "dataProcessor.js->DataProcessor->fetchUsersStream->PARAMETER->limit#1",
+      "parentFunctionId": "services/dataProcessor.js->FUNCTION->fetchUsersStream[in:DataProcessor]",
+      "scopePath": [
+        "DataProcessor",
+        "fetchUsersStream"
+      ],
+      "semanticId": "services/dataProcessor.js->PARAMETER->limit[in:fetchUsersStream]#1",
       "type": "PARAMETER"
     },
     {
@@ -17622,8 +17749,11 @@
       "hasDefault": true,
       "index": 1,
       "name": "maxRetries",
-      "parentFunctionId": "asyncHelpers.js->global->FUNCTION->retryWithBackoff",
-      "semanticId": "asyncHelpers.js->retryWithBackoff->PARAMETER->maxRetries#1",
+      "parentFunctionId": "utils/asyncHelpers.js->FUNCTION->retryWithBackoff",
+      "scopePath": [
+        "retryWithBackoff"
+      ],
+      "semanticId": "utils/asyncHelpers.js->PARAMETER->maxRetries[in:retryWithBackoff]#1",
       "type": "PARAMETER"
     },
     {
@@ -17631,8 +17761,11 @@
       "file": "utils/asyncHelpers.js",
       "index": 0,
       "name": "n",
-      "parentFunctionId": "asyncHelpers.js->global->FUNCTION->recursivePromiseChain",
-      "semanticId": "asyncHelpers.js->recursivePromiseChain->PARAMETER->n#0",
+      "parentFunctionId": "utils/asyncHelpers.js->FUNCTION->recursivePromiseChain",
+      "scopePath": [
+        "recursivePromiseChain"
+      ],
+      "semanticId": "utils/asyncHelpers.js->PARAMETER->n[in:recursivePromiseChain]",
       "type": "PARAMETER"
     },
     {
@@ -17640,8 +17773,11 @@
       "file": "middleware/auth.js",
       "index": 2,
       "name": "next",
-      "parentFunctionId": "auth.js->global->FUNCTION->authMiddleware",
-      "semanticId": "auth.js->authMiddleware->PARAMETER->next#2",
+      "parentFunctionId": "middleware/auth.js->FUNCTION->authMiddleware",
+      "scopePath": [
+        "authMiddleware"
+      ],
+      "semanticId": "middleware/auth.js->PARAMETER->next[in:authMiddleware]#2",
       "type": "PARAMETER"
     },
     {
@@ -17649,8 +17785,11 @@
       "file": "middleware/auth.js",
       "index": 2,
       "name": "next",
-      "parentFunctionId": "auth.js->global->FUNCTION->authMiddlewareCallback",
-      "semanticId": "auth.js->authMiddlewareCallback->PARAMETER->next#2",
+      "parentFunctionId": "middleware/auth.js->FUNCTION->authMiddlewareCallback",
+      "scopePath": [
+        "authMiddlewareCallback"
+      ],
+      "semanticId": "middleware/auth.js->PARAMETER->next[in:authMiddlewareCallback]#2",
       "type": "PARAMETER"
     },
     {
@@ -17658,8 +17797,11 @@
       "file": "middleware/auth.js",
       "index": 2,
       "name": "next",
-      "parentFunctionId": "auth.js->global->FUNCTION->authMiddlewarePromise",
-      "semanticId": "auth.js->authMiddlewarePromise->PARAMETER->next#2",
+      "parentFunctionId": "middleware/auth.js->FUNCTION->authMiddlewarePromise",
+      "scopePath": [
+        "authMiddlewarePromise"
+      ],
+      "semanticId": "middleware/auth.js->PARAMETER->next[in:authMiddlewarePromise]#2",
       "type": "PARAMETER"
     },
     {
@@ -17667,8 +17809,11 @@
       "file": "middleware/auth.js",
       "index": 2,
       "name": "next",
-      "parentFunctionId": "auth.js->global->FUNCTION->rateLimitMiddleware",
-      "semanticId": "auth.js->rateLimitMiddleware->PARAMETER->next#2",
+      "parentFunctionId": "middleware/auth.js->FUNCTION->rateLimitMiddleware",
+      "scopePath": [
+        "rateLimitMiddleware"
+      ],
+      "semanticId": "middleware/auth.js->PARAMETER->next[in:rateLimitMiddleware]#2",
       "type": "PARAMETER"
     },
     {
@@ -17676,8 +17821,11 @@
       "file": "utils/asyncHelpers.js",
       "index": 1,
       "name": "processor",
-      "parentFunctionId": "asyncHelpers.js->global->FUNCTION->processBatch",
-      "semanticId": "asyncHelpers.js->processBatch->PARAMETER->processor#1",
+      "parentFunctionId": "utils/asyncHelpers.js->FUNCTION->processBatch",
+      "scopePath": [
+        "processBatch"
+      ],
+      "semanticId": "utils/asyncHelpers.js->PARAMETER->processor[in:processBatch]#1",
       "type": "PARAMETER"
     },
     {
@@ -17685,8 +17833,11 @@
       "file": "utils/asyncHelpers.js",
       "index": 0,
       "name": "promise",
-      "parentFunctionId": "asyncHelpers.js->global->FUNCTION->promiseRace",
-      "semanticId": "asyncHelpers.js->promiseRace->PARAMETER->promise#0",
+      "parentFunctionId": "utils/asyncHelpers.js->FUNCTION->promiseRace",
+      "scopePath": [
+        "promiseRace"
+      ],
+      "semanticId": "utils/asyncHelpers.js->PARAMETER->promise[in:promiseRace]",
       "type": "PARAMETER"
     },
     {
@@ -17694,8 +17845,11 @@
       "file": "models/User.js",
       "index": 1,
       "name": "reject",
-      "parentFunctionId": "User.js->global->FUNCTION->anonymous[0]",
-      "semanticId": "User.js->anonymous[0]->PARAMETER->reject#1",
+      "parentFunctionId": "models/User.js->FUNCTION->anonymous[0]",
+      "scopePath": [
+        "anonymous[0]"
+      ],
+      "semanticId": "models/User.js->PARAMETER->reject#1",
       "type": "PARAMETER"
     },
     {
@@ -17703,8 +17857,11 @@
       "file": "services/dataProcessor.js",
       "index": 1,
       "name": "reject",
-      "parentFunctionId": "dataProcessor.js->global->FUNCTION->anonymous[1]",
-      "semanticId": "dataProcessor.js->anonymous[1]->PARAMETER->reject#1",
+      "parentFunctionId": "services/dataProcessor.js->FUNCTION->anonymous[1]",
+      "scopePath": [
+        "anonymous[1]"
+      ],
+      "semanticId": "services/dataProcessor.js->PARAMETER->reject#1",
       "type": "PARAMETER"
     },
     {
@@ -17712,26 +17869,11 @@
       "file": "app.js",
       "index": 0,
       "name": "req",
-      "parentFunctionId": "app.js->global->FUNCTION->anonymous[1]",
-      "semanticId": "app.js->anonymous[1]->PARAMETER->req#0",
-      "type": "PARAMETER"
-    },
-    {
-      "exported": false,
-      "file": "app.js",
-      "index": 0,
-      "name": "req",
-      "parentFunctionId": "app.js->global->FUNCTION->anonymous[2]",
-      "semanticId": "app.js->anonymous[2]->PARAMETER->req#0",
-      "type": "PARAMETER"
-    },
-    {
-      "exported": false,
-      "file": "app.js",
-      "index": 0,
-      "name": "req",
-      "parentFunctionId": "app.js->global->FUNCTION->anonymous[3]",
-      "semanticId": "app.js->anonymous[3]->PARAMETER->req#0",
+      "parentFunctionId": "app.js->FUNCTION->anonymous[3]",
+      "scopePath": [
+        "anonymous[3]"
+      ],
+      "semanticId": "app.js->PARAMETER->req",
       "type": "PARAMETER"
     },
     {
@@ -17739,8 +17881,11 @@
       "file": "middleware/auth.js",
       "index": 0,
       "name": "req",
-      "parentFunctionId": "auth.js->global->FUNCTION->authMiddleware",
-      "semanticId": "auth.js->authMiddleware->PARAMETER->req#0",
+      "parentFunctionId": "middleware/auth.js->FUNCTION->authMiddleware",
+      "scopePath": [
+        "authMiddleware"
+      ],
+      "semanticId": "middleware/auth.js->PARAMETER->req[in:authMiddleware]",
       "type": "PARAMETER"
     },
     {
@@ -17748,8 +17893,11 @@
       "file": "middleware/auth.js",
       "index": 0,
       "name": "req",
-      "parentFunctionId": "auth.js->global->FUNCTION->authMiddlewareCallback",
-      "semanticId": "auth.js->authMiddlewareCallback->PARAMETER->req#0",
+      "parentFunctionId": "middleware/auth.js->FUNCTION->authMiddlewareCallback",
+      "scopePath": [
+        "authMiddlewareCallback"
+      ],
+      "semanticId": "middleware/auth.js->PARAMETER->req[in:authMiddlewareCallback]",
       "type": "PARAMETER"
     },
     {
@@ -17757,8 +17905,11 @@
       "file": "middleware/auth.js",
       "index": 0,
       "name": "req",
-      "parentFunctionId": "auth.js->global->FUNCTION->authMiddlewarePromise",
-      "semanticId": "auth.js->authMiddlewarePromise->PARAMETER->req#0",
+      "parentFunctionId": "middleware/auth.js->FUNCTION->authMiddlewarePromise",
+      "scopePath": [
+        "authMiddlewarePromise"
+      ],
+      "semanticId": "middleware/auth.js->PARAMETER->req[in:authMiddlewarePromise]",
       "type": "PARAMETER"
     },
     {
@@ -17766,8 +17917,11 @@
       "file": "middleware/auth.js",
       "index": 0,
       "name": "req",
-      "parentFunctionId": "auth.js->global->FUNCTION->rateLimitMiddleware",
-      "semanticId": "auth.js->rateLimitMiddleware->PARAMETER->req#0",
+      "parentFunctionId": "middleware/auth.js->FUNCTION->rateLimitMiddleware",
+      "scopePath": [
+        "rateLimitMiddleware"
+      ],
+      "semanticId": "middleware/auth.js->PARAMETER->req[in:rateLimitMiddleware]",
       "type": "PARAMETER"
     },
     {
@@ -17775,53 +17929,11 @@
       "file": "routes/api.js",
       "index": 0,
       "name": "req",
-      "parentFunctionId": "api.js->global->FUNCTION->anonymous[0]",
-      "semanticId": "api.js->anonymous[0]->PARAMETER->req#0",
-      "type": "PARAMETER"
-    },
-    {
-      "exported": false,
-      "file": "routes/api.js",
-      "index": 0,
-      "name": "req",
-      "parentFunctionId": "api.js->global->FUNCTION->anonymous[1]",
-      "semanticId": "api.js->anonymous[1]->PARAMETER->req#0",
-      "type": "PARAMETER"
-    },
-    {
-      "exported": false,
-      "file": "routes/api.js",
-      "index": 0,
-      "name": "req",
-      "parentFunctionId": "api.js->global->FUNCTION->anonymous[2]",
-      "semanticId": "api.js->anonymous[2]->PARAMETER->req#0",
-      "type": "PARAMETER"
-    },
-    {
-      "exported": false,
-      "file": "routes/api.js",
-      "index": 0,
-      "name": "req",
-      "parentFunctionId": "api.js->global->FUNCTION->anonymous[3]",
-      "semanticId": "api.js->anonymous[3]->PARAMETER->req#0",
-      "type": "PARAMETER"
-    },
-    {
-      "exported": false,
-      "file": "routes/api.js",
-      "index": 0,
-      "name": "req",
-      "parentFunctionId": "api.js->global->FUNCTION->anonymous[4]",
-      "semanticId": "api.js->anonymous[4]->PARAMETER->req#0",
-      "type": "PARAMETER"
-    },
-    {
-      "exported": false,
-      "file": "routes/api.js",
-      "index": 0,
-      "name": "req",
-      "parentFunctionId": "api.js->global->FUNCTION->anonymous[5]",
-      "semanticId": "api.js->anonymous[5]->PARAMETER->req#0",
+      "parentFunctionId": "routes/api.js->FUNCTION->anonymous[5]",
+      "scopePath": [
+        "anonymous[5]"
+      ],
+      "semanticId": "routes/api.js->PARAMETER->req",
       "type": "PARAMETER"
     },
     {
@@ -17829,26 +17941,11 @@
       "file": "app.js",
       "index": 1,
       "name": "res",
-      "parentFunctionId": "app.js->global->FUNCTION->anonymous[1]",
-      "semanticId": "app.js->anonymous[1]->PARAMETER->res#1",
-      "type": "PARAMETER"
-    },
-    {
-      "exported": false,
-      "file": "app.js",
-      "index": 1,
-      "name": "res",
-      "parentFunctionId": "app.js->global->FUNCTION->anonymous[2]",
-      "semanticId": "app.js->anonymous[2]->PARAMETER->res#1",
-      "type": "PARAMETER"
-    },
-    {
-      "exported": false,
-      "file": "app.js",
-      "index": 1,
-      "name": "res",
-      "parentFunctionId": "app.js->global->FUNCTION->anonymous[3]",
-      "semanticId": "app.js->anonymous[3]->PARAMETER->res#1",
+      "parentFunctionId": "app.js->FUNCTION->anonymous[3]",
+      "scopePath": [
+        "anonymous[3]"
+      ],
+      "semanticId": "app.js->PARAMETER->res#1",
       "type": "PARAMETER"
     },
     {
@@ -17856,8 +17953,11 @@
       "file": "middleware/auth.js",
       "index": 1,
       "name": "res",
-      "parentFunctionId": "auth.js->global->FUNCTION->authMiddleware",
-      "semanticId": "auth.js->authMiddleware->PARAMETER->res#1",
+      "parentFunctionId": "middleware/auth.js->FUNCTION->authMiddleware",
+      "scopePath": [
+        "authMiddleware"
+      ],
+      "semanticId": "middleware/auth.js->PARAMETER->res[in:authMiddleware]#1",
       "type": "PARAMETER"
     },
     {
@@ -17865,8 +17965,11 @@
       "file": "middleware/auth.js",
       "index": 1,
       "name": "res",
-      "parentFunctionId": "auth.js->global->FUNCTION->authMiddlewareCallback",
-      "semanticId": "auth.js->authMiddlewareCallback->PARAMETER->res#1",
+      "parentFunctionId": "middleware/auth.js->FUNCTION->authMiddlewareCallback",
+      "scopePath": [
+        "authMiddlewareCallback"
+      ],
+      "semanticId": "middleware/auth.js->PARAMETER->res[in:authMiddlewareCallback]#1",
       "type": "PARAMETER"
     },
     {
@@ -17874,8 +17977,11 @@
       "file": "middleware/auth.js",
       "index": 1,
       "name": "res",
-      "parentFunctionId": "auth.js->global->FUNCTION->authMiddlewarePromise",
-      "semanticId": "auth.js->authMiddlewarePromise->PARAMETER->res#1",
+      "parentFunctionId": "middleware/auth.js->FUNCTION->authMiddlewarePromise",
+      "scopePath": [
+        "authMiddlewarePromise"
+      ],
+      "semanticId": "middleware/auth.js->PARAMETER->res[in:authMiddlewarePromise]#1",
       "type": "PARAMETER"
     },
     {
@@ -17883,8 +17989,11 @@
       "file": "middleware/auth.js",
       "index": 1,
       "name": "res",
-      "parentFunctionId": "auth.js->global->FUNCTION->rateLimitMiddleware",
-      "semanticId": "auth.js->rateLimitMiddleware->PARAMETER->res#1",
+      "parentFunctionId": "middleware/auth.js->FUNCTION->rateLimitMiddleware",
+      "scopePath": [
+        "rateLimitMiddleware"
+      ],
+      "semanticId": "middleware/auth.js->PARAMETER->res[in:rateLimitMiddleware]#1",
       "type": "PARAMETER"
     },
     {
@@ -17892,53 +18001,11 @@
       "file": "routes/api.js",
       "index": 1,
       "name": "res",
-      "parentFunctionId": "api.js->global->FUNCTION->anonymous[0]",
-      "semanticId": "api.js->anonymous[0]->PARAMETER->res#1",
-      "type": "PARAMETER"
-    },
-    {
-      "exported": false,
-      "file": "routes/api.js",
-      "index": 1,
-      "name": "res",
-      "parentFunctionId": "api.js->global->FUNCTION->anonymous[1]",
-      "semanticId": "api.js->anonymous[1]->PARAMETER->res#1",
-      "type": "PARAMETER"
-    },
-    {
-      "exported": false,
-      "file": "routes/api.js",
-      "index": 1,
-      "name": "res",
-      "parentFunctionId": "api.js->global->FUNCTION->anonymous[2]",
-      "semanticId": "api.js->anonymous[2]->PARAMETER->res#1",
-      "type": "PARAMETER"
-    },
-    {
-      "exported": false,
-      "file": "routes/api.js",
-      "index": 1,
-      "name": "res",
-      "parentFunctionId": "api.js->global->FUNCTION->anonymous[3]",
-      "semanticId": "api.js->anonymous[3]->PARAMETER->res#1",
-      "type": "PARAMETER"
-    },
-    {
-      "exported": false,
-      "file": "routes/api.js",
-      "index": 1,
-      "name": "res",
-      "parentFunctionId": "api.js->global->FUNCTION->anonymous[4]",
-      "semanticId": "api.js->anonymous[4]->PARAMETER->res#1",
-      "type": "PARAMETER"
-    },
-    {
-      "exported": false,
-      "file": "routes/api.js",
-      "index": 1,
-      "name": "res",
-      "parentFunctionId": "api.js->global->FUNCTION->anonymous[5]",
-      "semanticId": "api.js->anonymous[5]->PARAMETER->res#1",
+      "parentFunctionId": "routes/api.js->FUNCTION->anonymous[5]",
+      "scopePath": [
+        "anonymous[5]"
+      ],
+      "semanticId": "routes/api.js->PARAMETER->res#1",
       "type": "PARAMETER"
     },
     {
@@ -17946,8 +18013,11 @@
       "file": "models/User.js",
       "index": 0,
       "name": "resolve",
-      "parentFunctionId": "User.js->global->FUNCTION->anonymous[0]",
-      "semanticId": "User.js->anonymous[0]->PARAMETER->resolve#0",
+      "parentFunctionId": "models/User.js->FUNCTION->anonymous[0]",
+      "scopePath": [
+        "anonymous[0]"
+      ],
+      "semanticId": "models/User.js->PARAMETER->resolve",
       "type": "PARAMETER"
     },
     {
@@ -17955,8 +18025,11 @@
       "file": "services/dataProcessor.js",
       "index": 0,
       "name": "resolve",
-      "parentFunctionId": "dataProcessor.js->global->FUNCTION->anonymous[1]",
-      "semanticId": "dataProcessor.js->anonymous[1]->PARAMETER->resolve#0",
+      "parentFunctionId": "services/dataProcessor.js->FUNCTION->anonymous[1]",
+      "scopePath": [
+        "anonymous[1]"
+      ],
+      "semanticId": "services/dataProcessor.js->PARAMETER->resolve",
       "type": "PARAMETER"
     },
     {
@@ -17964,8 +18037,11 @@
       "file": "services/dataProcessor.js",
       "index": 0,
       "name": "result",
-      "parentFunctionId": "dataProcessor.js->global->FUNCTION->anonymous[5]",
-      "semanticId": "dataProcessor.js->anonymous[5]->PARAMETER->result#0",
+      "parentFunctionId": "services/dataProcessor.js->FUNCTION->anonymous[5]",
+      "scopePath": [
+        "anonymous[5]"
+      ],
+      "semanticId": "services/dataProcessor.js->PARAMETER->result",
       "type": "PARAMETER"
     },
     {
@@ -17973,8 +18049,11 @@
       "file": "services/dataProcessor.js",
       "index": 0,
       "name": "results",
-      "parentFunctionId": "dataProcessor.js->global->FUNCTION->anonymous[2]",
-      "semanticId": "dataProcessor.js->anonymous[2]->PARAMETER->results#0",
+      "parentFunctionId": "services/dataProcessor.js->FUNCTION->anonymous[2]",
+      "scopePath": [
+        "anonymous[2]"
+      ],
+      "semanticId": "services/dataProcessor.js->PARAMETER->results",
       "type": "PARAMETER"
     },
     {
@@ -17982,8 +18061,11 @@
       "file": "middleware/auth.js",
       "index": 0,
       "name": "role",
-      "parentFunctionId": "auth.js->global->FUNCTION->requireRole",
-      "semanticId": "auth.js->requireRole->PARAMETER->role#0",
+      "parentFunctionId": "middleware/auth.js->FUNCTION->requireRole",
+      "scopePath": [
+        "requireRole"
+      ],
+      "semanticId": "middleware/auth.js->PARAMETER->role[in:requireRole]",
       "type": "PARAMETER"
     },
     {
@@ -17991,8 +18073,11 @@
       "file": "middleware/auth.js",
       "index": 0,
       "name": "role",
-      "parentFunctionId": "auth.js->global->FUNCTION->requireRoleAsync",
-      "semanticId": "auth.js->requireRoleAsync->PARAMETER->role#0",
+      "parentFunctionId": "middleware/auth.js->FUNCTION->requireRoleAsync",
+      "scopePath": [
+        "requireRoleAsync"
+      ],
+      "semanticId": "middleware/auth.js->PARAMETER->role[in:requireRoleAsync]",
       "type": "PARAMETER"
     },
     {
@@ -18000,8 +18085,11 @@
       "file": "middleware/auth.js",
       "index": 0,
       "name": "role",
-      "parentFunctionId": "auth.js->global->FUNCTION->requireRolePromise",
-      "semanticId": "auth.js->requireRolePromise->PARAMETER->role#0",
+      "parentFunctionId": "middleware/auth.js->FUNCTION->requireRolePromise",
+      "scopePath": [
+        "requireRolePromise"
+      ],
+      "semanticId": "middleware/auth.js->PARAMETER->role[in:requireRolePromise]",
       "type": "PARAMETER"
     },
     {
@@ -18009,8 +18097,11 @@
       "file": "models/User.js",
       "index": 0,
       "name": "savedUser",
-      "parentFunctionId": "User.js->global->FUNCTION->anonymous[1]",
-      "semanticId": "User.js->anonymous[1]->PARAMETER->savedUser#0",
+      "parentFunctionId": "models/User.js->FUNCTION->anonymous[1]",
+      "scopePath": [
+        "anonymous[1]"
+      ],
+      "semanticId": "models/User.js->PARAMETER->savedUser",
       "type": "PARAMETER"
     },
     {
@@ -18018,8 +18109,11 @@
       "file": "app.js",
       "index": 0,
       "name": "startId",
-      "parentFunctionId": "app.js->global->FUNCTION->fetchDataStream",
-      "semanticId": "app.js->fetchDataStream->PARAMETER->startId#0",
+      "parentFunctionId": "app.js->FUNCTION->fetchDataStream",
+      "scopePath": [
+        "fetchDataStream"
+      ],
+      "semanticId": "app.js->PARAMETER->startId[in:fetchDataStream]",
       "type": "PARAMETER"
     },
     {
@@ -18027,8 +18121,12 @@
       "file": "services/dataProcessor.js",
       "index": 0,
       "name": "startId",
-      "parentFunctionId": "dataProcessor.js->DataProcessor->FUNCTION->fetchUsersStream",
-      "semanticId": "dataProcessor.js->DataProcessor->fetchUsersStream->PARAMETER->startId#0",
+      "parentFunctionId": "services/dataProcessor.js->FUNCTION->fetchUsersStream[in:DataProcessor]",
+      "scopePath": [
+        "DataProcessor",
+        "fetchUsersStream"
+      ],
+      "semanticId": "services/dataProcessor.js->PARAMETER->startId[in:fetchUsersStream]",
       "type": "PARAMETER"
     },
     {
@@ -18036,8 +18134,11 @@
       "file": "utils/asyncHelpers.js",
       "index": 0,
       "name": "tasks",
-      "parentFunctionId": "asyncHelpers.js->global->FUNCTION->promisePool",
-      "semanticId": "asyncHelpers.js->promisePool->PARAMETER->tasks#0",
+      "parentFunctionId": "utils/asyncHelpers.js->FUNCTION->promisePool",
+      "scopePath": [
+        "promisePool"
+      ],
+      "semanticId": "utils/asyncHelpers.js->PARAMETER->tasks[in:promisePool]",
       "type": "PARAMETER"
     },
     {
@@ -18045,8 +18146,11 @@
       "file": "utils/asyncHelpers.js",
       "index": 0,
       "name": "tasks",
-      "parentFunctionId": "asyncHelpers.js->global->FUNCTION->sequentialPromises",
-      "semanticId": "asyncHelpers.js->sequentialPromises->PARAMETER->tasks#0",
+      "parentFunctionId": "utils/asyncHelpers.js->FUNCTION->sequentialPromises",
+      "scopePath": [
+        "sequentialPromises"
+      ],
+      "semanticId": "utils/asyncHelpers.js->PARAMETER->tasks[in:sequentialPromises]",
       "type": "PARAMETER"
     },
     {
@@ -18054,8 +18158,11 @@
       "file": "utils/asyncHelpers.js",
       "index": 1,
       "name": "timeoutMs",
-      "parentFunctionId": "asyncHelpers.js->global->FUNCTION->promiseRace",
-      "semanticId": "asyncHelpers.js->promiseRace->PARAMETER->timeoutMs#1",
+      "parentFunctionId": "utils/asyncHelpers.js->FUNCTION->promiseRace",
+      "scopePath": [
+        "promiseRace"
+      ],
+      "semanticId": "utils/asyncHelpers.js->PARAMETER->timeoutMs[in:promiseRace]#1",
       "type": "PARAMETER"
     },
     {
@@ -18063,8 +18170,11 @@
       "file": "middleware/auth.js",
       "index": 0,
       "name": "token",
-      "parentFunctionId": "auth.js->global->FUNCTION->blacklistToken",
-      "semanticId": "auth.js->blacklistToken->PARAMETER->token#0",
+      "parentFunctionId": "middleware/auth.js->FUNCTION->blacklistToken",
+      "scopePath": [
+        "blacklistToken"
+      ],
+      "semanticId": "middleware/auth.js->PARAMETER->token[in:blacklistToken]",
       "type": "PARAMETER"
     },
     {
@@ -18072,8 +18182,11 @@
       "file": "middleware/auth.js",
       "index": 0,
       "name": "token",
-      "parentFunctionId": "auth.js->global->FUNCTION->verifyTokenAsync",
-      "semanticId": "auth.js->verifyTokenAsync->PARAMETER->token#0",
+      "parentFunctionId": "middleware/auth.js->FUNCTION->verifyTokenAsync",
+      "scopePath": [
+        "verifyTokenAsync"
+      ],
+      "semanticId": "middleware/auth.js->PARAMETER->token[in:verifyTokenAsync]",
       "type": "PARAMETER"
     },
     {
@@ -18081,8 +18194,11 @@
       "file": "middleware/auth.js",
       "index": 0,
       "name": "token",
-      "parentFunctionId": "auth.js->global->FUNCTION->verifyTokenCallback",
-      "semanticId": "auth.js->verifyTokenCallback->PARAMETER->token#0",
+      "parentFunctionId": "middleware/auth.js->FUNCTION->verifyTokenCallback",
+      "scopePath": [
+        "verifyTokenCallback"
+      ],
+      "semanticId": "middleware/auth.js->PARAMETER->token[in:verifyTokenCallback]",
       "type": "PARAMETER"
     },
     {
@@ -18090,8 +18206,11 @@
       "file": "middleware/auth.js",
       "index": 0,
       "name": "token",
-      "parentFunctionId": "auth.js->global->FUNCTION->verifyTokenPromise",
-      "semanticId": "auth.js->verifyTokenPromise->PARAMETER->token#0",
+      "parentFunctionId": "middleware/auth.js->FUNCTION->verifyTokenPromise",
+      "scopePath": [
+        "verifyTokenPromise"
+      ],
+      "semanticId": "middleware/auth.js->PARAMETER->token[in:verifyTokenPromise]",
       "type": "PARAMETER"
     },
     {
@@ -18099,8 +18218,11 @@
       "file": "utils/asyncHelpers.js",
       "index": 0,
       "name": "urls",
-      "parentFunctionId": "asyncHelpers.js->global->FUNCTION->nestedChain",
-      "semanticId": "asyncHelpers.js->nestedChain->PARAMETER->urls#0",
+      "parentFunctionId": "utils/asyncHelpers.js->FUNCTION->nestedChain",
+      "scopePath": [
+        "nestedChain"
+      ],
+      "semanticId": "utils/asyncHelpers.js->PARAMETER->urls[in:nestedChain]",
       "type": "PARAMETER"
     },
     {
@@ -18108,8 +18230,12 @@
       "file": "services/dataProcessor.js",
       "index": 0,
       "name": "user",
-      "parentFunctionId": "dataProcessor.js->DataProcessor->FUNCTION->processUser",
-      "semanticId": "dataProcessor.js->DataProcessor->processUser->PARAMETER->user#0",
+      "parentFunctionId": "services/dataProcessor.js->FUNCTION->processUser[in:DataProcessor]",
+      "scopePath": [
+        "DataProcessor",
+        "processUser"
+      ],
+      "semanticId": "services/dataProcessor.js->PARAMETER->user[in:processUser]",
       "type": "PARAMETER"
     },
     {
@@ -18117,8 +18243,11 @@
       "file": "app.js",
       "index": 0,
       "name": "userId",
-      "parentFunctionId": "app.js->global->FUNCTION->loadUserData",
-      "semanticId": "app.js->loadUserData->PARAMETER->userId#0",
+      "parentFunctionId": "app.js->FUNCTION->loadUserData",
+      "scopePath": [
+        "loadUserData"
+      ],
+      "semanticId": "app.js->PARAMETER->userId[in:loadUserData]",
       "type": "PARAMETER"
     },
     {
@@ -18126,8 +18255,11 @@
       "file": "app.js",
       "index": 0,
       "name": "userId",
-      "parentFunctionId": "app.js->global->FUNCTION->processUserRequest",
-      "semanticId": "app.js->processUserRequest->PARAMETER->userId#0",
+      "parentFunctionId": "app.js->FUNCTION->processUserRequest",
+      "scopePath": [
+        "processUserRequest"
+      ],
+      "semanticId": "app.js->PARAMETER->userId[in:processUserRequest]",
       "type": "PARAMETER"
     },
     {
@@ -18135,8 +18267,11 @@
       "file": "middleware/auth.js",
       "index": 0,
       "name": "userId",
-      "parentFunctionId": "auth.js->global->FUNCTION->refreshSession",
-      "semanticId": "auth.js->refreshSession->PARAMETER->userId#0",
+      "parentFunctionId": "middleware/auth.js->FUNCTION->refreshSession",
+      "scopePath": [
+        "refreshSession"
+      ],
+      "semanticId": "middleware/auth.js->PARAMETER->userId[in:refreshSession]",
       "type": "PARAMETER"
     },
     {
@@ -18144,8 +18279,11 @@
       "file": "utils/asyncHelpers.js",
       "index": 0,
       "name": "userId",
-      "parentFunctionId": "asyncHelpers.js->global->FUNCTION->asyncWithPromiseChain",
-      "semanticId": "asyncHelpers.js->asyncWithPromiseChain->PARAMETER->userId#0",
+      "parentFunctionId": "utils/asyncHelpers.js->FUNCTION->asyncWithPromiseChain",
+      "scopePath": [
+        "asyncWithPromiseChain"
+      ],
+      "semanticId": "utils/asyncHelpers.js->PARAMETER->userId[in:asyncWithPromiseChain]",
       "type": "PARAMETER"
     },
     {
@@ -18153,8 +18291,12 @@
       "file": "services/dataProcessor.js",
       "index": 0,
       "name": "userIds",
-      "parentFunctionId": "dataProcessor.js->DataProcessor->FUNCTION->generatePromises",
-      "semanticId": "dataProcessor.js->DataProcessor->generatePromises->PARAMETER->userIds#0",
+      "parentFunctionId": "services/dataProcessor.js->FUNCTION->generatePromises[in:DataProcessor]",
+      "scopePath": [
+        "DataProcessor",
+        "generatePromises"
+      ],
+      "semanticId": "services/dataProcessor.js->PARAMETER->userIds[in:generatePromises]",
       "type": "PARAMETER"
     },
     {
@@ -18162,8 +18304,12 @@
       "file": "services/dataProcessor.js",
       "index": 0,
       "name": "userIds",
-      "parentFunctionId": "dataProcessor.js->DataProcessor->FUNCTION->processPromiseGenerator",
-      "semanticId": "dataProcessor.js->DataProcessor->processPromiseGenerator->PARAMETER->userIds#0",
+      "parentFunctionId": "services/dataProcessor.js->FUNCTION->processPromiseGenerator[in:DataProcessor]",
+      "scopePath": [
+        "DataProcessor",
+        "processPromiseGenerator"
+      ],
+      "semanticId": "services/dataProcessor.js->PARAMETER->userIds[in:processPromiseGenerator]",
       "type": "PARAMETER"
     },
     {
@@ -18171,8 +18317,12 @@
       "file": "services/dataProcessor.js",
       "index": 0,
       "name": "userIds",
-      "parentFunctionId": "dataProcessor.js->DataProcessor->FUNCTION->processWithNestedGenerators",
-      "semanticId": "dataProcessor.js->DataProcessor->processWithNestedGenerators->PARAMETER->userIds#0",
+      "parentFunctionId": "services/dataProcessor.js->FUNCTION->processWithNestedGenerators[in:DataProcessor]",
+      "scopePath": [
+        "DataProcessor",
+        "processWithNestedGenerators"
+      ],
+      "semanticId": "services/dataProcessor.js->PARAMETER->userIds[in:processWithNestedGenerators]",
       "type": "PARAMETER"
     },
     {
@@ -18180,8 +18330,11 @@
       "file": "models/User.js",
       "index": 0,
       "name": "users",
-      "parentFunctionId": "User.js->global->FUNCTION->anonymous[4]",
-      "semanticId": "User.js->anonymous[4]->PARAMETER->users#0",
+      "parentFunctionId": "models/User.js->FUNCTION->anonymous[4]",
+      "scopePath": [
+        "anonymous[4]"
+      ],
+      "semanticId": "models/User.js->PARAMETER->users",
       "type": "PARAMETER"
     },
     {
@@ -18189,15 +18342,7 @@
       "file": "app.js",
       "name": "_id",
       "objectName": "user",
-      "semanticId": "app.js->loadUserData->anonymous[0]->anonymous[0]->PROPERTY_ACCESS->user._id#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "app.js",
-      "name": "_id",
-      "objectName": "user",
-      "semanticId": "app.js->loadUserData->anonymous[0]->PROPERTY_ACCESS->user._id#0",
+      "semanticId": "app.js->PROPERTY_ACCESS->user._id[in:loadUserData]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -18205,7 +18350,7 @@
       "file": "middleware/auth.js",
       "name": "_id",
       "objectName": "decoded",
-      "semanticId": "auth.js->authMiddlewareCallback->anonymous[0]->PROPERTY_ACCESS->decoded._id#0",
+      "semanticId": "middleware/auth.js->PROPERTY_ACCESS->decoded._id[in:authMiddlewareCallback]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -18213,7 +18358,7 @@
       "file": "middleware/auth.js",
       "name": "_id",
       "objectName": "decoded",
-      "semanticId": "auth.js->verifyTokenAsync->try#0->PROPERTY_ACCESS->decoded._id#0",
+      "semanticId": "middleware/auth.js->PROPERTY_ACCESS->decoded._id[in:verifyTokenAsync]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -18221,7 +18366,7 @@
       "file": "middleware/auth.js",
       "name": "_id",
       "objectName": "decoded",
-      "semanticId": "auth.js->verifyTokenCallback->anonymous[0]->PROPERTY_ACCESS->decoded._id#0",
+      "semanticId": "middleware/auth.js->PROPERTY_ACCESS->decoded._id[in:verifyTokenCallback]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -18229,7 +18374,7 @@
       "file": "middleware/auth.js",
       "name": "_id",
       "objectName": "decoded",
-      "semanticId": "auth.js->verifyTokenPromise->anonymous[1]->PROPERTY_ACCESS->decoded._id#0",
+      "semanticId": "middleware/auth.js->PROPERTY_ACCESS->decoded._id[in:verifyTokenPromise]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -18238,7 +18383,7 @@
       "name": "_id",
       "objectName": "req.user",
       "optional": true,
-      "semanticId": "auth.js->rateLimitMiddleware->PROPERTY_ACCESS->req.user._id#0",
+      "semanticId": "middleware/auth.js->PROPERTY_ACCESS->req.user._id[in:rateLimitMiddleware]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -18246,7 +18391,7 @@
       "file": "middleware/auth.js",
       "name": "_id",
       "objectName": "req.user",
-      "semanticId": "auth.js->requireRole->anonymous[0]->PROPERTY_ACCESS->req.user._id#0",
+      "semanticId": "middleware/auth.js->PROPERTY_ACCESS->req.user._id[in:requireRole]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -18254,7 +18399,7 @@
       "file": "middleware/auth.js",
       "name": "_id",
       "objectName": "req.user",
-      "semanticId": "auth.js->requireRoleAsync->anonymous[0]->try#0->PROPERTY_ACCESS->req.user._id#0",
+      "semanticId": "middleware/auth.js->PROPERTY_ACCESS->req.user._id[in:requireRoleAsync]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -18262,7 +18407,7 @@
       "file": "middleware/auth.js",
       "name": "_id",
       "objectName": "req.user",
-      "semanticId": "auth.js->requireRolePromise->anonymous[0]->PROPERTY_ACCESS->req.user._id#0",
+      "semanticId": "middleware/auth.js->PROPERTY_ACCESS->req.user._id[in:requireRolePromise]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -18270,7 +18415,7 @@
       "file": "middleware/auth.js",
       "name": "_id",
       "objectName": "user",
-      "semanticId": "auth.js->authMiddleware->try#0->PROPERTY_ACCESS->user._id#0",
+      "semanticId": "middleware/auth.js->PROPERTY_ACCESS->user._id[in:authMiddleware]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -18278,7 +18423,7 @@
       "file": "middleware/auth.js",
       "name": "_id",
       "objectName": "user",
-      "semanticId": "auth.js->authMiddlewareCallback->anonymous[0]->anonymous[0]->anonymous[0]->PROPERTY_ACCESS->user._id#0",
+      "semanticId": "middleware/auth.js->PROPERTY_ACCESS->user._id[in:authMiddlewareCallback]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -18286,7 +18431,7 @@
       "file": "middleware/auth.js",
       "name": "_id",
       "objectName": "user",
-      "semanticId": "auth.js->authMiddlewarePromise->anonymous[0]->PROPERTY_ACCESS->user._id#0",
+      "semanticId": "middleware/auth.js->PROPERTY_ACCESS->user._id[in:authMiddlewarePromise]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -18294,7 +18439,7 @@
       "file": "middleware/auth.js",
       "name": "_id",
       "objectName": "user",
-      "semanticId": "auth.js->refreshSession->anonymous[0]->PROPERTY_ACCESS->user._id#0",
+      "semanticId": "middleware/auth.js->PROPERTY_ACCESS->user._id[in:refreshSession]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -18302,7 +18447,7 @@
       "file": "middleware/auth.js",
       "name": "_id",
       "objectName": "user",
-      "semanticId": "auth.js->requireRole->anonymous[0]->anonymous[0]->PROPERTY_ACCESS->user._id#0",
+      "semanticId": "middleware/auth.js->PROPERTY_ACCESS->user._id[in:requireRole]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -18310,7 +18455,7 @@
       "file": "middleware/auth.js",
       "name": "_id",
       "objectName": "user",
-      "semanticId": "auth.js->requireRoleAsync->anonymous[0]->try#0->PROPERTY_ACCESS->user._id#0",
+      "semanticId": "middleware/auth.js->PROPERTY_ACCESS->user._id[in:requireRoleAsync]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -18318,7 +18463,7 @@
       "file": "middleware/auth.js",
       "name": "_id",
       "objectName": "user",
-      "semanticId": "auth.js->requireRolePromise->anonymous[0]->anonymous[1]->PROPERTY_ACCESS->user._id#0",
+      "semanticId": "middleware/auth.js->PROPERTY_ACCESS->user._id[in:requireRolePromise]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -18326,7 +18471,7 @@
       "file": "models/User.js",
       "name": "_id",
       "objectName": "this",
-      "semanticId": "User.js->anonymous[1]->PROPERTY_ACCESS->this._id#0",
+      "semanticId": "models/User.js->PROPERTY_ACCESS->this._id",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -18334,7 +18479,7 @@
       "file": "models/User.js",
       "name": "_id",
       "objectName": "this",
-      "semanticId": "User.js->anonymous[8]->PROPERTY_ACCESS->this._id#0",
+      "semanticId": "models/User.js->PROPERTY_ACCESS->this._id[in:getFullProfile]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -18342,7 +18487,7 @@
       "file": "models/User.js",
       "name": "_id",
       "objectName": "this",
-      "semanticId": "User.js->getFullProfile->PROPERTY_ACCESS->this._id#0",
+      "semanticId": "models/User.js->PROPERTY_ACCESS->this._id[in:getFullProfile]#1",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -18350,7 +18495,7 @@
       "file": "models/User.js",
       "name": "_id",
       "objectName": "this",
-      "semanticId": "User.js->getFullProfile->PROPERTY_ACCESS->this._id#1",
+      "semanticId": "models/User.js->PROPERTY_ACCESS->this._id[in:getFullProfile]#2",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -18358,15 +18503,7 @@
       "file": "models/User.js",
       "name": "_id",
       "objectName": "this",
-      "semanticId": "User.js->getFullProfile->PROPERTY_ACCESS->this._id#2",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "models/User.js",
-      "name": "_id",
-      "objectName": "this",
-      "semanticId": "User.js->updateLastLogin->anonymous[0]->PROPERTY_ACCESS->this._id#0",
+      "semanticId": "models/User.js->PROPERTY_ACCESS->this._id[in:updateLastLogin]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -18374,7 +18511,7 @@
       "file": "models/User.js",
       "name": "_id",
       "objectName": "user",
-      "semanticId": "User.js->anonymous[0]->PROPERTY_ACCESS->user._id#0",
+      "semanticId": "models/User.js->PROPERTY_ACCESS->user._id",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -18382,7 +18519,7 @@
       "file": "models/User.js",
       "name": "_id",
       "objectName": "user",
-      "semanticId": "User.js->createWithProfile->PROPERTY_ACCESS->user._id#0",
+      "semanticId": "models/User.js->PROPERTY_ACCESS->user._id[in:createWithProfile]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -18390,7 +18527,7 @@
       "file": "models/User.js",
       "name": "_id",
       "objectName": "user",
-      "semanticId": "User.js->generateAuthToken->anonymous[0]->PROPERTY_ACCESS->user._id#0",
+      "semanticId": "models/User.js->PROPERTY_ACCESS->user._id[in:generateAuthToken]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -18398,15 +18535,7 @@
       "file": "routes/api.js",
       "name": "_id",
       "objectName": "data.profile",
-      "semanticId": "api.js->anonymous[1]->anonymous[2]->PROPERTY_ACCESS->data.profile._id#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "_id",
-      "objectName": "data.profile",
-      "semanticId": "api.js->anonymous[1]->anonymous[4]->PROPERTY_ACCESS->data.profile._id#0",
+      "semanticId": "routes/api.js->PROPERTY_ACCESS->data.profile._id",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -18414,7 +18543,7 @@
       "file": "routes/api.js",
       "name": "_id",
       "objectName": "post",
-      "semanticId": "api.js->anonymous[3]->try#0->for-of#0->PROPERTY_ACCESS->post._id#0",
+      "semanticId": "routes/api.js->PROPERTY_ACCESS->post._id",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -18422,7 +18551,7 @@
       "file": "routes/api.js",
       "name": "_id",
       "objectName": "profile",
-      "semanticId": "api.js->anonymous[1]->anonymous[1]->PROPERTY_ACCESS->profile._id#0",
+      "semanticId": "routes/api.js->PROPERTY_ACCESS->profile._id",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -18430,31 +18559,7 @@
       "file": "routes/api.js",
       "name": "_id",
       "objectName": "savedUser",
-      "semanticId": "api.js->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->PROPERTY_ACCESS->savedUser._id#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "_id",
-      "objectName": "savedUser",
-      "semanticId": "api.js->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->PROPERTY_ACCESS->savedUser._id#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "_id",
-      "objectName": "savedUser",
-      "semanticId": "api.js->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->PROPERTY_ACCESS->savedUser._id#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "_id",
-      "objectName": "savedUser",
-      "semanticId": "api.js->anonymous[0]->anonymous[0]->anonymous[0]->PROPERTY_ACCESS->savedUser._id#0",
+      "semanticId": "routes/api.js->PROPERTY_ACCESS->savedUser._id",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -18462,7 +18567,7 @@
       "file": "routes/api.js",
       "name": "_id",
       "objectName": "updatedUser",
-      "semanticId": "api.js->anonymous[2]->anonymous[0]->anonymous[0]->PROPERTY_ACCESS->updatedUser._id#0",
+      "semanticId": "routes/api.js->PROPERTY_ACCESS->updatedUser._id",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -18470,7 +18575,7 @@
       "file": "routes/api.js",
       "name": "_id",
       "objectName": "user",
-      "semanticId": "api.js->anonymous[2]->anonymous[0]->anonymous[1]->anonymous[0]->PROPERTY_ACCESS->user._id#0",
+      "semanticId": "routes/api.js->PROPERTY_ACCESS->user._id",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -18479,16 +18584,7 @@
       "file": "services/dataProcessor.js",
       "name": "<computed>",
       "objectName": "batches",
-      "semanticId": "dataProcessor.js->processInBatches->anonymous[0]->processBatch->anonymous[0]->PROPERTY_ACCESS->batches.<computed>#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "computed": true,
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "<computed>",
-      "objectName": "batches",
-      "semanticId": "dataProcessor.js->processInBatches->anonymous[0]->processBatch->PROPERTY_ACCESS->batches.<computed>#0",
+      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->batches.<computed>[in:processBatch]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -18497,7 +18593,7 @@
       "file": "utils/asyncHelpers.js",
       "name": "<computed>",
       "objectName": "items",
-      "semanticId": "asyncHelpers.js->processBatch->processNext->PROPERTY_ACCESS->items.<computed>#0",
+      "semanticId": "utils/asyncHelpers.js->PROPERTY_ACCESS->items.<computed>[in:processNext]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -18506,7 +18602,7 @@
       "file": "utils/asyncHelpers.js",
       "name": "<computed>",
       "objectName": "tasks",
-      "semanticId": "asyncHelpers.js->promisePool->anonymous[0]->runNext->while#0->PROPERTY_ACCESS->tasks.<computed>#0",
+      "semanticId": "utils/asyncHelpers.js->PROPERTY_ACCESS->tasks.<computed>[in:runNext]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -18515,7 +18611,7 @@
       "file": "utils/asyncHelpers.js",
       "name": "0",
       "objectName": "ids",
-      "semanticId": "asyncHelpers.js->mixedParallelSequential->PROPERTY_ACCESS->ids.0#0",
+      "semanticId": "utils/asyncHelpers.js->PROPERTY_ACCESS->ids.0[in:mixedParallelSequential]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -18524,7 +18620,7 @@
       "file": "utils/asyncHelpers.js",
       "name": "0",
       "objectName": "urls",
-      "semanticId": "asyncHelpers.js->nestedChain->PROPERTY_ACCESS->urls.0#0",
+      "semanticId": "utils/asyncHelpers.js->PROPERTY_ACCESS->urls.0[in:nestedChain]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -18533,7 +18629,7 @@
       "file": "utils/asyncHelpers.js",
       "name": "1",
       "objectName": "urls",
-      "semanticId": "asyncHelpers.js->nestedChain->anonymous[0]->anonymous[1]->PROPERTY_ACCESS->urls.1#0",
+      "semanticId": "utils/asyncHelpers.js->PROPERTY_ACCESS->urls.1[in:nestedChain]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -18542,7 +18638,7 @@
       "file": "utils/asyncHelpers.js",
       "name": "2",
       "objectName": "urls",
-      "semanticId": "asyncHelpers.js->nestedChain->anonymous[0]->anonymous[1]->anonymous[0]->anonymous[1]->PROPERTY_ACCESS->urls.2#0",
+      "semanticId": "utils/asyncHelpers.js->PROPERTY_ACCESS->urls.2[in:nestedChain]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -18550,7 +18646,7 @@
       "file": "middleware/auth.js",
       "name": "authorization",
       "objectName": "req.headers",
-      "semanticId": "auth.js->authMiddleware->try#0->PROPERTY_ACCESS->req.headers.authorization#0",
+      "semanticId": "middleware/auth.js->PROPERTY_ACCESS->req.headers.authorization[in:authMiddleware]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -18558,7 +18654,7 @@
       "file": "middleware/auth.js",
       "name": "authorization",
       "objectName": "req.headers",
-      "semanticId": "auth.js->authMiddlewareCallback->PROPERTY_ACCESS->req.headers.authorization#0",
+      "semanticId": "middleware/auth.js->PROPERTY_ACCESS->req.headers.authorization[in:authMiddlewareCallback]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -18566,7 +18662,7 @@
       "file": "middleware/auth.js",
       "name": "authorization",
       "objectName": "req.headers",
-      "semanticId": "auth.js->authMiddlewarePromise->PROPERTY_ACCESS->req.headers.authorization#0",
+      "semanticId": "middleware/auth.js->PROPERTY_ACCESS->req.headers.authorization[in:authMiddlewarePromise]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -18574,7 +18670,7 @@
       "file": "services/dataProcessor.js",
       "name": "batchSize",
       "objectName": "this",
-      "semanticId": "dataProcessor.js->DataProcessor->fetchUsersStream->while#0->PROPERTY_ACCESS->this.batchSize#0",
+      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->this.batchSize[in:fetchUsersStream]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -18582,7 +18678,7 @@
       "file": "services/dataProcessor.js",
       "name": "batchSize",
       "objectName": "this",
-      "semanticId": "dataProcessor.js->DataProcessor->getStats->PROPERTY_ACCESS->this.batchSize#0",
+      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->this.batchSize[in:getStats]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -18590,7 +18686,7 @@
       "file": "services/dataProcessor.js",
       "name": "batchSize",
       "objectName": "this",
-      "semanticId": "dataProcessor.js->DataProcessor->processDataStream->for-of#0->PROPERTY_ACCESS->this.batchSize#0",
+      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->this.batchSize[in:processDataStream]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -18598,7 +18694,7 @@
       "file": "app.js",
       "name": "body",
       "objectName": "req",
-      "semanticId": "app.js->anonymous[1]->PROPERTY_ACCESS->req.body#0",
+      "semanticId": "app.js->PROPERTY_ACCESS->req.body",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -18606,15 +18702,7 @@
       "file": "routes/api.js",
       "name": "body",
       "objectName": "req",
-      "semanticId": "api.js->anonymous[0]->PROPERTY_ACCESS->req.body#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "body",
-      "objectName": "req",
-      "semanticId": "api.js->anonymous[2]->PROPERTY_ACCESS->req.body#0",
+      "semanticId": "routes/api.js->PROPERTY_ACCESS->req.body",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -18622,7 +18710,7 @@
       "file": "services/dataProcessor.js",
       "name": "cache",
       "objectName": "this",
-      "semanticId": "dataProcessor.js->DataProcessor->getStats->PROPERTY_ACCESS->this.cache#0",
+      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->this.cache[in:getStats]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -18630,7 +18718,7 @@
       "file": "services/dataProcessor.js",
       "name": "cache",
       "objectName": "this",
-      "semanticId": "dataProcessor.js->DataProcessor->processDataStream->for-of#0->if#1->PROPERTY_ACCESS->this.cache#0",
+      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->this.cache[in:processDataStream]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -18638,15 +18726,7 @@
       "file": "services/dataProcessor.js",
       "name": "cache",
       "objectName": "this",
-      "semanticId": "dataProcessor.js->DataProcessor->processDataStream->for-of#0->if#1->PROPERTY_ACCESS->this.cache#1",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "cache",
-      "objectName": "this",
-      "semanticId": "dataProcessor.js->DataProcessor->processDataStream->for-of#0->PROPERTY_ACCESS->this.cache#0",
+      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->this.cache[in:processDataStream]#1",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -18654,7 +18734,7 @@
       "file": "app.js",
       "name": "connection",
       "objectName": "mongoose",
-      "semanticId": "app.js->anonymous[1]->anonymous[0]->PROPERTY_ACCESS->mongoose.connection#0",
+      "semanticId": "app.js->PROPERTY_ACCESS->mongoose.connection",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -18662,7 +18742,7 @@
       "file": "app.js",
       "name": "connection",
       "objectName": "mongoose",
-      "semanticId": "app.js->anonymous[1]->PROPERTY_ACCESS->mongoose.connection#0",
+      "semanticId": "app.js->PROPERTY_ACCESS->mongoose.connection[in:fetchDataStream]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -18670,7 +18750,7 @@
       "file": "app.js",
       "name": "connection",
       "objectName": "mongoose",
-      "semanticId": "app.js->anonymous[4]->PROPERTY_ACCESS->mongoose.connection#0",
+      "semanticId": "app.js->PROPERTY_ACCESS->mongoose.connection[in:loadUserData]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -18678,7 +18758,7 @@
       "file": "app.js",
       "name": "connection",
       "objectName": "mongoose",
-      "semanticId": "app.js->fetchDataStream->for#0->PROPERTY_ACCESS->mongoose.connection#0",
+      "semanticId": "app.js->PROPERTY_ACCESS->mongoose.connection[in:processUserRequest]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -18686,39 +18766,7 @@
       "file": "app.js",
       "name": "connection",
       "objectName": "mongoose",
-      "semanticId": "app.js->loadUserData->anonymous[0]->anonymous[0]->PROPERTY_ACCESS->mongoose.connection#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "app.js",
-      "name": "connection",
-      "objectName": "mongoose",
-      "semanticId": "app.js->loadUserData->anonymous[0]->PROPERTY_ACCESS->mongoose.connection#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "app.js",
-      "name": "connection",
-      "objectName": "mongoose",
-      "semanticId": "app.js->loadUserData->PROPERTY_ACCESS->mongoose.connection#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "app.js",
-      "name": "connection",
-      "objectName": "mongoose",
-      "semanticId": "app.js->processUserRequest->try#0->PROPERTY_ACCESS->mongoose.connection#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "app.js",
-      "name": "connection",
-      "objectName": "mongoose",
-      "semanticId": "app.js->processUserRequest->try#0->PROPERTY_ACCESS->mongoose.connection#1",
+      "semanticId": "app.js->PROPERTY_ACCESS->mongoose.connection[in:processUserRequest]#1",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -18726,7 +18774,7 @@
       "file": "models/User.js",
       "name": "connection",
       "objectName": "mongoose",
-      "semanticId": "User.js->anonymous[1]->PROPERTY_ACCESS->mongoose.connection#0",
+      "semanticId": "models/User.js->PROPERTY_ACCESS->mongoose.connection",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -18734,7 +18782,7 @@
       "file": "models/User.js",
       "name": "connection",
       "objectName": "mongoose",
-      "semanticId": "User.js->anonymous[8]->PROPERTY_ACCESS->mongoose.connection#0",
+      "semanticId": "models/User.js->PROPERTY_ACCESS->mongoose.connection[in:createWithProfile]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -18742,7 +18790,7 @@
       "file": "models/User.js",
       "name": "connection",
       "objectName": "mongoose",
-      "semanticId": "User.js->createWithProfile->PROPERTY_ACCESS->mongoose.connection#0",
+      "semanticId": "models/User.js->PROPERTY_ACCESS->mongoose.connection[in:getFullProfile]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -18750,7 +18798,7 @@
       "file": "models/User.js",
       "name": "connection",
       "objectName": "mongoose",
-      "semanticId": "User.js->getFullProfile->PROPERTY_ACCESS->mongoose.connection#0",
+      "semanticId": "models/User.js->PROPERTY_ACCESS->mongoose.connection[in:getFullProfile]#1",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -18758,7 +18806,7 @@
       "file": "models/User.js",
       "name": "connection",
       "objectName": "mongoose",
-      "semanticId": "User.js->getFullProfile->PROPERTY_ACCESS->mongoose.connection#1",
+      "semanticId": "models/User.js->PROPERTY_ACCESS->mongoose.connection[in:getFullProfile]#2",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -18766,15 +18814,7 @@
       "file": "models/User.js",
       "name": "connection",
       "objectName": "mongoose",
-      "semanticId": "User.js->getFullProfile->PROPERTY_ACCESS->mongoose.connection#2",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "models/User.js",
-      "name": "connection",
-      "objectName": "mongoose",
-      "semanticId": "User.js->updateLastLogin->anonymous[0]->PROPERTY_ACCESS->mongoose.connection#0",
+      "semanticId": "models/User.js->PROPERTY_ACCESS->mongoose.connection[in:updateLastLogin]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -18782,7 +18822,7 @@
       "file": "routes/api.js",
       "name": "connection",
       "objectName": "mongoose",
-      "semanticId": "api.js->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->PROPERTY_ACCESS->mongoose.connection#0",
+      "semanticId": "routes/api.js->PROPERTY_ACCESS->mongoose.connection",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -18790,103 +18830,7 @@
       "file": "routes/api.js",
       "name": "connection",
       "objectName": "mongoose",
-      "semanticId": "api.js->anonymous[0]->anonymous[0]->anonymous[0]->PROPERTY_ACCESS->mongoose.connection#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "connection",
-      "objectName": "mongoose",
-      "semanticId": "api.js->anonymous[1]->anonymous[1]->PROPERTY_ACCESS->mongoose.connection#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "connection",
-      "objectName": "mongoose",
-      "semanticId": "api.js->anonymous[1]->anonymous[2]->PROPERTY_ACCESS->mongoose.connection#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "connection",
-      "objectName": "mongoose",
-      "semanticId": "api.js->anonymous[1]->anonymous[4]->PROPERTY_ACCESS->mongoose.connection#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "connection",
-      "objectName": "mongoose",
-      "semanticId": "api.js->anonymous[2]->anonymous[0]->anonymous[0]->PROPERTY_ACCESS->mongoose.connection#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "connection",
-      "objectName": "mongoose",
-      "semanticId": "api.js->anonymous[2]->anonymous[0]->anonymous[1]->anonymous[0]->PROPERTY_ACCESS->mongoose.connection#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "connection",
-      "objectName": "mongoose",
-      "semanticId": "api.js->anonymous[3]->try#0->for-of#0->PROPERTY_ACCESS->mongoose.connection#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "connection",
-      "objectName": "mongoose",
-      "semanticId": "api.js->anonymous[3]->try#0->PROPERTY_ACCESS->mongoose.connection#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "connection",
-      "objectName": "mongoose",
-      "semanticId": "api.js->anonymous[3]->try#0->PROPERTY_ACCESS->mongoose.connection#1",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "connection",
-      "objectName": "mongoose",
-      "semanticId": "api.js->anonymous[4]->anonymous[0]->anonymous[0]->if#1->anonymous[0]->anonymous[0]->PROPERTY_ACCESS->mongoose.connection#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "connection",
-      "objectName": "mongoose",
-      "semanticId": "api.js->anonymous[4]->anonymous[0]->anonymous[0]->if#1->anonymous[0]->PROPERTY_ACCESS->mongoose.connection#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "connection",
-      "objectName": "mongoose",
-      "semanticId": "api.js->anonymous[4]->anonymous[0]->anonymous[0]->if#1->PROPERTY_ACCESS->mongoose.connection#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "connection",
-      "objectName": "mongoose",
-      "semanticId": "api.js->anonymous[4]->anonymous[0]->PROPERTY_ACCESS->mongoose.connection#0",
+      "semanticId": "routes/api.js->PROPERTY_ACCESS->mongoose.connection#1",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -18894,7 +18838,7 @@
       "file": "services/dataProcessor.js",
       "name": "connection",
       "objectName": "mongoose",
-      "semanticId": "dataProcessor.js->anonymous[2]->PROPERTY_ACCESS->mongoose.connection#0",
+      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->mongoose.connection",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -18902,7 +18846,7 @@
       "file": "services/dataProcessor.js",
       "name": "connection",
       "objectName": "mongoose",
-      "semanticId": "dataProcessor.js->anonymous[5]->anonymous[0]->PROPERTY_ACCESS->mongoose.connection#0",
+      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->mongoose.connection[in:fetchUsersStream]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -18910,7 +18854,7 @@
       "file": "services/dataProcessor.js",
       "name": "connection",
       "objectName": "mongoose",
-      "semanticId": "dataProcessor.js->DataProcessor->fetchUsersStream->while#0->PROPERTY_ACCESS->mongoose.connection#0",
+      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->mongoose.connection[in:generatePromises]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -18918,7 +18862,7 @@
       "file": "services/dataProcessor.js",
       "name": "connection",
       "objectName": "mongoose",
-      "semanticId": "dataProcessor.js->DataProcessor->generatePromises->for-of#0->PROPERTY_ACCESS->mongoose.connection#0",
+      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->mongoose.connection[in:processBatch]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -18926,7 +18870,7 @@
       "file": "services/dataProcessor.js",
       "name": "connection",
       "objectName": "mongoose",
-      "semanticId": "dataProcessor.js->DataProcessor->processComplex->anonymous[0]->anonymous[0]->PROPERTY_ACCESS->mongoose.connection#0",
+      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->mongoose.connection[in:processComplex]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -18934,7 +18878,7 @@
       "file": "services/dataProcessor.js",
       "name": "connection",
       "objectName": "mongoose",
-      "semanticId": "dataProcessor.js->DataProcessor->processComplex->PROPERTY_ACCESS->mongoose.connection#0",
+      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->mongoose.connection[in:processDataStream]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -18942,7 +18886,7 @@
       "file": "services/dataProcessor.js",
       "name": "connection",
       "objectName": "mongoose",
-      "semanticId": "dataProcessor.js->DataProcessor->processDataStream->for-of#0->PROPERTY_ACCESS->mongoose.connection#0",
+      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->mongoose.connection[in:processNext]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -18950,7 +18894,7 @@
       "file": "services/dataProcessor.js",
       "name": "connection",
       "objectName": "mongoose",
-      "semanticId": "dataProcessor.js->DataProcessor->processWithCallbacks->processNext->if#0->PROPERTY_ACCESS->mongoose.connection#0",
+      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->mongoose.connection[in:processWithErrorHandling]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -18958,31 +18902,7 @@
       "file": "services/dataProcessor.js",
       "name": "connection",
       "objectName": "mongoose",
-      "semanticId": "dataProcessor.js->DataProcessor->processWithErrorHandling->try#0->for-of#0->try#0->PROPERTY_ACCESS->mongoose.connection#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "connection",
-      "objectName": "mongoose",
-      "semanticId": "dataProcessor.js->DataProcessor->processWithPromises->anonymous[1]->PROPERTY_ACCESS->mongoose.connection#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "connection",
-      "objectName": "mongoose",
-      "semanticId": "dataProcessor.js->processInBatches->anonymous[0]->processBatch->PROPERTY_ACCESS->mongoose.connection#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "connection",
-      "objectName": "mongoose",
-      "semanticId": "dataProcessor.js->processNext->if#0->PROPERTY_ACCESS->mongoose.connection#0",
+      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->mongoose.connection[in:processWithPromises]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -18990,7 +18910,7 @@
       "file": "models/User.js",
       "name": "createdAt",
       "objectName": "this",
-      "semanticId": "User.js->getActivityLog->PROPERTY_ACCESS->this.createdAt#0",
+      "semanticId": "models/User.js->PROPERTY_ACCESS->this.createdAt[in:getActivityLog]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -18998,7 +18918,7 @@
       "file": "services/dataProcessor.js",
       "name": "dataId",
       "objectName": "user",
-      "semanticId": "dataProcessor.js->DataProcessor->processUser->PROPERTY_ACCESS->user.dataId#0",
+      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->user.dataId[in:processUser]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19006,7 +18926,7 @@
       "file": "app.js",
       "name": "dataOffset",
       "objectName": "user",
-      "semanticId": "app.js->processUserRequest->try#0->PROPERTY_ACCESS->user.dataOffset#0",
+      "semanticId": "app.js->PROPERTY_ACCESS->user.dataOffset[in:processUserRequest]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19014,7 +18934,7 @@
       "file": "app.js",
       "name": "db",
       "objectName": "mongoose.connection",
-      "semanticId": "app.js->anonymous[1]->anonymous[0]->PROPERTY_ACCESS->mongoose.connection.db#0",
+      "semanticId": "app.js->PROPERTY_ACCESS->mongoose.connection.db",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19022,7 +18942,7 @@
       "file": "app.js",
       "name": "db",
       "objectName": "mongoose.connection",
-      "semanticId": "app.js->anonymous[1]->PROPERTY_ACCESS->mongoose.connection.db#0",
+      "semanticId": "app.js->PROPERTY_ACCESS->mongoose.connection.db[in:fetchDataStream]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19030,7 +18950,7 @@
       "file": "app.js",
       "name": "db",
       "objectName": "mongoose.connection",
-      "semanticId": "app.js->fetchDataStream->for#0->PROPERTY_ACCESS->mongoose.connection.db#0",
+      "semanticId": "app.js->PROPERTY_ACCESS->mongoose.connection.db[in:loadUserData]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19038,7 +18958,7 @@
       "file": "app.js",
       "name": "db",
       "objectName": "mongoose.connection",
-      "semanticId": "app.js->loadUserData->anonymous[0]->anonymous[0]->PROPERTY_ACCESS->mongoose.connection.db#0",
+      "semanticId": "app.js->PROPERTY_ACCESS->mongoose.connection.db[in:processUserRequest]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19046,31 +18966,7 @@
       "file": "app.js",
       "name": "db",
       "objectName": "mongoose.connection",
-      "semanticId": "app.js->loadUserData->anonymous[0]->PROPERTY_ACCESS->mongoose.connection.db#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "app.js",
-      "name": "db",
-      "objectName": "mongoose.connection",
-      "semanticId": "app.js->loadUserData->PROPERTY_ACCESS->mongoose.connection.db#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "app.js",
-      "name": "db",
-      "objectName": "mongoose.connection",
-      "semanticId": "app.js->processUserRequest->try#0->PROPERTY_ACCESS->mongoose.connection.db#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "app.js",
-      "name": "db",
-      "objectName": "mongoose.connection",
-      "semanticId": "app.js->processUserRequest->try#0->PROPERTY_ACCESS->mongoose.connection.db#1",
+      "semanticId": "app.js->PROPERTY_ACCESS->mongoose.connection.db[in:processUserRequest]#1",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19078,7 +18974,7 @@
       "file": "models/User.js",
       "name": "db",
       "objectName": "mongoose.connection",
-      "semanticId": "User.js->anonymous[1]->PROPERTY_ACCESS->mongoose.connection.db#0",
+      "semanticId": "models/User.js->PROPERTY_ACCESS->mongoose.connection.db",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19086,7 +18982,7 @@
       "file": "models/User.js",
       "name": "db",
       "objectName": "mongoose.connection",
-      "semanticId": "User.js->anonymous[8]->PROPERTY_ACCESS->mongoose.connection.db#0",
+      "semanticId": "models/User.js->PROPERTY_ACCESS->mongoose.connection.db[in:createWithProfile]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19094,7 +18990,7 @@
       "file": "models/User.js",
       "name": "db",
       "objectName": "mongoose.connection",
-      "semanticId": "User.js->createWithProfile->PROPERTY_ACCESS->mongoose.connection.db#0",
+      "semanticId": "models/User.js->PROPERTY_ACCESS->mongoose.connection.db[in:getFullProfile]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19102,7 +18998,7 @@
       "file": "models/User.js",
       "name": "db",
       "objectName": "mongoose.connection",
-      "semanticId": "User.js->getFullProfile->PROPERTY_ACCESS->mongoose.connection.db#0",
+      "semanticId": "models/User.js->PROPERTY_ACCESS->mongoose.connection.db[in:getFullProfile]#1",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19110,7 +19006,7 @@
       "file": "models/User.js",
       "name": "db",
       "objectName": "mongoose.connection",
-      "semanticId": "User.js->getFullProfile->PROPERTY_ACCESS->mongoose.connection.db#1",
+      "semanticId": "models/User.js->PROPERTY_ACCESS->mongoose.connection.db[in:getFullProfile]#2",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19118,15 +19014,7 @@
       "file": "models/User.js",
       "name": "db",
       "objectName": "mongoose.connection",
-      "semanticId": "User.js->getFullProfile->PROPERTY_ACCESS->mongoose.connection.db#2",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "models/User.js",
-      "name": "db",
-      "objectName": "mongoose.connection",
-      "semanticId": "User.js->updateLastLogin->anonymous[0]->PROPERTY_ACCESS->mongoose.connection.db#0",
+      "semanticId": "models/User.js->PROPERTY_ACCESS->mongoose.connection.db[in:updateLastLogin]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19134,7 +19022,7 @@
       "file": "routes/api.js",
       "name": "db",
       "objectName": "mongoose.connection",
-      "semanticId": "api.js->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->PROPERTY_ACCESS->mongoose.connection.db#0",
+      "semanticId": "routes/api.js->PROPERTY_ACCESS->mongoose.connection.db",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19142,103 +19030,7 @@
       "file": "routes/api.js",
       "name": "db",
       "objectName": "mongoose.connection",
-      "semanticId": "api.js->anonymous[0]->anonymous[0]->anonymous[0]->PROPERTY_ACCESS->mongoose.connection.db#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "db",
-      "objectName": "mongoose.connection",
-      "semanticId": "api.js->anonymous[1]->anonymous[1]->PROPERTY_ACCESS->mongoose.connection.db#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "db",
-      "objectName": "mongoose.connection",
-      "semanticId": "api.js->anonymous[1]->anonymous[2]->PROPERTY_ACCESS->mongoose.connection.db#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "db",
-      "objectName": "mongoose.connection",
-      "semanticId": "api.js->anonymous[1]->anonymous[4]->PROPERTY_ACCESS->mongoose.connection.db#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "db",
-      "objectName": "mongoose.connection",
-      "semanticId": "api.js->anonymous[2]->anonymous[0]->anonymous[0]->PROPERTY_ACCESS->mongoose.connection.db#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "db",
-      "objectName": "mongoose.connection",
-      "semanticId": "api.js->anonymous[2]->anonymous[0]->anonymous[1]->anonymous[0]->PROPERTY_ACCESS->mongoose.connection.db#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "db",
-      "objectName": "mongoose.connection",
-      "semanticId": "api.js->anonymous[3]->try#0->for-of#0->PROPERTY_ACCESS->mongoose.connection.db#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "db",
-      "objectName": "mongoose.connection",
-      "semanticId": "api.js->anonymous[3]->try#0->PROPERTY_ACCESS->mongoose.connection.db#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "db",
-      "objectName": "mongoose.connection",
-      "semanticId": "api.js->anonymous[3]->try#0->PROPERTY_ACCESS->mongoose.connection.db#1",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "db",
-      "objectName": "mongoose.connection",
-      "semanticId": "api.js->anonymous[4]->anonymous[0]->anonymous[0]->if#1->anonymous[0]->anonymous[0]->PROPERTY_ACCESS->mongoose.connection.db#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "db",
-      "objectName": "mongoose.connection",
-      "semanticId": "api.js->anonymous[4]->anonymous[0]->anonymous[0]->if#1->anonymous[0]->PROPERTY_ACCESS->mongoose.connection.db#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "db",
-      "objectName": "mongoose.connection",
-      "semanticId": "api.js->anonymous[4]->anonymous[0]->anonymous[0]->if#1->PROPERTY_ACCESS->mongoose.connection.db#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "db",
-      "objectName": "mongoose.connection",
-      "semanticId": "api.js->anonymous[4]->anonymous[0]->PROPERTY_ACCESS->mongoose.connection.db#0",
+      "semanticId": "routes/api.js->PROPERTY_ACCESS->mongoose.connection.db#1",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19246,7 +19038,7 @@
       "file": "services/dataProcessor.js",
       "name": "db",
       "objectName": "mongoose.connection",
-      "semanticId": "dataProcessor.js->anonymous[2]->PROPERTY_ACCESS->mongoose.connection.db#0",
+      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->mongoose.connection.db",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19254,7 +19046,7 @@
       "file": "services/dataProcessor.js",
       "name": "db",
       "objectName": "mongoose.connection",
-      "semanticId": "dataProcessor.js->anonymous[5]->anonymous[0]->PROPERTY_ACCESS->mongoose.connection.db#0",
+      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->mongoose.connection.db[in:fetchUsersStream]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19262,7 +19054,7 @@
       "file": "services/dataProcessor.js",
       "name": "db",
       "objectName": "mongoose.connection",
-      "semanticId": "dataProcessor.js->DataProcessor->fetchUsersStream->while#0->PROPERTY_ACCESS->mongoose.connection.db#0",
+      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->mongoose.connection.db[in:generatePromises]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19270,7 +19062,7 @@
       "file": "services/dataProcessor.js",
       "name": "db",
       "objectName": "mongoose.connection",
-      "semanticId": "dataProcessor.js->DataProcessor->generatePromises->for-of#0->PROPERTY_ACCESS->mongoose.connection.db#0",
+      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->mongoose.connection.db[in:processBatch]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19278,7 +19070,7 @@
       "file": "services/dataProcessor.js",
       "name": "db",
       "objectName": "mongoose.connection",
-      "semanticId": "dataProcessor.js->DataProcessor->processComplex->anonymous[0]->anonymous[0]->PROPERTY_ACCESS->mongoose.connection.db#0",
+      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->mongoose.connection.db[in:processComplex]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19286,7 +19078,7 @@
       "file": "services/dataProcessor.js",
       "name": "db",
       "objectName": "mongoose.connection",
-      "semanticId": "dataProcessor.js->DataProcessor->processComplex->PROPERTY_ACCESS->mongoose.connection.db#0",
+      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->mongoose.connection.db[in:processDataStream]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19294,7 +19086,7 @@
       "file": "services/dataProcessor.js",
       "name": "db",
       "objectName": "mongoose.connection",
-      "semanticId": "dataProcessor.js->DataProcessor->processDataStream->for-of#0->PROPERTY_ACCESS->mongoose.connection.db#0",
+      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->mongoose.connection.db[in:processNext]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19302,7 +19094,7 @@
       "file": "services/dataProcessor.js",
       "name": "db",
       "objectName": "mongoose.connection",
-      "semanticId": "dataProcessor.js->DataProcessor->processWithCallbacks->processNext->if#0->PROPERTY_ACCESS->mongoose.connection.db#0",
+      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->mongoose.connection.db[in:processWithErrorHandling]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19310,31 +19102,7 @@
       "file": "services/dataProcessor.js",
       "name": "db",
       "objectName": "mongoose.connection",
-      "semanticId": "dataProcessor.js->DataProcessor->processWithErrorHandling->try#0->for-of#0->try#0->PROPERTY_ACCESS->mongoose.connection.db#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "db",
-      "objectName": "mongoose.connection",
-      "semanticId": "dataProcessor.js->DataProcessor->processWithPromises->anonymous[1]->PROPERTY_ACCESS->mongoose.connection.db#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "db",
-      "objectName": "mongoose.connection",
-      "semanticId": "dataProcessor.js->processInBatches->anonymous[0]->processBatch->PROPERTY_ACCESS->mongoose.connection.db#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "db",
-      "objectName": "mongoose.connection",
-      "semanticId": "dataProcessor.js->processNext->if#0->PROPERTY_ACCESS->mongoose.connection.db#0",
+      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->mongoose.connection.db[in:processWithPromises]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19342,7 +19110,7 @@
       "file": "app.js",
       "name": "dbUrl",
       "objectName": "config",
-      "semanticId": "app.js->connectServices->anonymous[0]->PROPERTY_ACCESS->config.dbUrl#0",
+      "semanticId": "app.js->PROPERTY_ACCESS->config.dbUrl[in:connectServices]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19350,7 +19118,7 @@
       "file": "app.js",
       "name": "dbUrl",
       "objectName": "this",
-      "semanticId": "app.js->AppConfig->initDatabase->PROPERTY_ACCESS->this.dbUrl#0",
+      "semanticId": "app.js->PROPERTY_ACCESS->this.dbUrl[in:initDatabase]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19358,7 +19126,7 @@
       "file": "app.js",
       "name": "dbUrl",
       "objectName": "this",
-      "semanticId": "app.js->AppConfig->initDatabase->PROPERTY_ACCESS->this.dbUrl#1",
+      "semanticId": "app.js->PROPERTY_ACCESS->this.dbUrl[in:initDatabase]#1",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19366,7 +19134,7 @@
       "file": "services/dataProcessor.js",
       "name": "done",
       "objectName": "next",
-      "semanticId": "dataProcessor.js->anonymous[1]->processItem->if#0->PROPERTY_ACCESS->next.done#0",
+      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->next.done[in:processItem]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19374,23 +19142,7 @@
       "file": "services/dataProcessor.js",
       "name": "done",
       "objectName": "next",
-      "semanticId": "dataProcessor.js->DataProcessor->processWithCallbacks->processNext->if#0->PROPERTY_ACCESS->next.done#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "done",
-      "objectName": "next",
-      "semanticId": "dataProcessor.js->DataProcessor->processWithPromises->anonymous[0]->processItem->if#0->PROPERTY_ACCESS->next.done#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "done",
-      "objectName": "next",
-      "semanticId": "dataProcessor.js->processNext->if#0->PROPERTY_ACCESS->next.done#0",
+      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->next.done[in:processNext]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19398,7 +19150,7 @@
       "file": "middleware/auth.js",
       "name": "email",
       "objectName": "user",
-      "semanticId": "auth.js->refreshSession->anonymous[0]->PROPERTY_ACCESS->user.email#0",
+      "semanticId": "middleware/auth.js->PROPERTY_ACCESS->user.email[in:refreshSession]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19406,7 +19158,7 @@
       "file": "models/User.js",
       "name": "email",
       "objectName": "this",
-      "semanticId": "User.js->anonymous[8]->PROPERTY_ACCESS->this.email#0",
+      "semanticId": "models/User.js->PROPERTY_ACCESS->this.email",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19414,7 +19166,7 @@
       "file": "models/User.js",
       "name": "email",
       "objectName": "this",
-      "semanticId": "User.js->anonymous[9]->PROPERTY_ACCESS->this.email#0",
+      "semanticId": "models/User.js->PROPERTY_ACCESS->this.email[in:getActivityLog]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19422,15 +19174,7 @@
       "file": "models/User.js",
       "name": "email",
       "objectName": "this",
-      "semanticId": "User.js->getActivityLog->PROPERTY_ACCESS->this.email#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "models/User.js",
-      "name": "email",
-      "objectName": "this",
-      "semanticId": "User.js->getFullProfile->PROPERTY_ACCESS->this.email#0",
+      "semanticId": "models/User.js->PROPERTY_ACCESS->this.email[in:getFullProfile]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19438,7 +19182,7 @@
       "file": "models/User.js",
       "name": "email",
       "objectName": "user",
-      "semanticId": "User.js->anonymous[0]->PROPERTY_ACCESS->user.email#0",
+      "semanticId": "models/User.js->PROPERTY_ACCESS->user.email",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19446,7 +19190,7 @@
       "file": "models/User.js",
       "name": "email",
       "objectName": "user",
-      "semanticId": "User.js->generateAuthToken->anonymous[0]->PROPERTY_ACCESS->user.email#0",
+      "semanticId": "models/User.js->PROPERTY_ACCESS->user.email[in:generateAuthToken]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19454,15 +19198,7 @@
       "file": "routes/api.js",
       "name": "email",
       "objectName": "savedUser",
-      "semanticId": "api.js->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->PROPERTY_ACCESS->savedUser.email#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "email",
-      "objectName": "savedUser",
-      "semanticId": "api.js->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->PROPERTY_ACCESS->savedUser.email#0",
+      "semanticId": "routes/api.js->PROPERTY_ACCESS->savedUser.email",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19470,7 +19206,7 @@
       "file": "middleware/auth.js",
       "name": "exp",
       "objectName": "decoded",
-      "semanticId": "auth.js->blacklistToken->anonymous[1]->PROPERTY_ACCESS->decoded.exp#0",
+      "semanticId": "middleware/auth.js->PROPERTY_ACCESS->decoded.exp[in:blacklistToken]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19478,7 +19214,7 @@
       "file": "models/User.js",
       "name": "firstName",
       "objectName": "this.profile",
-      "semanticId": "User.js->anonymous[9]->if#0->PROPERTY_ACCESS->this.profile.firstName#0",
+      "semanticId": "models/User.js->PROPERTY_ACCESS->this.profile.firstName",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19486,7 +19222,7 @@
       "file": "models/User.js",
       "name": "firstName",
       "objectName": "this.profile",
-      "semanticId": "User.js->anonymous[9]->if#0->PROPERTY_ACCESS->this.profile.firstName#1",
+      "semanticId": "models/User.js->PROPERTY_ACCESS->this.profile.firstName#1",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19494,15 +19230,7 @@
       "file": "routes/api.js",
       "name": "fullName",
       "objectName": "savedUser",
-      "semanticId": "api.js->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->PROPERTY_ACCESS->savedUser.fullName#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "fullName",
-      "objectName": "savedUser",
-      "semanticId": "api.js->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->PROPERTY_ACCESS->savedUser.fullName#0",
+      "semanticId": "routes/api.js->PROPERTY_ACCESS->savedUser.fullName",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19510,7 +19238,7 @@
       "file": "app.js",
       "name": "handleError",
       "objectName": "config",
-      "semanticId": "app.js->startServer->anonymous[0]->anonymous[0]->anonymous[0]->PROPERTY_ACCESS->config.handleError#0",
+      "semanticId": "app.js->PROPERTY_ACCESS->config.handleError[in:startServer]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19518,7 +19246,7 @@
       "file": "app.js",
       "name": "handleError",
       "objectName": "errorHandler",
-      "semanticId": "app.js->global->PROPERTY_ACCESS->errorHandler.handleError#0",
+      "semanticId": "app.js->PROPERTY_ACCESS->errorHandler.handleError",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19526,7 +19254,7 @@
       "file": "middleware/auth.js",
       "name": "headers",
       "objectName": "req",
-      "semanticId": "auth.js->authMiddleware->try#0->PROPERTY_ACCESS->req.headers#0",
+      "semanticId": "middleware/auth.js->PROPERTY_ACCESS->req.headers[in:authMiddleware]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19534,7 +19262,7 @@
       "file": "middleware/auth.js",
       "name": "headers",
       "objectName": "req",
-      "semanticId": "auth.js->authMiddlewareCallback->PROPERTY_ACCESS->req.headers#0",
+      "semanticId": "middleware/auth.js->PROPERTY_ACCESS->req.headers[in:authMiddlewareCallback]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19542,7 +19270,7 @@
       "file": "middleware/auth.js",
       "name": "headers",
       "objectName": "req",
-      "semanticId": "auth.js->authMiddlewarePromise->PROPERTY_ACCESS->req.headers#0",
+      "semanticId": "middleware/auth.js->PROPERTY_ACCESS->req.headers[in:authMiddlewarePromise]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19550,7 +19278,7 @@
       "file": "app.js",
       "name": "id",
       "objectName": "item",
-      "semanticId": "app.js->processDataGenerator->for-of#0->PROPERTY_ACCESS->item.id#0",
+      "semanticId": "app.js->PROPERTY_ACCESS->item.id[in:processDataGenerator]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19558,15 +19286,7 @@
       "file": "app.js",
       "name": "id",
       "objectName": "req.params",
-      "semanticId": "app.js->anonymous[2]->PROPERTY_ACCESS->req.params.id#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "app.js",
-      "name": "id",
-      "objectName": "req.params",
-      "semanticId": "app.js->anonymous[3]->try#0->PROPERTY_ACCESS->req.params.id#0",
+      "semanticId": "app.js->PROPERTY_ACCESS->req.params.id",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19574,39 +19294,7 @@
       "file": "routes/api.js",
       "name": "id",
       "objectName": "req.params",
-      "semanticId": "api.js->anonymous[1]->PROPERTY_ACCESS->req.params.id#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "id",
-      "objectName": "req.params",
-      "semanticId": "api.js->anonymous[2]->PROPERTY_ACCESS->req.params.id#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "id",
-      "objectName": "req.params",
-      "semanticId": "api.js->anonymous[3]->try#0->PROPERTY_ACCESS->req.params.id#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "id",
-      "objectName": "req.params",
-      "semanticId": "api.js->anonymous[4]->PROPERTY_ACCESS->req.params.id#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "id",
-      "objectName": "req.params",
-      "semanticId": "api.js->anonymous[5]->PROPERTY_ACCESS->req.params.id#0",
+      "semanticId": "routes/api.js->PROPERTY_ACCESS->req.params.id",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19614,7 +19302,7 @@
       "file": "services/dataProcessor.js",
       "name": "id",
       "objectName": "item",
-      "semanticId": "dataProcessor.js->DataProcessor->processBatch->for-of#0->PROPERTY_ACCESS->item.id#0",
+      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->item.id[in:processBatch]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19622,7 +19310,7 @@
       "file": "utils/asyncHelpers.js",
       "name": "id",
       "objectName": "data1",
-      "semanticId": "asyncHelpers.js->mixedParallelSequential->anonymous[2]->PROPERTY_ACCESS->data1.id#0",
+      "semanticId": "utils/asyncHelpers.js->PROPERTY_ACCESS->data1.id[in:mixedParallelSequential]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19630,7 +19318,7 @@
       "file": "utils/asyncHelpers.js",
       "name": "id",
       "objectName": "data1",
-      "semanticId": "asyncHelpers.js->mixedParallelSequential->anonymous[2]->PROPERTY_ACCESS->data1.id#1",
+      "semanticId": "utils/asyncHelpers.js->PROPERTY_ACCESS->data1.id[in:mixedParallelSequential]#1",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19638,7 +19326,7 @@
       "file": "utils/asyncHelpers.js",
       "name": "id",
       "objectName": "data1",
-      "semanticId": "asyncHelpers.js->mixedParallelSequential->anonymous[2]->PROPERTY_ACCESS->data1.id#2",
+      "semanticId": "utils/asyncHelpers.js->PROPERTY_ACCESS->data1.id[in:mixedParallelSequential]#2",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19646,23 +19334,7 @@
       "file": "utils/asyncHelpers.js",
       "name": "id",
       "objectName": "user",
-      "semanticId": "asyncHelpers.js->asyncWithPromiseChain->try#0->anonymous[2]->anonymous[1]->PROPERTY_ACCESS->user.id#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "utils/asyncHelpers.js",
-      "name": "id",
-      "objectName": "user",
-      "semanticId": "asyncHelpers.js->asyncWithPromiseChain->try#0->anonymous[2]->PROPERTY_ACCESS->user.id#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "utils/asyncHelpers.js",
-      "name": "id",
-      "objectName": "user",
-      "semanticId": "asyncHelpers.js->asyncWithPromiseChain->try#0->PROPERTY_ACCESS->user.id#0",
+      "semanticId": "utils/asyncHelpers.js->PROPERTY_ACCESS->user.id[in:asyncWithPromiseChain]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19670,7 +19342,7 @@
       "file": "services/dataProcessor.js",
       "name": "initialized",
       "objectName": "this",
-      "semanticId": "dataProcessor.js->DataProcessor->getStats->PROPERTY_ACCESS->this.initialized#0",
+      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->this.initialized[in:getStats]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19678,15 +19350,7 @@
       "file": "app.js",
       "name": "insertedId",
       "objectName": "result",
-      "semanticId": "app.js->anonymous[1]->anonymous[0]->anonymous[0]->anonymous[0]->PROPERTY_ACCESS->result.insertedId#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "app.js",
-      "name": "insertedId",
-      "objectName": "result",
-      "semanticId": "app.js->anonymous[1]->anonymous[0]->anonymous[0]->PROPERTY_ACCESS->result.insertedId#0",
+      "semanticId": "app.js->PROPERTY_ACCESS->result.insertedId",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19694,7 +19358,7 @@
       "file": "middleware/auth.js",
       "name": "ip",
       "objectName": "req",
-      "semanticId": "auth.js->rateLimitMiddleware->PROPERTY_ACCESS->req.ip#0",
+      "semanticId": "middleware/auth.js->PROPERTY_ACCESS->req.ip[in:rateLimitMiddleware]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19702,7 +19366,7 @@
       "file": "models/User.js",
       "name": "lastLogin",
       "objectName": "this",
-      "semanticId": "User.js->anonymous[1]->PROPERTY_ACCESS->this.lastLogin#0",
+      "semanticId": "models/User.js->PROPERTY_ACCESS->this.lastLogin",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19710,7 +19374,7 @@
       "file": "models/User.js",
       "name": "lastLogin",
       "objectName": "this",
-      "semanticId": "User.js->getActivityLog->PROPERTY_ACCESS->this.lastLogin#0",
+      "semanticId": "models/User.js->PROPERTY_ACCESS->this.lastLogin[in:getActivityLog]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19718,7 +19382,7 @@
       "file": "models/User.js",
       "name": "lastLogin",
       "objectName": "this",
-      "semanticId": "User.js->updateLastLogin->anonymous[0]->PROPERTY_ACCESS->this.lastLogin#0",
+      "semanticId": "models/User.js->PROPERTY_ACCESS->this.lastLogin[in:updateLastLogin]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19726,7 +19390,7 @@
       "file": "models/User.js",
       "name": "lastName",
       "objectName": "this.profile",
-      "semanticId": "User.js->anonymous[9]->if#0->PROPERTY_ACCESS->this.profile.lastName#0",
+      "semanticId": "models/User.js->PROPERTY_ACCESS->this.profile.lastName",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19734,7 +19398,7 @@
       "file": "models/User.js",
       "name": "lastName",
       "objectName": "this.profile",
-      "semanticId": "User.js->anonymous[9]->if#0->PROPERTY_ACCESS->this.profile.lastName#1",
+      "semanticId": "models/User.js->PROPERTY_ACCESS->this.profile.lastName#1",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19742,7 +19406,7 @@
       "file": "models/User.js",
       "name": "length",
       "objectName": "friends",
-      "semanticId": "User.js->getFullProfile->PROPERTY_ACCESS->friends.length#0",
+      "semanticId": "models/User.js->PROPERTY_ACCESS->friends.length[in:getFullProfile]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19750,7 +19414,7 @@
       "file": "models/User.js",
       "name": "length",
       "objectName": "posts",
-      "semanticId": "User.js->getFullProfile->PROPERTY_ACCESS->posts.length#0",
+      "semanticId": "models/User.js->PROPERTY_ACCESS->posts.length[in:getFullProfile]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19758,7 +19422,7 @@
       "file": "routes/api.js",
       "name": "length",
       "objectName": "comments",
-      "semanticId": "api.js->anonymous[3]->try#0->for-of#0->PROPERTY_ACCESS->comments.length#0",
+      "semanticId": "routes/api.js->PROPERTY_ACCESS->comments.length",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19766,7 +19430,7 @@
       "file": "routes/api.js",
       "name": "length",
       "objectName": "friends",
-      "semanticId": "api.js->anonymous[3]->try#0->PROPERTY_ACCESS->friends.length#0",
+      "semanticId": "routes/api.js->PROPERTY_ACCESS->friends.length",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19774,7 +19438,7 @@
       "file": "routes/api.js",
       "name": "length",
       "objectName": "posts",
-      "semanticId": "api.js->anonymous[3]->try#0->PROPERTY_ACCESS->posts.length#0",
+      "semanticId": "routes/api.js->PROPERTY_ACCESS->posts.length",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19782,7 +19446,7 @@
       "file": "services/dataProcessor.js",
       "name": "length",
       "objectName": "batch",
-      "semanticId": "dataProcessor.js->anonymous[5]->anonymous[0]->PROPERTY_ACCESS->batch.length#0",
+      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->batch.length",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19790,7 +19454,7 @@
       "file": "services/dataProcessor.js",
       "name": "length",
       "objectName": "batch",
-      "semanticId": "dataProcessor.js->DataProcessor->fetchUsersStream->while#0->if#0->PROPERTY_ACCESS->batch.length#0",
+      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->batch.length[in:fetchUsersStream]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19798,7 +19462,7 @@
       "file": "services/dataProcessor.js",
       "name": "length",
       "objectName": "batch",
-      "semanticId": "dataProcessor.js->DataProcessor->processComplex->anonymous[0]->anonymous[0]->PROPERTY_ACCESS->batch.length#0",
+      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->batch.length[in:processComplex]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19806,7 +19470,7 @@
       "file": "services/dataProcessor.js",
       "name": "length",
       "objectName": "batches.<computed>",
-      "semanticId": "dataProcessor.js->processInBatches->anonymous[0]->processBatch->anonymous[0]->PROPERTY_ACCESS->batches.<computed>.length#0",
+      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->batches.<computed>.length[in:processBatch]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19814,7 +19478,7 @@
       "file": "services/dataProcessor.js",
       "name": "length",
       "objectName": "batches",
-      "semanticId": "dataProcessor.js->processInBatches->anonymous[0]->processBatch->if#0->PROPERTY_ACCESS->batches.length#0",
+      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->batches.length[in:processBatch]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19822,15 +19486,7 @@
       "file": "services/dataProcessor.js",
       "name": "length",
       "objectName": "currentBatch",
-      "semanticId": "dataProcessor.js->processInBatches->anonymous[0]->for-of#0->if#0->PROPERTY_ACCESS->currentBatch.length#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "length",
-      "objectName": "currentBatch",
-      "semanticId": "dataProcessor.js->processInBatches->anonymous[0]->if#0->PROPERTY_ACCESS->currentBatch.length#0",
+      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->currentBatch.length[in:processInBatches]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19838,7 +19494,7 @@
       "file": "utils/asyncHelpers.js",
       "name": "length",
       "objectName": "items",
-      "semanticId": "asyncHelpers.js->processBatch->processNext->if#0->PROPERTY_ACCESS->items.length#0",
+      "semanticId": "utils/asyncHelpers.js->PROPERTY_ACCESS->items.length[in:processNext]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19846,15 +19502,7 @@
       "file": "utils/asyncHelpers.js",
       "name": "length",
       "objectName": "tasks",
-      "semanticId": "asyncHelpers.js->promisePool->anonymous[0]->runNext->if#0->PROPERTY_ACCESS->tasks.length#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "utils/asyncHelpers.js",
-      "name": "length",
-      "objectName": "tasks",
-      "semanticId": "asyncHelpers.js->promisePool->anonymous[0]->runNext->while#0->PROPERTY_ACCESS->tasks.length#0",
+      "semanticId": "utils/asyncHelpers.js->PROPERTY_ACCESS->tasks.length[in:runNext]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19862,7 +19510,7 @@
       "file": "models/User.js",
       "name": "lockUntil",
       "objectName": "self",
-      "semanticId": "User.js->comparePassword->anonymous[0]->if#1->if#0->PROPERTY_ACCESS->self.lockUntil#0",
+      "semanticId": "models/User.js->PROPERTY_ACCESS->self.lockUntil[in:comparePassword]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19870,15 +19518,7 @@
       "file": "models/User.js",
       "name": "loginAttempts",
       "objectName": "self",
-      "semanticId": "User.js->comparePassword->anonymous[0]->else#0->if#0->PROPERTY_ACCESS->self.loginAttempts#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "models/User.js",
-      "name": "loginAttempts",
-      "objectName": "self",
-      "semanticId": "User.js->comparePassword->anonymous[0]->if#1->if#0->PROPERTY_ACCESS->self.loginAttempts#0",
+      "semanticId": "models/User.js->PROPERTY_ACCESS->self.loginAttempts[in:comparePassword]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19886,7 +19526,7 @@
       "file": "models/User.js",
       "name": "loginAttempts",
       "objectName": "this",
-      "semanticId": "User.js->getActivityLog->PROPERTY_ACCESS->this.loginAttempts#0",
+      "semanticId": "models/User.js->PROPERTY_ACCESS->this.loginAttempts[in:getActivityLog]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19894,7 +19534,7 @@
       "file": "app.js",
       "name": "message",
       "objectName": "err",
-      "semanticId": "app.js->anonymous[1]->anonymous[0]->anonymous[0]->if#0->PROPERTY_ACCESS->err.message#0",
+      "semanticId": "app.js->PROPERTY_ACCESS->err.message",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19902,23 +19542,7 @@
       "file": "app.js",
       "name": "message",
       "objectName": "err",
-      "semanticId": "app.js->anonymous[1]->anonymous[0]->if#0->PROPERTY_ACCESS->err.message#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "app.js",
-      "name": "message",
-      "objectName": "err",
-      "semanticId": "app.js->anonymous[2]->anonymous[2]->PROPERTY_ACCESS->err.message#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "app.js",
-      "name": "message",
-      "objectName": "err",
-      "semanticId": "app.js->AppConfig->logError->PROPERTY_ACCESS->err.message#0",
+      "semanticId": "app.js->PROPERTY_ACCESS->err.message[in:logError]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19926,7 +19550,7 @@
       "file": "app.js",
       "name": "message",
       "objectName": "error",
-      "semanticId": "app.js->anonymous[3]->catch#0->PROPERTY_ACCESS->error.message#0",
+      "semanticId": "app.js->PROPERTY_ACCESS->error.message",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19934,7 +19558,7 @@
       "file": "middleware/auth.js",
       "name": "message",
       "objectName": "err",
-      "semanticId": "auth.js->authMiddlewarePromise->anonymous[2]->PROPERTY_ACCESS->err.message#0",
+      "semanticId": "middleware/auth.js->PROPERTY_ACCESS->err.message[in:authMiddlewarePromise]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19942,15 +19566,7 @@
       "file": "middleware/auth.js",
       "name": "message",
       "objectName": "err",
-      "semanticId": "auth.js->requireRolePromise->anonymous[0]->anonymous[3]->PROPERTY_ACCESS->err.message#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "middleware/auth.js",
-      "name": "message",
-      "objectName": "error",
-      "semanticId": "auth.js->authMiddleware->catch#0->PROPERTY_ACCESS->error.message#0",
+      "semanticId": "middleware/auth.js->PROPERTY_ACCESS->err.message[in:requireRolePromise]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19958,7 +19574,15 @@
       "file": "middleware/auth.js",
       "name": "message",
       "objectName": "error",
-      "semanticId": "auth.js->requireRoleAsync->anonymous[0]->catch#0->PROPERTY_ACCESS->error.message#0",
+      "semanticId": "middleware/auth.js->PROPERTY_ACCESS->error.message[in:authMiddleware]",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "exported": false,
+      "file": "middleware/auth.js",
+      "name": "message",
+      "objectName": "error",
+      "semanticId": "middleware/auth.js->PROPERTY_ACCESS->error.message[in:requireRoleAsync]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -19966,79 +19590,7 @@
       "file": "routes/api.js",
       "name": "message",
       "objectName": "err",
-      "semanticId": "api.js->anonymous[1]->anonymous[6]->PROPERTY_ACCESS->err.message#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "message",
-      "objectName": "err",
-      "semanticId": "api.js->anonymous[2]->anonymous[0]->anonymous[2]->PROPERTY_ACCESS->err.message#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "message",
-      "objectName": "err",
-      "semanticId": "api.js->anonymous[4]->anonymous[0]->anonymous[0]->else#0->anonymous[0]->if#0->PROPERTY_ACCESS->err.message#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "message",
-      "objectName": "err",
-      "semanticId": "api.js->anonymous[4]->anonymous[0]->anonymous[0]->if#0->PROPERTY_ACCESS->err.message#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "message",
-      "objectName": "err",
-      "semanticId": "api.js->anonymous[4]->anonymous[0]->anonymous[0]->if#1->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->if#0->PROPERTY_ACCESS->err.message#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "message",
-      "objectName": "err",
-      "semanticId": "api.js->anonymous[4]->anonymous[0]->anonymous[0]->if#1->anonymous[0]->anonymous[0]->anonymous[0]->if#0->PROPERTY_ACCESS->err.message#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "message",
-      "objectName": "err",
-      "semanticId": "api.js->anonymous[4]->anonymous[0]->anonymous[0]->if#1->anonymous[0]->anonymous[0]->if#0->PROPERTY_ACCESS->err.message#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "message",
-      "objectName": "err",
-      "semanticId": "api.js->anonymous[4]->anonymous[0]->anonymous[0]->if#1->anonymous[0]->if#0->PROPERTY_ACCESS->err.message#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "message",
-      "objectName": "err",
-      "semanticId": "api.js->anonymous[4]->anonymous[0]->if#0->PROPERTY_ACCESS->err.message#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "message",
-      "objectName": "err",
-      "semanticId": "api.js->anonymous[5]->anonymous[0]->if#0->PROPERTY_ACCESS->err.message#0",
+      "semanticId": "routes/api.js->PROPERTY_ACCESS->err.message",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -20046,7 +19598,7 @@
       "file": "routes/api.js",
       "name": "message",
       "objectName": "error",
-      "semanticId": "api.js->anonymous[3]->catch#0->PROPERTY_ACCESS->error.message#0",
+      "semanticId": "routes/api.js->PROPERTY_ACCESS->error.message",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -20054,7 +19606,7 @@
       "file": "utils/asyncHelpers.js",
       "name": "message",
       "objectName": "err",
-      "semanticId": "asyncHelpers.js->retryWithBackoff->anonymous[0]->execute->anonymous[1]->if#0->PROPERTY_ACCESS->err.message#0",
+      "semanticId": "utils/asyncHelpers.js->PROPERTY_ACCESS->err.message[in:execute]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -20062,7 +19614,7 @@
       "file": "app.js",
       "name": "name",
       "objectName": "item",
-      "semanticId": "app.js->processDataGenerator->for-of#0->PROPERTY_ACCESS->item.name#0",
+      "semanticId": "app.js->PROPERTY_ACCESS->item.name[in:processDataGenerator]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -20070,7 +19622,7 @@
       "file": "models/User.js",
       "name": "now",
       "objectName": "Date",
-      "semanticId": "User.js->global->PROPERTY_ACCESS->Date.now#0",
+      "semanticId": "models/User.js->PROPERTY_ACCESS->Date.now",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -20078,15 +19630,7 @@
       "file": "app.js",
       "name": "params",
       "objectName": "req",
-      "semanticId": "app.js->anonymous[2]->PROPERTY_ACCESS->req.params#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "app.js",
-      "name": "params",
-      "objectName": "req",
-      "semanticId": "app.js->anonymous[3]->try#0->PROPERTY_ACCESS->req.params#0",
+      "semanticId": "app.js->PROPERTY_ACCESS->req.params",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -20094,39 +19638,7 @@
       "file": "routes/api.js",
       "name": "params",
       "objectName": "req",
-      "semanticId": "api.js->anonymous[1]->PROPERTY_ACCESS->req.params#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "params",
-      "objectName": "req",
-      "semanticId": "api.js->anonymous[2]->PROPERTY_ACCESS->req.params#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "params",
-      "objectName": "req",
-      "semanticId": "api.js->anonymous[3]->try#0->PROPERTY_ACCESS->req.params#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "params",
-      "objectName": "req",
-      "semanticId": "api.js->anonymous[4]->PROPERTY_ACCESS->req.params#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "params",
-      "objectName": "req",
-      "semanticId": "api.js->anonymous[5]->PROPERTY_ACCESS->req.params#0",
+      "semanticId": "routes/api.js->PROPERTY_ACCESS->req.params",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -20134,7 +19646,7 @@
       "file": "models/User.js",
       "name": "password",
       "objectName": "this",
-      "semanticId": "User.js->comparePassword->PROPERTY_ACCESS->this.password#0",
+      "semanticId": "models/User.js->PROPERTY_ACCESS->this.password[in:comparePassword]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -20142,7 +19654,7 @@
       "file": "models/User.js",
       "name": "password",
       "objectName": "user",
-      "semanticId": "User.js->anonymous[7]->anonymous[0]->PROPERTY_ACCESS->user.password#0",
+      "semanticId": "models/User.js->PROPERTY_ACCESS->user.password",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -20150,7 +19662,7 @@
       "file": "models/User.js",
       "name": "password",
       "objectName": "user",
-      "semanticId": "User.js->createWithProfile->PROPERTY_ACCESS->user.password#0",
+      "semanticId": "models/User.js->PROPERTY_ACCESS->user.password[in:createWithProfile]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -20158,7 +19670,7 @@
       "file": "app.js",
       "name": "port",
       "objectName": "this",
-      "semanticId": "app.js->anonymous[0]->PROPERTY_ACCESS->this.port#0",
+      "semanticId": "app.js->PROPERTY_ACCESS->this.port",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -20166,7 +19678,7 @@
       "file": "app.js",
       "name": "port",
       "objectName": "this",
-      "semanticId": "app.js->AppConfig->getPort->PROPERTY_ACCESS->this.port#0",
+      "semanticId": "app.js->PROPERTY_ACCESS->this.port[in:getPort]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -20174,7 +19686,7 @@
       "file": "app.js",
       "name": "port",
       "objectName": "this",
-      "semanticId": "app.js->AppConfig->handleError->PROPERTY_ACCESS->this.port#0",
+      "semanticId": "app.js->PROPERTY_ACCESS->this.port[in:handleError]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -20182,7 +19694,7 @@
       "file": "models/User.js",
       "name": "profile",
       "objectName": "this",
-      "semanticId": "User.js->anonymous[9]->if#0->PROPERTY_ACCESS->this.profile#0",
+      "semanticId": "models/User.js->PROPERTY_ACCESS->this.profile",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -20190,7 +19702,7 @@
       "file": "models/User.js",
       "name": "profile",
       "objectName": "this",
-      "semanticId": "User.js->anonymous[9]->if#0->PROPERTY_ACCESS->this.profile#1",
+      "semanticId": "models/User.js->PROPERTY_ACCESS->this.profile[in:getFullProfile]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -20198,7 +19710,7 @@
       "file": "models/User.js",
       "name": "profile",
       "objectName": "this",
-      "semanticId": "User.js->anonymous[9]->if#0->PROPERTY_ACCESS->this.profile#2",
+      "semanticId": "models/User.js->PROPERTY_ACCESS->this.profile#1",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -20206,7 +19718,7 @@
       "file": "models/User.js",
       "name": "profile",
       "objectName": "this",
-      "semanticId": "User.js->anonymous[9]->if#0->PROPERTY_ACCESS->this.profile#3",
+      "semanticId": "models/User.js->PROPERTY_ACCESS->this.profile#2",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -20214,7 +19726,7 @@
       "file": "models/User.js",
       "name": "profile",
       "objectName": "this",
-      "semanticId": "User.js->getFullProfile->PROPERTY_ACCESS->this.profile#0",
+      "semanticId": "models/User.js->PROPERTY_ACCESS->this.profile#3",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -20222,15 +19734,7 @@
       "file": "routes/api.js",
       "name": "profile",
       "objectName": "data",
-      "semanticId": "api.js->anonymous[1]->anonymous[2]->PROPERTY_ACCESS->data.profile#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "profile",
-      "objectName": "data",
-      "semanticId": "api.js->anonymous[1]->anonymous[4]->PROPERTY_ACCESS->data.profile#0",
+      "semanticId": "routes/api.js->PROPERTY_ACCESS->data.profile",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -20238,7 +19742,7 @@
       "file": "app.js",
       "name": "retryAttempts",
       "objectName": "this",
-      "semanticId": "app.js->AppConfig->initDatabase->PROPERTY_ACCESS->this.retryAttempts#0",
+      "semanticId": "app.js->PROPERTY_ACCESS->this.retryAttempts[in:initDatabase]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -20246,7 +19750,7 @@
       "file": "middleware/auth.js",
       "name": "role",
       "objectName": "user",
-      "semanticId": "auth.js->refreshSession->anonymous[0]->PROPERTY_ACCESS->user.role#0",
+      "semanticId": "middleware/auth.js->PROPERTY_ACCESS->user.role[in:refreshSession]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -20254,7 +19758,7 @@
       "file": "middleware/auth.js",
       "name": "role",
       "objectName": "user",
-      "semanticId": "auth.js->requireRole->anonymous[0]->anonymous[0]->if#1->PROPERTY_ACCESS->user.role#0",
+      "semanticId": "middleware/auth.js->PROPERTY_ACCESS->user.role[in:requireRole]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -20262,7 +19766,7 @@
       "file": "middleware/auth.js",
       "name": "role",
       "objectName": "user",
-      "semanticId": "auth.js->requireRoleAsync->anonymous[0]->try#0->if#1->PROPERTY_ACCESS->user.role#0",
+      "semanticId": "middleware/auth.js->PROPERTY_ACCESS->user.role[in:requireRoleAsync]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -20270,7 +19774,7 @@
       "file": "middleware/auth.js",
       "name": "role",
       "objectName": "user",
-      "semanticId": "auth.js->requireRolePromise->anonymous[0]->anonymous[0]->if#0->PROPERTY_ACCESS->user.role#0",
+      "semanticId": "middleware/auth.js->PROPERTY_ACCESS->user.role[in:requireRolePromise]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -20278,7 +19782,7 @@
       "file": "models/User.js",
       "name": "role",
       "objectName": "this",
-      "semanticId": "User.js->getActivityLog->PROPERTY_ACCESS->this.role#0",
+      "semanticId": "models/User.js->PROPERTY_ACCESS->this.role[in:getActivityLog]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -20286,7 +19790,7 @@
       "file": "models/User.js",
       "name": "role",
       "objectName": "user",
-      "semanticId": "User.js->anonymous[0]->PROPERTY_ACCESS->user.role#0",
+      "semanticId": "models/User.js->PROPERTY_ACCESS->user.role",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -20294,7 +19798,7 @@
       "file": "models/User.js",
       "name": "role",
       "objectName": "user",
-      "semanticId": "User.js->generateAuthToken->anonymous[0]->PROPERTY_ACCESS->user.role#0",
+      "semanticId": "models/User.js->PROPERTY_ACCESS->user.role[in:generateAuthToken]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -20302,7 +19806,7 @@
       "file": "services/dataProcessor.js",
       "name": "size",
       "objectName": "this.cache",
-      "semanticId": "dataProcessor.js->DataProcessor->getStats->PROPERTY_ACCESS->this.cache.size#0",
+      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->this.cache.size[in:getStats]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -20310,7 +19814,7 @@
       "file": "utils/asyncHelpers.js",
       "name": "then",
       "objectName": "result",
-      "semanticId": "asyncHelpers.js->debouncePromise->anonymous[0]->anonymous[0]->anonymous[0]->try#0->if#0->PROPERTY_ACCESS->result.then#0",
+      "semanticId": "utils/asyncHelpers.js->PROPERTY_ACCESS->result.then[in:debouncePromise]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -20318,7 +19822,7 @@
       "file": "middleware/auth.js",
       "name": "user",
       "objectName": "req",
-      "semanticId": "auth.js->rateLimitMiddleware->PROPERTY_ACCESS->req.user#0",
+      "semanticId": "middleware/auth.js->PROPERTY_ACCESS->req.user[in:rateLimitMiddleware]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -20326,7 +19830,7 @@
       "file": "middleware/auth.js",
       "name": "user",
       "objectName": "req",
-      "semanticId": "auth.js->requireRole->anonymous[0]->if#0->PROPERTY_ACCESS->req.user#0",
+      "semanticId": "middleware/auth.js->PROPERTY_ACCESS->req.user[in:requireRole]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -20334,7 +19838,7 @@
       "file": "middleware/auth.js",
       "name": "user",
       "objectName": "req",
-      "semanticId": "auth.js->requireRole->anonymous[0]->PROPERTY_ACCESS->req.user#0",
+      "semanticId": "middleware/auth.js->PROPERTY_ACCESS->req.user[in:requireRoleAsync]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -20342,31 +19846,7 @@
       "file": "middleware/auth.js",
       "name": "user",
       "objectName": "req",
-      "semanticId": "auth.js->requireRoleAsync->anonymous[0]->try#0->if#0->PROPERTY_ACCESS->req.user#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "middleware/auth.js",
-      "name": "user",
-      "objectName": "req",
-      "semanticId": "auth.js->requireRoleAsync->anonymous[0]->try#0->PROPERTY_ACCESS->req.user#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "middleware/auth.js",
-      "name": "user",
-      "objectName": "req",
-      "semanticId": "auth.js->requireRolePromise->anonymous[0]->if#0->PROPERTY_ACCESS->req.user#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "middleware/auth.js",
-      "name": "user",
-      "objectName": "req",
-      "semanticId": "auth.js->requireRolePromise->anonymous[0]->PROPERTY_ACCESS->req.user#0",
+      "semanticId": "middleware/auth.js->PROPERTY_ACCESS->req.user[in:requireRolePromise]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -20374,7 +19854,7 @@
       "file": "app.js",
       "name": "value",
       "objectName": "item",
-      "semanticId": "app.js->processDataGenerator->for-of#0->PROPERTY_ACCESS->item.value#0",
+      "semanticId": "app.js->PROPERTY_ACCESS->item.value[in:processDataGenerator]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -20382,7 +19862,7 @@
       "file": "services/dataProcessor.js",
       "name": "value",
       "objectName": "item",
-      "semanticId": "dataProcessor.js->DataProcessor->processBatch->for-of#0->PROPERTY_ACCESS->item.value#0",
+      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->item.value[in:processBatch]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -20390,7 +19870,7 @@
       "file": "services/dataProcessor.js",
       "name": "value",
       "objectName": "next",
-      "semanticId": "dataProcessor.js->anonymous[1]->processItem->PROPERTY_ACCESS->next.value#0",
+      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->next.value[in:processItem]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -20398,23 +19878,7 @@
       "file": "services/dataProcessor.js",
       "name": "value",
       "objectName": "next",
-      "semanticId": "dataProcessor.js->DataProcessor->processWithCallbacks->processNext->else#0->PROPERTY_ACCESS->next.value#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "value",
-      "objectName": "next",
-      "semanticId": "dataProcessor.js->DataProcessor->processWithPromises->anonymous[0]->processItem->PROPERTY_ACCESS->next.value#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "value",
-      "objectName": "next",
-      "semanticId": "dataProcessor.js->processNext->else#0->PROPERTY_ACCESS->next.value#0",
+      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->next.value[in:processNext]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -20964,13 +20428,6 @@
       "type": "SCOPE"
     },
     {
-      "exported": false,
-      "file": "app.js",
-      "name": "anonymous[0]:body",
-      "scopeType": "function-body",
-      "type": "SCOPE"
-    },
-    {
       "conditional": false,
       "exported": false,
       "file": "middleware/auth.js",
@@ -21331,13 +20788,6 @@
       "type": "SCOPE"
     },
     {
-      "exported": false,
-      "file": "models/User.js",
-      "name": "anonymous[0]:body",
-      "scopeType": "function-body",
-      "type": "SCOPE"
-    },
-    {
       "conditional": false,
       "exported": false,
       "file": "routes/api.js",
@@ -21551,13 +21001,6 @@
       "name": "anonymous[0]:body",
       "scopeType": "arrow_body",
       "semanticId": "anonymous[5]:arrow_body[0]",
-      "type": "SCOPE"
-    },
-    {
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "anonymous[0]:body",
-      "scopeType": "function-body",
       "type": "SCOPE"
     },
     {
@@ -21942,13 +21385,6 @@
       "type": "SCOPE"
     },
     {
-      "exported": false,
-      "file": "app.js",
-      "name": "anonymous[1]:body",
-      "scopeType": "function-body",
-      "type": "SCOPE"
-    },
-    {
       "conditional": false,
       "exported": false,
       "file": "middleware/auth.js",
@@ -22012,13 +21448,6 @@
       "type": "SCOPE"
     },
     {
-      "exported": false,
-      "file": "models/User.js",
-      "name": "anonymous[1]:body",
-      "scopeType": "function-body",
-      "type": "SCOPE"
-    },
-    {
       "conditional": false,
       "exported": false,
       "file": "routes/api.js",
@@ -22046,26 +21475,12 @@
       "type": "SCOPE"
     },
     {
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "anonymous[1]:body",
-      "scopeType": "function-body",
-      "type": "SCOPE"
-    },
-    {
       "conditional": false,
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "anonymous[1]:body",
       "scopeType": "arrow_body",
       "semanticId": "DataProcessor->processWithPromises:arrow_body[1]",
-      "type": "SCOPE"
-    },
-    {
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "anonymous[1]:body",
-      "scopeType": "function-body",
       "type": "SCOPE"
     },
     {
@@ -22211,13 +21626,6 @@
       "type": "SCOPE"
     },
     {
-      "exported": false,
-      "file": "app.js",
-      "name": "anonymous[2]:body",
-      "scopeType": "function-body",
-      "type": "SCOPE"
-    },
-    {
       "conditional": false,
       "exported": false,
       "file": "middleware/auth.js",
@@ -22272,13 +21680,6 @@
       "type": "SCOPE"
     },
     {
-      "exported": false,
-      "file": "models/User.js",
-      "name": "anonymous[2]:body",
-      "scopeType": "function-body",
-      "type": "SCOPE"
-    },
-    {
       "conditional": false,
       "exported": false,
       "file": "routes/api.js",
@@ -22297,26 +21698,12 @@
       "type": "SCOPE"
     },
     {
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "anonymous[2]:body",
-      "scopeType": "function-body",
-      "type": "SCOPE"
-    },
-    {
       "conditional": false,
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "anonymous[2]:body",
       "scopeType": "arrow_body",
       "semanticId": "DataProcessor->processWithPromises:arrow_body[2]",
-      "type": "SCOPE"
-    },
-    {
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "anonymous[2]:body",
-      "scopeType": "function-body",
       "type": "SCOPE"
     },
     {
@@ -22356,13 +21743,6 @@
       "type": "SCOPE"
     },
     {
-      "exported": false,
-      "file": "app.js",
-      "name": "anonymous[3]:body",
-      "scopeType": "function-body",
-      "type": "SCOPE"
-    },
-    {
       "conditional": false,
       "exported": false,
       "file": "middleware/auth.js",
@@ -22390,13 +21770,6 @@
       "type": "SCOPE"
     },
     {
-      "exported": false,
-      "file": "models/User.js",
-      "name": "anonymous[3]:body",
-      "scopeType": "function-body",
-      "type": "SCOPE"
-    },
-    {
       "conditional": false,
       "exported": false,
       "file": "routes/api.js",
@@ -22406,26 +21779,12 @@
       "type": "SCOPE"
     },
     {
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "anonymous[3]:body",
-      "scopeType": "function-body",
-      "type": "SCOPE"
-    },
-    {
       "conditional": false,
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "anonymous[3]:body",
       "scopeType": "arrow_body",
       "semanticId": "DataProcessor->processWithPromises:arrow_body[3]",
-      "type": "SCOPE"
-    },
-    {
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "anonymous[3]:body",
-      "scopeType": "function-body",
       "type": "SCOPE"
     },
     {
@@ -22456,40 +21815,12 @@
       "type": "SCOPE"
     },
     {
-      "exported": false,
-      "file": "app.js",
-      "name": "anonymous[4]:body",
-      "scopeType": "function-body",
-      "type": "SCOPE"
-    },
-    {
-      "exported": false,
-      "file": "models/User.js",
-      "name": "anonymous[4]:body",
-      "scopeType": "function-body",
-      "type": "SCOPE"
-    },
-    {
       "conditional": false,
       "exported": false,
       "file": "routes/api.js",
       "name": "anonymous[4]:body",
       "scopeType": "arrow_body",
       "semanticId": "anonymous[1]:arrow_body[4]",
-      "type": "SCOPE"
-    },
-    {
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "anonymous[4]:body",
-      "scopeType": "function-body",
-      "type": "SCOPE"
-    },
-    {
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "anonymous[4]:body",
-      "scopeType": "function-body",
       "type": "SCOPE"
     },
     {
@@ -22504,13 +21835,6 @@
     {
       "exported": false,
       "file": "app.js",
-      "name": "anonymous[5]:body",
-      "scopeType": "function-body",
-      "type": "SCOPE"
-    },
-    {
-      "exported": false,
-      "file": "models/User.js",
       "name": "anonymous[5]:body",
       "scopeType": "function-body",
       "type": "SCOPE"
@@ -22587,7 +21911,7 @@
       "file": "app.js",
       "name": "AppConfig.constructor:body",
       "scopeType": "method_body",
-      "semanticId": "app.js->AppConfig->constructor->SCOPE->body",
+      "semanticId": "app.js->SCOPE->body[in:constructor]",
       "type": "SCOPE"
     },
     {
@@ -22596,7 +21920,7 @@
       "file": "app.js",
       "name": "AppConfig.getPort:body",
       "scopeType": "method_body",
-      "semanticId": "app.js->AppConfig->getPort->SCOPE->body",
+      "semanticId": "app.js->SCOPE->body[in:getPort]",
       "type": "SCOPE"
     },
     {
@@ -22605,7 +21929,7 @@
       "file": "app.js",
       "name": "AppConfig.handleError:body",
       "scopeType": "property_body",
-      "semanticId": "app.js->AppConfig->handleError->SCOPE->body",
+      "semanticId": "app.js->SCOPE->body[in:handleError]",
       "type": "SCOPE"
     },
     {
@@ -22614,7 +21938,7 @@
       "file": "app.js",
       "name": "AppConfig.initDatabase:body",
       "scopeType": "method_body",
-      "semanticId": "app.js->AppConfig->initDatabase->SCOPE->body",
+      "semanticId": "app.js->SCOPE->body[in:initDatabase]",
       "type": "SCOPE"
     },
     {
@@ -22623,7 +21947,7 @@
       "file": "app.js",
       "name": "AppConfig.logError:body",
       "scopeType": "method_body",
-      "semanticId": "app.js->AppConfig->logError->SCOPE->body",
+      "semanticId": "app.js->SCOPE->body[in:logError]",
       "type": "SCOPE"
     },
     {
@@ -22744,7 +22068,7 @@
       "file": "services/dataProcessor.js",
       "name": "DataProcessor.constructor:body",
       "scopeType": "method_body",
-      "semanticId": "dataProcessor.js->DataProcessor->constructor->SCOPE->body",
+      "semanticId": "services/dataProcessor.js->SCOPE->body[in:constructor]",
       "type": "SCOPE"
     },
     {
@@ -22753,7 +22077,7 @@
       "file": "services/dataProcessor.js",
       "name": "DataProcessor.delegateProcess:body",
       "scopeType": "method_body",
-      "semanticId": "dataProcessor.js->DataProcessor->delegateProcess->SCOPE->body",
+      "semanticId": "services/dataProcessor.js->SCOPE->body[in:delegateProcess]",
       "type": "SCOPE"
     },
     {
@@ -22769,7 +22093,7 @@
       ],
       "name": "DataProcessor.fetchUsersStream:body",
       "scopeType": "method_body",
-      "semanticId": "dataProcessor.js->DataProcessor->fetchUsersStream->SCOPE->body",
+      "semanticId": "services/dataProcessor.js->SCOPE->body[in:fetchUsersStream]",
       "type": "SCOPE"
     },
     {
@@ -22778,7 +22102,7 @@
       "file": "services/dataProcessor.js",
       "name": "DataProcessor.generatePromises:body",
       "scopeType": "method_body",
-      "semanticId": "dataProcessor.js->DataProcessor->generatePromises->SCOPE->body",
+      "semanticId": "services/dataProcessor.js->SCOPE->body[in:generatePromises]",
       "type": "SCOPE"
     },
     {
@@ -22787,7 +22111,7 @@
       "file": "services/dataProcessor.js",
       "name": "DataProcessor.getStats:body",
       "scopeType": "method_body",
-      "semanticId": "dataProcessor.js->DataProcessor->getStats->SCOPE->body",
+      "semanticId": "services/dataProcessor.js->SCOPE->body[in:getStats]",
       "type": "SCOPE"
     },
     {
@@ -22796,7 +22120,7 @@
       "file": "services/dataProcessor.js",
       "name": "DataProcessor.initialize:body",
       "scopeType": "method_body",
-      "semanticId": "dataProcessor.js->DataProcessor->initialize->SCOPE->body",
+      "semanticId": "services/dataProcessor.js->SCOPE->body[in:initialize]",
       "type": "SCOPE"
     },
     {
@@ -22805,7 +22129,7 @@
       "file": "services/dataProcessor.js",
       "name": "DataProcessor.processBatch:body",
       "scopeType": "method_body",
-      "semanticId": "dataProcessor.js->DataProcessor->processBatch->SCOPE->body",
+      "semanticId": "services/dataProcessor.js->SCOPE->body[in:processBatch]",
       "type": "SCOPE"
     },
     {
@@ -22814,7 +22138,7 @@
       "file": "services/dataProcessor.js",
       "name": "DataProcessor.processComplex:body",
       "scopeType": "method_body",
-      "semanticId": "dataProcessor.js->DataProcessor->processComplex->SCOPE->body",
+      "semanticId": "services/dataProcessor.js->SCOPE->body[in:processComplex]",
       "type": "SCOPE"
     },
     {
@@ -22823,7 +22147,7 @@
       "file": "services/dataProcessor.js",
       "name": "DataProcessor.processDataStream:body",
       "scopeType": "method_body",
-      "semanticId": "dataProcessor.js->DataProcessor->processDataStream->SCOPE->body",
+      "semanticId": "services/dataProcessor.js->SCOPE->body[in:processDataStream]",
       "type": "SCOPE"
     },
     {
@@ -22832,7 +22156,7 @@
       "file": "services/dataProcessor.js",
       "name": "DataProcessor.processPromiseGenerator:body",
       "scopeType": "method_body",
-      "semanticId": "dataProcessor.js->DataProcessor->processPromiseGenerator->SCOPE->body",
+      "semanticId": "services/dataProcessor.js->SCOPE->body[in:processPromiseGenerator]",
       "type": "SCOPE"
     },
     {
@@ -22841,7 +22165,7 @@
       "file": "services/dataProcessor.js",
       "name": "DataProcessor.processUser:body",
       "scopeType": "method_body",
-      "semanticId": "dataProcessor.js->DataProcessor->processUser->SCOPE->body",
+      "semanticId": "services/dataProcessor.js->SCOPE->body[in:processUser]",
       "type": "SCOPE"
     },
     {
@@ -22850,7 +22174,7 @@
       "file": "services/dataProcessor.js",
       "name": "DataProcessor.processWithCallbacks:body",
       "scopeType": "method_body",
-      "semanticId": "dataProcessor.js->DataProcessor->processWithCallbacks->SCOPE->body",
+      "semanticId": "services/dataProcessor.js->SCOPE->body[in:processWithCallbacks]",
       "type": "SCOPE"
     },
     {
@@ -22859,7 +22183,7 @@
       "file": "services/dataProcessor.js",
       "name": "DataProcessor.processWithErrorHandling:body",
       "scopeType": "method_body",
-      "semanticId": "dataProcessor.js->DataProcessor->processWithErrorHandling->SCOPE->body",
+      "semanticId": "services/dataProcessor.js->SCOPE->body[in:processWithErrorHandling]",
       "type": "SCOPE"
     },
     {
@@ -22868,7 +22192,7 @@
       "file": "services/dataProcessor.js",
       "name": "DataProcessor.processWithNestedGenerators:body",
       "scopeType": "method_body",
-      "semanticId": "dataProcessor.js->DataProcessor->processWithNestedGenerators->SCOPE->body",
+      "semanticId": "services/dataProcessor.js->SCOPE->body[in:processWithNestedGenerators]",
       "type": "SCOPE"
     },
     {
@@ -22877,7 +22201,7 @@
       "file": "services/dataProcessor.js",
       "name": "DataProcessor.processWithPromises:body",
       "scopeType": "method_body",
-      "semanticId": "dataProcessor.js->DataProcessor->processWithPromises->SCOPE->body",
+      "semanticId": "services/dataProcessor.js->SCOPE->body[in:processWithPromises]",
       "type": "SCOPE"
     },
     {
@@ -25573,6 +24897,7 @@
       "exported": false,
       "file": "app.js",
       "name": "errorHandler",
+      "scopePath": [],
       "type": "VARIABLE"
     },
     {
@@ -25873,24 +25198,28 @@
       "exported": false,
       "file": "middleware/auth.js",
       "name": "redis",
+      "scopePath": [],
       "type": "VARIABLE"
     },
     {
       "exported": false,
       "file": "routes/api.js",
       "name": "redis",
+      "scopePath": [],
       "type": "VARIABLE"
     },
     {
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "redis",
+      "scopePath": [],
       "type": "VARIABLE"
     },
     {
       "exported": false,
       "file": "app.js",
       "name": "redisClient",
+      "scopePath": [],
       "type": "VARIABLE"
     },
     {
@@ -25915,6 +25244,7 @@
       "exported": false,
       "file": "routes/api.js",
       "name": "router",
+      "scopePath": [],
       "type": "VARIABLE"
     },
     {
@@ -26083,6 +25413,7 @@
       "exported": false,
       "file": "models/User.js",
       "name": "User",
+      "scopePath": [],
       "type": "VARIABLE"
     },
     {
@@ -27979,16 +27310,6 @@
       "from": "CALL:activeUsers.map",
       "type": "USES",
       "to": "PARAMETER:activeUsers"
-    },
-    {
-      "from": "CALL:app.get",
-      "type": "HAS_CALLBACK",
-      "to": "FUNCTION:anonymous[2]"
-    },
-    {
-      "from": "CALL:app.get",
-      "type": "HAS_CALLBACK",
-      "to": "FUNCTION:anonymous[3]"
     },
     {
       "from": "CALL:app.get",
@@ -31656,21 +30977,6 @@
     },
     {
       "from": "CALL:router.get",
-      "type": "HAS_CALLBACK",
-      "to": "FUNCTION:anonymous[1]"
-    },
-    {
-      "from": "CALL:router.get",
-      "type": "HAS_CALLBACK",
-      "to": "FUNCTION:anonymous[3]"
-    },
-    {
-      "from": "CALL:router.get",
-      "type": "HAS_CALLBACK",
-      "to": "FUNCTION:anonymous[5]"
-    },
-    {
-      "from": "CALL:router.get",
       "type": "PASSES_ARGUMENT",
       "to": "FUNCTION:anonymous[1]",
       "metadata": {
@@ -33860,17 +33166,7 @@
     {
       "from": "FUNCTION:anonymous[0]",
       "type": "CONTAINS",
-      "to": "PROPERTY_ACCESS:length"
-    },
-    {
-      "from": "FUNCTION:anonymous[0]",
-      "type": "CONTAINS",
       "to": "PROPERTY_ACCESS:lockUntil"
-    },
-    {
-      "from": "FUNCTION:anonymous[0]",
-      "type": "CONTAINS",
-      "to": "PROPERTY_ACCESS:loginAttempts"
     },
     {
       "from": "FUNCTION:anonymous[0]",
@@ -33981,21 +33277,6 @@
       "from": "FUNCTION:anonymous[0]",
       "type": "CONTAINS",
       "to": "PROPERTY_ACCESS:then"
-    },
-    {
-      "from": "FUNCTION:anonymous[0]",
-      "type": "CONTAINS",
-      "to": "PROPERTY_ACCESS:user"
-    },
-    {
-      "from": "FUNCTION:anonymous[0]",
-      "type": "CONTAINS",
-      "to": "PROPERTY_ACCESS:user"
-    },
-    {
-      "from": "FUNCTION:anonymous[0]",
-      "type": "CONTAINS",
-      "to": "PROPERTY_ACCESS:user"
     },
     {
       "from": "FUNCTION:anonymous[0]",
@@ -34690,17 +33971,17 @@
     {
       "from": "FUNCTION:anonymous[0]",
       "type": "HAS_SCOPE",
-      "to": "SCOPE:anonymous[0]:body"
+      "to": "SCOPE:anonymous[5]:body"
     },
     {
       "from": "FUNCTION:anonymous[0]",
       "type": "HAS_SCOPE",
-      "to": "SCOPE:anonymous[0]:body"
+      "to": "SCOPE:anonymous[5]:body"
     },
     {
       "from": "FUNCTION:anonymous[0]",
       "type": "HAS_SCOPE",
-      "to": "SCOPE:anonymous[0]:body"
+      "to": "SCOPE:anonymous[6]:body"
     },
     {
       "from": "FUNCTION:anonymous[0]",
@@ -35046,22 +34327,22 @@
     {
       "from": "FUNCTION:anonymous[1]",
       "type": "HAS_SCOPE",
-      "to": "SCOPE:anonymous[1]:body"
+      "to": "SCOPE:anonymous[5]:body"
     },
     {
       "from": "FUNCTION:anonymous[1]",
       "type": "HAS_SCOPE",
-      "to": "SCOPE:anonymous[1]:body"
+      "to": "SCOPE:anonymous[5]:body"
     },
     {
       "from": "FUNCTION:anonymous[1]",
       "type": "HAS_SCOPE",
-      "to": "SCOPE:anonymous[1]:body"
+      "to": "SCOPE:anonymous[5]:body"
     },
     {
       "from": "FUNCTION:anonymous[1]",
       "type": "HAS_SCOPE",
-      "to": "SCOPE:anonymous[1]:body"
+      "to": "SCOPE:anonymous[6]:body"
     },
     {
       "from": "FUNCTION:anonymous[1]",
@@ -35286,22 +34567,22 @@
     {
       "from": "FUNCTION:anonymous[2]",
       "type": "HAS_SCOPE",
-      "to": "SCOPE:anonymous[2]:body"
+      "to": "SCOPE:anonymous[5]:body"
     },
     {
       "from": "FUNCTION:anonymous[2]",
       "type": "HAS_SCOPE",
-      "to": "SCOPE:anonymous[2]:body"
+      "to": "SCOPE:anonymous[5]:body"
     },
     {
       "from": "FUNCTION:anonymous[2]",
       "type": "HAS_SCOPE",
-      "to": "SCOPE:anonymous[2]:body"
+      "to": "SCOPE:anonymous[5]:body"
     },
     {
       "from": "FUNCTION:anonymous[2]",
       "type": "HAS_SCOPE",
-      "to": "SCOPE:anonymous[2]:body"
+      "to": "SCOPE:anonymous[6]:body"
     },
     {
       "from": "FUNCTION:anonymous[2]",
@@ -35327,16 +34608,6 @@
       "from": "FUNCTION:anonymous[3]",
       "type": "CONTAINS",
       "to": "PROPERTY_ACCESS:connection"
-    },
-    {
-      "from": "FUNCTION:anonymous[3]",
-      "type": "CONTAINS",
-      "to": "PROPERTY_ACCESS:connection"
-    },
-    {
-      "from": "FUNCTION:anonymous[3]",
-      "type": "CONTAINS",
-      "to": "PROPERTY_ACCESS:db"
     },
     {
       "from": "FUNCTION:anonymous[3]",
@@ -35481,22 +34752,22 @@
     {
       "from": "FUNCTION:anonymous[3]",
       "type": "HAS_SCOPE",
-      "to": "SCOPE:anonymous[3]:body"
+      "to": "SCOPE:anonymous[5]:body"
     },
     {
       "from": "FUNCTION:anonymous[3]",
       "type": "HAS_SCOPE",
-      "to": "SCOPE:anonymous[3]:body"
+      "to": "SCOPE:anonymous[5]:body"
     },
     {
       "from": "FUNCTION:anonymous[3]",
       "type": "HAS_SCOPE",
-      "to": "SCOPE:anonymous[3]:body"
+      "to": "SCOPE:anonymous[5]:body"
     },
     {
       "from": "FUNCTION:anonymous[3]",
       "type": "HAS_SCOPE",
-      "to": "SCOPE:anonymous[3]:body"
+      "to": "SCOPE:anonymous[6]:body"
     },
     {
       "from": "FUNCTION:anonymous[3]",
@@ -35588,22 +34859,22 @@
     {
       "from": "FUNCTION:anonymous[4]",
       "type": "HAS_SCOPE",
-      "to": "SCOPE:anonymous[4]:body"
+      "to": "SCOPE:anonymous[5]:body"
     },
     {
       "from": "FUNCTION:anonymous[4]",
       "type": "HAS_SCOPE",
-      "to": "SCOPE:anonymous[4]:body"
+      "to": "SCOPE:anonymous[5]:body"
     },
     {
       "from": "FUNCTION:anonymous[4]",
       "type": "HAS_SCOPE",
-      "to": "SCOPE:anonymous[4]:body"
+      "to": "SCOPE:anonymous[5]:body"
     },
     {
       "from": "FUNCTION:anonymous[4]",
       "type": "HAS_SCOPE",
-      "to": "SCOPE:anonymous[4]:body"
+      "to": "SCOPE:anonymous[6]:body"
     },
     {
       "from": "FUNCTION:anonymous[5]",
@@ -35678,7 +34949,7 @@
     {
       "from": "FUNCTION:anonymous[5]",
       "type": "HAS_SCOPE",
-      "to": "SCOPE:anonymous[5]:body"
+      "to": "SCOPE:anonymous[6]:body"
     },
     {
       "from": "FUNCTION:anonymous[6]",
@@ -36526,11 +35797,6 @@
     {
       "from": "FUNCTION:processDataStream",
       "type": "CONTAINS",
-      "to": "PROPERTY_ACCESS:cache"
-    },
-    {
-      "from": "FUNCTION:processDataStream",
-      "type": "CONTAINS",
       "to": "PROPERTY_ACCESS:connection"
     },
     {
@@ -36588,16 +35854,6 @@
     {
       "from": "FUNCTION:processItem",
       "type": "CONTAINS",
-      "to": "PROPERTY_ACCESS:done"
-    },
-    {
-      "from": "FUNCTION:processItem",
-      "type": "CONTAINS",
-      "to": "PROPERTY_ACCESS:value"
-    },
-    {
-      "from": "FUNCTION:processItem",
-      "type": "CONTAINS",
       "to": "PROPERTY_ACCESS:value"
     },
     {
@@ -36623,22 +35879,7 @@
     {
       "from": "FUNCTION:processNext",
       "type": "CONTAINS",
-      "to": "PROPERTY_ACCESS:connection"
-    },
-    {
-      "from": "FUNCTION:processNext",
-      "type": "CONTAINS",
       "to": "PROPERTY_ACCESS:db"
-    },
-    {
-      "from": "FUNCTION:processNext",
-      "type": "CONTAINS",
-      "to": "PROPERTY_ACCESS:db"
-    },
-    {
-      "from": "FUNCTION:processNext",
-      "type": "CONTAINS",
-      "to": "PROPERTY_ACCESS:done"
     },
     {
       "from": "FUNCTION:processNext",
@@ -36649,11 +35890,6 @@
       "from": "FUNCTION:processNext",
       "type": "CONTAINS",
       "to": "PROPERTY_ACCESS:length"
-    },
-    {
-      "from": "FUNCTION:processNext",
-      "type": "CONTAINS",
-      "to": "PROPERTY_ACCESS:value"
     },
     {
       "from": "FUNCTION:processNext",
@@ -37048,11 +36284,6 @@
       "from": "FUNCTION:runNext",
       "type": "CONTAINS",
       "to": "PROPERTY_ACCESS:<computed>"
-    },
-    {
-      "from": "FUNCTION:runNext",
-      "type": "CONTAINS",
-      "to": "PROPERTY_ACCESS:length"
     },
     {
       "from": "FUNCTION:runNext",
@@ -40484,11 +39715,6 @@
     {
       "from": "SCOPE:anonymous[0]:body",
       "type": "CONTAINS",
-      "to": "CALL:console.error"
-    },
-    {
-      "from": "SCOPE:anonymous[0]:body",
-      "type": "CONTAINS",
       "to": "CALL:console.log"
     },
     {
@@ -40620,11 +39846,6 @@
       "from": "SCOPE:anonymous[0]:body",
       "type": "CONTAINS",
       "to": "CALL:JSON.stringify"
-    },
-    {
-      "from": "SCOPE:anonymous[0]:body",
-      "type": "CONTAINS",
-      "to": "CALL:jwt.sign"
     },
     {
       "from": "SCOPE:anonymous[0]:body",
@@ -40984,27 +40205,12 @@
     {
       "from": "SCOPE:anonymous[0]:body",
       "type": "CONTAINS",
-      "to": "CALL:this.logError"
-    },
-    {
-      "from": "SCOPE:anonymous[0]:body",
-      "type": "CONTAINS",
       "to": "CALL:User"
     },
     {
       "from": "SCOPE:anonymous[0]:body",
       "type": "CONTAINS",
-      "to": "CALL:user._id.toString"
-    },
-    {
-      "from": "SCOPE:anonymous[0]:body",
-      "type": "CONTAINS",
       "to": "CALL:user.deleteOne"
-    },
-    {
-      "from": "SCOPE:anonymous[0]:body",
-      "type": "CONTAINS",
-      "to": "CALL:User.findByEmail"
     },
     {
       "from": "SCOPE:anonymous[0]:body",
@@ -41045,16 +40251,6 @@
       "from": "SCOPE:anonymous[0]:body",
       "type": "CONTAINS",
       "to": "CALL:user.updateLastLogin"
-    },
-    {
-      "from": "SCOPE:anonymous[0]:body",
-      "type": "CONTAINS",
-      "to": "FUNCTION:anonymous[0]"
-    },
-    {
-      "from": "SCOPE:anonymous[0]:body",
-      "type": "CONTAINS",
-      "to": "FUNCTION:anonymous[0]"
     },
     {
       "from": "SCOPE:anonymous[0]:body",
@@ -41569,17 +40765,7 @@
     {
       "from": "SCOPE:anonymous[0]:body",
       "type": "DECLARES",
-      "to": "VARIABLE:email"
-    },
-    {
-      "from": "SCOPE:anonymous[0]:body",
-      "type": "DECLARES",
       "to": "VARIABLE:execute"
-    },
-    {
-      "from": "SCOPE:anonymous[0]:body",
-      "type": "DECLARES",
-      "to": "VARIABLE:firstName"
     },
     {
       "from": "SCOPE:anonymous[0]:body",
@@ -41599,17 +40785,7 @@
     {
       "from": "SCOPE:anonymous[0]:body",
       "type": "DECLARES",
-      "to": "VARIABLE:lastName"
-    },
-    {
-      "from": "SCOPE:anonymous[0]:body",
-      "type": "DECLARES",
       "to": "VARIABLE:logGenerator"
-    },
-    {
-      "from": "SCOPE:anonymous[0]:body",
-      "type": "DECLARES",
-      "to": "VARIABLE:password"
     },
     {
       "from": "SCOPE:anonymous[0]:body",
@@ -41749,16 +40925,6 @@
     {
       "from": "SCOPE:anonymous[1]:body",
       "type": "CONTAINS",
-      "to": "CALL:mongoose.connection.db.collection"
-    },
-    {
-      "from": "SCOPE:anonymous[1]:body",
-      "type": "CONTAINS",
-      "to": "CALL:mongoose.connection.db.collection"
-    },
-    {
-      "from": "SCOPE:anonymous[1]:body",
-      "type": "CONTAINS",
       "to": "CALL:next"
     },
     {
@@ -41824,16 +40990,6 @@
     {
       "from": "SCOPE:anonymous[1]:body",
       "type": "CONTAINS",
-      "to": "CALL:this.processBatch"
-    },
-    {
-      "from": "SCOPE:anonymous[1]:body",
-      "type": "CONTAINS",
-      "to": "CALL:User.findById"
-    },
-    {
-      "from": "SCOPE:anonymous[1]:body",
-      "type": "CONTAINS",
       "to": "CALL:User.findById"
     },
     {
@@ -41884,57 +41040,7 @@
     {
       "from": "SCOPE:anonymous[1]:body",
       "type": "CONTAINS",
-      "to": "FUNCTION:anonymous[0]"
-    },
-    {
-      "from": "SCOPE:anonymous[1]:body",
-      "type": "CONTAINS",
-      "to": "FUNCTION:anonymous[0]"
-    },
-    {
-      "from": "SCOPE:anonymous[1]:body",
-      "type": "CONTAINS",
       "to": "FUNCTION:anonymous[1]"
-    },
-    {
-      "from": "SCOPE:anonymous[1]:body",
-      "type": "CONTAINS",
-      "to": "FUNCTION:anonymous[1]"
-    },
-    {
-      "from": "SCOPE:anonymous[1]:body",
-      "type": "CONTAINS",
-      "to": "FUNCTION:anonymous[2]"
-    },
-    {
-      "from": "SCOPE:anonymous[1]:body",
-      "type": "CONTAINS",
-      "to": "FUNCTION:anonymous[3]"
-    },
-    {
-      "from": "SCOPE:anonymous[1]:body",
-      "type": "CONTAINS",
-      "to": "FUNCTION:anonymous[4]"
-    },
-    {
-      "from": "SCOPE:anonymous[1]:body",
-      "type": "CONTAINS",
-      "to": "FUNCTION:anonymous[5]"
-    },
-    {
-      "from": "SCOPE:anonymous[1]:body",
-      "type": "CONTAINS",
-      "to": "FUNCTION:anonymous[6]"
-    },
-    {
-      "from": "SCOPE:anonymous[1]:body",
-      "type": "CONTAINS",
-      "to": "FUNCTION:processItem"
-    },
-    {
-      "from": "SCOPE:anonymous[1]:body",
-      "type": "CONTAINS",
-      "to": "TRY_BLOCK:"
     },
     {
       "from": "SCOPE:anonymous[1]:body",
@@ -41944,42 +41050,12 @@
     {
       "from": "SCOPE:anonymous[1]:body",
       "type": "DECLARES",
-      "to": "CONSTANT:results"
-    },
-    {
-      "from": "SCOPE:anonymous[1]:body",
-      "type": "DECLARES",
       "to": "VARIABLE:delay"
     },
     {
       "from": "SCOPE:anonymous[1]:body",
       "type": "DECLARES",
-      "to": "VARIABLE:email"
-    },
-    {
-      "from": "SCOPE:anonymous[1]:body",
-      "type": "DECLARES",
       "to": "VARIABLE:expiresIn"
-    },
-    {
-      "from": "SCOPE:anonymous[1]:body",
-      "type": "DECLARES",
-      "to": "VARIABLE:generator"
-    },
-    {
-      "from": "SCOPE:anonymous[1]:body",
-      "type": "DECLARES",
-      "to": "VARIABLE:password"
-    },
-    {
-      "from": "SCOPE:anonymous[1]:body",
-      "type": "DECLARES",
-      "to": "VARIABLE:processItem"
-    },
-    {
-      "from": "SCOPE:anonymous[1]:body",
-      "type": "DECLARES",
-      "to": "VARIABLE:userId"
     },
     {
       "from": "SCOPE:anonymous[2]:body",
@@ -42029,16 +41105,6 @@
     {
       "from": "SCOPE:anonymous[2]:body",
       "type": "CONTAINS",
-      "to": "CALL:loadUserData"
-    },
-    {
-      "from": "SCOPE:anonymous[2]:body",
-      "type": "CONTAINS",
-      "to": "CALL:mongoose.connection.db.collection"
-    },
-    {
-      "from": "SCOPE:anonymous[2]:body",
-      "type": "CONTAINS",
       "to": "CALL:mongoose.connection.db.collection"
     },
     {
@@ -42084,21 +41150,6 @@
     {
       "from": "SCOPE:anonymous[2]:body",
       "type": "CONTAINS",
-      "to": "CALL:User.findById"
-    },
-    {
-      "from": "SCOPE:anonymous[2]:body",
-      "type": "CONTAINS",
-      "to": "FUNCTION:anonymous[0]"
-    },
-    {
-      "from": "SCOPE:anonymous[2]:body",
-      "type": "CONTAINS",
-      "to": "FUNCTION:anonymous[0]"
-    },
-    {
-      "from": "SCOPE:anonymous[2]:body",
-      "type": "CONTAINS",
       "to": "FUNCTION:anonymous[0]"
     },
     {
@@ -42125,16 +41176,6 @@
       "from": "SCOPE:anonymous[2]:body",
       "type": "CONTAINS",
       "to": "FUNCTION:anonymous[1]"
-    },
-    {
-      "from": "SCOPE:anonymous[2]:body",
-      "type": "CONTAINS",
-      "to": "FUNCTION:anonymous[1]"
-    },
-    {
-      "from": "SCOPE:anonymous[2]:body",
-      "type": "CONTAINS",
-      "to": "FUNCTION:anonymous[2]"
     },
     {
       "from": "SCOPE:anonymous[2]:body",
@@ -42145,21 +41186,6 @@
       "from": "SCOPE:anonymous[2]:body",
       "type": "CONTAINS",
       "to": "FUNCTION:anonymous[3]"
-    },
-    {
-      "from": "SCOPE:anonymous[2]:body",
-      "type": "DECLARES",
-      "to": "VARIABLE:updates"
-    },
-    {
-      "from": "SCOPE:anonymous[2]:body",
-      "type": "DECLARES",
-      "to": "VARIABLE:userId"
-    },
-    {
-      "from": "SCOPE:anonymous[3]:body",
-      "type": "CONTAINS",
-      "to": "CALL:console.error"
     },
     {
       "from": "SCOPE:anonymous[3]:body",
@@ -42189,17 +41215,7 @@
     {
       "from": "SCOPE:anonymous[3]:body",
       "type": "CONTAINS",
-      "to": "CALL:JSON.stringify"
-    },
-    {
-      "from": "SCOPE:anonymous[3]:body",
-      "type": "CONTAINS",
       "to": "CALL:redis.get"
-    },
-    {
-      "from": "SCOPE:anonymous[3]:body",
-      "type": "CONTAINS",
-      "to": "CALL:redis.set"
     },
     {
       "from": "SCOPE:anonymous[3]:body",
@@ -42222,34 +41238,9 @@
       "to": "FUNCTION:anonymous[1]"
     },
     {
-      "from": "SCOPE:anonymous[3]:body",
-      "type": "CONTAINS",
-      "to": "TRY_BLOCK:"
-    },
-    {
-      "from": "SCOPE:anonymous[3]:body",
-      "type": "CONTAINS",
-      "to": "TRY_BLOCK:"
-    },
-    {
       "from": "SCOPE:anonymous[4]:body",
       "type": "CONTAINS",
       "to": "CALL:console.error"
-    },
-    {
-      "from": "SCOPE:anonymous[4]:body",
-      "type": "CONTAINS",
-      "to": "CALL:console.error"
-    },
-    {
-      "from": "SCOPE:anonymous[4]:body",
-      "type": "CONTAINS",
-      "to": "CALL:console.log"
-    },
-    {
-      "from": "SCOPE:anonymous[4]:body",
-      "type": "CONTAINS",
-      "to": "CALL:mongoose.connection.close"
     },
     {
       "from": "SCOPE:anonymous[4]:body",
@@ -42259,42 +41250,7 @@
     {
       "from": "SCOPE:anonymous[4]:body",
       "type": "CONTAINS",
-      "to": "CALL:User.findById"
-    },
-    {
-      "from": "SCOPE:anonymous[4]:body",
-      "type": "CONTAINS",
-      "to": "CALL:users.filter"
-    },
-    {
-      "from": "SCOPE:anonymous[4]:body",
-      "type": "CONTAINS",
       "to": "FUNCTION:anonymous[0]"
-    },
-    {
-      "from": "SCOPE:anonymous[4]:body",
-      "type": "CONTAINS",
-      "to": "FUNCTION:anonymous[0]"
-    },
-    {
-      "from": "SCOPE:anonymous[4]:body",
-      "type": "CONTAINS",
-      "to": "FUNCTION:anonymous[0]"
-    },
-    {
-      "from": "SCOPE:anonymous[4]:body",
-      "type": "CONTAINS",
-      "to": "FUNCTION:anonymous[0]"
-    },
-    {
-      "from": "SCOPE:anonymous[4]:body",
-      "type": "DECLARES",
-      "to": "VARIABLE:userId"
-    },
-    {
-      "from": "SCOPE:anonymous[5]:body",
-      "type": "CONTAINS",
-      "to": "CALL:activeUsers.map"
     },
     {
       "from": "SCOPE:anonymous[5]:body",
@@ -42304,7 +41260,47 @@
     {
       "from": "SCOPE:anonymous[5]:body",
       "type": "CONTAINS",
+      "to": "CALL:console.error"
+    },
+    {
+      "from": "SCOPE:anonymous[5]:body",
+      "type": "CONTAINS",
+      "to": "CALL:console.error"
+    },
+    {
+      "from": "SCOPE:anonymous[5]:body",
+      "type": "CONTAINS",
+      "to": "CALL:console.log"
+    },
+    {
+      "from": "SCOPE:anonymous[5]:body",
+      "type": "CONTAINS",
       "to": "CALL:JSON.stringify"
+    },
+    {
+      "from": "SCOPE:anonymous[5]:body",
+      "type": "CONTAINS",
+      "to": "CALL:JSON.stringify"
+    },
+    {
+      "from": "SCOPE:anonymous[5]:body",
+      "type": "CONTAINS",
+      "to": "CALL:loadUserData"
+    },
+    {
+      "from": "SCOPE:anonymous[5]:body",
+      "type": "CONTAINS",
+      "to": "CALL:mongoose.connection.close"
+    },
+    {
+      "from": "SCOPE:anonymous[5]:body",
+      "type": "CONTAINS",
+      "to": "CALL:mongoose.connection.db.collection"
+    },
+    {
+      "from": "SCOPE:anonymous[5]:body",
+      "type": "CONTAINS",
+      "to": "CALL:mongoose.connection.db.collection"
     },
     {
       "from": "SCOPE:anonymous[5]:body",
@@ -42319,7 +41315,42 @@
     {
       "from": "SCOPE:anonymous[5]:body",
       "type": "CONTAINS",
+      "to": "CALL:redis.set"
+    },
+    {
+      "from": "SCOPE:anonymous[5]:body",
+      "type": "CONTAINS",
       "to": "CALL:res.json"
+    },
+    {
+      "from": "SCOPE:anonymous[5]:body",
+      "type": "CONTAINS",
+      "to": "CALL:this.logError"
+    },
+    {
+      "from": "SCOPE:anonymous[5]:body",
+      "type": "CONTAINS",
+      "to": "CALL:this.processBatch"
+    },
+    {
+      "from": "SCOPE:anonymous[5]:body",
+      "type": "CONTAINS",
+      "to": "CALL:User.findByEmail"
+    },
+    {
+      "from": "SCOPE:anonymous[5]:body",
+      "type": "CONTAINS",
+      "to": "CALL:User.findById"
+    },
+    {
+      "from": "SCOPE:anonymous[5]:body",
+      "type": "CONTAINS",
+      "to": "CALL:User.findById"
+    },
+    {
+      "from": "SCOPE:anonymous[5]:body",
+      "type": "CONTAINS",
+      "to": "CALL:User.findById"
     },
     {
       "from": "SCOPE:anonymous[5]:body",
@@ -42342,6 +41373,161 @@
       "to": "FUNCTION:anonymous[0]"
     },
     {
+      "from": "SCOPE:anonymous[5]:body",
+      "type": "CONTAINS",
+      "to": "FUNCTION:anonymous[0]"
+    },
+    {
+      "from": "SCOPE:anonymous[5]:body",
+      "type": "CONTAINS",
+      "to": "FUNCTION:anonymous[0]"
+    },
+    {
+      "from": "SCOPE:anonymous[5]:body",
+      "type": "CONTAINS",
+      "to": "FUNCTION:anonymous[0]"
+    },
+    {
+      "from": "SCOPE:anonymous[5]:body",
+      "type": "CONTAINS",
+      "to": "FUNCTION:anonymous[0]"
+    },
+    {
+      "from": "SCOPE:anonymous[5]:body",
+      "type": "CONTAINS",
+      "to": "FUNCTION:anonymous[0]"
+    },
+    {
+      "from": "SCOPE:anonymous[5]:body",
+      "type": "CONTAINS",
+      "to": "FUNCTION:anonymous[0]"
+    },
+    {
+      "from": "SCOPE:anonymous[5]:body",
+      "type": "CONTAINS",
+      "to": "FUNCTION:anonymous[1]"
+    },
+    {
+      "from": "SCOPE:anonymous[5]:body",
+      "type": "CONTAINS",
+      "to": "FUNCTION:anonymous[1]"
+    },
+    {
+      "from": "SCOPE:anonymous[5]:body",
+      "type": "CONTAINS",
+      "to": "FUNCTION:anonymous[2]"
+    },
+    {
+      "from": "SCOPE:anonymous[5]:body",
+      "type": "CONTAINS",
+      "to": "FUNCTION:anonymous[2]"
+    },
+    {
+      "from": "SCOPE:anonymous[5]:body",
+      "type": "CONTAINS",
+      "to": "FUNCTION:anonymous[3]"
+    },
+    {
+      "from": "SCOPE:anonymous[5]:body",
+      "type": "CONTAINS",
+      "to": "FUNCTION:anonymous[4]"
+    },
+    {
+      "from": "SCOPE:anonymous[5]:body",
+      "type": "CONTAINS",
+      "to": "FUNCTION:anonymous[5]"
+    },
+    {
+      "from": "SCOPE:anonymous[5]:body",
+      "type": "CONTAINS",
+      "to": "FUNCTION:anonymous[6]"
+    },
+    {
+      "from": "SCOPE:anonymous[5]:body",
+      "type": "CONTAINS",
+      "to": "FUNCTION:processItem"
+    },
+    {
+      "from": "SCOPE:anonymous[5]:body",
+      "type": "CONTAINS",
+      "to": "TRY_BLOCK:"
+    },
+    {
+      "from": "SCOPE:anonymous[5]:body",
+      "type": "CONTAINS",
+      "to": "TRY_BLOCK:"
+    },
+    {
+      "from": "SCOPE:anonymous[5]:body",
+      "type": "CONTAINS",
+      "to": "TRY_BLOCK:"
+    },
+    {
+      "from": "SCOPE:anonymous[5]:body",
+      "type": "DECLARES",
+      "to": "CONSTANT:results"
+    },
+    {
+      "from": "SCOPE:anonymous[5]:body",
+      "type": "DECLARES",
+      "to": "VARIABLE:email"
+    },
+    {
+      "from": "SCOPE:anonymous[5]:body",
+      "type": "DECLARES",
+      "to": "VARIABLE:email"
+    },
+    {
+      "from": "SCOPE:anonymous[5]:body",
+      "type": "DECLARES",
+      "to": "VARIABLE:firstName"
+    },
+    {
+      "from": "SCOPE:anonymous[5]:body",
+      "type": "DECLARES",
+      "to": "VARIABLE:generator"
+    },
+    {
+      "from": "SCOPE:anonymous[5]:body",
+      "type": "DECLARES",
+      "to": "VARIABLE:lastName"
+    },
+    {
+      "from": "SCOPE:anonymous[5]:body",
+      "type": "DECLARES",
+      "to": "VARIABLE:password"
+    },
+    {
+      "from": "SCOPE:anonymous[5]:body",
+      "type": "DECLARES",
+      "to": "VARIABLE:password"
+    },
+    {
+      "from": "SCOPE:anonymous[5]:body",
+      "type": "DECLARES",
+      "to": "VARIABLE:processItem"
+    },
+    {
+      "from": "SCOPE:anonymous[5]:body",
+      "type": "DECLARES",
+      "to": "VARIABLE:updates"
+    },
+    {
+      "from": "SCOPE:anonymous[5]:body",
+      "type": "DECLARES",
+      "to": "VARIABLE:userId"
+    },
+    {
+      "from": "SCOPE:anonymous[5]:body",
+      "type": "DECLARES",
+      "to": "VARIABLE:userId"
+    },
+    {
+      "from": "SCOPE:anonymous[5]:body",
+      "type": "DECLARES",
+      "to": "VARIABLE:userId"
+    },
+    {
       "from": "SCOPE:anonymous[6]:body",
       "type": "CONTAINS",
       "to": "BRANCH:"
@@ -42349,7 +41535,27 @@
     {
       "from": "SCOPE:anonymous[6]:body",
       "type": "CONTAINS",
+      "to": "CALL:activeUsers.map"
+    },
+    {
+      "from": "SCOPE:anonymous[6]:body",
+      "type": "CONTAINS",
       "to": "CALL:console.error"
+    },
+    {
+      "from": "SCOPE:anonymous[6]:body",
+      "type": "CONTAINS",
+      "to": "CALL:console.error"
+    },
+    {
+      "from": "SCOPE:anonymous[6]:body",
+      "type": "CONTAINS",
+      "to": "CALL:jwt.sign"
+    },
+    {
+      "from": "SCOPE:anonymous[6]:body",
+      "type": "CONTAINS",
+      "to": "CALL:mongoose.connection.db.collection"
     },
     {
       "from": "SCOPE:anonymous[6]:body",
@@ -42360,6 +41566,31 @@
       "from": "SCOPE:anonymous[6]:body",
       "type": "CONTAINS",
       "to": "CALL:res.status"
+    },
+    {
+      "from": "SCOPE:anonymous[6]:body",
+      "type": "CONTAINS",
+      "to": "CALL:user._id.toString"
+    },
+    {
+      "from": "SCOPE:anonymous[6]:body",
+      "type": "CONTAINS",
+      "to": "CALL:users.filter"
+    },
+    {
+      "from": "SCOPE:anonymous[6]:body",
+      "type": "CONTAINS",
+      "to": "FUNCTION:anonymous[0]"
+    },
+    {
+      "from": "SCOPE:anonymous[6]:body",
+      "type": "CONTAINS",
+      "to": "FUNCTION:anonymous[0]"
+    },
+    {
+      "from": "SCOPE:anonymous[6]:body",
+      "type": "CONTAINS",
+      "to": "FUNCTION:anonymous[0]"
     },
     {
       "from": "SCOPE:anonymous[7]:body",

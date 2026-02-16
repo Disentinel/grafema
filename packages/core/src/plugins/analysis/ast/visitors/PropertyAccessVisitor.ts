@@ -21,7 +21,7 @@ import type { NodePath } from '@babel/traverse';
 import { ASTVisitor, type VisitorModule, type VisitorCollections, type VisitorHandlers } from './ASTVisitor.js';
 import type { PropertyAccessInfo, CounterRef } from '../types.js';
 import type { ScopeTracker } from '../../../../core/ScopeTracker.js';
-import { computeSemanticId } from '../../../../core/SemanticId.js';
+import { computeSemanticIdV2 } from '../../../../core/SemanticId.js';
 import { getLine, getColumn } from '../utils/location.js';
 
 /**
@@ -146,7 +146,7 @@ export class PropertyAccessVisitor extends ASTVisitor {
       let id: string;
       if (scopeTracker) {
         const discriminator = scopeTracker.getItemCounter(`PROPERTY_ACCESS:${fullName}`);
-        id = computeSemanticId('PROPERTY_ACCESS', fullName, scopeTracker.getContext(), { discriminator });
+        id = computeSemanticIdV2('PROPERTY_ACCESS', fullName, module.file, scopeTracker.getNamedParent(), undefined, discriminator);
       } else {
         id = `PROPERTY_ACCESS#${fullName}#${module.file}#${info.line}:${info.column}:${propertyAccessCounterRef.value++}`;
       }
@@ -189,7 +189,7 @@ export class PropertyAccessVisitor extends ASTVisitor {
     let id: string;
     if (scopeTracker) {
       const discriminator = scopeTracker.getItemCounter(`PROPERTY_ACCESS:${fullName}`);
-      id = computeSemanticId('PROPERTY_ACCESS', fullName, scopeTracker.getContext(), { discriminator });
+      id = computeSemanticIdV2('PROPERTY_ACCESS', fullName, module.file, scopeTracker.getNamedParent(), undefined, discriminator);
     } else {
       const line = node.loc?.start?.line ?? 0;
       const column = node.loc?.start?.column ?? 0;

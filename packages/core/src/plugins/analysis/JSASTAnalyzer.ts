@@ -54,6 +54,8 @@ import { getLine, getColumn } from './ast/utils/location.js';
 import { Profiler } from '../../core/Profiler.js';
 import { ScopeTracker } from '../../core/ScopeTracker.js';
 import { computeSemanticId } from '../../core/SemanticId.js';
+import { IdGenerator } from './ast/IdGenerator.js';
+import { CollisionResolver } from './ast/CollisionResolver.js';
 import { ExpressionNode } from '../../core/nodes/ExpressionNode.js';
 import { ConstructorCallNode } from '../../core/nodes/ConstructorCallNode.js';
 import { ObjectLiteralNode } from '../../core/nodes/ObjectLiteralNode.js';
@@ -1327,6 +1329,9 @@ export class JSASTAnalyzer extends Plugin {
       // Use basename for shorter, more readable semantic IDs
       const scopeTracker = new ScopeTracker(basename(module.file));
 
+      // REG-464: Shared IdGenerator for v2 collision resolution across visitors
+      const sharedIdGenerator = new IdGenerator(scopeTracker);
+
       const functions: FunctionInfo[] = [];
       const parameters: ParameterInfo[] = [];
       const scopes: ScopeInfo[] = [];
@@ -1659,7 +1664,7 @@ export class JSASTAnalyzer extends Plugin {
 
       // Call expressions
       this.profiler.start('traverse_calls');
-      const callExpressionVisitor = new CallExpressionVisitor(module, allCollections, scopeTracker);
+      const callExpressionVisitor = new CallExpressionVisitor(module, allCollections, scopeTracker, sharedIdGenerator);
       traverse(ast, callExpressionVisitor.getHandlers());
       this.profiler.end('traverse_calls');
 
@@ -1816,6 +1821,39 @@ export class JSASTAnalyzer extends Plugin {
         }
       });
       this.profiler.end('traverse_ifs');
+
+      // REG-464: Resolve v2 ID collisions after all visitors complete
+      const pendingNodes = sharedIdGenerator.getPendingNodes();
+      if (pendingNodes.length > 0) {
+        // Capture pre-resolution IDs to update callArguments afterward
+        const preResolutionIds = new Map<{ id: string }, string>();
+        for (const pn of pendingNodes) {
+          preResolutionIds.set(pn.collectionRef, pn.collectionRef.id);
+        }
+
+        const collisionResolver = new CollisionResolver();
+        collisionResolver.resolve(pendingNodes);
+
+        // Update callArgument.callId references that became stale after resolution
+        const idRemapping = new Map<string, string>();
+        for (const pn of pendingNodes) {
+          const oldId = preResolutionIds.get(pn.collectionRef)!;
+          if (oldId !== pn.collectionRef.id) {
+            idRemapping.set(oldId, pn.collectionRef.id);
+          }
+        }
+        if (idRemapping.size > 0) {
+          const callArgs = allCollections.callArguments as Array<{ callId: string }> | undefined;
+          if (callArgs) {
+            for (const arg of callArgs) {
+              const resolved = idRemapping.get(arg.callId);
+              if (resolved) {
+                arg.callId = resolved;
+              }
+            }
+          }
+        }
+      }
 
       // Build graph
       this.profiler.start('graph_build');

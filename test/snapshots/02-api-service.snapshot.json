@@ -509,6 +509,7 @@
       "exported": false,
       "file": "src/index.js",
       "name": "PORT",
+      "scopePath": [],
       "type": "CONSTANT",
       "value": 3000
     },
@@ -1508,8 +1509,12 @@
       "hasDefault": true,
       "index": 1,
       "name": "params",
-      "parentFunctionId": "db.js->Database->FUNCTION->query",
-      "semanticId": "db.js->Database->query->PARAMETER->params#1",
+      "parentFunctionId": "src/db.js->FUNCTION->query[in:Database]",
+      "scopePath": [
+        "Database",
+        "query"
+      ],
+      "semanticId": "src/db.js->PARAMETER->params[in:query]#1",
       "type": "PARAMETER"
     },
     {
@@ -1517,8 +1522,11 @@
       "file": "src/index.js",
       "index": 0,
       "name": "req",
-      "parentFunctionId": "index.js->global->FUNCTION->anonymous[0]",
-      "semanticId": "index.js->anonymous[0]->PARAMETER->req#0",
+      "parentFunctionId": "src/index.js->FUNCTION->anonymous[0]",
+      "scopePath": [
+        "anonymous[0]"
+      ],
+      "semanticId": "src/index.js->PARAMETER->req",
       "type": "PARAMETER"
     },
     {
@@ -1526,8 +1534,11 @@
       "file": "src/index.js",
       "index": 1,
       "name": "res",
-      "parentFunctionId": "index.js->global->FUNCTION->anonymous[0]",
-      "semanticId": "index.js->anonymous[0]->PARAMETER->res#1",
+      "parentFunctionId": "src/index.js->FUNCTION->anonymous[0]",
+      "scopePath": [
+        "anonymous[0]"
+      ],
+      "semanticId": "src/index.js->PARAMETER->res#1",
       "type": "PARAMETER"
     },
     {
@@ -1535,8 +1546,12 @@
       "file": "src/db.js",
       "index": 0,
       "name": "sql",
-      "parentFunctionId": "db.js->Database->FUNCTION->query",
-      "semanticId": "db.js->Database->query->PARAMETER->sql#0",
+      "parentFunctionId": "src/db.js->FUNCTION->query[in:Database]",
+      "scopePath": [
+        "Database",
+        "query"
+      ],
+      "semanticId": "src/db.js->PARAMETER->sql[in:query]",
       "type": "PARAMETER"
     },
     {
@@ -1544,7 +1559,7 @@
       "file": "src/routes/orders.js",
       "name": "body",
       "objectName": "req",
-      "semanticId": "orders.js->getOrdersRoute->anonymous[1]->PROPERTY_ACCESS->req.body#0",
+      "semanticId": "src/routes/orders.js->PROPERTY_ACCESS->req.body[in:getOrdersRoute]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -1552,7 +1567,7 @@
       "file": "src/routes/users.js",
       "name": "body",
       "objectName": "req",
-      "semanticId": "users.js->getUsersRoute->anonymous[2]->PROPERTY_ACCESS->req.body#0",
+      "semanticId": "src/routes/users.js->PROPERTY_ACCESS->req.body[in:getUsersRoute]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -1560,7 +1575,7 @@
       "file": "src/db.js",
       "name": "connected",
       "objectName": "this",
-      "semanticId": "db.js->Database->query->if#0->PROPERTY_ACCESS->this.connected#0",
+      "semanticId": "src/db.js->PROPERTY_ACCESS->this.connected[in:query]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -1568,7 +1583,7 @@
       "file": "src/routes/orders.js",
       "name": "insertId",
       "objectName": "result",
-      "semanticId": "orders.js->getOrdersRoute->anonymous[1]->PROPERTY_ACCESS->result.insertId#0",
+      "semanticId": "src/routes/orders.js->PROPERTY_ACCESS->result.insertId[in:getOrdersRoute]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -1576,7 +1591,7 @@
       "file": "src/routes/users.js",
       "name": "insertId",
       "objectName": "result",
-      "semanticId": "users.js->getUsersRoute->anonymous[2]->PROPERTY_ACCESS->result.insertId#0",
+      "semanticId": "src/routes/users.js->PROPERTY_ACCESS->result.insertId[in:getUsersRoute]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -1584,7 +1599,7 @@
       "file": "src/routes/users.js",
       "name": "params",
       "objectName": "req",
-      "semanticId": "users.js->getUsersRoute->anonymous[1]->PROPERTY_ACCESS->req.params#0",
+      "semanticId": "src/routes/users.js->PROPERTY_ACCESS->req.params[in:getUsersRoute]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -1654,7 +1669,7 @@
       "file": "src/db.js",
       "name": "Database.connect:body",
       "scopeType": "method_body",
-      "semanticId": "db.js->Database->connect->SCOPE->body",
+      "semanticId": "src/db.js->SCOPE->body[in:connect]",
       "type": "SCOPE"
     },
     {
@@ -1663,7 +1678,7 @@
       "file": "src/db.js",
       "name": "Database.constructor:body",
       "scopeType": "method_body",
-      "semanticId": "db.js->Database->constructor->SCOPE->body",
+      "semanticId": "src/db.js->SCOPE->body[in:constructor]",
       "type": "SCOPE"
     },
     {
@@ -1672,7 +1687,7 @@
       "file": "src/db.js",
       "name": "Database.query:body",
       "scopeType": "method_body",
-      "semanticId": "db.js->Database->query->SCOPE->body",
+      "semanticId": "src/db.js->SCOPE->body[in:query]",
       "type": "SCOPE"
     },
     {
@@ -1726,6 +1741,7 @@
       "exported": false,
       "file": "src/index.js",
       "name": "app",
+      "scopePath": [],
       "type": "VARIABLE"
     },
     {

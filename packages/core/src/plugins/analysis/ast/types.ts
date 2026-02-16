@@ -57,6 +57,7 @@ export interface ParameterInfo {
   isRest?: boolean;      // Rest parameter (e.g., function(...args))
   functionId?: string;   // Legacy field - prefer parentFunctionId
   parentFunctionId?: string;
+  scopePath?: string[];
   // REG-399: Destructuring metadata
   propertyPath?: string[];  // For nested object destructuring: ['data', 'user'] for ({ data: { user } })
   arrayIndex?: number;      // For array destructuring: 0 for first element in ([first, second])
@@ -222,6 +223,7 @@ export interface VariableDeclarationInfo {
   column?: number;
   value?: unknown;
   parentScopeId?: string;
+  scopePath?: string[];
   // REG-271: Private fields support
   isPrivate?: boolean;      // true for #privateField
   isStatic?: boolean;       // true for static #field

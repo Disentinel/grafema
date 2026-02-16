@@ -16,7 +16,7 @@ import type {
 } from '@babel/types';
 import type { ParameterInfo } from '../types.js';
 import type { ScopeTracker } from '../../../../core/ScopeTracker.js';
-import { computeSemanticId } from '../../../../core/SemanticId.js';
+import { computeSemanticIdV2 } from '../../../../core/SemanticId.js';
 import { extractNamesFromPattern } from './extractNamesFromPattern.js';
 
 /**
@@ -49,11 +49,14 @@ export function createParameterNodes(
 ): void {
   if (!parameters) return; // Guard for backward compatibility
 
+  const scopePath = scopeTracker.getContext().scopePath;
+  const namedParent = scopeTracker.getNamedParent();
+
   params.forEach((param, index) => {
     // Handle different parameter types
     if (param.type === 'Identifier') {
       const name = (param as Identifier).name;
-      const paramId = computeSemanticId('PARAMETER', name, scopeTracker.getContext(), { discriminator: index });
+      const paramId = computeSemanticIdV2('PARAMETER', name, file, namedParent, undefined, index);
       parameters.push({
         id: paramId,
         semanticId: paramId,
@@ -62,7 +65,8 @@ export function createParameterNodes(
         file: file,
         line: param.loc?.start.line || line,
         index: index,
-        parentFunctionId: functionId
+        parentFunctionId: functionId,
+        scopePath
       });
     } else if (param.type === 'AssignmentPattern') {
       // Default parameter: function(a = 1) OR destructured with defaults: function({ x = 1 })
@@ -71,7 +75,7 @@ export function createParameterNodes(
       if (assignmentParam.left.type === 'Identifier') {
         // Simple default: function(a = 1)
         const name = assignmentParam.left.name;
-        const paramId = computeSemanticId('PARAMETER', name, scopeTracker.getContext(), { discriminator: index });
+        const paramId = computeSemanticIdV2('PARAMETER', name, file, namedParent, undefined, index);
         parameters.push({
           id: paramId,
           semanticId: paramId,
@@ -81,7 +85,8 @@ export function createParameterNodes(
           line: assignmentParam.left.loc?.start.line || line,
           index: index,
           hasDefault: true,
-          parentFunctionId: functionId
+          parentFunctionId: functionId,
+          scopePath
         });
       } else if (assignmentParam.left.type === 'ObjectPattern' || assignmentParam.left.type === 'ArrayPattern') {
         // REG-399: Destructuring with default: function({ x } = {}) or function([x] = [])
@@ -95,11 +100,13 @@ export function createParameterNodes(
           // Example: function({ a, b }, c) — a=0, b=1, c=1000
           const discriminator = index * 1000 + subIndex;
 
-          const paramId = computeSemanticId(
+          const paramId = computeSemanticIdV2(
             'PARAMETER',
             paramInfo.name,
-            scopeTracker.getContext(),
-            { discriminator }
+            file,
+            namedParent,
+            undefined,
+            discriminator
           );
 
           const paramData: ParameterInfo = {
@@ -111,7 +118,8 @@ export function createParameterNodes(
             line: paramInfo.loc.start.line,
             index: index,  // Original parameter position in function signature
             hasDefault: true,  // Pattern-level default (e.g., = {})
-            parentFunctionId: functionId
+            parentFunctionId: functionId,
+            scopePath
           };
 
           // Add destructuring metadata
@@ -133,7 +141,7 @@ export function createParameterNodes(
       const restParam = param as unknown as RestElement;
       if (restParam.argument.type === 'Identifier') {
         const name = restParam.argument.name;
-        const paramId = computeSemanticId('PARAMETER', name, scopeTracker.getContext(), { discriminator: index });
+        const paramId = computeSemanticIdV2('PARAMETER', name, file, namedParent, undefined, index);
         parameters.push({
           id: paramId,
           semanticId: paramId,
@@ -143,7 +151,8 @@ export function createParameterNodes(
           line: restParam.argument.loc?.start.line || line,
           index: index,
           isRest: true,
-          parentFunctionId: functionId
+          parentFunctionId: functionId,
+          scopePath
         });
       }
     } else if (param.type === 'ObjectPattern' || param.type === 'ArrayPattern') {
@@ -157,11 +166,13 @@ export function createParameterNodes(
         // Example: function({ a, b }, c) — a=0, b=1, c=1000
         const discriminator = index * 1000 + subIndex;
 
-        const paramId = computeSemanticId(
+        const paramId = computeSemanticIdV2(
           'PARAMETER',
           paramInfo.name,
-          scopeTracker.getContext(),
-          { discriminator }
+          file,
+          namedParent,
+          undefined,
+          discriminator
         );
 
         const paramData: ParameterInfo = {
@@ -172,7 +183,8 @@ export function createParameterNodes(
           file: file,
           line: paramInfo.loc.start.line,
           index: index,  // Original parameter position in function signature
-          parentFunctionId: functionId
+          parentFunctionId: functionId,
+          scopePath
         };
 
         // Add destructuring metadata

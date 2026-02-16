@@ -101,12 +101,12 @@ function foo() {
       const outerX = allNodes.find(n =>
         n.name === 'x' &&
         n.type === 'VARIABLE' &&
-        n.id.includes('->global->VARIABLE->x')
+        n.id === 'index.js->VARIABLE->x'
       );
       const innerX = allNodes.find(n =>
         n.name === 'x' &&
         n.type === 'VARIABLE' &&
-        n.id.includes('->foo->VARIABLE->x')
+        n.id === 'index.js->foo->VARIABLE->x'
       );
 
       assert.ok(outerX, 'Outer x not found');
@@ -151,7 +151,7 @@ function processItems(items) {
       const totalVar = allNodes.find(n =>
         n.name === 'total' &&
         n.type === 'VARIABLE' &&
-        n.id.includes('->global->VARIABLE->total')
+        n.id === 'index.js->VARIABLE->total'
       );
 
       assert.ok(totalVar, 'Variable "total" not found');
@@ -187,7 +187,7 @@ function outer() {
       // Scope paths: global, outer, outer->inner
       const globalX = allNodes.find(n =>
         n.name === 'x' &&
-        n.id.includes('->global->VARIABLE->x')
+        n.id === 'index.js->VARIABLE->x'
       );
       const outerX = allNodes.find(n =>
         n.name === 'x' &&
@@ -313,11 +313,11 @@ function foo() {
 
       const outerArr = allNodes.find(n =>
         n.name === 'arr' &&
-        n.id.includes('->global->VARIABLE->arr')
+        n.id === 'index.js->VARIABLE->arr'
       );
       const innerArr = allNodes.find(n =>
         n.name === 'arr' &&
-        n.id.includes('->foo->VARIABLE->arr')
+        n.id === 'index.js->foo->VARIABLE->arr'
       );
 
       assert.ok(outerArr, 'Outer arr not found');
@@ -359,7 +359,7 @@ function collect(item) {
 
       const resultsVar = allNodes.find(n =>
         n.name === 'results' &&
-        n.id.includes('->global->VARIABLE->results')
+        n.id === 'index.js->VARIABLE->results'
       );
 
       assert.ok(resultsVar, 'Variable "results" not found');
@@ -389,11 +389,11 @@ function processArray() {
 
       const outerArr = allNodes.find(n =>
         n.name === 'arr' &&
-        n.id.includes('->global->VARIABLE->arr')
+        n.id === 'index.js->VARIABLE->arr'
       );
       const innerArr = allNodes.find(n =>
         n.name === 'arr' &&
-        n.id.includes('->processArray->VARIABLE->arr')
+        n.id === 'index.js->processArray->VARIABLE->arr'
       );
 
       assert.ok(outerArr, 'Outer arr not found');
@@ -430,11 +430,11 @@ function processObject() {
 
       const outerObj = allNodes.find(n =>
         n.name === 'obj' &&
-        n.id.includes('->global->VARIABLE->obj')
+        n.id === 'index.js->VARIABLE->obj'
       );
       const innerObj = allNodes.find(n =>
         n.name === 'obj' &&
-        n.id.includes('->processObject->VARIABLE->obj')
+        n.id === 'index.js->processObject->VARIABLE->obj'
       );
 
       assert.ok(outerObj, 'Outer obj not found');
@@ -467,7 +467,7 @@ function setup() {
 
       const configVar = allNodes.find(n =>
         n.name === 'config' &&
-        n.id.includes('->global->VARIABLE->config')
+        n.id === 'index.js->VARIABLE->config'
       );
 
       assert.ok(configVar, 'Variable "config" not found');
@@ -499,7 +499,7 @@ function foo() {
 
       const outerObj = allNodes.find(n =>
         n.name === 'obj' &&
-        n.id.includes('->global->VARIABLE->obj')
+        n.id === 'index.js->VARIABLE->obj'
       );
       const innerObj = allNodes.find(n =>
         n.name === 'obj' &&
@@ -574,13 +574,12 @@ function outer(x) {
       const outerParam = allNodes.find(n =>
         n.name === 'x' &&
         n.type === 'PARAMETER' &&
-        n.id.includes('->outer->PARAMETER->x') &&
-        !n.id.includes('->inner->')
+        n.id.includes('[in:outer]')
       );
       const innerParam = allNodes.find(n =>
         n.name === 'x' &&
         n.type === 'PARAMETER' &&
-        n.id.includes('->outer->inner->PARAMETER->x')
+        n.id.includes('[in:inner]')
       );
 
       assert.ok(outerParam, 'Outer parameter not found');
@@ -617,7 +616,7 @@ const fn = () => {
 
       const outerX = allNodes.find(n =>
         n.name === 'x' &&
-        n.id.includes('->global->VARIABLE->x')
+        n.id === 'index.js->VARIABLE->x'
       );
       const innerX = allNodes.find(n =>
         n.name === 'x' &&
@@ -651,7 +650,7 @@ const increment = () => {
 
       const countVar = allNodes.find(n =>
         n.name === 'count' &&
-        n.id.includes('->global->VARIABLE->count')
+        n.id === 'index.js->VARIABLE->count'
       );
 
       assert.ok(countVar, 'Variable "count" not found');
@@ -688,7 +687,7 @@ class Foo {
 
       const globalX = allNodes.find(n =>
         n.name === 'x' &&
-        n.id.includes('->global->VARIABLE->x')
+        n.id === 'index.js->VARIABLE->x'
       );
       const methodX = allNodes.find(n =>
         n.name === 'x' &&
@@ -805,7 +804,7 @@ function process(items) {
 
       const globalResult = allNodes.find(n =>
         n.name === 'result' &&
-        n.id.includes('->global->VARIABLE->result')
+        n.id === 'index.js->VARIABLE->result'
       );
       const functionResult = allNodes.find(n =>
         n.name === 'result' &&

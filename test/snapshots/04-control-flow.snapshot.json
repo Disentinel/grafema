@@ -3430,8 +3430,11 @@
       "file": "src/loops.js",
       "index": 1,
       "name": "cols",
-      "parentFunctionId": "loops.js->global->FUNCTION->generateMatrix",
-      "semanticId": "loops.js->generateMatrix->PARAMETER->cols#1",
+      "parentFunctionId": "src/loops.js->FUNCTION->generateMatrix",
+      "scopePath": [
+        "generateMatrix"
+      ],
+      "semanticId": "src/loops.js->PARAMETER->cols[in:generateMatrix]#1",
       "type": "PARAMETER"
     },
     {
@@ -3439,8 +3442,11 @@
       "file": "src/conditionals.js",
       "index": 0,
       "name": "command",
-      "parentFunctionId": "conditionals.js->global->FUNCTION->processCommand",
-      "semanticId": "conditionals.js->processCommand->PARAMETER->command#0",
+      "parentFunctionId": "src/conditionals.js->FUNCTION->processCommand",
+      "scopePath": [
+        "processCommand"
+      ],
+      "semanticId": "src/conditionals.js->PARAMETER->command[in:processCommand]",
       "type": "PARAMETER"
     },
     {
@@ -3448,8 +3454,11 @@
       "file": "src/conditionals.js",
       "index": 0,
       "name": "config",
-      "parentFunctionId": "conditionals.js->global->FUNCTION->getConfigValue",
-      "semanticId": "conditionals.js->getConfigValue->PARAMETER->config#0",
+      "parentFunctionId": "src/conditionals.js->FUNCTION->getConfigValue",
+      "scopePath": [
+        "getConfigValue"
+      ],
+      "semanticId": "src/conditionals.js->PARAMETER->config[in:getConfigValue]",
       "type": "PARAMETER"
     },
     {
@@ -3457,8 +3466,11 @@
       "file": "src/conditionals.js",
       "index": 0,
       "name": "data",
-      "parentFunctionId": "conditionals.js->global->FUNCTION->getFirstItemName",
-      "semanticId": "conditionals.js->getFirstItemName->PARAMETER->data#0",
+      "parentFunctionId": "src/conditionals.js->FUNCTION->getFirstItemName",
+      "scopePath": [
+        "getFirstItemName"
+      ],
+      "semanticId": "src/conditionals.js->PARAMETER->data[in:getFirstItemName]",
       "type": "PARAMETER"
     },
     {
@@ -3466,8 +3478,11 @@
       "file": "src/exceptions.js",
       "index": 0,
       "name": "data",
-      "parentFunctionId": "exceptions.js->global->FUNCTION->processData",
-      "semanticId": "exceptions.js->processData->PARAMETER->data#0",
+      "parentFunctionId": "src/exceptions.js->FUNCTION->processData",
+      "scopePath": [
+        "processData"
+      ],
+      "semanticId": "src/exceptions.js->PARAMETER->data[in:processData]",
       "type": "PARAMETER"
     },
     {
@@ -3475,8 +3490,11 @@
       "file": "src/exceptions.js",
       "index": 0,
       "name": "data",
-      "parentFunctionId": "exceptions.js->global->FUNCTION->validateAndProcess",
-      "semanticId": "exceptions.js->validateAndProcess->PARAMETER->data#0",
+      "parentFunctionId": "src/exceptions.js->FUNCTION->validateAndProcess",
+      "scopePath": [
+        "validateAndProcess"
+      ],
+      "semanticId": "src/exceptions.js->PARAMETER->data[in:validateAndProcess]",
       "type": "PARAMETER"
     },
     {
@@ -3484,8 +3502,11 @@
       "file": "src/exceptions.js",
       "index": 0,
       "name": "data",
-      "parentFunctionId": "exceptions.js->global->FUNCTION->validateInput",
-      "semanticId": "exceptions.js->validateInput->PARAMETER->data#0",
+      "parentFunctionId": "src/exceptions.js->FUNCTION->validateInput",
+      "scopePath": [
+        "validateInput"
+      ],
+      "semanticId": "src/exceptions.js->PARAMETER->data[in:validateInput]",
       "type": "PARAMETER"
     },
     {
@@ -3493,8 +3514,11 @@
       "file": "src/conditionals.js",
       "index": 1,
       "name": "defaultValue",
-      "parentFunctionId": "conditionals.js->global->FUNCTION->getValue",
-      "semanticId": "conditionals.js->getValue->PARAMETER->defaultValue#1",
+      "parentFunctionId": "src/conditionals.js->FUNCTION->getValue",
+      "scopePath": [
+        "getValue"
+      ],
+      "semanticId": "src/conditionals.js->PARAMETER->defaultValue[in:getValue]#1",
       "type": "PARAMETER"
     },
     {
@@ -3502,8 +3526,11 @@
       "file": "src/exceptions.js",
       "index": 0,
       "name": "filename",
-      "parentFunctionId": "exceptions.js->global->FUNCTION->openFile",
-      "semanticId": "exceptions.js->openFile->PARAMETER->filename#0",
+      "parentFunctionId": "src/exceptions.js->FUNCTION->openFile",
+      "scopePath": [
+        "openFile"
+      ],
+      "semanticId": "src/exceptions.js->PARAMETER->filename[in:openFile]",
       "type": "PARAMETER"
     },
     {
@@ -3511,8 +3538,11 @@
       "file": "src/exceptions.js",
       "index": 0,
       "name": "filename",
-      "parentFunctionId": "exceptions.js->global->FUNCTION->readFileWithErrorHandling",
-      "semanticId": "exceptions.js->readFileWithErrorHandling->PARAMETER->filename#0",
+      "parentFunctionId": "src/exceptions.js->FUNCTION->readFileWithErrorHandling",
+      "scopePath": [
+        "readFileWithErrorHandling"
+      ],
+      "semanticId": "src/exceptions.js->PARAMETER->filename[in:readFileWithErrorHandling]",
       "type": "PARAMETER"
     },
     {
@@ -3520,8 +3550,11 @@
       "file": "src/conditionals.js",
       "index": 0,
       "name": "input",
-      "parentFunctionId": "conditionals.js->global->FUNCTION->getValue",
-      "semanticId": "conditionals.js->getValue->PARAMETER->input#0",
+      "parentFunctionId": "src/conditionals.js->FUNCTION->getValue",
+      "scopePath": [
+        "getValue"
+      ],
+      "semanticId": "src/conditionals.js->PARAMETER->input[in:getValue]",
       "type": "PARAMETER"
     },
     {
@@ -3529,8 +3562,11 @@
       "file": "src/exceptions.js",
       "index": 0,
       "name": "input",
-      "parentFunctionId": "exceptions.js->global->FUNCTION->complexOperation",
-      "semanticId": "exceptions.js->complexOperation->PARAMETER->input#0",
+      "parentFunctionId": "src/exceptions.js->FUNCTION->complexOperation",
+      "scopePath": [
+        "complexOperation"
+      ],
+      "semanticId": "src/exceptions.js->PARAMETER->input[in:complexOperation]",
       "type": "PARAMETER"
     },
     {
@@ -3538,8 +3574,11 @@
       "file": "src/exceptions.js",
       "index": 0,
       "name": "input",
-      "parentFunctionId": "exceptions.js->global->FUNCTION->parseInput",
-      "semanticId": "exceptions.js->parseInput->PARAMETER->input#0",
+      "parentFunctionId": "src/exceptions.js->FUNCTION->parseInput",
+      "scopePath": [
+        "parseInput"
+      ],
+      "semanticId": "src/exceptions.js->PARAMETER->input[in:parseInput]",
       "type": "PARAMETER"
     },
     {
@@ -3547,8 +3586,11 @@
       "file": "src/conditionals.js",
       "index": 0,
       "name": "isActive",
-      "parentFunctionId": "conditionals.js->global->FUNCTION->getStatus",
-      "semanticId": "conditionals.js->getStatus->PARAMETER->isActive#0",
+      "parentFunctionId": "src/conditionals.js->FUNCTION->getStatus",
+      "scopePath": [
+        "getStatus"
+      ],
+      "semanticId": "src/conditionals.js->PARAMETER->isActive[in:getStatus]",
       "type": "PARAMETER"
     },
     {
@@ -3556,8 +3598,11 @@
       "file": "src/conditionals.js",
       "index": 1,
       "name": "isPremium",
-      "parentFunctionId": "conditionals.js->global->FUNCTION->calculatePrice",
-      "semanticId": "conditionals.js->calculatePrice->PARAMETER->isPremium#1",
+      "parentFunctionId": "src/conditionals.js->FUNCTION->calculatePrice",
+      "scopePath": [
+        "calculatePrice"
+      ],
+      "semanticId": "src/conditionals.js->PARAMETER->isPremium[in:calculatePrice]#1",
       "type": "PARAMETER"
     },
     {
@@ -3565,8 +3610,11 @@
       "file": "src/loops.js",
       "index": 0,
       "name": "items",
-      "parentFunctionId": "loops.js->global->FUNCTION->findFirst",
-      "semanticId": "loops.js->findFirst->PARAMETER->items#0",
+      "parentFunctionId": "src/loops.js->FUNCTION->findFirst",
+      "scopePath": [
+        "findFirst"
+      ],
+      "semanticId": "src/loops.js->PARAMETER->items[in:findFirst]",
       "type": "PARAMETER"
     },
     {
@@ -3574,8 +3622,11 @@
       "file": "src/loops.js",
       "index": 0,
       "name": "items",
-      "parentFunctionId": "loops.js->global->FUNCTION->processWithForLoop",
-      "semanticId": "loops.js->processWithForLoop->PARAMETER->items#0",
+      "parentFunctionId": "src/loops.js->FUNCTION->processWithForLoop",
+      "scopePath": [
+        "processWithForLoop"
+      ],
+      "semanticId": "src/loops.js->PARAMETER->items[in:processWithForLoop]",
       "type": "PARAMETER"
     },
     {
@@ -3583,8 +3634,11 @@
       "file": "src/conditionals.js",
       "index": 1,
       "name": "key",
-      "parentFunctionId": "conditionals.js->global->FUNCTION->getConfigValue",
-      "semanticId": "conditionals.js->getConfigValue->PARAMETER->key#1",
+      "parentFunctionId": "src/conditionals.js->FUNCTION->getConfigValue",
+      "scopePath": [
+        "getConfigValue"
+      ],
+      "semanticId": "src/conditionals.js->PARAMETER->key[in:getConfigValue]#1",
       "type": "PARAMETER"
     },
     {
@@ -3592,8 +3646,11 @@
       "file": "src/loops.js",
       "index": 0,
       "name": "numbers",
-      "parentFunctionId": "loops.js->global->FUNCTION->processEvenOnly",
-      "semanticId": "loops.js->processEvenOnly->PARAMETER->numbers#0",
+      "parentFunctionId": "src/loops.js->FUNCTION->processEvenOnly",
+      "scopePath": [
+        "processEvenOnly"
+      ],
+      "semanticId": "src/loops.js->PARAMETER->numbers[in:processEvenOnly]",
       "type": "PARAMETER"
     },
     {
@@ -3601,8 +3658,11 @@
       "file": "src/loops.js",
       "index": 0,
       "name": "numbers",
-      "parentFunctionId": "loops.js->global->FUNCTION->sumWithForOf",
-      "semanticId": "loops.js->sumWithForOf->PARAMETER->numbers#0",
+      "parentFunctionId": "src/loops.js->FUNCTION->sumWithForOf",
+      "scopePath": [
+        "sumWithForOf"
+      ],
+      "semanticId": "src/loops.js->PARAMETER->numbers[in:sumWithForOf]",
       "type": "PARAMETER"
     },
     {
@@ -3610,8 +3670,11 @@
       "file": "src/conditionals.js",
       "index": 0,
       "name": "obj",
-      "parentFunctionId": "conditionals.js->global->FUNCTION->safeAccess",
-      "semanticId": "conditionals.js->safeAccess->PARAMETER->obj#0",
+      "parentFunctionId": "src/conditionals.js->FUNCTION->safeAccess",
+      "scopePath": [
+        "safeAccess"
+      ],
+      "semanticId": "src/conditionals.js->PARAMETER->obj[in:safeAccess]",
       "type": "PARAMETER"
     },
     {
@@ -3619,8 +3682,11 @@
       "file": "src/loops.js",
       "index": 0,
       "name": "obj",
-      "parentFunctionId": "loops.js->global->FUNCTION->processObjectKeys",
-      "semanticId": "loops.js->processObjectKeys->PARAMETER->obj#0",
+      "parentFunctionId": "src/loops.js->FUNCTION->processObjectKeys",
+      "scopePath": [
+        "processObjectKeys"
+      ],
+      "semanticId": "src/loops.js->PARAMETER->obj[in:processObjectKeys]",
       "type": "PARAMETER"
     },
     {
@@ -3628,8 +3694,11 @@
       "file": "src/exceptions.js",
       "index": 0,
       "name": "operation",
-      "parentFunctionId": "exceptions.js->global->FUNCTION->handleDifferentErrors",
-      "semanticId": "exceptions.js->handleDifferentErrors->PARAMETER->operation#0",
+      "parentFunctionId": "src/exceptions.js->FUNCTION->handleDifferentErrors",
+      "scopePath": [
+        "handleDifferentErrors"
+      ],
+      "semanticId": "src/exceptions.js->PARAMETER->operation[in:handleDifferentErrors]",
       "type": "PARAMETER"
     },
     {
@@ -3637,8 +3706,11 @@
       "file": "src/exceptions.js",
       "index": 0,
       "name": "operation",
-      "parentFunctionId": "exceptions.js->global->FUNCTION->withFinally",
-      "semanticId": "exceptions.js->withFinally->PARAMETER->operation#0",
+      "parentFunctionId": "src/exceptions.js->FUNCTION->withFinally",
+      "scopePath": [
+        "withFinally"
+      ],
+      "semanticId": "src/exceptions.js->PARAMETER->operation[in:withFinally]",
       "type": "PARAMETER"
     },
     {
@@ -3646,8 +3718,11 @@
       "file": "src/loops.js",
       "index": 1,
       "name": "predicate",
-      "parentFunctionId": "loops.js->global->FUNCTION->findFirst",
-      "semanticId": "loops.js->findFirst->PARAMETER->predicate#1",
+      "parentFunctionId": "src/loops.js->FUNCTION->findFirst",
+      "scopePath": [
+        "findFirst"
+      ],
+      "semanticId": "src/loops.js->PARAMETER->predicate[in:findFirst]#1",
       "type": "PARAMETER"
     },
     {
@@ -3655,8 +3730,11 @@
       "file": "src/conditionals.js",
       "index": 0,
       "name": "quantity",
-      "parentFunctionId": "conditionals.js->global->FUNCTION->calculatePrice",
-      "semanticId": "conditionals.js->calculatePrice->PARAMETER->quantity#0",
+      "parentFunctionId": "src/conditionals.js->FUNCTION->calculatePrice",
+      "scopePath": [
+        "calculatePrice"
+      ],
+      "semanticId": "src/conditionals.js->PARAMETER->quantity[in:calculatePrice]",
       "type": "PARAMETER"
     },
     {
@@ -3665,8 +3743,11 @@
       "hasDefault": true,
       "index": 1,
       "name": "retries",
-      "parentFunctionId": "exceptions.js->global->FUNCTION->fetchWithRetry",
-      "semanticId": "exceptions.js->fetchWithRetry->PARAMETER->retries#1",
+      "parentFunctionId": "src/exceptions.js->FUNCTION->fetchWithRetry",
+      "scopePath": [
+        "fetchWithRetry"
+      ],
+      "semanticId": "src/exceptions.js->PARAMETER->retries[in:fetchWithRetry]#1",
       "type": "PARAMETER"
     },
     {
@@ -3674,8 +3755,11 @@
       "file": "src/loops.js",
       "index": 0,
       "name": "rows",
-      "parentFunctionId": "loops.js->global->FUNCTION->generateMatrix",
-      "semanticId": "loops.js->generateMatrix->PARAMETER->rows#0",
+      "parentFunctionId": "src/loops.js->FUNCTION->generateMatrix",
+      "scopePath": [
+        "generateMatrix"
+      ],
+      "semanticId": "src/loops.js->PARAMETER->rows[in:generateMatrix]",
       "type": "PARAMETER"
     },
     {
@@ -3683,8 +3767,11 @@
       "file": "src/conditionals.js",
       "index": 0,
       "name": "score",
-      "parentFunctionId": "conditionals.js->global->FUNCTION->getGrade",
-      "semanticId": "conditionals.js->getGrade->PARAMETER->score#0",
+      "parentFunctionId": "src/conditionals.js->FUNCTION->getGrade",
+      "scopePath": [
+        "getGrade"
+      ],
+      "semanticId": "src/conditionals.js->PARAMETER->score[in:getGrade]",
       "type": "PARAMETER"
     },
     {
@@ -3692,8 +3779,11 @@
       "file": "src/loops.js",
       "index": 0,
       "name": "start",
-      "parentFunctionId": "loops.js->global->FUNCTION->countDown",
-      "semanticId": "loops.js->countDown->PARAMETER->start#0",
+      "parentFunctionId": "src/loops.js->FUNCTION->countDown",
+      "scopePath": [
+        "countDown"
+      ],
+      "semanticId": "src/loops.js->PARAMETER->start[in:countDown]",
       "type": "PARAMETER"
     },
     {
@@ -3701,8 +3791,11 @@
       "file": "src/exceptions.js",
       "index": 0,
       "name": "url",
-      "parentFunctionId": "exceptions.js->global->FUNCTION->fetchWithRetry",
-      "semanticId": "exceptions.js->fetchWithRetry->PARAMETER->url#0",
+      "parentFunctionId": "src/exceptions.js->FUNCTION->fetchWithRetry",
+      "scopePath": [
+        "fetchWithRetry"
+      ],
+      "semanticId": "src/exceptions.js->PARAMETER->url[in:fetchWithRetry]",
       "type": "PARAMETER"
     },
     {
@@ -3710,8 +3803,11 @@
       "file": "src/conditionals.js",
       "index": 0,
       "name": "user",
-      "parentFunctionId": "conditionals.js->global->FUNCTION->getUserEmail",
-      "semanticId": "conditionals.js->getUserEmail->PARAMETER->user#0",
+      "parentFunctionId": "src/conditionals.js->FUNCTION->getUserEmail",
+      "scopePath": [
+        "getUserEmail"
+      ],
+      "semanticId": "src/conditionals.js->PARAMETER->user[in:getUserEmail]",
       "type": "PARAMETER"
     },
     {
@@ -3719,8 +3815,11 @@
       "file": "src/conditionals.js",
       "index": 0,
       "name": "user",
-      "parentFunctionId": "conditionals.js->global->FUNCTION->greetUser",
-      "semanticId": "conditionals.js->greetUser->PARAMETER->user#0",
+      "parentFunctionId": "src/conditionals.js->FUNCTION->greetUser",
+      "scopePath": [
+        "greetUser"
+      ],
+      "semanticId": "src/conditionals.js->PARAMETER->user[in:greetUser]",
       "type": "PARAMETER"
     },
     {
@@ -3728,8 +3827,11 @@
       "file": "src/conditionals.js",
       "index": 0,
       "name": "user",
-      "parentFunctionId": "conditionals.js->global->FUNCTION->processUser",
-      "semanticId": "conditionals.js->processUser->PARAMETER->user#0",
+      "parentFunctionId": "src/conditionals.js->FUNCTION->processUser",
+      "scopePath": [
+        "processUser"
+      ],
+      "semanticId": "src/conditionals.js->PARAMETER->user[in:processUser]",
       "type": "PARAMETER"
     },
     {
@@ -3737,8 +3839,11 @@
       "file": "src/loops.js",
       "index": 0,
       "name": "validator",
-      "parentFunctionId": "loops.js->global->FUNCTION->readUntilValid",
-      "semanticId": "loops.js->readUntilValid->PARAMETER->validator#0",
+      "parentFunctionId": "src/loops.js->FUNCTION->readUntilValid",
+      "scopePath": [
+        "readUntilValid"
+      ],
+      "semanticId": "src/loops.js->PARAMETER->validator[in:readUntilValid]",
       "type": "PARAMETER"
     },
     {
@@ -3746,8 +3851,11 @@
       "file": "src/conditionals.js",
       "index": 0,
       "name": "value",
-      "parentFunctionId": "conditionals.js->global->FUNCTION->getCategory",
-      "semanticId": "conditionals.js->getCategory->PARAMETER->value#0",
+      "parentFunctionId": "src/conditionals.js->FUNCTION->getCategory",
+      "scopePath": [
+        "getCategory"
+      ],
+      "semanticId": "src/conditionals.js->PARAMETER->value[in:getCategory]",
       "type": "PARAMETER"
     },
     {
@@ -3756,7 +3864,7 @@
       "file": "src/conditionals.js",
       "name": "<computed>",
       "objectName": "config",
-      "semanticId": "conditionals.js->getConfigValue->PROPERTY_ACCESS->config.<computed>#0",
+      "semanticId": "src/conditionals.js->PROPERTY_ACCESS->config.<computed>[in:getConfigValue]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -3765,7 +3873,7 @@
       "file": "src/loops.js",
       "name": "<computed>",
       "objectName": "items",
-      "semanticId": "loops.js->findFirst->for#0->if#0->PROPERTY_ACCESS->items.<computed>#0",
+      "semanticId": "src/loops.js->PROPERTY_ACCESS->items.<computed>[in:findFirst]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -3774,7 +3882,7 @@
       "file": "src/loops.js",
       "name": "<computed>",
       "objectName": "items",
-      "semanticId": "loops.js->findFirst->for#0->if#0->PROPERTY_ACCESS->items.<computed>#1",
+      "semanticId": "src/loops.js->PROPERTY_ACCESS->items.<computed>[in:findFirst]#1",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -3783,7 +3891,7 @@
       "file": "src/loops.js",
       "name": "<computed>",
       "objectName": "items",
-      "semanticId": "loops.js->processWithForLoop->for#0->PROPERTY_ACCESS->items.<computed>#0",
+      "semanticId": "src/loops.js->PROPERTY_ACCESS->items.<computed>[in:processWithForLoop]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -3792,16 +3900,7 @@
       "file": "src/loops.js",
       "name": "<computed>",
       "objectName": "numbers",
-      "semanticId": "loops.js->processEvenOnly->for#0->if#0->PROPERTY_ACCESS->numbers.<computed>#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "computed": true,
-      "exported": false,
-      "file": "src/loops.js",
-      "name": "<computed>",
-      "objectName": "numbers",
-      "semanticId": "loops.js->processEvenOnly->for#0->PROPERTY_ACCESS->numbers.<computed>#0",
+      "semanticId": "src/loops.js->PROPERTY_ACCESS->numbers.<computed>[in:processEvenOnly]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -3810,7 +3909,7 @@
       "file": "src/loops.js",
       "name": "<computed>",
       "objectName": "obj",
-      "semanticId": "loops.js->processObjectKeys->for-in#0->PROPERTY_ACCESS->obj.<computed>#0",
+      "semanticId": "src/loops.js->PROPERTY_ACCESS->obj.<computed>[in:processObjectKeys]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -3820,7 +3919,7 @@
       "name": "0",
       "objectName": "data.items",
       "optional": true,
-      "semanticId": "conditionals.js->getFirstItemName->PROPERTY_ACCESS->data.items.0#0",
+      "semanticId": "src/conditionals.js->PROPERTY_ACCESS->data.items.0[in:getFirstItemName]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -3829,7 +3928,7 @@
       "name": "email",
       "objectName": "user.profile",
       "optional": true,
-      "semanticId": "conditionals.js->getUserEmail->PROPERTY_ACCESS->user.profile.email#0",
+      "semanticId": "src/conditionals.js->PROPERTY_ACCESS->user.profile.email[in:getUserEmail]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -3837,7 +3936,7 @@
       "file": "src/exceptions.js",
       "name": "id",
       "objectName": "data",
-      "semanticId": "exceptions.js->validateInput->if#0->PROPERTY_ACCESS->data.id#0",
+      "semanticId": "src/exceptions.js->PROPERTY_ACCESS->data.id[in:validateInput]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -3846,7 +3945,7 @@
       "name": "items",
       "objectName": "data",
       "optional": true,
-      "semanticId": "conditionals.js->getFirstItemName->PROPERTY_ACCESS->data.items#0",
+      "semanticId": "src/conditionals.js->PROPERTY_ACCESS->data.items[in:getFirstItemName]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -3854,7 +3953,7 @@
       "file": "src/loops.js",
       "name": "length",
       "objectName": "items",
-      "semanticId": "loops.js->findFirst->for#0->PROPERTY_ACCESS->items.length#0",
+      "semanticId": "src/loops.js->PROPERTY_ACCESS->items.length[in:findFirst]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -3862,7 +3961,7 @@
       "file": "src/loops.js",
       "name": "length",
       "objectName": "items",
-      "semanticId": "loops.js->processWithForLoop->for#0->PROPERTY_ACCESS->items.length#0",
+      "semanticId": "src/loops.js->PROPERTY_ACCESS->items.length[in:processWithForLoop]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -3870,7 +3969,7 @@
       "file": "src/loops.js",
       "name": "length",
       "objectName": "numbers",
-      "semanticId": "loops.js->processEvenOnly->for#0->PROPERTY_ACCESS->numbers.length#0",
+      "semanticId": "src/loops.js->PROPERTY_ACCESS->numbers.length[in:processEvenOnly]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -3878,7 +3977,7 @@
       "file": "src/exceptions.js",
       "name": "message",
       "objectName": "error",
-      "semanticId": "exceptions.js->fetchWithRetry->for#0->catch#0->PROPERTY_ACCESS->error.message#0",
+      "semanticId": "src/exceptions.js->PROPERTY_ACCESS->error.message[in:fetchWithRetry]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -3886,7 +3985,7 @@
       "file": "src/exceptions.js",
       "name": "message",
       "objectName": "error",
-      "semanticId": "exceptions.js->handleDifferentErrors->catch#0->if#0->else#0->PROPERTY_ACCESS->error.message#0",
+      "semanticId": "src/exceptions.js->PROPERTY_ACCESS->error.message[in:handleDifferentErrors]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -3894,23 +3993,7 @@
       "file": "src/exceptions.js",
       "name": "message",
       "objectName": "error",
-      "semanticId": "exceptions.js->handleDifferentErrors->catch#0->if#0->if#0->PROPERTY_ACCESS->error.message#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "src/exceptions.js",
-      "name": "message",
-      "objectName": "error",
-      "semanticId": "exceptions.js->handleDifferentErrors->catch#0->if#0->PROPERTY_ACCESS->error.message#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "src/exceptions.js",
-      "name": "message",
-      "objectName": "error",
-      "semanticId": "exceptions.js->readFileWithErrorHandling->catch#0->PROPERTY_ACCESS->error.message#0",
+      "semanticId": "src/exceptions.js->PROPERTY_ACCESS->error.message[in:readFileWithErrorHandling]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -3919,7 +4002,7 @@
       "name": "name",
       "objectName": "data.items.0",
       "optional": true,
-      "semanticId": "conditionals.js->getFirstItemName->PROPERTY_ACCESS->data.items.0.name#0",
+      "semanticId": "src/conditionals.js->PROPERTY_ACCESS->data.items.0.name[in:getFirstItemName]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -3927,7 +4010,7 @@
       "file": "src/conditionals.js",
       "name": "name",
       "objectName": "user",
-      "semanticId": "conditionals.js->greetUser->PROPERTY_ACCESS->user.name#0",
+      "semanticId": "src/conditionals.js->PROPERTY_ACCESS->user.name[in:greetUser]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -3935,7 +4018,7 @@
       "file": "src/conditionals.js",
       "name": "name",
       "objectName": "user",
-      "semanticId": "conditionals.js->processUser->PROPERTY_ACCESS->user.name#0",
+      "semanticId": "src/conditionals.js->PROPERTY_ACCESS->user.name[in:processUser]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -3943,15 +4026,7 @@
       "file": "src/exceptions.js",
       "name": "name",
       "objectName": "error",
-      "semanticId": "exceptions.js->handleDifferentErrors->catch#0->if#0->if#0->PROPERTY_ACCESS->error.name#0",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "src/exceptions.js",
-      "name": "name",
-      "objectName": "error",
-      "semanticId": "exceptions.js->handleDifferentErrors->catch#0->if#0->PROPERTY_ACCESS->error.name#0",
+      "semanticId": "src/exceptions.js->PROPERTY_ACCESS->error.name[in:handleDifferentErrors]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -3960,7 +4035,7 @@
       "name": "profile",
       "objectName": "user",
       "optional": true,
-      "semanticId": "conditionals.js->getUserEmail->PROPERTY_ACCESS->user.profile#0",
+      "semanticId": "src/conditionals.js->PROPERTY_ACCESS->user.profile[in:getUserEmail]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -3968,7 +4043,7 @@
       "file": "src/conditionals.js",
       "name": "property",
       "objectName": "obj",
-      "semanticId": "conditionals.js->safeAccess->PROPERTY_ACCESS->obj.property#0",
+      "semanticId": "src/conditionals.js->PROPERTY_ACCESS->obj.property[in:safeAccess]",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -6263,21 +6338,6 @@
     {
       "from": "FUNCTION:handleDifferentErrors",
       "type": "CONTAINS",
-      "to": "PROPERTY_ACCESS:message"
-    },
-    {
-      "from": "FUNCTION:handleDifferentErrors",
-      "type": "CONTAINS",
-      "to": "PROPERTY_ACCESS:message"
-    },
-    {
-      "from": "FUNCTION:handleDifferentErrors",
-      "type": "CONTAINS",
-      "to": "PROPERTY_ACCESS:name"
-    },
-    {
-      "from": "FUNCTION:handleDifferentErrors",
-      "type": "CONTAINS",
       "to": "PROPERTY_ACCESS:name"
     },
     {
@@ -6352,11 +6412,6 @@
       "from": "FUNCTION:processData",
       "type": "HAS_SCOPE",
       "to": "SCOPE:processData:body"
-    },
-    {
-      "from": "FUNCTION:processEvenOnly",
-      "type": "CONTAINS",
-      "to": "PROPERTY_ACCESS:<computed>"
     },
     {
       "from": "FUNCTION:processEvenOnly",

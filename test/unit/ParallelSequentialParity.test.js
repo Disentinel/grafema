@@ -138,9 +138,7 @@ export { outer };
         `Function outer should have semantic ID format: ${outerFunc.id}`
       );
 
-      // Expected format: file->global->FUNCTION->outer
-      const expectedOuterId = computeExpectedId('FUNCTION', 'outer', 'index.js');
-      // Extract semantic part (after file prefix) for comparison
+      // v2 format: file->FUNCTION->outer (no 'global' scope)
       const getSemanticPart = (id) => {
         const parts = id.split('->');
         return parts.slice(1).join('->');
@@ -148,8 +146,8 @@ export { outer };
 
       assert.strictEqual(
         getSemanticPart(outerFunc.id),
-        getSemanticPart(expectedOuterId),
-        `Outer function ID should match expected: ${outerFunc.id} vs ${expectedOuterId}`
+        'FUNCTION->outer',
+        `Outer function semantic part should be 'FUNCTION->outer': ${outerFunc.id}`
       );
     });
 
@@ -185,14 +183,14 @@ export { UserService };
         `saveUser should have semantic ID: ${saveUserMethod.id}`
       );
 
-      // IDs should include class scope
+      // v2: IDs should include class scope via [in:ClassName] suffix
       assert.ok(
-        findUserMethod.id.includes('->UserService->'),
-        `findUser ID should include class scope: ${findUserMethod.id}`
+        findUserMethod.id.includes('[in:UserService]'),
+        `findUser ID should include class scope via [in:UserService]: ${findUserMethod.id}`
       );
       assert.ok(
-        saveUserMethod.id.includes('->UserService->'),
-        `saveUser ID should include class scope: ${saveUserMethod.id}`
+        saveUserMethod.id.includes('[in:UserService]'),
+        `saveUser ID should include class scope via [in:UserService]: ${saveUserMethod.id}`
       );
 
       // IDs should be different
@@ -507,9 +505,9 @@ export { ServiceA, ServiceB };
         'Same-named methods in different classes should have different IDs'
       );
 
-      // Each should include its class name
-      const hasServiceA = processMethods.some(m => m.id.includes('->ServiceA->'));
-      const hasServiceB = processMethods.some(m => m.id.includes('->ServiceB->'));
+      // v2: Each should include its class name via [in:ClassName] suffix
+      const hasServiceA = processMethods.some(m => m.id.includes('[in:ServiceA]'));
+      const hasServiceB = processMethods.some(m => m.id.includes('[in:ServiceB]'));
 
       assert.ok(hasServiceA, 'Should have method with ServiceA scope');
       assert.ok(hasServiceB, 'Should have method with ServiceB scope');

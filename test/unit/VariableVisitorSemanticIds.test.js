@@ -69,19 +69,15 @@ const API_URL = 'https://api.example.com';
 
       assert.ok(constNode, 'CONSTANT node "API_URL" not found');
 
-      // Semantic ID format: file->global->CONSTANT->name
+      // Semantic ID format v2: file->CONSTANT->name (no 'global' scope at top level)
       // Should NOT contain line numbers
       assert.ok(
-        !constNode.id.includes(':'),
+        !(/:\d+:\d+/.test(constNode.id)),
         `ID should not contain line:column format. Got: ${constNode.id}`
       );
       assert.ok(
         constNode.id.includes('index.js'),
         `ID should contain filename. Got: ${constNode.id}`
-      );
-      assert.ok(
-        constNode.id.includes('global'),
-        `ID should contain 'global' scope. Got: ${constNode.id}`
       );
       assert.ok(
         constNode.id.includes('CONSTANT'),
@@ -92,10 +88,10 @@ const API_URL = 'https://api.example.com';
         `ID should contain variable name. Got: ${constNode.id}`
       );
 
-      // Expected format: index.js->global->CONSTANT->API_URL
+      // Expected format v2: index.js->CONSTANT->API_URL (no 'global')
       assert.strictEqual(
         constNode.id,
-        'index.js->global->CONSTANT->API_URL',
+        'index.js->CONSTANT->API_URL',
         `Expected semantic ID format`
       );
     });
@@ -114,10 +110,10 @@ let counter = 0;
 
       assert.ok(varNode, 'VARIABLE node "counter" not found');
 
-      // Expected format: index.js->global->VARIABLE->counter
+      // Expected format v2: index.js->VARIABLE->counter (no 'global')
       assert.strictEqual(
         varNode.id,
-        'index.js->global->VARIABLE->counter',
+        'index.js->VARIABLE->counter',
         `Expected semantic ID format`
       );
     });
@@ -136,10 +132,10 @@ var legacyVar = 'old style';
 
       assert.ok(varNode, 'VARIABLE node "legacyVar" not found');
 
-      // Expected format: index.js->global->VARIABLE->legacyVar
+      // Expected format v2: index.js->VARIABLE->legacyVar (no 'global')
       assert.strictEqual(
         varNode.id,
-        'index.js->global->VARIABLE->legacyVar',
+        'index.js->VARIABLE->legacyVar',
         `Expected semantic ID format`
       );
     });
@@ -163,10 +159,10 @@ var dbName = 'test';
       assert.ok(dbPort, 'dbPort not found');
       assert.ok(dbName, 'dbName not found');
 
-      // All should have 'global' in their scope path
-      assert.ok(dbHost.id.includes('->global->'), `DB_HOST should have global scope`);
-      assert.ok(dbPort.id.includes('->global->'), `dbPort should have global scope`);
-      assert.ok(dbName.id.includes('->global->'), `dbName should have global scope`);
+      // V2: module-level variables have no 'global' in path, format is file->TYPE->name
+      assert.ok(dbHost.id.startsWith('index.js->CONSTANT->'), `DB_HOST should be at module level. Got: ${dbHost.id}`);
+      assert.ok(dbPort.id.startsWith('index.js->VARIABLE->'), `dbPort should be at module level. Got: ${dbPort.id}`);
+      assert.ok(dbName.id.startsWith('index.js->VARIABLE->'), `dbName should be at module level. Got: ${dbName.id}`);
     });
   });
 
@@ -568,11 +564,11 @@ const [first, second] = array;
       assert.ok(firstVar, 'first not found');
       assert.ok(secondVar, 'second not found');
 
-      // All should have semantic ID format
+      // V2: all should have semantic ID format (no 'global' in path)
       [nameVar, ageVar, firstVar, secondVar].forEach(v => {
         assert.ok(
-          v.id.includes('index.js->global'),
-          `Destructured variable ${v.name} should have semantic ID`
+          v.id.startsWith('index.js->'),
+          `Destructured variable ${v.name} should have semantic ID. Got: ${v.id}`
         );
       });
     });

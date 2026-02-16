@@ -397,13 +397,13 @@ export class RFDBClient extends EventEmitter implements IRFDBClient {
       const nodeRecord = n as Record<string, unknown>;
 
       // Extract known wire format fields, rest goes to metadata
-      const { id, type, node_type, nodeType, name, file, exported, metadata, ...rest } = nodeRecord;
+      const { id, type, node_type, nodeType, name, file, exported, metadata, semanticId, semantic_id, ...rest } = nodeRecord;
 
       // Merge explicit metadata with extra properties
       const existingMeta = typeof metadata === 'string' ? JSON.parse(metadata as string) : (metadata || {});
       const combinedMeta = { ...existingMeta, ...rest };
 
-      return {
+      const wire: WireNode = {
         id: String(id),
         nodeType: (node_type || nodeType || type || 'UNKNOWN') as NodeType,
         name: (name as string) || '',
@@ -411,6 +411,14 @@ export class RFDBClient extends EventEmitter implements IRFDBClient {
         exported: (exported as boolean) || false,
         metadata: JSON.stringify(combinedMeta),
       };
+
+      // Preserve semanticId as top-level field for v3 protocol
+      const sid = semanticId || semantic_id;
+      if (sid) {
+        (wire as WireNode & { semanticId: string }).semanticId = String(sid);
+      }
+
+      return wire;
     });
 
     if (this._batching) {
@@ -685,6 +693,13 @@ export class RFDBClient extends EventEmitter implements IRFDBClient {
    * Query nodes (async generator)
    */
   async *queryNodes(query: AttrQuery): AsyncGenerator<WireNode, void, unknown> {
+    // When server supports streaming (protocol v3+), delegate to streaming handler
+    // to correctly handle chunked NodesChunk responses for large result sets.
+    if (this._supportsStreaming) {
+      yield* this.queryNodesStream(query);
+      return;
+    }
+
     const serverQuery = this._buildServerQuery(query);
     const response = await this._send('queryNodes', { query: serverQuery });
     const nodes = (response as { nodes?: WireNode[] }).nodes || [];
@@ -1034,7 +1049,6 @@ export class RFDBClient extends EventEmitter implements IRFDBClient {
    */
   async commitBatch(tags?: string[]): Promise<CommitDelta> {
     if (!this._batching) throw new Error('No batch in progress');
-
     const response = await this._send('commitBatch', {
       changedFiles: [...this._batchFiles],
       nodes: this._batchNodes,

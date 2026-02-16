@@ -122,7 +122,8 @@ configure({ key: API_KEY });
       });
 
       // Find the API_KEY constant
-      const apiKeyNode = await findNodeInScope(backend, 'API_KEY', 'CONSTANT', '->global->');
+      // v2 semantic IDs: top-level constants have format file->CONSTANT->name (no 'global' scope)
+      const apiKeyNode = await findNodeInScope(backend, 'API_KEY', 'CONSTANT', '->CONSTANT->');
       assert.ok(apiKeyNode, 'API_KEY CONSTANT node should exist at module level');
 
       // Find the HAS_PROPERTY edge for "key"
@@ -152,7 +153,7 @@ createClient({ url: baseUrl });
       });
 
       // Find the baseUrl variable
-      const baseUrlNode = await findNodeInScope(backend, 'baseUrl', 'VARIABLE', '->global->');
+      const baseUrlNode = await findNodeInScope(backend, 'baseUrl', 'VARIABLE', '->VARIABLE->');
       assert.ok(baseUrlNode, 'baseUrl VARIABLE node should exist at module level');
 
       // Find the HAS_PROPERTY edge for "url"
@@ -183,8 +184,8 @@ connect({ host: HOST, port: PORT, timeout: 5000 });
       });
 
       // Find the CONSTANT nodes
-      const hostNode = await findNodeInScope(backend, 'HOST', 'CONSTANT', '->global->');
-      const portNode = await findNodeInScope(backend, 'PORT', 'CONSTANT', '->global->');
+      const hostNode = await findNodeInScope(backend, 'HOST', 'CONSTANT', '->CONSTANT->');
+      const portNode = await findNodeInScope(backend, 'PORT', 'CONSTANT', '->CONSTANT->');
       assert.ok(hostNode, 'HOST CONSTANT should exist');
       assert.ok(portNode, 'PORT CONSTANT should exist');
 
@@ -214,8 +215,8 @@ process({ name, value });
       });
 
       // Find the CONSTANT nodes
-      const nameNode = await findNodeInScope(backend, 'name', 'CONSTANT', '->global->');
-      const valueNode = await findNodeInScope(backend, 'value', 'CONSTANT', '->global->');
+      const nameNode = await findNodeInScope(backend, 'name', 'CONSTANT', '->CONSTANT->');
+      const valueNode = await findNodeInScope(backend, 'value', 'CONSTANT', '->CONSTANT->');
       assert.ok(nameNode, 'name CONSTANT should exist');
       assert.ok(valueNode, 'value CONSTANT should exist');
 
@@ -244,7 +245,7 @@ sendRequest({ id: userId, type: 'user', active: true });
       });
 
       // Find the userId constant
-      const userIdNode = await findNodeInScope(backend, 'userId', 'CONSTANT', '->global->');
+      const userIdNode = await findNodeInScope(backend, 'userId', 'CONSTANT', '->CONSTANT->');
       assert.ok(userIdNode, 'userId CONSTANT should exist');
 
       // Find HAS_PROPERTY edge for "id"
@@ -275,7 +276,7 @@ setup({ config: globalConfig });
       });
 
       // Find the globalConfig constant
-      const globalConfigNode = await findNodeInScope(backend, 'globalConfig', 'CONSTANT', '->global->');
+      const globalConfigNode = await findNodeInScope(backend, 'globalConfig', 'CONSTANT', '->CONSTANT->');
       assert.ok(globalConfigNode, 'globalConfig CONSTANT should exist');
 
       // Find HAS_PROPERTY edge
@@ -312,7 +313,7 @@ handleRequest(null, { json: (x) => x });
       // NOTE: This test verifies the concept but actual Express handlers
       // use method calls (res.json) which may be handled differently.
       // The fix targets the object literal argument pattern.
-      const statusDataNode = await findNodeInScope(backend, 'statusData', 'VARIABLE', '->global->');
+      const statusDataNode = await findNodeInScope(backend, 'statusData', 'VARIABLE', '->VARIABLE->');
       assert.ok(statusDataNode, 'statusData VARIABLE should exist at module level (const with non-literal init)');
     });
   });

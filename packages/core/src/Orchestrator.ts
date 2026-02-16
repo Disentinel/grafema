@@ -368,7 +368,8 @@ export class Orchestrator {
         processedFiles: processedUnits
       });
 
-      await Promise.all(batch.map(async (unit, idx) => {
+      for (let idx = 0; idx < batch.length; idx++) {
+        const unit = batch[idx];
         const unitStart = Date.now();
         const unitManifest: UnitManifest = {
           projectPath: manifest.projectPath,
@@ -394,7 +395,7 @@ export class Orchestrator {
           processedFiles: processedUnits + idx + 1,
           servicesAnalyzed: processedUnits + idx + 1
         });
-      }));
+      }
 
       processedUnits += batch.length;
     }
