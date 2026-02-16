@@ -776,6 +776,45 @@ export class RFDBServerBackend {
   }
 
   /**
+   * Synchronously batch a node. Must be inside beginBatch/commitBatch.
+   * Bypasses async wrapper for direct batch insertion.
+   */
+  batchNode(node: InputNode): void {
+    if (!this.client) throw new Error('Not connected');
+    const { id, type, nodeType, node_type, name, file, exported, ...rest } = node;
+    const useV3 = this.protocolVersion >= 3;
+    const wire: Record<string, unknown> = {
+      id: String(id),
+      nodeType: (nodeType || node_type || type || 'UNKNOWN'),
+      name: name || '',
+      file: file || '',
+      exported: exported || false,
+      metadata: useV3 ? JSON.stringify(rest) : JSON.stringify({ originalId: String(id), ...rest }),
+    };
+    if (useV3) {
+      wire.semanticId = String(id);
+    }
+    this.client.batchNode(wire as Parameters<typeof this.client.batchNode>[0]);
+  }
+
+  /**
+   * Synchronously batch an edge. Must be inside beginBatch/commitBatch.
+   */
+  batchEdge(edge: InputEdge): void {
+    if (!this.client) throw new Error('Not connected');
+    const { src, dst, type, edgeType, edge_type, etype, metadata, ...rest } = edge;
+    const edgeTypeStr = edgeType || edge_type || (etype as string) || type;
+    if (typeof edgeTypeStr === 'string') this.edgeTypes.add(edgeTypeStr);
+    const flatMetadata = { ...rest, ...(typeof metadata === 'object' && metadata !== null ? metadata as Record<string, unknown> : {}) };
+    this.client.batchEdge({
+      src: String(src),
+      dst: String(dst),
+      edgeType: (edgeTypeStr || 'UNKNOWN'),
+      metadata: JSON.stringify(flatMetadata),
+    } as Record<string, unknown>);
+  }
+
+  /**
    * Abort the current batch, discarding all buffered data.
    */
   abortBatch(): void {

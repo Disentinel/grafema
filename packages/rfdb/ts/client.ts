@@ -1043,6 +1043,49 @@ export class RFDBClient extends EventEmitter implements IRFDBClient {
   }
 
   /**
+   * Synchronously batch a single node. Must be inside beginBatch/commitBatch.
+   * Skips async wrapper — pushes directly to batch array.
+   */
+  batchNode(node: Partial<WireNode> & { id: string; type?: string; node_type?: string; nodeType?: string }): void {
+    if (!this._batching) throw new Error('No batch in progress');
+    const nodeRecord = node as Record<string, unknown>;
+    const { id, type, node_type, nodeType, name, file, exported, metadata, semanticId, semantic_id, ...rest } = nodeRecord;
+    const existingMeta = typeof metadata === 'string' ? JSON.parse(metadata as string) : (metadata || {});
+    const combinedMeta = { ...existingMeta, ...rest };
+    const wire: WireNode = {
+      id: String(id),
+      nodeType: (node_type || nodeType || type || 'UNKNOWN') as NodeType,
+      name: (name as string) || '',
+      file: (file as string) || '',
+      exported: (exported as boolean) || false,
+      metadata: JSON.stringify(combinedMeta),
+    };
+    const sid = semanticId || semantic_id;
+    if (sid) {
+      (wire as WireNode & { semanticId: string }).semanticId = String(sid);
+    }
+    this._batchNodes.push(wire);
+    if (wire.file) this._batchFiles.add(wire.file);
+  }
+
+  /**
+   * Synchronously batch a single edge. Must be inside beginBatch/commitBatch.
+   */
+  batchEdge(edge: WireEdge | Record<string, unknown>): void {
+    if (!this._batching) throw new Error('No batch in progress');
+    const edgeRecord = edge as Record<string, unknown>;
+    const { src, dst, type, edge_type, edgeType, metadata, ...rest } = edgeRecord;
+    const existingMeta = typeof metadata === 'string' ? JSON.parse(metadata as string) : (metadata || {});
+    const combinedMeta = { ...existingMeta, ...rest };
+    this._batchEdges.push({
+      src: String(src),
+      dst: String(dst),
+      edgeType: (edge_type || edgeType || type || (edge as WireEdge).edgeType || 'UNKNOWN') as EdgeType,
+      metadata: JSON.stringify(combinedMeta),
+    });
+  }
+
+  /**
    * Commit the current batch to the server.
    * Sends all buffered nodes/edges with the list of changed files.
    * Server atomically replaces old data for changed files with new data.

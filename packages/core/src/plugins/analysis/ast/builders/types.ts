@@ -28,7 +28,7 @@ export interface BuilderContext {
   isCreated(singletonKey: string): boolean;
   markCreated(singletonKey: string): void;
 
-  // Buffered node lookup (for metadata updates, e.g., rejection patterns)
+  // Pending function node lookup (for metadata updates by ModuleRuntimeBuilder)
   findBufferedNode(id: string): GraphNode | undefined;
 
   // Scope-aware variable/parameter resolution (REG-309)
