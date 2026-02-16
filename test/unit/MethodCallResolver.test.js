@@ -489,4 +489,432 @@ describe('MethodCallResolver', () => {
       }
     });
   });
+
+  describe('Interface CHA resolution (REG-485)', () => {
+    it('should resolve method call through interface implementation', async () => {
+      const { backend } = await setupBackend();
+
+      try {
+        const resolver = new MethodCallResolver();
+
+        // INTERFACE GraphBackend with method addNodes
+        await backend.addNodes([
+          {
+            id: 'types.ts:INTERFACE:GraphBackend:1',
+            type: 'INTERFACE',
+            name: 'GraphBackend',
+            file: 'types.ts',
+            line: 1,
+            column: 0,
+            properties: JSON.stringify([{ name: 'addNodes', type: 'function' }])
+          },
+          // CLASS RFDBServerBackend with METHOD addNodes
+          {
+            id: 'rfdb-class',
+            type: 'CLASS',
+            name: 'RFDBServerBackend',
+            file: 'rfdb.ts',
+            line: 1
+          },
+          {
+            id: 'rfdb-addNodes-method',
+            type: 'METHOD',
+            name: 'addNodes',
+            file: 'rfdb.ts',
+            line: 5
+          },
+          // METHOD_CALL: graph.addNodes()
+          {
+            id: 'graph-addNodes-call',
+            type: 'CALL',
+            name: 'graph.addNodes',
+            file: 'app.ts',
+            line: 10,
+            object: 'graph',
+            method: 'addNodes'
+          }
+        ]);
+
+        // CLASS -> CONTAINS -> METHOD
+        await backend.addEdge({
+          src: 'rfdb-class',
+          dst: 'rfdb-addNodes-method',
+          type: 'CONTAINS'
+        });
+
+        // CLASS -> IMPLEMENTS -> INTERFACE
+        await backend.addEdge({
+          src: 'rfdb-class',
+          dst: 'types.ts:INTERFACE:GraphBackend:1',
+          type: 'IMPLEMENTS'
+        });
+
+        await backend.flush();
+
+        await resolver.execute({ graph: backend });
+
+        const edges = await backend.getOutgoingEdges('graph-addNodes-call', ['CALLS']);
+        assert.strictEqual(edges.length, 1, 'Should create one CALLS edge via interface resolution');
+
+        const targetNode = await backend.getNode(edges[0].dst);
+        assert.strictEqual(targetNode.name, 'addNodes', 'Should point to RFDBServerBackend.addNodes');
+
+        console.log('Basic interface CHA resolution works');
+      } finally {
+        await backend.close();
+      }
+    });
+
+    it('should resolve method call through inherited interface chain', async () => {
+      const { backend } = await setupBackend();
+
+      try {
+        const resolver = new MethodCallResolver();
+
+        // INTERFACE Base with method save
+        await backend.addNodes([
+          {
+            id: 'types.ts:INTERFACE:Base:1',
+            type: 'INTERFACE',
+            name: 'Base',
+            file: 'types.ts',
+            line: 1,
+            column: 0,
+            properties: JSON.stringify([{ name: 'save', type: 'function' }])
+          },
+          // INTERFACE Child with method load, extends Base
+          {
+            id: 'types.ts:INTERFACE:Child:10',
+            type: 'INTERFACE',
+            name: 'Child',
+            file: 'types.ts',
+            line: 10,
+            column: 0,
+            properties: JSON.stringify([{ name: 'load', type: 'function' }])
+          },
+          // CLASS Impl with METHOD save AND METHOD load
+          {
+            id: 'impl-class',
+            type: 'CLASS',
+            name: 'Impl',
+            file: 'impl.ts',
+            line: 1
+          },
+          {
+            id: 'impl-save-method',
+            type: 'METHOD',
+            name: 'save',
+            file: 'impl.ts',
+            line: 5
+          },
+          {
+            id: 'impl-load-method',
+            type: 'METHOD',
+            name: 'load',
+            file: 'impl.ts',
+            line: 10
+          },
+          // METHOD_CALL: x.save()
+          {
+            id: 'x-save-call',
+            type: 'CALL',
+            name: 'x.save',
+            file: 'app.ts',
+            line: 20,
+            object: 'x',
+            method: 'save'
+          }
+        ]);
+
+        // CLASS -> CONTAINS -> METHODs
+        await backend.addEdge({
+          src: 'impl-class',
+          dst: 'impl-save-method',
+          type: 'CONTAINS'
+        });
+        await backend.addEdge({
+          src: 'impl-class',
+          dst: 'impl-load-method',
+          type: 'CONTAINS'
+        });
+
+        // Child EXTENDS Base (interface inheritance)
+        await backend.addEdge({
+          src: 'types.ts:INTERFACE:Child:10',
+          dst: 'types.ts:INTERFACE:Base:1',
+          type: 'EXTENDS'
+        });
+
+        // Impl IMPLEMENTS Child
+        await backend.addEdge({
+          src: 'impl-class',
+          dst: 'types.ts:INTERFACE:Child:10',
+          type: 'IMPLEMENTS'
+        });
+
+        await backend.flush();
+
+        await resolver.execute({ graph: backend });
+
+        // save() is declared on Base, inherited through Child -> Impl should be found
+        const edges = await backend.getOutgoingEdges('x-save-call', ['CALLS']);
+        assert.strictEqual(edges.length, 1, 'Should create one CALLS edge via inherited interface');
+
+        const targetNode = await backend.getNode(edges[0].dst);
+        assert.strictEqual(targetNode.name, 'save', 'Should point to Impl.save');
+
+        console.log('Interface inheritance CHA resolution works');
+      } finally {
+        await backend.close();
+      }
+    });
+
+    it('should create exactly one CALLS edge when multiple classes implement same interface', async () => {
+      const { backend } = await setupBackend();
+
+      try {
+        const resolver = new MethodCallResolver();
+
+        // INTERFACE Storage with method save
+        await backend.addNodes([
+          {
+            id: 'types.ts:INTERFACE:Storage:1',
+            type: 'INTERFACE',
+            name: 'Storage',
+            file: 'types.ts',
+            line: 1,
+            column: 0,
+            properties: JSON.stringify([{ name: 'save', type: 'function' }])
+          },
+          // CLASS LocalStorage with METHOD save
+          {
+            id: 'local-class',
+            type: 'CLASS',
+            name: 'LocalStorage',
+            file: 'local.ts',
+            line: 1
+          },
+          {
+            id: 'local-save-method',
+            type: 'METHOD',
+            name: 'save',
+            file: 'local.ts',
+            line: 5
+          },
+          // CLASS CloudStorage with METHOD save
+          {
+            id: 'cloud-class',
+            type: 'CLASS',
+            name: 'CloudStorage',
+            file: 'cloud.ts',
+            line: 1
+          },
+          {
+            id: 'cloud-save-method',
+            type: 'METHOD',
+            name: 'save',
+            file: 'cloud.ts',
+            line: 5
+          },
+          // METHOD_CALL: s.save()
+          {
+            id: 's-save-call',
+            type: 'CALL',
+            name: 's.save',
+            file: 'app.ts',
+            line: 10,
+            object: 's',
+            method: 'save'
+          }
+        ]);
+
+        // LocalStorage -> CONTAINS -> save
+        await backend.addEdge({
+          src: 'local-class',
+          dst: 'local-save-method',
+          type: 'CONTAINS'
+        });
+        // CloudStorage -> CONTAINS -> save
+        await backend.addEdge({
+          src: 'cloud-class',
+          dst: 'cloud-save-method',
+          type: 'CONTAINS'
+        });
+
+        // Both implement Storage
+        await backend.addEdge({
+          src: 'local-class',
+          dst: 'types.ts:INTERFACE:Storage:1',
+          type: 'IMPLEMENTS'
+        });
+        await backend.addEdge({
+          src: 'cloud-class',
+          dst: 'types.ts:INTERFACE:Storage:1',
+          type: 'IMPLEMENTS'
+        });
+
+        await backend.flush();
+
+        await resolver.execute({ graph: backend });
+
+        // Should create exactly one CALLS edge (first match), not two
+        const edges = await backend.getOutgoingEdges('s-save-call', ['CALLS']);
+        assert.strictEqual(edges.length, 1, 'Should create exactly one CALLS edge');
+
+        const targetNode = await backend.getNode(edges[0].dst);
+        assert.strictEqual(targetNode.name, 'save', 'Should point to a save method');
+
+        console.log('Multiple implementations — single CALLS edge works');
+      } finally {
+        await backend.close();
+      }
+    });
+
+    it('should not create CALLS edge for method not declared in any interface', async () => {
+      const { backend } = await setupBackend();
+
+      try {
+        const resolver = new MethodCallResolver();
+
+        // INTERFACE Logger with method log
+        await backend.addNodes([
+          {
+            id: 'types.ts:INTERFACE:Logger:1',
+            type: 'INTERFACE',
+            name: 'Logger',
+            file: 'types.ts',
+            line: 1,
+            column: 0,
+            properties: JSON.stringify([{ name: 'log', type: 'function' }])
+          },
+          // CLASS MyLogger with METHOD log
+          {
+            id: 'mylogger-class',
+            type: 'CLASS',
+            name: 'MyLogger',
+            file: 'mylogger.ts',
+            line: 1
+          },
+          {
+            id: 'mylogger-log-method',
+            type: 'METHOD',
+            name: 'log',
+            file: 'mylogger.ts',
+            line: 5
+          },
+          // METHOD_CALL: x.unknownMethod() — NOT in any interface
+          {
+            id: 'x-unknown-call',
+            type: 'CALL',
+            name: 'x.unknownMethod',
+            file: 'app.ts',
+            line: 10,
+            object: 'x',
+            method: 'unknownMethod'
+          }
+        ]);
+
+        // MyLogger -> CONTAINS -> log
+        await backend.addEdge({
+          src: 'mylogger-class',
+          dst: 'mylogger-log-method',
+          type: 'CONTAINS'
+        });
+
+        // MyLogger -> IMPLEMENTS -> Logger
+        await backend.addEdge({
+          src: 'mylogger-class',
+          dst: 'types.ts:INTERFACE:Logger:1',
+          type: 'IMPLEMENTS'
+        });
+
+        await backend.flush();
+
+        await resolver.execute({ graph: backend });
+
+        // unknownMethod is not in any interface, should NOT be resolved
+        const edges = await backend.getOutgoingEdges('x-unknown-call', ['CALLS']);
+        assert.strictEqual(edges.length, 0, 'Should NOT create CALLS edge for method not in any interface');
+
+        console.log('No false positive for method not in interface');
+      } finally {
+        await backend.close();
+      }
+    });
+
+    it('should not create CALLS edge when class implements interface but lacks the method', async () => {
+      const { backend } = await setupBackend();
+
+      try {
+        const resolver = new MethodCallResolver();
+
+        // INTERFACE Complete with method1 and method2
+        await backend.addNodes([
+          {
+            id: 'types.ts:INTERFACE:Complete:1',
+            type: 'INTERFACE',
+            name: 'Complete',
+            file: 'types.ts',
+            line: 1,
+            column: 0,
+            properties: JSON.stringify([
+              { name: 'method1', type: 'function' },
+              { name: 'method2', type: 'function' }
+            ])
+          },
+          // CLASS Partial with only method1 (no method2!)
+          {
+            id: 'partial-class',
+            type: 'CLASS',
+            name: 'Partial',
+            file: 'partial.ts',
+            line: 1
+          },
+          {
+            id: 'partial-method1',
+            type: 'METHOD',
+            name: 'method1',
+            file: 'partial.ts',
+            line: 5
+          },
+          // METHOD_CALL: x.method2() — in interface but NOT in class
+          {
+            id: 'x-method2-call',
+            type: 'CALL',
+            name: 'x.method2',
+            file: 'app.ts',
+            line: 10,
+            object: 'x',
+            method: 'method2'
+          }
+        ]);
+
+        // Partial -> CONTAINS -> method1 (only!)
+        await backend.addEdge({
+          src: 'partial-class',
+          dst: 'partial-method1',
+          type: 'CONTAINS'
+        });
+
+        // Partial -> IMPLEMENTS -> Complete
+        await backend.addEdge({
+          src: 'partial-class',
+          dst: 'types.ts:INTERFACE:Complete:1',
+          type: 'IMPLEMENTS'
+        });
+
+        await backend.flush();
+
+        await resolver.execute({ graph: backend });
+
+        // method2 is in interface but Partial doesn't have it — no CALLS edge
+        const edges = await backend.getOutgoingEdges('x-method2-call', ['CALLS']);
+        assert.strictEqual(edges.length, 0, 'Should NOT create CALLS edge when class lacks the method');
+
+        console.log('No false positive for missing method on implementing class');
+      } finally {
+        await backend.close();
+      }
+    });
+  });
 });
