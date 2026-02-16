@@ -328,6 +328,7 @@ impl MultiShardStore {
     /// in `node_to_shard` (node must be added before its outgoing edges).
     pub fn upsert_edges(&mut self, records: Vec<EdgeRecordV2>) -> Result<()> {
         let mut by_shard: HashMap<u16, Vec<EdgeRecordV2>> = HashMap::new();
+        let mut skipped = 0u64;
         for edge in records {
             if let Some(file_context) = extract_file_context(&edge.metadata) {
                 // Enrichment edge: route to shard determined by file_context
@@ -339,11 +340,22 @@ impl MultiShardStore {
                 by_shard.entry(shard_id).or_default().push(edge);
             } else {
                 // Normal edge: route to source node's shard
-                let shard_id = self.node_to_shard.get(&edge.src)
-                    .copied()
-                    .ok_or(GraphError::NodeNotFound(edge.src))?;
-                by_shard.entry(shard_id).or_default().push(edge);
+                match self.node_to_shard.get(&edge.src).copied() {
+                    Some(shard_id) => {
+                        by_shard.entry(shard_id).or_default().push(edge);
+                    }
+                    None => {
+                        // Skip edges whose source node is not yet known.
+                        // This happens when edges reference nodes from other
+                        // batches (e.g., MODULE nodes deleted by a later batch).
+                        skipped += 1;
+                    }
+                }
             }
+        }
+
+        if skipped > 0 {
+            tracing::warn!("upsert_edges: skipped {} edges with unknown source node", skipped);
         }
 
         for (shard_id, edges) in by_shard {
@@ -1466,23 +1478,35 @@ mod tests {
     }
 
     #[test]
-    fn test_upsert_edges_src_not_found() {
+    fn test_upsert_edges_src_not_found_skips_gracefully() {
         let mut store = MultiShardStore::ephemeral(4);
 
-        // Try to add edge without adding source node first
-        let edge = EdgeRecordV2 {
+        // Add a valid node for the second edge
+        let n1 = make_node("valid-node", "FUNCTION", "fn1", "src/a.js");
+        store.add_nodes(vec![n1.clone()]);
+
+        // Try to add two edges: one with unknown src, one with valid src
+        let bad_edge = EdgeRecordV2 {
             src: 999,
             dst: 888,
             edge_type: "CALLS".to_string(),
             metadata: String::new(),
         };
+        let good_edge = EdgeRecordV2 {
+            src: n1.id,
+            dst: 888,
+            edge_type: "CALLS".to_string(),
+            metadata: String::new(),
+        };
 
-        let result = store.upsert_edges(vec![edge]);
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            GraphError::NodeNotFound(id) => assert_eq!(id, 999),
-            other => panic!("Expected NodeNotFound, got: {:?}", other),
-        }
+        // Should succeed — bad edges are skipped, good edges stored
+        let result = store.upsert_edges(vec![bad_edge, good_edge]);
+        assert!(result.is_ok());
+
+        // The good edge should be retrievable
+        let edges = store.get_outgoing_edges(n1.id, None);
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0].dst, 888);
     }
 
     #[test]
