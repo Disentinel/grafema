@@ -327,9 +327,8 @@ export class JSModuleIndexer extends Plugin {
           onProgress({
             phase: 'indexing',
             currentPlugin: 'JSModuleIndexer',
-            message: `${service.name}: indexed ${visited.size} files`,
-            processedFiles: visited.size,
-            currentService: service.name
+            message: `${service.name}: ${visited.size} modules`,
+            currentService: service.name,
           });
           lastProgressReport = visited.size;
         }
@@ -447,10 +446,8 @@ export class JSModuleIndexer extends Plugin {
         onProgress({
           phase: 'indexing',
           currentPlugin: 'JSModuleIndexer',
-          message: `${service.name}: indexed ${visited.size} files`,
-          totalFiles: visited.size,
-          processedFiles: visited.size,
-          currentService: service.name
+          message: `${service.name}: ${visited.size} modules`,
+          currentService: service.name,
         });
       }
 

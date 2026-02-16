@@ -120,14 +120,18 @@ describe('ProgressRenderer', () => {
       assert.strictEqual(renderer.getState().processedFiles, 100);
     });
 
-    it('should display processedFiles/totalFiles in output', () => {
+    it('should display services progress in indexing output', () => {
       renderer = new ProgressRenderer({ isInteractive: true, throttle: 0, write: output.write });
 
-      renderer.update({ phase: 'indexing', totalFiles: 4047, processedFiles: 2150 });
+      renderer.update({ phase: 'indexing', totalServices: 767, servicesAnalyzed: 50, currentService: 'my-service' });
       const lastOutput = output.getLastLine();
       assert.ok(
-        lastOutput.includes('2150/4047'),
-        `Should show 2150/4047 modules. Got: ${lastOutput}`
+        lastOutput.includes('50/767 services'),
+        `Should show 50/767 services. Got: ${lastOutput}`
+      );
+      assert.ok(
+        lastOutput.includes('my-service'),
+        `Should show current service name. Got: ${lastOutput}`
       );
     });
 
@@ -290,24 +294,24 @@ describe('ProgressRenderer', () => {
     it('should format indexing phase correctly in interactive mode', () => {
       renderer = new ProgressRenderer({ isInteractive: true, throttle: 0, write: output.write });
 
-      renderer.update({ phase: 'indexing', totalFiles: 4047, processedFiles: 2150 });
+      renderer.update({ phase: 'indexing', totalServices: 767, servicesAnalyzed: 150, currentService: 'auth-service' });
       const lastOutput = output.getLastLine();
 
       assert.ok(lastOutput.includes('[2/5]'), 'Should show phase 2/5');
       assert.ok(lastOutput.includes('Indexing'), 'Should show Indexing (capitalized)');
-      assert.ok(lastOutput.includes('2150/4047'), 'Should show progress fraction');
-      assert.ok(lastOutput.includes('modules'), 'Should show "modules" label');
+      assert.ok(lastOutput.includes('150/767 services'), 'Should show services progress');
+      assert.ok(lastOutput.includes('auth-service'), 'Should show current service name');
     });
 
     it('should format analysis phase correctly in interactive mode', () => {
       renderer = new ProgressRenderer({ isInteractive: true, throttle: 0, write: output.write });
 
-      renderer.update({ phase: 'analysis', totalFiles: 4047, processedFiles: 3000 });
+      renderer.update({ phase: 'analysis', totalServices: 767, servicesAnalyzed: 500, currentService: 'api-gateway' });
       const lastOutput = output.getLastLine();
 
       assert.ok(lastOutput.includes('[3/5]'), 'Should show phase 3/5');
       assert.ok(lastOutput.includes('Analysis'), 'Should show Analysis (capitalized)');
-      assert.ok(lastOutput.includes('3000/4047'), 'Should show progress fraction');
+      assert.ok(lastOutput.includes('500/767 services'), 'Should show services progress');
     });
 
     it('should format enrichment phase with plugins in interactive mode', () => {

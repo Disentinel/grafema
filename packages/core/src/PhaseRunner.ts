@@ -28,6 +28,8 @@ export interface ProgressInfo {
   totalFiles?: number;
   processedFiles?: number;
   servicesAnalyzed?: number;
+  totalServices?: number;
+  currentService?: string;
 }
 
 /**

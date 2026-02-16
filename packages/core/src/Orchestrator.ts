@@ -365,7 +365,9 @@ export class Orchestrator {
         currentPlugin: pluginLabel,
         message: `[${processedUnits + 1}-${processedUnits + batch.length}/${units.length}] Batch ${phase}...`,
         totalFiles: units.length,
-        processedFiles: processedUnits
+        processedFiles: processedUnits,
+        totalServices: units.length,
+        servicesAnalyzed: processedUnits,
       });
 
       for (let idx = 0; idx < batch.length; idx++) {
@@ -393,7 +395,9 @@ export class Orchestrator {
           message: `${unit.name || unit.path} (${unitTime}s)`,
           totalFiles: units.length,
           processedFiles: processedUnits + idx + 1,
-          servicesAnalyzed: processedUnits + idx + 1
+          totalServices: units.length,
+          servicesAnalyzed: processedUnits + idx + 1,
+          currentService: unit.name || unit.path,
         });
       }
 

@@ -45,6 +45,8 @@ export class ProgressRenderer {
   private totalFiles: number = 0;
   private processedFiles: number = 0;
   private servicesAnalyzed: number = 0;
+  private totalServices: number = 0;
+  private currentService: string = '';
   private spinnerIndex: number = 0;
   private isInteractive: boolean;
   private startTime: number;
@@ -99,6 +101,12 @@ export class ProgressRenderer {
     }
     if (info.servicesAnalyzed !== undefined) {
       this.servicesAnalyzed = info.servicesAnalyzed;
+    }
+    if (info.totalServices !== undefined) {
+      this.totalServices = info.totalServices;
+    }
+    if (info.currentService !== undefined) {
+      this.currentService = info.currentService;
     }
 
     // Update spinner
@@ -222,11 +230,20 @@ export class ProgressRenderer {
         }
         return '';
       case 'indexing':
-      case 'analysis':
-        if (this.totalFiles > 0) {
-          return ` ${this.processedFiles}/${this.totalFiles} modules`;
+      case 'analysis': {
+        const parts: string[] = [];
+        if (this.totalServices > 0) {
+          parts.push(`${this.servicesAnalyzed}/${this.totalServices} services`);
         }
-        return '';
+        if (this.currentService) {
+          // Truncate long service names
+          const name = this.currentService.length > 30
+            ? '...' + this.currentService.slice(-27)
+            : this.currentService;
+          parts.push(name);
+        }
+        return parts.length > 0 ? ` ${parts.join(' | ')}` : '';
+      }
       case 'enrichment':
       case 'validation':
         if (this.activePlugins.length > 0) {
@@ -268,6 +285,8 @@ export class ProgressRenderer {
     processedFiles: number;
     totalFiles: number;
     servicesAnalyzed: number;
+    totalServices: number;
+    currentService: string;
     spinnerIndex: number;
     activePlugins: string[];
     nodeCount: number;
@@ -279,6 +298,8 @@ export class ProgressRenderer {
       processedFiles: this.processedFiles,
       totalFiles: this.totalFiles,
       servicesAnalyzed: this.servicesAnalyzed,
+      totalServices: this.totalServices,
+      currentService: this.currentService,
       spinnerIndex: this.spinnerIndex,
       activePlugins: [...this.activePlugins],
       nodeCount: this.nodeCount,
