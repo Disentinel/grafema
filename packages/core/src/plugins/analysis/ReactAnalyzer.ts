@@ -41,6 +41,7 @@ export class ReactAnalyzer extends Plugin {
     return {
       name: 'ReactAnalyzer',
       phase: 'ANALYSIS',
+      covers: ['react'],
       creates: {
         nodes: [
           'react:component', 'react:state', 'react:effect', 'react:callback',

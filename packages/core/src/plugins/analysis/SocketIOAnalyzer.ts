@@ -89,6 +89,7 @@ export class SocketIOAnalyzer extends Plugin {
     return {
       name: 'SocketIOAnalyzer',
       phase: 'ANALYSIS',
+      covers: ['socket.io', 'socket.io-client'],
       creates: {
         nodes: ['socketio:emit', 'socketio:on', 'socketio:room', 'socketio:event'],
         edges: ['CONTAINS', 'EMITS_EVENT', 'LISTENS_TO', 'JOINS_ROOM', 'LISTENED_BY']

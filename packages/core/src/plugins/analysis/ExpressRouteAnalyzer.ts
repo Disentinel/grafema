@@ -68,6 +68,7 @@ export class ExpressRouteAnalyzer extends Plugin {
     return {
       name: 'ExpressRouteAnalyzer',
       phase: 'ANALYSIS',
+      covers: ['express'],
       creates: {
         nodes: ['http:route', 'express:middleware'],
         edges: ['CONTAINS', 'USES_MIDDLEWARE', 'HANDLED_BY']

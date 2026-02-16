@@ -169,6 +169,31 @@ export class PhaseRunner {
   }
 
   /**
+   * Extract service dependency package names from the ANALYSIS phase manifest.
+   * Merges dependencies + devDependencies + peerDependencies from package.json.
+   * Returns empty Set when no package.json is available (non-npm service).
+   */
+  private extractServiceDependencies(context: Partial<PluginContext>): Set<string> {
+    const manifest = context.manifest as Record<string, unknown>;
+    const service = manifest?.service as Record<string, unknown>;
+    const metadata = service?.metadata as Record<string, unknown>;
+    const packageJson = metadata?.packageJson as Record<string, unknown>;
+
+    if (!packageJson) return new Set();
+
+    const deps = new Set<string>();
+    for (const field of ['dependencies', 'devDependencies', 'peerDependencies']) {
+      const fieldValue = packageJson[field];
+      if (fieldValue && typeof fieldValue === 'object') {
+        for (const pkg of Object.keys(fieldValue as Record<string, unknown>)) {
+          deps.add(pkg);
+        }
+      }
+    }
+    return deps;
+  }
+
+  /**
    * Check whether an enricher should be skipped based on selective enrichment.
    * Returns true if the enricher's consumed types have no overlap with accumulated types
    * (i.e., no upstream enricher produced anything this one needs).
@@ -324,6 +349,20 @@ export class PhaseRunner {
             `[SKIP] ${plugin.metadata.name} — no changes in consumed types [${(plugin.metadata.consumes ?? []).join(', ')}]`
           );
           continue;
+        }
+      }
+
+      // Plugin applicability filter for ANALYSIS phase (REG-482)
+      if (phaseName === 'ANALYSIS') {
+        const covers = plugin.metadata.covers;
+        if (covers && covers.length > 0) {
+          const serviceDeps = this.extractServiceDependencies(context);
+          if (!covers.some(pkg => serviceDeps.has(pkg))) {
+            logger.debug(
+              `[SKIP] ${plugin.metadata.name} — no covered packages [${covers.join(', ')}] in service dependencies`
+            );
+            continue;
+          }
         }
       }
 
