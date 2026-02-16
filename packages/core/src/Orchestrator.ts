@@ -234,15 +234,19 @@ export class Orchestrator {
       return manifest;
     }
 
-    // PHASE 2: ANALYSIS
+    // PHASE 2: ANALYSIS (global, like ENRICHMENT)
+    const analysisStart = Date.now();
     this.profiler.start('ANALYSIS');
-    this.onProgress({ phase: 'analysis', currentPlugin: 'Starting analysis...', message: 'Analyzing all units...', totalFiles: unitsToProcess.length, processedFiles: 0 });
+    this.onProgress({ phase: 'analysis', currentPlugin: 'Starting analysis...', message: 'Analyzing all modules...', totalFiles: 0, processedFiles: 0 });
     if (this.parallelRunner) {
       await this.parallelRunner.run(manifest);
     } else {
-      await this.runBatchPhase('ANALYSIS', unitsToProcess, manifest);
+      // workerCount: 1 — JSASTAnalyzer uses WorkerPool(workerCount) for concurrent module analysis.
+      // Sequential processing avoids concurrent graph writes that cause race conditions.
+      await this.runPhase('ANALYSIS', { manifest, graph: this.graph, workerCount: 1 });
     }
     this.profiler.end('ANALYSIS');
+    this.logger.info('ANALYSIS phase complete', { duration: ((Date.now() - analysisStart) / 1000).toFixed(2) });
 
     // PHASES 3-4: ENRICHMENT → strict barrier → guarantee → VALIDATION → flush
     await this.runPipelineEpilogue(manifest, absoluteProjectPath);
@@ -295,12 +299,9 @@ export class Orchestrator {
       // Build indexing units for this root
       const units = this.discoveryManager.buildIndexingUnits(rootManifest);
 
-      // INDEXING + ANALYSIS phases for this root
+      // INDEXING phase for this root (per-unit, needs service context)
       const rootOpts = { rootPrefix: rootName };
       await this.runBatchPhase('INDEXING', units, rootManifest, rootOpts);
-      if (!this.indexOnly) {
-        await this.runBatchPhase('ANALYSIS', units, rootManifest, rootOpts);
-      }
 
       // Collect services with root prefix in path for unified manifest
       for (const svc of rootManifest.services) {
@@ -333,6 +334,20 @@ export class Orchestrator {
       return unifiedManifest;
     }
 
+    // ANALYSIS phase (global across all roots, like ENRICHMENT)
+    const analysisStart = Date.now();
+    this.profiler.start('ANALYSIS');
+    this.onProgress({ phase: 'analysis', currentPlugin: 'Starting analysis...', message: 'Analyzing all modules...', totalFiles: 0, processedFiles: 0 });
+    if (this.parallelRunner) {
+      await this.parallelRunner.run(unifiedManifest);
+    } else {
+      // workerCount: 1 — JSASTAnalyzer uses WorkerPool(workerCount) for concurrent module analysis.
+      // Sequential processing avoids concurrent graph writes that cause race conditions.
+      await this.runPhase('ANALYSIS', { manifest: unifiedManifest, graph: this.graph, workerCount: 1 });
+    }
+    this.profiler.end('ANALYSIS');
+    this.logger.info('ANALYSIS phase complete', { duration: ((Date.now() - analysisStart) / 1000).toFixed(2) });
+
     // ENRICHMENT → strict barrier → guarantee → VALIDATION → flush
     await this.runPipelineEpilogue(unifiedManifest, workspacePath);
 
@@ -343,7 +358,9 @@ export class Orchestrator {
   }
 
   /**
-   * Run a per-unit phase (INDEXING or ANALYSIS) in batches.
+   * Run INDEXING phase per-unit in batches.
+   * Used only for INDEXING (requires service context for DFS).
+   * ANALYSIS now runs globally like ENRICHMENT.
    * Common batch processing logic extracted from run() (REG-462).
    */
   private async runBatchPhase(
