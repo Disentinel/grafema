@@ -8897,14 +8897,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "app.js",
@@ -8923,14 +8923,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "app.js",
@@ -8941,14 +8941,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "app.js",
@@ -8959,14 +8959,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "app.js",
@@ -8977,14 +8977,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "app.js",
@@ -8995,14 +8995,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "app.js",
@@ -9013,14 +9013,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "app.js",
@@ -9031,14 +9031,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "app.js",
@@ -9049,14 +9049,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "app.js",
@@ -9067,14 +9067,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "app.js",
@@ -9085,14 +9085,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "app.js",
@@ -9103,14 +9103,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
         "hasBranches": true,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 2,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "app.js",
@@ -9121,32 +9121,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
         "hasBranches": true,
+        "hasLoops": false,
+        "hasTryCatch": false,
         "hasEarlyReturn": true,
-        "hasLoops": false,
         "hasThrow": false,
-        "hasTryCatch": false
-      },
-      "exported": false,
-      "file": "app.js",
-      "name": "anonymous[0]",
-      "type": "FUNCTION"
-    },
-    {
-      "arrowFunction": true,
-      "async": false,
-      "controlFlow": {
-        "canReject": false,
         "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
-        "hasBranches": true,
-        "hasEarlyReturn": true,
-        "hasLoops": false,
-        "hasThrow": false,
-        "hasTryCatch": false
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "app.js",
@@ -9157,14 +9139,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
+        "hasBranches": true,
+        "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": true,
+        "hasThrow": false,
         "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
-        "hasBranches": true,
-        "hasEarlyReturn": true,
-        "hasLoops": false,
-        "hasThrow": false,
-        "hasTryCatch": false
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "app.js",
@@ -9175,14 +9157,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
+        "hasBranches": true,
+        "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": true,
+        "hasThrow": false,
         "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
-        "hasBranches": true,
-        "hasEarlyReturn": true,
-        "hasLoops": false,
-        "hasThrow": false,
-        "hasTryCatch": false
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "app.js",
@@ -9193,14 +9175,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
+        "hasBranches": true,
+        "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": true,
+        "hasThrow": false,
         "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
-        "hasBranches": true,
-        "hasEarlyReturn": true,
-        "hasLoops": false,
-        "hasThrow": false,
-        "hasTryCatch": false
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "app.js",
@@ -9211,14 +9193,32 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
+        "hasBranches": true,
+        "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": true,
+        "hasThrow": false,
+        "cyclomaticComplexity": 2,
         "canReject": false,
+        "hasAsyncThrow": false
+      },
+      "exported": false,
+      "file": "app.js",
+      "name": "anonymous[0]",
+      "type": "FUNCTION"
+    },
+    {
+      "arrowFunction": true,
+      "async": false,
+      "controlFlow": {
+        "hasBranches": true,
+        "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": true,
+        "hasThrow": false,
         "cyclomaticComplexity": 3,
-        "hasAsyncThrow": false,
-        "hasBranches": true,
-        "hasEarlyReturn": true,
-        "hasLoops": false,
-        "hasThrow": false,
-        "hasTryCatch": false
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "app.js",
@@ -9229,14 +9229,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 3,
-        "hasAsyncThrow": false,
         "hasBranches": true,
-        "hasEarlyReturn": true,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": true,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 3,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "app.js",
@@ -9255,32 +9255,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
-      },
-      "exported": false,
-      "file": "middleware/auth.js",
-      "name": "anonymous[0]",
-      "type": "FUNCTION"
-    },
-    {
-      "arrowFunction": true,
-      "async": false,
-      "controlFlow": {
-        "canReject": false,
         "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
-        "hasBranches": false,
-        "hasEarlyReturn": false,
-        "hasLoops": false,
-        "hasThrow": false,
-        "hasTryCatch": false
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "middleware/auth.js",
@@ -9291,14 +9273,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
+        "hasBranches": false,
+        "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
+        "hasThrow": false,
         "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
-        "hasBranches": false,
-        "hasEarlyReturn": false,
-        "hasLoops": false,
-        "hasThrow": false,
-        "hasTryCatch": false
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "middleware/auth.js",
@@ -9309,14 +9291,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
+        "hasBranches": false,
+        "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
+        "hasThrow": false,
         "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
-        "hasBranches": false,
-        "hasEarlyReturn": false,
-        "hasLoops": false,
-        "hasThrow": false,
-        "hasTryCatch": false
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "middleware/auth.js",
@@ -9327,14 +9309,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
+        "hasBranches": false,
+        "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
+        "hasThrow": false,
         "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
-        "hasBranches": false,
-        "hasEarlyReturn": false,
-        "hasLoops": false,
-        "hasThrow": false,
-        "hasTryCatch": false
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "middleware/auth.js",
@@ -9345,14 +9327,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
+        "hasBranches": false,
+        "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
+        "hasThrow": false,
         "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
-        "hasBranches": false,
-        "hasEarlyReturn": false,
-        "hasLoops": false,
-        "hasThrow": false,
-        "hasTryCatch": false
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "middleware/auth.js",
@@ -9363,14 +9345,32 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
+        "hasBranches": false,
+        "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
+        "hasThrow": false,
         "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
+        "canReject": false,
+        "hasAsyncThrow": false
+      },
+      "exported": false,
+      "file": "middleware/auth.js",
+      "name": "anonymous[0]",
+      "type": "FUNCTION"
+    },
+    {
+      "arrowFunction": true,
+      "async": false,
+      "controlFlow": {
         "hasBranches": false,
+        "hasLoops": false,
+        "hasTryCatch": false,
         "hasEarlyReturn": false,
-        "hasLoops": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "middleware/auth.js",
@@ -9381,14 +9381,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
         "hasBranches": true,
+        "hasLoops": false,
+        "hasTryCatch": false,
         "hasEarlyReturn": false,
-        "hasLoops": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 2,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "middleware/auth.js",
@@ -9399,14 +9399,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
         "hasBranches": true,
+        "hasLoops": false,
+        "hasTryCatch": false,
         "hasEarlyReturn": false,
-        "hasLoops": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 2,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "middleware/auth.js",
@@ -9417,14 +9417,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
         "hasBranches": true,
+        "hasLoops": false,
+        "hasTryCatch": false,
         "hasEarlyReturn": false,
-        "hasLoops": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 2,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "middleware/auth.js",
@@ -9435,14 +9435,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
         "hasBranches": true,
+        "hasLoops": false,
+        "hasTryCatch": false,
         "hasEarlyReturn": false,
-        "hasLoops": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 2,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "middleware/auth.js",
@@ -9453,14 +9453,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
         "hasBranches": true,
+        "hasLoops": false,
+        "hasTryCatch": false,
         "hasEarlyReturn": false,
-        "hasLoops": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 2,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "middleware/auth.js",
@@ -9471,32 +9471,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
         "hasBranches": true,
+        "hasLoops": false,
+        "hasTryCatch": false,
         "hasEarlyReturn": false,
-        "hasLoops": false,
         "hasThrow": false,
-        "hasTryCatch": false
-      },
-      "exported": false,
-      "file": "middleware/auth.js",
-      "name": "anonymous[0]",
-      "type": "FUNCTION"
-    },
-    {
-      "arrowFunction": true,
-      "async": false,
-      "controlFlow": {
-        "canReject": false,
         "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
-        "hasBranches": true,
-        "hasEarlyReturn": true,
-        "hasLoops": false,
-        "hasThrow": false,
-        "hasTryCatch": false
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "middleware/auth.js",
@@ -9507,86 +9489,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
         "hasBranches": true,
-        "hasEarlyReturn": true,
         "hasLoops": false,
-        "hasThrow": false,
-        "hasTryCatch": false
-      },
-      "exported": false,
-      "file": "middleware/auth.js",
-      "name": "anonymous[0]",
-      "type": "FUNCTION"
-    },
-    {
-      "arrowFunction": true,
-      "async": false,
-      "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
-        "hasBranches": true,
-        "hasEarlyReturn": true,
-        "hasLoops": false,
-        "hasThrow": false,
-        "hasTryCatch": false
-      },
-      "exported": false,
-      "file": "middleware/auth.js",
-      "name": "anonymous[0]",
-      "type": "FUNCTION"
-    },
-    {
-      "arrowFunction": true,
-      "async": false,
-      "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
-        "hasBranches": true,
-        "hasEarlyReturn": true,
-        "hasLoops": false,
-        "hasThrow": false,
-        "hasTryCatch": false
-      },
-      "exported": false,
-      "file": "middleware/auth.js",
-      "name": "anonymous[0]",
-      "type": "FUNCTION"
-    },
-    {
-      "arrowFunction": true,
-      "async": false,
-      "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
-        "hasBranches": true,
-        "hasEarlyReturn": true,
-        "hasLoops": false,
-        "hasThrow": false,
-        "hasTryCatch": false
-      },
-      "exported": false,
-      "file": "middleware/auth.js",
-      "name": "anonymous[0]",
-      "type": "FUNCTION"
-    },
-    {
-      "arrowFunction": true,
-      "async": false,
-      "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 3,
-        "hasAsyncThrow": false,
-        "hasBranches": true,
+        "hasTryCatch": false,
         "hasEarlyReturn": false,
-        "hasLoops": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 3,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "middleware/auth.js",
@@ -9597,14 +9507,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 3,
-        "hasAsyncThrow": false,
         "hasBranches": true,
+        "hasLoops": false,
+        "hasTryCatch": false,
         "hasEarlyReturn": false,
-        "hasLoops": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 3,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "middleware/auth.js",
@@ -9615,139 +9525,229 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 3,
-        "hasAsyncThrow": false,
         "hasBranches": true,
-        "hasEarlyReturn": true,
         "hasLoops": false,
-        "hasThrow": false,
-        "hasTryCatch": false
-      },
-      "exported": false,
-      "file": "middleware/auth.js",
-      "name": "anonymous[0]",
-      "type": "FUNCTION"
-    },
-    {
-      "arrowFunction": true,
-      "async": false,
-      "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 3,
-        "hasAsyncThrow": false,
-        "hasBranches": true,
+        "hasTryCatch": false,
         "hasEarlyReturn": true,
-        "hasLoops": false,
         "hasThrow": false,
-        "hasTryCatch": false
-      },
-      "exported": false,
-      "file": "middleware/auth.js",
-      "name": "anonymous[0]",
-      "type": "FUNCTION"
-    },
-    {
-      "arrowFunction": true,
-      "async": false,
-      "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 3,
-        "hasAsyncThrow": false,
-        "hasBranches": true,
-        "hasEarlyReturn": true,
-        "hasLoops": false,
-        "hasThrow": false,
-        "hasTryCatch": false
-      },
-      "exported": false,
-      "file": "middleware/auth.js",
-      "name": "anonymous[0]",
-      "type": "FUNCTION"
-    },
-    {
-      "arrowFunction": true,
-      "async": false,
-      "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 3,
-        "hasAsyncThrow": false,
-        "hasBranches": true,
-        "hasEarlyReturn": true,
-        "hasLoops": false,
-        "hasThrow": false,
-        "hasTryCatch": false
-      },
-      "exported": false,
-      "file": "middleware/auth.js",
-      "name": "anonymous[0]",
-      "type": "FUNCTION"
-    },
-    {
-      "arrowFunction": true,
-      "async": false,
-      "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 3,
-        "hasAsyncThrow": false,
-        "hasBranches": true,
-        "hasEarlyReturn": true,
-        "hasLoops": false,
-        "hasThrow": false,
-        "hasTryCatch": false
-      },
-      "exported": false,
-      "file": "middleware/auth.js",
-      "name": "anonymous[0]",
-      "type": "FUNCTION"
-    },
-    {
-      "arrowFunction": true,
-      "async": false,
-      "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 3,
-        "hasAsyncThrow": false,
-        "hasBranches": true,
-        "hasEarlyReturn": true,
-        "hasLoops": false,
-        "hasThrow": false,
-        "hasTryCatch": false
-      },
-      "exported": false,
-      "file": "middleware/auth.js",
-      "name": "anonymous[0]",
-      "type": "FUNCTION"
-    },
-    {
-      "arrowFunction": true,
-      "async": false,
-      "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 3,
-        "hasAsyncThrow": false,
-        "hasBranches": true,
-        "hasEarlyReturn": true,
-        "hasLoops": false,
-        "hasThrow": false,
-        "hasTryCatch": false
-      },
-      "exported": false,
-      "file": "middleware/auth.js",
-      "name": "anonymous[0]",
-      "type": "FUNCTION"
-    },
-    {
-      "async": false,
-      "controlFlow": {
-        "canReject": false,
         "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
+        "canReject": false,
+        "hasAsyncThrow": false
+      },
+      "exported": false,
+      "file": "middleware/auth.js",
+      "name": "anonymous[0]",
+      "type": "FUNCTION"
+    },
+    {
+      "arrowFunction": true,
+      "async": false,
+      "controlFlow": {
         "hasBranches": true,
-        "hasEarlyReturn": true,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": true,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 2,
+        "canReject": false,
+        "hasAsyncThrow": false
+      },
+      "exported": false,
+      "file": "middleware/auth.js",
+      "name": "anonymous[0]",
+      "type": "FUNCTION"
+    },
+    {
+      "arrowFunction": true,
+      "async": false,
+      "controlFlow": {
+        "hasBranches": true,
+        "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": true,
+        "hasThrow": false,
+        "cyclomaticComplexity": 2,
+        "canReject": false,
+        "hasAsyncThrow": false
+      },
+      "exported": false,
+      "file": "middleware/auth.js",
+      "name": "anonymous[0]",
+      "type": "FUNCTION"
+    },
+    {
+      "arrowFunction": true,
+      "async": false,
+      "controlFlow": {
+        "hasBranches": true,
+        "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": true,
+        "hasThrow": false,
+        "cyclomaticComplexity": 2,
+        "canReject": false,
+        "hasAsyncThrow": false
+      },
+      "exported": false,
+      "file": "middleware/auth.js",
+      "name": "anonymous[0]",
+      "type": "FUNCTION"
+    },
+    {
+      "arrowFunction": true,
+      "async": false,
+      "controlFlow": {
+        "hasBranches": true,
+        "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": true,
+        "hasThrow": false,
+        "cyclomaticComplexity": 2,
+        "canReject": false,
+        "hasAsyncThrow": false
+      },
+      "exported": false,
+      "file": "middleware/auth.js",
+      "name": "anonymous[0]",
+      "type": "FUNCTION"
+    },
+    {
+      "arrowFunction": true,
+      "async": false,
+      "controlFlow": {
+        "hasBranches": true,
+        "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": true,
+        "hasThrow": false,
+        "cyclomaticComplexity": 3,
+        "canReject": false,
+        "hasAsyncThrow": false
+      },
+      "exported": false,
+      "file": "middleware/auth.js",
+      "name": "anonymous[0]",
+      "type": "FUNCTION"
+    },
+    {
+      "arrowFunction": true,
+      "async": false,
+      "controlFlow": {
+        "hasBranches": true,
+        "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": true,
+        "hasThrow": false,
+        "cyclomaticComplexity": 3,
+        "canReject": false,
+        "hasAsyncThrow": false
+      },
+      "exported": false,
+      "file": "middleware/auth.js",
+      "name": "anonymous[0]",
+      "type": "FUNCTION"
+    },
+    {
+      "arrowFunction": true,
+      "async": false,
+      "controlFlow": {
+        "hasBranches": true,
+        "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": true,
+        "hasThrow": false,
+        "cyclomaticComplexity": 3,
+        "canReject": false,
+        "hasAsyncThrow": false
+      },
+      "exported": false,
+      "file": "middleware/auth.js",
+      "name": "anonymous[0]",
+      "type": "FUNCTION"
+    },
+    {
+      "arrowFunction": true,
+      "async": false,
+      "controlFlow": {
+        "hasBranches": true,
+        "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": true,
+        "hasThrow": false,
+        "cyclomaticComplexity": 3,
+        "canReject": false,
+        "hasAsyncThrow": false
+      },
+      "exported": false,
+      "file": "middleware/auth.js",
+      "name": "anonymous[0]",
+      "type": "FUNCTION"
+    },
+    {
+      "arrowFunction": true,
+      "async": false,
+      "controlFlow": {
+        "hasBranches": true,
+        "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": true,
+        "hasThrow": false,
+        "cyclomaticComplexity": 3,
+        "canReject": false,
+        "hasAsyncThrow": false
+      },
+      "exported": false,
+      "file": "middleware/auth.js",
+      "name": "anonymous[0]",
+      "type": "FUNCTION"
+    },
+    {
+      "arrowFunction": true,
+      "async": false,
+      "controlFlow": {
+        "hasBranches": true,
+        "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": true,
+        "hasThrow": false,
+        "cyclomaticComplexity": 3,
+        "canReject": false,
+        "hasAsyncThrow": false
+      },
+      "exported": false,
+      "file": "middleware/auth.js",
+      "name": "anonymous[0]",
+      "type": "FUNCTION"
+    },
+    {
+      "arrowFunction": true,
+      "async": false,
+      "controlFlow": {
+        "hasBranches": true,
+        "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": true,
+        "hasThrow": false,
+        "cyclomaticComplexity": 3,
+        "canReject": false,
+        "hasAsyncThrow": false
+      },
+      "exported": false,
+      "file": "middleware/auth.js",
+      "name": "anonymous[0]",
+      "type": "FUNCTION"
+    },
+    {
+      "async": false,
+      "controlFlow": {
+        "hasBranches": true,
+        "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": true,
+        "hasThrow": false,
+        "cyclomaticComplexity": 2,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "middleware/auth.js",
@@ -9758,14 +9758,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
         "hasBranches": true,
-        "hasEarlyReturn": true,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": true,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 2,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "middleware/auth.js",
@@ -9776,14 +9776,14 @@
     {
       "async": true,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 4,
-        "hasAsyncThrow": false,
         "hasBranches": true,
-        "hasEarlyReturn": true,
         "hasLoops": false,
+        "hasTryCatch": true,
+        "hasEarlyReturn": true,
         "hasThrow": false,
-        "hasTryCatch": true
+        "cyclomaticComplexity": 4,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "middleware/auth.js",
@@ -9798,14 +9798,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "models/User.js",
@@ -9826,34 +9826,34 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": true,
-        "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
         "hasBranches": true,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 2,
+        "canReject": true,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "models/User.js",
       "name": "anonymous[0]",
       "rejectionPatterns": [
         {
-          "column": 10,
+          "rejectionType": "variable_unknown",
           "errorClassName": null,
           "line": 71,
-          "rejectionType": "variable_unknown",
+          "column": 10,
           "sourceVariableName": "err",
           "tracePath": [
             "err"
           ]
         },
         {
-          "column": 10,
+          "rejectionType": "variable_unknown",
           "errorClassName": null,
           "line": 71,
-          "rejectionType": "variable_unknown",
+          "column": 10,
           "sourceVariableName": "err",
           "tracePath": [
             "err"
@@ -9937,14 +9937,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
         "hasBranches": true,
-        "hasEarlyReturn": true,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": true,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 2,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "models/User.js",
@@ -9955,14 +9955,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
         "hasBranches": true,
-        "hasEarlyReturn": true,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": true,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 2,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "models/User.js",
@@ -9973,14 +9973,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
         "hasBranches": true,
-        "hasEarlyReturn": true,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": true,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 2,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "models/User.js",
@@ -9991,14 +9991,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
         "hasBranches": true,
-        "hasEarlyReturn": true,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": true,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 2,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "models/User.js",
@@ -10009,14 +10009,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
+        "hasBranches": true,
+        "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": true,
+        "hasThrow": false,
         "cyclomaticComplexity": 6,
-        "hasAsyncThrow": false,
-        "hasBranches": true,
-        "hasEarlyReturn": true,
-        "hasLoops": false,
-        "hasThrow": false,
-        "hasTryCatch": false
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "models/User.js",
@@ -10028,14 +10028,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "routes/api.js",
@@ -10056,32 +10056,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
-      },
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "anonymous[0]",
-      "type": "FUNCTION"
-    },
-    {
-      "arrowFunction": true,
-      "async": false,
-      "controlFlow": {
-        "canReject": false,
         "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
-        "hasBranches": false,
-        "hasEarlyReturn": false,
-        "hasLoops": false,
-        "hasThrow": false,
-        "hasTryCatch": false
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "routes/api.js",
@@ -10092,14 +10074,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
+        "hasBranches": false,
+        "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
+        "hasThrow": false,
         "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
-        "hasBranches": false,
-        "hasEarlyReturn": false,
-        "hasLoops": false,
-        "hasThrow": false,
-        "hasTryCatch": false
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "routes/api.js",
@@ -10110,14 +10092,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
+        "hasBranches": false,
+        "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
+        "hasThrow": false,
         "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
-        "hasBranches": false,
-        "hasEarlyReturn": false,
-        "hasLoops": false,
-        "hasThrow": false,
-        "hasTryCatch": false
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "routes/api.js",
@@ -10128,14 +10110,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
+        "hasBranches": false,
+        "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
+        "hasThrow": false,
         "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
-        "hasBranches": false,
-        "hasEarlyReturn": false,
-        "hasLoops": false,
-        "hasThrow": false,
-        "hasTryCatch": false
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "routes/api.js",
@@ -10146,14 +10128,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
+        "hasBranches": false,
+        "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
+        "hasThrow": false,
         "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
-        "hasBranches": false,
-        "hasEarlyReturn": false,
-        "hasLoops": false,
-        "hasThrow": false,
-        "hasTryCatch": false
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "routes/api.js",
@@ -10164,14 +10146,32 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
+        "hasBranches": false,
+        "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
+        "hasThrow": false,
         "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
+        "canReject": false,
+        "hasAsyncThrow": false
+      },
+      "exported": false,
+      "file": "routes/api.js",
+      "name": "anonymous[0]",
+      "type": "FUNCTION"
+    },
+    {
+      "arrowFunction": true,
+      "async": false,
+      "controlFlow": {
         "hasBranches": false,
+        "hasLoops": false,
+        "hasTryCatch": false,
         "hasEarlyReturn": false,
-        "hasLoops": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "routes/api.js",
@@ -10182,14 +10182,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
         "hasBranches": true,
+        "hasLoops": false,
+        "hasTryCatch": false,
         "hasEarlyReturn": false,
-        "hasLoops": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 2,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "routes/api.js",
@@ -10200,14 +10200,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
         "hasBranches": true,
+        "hasLoops": false,
+        "hasTryCatch": false,
         "hasEarlyReturn": false,
-        "hasLoops": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 2,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "routes/api.js",
@@ -10218,14 +10218,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
         "hasBranches": true,
+        "hasLoops": false,
+        "hasTryCatch": false,
         "hasEarlyReturn": false,
-        "hasLoops": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 2,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "routes/api.js",
@@ -10236,14 +10236,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
         "hasBranches": true,
+        "hasLoops": false,
+        "hasTryCatch": false,
         "hasEarlyReturn": false,
-        "hasLoops": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 2,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "routes/api.js",
@@ -10254,32 +10254,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
         "hasBranches": true,
+        "hasLoops": false,
+        "hasTryCatch": false,
         "hasEarlyReturn": false,
-        "hasLoops": false,
         "hasThrow": false,
-        "hasTryCatch": false
-      },
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "anonymous[0]",
-      "type": "FUNCTION"
-    },
-    {
-      "arrowFunction": true,
-      "async": false,
-      "controlFlow": {
-        "canReject": false,
         "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
-        "hasBranches": true,
-        "hasEarlyReturn": true,
-        "hasLoops": false,
-        "hasThrow": false,
-        "hasTryCatch": false
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "routes/api.js",
@@ -10290,14 +10272,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
+        "hasBranches": true,
+        "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": true,
+        "hasThrow": false,
         "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
-        "hasBranches": true,
-        "hasEarlyReturn": true,
-        "hasLoops": false,
-        "hasThrow": false,
-        "hasTryCatch": false
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "routes/api.js",
@@ -10308,14 +10290,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
+        "hasBranches": true,
+        "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": true,
+        "hasThrow": false,
         "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
-        "hasBranches": true,
-        "hasEarlyReturn": true,
-        "hasLoops": false,
-        "hasThrow": false,
-        "hasTryCatch": false
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "routes/api.js",
@@ -10326,14 +10308,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
+        "hasBranches": true,
+        "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": true,
+        "hasThrow": false,
         "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
-        "hasBranches": true,
-        "hasEarlyReturn": true,
-        "hasLoops": false,
-        "hasThrow": false,
-        "hasTryCatch": false
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "routes/api.js",
@@ -10344,14 +10326,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
+        "hasBranches": true,
+        "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": true,
+        "hasThrow": false,
         "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
-        "hasBranches": true,
-        "hasEarlyReturn": true,
-        "hasLoops": false,
-        "hasThrow": false,
-        "hasTryCatch": false
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "routes/api.js",
@@ -10362,14 +10344,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
+        "hasBranches": true,
+        "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": true,
+        "hasThrow": false,
         "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
-        "hasBranches": true,
-        "hasEarlyReturn": true,
-        "hasLoops": false,
-        "hasThrow": false,
-        "hasTryCatch": false
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "routes/api.js",
@@ -10380,14 +10362,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
+        "hasBranches": true,
+        "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": true,
+        "hasThrow": false,
         "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
-        "hasBranches": true,
-        "hasEarlyReturn": true,
-        "hasLoops": false,
-        "hasThrow": false,
-        "hasTryCatch": false
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "routes/api.js",
@@ -10398,14 +10380,32 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
+        "hasBranches": true,
+        "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": true,
+        "hasThrow": false,
+        "cyclomaticComplexity": 2,
         "canReject": false,
+        "hasAsyncThrow": false
+      },
+      "exported": false,
+      "file": "routes/api.js",
+      "name": "anonymous[0]",
+      "type": "FUNCTION"
+    },
+    {
+      "arrowFunction": true,
+      "async": false,
+      "controlFlow": {
+        "hasBranches": true,
+        "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": true,
+        "hasThrow": false,
         "cyclomaticComplexity": 3,
-        "hasAsyncThrow": false,
-        "hasBranches": true,
-        "hasEarlyReturn": true,
-        "hasLoops": false,
-        "hasThrow": false,
-        "hasTryCatch": false
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "routes/api.js",
@@ -10416,14 +10416,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
+        "hasBranches": true,
+        "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": true,
+        "hasThrow": false,
         "cyclomaticComplexity": 3,
-        "hasAsyncThrow": false,
-        "hasBranches": true,
-        "hasEarlyReturn": true,
-        "hasLoops": false,
-        "hasThrow": false,
-        "hasTryCatch": false
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "routes/api.js",
@@ -10434,14 +10434,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
+        "hasBranches": true,
+        "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": true,
+        "hasThrow": false,
         "cyclomaticComplexity": 3,
-        "hasAsyncThrow": false,
-        "hasBranches": true,
-        "hasEarlyReturn": true,
-        "hasLoops": false,
-        "hasThrow": false,
-        "hasTryCatch": false
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "routes/api.js",
@@ -10452,14 +10452,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
+        "hasBranches": true,
+        "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": true,
+        "hasThrow": false,
         "cyclomaticComplexity": 3,
-        "hasAsyncThrow": false,
-        "hasBranches": true,
-        "hasEarlyReturn": true,
-        "hasLoops": false,
-        "hasThrow": false,
-        "hasTryCatch": false
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "routes/api.js",
@@ -10470,14 +10470,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 4,
-        "hasAsyncThrow": false,
         "hasBranches": true,
-        "hasEarlyReturn": true,
         "hasLoops": true,
+        "hasTryCatch": false,
+        "hasEarlyReturn": true,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 4,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "routes/api.js",
@@ -10488,32 +10488,32 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
-      },
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "anonymous[0]",
-      "type": "FUNCTION"
-    },
-    {
-      "arrowFunction": true,
-      "async": false,
-      "controlFlow": {
-        "canReject": false,
         "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
+        "canReject": false,
+        "hasAsyncThrow": false
+      },
+      "exported": false,
+      "file": "services/dataProcessor.js",
+      "name": "anonymous[0]",
+      "type": "FUNCTION"
+    },
+    {
+      "arrowFunction": true,
+      "async": false,
+      "controlFlow": {
         "hasBranches": false,
+        "hasLoops": false,
+        "hasTryCatch": false,
         "hasEarlyReturn": false,
-        "hasLoops": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "services/dataProcessor.js",
@@ -10524,32 +10524,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
         "hasBranches": true,
+        "hasLoops": false,
+        "hasTryCatch": false,
         "hasEarlyReturn": false,
-        "hasLoops": false,
         "hasThrow": false,
-        "hasTryCatch": false
-      },
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "anonymous[0]",
-      "type": "FUNCTION"
-    },
-    {
-      "arrowFunction": true,
-      "async": false,
-      "controlFlow": {
-        "canReject": false,
         "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
-        "hasBranches": true,
-        "hasEarlyReturn": true,
-        "hasLoops": false,
-        "hasThrow": false,
-        "hasTryCatch": false
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "services/dataProcessor.js",
@@ -10560,14 +10542,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
+        "hasBranches": true,
+        "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": true,
+        "hasThrow": false,
         "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
-        "hasBranches": true,
-        "hasEarlyReturn": true,
-        "hasLoops": false,
-        "hasThrow": false,
-        "hasTryCatch": false
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "services/dataProcessor.js",
@@ -10578,14 +10560,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
+        "hasBranches": true,
+        "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": true,
+        "hasThrow": false,
         "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
-        "hasBranches": true,
-        "hasEarlyReturn": true,
-        "hasLoops": false,
-        "hasThrow": false,
-        "hasTryCatch": false
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "services/dataProcessor.js",
@@ -10596,14 +10578,32 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 4,
-        "hasAsyncThrow": false,
         "hasBranches": true,
-        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": true,
+        "hasThrow": false,
+        "cyclomaticComplexity": 2,
+        "canReject": false,
+        "hasAsyncThrow": false
+      },
+      "exported": false,
+      "file": "services/dataProcessor.js",
+      "name": "anonymous[0]",
+      "type": "FUNCTION"
+    },
+    {
+      "arrowFunction": true,
+      "async": false,
+      "controlFlow": {
+        "hasBranches": true,
         "hasLoops": true,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 4,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "services/dataProcessor.js",
@@ -10670,14 +10670,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "utils/asyncHelpers.js",
@@ -10688,14 +10688,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "utils/asyncHelpers.js",
@@ -10706,14 +10706,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "utils/asyncHelpers.js",
@@ -10724,14 +10724,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "utils/asyncHelpers.js",
@@ -10742,14 +10742,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "utils/asyncHelpers.js",
@@ -10760,14 +10760,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "utils/asyncHelpers.js",
@@ -10778,14 +10778,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "utils/asyncHelpers.js",
@@ -10796,14 +10796,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "utils/asyncHelpers.js",
@@ -10814,14 +10814,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "utils/asyncHelpers.js",
@@ -10832,14 +10832,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "utils/asyncHelpers.js",
@@ -10850,14 +10850,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "utils/asyncHelpers.js",
@@ -10868,14 +10868,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "utils/asyncHelpers.js",
@@ -10886,14 +10886,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "utils/asyncHelpers.js",
@@ -10904,14 +10904,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "utils/asyncHelpers.js",
@@ -10922,14 +10922,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "utils/asyncHelpers.js",
@@ -10940,14 +10940,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "utils/asyncHelpers.js",
@@ -10958,14 +10958,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "utils/asyncHelpers.js",
@@ -10976,14 +10976,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "utils/asyncHelpers.js",
@@ -10994,14 +10994,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "utils/asyncHelpers.js",
@@ -11012,14 +11012,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "utils/asyncHelpers.js",
@@ -11030,14 +11030,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "utils/asyncHelpers.js",
@@ -11048,14 +11048,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "utils/asyncHelpers.js",
@@ -11066,14 +11066,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "utils/asyncHelpers.js",
@@ -11084,14 +11084,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "utils/asyncHelpers.js",
@@ -11102,14 +11102,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "utils/asyncHelpers.js",
@@ -11120,14 +11120,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "utils/asyncHelpers.js",
@@ -11138,32 +11138,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
         "hasBranches": true,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
-      },
-      "exported": false,
-      "file": "utils/asyncHelpers.js",
-      "name": "anonymous[0]",
-      "type": "FUNCTION"
-    },
-    {
-      "arrowFunction": true,
-      "async": false,
-      "controlFlow": {
-        "canReject": false,
         "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
-        "hasBranches": true,
-        "hasEarlyReturn": false,
-        "hasLoops": false,
-        "hasThrow": false,
-        "hasTryCatch": false
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "utils/asyncHelpers.js",
@@ -11174,14 +11156,32 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
+        "hasBranches": true,
+        "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
+        "hasThrow": false,
+        "cyclomaticComplexity": 2,
         "canReject": false,
+        "hasAsyncThrow": false
+      },
+      "exported": false,
+      "file": "utils/asyncHelpers.js",
+      "name": "anonymous[0]",
+      "type": "FUNCTION"
+    },
+    {
+      "arrowFunction": true,
+      "async": false,
+      "controlFlow": {
+        "hasBranches": true,
+        "hasLoops": false,
+        "hasTryCatch": true,
+        "hasEarlyReturn": false,
+        "hasThrow": false,
         "cyclomaticComplexity": 3,
-        "hasAsyncThrow": false,
-        "hasBranches": true,
-        "hasEarlyReturn": false,
-        "hasLoops": false,
-        "hasThrow": false,
-        "hasTryCatch": true
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "utils/asyncHelpers.js",
@@ -11279,14 +11279,14 @@
     {
       "async": false,
       "controlFlow": {
+        "hasBranches": false,
+        "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
+        "hasThrow": false,
+        "cyclomaticComplexity": 1,
         "canReject": true,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
-        "hasBranches": false,
-        "hasEarlyReturn": false,
-        "hasLoops": false,
-        "hasThrow": false,
-        "hasTryCatch": false
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "utils/asyncHelpers.js",
@@ -11294,10 +11294,10 @@
       "name": "anonymous[0]",
       "rejectionPatterns": [
         {
-          "column": 10,
+          "rejectionType": "variable_unknown",
           "errorClassName": null,
           "line": 315,
-          "rejectionType": "variable_unknown",
+          "column": 10,
           "sourceVariableName": "err",
           "tracePath": [
             "err"
@@ -11310,14 +11310,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "app.js",
@@ -11338,14 +11338,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "app.js",
@@ -11356,14 +11356,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "app.js",
@@ -11374,14 +11374,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "middleware/auth.js",
@@ -11392,14 +11392,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "middleware/auth.js",
@@ -11410,14 +11410,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "middleware/auth.js",
@@ -11428,14 +11428,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "middleware/auth.js",
@@ -11446,14 +11446,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
         "hasBranches": true,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 2,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "middleware/auth.js",
@@ -11464,14 +11464,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "models/User.js",
@@ -11506,14 +11506,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "routes/api.js",
@@ -11534,14 +11534,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "routes/api.js",
@@ -11552,14 +11552,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "routes/api.js",
@@ -11570,14 +11570,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "routes/api.js",
@@ -11588,14 +11588,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
+        "hasBranches": false,
+        "hasLoops": false,
+        "hasTryCatch": true,
+        "hasEarlyReturn": false,
+        "hasThrow": false,
+        "cyclomaticComplexity": 1,
         "canReject": true,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
-        "hasBranches": false,
-        "hasEarlyReturn": false,
-        "hasLoops": false,
-        "hasThrow": false,
-        "hasTryCatch": true
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "services/dataProcessor.js",
@@ -11614,10 +11614,10 @@
       ],
       "rejectionPatterns": [
         {
-          "column": 8,
+          "rejectionType": "variable_unknown",
           "errorClassName": null,
           "line": 173,
-          "rejectionType": "variable_unknown",
+          "column": 8,
           "sourceVariableName": "err",
           "tracePath": [
             "err"
@@ -11640,14 +11640,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "utils/asyncHelpers.js",
@@ -11658,14 +11658,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "utils/asyncHelpers.js",
@@ -11676,14 +11676,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "utils/asyncHelpers.js",
@@ -11694,14 +11694,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "utils/asyncHelpers.js",
@@ -11712,14 +11712,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "utils/asyncHelpers.js",
@@ -11730,14 +11730,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "utils/asyncHelpers.js",
@@ -11748,14 +11748,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "utils/asyncHelpers.js",
@@ -11766,14 +11766,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "utils/asyncHelpers.js",
@@ -11784,14 +11784,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "utils/asyncHelpers.js",
@@ -11802,14 +11802,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "utils/asyncHelpers.js",
@@ -11820,14 +11820,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "utils/asyncHelpers.js",
@@ -11838,14 +11838,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "utils/asyncHelpers.js",
@@ -11856,14 +11856,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "utils/asyncHelpers.js",
@@ -11874,14 +11874,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
         "hasBranches": true,
-        "hasEarlyReturn": true,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": true,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 2,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "utils/asyncHelpers.js",
@@ -11916,14 +11916,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "app.js",
@@ -11944,14 +11944,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "app.js",
@@ -11962,14 +11962,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "middleware/auth.js",
@@ -11980,14 +11980,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "middleware/auth.js",
@@ -11998,14 +11998,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "middleware/auth.js",
@@ -12016,14 +12016,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "middleware/auth.js",
@@ -12034,14 +12034,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
         "hasBranches": true,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 2,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "middleware/auth.js",
@@ -12052,14 +12052,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "models/User.js",
@@ -12082,14 +12082,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "routes/api.js",
@@ -12110,14 +12110,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "routes/api.js",
@@ -12128,14 +12128,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "routes/api.js",
@@ -12146,14 +12146,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "services/dataProcessor.js",
@@ -12180,14 +12180,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "utils/asyncHelpers.js",
@@ -12198,14 +12198,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "utils/asyncHelpers.js",
@@ -12216,14 +12216,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "utils/asyncHelpers.js",
@@ -12234,14 +12234,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "utils/asyncHelpers.js",
@@ -12260,14 +12260,14 @@
       "arrowFunction": true,
       "async": true,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": true,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": true
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "app.js",
@@ -12288,14 +12288,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "middleware/auth.js",
@@ -12306,14 +12306,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "middleware/auth.js",
@@ -12324,14 +12324,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "middleware/auth.js",
@@ -12342,14 +12342,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "models/User.js",
@@ -12368,14 +12368,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "routes/api.js",
@@ -12386,14 +12386,14 @@
       "arrowFunction": true,
       "async": true,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 3,
-        "hasAsyncThrow": false,
         "hasBranches": true,
-        "hasEarlyReturn": true,
         "hasLoops": true,
+        "hasTryCatch": true,
+        "hasEarlyReturn": true,
         "hasThrow": false,
-        "hasTryCatch": true
+        "cyclomaticComplexity": 3,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "routes/api.js",
@@ -12414,14 +12414,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "services/dataProcessor.js",
@@ -12444,14 +12444,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "utils/asyncHelpers.js",
@@ -12462,14 +12462,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "utils/asyncHelpers.js",
@@ -12480,14 +12480,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "utils/asyncHelpers.js",
@@ -12498,14 +12498,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "app.js",
@@ -12520,14 +12520,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "models/User.js",
@@ -12546,14 +12546,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "routes/api.js",
@@ -12574,14 +12574,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "routes/api.js",
@@ -12592,14 +12592,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "services/dataProcessor.js",
@@ -12618,14 +12618,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "utils/asyncHelpers.js",
@@ -12636,14 +12636,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "app.js",
@@ -12662,14 +12662,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "models/User.js",
@@ -12688,14 +12688,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "routes/api.js",
@@ -12716,14 +12716,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "routes/api.js",
@@ -12734,14 +12734,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "services/dataProcessor.js",
@@ -12760,14 +12760,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
         "hasBranches": true,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 2,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "models/User.js",
@@ -12786,14 +12786,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "routes/api.js",
@@ -12803,14 +12803,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
         "hasBranches": true,
-        "hasEarlyReturn": true,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": true,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 2,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "models/User.js",
@@ -12825,14 +12825,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "models/User.js",
@@ -12844,14 +12844,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 3,
-        "hasAsyncThrow": false,
         "hasBranches": true,
-        "hasEarlyReturn": true,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": true,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 3,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "models/User.js",
@@ -12863,14 +12863,14 @@
     {
       "async": true,
       "controlFlow": {
-        "canReject": true,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": true,
         "hasLoops": false,
+        "hasTryCatch": true,
+        "hasEarlyReturn": true,
         "hasThrow": true,
-        "hasTryCatch": true
+        "cyclomaticComplexity": 1,
+        "canReject": true,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "utils/asyncHelpers.js",
@@ -12884,10 +12884,10 @@
       ],
       "rejectionPatterns": [
         {
-          "column": 4,
+          "rejectionType": "variable_unknown",
           "errorClassName": null,
           "line": 233,
-          "rejectionType": "variable_unknown",
+          "column": 4,
           "sourceVariableName": "err",
           "tracePath": [
             "err"
@@ -12901,14 +12901,14 @@
     {
       "async": true,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 3,
-        "hasAsyncThrow": false,
         "hasBranches": true,
-        "hasEarlyReturn": true,
         "hasLoops": false,
+        "hasTryCatch": true,
+        "hasEarlyReturn": true,
         "hasThrow": false,
-        "hasTryCatch": true
+        "cyclomaticComplexity": 3,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "middleware/auth.js",
@@ -12934,14 +12934,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
         "hasBranches": true,
-        "hasEarlyReturn": true,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": true,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 2,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "middleware/auth.js",
@@ -12964,14 +12964,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
         "hasBranches": true,
-        "hasEarlyReturn": true,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": true,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 2,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "middleware/auth.js",
@@ -12994,14 +12994,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": true,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
-        "hasThrow": false,
         "hasTryCatch": false,
+        "hasEarlyReturn": false,
+        "hasThrow": false,
+        "cyclomaticComplexity": 1,
+        "canReject": true,
+        "hasAsyncThrow": false,
         "rejectedBuiltinErrors": [
           "Error"
         ]
@@ -13018,10 +13018,10 @@
       ],
       "rejectionPatterns": [
         {
-          "column": 8,
+          "rejectionType": "executor_reject",
           "errorClassName": "Error",
           "line": 348,
-          "rejectionType": "executor_reject"
+          "column": 8
         }
       ],
       "returnType": "void",
@@ -13031,14 +13031,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "utils/asyncHelpers.js",
@@ -13059,14 +13059,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": true,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": true,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "utils/asyncHelpers.js",
@@ -13082,10 +13082,10 @@
       ],
       "rejectionPatterns": [
         {
-          "column": 8,
+          "rejectionType": "variable_unknown",
           "errorClassName": null,
           "line": 55,
-          "rejectionType": "variable_unknown",
+          "column": 8,
           "sourceVariableName": "err",
           "tracePath": [
             "err"
@@ -13108,14 +13108,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "app.js",
@@ -13135,14 +13135,14 @@
       "async": false,
       "className": "AppConfig",
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "app.js",
@@ -13157,14 +13157,14 @@
       "async": false,
       "className": "DataProcessor",
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "services/dataProcessor.js",
@@ -13178,14 +13178,14 @@
     {
       "async": true,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": true,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 2,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "services/dataProcessor.js",
@@ -13204,14 +13204,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": true,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 2,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "services/dataProcessor.js",
@@ -13239,14 +13239,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "utils/asyncHelpers.js",
@@ -13268,14 +13268,14 @@
       "async": false,
       "className": "DataProcessor",
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "services/dataProcessor.js",
@@ -13290,14 +13290,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "utils/asyncHelpers.js",
@@ -13307,14 +13307,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": true,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 2,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "utils/asyncHelpers.js",
@@ -13333,14 +13333,14 @@
     {
       "async": true,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": true,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 2,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "app.js",
@@ -13362,14 +13362,14 @@
       "async": true,
       "className": "DataProcessor",
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 5,
-        "hasAsyncThrow": false,
         "hasBranches": true,
-        "hasEarlyReturn": false,
         "hasLoops": true,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 5,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "services/dataProcessor.js",
@@ -13411,14 +13411,14 @@
       "async": false,
       "className": "DataProcessor",
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": true,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 2,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "services/dataProcessor.js",
@@ -13451,14 +13451,14 @@
       "async": false,
       "className": "AppConfig",
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "app.js",
@@ -13473,14 +13473,14 @@
       "async": false,
       "className": "DataProcessor",
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "services/dataProcessor.js",
@@ -13507,14 +13507,14 @@
       "async": true,
       "className": "AppConfig",
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "app.js",
@@ -13529,14 +13529,14 @@
       "async": true,
       "className": "DataProcessor",
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "services/dataProcessor.js",
@@ -13550,14 +13550,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "app.js",
@@ -13577,14 +13577,14 @@
       "async": false,
       "className": "AppConfig",
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "app.js",
@@ -13598,14 +13598,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "utils/asyncHelpers.js",
@@ -13624,14 +13624,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "utils/asyncHelpers.js",
@@ -13651,14 +13651,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
         "hasBranches": true,
-        "hasEarlyReturn": true,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": true,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 2,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "services/dataProcessor.js",
@@ -13669,14 +13669,14 @@
       "async": false,
       "className": "DataProcessor",
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": true,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 2,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "services/dataProcessor.js",
@@ -13690,14 +13690,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "utils/asyncHelpers.js",
@@ -13721,14 +13721,14 @@
       "async": false,
       "className": "DataProcessor",
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": true,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 2,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "services/dataProcessor.js",
@@ -13742,14 +13742,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": true,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 2,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "app.js",
@@ -13769,14 +13769,14 @@
       "async": true,
       "className": "DataProcessor",
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 4,
-        "hasAsyncThrow": false,
         "hasBranches": true,
-        "hasEarlyReturn": false,
         "hasLoops": true,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 4,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "services/dataProcessor.js",
@@ -13790,14 +13790,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "services/dataProcessor.js",
@@ -13821,14 +13821,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
         "hasBranches": true,
-        "hasEarlyReturn": true,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": true,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 2,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "services/dataProcessor.js",
@@ -13847,14 +13847,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
         "hasBranches": true,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 2,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "services/dataProcessor.js",
@@ -13877,14 +13877,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
         "hasBranches": true,
-        "hasEarlyReturn": true,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": true,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 2,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "utils/asyncHelpers.js",
@@ -13895,14 +13895,14 @@
       "async": true,
       "className": "DataProcessor",
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": true,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 2,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "services/dataProcessor.js",
@@ -13917,14 +13917,14 @@
       "async": true,
       "className": "DataProcessor",
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": true,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 2,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "services/dataProcessor.js",
@@ -13938,14 +13938,14 @@
     {
       "async": true,
       "controlFlow": {
-        "canReject": true,
-        "cyclomaticComplexity": 3,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": true,
         "hasLoops": true,
+        "hasTryCatch": true,
+        "hasEarlyReturn": true,
         "hasThrow": true,
-        "hasTryCatch": true
+        "cyclomaticComplexity": 3,
+        "canReject": true,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "app.js",
@@ -13959,10 +13959,10 @@
       ],
       "rejectionPatterns": [
         {
-          "column": 4,
+          "rejectionType": "variable_unknown",
           "errorClassName": null,
           "line": 157,
-          "rejectionType": "variable_unknown",
+          "column": 4,
           "sourceVariableName": "error",
           "tracePath": [
             "error"
@@ -13977,14 +13977,14 @@
       "async": false,
       "className": "DataProcessor",
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "services/dataProcessor.js",
@@ -13999,14 +13999,14 @@
       "async": true,
       "className": "DataProcessor",
       "controlFlow": {
-        "canReject": true,
-        "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": true,
         "hasLoops": true,
+        "hasTryCatch": true,
+        "hasEarlyReturn": true,
         "hasThrow": true,
-        "hasTryCatch": true
+        "cyclomaticComplexity": 2,
+        "canReject": true,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "services/dataProcessor.js",
@@ -14017,10 +14017,10 @@
       "name": "processWithErrorHandling",
       "rejectionPatterns": [
         {
-          "column": 6,
+          "rejectionType": "variable_unknown",
           "errorClassName": null,
           "line": 294,
-          "rejectionType": "variable_unknown",
+          "column": 6,
           "sourceVariableName": "err",
           "tracePath": [
             "err"
@@ -14033,14 +14033,14 @@
       "async": true,
       "className": "DataProcessor",
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 4,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": true,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 4,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "services/dataProcessor.js",
@@ -14055,14 +14055,14 @@
       "async": false,
       "className": "DataProcessor",
       "controlFlow": {
-        "canReject": true,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": true,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "services/dataProcessor.js",
@@ -14073,10 +14073,10 @@
       "name": "processWithPromises",
       "rejectionPatterns": [
         {
-          "column": 8,
+          "rejectionType": "variable_unknown",
           "errorClassName": null,
           "line": 173,
-          "rejectionType": "variable_unknown",
+          "column": 8,
           "sourceVariableName": "err",
           "tracePath": [
             "err"
@@ -14088,14 +14088,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": true,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 2,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "utils/asyncHelpers.js",
@@ -14114,14 +14114,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": true,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": true,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "utils/asyncHelpers.js",
@@ -14137,10 +14137,10 @@
       ],
       "rejectionPatterns": [
         {
-          "column": 12,
+          "rejectionType": "variable_unknown",
           "errorClassName": null,
           "line": 349,
-          "rejectionType": "variable_unknown",
+          "column": 12,
           "sourceVariableName": "err",
           "tracePath": [
             "err"
@@ -14154,14 +14154,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": true,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
-        "hasThrow": false,
         "hasTryCatch": false,
+        "hasEarlyReturn": false,
+        "hasThrow": false,
+        "cyclomaticComplexity": 1,
+        "canReject": true,
+        "hasAsyncThrow": false,
         "rejectedBuiltinErrors": [
           "Error"
         ]
@@ -14180,16 +14180,16 @@
       ],
       "rejectionPatterns": [
         {
-          "column": 6,
+          "rejectionType": "executor_reject",
           "errorClassName": "Error",
           "line": 35,
-          "rejectionType": "executor_reject"
+          "column": 6
         },
         {
-          "column": 8,
+          "rejectionType": "variable_unknown",
           "errorClassName": null,
           "line": 45,
-          "rejectionType": "variable_unknown",
+          "column": 8,
           "sourceVariableName": "err",
           "tracePath": [
             "err"
@@ -14203,14 +14203,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "middleware/auth.js",
@@ -14233,14 +14233,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
         "hasBranches": true,
-        "hasEarlyReturn": true,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": true,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 2,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "utils/asyncHelpers.js",
@@ -14261,14 +14261,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "middleware/auth.js",
@@ -14289,14 +14289,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "middleware/auth.js",
@@ -14315,14 +14315,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "middleware/auth.js",
@@ -14341,14 +14341,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "middleware/auth.js",
@@ -14367,14 +14367,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": true,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
-        "hasThrow": false,
         "hasTryCatch": false,
+        "hasEarlyReturn": false,
+        "hasThrow": false,
+        "cyclomaticComplexity": 1,
+        "canReject": true,
+        "hasAsyncThrow": false,
         "rejectedBuiltinErrors": [
           "Error"
         ]
@@ -14395,10 +14395,10 @@
       ],
       "rejectionPatterns": [
         {
-          "column": 19,
+          "rejectionType": "executor_reject",
           "errorClassName": "Error",
           "line": 15,
-          "rejectionType": "executor_reject"
+          "column": 19
         }
       ],
       "returnType": "void",
@@ -14409,14 +14409,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 3,
-        "hasAsyncThrow": false,
         "hasBranches": true,
-        "hasEarlyReturn": true,
         "hasLoops": true,
+        "hasTryCatch": false,
+        "hasEarlyReturn": true,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 3,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "utils/asyncHelpers.js",
@@ -14426,14 +14426,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "utils/asyncHelpers.js",
@@ -14452,14 +14452,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": true,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": true,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "app.js",
@@ -14469,10 +14469,10 @@
       "paramTypes": [],
       "rejectionPatterns": [
         {
-          "column": 8,
+          "rejectionType": "variable_unknown",
           "errorClassName": null,
           "line": 249,
-          "rejectionType": "variable_unknown",
+          "column": 8,
           "sourceVariableName": "err",
           "tracePath": [
             "err"
@@ -14495,14 +14495,14 @@
     {
       "async": true,
       "controlFlow": {
-        "canReject": true,
-        "cyclomaticComplexity": 3,
-        "hasAsyncThrow": true,
         "hasBranches": true,
-        "hasEarlyReturn": true,
         "hasLoops": false,
-        "hasThrow": true,
         "hasTryCatch": true,
+        "hasEarlyReturn": true,
+        "hasThrow": true,
+        "cyclomaticComplexity": 3,
+        "canReject": true,
+        "hasAsyncThrow": true,
         "rejectedBuiltinErrors": [
           "Error"
         ]
@@ -14519,32 +14519,32 @@
       ],
       "rejectionPatterns": [
         {
-          "column": 17,
+          "rejectionType": "variable_unknown",
           "errorClassName": null,
           "line": 80,
-          "rejectionType": "variable_unknown",
+          "column": 17,
           "sourceVariableName": "err",
           "tracePath": [
             "err"
           ]
         },
         {
-          "column": 6,
+          "rejectionType": "async_throw",
           "errorClassName": "Error",
           "line": 88,
-          "rejectionType": "async_throw"
+          "column": 6
         },
         {
-          "column": 6,
+          "rejectionType": "async_throw",
           "errorClassName": "Error",
           "line": 94,
-          "rejectionType": "async_throw"
+          "column": 6
         },
         {
-          "column": 4,
+          "rejectionType": "variable_unknown",
           "errorClassName": null,
           "line": 100,
-          "rejectionType": "variable_unknown",
+          "column": 4,
           "sourceVariableName": "error",
           "tracePath": [
             "error"
@@ -14558,14 +14558,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "middleware/auth.js",
@@ -14586,14 +14586,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": true,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
-        "hasThrow": false,
         "hasTryCatch": false,
+        "hasEarlyReturn": false,
+        "hasThrow": false,
+        "cyclomaticComplexity": 1,
+        "canReject": true,
+        "hasAsyncThrow": false,
         "rejectedBuiltinErrors": [
           "Error"
         ]
@@ -14610,10 +14610,10 @@
       ],
       "rejectionPatterns": [
         {
-          "column": 8,
+          "rejectionType": "executor_reject",
           "errorClassName": "Error",
           "line": 45,
-          "rejectionType": "executor_reject"
+          "column": 8
         }
       ],
       "returnType": "void",
@@ -14623,14 +14623,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "utils/asyncHelpers.js",
@@ -14654,10 +14654,10 @@
     {
       "builtin": true,
       "creates": {
+        "nodes": [],
         "edges": [
           "RECEIVES_ARGUMENT"
-        ],
-        "nodes": []
+        ]
       },
       "createsEdges": [
         "RECEIVES_ARGUMENT"
@@ -14677,10 +14677,10 @@
     {
       "builtin": true,
       "creates": {
+        "nodes": [],
         "edges": [
           "CALLS"
-        ],
-        "nodes": []
+        ]
       },
       "createsEdges": [
         "CALLS"
@@ -14700,14 +14700,14 @@
     {
       "builtin": true,
       "creates": {
+        "nodes": [
+          "http:request",
+          "EXTERNAL"
+        ],
         "edges": [
           "CONTAINS",
           "MAKES_REQUEST",
           "CALLS_API"
-        ],
-        "nodes": [
-          "http:request",
-          "EXTERNAL"
         ]
       },
       "createsEdges": [
@@ -14733,11 +14733,11 @@
     {
       "builtin": true,
       "creates": {
+        "nodes": [],
         "edges": [
           "IMPORTS",
           "IMPORTS_FROM"
-        ],
-        "nodes": []
+        ]
       },
       "createsEdges": [
         "IMPORTS",
@@ -14757,10 +14757,10 @@
     {
       "builtin": true,
       "creates": {
+        "nodes": [],
         "edges": [
           "INSTANCE_OF"
-        ],
-        "nodes": []
+        ]
       },
       "createsEdges": [
         "INSTANCE_OF"
@@ -14779,6 +14779,28 @@
     {
       "builtin": true,
       "creates": {
+        "nodes": [
+          "FUNCTION",
+          "CLASS",
+          "METHOD",
+          "VARIABLE",
+          "CONSTANT",
+          "SCOPE",
+          "CALL",
+          "IMPORT",
+          "EXPORT",
+          "LITERAL",
+          "EXTERNAL_MODULE",
+          "net:stdio",
+          "net:request",
+          "event:listener",
+          "http:request",
+          "INTERFACE",
+          "TYPE",
+          "ENUM",
+          "DECORATOR",
+          "TYPE_PARAMETER"
+        ],
         "edges": [
           "CONTAINS",
           "DECLARES",
@@ -14801,28 +14823,6 @@
           "DECORATED_BY",
           "HAS_TYPE_PARAMETER",
           "RESOLVES_TO"
-        ],
-        "nodes": [
-          "FUNCTION",
-          "CLASS",
-          "METHOD",
-          "VARIABLE",
-          "CONSTANT",
-          "SCOPE",
-          "CALL",
-          "IMPORT",
-          "EXPORT",
-          "LITERAL",
-          "EXTERNAL_MODULE",
-          "net:stdio",
-          "net:request",
-          "event:listener",
-          "http:request",
-          "INTERFACE",
-          "TYPE",
-          "ENUM",
-          "DECORATOR",
-          "TYPE_PARAMETER"
         ]
       },
       "createsEdges": [
@@ -14883,12 +14883,12 @@
     {
       "builtin": true,
       "creates": {
+        "nodes": [
+          "MODULE"
+        ],
         "edges": [
           "CONTAINS",
           "DEPENDS_ON"
-        ],
-        "nodes": [
-          "MODULE"
         ]
       },
       "createsEdges": [
@@ -14909,10 +14909,10 @@
     {
       "builtin": true,
       "creates": {
+        "nodes": [],
         "edges": [
           "CALLS"
-        ],
-        "nodes": []
+        ]
       },
       "createsEdges": [
         "CALLS"
@@ -14931,13 +14931,13 @@
     {
       "builtin": true,
       "creates": {
-        "edges": [
-          "CALLS",
-          "IMPORTS_FROM"
-        ],
         "nodes": [
           "EXTERNAL_FUNCTION",
           "EXTERNAL_MODULE"
+        ],
+        "edges": [
+          "CALLS",
+          "IMPORTS_FROM"
         ]
       },
       "createsEdges": [
@@ -14962,10 +14962,10 @@
     {
       "builtin": true,
       "creates": {
+        "nodes": [],
         "edges": [
           "REJECTS"
-        ],
-        "nodes": []
+        ]
       },
       "createsEdges": [
         "REJECTS"
@@ -14984,10 +14984,10 @@
     {
       "builtin": true,
       "creates": {
-        "edges": [],
         "nodes": [
           "SERVICE"
-        ]
+        ],
+        "edges": []
       },
       "createsEdges": [],
       "createsNodes": [
@@ -21090,14 +21090,14 @@
       "file": "utils/asyncHelpers.js",
       "modifies": [
         {
-          "line": 344,
           "variableId": "asyncHelpers.js->promisePool->anonymous[0]->VARIABLE->completed",
-          "variableName": "completed"
+          "variableName": "completed",
+          "line": 344
         },
         {
-          "line": 345,
           "variableId": "asyncHelpers.js->promisePool->anonymous[0]->VARIABLE->running",
-          "variableName": "running"
+          "variableName": "running",
+          "line": 345
         }
       ],
       "name": "anonymous[0]:body",
@@ -21489,9 +21489,9 @@
       "file": "utils/asyncHelpers.js",
       "modifies": [
         {
-          "line": 12,
           "variableId": "asyncHelpers.js->retryWithBackoff->anonymous[0]->VARIABLE->attempt",
-          "variableName": "attempt"
+          "variableName": "attempt",
+          "line": 12
         }
       ],
       "name": "anonymous[1]:body",
@@ -22029,9 +22029,9 @@
       "file": "services/dataProcessor.js",
       "modifies": [
         {
-          "line": 310,
           "variableId": "dataProcessor.js->createAsyncProcessors->for#0->VARIABLE->i",
-          "variableName": "i"
+          "variableName": "i",
+          "line": 310
         }
       ],
       "name": "createAsyncProcessors:body",
@@ -22044,9 +22044,9 @@
       "file": "services/dataProcessor.js",
       "modifies": [
         {
-          "line": 301,
           "variableId": "dataProcessor.js->createProcessors->for#0->VARIABLE->i",
-          "variableName": "i"
+          "variableName": "i",
+          "line": 301
         }
       ],
       "name": "createProcessors:body",
@@ -22086,9 +22086,9 @@
       "file": "services/dataProcessor.js",
       "modifies": [
         {
-          "line": 56,
           "variableId": "dataProcessor.js->DataProcessor->fetchUsersStream->VARIABLE->processed",
-          "variableName": "processed"
+          "variableName": "processed",
+          "line": 56
         }
       ],
       "name": "DataProcessor.fetchUsersStream:body",
@@ -22216,10 +22216,10 @@
       "conditional": true,
       "constraints": [
         {
-          "excludes": true,
-          "negated": true,
+          "variable": "next.done",
           "operator": "falsy",
-          "variable": "next.done"
+          "negated": true,
+          "excludes": true
         }
       ],
       "exported": false,
@@ -22233,10 +22233,10 @@
       "conditional": true,
       "constraints": [
         {
-          "excludes": true,
-          "negated": true,
+          "variable": "next.done",
           "operator": "falsy",
-          "variable": "next.done"
+          "negated": true,
+          "excludes": true
         }
       ],
       "exported": false,
@@ -22259,10 +22259,10 @@
       "conditional": true,
       "constraints": [
         {
-          "excludes": true,
-          "negated": true,
+          "variable": "result",
           "operator": "falsy",
-          "variable": "result"
+          "negated": true,
+          "excludes": true
         }
       ],
       "exported": false,
@@ -22276,10 +22276,10 @@
       "conditional": true,
       "constraints": [
         {
-          "excludes": true,
-          "negated": true,
+          "variable": "err",
           "operator": "falsy",
-          "variable": "err"
+          "negated": true,
+          "excludes": true
         }
       ],
       "exported": false,
@@ -22293,15 +22293,15 @@
       "conditional": true,
       "constraints": [
         {
+          "type": "and",
           "constraints": [
             {
-              "excludes": true,
-              "negated": true,
+              "variable": "self.lockUntil",
               "operator": "falsy",
-              "variable": "self.lockUntil"
+              "negated": true,
+              "excludes": true
             }
-          ],
-          "type": "and"
+          ]
         }
       ],
       "exported": false,
@@ -22315,10 +22315,10 @@
       "conditional": true,
       "constraints": [
         {
-          "excludes": true,
-          "negated": true,
+          "variable": "isMatch",
           "operator": "falsy",
-          "variable": "isMatch"
+          "negated": true,
+          "excludes": true
         }
       ],
       "exported": false,
@@ -22332,10 +22332,10 @@
       "conditional": true,
       "constraints": [
         {
-          "excludes": true,
-          "negated": true,
+          "variable": "err",
           "operator": "falsy",
-          "variable": "err"
+          "negated": true,
+          "excludes": true
         }
       ],
       "exported": false,
@@ -22349,10 +22349,10 @@
       "conditional": true,
       "constraints": [
         {
-          "excludes": true,
-          "negated": true,
+          "variable": "err",
           "operator": "falsy",
-          "variable": "err"
+          "negated": true,
+          "excludes": true
         }
       ],
       "exported": false,
@@ -22366,10 +22366,10 @@
       "conditional": true,
       "constraints": [
         {
-          "excludes": true,
-          "negated": false,
+          "variable": "value",
           "operator": "falsy",
-          "variable": "value"
+          "negated": false,
+          "excludes": true
         }
       ],
       "exported": false,
@@ -22383,10 +22383,10 @@
       "conditional": true,
       "constraints": [
         {
-          "excludes": true,
-          "negated": true,
+          "variable": "err",
           "operator": "falsy",
-          "variable": "err"
+          "negated": true,
+          "excludes": true
         }
       ],
       "exported": false,
@@ -22400,10 +22400,10 @@
       "conditional": true,
       "constraints": [
         {
-          "excludes": true,
-          "negated": true,
+          "variable": "err",
           "operator": "falsy",
-          "variable": "err"
+          "negated": true,
+          "excludes": true
         }
       ],
       "exported": false,
@@ -22417,10 +22417,10 @@
       "conditional": true,
       "constraints": [
         {
-          "excludes": true,
-          "negated": true,
+          "variable": "err",
           "operator": "falsy",
-          "variable": "err"
+          "negated": true,
+          "excludes": true
         }
       ],
       "exported": false,
@@ -22453,9 +22453,9 @@
       "file": "app.js",
       "modifies": [
         {
-          "line": 111,
           "variableId": "app.js->fetchDataStream->for#0->VARIABLE->i",
-          "variableName": "i"
+          "variableName": "i",
+          "line": 111
         }
       ],
       "name": "fetchDataStream:body",
@@ -22512,9 +22512,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": true,
+          "variable": "token",
           "operator": "truthy",
-          "variable": "token"
+          "negated": true
         }
       ],
       "exported": false,
@@ -22529,9 +22529,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "err",
           "operator": "truthy",
-          "variable": "err"
+          "negated": false
         }
       ],
       "exported": false,
@@ -22546,9 +22546,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "err",
           "operator": "truthy",
-          "variable": "err"
+          "negated": false
         }
       ],
       "exported": false,
@@ -22563,9 +22563,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "err",
           "operator": "truthy",
-          "variable": "err"
+          "negated": false
         }
       ],
       "exported": false,
@@ -22580,9 +22580,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": true,
+          "variable": "user",
           "operator": "truthy",
-          "variable": "user"
+          "negated": true
         }
       ],
       "exported": false,
@@ -22597,9 +22597,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "next.done",
           "operator": "truthy",
-          "variable": "next.done"
+          "negated": false
         }
       ],
       "exported": false,
@@ -22614,9 +22614,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "next.done",
           "operator": "truthy",
-          "variable": "next.done"
+          "negated": false
         }
       ],
       "exported": false,
@@ -22631,9 +22631,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "err",
           "operator": "truthy",
-          "variable": "err"
+          "negated": false
         }
       ],
       "exported": false,
@@ -22648,9 +22648,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "err",
           "operator": "truthy",
-          "variable": "err"
+          "negated": false
         }
       ],
       "exported": false,
@@ -22665,9 +22665,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "err",
           "operator": "truthy",
-          "variable": "err"
+          "negated": false
         }
       ],
       "exported": false,
@@ -22682,9 +22682,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "blacklisted",
           "operator": "truthy",
-          "variable": "blacklisted"
+          "negated": false
         }
       ],
       "exported": false,
@@ -22699,9 +22699,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "err",
           "operator": "truthy",
-          "variable": "err"
+          "negated": false
         }
       ],
       "exported": false,
@@ -22716,9 +22716,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "err",
           "operator": "truthy",
-          "variable": "err"
+          "negated": false
         }
       ],
       "exported": false,
@@ -22733,9 +22733,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "err",
           "operator": "truthy",
-          "variable": "err"
+          "negated": false
         }
       ],
       "exported": false,
@@ -22760,9 +22760,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "err",
           "operator": "truthy",
-          "variable": "err"
+          "negated": false
         }
       ],
       "exported": false,
@@ -22777,9 +22777,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": true,
+          "variable": "user",
           "operator": "truthy",
-          "variable": "user"
+          "negated": true
         }
       ],
       "exported": false,
@@ -22794,9 +22794,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": true,
+          "variable": "token",
           "operator": "truthy",
-          "variable": "token"
+          "negated": true
         }
       ],
       "exported": false,
@@ -22811,9 +22811,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "err",
           "operator": "truthy",
-          "variable": "err"
+          "negated": false
         }
       ],
       "exported": false,
@@ -22828,9 +22828,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "next.done",
           "operator": "truthy",
-          "variable": "next.done"
+          "negated": false
         }
       ],
       "exported": false,
@@ -22845,9 +22845,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "next.done",
           "operator": "truthy",
-          "variable": "next.done"
+          "negated": false
         }
       ],
       "exported": false,
@@ -22862,9 +22862,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "err",
           "operator": "truthy",
-          "variable": "err"
+          "negated": false
         }
       ],
       "exported": false,
@@ -22879,9 +22879,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "err",
           "operator": "truthy",
-          "variable": "err"
+          "negated": false
         }
       ],
       "exported": false,
@@ -22896,9 +22896,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "err",
           "operator": "truthy",
-          "variable": "err"
+          "negated": false
         }
       ],
       "exported": false,
@@ -22913,9 +22913,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "existing",
           "operator": "truthy",
-          "variable": "existing"
+          "negated": false
         }
       ],
       "exported": false,
@@ -22940,9 +22940,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "err",
           "operator": "truthy",
-          "variable": "err"
+          "negated": false
         }
       ],
       "exported": false,
@@ -22957,9 +22957,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": true,
+          "variable": "token",
           "operator": "truthy",
-          "variable": "token"
+          "negated": true
         }
       ],
       "exported": false,
@@ -22974,9 +22974,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "err",
           "operator": "truthy",
-          "variable": "err"
+          "negated": false
         }
       ],
       "exported": false,
@@ -22991,9 +22991,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "err",
           "operator": "truthy",
-          "variable": "err"
+          "negated": false
         }
       ],
       "exported": false,
@@ -23008,9 +23008,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "err",
           "operator": "truthy",
-          "variable": "err"
+          "negated": false
         }
       ],
       "exported": false,
@@ -23025,9 +23025,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "existingUser",
           "operator": "truthy",
-          "variable": "existingUser"
+          "negated": false
         }
       ],
       "exported": false,
@@ -23042,9 +23042,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "err",
           "operator": "truthy",
-          "variable": "err"
+          "negated": false
         }
       ],
       "exported": false,
@@ -23059,9 +23059,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "err",
           "operator": "truthy",
-          "variable": "err"
+          "negated": false
         }
       ],
       "exported": false,
@@ -23076,9 +23076,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": true,
+          "variable": "req.user",
           "operator": "truthy",
-          "variable": "req.user"
+          "negated": true
         }
       ],
       "exported": false,
@@ -23093,9 +23093,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "err",
           "operator": "truthy",
-          "variable": "err"
+          "negated": false
         }
       ],
       "exported": false,
@@ -23110,9 +23110,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": true,
+          "variable": "user",
           "operator": "truthy",
-          "variable": "user"
+          "negated": true
         }
       ],
       "exported": false,
@@ -23127,9 +23127,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": true,
+          "variable": "user",
           "operator": "truthy",
-          "variable": "user"
+          "negated": true
         }
       ],
       "exported": false,
@@ -23164,9 +23164,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "err",
           "operator": "truthy",
-          "variable": "err"
+          "negated": false
         }
       ],
       "exported": false,
@@ -23181,9 +23181,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "err",
           "operator": "truthy",
-          "variable": "err"
+          "negated": false
         }
       ],
       "exported": false,
@@ -23198,9 +23198,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "err",
           "operator": "truthy",
-          "variable": "err"
+          "negated": false
         }
       ],
       "exported": false,
@@ -23215,9 +23215,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": true,
+          "variable": "req.user",
           "operator": "truthy",
-          "variable": "req.user"
+          "negated": true
         }
       ],
       "exported": false,
@@ -23242,9 +23242,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "err",
           "operator": "truthy",
-          "variable": "err"
+          "negated": false
         }
       ],
       "exported": false,
@@ -23259,9 +23259,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "err",
           "operator": "truthy",
-          "variable": "err"
+          "negated": false
         }
       ],
       "exported": false,
@@ -23276,9 +23276,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": true,
+          "variable": "user",
           "operator": "truthy",
-          "variable": "user"
+          "negated": true
         }
       ],
       "exported": false,
@@ -23293,9 +23293,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "err",
           "operator": "truthy",
-          "variable": "err"
+          "negated": false
         }
       ],
       "exported": false,
@@ -23310,9 +23310,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "err",
           "operator": "truthy",
-          "variable": "err"
+          "negated": false
         }
       ],
       "exported": false,
@@ -23327,9 +23327,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "err",
           "operator": "truthy",
-          "variable": "err"
+          "negated": false
         }
       ],
       "exported": false,
@@ -23344,9 +23344,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": true,
+          "variable": "req.user",
           "operator": "truthy",
-          "variable": "req.user"
+          "negated": true
         }
       ],
       "exported": false,
@@ -23371,9 +23371,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "err",
           "operator": "truthy",
-          "variable": "err"
+          "negated": false
         }
       ],
       "exported": false,
@@ -23398,9 +23398,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "err",
           "operator": "truthy",
-          "variable": "err"
+          "negated": false
         }
       ],
       "exported": false,
@@ -23425,9 +23425,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "err",
           "operator": "truthy",
-          "variable": "err"
+          "negated": false
         }
       ],
       "exported": false,
@@ -23442,9 +23442,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "err",
           "operator": "truthy",
-          "variable": "err"
+          "negated": false
         }
       ],
       "exported": false,
@@ -23459,9 +23459,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "isMatch",
           "operator": "truthy",
-          "variable": "isMatch"
+          "negated": false
         }
       ],
       "exported": false,
@@ -23476,9 +23476,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "err",
           "operator": "truthy",
-          "variable": "err"
+          "negated": false
         }
       ],
       "exported": false,
@@ -23493,9 +23493,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "err",
           "operator": "truthy",
-          "variable": "err"
+          "negated": false
         }
       ],
       "exported": false,
@@ -23520,9 +23520,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "timeoutId",
           "operator": "truthy",
-          "variable": "timeoutId"
+          "negated": false
         }
       ],
       "exported": false,
@@ -23537,14 +23537,14 @@
       "conditional": true,
       "constraints": [
         {
+          "type": "or",
           "constraints": [
             {
-              "negated": false,
+              "variable": "self.lockUntil",
               "operator": "truthy",
-              "variable": "self.lockUntil"
+              "negated": false
             }
-          ],
-          "type": "or"
+          ]
         }
       ],
       "exported": false,
@@ -23559,9 +23559,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "blacklisted",
           "operator": "truthy",
-          "variable": "blacklisted"
+          "negated": false
         }
       ],
       "exported": false,
@@ -23576,9 +23576,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "err",
           "operator": "truthy",
-          "variable": "err"
+          "negated": false
         }
       ],
       "exported": false,
@@ -23593,9 +23593,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": true,
+          "variable": "user",
           "operator": "truthy",
-          "variable": "user"
+          "negated": true
         }
       ],
       "exported": false,
@@ -23610,9 +23610,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "result",
           "operator": "truthy",
-          "variable": "result"
+          "negated": false
         }
       ],
       "exported": false,
@@ -23627,9 +23627,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "err",
           "operator": "truthy",
-          "variable": "err"
+          "negated": false
         }
       ],
       "exported": false,
@@ -23644,9 +23644,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": true,
+          "variable": "user",
           "operator": "truthy",
-          "variable": "user"
+          "negated": true
         }
       ],
       "exported": false,
@@ -23661,9 +23661,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "err",
           "operator": "truthy",
-          "variable": "err"
+          "negated": false
         }
       ],
       "exported": false,
@@ -23678,9 +23678,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "err",
           "operator": "truthy",
-          "variable": "err"
+          "negated": false
         }
       ],
       "exported": false,
@@ -23705,9 +23705,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "err",
           "operator": "truthy",
-          "variable": "err"
+          "negated": false
         }
       ],
       "exported": false,
@@ -23732,9 +23732,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "err",
           "operator": "truthy",
-          "variable": "err"
+          "negated": false
         }
       ],
       "exported": false,
@@ -23759,9 +23759,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "err",
           "operator": "truthy",
-          "variable": "err"
+          "negated": false
         }
       ],
       "exported": false,
@@ -23786,9 +23786,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "err",
           "operator": "truthy",
-          "variable": "err"
+          "negated": false
         }
       ],
       "exported": false,
@@ -23803,9 +23803,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "err",
           "operator": "truthy",
-          "variable": "err"
+          "negated": false
         }
       ],
       "exported": false,
@@ -23820,9 +23820,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "err",
           "operator": "truthy",
-          "variable": "err"
+          "negated": false
         }
       ],
       "exported": false,
@@ -23837,9 +23837,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "err",
           "operator": "truthy",
-          "variable": "err"
+          "negated": false
         }
       ],
       "exported": false,
@@ -23864,9 +23864,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "err",
           "operator": "truthy",
-          "variable": "err"
+          "negated": false
         }
       ],
       "exported": false,
@@ -23881,9 +23881,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "err",
           "operator": "truthy",
-          "variable": "err"
+          "negated": false
         }
       ],
       "exported": false,
@@ -23898,9 +23898,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "err",
           "operator": "truthy",
-          "variable": "err"
+          "negated": false
         }
       ],
       "exported": false,
@@ -23915,10 +23915,10 @@
       "conditional": true,
       "constraints": [
         {
-          "excludes": false,
+          "variable": "batch.length",
           "operator": "===",
           "value": 0,
-          "variable": "batch.length"
+          "excludes": false
         }
       ],
       "exported": false,
@@ -23933,9 +23933,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "err",
           "operator": "truthy",
-          "variable": "err"
+          "negated": false
         }
       ],
       "exported": false,
@@ -23950,9 +23950,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "err",
           "operator": "truthy",
-          "variable": "err"
+          "negated": false
         }
       ],
       "exported": false,
@@ -23967,9 +23967,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": true,
+          "variable": "user",
           "operator": "truthy",
-          "variable": "user"
+          "negated": true
         }
       ],
       "exported": false,
@@ -23984,9 +23984,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "err",
           "operator": "truthy",
-          "variable": "err"
+          "negated": false
         }
       ],
       "exported": false,
@@ -24001,9 +24001,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "err",
           "operator": "truthy",
-          "variable": "err"
+          "negated": false
         }
       ],
       "exported": false,
@@ -24028,9 +24028,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": true,
+          "variable": "value",
           "operator": "truthy",
-          "variable": "value"
+          "negated": true
         }
       ],
       "exported": false,
@@ -24045,9 +24045,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "err",
           "operator": "truthy",
-          "variable": "err"
+          "negated": false
         }
       ],
       "exported": false,
@@ -24062,9 +24062,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "blacklisted",
           "operator": "truthy",
-          "variable": "blacklisted"
+          "negated": false
         }
       ],
       "exported": false,
@@ -24079,9 +24079,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "err",
           "operator": "truthy",
-          "variable": "err"
+          "negated": false
         }
       ],
       "exported": false,
@@ -24096,9 +24096,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "err",
           "operator": "truthy",
-          "variable": "err"
+          "negated": false
         }
       ],
       "exported": false,
@@ -24113,9 +24113,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "err",
           "operator": "truthy",
-          "variable": "err"
+          "negated": false
         }
       ],
       "exported": false,
@@ -24130,9 +24130,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": true,
+          "variable": "data",
           "operator": "truthy",
-          "variable": "data"
+          "negated": true
         }
       ],
       "exported": false,
@@ -24157,9 +24157,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "err",
           "operator": "truthy",
-          "variable": "err"
+          "negated": false
         }
       ],
       "exported": false,
@@ -24184,9 +24184,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": true,
+          "variable": "user",
           "operator": "truthy",
-          "variable": "user"
+          "negated": true
         }
       ],
       "exported": false,
@@ -24201,9 +24201,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "blacklisted",
           "operator": "truthy",
-          "variable": "blacklisted"
+          "negated": false
         }
       ],
       "exported": false,
@@ -24218,9 +24218,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": true,
+          "variable": "user",
           "operator": "truthy",
-          "variable": "user"
+          "negated": true
         }
       ],
       "exported": false,
@@ -24318,9 +24318,9 @@
       "file": "utils/asyncHelpers.js",
       "modifies": [
         {
-          "line": 86,
           "variableId": "asyncHelpers.js->processBatch->VARIABLE->index",
-          "variableName": "index"
+          "variableName": "index",
+          "line": 86
         }
       ],
       "name": "processNext:body",
@@ -24342,9 +24342,9 @@
       "file": "utils/asyncHelpers.js",
       "modifies": [
         {
-          "line": 239,
           "variableId": "asyncHelpers.js->promiseGenerator->for#0->VARIABLE->i",
-          "variableName": "i"
+          "variableName": "i",
+          "line": 239
         }
       ],
       "name": "promiseGenerator:body",
@@ -24429,14 +24429,14 @@
       "file": "utils/asyncHelpers.js",
       "modifies": [
         {
-          "line": 336,
           "variableId": "asyncHelpers.js->processBatch->VARIABLE->index",
-          "variableName": "index"
+          "variableName": "index",
+          "line": 336
         },
         {
-          "line": 339,
           "variableId": "asyncHelpers.js->promisePool->anonymous[0]->VARIABLE->running",
-          "variableName": "running"
+          "variableName": "running",
+          "line": 339
         }
       ],
       "name": "runNext:body",
@@ -25448,6 +25448,31 @@
     }
   ],
   "edges": [
+    {
+      "from": "<unresolved:app.js->CALL->app.get>",
+      "type": "HAS_CALLBACK",
+      "to": "FUNCTION:anonymous[2]"
+    },
+    {
+      "from": "<unresolved:app.js->CALL->app.get>",
+      "type": "HAS_CALLBACK",
+      "to": "FUNCTION:anonymous[3]"
+    },
+    {
+      "from": "<unresolved:routes/api.js->CALL->router.get>",
+      "type": "HAS_CALLBACK",
+      "to": "FUNCTION:anonymous[1]"
+    },
+    {
+      "from": "<unresolved:routes/api.js->CALL->router.get>",
+      "type": "HAS_CALLBACK",
+      "to": "FUNCTION:anonymous[3]"
+    },
+    {
+      "from": "<unresolved:routes/api.js->CALL->router.get>",
+      "type": "HAS_CALLBACK",
+      "to": "FUNCTION:anonymous[5]"
+    },
     {
       "from": "BRANCH:",
       "type": "CONTAINS",
@@ -31619,7 +31644,7 @@
       "to": "CALL:fetch",
       "metadata": {
         "parameterName": "err",
-        "sourceType": "sync_call",
+        "sourceType": "awaited_call",
         "sourceLine": 206
       }
     },
@@ -31699,8 +31724,18 @@
       "to": "CALL:mongoose.connection.db.collection",
       "metadata": {
         "parameterName": "err",
-        "sourceType": "sync_call",
+        "sourceType": "awaited_call",
         "sourceLine": 280
+      }
+    },
+    {
+      "from": "CATCH_BLOCK:",
+      "type": "CATCHES_FROM",
+      "to": "CALL:mongoose.connection.db.collection",
+      "metadata": {
+        "parameterName": "error",
+        "sourceType": "awaited_call",
+        "sourceLine": 220
       }
     },
     {
@@ -31741,16 +31776,6 @@
         "parameterName": "error",
         "sourceType": "sync_call",
         "sourceLine": 206
-      }
-    },
-    {
-      "from": "CATCH_BLOCK:",
-      "type": "CATCHES_FROM",
-      "to": "CALL:mongoose.connection.db.collection",
-      "metadata": {
-        "parameterName": "error",
-        "sourceType": "sync_call",
-        "sourceLine": 220
       }
     },
     {

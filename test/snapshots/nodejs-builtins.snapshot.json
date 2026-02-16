@@ -1528,14 +1528,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "aliased-imports.js",
@@ -1546,14 +1546,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "aliased-imports.js",
@@ -1564,14 +1564,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
         "hasBranches": true,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 2,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "aliased-imports.js",
@@ -1582,14 +1582,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
         "hasBranches": true,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 2,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "aliased-imports.js",
@@ -1600,14 +1600,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "index.js",
@@ -1618,14 +1618,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "index.js",
@@ -1636,14 +1636,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "index.js",
@@ -1654,32 +1654,32 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
         "hasBranches": true,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
-      },
-      "exported": false,
-      "file": "index.js",
-      "name": "anonymous[0]",
-      "type": "FUNCTION"
-    },
-    {
-      "arrowFunction": true,
-      "async": false,
-      "controlFlow": {
-        "canReject": false,
         "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
+        "canReject": false,
+        "hasAsyncThrow": false
+      },
+      "exported": false,
+      "file": "index.js",
+      "name": "anonymous[0]",
+      "type": "FUNCTION"
+    },
+    {
+      "arrowFunction": true,
+      "async": false,
+      "controlFlow": {
         "hasBranches": true,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 2,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "index.js",
@@ -1698,14 +1698,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "namespace-import.js",
@@ -1716,14 +1716,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
         "hasBranches": true,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 2,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "namespace-import.js",
@@ -1734,14 +1734,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "unused-imports.js",
@@ -1752,14 +1752,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
         "hasBranches": true,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 2,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "unused-imports.js",
@@ -1769,14 +1769,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "index.js",
@@ -1797,14 +1797,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "aliased-imports.js",
@@ -1825,14 +1825,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "node-prefix.js",
@@ -1853,14 +1853,14 @@
     {
       "async": true,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": true,
         "hasLoops": false,
+        "hasTryCatch": true,
+        "hasEarlyReturn": true,
         "hasThrow": false,
-        "hasTryCatch": true
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "fs-promises.js",
@@ -1879,14 +1879,14 @@
     {
       "async": true,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "fs-promises.js",
@@ -1907,14 +1907,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "node-prefix.js",
@@ -1929,14 +1929,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "node-prefix.js",
@@ -1955,14 +1955,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
         "hasBranches": true,
-        "hasEarlyReturn": true,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": true,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 2,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "node-prefix.js",
@@ -1981,14 +1981,14 @@
     {
       "async": true,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "fs-promises.js",
@@ -2007,14 +2007,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "namespace-import.js",
@@ -2033,14 +2033,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "namespace-import.js",
@@ -2059,14 +2059,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "index.js",
@@ -2085,14 +2085,14 @@
     {
       "async": true,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "fs-promises.js",
@@ -2111,14 +2111,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "aliased-imports.js",
@@ -2137,14 +2137,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "namespace-import.js",
@@ -2163,14 +2163,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "namespace-import.js",
@@ -2189,14 +2189,14 @@
     {
       "async": true,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "fs-promises.js",
@@ -2215,14 +2215,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "index.js",
@@ -2243,14 +2243,14 @@
     {
       "async": true,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "fs-promises.js",
@@ -2269,14 +2269,14 @@
     {
       "async": true,
       "controlFlow": {
-        "canReject": true,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": true,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "index.js",
@@ -2290,10 +2290,10 @@
       ],
       "rejectionPatterns": [
         {
-          "column": 15,
+          "rejectionType": "variable_unknown",
           "errorClassName": null,
           "line": 23,
-          "rejectionType": "variable_unknown",
+          "column": 15,
           "sourceVariableName": "err",
           "tracePath": [
             "err"
@@ -2307,14 +2307,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": true,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": true,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "namespace-import.js",
@@ -2328,10 +2328,10 @@
       ],
       "rejectionPatterns": [
         {
-          "column": 15,
+          "rejectionType": "variable_unknown",
           "errorClassName": null,
           "line": 17,
-          "rejectionType": "variable_unknown",
+          "column": 15,
           "sourceVariableName": "err",
           "tracePath": [
             "err"
@@ -2345,14 +2345,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": true,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": true,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "aliased-imports.js",
@@ -2366,10 +2366,10 @@
       ],
       "rejectionPatterns": [
         {
-          "column": 15,
+          "rejectionType": "variable_unknown",
           "errorClassName": null,
           "line": 16,
-          "rejectionType": "variable_unknown",
+          "column": 15,
           "sourceVariableName": "err",
           "tracePath": [
             "err"
@@ -2383,14 +2383,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "node-prefix.js",
@@ -2411,14 +2411,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "unused-imports.js",
@@ -2437,14 +2437,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "unused-imports.js",
@@ -2465,14 +2465,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": true,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": true,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "unused-imports.js",
@@ -2486,10 +2486,10 @@
       ],
       "rejectionPatterns": [
         {
-          "column": 15,
+          "rejectionType": "variable_unknown",
           "errorClassName": null,
           "line": 17,
-          "rejectionType": "variable_unknown",
+          "column": 15,
           "sourceVariableName": "err",
           "tracePath": [
             "err"
@@ -2503,14 +2503,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "namespace-import.js",
@@ -2529,14 +2529,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "namespace-import.js",
@@ -2555,14 +2555,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "namespace-import.js",
@@ -2581,14 +2581,14 @@
     {
       "async": true,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "fs-promises.js",
@@ -2607,14 +2607,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "index.js",
@@ -2633,14 +2633,14 @@
     {
       "async": true,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "fs-promises.js",
@@ -2661,14 +2661,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "index.js",
@@ -2689,14 +2689,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": true,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": true,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "aliased-imports.js",
@@ -2712,10 +2712,10 @@
       ],
       "rejectionPatterns": [
         {
-          "column": 15,
+          "rejectionType": "variable_unknown",
           "errorClassName": null,
           "line": 26,
-          "rejectionType": "variable_unknown",
+          "column": 15,
           "sourceVariableName": "err",
           "tracePath": [
             "err"
@@ -2729,14 +2729,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "node-prefix.js",
@@ -2759,14 +2759,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "index.js",
@@ -2787,14 +2787,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "index.js",
@@ -2813,14 +2813,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "namespace-import.js",
@@ -2841,10 +2841,10 @@
     {
       "builtin": true,
       "creates": {
+        "nodes": [],
         "edges": [
           "RECEIVES_ARGUMENT"
-        ],
-        "nodes": []
+        ]
       },
       "createsEdges": [
         "RECEIVES_ARGUMENT"
@@ -2864,10 +2864,10 @@
     {
       "builtin": true,
       "creates": {
+        "nodes": [],
         "edges": [
           "CALLS"
-        ],
-        "nodes": []
+        ]
       },
       "createsEdges": [
         "CALLS"
@@ -2887,14 +2887,14 @@
     {
       "builtin": true,
       "creates": {
+        "nodes": [
+          "http:request",
+          "EXTERNAL"
+        ],
         "edges": [
           "CONTAINS",
           "MAKES_REQUEST",
           "CALLS_API"
-        ],
-        "nodes": [
-          "http:request",
-          "EXTERNAL"
         ]
       },
       "createsEdges": [
@@ -2920,11 +2920,11 @@
     {
       "builtin": true,
       "creates": {
+        "nodes": [],
         "edges": [
           "IMPORTS",
           "IMPORTS_FROM"
-        ],
-        "nodes": []
+        ]
       },
       "createsEdges": [
         "IMPORTS",
@@ -2944,10 +2944,10 @@
     {
       "builtin": true,
       "creates": {
+        "nodes": [],
         "edges": [
           "INSTANCE_OF"
-        ],
-        "nodes": []
+        ]
       },
       "createsEdges": [
         "INSTANCE_OF"
@@ -2966,6 +2966,28 @@
     {
       "builtin": true,
       "creates": {
+        "nodes": [
+          "FUNCTION",
+          "CLASS",
+          "METHOD",
+          "VARIABLE",
+          "CONSTANT",
+          "SCOPE",
+          "CALL",
+          "IMPORT",
+          "EXPORT",
+          "LITERAL",
+          "EXTERNAL_MODULE",
+          "net:stdio",
+          "net:request",
+          "event:listener",
+          "http:request",
+          "INTERFACE",
+          "TYPE",
+          "ENUM",
+          "DECORATOR",
+          "TYPE_PARAMETER"
+        ],
         "edges": [
           "CONTAINS",
           "DECLARES",
@@ -2988,28 +3010,6 @@
           "DECORATED_BY",
           "HAS_TYPE_PARAMETER",
           "RESOLVES_TO"
-        ],
-        "nodes": [
-          "FUNCTION",
-          "CLASS",
-          "METHOD",
-          "VARIABLE",
-          "CONSTANT",
-          "SCOPE",
-          "CALL",
-          "IMPORT",
-          "EXPORT",
-          "LITERAL",
-          "EXTERNAL_MODULE",
-          "net:stdio",
-          "net:request",
-          "event:listener",
-          "http:request",
-          "INTERFACE",
-          "TYPE",
-          "ENUM",
-          "DECORATOR",
-          "TYPE_PARAMETER"
         ]
       },
       "createsEdges": [
@@ -3070,12 +3070,12 @@
     {
       "builtin": true,
       "creates": {
+        "nodes": [
+          "MODULE"
+        ],
         "edges": [
           "CONTAINS",
           "DEPENDS_ON"
-        ],
-        "nodes": [
-          "MODULE"
         ]
       },
       "createsEdges": [
@@ -3096,10 +3096,10 @@
     {
       "builtin": true,
       "creates": {
+        "nodes": [],
         "edges": [
           "CALLS"
-        ],
-        "nodes": []
+        ]
       },
       "createsEdges": [
         "CALLS"
@@ -3118,13 +3118,13 @@
     {
       "builtin": true,
       "creates": {
-        "edges": [
-          "CALLS",
-          "IMPORTS_FROM"
-        ],
         "nodes": [
           "EXTERNAL_FUNCTION",
           "EXTERNAL_MODULE"
+        ],
+        "edges": [
+          "CALLS",
+          "IMPORTS_FROM"
         ]
       },
       "createsEdges": [
@@ -3149,10 +3149,10 @@
     {
       "builtin": true,
       "creates": {
+        "nodes": [],
         "edges": [
           "REJECTS"
-        ],
-        "nodes": []
+        ]
       },
       "createsEdges": [
         "REJECTS"
@@ -3171,10 +3171,10 @@
     {
       "builtin": true,
       "creates": {
-        "edges": [],
         "nodes": [
           "SERVICE"
-        ]
+        ],
+        "edges": []
       },
       "createsEdges": [],
       "createsNodes": [
@@ -4768,10 +4768,10 @@
       "conditional": true,
       "constraints": [
         {
-          "excludes": true,
-          "negated": true,
+          "variable": "err",
           "operator": "falsy",
-          "variable": "err"
+          "negated": true,
+          "excludes": true
         }
       ],
       "exported": false,
@@ -4785,10 +4785,10 @@
       "conditional": true,
       "constraints": [
         {
-          "excludes": true,
-          "negated": true,
+          "variable": "err",
           "operator": "falsy",
-          "variable": "err"
+          "negated": true,
+          "excludes": true
         }
       ],
       "exported": false,
@@ -4802,10 +4802,10 @@
       "conditional": true,
       "constraints": [
         {
-          "excludes": true,
-          "negated": true,
+          "variable": "err",
           "operator": "falsy",
-          "variable": "err"
+          "negated": true,
+          "excludes": true
         }
       ],
       "exported": false,
@@ -4819,10 +4819,10 @@
       "conditional": true,
       "constraints": [
         {
-          "excludes": true,
-          "negated": true,
+          "variable": "err",
           "operator": "falsy",
-          "variable": "err"
+          "negated": true,
+          "excludes": true
         }
       ],
       "exported": false,
@@ -4836,10 +4836,10 @@
       "conditional": true,
       "constraints": [
         {
-          "excludes": true,
-          "negated": true,
+          "variable": "err",
           "operator": "falsy",
-          "variable": "err"
+          "negated": true,
+          "excludes": true
         }
       ],
       "exported": false,
@@ -4902,9 +4902,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "err",
           "operator": "truthy",
-          "variable": "err"
+          "negated": false
         }
       ],
       "exported": false,
@@ -4919,9 +4919,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "err",
           "operator": "truthy",
-          "variable": "err"
+          "negated": false
         }
       ],
       "exported": false,
@@ -4936,9 +4936,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "err",
           "operator": "truthy",
-          "variable": "err"
+          "negated": false
         }
       ],
       "exported": false,
@@ -4953,9 +4953,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "err",
           "operator": "truthy",
-          "variable": "err"
+          "negated": false
         }
       ],
       "exported": false,
@@ -4970,9 +4970,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "err",
           "operator": "truthy",
-          "variable": "err"
+          "negated": false
         }
       ],
       "exported": false,
@@ -4987,9 +4987,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "err",
           "operator": "truthy",
-          "variable": "err"
+          "negated": false
         }
       ],
       "exported": false,
@@ -5004,9 +5004,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "isMainThread",
           "operator": "truthy",
-          "variable": "isMainThread"
+          "negated": false
         }
       ],
       "exported": false,

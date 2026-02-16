@@ -1601,14 +1601,14 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "src/exceptions.js",
@@ -1618,14 +1618,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
         "hasBranches": true,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 2,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "src/conditionals.js",
@@ -1646,14 +1646,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": true,
         "hasLoops": false,
+        "hasTryCatch": true,
+        "hasEarlyReturn": true,
         "hasThrow": true,
-        "hasTryCatch": true
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "src/exceptions.js",
@@ -1667,10 +1667,10 @@
       ],
       "rejectionPatterns": [
         {
-          "column": 4,
+          "rejectionType": "variable_unknown",
           "errorClassName": null,
           "line": 58,
-          "rejectionType": "variable_unknown",
+          "column": 4,
           "sourceVariableName": "parseError",
           "tracePath": [
             "parseError"
@@ -1684,14 +1684,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": true,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 2,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "src/loops.js",
@@ -1710,14 +1710,14 @@
     {
       "async": true,
       "controlFlow": {
-        "canReject": true,
-        "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": true,
         "hasLoops": true,
+        "hasTryCatch": true,
+        "hasEarlyReturn": true,
         "hasThrow": true,
-        "hasTryCatch": true
+        "cyclomaticComplexity": 2,
+        "canReject": true,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "src/exceptions.js",
@@ -1733,10 +1733,10 @@
       ],
       "rejectionPatterns": [
         {
-          "column": 2,
+          "rejectionType": "variable_unknown",
           "errorClassName": null,
           "line": 86,
-          "rejectionType": "variable_unknown",
+          "column": 2,
           "sourceVariableName": "lastError",
           "tracePath": [
             "lastError",
@@ -1751,14 +1751,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 3,
-        "hasAsyncThrow": false,
         "hasBranches": true,
-        "hasEarlyReturn": true,
         "hasLoops": true,
+        "hasTryCatch": false,
+        "hasEarlyReturn": true,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 3,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "src/loops.js",
@@ -1782,14 +1782,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 3,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": true,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 3,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "src/loops.js",
@@ -1810,14 +1810,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 12,
-        "hasAsyncThrow": false,
         "hasBranches": true,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 12,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "src/conditionals.js",
@@ -1836,14 +1836,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "src/conditionals.js",
@@ -1864,14 +1864,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "src/conditionals.js",
@@ -1890,14 +1890,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 5,
-        "hasAsyncThrow": false,
         "hasBranches": true,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 5,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "src/conditionals.js",
@@ -1916,14 +1916,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
         "hasBranches": true,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 2,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "src/conditionals.js",
@@ -1942,14 +1942,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "src/conditionals.js",
@@ -1968,14 +1968,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "src/conditionals.js",
@@ -1996,14 +1996,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "src/conditionals.js",
@@ -2018,14 +2018,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "src/conditionals.js",
@@ -2044,14 +2044,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 3,
-        "hasAsyncThrow": false,
         "hasBranches": true,
-        "hasEarlyReturn": true,
         "hasLoops": false,
+        "hasTryCatch": true,
+        "hasEarlyReturn": true,
         "hasThrow": true,
-        "hasTryCatch": true
+        "cyclomaticComplexity": 3,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "src/exceptions.js",
@@ -2068,10 +2068,10 @@
       ],
       "rejectionPatterns": [
         {
-          "column": 6,
+          "rejectionType": "variable_unknown",
           "errorClassName": null,
           "line": 102,
-          "rejectionType": "variable_unknown",
+          "column": 6,
           "sourceVariableName": "error",
           "tracePath": [
             "error"
@@ -2085,14 +2085,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "src/exceptions.js",
@@ -2111,14 +2111,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
         "hasBranches": true,
-        "hasEarlyReturn": false,
         "hasLoops": false,
-        "hasThrow": true,
         "hasTryCatch": false,
+        "hasEarlyReturn": false,
+        "hasThrow": true,
+        "cyclomaticComplexity": 2,
+        "canReject": false,
+        "hasAsyncThrow": false,
         "thrownBuiltinErrors": [
           "Error"
         ]
@@ -2135,10 +2135,10 @@
       ],
       "rejectionPatterns": [
         {
-          "column": 14,
+          "rejectionType": "sync_throw",
           "errorClassName": "Error",
           "line": 63,
-          "rejectionType": "sync_throw"
+          "column": 14
         }
       ],
       "returnType": "void",
@@ -2148,14 +2148,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 6,
-        "hasAsyncThrow": false,
         "hasBranches": true,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 6,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "src/conditionals.js",
@@ -2174,14 +2174,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "src/exceptions.js",
@@ -2200,14 +2200,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 3,
-        "hasAsyncThrow": false,
         "hasBranches": true,
-        "hasEarlyReturn": false,
         "hasLoops": true,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 3,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "src/loops.js",
@@ -2226,14 +2226,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": true,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 2,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "src/loops.js",
@@ -2252,14 +2252,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 3,
-        "hasAsyncThrow": false,
         "hasBranches": true,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 3,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "src/conditionals.js",
@@ -2278,14 +2278,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": true,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 2,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "src/loops.js",
@@ -2304,14 +2304,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
         "hasBranches": true,
-        "hasEarlyReturn": true,
         "hasLoops": false,
+        "hasTryCatch": true,
+        "hasEarlyReturn": true,
         "hasThrow": false,
-        "hasTryCatch": true
+        "cyclomaticComplexity": 2,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "src/exceptions.js",
@@ -2330,14 +2330,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": true,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 2,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "src/loops.js",
@@ -2359,14 +2359,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "src/conditionals.js",
@@ -2385,14 +2385,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": true,
+        "hasTryCatch": false,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": false
+        "cyclomaticComplexity": 2,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "src/loops.js",
@@ -2411,14 +2411,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
         "hasBranches": true,
-        "hasEarlyReturn": true,
         "hasLoops": false,
-        "hasThrow": true,
         "hasTryCatch": true,
+        "hasEarlyReturn": true,
+        "hasThrow": true,
+        "cyclomaticComplexity": 2,
+        "canReject": false,
+        "hasAsyncThrow": false,
         "thrownBuiltinErrors": [
           "Error"
         ]
@@ -2435,16 +2435,16 @@
       ],
       "rejectionPatterns": [
         {
-          "column": 6,
+          "rejectionType": "sync_throw",
           "errorClassName": "Error",
           "line": 29,
-          "rejectionType": "sync_throw"
+          "column": 6
         },
         {
-          "column": 4,
+          "rejectionType": "variable_unknown",
           "errorClassName": null,
           "line": 36,
-          "rejectionType": "variable_unknown",
+          "column": 4,
           "sourceVariableName": "error",
           "tracePath": [
             "error"
@@ -2458,14 +2458,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
         "hasBranches": true,
-        "hasEarlyReturn": false,
         "hasLoops": false,
-        "hasThrow": true,
         "hasTryCatch": false,
+        "hasEarlyReturn": false,
+        "hasThrow": true,
+        "cyclomaticComplexity": 2,
+        "canReject": false,
+        "hasAsyncThrow": false,
         "thrownBuiltinErrors": [
           "Error"
         ]
@@ -2482,10 +2482,10 @@
       ],
       "rejectionPatterns": [
         {
-          "column": 16,
+          "rejectionType": "sync_throw",
           "errorClassName": "Error",
           "line": 68,
-          "rejectionType": "sync_throw"
+          "column": 16
         }
       ],
       "returnType": "void",
@@ -2495,14 +2495,14 @@
     {
       "async": false,
       "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
         "hasBranches": false,
-        "hasEarlyReturn": false,
         "hasLoops": false,
+        "hasTryCatch": true,
+        "hasEarlyReturn": false,
         "hasThrow": false,
-        "hasTryCatch": true
+        "cyclomaticComplexity": 1,
+        "canReject": false,
+        "hasAsyncThrow": false
       },
       "exported": false,
       "file": "src/exceptions.js",
@@ -2524,10 +2524,10 @@
     {
       "builtin": true,
       "creates": {
+        "nodes": [],
         "edges": [
           "RECEIVES_ARGUMENT"
-        ],
-        "nodes": []
+        ]
       },
       "createsEdges": [
         "RECEIVES_ARGUMENT"
@@ -2547,10 +2547,10 @@
     {
       "builtin": true,
       "creates": {
+        "nodes": [],
         "edges": [
           "CALLS"
-        ],
-        "nodes": []
+        ]
       },
       "createsEdges": [
         "CALLS"
@@ -2570,14 +2570,14 @@
     {
       "builtin": true,
       "creates": {
+        "nodes": [
+          "http:request",
+          "EXTERNAL"
+        ],
         "edges": [
           "CONTAINS",
           "MAKES_REQUEST",
           "CALLS_API"
-        ],
-        "nodes": [
-          "http:request",
-          "EXTERNAL"
         ]
       },
       "createsEdges": [
@@ -2603,11 +2603,11 @@
     {
       "builtin": true,
       "creates": {
+        "nodes": [],
         "edges": [
           "IMPORTS",
           "IMPORTS_FROM"
-        ],
-        "nodes": []
+        ]
       },
       "createsEdges": [
         "IMPORTS",
@@ -2627,10 +2627,10 @@
     {
       "builtin": true,
       "creates": {
+        "nodes": [],
         "edges": [
           "INSTANCE_OF"
-        ],
-        "nodes": []
+        ]
       },
       "createsEdges": [
         "INSTANCE_OF"
@@ -2649,6 +2649,28 @@
     {
       "builtin": true,
       "creates": {
+        "nodes": [
+          "FUNCTION",
+          "CLASS",
+          "METHOD",
+          "VARIABLE",
+          "CONSTANT",
+          "SCOPE",
+          "CALL",
+          "IMPORT",
+          "EXPORT",
+          "LITERAL",
+          "EXTERNAL_MODULE",
+          "net:stdio",
+          "net:request",
+          "event:listener",
+          "http:request",
+          "INTERFACE",
+          "TYPE",
+          "ENUM",
+          "DECORATOR",
+          "TYPE_PARAMETER"
+        ],
         "edges": [
           "CONTAINS",
           "DECLARES",
@@ -2671,28 +2693,6 @@
           "DECORATED_BY",
           "HAS_TYPE_PARAMETER",
           "RESOLVES_TO"
-        ],
-        "nodes": [
-          "FUNCTION",
-          "CLASS",
-          "METHOD",
-          "VARIABLE",
-          "CONSTANT",
-          "SCOPE",
-          "CALL",
-          "IMPORT",
-          "EXPORT",
-          "LITERAL",
-          "EXTERNAL_MODULE",
-          "net:stdio",
-          "net:request",
-          "event:listener",
-          "http:request",
-          "INTERFACE",
-          "TYPE",
-          "ENUM",
-          "DECORATOR",
-          "TYPE_PARAMETER"
         ]
       },
       "createsEdges": [
@@ -2753,12 +2753,12 @@
     {
       "builtin": true,
       "creates": {
+        "nodes": [
+          "MODULE"
+        ],
         "edges": [
           "CONTAINS",
           "DEPENDS_ON"
-        ],
-        "nodes": [
-          "MODULE"
         ]
       },
       "createsEdges": [
@@ -2779,10 +2779,10 @@
     {
       "builtin": true,
       "creates": {
+        "nodes": [],
         "edges": [
           "CALLS"
-        ],
-        "nodes": []
+        ]
       },
       "createsEdges": [
         "CALLS"
@@ -2801,13 +2801,13 @@
     {
       "builtin": true,
       "creates": {
-        "edges": [
-          "CALLS",
-          "IMPORTS_FROM"
-        ],
         "nodes": [
           "EXTERNAL_FUNCTION",
           "EXTERNAL_MODULE"
+        ],
+        "edges": [
+          "CALLS",
+          "IMPORTS_FROM"
         ]
       },
       "createsEdges": [
@@ -2832,10 +2832,10 @@
     {
       "builtin": true,
       "creates": {
+        "nodes": [],
         "edges": [
           "REJECTS"
-        ],
-        "nodes": []
+        ]
       },
       "createsEdges": [
         "REJECTS"
@@ -2854,10 +2854,10 @@
     {
       "builtin": true,
       "creates": {
-        "edges": [],
         "nodes": [
           "SERVICE"
-        ]
+        ],
+        "edges": []
       },
       "createsEdges": [],
       "createsNodes": [
@@ -4277,9 +4277,9 @@
       "file": "src/loops.js",
       "modifies": [
         {
-          "line": 43,
           "variableId": "loops.js->countDown->VARIABLE->count",
-          "variableName": "count"
+          "variableName": "count",
+          "line": 43
         }
       ],
       "name": "countDown:body",
@@ -4290,11 +4290,11 @@
       "conditional": true,
       "constraints": [
         {
-          "excludes": true,
-          "negated": true,
+          "variable": "error.name",
           "operator": "!==",
           "value": "ReferenceError",
-          "variable": "error.name"
+          "excludes": true,
+          "negated": true
         }
       ],
       "exported": false,
@@ -4310,9 +4310,9 @@
       "file": "src/exceptions.js",
       "modifies": [
         {
-          "line": 76,
           "variableId": "exceptions.js->fetchWithRetry->for#0->VARIABLE->i",
-          "variableName": "i"
+          "variableName": "i",
+          "line": 76
         }
       ],
       "name": "fetchWithRetry:body",
@@ -4325,9 +4325,9 @@
       "file": "src/loops.js",
       "modifies": [
         {
-          "line": 79,
           "variableId": "loops.js->findFirst->for#0->VARIABLE->i",
-          "variableName": "i"
+          "variableName": "i",
+          "line": 79
         }
       ],
       "name": "findFirst:body",
@@ -4340,14 +4340,14 @@
       "file": "src/loops.js",
       "modifies": [
         {
-          "line": 66,
           "variableId": "loops.js->generateMatrix->for#0->VARIABLE->i",
-          "variableName": "i"
+          "variableName": "i",
+          "line": 66
         },
         {
-          "line": 68,
           "variableId": "loops.js->generateMatrix->for#0->for#0->VARIABLE->j",
-          "variableName": "j"
+          "variableName": "j",
+          "line": 68
         }
       ],
       "name": "generateMatrix:body",
@@ -4439,9 +4439,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": false,
+          "variable": "file",
           "operator": "truthy",
-          "variable": "file"
+          "negated": false
         }
       ],
       "exported": false,
@@ -4456,9 +4456,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": true,
+          "variable": "data",
           "operator": "truthy",
-          "variable": "data"
+          "negated": true
         }
       ],
       "exported": false,
@@ -4473,9 +4473,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": true,
+          "variable": "input",
           "operator": "truthy",
-          "variable": "input"
+          "negated": true
         }
       ],
       "exported": false,
@@ -4490,9 +4490,9 @@
       "conditional": true,
       "constraints": [
         {
-          "negated": true,
+          "variable": "data.id",
           "operator": "truthy",
-          "variable": "data.id"
+          "negated": true
         }
       ],
       "exported": false,
@@ -4527,10 +4527,10 @@
       "conditional": true,
       "constraints": [
         {
-          "excludes": false,
+          "variable": "error.name",
           "operator": "===",
           "value": "TypeError",
-          "variable": "error.name"
+          "excludes": false
         }
       ],
       "exported": false,
@@ -4545,10 +4545,10 @@
       "conditional": true,
       "constraints": [
         {
-          "excludes": false,
+          "variable": "error.name",
           "operator": "===",
           "value": "ReferenceError",
-          "variable": "error.name"
+          "excludes": false
         }
       ],
       "exported": false,
@@ -4596,9 +4596,9 @@
       "file": "src/loops.js",
       "modifies": [
         {
-          "line": 91,
           "variableId": "loops.js->processEvenOnly->for#0->VARIABLE->i",
-          "variableName": "i"
+          "variableName": "i",
+          "line": 91
         }
       ],
       "name": "processEvenOnly:body",
@@ -4627,9 +4627,9 @@
       "file": "src/loops.js",
       "modifies": [
         {
-          "line": 6,
           "variableId": "loops.js->processWithForLoop->for#0->VARIABLE->i",
-          "variableName": "i"
+          "variableName": "i",
+          "line": 6
         }
       ],
       "name": "processWithForLoop:body",
@@ -4650,9 +4650,9 @@
       "file": "src/loops.js",
       "modifies": [
         {
-          "line": 56,
           "variableId": "loops.js->readUntilValid->VARIABLE->attempts",
-          "variableName": "attempts"
+          "variableName": "attempts",
+          "line": 56
         }
       ],
       "name": "readUntilValid:body",
