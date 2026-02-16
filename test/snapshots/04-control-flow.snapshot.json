@@ -1,13 +1,21 @@
 {
   "nodes": [
     {
-      "alternateExpressionId": "src/conditionals.js:EXPRESSION:CallExpression:85:44",
+      "alternateExpressionId": "src/conditionals.js:EXPRESSION:Identifier:71:39",
       "branchType": "ternary",
-      "consequentExpressionId": "src/conditionals.js:EXPRESSION:CallExpression:85:26",
+      "consequentExpressionId": "src/conditionals.js:EXPRESSION:BinaryExpression:71:21",
       "exported": false,
       "file": "src/conditionals.js",
       "name": "",
-      "semanticId": "conditionals.js->processUser->BRANCH->ternary#9",
+      "semanticId": "conditionals.js->calculatePrice->BRANCH->ternary#3",
+      "type": "BRANCH"
+    },
+    {
+      "branchType": "switch",
+      "exported": false,
+      "file": "src/conditionals.js",
+      "name": "",
+      "semanticId": "conditionals.js->getCategory->BRANCH->switch#1",
       "type": "BRANCH"
     },
     {
@@ -41,13 +49,13 @@
       "type": "BRANCH"
     },
     {
-      "alternateExpressionId": "src/conditionals.js:EXPRESSION:Identifier:71:39",
+      "alternateExpressionId": "src/conditionals.js:EXPRESSION:StringLiteral:79:29",
       "branchType": "ternary",
-      "consequentExpressionId": "src/conditionals.js:EXPRESSION:BinaryExpression:71:21",
+      "consequentExpressionId": "src/conditionals.js:EXPRESSION:StringLiteral:79:23",
       "exported": false,
       "file": "src/conditionals.js",
       "name": "",
-      "semanticId": "conditionals.js->calculatePrice->BRANCH->ternary#3",
+      "semanticId": "conditionals.js->getGrade->BRANCH->ternary#7",
       "type": "BRANCH"
     },
     {
@@ -61,13 +69,11 @@
       "type": "BRANCH"
     },
     {
-      "alternateExpressionId": "src/conditionals.js:EXPRESSION:StringLiteral:79:29",
-      "branchType": "ternary",
-      "consequentExpressionId": "src/conditionals.js:EXPRESSION:StringLiteral:79:23",
+      "branchType": "switch",
       "exported": false,
       "file": "src/conditionals.js",
       "name": "",
-      "semanticId": "conditionals.js->getGrade->BRANCH->ternary#7",
+      "semanticId": "conditionals.js->processCommand->BRANCH->switch#0",
       "type": "BRANCH"
     },
     {
@@ -81,19 +87,21 @@
       "type": "BRANCH"
     },
     {
-      "branchType": "switch",
+      "alternateExpressionId": "src/conditionals.js:EXPRESSION:CallExpression:85:44",
+      "branchType": "ternary",
+      "consequentExpressionId": "src/conditionals.js:EXPRESSION:CallExpression:85:26",
       "exported": false,
       "file": "src/conditionals.js",
       "name": "",
-      "semanticId": "conditionals.js->getCategory->BRANCH->switch#1",
+      "semanticId": "conditionals.js->processUser->BRANCH->ternary#9",
       "type": "BRANCH"
     },
     {
-      "branchType": "switch",
+      "branchType": "if",
       "exported": false,
-      "file": "src/conditionals.js",
+      "file": "src/exceptions.js",
       "name": "",
-      "semanticId": "conditionals.js->processCommand->BRANCH->switch#0",
+      "semanticId": "exceptions.js->handleDifferentErrors->catch#0->BRANCH->if#4",
       "type": "BRANCH"
     },
     {
@@ -103,14 +111,6 @@
       "isAlternateOfBranchId": "exceptions.js->handleDifferentErrors->catch#0->BRANCH->if#4",
       "name": "",
       "semanticId": "exceptions.js->handleDifferentErrors->catch#0->if#0->BRANCH->if#5",
-      "type": "BRANCH"
-    },
-    {
-      "branchType": "if",
-      "exported": false,
-      "file": "src/exceptions.js",
-      "name": "",
-      "semanticId": "exceptions.js->handleDifferentErrors->catch#0->BRANCH->if#4",
       "type": "BRANCH"
     },
     {
@@ -638,83 +638,6 @@
     },
     {
       "exported": false,
-      "fallsThrough": false,
-      "file": "src/conditionals.js",
-      "isDefault": false,
-      "isEmpty": false,
-      "name": "",
-      "semanticId": "conditionals.js->getCategory->CASE->10#14",
-      "type": "CASE",
-      "value": 10
-    },
-    {
-      "exported": false,
-      "fallsThrough": false,
-      "file": "src/conditionals.js",
-      "isDefault": false,
-      "isEmpty": false,
-      "name": "",
-      "semanticId": "conditionals.js->getCategory->CASE->3#7",
-      "type": "CASE",
-      "value": 3
-    },
-    {
-      "exported": false,
-      "fallsThrough": false,
-      "file": "src/conditionals.js",
-      "isDefault": false,
-      "isEmpty": false,
-      "name": "",
-      "semanticId": "conditionals.js->getCategory->CASE->6#10",
-      "type": "CASE",
-      "value": 6
-    },
-    {
-      "exported": false,
-      "fallsThrough": false,
-      "file": "src/conditionals.js",
-      "isDefault": false,
-      "isEmpty": false,
-      "name": "",
-      "semanticId": "conditionals.js->processCommand->CASE->restart#2",
-      "type": "CASE",
-      "value": "restart"
-    },
-    {
-      "exported": false,
-      "fallsThrough": false,
-      "file": "src/conditionals.js",
-      "isDefault": false,
-      "isEmpty": false,
-      "name": "",
-      "semanticId": "conditionals.js->processCommand->CASE->start#0",
-      "type": "CASE",
-      "value": "start"
-    },
-    {
-      "exported": false,
-      "fallsThrough": false,
-      "file": "src/conditionals.js",
-      "isDefault": false,
-      "isEmpty": false,
-      "name": "",
-      "semanticId": "conditionals.js->processCommand->CASE->status#3",
-      "type": "CASE",
-      "value": "status"
-    },
-    {
-      "exported": false,
-      "fallsThrough": false,
-      "file": "src/conditionals.js",
-      "isDefault": false,
-      "isEmpty": false,
-      "name": "",
-      "semanticId": "conditionals.js->processCommand->CASE->stop#1",
-      "type": "CASE",
-      "value": "stop"
-    },
-    {
-      "exported": false,
       "fallsThrough": true,
       "file": "src/conditionals.js",
       "isDefault": false,
@@ -726,6 +649,17 @@
     },
     {
       "exported": false,
+      "fallsThrough": false,
+      "file": "src/conditionals.js",
+      "isDefault": false,
+      "isEmpty": false,
+      "name": "",
+      "semanticId": "conditionals.js->getCategory->CASE->10#14",
+      "type": "CASE",
+      "value": 10
+    },
+    {
+      "exported": false,
       "fallsThrough": true,
       "file": "src/conditionals.js",
       "isDefault": false,
@@ -734,6 +668,17 @@
       "semanticId": "conditionals.js->getCategory->CASE->2#6",
       "type": "CASE",
       "value": 2
+    },
+    {
+      "exported": false,
+      "fallsThrough": false,
+      "file": "src/conditionals.js",
+      "isDefault": false,
+      "isEmpty": false,
+      "name": "",
+      "semanticId": "conditionals.js->getCategory->CASE->3#7",
+      "type": "CASE",
+      "value": 3
     },
     {
       "exported": false,
@@ -756,6 +701,17 @@
       "semanticId": "conditionals.js->getCategory->CASE->5#9",
       "type": "CASE",
       "value": 5
+    },
+    {
+      "exported": false,
+      "fallsThrough": false,
+      "file": "src/conditionals.js",
+      "isDefault": false,
+      "isEmpty": false,
+      "name": "",
+      "semanticId": "conditionals.js->getCategory->CASE->6#10",
+      "type": "CASE",
+      "value": 6
     },
     {
       "exported": false,
@@ -814,6 +770,66 @@
     },
     {
       "exported": false,
+      "fallsThrough": false,
+      "file": "src/conditionals.js",
+      "isDefault": false,
+      "isEmpty": false,
+      "name": "",
+      "semanticId": "conditionals.js->processCommand->CASE->restart#2",
+      "type": "CASE",
+      "value": "restart"
+    },
+    {
+      "exported": false,
+      "fallsThrough": false,
+      "file": "src/conditionals.js",
+      "isDefault": false,
+      "isEmpty": false,
+      "name": "",
+      "semanticId": "conditionals.js->processCommand->CASE->start#0",
+      "type": "CASE",
+      "value": "start"
+    },
+    {
+      "exported": false,
+      "fallsThrough": false,
+      "file": "src/conditionals.js",
+      "isDefault": false,
+      "isEmpty": false,
+      "name": "",
+      "semanticId": "conditionals.js->processCommand->CASE->status#3",
+      "type": "CASE",
+      "value": "status"
+    },
+    {
+      "exported": false,
+      "fallsThrough": false,
+      "file": "src/conditionals.js",
+      "isDefault": false,
+      "isEmpty": false,
+      "name": "",
+      "semanticId": "conditionals.js->processCommand->CASE->stop#1",
+      "type": "CASE",
+      "value": "stop"
+    },
+    {
+      "exported": false,
+      "file": "src/exceptions.js",
+      "name": "",
+      "parameterName": "parseError",
+      "semanticId": "exceptions.js->complexOperation->CATCH_BLOCK->catch#2",
+      "type": "CATCH_BLOCK"
+    },
+    {
+      "exported": false,
+      "file": "src/exceptions.js",
+      "name": "",
+      "parameterName": "validationError",
+      "semanticId": "exceptions.js->complexOperation->try#0->CATCH_BLOCK->catch#3",
+      "type": "CATCH_BLOCK"
+    },
+    {
+      "exported": false,
       "file": "src/exceptions.js",
       "name": "",
       "parameterName": "error",
@@ -842,22 +858,6 @@
       "name": "",
       "parameterName": "error",
       "semanticId": "exceptions.js->validateAndProcess->CATCH_BLOCK->catch#1",
-      "type": "CATCH_BLOCK"
-    },
-    {
-      "exported": false,
-      "file": "src/exceptions.js",
-      "name": "",
-      "parameterName": "parseError",
-      "semanticId": "exceptions.js->complexOperation->CATCH_BLOCK->catch#2",
-      "type": "CATCH_BLOCK"
-    },
-    {
-      "exported": false,
-      "file": "src/exceptions.js",
-      "name": "",
-      "parameterName": "validationError",
-      "semanticId": "exceptions.js->complexOperation->try#0->CATCH_BLOCK->catch#3",
       "type": "CATCH_BLOCK"
     },
     {
@@ -3257,56 +3257,14 @@
     {
       "exported": false,
       "file": "src/loops.js",
-      "initLine": 6,
-      "initVariableName": "i",
-      "loopType": "for",
+      "loopType": "while",
       "name": "",
-      "semanticId": "loops.js->processWithForLoop->LOOP->for#0",
-      "testColumn": 18,
-      "testExpressionId": "src/loops.js:EXPRESSION:BinaryExpression:6:18",
+      "semanticId": "loops.js->countDown->LOOP->while#3",
+      "testColumn": 9,
+      "testExpressionId": "src/loops.js:EXPRESSION:BinaryExpression:41:9",
       "testExpressionType": "BinaryExpression",
-      "testLine": 6,
-      "type": "LOOP",
-      "updateColumn": 36,
-      "updateExpressionId": "src/loops.js:EXPRESSION:UpdateExpression:6:36",
-      "updateExpressionType": "UpdateExpression",
-      "updateLine": 6
-    },
-    {
-      "exported": false,
-      "file": "src/loops.js",
-      "initLine": 66,
-      "initVariableName": "i",
-      "loopType": "for",
-      "name": "",
-      "semanticId": "loops.js->generateMatrix->LOOP->for#5",
-      "testColumn": 18,
-      "testExpressionId": "src/loops.js:EXPRESSION:BinaryExpression:66:18",
-      "testExpressionType": "BinaryExpression",
-      "testLine": 66,
-      "type": "LOOP",
-      "updateColumn": 28,
-      "updateExpressionId": "src/loops.js:EXPRESSION:UpdateExpression:66:28",
-      "updateExpressionType": "UpdateExpression",
-      "updateLine": 66
-    },
-    {
-      "exported": false,
-      "file": "src/loops.js",
-      "initLine": 68,
-      "initVariableName": "j",
-      "loopType": "for",
-      "name": "",
-      "semanticId": "loops.js->generateMatrix->for#0->LOOP->for#6",
-      "testColumn": 20,
-      "testExpressionId": "src/loops.js:EXPRESSION:BinaryExpression:68:20",
-      "testExpressionType": "BinaryExpression",
-      "testLine": 68,
-      "type": "LOOP",
-      "updateColumn": 30,
-      "updateExpressionId": "src/loops.js:EXPRESSION:UpdateExpression:68:30",
-      "updateExpressionType": "UpdateExpression",
-      "updateLine": 68
+      "testLine": 41,
+      "type": "LOOP"
     },
     {
       "exported": false,
@@ -3329,6 +3287,42 @@
     {
       "exported": false,
       "file": "src/loops.js",
+      "initLine": 68,
+      "initVariableName": "j",
+      "loopType": "for",
+      "name": "",
+      "semanticId": "loops.js->generateMatrix->for#0->LOOP->for#6",
+      "testColumn": 20,
+      "testExpressionId": "src/loops.js:EXPRESSION:BinaryExpression:68:20",
+      "testExpressionType": "BinaryExpression",
+      "testLine": 68,
+      "type": "LOOP",
+      "updateColumn": 30,
+      "updateExpressionId": "src/loops.js:EXPRESSION:UpdateExpression:68:30",
+      "updateExpressionType": "UpdateExpression",
+      "updateLine": 68
+    },
+    {
+      "exported": false,
+      "file": "src/loops.js",
+      "initLine": 66,
+      "initVariableName": "i",
+      "loopType": "for",
+      "name": "",
+      "semanticId": "loops.js->generateMatrix->LOOP->for#5",
+      "testColumn": 18,
+      "testExpressionId": "src/loops.js:EXPRESSION:BinaryExpression:66:18",
+      "testExpressionType": "BinaryExpression",
+      "testLine": 66,
+      "type": "LOOP",
+      "updateColumn": 28,
+      "updateExpressionId": "src/loops.js:EXPRESSION:UpdateExpression:66:28",
+      "updateExpressionType": "UpdateExpression",
+      "updateLine": 66
+    },
+    {
+      "exported": false,
+      "file": "src/loops.js",
       "initLine": 91,
       "initVariableName": "i",
       "loopType": "for",
@@ -3347,6 +3341,32 @@
     {
       "exported": false,
       "file": "src/loops.js",
+      "loopType": "for-in",
+      "name": "",
+      "semanticId": "loops.js->processObjectKeys->LOOP->for-in#2",
+      "type": "LOOP"
+    },
+    {
+      "exported": false,
+      "file": "src/loops.js",
+      "initLine": 6,
+      "initVariableName": "i",
+      "loopType": "for",
+      "name": "",
+      "semanticId": "loops.js->processWithForLoop->LOOP->for#0",
+      "testColumn": 18,
+      "testExpressionId": "src/loops.js:EXPRESSION:BinaryExpression:6:18",
+      "testExpressionType": "BinaryExpression",
+      "testLine": 6,
+      "type": "LOOP",
+      "updateColumn": 36,
+      "updateExpressionId": "src/loops.js:EXPRESSION:UpdateExpression:6:36",
+      "updateExpressionType": "UpdateExpression",
+      "updateLine": 6
+    },
+    {
+      "exported": false,
+      "file": "src/loops.js",
       "loopType": "do-while",
       "name": "",
       "semanticId": "loops.js->readUntilValid->LOOP->do-while#4",
@@ -3359,29 +3379,9 @@
     {
       "exported": false,
       "file": "src/loops.js",
-      "loopType": "for-in",
-      "name": "",
-      "semanticId": "loops.js->processObjectKeys->LOOP->for-in#2",
-      "type": "LOOP"
-    },
-    {
-      "exported": false,
-      "file": "src/loops.js",
       "loopType": "for-of",
       "name": "",
       "semanticId": "loops.js->sumWithForOf->LOOP->for-of#1",
-      "type": "LOOP"
-    },
-    {
-      "exported": false,
-      "file": "src/loops.js",
-      "loopType": "while",
-      "name": "",
-      "semanticId": "loops.js->countDown->LOOP->while#3",
-      "testColumn": 9,
-      "testExpressionId": "src/loops.js:EXPRESSION:BinaryExpression:41:9",
-      "testExpressionType": "BinaryExpression",
-      "testLine": 41,
       "type": "LOOP"
     },
     {
@@ -4058,72 +4058,16 @@
       "exported": false,
       "file": "src/exceptions.js",
       "name": "",
-      "scopeType": "catch-block",
-      "semanticId": "complexOperation:catch-block[0]",
-      "type": "SCOPE"
-    },
-    {
-      "exported": false,
-      "file": "src/exceptions.js",
-      "name": "",
-      "scopeType": "catch-block",
-      "semanticId": "fetchWithRetry->for#0:catch-block[0]",
-      "type": "SCOPE"
-    },
-    {
-      "exported": false,
-      "file": "src/exceptions.js",
-      "name": "",
-      "scopeType": "catch-block",
-      "semanticId": "handleDifferentErrors:catch-block[0]",
-      "type": "SCOPE"
-    },
-    {
-      "exported": false,
-      "file": "src/exceptions.js",
-      "name": "",
-      "scopeType": "catch-block",
-      "semanticId": "readFileWithErrorHandling:catch-block[0]",
-      "type": "SCOPE"
-    },
-    {
-      "exported": false,
-      "file": "src/exceptions.js",
-      "name": "",
-      "scopeType": "catch-block",
-      "semanticId": "validateAndProcess:catch-block[0]",
-      "type": "SCOPE"
-    },
-    {
-      "exported": false,
-      "file": "src/exceptions.js",
-      "name": "",
-      "scopeType": "finally-block",
-      "semanticId": "readFileWithErrorHandling:finally-block[0]",
-      "type": "SCOPE"
-    },
-    {
-      "exported": false,
-      "file": "src/exceptions.js",
-      "name": "",
-      "scopeType": "finally-block",
-      "semanticId": "withFinally:finally-block[0]",
-      "type": "SCOPE"
-    },
-    {
-      "exported": false,
-      "file": "src/exceptions.js",
-      "name": "",
-      "scopeType": "for-loop",
-      "semanticId": "fetchWithRetry:for-loop[0]",
-      "type": "SCOPE"
-    },
-    {
-      "exported": false,
-      "file": "src/exceptions.js",
-      "name": "",
       "scopeType": "try-block",
       "semanticId": "complexOperation->try#0:try-block[0]",
+      "type": "SCOPE"
+    },
+    {
+      "exported": false,
+      "file": "src/exceptions.js",
+      "name": "",
+      "scopeType": "catch-block",
+      "semanticId": "complexOperation:catch-block[0]",
       "type": "SCOPE"
     },
     {
@@ -4138,8 +4082,32 @@
       "exported": false,
       "file": "src/exceptions.js",
       "name": "",
+      "scopeType": "catch-block",
+      "semanticId": "fetchWithRetry->for#0:catch-block[0]",
+      "type": "SCOPE"
+    },
+    {
+      "exported": false,
+      "file": "src/exceptions.js",
+      "name": "",
       "scopeType": "try-block",
       "semanticId": "fetchWithRetry->for#0:try-block[0]",
+      "type": "SCOPE"
+    },
+    {
+      "exported": false,
+      "file": "src/exceptions.js",
+      "name": "",
+      "scopeType": "for-loop",
+      "semanticId": "fetchWithRetry:for-loop[0]",
+      "type": "SCOPE"
+    },
+    {
+      "exported": false,
+      "file": "src/exceptions.js",
+      "name": "",
+      "scopeType": "catch-block",
+      "semanticId": "handleDifferentErrors:catch-block[0]",
       "type": "SCOPE"
     },
     {
@@ -4154,8 +4122,32 @@
       "exported": false,
       "file": "src/exceptions.js",
       "name": "",
+      "scopeType": "catch-block",
+      "semanticId": "readFileWithErrorHandling:catch-block[0]",
+      "type": "SCOPE"
+    },
+    {
+      "exported": false,
+      "file": "src/exceptions.js",
+      "name": "",
+      "scopeType": "finally-block",
+      "semanticId": "readFileWithErrorHandling:finally-block[0]",
+      "type": "SCOPE"
+    },
+    {
+      "exported": false,
+      "file": "src/exceptions.js",
+      "name": "",
       "scopeType": "try-block",
       "semanticId": "readFileWithErrorHandling:try-block[0]",
+      "type": "SCOPE"
+    },
+    {
+      "exported": false,
+      "file": "src/exceptions.js",
+      "name": "",
+      "scopeType": "catch-block",
+      "semanticId": "validateAndProcess:catch-block[0]",
       "type": "SCOPE"
     },
     {
@@ -4170,6 +4162,14 @@
       "exported": false,
       "file": "src/exceptions.js",
       "name": "",
+      "scopeType": "finally-block",
+      "semanticId": "withFinally:finally-block[0]",
+      "type": "SCOPE"
+    },
+    {
+      "exported": false,
+      "file": "src/exceptions.js",
+      "name": "",
       "scopeType": "try-block",
       "semanticId": "withFinally:try-block[0]",
       "type": "SCOPE"
@@ -4178,16 +4178,8 @@
       "exported": false,
       "file": "src/loops.js",
       "name": "",
-      "scopeType": "do-while-loop",
-      "semanticId": "readUntilValid:do-while-loop[0]",
-      "type": "SCOPE"
-    },
-    {
-      "exported": false,
-      "file": "src/loops.js",
-      "name": "",
-      "scopeType": "for-in-loop",
-      "semanticId": "processObjectKeys:for-in-loop[0]",
+      "scopeType": "while-loop",
+      "semanticId": "countDown:while-loop[0]",
       "type": "SCOPE"
     },
     {
@@ -4226,6 +4218,14 @@
       "exported": false,
       "file": "src/loops.js",
       "name": "",
+      "scopeType": "for-in-loop",
+      "semanticId": "processObjectKeys:for-in-loop[0]",
+      "type": "SCOPE"
+    },
+    {
+      "exported": false,
+      "file": "src/loops.js",
+      "name": "",
       "scopeType": "for-loop",
       "semanticId": "processWithForLoop:for-loop[0]",
       "type": "SCOPE"
@@ -4234,16 +4234,16 @@
       "exported": false,
       "file": "src/loops.js",
       "name": "",
-      "scopeType": "for-of-loop",
-      "semanticId": "sumWithForOf:for-of-loop[0]",
+      "scopeType": "do-while-loop",
+      "semanticId": "readUntilValid:do-while-loop[0]",
       "type": "SCOPE"
     },
     {
       "exported": false,
       "file": "src/loops.js",
       "name": "",
-      "scopeType": "while-loop",
-      "semanticId": "countDown:while-loop[0]",
+      "scopeType": "for-of-loop",
+      "semanticId": "sumWithForOf:for-of-loop[0]",
       "type": "SCOPE"
     },
     {
@@ -5075,46 +5075,6 @@
     {
       "from": "BRANCH:",
       "type": "HAS_ALTERNATE",
-      "to": "<unresolved:src/conditionals.js:EXPRESSION:CallExpression:85:44>"
-    },
-    {
-      "from": "BRANCH:",
-      "type": "HAS_ALTERNATE",
-      "to": "<unresolved:src/conditionals.js:EXPRESSION:ConditionalExpression:77:9>"
-    },
-    {
-      "from": "BRANCH:",
-      "type": "HAS_ALTERNATE",
-      "to": "<unresolved:src/conditionals.js:EXPRESSION:ConditionalExpression:78:9>"
-    },
-    {
-      "from": "BRANCH:",
-      "type": "HAS_ALTERNATE",
-      "to": "<unresolved:src/conditionals.js:EXPRESSION:ConditionalExpression:79:9>"
-    },
-    {
-      "from": "BRANCH:",
-      "type": "HAS_ALTERNATE",
-      "to": "<unresolved:src/conditionals.js:EXPRESSION:Identifier:71:39>"
-    },
-    {
-      "from": "BRANCH:",
-      "type": "HAS_ALTERNATE",
-      "to": "<unresolved:src/conditionals.js:EXPRESSION:StringLiteral:66:31>"
-    },
-    {
-      "from": "BRANCH:",
-      "type": "HAS_ALTERNATE",
-      "to": "<unresolved:src/conditionals.js:EXPRESSION:StringLiteral:79:29>"
-    },
-    {
-      "from": "BRANCH:",
-      "type": "HAS_ALTERNATE",
-      "to": "<unresolved:src/conditionals.js:EXPRESSION:StringLiteral:84:34>"
-    },
-    {
-      "from": "BRANCH:",
-      "type": "HAS_ALTERNATE",
       "to": "BRANCH:"
     },
     {
@@ -5281,46 +5241,6 @@
       "from": "BRANCH:",
       "type": "HAS_CONDITION",
       "to": "EXPRESSION:UnaryExpression"
-    },
-    {
-      "from": "BRANCH:",
-      "type": "HAS_CONSEQUENT",
-      "to": "<unresolved:src/conditionals.js:EXPRESSION:BinaryExpression:71:21>"
-    },
-    {
-      "from": "BRANCH:",
-      "type": "HAS_CONSEQUENT",
-      "to": "<unresolved:src/conditionals.js:EXPRESSION:CallExpression:85:26>"
-    },
-    {
-      "from": "BRANCH:",
-      "type": "HAS_CONSEQUENT",
-      "to": "<unresolved:src/conditionals.js:EXPRESSION:MemberExpression:84:22>"
-    },
-    {
-      "from": "BRANCH:",
-      "type": "HAS_CONSEQUENT",
-      "to": "<unresolved:src/conditionals.js:EXPRESSION:StringLiteral:66:20>"
-    },
-    {
-      "from": "BRANCH:",
-      "type": "HAS_CONSEQUENT",
-      "to": "<unresolved:src/conditionals.js:EXPRESSION:StringLiteral:76:23>"
-    },
-    {
-      "from": "BRANCH:",
-      "type": "HAS_CONSEQUENT",
-      "to": "<unresolved:src/conditionals.js:EXPRESSION:StringLiteral:77:23>"
-    },
-    {
-      "from": "BRANCH:",
-      "type": "HAS_CONSEQUENT",
-      "to": "<unresolved:src/conditionals.js:EXPRESSION:StringLiteral:78:23>"
-    },
-    {
-      "from": "BRANCH:",
-      "type": "HAS_CONSEQUENT",
-      "to": "<unresolved:src/conditionals.js:EXPRESSION:StringLiteral:79:23>"
     },
     {
       "from": "BRANCH:",
@@ -5738,21 +5658,9 @@
     {
       "from": "CATCH_BLOCK:",
       "type": "CATCHES_FROM",
-      "to": "<unresolved:THROW#src/exceptions.js#29:6>",
-      "metadata": {
-        "parameterName": "error",
-        "sourceType": "throw_statement",
-        "sourceLine": 29
-      }
-    },
-    {
-      "from": "CATCH_BLOCK:",
-      "type": "CATCHES_FROM",
       "to": "CALL:console.log",
       "metadata": {
-        "parameterName": "error",
-        "sourceType": "sync_call",
-        "sourceLine": 6
+        "parameterName": "error"
       }
     },
     {
@@ -5760,9 +5668,7 @@
       "type": "CATCHES_FROM",
       "to": "CALL:fetch",
       "metadata": {
-        "parameterName": "error",
-        "sourceType": "awaited_call",
-        "sourceLine": 78
+        "parameterName": "error"
       }
     },
     {
@@ -5770,9 +5676,7 @@
       "type": "CATCHES_FROM",
       "to": "CALL:file.read",
       "metadata": {
-        "parameterName": "error",
-        "sourceType": "sync_call",
-        "sourceLine": 8
+        "parameterName": "error"
       }
     },
     {
@@ -5780,9 +5684,7 @@
       "type": "CATCHES_FROM",
       "to": "CALL:openFile",
       "metadata": {
-        "parameterName": "error",
-        "sourceType": "sync_call",
-        "sourceLine": 7
+        "parameterName": "error"
       }
     },
     {
@@ -5790,9 +5692,7 @@
       "type": "CATCHES_FROM",
       "to": "CALL:operation",
       "metadata": {
-        "parameterName": "error",
-        "sourceType": "sync_call",
-        "sourceLine": 92
+        "parameterName": "error"
       }
     },
     {
@@ -5800,9 +5700,7 @@
       "type": "CATCHES_FROM",
       "to": "CALL:parseInput",
       "metadata": {
-        "parameterName": "parseError",
-        "sourceType": "sync_call",
-        "sourceLine": 47
+        "parameterName": "parseError"
       }
     },
     {
@@ -5810,9 +5708,7 @@
       "type": "CATCHES_FROM",
       "to": "CALL:processData",
       "metadata": {
-        "parameterName": "error",
-        "sourceType": "sync_call",
-        "sourceLine": 32
+        "parameterName": "error"
       }
     },
     {
@@ -5820,9 +5716,7 @@
       "type": "CATCHES_FROM",
       "to": "CALL:response.json",
       "metadata": {
-        "parameterName": "error",
-        "sourceType": "awaited_call",
-        "sourceLine": 79
+        "parameterName": "error"
       }
     },
     {
@@ -5830,9 +5724,7 @@
       "type": "CATCHES_FROM",
       "to": "CALL:validateInput",
       "metadata": {
-        "parameterName": "validationError",
-        "sourceType": "sync_call",
-        "sourceLine": 50
+        "parameterName": "validationError"
       }
     },
     {
@@ -6380,14 +6272,6 @@
       "to": "SCOPE:parseInput:body"
     },
     {
-      "from": "FUNCTION:parseInput",
-      "type": "THROWS",
-      "to": "<unresolved:src/exceptions.js->global->CLASS->Error>",
-      "metadata": {
-        "errorClassName": "Error"
-      }
-    },
-    {
       "from": "FUNCTION:processCommand",
       "type": "HAS_PARAMETER",
       "to": "PARAMETER:command",
@@ -6571,14 +6455,6 @@
       "to": "SCOPE:validateAndProcess:body"
     },
     {
-      "from": "FUNCTION:validateAndProcess",
-      "type": "THROWS",
-      "to": "<unresolved:src/exceptions.js->global->CLASS->Error>",
-      "metadata": {
-        "errorClassName": "Error"
-      }
-    },
-    {
       "from": "FUNCTION:validateInput",
       "type": "CONTAINS",
       "to": "PROPERTY_ACCESS:id"
@@ -6595,14 +6471,6 @@
       "from": "FUNCTION:validateInput",
       "type": "HAS_SCOPE",
       "to": "SCOPE:validateInput:body"
-    },
-    {
-      "from": "FUNCTION:validateInput",
-      "type": "THROWS",
-      "to": "<unresolved:src/exceptions.js->global->CLASS->Error>",
-      "metadata": {
-        "errorClassName": "Error"
-      }
     },
     {
       "from": "FUNCTION:withFinally",

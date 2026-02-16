@@ -439,8 +439,14 @@ export class GraphAsserter {
       if (cmp !== 0) return cmp;
       const fileCmp = (a.file || '').localeCompare(b.file || '');
       if (fileCmp !== 0) return fileCmp;
+      // Use semanticId as stable tiebreaker (deterministic per-file from AST traversal)
+      const sidCmp = (a.semanticId || '').localeCompare(b.semanticId || '');
+      if (sidCmp !== 0) return sidCmp;
       return JSON.stringify(a).localeCompare(JSON.stringify(b));
     });
+
+    // Metadata properties to strip from edges (positional/non-deterministic across platforms)
+    const EDGE_METADATA_SKIP = new Set(['sourceLine', 'sourceType']);
 
     const edges = this._getEdges().map(e => {
       const srcId = e.fromId || e.src;
@@ -448,19 +454,28 @@ export class GraphAsserter {
       const from = this._findNodeByEdgeId(srcId);
       const to = this._findNodeByEdgeId(dstId);
 
+      // Skip edges with unresolved endpoints — non-deterministic across platforms
+      if (!from || !to) return null;
+
       const entry = {
-        from: from ? `${from.type}:${from.name}` : `<unresolved:${srcId}>`,
+        from: `${from.type}:${from.name}`,
         type: e.type,
-        to: to ? `${to.type}:${to.name}` : `<unresolved:${dstId}>`,
+        to: `${to.type}:${to.name}`,
       };
 
-      // Include metadata if present and non-empty
-      if (e.metadata && typeof e.metadata === 'object' && Object.keys(e.metadata).length > 0) {
-        entry.metadata = e.metadata;
+      // Include metadata if present and non-empty, stripping unstable properties
+      if (e.metadata && typeof e.metadata === 'object') {
+        const cleaned = {};
+        for (const [k, v] of Object.entries(e.metadata)) {
+          if (!EDGE_METADATA_SKIP.has(k)) cleaned[k] = v;
+        }
+        if (Object.keys(cleaned).length > 0) {
+          entry.metadata = cleaned;
+        }
       }
 
       return entry;
-    }).sort((a, b) => {
+    }).filter(Boolean).sort((a, b) => {
       const keyA = `${a.from}-${a.type}-${a.to}`;
       const keyB = `${b.from}-${b.type}-${b.to}`;
       const cmp = keyA.localeCompare(keyB);

@@ -81,53 +81,11 @@
       "type": "BRANCH"
     },
     {
-      "alternateExpressionId": "middleware/auth.js:EXPRESSION:ArrayExpression:220:66",
-      "branchType": "ternary",
-      "consequentExpressionId": "middleware/auth.js:EXPRESSION:CallExpression:220:40",
+      "branchType": "if",
       "exported": false,
       "file": "middleware/auth.js",
       "name": "",
-      "semanticId": "auth.js->requireRole->anonymous[0]->anonymous[0]->anonymous[0]->BRANCH->ternary#27",
-      "type": "BRANCH"
-    },
-    {
-      "alternateExpressionId": "middleware/auth.js:EXPRESSION:ArrayExpression:248:66",
-      "branchType": "ternary",
-      "consequentExpressionId": "middleware/auth.js:EXPRESSION:CallExpression:248:40",
-      "exported": false,
-      "file": "middleware/auth.js",
-      "name": "",
-      "semanticId": "auth.js->requireRolePromise->anonymous[0]->anonymous[2]->BRANCH->ternary#30",
-      "type": "BRANCH"
-    },
-    {
-      "alternateExpressionId": "middleware/auth.js:EXPRESSION:ArrayExpression:272:64",
-      "branchType": "ternary",
-      "consequentExpressionId": "middleware/auth.js:EXPRESSION:CallExpression:272:38",
-      "exported": false,
-      "file": "middleware/auth.js",
-      "name": "",
-      "semanticId": "auth.js->requireRoleAsync->anonymous[0]->try#0->BRANCH->ternary#33",
-      "type": "BRANCH"
-    },
-    {
-      "alternateExpressionId": "middleware/auth.js:EXPRESSION:NullLiteral:142:56",
-      "branchType": "ternary",
-      "consequentExpressionId": "middleware/auth.js:EXPRESSION:CallExpression:142:34",
-      "exported": false,
-      "file": "middleware/auth.js",
-      "name": "",
-      "semanticId": "auth.js->authMiddlewareCallback->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->BRANCH->ternary#18",
-      "type": "BRANCH"
-    },
-    {
-      "alternateExpressionId": "middleware/auth.js:EXPRESSION:NullLiteral:168:52",
-      "branchType": "ternary",
-      "consequentExpressionId": "middleware/auth.js:EXPRESSION:CallExpression:168:30",
-      "exported": false,
-      "file": "middleware/auth.js",
-      "name": "",
-      "semanticId": "auth.js->authMiddlewarePromise->anonymous[1]->BRANCH->ternary#20",
+      "semanticId": "auth.js->authMiddleware->try#0->BRANCH->if#21",
       "type": "BRANCH"
     },
     {
@@ -145,15 +103,17 @@
       "exported": false,
       "file": "middleware/auth.js",
       "name": "",
-      "semanticId": "auth.js->authMiddleware->try#0->BRANCH->if#21",
+      "semanticId": "auth.js->authMiddlewareCallback->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->BRANCH->if#17",
       "type": "BRANCH"
     },
     {
-      "branchType": "if",
+      "alternateExpressionId": "middleware/auth.js:EXPRESSION:NullLiteral:142:56",
+      "branchType": "ternary",
+      "consequentExpressionId": "middleware/auth.js:EXPRESSION:CallExpression:142:34",
       "exported": false,
       "file": "middleware/auth.js",
       "name": "",
-      "semanticId": "auth.js->authMiddlewareCallback->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->BRANCH->if#17",
+      "semanticId": "auth.js->authMiddlewareCallback->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->BRANCH->ternary#18",
       "type": "BRANCH"
     },
     {
@@ -202,6 +162,16 @@
       "file": "middleware/auth.js",
       "name": "",
       "semanticId": "auth.js->authMiddlewareCallback->BRANCH->if#11",
+      "type": "BRANCH"
+    },
+    {
+      "alternateExpressionId": "middleware/auth.js:EXPRESSION:NullLiteral:168:52",
+      "branchType": "ternary",
+      "consequentExpressionId": "middleware/auth.js:EXPRESSION:CallExpression:168:30",
+      "exported": false,
+      "file": "middleware/auth.js",
+      "name": "",
+      "semanticId": "auth.js->authMiddlewarePromise->anonymous[1]->BRANCH->ternary#20",
       "type": "BRANCH"
     },
     {
@@ -285,6 +255,16 @@
       "type": "BRANCH"
     },
     {
+      "alternateExpressionId": "middleware/auth.js:EXPRESSION:ArrayExpression:220:66",
+      "branchType": "ternary",
+      "consequentExpressionId": "middleware/auth.js:EXPRESSION:CallExpression:220:40",
+      "exported": false,
+      "file": "middleware/auth.js",
+      "name": "",
+      "semanticId": "auth.js->requireRole->anonymous[0]->anonymous[0]->anonymous[0]->BRANCH->ternary#27",
+      "type": "BRANCH"
+    },
+    {
       "branchType": "if",
       "exported": false,
       "file": "middleware/auth.js",
@@ -325,11 +305,31 @@
       "type": "BRANCH"
     },
     {
+      "alternateExpressionId": "middleware/auth.js:EXPRESSION:ArrayExpression:272:64",
+      "branchType": "ternary",
+      "consequentExpressionId": "middleware/auth.js:EXPRESSION:CallExpression:272:38",
+      "exported": false,
+      "file": "middleware/auth.js",
+      "name": "",
+      "semanticId": "auth.js->requireRoleAsync->anonymous[0]->try#0->BRANCH->ternary#33",
+      "type": "BRANCH"
+    },
+    {
       "branchType": "if",
       "exported": false,
       "file": "middleware/auth.js",
       "name": "",
       "semanticId": "auth.js->requireRolePromise->anonymous[0]->anonymous[0]->BRANCH->if#29",
+      "type": "BRANCH"
+    },
+    {
+      "alternateExpressionId": "middleware/auth.js:EXPRESSION:ArrayExpression:248:66",
+      "branchType": "ternary",
+      "consequentExpressionId": "middleware/auth.js:EXPRESSION:CallExpression:248:40",
+      "exported": false,
+      "file": "middleware/auth.js",
+      "name": "",
+      "semanticId": "auth.js->requireRolePromise->anonymous[0]->anonymous[2]->BRANCH->ternary#30",
       "type": "BRANCH"
     },
     {
@@ -16897,15 +16897,6 @@
       "valueType": "number"
     },
     {
-      "async": true,
-      "exported": false,
-      "file": "app.js",
-      "loopType": "for-of",
-      "name": "",
-      "semanticId": "app.js->processUserRequest->try#0->LOOP->for-of#3",
-      "type": "LOOP"
-    },
-    {
       "exported": false,
       "file": "app.js",
       "initLine": 111,
@@ -16940,6 +16931,15 @@
       "type": "LOOP"
     },
     {
+      "async": true,
+      "exported": false,
+      "file": "app.js",
+      "loopType": "for-of",
+      "name": "",
+      "semanticId": "app.js->processUserRequest->try#0->LOOP->for-of#3",
+      "type": "LOOP"
+    },
+    {
       "exported": false,
       "file": "routes/api.js",
       "loopType": "for-of",
@@ -16956,22 +16956,22 @@
       "type": "LOOP"
     },
     {
-      "async": true,
       "exported": false,
       "file": "services/dataProcessor.js",
-      "loopType": "for-of",
+      "initLine": 310,
+      "initVariableName": "i",
+      "loopType": "for",
       "name": "",
-      "semanticId": "dataProcessor.js->DataProcessor->processUser->LOOP->for-of#10",
-      "type": "LOOP"
-    },
-    {
-      "async": true,
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "loopType": "for-of",
-      "name": "",
-      "semanticId": "dataProcessor.js->DataProcessor->processWithNestedGenerators->for-of#0->LOOP->for-of#8",
-      "type": "LOOP"
+      "semanticId": "dataProcessor.js->createAsyncProcessors->LOOP->for#1",
+      "testColumn": 18,
+      "testExpressionId": "services/dataProcessor.js:EXPRESSION:BinaryExpression:310:18",
+      "testExpressionType": "BinaryExpression",
+      "testLine": 310,
+      "type": "LOOP",
+      "updateColumn": 29,
+      "updateExpressionId": "services/dataProcessor.js:EXPRESSION:UpdateExpression:310:29",
+      "updateExpressionType": "UpdateExpression",
+      "updateLine": 310
     },
     {
       "exported": false,
@@ -16994,20 +16994,14 @@
     {
       "exported": false,
       "file": "services/dataProcessor.js",
-      "initLine": 310,
-      "initVariableName": "i",
-      "loopType": "for",
+      "loopType": "while",
       "name": "",
-      "semanticId": "dataProcessor.js->createAsyncProcessors->LOOP->for#1",
-      "testColumn": 18,
-      "testExpressionId": "services/dataProcessor.js:EXPRESSION:BinaryExpression:310:18",
+      "semanticId": "dataProcessor.js->DataProcessor->fetchUsersStream->LOOP->while#4",
+      "testColumn": 11,
+      "testExpressionId": "services/dataProcessor.js:EXPRESSION:BinaryExpression:45:11",
       "testExpressionType": "BinaryExpression",
-      "testLine": 310,
-      "type": "LOOP",
-      "updateColumn": 29,
-      "updateExpressionId": "services/dataProcessor.js:EXPRESSION:UpdateExpression:310:29",
-      "updateExpressionType": "UpdateExpression",
-      "updateLine": 310
+      "testLine": 45,
+      "type": "LOOP"
     },
     {
       "exported": false,
@@ -17058,6 +17052,15 @@
       "type": "LOOP"
     },
     {
+      "async": true,
+      "exported": false,
+      "file": "services/dataProcessor.js",
+      "loopType": "for-of",
+      "name": "",
+      "semanticId": "dataProcessor.js->DataProcessor->processUser->LOOP->for-of#10",
+      "type": "LOOP"
+    },
+    {
       "exported": false,
       "file": "services/dataProcessor.js",
       "loopType": "for-of",
@@ -17071,6 +17074,15 @@
       "loopType": "for-of",
       "name": "",
       "semanticId": "dataProcessor.js->DataProcessor->processWithNestedGenerators->for-of#0->for-of#0->LOOP->for-of#9",
+      "type": "LOOP"
+    },
+    {
+      "async": true,
+      "exported": false,
+      "file": "services/dataProcessor.js",
+      "loopType": "for-of",
+      "name": "",
+      "semanticId": "dataProcessor.js->DataProcessor->processWithNestedGenerators->for-of#0->LOOP->for-of#8",
       "type": "LOOP"
     },
     {
@@ -17091,14 +17103,10 @@
     },
     {
       "exported": false,
-      "file": "services/dataProcessor.js",
-      "loopType": "while",
+      "file": "utils/asyncHelpers.js",
+      "loopType": "for-of",
       "name": "",
-      "semanticId": "dataProcessor.js->DataProcessor->fetchUsersStream->LOOP->while#4",
-      "testColumn": 11,
-      "testExpressionId": "services/dataProcessor.js:EXPRESSION:BinaryExpression:45:11",
-      "testExpressionType": "BinaryExpression",
-      "testLine": 45,
+      "semanticId": "asyncHelpers.js->executePromiseGenerator->LOOP->for-of#1",
       "type": "LOOP"
     },
     {
@@ -17118,14 +17126,6 @@
       "updateExpressionId": "utils/asyncHelpers.js:EXPRESSION:UpdateExpression:239:29",
       "updateExpressionType": "UpdateExpression",
       "updateLine": 239
-    },
-    {
-      "exported": false,
-      "file": "utils/asyncHelpers.js",
-      "loopType": "for-of",
-      "name": "",
-      "semanticId": "asyncHelpers.js->executePromiseGenerator->LOOP->for-of#1",
-      "type": "LOOP"
     },
     {
       "exported": false,
@@ -17327,6 +17327,18 @@
     {
       "exported": false,
       "file": "services/dataProcessor.js",
+      "index": 2,
+      "name": "callback",
+      "parentFunctionId": "services/dataProcessor.js->FUNCTION->processInBatches",
+      "scopePath": [
+        "processInBatches"
+      ],
+      "semanticId": "services/dataProcessor.js->PARAMETER->callback[in:processInBatches]#2",
+      "type": "PARAMETER"
+    },
+    {
+      "exported": false,
+      "file": "services/dataProcessor.js",
       "index": 1,
       "name": "callback",
       "parentFunctionId": "services/dataProcessor.js->FUNCTION->processWithCallbacks[in:DataProcessor]",
@@ -17335,18 +17347,6 @@
         "processWithCallbacks"
       ],
       "semanticId": "services/dataProcessor.js->PARAMETER->callback[in:processWithCallbacks]#1",
-      "type": "PARAMETER"
-    },
-    {
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "index": 2,
-      "name": "callback",
-      "parentFunctionId": "services/dataProcessor.js->FUNCTION->processInBatches",
-      "scopePath": [
-        "processInBatches"
-      ],
-      "semanticId": "services/dataProcessor.js->PARAMETER->callback[in:processInBatches]#2",
       "type": "PARAMETER"
     },
     {
@@ -19893,8 +19893,8 @@
       "exported": false,
       "file": "app.js",
       "name": "",
-      "scopeType": "catch-block",
-      "semanticId": "processUserRequest:catch-block[0]",
+      "scopeType": "try-block",
+      "semanticId": "anonymous[3]:try-block[0]",
       "type": "SCOPE"
     },
     {
@@ -19933,8 +19933,8 @@
       "exported": false,
       "file": "app.js",
       "name": "",
-      "scopeType": "try-block",
-      "semanticId": "anonymous[3]:try-block[0]",
+      "scopeType": "catch-block",
+      "semanticId": "processUserRequest:catch-block[0]",
       "type": "SCOPE"
     },
     {
@@ -19957,8 +19957,24 @@
       "exported": false,
       "file": "middleware/auth.js",
       "name": "",
+      "scopeType": "try-block",
+      "semanticId": "authMiddleware:try-block[0]",
+      "type": "SCOPE"
+    },
+    {
+      "exported": false,
+      "file": "middleware/auth.js",
+      "name": "",
       "scopeType": "catch-block",
       "semanticId": "requireRoleAsync->anonymous[0]:catch-block[0]",
+      "type": "SCOPE"
+    },
+    {
+      "exported": false,
+      "file": "middleware/auth.js",
+      "name": "",
+      "scopeType": "try-block",
+      "semanticId": "requireRoleAsync->anonymous[0]:try-block[0]",
       "type": "SCOPE"
     },
     {
@@ -19974,31 +19990,7 @@
       "file": "middleware/auth.js",
       "name": "",
       "scopeType": "try-block",
-      "semanticId": "authMiddleware:try-block[0]",
-      "type": "SCOPE"
-    },
-    {
-      "exported": false,
-      "file": "middleware/auth.js",
-      "name": "",
-      "scopeType": "try-block",
-      "semanticId": "requireRoleAsync->anonymous[0]:try-block[0]",
-      "type": "SCOPE"
-    },
-    {
-      "exported": false,
-      "file": "middleware/auth.js",
-      "name": "",
-      "scopeType": "try-block",
       "semanticId": "verifyTokenAsync:try-block[0]",
-      "type": "SCOPE"
-    },
-    {
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "",
-      "scopeType": "catch-block",
-      "semanticId": "anonymous[3]:catch-block[0]",
       "type": "SCOPE"
     },
     {
@@ -20013,8 +20005,8 @@
       "exported": false,
       "file": "routes/api.js",
       "name": "",
-      "scopeType": "for-of-loop",
-      "semanticId": "anonymous[5]->anonymous[0]:for-of-loop[0]",
+      "scopeType": "catch-block",
+      "semanticId": "anonymous[3]:catch-block[0]",
       "type": "SCOPE"
     },
     {
@@ -20023,6 +20015,14 @@
       "name": "",
       "scopeType": "try-block",
       "semanticId": "anonymous[3]:try-block[0]",
+      "type": "SCOPE"
+    },
+    {
+      "exported": false,
+      "file": "routes/api.js",
+      "name": "",
+      "scopeType": "for-of-loop",
+      "semanticId": "anonymous[5]->anonymous[0]:for-of-loop[0]",
       "type": "SCOPE"
     },
     {
@@ -20037,24 +20037,8 @@
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "",
-      "scopeType": "catch-block",
-      "semanticId": "DataProcessor->processWithErrorHandling->try#0->for-of#0:catch-block[0]",
-      "type": "SCOPE"
-    },
-    {
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "",
-      "scopeType": "catch-block",
-      "semanticId": "DataProcessor->processWithErrorHandling:catch-block[0]",
-      "type": "SCOPE"
-    },
-    {
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "",
-      "scopeType": "catch-block",
-      "semanticId": "DataProcessor->processWithPromises->anonymous[0]:catch-block[0]",
+      "scopeType": "try-block",
+      "semanticId": "anonymous[1]:try-block[0]",
       "type": "SCOPE"
     },
     {
@@ -20079,6 +20063,14 @@
       "name": "",
       "scopeType": "for-of-loop",
       "semanticId": "DataProcessor->fetchUsersStream->while#0:for-of-loop[0]",
+      "type": "SCOPE"
+    },
+    {
+      "exported": false,
+      "file": "services/dataProcessor.js",
+      "name": "",
+      "scopeType": "while-loop",
+      "semanticId": "DataProcessor->fetchUsersStream:while-loop[0]",
       "type": "SCOPE"
     },
     {
@@ -20133,8 +20125,40 @@
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "",
+      "scopeType": "catch-block",
+      "semanticId": "DataProcessor->processWithErrorHandling->try#0->for-of#0:catch-block[0]",
+      "type": "SCOPE"
+    },
+    {
+      "exported": false,
+      "file": "services/dataProcessor.js",
+      "name": "",
+      "scopeType": "try-block",
+      "semanticId": "DataProcessor->processWithErrorHandling->try#0->for-of#0:try-block[0]",
+      "type": "SCOPE"
+    },
+    {
+      "exported": false,
+      "file": "services/dataProcessor.js",
+      "name": "",
       "scopeType": "for-of-loop",
       "semanticId": "DataProcessor->processWithErrorHandling->try#0:for-of-loop[0]",
+      "type": "SCOPE"
+    },
+    {
+      "exported": false,
+      "file": "services/dataProcessor.js",
+      "name": "",
+      "scopeType": "catch-block",
+      "semanticId": "DataProcessor->processWithErrorHandling:catch-block[0]",
+      "type": "SCOPE"
+    },
+    {
+      "exported": false,
+      "file": "services/dataProcessor.js",
+      "name": "",
+      "scopeType": "try-block",
+      "semanticId": "DataProcessor->processWithErrorHandling:try-block[0]",
       "type": "SCOPE"
     },
     {
@@ -20165,32 +20189,8 @@
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "",
-      "scopeType": "for-of-loop",
-      "semanticId": "processInBatches->anonymous[0]:for-of-loop[0]",
-      "type": "SCOPE"
-    },
-    {
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "",
-      "scopeType": "try-block",
-      "semanticId": "anonymous[1]:try-block[0]",
-      "type": "SCOPE"
-    },
-    {
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "",
-      "scopeType": "try-block",
-      "semanticId": "DataProcessor->processWithErrorHandling->try#0->for-of#0:try-block[0]",
-      "type": "SCOPE"
-    },
-    {
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "",
-      "scopeType": "try-block",
-      "semanticId": "DataProcessor->processWithErrorHandling:try-block[0]",
+      "scopeType": "catch-block",
+      "semanticId": "DataProcessor->processWithPromises->anonymous[0]:catch-block[0]",
       "type": "SCOPE"
     },
     {
@@ -20205,8 +20205,8 @@
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "",
-      "scopeType": "while-loop",
-      "semanticId": "DataProcessor->fetchUsersStream:while-loop[0]",
+      "scopeType": "for-of-loop",
+      "semanticId": "processInBatches->anonymous[0]:for-of-loop[0]",
       "type": "SCOPE"
     },
     {
@@ -20221,6 +20221,14 @@
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "name": "",
+      "scopeType": "try-block",
+      "semanticId": "asyncWithPromiseChain:try-block[0]",
+      "type": "SCOPE"
+    },
+    {
+      "exported": false,
+      "file": "utils/asyncHelpers.js",
+      "name": "",
       "scopeType": "catch-block",
       "semanticId": "debouncePromise->anonymous[0]->anonymous[0]->anonymous[0]:catch-block[0]",
       "type": "SCOPE"
@@ -20229,8 +20237,8 @@
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "name": "",
-      "scopeType": "for-loop",
-      "semanticId": "promiseGenerator:for-loop[0]",
+      "scopeType": "try-block",
+      "semanticId": "debouncePromise->anonymous[0]->anonymous[0]->anonymous[0]:try-block[0]",
       "type": "SCOPE"
     },
     {
@@ -20245,16 +20253,8 @@
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "name": "",
-      "scopeType": "try-block",
-      "semanticId": "asyncWithPromiseChain:try-block[0]",
-      "type": "SCOPE"
-    },
-    {
-      "exported": false,
-      "file": "utils/asyncHelpers.js",
-      "name": "",
-      "scopeType": "try-block",
-      "semanticId": "debouncePromise->anonymous[0]->anonymous[0]->anonymous[0]:try-block[0]",
+      "scopeType": "for-loop",
+      "semanticId": "promiseGenerator:for-loop[0]",
       "type": "SCOPE"
     },
     {
@@ -20576,6 +20576,24 @@
       "exported": false,
       "file": "middleware/auth.js",
       "name": "anonymous[0]:body",
+      "scopeType": "closure",
+      "semanticId": "requireRole:closure[0]",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "middleware/auth.js",
+      "name": "anonymous[0]:body",
+      "scopeType": "closure",
+      "semanticId": "requireRoleAsync:closure[0]",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "middleware/auth.js",
+      "name": "anonymous[0]:body",
       "scopeType": "arrow_body",
       "semanticId": "requireRolePromise->anonymous[0]->anonymous[1]:arrow_body[0]",
       "type": "SCOPE"
@@ -20587,6 +20605,15 @@
       "name": "anonymous[0]:body",
       "scopeType": "arrow_body",
       "semanticId": "requireRolePromise->anonymous[0]:arrow_body[0]",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "middleware/auth.js",
+      "name": "anonymous[0]:body",
+      "scopeType": "closure",
+      "semanticId": "requireRolePromise:closure[0]",
       "type": "SCOPE"
     },
     {
@@ -20673,28 +20700,19 @@
     {
       "conditional": false,
       "exported": false,
-      "file": "middleware/auth.js",
+      "file": "models/User.js",
       "name": "anonymous[0]:body",
       "scopeType": "closure",
-      "semanticId": "requireRole:closure[0]",
+      "semanticId": "anonymous[7]->anonymous[0]:closure[0]",
       "type": "SCOPE"
     },
     {
       "conditional": false,
       "exported": false,
-      "file": "middleware/auth.js",
+      "file": "models/User.js",
       "name": "anonymous[0]:body",
       "scopeType": "closure",
-      "semanticId": "requireRoleAsync:closure[0]",
-      "type": "SCOPE"
-    },
-    {
-      "conditional": false,
-      "exported": false,
-      "file": "middleware/auth.js",
-      "name": "anonymous[0]:body",
-      "scopeType": "closure",
-      "semanticId": "requireRolePromise:closure[0]",
+      "semanticId": "anonymous[7]:closure[0]",
       "type": "SCOPE"
     },
     {
@@ -20704,6 +20722,33 @@
       "name": "anonymous[0]:body",
       "scopeType": "arrow_body",
       "semanticId": "anonymous[8]:arrow_body[0]",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "models/User.js",
+      "name": "anonymous[0]:body",
+      "scopeType": "closure",
+      "semanticId": "comparePassword->anonymous[0]->else#0:closure[0]",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "models/User.js",
+      "name": "anonymous[0]:body",
+      "scopeType": "closure",
+      "semanticId": "comparePassword->anonymous[0]->if#1->if#0:closure[0]",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "models/User.js",
+      "name": "anonymous[0]:body",
+      "scopeType": "closure",
+      "semanticId": "comparePassword:closure[0]",
       "type": "SCOPE"
     },
     {
@@ -20740,51 +20785,6 @@
       "name": "anonymous[0]:body",
       "scopeType": "arrow_body",
       "semanticId": "updateLastLogin:arrow_body[0]",
-      "type": "SCOPE"
-    },
-    {
-      "conditional": false,
-      "exported": false,
-      "file": "models/User.js",
-      "name": "anonymous[0]:body",
-      "scopeType": "closure",
-      "semanticId": "anonymous[7]->anonymous[0]:closure[0]",
-      "type": "SCOPE"
-    },
-    {
-      "conditional": false,
-      "exported": false,
-      "file": "models/User.js",
-      "name": "anonymous[0]:body",
-      "scopeType": "closure",
-      "semanticId": "anonymous[7]:closure[0]",
-      "type": "SCOPE"
-    },
-    {
-      "conditional": false,
-      "exported": false,
-      "file": "models/User.js",
-      "name": "anonymous[0]:body",
-      "scopeType": "closure",
-      "semanticId": "comparePassword->anonymous[0]->else#0:closure[0]",
-      "type": "SCOPE"
-    },
-    {
-      "conditional": false,
-      "exported": false,
-      "file": "models/User.js",
-      "name": "anonymous[0]:body",
-      "scopeType": "closure",
-      "semanticId": "comparePassword->anonymous[0]->if#1->if#0:closure[0]",
-      "type": "SCOPE"
-    },
-    {
-      "conditional": false,
-      "exported": false,
-      "file": "models/User.js",
-      "name": "anonymous[0]:body",
-      "scopeType": "closure",
-      "semanticId": "comparePassword:closure[0]",
       "type": "SCOPE"
     },
     {
@@ -21088,27 +21088,6 @@
       "conditional": false,
       "exported": false,
       "file": "utils/asyncHelpers.js",
-      "modifies": [
-        {
-          "variableId": "asyncHelpers.js->promisePool->anonymous[0]->VARIABLE->completed",
-          "variableName": "completed",
-          "line": 344
-        },
-        {
-          "variableId": "asyncHelpers.js->promisePool->anonymous[0]->VARIABLE->running",
-          "variableName": "running",
-          "line": 345
-        }
-      ],
-      "name": "anonymous[0]:body",
-      "scopeType": "arrow_body",
-      "semanticId": "promisePool->anonymous[0]->runNext->while#0:arrow_body[0]",
-      "type": "SCOPE"
-    },
-    {
-      "conditional": false,
-      "exported": false,
-      "file": "utils/asyncHelpers.js",
       "name": "anonymous[0]:body",
       "scopeType": "arrow_body",
       "semanticId": "callbackHell->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]:arrow_body[0]",
@@ -21191,6 +21170,15 @@
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "name": "anonymous[0]:body",
+      "scopeType": "closure",
+      "semanticId": "debouncePromise:closure[0]",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "utils/asyncHelpers.js",
+      "name": "anonymous[0]:body",
       "scopeType": "arrow_body",
       "semanticId": "executePromiseGenerator:arrow_body[0]",
       "type": "SCOPE"
@@ -21247,6 +21235,27 @@
       "name": "anonymous[0]:body",
       "scopeType": "arrow_body",
       "semanticId": "promiseGenerator->for#0:arrow_body[0]",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "utils/asyncHelpers.js",
+      "modifies": [
+        {
+          "variableId": "asyncHelpers.js->promisePool->anonymous[0]->VARIABLE->completed",
+          "variableName": "completed",
+          "line": 344
+        },
+        {
+          "variableId": "asyncHelpers.js->promisePool->anonymous[0]->VARIABLE->running",
+          "variableName": "running",
+          "line": 345
+        }
+      ],
+      "name": "anonymous[0]:body",
+      "scopeType": "arrow_body",
+      "semanticId": "promisePool->anonymous[0]->runNext->while#0:arrow_body[0]",
       "type": "SCOPE"
     },
     {
@@ -21355,15 +21364,6 @@
       "name": "anonymous[0]:body",
       "scopeType": "arrow_body",
       "semanticId": "withErrorRecovery:arrow_body[0]",
-      "type": "SCOPE"
-    },
-    {
-      "conditional": false,
-      "exported": false,
-      "file": "utils/asyncHelpers.js",
-      "name": "anonymous[0]:body",
-      "scopeType": "closure",
-      "semanticId": "debouncePromise:closure[0]",
       "type": "SCOPE"
     },
     {
@@ -21487,22 +21487,6 @@
       "conditional": false,
       "exported": false,
       "file": "utils/asyncHelpers.js",
-      "modifies": [
-        {
-          "variableId": "asyncHelpers.js->retryWithBackoff->anonymous[0]->VARIABLE->attempt",
-          "variableName": "attempt",
-          "line": 12
-        }
-      ],
-      "name": "anonymous[1]:body",
-      "scopeType": "arrow_body",
-      "semanticId": "retryWithBackoff->anonymous[0]->execute:arrow_body[0]",
-      "type": "SCOPE"
-    },
-    {
-      "conditional": false,
-      "exported": false,
-      "file": "utils/asyncHelpers.js",
       "name": "anonymous[1]:body",
       "scopeType": "arrow_body",
       "semanticId": "asyncWithPromiseChain->try#0->anonymous[2]->anonymous[1]:arrow_body[0]",
@@ -21605,6 +21589,22 @@
       "name": "anonymous[1]:body",
       "scopeType": "arrow_body",
       "semanticId": "recursivePromiseChain:arrow_body[1]",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "utils/asyncHelpers.js",
+      "modifies": [
+        {
+          "variableId": "asyncHelpers.js->retryWithBackoff->anonymous[0]->VARIABLE->attempt",
+          "variableName": "attempt",
+          "line": 12
+        }
+      ],
+      "name": "anonymous[1]:body",
+      "scopeType": "arrow_body",
+      "semanticId": "retryWithBackoff->anonymous[0]->execute:arrow_body[0]",
       "type": "SCOPE"
     },
     {
@@ -21840,19 +21840,19 @@
       "type": "SCOPE"
     },
     {
+      "exported": false,
+      "file": "routes/api.js",
+      "name": "anonymous[5]:body",
+      "scopeType": "function-body",
+      "type": "SCOPE"
+    },
+    {
       "conditional": false,
       "exported": false,
       "file": "routes/api.js",
       "name": "anonymous[5]:body",
       "scopeType": "arrow_body",
       "semanticId": "anonymous[1]:arrow_body[5]",
-      "type": "SCOPE"
-    },
-    {
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "anonymous[5]:body",
-      "scopeType": "function-body",
       "type": "SCOPE"
     },
     {
@@ -24297,19 +24297,19 @@
       "type": "SCOPE"
     },
     {
+      "exported": false,
+      "file": "services/dataProcessor.js",
+      "name": "processNext:body",
+      "scopeType": "function-body",
+      "type": "SCOPE"
+    },
+    {
       "conditional": false,
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "processNext:body",
       "scopeType": "arrow_body",
       "semanticId": "DataProcessor->processWithCallbacks:arrow_body[0]",
-      "type": "SCOPE"
-    },
-    {
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "processNext:body",
-      "scopeType": "function-body",
       "type": "SCOPE"
     },
     {
@@ -25449,31 +25449,6 @@
   ],
   "edges": [
     {
-      "from": "<unresolved:app.js->CALL->app.get>",
-      "type": "HAS_CALLBACK",
-      "to": "FUNCTION:anonymous[2]"
-    },
-    {
-      "from": "<unresolved:app.js->CALL->app.get>",
-      "type": "HAS_CALLBACK",
-      "to": "FUNCTION:anonymous[3]"
-    },
-    {
-      "from": "<unresolved:routes/api.js->CALL->router.get>",
-      "type": "HAS_CALLBACK",
-      "to": "FUNCTION:anonymous[1]"
-    },
-    {
-      "from": "<unresolved:routes/api.js->CALL->router.get>",
-      "type": "HAS_CALLBACK",
-      "to": "FUNCTION:anonymous[3]"
-    },
-    {
-      "from": "<unresolved:routes/api.js->CALL->router.get>",
-      "type": "HAS_CALLBACK",
-      "to": "FUNCTION:anonymous[5]"
-    },
-    {
       "from": "BRANCH:",
       "type": "CONTAINS",
       "to": "SCOPE:else:139:13:1"
@@ -26081,36 +26056,6 @@
     {
       "from": "BRANCH:",
       "type": "HAS_ALTERNATE",
-      "to": "<unresolved:middleware/auth.js:EXPRESSION:ArrayExpression:220:66>"
-    },
-    {
-      "from": "BRANCH:",
-      "type": "HAS_ALTERNATE",
-      "to": "<unresolved:middleware/auth.js:EXPRESSION:ArrayExpression:248:66>"
-    },
-    {
-      "from": "BRANCH:",
-      "type": "HAS_ALTERNATE",
-      "to": "<unresolved:middleware/auth.js:EXPRESSION:ArrayExpression:272:64>"
-    },
-    {
-      "from": "BRANCH:",
-      "type": "HAS_ALTERNATE",
-      "to": "<unresolved:middleware/auth.js:EXPRESSION:NullLiteral:142:56>"
-    },
-    {
-      "from": "BRANCH:",
-      "type": "HAS_ALTERNATE",
-      "to": "<unresolved:middleware/auth.js:EXPRESSION:NullLiteral:168:52>"
-    },
-    {
-      "from": "BRANCH:",
-      "type": "HAS_ALTERNATE",
-      "to": "<unresolved:middleware/auth.js:EXPRESSION:NullLiteral:191:50>"
-    },
-    {
-      "from": "BRANCH:",
-      "type": "HAS_ALTERNATE",
       "to": "SCOPE:else:139:13:1"
     },
     {
@@ -26176,11 +26121,6 @@
     {
       "from": "BRANCH:",
       "type": "HAS_CONDITION",
-      "to": "<unresolved:services/dataProcessor.js:CALL:<complex>:75:10>"
-    },
-    {
-      "from": "BRANCH:",
-      "type": "HAS_CONDITION",
       "to": "EXPRESSION:BinaryExpression"
     },
     {
@@ -26742,36 +26682,6 @@
       "from": "BRANCH:",
       "type": "HAS_CONDITION",
       "to": "EXPRESSION:UnaryExpression"
-    },
-    {
-      "from": "BRANCH:",
-      "type": "HAS_CONSEQUENT",
-      "to": "<unresolved:middleware/auth.js:EXPRESSION:CallExpression:142:34>"
-    },
-    {
-      "from": "BRANCH:",
-      "type": "HAS_CONSEQUENT",
-      "to": "<unresolved:middleware/auth.js:EXPRESSION:CallExpression:168:30>"
-    },
-    {
-      "from": "BRANCH:",
-      "type": "HAS_CONSEQUENT",
-      "to": "<unresolved:middleware/auth.js:EXPRESSION:CallExpression:191:28>"
-    },
-    {
-      "from": "BRANCH:",
-      "type": "HAS_CONSEQUENT",
-      "to": "<unresolved:middleware/auth.js:EXPRESSION:CallExpression:220:40>"
-    },
-    {
-      "from": "BRANCH:",
-      "type": "HAS_CONSEQUENT",
-      "to": "<unresolved:middleware/auth.js:EXPRESSION:CallExpression:248:40>"
-    },
-    {
-      "from": "BRANCH:",
-      "type": "HAS_CONSEQUENT",
-      "to": "<unresolved:middleware/auth.js:EXPRESSION:CallExpression:272:38>"
     },
     {
       "from": "BRANCH:",
@@ -31621,21 +31531,9 @@
     {
       "from": "CATCH_BLOCK:",
       "type": "CATCHES_FROM",
-      "to": "<unresolved:THROW#middleware/auth.js#88:6>",
+      "to": "CALL:fetch",
       "metadata": {
-        "parameterName": "error",
-        "sourceType": "throw_statement",
-        "sourceLine": 88
-      }
-    },
-    {
-      "from": "CATCH_BLOCK:",
-      "type": "CATCHES_FROM",
-      "to": "<unresolved:THROW#middleware/auth.js#94:6>",
-      "metadata": {
-        "parameterName": "error",
-        "sourceType": "throw_statement",
-        "sourceLine": 94
+        "parameterName": "err"
       }
     },
     {
@@ -31643,19 +31541,7 @@
       "type": "CATCHES_FROM",
       "to": "CALL:fetch",
       "metadata": {
-        "parameterName": "err",
-        "sourceType": "awaited_call",
-        "sourceLine": 206
-      }
-    },
-    {
-      "from": "CATCH_BLOCK:",
-      "type": "CATCHES_FROM",
-      "to": "CALL:fetch",
-      "metadata": {
-        "parameterName": "err",
-        "sourceType": "sync_call",
-        "sourceLine": 209
+        "parameterName": "err"
       }
     },
     {
@@ -31663,9 +31549,7 @@
       "type": "CATCHES_FROM",
       "to": "CALL:fetchDataStream",
       "metadata": {
-        "parameterName": "error",
-        "sourceType": "sync_call",
-        "sourceLine": 144
+        "parameterName": "error"
       }
     },
     {
@@ -31673,9 +31557,7 @@
       "type": "CATCHES_FROM",
       "to": "CALL:fn",
       "metadata": {
-        "parameterName": "err",
-        "sourceType": "sync_call",
-        "sourceLine": 308
+        "parameterName": "err"
       }
     },
     {
@@ -31683,9 +31565,7 @@
       "type": "CATCHES_FROM",
       "to": "CALL:JSON.parse",
       "metadata": {
-        "parameterName": "error",
-        "sourceType": "sync_call",
-        "sourceLine": 152
+        "parameterName": "error"
       }
     },
     {
@@ -31693,9 +31573,7 @@
       "type": "CATCHES_FROM",
       "to": "CALL:JSON.parse",
       "metadata": {
-        "parameterName": "error",
-        "sourceType": "sync_call",
-        "sourceLine": 191
+        "parameterName": "error"
       }
     },
     {
@@ -31703,9 +31581,7 @@
       "type": "CATCHES_FROM",
       "to": "CALL:JSON.parse",
       "metadata": {
-        "parameterName": "error",
-        "sourceType": "sync_call",
-        "sourceLine": 272
+        "parameterName": "error"
       }
     },
     {
@@ -31713,9 +31589,7 @@
       "type": "CATCHES_FROM",
       "to": "CALL:JSON.stringify",
       "metadata": {
-        "parameterName": "error",
-        "sourceType": "sync_call",
-        "sourceLine": 234
+        "parameterName": "error"
       }
     },
     {
@@ -31723,9 +31597,7 @@
       "type": "CATCHES_FROM",
       "to": "CALL:mongoose.connection.db.collection",
       "metadata": {
-        "parameterName": "err",
-        "sourceType": "awaited_call",
-        "sourceLine": 280
+        "parameterName": "err"
       }
     },
     {
@@ -31733,9 +31605,7 @@
       "type": "CATCHES_FROM",
       "to": "CALL:mongoose.connection.db.collection",
       "metadata": {
-        "parameterName": "error",
-        "sourceType": "awaited_call",
-        "sourceLine": 220
+        "parameterName": "error"
       }
     },
     {
@@ -31743,9 +31613,7 @@
       "type": "CATCHES_FROM",
       "to": "CALL:mongoose.connection.db.collection",
       "metadata": {
-        "parameterName": "error",
-        "sourceType": "sync_call",
-        "sourceLine": 125
+        "parameterName": "error"
       }
     },
     {
@@ -31753,9 +31621,7 @@
       "type": "CATCHES_FROM",
       "to": "CALL:mongoose.connection.db.collection",
       "metadata": {
-        "parameterName": "error",
-        "sourceType": "sync_call",
-        "sourceLine": 126
+        "parameterName": "error"
       }
     },
     {
@@ -31763,9 +31629,7 @@
       "type": "CATCHES_FROM",
       "to": "CALL:mongoose.connection.db.collection",
       "metadata": {
-        "parameterName": "error",
-        "sourceType": "sync_call",
-        "sourceLine": 205
+        "parameterName": "error"
       }
     },
     {
@@ -31773,9 +31637,7 @@
       "type": "CATCHES_FROM",
       "to": "CALL:mongoose.connection.db.collection",
       "metadata": {
-        "parameterName": "error",
-        "sourceType": "sync_call",
-        "sourceLine": 206
+        "parameterName": "error"
       }
     },
     {
@@ -31783,9 +31645,7 @@
       "type": "CATCHES_FROM",
       "to": "CALL:next",
       "metadata": {
-        "parameterName": "error",
-        "sourceType": "sync_call",
-        "sourceLine": 193
+        "parameterName": "error"
       }
     },
     {
@@ -31793,9 +31653,7 @@
       "type": "CATCHES_FROM",
       "to": "CALL:next",
       "metadata": {
-        "parameterName": "error",
-        "sourceType": "sync_call",
-        "sourceLine": 274
+        "parameterName": "error"
       }
     },
     {
@@ -31803,9 +31661,7 @@
       "type": "CATCHES_FROM",
       "to": "CALL:postsWithComments.push",
       "metadata": {
-        "parameterName": "error",
-        "sourceType": "sync_call",
-        "sourceLine": 225
+        "parameterName": "error"
       }
     },
     {
@@ -31813,9 +31669,7 @@
       "type": "CATCHES_FROM",
       "to": "CALL:processDataGenerator",
       "metadata": {
-        "parameterName": "error",
-        "sourceType": "sync_call",
-        "sourceLine": 137
+        "parameterName": "error"
       }
     },
     {
@@ -31823,9 +31677,7 @@
       "type": "CATCHES_FROM",
       "to": "CALL:processItem",
       "metadata": {
-        "parameterName": "err",
-        "sourceType": "sync_call",
-        "sourceLine": 170
+        "parameterName": "err"
       }
     },
     {
@@ -31833,9 +31685,7 @@
       "type": "CATCHES_FROM",
       "to": "CALL:processor.initialize",
       "metadata": {
-        "parameterName": "error",
-        "sourceType": "awaited_call",
-        "sourceLine": 132
+        "parameterName": "error"
       }
     },
     {
@@ -31843,9 +31693,7 @@
       "type": "CATCHES_FROM",
       "to": "CALL:processor.processUser",
       "metadata": {
-        "parameterName": "error",
-        "sourceType": "awaited_call",
-        "sourceLine": 134
+        "parameterName": "error"
       }
     },
     {
@@ -31853,9 +31701,7 @@
       "type": "CATCHES_FROM",
       "to": "CALL:processUserRequest",
       "metadata": {
-        "parameterName": "error",
-        "sourceType": "awaited_call",
-        "sourceLine": 217
+        "parameterName": "error"
       }
     },
     {
@@ -31863,9 +31709,7 @@
       "type": "CATCHES_FROM",
       "to": "CALL:Promise.all",
       "metadata": {
-        "parameterName": "error",
-        "sourceType": "awaited_call",
-        "sourceLine": 124
+        "parameterName": "error"
       }
     },
     {
@@ -31873,9 +31717,7 @@
       "type": "CATCHES_FROM",
       "to": "CALL:Promise.all",
       "metadata": {
-        "parameterName": "error",
-        "sourceType": "awaited_call",
-        "sourceLine": 203
+        "parameterName": "error"
       }
     },
     {
@@ -31883,9 +31725,7 @@
       "type": "CATCHES_FROM",
       "to": "CALL:redis.get",
       "metadata": {
-        "parameterName": "error",
-        "sourceType": "awaited_call",
-        "sourceLine": 187
+        "parameterName": "error"
       }
     },
     {
@@ -31893,9 +31733,7 @@
       "type": "CATCHES_FROM",
       "to": "CALL:redis.get",
       "metadata": {
-        "parameterName": "error",
-        "sourceType": "awaited_call",
-        "sourceLine": 271
+        "parameterName": "error"
       }
     },
     {
@@ -31903,9 +31741,7 @@
       "type": "CATCHES_FROM",
       "to": "CALL:redis.get",
       "metadata": {
-        "parameterName": "error",
-        "sourceType": "awaited_call",
-        "sourceLine": 91
+        "parameterName": "error"
       }
     },
     {
@@ -31913,9 +31749,7 @@
       "type": "CATCHES_FROM",
       "to": "CALL:redis.set",
       "metadata": {
-        "parameterName": "error",
-        "sourceType": "awaited_call",
-        "sourceLine": 232
+        "parameterName": "error"
       }
     },
     {
@@ -31923,9 +31757,7 @@
       "type": "CATCHES_FROM",
       "to": "CALL:redisClient.get",
       "metadata": {
-        "parameterName": "error",
-        "sourceType": "sync_call",
-        "sourceLine": 127
+        "parameterName": "error"
       }
     },
     {
@@ -31933,9 +31765,7 @@
       "type": "CATCHES_FROM",
       "to": "CALL:res.json",
       "metadata": {
-        "parameterName": "error",
-        "sourceType": "sync_call",
-        "sourceLine": 218
+        "parameterName": "error"
       }
     },
     {
@@ -31943,9 +31773,7 @@
       "type": "CATCHES_FROM",
       "to": "CALL:res.json",
       "metadata": {
-        "parameterName": "error",
-        "sourceType": "sync_call",
-        "sourceLine": 239
+        "parameterName": "error"
       }
     },
     {
@@ -31953,9 +31781,7 @@
       "type": "CATCHES_FROM",
       "to": "CALL:res.status",
       "metadata": {
-        "parameterName": "error",
-        "sourceType": "sync_call",
-        "sourceLine": 182
+        "parameterName": "error"
       }
     },
     {
@@ -31963,9 +31789,7 @@
       "type": "CATCHES_FROM",
       "to": "CALL:res.status",
       "metadata": {
-        "parameterName": "error",
-        "sourceType": "sync_call",
-        "sourceLine": 210
+        "parameterName": "error"
       }
     },
     {
@@ -31973,9 +31797,7 @@
       "type": "CATCHES_FROM",
       "to": "CALL:res.status",
       "metadata": {
-        "parameterName": "error",
-        "sourceType": "sync_call",
-        "sourceLine": 262
+        "parameterName": "error"
       }
     },
     {
@@ -31983,9 +31805,7 @@
       "type": "CATCHES_FROM",
       "to": "CALL:res.status",
       "metadata": {
-        "parameterName": "error",
-        "sourceType": "sync_call",
-        "sourceLine": 268
+        "parameterName": "error"
       }
     },
     {
@@ -31993,9 +31813,7 @@
       "type": "CATCHES_FROM",
       "to": "CALL:resolve",
       "metadata": {
-        "parameterName": "err",
-        "sourceType": "sync_call",
-        "sourceLine": 171
+        "parameterName": "err"
       }
     },
     {
@@ -32003,9 +31821,7 @@
       "type": "CATCHES_FROM",
       "to": "CALL:resolve",
       "metadata": {
-        "parameterName": "err",
-        "sourceType": "sync_call",
-        "sourceLine": 312
+        "parameterName": "err"
       }
     },
     {
@@ -32013,9 +31829,7 @@
       "type": "CATCHES_FROM",
       "to": "CALL:result.then",
       "metadata": {
-        "parameterName": "err",
-        "sourceType": "sync_call",
-        "sourceLine": 310
+        "parameterName": "err"
       }
     },
     {
@@ -32023,9 +31837,7 @@
       "type": "CATCHES_FROM",
       "to": "CALL:results.push",
       "metadata": {
-        "parameterName": "err",
-        "sourceType": "sync_call",
-        "sourceLine": 284
+        "parameterName": "err"
       }
     },
     {
@@ -32033,9 +31845,7 @@
       "type": "CATCHES_FROM",
       "to": "CALL:results.push",
       "metadata": {
-        "parameterName": "error",
-        "sourceType": "sync_call",
-        "sourceLine": 140
+        "parameterName": "error"
       }
     },
     {
@@ -32043,9 +31853,7 @@
       "type": "CATCHES_FROM",
       "to": "CALL:results.push",
       "metadata": {
-        "parameterName": "error",
-        "sourceType": "sync_call",
-        "sourceLine": 146
+        "parameterName": "error"
       }
     },
     {
@@ -32053,9 +31861,7 @@
       "type": "CATCHES_FROM",
       "to": "CALL:this.processBatch",
       "metadata": {
-        "parameterName": "err",
-        "sourceType": "sync_call",
-        "sourceLine": 275
+        "parameterName": "err"
       }
     },
     {
@@ -32063,9 +31869,7 @@
       "type": "CATCHES_FROM",
       "to": "CALL:User.findById",
       "metadata": {
-        "parameterName": "error",
-        "sourceType": "awaited_call",
-        "sourceLine": 265
+        "parameterName": "error"
       }
     },
     {
@@ -32073,9 +31877,7 @@
       "type": "CATCHES_FROM",
       "to": "CALL:User.findById",
       "metadata": {
-        "parameterName": "error",
-        "sourceType": "awaited_call",
-        "sourceLine": 85
+        "parameterName": "error"
       }
     },
     {
@@ -32083,9 +31885,7 @@
       "type": "CATCHES_FROM",
       "to": "CALL:User.findById",
       "metadata": {
-        "parameterName": "error",
-        "sourceType": "sync_call",
-        "sourceLine": 204
+        "parameterName": "error"
       }
     },
     {
@@ -32093,9 +31893,7 @@
       "type": "CATCHES_FROM",
       "to": "CALL:user.getFullProfile",
       "metadata": {
-        "parameterName": "error",
-        "sourceType": "awaited_call",
-        "sourceLine": 214
+        "parameterName": "error"
       }
     },
     {
@@ -32103,9 +31901,7 @@
       "type": "CATCHES_FROM",
       "to": "CALL:user.updateLastLogin",
       "metadata": {
-        "parameterName": "error",
-        "sourceType": "awaited_call",
-        "sourceLine": 215
+        "parameterName": "error"
       }
     },
     {
@@ -32113,9 +31909,7 @@
       "type": "CATCHES_FROM",
       "to": "CALL:verifyTokenAsync",
       "metadata": {
-        "parameterName": "error",
-        "sourceType": "awaited_call",
-        "sourceLine": 185
+        "parameterName": "error"
       }
     },
     {
@@ -32123,9 +31917,7 @@
       "type": "CATCHES_FROM",
       "to": "CONSTRUCTOR_CALL:new DataProcessor()",
       "metadata": {
-        "parameterName": "error",
-        "sourceType": "constructor_call",
-        "sourceLine": 131
+        "parameterName": "error"
       }
     },
     {
@@ -32133,9 +31925,7 @@
       "type": "CATCHES_FROM",
       "to": "CONSTRUCTOR_CALL:new Promise()",
       "metadata": {
-        "parameterName": "error",
-        "sourceType": "constructor_call",
-        "sourceLine": 78
+        "parameterName": "error"
       }
     },
     {
@@ -32304,11 +32094,6 @@
       "to": "CONSTRUCTOR_CALL:new express()"
     },
     {
-      "from": "CONSTANT:app",
-      "type": "INSTANCE_OF",
-      "to": "<unresolved:app.js->global->CLASS->express>"
-    },
-    {
       "from": "CONSTANT:batch",
       "type": "ASSIGNED_FROM",
       "to": "LITERAL:"
@@ -32374,11 +32159,6 @@
       "to": "CONSTRUCTOR_CALL:new User()"
     },
     {
-      "from": "CONSTANT:newUser",
-      "type": "INSTANCE_OF",
-      "to": "<unresolved:api.js->global->CLASS->User>"
-    },
-    {
       "from": "CONSTANT:postsWithComments",
       "type": "ASSIGNED_FROM",
       "to": "LITERAL:"
@@ -32407,11 +32187,6 @@
       "from": "CONSTANT:processor",
       "type": "ASSIGNED_FROM",
       "to": "CONSTRUCTOR_CALL:new DataProcessor()"
-    },
-    {
-      "from": "CONSTANT:processor",
-      "type": "INSTANCE_OF",
-      "to": "<unresolved:app.js->global->CLASS->DataProcessor>"
     },
     {
       "from": "CONSTANT:processor",
@@ -35238,14 +35013,6 @@
       "to": "SCOPE:blacklistToken:body"
     },
     {
-      "from": "FUNCTION:blacklistToken",
-      "type": "REJECTS",
-      "to": "<unresolved:middleware/auth.js->global->CLASS->Error>",
-      "metadata": {
-        "errorClassName": "Error"
-      }
-    },
-    {
       "from": "FUNCTION:callbackHell",
       "type": "HAS_PARAMETER",
       "to": "PARAMETER:callback",
@@ -36136,14 +35903,6 @@
       "to": "SCOPE:promiseRace:body"
     },
     {
-      "from": "FUNCTION:promiseRace",
-      "type": "REJECTS",
-      "to": "<unresolved:utils/asyncHelpers.js->global->CLASS->Error>",
-      "metadata": {
-        "errorClassName": "Error"
-      }
-    },
-    {
       "from": "FUNCTION:rateLimitMiddleware",
       "type": "CONTAINS",
       "to": "PROPERTY_ACCESS:_id"
@@ -36298,14 +36057,6 @@
       "to": "SCOPE:retryWithBackoff:body"
     },
     {
-      "from": "FUNCTION:retryWithBackoff",
-      "type": "REJECTS",
-      "to": "<unresolved:utils/asyncHelpers.js->global->CLASS->Error>",
-      "metadata": {
-        "errorClassName": "Error"
-      }
-    },
-    {
       "from": "FUNCTION:runNext",
       "type": "CONTAINS",
       "to": "PROPERTY_ACCESS:<computed>"
@@ -36362,14 +36113,6 @@
       "to": "SCOPE:verifyTokenAsync:body"
     },
     {
-      "from": "FUNCTION:verifyTokenAsync",
-      "type": "REJECTS",
-      "to": "<unresolved:middleware/auth.js->global->CLASS->Error>",
-      "metadata": {
-        "errorClassName": "Error"
-      }
-    },
-    {
       "from": "FUNCTION:verifyTokenCallback",
       "type": "HAS_PARAMETER",
       "to": "PARAMETER:callback",
@@ -36402,14 +36145,6 @@
       "from": "FUNCTION:verifyTokenPromise",
       "type": "HAS_SCOPE",
       "to": "SCOPE:verifyTokenPromise:body"
-    },
-    {
-      "from": "FUNCTION:verifyTokenPromise",
-      "type": "REJECTS",
-      "to": "<unresolved:middleware/auth.js->global->CLASS->Error>",
-      "metadata": {
-        "errorClassName": "Error"
-      }
     },
     {
       "from": "FUNCTION:withErrorRecovery",

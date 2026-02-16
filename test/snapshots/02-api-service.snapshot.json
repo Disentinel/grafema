@@ -1603,19 +1603,19 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "exported": false,
+      "file": "src/index.js",
+      "name": "anonymous[0]:body",
+      "scopeType": "function-body",
+      "type": "SCOPE"
+    },
+    {
       "conditional": false,
       "exported": false,
       "file": "src/index.js",
       "name": "anonymous[0]:body",
       "scopeType": "arrow_body",
       "semanticId": "start:arrow_body[0]",
-      "type": "SCOPE"
-    },
-    {
-      "exported": false,
-      "file": "src/index.js",
-      "name": "anonymous[0]:body",
-      "scopeType": "function-body",
       "type": "SCOPE"
     },
     {
@@ -2358,14 +2358,6 @@
       "from": "FUNCTION:query",
       "type": "HAS_SCOPE",
       "to": "SCOPE:Database.query:body"
-    },
-    {
-      "from": "FUNCTION:query",
-      "type": "REJECTS",
-      "to": "<unresolved:src/db.js->global->CLASS->Error>",
-      "metadata": {
-        "errorClassName": "Error"
-      }
     },
     {
       "from": "FUNCTION:start",

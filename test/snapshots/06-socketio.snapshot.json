@@ -1777,19 +1777,19 @@
       "type": "SCOPE"
     },
     {
+      "exported": false,
+      "file": "server.js",
+      "name": "anonymous[1]:body",
+      "scopeType": "function-body",
+      "type": "SCOPE"
+    },
+    {
       "conditional": false,
       "exported": false,
       "file": "server.js",
       "name": "anonymous[1]:body",
       "scopeType": "arrow_body",
       "semanticId": "anonymous[0]:arrow_body[1]",
-      "type": "SCOPE"
-    },
-    {
-      "exported": false,
-      "file": "server.js",
-      "name": "anonymous[1]:body",
-      "scopeType": "function-body",
       "type": "SCOPE"
     },
     {

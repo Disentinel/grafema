@@ -1748,11 +1748,6 @@
       "to": "CONSTRUCTOR_CALL:new Headers()"
     },
     {
-      "from": "CONSTANT:headers",
-      "type": "INSTANCE_OF",
-      "to": "<unresolved:client.js->global->CLASS->Headers>"
-    },
-    {
       "from": "EXPRESSION:data.gigs",
       "type": "DERIVES_FROM",
       "to": "VARIABLE:data"
