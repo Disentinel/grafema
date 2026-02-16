@@ -86,10 +86,10 @@ pub trait GraphStore: Send + Sync {
 
     // === STATS ===
 
-    /// Количество нод (включая deleted)
+    /// Количество живых нод (без deleted, с дедупликацией segment/delta)
     fn node_count(&self) -> usize;
 
-    /// Количество рёбер (включая deleted)
+    /// Количество живых рёбер (без deleted, с дедупликацией segment/delta)
     fn edge_count(&self) -> usize;
 
     // === ENGINE-SPECIFIC ===

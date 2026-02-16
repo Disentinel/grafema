@@ -1115,21 +1115,23 @@ impl GraphStore for GraphEngine {
         eprintln!("[RUST FLUSH] Flushing {} operations to disk", self.delta_log.len());
         eprintln!("[RUST FLUSH] Delta has {} nodes before flush", self.delta_nodes.len());
 
-        // Собираем все ноды (segment + delta)
+        // Собираем все ноды (segment + delta) с дедупликацией.
+        // Delta имеет приоритет над segment (более свежие данные).
         let mut all_nodes = Vec::new();
 
-        // Из segment
-        // Из segment - сохраняем строки чтобы они не потерялись
+        // Из segment — пропускаем ноды, перезаписанные в delta
         if let Some(ref segment) = self.nodes_segment {
             for idx in segment.iter_indices() {
                 if !segment.is_deleted(idx) {
                     if let Some(id) = segment.get_id(idx) {
-                        // Skip nodes that were deleted (tracked in deleted_segment_ids)
                         if self.deleted_segment_ids.contains(&id) {
                             continue;
                         }
+                        // Skip nodes overridden by delta (delta takes priority)
+                        if self.delta_nodes.contains_key(&id) {
+                            continue;
+                        }
 
-                        // Читаем строковые данные из StringTable если есть
                         let node_type = segment.get_node_type(idx).map(|s| s.to_string());
                         let name = segment.get_name(idx).map(|s| s.to_string());
                         let file = segment.get_file_path(idx).map(|s| s.to_string());
@@ -1140,8 +1142,8 @@ impl GraphStore for GraphEngine {
                         all_nodes.push(NodeRecord {
                             id,
                             node_type,
-                            file_id: 0, // Будет пересчитано в writer
-                            name_offset: 0, // Будет пересчитано в writer
+                            file_id: 0,
+                            name_offset: 0,
                             version: version.to_string(),
                             exported,
                             replaces: None,
@@ -1157,29 +1159,18 @@ impl GraphStore for GraphEngine {
         }
 
         let nodes_from_segment = all_nodes.len();
-        eprintln!("[RUST FLUSH] Collected {} nodes from segment", nodes_from_segment);
 
-        // From delta
-        let mut seen_ids = std::collections::HashSet::new();
-        for node in &all_nodes {
-            seen_ids.insert(node.id);
-        }
-
+        // From delta (live nodes only, no overlap with segment possible now)
         let mut delta_added = 0;
-        let mut delta_duplicates = 0;
         for node in self.delta_nodes.values() {
             if !node.deleted {
-                if seen_ids.contains(&node.id) {
-                    eprintln!("[RUST FLUSH] !!! Duplicate ID {} in flush - delta overwrites segment", node.id);
-                    delta_duplicates += 1;
-                }
                 all_nodes.push(node.clone());
                 delta_added += 1;
             }
         }
 
-        eprintln!("[RUST FLUSH] Added {} nodes from delta ({} duplicates)", delta_added, delta_duplicates);
-        eprintln!("[RUST FLUSH] Total nodes to write: {}", all_nodes.len());
+        eprintln!("[RUST FLUSH] Collected {} from segment, {} from delta, {} total",
+                 nodes_from_segment, delta_added, all_nodes.len());
 
         // Collect all edges with deduplication (same pattern as get_all_edges)
         let mut edges_map: HashMap<(u128, u128, String), EdgeRecord> = HashMap::new();
@@ -1309,11 +1300,39 @@ impl GraphStore for GraphEngine {
     }
 
     fn node_count(&self) -> usize {
-        self.nodes_segment.as_ref().map_or(0, |s| s.node_count()) + self.delta_nodes.len()
+        let segment_count = self.nodes_segment.as_ref().map_or(0, |s| s.node_count());
+
+        // After flush, segment contains all live nodes. Between flushes:
+        // - deleted_segment_ids: segment nodes deleted directly
+        // - delta with deleted=true + in_segment: segment nodes deleted via delta override
+        // - delta with deleted=false + not_in_segment: truly new live nodes
+        // - delta with deleted=false + in_segment: live overrides, already in segment
+        let mut new_live = 0usize;
+        let mut deleted_overlap = 0usize;
+
+        for (id, node) in &self.delta_nodes {
+            let in_segment = self.index_set.find_node_index(*id).is_some();
+            match (node.deleted, in_segment) {
+                (false, false) => new_live += 1,
+                (true, true) => deleted_overlap += 1,
+                _ => {}
+            }
+        }
+
+        segment_count
+            .saturating_sub(self.deleted_segment_ids.len())
+            .saturating_sub(deleted_overlap)
+            + new_live
     }
 
     fn edge_count(&self) -> usize {
-        self.edges_segment.as_ref().map_or(0, |s| s.edge_count()) + self.delta_edges.len()
+        let segment_count = self.edges_segment.as_ref().map_or(0, |s| s.edge_count());
+        // edge_keys dedup in add_edges prevents delta/segment overlap
+        let delta_live = self.delta_edges.iter().filter(|e| !e.deleted).count();
+
+        segment_count
+            .saturating_sub(self.deleted_segment_edge_keys.len())
+            + delta_live
     }
 
     /// Get all outgoing edges from a node
@@ -3146,5 +3165,187 @@ mod tests {
         // Both should return exactly 1
         assert_eq!(engine.get_outgoing_edges(1, None).len(), 1);
         assert_eq!(engine.get_incoming_edges(2, None).len(), 1);
+    }
+
+    // ============================================================
+    // RFD-39: node_count/edge_count double-count after flush
+    // ============================================================
+
+    #[test]
+    fn test_node_count_no_double_count_after_flush() {
+        // RFD-39: After flush, re-adding the same node should not inflate node_count
+        use tempfile::tempdir;
+
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("test");
+        let mut engine = GraphEngine::create(&db_path).unwrap();
+
+        // Add 3 nodes and flush to segment
+        engine.add_nodes(vec![
+            make_test_node(1, "a", "FUNCTION"),
+            make_test_node(2, "b", "FUNCTION"),
+            make_test_node(3, "c", "CLASS"),
+        ]);
+        assert_eq!(engine.node_count(), 3);
+
+        engine.flush().unwrap();
+        assert_eq!(engine.node_count(), 3, "node_count after flush should be 3");
+
+        // Re-add same nodes (simulates shared module re-analysis)
+        engine.add_nodes(vec![
+            make_test_node(1, "a_updated", "FUNCTION"),
+            make_test_node(2, "b_updated", "FUNCTION"),
+        ]);
+
+        // Must still be 3, not 5
+        assert_eq!(engine.node_count(), 3, "node_count must not double-count after flush + re-add");
+
+        // Verify count_nodes_by_type agrees
+        let by_type: usize = engine.count_nodes_by_type(None).values().sum();
+        assert_eq!(engine.node_count(), by_type, "node_count must match count_nodes_by_type total");
+    }
+
+    #[test]
+    fn test_edge_count_no_double_count_after_flush() {
+        // RFD-39: edge_count must stay correct after flush
+        use tempfile::tempdir;
+
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("test");
+        let mut engine = GraphEngine::create(&db_path).unwrap();
+
+        engine.add_nodes(vec![
+            make_test_node(1, "a", "FUNCTION"),
+            make_test_node(2, "b", "FUNCTION"),
+            make_test_node(3, "c", "FUNCTION"),
+        ]);
+        engine.add_edges(vec![
+            make_test_edge(1, 2, "CALLS"),
+            make_test_edge(2, 3, "CALLS"),
+        ], false);
+
+        assert_eq!(engine.edge_count(), 2);
+
+        engine.flush().unwrap();
+        assert_eq!(engine.edge_count(), 2, "edge_count after flush should be 2");
+
+        // Re-add same edge (should be deduplicated by edge_keys)
+        engine.add_edges(vec![make_test_edge(1, 2, "CALLS")], false);
+        assert_eq!(engine.edge_count(), 2, "edge_count must not inflate after flush + re-add");
+
+        // Verify count_edges_by_type agrees
+        let by_type: usize = engine.count_edges_by_type(None).values().sum();
+        assert_eq!(engine.edge_count(), by_type, "edge_count must match count_edges_by_type total");
+    }
+
+    #[test]
+    fn test_node_count_after_delete() {
+        // node_count must decrease after deletion
+        use tempfile::tempdir;
+
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("test");
+        let mut engine = GraphEngine::create(&db_path).unwrap();
+
+        engine.add_nodes(vec![
+            make_test_node(1, "a", "FUNCTION"),
+            make_test_node(2, "b", "FUNCTION"),
+        ]);
+        engine.flush().unwrap();
+        assert_eq!(engine.node_count(), 2);
+
+        // Delete a segment node (goes to deleted_segment_ids)
+        engine.delete_node(1);
+        assert_eq!(engine.node_count(), 1, "node_count must decrease after segment node deletion");
+
+        // Delete from delta: add a new node, then delete it
+        engine.add_nodes(vec![make_test_node(3, "c", "CLASS")]);
+        assert_eq!(engine.node_count(), 2);
+        engine.delete_node(3);
+        assert_eq!(engine.node_count(), 1, "node_count must decrease after delta node deletion");
+    }
+
+    #[test]
+    fn test_node_count_delete_re_added_node() {
+        // Delete a node that exists in both segment and delta
+        use tempfile::tempdir;
+
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("test");
+        let mut engine = GraphEngine::create(&db_path).unwrap();
+
+        engine.add_nodes(vec![make_test_node(1, "a", "FUNCTION")]);
+        engine.flush().unwrap();
+        assert_eq!(engine.node_count(), 1);
+
+        // Re-add same node (now in both segment and delta)
+        engine.add_nodes(vec![make_test_node(1, "a_v2", "FUNCTION")]);
+        assert_eq!(engine.node_count(), 1, "re-add must not inflate count");
+
+        // Delete it (goes through delta path since it's in delta_nodes)
+        engine.delete_node(1);
+        assert_eq!(engine.node_count(), 0, "deleting re-added node must reduce count to 0");
+    }
+
+    #[test]
+    fn test_node_count_across_multiple_flushes() {
+        // RFD-39: Verify counts stay correct across multiple flush cycles
+        use tempfile::tempdir;
+
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("test");
+        let mut engine = GraphEngine::create(&db_path).unwrap();
+
+        // Cycle 1: add + flush
+        engine.add_nodes(vec![
+            make_test_node(1, "a", "FUNCTION"),
+            make_test_node(2, "b", "FUNCTION"),
+        ]);
+        engine.flush().unwrap();
+        assert_eq!(engine.node_count(), 2);
+
+        // Cycle 2: re-add + new + flush
+        engine.add_nodes(vec![
+            make_test_node(1, "a_v2", "FUNCTION"), // re-add
+            make_test_node(3, "c", "CLASS"),        // new
+        ]);
+        assert_eq!(engine.node_count(), 3, "before second flush: 2 segment + 1 new");
+        engine.flush().unwrap();
+        assert_eq!(engine.node_count(), 3, "after second flush");
+
+        // Cycle 3: re-add all + delete one
+        engine.add_nodes(vec![
+            make_test_node(1, "a_v3", "FUNCTION"),
+            make_test_node(2, "b_v2", "FUNCTION"),
+        ]);
+        engine.delete_node(3);
+        assert_eq!(engine.node_count(), 2, "re-added 2 + deleted 1 from segment");
+
+        engine.flush().unwrap();
+        assert_eq!(engine.node_count(), 2, "after third flush");
+
+        // Verify consistency with count_nodes_by_type
+        let by_type: usize = engine.count_nodes_by_type(None).values().sum();
+        assert_eq!(engine.node_count(), by_type);
+    }
+
+    #[test]
+    fn test_edge_count_after_delete() {
+        use tempfile::tempdir;
+
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("test");
+        let mut engine = GraphEngine::create(&db_path).unwrap();
+
+        engine.add_nodes(vec![
+            make_test_node(1, "a", "FUNCTION"),
+            make_test_node(2, "b", "FUNCTION"),
+        ]);
+        engine.add_edges(vec![make_test_edge(1, 2, "CALLS")], false);
+        engine.flush().unwrap();
+        assert_eq!(engine.edge_count(), 1);
+
+        engine.delete_edge(1, 2, "CALLS");
+        assert_eq!(engine.edge_count(), 0, "edge_count must decrease after deletion");
     }
 }
