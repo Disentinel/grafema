@@ -381,28 +381,21 @@ export class JSASTAnalyzer extends Plugin {
       }
 
       const queue = new PriorityQueue();
-      // When managing batches, serialize to avoid race conditions on shared RFDB client state.
-      // Multiple workers calling beginBatch/commitBatch on the same client causes data corruption.
-      const useChunkedBatch = !!(graph.beginBatch && graph.commitBatch);
-      const pool = new WorkerPool(useChunkedBatch ? 1 : (context.workerCount || 10));
-
-      // Chunked batch: commit every CHUNK_SIZE modules instead of per-module.
-      // Per-module commits cause O(n²) behavior as the graph grows (server index updates
-      // get slower with each commit). Chunked commits balance progressive writes with
-      // batch efficiency.
-      const CHUNK_SIZE = 50;
-      let modulesSinceCommit = 0;
+      const pool = new WorkerPool(context.workerCount || 10);
 
       pool.registerHandler('ANALYZE_MODULE', async (task) => {
-        if (useChunkedBatch) {
-          const result = await this.analyzeModule(task.data.module, graph, projectPath);
-          modulesSinceCommit++;
-          if (modulesSinceCommit >= CHUNK_SIZE) {
-            await graph.commitBatch!(['JSASTAnalyzer', 'ANALYSIS']);
-            graph.beginBatch!();
-            modulesSinceCommit = 0;
+        // Per-module batch: commit after each module to avoid buffering the entire
+        // graph in memory. Prevents connection timeouts on large codebases.
+        if (graph.beginBatch && graph.commitBatch) {
+          graph.beginBatch();
+          try {
+            const result = await this.analyzeModule(task.data.module, graph, projectPath);
+            await graph.commitBatch(['JSASTAnalyzer', 'ANALYSIS', task.data.module.file]);
+            return result;
+          } catch (err) {
+            if (graph.abortBatch) graph.abortBatch();
+            throw err;
           }
-          return result;
         }
         return await this.analyzeModule(task.data.module, graph, projectPath);
       });
@@ -446,19 +439,7 @@ export class JSASTAnalyzer extends Plugin {
         }
       });
 
-      // Start initial batch if using chunked commits
-      if (useChunkedBatch) {
-        graph.beginBatch!();
-      }
-
-      try {
-        await pool.processQueue(queue);
-      } finally {
-        // Commit remaining buffered data
-        if (useChunkedBatch && modulesSinceCommit > 0) {
-          await graph.commitBatch!(['JSASTAnalyzer', 'ANALYSIS']);
-        }
-      }
+      await pool.processQueue(queue);
 
       clearInterval(progressInterval);
 
