@@ -1,6 +1,6 @@
 {
   "name": "@grafema/rfdb",
-  "version": "0.2.8",
+  "version": "0.2.9",
   "description": "RFDB (Rega Flow Database) — high-performance disk-backed graph database server for Grafema",
   "main": "index.js",
   "types": "index.d.ts",

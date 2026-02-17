@@ -1,6 +1,6 @@
 {
   "name": "@grafema/mcp",
-  "version": "0.2.8",
+  "version": "0.2.9",
   "description": "MCP server for Grafema code analysis toolkit",
   "type": "module",
   "main": "./dist/server.js",
