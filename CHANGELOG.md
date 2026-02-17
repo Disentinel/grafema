@@ -2,18 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.2.12] - 2026-02-17
-
-### Bug Fixes
-
-- **JSASTAnalyzer**: Fix race condition and O(n²) performance regression from v0.2.11 per-module batch commits — parallel WorkerPool workers corrupted shared RFDB client batch state; per-module commits caused progressive slowdown (0.3s→9s/module). Fix: serialize workers when batching + chunked commits every 50 modules. Analysis time: 22+ min (hanging) → 56s
-
-## [0.2.11] - 2026-02-17 [BROKEN — use 0.2.12]
+## [0.2.11] - 2026-02-17
 
 ### Performance
 
 - **JSASTAnalyzer**: Per-module batch commits instead of buffering entire ANALYSIS phase — prevents RFDB connection timeouts on large codebases by writing incrementally during analysis
-- **WARNING**: This release has a critical bug causing analysis to hang on large codebases. Use 0.2.12 instead.
 
 ## [0.2.10] - 2026-02-17
 
