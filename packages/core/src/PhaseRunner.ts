@@ -194,22 +194,6 @@ export class PhaseRunner {
   }
 
   /**
-   * Check whether an enricher should be skipped based on selective enrichment.
-   * Returns true if the enricher's consumed types have no overlap with accumulated types
-   * (i.e., no upstream enricher produced anything this one needs).
-   * Level-0 enrichers (consumes: []) are never skipped.
-   */
-  private shouldSkipEnricher(
-    plugin: Plugin,
-    accumulatedTypes: Set<string>,
-  ): boolean {
-    const consumes = plugin.metadata.consumes ?? [];
-    const isLevel0 = consumes.length === 0;
-    if (isLevel0) return false;
-    return !consumes.some(t => accumulatedTypes.has(t));
-  }
-
-  /**
    * Execute a plugin, collect diagnostics, and check for fatal errors.
    * Shared between the fallback loop and the propagation path.
    * Returns the delta from the batch commit (if any).
@@ -342,16 +326,6 @@ export class PhaseRunner {
     for (let i = 0; i < phasePlugins.length; i++) {
       const plugin = phasePlugins[i];
 
-      // Selective enrichment: skip enrichers whose consumed types didn't change
-      if (phaseName === 'ENRICHMENT' && supportsBatch) {
-        if (this.shouldSkipEnricher(plugin, accumulatedTypes)) {
-          logger.debug(
-            `[SKIP] ${plugin.metadata.name} — no changes in consumed types [${(plugin.metadata.consumes ?? []).join(', ')}]`
-          );
-          continue;
-        }
-      }
-
       // Plugin applicability filter for ANALYSIS phase (REG-482)
       if (phaseName === 'ANALYSIS') {
         const covers = plugin.metadata.covers;
@@ -412,12 +386,9 @@ export class PhaseRunner {
     const pending = new Set<string>();
     const processed = new Set<string>();
 
-    // Seed: enqueue all level-0 enrichers (they always run)
+    // Seed: enqueue ALL enrichers (analysis phase already produced their consumed types)
     for (const plugin of phasePlugins) {
-      const consumes = plugin.metadata.consumes ?? [];
-      if (consumes.length === 0) {
-        pending.add(plugin.metadata.name);
-      }
+      pending.add(plugin.metadata.name);
     }
 
     // Propagation loop
