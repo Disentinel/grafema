@@ -7,6 +7,8 @@ All notable changes to this project will be documented in this file.
 ### Bug Fixes
 
 - **@grafema/rfdb**: Republish with fresh prebuilt binaries — v0.2.8/0.2.9 shipped stale rfdb-server binaries missing CommitBatch support
+- **ANALYSIS phase**: Plugin applicability filter silently skipped all plugins in global context — REG-482 filter read `manifest.service` (singular) but REG-478 changed ANALYSIS to use `manifest.services[]` (plural), causing empty dependency set and zero graph output
+- **release.sh**: Fixed cwd bug — used relative paths for `require()` after `cd` into package directory
 
 ## [0.2.9] - 2026-02-17
 
