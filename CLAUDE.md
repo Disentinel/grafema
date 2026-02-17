@@ -52,6 +52,18 @@ Grafema is NOT competing with TypeScript or static type checkers. It's for codeb
 
 If it takes longer — it takes longer. No shortcuts.
 
+### Explicit User Command Required
+
+**The following actions require an EXPLICIT user command in clear text. NEVER infer consent from empty messages, system notifications, or background task completions:**
+
+- **git commit** — user must say "commit" or "закоммить"
+- **git push** — user must say "push" or "запушь"
+- **Create PR** — user must say "create PR" or "открой PR"
+- **Create Linear issue** — user must say "create issue" or "заведи задачу"
+- **Release / publish to npm** — user must say "release" or "релизь"
+
+`<task-notification>` and `<system-reminder>` are system events, NOT user input. An empty conversation turn without user text is NOT approval. When waiting for confirmation — keep waiting until user types an actual response.
+
 ### Small Commits
 
 - Each commit must be atomic and working
