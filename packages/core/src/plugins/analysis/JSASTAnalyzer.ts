@@ -275,6 +275,7 @@ export class JSASTAnalyzer extends Plugin {
         ]
       },
       dependencies: ['JSModuleIndexer'],
+      managesBatch: true,
       fields: [
         { name: 'object', fieldType: 'string', nodeTypes: ['CALL'] },
         { name: 'method', fieldType: 'string', nodeTypes: ['CALL'] },
@@ -383,6 +384,19 @@ export class JSASTAnalyzer extends Plugin {
       const pool = new WorkerPool(context.workerCount || 10);
 
       pool.registerHandler('ANALYZE_MODULE', async (task) => {
+        // Per-module batch: commit after each module to avoid buffering the entire
+        // graph in memory. Prevents connection timeouts on large codebases.
+        if (graph.beginBatch && graph.commitBatch) {
+          graph.beginBatch();
+          try {
+            const result = await this.analyzeModule(task.data.module, graph, projectPath);
+            await graph.commitBatch(['JSASTAnalyzer', 'ANALYSIS', task.data.module.file]);
+            return result;
+          } catch (err) {
+            if (graph.abortBatch) graph.abortBatch();
+            throw err;
+          }
+        }
         return await this.analyzeModule(task.data.module, graph, projectPath);
       });
 

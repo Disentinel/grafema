@@ -62,6 +62,8 @@ export interface PluginMetadata {
   consumes?: EdgeType[];
   /** Edge types this plugin creates/modifies (RFD-2). Used for automatic dependency inference. */
   produces?: EdgeType[];
+  /** Plugin manages its own beginBatch/commitBatch calls (e.g., per-module commits). PhaseRunner skips batch wrapping. */
+  managesBatch?: boolean;
 }
 
 // === ISSUE SPEC ===

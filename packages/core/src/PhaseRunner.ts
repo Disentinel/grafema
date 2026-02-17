@@ -77,8 +77,9 @@ export class PhaseRunner {
   ): Promise<{ result: PluginResult; delta: CommitDelta | null }> {
     const graph = pluginContext.graph;
 
-    // Fallback: backend doesn't support batching
-    if (!graph.beginBatch || !graph.commitBatch || !graph.abortBatch) {
+    // Fallback: backend doesn't support batching, or plugin manages its own batches
+    if (!graph.beginBatch || !graph.commitBatch || !graph.abortBatch
+        || plugin.metadata.managesBatch) {
       const result = await plugin.execute(pluginContext);
       return { result, delta: null };
     }
