@@ -331,8 +331,8 @@ if [ "$PUBLISH" = true ]; then
     # Publish packages in dependency order
     for pkg in "${PACKAGES[@]}"; do
         if [ -f "$ROOT_DIR/$pkg/package.json" ]; then
-            PKG_NAME=$(node -p "require('./$pkg/package.json').name")
-            PKG_PRIVATE=$(node -p "require('./$pkg/package.json').private || false")
+            PKG_NAME=$(node -p "require('$ROOT_DIR/$pkg/package.json').name")
+            PKG_PRIVATE=$(node -p "require('$ROOT_DIR/$pkg/package.json').private || false")
 
             if [ "$PKG_PRIVATE" = "true" ]; then
                 echo -e "${YELLOW}[SKIP] $PKG_NAME (private)${NC}"
