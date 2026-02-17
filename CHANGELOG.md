@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.11] - 2026-02-17
+
+### Performance
+
+- **JSASTAnalyzer**: Per-module batch commits instead of buffering entire ANALYSIS phase — prevents RFDB connection timeouts on large codebases by writing incrementally during analysis
+
 ## [0.2.10] - 2026-02-17
 
 ### Bug Fixes
