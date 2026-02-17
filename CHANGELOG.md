@@ -2,6 +2,32 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.9] - 2026-02-17
+
+### Features
+
+- **REG-485**: Interface-aware CHA (Class Hierarchy Analysis) fallback for method call resolution — when precise type resolution fails, the resolver finds all classes implementing the interface and creates CALLS edges to matching methods
+
+### Performance
+
+- **REG-478**: Run ANALYSIS phase globally instead of per-service — eliminates redundant re-analysis when multiple services share files
+- **REG-479**: Scope queryNodes calls by file/name in ExpressResponseAnalyzer
+- **REG-480**: Scope queryNodes calls by file in DatabaseAnalyzer and SQLiteAnalyzer
+- **REG-481**: Scope queryNodes calls in ServiceLayerAnalyzer and GraphBuilder
+- **REG-482**: Skip irrelevant ANALYSIS plugins based on service dependencies — plugins that don't match the service's technology stack are no longer loaded
+- **REG-483**: Eliminate redundant GraphBuilder buffer layer via sync batch API — removes double-buffering overhead, uses RFDB's synchronous addNodes/addEdges directly
+
+### Bug Fixes
+
+- **RFD-39**: Deduplicate node_count/edge_count after RFDB flush — counts no longer inflate after memory-triggered compaction
+- Seed all enrichers in propagation queue to prevent skipping enrichment passes
+- Release script npm auth fix — copy .npmrc.local for pnpm publish
+
+### Tests
+
+- Cross-platform deterministic graph snapshots
+- Deep-sort nested object keys in snapshot comparison
+
 ## [0.2.8] - 2026-02-16
 
 ### Bug Fixes
