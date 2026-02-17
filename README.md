@@ -175,7 +175,7 @@ const orchestrator = new Orchestrator({
 Start RFDB server:
 ```bash
 npm install @grafema/rfdb
-npx rfdb-server ./rfdb-data --socket /tmp/rfdb.sock
+npx @grafema/rfdb ./rfdb-data --socket /tmp/rfdb.sock
 ```
 
 ## Requirements

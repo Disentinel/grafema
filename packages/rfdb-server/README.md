@@ -31,7 +31,7 @@ cargo build --release
 
 ```bash
 # Start the server
-npx rfdb-server ./my-graph.rfdb --socket /tmp/rfdb.sock
+npx @grafema/rfdb ./my-graph.rfdb --socket /tmp/rfdb.sock
 
 # Using default socket path (/tmp/rfdb.sock)
 rfdb-server ./my-graph.rfdb

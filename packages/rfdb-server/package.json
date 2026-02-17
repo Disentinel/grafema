@@ -5,6 +5,7 @@
   "main": "index.js",
   "types": "index.d.ts",
   "bin": {
+    "rfdb": "./bin/rfdb-server.js",
     "rfdb-server": "./bin/rfdb-server.js"
   },
   "repository": {
