@@ -63,7 +63,9 @@ export type RFDBCommand =
   | 'findSnapshot'
   | 'listSnapshots'
   // Batch operations
-  | 'commitBatch';
+  | 'commitBatch'
+  // Index management (REG-487: deferred indexing)
+  | 'rebuildIndexes';
 
 // === WIRE FORMAT ===
 // Nodes as sent over the wire

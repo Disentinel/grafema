@@ -81,6 +81,15 @@ pub trait GraphStore: Send + Sync {
     /// Flush delta log на диск
     fn flush(&mut self) -> Result<()>;
 
+    /// Flush data to disk without rebuilding secondary indexes (for bulk load mode).
+    /// Default: calls full flush() for backwards compatibility.
+    fn flush_data_only(&mut self) -> Result<()> {
+        self.flush()
+    }
+
+    /// Rebuild all secondary indexes from current segment (called after bulk load).
+    fn rebuild_indexes(&mut self) -> Result<()>;
+
     /// Компактировать delta log в immutable segments
     fn compact(&mut self) -> Result<()>;
 

@@ -68,6 +68,8 @@ export class Orchestrator {
   private routing: RoutingRule[] | undefined;
   /** Phase executor (extracted from runPhase, RFD-16) */
   private phaseRunner!: PhaseRunner;
+  /** REG-487: Whether to defer index rebuilding during bulk load */
+  private _deferIndexing: boolean = false;
   /** Graph setup: plugin nodes, field declarations, meta node (REG-462) */
   private graphInitializer!: GraphInitializer;
   /** Service/entrypoint discovery (REG-462) */
@@ -181,6 +183,15 @@ export class Orchestrator {
       this.logger.info('Graph cleared successfully');
     }
 
+    // REG-487: Detect if we should defer indexing during bulk load.
+    // Defer when doing a full re-analysis (forceAnalysis or empty graph).
+    // Must check BEFORE graphInitializer.init() which adds plugin nodes to delta.
+    this._deferIndexing = this.forceAnalysis || await this._isEmptyGraph();
+    if (this._deferIndexing) {
+      this.logger.info('Deferred indexing enabled for bulk load');
+      this._updatePhaseRunnerDeferIndexing(true);
+    }
+
     // Initialize graph: plugin nodes, field declarations (REG-386, REG-398)
     await this.graphInitializer.init(absoluteProjectPath);
 
@@ -227,6 +238,13 @@ export class Orchestrator {
     await this.runBatchPhase('INDEXING', unitsToProcess, manifest);
     this.profiler.end('INDEXING');
 
+    // REG-487: Rebuild indexes after deferred INDEXING commits.
+    // MODULE nodes written by INDEXING must be queryable before ANALYSIS starts.
+    if (this._deferIndexing && this.graph.rebuildIndexes) {
+      this.logger.info('Rebuilding indexes after INDEXING phase...');
+      await this.graph.rebuildIndexes();
+    }
+
     // Skip remaining phases if indexOnly mode (for coverage)
     if (this.indexOnly) {
       const totalTime = ((Date.now() - totalStartTime) / 1000).toFixed(2);
@@ -243,10 +261,21 @@ export class Orchestrator {
     } else {
       // workerCount: 1 — JSASTAnalyzer uses WorkerPool(workerCount) for concurrent module analysis.
       // Sequential processing avoids concurrent graph writes that cause race conditions.
-      await this.runPhase('ANALYSIS', { manifest, graph: this.graph, workerCount: 1 });
+      // REG-487: Pass deferIndexing so JSASTAnalyzer defers per-module index rebuilds.
+      await this.runPhase('ANALYSIS', {
+        manifest, graph: this.graph, workerCount: 1,
+        deferIndexing: this._deferIndexing,
+      });
     }
     this.profiler.end('ANALYSIS');
     this.logger.info('ANALYSIS phase complete', { duration: ((Date.now() - analysisStart) / 1000).toFixed(2) });
+
+    // REG-487: Reset deferred indexing before ENRICHMENT/VALIDATION phases.
+    // Those phases need immediate index consistency.
+    if (this._deferIndexing) {
+      this._deferIndexing = false;
+      this._updatePhaseRunnerDeferIndexing(false);
+    }
 
     // PHASES 3-4: ENRICHMENT → strict barrier → guarantee → VALIDATION → flush
     await this.runPipelineEpilogue(manifest, absoluteProjectPath);
@@ -273,6 +302,14 @@ export class Orchestrator {
       this.logger.info('Clearing entire graph (forceAnalysis=true)');
       await this.graph.clear();
       this.logger.info('Graph cleared successfully');
+    }
+
+    // REG-487: Detect if we should defer indexing during bulk load.
+    // Must check BEFORE graphInitializer.init() which adds plugin nodes to delta.
+    this._deferIndexing = this.forceAnalysis || await this._isEmptyGraph();
+    if (this._deferIndexing) {
+      this.logger.info('Deferred indexing enabled for bulk load (multi-root)');
+      this._updatePhaseRunnerDeferIndexing(true);
     }
 
     // Initialize graph: plugin nodes, field declarations, meta node (REG-386, REG-398, REG-408)
@@ -327,6 +364,12 @@ export class Orchestrator {
       projectPath: workspacePath,
     };
 
+    // REG-487: Rebuild indexes after all deferred INDEXING commits from all roots.
+    if (this._deferIndexing && this.graph.rebuildIndexes) {
+      this.logger.info('Rebuilding indexes after INDEXING phase (multi-root)...');
+      await this.graph.rebuildIndexes();
+    }
+
     // Skip remaining phases if indexOnly
     if (this.indexOnly) {
       const totalTime = ((Date.now() - totalStartTime) / 1000).toFixed(2);
@@ -343,10 +386,20 @@ export class Orchestrator {
     } else {
       // workerCount: 1 — JSASTAnalyzer uses WorkerPool(workerCount) for concurrent module analysis.
       // Sequential processing avoids concurrent graph writes that cause race conditions.
-      await this.runPhase('ANALYSIS', { manifest: unifiedManifest, graph: this.graph, workerCount: 1 });
+      // REG-487: Pass deferIndexing so JSASTAnalyzer defers per-module index rebuilds.
+      await this.runPhase('ANALYSIS', {
+        manifest: unifiedManifest, graph: this.graph, workerCount: 1,
+        deferIndexing: this._deferIndexing,
+      });
     }
     this.profiler.end('ANALYSIS');
     this.logger.info('ANALYSIS phase complete', { duration: ((Date.now() - analysisStart) / 1000).toFixed(2) });
+
+    // REG-487: Reset deferred indexing before ENRICHMENT/VALIDATION phases.
+    if (this._deferIndexing) {
+      this._deferIndexing = false;
+      this._updatePhaseRunnerDeferIndexing(false);
+    }
 
     // ENRICHMENT → strict barrier → guarantee → VALIDATION → flush
     await this.runPipelineEpilogue(unifiedManifest, workspacePath);
@@ -510,6 +563,42 @@ export class Orchestrator {
     this.logger.debug('Stored covered packages for validation', {
       count: coveredPackages.size,
       packages: [...coveredPackages],
+    });
+  }
+
+  /**
+   * REG-487: Check if the graph is empty (first run or after clear).
+   * Used to decide whether to enable deferred indexing.
+   */
+  private async _isEmptyGraph(): Promise<boolean> {
+    try {
+      const count = await this.graph.nodeCount();
+      return count === 0;
+    } catch {
+      // If nodeCount fails, assume empty for safety
+      return true;
+    }
+  }
+
+  /**
+   * REG-487: Update PhaseRunner's deferIndexing setting.
+   * Must be called before phases that should use deferred indexing.
+   * After ANALYSIS completes, reset to false so ENRICHMENT/VALIDATION get normal flush.
+   */
+  private _updatePhaseRunnerDeferIndexing(deferIndexing: boolean): void {
+    // PhaseRunner is constructed once in the constructor with initial deps.
+    // We need to recreate it with updated deps to change deferIndexing.
+    this.phaseRunner = new PhaseRunner({
+      plugins: this.plugins,
+      onProgress: this.onProgress,
+      forceAnalysis: this.forceAnalysis,
+      logger: this.logger,
+      strictMode: this.strictMode,
+      diagnosticCollector: this.diagnosticCollector,
+      resourceRegistry: this.resourceRegistry,
+      configServices: this.configServices,
+      routing: this.routing,
+      deferIndexing,
     });
   }
 

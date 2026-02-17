@@ -1089,8 +1089,12 @@ export class RFDBClient extends EventEmitter implements IRFDBClient {
    * Commit the current batch to the server.
    * Sends all buffered nodes/edges with the list of changed files.
    * Server atomically replaces old data for changed files with new data.
+   *
+   * @param tags - Optional tags for the commit (e.g., plugin name, phase)
+   * @param deferIndex - When true, server writes data but skips index rebuild.
+   *   Caller must send rebuildIndexes() after all deferred commits complete.
    */
-  async commitBatch(tags?: string[]): Promise<CommitDelta> {
+  async commitBatch(tags?: string[], deferIndex?: boolean): Promise<CommitDelta> {
     if (!this._batching) throw new Error('No batch in progress');
 
     const allNodes = this._batchNodes;
@@ -1102,6 +1106,21 @@ export class RFDBClient extends EventEmitter implements IRFDBClient {
     this._batchEdges = [];
     this._batchFiles = new Set();
 
+    return this._sendCommitBatch(changedFiles, allNodes, allEdges, tags, deferIndex);
+  }
+
+  /**
+   * Internal helper: send a commitBatch with chunking for large payloads.
+   * Used by both commitBatch() and BatchHandle.commit().
+   * @internal
+   */
+  async _sendCommitBatch(
+    changedFiles: string[],
+    allNodes: WireNode[],
+    allEdges: WireEdge[],
+    tags?: string[],
+    deferIndex?: boolean,
+  ): Promise<CommitDelta> {
     // Chunk large batches to stay under server's 100MB message limit.
     // First chunk includes changedFiles (triggers old data deletion),
     // subsequent chunks use empty changedFiles (additive only).
@@ -1109,6 +1128,7 @@ export class RFDBClient extends EventEmitter implements IRFDBClient {
     if (allNodes.length <= CHUNK && allEdges.length <= CHUNK) {
       const response = await this._send('commitBatch', {
         changedFiles, nodes: allNodes, edges: allEdges, tags,
+        ...(deferIndex ? { deferIndex: true } : {}),
       });
       return (response as CommitBatchResponse).delta;
     }
@@ -1134,6 +1154,7 @@ export class RFDBClient extends EventEmitter implements IRFDBClient {
       const response = await this._send('commitBatch', {
         changedFiles: i === 0 ? changedFiles : [],
         nodes, edges, tags,
+        ...(deferIndex ? { deferIndex: true } : {}),
       });
       const d = (response as CommitBatchResponse).delta;
       merged.nodesAdded += d.nodesAdded;
@@ -1147,6 +1168,23 @@ export class RFDBClient extends EventEmitter implements IRFDBClient {
     merged.changedNodeTypes = [...nodeTypes];
     merged.changedEdgeTypes = [...edgeTypes];
     return merged;
+  }
+
+  /**
+   * Rebuild all secondary indexes after a series of deferred-index commits.
+   * Call this once after bulk loading data with commitBatch(tags, true).
+   */
+  async rebuildIndexes(): Promise<void> {
+    await this._send('rebuildIndexes', {});
+  }
+
+  /**
+   * Create an isolated batch handle for concurrent-safe batching.
+   * Each BatchHandle has its own node/edge buffers, avoiding the shared
+   * instance-level _batching state race condition with multiple workers.
+   */
+  createBatch(): BatchHandle {
+    return new BatchHandle(this);
   }
 
   /**
@@ -1235,6 +1273,52 @@ export class RFDBClient extends EventEmitter implements IRFDBClient {
       // Expected - server closes connection
     }
     await this.close();
+  }
+}
+
+/**
+ * Isolated batch handle for concurrent-safe batching (REG-487).
+ *
+ * Each BatchHandle maintains its own node/edge/file buffers, completely
+ * independent of the RFDBClient's instance-level _batching state.
+ * Multiple workers can each create their own BatchHandle and commit
+ * independently without race conditions.
+ */
+export class BatchHandle {
+  private _nodes: WireNode[] = [];
+  private _edges: WireEdge[] = [];
+  private _files: Set<string> = new Set();
+
+  constructor(private client: RFDBClient) {}
+
+  addNode(node: WireNode, file?: string): void {
+    this._nodes.push(node);
+    if (file) this._files.add(file);
+    else if (node.file) this._files.add(node.file);
+  }
+
+  addEdge(edge: WireEdge): void {
+    this._edges.push(edge);
+  }
+
+  addFile(file: string): void {
+    this._files.add(file);
+  }
+
+  async commit(tags?: string[], deferIndex?: boolean): Promise<CommitDelta> {
+    const nodes = this._nodes;
+    const edges = this._edges;
+    const changedFiles = [...this._files];
+    this._nodes = [];
+    this._edges = [];
+    this._files = new Set();
+    return this.client._sendCommitBatch(changedFiles, nodes, edges, tags, deferIndex);
+  }
+
+  abort(): void {
+    this._nodes = [];
+    this._edges = [];
+    this._files = new Set();
   }
 }
 

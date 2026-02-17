@@ -553,6 +553,12 @@ impl GraphStore for GraphEngineV2 {
         Ok(())
     }
 
+    /// V2 engine: rebuild_indexes is a no-op (v2 handles indexes differently).
+    fn rebuild_indexes(&mut self) -> Result<()> {
+        // V2 engine manages indexes internally — full flush is the rebuild.
+        self.flush()
+    }
+
     fn node_count(&self) -> usize {
         let total = self.store.node_count();
         total.saturating_sub(self.pending_tombstone_nodes.len())

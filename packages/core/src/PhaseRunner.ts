@@ -50,6 +50,8 @@ export interface PhaseRunnerDeps {
   resourceRegistry: ResourceRegistry;
   configServices?: ServiceDefinition[];
   routing?: RoutingRule[];
+  /** When true, commitBatch defers index rebuild for bulk load (REG-487). */
+  deferIndexing?: boolean;
 }
 
 export class PhaseRunner {
@@ -92,7 +94,8 @@ export class PhaseRunner {
     graph.beginBatch();
     try {
       const result = await plugin.execute(pluginContext);
-      const delta = await graph.commitBatch(tags);
+      const deferIndex = pluginContext.deferIndexing ?? false;
+      const delta = await graph.commitBatch(tags, deferIndex);
       return { result, delta };
     } catch (error) {
       graph.abortBatch();
@@ -121,6 +124,8 @@ export class PhaseRunner {
       rootPrefix: (baseContext as { rootPrefix?: string }).rootPrefix,
       // REG-256: Pass resource registry for inter-plugin communication
       resources: resourceRegistry,
+      // REG-487: Pass deferIndexing flag for bulk load optimization
+      deferIndexing: this.deps.deferIndexing ?? false,
     };
 
     // REG-256: Ensure config is available with routing and services for all plugins

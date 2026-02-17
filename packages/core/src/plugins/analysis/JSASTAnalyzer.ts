@@ -383,14 +383,20 @@ export class JSASTAnalyzer extends Plugin {
       const queue = new PriorityQueue();
       const pool = new WorkerPool(context.workerCount || 10);
 
+      const deferIndex = context.deferIndexing ?? false;
+
       pool.registerHandler('ANALYZE_MODULE', async (task) => {
         // Per-module batch: commit after each module to avoid buffering the entire
         // graph in memory. Prevents connection timeouts on large codebases.
+        // REG-487: Pass deferIndex to skip per-commit index rebuild during bulk load.
         if (graph.beginBatch && graph.commitBatch) {
           graph.beginBatch();
           try {
             const result = await this.analyzeModule(task.data.module, graph, projectPath);
-            await graph.commitBatch(['JSASTAnalyzer', 'ANALYSIS', task.data.module.file]);
+            await graph.commitBatch(
+              ['JSASTAnalyzer', 'ANALYSIS', task.data.module.file],
+              deferIndex,
+            );
             return result;
           } catch (err) {
             if (graph.abortBatch) graph.abortBatch();
@@ -443,6 +449,14 @@ export class JSASTAnalyzer extends Plugin {
       await pool.processQueue(queue);
 
       clearInterval(progressInterval);
+
+      // REG-487: Rebuild indexes after all deferred commits.
+      // This runs inside JSASTAnalyzer.execute() so downstream ANALYSIS plugins
+      // (which depend on JSASTAnalyzer) see rebuilt indexes.
+      if (deferIndex && graph.rebuildIndexes) {
+        logger.info('Rebuilding indexes after deferred bulk load...');
+        await graph.rebuildIndexes();
+      }
 
       if (context.onProgress) {
         context.onProgress({
