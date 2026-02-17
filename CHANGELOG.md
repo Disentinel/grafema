@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.10] - 2026-02-17
+
+### Bug Fixes
+
+- **@grafema/rfdb**: Republish with fresh prebuilt binaries — v0.2.8/0.2.9 shipped stale rfdb-server binaries missing CommitBatch support
+
 ## [0.2.9] - 2026-02-17
 
 ### Features
