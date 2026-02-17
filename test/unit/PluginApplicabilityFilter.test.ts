@@ -179,7 +179,7 @@ describe('Plugin applicability filter — extractServiceDependencies (REG-482)',
       'Plugin should run when covered package is in peerDependencies');
   });
 
-  it('service without packageJson — plugin with covers is SKIPPED', async () => {
+  it('service without packageJson — plugin with covers RUNS (cannot filter without deps)', async () => {
     const graph = createMockGraph();
     const plugin = createAnalysisPlugin('ExpressAnalyzer', { covers: ['express'] });
 
@@ -206,11 +206,11 @@ describe('Plugin applicability filter — extractServiceDependencies (REG-482)',
 
     await orchestrator.runPhase('ANALYSIS', context as any);
 
-    assert.strictEqual(plugin.calls.length, 0,
-      'Plugin with covers should be SKIPPED when service has no packageJson');
+    assert.strictEqual(plugin.calls.length, 1,
+      'Plugin with covers should RUN when no packageJson — cannot determine applicability');
   });
 
-  it('service with empty dependencies object — plugin with covers is SKIPPED', async () => {
+  it('service with empty dependencies — plugin with covers is SKIPPED (explicit empty deps)', async () => {
     const graph = createMockGraph();
     const plugin = createAnalysisPlugin('ExpressAnalyzer', { covers: ['express'] });
 
@@ -228,10 +228,10 @@ describe('Plugin applicability filter — extractServiceDependencies (REG-482)',
     await orchestrator.runPhase('ANALYSIS', context as any);
 
     assert.strictEqual(plugin.calls.length, 0,
-      'Plugin should be SKIPPED when service has empty dependencies and no match');
+      'Plugin should be SKIPPED when service has explicit empty dependencies');
   });
 
-  it('non-service unit (no metadata) — plugin with covers is SKIPPED', async () => {
+  it('non-service unit (no metadata) — plugin with covers RUNS (cannot filter)', async () => {
     const graph = createMockGraph();
     const plugin = createAnalysisPlugin('ExpressAnalyzer', { covers: ['express'] });
 
@@ -258,8 +258,145 @@ describe('Plugin applicability filter — extractServiceDependencies (REG-482)',
 
     await orchestrator.runPhase('ANALYSIS', context as any);
 
+    assert.strictEqual(plugin.calls.length, 1,
+      'Plugin with covers should RUN for units without metadata — cannot determine applicability');
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Tests for global ANALYSIS context (manifest.services[] plural — REG-478 + REG-482)
+// ──────────────────────────────────────────────────────────────────────────────
+
+describe('Plugin applicability filter — global ANALYSIS context (REG-478)', () => {
+
+  it('global context with manifest.services[] — plugin matching any service dep RUNS', async () => {
+    const graph = createMockGraph();
+    const plugin = createAnalysisPlugin('ExpressAnalyzer', { covers: ['express'] });
+
+    // Global DiscoveryManifest: .services (plural), not .service (singular)
+    const context = {
+      graph,
+      manifest: {
+        projectPath: '/test/project',
+        services: [
+          {
+            id: 'svc-1',
+            name: 'api-service',
+            path: '/test/project/services/api',
+            metadata: {
+              entrypoint: 'src/index.ts',
+              packageJson: {
+                name: 'api-service',
+                version: '1.0.0',
+                dependencies: { express: '4.18.0' },
+              },
+            },
+          },
+          {
+            id: 'svc-2',
+            name: 'worker-service',
+            path: '/test/project/services/worker',
+            metadata: {
+              entrypoint: 'src/index.ts',
+              packageJson: {
+                name: 'worker-service',
+                version: '1.0.0',
+                dependencies: { bullmq: '3.0.0' },
+              },
+            },
+          },
+        ],
+        entrypoints: [],
+        modules: [],
+      },
+    };
+
+    const { Orchestrator } = await import('@grafema/core');
+    const orchestrator = new Orchestrator({
+      graph: graph as any,
+      plugins: [plugin as any],
+      logLevel: 'silent',
+    });
+
+    await orchestrator.runPhase('ANALYSIS', context as any);
+
+    assert.strictEqual(plugin.calls.length, 1,
+      'Plugin should RUN — express is in api-service deps (global context, services[] plural)');
+  });
+
+  it('global context with manifest.services[] — plugin not matching any service dep is SKIPPED', async () => {
+    const graph = createMockGraph();
+    const plugin = createAnalysisPlugin('NestJSRouteAnalyzer', { covers: ['@nestjs/common', '@nestjs/core'] });
+
+    const context = {
+      graph,
+      manifest: {
+        projectPath: '/test/project',
+        services: [
+          {
+            id: 'svc-1',
+            name: 'api-service',
+            path: '/test/project/services/api',
+            metadata: {
+              entrypoint: 'src/index.ts',
+              packageJson: {
+                name: 'api-service',
+                version: '1.0.0',
+                dependencies: { express: '4.18.0' },
+              },
+            },
+          },
+        ],
+        entrypoints: [],
+        modules: [],
+      },
+    };
+
+    const { Orchestrator } = await import('@grafema/core');
+    const orchestrator = new Orchestrator({
+      graph: graph as any,
+      plugins: [plugin as any],
+      logLevel: 'silent',
+    });
+
+    await orchestrator.runPhase('ANALYSIS', context as any);
+
     assert.strictEqual(plugin.calls.length, 0,
-      'Plugin with covers should be SKIPPED for units without metadata');
+      'Plugin should be SKIPPED — no NestJS deps in any service (global context)');
+  });
+
+  it('global context with services[] having no packageJson — runs all plugins', async () => {
+    const graph = createMockGraph();
+    const plugin = createAnalysisPlugin('ExpressAnalyzer', { covers: ['express'] });
+
+    const context = {
+      graph,
+      manifest: {
+        projectPath: '/test/project',
+        services: [
+          {
+            id: 'svc-1',
+            name: 'bare-service',
+            path: '/test/project/services/bare',
+            // no metadata.packageJson
+          },
+        ],
+        entrypoints: [],
+        modules: [],
+      },
+    };
+
+    const { Orchestrator } = await import('@grafema/core');
+    const orchestrator = new Orchestrator({
+      graph: graph as any,
+      plugins: [plugin as any],
+      logLevel: 'silent',
+    });
+
+    await orchestrator.runPhase('ANALYSIS', context as any);
+
+    assert.strictEqual(plugin.calls.length, 1,
+      'Plugin should RUN when services have no packageJson — cannot filter');
   });
 });
 

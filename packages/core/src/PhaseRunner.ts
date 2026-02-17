@@ -173,20 +173,47 @@ export class PhaseRunner {
    * Merges dependencies + devDependencies + peerDependencies from package.json.
    * Returns empty Set when no package.json is available (non-npm service).
    */
-  private extractServiceDependencies(context: Partial<PluginContext>): Set<string> {
+  /**
+   * Extract service dependency package names from the manifest.
+   * Handles both per-service (manifest.service) and global (manifest.services[]) contexts.
+   * Returns null when no packageJson is available (cannot filter — run all plugins).
+   * Returns empty Set when packageJson exists but has no dependencies (filter can be applied).
+   */
+  private extractServiceDependencies(context: Partial<PluginContext>): Set<string> | null {
     const manifest = context.manifest as Record<string, unknown>;
-    const service = manifest?.service as Record<string, unknown>;
-    const metadata = service?.metadata as Record<string, unknown>;
-    const packageJson = metadata?.packageJson as Record<string, unknown>;
 
-    if (!packageJson) return new Set();
+    // Collect packageJson objects from all available sources:
+    // - manifest.service (per-service context from INDEXING)
+    // - manifest.services[] (global context from ANALYSIS after REG-478)
+    const packageJsons: Record<string, unknown>[] = [];
+
+    const service = manifest?.service as Record<string, unknown> | undefined;
+    if (service) {
+      const meta = service.metadata as Record<string, unknown> | undefined;
+      const pj = meta?.packageJson as Record<string, unknown> | undefined;
+      if (pj) packageJsons.push(pj);
+    }
+
+    const services = manifest?.services as Record<string, unknown>[] | undefined;
+    if (services && Array.isArray(services)) {
+      for (const svc of services) {
+        const meta = svc.metadata as Record<string, unknown> | undefined;
+        const pj = meta?.packageJson as Record<string, unknown> | undefined;
+        if (pj) packageJsons.push(pj);
+      }
+    }
+
+    // No packageJson found anywhere — cannot filter, signal with null
+    if (packageJsons.length === 0) return null;
 
     const deps = new Set<string>();
-    for (const field of ['dependencies', 'devDependencies', 'peerDependencies']) {
-      const fieldValue = packageJson[field];
-      if (fieldValue && typeof fieldValue === 'object') {
-        for (const pkg of Object.keys(fieldValue as Record<string, unknown>)) {
-          deps.add(pkg);
+    for (const packageJson of packageJsons) {
+      for (const field of ['dependencies', 'devDependencies', 'peerDependencies']) {
+        const fieldValue = packageJson[field];
+        if (fieldValue && typeof fieldValue === 'object') {
+          for (const pkg of Object.keys(fieldValue as Record<string, unknown>)) {
+            deps.add(pkg);
+          }
         }
       }
     }
@@ -322,15 +349,21 @@ export class PhaseRunner {
     // Track accumulated changed types for ENRICHMENT skip optimization (fallback path)
     const accumulatedTypes = new Set<string>();
 
+    // Pre-compute service dependencies for ANALYSIS plugin filter (REG-482)
+    // null = no packageJson found, cannot filter → run all plugins
+    // Set = packageJson available, filter by covers (even if Set is empty)
+    const serviceDeps = phaseName === 'ANALYSIS' ? this.extractServiceDependencies(context) : null;
+
     // Execute plugins sequentially (non-ENRICHMENT phases or non-batch backends)
     for (let i = 0; i < phasePlugins.length; i++) {
       const plugin = phasePlugins[i];
 
       // Plugin applicability filter for ANALYSIS phase (REG-482)
-      if (phaseName === 'ANALYSIS') {
+      // Only filter when serviceDeps is a Set (packageJson was found).
+      // When serviceDeps is null (no packageJson), skip filtering — run all plugins.
+      if (serviceDeps !== null) {
         const covers = plugin.metadata.covers;
         if (covers && covers.length > 0) {
-          const serviceDeps = this.extractServiceDependencies(context);
           if (!covers.some(pkg => serviceDeps.has(pkg))) {
             logger.debug(
               `[SKIP] ${plugin.metadata.name} — no covered packages [${covers.join(', ')}] in service dependencies`
