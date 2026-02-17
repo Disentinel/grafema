@@ -18,13 +18,16 @@ import type { MethodCallNode, ClassEntry } from './MethodCallData.js';
  * 2. Local class in same file
  * 3. "this" reference to containing class
  * 4. Variable type index (INSTANCE_OF)
+ * 5. Interface-aware CHA fallback (REG-485)
  */
 export async function resolveMethodCall(
   methodCall: MethodCallNode,
   classMethodIndex: Map<string, ClassEntry>,
   variableTypes: Map<string, string>,
   graph: PluginContext['graph'],
-  containingClassCache: Map<string, BaseNodeRecord | null>
+  containingClassCache: Map<string, BaseNodeRecord | null>,
+  methodToInterfaces?: Map<string, Set<string>>,
+  interfaceImpls?: Map<string, Set<string>>
 ): Promise<BaseNodeRecord | null> {
   const { object, method, file } = methodCall;
 
@@ -85,6 +88,55 @@ export async function resolveMethodCall(
       if (classEntry.methods.has(method)) {
         return classEntry.methods.get(method)!;
       }
+    }
+  }
+
+  // 5. Interface-aware CHA fallback (REG-485)
+  if (methodToInterfaces && interfaceImpls) {
+    const chaResult = await resolveViaInterfaceCHA(
+      method, classMethodIndex, methodToInterfaces, interfaceImpls, graph
+    );
+    if (chaResult) return chaResult;
+  }
+
+  return null;
+}
+
+/**
+ * Step 5: Interface-aware CHA fallback (REG-485).
+ *
+ * When steps 1-4 fail, look up method name in interface method index,
+ * find implementing classes, and resolve to their method definition.
+ * Also checks parent classes via DERIVES_FROM for inherited methods.
+ * This enables resolution for calls on variables typed as interfaces.
+ */
+export async function resolveViaInterfaceCHA(
+  methodName: string,
+  classMethodIndex: Map<string, ClassEntry>,
+  methodToInterfaces: Map<string, Set<string>>,
+  interfaceImpls: Map<string, Set<string>>,
+  graph: PluginContext['graph']
+): Promise<BaseNodeRecord | null> {
+  const candidateInterfaces = methodToInterfaces.get(methodName);
+  if (!candidateInterfaces || candidateInterfaces.size === 0) return null;
+
+  for (const interfaceName of candidateInterfaces) {
+    const implementingClasses = interfaceImpls.get(interfaceName);
+    if (!implementingClasses) continue;
+
+    for (const className of implementingClasses) {
+      const classEntry = classMethodIndex.get(className);
+      if (!classEntry) continue;
+
+      if (classEntry.methods.has(methodName)) {
+        return classEntry.methods.get(methodName)!;
+      }
+
+      // Check parent classes via DERIVES_FROM chain
+      const inherited = await findMethodInParentClasses(
+        classEntry.classNode, methodName, classMethodIndex, graph
+      );
+      if (inherited) return inherited;
     }
   }
 

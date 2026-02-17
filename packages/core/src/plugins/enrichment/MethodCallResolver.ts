@@ -27,7 +27,12 @@ import { StrictModeError } from '../../errors/GrafemaError.js';
 import { BUILTIN_PROTOTYPE_METHODS } from './method-call/MethodCallData.js';
 import type { MethodCallNode, LibraryCallStats } from './method-call/MethodCallData.js';
 import { isExternalMethod, isBuiltInObject, trackLibraryCall } from './method-call/MethodCallDetectors.js';
-import { buildClassMethodIndex, buildVariableTypeIndex } from './method-call/MethodCallIndexers.js';
+import {
+  buildClassMethodIndex,
+  buildVariableTypeIndex,
+  buildInterfaceMethodIndex,
+  buildInterfaceImplementationIndex
+} from './method-call/MethodCallIndexers.js';
 import { resolveMethodCall } from './method-call/MethodCallResolution.js';
 import { analyzeResolutionFailure, generateContextualSuggestion } from './method-call/MethodCallErrorAnalysis.js';
 
@@ -45,7 +50,7 @@ export class MethodCallResolver extends Plugin {
         edges: ['CALLS']
       },
       dependencies: ['ImportExportLinker'],
-      consumes: ['CONTAINS', 'INSTANCE_OF', 'DERIVES_FROM'],
+      consumes: ['CONTAINS', 'INSTANCE_OF', 'DERIVES_FROM', 'IMPLEMENTS', 'EXTENDS'],
       produces: ['CALLS']
     };
   }
@@ -103,6 +108,13 @@ export class MethodCallResolver extends Plugin {
     logger.info('Indexed classes', { count: classMethodIndex.size });
 
     const variableTypes = await buildVariableTypeIndex(graph, logger);
+
+    // Build interface indexes for CHA fallback (REG-485)
+    const methodToInterfaces = await buildInterfaceMethodIndex(graph, logger);
+    logger.info('Indexed interface methods', { methods: methodToInterfaces.size });
+
+    const interfaceImpls = await buildInterfaceImplementationIndex(graph, logger);
+    logger.info('Indexed interface implementations', { interfaces: interfaceImpls.size });
 
     // Cache for containing class lookups (local to this execution)
     const containingClassCache = new Map<string, BaseNodeRecord | null>();
@@ -162,7 +174,9 @@ export class MethodCallResolver extends Plugin {
         classMethodIndex,
         variableTypes,
         graph,
-        containingClassCache
+        containingClassCache,
+        methodToInterfaces,
+        interfaceImpls
       );
 
       if (targetMethod) {
