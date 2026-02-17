@@ -1,6 +1,6 @@
 {
   "name": "@grafema/rfdb-client",
-  "version": "0.2.9",
+  "version": "0.2.10",
   "description": "TypeScript client for RFDB (Rega Flow Database)",
   "type": "module",
   "main": "./dist/index.js",
