@@ -79,6 +79,11 @@ export class ProgressRenderer {
       }
       // Reset phase-specific state
       this.activePlugins = [];
+      this.currentService = '';
+      this.servicesAnalyzed = 0;
+      this.totalServices = 0;
+      this.processedFiles = 0;
+      this.totalFiles = 0;
     }
 
     // Update state from progress info
@@ -229,16 +234,27 @@ export class ProgressRenderer {
           return ` ${this.servicesAnalyzed} services found`;
         }
         return '';
-      case 'indexing':
-      case 'analysis': {
+      case 'indexing': {
         const parts: string[] = [];
         if (this.totalServices > 0) {
           parts.push(`${this.servicesAnalyzed}/${this.totalServices} services`);
         }
         if (this.currentService) {
-          // Truncate long service names
           const name = this.currentService.length > 30
             ? '...' + this.currentService.slice(-27)
+            : this.currentService;
+          parts.push(name);
+        }
+        return parts.length > 0 ? ` ${parts.join(' | ')}` : '';
+      }
+      case 'analysis': {
+        const parts: string[] = [];
+        if (this.totalFiles > 0) {
+          parts.push(`${this.processedFiles}/${this.totalFiles} files`);
+        }
+        if (this.currentService) {
+          const name = this.currentService.length > 40
+            ? '...' + this.currentService.slice(-37)
             : this.currentService;
           parts.push(name);
         }

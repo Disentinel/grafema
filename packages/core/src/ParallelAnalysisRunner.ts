@@ -67,6 +67,20 @@ export class ParallelAnalysisRunner {
     await this.analysisQueue.start();
 
     let moduleCount = 0;
+    let completedCount = 0;
+
+    this.analysisQueue.on('taskCompleted', ({ file, stats, duration }: { file: string; stats?: { nodes?: number }; duration: number }) => {
+      completedCount++;
+      this.onProgress({
+        phase: 'analysis',
+        currentPlugin: 'AnalysisQueue',
+        message: `${file.split('/').pop()} (${stats?.nodes || 0} nodes, ${duration}ms)`,
+        totalFiles: moduleCount,
+        processedFiles: completedCount,
+        currentService: file,
+      });
+    });
+
     for await (const node of this.graph.queryNodes({ type: 'MODULE' })) {
       if (!node.file?.match(/\.(js|jsx|ts|tsx|mjs|cjs)$/)) continue;
 
@@ -80,14 +94,6 @@ export class ParallelAnalysisRunner {
     }
 
     this.logger.debug('Queued modules for analysis', { count: moduleCount });
-
-    this.analysisQueue.on('taskCompleted', ({ file, stats, duration }: { file: string; stats?: { nodes?: number }; duration: number }) => {
-      this.onProgress({
-        phase: 'analysis',
-        currentPlugin: 'AnalysisQueue',
-        message: `${file.split('/').pop()} (${stats?.nodes || 0} nodes, ${duration}ms)`,
-      });
-    });
 
     this.analysisQueue.on('taskFailed', ({ file, error }: { file: string; error: string }) => {
       this.logger.error('Analysis failed', { file, error });

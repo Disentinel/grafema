@@ -25,9 +25,9 @@ export interface ReanalysisOptions {
 
 export interface ReanalysisProgress {
   phase: 'clearing' | 'indexing' | 'analysis' | 'enrichment';
-  current: number;
-  total: number;
-  currentFile?: string;
+  processedFiles: number;
+  totalFiles: number;
+  currentService?: string;
 }
 
 export interface ReanalysisResult {
@@ -78,9 +78,9 @@ export class IncrementalReanalyzer {
       if (options.onProgress) {
         options.onProgress({
           phase: 'clearing',
-          current: i + 1,
-          total: staleModules.length,
-          currentFile: module.file
+          processedFiles: i + 1,
+          totalFiles: staleModules.length,
+          currentService: module.file
         });
       }
       const cleared = await clearFileNodesIfNeeded(this.graph, module.file, touchedFiles);
@@ -98,9 +98,9 @@ export class IncrementalReanalyzer {
       if (options.onProgress) {
         options.onProgress({
           phase: 'indexing',
-          current: i + 1,
-          total: modifiedModules.length,
-          currentFile: module.file
+          processedFiles: i + 1,
+          totalFiles: modifiedModules.length,
+          currentService: module.file
         });
       }
 
@@ -127,9 +127,9 @@ export class IncrementalReanalyzer {
       if (options.onProgress) {
         options.onProgress({
           phase: 'analysis',
-          current: i + 1,
-          total: modulesToAnalyze.length,
-          currentFile: module.file
+          processedFiles: i + 1,
+          totalFiles: modulesToAnalyze.length,
+          currentService: module.file
         });
       }
 
@@ -150,7 +150,7 @@ export class IncrementalReanalyzer {
     // STEP 4: Re-run enrichment plugins
     if (!options.skipEnrichment && modulesToAnalyze.length > 0) {
       if (options.onProgress) {
-        options.onProgress({ phase: 'enrichment', current: 0, total: 2 });
+        options.onProgress({ phase: 'enrichment', processedFiles: 0, totalFiles: 2 });
       }
 
       const pluginContext: PluginContext = {
@@ -169,7 +169,7 @@ export class IncrementalReanalyzer {
       }
 
       if (options.onProgress) {
-        options.onProgress({ phase: 'enrichment', current: 1, total: 2 });
+        options.onProgress({ phase: 'enrichment', processedFiles: 1, totalFiles: 2 });
       }
 
       const importExportLinker = new ImportExportLinker();
@@ -182,7 +182,7 @@ export class IncrementalReanalyzer {
       }
 
       if (options.onProgress) {
-        options.onProgress({ phase: 'enrichment', current: 2, total: 2 });
+        options.onProgress({ phase: 'enrichment', processedFiles: 2, totalFiles: 2 });
       }
     }
 
