@@ -422,7 +422,8 @@ export class JSASTAnalyzer extends Plugin {
             currentPlugin: 'JSASTAnalyzer',
             message: `Analyzing ${currentFile} (${completed}/${modulesToAnalyze.length})`,
             totalFiles: modulesToAnalyze.length,
-            processedFiles: completed
+            processedFiles: completed,
+            currentService: currentFile
           });
         }
       }, 500);
@@ -557,7 +558,8 @@ export class JSASTAnalyzer extends Plugin {
             currentPlugin: 'JSASTAnalyzer',
             message: `Processed ${result.module.name}`,
             totalFiles: modules.length,
-            processedFiles: results.indexOf(result) + 1
+            processedFiles: results.indexOf(result) + 1,
+            currentService: result.module.file || result.module.name
           });
         }
       }

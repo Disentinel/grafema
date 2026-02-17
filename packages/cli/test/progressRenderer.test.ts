@@ -303,15 +303,43 @@ describe('ProgressRenderer', () => {
       assert.ok(lastOutput.includes('auth-service'), 'Should show current service name');
     });
 
-    it('should format analysis phase correctly in interactive mode', () => {
+    it('should format analysis phase with file count in interactive mode', () => {
       renderer = new ProgressRenderer({ isInteractive: true, throttle: 0, write: output.write });
 
-      renderer.update({ phase: 'analysis', totalServices: 767, servicesAnalyzed: 500, currentService: 'api-gateway' });
+      renderer.update({ phase: 'analysis', totalFiles: 767, processedFiles: 500, currentService: 'packages/core/src/Plugin.ts' });
       const lastOutput = output.getLastLine();
 
       assert.ok(lastOutput.includes('[3/5]'), 'Should show phase 3/5');
       assert.ok(lastOutput.includes('Analysis'), 'Should show Analysis (capitalized)');
-      assert.ok(lastOutput.includes('500/767 services'), 'Should show services progress');
+      assert.ok(lastOutput.includes('500/767 files'), 'Should show file progress, not services');
+      assert.ok(!lastOutput.includes('services'), 'Should NOT show "services" in analysis phase');
+    });
+
+    it('should show file path in analysis phase output', () => {
+      renderer = new ProgressRenderer({ isInteractive: true, throttle: 0, write: output.write });
+
+      renderer.update({ phase: 'analysis', totalFiles: 330, processedFiles: 145, currentService: 'packages/core/src/Plugin.ts' });
+      const lastOutput = output.getLastLine();
+
+      assert.ok(
+        lastOutput.includes('145/330 files'),
+        `Should show 145/330 files. Got: ${lastOutput}`
+      );
+      assert.ok(
+        lastOutput.includes('Plugin.ts'),
+        `Should show the current file path. Got: ${lastOutput}`
+      );
+    });
+
+    it('should still show services in indexing phase (not files)', () => {
+      renderer = new ProgressRenderer({ isInteractive: true, throttle: 0, write: output.write });
+
+      renderer.update({ phase: 'indexing', totalServices: 10, servicesAnalyzed: 5, currentService: 'api-gateway' });
+      const lastOutput = output.getLastLine();
+
+      assert.ok(lastOutput.includes('[2/5]'), 'Should show phase 2/5');
+      assert.ok(lastOutput.includes('5/10 services'), `Should show services progress. Got: ${lastOutput}`);
+      assert.ok(lastOutput.includes('api-gateway'), `Should show current service. Got: ${lastOutput}`);
     });
 
     it('should format enrichment phase with plugins in interactive mode', () => {
@@ -579,6 +607,46 @@ describe('ProgressRenderer', () => {
       const state = renderer.getState();
       assert.strictEqual(state.totalFiles, 100, 'totalFiles should be preserved');
       assert.strictEqual(state.processedFiles, 50, 'processedFiles should reflect latest');
+    });
+
+    it('should not leak stale indexing currentService into analysis display', () => {
+      renderer = new ProgressRenderer({ isInteractive: true, throttle: 0, write: output.write });
+
+      // Indexing phase sets currentService to a service name
+      renderer.update({ phase: 'indexing', totalServices: 10, servicesAnalyzed: 5, currentService: 'auth-service' });
+      const indexingOutput = output.getLastLine();
+      assert.ok(indexingOutput.includes('auth-service'), 'Indexing should show service name');
+
+      // Switch to analysis phase with file-level progress
+      renderer.update({ phase: 'analysis', totalFiles: 200, processedFiles: 1, currentService: 'packages/core/src/index.ts' });
+      const analysisOutput = output.getLastLine();
+
+      // Analysis should show files, not the old service name
+      assert.ok(
+        analysisOutput.includes('1/200 files'),
+        `Analysis should show file count after transition. Got: ${analysisOutput}`
+      );
+      assert.ok(
+        !analysisOutput.includes('auth-service'),
+        `Stale service name should not leak into analysis. Got: ${analysisOutput}`
+      );
+    });
+
+    it('should handle analysis phase with zero files without crash', () => {
+      renderer = new ProgressRenderer({ isInteractive: true, throttle: 0, write: output.write });
+
+      // Analysis phase starts with 0 files (e.g., before any analyzer reports)
+      renderer.update({ phase: 'analysis', totalFiles: 0, processedFiles: 0 });
+      const lastOutput = output.getLastLine();
+
+      // Should not crash, should show analysis phase label
+      assert.ok(lastOutput.includes('[3/5]'), 'Should show phase 3/5');
+      assert.ok(lastOutput.includes('Analysis'), 'Should show Analysis label');
+      // Should not show stale data from previous phases
+      assert.ok(
+        !lastOutput.includes('services'),
+        `Should not show stale "services" text. Got: ${lastOutput}`
+      );
     });
 
     it('should handle duplicate plugin names gracefully', () => {
