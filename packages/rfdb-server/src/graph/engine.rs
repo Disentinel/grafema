@@ -731,6 +731,168 @@ impl GraphEngine {
         }
         true
     }
+
+    /// Collect all nodes and edges from segment + delta, write to disk,
+    /// clear delta state, and reload segments. Shared by flush() and flush_data_only().
+    ///
+    /// Returns Ok(true) if data was written, Ok(false) if early-returned
+    /// (empty delta or ephemeral database).
+    fn collect_and_write_data(&mut self) -> Result<bool> {
+        if self.delta_log.is_empty() {
+            return Ok(false);
+        }
+
+        // Ephemeral databases don't write to disk - just clear the log
+        if self.is_ephemeral() {
+            self.delta_log.clear();
+            return Ok(false);
+        }
+
+        tracing::info!("Flushing {} operations to disk, delta has {} nodes",
+            self.delta_log.len(), self.delta_nodes.len());
+
+        // Collect all nodes (segment + delta) with deduplication.
+        // Delta takes priority over segment (more recent data).
+        let mut all_nodes = Vec::new();
+
+        // From segment — skip nodes overridden by delta
+        if let Some(ref segment) = self.nodes_segment {
+            for idx in segment.iter_indices() {
+                if !segment.is_deleted(idx) {
+                    if let Some(id) = segment.get_id(idx) {
+                        if self.deleted_segment_ids.contains(&id) {
+                            continue;
+                        }
+                        // Skip nodes overridden by delta (delta takes priority)
+                        if self.delta_nodes.contains_key(&id) {
+                            continue;
+                        }
+
+                        let node_type = segment.get_node_type(idx).map(|s| s.to_string());
+                        let name = segment.get_name(idx).map(|s| s.to_string());
+                        let file = segment.get_file_path(idx).map(|s| s.to_string());
+                        let metadata = segment.get_metadata(idx).map(|s| s.to_string());
+                        let version = segment.get_version(idx).unwrap_or("main");
+                        let exported = segment.get_exported(idx).unwrap_or(false);
+
+                        all_nodes.push(NodeRecord {
+                            id,
+                            node_type,
+                            file_id: 0,
+                            name_offset: 0,
+                            version: version.to_string(),
+                            exported,
+                            replaces: None,
+                            deleted: false,
+                            name,
+                            file,
+                            metadata,
+                            semantic_id: None,
+                        });
+                    }
+                }
+            }
+        }
+
+        let nodes_from_segment = all_nodes.len();
+
+        // From delta (live nodes only, no overlap with segment possible now)
+        let mut delta_added = 0;
+        for node in self.delta_nodes.values() {
+            if !node.deleted {
+                all_nodes.push(node.clone());
+                delta_added += 1;
+            }
+        }
+
+        tracing::info!("Collected {} from segment, {} from delta, {} total",
+            nodes_from_segment, delta_added, all_nodes.len());
+
+        // Collect all edges with deduplication (same pattern as get_all_edges)
+        let mut edges_map: HashMap<(u128, u128, String), EdgeRecord> = HashMap::new();
+
+        // Delta edges first (more recent, take priority over segment)
+        for edge in &self.delta_edges {
+            if !edge.deleted {
+                let edge_type_key = edge.edge_type.clone().unwrap_or_default();
+                let key = (edge.src, edge.dst, edge_type_key);
+                edges_map.insert(key, edge.clone());
+            }
+        }
+
+        // From segment (don't overwrite delta — delta is more recent)
+        if let Some(ref segment) = self.edges_segment {
+            for idx in 0..segment.edge_count() {
+                if !segment.is_deleted(idx) {
+                    if let (Some(src), Some(dst)) = (
+                        segment.get_src(idx),
+                        segment.get_dst(idx),
+                    ) {
+                        let edge_type = segment.get_edge_type(idx);
+                        let edge_type_key = edge_type.unwrap_or("").to_string();
+                        let key = (src, dst, edge_type_key.clone());
+
+                        // Skip edges deleted from segment
+                        if self.deleted_segment_edge_keys.contains(&key) {
+                            continue;
+                        }
+
+                        // Don't overwrite delta edges (they are more recent)
+                        if !edges_map.contains_key(&key) {
+                            let metadata = segment.get_metadata(idx).map(|s| s.to_string());
+                            edges_map.insert(key, EdgeRecord {
+                                src,
+                                dst,
+                                edge_type: if edge_type_key.is_empty() { None } else { Some(edge_type_key) },
+                                version: "main".to_string(),
+                                metadata,
+                                deleted: false,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        let all_edges: Vec<EdgeRecord> = edges_map.into_values().collect();
+
+        // Close old segments before overwriting
+        self.nodes_segment = None;
+        self.edges_segment = None;
+
+        // Write to disk
+        let writer = SegmentWriter::new(&self.path);
+        writer.write_nodes(&all_nodes)?;
+        writer.write_edges(&all_edges)?;
+
+        // Update metadata
+        self.metadata.node_count = all_nodes.len();
+        self.metadata.edge_count = all_edges.len();
+        self.metadata.updated_at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        self.metadata.field_declarations = self.declared_fields.clone();
+
+        writer.write_metadata(&self.metadata)?;
+
+        // Clear delta log, caches, and dedup sets (nodes/edges are now written to new segment)
+        self.delta_log.clear();
+        self.delta_nodes.clear();
+        self.delta_edges.clear();
+        self.deleted_segment_ids.clear();
+        self.deleted_segment_edge_keys.clear();
+        self.edge_keys.clear();
+
+        // Reload segments
+        self.nodes_segment = Some(NodesSegment::open(&self.path.join("nodes.bin"))?);
+        self.edges_segment = Some(EdgesSegment::open(&self.path.join("edges.bin"))?);
+
+        tracing::info!("Flush complete: {} nodes, {} edges", all_nodes.len(), all_edges.len());
+        self.ops_since_flush = 0;
+
+        Ok(true)
+    }
 }
 
 impl GraphStore for GraphEngine {
@@ -1102,161 +1264,9 @@ impl GraphStore for GraphEngine {
     }
 
     fn flush(&mut self) -> Result<()> {
-        if self.delta_log.is_empty() {
+        if !self.collect_and_write_data()? {
             return Ok(());
         }
-
-        // Ephemeral databases don't write to disk - just clear the log
-        if self.is_ephemeral() {
-            self.delta_log.clear();
-            return Ok(());
-        }
-
-        eprintln!("[RUST FLUSH] Flushing {} operations to disk", self.delta_log.len());
-        eprintln!("[RUST FLUSH] Delta has {} nodes before flush", self.delta_nodes.len());
-
-        // Собираем все ноды (segment + delta) с дедупликацией.
-        // Delta имеет приоритет над segment (более свежие данные).
-        let mut all_nodes = Vec::new();
-
-        // Из segment — пропускаем ноды, перезаписанные в delta
-        if let Some(ref segment) = self.nodes_segment {
-            for idx in segment.iter_indices() {
-                if !segment.is_deleted(idx) {
-                    if let Some(id) = segment.get_id(idx) {
-                        if self.deleted_segment_ids.contains(&id) {
-                            continue;
-                        }
-                        // Skip nodes overridden by delta (delta takes priority)
-                        if self.delta_nodes.contains_key(&id) {
-                            continue;
-                        }
-
-                        let node_type = segment.get_node_type(idx).map(|s| s.to_string());
-                        let name = segment.get_name(idx).map(|s| s.to_string());
-                        let file = segment.get_file_path(idx).map(|s| s.to_string());
-                        let metadata = segment.get_metadata(idx).map(|s| s.to_string());
-                        let version = segment.get_version(idx).unwrap_or("main");
-                        let exported = segment.get_exported(idx).unwrap_or(false);
-
-                        all_nodes.push(NodeRecord {
-                            id,
-                            node_type,
-                            file_id: 0,
-                            name_offset: 0,
-                            version: version.to_string(),
-                            exported,
-                            replaces: None,
-                            deleted: false,
-                            name,
-                            file,
-                            metadata,
-                            semantic_id: None,
-                        });
-                    }
-                }
-            }
-        }
-
-        let nodes_from_segment = all_nodes.len();
-
-        // From delta (live nodes only, no overlap with segment possible now)
-        let mut delta_added = 0;
-        for node in self.delta_nodes.values() {
-            if !node.deleted {
-                all_nodes.push(node.clone());
-                delta_added += 1;
-            }
-        }
-
-        eprintln!("[RUST FLUSH] Collected {} from segment, {} from delta, {} total",
-                 nodes_from_segment, delta_added, all_nodes.len());
-
-        // Collect all edges with deduplication (same pattern as get_all_edges)
-        let mut edges_map: HashMap<(u128, u128, String), EdgeRecord> = HashMap::new();
-
-        // Delta edges first (more recent, take priority over segment)
-        for edge in &self.delta_edges {
-            if !edge.deleted {
-                let edge_type_key = edge.edge_type.clone().unwrap_or_default();
-                let key = (edge.src, edge.dst, edge_type_key);
-                edges_map.insert(key, edge.clone());
-            }
-        }
-
-        // From segment (don't overwrite delta -- delta is more recent)
-        if let Some(ref segment) = self.edges_segment {
-            for idx in 0..segment.edge_count() {
-                if !segment.is_deleted(idx) {
-                    if let (Some(src), Some(dst)) = (
-                        segment.get_src(idx),
-                        segment.get_dst(idx),
-                    ) {
-                        let edge_type = segment.get_edge_type(idx);
-                        let edge_type_key = edge_type.unwrap_or("").to_string();
-                        let key = (src, dst, edge_type_key.clone());
-
-                        // Skip edges deleted from segment
-                        if self.deleted_segment_edge_keys.contains(&key) {
-                            continue;
-                        }
-
-                        // Don't overwrite delta edges (they are more recent)
-                        if !edges_map.contains_key(&key) {
-                            let metadata = segment.get_metadata(idx).map(|s| s.to_string());
-                            edges_map.insert(key, EdgeRecord {
-                                src,
-                                dst,
-                                edge_type: if edge_type_key.is_empty() { None } else { Some(edge_type_key) },
-                                version: "main".to_string(),
-                                metadata,
-                                deleted: false,
-                            });
-                        }
-                    }
-                }
-            }
-        }
-
-        let all_edges: Vec<EdgeRecord> = edges_map.into_values().collect();
-
-        // Закрываем старые segments перед перезаписью
-        self.nodes_segment = None;
-        self.edges_segment = None;
-
-        // Debug: count nodes with metadata containing "isClassMethod"
-        let class_methods = all_nodes.iter().filter(|n| {
-            n.metadata.as_ref().map_or(false, |m| m.contains("isClassMethod"))
-        }).count();
-        eprintln!("[RUST FLUSH] Nodes with isClassMethod metadata: {}", class_methods);
-
-        // Записываем на диск
-        let writer = SegmentWriter::new(&self.path);
-        writer.write_nodes(&all_nodes)?;
-        writer.write_edges(&all_edges)?;
-
-        // Обновляем metadata
-        self.metadata.node_count = all_nodes.len();
-        self.metadata.edge_count = all_edges.len();
-        self.metadata.updated_at = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-        self.metadata.field_declarations = self.declared_fields.clone();
-
-        writer.write_metadata(&self.metadata)?;
-
-        // Clear delta log, caches, and dedup sets (nodes/edges are now written to new segment)
-        self.delta_log.clear();
-        self.delta_nodes.clear();
-        self.delta_edges.clear();
-        self.deleted_segment_ids.clear();
-        self.deleted_segment_edge_keys.clear();
-        self.edge_keys.clear();
-
-        // Перезагружаем segments
-        self.nodes_segment = Some(NodesSegment::open(&self.path.join("nodes.bin"))?);
-        self.edges_segment = Some(EdgesSegment::open(&self.path.join("edges.bin"))?);
 
         // Rebuild secondary indexes from new segment
         self.index_set.clear();
@@ -1267,7 +1277,7 @@ impl GraphStore for GraphEngine {
         // Rebuild adjacency, reverse_adjacency, and edge_keys
         self.adjacency.clear();
         self.reverse_adjacency.clear();
-        // edge_keys already cleared above
+        // edge_keys already cleared in collect_and_write_data
         if let Some(ref edges_seg) = self.edges_segment {
             for idx in 0..edges_seg.edge_count() {
                 if edges_seg.is_deleted(idx) {
@@ -1285,10 +1295,57 @@ impl GraphStore for GraphEngine {
             }
         }
 
-        tracing::info!("Flush complete: {} nodes, {} edges", all_nodes.len(), all_edges.len());
+        Ok(())
+    }
 
-        // Сбросить счётчик операций
-        self.ops_since_flush = 0;
+    /// Flush data to disk WITHOUT rebuilding secondary indexes or adjacency.
+    /// Used during bulk load (initial analysis) for O(1) per-commit cost.
+    /// IMPORTANT: After flush_data_only(), indexes are stale.
+    /// Call rebuild_indexes() once when bulk load is complete.
+    fn flush_data_only(&mut self) -> Result<()> {
+        if !self.collect_and_write_data()? {
+            return Ok(());
+        }
+
+        // SKIP: index_set.rebuild_from_segment()
+        // SKIP: adjacency/reverse_adjacency/edge_keys rebuild
+        // Caller must call rebuild_indexes() after all deferred commits complete.
+
+        Ok(())
+    }
+
+    /// Rebuild all secondary indexes and adjacency from current segment.
+    /// Called once after bulk load to materialize all deferred index updates.
+    fn rebuild_indexes(&mut self) -> Result<()> {
+        let start = Instant::now();
+
+        self.index_set.clear();
+        if let Some(ref nodes_seg) = self.nodes_segment {
+            self.index_set.rebuild_from_segment(nodes_seg, &self.declared_fields);
+        }
+
+        self.adjacency.clear();
+        self.reverse_adjacency.clear();
+        self.edge_keys.clear();
+        if let Some(ref edges_seg) = self.edges_segment {
+            for idx in 0..edges_seg.edge_count() {
+                if edges_seg.is_deleted(idx) {
+                    continue;
+                }
+                if let (Some(src), Some(dst)) = (edges_seg.get_src(idx), edges_seg.get_dst(idx)) {
+                    self.adjacency.entry(src).or_insert_with(Vec::new).push(idx);
+                    self.reverse_adjacency.entry(dst).or_insert_with(Vec::new).push(idx);
+
+                    let edge_type_key = edges_seg.get_edge_type(idx)
+                        .unwrap_or("")
+                        .to_string();
+                    self.edge_keys.insert((src, dst, edge_type_key));
+                }
+            }
+        }
+
+        let elapsed = start.elapsed();
+        tracing::info!("Index rebuild complete in {:?}", elapsed);
 
         Ok(())
     }
@@ -3347,5 +3404,257 @@ mod tests {
 
         engine.delete_edge(1, 2, "CALLS");
         assert_eq!(engine.edge_count(), 0, "edge_count must decrease after deletion");
+    }
+
+    // ============================================================
+    // REG-487: Deferred Indexing Tests
+    // ============================================================
+
+    /// Test that flush_data_only() persists data to disk but does NOT rebuild
+    /// secondary indexes (type_index, id_index, file_index) or adjacency maps.
+    /// After calling rebuild_indexes(), indexes should be populated correctly.
+    #[test]
+    fn test_flush_data_only_persists_data_but_skips_index() {
+        use tempfile::tempdir;
+
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("test_flush_data_only");
+        let mut engine = GraphEngine::create(&db_path).unwrap();
+
+        // Add nodes of different types and a file attribute
+        engine.add_nodes(vec![
+            make_test_node(1, "funcA", "FUNCTION"),
+            make_test_node(2, "funcB", "FUNCTION"),
+            make_test_node(3, "classC", "CLASS"),
+        ]);
+
+        // Add edges to test adjacency rebuild
+        engine.add_edges(vec![
+            make_test_edge(1, 2, "CALLS"),
+            make_test_edge(3, 1, "CONTAINS"),
+        ], false);
+
+        // flush_data_only() — writes data to disk, skips index/adjacency rebuild
+        engine.flush_data_only().unwrap();
+
+        // Verify: data IS persisted — node_count should reflect segment data
+        // After flush_data_only, segment has data but indexes are stale/empty.
+        // node_count() relies on index_set.find_node_index for overlap detection,
+        // so with stale indexes it may over-count. The key assertion is that
+        // the segment file was written (nodes are on disk).
+        assert!(engine.nodes_segment.is_some(), "Nodes segment should exist after flush_data_only");
+
+        // Verify: type_index is empty (indexes NOT rebuilt)
+        assert!(
+            engine.index_set.find_by_type("FUNCTION").is_empty(),
+            "type_index should be empty after flush_data_only (no rebuild)"
+        );
+        assert!(
+            engine.index_set.find_by_type("CLASS").is_empty(),
+            "type_index should be empty for CLASS after flush_data_only"
+        );
+
+        // Verify: find_by_type returns nothing from segment (only delta, which is cleared)
+        let functions = engine.find_by_type("FUNCTION");
+        assert!(
+            functions.is_empty(),
+            "find_by_type should return empty after flush_data_only (delta cleared, index empty)"
+        );
+
+        // Note: adjacency is STALE after flush_data_only (has entries from delta phase),
+        // not necessarily empty. The key contract is that rebuild_indexes() fixes it.
+        // We do NOT assert adjacency is empty here.
+
+        // Now rebuild indexes
+        engine.rebuild_indexes().unwrap();
+
+        // Verify: type_index is populated
+        assert_eq!(
+            engine.index_set.find_by_type("FUNCTION").len(), 2,
+            "type_index should have 2 FUNCTION entries after rebuild_indexes"
+        );
+        assert_eq!(
+            engine.index_set.find_by_type("CLASS").len(), 1,
+            "type_index should have 1 CLASS entry after rebuild_indexes"
+        );
+
+        // Verify: find_by_type now works
+        let functions = engine.find_by_type("FUNCTION");
+        assert_eq!(functions.len(), 2, "find_by_type(FUNCTION) should return 2 after rebuild");
+
+        let classes = engine.find_by_type("CLASS");
+        assert_eq!(classes.len(), 1, "find_by_type(CLASS) should return 1 after rebuild");
+
+        // Verify: adjacency is rebuilt
+        let neighbors = engine.neighbors(1, &["CALLS"]);
+        assert_eq!(neighbors.len(), 1, "adjacency should show 1 neighbor after rebuild");
+        assert_eq!(neighbors[0], 2, "funcA should call funcB");
+
+        // Verify: reverse adjacency is rebuilt
+        let callers = engine.reverse_neighbors(2, &["CALLS"]);
+        assert_eq!(callers.len(), 1, "reverse_adjacency should show 1 caller after rebuild");
+        assert_eq!(callers[0], 1, "funcB should be called by funcA");
+
+        // Verify: node_count is correct after rebuild
+        assert_eq!(engine.node_count(), 3, "node_count should be 3 after rebuild");
+        assert_eq!(engine.edge_count(), 2, "edge_count should be 2 after rebuild");
+    }
+
+    /// Test that rebuild_indexes() is idempotent — calling it twice produces
+    /// the same results as calling it once.
+    #[test]
+    fn test_rebuild_indexes_is_idempotent() {
+        use tempfile::tempdir;
+
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("test_rebuild_idempotent");
+        let mut engine = GraphEngine::create(&db_path).unwrap();
+
+        engine.add_nodes(vec![
+            make_test_node(1, "funcA", "FUNCTION"),
+            make_test_node(2, "funcB", "FUNCTION"),
+            make_test_node(3, "classC", "CLASS"),
+        ]);
+        engine.add_edges(vec![
+            make_test_edge(1, 2, "CALLS"),
+        ], false);
+
+        engine.flush().unwrap();
+
+        // First rebuild
+        engine.rebuild_indexes().unwrap();
+        let functions_1 = engine.find_by_type("FUNCTION");
+        let classes_1 = engine.find_by_type("CLASS");
+        let neighbors_1 = engine.neighbors(1, &["CALLS"]);
+        let node_count_1 = engine.node_count();
+        let edge_count_1 = engine.edge_count();
+
+        // Second rebuild
+        engine.rebuild_indexes().unwrap();
+        let functions_2 = engine.find_by_type("FUNCTION");
+        let classes_2 = engine.find_by_type("CLASS");
+        let neighbors_2 = engine.neighbors(1, &["CALLS"]);
+        let node_count_2 = engine.node_count();
+        let edge_count_2 = engine.edge_count();
+
+        // Verify idempotency
+        assert_eq!(functions_1.len(), functions_2.len(), "find_by_type(FUNCTION) should be same after second rebuild");
+        assert_eq!(classes_1.len(), classes_2.len(), "find_by_type(CLASS) should be same after second rebuild");
+        assert_eq!(neighbors_1, neighbors_2, "neighbors should be same after second rebuild");
+        assert_eq!(node_count_1, node_count_2, "node_count should be same after second rebuild");
+        assert_eq!(edge_count_1, edge_count_2, "edge_count should be same after second rebuild");
+    }
+
+    /// Test that multiple flush_data_only() calls accumulate data correctly,
+    /// and a single rebuild_indexes() at the end produces correct indexes.
+    #[test]
+    fn test_multiple_flush_data_only_then_rebuild() {
+        use tempfile::tempdir;
+
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("test_multi_flush_data_only");
+        let mut engine = GraphEngine::create(&db_path).unwrap();
+
+        // First batch
+        engine.add_nodes(vec![
+            make_test_node(1, "funcA", "FUNCTION"),
+            make_test_node(2, "funcB", "FUNCTION"),
+        ]);
+        engine.add_edges(vec![
+            make_test_edge(1, 2, "CALLS"),
+        ], false);
+        engine.flush_data_only().unwrap();
+
+        // Second batch — adds more nodes on top of existing segment
+        engine.add_nodes(vec![
+            make_test_node(3, "classC", "CLASS"),
+            make_test_node(4, "funcD", "FUNCTION"),
+        ]);
+        engine.add_edges(vec![
+            make_test_edge(3, 4, "CONTAINS"),
+        ], false);
+        engine.flush_data_only().unwrap();
+
+        // Indexes still stale — find_by_type should not find segment data
+        assert!(
+            engine.find_by_type("FUNCTION").is_empty(),
+            "find_by_type should return empty before rebuild"
+        );
+
+        // Single rebuild at the end
+        engine.rebuild_indexes().unwrap();
+
+        // All data should be queryable
+        let functions = engine.find_by_type("FUNCTION");
+        assert_eq!(functions.len(), 3, "Should find funcA, funcB, funcD after rebuild");
+
+        let classes = engine.find_by_type("CLASS");
+        assert_eq!(classes.len(), 1, "Should find classC after rebuild");
+
+        assert_eq!(engine.node_count(), 4, "node_count should be 4");
+        assert_eq!(engine.edge_count(), 2, "edge_count should be 2");
+
+        // Adjacency rebuilt correctly
+        let neighbors_1 = engine.neighbors(1, &["CALLS"]);
+        assert_eq!(neighbors_1.len(), 1);
+        assert_eq!(neighbors_1[0], 2);
+
+        let neighbors_3 = engine.neighbors(3, &["CONTAINS"]);
+        assert_eq!(neighbors_3.len(), 1);
+        assert_eq!(neighbors_3[0], 4);
+    }
+
+    /// Test that flush_data_only() on an empty delta is a no-op
+    /// (same as flush() behavior on empty delta).
+    #[test]
+    fn test_flush_data_only_empty_delta_is_noop() {
+        use tempfile::tempdir;
+
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("test_flush_data_only_empty");
+        let mut engine = GraphEngine::create(&db_path).unwrap();
+
+        // No data added — flush_data_only should be a no-op
+        let result = engine.flush_data_only();
+        assert!(result.is_ok(), "flush_data_only on empty delta should succeed");
+
+        // rebuild_indexes on empty graph should also be a no-op
+        let result = engine.rebuild_indexes();
+        assert!(result.is_ok(), "rebuild_indexes on empty graph should succeed");
+
+        assert_eq!(engine.node_count(), 0);
+        assert_eq!(engine.edge_count(), 0);
+    }
+
+    /// Test that normal flush() still works correctly after flush_data_only()
+    /// was introduced — regression test for existing behavior.
+    #[test]
+    fn test_normal_flush_still_works_after_deferred_indexing_added() {
+        use tempfile::tempdir;
+
+        let temp_dir = tempdir().unwrap();
+        let db_path = temp_dir.path().join("test_normal_flush_regression");
+        let mut engine = GraphEngine::create(&db_path).unwrap();
+
+        engine.add_nodes(vec![
+            make_test_node(1, "funcA", "FUNCTION"),
+            make_test_node(2, "funcB", "FUNCTION"),
+        ]);
+        engine.add_edges(vec![
+            make_test_edge(1, 2, "CALLS"),
+        ], false);
+
+        // Normal flush — should still work exactly as before
+        engine.flush().unwrap();
+
+        // Indexes should be built immediately
+        let functions = engine.find_by_type("FUNCTION");
+        assert_eq!(functions.len(), 2, "Normal flush should build indexes immediately");
+
+        let neighbors = engine.neighbors(1, &["CALLS"]);
+        assert_eq!(neighbors.len(), 1, "Normal flush should build adjacency immediately");
+
+        assert_eq!(engine.node_count(), 2);
+        assert_eq!(engine.edge_count(), 1);
     }
 }

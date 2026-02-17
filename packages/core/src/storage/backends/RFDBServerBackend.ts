@@ -18,7 +18,7 @@
  *   await backend.flush();
  */
 
-import { RFDBClient } from '@grafema/rfdb-client';
+import { RFDBClient, type BatchHandle } from '@grafema/rfdb-client';
 import { existsSync, unlinkSync } from 'fs';
 import { spawn, type ChildProcess } from 'child_process';
 import { join, dirname } from 'path';
@@ -769,10 +769,13 @@ export class RFDBServerBackend {
   /**
    * Commit the current batch to the server atomically.
    * Returns a CommitDelta describing what changed.
+   *
+   * @param tags - Optional tags for the commit
+   * @param deferIndex - When true, server writes data but skips index rebuild.
    */
-  async commitBatch(tags?: string[]): Promise<CommitDelta> {
+  async commitBatch(tags?: string[], deferIndex?: boolean): Promise<CommitDelta> {
     if (!this.client) throw new Error('Not connected to RFDB server');
-    return this.client.commitBatch(tags);
+    return this.client.commitBatch(tags, deferIndex);
   }
 
   /**
@@ -820,6 +823,24 @@ export class RFDBServerBackend {
   abortBatch(): void {
     if (!this.client) throw new Error('Not connected to RFDB server');
     this.client.abortBatch();
+  }
+
+  /**
+   * Rebuild all secondary indexes after deferred-index commits (REG-487).
+   * Call this once after a series of commitBatch(tags, true) calls.
+   */
+  async rebuildIndexes(): Promise<void> {
+    if (!this.client) throw new Error('Not connected to RFDB server');
+    await this.client.rebuildIndexes();
+  }
+
+  /**
+   * Create an isolated batch handle for concurrent-safe batching (REG-487).
+   * Each handle has its own buffers — safe for parallel workers.
+   */
+  createBatch(): BatchHandle {
+    if (!this.client) throw new Error('Not connected to RFDB server');
+    return this.client.createBatch();
   }
 
   // ===========================================================================

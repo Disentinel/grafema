@@ -144,6 +144,13 @@ export interface PluginContext {
    * Available in all phases. Created by Orchestrator at run start.
    */
   resources?: ResourceRegistry;
+
+  /**
+   * When true, commitBatch should defer index rebuilding (REG-487).
+   * Used during initial/full analysis for O(1) per-commit cost.
+   * Caller must send rebuildIndexes() after all deferred commits complete.
+   */
+  deferIndexing?: boolean;
 }
 
 // === PLUGIN RESULT ===
@@ -316,8 +323,12 @@ export interface GraphBackend {
 
   // Batch operations (RFD-16: CommitBatch protocol)
   beginBatch?(): void;
-  commitBatch?(tags?: string[]): Promise<CommitDelta>;
+  commitBatch?(tags?: string[], deferIndex?: boolean): Promise<CommitDelta>;
   abortBatch?(): void;
+
+  // Deferred indexing (REG-487: bulk load optimization)
+  rebuildIndexes?(): Promise<void>;
+  createBatch?(): unknown;
 
   // Synchronous batch operations (REG-483: direct batch insertion)
   batchNode?(node: AnyBrandedNode): void;

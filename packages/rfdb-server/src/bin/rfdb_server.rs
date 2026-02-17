@@ -220,7 +220,15 @@ pub enum Request {
         tags: Option<Vec<String>>,
         #[serde(default, rename = "fileContext")]
         file_context: Option<String>,
+        /// When true, write data to disk but skip index rebuild.
+        /// Caller must send RebuildIndexes after all deferred commits complete.
+        #[serde(default, rename = "deferIndex")]
+        defer_index: bool,
     },
+
+    /// Rebuild all secondary indexes from current segment.
+    /// Send after a series of deferIndex=true CommitBatch commands.
+    RebuildIndexes,
 
     // ========================================================================
     // Protocol v3 Commands
@@ -749,6 +757,7 @@ fn get_operation_name(request: &Request) -> String {
         Request::EdgeCount => "EdgeCount".to_string(),
         Request::GetStats => "GetStats".to_string(),
         Request::CommitBatch { .. } => "CommitBatch".to_string(),
+        Request::RebuildIndexes => "RebuildIndexes".to_string(),
         Request::TagSnapshot { .. } => "TagSnapshot".to_string(),
         Request::FindSnapshot { .. } => "FindSnapshot".to_string(),
         Request::ListSnapshots { .. } => "ListSnapshots".to_string(),
@@ -1278,9 +1287,18 @@ fn handle_request(
             }
         }
 
-        Request::CommitBatch { changed_files, nodes, edges, tags: _, file_context } => {
+        Request::CommitBatch { changed_files, nodes, edges, tags: _, file_context, defer_index } => {
             with_engine_write(session, |engine| {
-                handle_commit_batch(engine, changed_files, nodes, edges, file_context)
+                handle_commit_batch(engine, changed_files, nodes, edges, file_context, defer_index)
+            })
+        }
+
+        Request::RebuildIndexes => {
+            with_engine_write(session, |engine| {
+                if let Err(e) = engine.rebuild_indexes() {
+                    return Response::Error { error: format!("Index rebuild failed: {}", e) };
+                }
+                Response::Ok { ok: true }
             })
         }
 
@@ -1479,6 +1497,7 @@ fn handle_commit_batch(
     nodes: Vec<WireNode>,
     edges: Vec<WireEdge>,
     file_context: Option<String>,
+    defer_index: bool,
 ) -> Response {
     // If file_context is set, ensure it's included in changed_files
     // so the deletion phase tombstones old enrichment edges for this context.
@@ -1572,7 +1591,12 @@ fn handle_commit_batch(
     };
     engine.add_edges(edge_records, true);
 
-    if let Err(e) = engine.flush() {
+    let flush_result = if defer_index {
+        engine.flush_data_only()
+    } else {
+        engine.flush()
+    };
+    if let Err(e) = flush_result {
         return Response::Error { error: format!("Flush failed during commit: {}", e) };
     }
 
@@ -2954,6 +2978,7 @@ mod protocol_tests {
             edges: vec![],
             tags: None,
             file_context: None,
+            defer_index: false,
         }, &None);
 
         // Verify delta
@@ -3006,6 +3031,7 @@ mod protocol_tests {
             edges: vec![],
             tags: None,
             file_context: None,
+            defer_index: false,
         }, &None);
 
         match response {
@@ -3042,6 +3068,7 @@ mod protocol_tests {
             edges: vec![],
             tags: None,
             file_context: None,
+            defer_index: false,
         }, &None);
 
         match response {
@@ -3103,6 +3130,7 @@ mod protocol_tests {
             edges: vec![],
             tags: None,
             file_context: None,
+            defer_index: false,
         }, &None);
 
         // Verify delta counts
@@ -3182,6 +3210,7 @@ mod protocol_tests {
             edges: vec![],
             tags: None,
             file_context: None,
+            defer_index: false,
         }, &None);
 
         match response {
@@ -3224,6 +3253,7 @@ mod protocol_tests {
             ],
             tags: None,
             file_context: Some(file_ctx.clone()),
+            defer_index: false,
         }, &None);
 
         match response {
@@ -3262,6 +3292,7 @@ mod protocol_tests {
             ],
             tags: None,
             file_context: Some(file_ctx.clone()),
+            defer_index: false,
         }, &None);
 
         match response2 {
@@ -3314,6 +3345,7 @@ mod protocol_tests {
             ],
             tags: None,
             file_context: None,
+            defer_index: false,
         }, &None);
 
         match response {
@@ -4158,5 +4190,286 @@ mod protocol_tests {
 
         let chunk_count = reader_handle.join().expect("Reader thread panicked");
         assert!(chunk_count > 0, "Should have received at least one chunk");
+    }
+
+    // ============================================================================
+    // REG-487: Deferred Indexing Protocol Tests
+    // ============================================================================
+
+    /// Test that CommitBatch with deferIndex=true is accepted and data is persisted.
+    /// Note: DatabaseManager creates V2 engines where flush_data_only falls back
+    /// to full flush. The actual deferred indexing optimization runs on V1 engine
+    /// (tested in engine.rs tests). This test verifies protocol plumbing.
+    #[test]
+    fn test_commit_batch_with_defer_index() {
+        let (_dir, manager) = setup_test_manager();
+        let mut session = ClientSession::new(1);
+        setup_ephemeral_db(&manager, &mut session, "defer_idx_test");
+
+        // CommitBatch with deferIndex=true
+        let response = handle_request(&manager, &mut session, Request::CommitBatch {
+            changed_files: vec!["mod_a.js".to_string()],
+            nodes: vec![
+                WireNode {
+                    semantic_id: None,
+                    id: "d1".to_string(),
+                    node_type: Some("FUNCTION".to_string()),
+                    name: Some("deferredFunc".to_string()),
+                    file: Some("mod_a.js".to_string()),
+                    exported: false,
+                    metadata: None,
+                },
+                WireNode {
+                    semantic_id: None,
+                    id: "d2".to_string(),
+                    node_type: Some("CLASS".to_string()),
+                    name: Some("deferredClass".to_string()),
+                    file: Some("mod_a.js".to_string()),
+                    exported: true,
+                    metadata: None,
+                },
+            ],
+            edges: vec![],
+            tags: None,
+            file_context: None,
+            defer_index: true,
+        }, &None);
+
+        // Verify: CommitBatch succeeds with correct delta
+        match response {
+            Response::BatchCommitted { ok, delta } => {
+                assert!(ok);
+                assert_eq!(delta.nodes_added, 2, "Should report 2 nodes added");
+                assert_eq!(delta.changed_files, vec!["mod_a.js".to_string()]);
+            }
+            _ => panic!("Expected BatchCommitted, got {:?}", response),
+        }
+
+        // Send RebuildIndexes — should succeed
+        let rebuild_response = handle_request(
+            &manager,
+            &mut session,
+            Request::RebuildIndexes,
+            &None,
+        );
+        match rebuild_response {
+            Response::Ok { ok } => assert!(ok, "RebuildIndexes should return Ok"),
+            _ => panic!("Expected Ok response for RebuildIndexes, got {:?}", rebuild_response),
+        }
+
+        // After rebuild, nodes should be findable
+        let find_response = handle_request(&manager, &mut session, Request::FindByType {
+            node_type: "FUNCTION".to_string(),
+        }, &None);
+        match find_response {
+            Response::Ids { ids } => {
+                assert_eq!(
+                    ids.len(), 1,
+                    "FindByType(FUNCTION) should return 1 result after RebuildIndexes"
+                );
+            }
+            _ => panic!("Expected Ids response"),
+        }
+
+        let find_class = handle_request(&manager, &mut session, Request::FindByType {
+            node_type: "CLASS".to_string(),
+        }, &None);
+        match find_class {
+            Response::Ids { ids } => {
+                assert_eq!(ids.len(), 1, "FindByType(CLASS) should return 1 result after RebuildIndexes");
+            }
+            _ => panic!("Expected Ids response"),
+        }
+    }
+
+    /// Test that CommitBatch with defer_index=false (the default) immediately
+    /// makes nodes findable — existing behavior preserved.
+    #[test]
+    fn test_commit_batch_default_index_behavior() {
+        let (_dir, manager) = setup_test_manager();
+        let mut session = ClientSession::new(1);
+        setup_ephemeral_db(&manager, &mut session, "default_idx_test");
+
+        // CommitBatch with defer_index=false (the default)
+        let response = handle_request(&manager, &mut session, Request::CommitBatch {
+            changed_files: vec!["app.js".to_string()],
+            nodes: vec![
+                WireNode {
+                    semantic_id: None,
+                    id: "n1".to_string(),
+                    node_type: Some("FUNCTION".to_string()),
+                    name: Some("immediateFunc".to_string()),
+                    file: Some("app.js".to_string()),
+                    exported: false,
+                    metadata: None,
+                },
+            ],
+            edges: vec![],
+            tags: None,
+            file_context: None,
+            defer_index: false,
+        }, &None);
+
+        match response {
+            Response::BatchCommitted { ok, delta } => {
+                assert!(ok);
+                assert_eq!(delta.nodes_added, 1);
+            }
+            _ => panic!("Expected BatchCommitted"),
+        }
+
+        // Verify: nodes ARE immediately findable (existing behavior)
+        let find_response = handle_request(&manager, &mut session, Request::FindByType {
+            node_type: "FUNCTION".to_string(),
+        }, &None);
+        match find_response {
+            Response::Ids { ids } => {
+                assert_eq!(
+                    ids.len(), 1,
+                    "FindByType should return 1 result immediately with defer_index=false"
+                );
+            }
+            _ => panic!("Expected Ids response"),
+        }
+    }
+
+    /// Test that multiple commits with deferIndex=true followed by RebuildIndexes
+    /// produces correct results. Verifies protocol-level deferred commit accumulation.
+    #[test]
+    fn test_multiple_deferred_commits_then_rebuild() {
+        let (_dir, manager) = setup_test_manager();
+        let mut session = ClientSession::new(1);
+        setup_ephemeral_db(&manager, &mut session, "multi_defer_test");
+
+        // First deferred commit
+        handle_request(&manager, &mut session, Request::CommitBatch {
+            changed_files: vec!["a.js".to_string()],
+            nodes: vec![
+                WireNode { semantic_id: None, id: "m1".to_string(), node_type: Some("MODULE".to_string()), name: Some("modA".to_string()), file: Some("a.js".to_string()), exported: false, metadata: None },
+                WireNode { semantic_id: None, id: "f1".to_string(), node_type: Some("FUNCTION".to_string()), name: Some("funcA".to_string()), file: Some("a.js".to_string()), exported: true, metadata: None },
+            ],
+            edges: vec![],
+            tags: None,
+            file_context: None,
+            defer_index: true,
+        }, &None);
+
+        // Second deferred commit
+        handle_request(&manager, &mut session, Request::CommitBatch {
+            changed_files: vec!["b.js".to_string()],
+            nodes: vec![
+                WireNode { semantic_id: None, id: "m2".to_string(), node_type: Some("MODULE".to_string()), name: Some("modB".to_string()), file: Some("b.js".to_string()), exported: false, metadata: None },
+                WireNode { semantic_id: None, id: "f2".to_string(), node_type: Some("FUNCTION".to_string()), name: Some("funcB".to_string()), file: Some("b.js".to_string()), exported: false, metadata: None },
+            ],
+            edges: vec![
+                WireEdge { src: "f1".to_string(), dst: "f2".to_string(), edge_type: Some("CALLS".to_string()), metadata: None },
+            ],
+            tags: None,
+            file_context: None,
+            defer_index: true,
+        }, &None);
+
+        // Third deferred commit
+        handle_request(&manager, &mut session, Request::CommitBatch {
+            changed_files: vec!["c.js".to_string()],
+            nodes: vec![
+                WireNode { semantic_id: None, id: "c1".to_string(), node_type: Some("CLASS".to_string()), name: Some("MyClass".to_string()), file: Some("c.js".to_string()), exported: true, metadata: None },
+            ],
+            edges: vec![],
+            tags: None,
+            file_context: None,
+            defer_index: true,
+        }, &None);
+
+        // Rebuild
+        let rebuild = handle_request(&manager, &mut session, Request::RebuildIndexes, &None);
+        match rebuild {
+            Response::Ok { ok } => assert!(ok),
+            _ => panic!("Expected Ok for RebuildIndexes"),
+        }
+
+        // ALL data from all three commits should be findable after rebuild
+        let find_modules = handle_request(&manager, &mut session, Request::FindByType {
+            node_type: "MODULE".to_string(),
+        }, &None);
+        match find_modules {
+            Response::Ids { ids } => assert_eq!(ids.len(), 2, "Should find 2 MODULEs after rebuild"),
+            _ => panic!("Expected Ids"),
+        }
+
+        let find_functions = handle_request(&manager, &mut session, Request::FindByType {
+            node_type: "FUNCTION".to_string(),
+        }, &None);
+        match find_functions {
+            Response::Ids { ids } => assert_eq!(ids.len(), 2, "Should find 2 FUNCTIONs after rebuild"),
+            _ => panic!("Expected Ids"),
+        }
+
+        let find_classes = handle_request(&manager, &mut session, Request::FindByType {
+            node_type: "CLASS".to_string(),
+        }, &None);
+        match find_classes {
+            Response::Ids { ids } => assert_eq!(ids.len(), 1, "Should find 1 CLASS after rebuild"),
+            _ => panic!("Expected Ids"),
+        }
+    }
+
+    /// Test that RebuildIndexes on an empty database is a safe no-op.
+    #[test]
+    fn test_rebuild_indexes_on_empty_graph() {
+        let (_dir, manager) = setup_test_manager();
+        let mut session = ClientSession::new(1);
+        setup_ephemeral_db(&manager, &mut session, "empty_rebuild_test");
+
+        // RebuildIndexes on empty database should succeed
+        let response = handle_request(&manager, &mut session, Request::RebuildIndexes, &None);
+        match response {
+            Response::Ok { ok } => assert!(ok, "RebuildIndexes on empty graph should succeed"),
+            _ => panic!("Expected Ok for RebuildIndexes on empty graph, got {:?}", response),
+        }
+    }
+
+    /// Test that RebuildIndexes is idempotent at the protocol level.
+    #[test]
+    fn test_rebuild_indexes_idempotent_protocol() {
+        let (_dir, manager) = setup_test_manager();
+        let mut session = ClientSession::new(1);
+        setup_ephemeral_db(&manager, &mut session, "idempotent_rebuild");
+
+        // Add data
+        handle_request(&manager, &mut session, Request::CommitBatch {
+            changed_files: vec!["x.js".to_string()],
+            nodes: vec![
+                WireNode { semantic_id: None, id: "x1".to_string(), node_type: Some("FUNCTION".to_string()), name: Some("f1".to_string()), file: Some("x.js".to_string()), exported: false, metadata: None },
+                WireNode { semantic_id: None, id: "x2".to_string(), node_type: Some("FUNCTION".to_string()), name: Some("f2".to_string()), file: Some("x.js".to_string()), exported: false, metadata: None },
+            ],
+            edges: vec![],
+            tags: None,
+            file_context: None,
+            defer_index: true,
+        }, &None);
+
+        // First rebuild
+        handle_request(&manager, &mut session, Request::RebuildIndexes, &None);
+        let find1 = handle_request(&manager, &mut session, Request::FindByType {
+            node_type: "FUNCTION".to_string(),
+        }, &None);
+        let count1 = match find1 {
+            Response::Ids { ids } => ids.len(),
+            _ => panic!("Expected Ids"),
+        };
+
+        // Second rebuild (should produce same results)
+        handle_request(&manager, &mut session, Request::RebuildIndexes, &None);
+        let find2 = handle_request(&manager, &mut session, Request::FindByType {
+            node_type: "FUNCTION".to_string(),
+        }, &None);
+        let count2 = match find2 {
+            Response::Ids { ids } => ids.len(),
+            _ => panic!("Expected Ids"),
+        };
+
+        assert_eq!(count1, count2, "RebuildIndexes should be idempotent: same result count after two rebuilds");
+        assert_eq!(count1, 2, "Should find 2 FUNCTIONs");
     }
 }
