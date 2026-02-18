@@ -51,6 +51,7 @@ interface ImportInfo {
   specifiers: ImportSpecifierInfo[];
   line: number;
   column?: number;
+  importKind?: 'value' | 'type' | 'typeof';  // TypeScript: import type { ... }
   isDynamic?: boolean;         // true for dynamic import() expressions
   isResolvable?: boolean;      // true if path is a string literal (statically analyzable)
   dynamicPath?: string;        // original expression for template/variable paths
@@ -135,7 +136,8 @@ export class ImportExportVisitor extends ASTVisitor {
           source,
           specifiers,
           line: getLine(node),
-          column: getColumn(node)
+          column: getColumn(node),
+          importKind: (node as ImportDeclaration & { importKind?: string }).importKind as ImportInfo['importKind']
         });
       },
 

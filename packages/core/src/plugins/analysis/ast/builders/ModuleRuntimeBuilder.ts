@@ -52,7 +52,7 @@ export class ModuleRuntimeBuilder implements DomainBuilder {
 
   private bufferImportNodes(module: ModuleNode, imports: ImportInfo[]): void {
     for (const imp of imports) {
-      const { source, specifiers, line, column, isDynamic, isResolvable, dynamicPath } = imp;
+      const { source, specifiers, line, column, importKind, isDynamic, isResolvable, dynamicPath } = imp;
 
       // REG-273: Handle side-effect-only imports (no specifiers)
       if (specifiers.length === 0) {
@@ -66,7 +66,8 @@ export class ModuleRuntimeBuilder implements DomainBuilder {
           {
             imported: '*',      // no specific export
             local: source,      // source becomes local
-            sideEffect: true    // mark as side-effect import
+            sideEffect: true,   // mark as side-effect import
+            importBinding: importKind || 'value'
           }
         );
 
@@ -110,6 +111,7 @@ export class ModuleRuntimeBuilder implements DomainBuilder {
               imported: spec.imported,
               local: spec.local,
               sideEffect: false,  // regular imports are not side-effects
+              importBinding: importKind || 'value',
               // importType is auto-detected from imported field
               // Dynamic import fields
               isDynamic,

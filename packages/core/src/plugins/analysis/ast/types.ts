@@ -502,6 +502,7 @@ export interface ImportInfo {
   line: number;
   column?: number;  // Column position for ImportNode
   specifiers: ImportSpecifier[];
+  importKind?: 'value' | 'type' | 'typeof';  // TypeScript: import type { ... }
   isDynamic?: boolean;         // true for dynamic import() expressions
   isResolvable?: boolean;      // true if path is a string literal (statically analyzable)
   dynamicPath?: string;        // original expression for template/variable paths

@@ -102,20 +102,30 @@ export class ImportExportLinker extends Plugin {
       const currentDir = dirname(imp.file!);
       const basePath = join(currentDir, imp.source!);
 
-      // Try different extensions
+      // Build candidate paths: append extensions + TypeScript .js→.ts redirect
+      const candidates: string[] = [];
       const extensions = ['', '.js', '.ts', '.jsx', '.tsx', '/index.js', '/index.ts'];
+      for (const ext of extensions) {
+        candidates.push(basePath + ext);
+      }
+      // TypeScript convention: imports use .js but actual files are .ts
+      if (basePath.endsWith('.js')) {
+        candidates.push(basePath.slice(0, -3) + '.ts');
+        candidates.push(basePath.slice(0, -3) + '.tsx');
+      } else if (basePath.endsWith('.jsx')) {
+        candidates.push(basePath.slice(0, -4) + '.tsx');
+      }
+
       let targetFile: string | null = null;
       let targetExports: Map<string, ExportNode> | null = null;
 
-      for (const ext of extensions) {
-        const testPath = basePath + ext;
+      for (const testPath of candidates) {
         if (exportIndex.has(testPath)) {
           targetFile = testPath;
           targetExports = exportIndex.get(testPath)!;
           break;
         }
-        // Also check modulesByFile in case exports haven't been indexed yet
-        if (!targetFile && modulesByFile.has(testPath)) {
+        if (modulesByFile.has(testPath)) {
           targetFile = testPath;
           targetExports = exportIndex.get(testPath) || new Map();
           break;
