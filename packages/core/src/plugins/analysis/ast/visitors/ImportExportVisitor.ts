@@ -41,6 +41,7 @@ export type ExtractVariableNamesCallback = (pattern: Node) => VariableInfo[];
 interface ImportSpecifierInfo {
   imported: string;
   local: string;
+  importKind?: 'value' | 'type' | 'typeof';  // specifier-level: import { type X } from '...'
 }
 
 /**
@@ -107,13 +108,16 @@ export class ImportExportVisitor extends ASTVisitor {
         node.specifiers.forEach((spec) => {
           if (spec.type === 'ImportSpecifier') {
             // import { foo, bar } from './module'
+            // import { type Foo, bar } from './module' (specifier-level type)
             const importSpec = spec as ImportSpecifier;
             const importedName = importSpec.imported.type === 'Identifier'
               ? importSpec.imported.name
               : importSpec.imported.value;
+            const specKind = (importSpec as ImportSpecifier & { importKind?: string }).importKind;
             specifiers.push({
               imported: importedName,
-              local: importSpec.local.name
+              local: importSpec.local.name,
+              importKind: specKind as ImportSpecifierInfo['importKind']
             });
           } else if (spec.type === 'ImportDefaultSpecifier') {
             // import foo from './module'

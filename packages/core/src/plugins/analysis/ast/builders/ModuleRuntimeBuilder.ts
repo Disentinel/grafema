@@ -111,7 +111,7 @@ export class ModuleRuntimeBuilder implements DomainBuilder {
               imported: spec.imported,
               local: spec.local,
               sideEffect: false,  // regular imports are not side-effects
-              importBinding: importKind || 'value',
+              importBinding: spec.importKind === 'type' ? 'type' : (importKind || 'value'),
               // importType is auto-detected from imported field
               // Dynamic import fields
               isDynamic,

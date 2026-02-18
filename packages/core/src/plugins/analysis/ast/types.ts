@@ -511,6 +511,7 @@ export interface ImportInfo {
 export interface ImportSpecifier {
   imported: string;  // имя в экспортируемом модуле (default, *, или имя)
   local: string;     // имя в текущем модуле
+  importKind?: 'value' | 'type' | 'typeof';  // specifier-level: import { type X } from '...'
 }
 
 // === EXPORT INFO ===
