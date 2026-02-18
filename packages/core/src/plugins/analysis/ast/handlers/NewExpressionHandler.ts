@@ -47,7 +47,8 @@ export class NewExpressionHandler extends FunctionBodyHandler {
               isBuiltin,
               file: ctx.module.file,
               line,
-              column
+              column,
+              parentScopeId: ctx.getCurrentScopeId()
             });
 
             // REG-334: If this is Promise constructor with executor callback,

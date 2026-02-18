@@ -7872,6 +7872,11 @@
       "to": "CALL:EventEmitter"
     },
     {
+      "from": "SCOPE:createEmitter:body",
+      "type": "CONTAINS",
+      "to": "CONSTRUCTOR_CALL:new EventEmitter()"
+    },
+    {
       "from": "SCOPE:createServerWithNodePrefix:body",
       "type": "CONTAINS",
       "to": "CALL:createServer"
@@ -7977,6 +7982,11 @@
       "to": "CALL:Worker"
     },
     {
+      "from": "SCOPE:if:36:2:0",
+      "type": "CONTAINS",
+      "to": "CONSTRUCTOR_CALL:new Worker()"
+    },
+    {
       "from": "SCOPE:inspectObject:body",
       "type": "CONTAINS",
       "to": "CALL:util.inspect"
@@ -8019,12 +8029,22 @@
     {
       "from": "SCOPE:loadConfig:body",
       "type": "CONTAINS",
+      "to": "CONSTRUCTOR_CALL:new Promise()"
+    },
+    {
+      "from": "SCOPE:loadConfig:body",
+      "type": "CONTAINS",
       "to": "FUNCTION:anonymous[0]"
     },
     {
       "from": "SCOPE:loadViaNamespace:body",
       "type": "CONTAINS",
       "to": "CALL:Promise"
+    },
+    {
+      "from": "SCOPE:loadViaNamespace:body",
+      "type": "CONTAINS",
+      "to": "CONSTRUCTOR_CALL:new Promise()"
     },
     {
       "from": "SCOPE:loadViaNamespace:body",
@@ -8035,6 +8055,11 @@
       "from": "SCOPE:loadWithAlias:body",
       "type": "CONTAINS",
       "to": "CALL:Promise"
+    },
+    {
+      "from": "SCOPE:loadWithAlias:body",
+      "type": "CONTAINS",
+      "to": "CONSTRUCTOR_CALL:new Promise()"
     },
     {
       "from": "SCOPE:loadWithAlias:body",
@@ -8065,6 +8090,11 @@
       "from": "SCOPE:onlyReadFile:body",
       "type": "CONTAINS",
       "to": "CALL:Promise"
+    },
+    {
+      "from": "SCOPE:onlyReadFile:body",
+      "type": "CONTAINS",
+      "to": "CONSTRUCTOR_CALL:new Promise()"
     },
     {
       "from": "SCOPE:onlyReadFile:body",
@@ -8130,6 +8160,11 @@
       "from": "SCOPE:saveWithAlias:body",
       "type": "CONTAINS",
       "to": "CALL:Promise"
+    },
+    {
+      "from": "SCOPE:saveWithAlias:body",
+      "type": "CONTAINS",
+      "to": "CONSTRUCTOR_CALL:new Promise()"
     },
     {
       "from": "SCOPE:saveWithAlias:body",

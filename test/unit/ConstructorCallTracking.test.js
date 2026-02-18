@@ -597,6 +597,177 @@ const date = new Date();
   });
 
   // ============================================================================
+  // CONTAINS edges for CONSTRUCTOR_CALL nodes (REG-491)
+  // ============================================================================
+  describe('CONTAINS edges for CONSTRUCTOR_CALL nodes', () => {
+    it('should create CONTAINS edge from MODULE to module-level assigned constructor call', async () => {
+      await setupTest(backend, {
+        'index.js': `const x = new Foo();`
+      });
+
+      const allNodes = await backend.getAllNodes();
+      const allEdges = await backend.getAllEdges();
+
+      // Find the CONSTRUCTOR_CALL node
+      const constructorCall = allNodes.find(n =>
+        n.type === 'CONSTRUCTOR_CALL' && n.className === 'Foo'
+      );
+      assert.ok(constructorCall, 'CONSTRUCTOR_CALL node for Foo not found');
+
+      // Find the MODULE node
+      const moduleNode = allNodes.find(n =>
+        n.type === 'MODULE' && n.file.endsWith('index.js')
+      );
+      assert.ok(moduleNode, 'MODULE node not found');
+
+      // Verify CONTAINS edge from MODULE to CONSTRUCTOR_CALL
+      const containsEdge = allEdges.find(e =>
+        e.type === 'CONTAINS' &&
+        e.src === moduleNode.id &&
+        e.dst === constructorCall.id
+      );
+      assert.ok(
+        containsEdge,
+        `CONTAINS edge from MODULE (${moduleNode.id}) to CONSTRUCTOR_CALL (${constructorCall.id}) not found. ` +
+        `CONTAINS edges: ${JSON.stringify(allEdges.filter(e => e.type === 'CONTAINS'))}`
+      );
+    });
+
+    it('should create CONTAINS edge from function scope to function-scoped assigned constructor call', async () => {
+      await setupTest(backend, {
+        'index.js': `
+function f() {
+  const x = new Foo();
+}
+        `
+      });
+
+      const allNodes = await backend.getAllNodes();
+      const allEdges = await backend.getAllEdges();
+
+      // Find the CONSTRUCTOR_CALL node
+      const constructorCall = allNodes.find(n =>
+        n.type === 'CONSTRUCTOR_CALL' && n.className === 'Foo'
+      );
+      assert.ok(constructorCall, 'CONSTRUCTOR_CALL node for Foo not found');
+
+      // Verify CONTAINS edge exists targeting this CONSTRUCTOR_CALL
+      const containsEdge = allEdges.find(e =>
+        e.type === 'CONTAINS' && e.dst === constructorCall.id
+      );
+      assert.ok(
+        containsEdge,
+        `CONTAINS edge to CONSTRUCTOR_CALL (${constructorCall.id}) not found. ` +
+        `CONTAINS edges: ${JSON.stringify(allEdges.filter(e => e.type === 'CONTAINS'))}`
+      );
+
+      // The source should NOT be a MODULE node (should be a function scope)
+      const moduleNode = allNodes.find(n => n.type === 'MODULE');
+      assert.notStrictEqual(
+        containsEdge.src, moduleNode?.id,
+        'CONTAINS edge src should be function scope, not MODULE'
+      );
+    });
+
+    it('should create CONTAINS edge for thrown unassigned constructor call', async () => {
+      await setupTest(backend, {
+        'index.js': `
+function f() {
+  throw new Error('something went wrong');
+}
+        `
+      });
+
+      const allNodes = await backend.getAllNodes();
+      const allEdges = await backend.getAllEdges();
+
+      // Find the CONSTRUCTOR_CALL node for Error
+      const constructorCall = allNodes.find(n =>
+        n.type === 'CONSTRUCTOR_CALL' && n.className === 'Error'
+      );
+      assert.ok(constructorCall, 'CONSTRUCTOR_CALL node for Error not found');
+
+      // This constructor call is NOT assigned to a variable — no ASSIGNED_FROM edge expected
+      const assignedFromEdge = allEdges.find(e =>
+        e.type === 'ASSIGNED_FROM' && e.dst === constructorCall.id
+      );
+      // Verify it has NO ASSIGNED_FROM (it's thrown, not assigned)
+      assert.ok(
+        !assignedFromEdge,
+        'Thrown constructor call should NOT have ASSIGNED_FROM edge'
+      );
+
+      // But it SHOULD have a CONTAINS edge from function scope
+      const containsEdge = allEdges.find(e =>
+        e.type === 'CONTAINS' && e.dst === constructorCall.id
+      );
+      assert.ok(
+        containsEdge,
+        `CONTAINS edge to thrown CONSTRUCTOR_CALL (${constructorCall.id}) not found. ` +
+        `This is the key fix — unassigned constructor calls need CONTAINS edges.`
+      );
+    });
+
+    it('should create CONTAINS edge for constructor call passed as argument', async () => {
+      await setupTest(backend, {
+        'index.js': `
+function f() {
+  console.log(new Foo());
+}
+        `
+      });
+
+      const allNodes = await backend.getAllNodes();
+      const allEdges = await backend.getAllEdges();
+
+      // Find the CONSTRUCTOR_CALL node for Foo
+      const constructorCall = allNodes.find(n =>
+        n.type === 'CONSTRUCTOR_CALL' && n.className === 'Foo'
+      );
+      assert.ok(constructorCall, 'CONSTRUCTOR_CALL node for Foo not found');
+
+      // Verify CONTAINS edge exists
+      const containsEdge = allEdges.find(e =>
+        e.type === 'CONTAINS' && e.dst === constructorCall.id
+      );
+      assert.ok(
+        containsEdge,
+        `CONTAINS edge to argument CONSTRUCTOR_CALL (${constructorCall.id}) not found. ` +
+        `Unassigned constructor calls passed as arguments need CONTAINS edges.`
+      );
+    });
+
+    it('should create CONTAINS edge for constructor call in return statement', async () => {
+      await setupTest(backend, {
+        'index.js': `
+function f() {
+  return new Foo();
+}
+        `
+      });
+
+      const allNodes = await backend.getAllNodes();
+      const allEdges = await backend.getAllEdges();
+
+      // Find the CONSTRUCTOR_CALL node for Foo
+      const constructorCall = allNodes.find(n =>
+        n.type === 'CONSTRUCTOR_CALL' && n.className === 'Foo'
+      );
+      assert.ok(constructorCall, 'CONSTRUCTOR_CALL node for Foo not found');
+
+      // Verify CONTAINS edge exists
+      const containsEdge = allEdges.find(e =>
+        e.type === 'CONTAINS' && e.dst === constructorCall.id
+      );
+      assert.ok(
+        containsEdge,
+        `CONTAINS edge to returned CONSTRUCTOR_CALL (${constructorCall.id}) not found. ` +
+        `Unassigned constructor calls in return statements need CONTAINS edges.`
+      );
+    });
+  });
+
+  // ============================================================================
   // No INVOKES edges (as per simplified spec)
   // ============================================================================
   describe('No INVOKES edges', () => {

@@ -2295,6 +2295,11 @@
     },
     {
       "from": "SCOPE:authFetch:body",
+      "type": "CONTAINS",
+      "to": "CONSTRUCTOR_CALL:new Headers()"
+    },
+    {
+      "from": "SCOPE:authFetch:body",
       "type": "DECLARES",
       "to": "CONSTANT:headers"
     },
