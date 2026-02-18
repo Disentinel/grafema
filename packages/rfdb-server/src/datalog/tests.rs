@@ -1894,6 +1894,104 @@ mod eval_tests {
         assert_eq!(results.len(), 0); // Edge doesn't exist
     }
 
+    // ============================================================================
+    // EvaluatorExplain Tests (REG-503)
+    // ============================================================================
+
+    #[test]
+    fn test_explain_eval_query_produces_steps() {
+        use crate::datalog::eval_explain::EvaluatorExplain;
+
+        let engine = setup_test_graph();
+        let mut evaluator = EvaluatorExplain::new(&engine, true);
+
+        let literals = parse_query("node(X, \"queue:publish\")").unwrap();
+        let result = evaluator.eval_query(&literals);
+
+        assert!(!result.explain_steps.is_empty(), "explain_steps should be non-empty when explain=true");
+        assert_eq!(result.explain_steps[0].step, 1);
+    }
+
+    #[test]
+    fn test_explain_eval_query_no_explain_empty_steps() {
+        use crate::datalog::eval_explain::EvaluatorExplain;
+
+        let engine = setup_test_graph();
+        let mut evaluator = EvaluatorExplain::new(&engine, false);
+
+        let literals = parse_query("node(X, \"queue:publish\")").unwrap();
+        let result = evaluator.eval_query(&literals);
+
+        assert!(result.explain_steps.is_empty(), "explain_steps should be empty when explain=false");
+        assert_eq!(result.bindings.len(), 2, "should still produce correct bindings");
+    }
+
+    #[test]
+    fn test_explain_query_produces_steps() {
+        use crate::datalog::eval_explain::EvaluatorExplain;
+
+        let engine = setup_test_graph();
+        let mut evaluator = EvaluatorExplain::new(&engine, true);
+
+        let atom = parse_atom("node(X, \"queue:publish\")").unwrap();
+        let result = evaluator.query(&atom);
+
+        assert!(!result.explain_steps.is_empty(), "explain_steps should be non-empty for query() with explain=true");
+    }
+
+    #[test]
+    fn test_explain_bindings_match_plain_evaluator() {
+        use crate::datalog::eval_explain::EvaluatorExplain;
+
+        let engine = setup_test_graph();
+
+        // Run with plain Evaluator
+        let evaluator = Evaluator::new(&engine);
+        let literals = parse_query("node(X, \"queue:publish\")").unwrap();
+        let plain_bindings = evaluator.eval_query(&literals);
+
+        // Run with EvaluatorExplain
+        let mut explain_eval = EvaluatorExplain::new(&engine, true);
+        let literals2 = parse_query("node(X, \"queue:publish\")").unwrap();
+        let explain_result = explain_eval.eval_query(&literals2);
+
+        // Both should produce the same number of results
+        assert_eq!(plain_bindings.len(), explain_result.bindings.len(),
+            "plain evaluator and explain evaluator should produce same number of results");
+
+        // Collect binding values as sorted sets for comparison
+        let mut plain_values: Vec<String> = plain_bindings.iter()
+            .filter_map(|b| b.get("X").map(|v| v.as_str()))
+            .collect();
+        plain_values.sort();
+
+        let mut explain_values: Vec<String> = explain_result.bindings.iter()
+            .filter_map(|b| b.get("X").map(|s| s.clone()))
+            .collect();
+        explain_values.sort();
+
+        assert_eq!(plain_values, explain_values,
+            "binding values should match between plain and explain evaluators");
+    }
+
+    #[test]
+    fn test_explain_stats_populated() {
+        use crate::datalog::eval_explain::EvaluatorExplain;
+
+        let engine = setup_test_graph();
+        let mut evaluator = EvaluatorExplain::new(&engine, true);
+
+        let literals = parse_query("node(X, \"queue:publish\")").unwrap();
+        let result = evaluator.eval_query(&literals);
+
+        assert!(result.stats.nodes_visited > 0,
+            "stats.nodes_visited should be > 0 after querying nodes");
+        assert!(result.stats.find_by_type_calls > 0,
+            "stats.find_by_type_calls should be > 0 after node query by type");
+        assert_eq!(result.stats.total_results, 2,
+            "stats.total_results should match number of bindings");
+    }
+
     #[test]
     fn test_eval_attr_edge_in_rule() {
         // Test attr_edge() used in a Datalog rule context
