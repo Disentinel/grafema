@@ -25,6 +25,7 @@ import { join, dirname } from 'path';
 import type { WireNode, WireEdge, FieldDeclaration, CommitDelta, AttrQuery as RFDBAttrQuery } from '@grafema/types';
 import type { NodeType, EdgeType } from '@grafema/types';
 import { startRfdbServer } from '../../utils/startRfdbServer.js';
+import { GRAFEMA_VERSION, getSchemaVersion } from '../../version.js';
 import type { BaseNodeRecord, EdgeRecord, AnyBrandedNode } from '@grafema/types';
 import { brandNodeInternal } from '../../core/brandNodeInternal.js';
 import type { AttrQuery, GraphStats, GraphExport } from '../../core/GraphBackend.js';
@@ -225,9 +226,28 @@ export class RFDBServerBackend {
     try {
       const hello = await this.client.hello(3);
       this.protocolVersion = hello.protocolVersion;
+      this._checkServerVersion(hello.serverVersion);
     } catch {
       // Server predates hello command or doesn't support v3 — safe v2 fallback
       this.protocolVersion = 2;
+      this.log('[RFDBServerBackend] WARNING: Server does not support version negotiation. Consider updating rfdb-server.');
+    }
+  }
+
+  /**
+   * Validate server version against expected client version.
+   * Warns on mismatch but never fails — version differences are informational.
+   */
+  private _checkServerVersion(serverVersion: string): void {
+    if (!serverVersion) return;
+    const expected = getSchemaVersion(GRAFEMA_VERSION);
+    const actual = getSchemaVersion(serverVersion);
+    if (actual !== expected) {
+      this.log(
+        `[RFDBServerBackend] WARNING: rfdb-server version mismatch — ` +
+        `server v${serverVersion}, expected v${GRAFEMA_VERSION}. ` +
+        `Update with: grafema server restart`
+      );
     }
   }
 
