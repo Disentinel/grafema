@@ -338,6 +338,7 @@ export interface ConstructorCallInfo {
   file: string;
   line: number;
   column: number;
+  parentScopeId?: string;
 }
 
 // === CLASS DECLARATION INFO ===

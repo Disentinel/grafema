@@ -311,6 +311,15 @@ export class GraphBuilder {
         line: constructorCall.line,
         column: constructorCall.column
       } as GraphNode);
+
+      // SCOPE -> CONTAINS -> CONSTRUCTOR_CALL
+      if (constructorCall.parentScopeId) {
+        this._bufferEdge({
+          type: 'CONTAINS',
+          src: constructorCall.parentScopeId,
+          dst: constructorCall.id
+        });
+      }
     }
 
     // Phase 2: Delegate to domain builders

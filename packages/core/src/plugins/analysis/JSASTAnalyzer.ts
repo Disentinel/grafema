@@ -1735,6 +1735,11 @@ export class JSASTAnalyzer extends Plugin {
           if (processedConstructorCalls.has(nodeKey)) {
             return;
           }
+
+          // Skip in-function calls — handled by NewExpressionHandler in analyzeFunctionBody
+          const functionParent = newPath.getFunctionParent();
+          if (functionParent) return;
+
           processedConstructorCalls.add(nodeKey);
 
           // Determine className from callee
@@ -1758,7 +1763,8 @@ export class JSASTAnalyzer extends Plugin {
               isBuiltin,
               file: module.file,
               line,
-              column
+              column,
+              parentScopeId: module.id
             });
 
             // REG-334: If this is Promise constructor with executor callback,
