@@ -36854,6 +36854,16 @@
     {
       "from": "MODULE:app.js",
       "type": "CONTAINS",
+      "to": "CONSTRUCTOR_CALL:new AppConfig()"
+    },
+    {
+      "from": "MODULE:app.js",
+      "type": "CONTAINS",
+      "to": "CONSTRUCTOR_CALL:new express()"
+    },
+    {
+      "from": "MODULE:app.js",
+      "type": "CONTAINS",
       "to": "event:listener:SIGINT"
     },
     {
@@ -37315,6 +37325,11 @@
       "from": "MODULE:models/User.js",
       "type": "CONTAINS",
       "to": "CALL:userSchema.virtual"
+    },
+    {
+      "from": "MODULE:models/User.js",
+      "type": "CONTAINS",
+      "to": "CONSTRUCTOR_CALL:new Schema()"
     },
     {
       "from": "MODULE:models/User.js",
@@ -38491,6 +38506,36 @@
       "from": "SCOPE:",
       "type": "CONTAINS",
       "to": "CALL:verifyTokenAsync"
+    },
+    {
+      "from": "SCOPE:",
+      "type": "CONTAINS",
+      "to": "CONSTRUCTOR_CALL:new DataProcessor()"
+    },
+    {
+      "from": "SCOPE:",
+      "type": "CONTAINS",
+      "to": "CONSTRUCTOR_CALL:new DataProcessor()"
+    },
+    {
+      "from": "SCOPE:",
+      "type": "CONTAINS",
+      "to": "CONSTRUCTOR_CALL:new DataProcessor()"
+    },
+    {
+      "from": "SCOPE:",
+      "type": "CONTAINS",
+      "to": "CONSTRUCTOR_CALL:new Date()"
+    },
+    {
+      "from": "SCOPE:",
+      "type": "CONTAINS",
+      "to": "CONSTRUCTOR_CALL:new Promise()"
+    },
+    {
+      "from": "SCOPE:",
+      "type": "CONTAINS",
+      "to": "CONSTRUCTOR_CALL:new Promise()"
     },
     {
       "from": "SCOPE:",
@@ -40015,6 +40060,51 @@
     {
       "from": "SCOPE:anonymous[0]:body",
       "type": "CONTAINS",
+      "to": "CONSTRUCTOR_CALL:new Date()"
+    },
+    {
+      "from": "SCOPE:anonymous[0]:body",
+      "type": "CONTAINS",
+      "to": "CONSTRUCTOR_CALL:new Date()"
+    },
+    {
+      "from": "SCOPE:anonymous[0]:body",
+      "type": "CONTAINS",
+      "to": "CONSTRUCTOR_CALL:new Date()"
+    },
+    {
+      "from": "SCOPE:anonymous[0]:body",
+      "type": "CONTAINS",
+      "to": "CONSTRUCTOR_CALL:new Date()"
+    },
+    {
+      "from": "SCOPE:anonymous[0]:body",
+      "type": "CONTAINS",
+      "to": "CONSTRUCTOR_CALL:new Date()"
+    },
+    {
+      "from": "SCOPE:anonymous[0]:body",
+      "type": "CONTAINS",
+      "to": "CONSTRUCTOR_CALL:new Error()"
+    },
+    {
+      "from": "SCOPE:anonymous[0]:body",
+      "type": "CONTAINS",
+      "to": "CONSTRUCTOR_CALL:new Promise()"
+    },
+    {
+      "from": "SCOPE:anonymous[0]:body",
+      "type": "CONTAINS",
+      "to": "CONSTRUCTOR_CALL:new Promise()"
+    },
+    {
+      "from": "SCOPE:anonymous[0]:body",
+      "type": "CONTAINS",
+      "to": "CONSTRUCTOR_CALL:new User()"
+    },
+    {
+      "from": "SCOPE:anonymous[0]:body",
+      "type": "CONTAINS",
       "to": "FUNCTION:anonymous[0]"
     },
     {
@@ -40755,6 +40845,11 @@
     {
       "from": "SCOPE:anonymous[1]:body",
       "type": "CONTAINS",
+      "to": "CONSTRUCTOR_CALL:new Error()"
+    },
+    {
+      "from": "SCOPE:anonymous[1]:body",
+      "type": "CONTAINS",
       "to": "FUNCTION:anonymous[0]"
     },
     {
@@ -41390,6 +41485,11 @@
     {
       "from": "SCOPE:anonymous[8]:body",
       "type": "CONTAINS",
+      "to": "CONSTRUCTOR_CALL:new Date()"
+    },
+    {
+      "from": "SCOPE:anonymous[8]:body",
+      "type": "CONTAINS",
       "to": "FUNCTION:anonymous[0]"
     },
     {
@@ -41500,6 +41600,11 @@
     {
       "from": "SCOPE:blacklistToken:body",
       "type": "CONTAINS",
+      "to": "CONSTRUCTOR_CALL:new Promise()"
+    },
+    {
+      "from": "SCOPE:blacklistToken:body",
+      "type": "CONTAINS",
       "to": "FUNCTION:anonymous[0]"
     },
     {
@@ -41531,6 +41636,11 @@
       "from": "SCOPE:callbackToPromise:body",
       "type": "CONTAINS",
       "to": "CALL:Promise"
+    },
+    {
+      "from": "SCOPE:callbackToPromise:body",
+      "type": "CONTAINS",
+      "to": "CONSTRUCTOR_CALL:new Promise()"
     },
     {
       "from": "SCOPE:callbackToPromise:body",
@@ -41605,6 +41715,11 @@
     {
       "from": "SCOPE:createWithProfile:body",
       "type": "CONTAINS",
+      "to": "CONSTRUCTOR_CALL:new Date()"
+    },
+    {
+      "from": "SCOPE:createWithProfile:body",
+      "type": "CONTAINS",
       "to": "PROPERTY_ACCESS:_id"
     },
     {
@@ -41636,6 +41751,11 @@
       "from": "SCOPE:DataProcessor.constructor:body",
       "type": "CONTAINS",
       "to": "CALL:Map"
+    },
+    {
+      "from": "SCOPE:DataProcessor.constructor:body",
+      "type": "CONTAINS",
+      "to": "CONSTRUCTOR_CALL:new Map()"
     },
     {
       "from": "SCOPE:DataProcessor.delegateProcess:body",
@@ -41801,6 +41921,11 @@
       "from": "SCOPE:DataProcessor.processWithPromises:body",
       "type": "CONTAINS",
       "to": "CALL:Promise"
+    },
+    {
+      "from": "SCOPE:DataProcessor.processWithPromises:body",
+      "type": "CONTAINS",
+      "to": "CONSTRUCTOR_CALL:new Promise()"
     },
     {
       "from": "SCOPE:DataProcessor.processWithPromises:body",
@@ -41985,6 +42110,11 @@
     {
       "from": "SCOPE:generateAuthToken:body",
       "type": "CONTAINS",
+      "to": "CONSTRUCTOR_CALL:new Promise()"
+    },
+    {
+      "from": "SCOPE:generateAuthToken:body",
+      "type": "CONTAINS",
       "to": "FUNCTION:anonymous[0]"
     },
     {
@@ -42148,6 +42278,11 @@
       "to": "CALL:Error"
     },
     {
+      "from": "SCOPE:if:12:4:0",
+      "type": "CONTAINS",
+      "to": "CONSTRUCTOR_CALL:new Error()"
+    },
+    {
       "from": "SCOPE:if:123:6:16",
       "type": "CONTAINS",
       "to": "CALL:res.status"
@@ -42191,6 +42326,11 @@
       "from": "SCOPE:if:14:10:0",
       "type": "CONTAINS",
       "to": "CALL:reject"
+    },
+    {
+      "from": "SCOPE:if:14:10:0",
+      "type": "CONTAINS",
+      "to": "CONSTRUCTOR_CALL:new Error()"
     },
     {
       "from": "SCOPE:if:148:4:8",
@@ -42303,6 +42443,11 @@
       "to": "CALL:Error"
     },
     {
+      "from": "SCOPE:if:21:6:2",
+      "type": "CONTAINS",
+      "to": "CONSTRUCTOR_CALL:new Error()"
+    },
+    {
       "from": "SCOPE:if:211:6:24",
       "type": "CONTAINS",
       "to": "CALL:res.status"
@@ -42326,6 +42471,11 @@
       "from": "SCOPE:if:236:8:27",
       "type": "CONTAINS",
       "to": "CALL:Error"
+    },
+    {
+      "from": "SCOPE:if:236:8:27",
+      "type": "CONTAINS",
+      "to": "CONSTRUCTOR_CALL:new Error()"
     },
     {
       "from": "SCOPE:if:248:6:10",
@@ -42443,6 +42593,11 @@
       "to": "CALL:Error"
     },
     {
+      "from": "SCOPE:if:30:8:4",
+      "type": "CONTAINS",
+      "to": "CONSTRUCTOR_CALL:new Error()"
+    },
+    {
       "from": "SCOPE:if:300:4:22",
       "type": "CONTAINS",
       "to": "CALL:res.status"
@@ -42471,6 +42626,11 @@
       "from": "SCOPE:if:318:4:33",
       "type": "CONTAINS",
       "to": "CALL:Error"
+    },
+    {
+      "from": "SCOPE:if:318:4:33",
+      "type": "CONTAINS",
+      "to": "CONSTRUCTOR_CALL:new Error()"
     },
     {
       "from": "SCOPE:if:32:6:2",
@@ -42533,6 +42693,11 @@
       "to": "CALL:reject"
     },
     {
+      "from": "SCOPE:if:347:6:37",
+      "type": "CONTAINS",
+      "to": "CONSTRUCTOR_CALL:new Error()"
+    },
+    {
       "from": "SCOPE:if:352:12:9",
       "type": "CONTAINS",
       "to": "CALL:callback"
@@ -42551,6 +42716,11 @@
       "from": "SCOPE:if:44:6:5",
       "type": "CONTAINS",
       "to": "CALL:reject"
+    },
+    {
+      "from": "SCOPE:if:44:6:5",
+      "type": "CONTAINS",
+      "to": "CONSTRUCTOR_CALL:new Error()"
     },
     {
       "from": "SCOPE:if:44:6:9",
@@ -42588,6 +42758,11 @@
       "to": "CALL:Error"
     },
     {
+      "from": "SCOPE:if:54:8:7",
+      "type": "CONTAINS",
+      "to": "CONSTRUCTOR_CALL:new Error()"
+    },
+    {
       "from": "SCOPE:if:56:8:2",
       "type": "CONTAINS",
       "to": "CALL:callback"
@@ -42611,6 +42786,11 @@
       "from": "SCOPE:if:63:8:8",
       "type": "CONTAINS",
       "to": "CALL:Error"
+    },
+    {
+      "from": "SCOPE:if:63:8:8",
+      "type": "CONTAINS",
+      "to": "CONSTRUCTOR_CALL:new Error()"
     },
     {
       "from": "SCOPE:if:67:14:6",
@@ -42653,14 +42833,29 @@
       "to": "CALL:Error"
     },
     {
+      "from": "SCOPE:if:87:4:11",
+      "type": "CONTAINS",
+      "to": "CONSTRUCTOR_CALL:new Error()"
+    },
+    {
       "from": "SCOPE:if:93:4:12",
+      "type": "CONTAINS",
+      "to": "CALL:Error"
+    },
+    {
+      "from": "SCOPE:if:93:4:12",
+      "type": "CONTAINS",
+      "to": "CONSTRUCTOR_CALL:new Error()"
+    },
+    {
+      "from": "SCOPE:if:94:6:7",
       "type": "CONTAINS",
       "to": "CALL:Error"
     },
     {
       "from": "SCOPE:if:94:6:7",
       "type": "CONTAINS",
-      "to": "CALL:Error"
+      "to": "CONSTRUCTOR_CALL:new Error()"
     },
     {
       "from": "SCOPE:loadUserData:body",
@@ -42776,6 +42971,11 @@
       "from": "SCOPE:processInBatches:body",
       "type": "CONTAINS",
       "to": "CALL:processor.initialize"
+    },
+    {
+      "from": "SCOPE:processInBatches:body",
+      "type": "CONTAINS",
+      "to": "CONSTRUCTOR_CALL:new DataProcessor()"
     },
     {
       "from": "SCOPE:processInBatches:body",
@@ -42925,12 +43125,22 @@
     {
       "from": "SCOPE:promisePool:body",
       "type": "CONTAINS",
+      "to": "CONSTRUCTOR_CALL:new Promise()"
+    },
+    {
+      "from": "SCOPE:promisePool:body",
+      "type": "CONTAINS",
       "to": "FUNCTION:anonymous[0]"
     },
     {
       "from": "SCOPE:promiseRace:body",
       "type": "CONTAINS",
       "to": "CALL:Promise"
+    },
+    {
+      "from": "SCOPE:promiseRace:body",
+      "type": "CONTAINS",
+      "to": "CONSTRUCTOR_CALL:new Promise()"
     },
     {
       "from": "SCOPE:promiseRace:body",
@@ -43015,6 +43225,11 @@
     {
       "from": "SCOPE:retryWithBackoff:body",
       "type": "CONTAINS",
+      "to": "CONSTRUCTOR_CALL:new Promise()"
+    },
+    {
+      "from": "SCOPE:retryWithBackoff:body",
+      "type": "CONTAINS",
       "to": "FUNCTION:anonymous[0]"
     },
     {
@@ -43060,6 +43275,11 @@
     {
       "from": "SCOPE:startServer:body",
       "type": "CONTAINS",
+      "to": "CONSTRUCTOR_CALL:new Promise()"
+    },
+    {
+      "from": "SCOPE:startServer:body",
+      "type": "CONTAINS",
       "to": "FUNCTION:anonymous[0]"
     },
     {
@@ -43071,6 +43291,11 @@
       "from": "SCOPE:updateLastLogin:body",
       "type": "CONTAINS",
       "to": "CALL:this.save"
+    },
+    {
+      "from": "SCOPE:updateLastLogin:body",
+      "type": "CONTAINS",
+      "to": "CONSTRUCTOR_CALL:new Date()"
     },
     {
       "from": "SCOPE:updateLastLogin:body",
@@ -43111,6 +43336,11 @@
       "from": "SCOPE:verifyTokenPromise:body",
       "type": "CONTAINS",
       "to": "CALL:Promise"
+    },
+    {
+      "from": "SCOPE:verifyTokenPromise:body",
+      "type": "CONTAINS",
+      "to": "CONSTRUCTOR_CALL:new Promise()"
     },
     {
       "from": "SCOPE:verifyTokenPromise:body",

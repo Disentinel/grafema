@@ -7626,14 +7626,29 @@
       "to": "CALL:Error"
     },
     {
+      "from": "SCOPE:if:28:4:1",
+      "type": "CONTAINS",
+      "to": "CONSTRUCTOR_CALL:new Error()"
+    },
+    {
       "from": "SCOPE:if:63:2:2",
+      "type": "CONTAINS",
+      "to": "CALL:Error"
+    },
+    {
+      "from": "SCOPE:if:63:2:2",
+      "type": "CONTAINS",
+      "to": "CONSTRUCTOR_CALL:new Error()"
+    },
+    {
+      "from": "SCOPE:if:68:2:3",
       "type": "CONTAINS",
       "to": "CALL:Error"
     },
     {
       "from": "SCOPE:if:68:2:3",
       "type": "CONTAINS",
-      "to": "CALL:Error"
+      "to": "CONSTRUCTOR_CALL:new Error()"
     },
     {
       "from": "SCOPE:if:80:4:0",

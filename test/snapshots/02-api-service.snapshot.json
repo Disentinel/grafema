@@ -2457,6 +2457,11 @@
     {
       "from": "MODULE:src/db.js",
       "type": "CONTAINS",
+      "to": "CONSTRUCTOR_CALL:new Database()"
+    },
+    {
+      "from": "MODULE:src/db.js",
+      "type": "CONTAINS",
       "to": "EXPORT:default"
     },
     {
@@ -2913,6 +2918,11 @@
       "from": "SCOPE:if:13:4:0",
       "type": "CONTAINS",
       "to": "CALL:Error"
+    },
+    {
+      "from": "SCOPE:if:13:4:0",
+      "type": "CONTAINS",
+      "to": "CONSTRUCTOR_CALL:new Error()"
     },
     {
       "from": "SCOPE:start:body",
