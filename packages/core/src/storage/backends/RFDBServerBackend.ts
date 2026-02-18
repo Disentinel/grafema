@@ -22,7 +22,7 @@ import { RFDBClient, type BatchHandle } from '@grafema/rfdb-client';
 import type { ChildProcess } from 'child_process';
 import { join, dirname } from 'path';
 
-import type { WireNode, WireEdge, FieldDeclaration, CommitDelta, AttrQuery as RFDBAttrQuery } from '@grafema/types';
+import type { WireNode, WireEdge, FieldDeclaration, CommitDelta, AttrQuery as RFDBAttrQuery, DatalogExplainResult } from '@grafema/types';
 import type { NodeType, EdgeType } from '@grafema/types';
 import { startRfdbServer } from '../../utils/startRfdbServer.js';
 import { GRAFEMA_VERSION, getSchemaVersion } from '../../version.js';
@@ -673,10 +673,16 @@ export class RFDBServerBackend {
   // ===========================================================================
 
   /**
-   * Check a guarantee (Datalog rule) and return violations
+   * Check a guarantee (Datalog rule) and return violations.
+   * @param explain Pass literal `true` to get explain data.
    */
-  async checkGuarantee(ruleSource: string): Promise<Array<{ bindings: Array<{ name: string; value: string }> }>> {
+  async checkGuarantee(ruleSource: string): Promise<Array<{ bindings: Array<{ name: string; value: string }> }>>;
+  async checkGuarantee(ruleSource: string, explain: true): Promise<DatalogExplainResult>;
+  async checkGuarantee(ruleSource: string, explain?: boolean): Promise<Array<{ bindings: Array<{ name: string; value: string }> }> | DatalogExplainResult> {
     if (!this.client) throw new Error('Not connected');
+    if (explain) {
+      return await this.client.checkGuarantee(ruleSource, true);
+    }
     const violations = await this.client.checkGuarantee(ruleSource);
     // Convert bindings from {X: "value"} to [{name: "X", value: "value"}]
     return violations.map(v => ({
@@ -701,10 +707,16 @@ export class RFDBServerBackend {
   }
 
   /**
-   * Run a Datalog query
+   * Run a Datalog query.
+   * @param explain Pass literal `true` to get explain data.
    */
-  async datalogQuery(query: string): Promise<Array<{ bindings: Array<{ name: string; value: string }> }>> {
+  async datalogQuery(query: string): Promise<Array<{ bindings: Array<{ name: string; value: string }> }>>;
+  async datalogQuery(query: string, explain: true): Promise<DatalogExplainResult>;
+  async datalogQuery(query: string, explain?: boolean): Promise<Array<{ bindings: Array<{ name: string; value: string }> }> | DatalogExplainResult> {
     if (!this.client) throw new Error('Not connected');
+    if (explain) {
+      return await this.client.datalogQuery(query, true);
+    }
     const results = await this.client.datalogQuery(query);
     // Convert bindings from {X: "value"} to [{name: "X", value: "value"}]
     return results.map(r => ({
@@ -715,9 +727,15 @@ export class RFDBServerBackend {
   /**
    * Execute unified Datalog query or program.
    * Auto-detects whether input is rules or direct query.
+   * @param explain Pass literal `true` to get explain data.
    */
-  async executeDatalog(source: string): Promise<Array<{ bindings: Array<{ name: string; value: string }> }>> {
+  async executeDatalog(source: string): Promise<Array<{ bindings: Array<{ name: string; value: string }> }>>;
+  async executeDatalog(source: string, explain: true): Promise<DatalogExplainResult>;
+  async executeDatalog(source: string, explain?: boolean): Promise<Array<{ bindings: Array<{ name: string; value: string }> }> | DatalogExplainResult> {
     if (!this.client) throw new Error('Not connected');
+    if (explain) {
+      return await this.client.executeDatalog(source, true);
+    }
     const results = await this.client.executeDatalog(source);
     return results.map(r => ({
       bindings: Object.entries(r.bindings).map(([name, value]) => ({ name, value }))

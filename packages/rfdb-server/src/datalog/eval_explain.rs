@@ -147,13 +147,57 @@ impl<'a> EvaluatorExplain<'a> {
 
         let bindings = self.eval_atom(goal);
 
+        self.finalize_result(bindings)
+    }
+
+    /// Evaluate a conjunction of literals with explain support
+    pub fn eval_query(&mut self, literals: &[Literal]) -> QueryResult {
+        self.query_start = Some(Instant::now());
+        self.stats = QueryStats::new();
+        self.explain_steps.clear();
+        self.step_counter = 0;
+        self.predicate_times.clear();
+
+        let mut current = vec![Bindings::new()];
+        for literal in literals {
+            let mut next = vec![];
+            for bindings in &current {
+                match literal {
+                    Literal::Positive(atom) => {
+                        let substituted = self.substitute_atom(atom, bindings);
+                        let results = self.eval_atom(&substituted);
+                        for result in results {
+                            if let Some(merged) = bindings.extend(&result) {
+                                next.push(merged);
+                            }
+                        }
+                    }
+                    Literal::Negative(atom) => {
+                        let substituted = self.substitute_atom(atom, bindings);
+                        let results = self.eval_atom(&substituted);
+                        if results.is_empty() {
+                            next.push(bindings.clone());
+                        }
+                    }
+                }
+            }
+            current = next;
+            if current.is_empty() {
+                break;
+            }
+        }
+
+        self.finalize_result(current)
+    }
+
+    /// Build the final QueryResult from raw bindings
+    fn finalize_result(&mut self, bindings: Vec<Bindings>) -> QueryResult {
         self.stats.total_results = bindings.len();
 
         let total_duration = self.query_start
             .map(|s| s.elapsed())
             .unwrap_or_default();
 
-        // Convert bindings to serializable format
         let bindings_out: Vec<HashMap<String, String>> = bindings
             .into_iter()
             .map(|b| {
@@ -163,15 +207,14 @@ impl<'a> EvaluatorExplain<'a> {
             })
             .collect();
 
-        // Build profile
         let profile = QueryProfile {
             total_duration_us: total_duration.as_micros() as u64,
             predicate_times: self.predicate_times
                 .iter()
                 .map(|(k, v)| (k.clone(), v.as_micros() as u64))
                 .collect(),
-            rule_eval_time_us: 0, // TODO: track separately
-            projection_time_us: 0,
+            rule_eval_time_us: 0, // not yet tracked per-rule
+            projection_time_us: 0, // not yet tracked
         };
 
         QueryResult {

@@ -359,6 +359,45 @@ export interface DatalogResult {
   bindings: DatalogBinding;
 }
 
+export interface QueryStats {
+  nodesVisited: number;
+  edgesTraversed: number;
+  findByTypeCalls: number;
+  getNodeCalls: number;
+  outgoingEdgeCalls: number;
+  incomingEdgeCalls: number;
+  allEdgesCalls: number;
+  bfsCalls: number;
+  totalResults: number;
+  ruleEvaluations: number;
+  intermediateCounts: number[];
+}
+
+export interface QueryProfile {
+  totalDurationUs: number;
+  predicateTimes: Record<string, number>;
+  ruleEvalTimeUs: number;
+  projectionTimeUs: number;
+}
+
+export interface ExplainStep {
+  step: number;
+  operation: string;
+  predicate: string;
+  args: string[];
+  resultCount: number;
+  durationUs: number;
+  details: string | null;
+}
+
+/** Full explain result -- single object per query (not per row) */
+export interface DatalogExplainResult {
+  bindings: DatalogBinding[];
+  stats: QueryStats;
+  profile: QueryProfile;
+  explainSteps: ExplainStep[];
+}
+
 // === SNAPSHOT TYPES ===
 
 /**
@@ -497,8 +536,14 @@ export interface IRFDBClient {
   datalogLoadRules(source: string): Promise<number>;
   datalogClearRules(): Promise<RFDBResponse>;
   datalogQuery(query: string): Promise<DatalogResult[]>;
+  /** Pass literal `true` for explain -- a boolean variable won't narrow the return type. */
+  datalogQuery(query: string, explain: true): Promise<DatalogExplainResult>;
   checkGuarantee(ruleSource: string): Promise<DatalogResult[]>;
+  /** Pass literal `true` for explain -- a boolean variable won't narrow the return type. */
+  checkGuarantee(ruleSource: string, explain: true): Promise<DatalogExplainResult>;
   executeDatalog(source: string): Promise<DatalogResult[]>;
+  /** Pass literal `true` for explain -- a boolean variable won't narrow the return type. */
+  executeDatalog(source: string, explain: true): Promise<DatalogExplainResult>;
 
   // Batch operations
   beginBatch(): void;
