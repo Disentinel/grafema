@@ -1,7 +1,7 @@
-import { ChildProcess } from 'child_process';
-
 /**
  * Get the path to the rfdb-server binary for the current platform.
+ * Only checks prebuilt directory. For full search, use findRfdbBinary() from @grafema/core.
+ * @deprecated Use findRfdbBinary() from @grafema/core for full binary search.
  * @returns Path to binary, or null if not available
  */
 export function getBinaryPath(): string | null;
@@ -10,21 +10,6 @@ export function getBinaryPath(): string | null;
  * Check if a binary is available for the current platform.
  */
 export function isAvailable(): boolean;
-
-export interface StartServerOptions {
-  /** Unix socket path (default: /tmp/rfdb.sock) */
-  socketPath?: string;
-  /** Data directory (default: ./rfdb-data) */
-  dataDir?: string;
-  /** Suppress output (default: false) */
-  silent?: boolean;
-}
-
-/**
- * Start the rfdb-server.
- * @returns The server process
- */
-export function startServer(options?: StartServerOptions): ChildProcess & { socketPath: string };
 
 /**
  * Wait for the server to be ready.
