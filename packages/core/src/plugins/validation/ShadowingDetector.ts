@@ -15,7 +15,7 @@
  *
  * Implementation notes:
  * - Datalog doesn't support inequality (\=), so we use JS filtering
- * - queryNodes is an async generator, use getAllNodes for arrays
+ * - queryNodes returns an async generator, collected into arrays below
  */
 
 import { Plugin, createSuccessResult } from '../Plugin.js';
@@ -77,10 +77,22 @@ export class ShadowingDetector extends Plugin {
     const issues: ShadowingIssue[] = [];
 
     // Get all relevant nodes
-    const allClasses = await graph.getAllNodes({ type: 'CLASS' });
-    const allVariables = await graph.getAllNodes({ type: 'VARIABLE' }) as ShadowableNode[];
-    const allConstants = await graph.getAllNodes({ type: 'CONSTANT' }) as ShadowableNode[];
-    const allImports = await graph.getAllNodes({ type: 'IMPORT' }) as ShadowableNode[];
+    const allClasses: NodeRecord[] = [];
+    for await (const node of graph.queryNodes({ nodeType: 'CLASS' })) {
+      allClasses.push(node);
+    }
+    const allVariables: ShadowableNode[] = [];
+    for await (const node of graph.queryNodes({ nodeType: 'VARIABLE' })) {
+      allVariables.push(node as ShadowableNode);
+    }
+    const allConstants: ShadowableNode[] = [];
+    for await (const node of graph.queryNodes({ nodeType: 'CONSTANT' })) {
+      allConstants.push(node as ShadowableNode);
+    }
+    const allImports: ShadowableNode[] = [];
+    for await (const node of graph.queryNodes({ nodeType: 'IMPORT' })) {
+      allImports.push(node as ShadowableNode);
+    }
 
     // Build maps for efficient lookup
     const classesByName = new Map<string, NodeRecord[]>();

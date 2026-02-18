@@ -1,43 +1,13 @@
-/**
- * DataFlowValidator - проверяет что все переменные прослеживаются до листовых узлов
- *
- * ПРАВИЛО: Каждая переменная должна иметь путь до листового узла через ASSIGNED_FROM рёбра
- *
- * ЛИСТОВЫЕ УЗЛЫ:
- * - LITERAL: примитивные значения
- * - EXTERNAL_STDIO: console.log/error
- * - EXTERNAL_DATABASE: database queries
- * - EXTERNAL_NETWORK: HTTP requests
- * - EXTERNAL_FILESYSTEM: fs.readFile
- * - EVENT_LISTENER: события
- */
-
 import { Plugin, createSuccessResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { NodeRecord } from '@grafema/types';
 import { ValidationError } from '../../errors/GrafemaError.js';
 
-/**
- * Edge structure
- */
-interface EdgeRecord {
-  type: string;
-  src: string;
-  dst: string;
-  [key: string]: unknown;
-}
-
-/**
- * Path finding result
- */
 interface PathResult {
   found: boolean;
   chain: string[];
 }
 
-/**
- * Validation summary
- */
 interface ValidationSummary {
   total: number;
   validated: number;
@@ -64,19 +34,13 @@ export class DataFlowValidator extends Plugin {
 
     logger.info('Starting data flow validation');
 
-    // Check if graph supports getAllEdges
-    if (!graph.getAllEdges) {
-      logger.debug('Graph does not support getAllEdges, skipping validation');
-      return createSuccessResult({ nodes: 0, edges: 0 }, { skipped: true });
+    const variables: NodeRecord[] = [];
+    for await (const node of graph.queryNodes({ nodeType: 'VARIABLE' })) {
+      variables.push(node);
     }
-
-    // Получаем все переменные
-    const allNodes = await graph.getAllNodes();
-    const allEdges = await graph.getAllEdges() as EdgeRecord[];
-
-    const variables = allNodes.filter(n =>
-      n.type === 'VARIABLE_DECLARATION' || n.type === 'CONSTANT'
-    );
+    for await (const node of graph.queryNodes({ nodeType: 'CONSTANT' })) {
+      variables.push(node);
+    }
 
     logger.debug('Variables collected', { count: variables.length });
 
@@ -88,21 +52,19 @@ export class DataFlowValidator extends Plugin {
       'net:request',
       'fs:operation',
       'event:listener',
-      'CLASS',          // NewExpression - конструкторы классов
-      'FUNCTION',       // Arrow functions и function expressions
-      'METHOD_CALL',    // Вызовы методов (промежуточные узлы)
-      'CALL_SITE'       // Вызовы функций (промежуточные узлы)
+      'CLASS',
+      'FUNCTION',
+      'METHOD_CALL',
+      'CALL_SITE'
     ]);
 
     for (const variable of variables) {
-      // Проверяем наличие ASSIGNED_FROM ребра
-      const assignment = allEdges.find(e =>
-        e.type === 'ASSIGNED_FROM' && e.src === variable.id
-      );
+      const outgoing = await graph.getOutgoingEdges(variable.id, ['ASSIGNED_FROM', 'DERIVES_FROM']);
+      const assignment = outgoing[0];
 
       if (!assignment) {
         errors.push(new ValidationError(
-          `Variable "${variable.name}" (${variable.file}:${variable.line}) has no ASSIGNED_FROM edge`,
+          `Variable "${variable.name}" (${variable.file}:${variable.line}) has no ASSIGNED_FROM or DERIVES_FROM edge`,
           'ERR_MISSING_ASSIGNMENT',
           {
             filePath: variable.file,
@@ -117,8 +79,7 @@ export class DataFlowValidator extends Plugin {
         continue;
       }
 
-      // Проверяем что источник существует
-      const source = allNodes.find(n => n.id === assignment.dst);
+      const source = await graph.getNode(assignment.dst);
       if (!source) {
         errors.push(new ValidationError(
           `Variable "${variable.name}" references non-existent node ${assignment.dst}`,
@@ -137,8 +98,7 @@ export class DataFlowValidator extends Plugin {
         continue;
       }
 
-      // Проверяем путь до листового узла
-      const path = this.findPathToLeaf(variable, allNodes, allEdges, leafTypes);
+      const path = await this.findPathToLeaf(variable, graph, leafTypes);
       if (!path.found) {
         errors.push(new ValidationError(
           `Variable "${variable.name}" (${variable.file}:${variable.line}) does not trace to a leaf node. Chain: ${path.chain.join(' -> ')}`,
@@ -157,7 +117,6 @@ export class DataFlowValidator extends Plugin {
       }
     }
 
-    // Группируем errors по коду
     const byCode: Record<string, number> = {};
     for (const error of errors) {
       if (!byCode[error.code]) {
@@ -175,7 +134,6 @@ export class DataFlowValidator extends Plugin {
 
     logger.info('Validation complete', { ...summary });
 
-    // Выводим errors
     if (errors.length > 0) {
       logger.warn('Data flow issues found', { count: errors.length });
       for (const error of errors) {
@@ -194,18 +152,13 @@ export class DataFlowValidator extends Plugin {
     );
   }
 
-  /**
-   * Находит путь от переменной до листового узла
-   */
-  private findPathToLeaf(
+  private async findPathToLeaf(
     startNode: NodeRecord,
-    allNodes: NodeRecord[],
-    allEdges: EdgeRecord[],
+    graph: PluginContext['graph'],
     leafTypes: Set<string>,
     visited: Set<string> = new Set(),
     chain: string[] = []
-  ): PathResult {
-    // Защита от циклов
+  ): Promise<PathResult> {
     if (visited.has(startNode.id)) {
       return { found: false, chain: [...chain, `${startNode.type}:${startNode.name} (CYCLE)`] };
     }
@@ -213,29 +166,22 @@ export class DataFlowValidator extends Plugin {
     visited.add(startNode.id);
     chain.push(`${startNode.type}:${startNode.name}`);
 
-    // Проверяем что это листовой узел
     if (leafTypes.has(startNode.type)) {
       return { found: true, chain };
     }
 
-    // REG-262: Check if variable is used by a method call (incoming USES edge)
-    // If something USES this variable, the variable is not dead
-    const usedByCall = allEdges.find(e =>
-      e.type === 'USES' && e.dst === startNode.id
-    );
+    const incomingUses = await graph.getIncomingEdges(startNode.id, ['USES']);
+    const usedByCall = incomingUses[0];
     if (usedByCall) {
-      const callNode = allNodes.find(n => n.id === usedByCall.src);
+      const callNode = await graph.getNode(usedByCall.src);
       const callName = callNode?.name ?? usedByCall.src;
       return { found: true, chain: [...chain, `(used by ${callName})`] };
     }
 
-    // Ищем ASSIGNED_FROM ребро
-    const assignment = allEdges.find(e =>
-      e.type === 'ASSIGNED_FROM' && e.src === startNode.id
-    );
+    const outgoing = await graph.getOutgoingEdges(startNode.id, ['ASSIGNED_FROM', 'DERIVES_FROM']);
+    const assignment = outgoing[0];
 
     if (!assignment) {
-      // Для METHOD_CALL и CALL_SITE - это промежуточные узлы, но можем считать их leaf для первой версии
       if (startNode.type === 'METHOD_CALL' || startNode.type === 'CALL_SITE') {
         return { found: true, chain: [...chain, '(intermediate node)'] };
       }
@@ -243,12 +189,11 @@ export class DataFlowValidator extends Plugin {
       return { found: false, chain: [...chain, '(no assignment)'] };
     }
 
-    // Продолжаем по цепочке
-    const nextNode = allNodes.find(n => n.id === assignment.dst);
+    const nextNode = await graph.getNode(assignment.dst);
     if (!nextNode) {
       return { found: false, chain: [...chain, '(broken reference)'] };
     }
 
-    return this.findPathToLeaf(nextNode, allNodes, allEdges, leafTypes, visited, chain);
+    return this.findPathToLeaf(nextNode, graph, leafTypes, visited, chain);
   }
 }

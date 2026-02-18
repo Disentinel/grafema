@@ -58,8 +58,13 @@ export class GraphConnectivityValidator extends Plugin {
 
     logger.info('Starting connectivity validation');
 
-    // Получаем все узлы
-    const allNodes = await graph.getAllNodes();
+    // Connectivity validation requires the full node set by definition:
+    // to find unreachable nodes, we must know all nodes that exist.
+    // queryNodes({}) is the streaming equivalent of the removed getAllNodes().
+    const allNodes: NodeRecord[] = [];
+    for await (const node of graph.queryNodes({})) {
+      allNodes.push(node);
+    }
     logger.debug('Nodes collected', { totalNodes: allNodes.length });
 
     // Находим корневые узлы (SERVICE, MODULE)
@@ -70,34 +75,6 @@ export class GraphConnectivityValidator extends Plugin {
     if (rootNodes.length === 0) {
       logger.warn('No root nodes found');
       return createSuccessResult({ nodes: 0, edges: 0 }, { skipped: true, reason: 'No root nodes' });
-    }
-
-    // Check if graph supports getAllEdges
-    if (!graph.getAllEdges) {
-      logger.debug('Graph does not support getAllEdges, skipping validation');
-      return createSuccessResult({ nodes: 0, edges: 0 }, { skipped: true, reason: 'No getAllEdges support' });
-    }
-
-    // Собираем все ребра
-    const allEdges = await graph.getAllEdges();
-    logger.debug('Edges collected', { totalEdges: allEdges.length });
-
-    // Строим карты смежности (обе направления)
-    const adjacencyOut = new Map<string, string[]>(); // nodeId -> [targetIds]
-    const adjacencyIn = new Map<string, string[]>();  // nodeId -> [sourceIds]
-
-    for (const edge of allEdges) {
-      // Outgoing edges
-      if (!adjacencyOut.has(edge.src)) {
-        adjacencyOut.set(edge.src, []);
-      }
-      adjacencyOut.get(edge.src)!.push(edge.dst);
-
-      // Incoming edges
-      if (!adjacencyIn.has(edge.dst)) {
-        adjacencyIn.set(edge.dst, []);
-      }
-      adjacencyIn.get(edge.dst)!.push(edge.src);
     }
 
     // BFS от корневых узлов для поиска достижимых узлов
@@ -111,12 +88,17 @@ export class GraphConnectivityValidator extends Plugin {
       reachable.add(nodeId);
 
       // Добавляем все связанные узлы (в обоих направлениях)
-      const outgoing = adjacencyOut.get(nodeId) || [];
-      const incoming = adjacencyIn.get(nodeId) || [];
+      const outgoing = await graph.getOutgoingEdges(nodeId);
+      const incoming = await graph.getIncomingEdges(nodeId);
 
-      for (const targetId of [...outgoing, ...incoming]) {
-        if (!reachable.has(targetId)) {
-          queue.push(targetId);
+      for (const edge of outgoing) {
+        if (!reachable.has(edge.dst)) {
+          queue.push(edge.dst);
+        }
+      }
+      for (const edge of incoming) {
+        if (!reachable.has(edge.src)) {
+          queue.push(edge.src);
         }
       }
     }
@@ -145,10 +127,10 @@ export class GraphConnectivityValidator extends Plugin {
           logger.debug(`  - ${node.name || node.id}`);
 
           // Показываем связи этого узла
-          const out = adjacencyOut.get(node.id) || [];
-          const incoming = adjacencyIn.get(node.id) || [];
-          if (out.length > 0 || incoming.length > 0) {
-            logger.debug(`    Edges: ${incoming.length} incoming, ${out.length} outgoing`);
+          const out = await graph.getOutgoingEdges(node.id);
+          const inc = await graph.getIncomingEdges(node.id);
+          if (out.length > 0 || inc.length > 0) {
+            logger.debug(`    Edges: ${inc.length} incoming, ${out.length} outgoing`);
           }
         }
         if (nodes.length > 5) {
