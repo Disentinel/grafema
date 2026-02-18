@@ -290,16 +290,12 @@ export interface GraphBackend {
 
   getNode(id: string): Promise<NodeRecord | null>;
   queryNodes(filter: NodeFilter): AsyncIterable<NodeRecord> | AsyncGenerator<NodeRecord>;
-  getAllNodes(filter?: NodeFilter): Promise<NodeRecord[]>;
 
   getOutgoingEdges(nodeId: string, edgeTypes?: EdgeType[] | null): Promise<EdgeRecord[]>;
   getIncomingEdges(nodeId: string, edgeTypes?: EdgeType[] | null): Promise<EdgeRecord[]>;
 
   nodeCount(): Promise<number>;
   edgeCount(): Promise<number>;
-
-  // For GUI/export - use with caution on large graphs
-  getAllEdges?(): Promise<EdgeRecord[]>;
 
   // Extended query methods
   countNodesByType(types?: string[] | null): Promise<Record<string, number>>;
