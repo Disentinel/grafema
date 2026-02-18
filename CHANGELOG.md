@@ -2,6 +2,30 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.12-beta] - 2026-02-18
+
+### Features
+
+- **REG-491**: CONTAINS edges from scope to CONSTRUCTOR_CALL nodes — constructor calls are now part of the scope containment graph
+- **RFD-42**: Client-side RFDB version validation on connect — CLI detects incompatible rfdb-server versions early with a clear error message
+- **RFD-40**: `grafema server restart` command, unified RFDB server spawn utility, `pnpm rfdb:*` scripts for development
+- **RFD-41**: Cargo.toml version auto-synced by release script and CI
+
+### Bug Fixes
+
+- **REG-489**: Protect MODULE nodes from cross-phase deletion in commitBatch — modules created during INDEXING were silently deleted when ANALYSIS committed batch updates for the same file
+- Fix specifier-level type imports (`import { type X } from '...'`) — type-only specifiers now correctly propagate importKind
+- Resolve `.js→.ts` imports and propagate importKind for type-only imports
+
+### Performance
+
+- **REG-487**: Deferred RFDB indexing eliminates O(n²) index rebuilds during bulk analysis — indexes are now built once after all data is loaded
+- **REG-488**: Analysis progress line shows file count instead of misleading service count
+
+### Infrastructure
+
+- Extract MLA workflow, agent personas, and dogfooding guide into `_ai/` directory
+
 ## [0.2.11] - 2026-02-17
 
 ### Performance
