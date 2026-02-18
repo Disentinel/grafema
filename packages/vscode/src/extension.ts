@@ -35,12 +35,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   const workspaceRoot = workspaceFolders[0].uri.fsPath;
 
-  // Get rfdb-server path from settings (if configured)
+  // Get paths from settings (if configured)
   const config = vscode.workspace.getConfiguration('grafema');
   const rfdbServerPath = config.get<string>('rfdbServerPath') || undefined;
+  const rfdbSocketPath = config.get<string>('rfdbSocketPath') || undefined;
 
   // Initialize client manager
-  clientManager = new GrafemaClientManager(workspaceRoot, rfdbServerPath);
+  clientManager = new GrafemaClientManager(workspaceRoot, rfdbServerPath, rfdbSocketPath);
 
   // Initialize tree provider
   edgesProvider = new EdgesProvider(clientManager);
@@ -52,7 +53,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   });
 
   // Track selection changes for state export
-  treeView.onDidChangeSelection((event) => {
+  const selectionTracker = treeView.onDidChangeSelection((event) => {
     selectedTreeItem = event.selection[0] ?? null;
   });
 
@@ -74,10 +75,41 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.window.showInformationMessage('Grafema: Reconnected to graph database');
   });
 
-  // === COMMANDS ===
+  // Register commands, status bar, and cursor listener
+  const disposables = registerCommands();
+
+  // Connect to RFDB
+  try {
+    await clientManager.connect();
+  } catch (err) {
+    console.error('[grafema-explore] Connection error:', err);
+    edgesProvider.setStatusMessage('Connection failed');
+  }
+
+  // Register all disposables
+  context.subscriptions.push(
+    treeView,
+    selectionTracker,
+    ...disposables,
+    {
+      dispose: () => {
+        clientManager?.disconnect();
+      },
+    }
+  );
+
+  console.log('[grafema-explore] Extension activated');
+}
+
+/**
+ * Register all extension commands, status bar, and cursor listener.
+ * Returns disposables array for cleanup.
+ */
+function registerCommands(): vscode.Disposable[] {
+  const disposables: vscode.Disposable[] = [];
 
   // Go to file location (doesn't change tree state)
-  const gotoCommand = vscode.commands.registerCommand(
+  disposables.push(vscode.commands.registerCommand(
     'grafema.gotoLocation',
     async (file: string, line: number, column: number) => {
       try {
@@ -92,15 +124,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         vscode.window.showErrorMessage(`Failed to open ${file}`);
       }
     }
-  );
+  ));
 
   // Find node at cursor and set as root (clears history)
-  const findAtCursorCommand = vscode.commands.registerCommand('grafema.findAtCursor', async () => {
+  disposables.push(vscode.commands.registerCommand('grafema.findAtCursor', async () => {
     await findAndSetRoot(false);
-  });
+  }));
 
   // Set selected tree item as new root (preserves history)
-  const setAsRootCommand = vscode.commands.registerCommand(
+  disposables.push(vscode.commands.registerCommand(
     'grafema.setAsRoot',
     async (item: GraphTreeItem) => {
       if (!edgesProvider) return;
@@ -112,7 +144,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       } else if (item.kind === 'edge' && item.targetNode) {
         node = item.targetNode;
       } else if (item.kind === 'edge' && clientManager?.isConnected()) {
-        // Fetch target node if not pre-loaded
         const targetId = item.direction === 'outgoing' ? item.edge.dst : item.edge.src;
         node = await clientManager.getClient().getNode(targetId);
       }
@@ -121,37 +152,36 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         edgesProvider.navigateToNode(node);
       }
     }
-  );
+  ));
 
   // Refresh current view
-  const refreshCommand = vscode.commands.registerCommand('grafema.refreshEdges', () => {
+  disposables.push(vscode.commands.registerCommand('grafema.refreshEdges', () => {
     edgesProvider?.refresh();
-  });
+  }));
 
   // Go back to previous root
-  const goBackCommand = vscode.commands.registerCommand('grafema.goBack', () => {
+  disposables.push(vscode.commands.registerCommand('grafema.goBack', () => {
     if (edgesProvider?.canGoBack()) {
       edgesProvider.goBack();
     } else {
       vscode.window.showInformationMessage('Grafema: No history to go back to');
     }
-  });
+  }));
 
   // Toggle follow cursor mode
-  const toggleFollowCursorCommand = vscode.commands.registerCommand('grafema.toggleFollowCursor', () => {
+  disposables.push(vscode.commands.registerCommand('grafema.toggleFollowCursor', () => {
     followCursor = !followCursor;
     updateStatusBar();
     if (followCursor) {
-      // Immediately update to current cursor position
       findAndSetRoot(false);
       vscode.window.showInformationMessage('Grafema: Follow cursor enabled');
     } else {
       vscode.window.showInformationMessage('Grafema: Follow cursor disabled (locked)');
     }
-  });
+  }));
 
   // Copy tree state to clipboard for debugging
-  const copyTreeStateCommand = vscode.commands.registerCommand('grafema.copyTreeState', async () => {
+  disposables.push(vscode.commands.registerCommand('grafema.copyTreeState', async () => {
     if (!clientManager || !edgesProvider) {
       vscode.window.showErrorMessage('Grafema: Extension not initialized');
       return;
@@ -161,51 +191,25 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     const json = JSON.stringify(state, null, 2);
     await vscode.env.clipboard.writeText(json);
     vscode.window.showInformationMessage('Grafema: Tree state copied to clipboard');
-  });
+  }));
 
-  // Create status bar item
+  // Status bar
   statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
   statusBarItem.command = 'grafema.toggleFollowCursor';
   updateStatusBar();
   statusBarItem.show();
+  disposables.push(statusBarItem);
 
   // Follow cursor on selection change
-  const selectionChangeListener = vscode.window.onDidChangeTextEditorSelection(
+  disposables.push(vscode.window.onDidChangeTextEditorSelection(
     debounce(async (_event: vscode.TextEditorSelectionChangeEvent) => {
       if (followCursor && clientManager?.isConnected()) {
         await findAndSetRoot(false);
       }
-    }, 150) // Debounce to avoid too frequent updates
-  );
+    }, 150)
+  ));
 
-  // Connect to RFDB
-  try {
-    await clientManager.connect();
-  } catch (err) {
-    console.error('[grafema-explore] Connection error:', err);
-    edgesProvider.setStatusMessage('Connection failed');
-  }
-
-  // Register disposables
-  context.subscriptions.push(
-    treeView,
-    gotoCommand,
-    findAtCursorCommand,
-    setAsRootCommand,
-    refreshCommand,
-    goBackCommand,
-    toggleFollowCursorCommand,
-    copyTreeStateCommand,
-    selectionChangeListener,
-    statusBarItem,
-    {
-      dispose: () => {
-        clientManager?.disconnect();
-      },
-    }
-  );
-
-  console.log('[grafema-explore] Extension activated');
+  return disposables;
 }
 
 /**
@@ -290,24 +294,20 @@ function debounce<Args extends unknown[]>(
 /**
  * Build tree state object for debugging export
  */
+interface NodeStateInfo {
+  id: string;
+  type: string;
+  name: string;
+  file: string;
+  line?: number;
+}
+
 interface TreeStateExport {
   connection: string;
   serverVersion: string | null;
   stats: { nodes: number; edges: number } | null;
-  rootNode: {
-    id: string;
-    type: string;
-    name: string;
-    file: string;
-    line?: number;
-  } | null;
-  selectedNode: {
-    id: string;
-    type: string;
-    name: string;
-    file: string;
-    line?: number;
-  } | null;
+  rootNode: NodeStateInfo | null;
+  selectedNode: NodeStateInfo | null;
   visibleEdges: Array<{
     direction: 'outgoing' | 'incoming';
     type: string;
@@ -315,6 +315,17 @@ interface TreeStateExport {
   }>;
   navigationPath: string[];
   historyDepth: number;
+}
+
+function nodeToStateInfo(node: WireNode): NodeStateInfo {
+  const metadata = parseNodeMetadata(node);
+  return {
+    id: node.id,
+    type: node.nodeType,
+    name: node.name,
+    file: node.file,
+    line: metadata.line,
+  };
 }
 
 async function buildTreeState(
@@ -353,69 +364,46 @@ async function buildTreeState(
   // Root node info
   const rootNode = edgesProvider.getRootNode();
   if (rootNode) {
-    const metadata = parseNodeMetadata(rootNode);
-    state.rootNode = {
-      id: rootNode.id,
-      type: rootNode.nodeType,
-      name: rootNode.name,
-      file: rootNode.file,
-      line: metadata.line,
-    };
+    state.rootNode = nodeToStateInfo(rootNode);
   }
 
   // Selected node info
-  if (selectedItem?.kind === 'node') {
-    const node = selectedItem.node;
-    const metadata = parseNodeMetadata(node);
-    state.selectedNode = {
-      id: node.id,
-      type: node.nodeType,
-      name: node.name,
-      file: node.file,
-      line: metadata.line,
-    };
+  const selectedNode = selectedItem?.kind === 'node'
+    ? selectedItem.node
+    : selectedItem?.kind === 'edge'
+      ? selectedItem.targetNode ?? null
+      : null;
 
-    // Fetch visible edges for selected node if connected
-    if (clientManager.isConnected()) {
-      try {
-        const client = clientManager.getClient();
-        const [outgoing, incoming] = await Promise.all([
-          client.getOutgoingEdges(node.id),
-          client.getIncomingEdges(node.id),
-        ]);
+  if (selectedNode) {
+    state.selectedNode = nodeToStateInfo(selectedNode);
+  }
 
-        for (const edge of outgoing) {
-          state.visibleEdges.push({
-            direction: 'outgoing',
-            type: edge.edgeType,
-            target: edge.dst,
-          });
-        }
+  // Fetch visible edges for selected node if connected
+  if (selectedItem?.kind === 'node' && clientManager.isConnected()) {
+    try {
+      const client = clientManager.getClient();
+      const [outgoing, incoming] = await Promise.all([
+        client.getOutgoingEdges(selectedItem.node.id),
+        client.getIncomingEdges(selectedItem.node.id),
+      ]);
 
-        for (const edge of incoming) {
-          state.visibleEdges.push({
-            direction: 'incoming',
-            type: edge.edgeType,
-            target: edge.src,
-          });
-        }
-      } catch {
-        // Ignore errors
+      for (const edge of outgoing) {
+        state.visibleEdges.push({
+          direction: 'outgoing',
+          type: edge.edgeType,
+          target: edge.dst,
+        });
       }
-    }
-  } else if (selectedItem?.kind === 'edge') {
-    // If an edge is selected, show the target node
-    const _edge = selectedItem.edge;
-    const targetNode = selectedItem.targetNode;
-    if (targetNode) {
-      const metadata = parseNodeMetadata(targetNode);
-      state.selectedNode = {
-        id: targetNode.id,
-        type: targetNode.nodeType,
-        name: targetNode.name,
-        file: targetNode.file,
-        line: metadata.line,
-      };
+
+      for (const edge of incoming) {
+        state.visibleEdges.push({
+          direction: 'incoming',
+          type: edge.edgeType,
+          target: edge.src,
+        });
+      }
+    } catch {
+      // Ignore errors
     }
   }
 

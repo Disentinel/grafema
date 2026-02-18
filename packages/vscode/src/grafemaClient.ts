@@ -9,7 +9,7 @@ import type { ChildProcess } from 'child_process';
 import { spawn } from 'child_process';
 import type { FSWatcher } from 'fs';
 import { existsSync, unlinkSync, watch } from 'fs';
-import { join, dirname } from 'path';
+import { join, dirname, basename } from 'path';
 import { EventEmitter } from 'events';
 import { RFDBClient } from '@grafema/rfdb-client';
 import type { ConnectionState } from './types';
@@ -36,16 +36,18 @@ function sleep(ms: number): Promise<void> {
 export class GrafemaClientManager extends EventEmitter {
   private workspaceRoot: string;
   private explicitBinaryPath: string | null;
+  private explicitSocketPath: string | null;
   private client: RFDBClient | null = null;
   private serverProcess: ChildProcess | null = null;
   private _state: ConnectionState = { status: 'disconnected' };
-  private socketWatcher: FSWatcher | null = null;
+  private watchers: FSWatcher[] = [];
   private reconnecting = false;
 
-  constructor(workspaceRoot: string, explicitBinaryPath?: string) {
+  constructor(workspaceRoot: string, explicitBinaryPath?: string, explicitSocketPath?: string) {
     super();
     this.workspaceRoot = workspaceRoot;
     this.explicitBinaryPath = explicitBinaryPath || null;
+    this.explicitSocketPath = explicitSocketPath || null;
   }
 
   get state(): ConnectionState {
@@ -58,7 +60,7 @@ export class GrafemaClientManager extends EventEmitter {
   }
 
   get socketPath(): string {
-    return join(this.workspaceRoot, GRAFEMA_DIR, SOCKET_FILE);
+    return this.explicitSocketPath || join(this.workspaceRoot, GRAFEMA_DIR, SOCKET_FILE);
   }
 
   get dbPath(): string {
@@ -176,8 +178,6 @@ export class GrafemaClientManager extends EventEmitter {
       join(__dirname, '..', '..', '..'),
       join(__dirname, '..', '..', '..', '..'),
       join(__dirname, '..', '..', '..', '..', '..'),
-      // Known grafema monorepo location (development convenience)
-      '/Users/vadimr/grafema',
     ];
 
     for (const root of possibleRoots) {
@@ -360,32 +360,48 @@ export class GrafemaClientManager extends EventEmitter {
   private startWatching(): void {
     this.stopWatching();
 
-    const grafemaDir = join(this.workspaceRoot, GRAFEMA_DIR);
-    if (!existsSync(grafemaDir)) {
-      return;
-    }
+    const handleChange = (eventType: string, filename: string | null) => {
+      if (!filename) return;
+      console.log(`[grafema-explore] Detected change: ${eventType} ${filename}`);
+      setTimeout(() => {
+        if (this._state.status === 'connected') {
+          this.client?.ping().catch(() => {
+            console.log('[grafema-explore] Socket invalid after change, reconnecting...');
+            this.reconnect();
+          });
+        } else {
+          this.connect();
+        }
+      }, 500);
+    };
 
+    // Watch socket directory for socket file changes
+    const socketDir = dirname(this.socketPath);
+    const socketFilename = basename(this.socketPath);
+    this.addWatcher(socketDir, socketFilename, handleChange);
+
+    // Watch .grafema/ dir for DB changes (if socket is in a different directory)
+    const grafemaDir = join(this.workspaceRoot, GRAFEMA_DIR);
+    if (grafemaDir !== socketDir) {
+      this.addWatcher(grafemaDir, DB_FILE, handleChange);
+    }
+  }
+
+  private addWatcher(
+    dir: string,
+    targetFile: string,
+    onChange: (eventType: string, filename: string | null) => void
+  ): void {
+    if (!existsSync(dir)) return;
     try {
-      this.socketWatcher = watch(grafemaDir, (eventType, filename) => {
-        if (filename === SOCKET_FILE || filename === DB_FILE) {
-          console.log(`[grafema-explore] Detected change: ${eventType} ${filename}`);
-          // Debounce reconnect
-          setTimeout(() => {
-            if (this._state.status === 'connected') {
-              // Check if socket still valid
-              this.client?.ping().catch(() => {
-                console.log('[grafema-explore] Socket invalid after change, reconnecting...');
-                this.reconnect();
-              });
-            } else {
-              // Try to connect if we weren't connected
-              this.connect();
-            }
-          }, 500);
+      const watcher = watch(dir, (eventType, filename) => {
+        if (filename === targetFile) {
+          onChange(eventType, filename);
         }
       });
+      this.watchers.push(watcher);
     } catch (err) {
-      console.error('[grafema-explore] Failed to start watcher:', err);
+      console.error(`[grafema-explore] Failed to watch ${dir}:`, err);
     }
   }
 
@@ -393,9 +409,9 @@ export class GrafemaClientManager extends EventEmitter {
    * Stop watching for changes
    */
   private stopWatching(): void {
-    if (this.socketWatcher) {
-      this.socketWatcher.close();
-      this.socketWatcher = null;
+    for (const watcher of this.watchers) {
+      watcher.close();
     }
+    this.watchers = [];
   }
 }
