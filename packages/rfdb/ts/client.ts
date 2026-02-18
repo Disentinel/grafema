@@ -19,6 +19,7 @@ import type {
   AttrQuery,
   FieldDeclaration,
   DatalogResult,
+  DatalogExplainResult,
   NodeType,
   EdgeType,
   HelloResponse,
@@ -864,28 +865,65 @@ export class RFDBClient extends EventEmitter implements IRFDBClient {
     return this._send('datalogClearRules');
   }
 
+  private _parseExplainResponse(response: RFDBResponse): DatalogExplainResult {
+    const r = response as unknown as DatalogExplainResult & { requestId?: string };
+    return {
+      bindings: r.bindings || [],
+      stats: r.stats,
+      profile: r.profile,
+      explainSteps: r.explainSteps || [],
+    };
+  }
+
   /**
-   * Execute Datalog query
+   * Execute Datalog query.
+   * @param explain Pass literal `true` to get explain data.
+   *   A boolean variable won't narrow the return type.
    */
-  async datalogQuery(query: string): Promise<DatalogResult[]> {
-    const response = await this._send('datalogQuery', { query });
+  async datalogQuery(query: string): Promise<DatalogResult[]>;
+  async datalogQuery(query: string, explain: true): Promise<DatalogExplainResult>;
+  async datalogQuery(query: string, explain?: boolean): Promise<DatalogResult[] | DatalogExplainResult> {
+    const payload: Record<string, unknown> = { query };
+    if (explain) payload.explain = true;
+    const response = await this._send('datalogQuery', payload);
+    if (explain) {
+      return this._parseExplainResponse(response);
+    }
     return (response as { results?: DatalogResult[] }).results || [];
   }
 
   /**
-   * Check a guarantee (Datalog rule) and return violations
+   * Check a guarantee (Datalog rule) and return violations.
+   * @param explain Pass literal `true` to get explain data.
+   *   A boolean variable won't narrow the return type.
    */
-  async checkGuarantee(ruleSource: string): Promise<DatalogResult[]> {
-    const response = await this._send('checkGuarantee', { ruleSource });
+  async checkGuarantee(ruleSource: string): Promise<DatalogResult[]>;
+  async checkGuarantee(ruleSource: string, explain: true): Promise<DatalogExplainResult>;
+  async checkGuarantee(ruleSource: string, explain?: boolean): Promise<DatalogResult[] | DatalogExplainResult> {
+    const payload: Record<string, unknown> = { ruleSource };
+    if (explain) payload.explain = true;
+    const response = await this._send('checkGuarantee', payload);
+    if (explain) {
+      return this._parseExplainResponse(response);
+    }
     return (response as { violations?: DatalogResult[] }).violations || [];
   }
 
   /**
-   * Execute unified Datalog — handles both direct queries and rule-based programs.
+   * Execute unified Datalog -- handles both direct queries and rule-based programs.
    * Auto-detects the head predicate instead of hardcoding violation(X).
+   * @param explain Pass literal `true` to get explain data.
+   *   A boolean variable won't narrow the return type.
    */
-  async executeDatalog(source: string): Promise<DatalogResult[]> {
-    const response = await this._send('executeDatalog', { source });
+  async executeDatalog(source: string): Promise<DatalogResult[]>;
+  async executeDatalog(source: string, explain: true): Promise<DatalogExplainResult>;
+  async executeDatalog(source: string, explain?: boolean): Promise<DatalogResult[] | DatalogExplainResult> {
+    const payload: Record<string, unknown> = { source };
+    if (explain) payload.explain = true;
+    const response = await this._send('executeDatalog', payload);
+    if (explain) {
+      return this._parseExplainResponse(response);
+    }
     return (response as { results?: DatalogResult[] }).results || [];
   }
 
