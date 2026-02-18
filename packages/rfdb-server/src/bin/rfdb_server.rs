@@ -34,7 +34,7 @@ use sysinfo::System;
 // Import from library
 use rfdb::graph::{GraphEngine, GraphEngineV2, GraphStore};
 use rfdb::storage::{NodeRecord, EdgeRecord, AttrQuery, FieldDecl, FieldType};
-use rfdb::datalog::{parse_program, parse_atom, parse_query, Evaluator};
+use rfdb::datalog::{parse_program, parse_atom, parse_query, Evaluator, EvaluatorExplain, QueryResult};
 use rfdb::database_manager::{DatabaseManager, DatabaseInfo, AccessMode};
 use rfdb::session::ClientSession;
 use rfdb::metrics::{Metrics, MetricsSnapshot, SLOW_QUERY_THRESHOLD_MS};
@@ -196,11 +196,21 @@ pub enum Request {
     CheckGuarantee {
         #[serde(rename = "ruleSource")]
         rule_source: String,
+        #[serde(default)]
+        explain: bool,
     },
     DatalogLoadRules { source: String },
     DatalogClearRules,
-    DatalogQuery { query: String },
-    ExecuteDatalog { source: String },
+    DatalogQuery {
+        query: String,
+        #[serde(default)]
+        explain: bool,
+    },
+    ExecuteDatalog {
+        source: String,
+        #[serde(default)]
+        explain: bool,
+    },
 
     // Node utility
     IsEndpoint { id: String },
@@ -370,6 +380,7 @@ pub enum Response {
     Violations { violations: Vec<WireViolation> },
     Identifier { identifier: Option<String> },
     DatalogResults { results: Vec<WireViolation> },
+    ExplainResult(WireExplainResult),
 
     // ========================================================================
     // Protocol v3 Responses
@@ -494,6 +505,56 @@ impl From<DatabaseInfo> for WireDatabaseInfo {
 #[serde(rename_all = "camelCase")]
 pub struct WireViolation {
     pub bindings: HashMap<String, String>,
+}
+
+/// Explain result for wire protocol (single object per query, not per row)
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WireExplainResult {
+    pub bindings: Vec<HashMap<String, String>>,
+    pub stats: WireQueryStats,
+    pub profile: WireQueryProfile,
+    pub explain_steps: Vec<WireExplainStep>,
+}
+
+/// Query statistics for wire protocol
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WireQueryStats {
+    pub nodes_visited: usize,
+    pub edges_traversed: usize,
+    pub find_by_type_calls: usize,
+    pub get_node_calls: usize,
+    pub outgoing_edge_calls: usize,
+    pub incoming_edge_calls: usize,
+    pub all_edges_calls: usize,
+    pub bfs_calls: usize,
+    pub total_results: usize,
+    pub rule_evaluations: usize,
+    pub intermediate_counts: Vec<usize>,
+}
+
+/// Query profile for wire protocol
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WireQueryProfile {
+    pub total_duration_us: u64,
+    pub predicate_times: HashMap<String, u64>,
+    pub rule_eval_time_us: u64,
+    pub projection_time_us: u64,
+}
+
+/// Single explain step for wire protocol
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WireExplainStep {
+    pub step: usize,
+    pub operation: String,
+    pub predicate: String,
+    pub args: Vec<String>,
+    pub result_count: usize,
+    pub duration_us: u64,
+    pub details: Option<String>,
 }
 
 /// Slow query info for wire protocol
@@ -1153,10 +1214,11 @@ fn handle_request(
             })
         }
 
-        Request::CheckGuarantee { rule_source } => {
+        Request::CheckGuarantee { rule_source, explain } => {
             with_engine_read(session, |engine| {
-                match execute_check_guarantee(engine, &rule_source) {
-                    Ok(violations) => Response::Violations { violations },
+                match execute_check_guarantee(engine, &rule_source, explain) {
+                    Ok(DatalogResponse::Violations(violations)) => Response::Violations { violations },
+                    Ok(DatalogResponse::Explain(result)) => Response::ExplainResult(result),
                     Err(e) => Response::Error { error: e },
                 }
             })
@@ -1175,19 +1237,21 @@ fn handle_request(
             Response::Ok { ok: true }
         }
 
-        Request::DatalogQuery { query } => {
+        Request::DatalogQuery { query, explain } => {
             with_engine_read(session, |engine| {
-                match execute_datalog_query(engine, &query) {
-                    Ok(results) => Response::DatalogResults { results },
+                match execute_datalog_query(engine, &query, explain) {
+                    Ok(DatalogResponse::Violations(results)) => Response::DatalogResults { results },
+                    Ok(DatalogResponse::Explain(result)) => Response::ExplainResult(result),
                     Err(e) => Response::Error { error: e },
                 }
             })
         }
 
-        Request::ExecuteDatalog { source } => {
+        Request::ExecuteDatalog { source, explain } => {
             with_engine_read(session, |engine| {
-                match execute_datalog(engine, &source) {
-                    Ok(results) => Response::DatalogResults { results },
+                match execute_datalog(engine, &source, explain) {
+                    Ok(DatalogResponse::Violations(results)) => Response::DatalogResults { results },
+                    Ok(DatalogResponse::Explain(result)) => Response::ExplainResult(result),
                     Err(e) => Response::Error { error: e },
                 }
             })
@@ -1686,36 +1750,83 @@ fn handle_close_database(manager: &DatabaseManager, session: &mut ClientSession)
 // Datalog Helpers
 // ============================================================================
 
+/// Internal return type to distinguish explain vs non-explain results
+enum DatalogResponse {
+    Violations(Vec<WireViolation>),
+    Explain(WireExplainResult),
+}
+
+/// Convert a `QueryResult` into a `WireExplainResult`
+fn query_result_to_wire_explain(result: QueryResult) -> WireExplainResult {
+    WireExplainResult {
+        bindings: result.bindings,
+        stats: WireQueryStats {
+            nodes_visited: result.stats.nodes_visited,
+            edges_traversed: result.stats.edges_traversed,
+            find_by_type_calls: result.stats.find_by_type_calls,
+            get_node_calls: result.stats.get_node_calls,
+            outgoing_edge_calls: result.stats.outgoing_edge_calls,
+            incoming_edge_calls: result.stats.incoming_edge_calls,
+            all_edges_calls: result.stats.all_edges_calls,
+            bfs_calls: result.stats.bfs_calls,
+            total_results: result.stats.total_results,
+            rule_evaluations: result.stats.rule_evaluations,
+            intermediate_counts: result.stats.intermediate_counts,
+        },
+        profile: WireQueryProfile {
+            total_duration_us: result.profile.total_duration_us,
+            predicate_times: result.profile.predicate_times,
+            rule_eval_time_us: result.profile.rule_eval_time_us,
+            projection_time_us: result.profile.projection_time_us,
+        },
+        explain_steps: result.explain_steps.into_iter().map(|s| WireExplainStep {
+            step: s.step,
+            operation: s.operation,
+            predicate: s.predicate,
+            args: s.args,
+            result_count: s.result_count,
+            duration_us: s.duration_us,
+            details: s.details,
+        }).collect(),
+    }
+}
+
 /// Execute a guarantee check (violation query)
 fn execute_check_guarantee(
     engine: &dyn GraphStore,
     rule_source: &str,
-) -> std::result::Result<Vec<WireViolation>, String> {
+    explain: bool,
+) -> std::result::Result<DatalogResponse, String> {
     let program = parse_program(rule_source)
         .map_err(|e| format!("Datalog parse error: {}", e))?;
-
-    let mut evaluator = Evaluator::new(engine);
-
-    for rule in program.rules() {
-        evaluator.add_rule(rule.clone());
-    }
 
     let violation_query = parse_atom("violation(X)")
         .map_err(|e| format!("Internal error parsing violation query: {}", e))?;
 
-    let bindings = evaluator.query(&violation_query);
-
-    let violations: Vec<WireViolation> = bindings.into_iter()
-        .map(|b| {
-            let mut map = std::collections::HashMap::new();
-            for (k, v) in b.iter() {
-                map.insert(k.clone(), v.as_str());
-            }
-            WireViolation { bindings: map }
-        })
-        .collect();
-
-    Ok(violations)
+    if explain {
+        let mut evaluator = EvaluatorExplain::new(engine, true);
+        for rule in program.rules() {
+            evaluator.add_rule(rule.clone());
+        }
+        let result = evaluator.query(&violation_query);
+        Ok(DatalogResponse::Explain(query_result_to_wire_explain(result)))
+    } else {
+        let mut evaluator = Evaluator::new(engine);
+        for rule in program.rules() {
+            evaluator.add_rule(rule.clone());
+        }
+        let bindings = evaluator.query(&violation_query);
+        let violations: Vec<WireViolation> = bindings.into_iter()
+            .map(|b| {
+                let mut map = std::collections::HashMap::new();
+                for (k, v) in b.iter() {
+                    map.insert(k.clone(), v.as_str());
+                }
+                WireViolation { bindings: map }
+            })
+            .collect();
+        Ok(DatalogResponse::Violations(violations))
+    }
 }
 
 /// Execute datalog load rules (returns count of loaded rules)
@@ -1733,25 +1844,29 @@ fn execute_datalog_load_rules(
 fn execute_datalog_query(
     engine: &dyn GraphStore,
     query_source: &str,
-) -> std::result::Result<Vec<WireViolation>, String> {
+    explain: bool,
+) -> std::result::Result<DatalogResponse, String> {
     let literals = parse_query(query_source)
         .map_err(|e| format!("Datalog query parse error: {}", e))?;
 
-    let evaluator = Evaluator::new(engine);
-
-    let bindings = evaluator.eval_query(&literals);
-
-    let results: Vec<WireViolation> = bindings.into_iter()
-        .map(|b| {
-            let mut map = std::collections::HashMap::new();
-            for (k, v) in b.iter() {
-                map.insert(k.clone(), v.as_str());
-            }
-            WireViolation { bindings: map }
-        })
-        .collect();
-
-    Ok(results)
+    if explain {
+        let mut evaluator = EvaluatorExplain::new(engine, true);
+        let result = evaluator.eval_query(&literals);
+        Ok(DatalogResponse::Explain(query_result_to_wire_explain(result)))
+    } else {
+        let evaluator = Evaluator::new(engine);
+        let bindings = evaluator.eval_query(&literals);
+        let results: Vec<WireViolation> = bindings.into_iter()
+            .map(|b| {
+                let mut map = std::collections::HashMap::new();
+                for (k, v) in b.iter() {
+                    map.insert(k.clone(), v.as_str());
+                }
+                WireViolation { bindings: map }
+            })
+            .collect();
+        Ok(DatalogResponse::Violations(results))
+    }
 }
 
 /// Execute unified Datalog — auto-detects rules vs direct query.
@@ -1762,31 +1877,37 @@ fn execute_datalog_query(
 fn execute_datalog(
     engine: &dyn GraphStore,
     source: &str,
-) -> std::result::Result<Vec<WireViolation>, String> {
+    explain: bool,
+) -> std::result::Result<DatalogResponse, String> {
     // Try parsing as a program first
     if let Ok(program) = parse_program(source) {
         if !program.rules().is_empty() {
-            let mut evaluator = Evaluator::new(engine);
-
-            for rule in program.rules() {
-                evaluator.add_rule(rule.clone());
+            if explain {
+                let mut evaluator = EvaluatorExplain::new(engine, true);
+                for rule in program.rules() {
+                    evaluator.add_rule(rule.clone());
+                }
+                let head = program.rules()[0].head();
+                let result = evaluator.query(head);
+                return Ok(DatalogResponse::Explain(query_result_to_wire_explain(result)));
+            } else {
+                let mut evaluator = Evaluator::new(engine);
+                for rule in program.rules() {
+                    evaluator.add_rule(rule.clone());
+                }
+                let head = program.rules()[0].head();
+                let bindings = evaluator.query(head);
+                let results: Vec<WireViolation> = bindings.into_iter()
+                    .map(|b| {
+                        let mut map = std::collections::HashMap::new();
+                        for (k, v) in b.iter() {
+                            map.insert(k.clone(), v.as_str());
+                        }
+                        WireViolation { bindings: map }
+                    })
+                    .collect();
+                return Ok(DatalogResponse::Violations(results));
             }
-
-            // Query using the head atom of the first rule
-            let head = program.rules()[0].head();
-            let bindings = evaluator.query(head);
-
-            let results: Vec<WireViolation> = bindings.into_iter()
-                .map(|b| {
-                    let mut map = std::collections::HashMap::new();
-                    for (k, v) in b.iter() {
-                        map.insert(k.clone(), v.as_str());
-                    }
-                    WireViolation { bindings: map }
-                })
-                .collect();
-
-            return Ok(results);
         }
     }
 
@@ -1794,20 +1915,24 @@ fn execute_datalog(
     let literals = parse_query(source)
         .map_err(|e| format!("Datalog parse error: {}", e))?;
 
-    let evaluator = Evaluator::new(engine);
-    let bindings = evaluator.eval_query(&literals);
-
-    let results: Vec<WireViolation> = bindings.into_iter()
-        .map(|b| {
-            let mut map = std::collections::HashMap::new();
-            for (k, v) in b.iter() {
-                map.insert(k.clone(), v.as_str());
-            }
-            WireViolation { bindings: map }
-        })
-        .collect();
-
-    Ok(results)
+    if explain {
+        let mut evaluator = EvaluatorExplain::new(engine, true);
+        let result = evaluator.eval_query(&literals);
+        Ok(DatalogResponse::Explain(query_result_to_wire_explain(result)))
+    } else {
+        let evaluator = Evaluator::new(engine);
+        let bindings = evaluator.eval_query(&literals);
+        let results: Vec<WireViolation> = bindings.into_iter()
+            .map(|b| {
+                let mut map = std::collections::HashMap::new();
+                for (k, v) in b.iter() {
+                    map.insert(k.clone(), v.as_str());
+                }
+                WireViolation { bindings: map }
+            })
+            .collect();
+        Ok(DatalogResponse::Violations(results))
+    }
 }
 
 // ============================================================================
