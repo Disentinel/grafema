@@ -396,6 +396,7 @@ export class JSASTAnalyzer extends Plugin {
             await graph.commitBatch(
               ['JSASTAnalyzer', 'ANALYSIS', task.data.module.file],
               deferIndex,
+              ['MODULE'],
             );
             return result;
           } catch (err) {

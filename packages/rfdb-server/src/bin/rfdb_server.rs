@@ -224,6 +224,9 @@ pub enum Request {
         /// Caller must send RebuildIndexes after all deferred commits complete.
         #[serde(default, rename = "deferIndex")]
         defer_index: bool,
+        /// Node types to preserve during deletion phase (REG-489).
+        #[serde(default, rename = "protectedTypes")]
+        protected_types: Vec<String>,
     },
 
     /// Rebuild all secondary indexes from current segment.
@@ -1287,9 +1290,9 @@ fn handle_request(
             }
         }
 
-        Request::CommitBatch { changed_files, nodes, edges, tags: _, file_context, defer_index } => {
+        Request::CommitBatch { changed_files, nodes, edges, tags: _, file_context, defer_index, protected_types } => {
             with_engine_write(session, |engine| {
-                handle_commit_batch(engine, changed_files, nodes, edges, file_context, defer_index)
+                handle_commit_batch(engine, changed_files, nodes, edges, file_context, defer_index, protected_types)
             })
         }
 
@@ -1498,6 +1501,7 @@ fn handle_commit_batch(
     edges: Vec<WireEdge>,
     file_context: Option<String>,
     defer_index: bool,
+    protected_types: Vec<String>,
 ) -> Response {
     // If file_context is set, ensure it's included in changed_files
     // so the deletion phase tombstones old enrichment edges for this context.
@@ -1526,6 +1530,17 @@ fn handle_commit_batch(
         let old_ids = engine.find_by_attr(&attr_query);
 
         for id in &old_ids {
+            // Skip deletion for protected node types (REG-489)
+            if !protected_types.is_empty() {
+                if let Some(node) = engine.get_node(*id) {
+                    if let Some(ref nt) = node.node_type {
+                        if protected_types.contains(nt) {
+                            continue;
+                        }
+                    }
+                }
+            }
+
             if let Some(node) = engine.get_node(*id) {
                 if let Some(ref nt) = node.node_type {
                     changed_node_types.insert(nt.clone());
@@ -2980,6 +2995,7 @@ mod protocol_tests {
             tags: None,
             file_context: None,
             defer_index: false,
+            protected_types: vec![],
         }, &None);
 
         // Verify delta
@@ -3033,6 +3049,7 @@ mod protocol_tests {
             tags: None,
             file_context: None,
             defer_index: false,
+            protected_types: vec![],
         }, &None);
 
         match response {
@@ -3070,6 +3087,7 @@ mod protocol_tests {
             tags: None,
             file_context: None,
             defer_index: false,
+            protected_types: vec![],
         }, &None);
 
         match response {
@@ -3132,6 +3150,7 @@ mod protocol_tests {
             tags: None,
             file_context: None,
             defer_index: false,
+            protected_types: vec![],
         }, &None);
 
         // Verify delta counts
@@ -3212,6 +3231,7 @@ mod protocol_tests {
             tags: None,
             file_context: None,
             defer_index: false,
+            protected_types: vec![],
         }, &None);
 
         match response {
@@ -3255,6 +3275,7 @@ mod protocol_tests {
             tags: None,
             file_context: Some(file_ctx.clone()),
             defer_index: false,
+            protected_types: vec![],
         }, &None);
 
         match response {
@@ -3294,6 +3315,7 @@ mod protocol_tests {
             tags: None,
             file_context: Some(file_ctx.clone()),
             defer_index: false,
+            protected_types: vec![],
         }, &None);
 
         match response2 {
@@ -3347,6 +3369,7 @@ mod protocol_tests {
             tags: None,
             file_context: None,
             defer_index: false,
+            protected_types: vec![],
         }, &None);
 
         match response {
@@ -4234,6 +4257,7 @@ mod protocol_tests {
             tags: None,
             file_context: None,
             defer_index: true,
+            protected_types: vec![],
         }, &None);
 
         // Verify: CommitBatch succeeds with correct delta
@@ -4309,6 +4333,7 @@ mod protocol_tests {
             tags: None,
             file_context: None,
             defer_index: false,
+            protected_types: vec![],
         }, &None);
 
         match response {
@@ -4353,6 +4378,7 @@ mod protocol_tests {
             tags: None,
             file_context: None,
             defer_index: true,
+            protected_types: vec![],
         }, &None);
 
         // Second deferred commit
@@ -4368,6 +4394,7 @@ mod protocol_tests {
             tags: None,
             file_context: None,
             defer_index: true,
+            protected_types: vec![],
         }, &None);
 
         // Third deferred commit
@@ -4380,6 +4407,7 @@ mod protocol_tests {
             tags: None,
             file_context: None,
             defer_index: true,
+            protected_types: vec![],
         }, &None);
 
         // Rebuild
@@ -4448,6 +4476,7 @@ mod protocol_tests {
             tags: None,
             file_context: None,
             defer_index: true,
+            protected_types: vec![],
         }, &None);
 
         // First rebuild
@@ -4472,5 +4501,206 @@ mod protocol_tests {
 
         assert_eq!(count1, count2, "RebuildIndexes should be idempotent: same result count after two rebuilds");
         assert_eq!(count1, 2, "Should find 2 FUNCTIONs");
+    }
+
+    // ============================================================================
+    // CommitBatch with protected_types (REG-489)
+    // ============================================================================
+
+    /// Test that protected_types preserves nodes of specified types during
+    /// commitBatch deletion phase. Simulates INDEXING creating MODULE + FUNCTION,
+    /// then ANALYSIS replacing FUNCTION while preserving MODULE.
+    #[test]
+    fn test_commit_batch_protected_types_preserves_nodes() {
+        let (_dir, manager) = setup_test_manager();
+        let mut session = ClientSession::new(1);
+        setup_ephemeral_db(&manager, &mut session, "protected_types_test");
+
+        // INDEXING phase: create MODULE and FUNCTION nodes for "app.js"
+        handle_request(&manager, &mut session, Request::AddNodes {
+            nodes: vec![
+                WireNode { semantic_id: None, id: "mod1".to_string(), node_type: Some("MODULE".to_string()), name: Some("app".to_string()), file: Some("app.js".to_string()), exported: false, metadata: None },
+                WireNode { semantic_id: None, id: "fn_old".to_string(), node_type: Some("FUNCTION".to_string()), name: Some("oldFunc".to_string()), file: Some("app.js".to_string()), exported: false, metadata: None },
+            ],
+        }, &None);
+        handle_request(&manager, &mut session, Request::Flush, &None);
+
+        // ANALYSIS phase: commitBatch with protectedTypes: ["MODULE"]
+        // Should delete FUNCTION (not protected), preserve MODULE (protected), add new FUNCTION
+        let response = handle_request(&manager, &mut session, Request::CommitBatch {
+            changed_files: vec!["app.js".to_string()],
+            nodes: vec![
+                WireNode { semantic_id: None, id: "fn_new".to_string(), node_type: Some("FUNCTION".to_string()), name: Some("newFunc".to_string()), file: Some("app.js".to_string()), exported: false, metadata: None },
+            ],
+            edges: vec![],
+            tags: None,
+            file_context: None,
+            defer_index: false,
+            protected_types: vec!["MODULE".to_string()],
+        }, &None);
+
+        // Verify delta: only 1 node removed (FUNCTION), MODULE was skipped
+        match response {
+            Response::BatchCommitted { ok, delta } => {
+                assert!(ok);
+                assert_eq!(delta.nodes_removed, 1, "Only old FUNCTION should be removed, MODULE is protected");
+                assert_eq!(delta.nodes_added, 1, "New FUNCTION should be added");
+            }
+            _ => panic!("Expected BatchCommitted, got {:?}", response),
+        }
+
+        // MODULE node should still exist
+        let mod_exists = handle_request(&manager, &mut session, Request::NodeExists { id: "mod1".to_string() }, &None);
+        match mod_exists { Response::Bool { value } => assert!(value, "MODULE node should survive with protectedTypes"), _ => panic!("Expected Bool") }
+
+        // Old FUNCTION should be gone
+        let old_fn_exists = handle_request(&manager, &mut session, Request::NodeExists { id: "fn_old".to_string() }, &None);
+        match old_fn_exists { Response::Bool { value } => assert!(!value, "Old FUNCTION should be deleted"), _ => panic!("Expected Bool") }
+
+        // New FUNCTION should exist
+        let new_fn_exists = handle_request(&manager, &mut session, Request::NodeExists { id: "fn_new".to_string() }, &None);
+        match new_fn_exists { Response::Bool { value } => assert!(value, "New FUNCTION should be added"), _ => panic!("Expected Bool") }
+    }
+
+    /// Test that empty protected_types = legacy behavior (all nodes deleted).
+    /// This ensures backward compatibility: callers not passing protectedTypes
+    /// get the same delete-then-add semantics as before REG-489.
+    #[test]
+    fn test_commit_batch_empty_protected_types_legacy_behavior() {
+        let (_dir, manager) = setup_test_manager();
+        let mut session = ClientSession::new(1);
+        setup_ephemeral_db(&manager, &mut session, "empty_protected_test");
+
+        // Create MODULE and FUNCTION nodes for "app.js"
+        handle_request(&manager, &mut session, Request::AddNodes {
+            nodes: vec![
+                WireNode { semantic_id: None, id: "mod1".to_string(), node_type: Some("MODULE".to_string()), name: Some("app".to_string()), file: Some("app.js".to_string()), exported: false, metadata: None },
+                WireNode { semantic_id: None, id: "fn1".to_string(), node_type: Some("FUNCTION".to_string()), name: Some("func1".to_string()), file: Some("app.js".to_string()), exported: false, metadata: None },
+            ],
+        }, &None);
+        handle_request(&manager, &mut session, Request::Flush, &None);
+
+        // CommitBatch with empty protectedTypes (legacy behavior)
+        let response = handle_request(&manager, &mut session, Request::CommitBatch {
+            changed_files: vec!["app.js".to_string()],
+            nodes: vec![
+                WireNode { semantic_id: None, id: "fn_new".to_string(), node_type: Some("FUNCTION".to_string()), name: Some("newFunc".to_string()), file: Some("app.js".to_string()), exported: false, metadata: None },
+            ],
+            edges: vec![],
+            tags: None,
+            file_context: None,
+            defer_index: false,
+            protected_types: vec![],
+        }, &None);
+
+        // Both MODULE and FUNCTION should be deleted (legacy behavior)
+        match response {
+            Response::BatchCommitted { ok, delta } => {
+                assert!(ok);
+                assert_eq!(delta.nodes_removed, 2, "Both MODULE and FUNCTION should be removed with empty protectedTypes");
+                assert_eq!(delta.nodes_added, 1);
+            }
+            _ => panic!("Expected BatchCommitted, got {:?}", response),
+        }
+
+        // MODULE should NOT exist (was deleted -- legacy behavior)
+        let mod_exists = handle_request(&manager, &mut session, Request::NodeExists { id: "mod1".to_string() }, &None);
+        match mod_exists { Response::Bool { value } => assert!(!value, "MODULE should be deleted with empty protectedTypes"), _ => panic!("Expected Bool") }
+
+        // New FUNCTION should exist
+        let new_fn = handle_request(&manager, &mut session, Request::NodeExists { id: "fn_new".to_string() }, &None);
+        match new_fn { Response::Bool { value } => assert!(value, "New FUNCTION should be added"), _ => panic!("Expected Bool") }
+    }
+
+    /// Test that edges connected to protected nodes are preserved during
+    /// commitBatch deletion phase. When MODULE is protected and has a CONTAINS
+    /// edge to a FUNCTION, the edge from an external node to MODULE should survive.
+    #[test]
+    fn test_commit_batch_protected_node_edges_preserved() {
+        let (_dir, manager) = setup_test_manager();
+        let mut session = ClientSession::new(1);
+        setup_ephemeral_db(&manager, &mut session, "protected_edges_test");
+
+        // Create MODULE with outgoing CONTAINS edge to FUNCTION,
+        // and a SERVICE node with CONTAINS edge to MODULE
+        handle_request(&manager, &mut session, Request::AddNodes {
+            nodes: vec![
+                WireNode { semantic_id: None, id: "svc1".to_string(), node_type: Some("SERVICE".to_string()), name: Some("myService".to_string()), file: Some("service.js".to_string()), exported: false, metadata: None },
+                WireNode { semantic_id: None, id: "mod1".to_string(), node_type: Some("MODULE".to_string()), name: Some("app".to_string()), file: Some("app.js".to_string()), exported: false, metadata: None },
+                WireNode { semantic_id: None, id: "fn1".to_string(), node_type: Some("FUNCTION".to_string()), name: Some("handler".to_string()), file: Some("app.js".to_string()), exported: true, metadata: None },
+            ],
+        }, &None);
+        handle_request(&manager, &mut session, Request::AddEdges {
+            edges: vec![
+                // SERVICE -> MODULE (cross-file edge, should survive because MODULE is protected)
+                WireEdge { src: "svc1".to_string(), dst: "mod1".to_string(), edge_type: Some("CONTAINS".to_string()), metadata: None },
+                // MODULE -> FUNCTION (intra-file edge from protected to non-protected)
+                WireEdge { src: "mod1".to_string(), dst: "fn1".to_string(), edge_type: Some("CONTAINS".to_string()), metadata: None },
+            ],
+            skip_validation: true,
+        }, &None);
+        handle_request(&manager, &mut session, Request::Flush, &None);
+
+        // ANALYSIS commitBatch: replace FUNCTION nodes for "app.js", protect MODULE
+        let response = handle_request(&manager, &mut session, Request::CommitBatch {
+            changed_files: vec!["app.js".to_string()],
+            nodes: vec![
+                WireNode { semantic_id: None, id: "fn_new".to_string(), node_type: Some("FUNCTION".to_string()), name: Some("newHandler".to_string()), file: Some("app.js".to_string()), exported: true, metadata: None },
+            ],
+            edges: vec![
+                // Re-create MODULE -> new FUNCTION edge
+                WireEdge { src: "mod1".to_string(), dst: "fn_new".to_string(), edge_type: Some("CONTAINS".to_string()), metadata: None },
+            ],
+            tags: None,
+            file_context: None,
+            defer_index: false,
+            protected_types: vec!["MODULE".to_string()],
+        }, &None);
+
+        match response {
+            Response::BatchCommitted { ok, delta } => {
+                assert!(ok);
+                // Only fn1 deleted, mod1 preserved
+                assert_eq!(delta.nodes_removed, 1, "Only FUNCTION should be removed");
+                assert_eq!(delta.nodes_added, 1, "New FUNCTION should be added");
+            }
+            _ => panic!("Expected BatchCommitted, got {:?}", response),
+        }
+
+        // MODULE should still exist
+        let mod_exists = handle_request(&manager, &mut session, Request::NodeExists { id: "mod1".to_string() }, &None);
+        match mod_exists { Response::Bool { value } => assert!(value, "MODULE should survive"), _ => panic!("Expected Bool") }
+
+        // Check SERVICE -> MODULE edge survived (cross-file edge to protected node)
+        // Use string_to_id to get the internal numeric ID for comparison
+        let mod1_numeric = id_to_string(string_to_id("mod1"));
+        let fn_new_numeric = id_to_string(string_to_id("fn_new"));
+
+        let svc_edges = handle_request(&manager, &mut session, Request::GetOutgoingEdges {
+            id: "svc1".to_string(),
+            edge_types: None,
+        }, &None);
+        match svc_edges {
+            Response::Edges { edges } => {
+                let contains_to_mod = edges.iter().find(|e| e.dst == mod1_numeric && e.edge_type.as_deref() == Some("CONTAINS"));
+                assert!(contains_to_mod.is_some(),
+                    "SERVICE -> MODULE CONTAINS edge should survive because MODULE is protected. Found edges: {:?}", edges);
+            }
+            _ => panic!("Expected Edges response"),
+        }
+
+        // Check MODULE -> new FUNCTION edge was added
+        let mod_edges = handle_request(&manager, &mut session, Request::GetOutgoingEdges {
+            id: "mod1".to_string(),
+            edge_types: None,
+        }, &None);
+        match mod_edges {
+            Response::Edges { edges } => {
+                let contains_to_fn = edges.iter().find(|e| e.dst == fn_new_numeric && e.edge_type.as_deref() == Some("CONTAINS"));
+                assert!(contains_to_fn.is_some(),
+                    "MODULE -> new FUNCTION CONTAINS edge should exist from the batch. Found edges: {:?}", edges);
+            }
+            _ => panic!("Expected Edges response"),
+        }
     }
 }

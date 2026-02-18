@@ -1094,7 +1094,7 @@ export class RFDBClient extends EventEmitter implements IRFDBClient {
    * @param deferIndex - When true, server writes data but skips index rebuild.
    *   Caller must send rebuildIndexes() after all deferred commits complete.
    */
-  async commitBatch(tags?: string[], deferIndex?: boolean): Promise<CommitDelta> {
+  async commitBatch(tags?: string[], deferIndex?: boolean, protectedTypes?: string[]): Promise<CommitDelta> {
     if (!this._batching) throw new Error('No batch in progress');
 
     const allNodes = this._batchNodes;
@@ -1106,7 +1106,7 @@ export class RFDBClient extends EventEmitter implements IRFDBClient {
     this._batchEdges = [];
     this._batchFiles = new Set();
 
-    return this._sendCommitBatch(changedFiles, allNodes, allEdges, tags, deferIndex);
+    return this._sendCommitBatch(changedFiles, allNodes, allEdges, tags, deferIndex, protectedTypes);
   }
 
   /**
@@ -1120,6 +1120,7 @@ export class RFDBClient extends EventEmitter implements IRFDBClient {
     allEdges: WireEdge[],
     tags?: string[],
     deferIndex?: boolean,
+    protectedTypes?: string[],
   ): Promise<CommitDelta> {
     // Chunk large batches to stay under server's 100MB message limit.
     // First chunk includes changedFiles (triggers old data deletion),
@@ -1129,6 +1130,7 @@ export class RFDBClient extends EventEmitter implements IRFDBClient {
       const response = await this._send('commitBatch', {
         changedFiles, nodes: allNodes, edges: allEdges, tags,
         ...(deferIndex ? { deferIndex: true } : {}),
+        ...(protectedTypes?.length ? { protectedTypes } : {}),
       });
       return (response as CommitBatchResponse).delta;
     }
@@ -1155,6 +1157,7 @@ export class RFDBClient extends EventEmitter implements IRFDBClient {
         changedFiles: i === 0 ? changedFiles : [],
         nodes, edges, tags,
         ...(deferIndex ? { deferIndex: true } : {}),
+        ...(i === 0 && protectedTypes?.length ? { protectedTypes } : {}),
       });
       const d = (response as CommitBatchResponse).delta;
       merged.nodesAdded += d.nodesAdded;
@@ -1305,14 +1308,14 @@ export class BatchHandle {
     this._files.add(file);
   }
 
-  async commit(tags?: string[], deferIndex?: boolean): Promise<CommitDelta> {
+  async commit(tags?: string[], deferIndex?: boolean, protectedTypes?: string[]): Promise<CommitDelta> {
     const nodes = this._nodes;
     const edges = this._edges;
     const changedFiles = [...this._files];
     this._nodes = [];
     this._edges = [];
     this._files = new Set();
-    return this.client._sendCommitBatch(changedFiles, nodes, edges, tags, deferIndex);
+    return this.client._sendCommitBatch(changedFiles, nodes, edges, tags, deferIndex, protectedTypes);
   }
 
   abort(): void {

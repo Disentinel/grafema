@@ -502,7 +502,7 @@ export interface IRFDBClient {
 
   // Batch operations
   beginBatch(): void;
-  commitBatch(tags?: string[]): Promise<CommitDelta>;
+  commitBatch(tags?: string[], deferIndex?: boolean, protectedTypes?: string[]): Promise<CommitDelta>;
   abortBatch(): void;
   isBatching(): boolean;
   findDependentFiles(changedFiles: string[]): Promise<string[]>;

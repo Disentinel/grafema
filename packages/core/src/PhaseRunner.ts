@@ -95,7 +95,8 @@ export class PhaseRunner {
     try {
       const result = await plugin.execute(pluginContext);
       const deferIndex = pluginContext.deferIndexing ?? false;
-      const delta = await graph.commitBatch(tags, deferIndex);
+      const protectedTypes = phaseName === 'ANALYSIS' ? ['MODULE'] : undefined;
+      const delta = await graph.commitBatch(tags, deferIndex, protectedTypes);
       return { result, delta };
     } catch (error) {
       graph.abortBatch();
