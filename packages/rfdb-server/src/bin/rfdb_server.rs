@@ -2109,6 +2109,7 @@ fn main() {
     }
 
     let db_path = PathBuf::from(db_path_str);
+    eprintln!("[rfdb-server] Starting rfdb-server v{}", env!("CARGO_PKG_VERSION"));
     let socket_path = args.iter()
         .position(|a| a == "--socket")
         .and_then(|i| args.get(i + 1))
