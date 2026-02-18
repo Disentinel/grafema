@@ -221,7 +221,7 @@ async function run(): Promise<void> {
     // Connect to RFDB server (shared with MCP server)
     // The MCP server starts the RFDB server if not running
     const dbPath = join(projectPath, '.grafema', 'graph.rfdb');
-    const socketPath = config.analysis?.parallel?.socketPath || '/tmp/rfdb.sock';
+    const socketPath = config.analysis?.parallel?.socketPath || join(projectPath, '.grafema', 'rfdb.sock');
 
     console.log(`[Worker] Connecting to RFDB server: socket=${socketPath}, db=${dbPath}`);
     db = new RFDBServerBackend({ socketPath, dbPath });

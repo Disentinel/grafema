@@ -39,30 +39,32 @@ rfdb-server ./my-graph.rfdb
 
 ### Programmatic usage
 
+Server lifecycle is managed through `@grafema/core`:
+
 ```javascript
-const { startServer, waitForServer, isAvailable } = require('@grafema/rfdb');
+const { startRfdbServer, RFDBServerBackend } = require('@grafema/core');
 
-// Check if binary is available
-if (!isAvailable()) {
-  console.log('RFDB not available, using in-memory backend');
-}
-
-// Start server
-const server = startServer({
-  socketPath: '/tmp/rfdb.sock',
-  dataDir: './rfdb-data',
-  silent: false,
+// Start server (handles binary discovery, socket polling, PID file)
+const server = await startRfdbServer({
+  dbPath: './my-graph.rfdb',
+  socketPath: '.grafema/rfdb.sock',
 });
 
-// Wait for it to be ready
-await waitForServer('/tmp/rfdb.sock');
-
-// Use with @grafema/core
-const { RFDBServerBackend } = require('@grafema/core');
-const backend = new RFDBServerBackend({ socketPath: '/tmp/rfdb.sock' });
+// Use with Grafema
+const backend = new RFDBServerBackend({ socketPath: '.grafema/rfdb.sock' });
 
 // Stop server when done
 server.kill();
+```
+
+This package also exports helpers for binary detection:
+
+```javascript
+const { isAvailable, waitForServer } = require('@grafema/rfdb');
+
+if (!isAvailable()) {
+  console.log('RFDB not available, using in-memory backend');
+}
 ```
 
 ## With Grafema
@@ -74,7 +76,7 @@ const { Orchestrator, RFDBServerBackend } = require('@grafema/core');
 
 const orchestrator = new Orchestrator({
   rootDir: './src',
-  backend: new RFDBServerBackend({ socketPath: '/tmp/rfdb.sock' }),
+  backend: new RFDBServerBackend({ socketPath: '.grafema/rfdb.sock' }),
 });
 ```
 

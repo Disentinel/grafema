@@ -10,10 +10,9 @@
 
 import { Command } from 'commander';
 import { resolve, join } from 'path';
-import { existsSync, unlinkSync, writeFileSync, readFileSync } from 'fs';
-import { spawn } from 'child_process';
+import { existsSync, unlinkSync, readFileSync } from 'fs';
 import { setTimeout as sleep } from 'timers/promises';
-import { RFDBClient, loadConfig, RFDBServerBackend, findRfdbBinary } from '@grafema/core';
+import { RFDBClient, loadConfig, RFDBServerBackend, findRfdbBinary, startRfdbServer } from '@grafema/core';
 import { exitWithError } from '../utils/errorFormatter.js';
 
 // Extend config type for server settings
@@ -67,6 +66,55 @@ function getProjectPaths(projectPath: string) {
   return { grafemaDir, socketPath, dbPath, pidPath };
 }
 
+/**
+ * Resolve RFDB binary path: CLI flag > config > auto-detect
+ */
+function resolveBinaryPath(projectPath: string, explicitBinary?: string): string | null {
+  if (explicitBinary) {
+    return findServerBinary(explicitBinary);
+  }
+
+  // Try config
+  try {
+    const config = loadConfig(projectPath);
+    const serverConfig = (config as unknown as { server?: ServerConfig }).server;
+    if (serverConfig?.binaryPath) {
+      return findServerBinary(serverConfig.binaryPath);
+    }
+  } catch {
+    // Config not found or invalid - continue with auto-detect
+  }
+
+  return findServerBinary();
+}
+
+/**
+ * Stop a running RFDB server: send shutdown, wait for socket removal, clean PID
+ */
+async function stopRunningServer(socketPath: string, pidPath: string): Promise<void> {
+  const client = new RFDBClient(socketPath);
+  client.on('error', () => {});
+
+  try {
+    await client.connect();
+    await client.shutdown();
+  } catch {
+    // Expected - server closes connection
+  }
+
+  // Wait for socket to disappear
+  let attempts = 0;
+  while (existsSync(socketPath) && attempts < 30) {
+    await sleep(100);
+    attempts++;
+  }
+
+  // Clean up PID file
+  if (existsSync(pidPath)) {
+    unlinkSync(pidPath);
+  }
+}
+
 // Create main server command with subcommands
 export const serverCommand = new Command('server')
   .description('Manage RFDB (Rega Flow Database) server lifecycle')
@@ -111,34 +159,7 @@ serverCommand
       return;
     }
 
-    // Remove stale socket if exists
-    if (existsSync(socketPath)) {
-      unlinkSync(socketPath);
-    }
-
-    // Determine binary path: CLI flag > config > auto-detect
-    let binaryPath: string | null = null;
-
-    if (options.binary) {
-      // Explicit --binary flag
-      binaryPath = findServerBinary(options.binary);
-    } else {
-      // Try to read from config
-      try {
-        const config = loadConfig(projectPath);
-        const serverConfig = (config as unknown as { server?: ServerConfig }).server;
-        if (serverConfig?.binaryPath) {
-          binaryPath = findServerBinary(serverConfig.binaryPath);
-        }
-      } catch {
-        // Config not found or invalid - continue with auto-detect
-      }
-
-      // Auto-detect if not specified
-      if (!binaryPath) {
-        binaryPath = findServerBinary();
-      }
-    }
+    const binaryPath = resolveBinaryPath(projectPath, options.binary);
 
     if (!binaryPath) {
       exitWithError('RFDB server binary not found', [
@@ -156,34 +177,14 @@ serverCommand
     console.log(`  Database: ${dbPath}`);
     console.log(`  Socket: ${socketPath}`);
 
-    // Start server
-    const serverProcess = spawn(binaryPath, [dbPath, '--socket', socketPath], {
-      stdio: ['ignore', 'pipe', 'pipe'],
-      detached: true,
+    // Start server using shared utility
+    const serverProcess = await startRfdbServer({
+      dbPath,
+      socketPath,
+      binaryPath,
+      pidPath,
+      waitTimeoutMs: 10000,
     });
-
-    // Don't let server process prevent parent from exiting
-    serverProcess.unref();
-
-    // Write PID file
-    if (serverProcess.pid) {
-      writeFileSync(pidPath, String(serverProcess.pid));
-    }
-
-    // Wait for socket to appear (increased timeout for slow systems)
-    let attempts = 0;
-    while (!existsSync(socketPath) && attempts < 100) {
-      await sleep(100);
-      attempts++;
-    }
-
-    if (!existsSync(socketPath)) {
-      exitWithError('Server failed to start', [
-        'Check if database path is valid',
-        'Check server logs for errors',
-        `Binary used: ${binaryPath}`
-      ]);
-    }
 
     // Verify server is responsive
     const verifyStatus = await isServerRunning(socketPath);
@@ -227,31 +228,7 @@ serverCommand
     }
 
     console.log('Stopping RFDB server...');
-
-    // Send shutdown command
-    const client = new RFDBClient(socketPath);
-    // Suppress error events (server closes connection on shutdown)
-    client.on('error', () => {});
-
-    try {
-      await client.connect();
-      await client.shutdown();
-    } catch {
-      // Expected - server closes connection
-    }
-
-    // Wait for socket to disappear
-    let attempts = 0;
-    while (existsSync(socketPath) && attempts < 30) {
-      await sleep(100);
-      attempts++;
-    }
-
-    // Clean up PID file
-    if (existsSync(pidPath)) {
-      unlinkSync(pidPath);
-    }
-
+    await stopRunningServer(socketPath, pidPath);
     console.log('Server stopped');
   });
 
@@ -338,6 +315,75 @@ serverCommand
       if (existsSync(socketPath)) {
         console.log('  (stale socket file exists)');
       }
+    }
+  });
+
+// grafema server restart
+serverCommand
+  .command('restart')
+  .description('Restart the RFDB server (stop if running, then start)')
+  .option('-p, --project <path>', 'Project path', '.')
+  .option('-b, --binary <path>', 'Path to rfdb-server binary')
+  .action(async (options: { project: string; binary?: string }) => {
+    const projectPath = resolve(options.project);
+    const { grafemaDir, socketPath, dbPath, pidPath } = getProjectPaths(projectPath);
+
+    // Check if grafema is initialized
+    if (!existsSync(grafemaDir)) {
+      exitWithError('Grafema not initialized', [
+        'Run: grafema init',
+        'Or: grafema analyze (initializes automatically)'
+      ]);
+    }
+
+    // Stop server if running
+    const status = await isServerRunning(socketPath);
+    if (status.running) {
+      console.log('Stopping RFDB server...');
+      await stopRunningServer(socketPath, pidPath);
+      console.log('Server stopped');
+    }
+
+    const binaryPath = resolveBinaryPath(projectPath, options.binary);
+
+    if (!binaryPath) {
+      exitWithError('RFDB server binary not found', [
+        'Specify path: grafema server restart --binary /path/to/rfdb-server',
+        'Or add to config.yaml:',
+        '  server:',
+        '    binaryPath: /path/to/rfdb-server',
+        'Or install: npm install @grafema/rfdb',
+        'Or build: cargo build --release && cp target/release/rfdb-server ~/.local/bin/'
+      ]);
+    }
+
+    console.log('Starting RFDB server...');
+    console.log(`  Binary: ${binaryPath}`);
+    console.log(`  Database: ${dbPath}`);
+    console.log(`  Socket: ${socketPath}`);
+
+    const serverProcess = await startRfdbServer({
+      dbPath,
+      socketPath,
+      binaryPath,
+      pidPath,
+      waitTimeoutMs: 10000,
+    });
+
+    const verifyStatus = await isServerRunning(socketPath);
+    if (!verifyStatus.running) {
+      exitWithError('Server started but not responding', [
+        'Check server logs for errors'
+      ]);
+    }
+
+    console.log('');
+    console.log(`Server restarted successfully`);
+    if (verifyStatus.version) {
+      console.log(`  Version: ${verifyStatus.version}`);
+    }
+    if (serverProcess.pid) {
+      console.log(`  PID: ${serverProcess.pid}`);
     }
   });
 

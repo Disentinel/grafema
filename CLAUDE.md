@@ -93,10 +93,14 @@ Before proposing a new subsystem, check if existing Grafema infrastructure can b
 
 RFDB server must be running for Grafema queries to work:
 ```bash
-# Start RFDB server (from project root)
-/Users/vadim/.local/bin/rfdb-server .grafema/graph.rfdb --socket .grafema/rfdb.sock --data-dir .grafema &
+# Start RFDB server (from project root — auto-discovers binary)
+grafema server start
+# Or using pnpm convenience script (requires pnpm build first):
+pnpm rfdb:start
 
 # Rebuild graph after switching branches or pulling changes
+grafema analyze
+# Or:
 node packages/cli/dist/cli.js analyze
 ```
 
@@ -147,7 +151,7 @@ Every task metrics report (`0XX-metrics.md`) MUST include a **Grafema Dogfooding
 
 ### Product Gap Policy
 
-**RFDB auto-start:** The MCP server auto-starts RFDB when needed. No manual `rfdb-server` command required — `RFDBServerBackend` spawns it on first connection attempt (detached, survives MCP exit). Binary is found via `findRfdbBinary()` (monorepo build, PATH, `~/.local/bin`).
+**RFDB auto-start:** The MCP server auto-starts RFDB when needed. No manual `rfdb-server` command required — `RFDBServerBackend` spawns it on first connection attempt (detached, survives MCP exit). Binary is found via `findRfdbBinary()` (monorepo build, PATH, `~/.local/bin`). For explicit control, use `grafema server start/stop/restart/status`.
 
 **When Grafema falls short:**
 1. Note what you tried and why it failed

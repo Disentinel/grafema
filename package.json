@@ -14,6 +14,10 @@
     "test:coverage": "c8 node --test --test-concurrency=1 'test/unit/*.test.js'",
     "test:scenarios": "node --test test/scenarios/",
     "release": "./scripts/release.sh",
+    "rfdb:start": "node packages/cli/dist/cli.js server start",
+    "rfdb:stop": "node packages/cli/dist/cli.js server stop",
+    "rfdb:status": "node packages/cli/dist/cli.js server status",
+    "rfdb:restart": "node packages/cli/dist/cli.js server restart",
     "prepare": "husky"
   },
   "keywords": [
