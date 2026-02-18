@@ -28,6 +28,7 @@ PUBLISH=false
 DRY_RUN=false
 SKIP_CI_CHECK=false
 SKIP_CHANGELOG=false
+SKIP_RFDB_CHECK=false
 
 for arg in "$@"; do
     case $arg in
@@ -42,6 +43,9 @@ for arg in "$@"; do
             ;;
         --skip-changelog)
             SKIP_CHANGELOG=true
+            ;;
+        --skip-rfdb-check)
+            SKIP_RFDB_CHECK=true
             ;;
         *)
             VERSION_ARG="$arg"
@@ -60,6 +64,7 @@ if [ -z "$VERSION_ARG" ]; then
     echo "  --dry-run         Preview changes without modifying files"
     echo "  --skip-ci-check   Skip GitHub Actions CI status check"
     echo "  --skip-changelog  Skip CHANGELOG.md update check (for hotfixes)"
+    echo "  --skip-rfdb-check Skip rfdb binary freshness check"
     exit 1
 fi
 
@@ -134,6 +139,54 @@ if [ "$SKIP_CI_CHECK" != "true" ]; then
         echo -e "${YELLOW}[SKIP] gh CLI not available, skipping CI check${NC}"
     fi
 fi
+
+#---------------------------------------------------------
+# STEP 1.6: Check rfdb binary freshness
+#---------------------------------------------------------
+echo ""
+echo -e "${BLUE}=== RFDB Binary Freshness Check ===${NC}"
+
+if [ "$SKIP_RFDB_CHECK" = true ]; then
+    echo -e "${YELLOW}[SKIP] RFDB binary check bypassed (--skip-rfdb-check)${NC}"
+else
+
+LAST_RFDB_TAG=$(git tag -l 'rfdb-v*' | sort -V | tail -1)
+if [ -z "$LAST_RFDB_TAG" ]; then
+    echo -e "${RED}ERROR: No rfdb-v* tags found. Cannot verify binary freshness.${NC}"
+    echo "Push a tag first: git tag rfdb-v<version> && git push origin rfdb-v<version>"
+    exit 1
+fi
+
+RUST_CHANGES_SINCE_TAG=$(git log "$LAST_RFDB_TAG"..HEAD --oneline -- packages/rfdb-server/src/ | wc -l | tr -d ' ')
+if [ "$RUST_CHANGES_SINCE_TAG" -gt 0 ]; then
+    echo -e "${RED}ERROR: $RUST_CHANGES_SINCE_TAG Rust source commits since last rfdb tag ($LAST_RFDB_TAG)${NC}"
+    echo ""
+    echo "Prebuilt rfdb-server binaries are STALE. Recent Rust changes:"
+    git log "$LAST_RFDB_TAG"..HEAD --oneline -- packages/rfdb-server/src/
+    echo ""
+    echo "Fix: push a new rfdb tag to trigger CI binary build:"
+    echo "  git tag rfdb-v<version> && git push origin rfdb-v<version>"
+    echo "  # Wait for CI to complete, then:"
+    echo "  ./scripts/download-rfdb-binaries.sh rfdb-v<version>"
+    exit 1
+fi
+echo -e "${GREEN}[x] RFDB binaries up-to-date (tag: $LAST_RFDB_TAG, 0 Rust changes since)${NC}"
+
+# Verify all 4 platform binaries exist
+MISSING_PLATFORMS=()
+for platform in darwin-arm64 darwin-x64 linux-arm64 linux-x64; do
+    if [ ! -f "$ROOT_DIR/packages/rfdb-server/prebuilt/$platform/rfdb-server" ]; then
+        MISSING_PLATFORMS+=("$platform")
+    fi
+done
+if [ ${#MISSING_PLATFORMS[@]} -gt 0 ]; then
+    echo -e "${RED}ERROR: Missing rfdb-server binaries for: ${MISSING_PLATFORMS[*]}${NC}"
+    echo "Download: ./scripts/download-rfdb-binaries.sh $LAST_RFDB_TAG"
+    exit 1
+fi
+echo -e "${GREEN}[x] All 4 platform binaries present${NC}"
+
+fi  # end SKIP_RFDB_CHECK
 
 # Run tests
 echo ""

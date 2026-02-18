@@ -4,11 +4,13 @@ description: |
   Fix release script failures in Grafema monorepo. Use when: (1) release.sh fails on
   "Uncommitted changes detected" despite .gitignore rules, (2) release tests fail with
   100+ failures that pass in CI, (3) snapshot tests fail cross-platform (macOS vs Linux),
-  (4) npm publish fails with token errors. Covers gitignore anchoring in monorepos,
-  stale dist/ builds, and the correct pre-release sequence.
+  (4) npm publish fails with token errors, (5) @grafema/rfdb ships stale binaries
+  (rfdb-server --version shows old version like 0.1.0 after release). Covers gitignore
+  anchoring in monorepos, stale dist/ builds, rfdb binary CI tag lifecycle, and the
+  correct pre-release sequence.
 author: Claude Code
-version: 1.0.0
-date: 2026-02-16
+version: 1.1.0
+date: 2026-02-18
 ---
 
 # Grafema Release Workflow Pitfalls
@@ -40,6 +42,20 @@ The `./scripts/release.sh` script has multiple failure points that can block rel
 - **Symptom**: `npm error code E404` or `Access token expired or revoked`
 - **Root cause**: Token in `.npmrc.local` expired
 - **Fix**: Run `npm login` or manually update token in `.npmrc.local`
+
+### Pitfall 5: @grafema/rfdb ships stale rfdb-server binaries
+- **Symptom**: After release, `npx @grafema/rfdb@<version> --version` shows old version (e.g., `0.1.0` instead of `0.2.12-beta`)
+- **Symptom**: New Rust features (deferred indexing, commitBatch fixes) don't work despite being in source
+- **Root cause**: `release.sh` packages whatever is in `packages/rfdb-server/prebuilt/`. These binaries come from CI builds triggered by `rfdb-v*` tags. If Rust source changed since the last `rfdb-v*` tag, the prebuilt binaries are stale.
+- **Detection**: Compare last `rfdb-v*` tag with recent Rust commits: `git log $(git tag -l 'rfdb-v*' | sort -V | tail -1)..HEAD -- packages/rfdb-server/src/`
+- **Fix sequence**:
+  1. Push new rfdb tag: `git tag rfdb-v0.X.Y && git push origin rfdb-v0.X.Y`
+  2. Wait for CI "Build rfdb-server Binaries" workflow to complete (all 4 platforms)
+  3. Download: `./scripts/download-rfdb-binaries.sh rfdb-v0.X.Y`
+  4. Verify: `packages/rfdb-server/prebuilt/darwin-x64/rfdb-server --version`
+  5. Only THEN run release.sh or manually publish `@grafema/rfdb`
+- **Key insight**: npm version tags (`v0.2.12-beta`) and rfdb binary CI tags (`rfdb-v0.2.12-beta`) are **independent**. The release script doesn't check if binaries match the current Rust source. You must manually ensure they're in sync.
+- **If already published with stale binaries**: Publish a new version (e.g., `0.2.12-dev1`) with correct binaries using a different dist-tag.
 
 ## Solution: Correct Pre-Release Sequence
 
