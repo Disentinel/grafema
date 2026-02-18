@@ -19,14 +19,12 @@
  */
 
 import { RFDBClient, type BatchHandle } from '@grafema/rfdb-client';
-import { existsSync, unlinkSync } from 'fs';
-import { spawn, type ChildProcess } from 'child_process';
+import type { ChildProcess } from 'child_process';
 import { join, dirname } from 'path';
-import { setTimeout as sleep } from 'timers/promises';
 
 import type { WireNode, WireEdge, FieldDeclaration, CommitDelta, AttrQuery as RFDBAttrQuery } from '@grafema/types';
 import type { NodeType, EdgeType } from '@grafema/types';
-import { findRfdbBinary } from '../../utils/findRfdbBinary.js';
+import { startRfdbServer } from '../../utils/startRfdbServer.js';
 import type { BaseNodeRecord, EdgeRecord, AnyBrandedNode } from '@grafema/types';
 import { brandNodeInternal } from '../../core/brandNodeInternal.js';
 import type { AttrQuery, GraphStats, GraphExport } from '../../core/GraphBackend.js';
@@ -201,66 +199,19 @@ export class RFDBServerBackend {
   }
 
   /**
-   * Find RFDB server binary using shared utility.
-   * Delegates to findRfdbBinary() for consistent search across all entry points.
-   */
-  private _findServerBinary(): string | null {
-    const binaryPath = findRfdbBinary();
-    if (binaryPath) {
-      this.log(`[RFDBServerBackend] Found binary: ${binaryPath}`);
-    }
-    return binaryPath;
-  }
-
-  /**
-   * Start RFDB server process
+   * Start RFDB server process using shared utility.
    */
   private async _startServer(): Promise<void> {
     if (!this.dbPath) {
       throw new Error('dbPath required to start RFDB server');
     }
 
-    // Find server binary - check multiple locations
-    const binaryPath = this._findServerBinary();
-    if (!binaryPath) {
-      throw new Error(
-        'RFDB server binary not found.\n' +
-        'Install @grafema/rfdb: npm install @grafema/rfdb\n' +
-        'Or build from source: cargo build --release --bin rfdb-server'
-      );
-    }
-
-    // Remove stale socket
-    if (existsSync(this.socketPath)) {
-      unlinkSync(this.socketPath);
-    }
-
-    this.log(`[RFDBServerBackend] Starting: ${binaryPath} ${this.dbPath} --socket ${this.socketPath}`);
-
-    this.serverProcess = spawn(binaryPath, [this.dbPath, '--socket', this.socketPath], {
-      stdio: ['ignore', 'ignore', 'inherit'], // stdin/stdout ignored, stderr inherited
-      detached: true, // Allow server to outlive this process
+    await startRfdbServer({
+      dbPath: this.dbPath,
+      socketPath: this.socketPath,
+      waitTimeoutMs: 5000,
+      logger: this.silent ? undefined : { debug: (m: string) => this.log(m) },
     });
-
-    // Don't let server process prevent parent from exiting
-    this.serverProcess.unref();
-
-    this.serverProcess.on('error', (err: Error) => {
-      this.logError(`[RFDBServerBackend] Server process error:`, err);
-    });
-
-    // Wait for socket to appear
-    let attempts = 0;
-    while (!existsSync(this.socketPath) && attempts < 50) {
-      await sleep(100);
-      attempts++;
-    }
-
-    if (!existsSync(this.socketPath)) {
-      throw new Error(`RFDB server failed to start (socket not created after ${attempts * 100}ms)`);
-    }
-
-    this.log(`[RFDBServerBackend] Server started on ${this.socketPath}`);
   }
 
   /**

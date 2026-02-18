@@ -9,17 +9,17 @@
  * - Barrier: wait for all tasks before returning
  */
 
-import { existsSync, unlinkSync } from 'fs';
+import { existsSync } from 'fs';
 import { join, dirname } from 'path';
-import { fileURLToPath } from 'url';
 import type { ChildProcess } from 'child_process';
-import { spawn, execSync } from 'child_process';
 import { setTimeout as sleep } from 'timers/promises';
 import { AnalysisQueue } from './core/AnalysisQueue.js';
 import type { Plugin } from './plugins/Plugin.js';
 import type { GraphBackend, Logger } from '@grafema/types';
 import type { ProgressCallback } from './PhaseRunner.js';
 import type { ParallelConfig, DiscoveryManifest } from './OrchestratorTypes.js';
+import { findRfdbBinary } from './utils/findRfdbBinary.js';
+import { startRfdbServer } from './utils/startRfdbServer.js';
 
 export class ParallelAnalysisRunner {
   private analysisQueue: AnalysisQueue | null = null;
@@ -43,10 +43,9 @@ export class ParallelAnalysisRunner {
    * - Barrier waits for all tasks before ENRICHMENT phase
    */
   async run(manifest: DiscoveryManifest): Promise<void> {
-    const socketPath = this.parallelConfig.socketPath || '/tmp/rfdb.sock';
-    const maxWorkers = this.parallelConfig.maxWorkers || null;
-
     const mainDbPath = (this.graph as unknown as { dbPath?: string }).dbPath || join(manifest.projectPath, '.grafema', 'graph.rfdb');
+    const socketPath = this.parallelConfig.socketPath || join(dirname(mainDbPath), 'rfdb.sock');
+    const maxWorkers = this.parallelConfig.maxWorkers || null;
 
     this.logger.debug('Starting queue-based parallel analysis', { database: mainDbPath });
 
@@ -117,6 +116,7 @@ export class ParallelAnalysisRunner {
    * Start RFDB server process (or connect to existing one).
    */
   private async startRfdbServer(socketPath: string, dbPath: string): Promise<void> {
+    // Check if server is already running
     if (existsSync(socketPath)) {
       try {
         const { RFDBClient } = await import('@grafema/rfdb-client');
@@ -129,48 +129,24 @@ export class ParallelAnalysisRunner {
         this._serverWasExternal = true;
         return;
       } catch {
-        this.logger.debug('Stale socket found, removing');
-        unlinkSync(socketPath);
+        this.logger.debug('Stale socket found, will be removed by startRfdbServer');
       }
     }
 
-    const projectRoot = join(dirname(fileURLToPath(import.meta.url)), '../..');
-    const serverBinary = join(projectRoot, 'packages/rfdb-server/target/release/rfdb-server');
-    const debugBinary = join(projectRoot, 'packages/rfdb-server/target/debug/rfdb-server');
-
-    let binaryPath = existsSync(serverBinary) ? serverBinary : debugBinary;
-
-    if (!existsSync(binaryPath)) {
-      this.logger.debug('RFDB server binary not found, building', { path: binaryPath });
-      execSync('cargo build --bin rfdb-server', {
-        cwd: join(projectRoot, 'packages/rfdb-server'),
-        stdio: 'inherit',
-      });
-      binaryPath = debugBinary;
+    const binaryPath = findRfdbBinary();
+    if (!binaryPath) {
+      throw new Error('RFDB server binary not found');
     }
 
     this.logger.debug('Starting RFDB server', { binary: binaryPath, database: dbPath });
-    this.rfdbServerProcess = spawn(binaryPath, [dbPath, '--socket', socketPath], {
-      stdio: ['ignore', 'pipe', 'pipe'],
+    this.rfdbServerProcess = await startRfdbServer({
+      dbPath,
+      socketPath,
+      binaryPath,
+      waitTimeoutMs: 3000,
+      logger: { debug: (m: string) => this.logger.debug(m) },
     });
     this._serverWasExternal = false;
-
-    this.rfdbServerProcess.stderr?.on('data', (data: Buffer) => {
-      const msg = data.toString().trim();
-      if (!msg.includes('FLUSH') && !msg.includes('WRITER')) {
-        this.logger.debug('rfdb-server', { message: msg });
-      }
-    });
-
-    let attempts = 0;
-    while (!existsSync(socketPath) && attempts < 30) {
-      await sleep(100);
-      attempts++;
-    }
-
-    if (!existsSync(socketPath)) {
-      throw new Error('RFDB server failed to start');
-    }
 
     this.logger.debug('RFDB server started', { socketPath });
   }
