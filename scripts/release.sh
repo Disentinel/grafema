@@ -215,6 +215,7 @@ if [ "$DRY_RUN" = true ]; then
         echo "  - $pkg"
     done
     echo "  - package.json (root)"
+    echo "  - packages/rfdb-server/Cargo.toml"
     echo ""
     if [ "$SKIP_CHANGELOG" = true ]; then
         echo -e "${YELLOW}[SKIP] CHANGELOG check bypassed (--skip-changelog)${NC}"
@@ -244,6 +245,14 @@ for pkg in "${PACKAGES[@]}"; do
         echo -e "${GREEN}[x] $pkg -> $NEW_VERSION${NC}"
     fi
 done
+
+# Update rfdb-server Cargo.toml to match npm version
+CARGO_TOML="$ROOT_DIR/packages/rfdb-server/Cargo.toml"
+if [ -f "$CARGO_TOML" ]; then
+    sed -i.bak 's/^version = "[0-9]*\.[0-9]*\.[0-9]*.*"$/version = "'"$NEW_VERSION"'"/' "$CARGO_TOML"
+    rm -f "$CARGO_TOML.bak"
+    echo -e "${GREEN}[x] packages/rfdb-server/Cargo.toml -> $NEW_VERSION${NC}"
+fi
 
 cd "$ROOT_DIR"
 
