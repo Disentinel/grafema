@@ -245,3 +245,16 @@ jobs:
           fi
 
           echo "All package versions are in sync."
+
+      - name: Check Cargo.toml version matches npm version
+        run: |
+          ROOT_VERSION=$(node -p "require('./package.json').version")
+          CARGO_VERSION=$(grep '^version = ' packages/rfdb-server/Cargo.toml | head -1 | sed 's/^version = "\([^"]*\)".*/\1/')
+          echo "npm version: $ROOT_VERSION"
+          echo "Cargo.toml version: $CARGO_VERSION"
+          if [ "$CARGO_VERSION" != "$ROOT_VERSION" ]; then
+            echo "::error::Cargo.toml version ($CARGO_VERSION) does not match npm version ($ROOT_VERSION)"
+            echo "::error::Fix: update packages/rfdb-server/Cargo.toml version to $ROOT_VERSION"
+            exit 1
+          fi
+          echo "Cargo.toml version is in sync."
