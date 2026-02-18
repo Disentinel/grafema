@@ -82,26 +82,15 @@ export class TypeScriptDeadCodeValidator extends Plugin {
     }
     logger.debug('Interfaces collected', { count: interfaces.size });
 
-    // Find interfaces with IMPLEMENTS or EXTENDS edges
-    logger.debug('Checking implementations');
-    const implementedInterfaces: Map<string, number> = new Map();
-
-    // Get all edges and filter by type (no queryEdges in GraphBackend yet)
-    const allEdges = await graph.getAllEdges?.() ?? [];
-    for (const edge of allEdges) {
-      if (edge.type === 'IMPLEMENTS' || edge.type === 'EXTENDS') {
-        const count = implementedInterfaces.get(edge.dst) || 0;
-        implementedInterfaces.set(edge.dst, count + 1);
-      }
-    }
-
     // Analyze interfaces
+    logger.debug('Checking implementations');
     let unusedCount = 0;
     let emptyCount = 0;
     let singleImplCount = 0;
 
     for (const [id, iface] of interfaces) {
-      const implCount = implementedInterfaces.get(id) || 0;
+      const incoming = await graph.getIncomingEdges(id, ['IMPLEMENTS', 'EXTENDS']);
+      const implCount = incoming.length;
       const properties = iface.properties || [];
 
       // Check for empty interface

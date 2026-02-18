@@ -173,8 +173,14 @@ export class SocketIOAnalyzer extends Plugin {
   ): Promise<number> {
     try {
       // Step 1: Get all emit and listener nodes
-      const allEmits = await graph.getAllNodes({ type: 'socketio:emit' });
-      const allListeners = await graph.getAllNodes({ type: 'socketio:on' });
+      const allEmits: NodeRecord[] = [];
+      for await (const node of graph.queryNodes({ nodeType: 'socketio:emit' })) {
+        allEmits.push(node);
+      }
+      const allListeners: NodeRecord[] = [];
+      for await (const node of graph.queryNodes({ nodeType: 'socketio:on' })) {
+        allListeners.push(node);
+      }
 
       logger.debug('Creating event channels', {
         emits: allEmits.length,
@@ -429,11 +435,14 @@ export class SocketIOAnalyzer extends Plugin {
         });
 
         // Find FUNCTION node for handler by name and file (supports both legacy and semantic IDs)
-        const handlerFunctions = await graph.getAllNodes({
-          type: 'FUNCTION',
+        const handlerFunctions: NodeRecord[] = [];
+        for await (const node of graph.queryNodes({
+          nodeType: 'FUNCTION',
           name: listener.handlerName,
           file: listener.file
-        });
+        })) {
+          handlerFunctions.push(node);
+        }
 
         // Find the handler at the matching line
         const handlerFunction = handlerFunctions.find(fn =>
