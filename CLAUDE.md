@@ -30,7 +30,6 @@ Grafema is NOT competing with TypeScript or static type checkers. It's for codeb
 
 - New features/bugfixes: write tests first
 - Refactoring: write tests that lock current behavior BEFORE changing anything
-- Refactoring must preserve behavioral identity — output before = output after
 - If tests don't exist for the area you're changing, write them first
 
 ### DRY / KISS
@@ -42,15 +41,7 @@ Grafema is NOT competing with TypeScript or static type checkers. It's for codeb
 
 ### Root Cause Policy
 
-**CRITICAL: When behavior or architecture doesn't match project vision:**
-
-1. STOP immediately
-2. Do not patch or workaround
-3. Identify the architectural mismatch
-4. Discuss with user before proceeding
-5. Fix from the roots, not symptoms
-
-If it takes longer — it takes longer. No shortcuts.
+**CRITICAL:** When behavior or architecture doesn't match project vision — STOP. Do not patch or workaround. Identify the architectural mismatch, discuss with user, fix from the roots.
 
 ### Explicit User Command Required
 
@@ -81,642 +72,42 @@ Before proposing a new subsystem, check if existing Grafema infrastructure can b
 | "Report issue Z to user" | New warning system | ISSUE nodes + existing reporters |
 | "Query pattern W" | Custom traversal code | Datalog query |
 
-**Example:** Cardinality Tracking was initially designed as a 7-phase "Complexity Analysis Engine" (21-29 days). After architectural review, it became: CardinalityEnricher (adds metadata) + Datalog rules (checks it) + GuaranteeManager (reports violations). Scope reduced to 11-13 days.
-
 **Key insight:** Grafema's core is graph + Datalog + guarantees. Most features should be: enricher that adds data + Datalog rules that query it.
 
-## Dogfooding
+## Task Identification & Workflow Trigger
 
-**Use Grafema to work on Grafema.** Hybrid mode: graph for exploration/planning, direct file reads for implementation.
+**When user provides a task identifier** (e.g., `REG-25`, `RFD-1`, or a Linear URL):
 
-### Setup (per worker)
+1. **Fetch task from Linear** — use `mcp__linear__get_issue` with the identifier
+2. **Read MLA workflow** — `_ai/mla-workflow.md` for process steps, team roster, model assignment
+3. **Select MLA configuration** using the Lens Selection decision tree:
+   - Well-understood, single file, <50 LOC → **Single Agent**
+   - Medium complexity, local scope → **Mini-MLA** (most common)
+   - Core architecture change, multi-system, ambiguous → **Full MLA**
+4. **Read persona instructions** — `_ai/agent-personas.md` for the specific agents you'll spawn
+5. **Execute the workflow** — follow STEP 1 through STEP 4 from `_ai/mla-workflow.md`
 
-RFDB server must be running for Grafema queries to work:
-```bash
-# Start RFDB server (from project root — auto-discovers binary)
-grafema server start
-# Or using pnpm convenience script (requires pnpm build first):
-pnpm rfdb:start
+If user provides just a task ID without further context, the Linear issue description IS the task request.
 
-# Rebuild graph after switching branches or pulling changes
-grafema analyze
-# Or:
-node packages/cli/dist/cli.js analyze
-```
+## MLA Workflow (Summary)
 
-MCP server configured in `.mcp.json` — provides 25 tools for graph queries. Restart Claude Code after starting RFDB for MCP tools to load.
+**Full details:** `_ai/mla-workflow.md` (team roster, model table, steps, metrics template)
+**Persona prompts:** `_ai/agent-personas.md` (pass relevant section to each subagent)
+**Dogfooding guide:** `_ai/dogfooding.md` (graph-first exploration, gap tracking)
 
-### Workflow Integration (Hybrid Mode)
+**CRITICAL: NO CODING AT TOP LEVEL!** All implementation happens through subagents.
 
-**Don (exploration phase) — MUST try graph first:**
+**Pipeline:** STEP 1 (save request) → STEP 2 (plan + verify) → STEP 2.5 (prepare/refactor) → STEP 3 (implement + 4-review) → STEP 4 (finalize + metrics)
 
-| Instead of... | Try Grafema MCP first |
-|---------------|----------------------|
-| Glob `**/*.ts` + Read files | `find_nodes` by type/name/file |
-| Grep "functionName" + Read context | `find_calls --name functionName` |
-| Read file to understand dependencies | `trace_dataflow` or `get_file_overview` |
-| Read file to understand structure | `get_file_overview` or `get_function_details` |
-| Multiple Reads to understand impact | `query_graph` with Datalog |
-
-If graph doesn't have the answer → fallback to direct file reads. **Note the gap.**
-
-**Kent/Rob (implementation) — direct file reads OK:**
-- Implementation needs exact code, not summaries
-- Graph useful for: finding call sites, checking impact, understanding dependencies
-- But writing code requires reading the actual files
-
-**4-Review — use graph for verification:**
-- `get_stats` to check graph health after changes
-- `check_guarantees` if guarantees are defined
-
-### Tracking Grafema Usage in Metrics
-
-Every task metrics report (`0XX-metrics.md`) MUST include a **Grafema Dogfooding** section:
-
-```markdown
-### Grafema Dogfooding
-
-| Metric | Value |
-|--------|-------|
-| Graph queries attempted | N |
-| Graph queries successful | N (answered the question) |
-| Fallbacks to file read | N (graph couldn't answer) |
-| Product gaps found | N |
-
-**Gaps found:**
-- [what you tried to do] → [why graph couldn't help] → [suggested improvement]
-
-**Verdict:** [useful / partially useful / not useful for this task]
-```
-
-### Product Gap Policy
-
-**RFDB auto-start:** The MCP server auto-starts RFDB when needed. No manual `rfdb-server` command required — `RFDBServerBackend` spawns it on first connection attempt (detached, survives MCP exit). Binary is found via `findRfdbBinary()` (monorepo build, PATH, `~/.local/bin`). For explicit control, use `grafema server start/stop/restart/status`.
-
-**When Grafema falls short:**
-1. Note what you tried and why it failed
-2. Record in metrics report (Gaps found section)
-3. At STEP 4: present gaps to user → if confirmed → create Linear issue (team: Reginaflow, label: `Improvement`, `v0.2`)
-4. Difficulties leading to retries = high-priority gaps
-
-### Known Limitations (2026-02-15)
-
-- **Import resolution**: `.js` → `.ts` redirects not followed, graph is incomplete for TS monorepos
-- **Incremental analysis**: not yet available (coming with RFDBv2), full re-analyze after changes
-- **Classes**: TypeScript classes not extracted as CLASS nodes
-- **Graph coverage**: only entry point files analyzed, transitive imports partially resolved
-
-## Process
-
-**Workflow version: v2.1** (2026-02-16)
-
-Changelog:
-- **v2.1** — RFD-4 post-mortem fix. Added Dijkstra (plan verification — catches edge cases before they cascade into spec/implementation). Split Combined Auto-Review into 4 independent reviewers: Steve (vision), Вадим auto (completeness), Uncle Bob (code quality), Dijkstra (correctness). Reviews run in 2 batches of 2 parallel.
-- **v2.0** — Streamlined pipeline: removed Kevlin/Donald from standard flow, Joel only for Full MLA, combined Steve+Вадим auto into single Auto-Review, strengthened Uncle Bob (file-level checks), added model assignment table, parallel Kent ∥ Rob, max 3 subagents, per-task metrics tracking.
-- **v1.0** — Original MLA with all personas sequential.
-
-**CRITICAL: NO CODING AT TOP LEVEL!**
-
-All implementation happens through subagents. Top-level agent only coordinates.
-
-### The Team
-
-**Planning:**
-- **Don Melton** (Tech Lead) — "I don't care if it works, is it RIGHT?" Analyzes codebase, creates high-level plan, ensures alignment with vision. **MUST use WebSearch** to find existing approaches, prior art, and tradeoffs before proposing solutions.
-- **Joel Spolsky** (Implementation Planner) — **Full MLA only.** Expands Don's plan into detailed technical specs with specific steps. Must include Big-O complexity analysis for algorithms. Skip for Single Agent and Mini-MLA.
-
-**Plan Verification:**
-- **Edsger Dijkstra** (Plan Verifier) — "Testing shows the presence, not the absence of bugs." Mandatory verification of the final plan (Don's for Mini-MLA, Joel's for Full MLA). For every filter, condition, or classification: enumerates ALL input categories, not just the happy path. Catches edge cases BEFORE they cascade into implementation. Runs in Mini-MLA and Full MLA.
-
-**Code Quality:**
-- **Robert Martin** (Uncle Bob) — Clean Code guardian. Reviews code BEFORE implementation at **file and method level** (STEP 2.5) AND AFTER implementation (review phase). Hard limits: file > 300 lines = MUST split, method > 50 lines = candidate for split. Runs in ALL configurations except Single Agent.
-
-**Implementation:**
-- **Kent Beck** (Test Engineer) — TDD discipline, tests communicate intent, no mocks in production paths. Can run **parallel** with Rob when test structure is clear from plan.
-- **Rob Pike** (Implementation Engineer) — Simplicity over cleverness, match existing patterns, pragmatic solutions
-
-**Review (4 independent perspectives — 2 batches of 2 parallel subagents):**
-- **Steve Jobs** (Vision) — Does this align with project vision? Did we cut corners? Complexity & architecture checklist. Would shipping this embarrass us?
-- **Вадим auto** (Completeness) — Does the code do what the task requires? Edge cases, regressions, scope creep. Tests meaningful? Commits atomic?
-- **Robert Martin** (Code Quality) — Structure, naming, duplication, readability. File/method size limits.
-- **Edsger Dijkstra** (Correctness) — For every function: enumerate ALL possible inputs. For every condition: what passes that shouldn't? What's blocked that should pass?
-- **Вадим Решетников** (Final confirmation, human) — Called only AFTER all 4 reviewers approve. User sees combined review summary and confirms or overrides.
-
-**Project Management:**
-- **Andy Grove** (PM / Tech Debt) — Manages Linear, prioritizes backlog, tracks tech debt. Ruthless prioritization: what moves the needle NOW?
-
-**Support:**
-- **Donald Knuth** (Problem Solver) — **Only when stuck.** Deep analysis instead of more coding. Think hard, provide analysis, don't make changes. NOT part of standard pipeline.
-
-**Research / Consulting (for new features planning):**
-- **Robert Tarjan** (Graph Theory) — Graph algorithms, dependency analysis, cycle detection, strongly connected components
-- **Patrick Cousot** (Static Analysis) — Abstract interpretation, dataflow analysis, formal foundations
-- **Anders Hejlsberg** (Practical Type Systems) — Real-world type inference, pragmatic approach to static analysis
-- **Генрих Альтшуллер** (ТРИЗ) - Разбор архитектурных противоречий
-
-**IMPORTANT for Research agents:** Always use **WebSearch** to find existing tools, papers, and approaches before generating recommendations. Don't hallucinate — ground your analysis in real prior art. Brief search is enough, not deep research.
-
-### Model Assignment
-
-Use the cheapest model that can handle the task. **Max 3 parallel subagents** (reduce CPU load).
-
-| Role | Model | Rationale |
-|------|-------|-----------|
-| Don (exploration phase) | **Sonnet** | Codebase search needs reasoning for accurate results |
-| Don (planning/decisions) | **Sonnet** | Architectural decisions need reasoning |
-| Joel (Full MLA only) | **Sonnet** | Technical specs need reasoning |
-| Dijkstra (plan verification) | **Sonnet** | Edge case enumeration needs careful reasoning |
-| Uncle Bob (STEP 2.5 review) | **Sonnet** | Code quality judgment needs nuance |
-| Kent (tests) | **Opus** | Writing correct tests needs top reasoning |
-| Rob (implementation) | **Opus** | Writing correct code needs top reasoning |
-| Steve (vision review) | **Sonnet** | Architecture judgment |
-| Вадим auto (completeness review) | **Sonnet** | Practical quality check |
-| Uncle Bob (code quality review) | **Sonnet** | Structure/naming check |
-| Dijkstra (correctness review) | **Sonnet** | Edge case verification |
-| Andy Grove (Linear ops) | **Haiku** | Structured CRUD, template-based |
-| Save user request | **Haiku** | Formatting and file write |
-| Report formatting | **Haiku** | Template-based markdown |
-| Donald Knuth (when stuck) | **Opus** | Deep analysis by definition |
-| Research agents | **Sonnet** | Need reasoning + WebSearch |
-
-### Lens Selection (When to Use Which Team Configuration)
-
-Not every task needs full MLA. Match team size to task complexity.
-
-**Decision Tree:**
-
-```
-START
- ├─ Is production broken? → YES → Single agent (Rob) + post-mortem MLA later
- └─ NO
-     ├─ Is this well-understood? (clear requirements, single file, <50 LOC)
-     │   → YES → Single agent (Rob)
-     └─ NO
-         ├─ Does it change core architecture? (affects multiple systems, long-term impact)
-         │   → YES → Full MLA (all personas)
-         └─ NO → Mini-MLA (Don, Dijkstra, Uncle Bob, Kent ∥ Rob, 4-Review, Vadim)
-```
+**4-Review:** Batch 1: Вадим auto ∥ Steve, Batch 2: Dijkstra ∥ Uncle Bob. ANY REJECT → fix + re-run ALL 4. ALL approve → present to user.
 
 **Configurations:**
 
 | Config | Team | When to Use |
 |--------|------|-------------|
-| **Single Agent** | Rob (impl + tests) → 4-Review → Vadim | Trivial changes, hotfixes, single file <50 LOC |
-| **Mini-MLA** | Don → Dijkstra → Uncle Bob → Kent ∥ Rob → 4-Review → Vadim | Medium complexity, local scope |
-| **Full MLA** | Don → Joel → Dijkstra → Uncle Bob → Kent ∥ Rob → 4-Review → Vadim | Architecture, complex debugging, ambiguous requirements |
-
-`Kent ∥ Rob` = parallel execution when test structure is clear from plan.
-`4-Review` = Steve ∥ Вадим auto, then Dijkstra ∥ Uncle Bob (2 batches of 2 parallel subagents).
-
-Dijkstra runs in **all configurations except Single Agent** — verifies the final plan before implementation.
-Uncle Bob runs in **all configurations except Single Agent** — PREPARE (before) + review (after).
-
-**Early Exit Rule:**
-- If Don's plan shows <50 LOC single-file change with no architectural decisions → downgrade to Single Agent
-- If first 2 expert contributions converge (no new info) → stop, signal saturation
-
-**ROI Guidelines:**
-
-- Simple task (extract helper, fix typo): Single agent. Full MLA = -80% ROI (waste)
-- Complex task (architecture change): Full MLA = +113% ROI (worth it)
-
-See `_ai/mla-patterns.md` for detailed methodology.
-
-## Execution Guards
-
-**Any command: max 10 minutes.** No exceptions.
-
-If command takes longer than 10 minutes:
-1. Kill immediately
-2. This is a design problem, not a waiting problem
-3. Refactor to async with progress reporting
-4. Split into subtasks with separate progress reports
-
-**Tests:**
-- Run atomically — only tests relevant to current change
-- `node --test test/unit/specific-file.test.js` > `npm test`
-- Single test file: max 30 seconds. Hanging = bug.
-- Full suite — only before final commit
-
-**When anything hangs:**
-1. Kill, don't wait
-2. Analyze: infinite loop? Waiting for input? Sync blocking?
-3. Fix root cause — don't retry blindly, don't increase timeout
-
-### Workflow
-
-Tasks are organized under `_tasks/` directory:
-```
-_tasks/
-├── 2025-01-21-feature-name/
-│   ├── 001-user-request.md
-│   ├── 002-don-plan.md
-│   ├── 003-joel-tech-plan.md
-│   ├── 004-steve-review.md
-│   ├── 005-vadim-review.md
-│   └── ...
-```
-
-**STEP 1 — SAVE REQUEST:**
-- Save user's request to `001-user-request.md` (or `0XX-user-revision.md` for follow-ups)
-
-**STEP 2 — PLAN:**
-1. Don explores codebase (Sonnet subagent), then plans (Sonnet subagent) → `0XX-don-plan.md`
-2. **Full MLA only:** Joel expands into detailed tech plan `0XX-joel-tech-plan.md`
-3. **Dijkstra verifies the final plan** (Don's for Mini-MLA, Joel's for Full MLA) → `0XX-dijkstra-verification.md` — if REJECT → back to planner with specific gaps
-4. **If Dijkstra approved → present to user** for manual confirmation
-5. Iterate until Dijkstra AND user approve. If user rejects → back to step 1
-
-**STEP 2.5 — PREPARE (Refactor-First):**
-
-Before implementation, improve the code we're about to touch. This is "Boy Scout Rule" formalized.
-
-1. Don identifies files/methods that will be modified
-2. Uncle Bob reviews those files at **file-level** (size, SRP) AND **method-level** (complexity)
-3. If refactoring opportunity exists AND is safe:
-   - Kent writes tests locking CURRENT behavior (before refactoring)
-   - Rob refactors per Uncle Bob's plan
-   - Tests must pass — if not, revert and skip refactoring
-4. If file is too messy for safe refactoring → skip, create tech debt issue
-5. Proceed to STEP 3
-
-**Refactoring scope limits:**
-- Only methods we will directly modify
-- Max 20% of task time on refactoring
-- "One level better" not "perfect":
-  - Method 200→80 lines (split into 2-3)
-  - 8 params → Parameter Object
-  - Deep nesting → early returns
-- **NOT allowed:** rename public API, change architecture, refactor unrelated code
-
-**Skip refactoring when:**
-- Method < 50 lines and readable
-- No obvious wins
-- Risk too high (central critical path)
-- Would take >20% of task time
-
-**STEP 3 — EXECUTE:**
-1. Kent writes tests ∥ Rob implements (parallel when possible), create reports
-2. **4-Review** (2 batches of 2 parallel subagents):
-   - Batch 1: Вадим auto (completeness) ∥ Steve (vision)
-   - Batch 2: Dijkstra (correctness) ∥ Uncle Bob (code quality)
-   - ANY reviewer REJECT → back to implementation, fix issues, re-run ALL 4 reviews
-   - ALL 4 approve → present combined summary to user
-3. **Вадим (human)** confirms or rejects with feedback
-4. Loop until all 4 reviewers AND user ALL agree task is FULLY DONE
-
-**STEP 4 — FINALIZE:**
-- Write **task metrics report** (see template below) → `0XX-metrics.md`
-- Update linear. Reported tech debt and current limitation MUST be added to backlog for future fix
-- If Grafema couldn't help during this task → discuss with user → possibly Linear issue
-- Check backlog, prioritize, offer next task
-- **IMPORTANT:** Task reports (`_tasks/REG-XXX/`) must be committed to main when merging the task branch. Don't forget to copy them from worker worktrees!
-
-**IMPORTANT:** 4-Review runs after ALL implementation is complete, not after every individual agent.
-
-### Task Metrics (REQUIRED for every task)
-
-**Top-level agent MUST collect usage data from every subagent call** and write metrics report at STEP 4.
-
-Each `Task` tool call returns `total_tokens`, `tool_uses`, `duration_ms` in its output. Collect these.
-
-**Blended cost rates** (input+output average):
-| Model | $/M tokens |
-|-------|------------|
-| Haiku | $1.76 |
-| Sonnet | $6.60 |
-| Opus | $33.00 |
-
-**Template** (`0XX-metrics.md`):
-```markdown
-## Task Metrics: REG-XXX
-
-**Workflow:** v2.0
-**Config:** [Single Agent / Mini-MLA / Full MLA]
-**Date:** YYYY-MM-DD
-**Wall clock:** [start time] → [end time] = [duration]
-
-### Subagents
-
-| # | Agent | Model | Tokens | Tools | Duration | Est. Cost |
-|---|-------|-------|--------|-------|----------|-----------|
-| 1 | Don (explore) | Sonnet | 35,000 | 8 | 15s | $0.23 |
-| 2 | Don (plan) | Sonnet | 35,000 | 3 | 25s | $0.23 |
-| ... | ... | ... | ... | ... | ... | ... |
-
-### Totals
-
-| Metric | Value |
-|--------|-------|
-| Subagents total | N |
-| By model | Haiku: N, Sonnet: N, Opus: N |
-| Total tokens (subagents) | N |
-| Est. subagent cost | $X.XX |
-| Top-level overhead | ~20-30% (not tracked) |
-| **Est. total cost** | **$X.XX** |
-| 4-Review cycles | N (how many REJECT→retry across all 4 reviewers) |
-
-### Grafema Dogfooding
-
-| Metric | Value |
-|--------|-------|
-| Graph queries attempted | N |
-| Graph queries successful | N |
-| Fallbacks to file read | N |
-| Product gaps found | N |
-
-**Gaps found:**
-- [what you tried] → [why it failed] → [suggested fix]
-
-**Verdict:** [useful / partially useful / not useful]
-
-### Notes
-- [workflow observations, bottlenecks, what worked/didn't]
-```
-
-**Rules:**
-- Metrics are NON-OPTIONAL. Every task gets a metrics report.
-- If a subagent doesn't return usage data, note "N/A" and estimate.
-- Wall clock = time from user request to user approval (not including PR/CI).
-- 4-Review cycles count: 1 = all 4 passed first time, 2+ = had rejections.
-
-### When Stuck
-
-1. Call Donald Knuth for deep analysis
-2. Do NOT keep trying random fixes
-3. If architectural issue discovered → record it → discuss with user → possibly switch tasks
-
-## Agent Instructions
-
-### For All Agents
-- Read relevant docs under `_ai/` and `_readme/` before starting
-- Write reports to task directory with sequential numbering
-- Never write code at top level — only through designated implementation agents
-
-### For Don Melton (Tech Lead) — Request Quality Gate
-
-**BEFORE planning, check request for red flags. If any found → stop and ask user for clarification.**
-
-| Red Flag | Signal | Action |
-|----------|--------|--------|
-| **Однострочник без контекста** | Request is 1-2 sentences with no examples, no affected files, no acceptance criteria | Ask: "What specific behavior should change? Can you give a before/after example?" |
-| **Предписывает решение вместо проблемы** | Request says "build X", "create Y system", "add Z component" without explaining WHY | Ask: "What problem does this solve? Is there a simpler fix we're missing?" |
-| **Описывает симптом вместо root cause** | Request says "work around X", "handle case when Y breaks", "add fallback for Z" | Ask: "Why does X break? Have we identified the root cause?" |
-
-**If request passes gate** → proceed with exploration and planning as normal.
-
-**Data:** 89% of tasks with clear requests completed without revisions. 11% with red-flag requests required costly replanning (up to 28 report files vs normal 5-8).
-
-### For Kent Beck (Tests)
-- Tests first, always
-- Tests must communicate intent clearly
-- No mocks in production code paths
-- Find existing test patterns and match them
-
-### For Robert Martin (Uncle Bob) — PREPARE Phase (STEP 2.5)
-
-**This section covers the pre-implementation review. For post-implementation code quality review, see the "For Robert Martin (Uncle Bob) — Code Quality (PREPARE + Review)" section below.**
-
-Reviews at TWO levels: **file-level** (structural) and **method-level** (local).
-
-**File-level checks (HARD LIMITS):**
-- File > 500 lines = **MUST split** before implementation. Create tech debt issue if can't split safely.
-- File > 700 lines = **CRITICAL.** Stop everything, discuss with user. This is how 6k-line files happen.
-- Single file doing 3+ unrelated things = **MUST split** (Single Responsibility)
-- Count before implementation: `wc -l` on files Don identified
-
-**Method-level checklist:**
-- Method length (>50 lines = candidate for split)
-- Parameter count (>3 = consider Parameter Object)
-- Nesting depth (>2 levels = consider early return/extract)
-- Duplication (same pattern 3+ times = extract helper)
-- Naming clarity (can you understand without reading body?)
-
-**Output format:**
-```markdown
-## Uncle Bob PREPARE Review: [file]
-
-**File size:** [N lines] — [OK / MUST SPLIT / CRITICAL]
-**Methods to modify:** [list with line counts]
-
-**File-level:**
-- [Issue or OK]
-
-**Method-level:** [file:method]
-- **Recommendation:** [REFACTOR / SKIP]
-- [Specific actions]
-
-**Risk:** [LOW/MEDIUM/HIGH]
-**Estimated scope:** [lines affected]
-```
-
-**Rules:**
-- Review ALL files Don identified — both file-level and method-level
-- File splits are NON-NEGOTIABLE above 300 lines
-- Propose MINIMAL method changes that improve readability
-- If method risk > benefit → recommend SKIP
-- Never propose architectural changes in PREPARE phase
-- Run on **Sonnet** model
-
-### For Rob Pike (Implementation)
-- Read existing code before writing new code
-- Match project style over personal preferences
-- Clean, correct solution that doesn't create technical debt
-- If tests fail, fix implementation, not tests (unless tests are wrong)
-
-### For Steve Jobs (Vision Review)
-
-**Focus: ONE thing only — vision alignment and architecture.**
-
-- Does this align with project vision? ("AI should query the graph, not read code")
-- Did we cut corners instead of doing it right?
-- Are there fundamental architectural gaps?
-- Would shipping this embarrass us?
-
-**CRITICAL — Zero Tolerance for "MVP Limitations":**
-- If a "limitation" makes the feature work for <50% of real-world cases → **REJECT**
-- If the limitation is actually an architectural gap → **STOP, don't defer**
-- Root Cause Policy: fix from roots, not symptoms.
-
-**MANDATORY Complexity & Architecture Checklist:**
-
-Before approving ANY plan involving data flow, enrichment, or graph traversal:
-
-1. **Complexity Check**: What's the iteration space?
-   - O(n) over ALL nodes/edges = **RED FLAG, REJECT**
-   - O(n) over all nodes of ONE type = **RED FLAG** (there can be millions)
-   - O(m) over specific SMALL set (e.g., http:request nodes) = OK
-   - Reusing existing iteration (extending current enricher) = BEST
-
-2. **Plugin Architecture**: Does it use existing abstractions?
-   - Forward registration = **GOOD**, backward pattern scanning = **BAD**
-   - Extending existing enricher pass = **BEST** (no extra iteration)
-
-3. **Extensibility**: Adding new framework support requires only new analyzer plugin = **GOOD**
-
-4. **Grafema doesn't brute-force**: If solution scans all nodes looking for patterns, it's WRONG.
-
-**Output format:**
-```markdown
-## Steve Jobs — Vision Review
-
-**Verdict:** APPROVE / REJECT
-
-**Vision alignment:** [OK / issues]
-**Architecture:** [OK / issues]
-
-If REJECT:
-- [Specific issue]
-```
-
-### For Вадим auto (Completeness Review)
-
-**Focus: ONE thing only — does the code deliver what the task asked for?**
-
-- Does the code actually do what the task requires? Check against original request.
-- Are there edge cases or regressions?
-- Is the change minimal and focused — no scope creep?
-- Are tests meaningful (not just "it doesn't crash")? Do they cover happy path AND failure modes?
-- Commit quality: atomic commits, clear messages, no loose ends (TODOs, commented-out code).
-
-**Output format:**
-```markdown
-## Вадим auto — Completeness Review
-
-**Verdict:** APPROVE / REJECT
-
-**Feature completeness:** [OK / issues]
-**Test coverage:** [OK / issues]
-**Commit quality:** [OK / issues]
-
-If REJECT:
-- [Specific issue]
-```
-
-### For Edsger Dijkstra (Plan Verification & Correctness Review)
-
-**Two roles: (A) Plan verification after Don/Joel, (B) Correctness review after implementation.**
-
-**Core principle: "I don't THINK it handles all cases — I PROVE it, by enumeration."**
-
-**(A) Plan Verification — runs after Don (Mini-MLA) or Joel (Full MLA), before implementation:**
-
-For EVERY filter, condition, or classification rule in the plan:
-
-1. **Input Universe**: List ALL possible input categories. Not just the ones the plan mentions.
-   Example from RFD-4 failure: Don listed anonymous scopes as "if, for, try, catch, else, finally, switch, while".
-   Dijkstra would ask: "What ELSE lives on the scope stack?" → functions (named), classes, anonymous functions, arrow functions.
-   The omission of "anonymous functions" caused a 2-hour-post-merge revert.
-
-2. **Completeness Table**: For every classification/filter, build explicit table:
-   | Input | Expected behavior | Handled by plan? |
-   |-------|------------------|-----------------|
-   | ... | ... | YES / NO / UNCLEAR |
-   If any row is NO or UNCLEAR → REJECT with specific gap.
-
-3. **Preconditions**: What must be true for the algorithm to work? Are those preconditions guaranteed?
-
-4. **Edge cases by construction**:
-   - Empty input
-   - Single element
-   - All identical
-   - Maximum realistic size
-   - Boundary between categories
-
-**Output format (Plan Verification):**
-```markdown
-## Dijkstra Plan Verification
-
-**Verdict:** APPROVE / REJECT
-
-**Completeness tables:** [N tables built for N classification rules]
-
-**Gaps found:**
-- [Specific gap: what input category is missing from plan]
-
-**Precondition issues:**
-- [What assumption is unverified]
-```
-
-**(B) Correctness Review — runs after implementation, parallel with Uncle Bob:**
-
-For EVERY function/method changed or added:
-
-1. **Input enumeration**: What types/values can each parameter receive?
-   - Don't trust type annotations blindly — what actually gets passed at call sites?
-
-2. **Condition completeness**: For every `if/switch/filter`:
-   - What passes? What's blocked? What falls through?
-   - Is there an input that matches NO branch?
-
-3. **Loop termination**: Can every loop terminate? What about empty collections?
-
-4. **Invariant verification**: After the function runs, what must be true?
-   Is that actually guaranteed by the code?
-
-**Output format (Correctness Review):**
-```markdown
-## Dijkstra Correctness Review
-
-**Verdict:** APPROVE / REJECT
-
-**Functions reviewed:** [list with verdict per function]
-
-**Issues found:**
-- [function:line] — [specific input that breaks it]
-```
-
-**Rules:**
-- NEVER say "looks correct" without showing your enumeration
-- If you cannot enumerate all input categories for a condition → REJECT (you don't understand it well enough)
-
-### For Robert Martin (Uncle Bob) — Code Quality (PREPARE + Review)
-
-**Two roles: (A) Pre-implementation review (STEP 2.5), (B) Post-implementation code quality review.**
-
-**(A) Pre-implementation** — see STEP 2.5 PREPARE section above.
-
-**(B) Post-implementation Code Quality Review:**
-
-Reviews at TWO levels: **file-level** (structural) and **method-level** (local).
-
-**File-level checks (HARD LIMITS):**
-- File > 500 lines = **MUST split**. Create tech debt issue if can't split safely.
-- File > 700 lines = **CRITICAL.** Stop everything, discuss with user.
-- Single file doing 3+ unrelated things = **MUST split** (Single Responsibility)
-
-**Method-level checklist:**
-- Method length (>50 lines = candidate for split)
-- Parameter count (>3 = consider Parameter Object)
-- Nesting depth (>2 levels = consider early return/extract)
-- Duplication (same pattern 3+ times = extract helper)
-- Naming clarity (can you understand without reading body?)
-
-**Also checks:**
-- Readability and clarity
-- Test quality and intent communication
-- Naming, structure, duplication
-- Code matches existing patterns?
-
-**Output format:**
-```markdown
-## Uncle Bob — Code Quality Review
-
-**Verdict:** APPROVE / REJECT
-
-**File sizes:** [OK / issues]
-**Method quality:** [OK / issues]
-**Patterns & naming:** [OK / issues]
-
-If REJECT:
-- [Specific issue]
-```
-
-**4-Review flow:**
-- Batch 1: Вадим auto ∥ Steve — run in parallel
-- Batch 2: Dijkstra ∥ Uncle Bob — run in parallel after batch 1
-- ANY REJECT → back to implementation, no user involvement
-- ALL 4 APPROVE → present combined summary to user for manual confirmation
+| **Single Agent** | Rob → 4-Review → Vadim | Trivial, single file <50 LOC |
+| **Mini-MLA** | Don → Dijkstra → Uncle Bob → Kent ∥ Rob → 4-Review → Vadim | Medium complexity |
+| **Full MLA** | Don → Joel → Dijkstra → Uncle Bob → Kent ∥ Rob → 4-Review → Vadim | Architecture changes |
 
 ## Forbidden Patterns
 
@@ -729,8 +120,7 @@ If REJECT:
 ### Never Do
 - Changes outside scope without discussing first
 - "Improvements" nobody asked for
-- Refactoring OUTSIDE of STEP 2.5 (refactoring happens in PREPARE, not during EXECUTE)
-- Refactoring code unrelated to current task
+- Refactoring OUTSIDE of STEP 2.5
 - Quick fixes or workarounds
 - Guessing when you can ask
 
@@ -743,217 +133,50 @@ If REJECT:
 | `REG-*` | **Reginaflow** | Grafema product (JS/TS, CLI, MCP, plugins) |
 | `RFD-*` | **RFDB** | RFDB v2 storage engine (Rust, internal roadmap tasks) |
 
-When creating issues:
-- Team: pick by prefix (see above)
-- Project: **Grafema**
-- Format: Markdown
-- Include: goal, acceptance criteria, context
+When creating issues: Team by prefix, Project: **Grafema**, format: Markdown, include: goal, acceptance criteria, context.
 
 ### Labels (REQUIRED)
 
-**Type labels** (one required):
-- `Bug` — broken functionality
-- `Feature` — new capability
-- `Improvement` — enhancement to existing
-- `Research` — investigation, analysis
+**Type labels** (one required): `Bug`, `Feature`, `Improvement`, `Research`
 
 **Version labels** (one required):
-- `v0.1.x` — bugs and polish for current release
-- `v0.2` — Early Access prep, Data Flow, Tech Debt
+- `v0.1.x` — blocks current usage, critical bugs, CLI/MCP polish
+- `v0.2` — Early Access prep, data flow, tech debt
 - `v0.3` — stability, onboarding, infrastructure
 - `v0.5+` — strategic (GUI, Systema, Research)
 
-### Version Assignment Criteria
-
-| Version | Criteria |
-|---------|----------|
-| `v0.1.x` | Blocks current usage, critical bugs, CLI/MCP polish |
-| `v0.2` | Early Access blockers, data flow features, parallelizable tech debt |
-| `v0.3` | Release workflow, onboarding UX, performance optimization |
-| `v0.5+` | GUI visualization, Systema automation, research/articles |
-
-### When Completing Tasks
-
-Linear workflow with worktrees:
-1. Code ready in worktree → **In Review**
-2. After merge to main → **Done**
-3. Remove worktree after merge
-4. If tech debt discovered → create new issue with appropriate version label
-5. If limitation documented → create issue for future fix
-
-Available statuses:
-- **Backlog** / **Todo** → ready to start
-- **In Progress** → working in worktree
-- **In Review** → code ready, waiting for merge
-- **Done** → merged to main, worktree removed
-- **Canceled** / **Duplicate** → cancelled tasks
+### Statuses
+Backlog / Todo → **In Progress** (working) → **In Review** (code ready) → **Done** (merged) / Canceled / Duplicate
 
 ### Vibe-kanban Sprint Board
 
-**Source of truth for current sprint.** Linear remains backlog/planning tool.
+Source of truth for current sprint. Linear remains backlog/planning tool.
+- Sprint start: load v0.2 tasks from Linear into vibe-kanban (`npx vibe-kanban`)
+- During sprint: work from board. New tech debt → create in BOTH kanban and Linear
+- Sprint end: `_scripts/sync-vk-to-linear.sh` to sync completed tasks
 
-**Workflow:**
-1. Sprint start: open v0.2 tasks from Linear loaded into vibe-kanban (`npx vibe-kanban`)
-2. During sprint: work from vibe-kanban board. New tech debt → create in BOTH kanban and Linear
-3. Sprint end: run `_scripts/sync-vk-to-linear.sh` to mark completed tasks in Linear
-
-**Vibe-kanban API:** `http://127.0.0.1:<port>/api/` (port in `/tmp/vibe-kanban/vibe-kanban.port`)
-- `GET /api/tasks?project_id=<id>` — list tasks
-- `POST /api/tasks` — create task (body: `{project_id, title, description}`)
-- `PATCH /api/tasks/<id>` — update (body: `{status: "done"}`)
-- `DELETE /api/tasks/<id>` — delete (**no confirmation, be careful**)
-
-**Task naming convention:** `REG-XXX: Title [PRIORITY]` — always include Linear ID for traceability.
-
-**MCP:** vibe-kanban MCP server configured in settings. Requires backend running (`npx vibe-kanban`). Restart Claude Code after starting backend for MCP tools to load.
-
-**IMPORTANT:** `delete_task` has NO confirmation. Don't use bulk delete operations. Prefer status changes over deletion.
+**API:** `http://127.0.0.1:<port>/api/` (port in `/tmp/vibe-kanban/vibe-kanban.port`)
+**Task naming:** `REG-XXX: Title [PRIORITY]` — include Linear ID for traceability.
+**IMPORTANT:** `delete_task` has NO confirmation. Prefer status changes over deletion.
 
 ## Git Worktree Workflow
 
-**CRITICAL: Worker Slots Pattern**
+**Full details:** `_ai/worktrees.md`
 
-Fixed number of worktree "slots" for parallel work. Each slot runs persistent Claude Code instance.
+**Summary:** Fixed worker slots (`grafema-worker-1` through `grafema-worker-8`), each runs persistent Claude Code instance. Never work in main repo — only in worker slots.
 
-### Initial Setup (done once)
+**New task:** `git fetch && git checkout main && git pull && git checkout -b task/REG-XXX` → update Linear → In Progress → save request → start MLA.
 
-```bash
-cd /Users/vadimr/grafema
-git worktree add ../grafema-worker-1
-git worktree add ../grafema-worker-2
-...
-git worktree add ../grafema-worker-8
-```
-
-Each worker runs Claude Code in its own terminal. Workers persist across tasks.
-
-### Starting New Task in a Worker
-
-User will tell Claude which task to work on. Claude then:
-
-```bash
-# Pull latest changes
-git fetch origin
-git checkout main
-git pull
-
-# Create task branch
-git checkout -b task/REG-XXX
-```
-
-**IMPORTANT:** Git operations (fetch, checkout, branch creation) are safe and require NO user confirmation.
-
-**CRITICAL — After branch created, IMMEDIATELY:**
-1. **Update Linear → In Progress** (use `mcp__linear__update_issue` with `state: "In Progress"`)
-2. Save task description to `_tasks/REG-XXX/001-user-request.md`
-
-Do NOT start coding until Linear status is updated.
-
-### Finishing Task
-
-1. Code ready → run **4-Review** (Batch 1: Вадим auto ∥ Steve, Batch 2: Dijkstra ∥ Uncle Bob)
-2. If ANY REJECT → fix issues, don't bother user, re-run ALL 4 reviews
-3. If ALL 4 APPROVE → present combined review summary to user (real Вадим)
-4. User confirms → create PR, Linear status → **In Review**
-5. CI must pass. If CI fails → fix, push, wait for green
-6. User will merge and `/clear` to start next task
-
-### Review & Merge Process
-
-**Two-stage review:**
-
-| Stage | Who | Focus | On REJECT |
-|-------|-----|-------|-----------|
-| 1a. Вадим auto | Completeness | Does it deliver what was asked? | Fix, retry all 4 |
-| 1b. Steve | Vision | Architecture, vision alignment | Fix, retry all 4 |
-| 1c. Dijkstra | Correctness | Edge cases, input enumeration | Fix, retry all 4 |
-| 1d. Uncle Bob | Code quality | Structure, naming, readability | Fix, retry all 4 |
-| 2. Вадим (human) | Final | Confirms or overrides | Fix per feedback, retry from stage 1 |
-
-**Stage 1 — 4-Review (2 batches of 2 parallel):**
-- Batch 1: Вадим auto ∥ Steve
-- Batch 2: Dijkstra ∥ Uncle Bob
-- Each reviewer focuses on ONE perspective — no multi-tasking
-- ANY REJECT → fix, then re-run ALL 4 (not just the failed one)
-
-**Stage 2 — Вадим manual (final confirmation):**
-- User sees combined review summary from all 4 reviewers
-- User confirms or rejects with feedback
-- If confirmed → merge to main, update Linear → **Done**
-
-After merge, task branch can be deleted (optional cleanup).
-
-### Directory Structure
-
-```
-/Users/vadimr/
-├── grafema/              # Main repo (coordination, PR reviews, releases)
-├── grafema-worker-1/     # Worker slot 1 (persistent)
-├── grafema-worker-2/     # Worker slot 2 (persistent)
-...
-├── grafema-worker-8/     # Worker slot 8 (persistent)
-```
-
-### Rules
-
-1. **Never work in main repo** — only in worker slots
-2. **Workers persist across tasks** — no need to recreate
-3. **One worker = one terminal = one CC instance** — stays running
-4. **Task switching within worker:**
-   ```bash
-   # After /clear
-   git checkout main
-   git pull
-   git checkout -b task/REG-YYY
-   ```
-5. **Commit often** — branches are in git, safe even if worker reset
-
-### Managing Workers
-
-Check active workers:
-```bash
-cd /Users/vadimr/grafema
-git worktree list
-```
-
-If worker gets corrupted, recreate it:
-```bash
-git worktree remove ../grafema-worker-N --force
-git worktree add ../grafema-worker-N
-```
+**Finishing:** 4-Review → user confirms → create PR → Linear → In Review → CI green → merge → Done.
 
 ## Agent Teams (Experimental)
 
-Agent Teams — экспериментальная фича Claude Code для координации нескольких инстансов с shared task list и межагентным messaging. Включена в settings.
+Agent Teams — экспериментальная фича Claude Code для координации нескольких инстансов с shared task list.
 
-### Когда использовать
+**Use for:** parallel research, code review с разных ракурсов, independent modules, debugging competing hypotheses.
+**NOT for:** MLA workflow (use worktrees), sequential dependencies, edits to same files.
 
-- **Параллельный research** — несколько гипотез одновременно
-- **Code review с разных ракурсов** — security, performance, test coverage
-- **Независимые модули** — каждый тиммейт владеет своим набором файлов
-- **Debugging** — конкурирующие гипотезы, тиммейты спорят друг с другом
-
-### Когда НЕ использовать
-
-- MLA workflow (Don → Joel → Kent → Rob) — для этого worktrees + персистентные инстансы
-- Задачи с зависимостями между шагами — sequential work
-- Правки в одних и тех же файлах — конфликты неизбежны
-
-### Ограничения (на февраль 2026)
-
-- **No session resumption** — если лид падает, команда теряется
-- **One team per session** — нельзя несколько команд
-- **Тиммейты не персистентны** — создаются заново каждый раз
-- **No nested teams** — тиммейты не спавнят своих тиммейтов
-
-### Обязательно
-
-После каждого использования Agent Teams — записать в задачу/комментарий:
-1. Была ли реальная польза vs обычные subagents?
-2. Сколько примерно токенов потрачено (субъективно: много/умеренно)?
-3. Какие проблемы возникли?
-
-Это нужно для принятия решения — продолжать ли использовать или откатиться.
+After each use — record: реальная польза vs subagents? токены? проблемы?
 
 ## Commands
 
@@ -963,31 +186,16 @@ node --test --test-concurrency=1 'test/unit/*.test.js'  # Run all unit tests
 node --test test/unit/specific-file.test.js             # Run single test file
 ```
 
-**CRITICAL: Tests run against `dist/`, not `src/`.** Always `pnpm build` before running tests after any TypeScript changes. Stale builds cause false failures that look like real bugs.
+**CRITICAL: Tests run against `dist/`, not `src/`.** Always `pnpm build` before running tests after any TypeScript changes.
 
 ## Skills
 
-Project-specific skills are available in `.claude/skills/`. Key skills:
+Project-specific skills in `.claude/skills/`. Key skills:
 
 ### /release
-**Skill:** `grafema-release`
-
-Use when publishing new versions to npm. Covers:
-- Unified versioning across all packages
-- Automated pre-flight checks (tests, clean git, CI status)
-- CHANGELOG.md updates
-- Building packages
-- Publishing with correct dist-tags (beta/latest)
-- Automatic stable branch merge
-- CI/CD validation via GitHub Actions
-
+**Skill:** `grafema-release` — use when publishing new versions to npm.
 **Trigger:** User says "release", "publish", "bump version"
-
 **Quick command:** `./scripts/release.sh patch --publish`
 
 ### Other Skills
-
-See `.claude/skills/` for debugging skills:
-- `grafema-cli-dev-workflow` — build before running CLI
-- `grafema-cross-file-operations` — enrichment phase for cross-file edges
-- `pnpm-workspace-publish` — use `pnpm publish` not `npm publish`
+See `.claude/skills/` for debugging skills: `grafema-cli-dev-workflow`, `grafema-cross-file-operations`, `pnpm-workspace-publish`
