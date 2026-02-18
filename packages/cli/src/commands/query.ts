@@ -17,6 +17,7 @@ import { RFDBServerBackend, parseSemanticId, parseSemanticIdV2, findCallsInFunct
 import { formatNodeDisplay, formatNodeInline, formatLocation } from '../utils/formatNode.js';
 import { exitWithError } from '../utils/errorFormatter.js';
 import { Spinner } from '../utils/spinner.js';
+import type { DatalogExplainResult } from '@grafema/types';
 
 // Node type constants to avoid magic string duplication
 const HTTP_ROUTE_TYPE = 'http:route';
@@ -32,6 +33,7 @@ interface QueryOptions {
   json?: boolean;
   limit: string;
   raw?: boolean;
+  explain?: boolean;
   type?: string;  // Explicit node type (bypasses type aliases)
 }
 
@@ -107,6 +109,16 @@ Rules (must define violation/1):
   grafema query --raw 'violation(X) :- node(X, "http:route"), attr(X, "method", "POST").'`
   )
   .option(
+    '--explain',
+    `Show step-by-step query execution (use with --raw)
+
+Displays each predicate evaluation, result counts, and timing.
+Useful when a query returns no results — shows where the funnel drops to zero.
+
+Example:
+  grafema query --raw 'type(X, "FUNCTION"), attr(X, "name", "main")' --explain`
+  )
+  .option(
     '-t, --type <nodeType>',
     `Filter by exact node type (bypasses type aliases)
 
@@ -158,10 +170,16 @@ Examples:
         exitWithError('Invalid limit', ['Use a positive number, e.g.: --limit 10']);
       }
 
+      // --explain only works with --raw
+      if (options.explain && !options.raw) {
+        spinner.stop();
+        console.error('Note: --explain requires --raw. Ignoring --explain.');
+      }
+
       // Raw Datalog mode
       if (options.raw) {
         spinner.stop();
-        await executeRawQuery(backend, pattern, limit, options.json);
+        await executeRawQuery(backend, pattern, limit, options.json, options.explain);
         return;
       }
 
@@ -1078,8 +1096,19 @@ async function executeRawQuery(
   backend: RFDBServerBackend,
   query: string,
   limit: number,
-  json?: boolean
+  json?: boolean,
+  explain?: boolean,
 ): Promise<void> {
+  if (explain) {
+    const result = await backend.executeDatalog(query, true);
+    if (json) {
+      console.log(JSON.stringify(result, null, 2));
+      return;
+    }
+    renderExplainOutput(result, limit);
+    return;
+  }
+
   const results = await backend.executeDatalog(query);
   const limited = results.slice(0, limit);
 
@@ -1105,6 +1134,43 @@ async function executeRawQuery(
       const unknownList = unknown.map(p => `'${p}'`).join(', ');
       const builtinList = [...BUILTIN_PREDICATES].join(', ');
       console.error(`Note: unknown predicate ${unknownList}. Built-in predicates: ${builtinList}`);
+    }
+  }
+}
+
+function renderExplainOutput(result: DatalogExplainResult, limit: number): void {
+  console.log('Explain mode \u2014 step-by-step execution:\n');
+
+  for (const step of result.explainSteps) {
+    const args = step.args.join(', ');
+    console.log(`  Step ${step.step}: [${step.operation}] ${step.predicate}(${args})`);
+    console.log(`          \u2192 ${step.resultCount} result(s) in ${step.durationUs} \u00b5s`);
+    if (step.details) {
+      console.log(`          ${step.details}`);
+    }
+    console.log('');
+  }
+
+  console.log('Query statistics:');
+  console.log(`  Nodes visited:    ${result.stats.nodesVisited}`);
+  console.log(`  Edges traversed:  ${result.stats.edgesTraversed}`);
+  console.log(`  Rule evaluations: ${result.stats.ruleEvaluations}`);
+  console.log(`  Total results:    ${result.stats.totalResults}`);
+  console.log(`  Total duration:   ${result.profile.totalDurationUs} \u00b5s`);
+  if (result.profile.ruleEvalTimeUs === 0 && result.profile.projectionTimeUs === 0) {
+    console.log('  (rule_eval_time and projection_time: not yet tracked)');
+  }
+  console.log('');
+
+  const bindingsToShow = result.bindings.slice(0, limit);
+  if (bindingsToShow.length === 0) {
+    console.log('No results.');
+  } else {
+    console.log(`Results (${bindingsToShow.length}${result.bindings.length > limit ? ` of ${result.bindings.length}` : ''}):`);
+    console.log('');
+    for (const row of bindingsToShow) {
+      const pairs = Object.entries(row).map(([k, v]) => `${k}=${v}`).join(', ');
+      console.log(`  { ${pairs} }`);
     }
   }
 }
