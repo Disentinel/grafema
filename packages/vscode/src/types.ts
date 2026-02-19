@@ -197,3 +197,23 @@ export type CallersItem =
   | { kind: 'call-node'; node: WireNode; metadata: NodeMetadata; direction: 'incoming' | 'outgoing'; depth: number; visitedIds: Set<string> }
   | { kind: 'status'; message: string }
   | { kind: 'more'; count: number };
+
+// === ISSUES PANEL TYPES ===
+
+/**
+ * Severity groups for the ISSUES panel sections.
+ */
+export type IssueSectionKind = 'violation' | 'connectivity' | 'warning';
+
+/**
+ * Union type for all items in the ISSUES TreeDataProvider.
+ *
+ * Kinds:
+ *   - 'section' : group header with count
+ *   - 'issue'   : a single ISSUE node from the graph
+ *   - 'status'  : placeholder when not connected or no issues found
+ */
+export type IssueItem =
+  | { kind: 'section'; label: string; icon: string; sectionKind: IssueSectionKind; count: number }
+  | { kind: 'issue'; node: WireNode; metadata: NodeMetadata; sectionKind: IssueSectionKind }
+  | { kind: 'status'; message: string };

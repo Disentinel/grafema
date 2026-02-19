@@ -14,7 +14,8 @@
     "onView:grafemaStatus",
     "onView:grafemaExplore",
     "onView:grafemaValueTrace",
-    "onView:grafemaCallers"
+    "onView:grafemaCallers",
+    "onView:grafemaIssues"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -42,10 +43,6 @@
       {
         "view": "grafemaBlastRadius",
         "contents": "Blast radius shows what breaks if you change this code.\n\nComing in Phase 4."
-      },
-      {
-        "view": "grafemaIssues",
-        "contents": "Issues panel shows guarantee violations and connectivity gaps.\n\nComing in Phase 3."
       }
     ],
     "commands": [
@@ -141,6 +138,11 @@
         "icon": "$(refresh)"
       },
       {
+        "command": "grafema.refreshIssues",
+        "title": "Refresh",
+        "icon": "$(refresh)"
+      },
+      {
         "command": "grafema.blastRadiusPlaceholder",
         "title": "Blast Radius (coming Phase 4)"
       }
@@ -216,6 +218,11 @@
           "command": "grafema.refreshCallers",
           "when": "view == grafemaCallers",
           "group": "navigation@3"
+        },
+        {
+          "command": "grafema.refreshIssues",
+          "when": "view == grafemaIssues",
+          "group": "navigation@0"
         }
       ],
       "view/item/context": [
