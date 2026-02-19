@@ -69,7 +69,7 @@ export class ShadowingDetector extends Plugin {
   }
 
   async execute(context: PluginContext): Promise<PluginResult> {
-    const { graph } = context;
+    const { graph, onProgress } = context;
     const logger = this.log(context);
 
     logger.info('Starting variable shadowing detection');
@@ -77,20 +77,57 @@ export class ShadowingDetector extends Plugin {
     const issues: ShadowingIssue[] = [];
 
     // Get all relevant nodes
+    let collected = 0;
     const allClasses: NodeRecord[] = [];
     for await (const node of graph.queryNodes({ nodeType: 'CLASS' })) {
+      collected++;
+      if (onProgress && collected % 500 === 0) {
+        onProgress({
+          phase: 'validation',
+          currentPlugin: 'ShadowingDetector',
+          message: `Collecting declarations: ${collected}`,
+          processedFiles: collected,
+        });
+      }
       allClasses.push(node);
     }
     const allVariables: ShadowableNode[] = [];
     for await (const node of graph.queryNodes({ nodeType: 'VARIABLE' })) {
+      collected++;
+      if (onProgress && collected % 500 === 0) {
+        onProgress({
+          phase: 'validation',
+          currentPlugin: 'ShadowingDetector',
+          message: `Collecting declarations: ${collected}`,
+          processedFiles: collected,
+        });
+      }
       allVariables.push(node as ShadowableNode);
     }
     const allConstants: ShadowableNode[] = [];
     for await (const node of graph.queryNodes({ nodeType: 'CONSTANT' })) {
+      collected++;
+      if (onProgress && collected % 500 === 0) {
+        onProgress({
+          phase: 'validation',
+          currentPlugin: 'ShadowingDetector',
+          message: `Collecting declarations: ${collected}`,
+          processedFiles: collected,
+        });
+      }
       allConstants.push(node as ShadowableNode);
     }
     const allImports: ShadowableNode[] = [];
     for await (const node of graph.queryNodes({ nodeType: 'IMPORT' })) {
+      collected++;
+      if (onProgress && collected % 500 === 0) {
+        onProgress({
+          phase: 'validation',
+          currentPlugin: 'ShadowingDetector',
+          message: `Collecting declarations: ${collected}`,
+          processedFiles: collected,
+        });
+      }
       allImports.push(node as ShadowableNode);
     }
 
@@ -111,7 +148,18 @@ export class ShadowingDetector extends Plugin {
     }
 
     // 1. Cross-file shadowing: VARIABLE shadows CLASS from another file
+    let checked = 0;
     for (const variable of allVariables) {
+      checked++;
+      if (onProgress && checked % 500 === 0) {
+        onProgress({
+          phase: 'validation',
+          currentPlugin: 'ShadowingDetector',
+          message: `Checking cross-file shadowing: ${checked}/${allVariables.length}`,
+          totalFiles: allVariables.length,
+          processedFiles: checked,
+        });
+      }
       const name = variable.name as string;
       const classesWithSameName = classesByName.get(name);
       if (classesWithSameName) {
@@ -137,7 +185,18 @@ export class ShadowingDetector extends Plugin {
     // Variables/constants with parentScopeId (inside functions) that shadow imports
     const allLocalVars = [...allVariables, ...allConstants].filter(v => v.parentScopeId);
 
+    checked = 0;
     for (const localVar of allLocalVars) {
+      checked++;
+      if (onProgress && checked % 500 === 0) {
+        onProgress({
+          phase: 'validation',
+          currentPlugin: 'ShadowingDetector',
+          message: `Checking scope shadowing: ${checked}/${allLocalVars.length}`,
+          totalFiles: allLocalVars.length,
+          processedFiles: checked,
+        });
+      }
       const name = localVar.name as string;
       const importKey = `${localVar.file}:${name}`;
       const shadowedImport = importsByFileAndLocal.get(importKey);

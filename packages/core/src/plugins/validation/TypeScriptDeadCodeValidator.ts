@@ -56,7 +56,7 @@ export class TypeScriptDeadCodeValidator extends Plugin {
   }
 
   async execute(context: PluginContext): Promise<PluginResult> {
-    const { graph } = context;
+    const { graph, onProgress } = context;
     const logger = this.log(context);
 
     logger.info('Starting TypeScript dead code analysis');
@@ -68,9 +68,20 @@ export class TypeScriptDeadCodeValidator extends Plugin {
     logger.debug('Collecting interfaces');
     const interfaces: Map<string, { id: string; name: string; file?: string; line?: number; properties?: unknown[] }> = new Map();
 
+    let collected = 0;
     for await (const node of graph.queryNodes({ nodeType: 'INTERFACE' })) {
       // Skip external/reference interfaces
       if ((node as { isExternal?: boolean }).isExternal) continue;
+
+      collected++;
+      if (onProgress && collected % 500 === 0) {
+        onProgress({
+          phase: 'validation',
+          currentPlugin: 'TypeScriptDeadCodeValidator',
+          message: `Collecting interfaces: ${collected}`,
+          processedFiles: collected,
+        });
+      }
 
       interfaces.set(node.id, {
         id: node.id,
@@ -88,7 +99,19 @@ export class TypeScriptDeadCodeValidator extends Plugin {
     let emptyCount = 0;
     let singleImplCount = 0;
 
+    let checked = 0;
     for (const [id, iface] of interfaces) {
+      checked++;
+      if (onProgress && checked % 200 === 0) {
+        onProgress({
+          phase: 'validation',
+          currentPlugin: 'TypeScriptDeadCodeValidator',
+          message: `Checking interfaces: ${checked}/${interfaces.size}`,
+          totalFiles: interfaces.size,
+          processedFiles: checked,
+        });
+      }
+
       const incoming = await graph.getIncomingEdges(id, ['IMPLEMENTS', 'EXTENDS']);
       const implCount = incoming.length;
       const properties = iface.properties || [];

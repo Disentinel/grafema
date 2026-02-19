@@ -68,13 +68,14 @@ export class EvalBanValidator extends Plugin {
   }
 
   async execute(context: PluginContext): Promise<PluginResult> {
-    const { graph } = context;
+    const { graph, onProgress } = context;
     const logger = this.log(context);
 
     logger.info('Starting eval/Function usage validation');
     const startTime = Date.now();
 
     const issues: EvalBanIssue[] = [];
+    let scannedCalls = 0;
 
     // OPTIMIZATION: use direct graph queries instead of Datalog (slow full scan)
     // Datalog hangs on large graphs due to lack of indexes
@@ -85,6 +86,15 @@ export class EvalBanValidator extends Plugin {
     let evalCount = 0;
 
     for await (const node of graph.queryNodes({ nodeType: 'CALL' })) {
+      scannedCalls++;
+      if (onProgress && scannedCalls % 500 === 0) {
+        onProgress({
+          phase: 'validation',
+          currentPlugin: 'EvalBanValidator',
+          message: `Scanning for eval patterns: ${scannedCalls} calls checked`,
+          processedFiles: scannedCalls,
+        });
+      }
       if (node.name === 'eval') {
         evalCount++;
         issues.push({
@@ -105,6 +115,15 @@ export class EvalBanValidator extends Plugin {
     let funcCount = 0;
 
     for await (const node of graph.queryNodes({ nodeType: 'CALL' })) {
+      scannedCalls++;
+      if (onProgress && scannedCalls % 500 === 0) {
+        onProgress({
+          phase: 'validation',
+          currentPlugin: 'EvalBanValidator',
+          message: `Scanning for eval patterns: ${scannedCalls} calls checked`,
+          processedFiles: scannedCalls,
+        });
+      }
       if (node.name === 'Function') {
         funcCount++;
         issues.push({
@@ -126,6 +145,15 @@ export class EvalBanValidator extends Plugin {
     let methodCount = 0;
 
     for await (const node of graph.queryNodes({ nodeType: 'CALL' })) {
+      scannedCalls++;
+      if (onProgress && scannedCalls % 500 === 0) {
+        onProgress({
+          phase: 'validation',
+          currentPlugin: 'EvalBanValidator',
+          message: `Scanning for eval patterns: ${scannedCalls} calls checked`,
+          processedFiles: scannedCalls,
+        });
+      }
       const callNode = node as CallNode;
       // Method calls have 'method' attribute (e.g., window.eval())
       if (callNode.method === 'eval' && callNode.object) {

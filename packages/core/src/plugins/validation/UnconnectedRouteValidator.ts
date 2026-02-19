@@ -39,15 +39,26 @@ export class UnconnectedRouteValidator extends Plugin {
   }
 
   async execute(context: PluginContext): Promise<PluginResult> {
-    const { graph } = context;
+    const { graph, onProgress } = context;
     const logger = this.log(context);
 
     logger.info('Starting unconnected route check');
 
     let issueCount = 0;
+    let routesChecked = 0;
 
     for await (const node of graph.queryNodes({ type: 'http:route' })) {
       const route = node as unknown as RouteNode;
+
+      routesChecked++;
+      if (onProgress && routesChecked % 200 === 0) {
+        onProgress({
+          phase: 'validation',
+          currentPlugin: 'UnconnectedRouteValidator',
+          message: `Checking routes: ${routesChecked} scanned`,
+          processedFiles: routesChecked,
+        });
+      }
 
       // Only check customer-facing routes
       if (!route.customerFacing) continue;

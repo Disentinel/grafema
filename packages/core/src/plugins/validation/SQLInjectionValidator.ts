@@ -111,7 +111,7 @@ export class SQLInjectionValidator extends Plugin {
   }
 
   async execute(context: PluginContext): Promise<PluginResult> {
-    const { graph } = context;
+    const { graph, onProgress } = context;
     const logger = this.log(context);
 
     logger.info('Starting SQL injection vulnerability check');
@@ -122,7 +122,17 @@ export class SQLInjectionValidator extends Plugin {
 
     // 1. Find all CALL nodes that look like SQL queries
     const sqlCalls: CallNode[] = [];
+    let scannedCalls = 0;
     for await (const node of graph.queryNodes({ nodeType: 'CALL' })) {
+      scannedCalls++;
+      if (onProgress && scannedCalls % 500 === 0) {
+        onProgress({
+          phase: 'validation',
+          currentPlugin: 'SQLInjectionValidator',
+          message: `Scanning for SQL calls: ${scannedCalls} checked`,
+          processedFiles: scannedCalls,
+        });
+      }
       const callNode = node as CallNode;
       const method = callNode.method || callNode.name;
       if (method && SQL_METHODS.includes(method as string)) {
@@ -133,7 +143,18 @@ export class SQLInjectionValidator extends Plugin {
     logger.debug('SQL calls collected', { count: sqlCalls.length });
 
     // 2. For each SQL call, analyze the query argument
+    let analyzed = 0;
     for (const call of sqlCalls) {
+      analyzed++;
+      if (onProgress && analyzed % 100 === 0) {
+        onProgress({
+          phase: 'validation',
+          currentPlugin: 'SQLInjectionValidator',
+          message: `Analyzing SQL calls: ${analyzed}/${sqlCalls.length}`,
+          totalFiles: sqlCalls.length,
+          processedFiles: analyzed,
+        });
+      }
       const result = await this.analyzeQueryCall(call, graph);
       if (result.isVulnerable) {
         const issue: SQLInjectionIssue = {

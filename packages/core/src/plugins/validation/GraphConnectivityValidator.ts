@@ -52,7 +52,7 @@ export class GraphConnectivityValidator extends Plugin {
   }
 
   async execute(context: PluginContext): Promise<PluginResult> {
-    const { graph, manifest } = context;
+    const { graph, manifest, onProgress } = context;
     const logger = this.log(context);
     const manifestWithValidation = manifest as ManifestWithValidation;
 
@@ -62,8 +62,18 @@ export class GraphConnectivityValidator extends Plugin {
     // to find unreachable nodes, we must know all nodes that exist.
     // queryNodes({}) is the streaming equivalent of the removed getAllNodes().
     const allNodes: NodeRecord[] = [];
+    let collected = 0;
     for await (const node of graph.queryNodes({})) {
       allNodes.push(node);
+      collected++;
+      if (onProgress && collected % 500 === 0) {
+        onProgress({
+          phase: 'validation',
+          currentPlugin: 'GraphConnectivityValidator',
+          message: `Collecting nodes: ${collected}`,
+          processedFiles: collected,
+        });
+      }
     }
     logger.debug('Nodes collected', { totalNodes: allNodes.length });
 
@@ -86,6 +96,15 @@ export class GraphConnectivityValidator extends Plugin {
 
       if (reachable.has(nodeId)) continue;
       reachable.add(nodeId);
+
+      if (onProgress && reachable.size % 1000 === 0) {
+        onProgress({
+          phase: 'validation',
+          currentPlugin: 'GraphConnectivityValidator',
+          message: `BFS traversal: ${reachable.size} nodes reached`,
+          processedFiles: reachable.size,
+        });
+      }
 
       // Добавляем все связанные узлы (в обоих направлениях)
       const outgoing = await graph.getOutgoingEdges(nodeId);
