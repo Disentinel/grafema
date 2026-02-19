@@ -64,6 +64,10 @@ EXAMPLES:
           type: 'boolean',
           description: 'Show step-by-step query execution to debug empty results',
         },
+        count: {
+          type: 'boolean',
+          description: 'When true, returns only the count of matching results instead of the full result list',
+        },
       },
       required: ['query'],
     },

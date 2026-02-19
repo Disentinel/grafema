@@ -28,7 +28,7 @@ import type {
 
 export async function handleQueryGraph(args: QueryGraphArgs): Promise<ToolResult> {
   const db = await ensureAnalyzed();
-  const { query, limit: requestedLimit, offset: requestedOffset, format: _format, explain } = args;
+  const { query, limit: requestedLimit, offset: requestedOffset, format: _format, explain, count } = args;
 
   const limit = normalizeLimit(requestedLimit);
   const offset = Math.max(0, requestedOffset || 0);
@@ -49,6 +49,10 @@ export async function handleQueryGraph(args: QueryGraphArgs): Promise<ToolResult
     const checkFn = (db as unknown as { checkGuarantee: (q: string) => Promise<Array<{ bindings: Array<{ name: string; value: string }> }>> }).checkGuarantee;
     const results = await checkFn.call(db, query);
     const total = results.length;
+
+    if (count) {
+      return textResult(`Count: ${total}`);
+    }
 
     if (total === 0) {
       const { nodeTypes, edgeTypes } = extractQueriedTypes(query);

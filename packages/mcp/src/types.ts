@@ -46,6 +46,8 @@ export interface QueryGraphArgs {
   offset?: number;
   format?: 'table' | 'json' | 'tree';
   explain?: boolean;
+  /** When true, returns only the count of matching results instead of the full result list */
+  count?: boolean;
 }
 
 export interface FindCallsArgs {
