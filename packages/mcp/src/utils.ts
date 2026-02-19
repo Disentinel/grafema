@@ -120,10 +120,9 @@ export function extractQueriedTypes(query: string): { nodeTypes: string[]; edgeT
   const nodeTypes: string[] = [];
   const edgeTypes: string[] = [];
 
-  // Match node(VAR, "TYPE") — the only working node predicate in the Rust evaluator.
-  // Note: type(VAR, "TYPE") is intentionally excluded: the Rust evaluator has no "type"
-  // branch and silently returns empty results. See separate issue for the root cause fix.
-  const nodeRegex = /\bnode\([^,)]+,\s*"([^"]+)"\)/g;
+  // Match node(VAR, "TYPE") and type(VAR, "TYPE") — both are valid node predicates.
+  // type() is an alias for node(), added in REG-518.
+  const nodeRegex = /\b(?:node|type)\([^,)]+,\s*"([^"]+)"\)/g;
   let m: RegExpExecArray | null;
   while ((m = nodeRegex.exec(query)) !== null) {
     nodeTypes.push(m[1]);

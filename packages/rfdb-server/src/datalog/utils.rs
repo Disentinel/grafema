@@ -163,7 +163,7 @@ fn positive_can_place_and_provides(
     let pred = atom.predicate();
 
     match pred {
-        "node" => {
+        "node" | "type" => {
             // node is always placeable — provides free Var args
             let provides = free_vars(args, bound);
             (true, provides)

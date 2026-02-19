@@ -262,7 +262,7 @@ impl<'a> EvaluatorExplain<'a> {
         let start = Instant::now();
 
         let result = match atom.predicate() {
-            "node" => self.eval_node(atom),
+            "node" | "type" => self.eval_node(atom),
             "edge" => self.eval_edge(atom),
             "incoming" => self.eval_incoming(atom),
             "path" => self.eval_path(atom),

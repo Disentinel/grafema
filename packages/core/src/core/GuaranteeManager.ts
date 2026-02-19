@@ -351,8 +351,8 @@ export class GuaranteeManager {
   extractRelevantTypes(rule: string): string[] {
     const types = new Set<string>();
 
-    // Match node(X, "TYPE") patterns
-    const nodePattern = /node\(\s*\w+\s*,\s*"([^"]+)"\s*\)/g;
+    // Match node(X, "TYPE") or type(X, "TYPE") patterns
+    const nodePattern = /(?:node|type)\(\s*\w+\s*,\s*"([^"]+)"\s*\)/g;
     let match;
     while ((match = nodePattern.exec(rule)) !== null) {
       types.add(match[1]);

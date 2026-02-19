@@ -177,7 +177,7 @@ impl<'a> Evaluator<'a> {
     /// Evaluate an atom (built-in or derived)
     pub fn eval_atom(&self, atom: &Atom) -> Vec<Bindings> {
         match atom.predicate() {
-            "node" => self.eval_node(atom),
+            "node" | "type" => self.eval_node(atom),
             "edge" => self.eval_edge(atom),
             "incoming" => self.eval_incoming(atom),
             "path" => self.eval_path(atom),

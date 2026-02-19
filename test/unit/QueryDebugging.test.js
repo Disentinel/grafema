@@ -229,9 +229,9 @@ describe('QueryDebugging', () => {
         assert.deepStrictEqual(result, { nodeTypes: [], edgeTypes: [] });
       });
 
-      it('should not match type() predicate (excluded intentionally)', () => {
+      it('should match type() predicate as alias for node() (REG-518)', () => {
         const result = extractQueriedTypes('type(X, "FUNCTON")');
-        assert.deepStrictEqual(result, { nodeTypes: [], edgeTypes: [] });
+        assert.deepStrictEqual(result, { nodeTypes: ['FUNCTON'], edgeTypes: [] });
       });
 
       it('should return empty arrays for empty string', () => {
