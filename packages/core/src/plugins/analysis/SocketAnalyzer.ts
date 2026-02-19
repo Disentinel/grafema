@@ -82,7 +82,7 @@ export class SocketAnalyzer extends Plugin {
     const logger = this.log(context);
 
     try {
-      const { graph } = context;
+      const { graph, onProgress } = context;
       const projectPath = (context.manifest as { projectPath?: string })?.projectPath ?? '';
 
       const modules = await this.getModules(graph);
@@ -106,6 +106,13 @@ export class SocketAnalyzer extends Plugin {
             total: modules.length,
             elapsed: `${elapsed}s`,
             avgTime: `${avgTime}ms/module`
+          });
+          onProgress?.({
+            phase: 'analysis',
+            currentPlugin: 'SocketAnalyzer',
+            message: `Processing modules ${i + 1}/${modules.length}`,
+            totalFiles: modules.length,
+            processedFiles: i + 1,
           });
         }
       }
