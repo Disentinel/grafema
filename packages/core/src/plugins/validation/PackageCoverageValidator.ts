@@ -95,7 +95,7 @@ export class PackageCoverageValidator extends Plugin {
   }
 
   async execute(context: PluginContext): Promise<PluginResult> {
-    const { graph } = context;
+    const { graph, onProgress } = context;
     const logger = this.log(context);
 
     // Get covered packages from ResourceRegistry
@@ -110,7 +110,18 @@ export class PackageCoverageValidator extends Plugin {
     const importedPackageNames = new Set<string>();
     const uncoveredPackages = new Map<string, { file: string; line: number }>();
 
+    let importsScanned = 0;
     for await (const node of graph.queryNodes({ type: 'IMPORT' })) {
+      importsScanned++;
+      if (onProgress && importsScanned % 500 === 0) {
+        onProgress({
+          phase: 'validation',
+          currentPlugin: 'PackageCoverageValidator',
+          message: `Scanning package imports: ${importsScanned}`,
+          processedFiles: importsScanned,
+        });
+      }
+
       const source = (node as unknown as { source?: string }).source;
       if (!source) continue;
 

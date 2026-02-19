@@ -56,7 +56,7 @@ export class CallResolverValidator extends Plugin {
   }
 
   async execute(context: PluginContext): Promise<PluginResult> {
-    const { graph } = context;
+    const { graph, onProgress } = context;
     const logger = this.log(context);
 
     logger.info('Starting call resolution validation');
@@ -75,6 +75,15 @@ export class CallResolverValidator extends Plugin {
     // Process all CALL nodes
     for await (const node of graph.queryNodes({ nodeType: 'CALL' })) {
       summary.totalCalls++;
+
+      if (onProgress && summary.totalCalls % 500 === 0) {
+        onProgress({
+          phase: 'validation',
+          currentPlugin: 'CallResolverValidator',
+          message: `Resolving calls: ${summary.totalCalls} processed`,
+          processedFiles: summary.totalCalls,
+        });
+      }
       const callNode = node as CallNode;
 
       const resolutionType = await this.determineResolutionType(graph, callNode);

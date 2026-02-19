@@ -43,14 +43,24 @@ export class AwaitInLoopValidator extends Plugin {
   }
 
   async execute(context: PluginContext): Promise<PluginResult> {
-    const { graph } = context;
+    const { graph, onProgress } = context;
     const logger = this.log(context);
 
     logger.info('Starting await-in-loop detection');
 
     let issueCount = 0;
+    let scannedCalls = 0;
 
     for await (const node of graph.queryNodes({ nodeType: 'CALL' })) {
+      scannedCalls++;
+      if (onProgress && scannedCalls % 500 === 0) {
+        onProgress({
+          phase: 'validation',
+          currentPlugin: 'AwaitInLoopValidator',
+          message: `Checking await-in-loop: ${scannedCalls} calls scanned`,
+          processedFiles: scannedCalls,
+        });
+      }
       const call = node as unknown as CallNode;
 
       if (call.isAwaited && call.isInsideLoop) {

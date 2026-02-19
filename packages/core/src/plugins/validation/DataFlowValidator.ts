@@ -29,17 +29,36 @@ export class DataFlowValidator extends Plugin {
   }
 
   async execute(context: PluginContext): Promise<PluginResult> {
-    const { graph } = context;
+    const { graph, onProgress } = context;
     const logger = this.log(context);
 
     logger.info('Starting data flow validation');
 
     const variables: NodeRecord[] = [];
+    let collected = 0;
     for await (const node of graph.queryNodes({ nodeType: 'VARIABLE' })) {
       variables.push(node);
+      collected++;
+      if (onProgress && collected % 500 === 0) {
+        onProgress({
+          phase: 'validation',
+          currentPlugin: 'DataFlowValidator',
+          message: `Collecting variables: ${collected}`,
+          processedFiles: collected,
+        });
+      }
     }
     for await (const node of graph.queryNodes({ nodeType: 'CONSTANT' })) {
       variables.push(node);
+      collected++;
+      if (onProgress && collected % 500 === 0) {
+        onProgress({
+          phase: 'validation',
+          currentPlugin: 'DataFlowValidator',
+          message: `Collecting variables: ${collected}`,
+          processedFiles: collected,
+        });
+      }
     }
 
     logger.debug('Variables collected', { count: variables.length });
@@ -58,7 +77,19 @@ export class DataFlowValidator extends Plugin {
       'CALL_SITE'
     ]);
 
+    let checked = 0;
     for (const variable of variables) {
+      checked++;
+      if (onProgress && checked % 200 === 0) {
+        onProgress({
+          phase: 'validation',
+          currentPlugin: 'DataFlowValidator',
+          message: `Validating data flow: ${checked}/${variables.length}`,
+          totalFiles: variables.length,
+          processedFiles: checked,
+        });
+      }
+
       const outgoing = await graph.getOutgoingEdges(variable.id, ['ASSIGNED_FROM', 'DERIVES_FROM']);
       const assignment = outgoing[0];
 
