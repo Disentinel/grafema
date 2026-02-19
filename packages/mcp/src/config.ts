@@ -51,7 +51,6 @@ import {
   ShadowingDetector,
   GraphConnectivityValidator,
   DataFlowValidator,
-  TypeScriptDeadCodeValidator,
   BrokenImportValidator,
   UnconnectedRouteValidator,
 } from '@grafema/core';
@@ -127,7 +126,6 @@ export const BUILTIN_PLUGINS: Record<string, PluginFactory> = {
   ShadowingDetector: () => new ShadowingDetector(),
   GraphConnectivityValidator: () => new GraphConnectivityValidator(),
   DataFlowValidator: () => new DataFlowValidator(),
-  TypeScriptDeadCodeValidator: () => new TypeScriptDeadCodeValidator(),
   BrokenImportValidator: () => new BrokenImportValidator(),
   UnconnectedRouteValidator: () => new UnconnectedRouteValidator(),
 };

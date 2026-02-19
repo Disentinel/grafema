@@ -77,7 +77,7 @@ Default plugin list (reference only — omit from config to use defaults):
     ImportExportLinker, HTTPConnectionEnricher]
   validation: [GraphConnectivityValidator, DataFlowValidator, EvalBanValidator,
     CallResolverValidator, SQLInjectionValidator, ShadowingDetector,
-    TypeScriptDeadCodeValidator, BrokenImportValidator]
+    BrokenImportValidator]
 
 ## Step 5: Write Configuration
 

@@ -34,7 +34,6 @@ plugins:
   validation:
     - GraphConnectivityValidator
     - DataFlowValidator
-    - TypeScriptDeadCodeValidator
     - BrokenImportValidator
 
 exclude:
