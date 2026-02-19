@@ -41,7 +41,7 @@ Grafema is a static code analyzer that builds a graph of your codebase.
 violation(X) :- node(X, "TYPE"), attr(X, "name", "value").
 
 ## Available Predicates
-- node(Id, Type) - match nodes
+- type(Id, Type) - match nodes (alias: node)
 - edge(Src, Dst, Type) - match edges
 - attr(Id, Name, Value) - match attributes
 - \\+ - negation (not)

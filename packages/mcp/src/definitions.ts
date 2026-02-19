@@ -29,7 +29,7 @@ export const TOOLS: ToolDefinition[] = [
     description: `Execute a Datalog query on the code graph.
 
 Available predicates:
-- node(Id, Type) - match nodes by type
+- type(Id, Type) - match nodes by type (alias: node)
 - edge(Src, Dst, Type) - match edges
 - attr(Id, Name, Value) - match node attributes (name, file, line, etc.)
 

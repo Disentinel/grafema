@@ -53,7 +53,7 @@ export async function handleQueryGraph(args: QueryGraphArgs): Promise<ToolResult
       const nodeCounts = await db.countNodesByType();
       const totalNodes = Object.values(nodeCounts).reduce((a, b) => a + b, 0);
 
-      const typeMatch = query.match(/node\([^,]+,\s*"([^"]+)"\)/);
+      const typeMatch = query.match(/(?:node|type)\([^,]+,\s*"([^"]+)"\)/);
       const queriedType = typeMatch ? typeMatch[1] : null;
 
       let hint = '';

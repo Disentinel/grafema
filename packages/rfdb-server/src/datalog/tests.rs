@@ -514,6 +514,56 @@ mod eval_tests {
     }
 
     #[test]
+    fn test_type_alias_returns_same_results_as_node() {
+        let engine = setup_test_graph();
+        let evaluator = Evaluator::new(&engine);
+
+        // node(X, "queue:publish") and type(X, "queue:publish") should return identical results
+        let node_query = Atom::new("node", vec![
+            Term::var("X"),
+            Term::constant("queue:publish"),
+        ]);
+        let type_query = Atom::new("type", vec![
+            Term::var("X"),
+            Term::constant("queue:publish"),
+        ]);
+
+        let node_results = evaluator.eval_atom(&node_query);
+        let type_results = evaluator.eval_atom(&type_query);
+
+        assert_eq!(node_results.len(), type_results.len());
+        assert_eq!(node_results.len(), 2);
+
+        let mut node_ids: Vec<u128> = node_results.iter()
+            .filter_map(|b| b.get("X").and_then(|v| v.as_id()))
+            .collect();
+        node_ids.sort();
+
+        let mut type_ids: Vec<u128> = type_results.iter()
+            .filter_map(|b| b.get("X").and_then(|v| v.as_id()))
+            .collect();
+        type_ids.sort();
+
+        assert_eq!(node_ids, type_ids);
+    }
+
+    #[test]
+    fn test_type_alias_by_id() {
+        let engine = setup_test_graph();
+        let evaluator = Evaluator::new(&engine);
+
+        // type(1, Type) should work the same as node(1, Type)
+        let query = Atom::new("type", vec![
+            Term::constant("1"),
+            Term::var("Type"),
+        ]);
+
+        let results = evaluator.eval_atom(&query);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].get("Type"), Some(&Value::Str("queue:publish".to_string())));
+    }
+
+    #[test]
     fn test_eval_node_by_id() {
         let engine = setup_test_graph();
         let evaluator = Evaluator::new(&engine);
