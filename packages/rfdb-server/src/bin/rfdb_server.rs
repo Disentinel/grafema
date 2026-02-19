@@ -515,6 +515,7 @@ pub struct WireExplainResult {
     pub stats: WireQueryStats,
     pub profile: WireQueryProfile,
     pub explain_steps: Vec<WireExplainStep>,
+    pub warnings: Vec<String>,
 }
 
 /// Query statistics for wire protocol
@@ -1788,6 +1789,7 @@ fn query_result_to_wire_explain(result: QueryResult) -> WireExplainResult {
             duration_us: s.duration_us,
             details: s.details,
         }).collect(),
+        warnings: result.warnings,
     }
 }
 
