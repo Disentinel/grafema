@@ -67,7 +67,7 @@ export class FunctionCallResolver extends Plugin {
   }
 
   async execute(context: PluginContext): Promise<PluginResult> {
-    const { graph } = context;
+    const { graph, onProgress } = context;
     const logger = this.log(context);
 
     logger.info('Starting function call resolution');
@@ -158,7 +158,20 @@ export class FunctionCallResolver extends Plugin {
     let reExportsResolved = 0; // Counter for successfully resolved re-export chains
     const errors: Error[] = [];
 
+    let processed = 0;
+    const total = callSitesToResolve.length;
     for (const callSite of callSitesToResolve) {
+      processed++;
+      if (onProgress && processed % 50 === 0) {
+        const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+        onProgress({
+          phase: 'enrichment',
+          currentPlugin: 'FunctionCallResolver',
+          message: `Resolving function calls ${processed}/${total} (${elapsed}s)`,
+          totalFiles: total,
+          processedFiles: processed
+        });
+      }
       const calledName = callSite.name;
       const file = callSite.file;
 

@@ -59,7 +59,8 @@ export class InstanceOfResolver extends Plugin {
   }
 
   async execute(context: PluginContext): Promise<PluginResult> {
-    const { graph } = context;
+    const { graph, onProgress } = context;
+    const logger = this.log(context);
     let resolvedCount = 0;
     let removedStubs = 0;
 
@@ -93,7 +94,21 @@ export class InstanceOfResolver extends Plugin {
     const edgesToUpdate: EdgeUpdate[] = [];
     const stubsToRemove: string[] = [];
 
+    const startTime = Date.now();
+    logger.info('Found class stubs to resolve', { count: classStubs.size });
+    let processed = 0;
     for (const [stubId, stubInfo] of classStubs) {
+      processed++;
+      if (onProgress && processed % 50 === 0) {
+        const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+        onProgress({
+          phase: 'enrichment',
+          currentPlugin: 'InstanceOfResolver',
+          message: `Resolving instance stubs ${processed}/${classStubs.size} (${elapsed}s)`,
+          totalFiles: classStubs.size,
+          processedFiles: processed
+        });
+      }
       const { name, file } = stubInfo;
 
       // Проверяем есть ли импорт для этого класса
@@ -158,6 +173,8 @@ export class InstanceOfResolver extends Plugin {
         removedStubs++;
       }
     }
+
+    logger.info('Complete', { resolvedInstanceOf: resolvedCount, removedStubs });
 
     return createSuccessResult(
       { nodes: 0, edges: resolvedCount },

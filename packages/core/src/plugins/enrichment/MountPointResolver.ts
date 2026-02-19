@@ -76,7 +76,7 @@ export class MountPointResolver extends Plugin {
 
   async execute(context: PluginContext): Promise<PluginResult> {
     try {
-      const { graph } = context;
+      const { graph, onProgress } = context;
       const logger = this.log(context);
 
       let routesUpdated = 0;
@@ -174,7 +174,20 @@ export class MountPointResolver extends Plugin {
       }
 
       // Step 4: For each mount point, find and update routes
+      const startTime = Date.now();
+      let processed = 0;
       for (const mount of mountNodes) {
+        processed++;
+        if (onProgress && processed % 50 === 0) {
+          const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+          onProgress({
+            phase: 'enrichment',
+            currentPlugin: 'MountPointResolver',
+            message: `Resolving mount points ${processed}/${mountNodes.length} (${elapsed}s)`,
+            totalFiles: mountNodes.length,
+            processedFiles: processed
+          });
+        }
         if (!mount.file || !mount.mountPath || !mount.name) continue;
 
         // Get import map for this file

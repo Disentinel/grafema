@@ -91,7 +91,7 @@ export class CallbackCallResolver extends Plugin {
   }
 
   async execute(context: PluginContext): Promise<PluginResult> {
-    const { graph } = context;
+    const { graph, onProgress } = context;
     const logger = this.log(context);
 
     logger.info('Starting callback call resolution');
@@ -165,7 +165,20 @@ export class CallbackCallResolver extends Plugin {
     }
     logger.debug('Found call nodes', { count: callNodes.length });
 
+    let processed = 0;
+    const total = callNodes.length + userDefinedHOFs.length;
     for (const callNode of callNodes) {
+      processed++;
+      if (onProgress && processed % 50 === 0) {
+        const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+        onProgress({
+          phase: 'enrichment',
+          currentPlugin: 'CallbackCallResolver',
+          message: `Resolving callbacks ${processed}/${total} (${elapsed}s)`,
+          totalFiles: total,
+          processedFiles: processed
+        });
+      }
       // Only process known callback-invoking functions/methods
       // Prevents false positives for store/register patterns
       const callName = callNode.method || callNode.name;
@@ -241,6 +254,17 @@ export class CallbackCallResolver extends Plugin {
     // For each HOF with invokesParamIndexes, find call sites and create callback edges
     let hofEdgesCreated = 0;
     for (const hof of userDefinedHOFs) {
+      processed++;
+      if (onProgress && processed % 50 === 0) {
+        const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+        onProgress({
+          phase: 'enrichment',
+          currentPlugin: 'CallbackCallResolver',
+          message: `Resolving callbacks ${processed}/${total} (${elapsed}s)`,
+          totalFiles: total,
+          processedFiles: processed
+        });
+      }
       // Get incoming CALLS edges to find call sites that call this HOF
       const incomingCalls = await graph.getIncomingEdges(hof.functionId, ['CALLS']);
 
