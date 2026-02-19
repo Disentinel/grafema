@@ -13,40 +13,9 @@ import { pathToFileURL } from 'url';
 import {
   Orchestrator,
   RFDBServerBackend,
-  // Indexing
-  JSModuleIndexer,
-  // Analysis
-  JSASTAnalyzer,
-  ExpressRouteAnalyzer,
-  ExpressResponseAnalyzer,
-  NestJSRouteAnalyzer,
-  SocketIOAnalyzer,
-  DatabaseAnalyzer,
-  FetchAnalyzer,
-  ServiceLayerAnalyzer,
-  ReactAnalyzer,
-  // Enrichment
-  MethodCallResolver,
-  ArgumentParameterLinker,
-  AliasTracker,
-  ValueDomainAnalyzer,
-  MountPointResolver,
-  PrefixEvaluator,
-  ConfigRoutingMapBuilder,
-  ServiceConnectionEnricher,
-  RejectionPropagationEnricher,
-  // Validation
-  CallResolverValidator,
-  EvalBanValidator,
-  SQLInjectionValidator,
-  AwaitInLoopValidator,
-  ShadowingDetector,
-  GraphConnectivityValidator,
-  DataFlowValidator,
-  UnconnectedRouteValidator,
 } from '@grafema/core';
-import type { ParallelConfig ,
-  Plugin} from '@grafema/core';
+import type { ParallelConfig, Plugin } from '@grafema/core';
+import { BUILTIN_PLUGINS } from './config.js';
 
 /**
  * Config structure
@@ -158,36 +127,8 @@ async function run(): Promise<void> {
     const config = await loadConfig();
     const customPlugins = await loadCustomPlugins();
 
-    // Built-in plugins map
-    const builtinPlugins: Record<string, () => Plugin> = {
-      JSModuleIndexer: () => new JSModuleIndexer(),
-      JSASTAnalyzer: () => new JSASTAnalyzer(),
-      ExpressRouteAnalyzer: () => new ExpressRouteAnalyzer(),
-      ExpressResponseAnalyzer: () => new ExpressResponseAnalyzer(),
-      NestJSRouteAnalyzer: () => new NestJSRouteAnalyzer(),
-      SocketIOAnalyzer: () => new SocketIOAnalyzer(),
-      DatabaseAnalyzer: () => new DatabaseAnalyzer(),
-      FetchAnalyzer: () => new FetchAnalyzer(),
-      ServiceLayerAnalyzer: () => new ServiceLayerAnalyzer(),
-      ReactAnalyzer: () => new ReactAnalyzer(),
-      MethodCallResolver: () => new MethodCallResolver(),
-      ArgumentParameterLinker: () => new ArgumentParameterLinker(),
-      AliasTracker: () => new AliasTracker(),
-      ValueDomainAnalyzer: () => new ValueDomainAnalyzer(),
-      MountPointResolver: () => new MountPointResolver(),
-      PrefixEvaluator: () => new PrefixEvaluator(),
-      ConfigRoutingMapBuilder: () => new ConfigRoutingMapBuilder(),
-      ServiceConnectionEnricher: () => new ServiceConnectionEnricher(),
-      RejectionPropagationEnricher: () => new RejectionPropagationEnricher(),
-      CallResolverValidator: () => new CallResolverValidator(),
-      EvalBanValidator: () => new EvalBanValidator(),
-      SQLInjectionValidator: () => new SQLInjectionValidator(),
-      AwaitInLoopValidator: () => new AwaitInLoopValidator(),
-      ShadowingDetector: () => new ShadowingDetector(),
-      GraphConnectivityValidator: () => new GraphConnectivityValidator(),
-      DataFlowValidator: () => new DataFlowValidator(),
-      UnconnectedRouteValidator: () => new UnconnectedRouteValidator(),
-    };
+    // Built-in plugins from canonical registry
+    const builtinPlugins: Record<string, () => unknown> = { ...BUILTIN_PLUGINS };
 
     // Add custom plugins
     for (const [name, PluginClass] of Object.entries(customPlugins)) {
@@ -199,7 +140,7 @@ async function run(): Promise<void> {
     for (const [_phase, pluginNames] of Object.entries(config.plugins || {})) {
       for (const name of pluginNames) {
         if (builtinPlugins[name]) {
-          plugins.push(builtinPlugins[name]());
+          plugins.push(builtinPlugins[name]() as Plugin);
         } else if (customPlugins[name]) {
           plugins.push(new customPlugins[name]());
           console.log(`[Worker] Loaded custom plugin: ${name}`);
