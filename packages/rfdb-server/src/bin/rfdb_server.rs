@@ -1851,11 +1851,11 @@ fn execute_datalog_query(
 
     if explain {
         let mut evaluator = EvaluatorExplain::new(engine, true);
-        let result = evaluator.eval_query(&literals);
+        let result = evaluator.eval_query(&literals)?;
         Ok(DatalogResponse::Explain(query_result_to_wire_explain(result)))
     } else {
         let evaluator = Evaluator::new(engine);
-        let bindings = evaluator.eval_query(&literals);
+        let bindings = evaluator.eval_query(&literals)?;
         let results: Vec<WireViolation> = bindings.into_iter()
             .map(|b| {
                 let mut map = std::collections::HashMap::new();
@@ -1917,11 +1917,11 @@ fn execute_datalog(
 
     if explain {
         let mut evaluator = EvaluatorExplain::new(engine, true);
-        let result = evaluator.eval_query(&literals);
+        let result = evaluator.eval_query(&literals)?;
         Ok(DatalogResponse::Explain(query_result_to_wire_explain(result)))
     } else {
         let evaluator = Evaluator::new(engine);
-        let bindings = evaluator.eval_query(&literals);
+        let bindings = evaluator.eval_query(&literals)?;
         let results: Vec<WireViolation> = bindings.into_iter()
             .map(|b| {
                 let mut map = std::collections::HashMap::new();

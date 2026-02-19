@@ -3,7 +3,10 @@
 //! This module provides helper functions used across the Datalog evaluator,
 //! particularly for extracting values from JSON metadata.
 
+use std::collections::HashSet;
 use serde_json::Value;
+
+use super::types::{Literal, Term};
 
 /// Extracts a value from JSON metadata, supporting both direct keys and nested paths.
 ///
@@ -87,6 +90,178 @@ fn value_to_string(value: &Value) -> Option<String> {
         Value::Bool(b) => Some(b.to_string()),
         Value::Object(_) | Value::Array(_) | Value::Null => None,
     }
+}
+
+/// Reorder query literals so that predicates requiring bound variables come after
+/// the predicates that provide those bindings.
+///
+/// Uses a greedy topological sort: at each step, pick the first literal in `remaining`
+/// whose variable requirements are satisfied by the current `bound` set.
+///
+/// Returns `Err` if no progress can be made (circular dependency).
+pub(crate) fn reorder_literals(literals: &[Literal]) -> Result<Vec<Literal>, String> {
+    let mut bound: HashSet<String> = HashSet::new();
+    let mut result: Vec<Literal> = Vec::with_capacity(literals.len());
+    let mut remaining: Vec<Literal> = literals.to_vec();
+
+    while !remaining.is_empty() {
+        let pos = remaining.iter().position(|lit| {
+            let (can_place, _) = literal_can_place_and_provides(lit, &bound);
+            can_place
+        });
+
+        match pos {
+            Some(i) => {
+                let lit = remaining.remove(i);
+                let (_, provides) = literal_can_place_and_provides(&lit, &bound);
+                bound.extend(provides);
+                result.push(lit);
+            }
+            None => {
+                let stuck: Vec<String> = remaining
+                    .iter()
+                    .map(|l| format!("{:?}", l))
+                    .collect();
+                return Err(format!(
+                    "datalog reorder: circular dependency, cannot place: {:?}",
+                    stuck,
+                ));
+            }
+        }
+    }
+
+    Ok(result)
+}
+
+/// Determine whether a literal can be placed given the current set of bound variables,
+/// and which new variables it provides if placed.
+fn literal_can_place_and_provides(
+    literal: &Literal,
+    bound: &HashSet<String>,
+) -> (bool, HashSet<String>) {
+    match literal {
+        Literal::Negative(atom) => {
+            // Negative literals require ALL Var args to be in bound
+            let all_bound = atom.args().iter().all(|t| match t {
+                Term::Var(v) => bound.contains(v),
+                _ => true,
+            });
+            (all_bound, HashSet::new())
+        }
+        Literal::Positive(atom) => {
+            positive_can_place_and_provides(atom, bound)
+        }
+    }
+}
+
+/// Classification for positive literals.
+fn positive_can_place_and_provides(
+    atom: &super::types::Atom,
+    bound: &HashSet<String>,
+) -> (bool, HashSet<String>) {
+    let args = atom.args();
+    let pred = atom.predicate();
+
+    match pred {
+        "node" => {
+            // node is always placeable — provides free Var args
+            let provides = free_vars(args, bound);
+            (true, provides)
+        }
+        "attr" => {
+            // attr(id, name, val) — requires id AND name to be Const or in bound
+            if args.len() < 3 {
+                return (true, HashSet::new());
+            }
+            let id_ok = is_bound_or_const(&args[0], bound);
+            let name_ok = is_bound_or_const(&args[1], bound);
+            let can_place = id_ok && name_ok;
+            let mut provides = HashSet::new();
+            if can_place {
+                if let Term::Var(v) = &args[2] {
+                    if !bound.contains(v) {
+                        provides.insert(v.clone());
+                    }
+                }
+            }
+            (can_place, provides)
+        }
+        "attr_edge" => {
+            // attr_edge(src, dst, etype, name, val) — requires src, dst, etype, name
+            if args.len() < 5 {
+                return (true, HashSet::new());
+            }
+            let can_place = is_bound_or_const(&args[0], bound)
+                && is_bound_or_const(&args[1], bound)
+                && is_bound_or_const(&args[2], bound)
+                && is_bound_or_const(&args[3], bound);
+            let mut provides = HashSet::new();
+            if can_place {
+                if let Term::Var(v) = &args[4] {
+                    if !bound.contains(v) {
+                        provides.insert(v.clone());
+                    }
+                }
+            }
+            (can_place, provides)
+        }
+        "edge" => {
+            // edge is always placeable (full scan if src unbound)
+            let provides = free_vars(args, bound);
+            (true, provides)
+        }
+        "incoming" | "path" => {
+            // incoming(dst, src, type) / path(src, dst) — requires first arg bound
+            if args.is_empty() {
+                return (true, HashSet::new());
+            }
+            let can_place = is_bound_or_const(&args[0], bound);
+            let mut provides = HashSet::new();
+            if can_place {
+                for arg in args.iter().skip(1) {
+                    if let Term::Var(v) = arg {
+                        if !bound.contains(v) {
+                            provides.insert(v.clone());
+                        }
+                    }
+                }
+            }
+            (can_place, provides)
+        }
+        "neq" | "starts_with" | "not_starts_with" => {
+            // All Var args must be in bound
+            let all_bound = args.iter().all(|t| match t {
+                Term::Var(v) => bound.contains(v),
+                _ => true,
+            });
+            (all_bound, HashSet::new())
+        }
+        _ => {
+            // Unknown/derived predicate — always placeable, provides all free Var args.
+            // Derived predicates bind variables via their rule head projection,
+            // so we must report them as providers to avoid false circular dependencies.
+            let provides = free_vars(args, bound);
+            (true, provides)
+        }
+    }
+}
+
+/// Check if a term is a Const or a Var that is already in bound.
+fn is_bound_or_const(term: &Term, bound: &HashSet<String>) -> bool {
+    match term {
+        Term::Const(_) | Term::Wildcard => true,
+        Term::Var(v) => bound.contains(v),
+    }
+}
+
+/// Collect all free Var names from args (Var names not yet in bound).
+fn free_vars(args: &[Term], bound: &HashSet<String>) -> HashSet<String> {
+    args.iter()
+        .filter_map(|t| match t {
+            Term::Var(v) if !bound.contains(v) => Some(v.clone()),
+            _ => None,
+        })
+        .collect()
 }
 
 #[cfg(test)]

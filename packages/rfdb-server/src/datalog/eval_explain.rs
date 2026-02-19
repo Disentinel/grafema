@@ -12,6 +12,7 @@ use serde::{Serialize, Deserialize};
 use crate::graph::GraphStore;
 use crate::datalog::types::*;
 use crate::datalog::eval::{Value, Bindings};
+use super::utils::reorder_literals;
 
 /// Statistics collected during query execution
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -151,7 +152,12 @@ impl<'a> EvaluatorExplain<'a> {
     }
 
     /// Evaluate a conjunction of literals with explain support
-    pub fn eval_query(&mut self, literals: &[Literal]) -> QueryResult {
+    ///
+    /// Reorders literals so that predicates requiring bound variables come after
+    /// the predicates that provide those bindings, then evaluates left-to-right.
+    pub fn eval_query(&mut self, literals: &[Literal]) -> Result<QueryResult, String> {
+        let ordered = reorder_literals(literals)?;
+
         self.query_start = Some(Instant::now());
         self.stats = QueryStats::new();
         self.explain_steps.clear();
@@ -159,7 +165,7 @@ impl<'a> EvaluatorExplain<'a> {
         self.predicate_times.clear();
 
         let mut current = vec![Bindings::new()];
-        for literal in literals {
+        for literal in &ordered {
             let mut next = vec![];
             for bindings in &current {
                 match literal {
@@ -187,7 +193,7 @@ impl<'a> EvaluatorExplain<'a> {
             }
         }
 
-        self.finalize_result(current)
+        Ok(self.finalize_result(current))
     }
 
     /// Build the final QueryResult from raw bindings
@@ -752,7 +758,13 @@ impl<'a> EvaluatorExplain<'a> {
 
         for rule in &rules {
             self.stats.rule_evaluations += 1;
-            let body_results = self.eval_rule_body(rule);
+            let body_results = match self.eval_rule_body(rule) {
+                Ok(b) => b,
+                Err(e) => {
+                    eprintln!("datalog eval_derived: reorder error for rule {:?}: {}", rule, e);
+                    continue;
+                }
+            };
 
             for bindings in body_results {
                 if let Some(head_bindings) = self.project_to_head(rule, atom, &bindings) {
@@ -765,10 +777,13 @@ impl<'a> EvaluatorExplain<'a> {
     }
 
     /// Evaluate rule body
-    fn eval_rule_body(&mut self, rule: &Rule) -> Vec<Bindings> {
+    ///
+    /// Reorders body literals before evaluation to ensure correct variable binding order.
+    fn eval_rule_body(&mut self, rule: &Rule) -> Result<Vec<Bindings>, String> {
+        let ordered = reorder_literals(rule.body())?;
         let mut current = vec![Bindings::new()];
 
-        for literal in rule.body() {
+        for literal in &ordered {
             let mut next = vec![];
 
             for bindings in &current {
@@ -800,7 +815,7 @@ impl<'a> EvaluatorExplain<'a> {
             }
         }
 
-        current
+        Ok(current)
     }
 
     /// Substitute known bindings into an atom
