@@ -97,17 +97,17 @@ If user provides just a task ID without further context, the Linear issue descri
 
 **CRITICAL: NO CODING AT TOP LEVEL!** All implementation happens through subagents.
 
-**Pipeline:** STEP 1 (save request) → STEP 2 (plan + verify) → STEP 2.5 (prepare/refactor) → STEP 3 (implement + 4-review) → STEP 4 (finalize + metrics)
+**Pipeline:** STEP 1 (save request) → STEP 2 (plan + verify) → STEP 2.5 (prepare/refactor) → STEP 3 (implement + 3-review) → STEP 4 (finalize + metrics)
 
-**4-Review:** Batch 1: Вадим auto ∥ Steve, Batch 2: Dijkstra ∥ Uncle Bob. ANY REJECT → fix + re-run ALL 4. ALL approve → present to user.
+**3-Review:** Steve ∥ Вадим auto ∥ Uncle Bob (single parallel batch). ANY REJECT → fix + re-run ALL 3. ALL approve → present to user.
 
 **Configurations:**
 
 | Config | Team | When to Use |
 |--------|------|-------------|
-| **Single Agent** | Rob → 4-Review → Vadim | Trivial, single file <50 LOC |
-| **Mini-MLA** | Don → Dijkstra → Uncle Bob → Kent ∥ Rob → 4-Review → Vadim | Medium complexity |
-| **Full MLA** | Don → Joel → Dijkstra → Uncle Bob → Kent ∥ Rob → 4-Review → Vadim | Architecture changes |
+| **Single Agent** | Rob → 3-Review → Vadim | Trivial, single file <50 LOC |
+| **Mini-MLA** | Don → Dijkstra → Uncle Bob → Kent ∥ Rob → 3-Review → Vadim | Medium complexity |
+| **Full MLA** | Don → Joel → Dijkstra → Uncle Bob → Kent ∥ Rob → 3-Review → Vadim | Architecture changes |
 
 ## Forbidden Patterns
 
@@ -167,7 +167,7 @@ Source of truth for current sprint. Linear remains backlog/planning tool.
 
 **New task:** `git fetch && git checkout main && git pull && git checkout -b task/REG-XXX` → update Linear → In Progress → save request → start MLA.
 
-**Finishing:** 4-Review → user confirms → create PR → Linear → In Review → CI green → merge → Done.
+**Finishing:** 3-Review → user confirms → create PR → Linear → In Review → CI green → merge → Done.
 
 ## Agent Teams (Experimental)
 
