@@ -59,8 +59,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // Initialize client manager
   clientManager = new GrafemaClientManager(workspaceRoot, rfdbServerPath, rfdbSocketPath);
 
-  // Initialize tree provider
-  edgesProvider = new EdgesProvider(clientManager);
+  // Initialize tree provider (pass context for workspaceState persistence)
+  edgesProvider = new EdgesProvider(clientManager, context);
 
   // Register status provider
   statusProvider = new StatusProvider(clientManager);
@@ -225,160 +225,9 @@ function registerCommands(): vscode.Disposable[] {
     }
   ));
 
-  // Search nodes in graph — streaming search with timeout
-  const SEARCH_TIMEOUT_MS = 5000;
-  const SEARCH_MAX_RESULTS = 50;
-
-  disposables.push(vscode.commands.registerCommand('grafema.searchNodes', async () => {
-    if (!clientManager?.isConnected() || !edgesProvider) {
-      vscode.window.showWarningMessage('Grafema: Not connected to graph');
-      return;
-    }
-
-    const client = clientManager.getClient();
-
-    const quickPick = vscode.window.createQuickPick();
-    quickPick.placeholder = 'Search: exact name, or TYPE:substring (e.g. FUNCTION:handle, MODULE:)';
-    quickPick.matchOnDescription = true;
-
-    const nodeIdMap = new Map<string, string>(); // detail display text → numeric id
-    let activeAbort: AbortController | null = null;
-    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-
-    quickPick.onDidChangeValue((value) => {
-      // Cancel previous search
-      if (activeAbort) activeAbort.abort();
-      if (debounceTimer) clearTimeout(debounceTimer);
-
-      if (!value || value.length < 2) {
-        quickPick.items = [];
-        return;
-      }
-
-      debounceTimer = setTimeout(async () => {
-        const abort = new AbortController();
-        activeAbort = abort;
-
-        // Parse TYPE:name syntax
-        const colonIdx = value.indexOf(':');
-        let typeFilter = '';
-        let nameFilter = '';
-        if (colonIdx > 0) {
-          typeFilter = value.slice(0, colonIdx).toUpperCase();
-          nameFilter = value.slice(colonIdx + 1).toLowerCase();
-        } else {
-          nameFilter = value.toLowerCase();
-        }
-
-        // Build RFDB query — use exact match fields where possible
-        const query: Record<string, string> = {};
-        if (typeFilter) query.nodeType = typeFilter;
-        // If no type prefix and input looks like an exact name (no spaces), try exact match
-        if (!typeFilter && !nameFilter.includes(' ')) query.name = value;
-
-        quickPick.busy = true;
-        const startTime = Date.now();
-
-        try {
-          const matches: WireNode[] = [];
-          const timeoutPromise = new Promise<'timeout'>((resolve) =>
-            setTimeout(() => resolve('timeout'), SEARCH_TIMEOUT_MS)
-          );
-
-          // Stream results — collect up to SEARCH_MAX_RESULTS
-          const streamPromise = (async () => {
-            for await (const node of client.queryNodes(query)) {
-              if (abort.signal.aborted) return 'aborted';
-              // If we used exact name query, accept all results
-              // If we used type query, filter by name substring
-              if (typeFilter && nameFilter && !node.name.toLowerCase().includes(nameFilter)) {
-                continue;
-              }
-              matches.push(node);
-              if (matches.length >= SEARCH_MAX_RESULTS) return 'limit';
-            }
-            return 'done';
-          })();
-
-          const reason = await Promise.race([streamPromise, timeoutPromise]);
-          if (abort.signal.aborted) return;
-
-          const elapsed = Date.now() - startTime;
-          debugProvider?.log({
-            timestamp: Date.now(),
-            operation: 'searchNodes',
-            query: { ...query, nameFilter: nameFilter || '(none)' },
-            result: `${matches.length} found (${reason}, ${elapsed}ms)`,
-            details: matches.slice(0, 5).map((n) => `${n.nodeType} "${n.name}" ${n.file}`),
-          });
-
-          if (matches.length === 0) {
-            const hint = !typeFilter
-              ? 'Try TYPE:name syntax (e.g. FUNCTION:handle)'
-              : `no "${typeFilter}" nodes${nameFilter ? ` matching "${nameFilter}"` : ''}`;
-            quickPick.items = [{
-              label: `$(circle-slash) No results`,
-              description: hint,
-              alwaysShow: true,
-            }];
-          } else {
-            const items: vscode.QuickPickItem[] = [];
-            nodeIdMap.clear();
-            for (const node of matches) {
-              const meta = JSON.parse(node.metadata || '{}');
-              const loc = meta.line ? `:${meta.line}` : '';
-              const displayId = node.semanticId || node.id;
-              nodeIdMap.set(displayId, node.id);
-              items.push({
-                label: `$(symbol-${getIconName(node.nodeType)}) ${node.nodeType} "${node.name}"`,
-                description: `${node.file}${loc}`,
-                detail: displayId,
-                alwaysShow: true,
-              });
-            }
-            if (reason === 'limit') {
-              items.push({
-                label: `$(info) ${SEARCH_MAX_RESULTS}+ results, refine your query`,
-                kind: vscode.QuickPickItemKind.Separator,
-              });
-            }
-            quickPick.items = items;
-          }
-        } catch (err) {
-          if (abort.signal.aborted) return;
-          const message = err instanceof Error ? err.message : String(err);
-          debugProvider?.log({
-            timestamp: Date.now(),
-            operation: 'searchNodes',
-            query,
-            result: `error: ${message}`,
-          });
-          quickPick.items = [{ label: `$(error) Search failed: ${message}` }];
-        } finally {
-          if (!abort.signal.aborted) quickPick.busy = false;
-        }
-      }, 300);
-    });
-
-    quickPick.onDidAccept(() => {
-      const selected = quickPick.selectedItems[0];
-      if (selected?.detail && clientManager?.isConnected()) {
-        const nodeId = nodeIdMap.get(selected.detail) || selected.detail;
-        clientManager.getClient().getNode(nodeId).then((node) => {
-          if (node && edgesProvider) {
-            edgesProvider.navigateToNode(node);
-          }
-        });
-      }
-      quickPick.dispose();
-    });
-
-    quickPick.onDidHide(() => {
-      if (activeAbort) activeAbort.abort();
-      quickPick.dispose();
-    });
-
-    quickPick.show();
+  // Search nodes in graph
+  disposables.push(vscode.commands.registerCommand('grafema.searchNodes', () => {
+    openSearchNodes(clientManager, edgesProvider, debugProvider);
   }));
 
   // Find node at cursor and set as root (clears history)
@@ -396,6 +245,8 @@ function registerCommands(): vscode.Disposable[] {
       let node: WireNode | null = null;
 
       if (item.kind === 'node') {
+        node = item.node;
+      } else if (item.kind === 'bookmark') {
         node = item.node;
       } else if (item.kind === 'edge' && item.targetNode) {
         node = item.targetNode;
@@ -590,6 +441,69 @@ function registerCommands(): vscode.Disposable[] {
     blastRadiusProvider?.refresh();
   }));
 
+  // Filter edge types in EXPLORER panel
+  const COMMON_EDGE_TYPES = [
+    'CALLS', 'IMPORTS', 'IMPORTS_FROM', 'EXPORTS', 'EXPORTS_TO',
+    'ASSIGNED_FROM', 'DERIVES_FROM', 'CONTAINS', 'DEFINES', 'USES',
+    'PASSES_ARGUMENT', 'RETURNS', 'EXTENDS', 'IMPLEMENTS',
+  ];
+
+  disposables.push(vscode.commands.registerCommand('grafema.filterEdgeTypes', async () => {
+    if (!edgesProvider) return;
+
+    const hidden = edgesProvider.getHiddenEdgeTypes();
+    const items: vscode.QuickPickItem[] = COMMON_EDGE_TYPES.map((t) => ({
+      label: t,
+      picked: !hidden.has(t),
+    }));
+
+    const picked = await vscode.window.showQuickPick(items, {
+      placeHolder: 'Select edge types to show (checked = visible)',
+      canPickMany: true,
+    });
+
+    if (!picked) return; // cancelled
+
+    if (picked.length === 0) {
+      vscode.window.showInformationMessage('No edge types selected. Filter unchanged.');
+      return;
+    }
+
+    const pickedLabels = new Set(picked.map((p) => p.label));
+    const newHidden = new Set<string>();
+    for (const t of COMMON_EDGE_TYPES) {
+      if (!pickedLabels.has(t)) newHidden.add(t);
+    }
+    edgesProvider.setHiddenEdgeTypes(newHidden);
+  }));
+
+  // Bookmark node from tree context menu
+  disposables.push(vscode.commands.registerCommand(
+    'grafema.bookmarkNode',
+    (item: GraphTreeItem) => {
+      if (!edgesProvider) return;
+      if (item.kind === 'node') {
+        edgesProvider.addBookmark(item.node);
+      }
+    }
+  ));
+
+  // Remove bookmark from tree context menu
+  disposables.push(vscode.commands.registerCommand(
+    'grafema.removeBookmark',
+    (item: GraphTreeItem) => {
+      if (!edgesProvider) return;
+      if (item.kind === 'bookmark') {
+        edgesProvider.removeBookmark(item.node.id);
+      }
+    }
+  ));
+
+  // Clear all bookmarks
+  disposables.push(vscode.commands.registerCommand('grafema.clearBookmarks', () => {
+    edgesProvider?.clearBookmarks();
+  }));
+
   // Status bar — click focuses STATUS view
   statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
   statusBarItem.command = 'grafema.focusStatus';
@@ -614,21 +528,21 @@ function registerCommands(): vscode.Disposable[] {
 }
 
 /**
- * Find node at current cursor and trigger VALUE TRACE panel update.
- * Parallel to findAndSetRoot() but for the VALUE TRACE panel.
+ * Resolve the graph node at the current cursor position.
+ * Shared helper that eliminates the repeated editor/path/cursor boilerplate
+ * from findAndTraceAtCursor, findAndSetCallersAtCursor, and findAndSetBlastRadiusAtCursor.
+ *
+ * Returns null if no active file editor, not connected, or no node found.
  */
-async function findAndTraceAtCursor(): Promise<void> {
-  if (!valueTraceProvider || !clientManager) return;
+async function resolveNodeAtCursor(): Promise<WireNode | null> {
+  if (!clientManager?.isConnected()) return null;
 
   const editor = vscode.window.activeTextEditor;
-  if (!editor) return;
-  if (!clientManager.isConnected()) return;
-
-  const document = editor.document;
-  if (document.uri.scheme !== 'file') return;
+  if (!editor) return null;
+  if (editor.document.uri.scheme !== 'file') return null;
 
   const position = editor.selection.active;
-  const absPath = document.uri.fsPath;
+  const absPath = editor.document.uri.fsPath;
   const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
   const filePath = workspaceRoot && absPath.startsWith(workspaceRoot)
     ? absPath.slice(workspaceRoot.length + 1)
@@ -636,12 +550,21 @@ async function findAndTraceAtCursor(): Promise<void> {
 
   try {
     const client = clientManager.getClient();
-    const node = await findNodeAtCursor(client, filePath, position.line + 1, position.character);
-    if (node) {
-      await valueTraceProvider.traceNode(node);
-    }
+    return await findNodeAtCursor(client, filePath, position.line + 1, position.character);
   } catch {
-    // Silent fail — VALUE TRACE panel errors should not disrupt the editor
+    return null;
+  }
+}
+
+/**
+ * Find node at current cursor and trigger VALUE TRACE panel update.
+ * Parallel to findAndSetRoot() but for the VALUE TRACE panel.
+ */
+async function findAndTraceAtCursor(): Promise<void> {
+  if (!valueTraceProvider) return;
+  const node = await resolveNodeAtCursor();
+  if (node) {
+    await valueTraceProvider.traceNode(node);
   }
 }
 
@@ -650,28 +573,10 @@ async function findAndTraceAtCursor(): Promise<void> {
  * Only sets root when cursor is on a FUNCTION or METHOD node.
  */
 async function findAndSetCallersAtCursor(): Promise<void> {
-  if (!callersProvider || !clientManager) return;
-
-  const editor = vscode.window.activeTextEditor;
-  if (!editor) return;
-  if (!clientManager.isConnected()) return;
-  if (editor.document.uri.scheme !== 'file') return;
-
-  const position = editor.selection.active;
-  const absPath = editor.document.uri.fsPath;
-  const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  const filePath = workspaceRoot && absPath.startsWith(workspaceRoot)
-    ? absPath.slice(workspaceRoot.length + 1)
-    : absPath;
-
-  try {
-    const client = clientManager.getClient();
-    const node = await findNodeAtCursor(client, filePath, position.line + 1, position.character);
-    if (node && (node.nodeType === 'FUNCTION' || node.nodeType === 'METHOD')) {
-      callersProvider.setRootNode(node);
-    }
-  } catch {
-    // Silent fail -- CALLERS panel errors should not disrupt the editor
+  if (!callersProvider) return;
+  const node = await resolveNodeAtCursor();
+  if (node && (node.nodeType === 'FUNCTION' || node.nodeType === 'METHOD')) {
+    callersProvider.setRootNode(node);
   }
 }
 
@@ -680,34 +585,180 @@ async function findAndSetCallersAtCursor(): Promise<void> {
  * Triggers on FUNCTION, METHOD, VARIABLE, and CONSTANT node types.
  */
 async function findAndSetBlastRadiusAtCursor(): Promise<void> {
-  if (!blastRadiusProvider || !clientManager) return;
-
-  const editor = vscode.window.activeTextEditor;
-  if (!editor) return;
-  if (!clientManager.isConnected()) return;
-  if (editor.document.uri.scheme !== 'file') return;
-
-  const position = editor.selection.active;
-  const absPath = editor.document.uri.fsPath;
-  const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  const filePath = workspaceRoot && absPath.startsWith(workspaceRoot)
-    ? absPath.slice(workspaceRoot.length + 1)
-    : absPath;
-
-  try {
-    const client = clientManager.getClient();
-    const node = await findNodeAtCursor(client, filePath, position.line + 1, position.character);
-    if (node && (
-      node.nodeType === 'FUNCTION'
-      || node.nodeType === 'METHOD'
-      || node.nodeType === 'VARIABLE'
-      || node.nodeType === 'CONSTANT'
-    )) {
-      blastRadiusProvider.setRootNode(node);
-    }
-  } catch {
-    // Silent fail -- BLAST RADIUS panel errors should not disrupt the editor
+  if (!blastRadiusProvider) return;
+  const node = await resolveNodeAtCursor();
+  if (node && (
+    node.nodeType === 'FUNCTION'
+    || node.nodeType === 'METHOD'
+    || node.nodeType === 'VARIABLE'
+    || node.nodeType === 'CONSTANT'
+  )) {
+    blastRadiusProvider.setRootNode(node);
   }
+}
+
+/**
+ * Search nodes in graph — streaming search with timeout.
+ * Opens a QuickPick with debounced streaming search against RFDB.
+ */
+function openSearchNodes(
+  cm: GrafemaClientManager | null,
+  ep: EdgesProvider | null,
+  dp: DebugProvider | null
+): void {
+  if (!cm?.isConnected() || !ep) {
+    vscode.window.showWarningMessage('Grafema: Not connected to graph');
+    return;
+  }
+
+  const SEARCH_TIMEOUT_MS = 5000;
+  const SEARCH_MAX_RESULTS = 50;
+
+  const client = cm.getClient();
+
+  const quickPick = vscode.window.createQuickPick();
+  quickPick.placeholder = 'Search: exact name, or TYPE:substring (e.g. FUNCTION:handle, MODULE:)';
+  quickPick.matchOnDescription = true;
+
+  const nodeIdMap = new Map<string, string>(); // detail display text -> numeric id
+  let activeAbort: AbortController | null = null;
+  let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+  quickPick.onDidChangeValue((value) => {
+    // Cancel previous search
+    if (activeAbort) activeAbort.abort();
+    if (debounceTimer) clearTimeout(debounceTimer);
+
+    if (!value || value.length < 2) {
+      quickPick.items = [];
+      return;
+    }
+
+    debounceTimer = setTimeout(async () => {
+      const abort = new AbortController();
+      activeAbort = abort;
+
+      // Parse TYPE:name syntax
+      const colonIdx = value.indexOf(':');
+      let typeFilter = '';
+      let nameFilter = '';
+      if (colonIdx > 0) {
+        typeFilter = value.slice(0, colonIdx).toUpperCase();
+        nameFilter = value.slice(colonIdx + 1).toLowerCase();
+      } else {
+        nameFilter = value.toLowerCase();
+      }
+
+      // Build RFDB query -- use exact match fields where possible
+      const query: Record<string, string> = {};
+      if (typeFilter) query.nodeType = typeFilter;
+      // If no type prefix and input looks like an exact name (no spaces), try exact match
+      if (!typeFilter && !nameFilter.includes(' ')) query.name = value;
+
+      quickPick.busy = true;
+      const startTime = Date.now();
+
+      try {
+        const matches: WireNode[] = [];
+        const timeoutPromise = new Promise<'timeout'>((resolve) =>
+          setTimeout(() => resolve('timeout'), SEARCH_TIMEOUT_MS)
+        );
+
+        // Stream results -- collect up to SEARCH_MAX_RESULTS
+        const streamPromise = (async () => {
+          for await (const node of client.queryNodes(query)) {
+            if (abort.signal.aborted) return 'aborted';
+            // If we used exact name query, accept all results
+            // If we used type query, filter by name substring
+            if (typeFilter && nameFilter && !node.name.toLowerCase().includes(nameFilter)) {
+              continue;
+            }
+            matches.push(node);
+            if (matches.length >= SEARCH_MAX_RESULTS) return 'limit';
+          }
+          return 'done';
+        })();
+
+        const reason = await Promise.race([streamPromise, timeoutPromise]);
+        if (abort.signal.aborted) return;
+
+        const elapsed = Date.now() - startTime;
+        dp?.log({
+          timestamp: Date.now(),
+          operation: 'searchNodes',
+          query: { ...query, nameFilter: nameFilter || '(none)' },
+          result: `${matches.length} found (${reason}, ${elapsed}ms)`,
+          details: matches.slice(0, 5).map((n) => `${n.nodeType} "${n.name}" ${n.file}`),
+        });
+
+        if (matches.length === 0) {
+          const hint = !typeFilter
+            ? 'Try TYPE:name syntax (e.g. FUNCTION:handle)'
+            : `no "${typeFilter}" nodes${nameFilter ? ` matching "${nameFilter}"` : ''}`;
+          quickPick.items = [{
+            label: `$(circle-slash) No results`,
+            description: hint,
+            alwaysShow: true,
+          }];
+        } else {
+          const items: vscode.QuickPickItem[] = [];
+          nodeIdMap.clear();
+          for (const node of matches) {
+            const meta = JSON.parse(node.metadata || '{}');
+            const loc = meta.line ? `:${meta.line}` : '';
+            const exportedTag = node.exported ? ' [exported]' : '';
+            const displayId = node.semanticId || node.id;
+            nodeIdMap.set(displayId, node.id);
+            items.push({
+              label: `$(symbol-${getIconName(node.nodeType)}) ${node.nodeType} "${node.name}"`,
+              description: `${node.file}${loc}${exportedTag}`,
+              detail: displayId,
+              alwaysShow: true,
+            });
+          }
+          if (reason === 'limit') {
+            items.push({
+              label: `$(info) ${SEARCH_MAX_RESULTS}+ results, refine your query`,
+              kind: vscode.QuickPickItemKind.Separator,
+            });
+          }
+          quickPick.items = items;
+        }
+      } catch (err) {
+        if (abort.signal.aborted) return;
+        const message = err instanceof Error ? err.message : String(err);
+        dp?.log({
+          timestamp: Date.now(),
+          operation: 'searchNodes',
+          query,
+          result: `error: ${message}`,
+        });
+        quickPick.items = [{ label: `$(error) Search failed: ${message}` }];
+      } finally {
+        if (!abort.signal.aborted) quickPick.busy = false;
+      }
+    }, 300);
+  });
+
+  quickPick.onDidAccept(() => {
+    const selected = quickPick.selectedItems[0];
+    if (selected?.detail && cm?.isConnected()) {
+      const nodeId = nodeIdMap.get(selected.detail) || selected.detail;
+      cm.getClient().getNode(nodeId).then((node) => {
+        if (node && ep) {
+          ep.navigateToNode(node);
+        }
+      });
+    }
+    quickPick.dispose();
+  });
+
+  quickPick.onDidHide(() => {
+    if (activeAbort) activeAbort.abort();
+    quickPick.dispose();
+  });
+
+  quickPick.show();
 }
 
 /**
