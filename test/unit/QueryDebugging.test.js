@@ -5,6 +5,7 @@
  * - get_schema: schema introspection
  * - Empty query stats: helpful hints on empty results
  * - Explain mode: step-by-step query debugging
+ * - Did You Mean suggestions: type extraction and similarity matching
  */
 
 import { describe, it, after, beforeEach } from 'node:test';
@@ -17,6 +18,7 @@ import { createTestDatabase, cleanupAllTestDatabases } from '../helpers/TestRFDB
 after(cleanupAllTestDatabases);
 import { createTestOrchestrator } from '../helpers/createTestOrchestrator.js';
 import { levenshtein } from '@grafema/core';
+import { findSimilarTypes, extractQueriedTypes } from '../../packages/mcp/dist/utils.js';
 
 const FIXTURE_PATH = join(process.cwd(), 'test/fixtures/01-simple-script');
 
@@ -177,6 +179,161 @@ describe('QueryDebugging', () => {
       assert.strictEqual(predicates.length, 2);
       assert.strictEqual(predicates[0], 'node(X, "CALL")');
       assert.strictEqual(predicates[1], '\\+ edge(X, _, "CALLS")');
+    });
+  });
+
+  describe('Did You Mean Suggestions', () => {
+    describe('extractQueriedTypes - pure function', () => {
+      it('should extract node type from node(X, "FUNCTON")', () => {
+        const result = extractQueriedTypes('node(X, "FUNCTON")');
+        assert.deepStrictEqual(result, { nodeTypes: ['FUNCTON'], edgeTypes: [] });
+      });
+
+      it('should extract node type from node(_, "FUNCTON")', () => {
+        const result = extractQueriedTypes('node(_, "FUNCTON")');
+        assert.deepStrictEqual(result, { nodeTypes: ['FUNCTON'], edgeTypes: [] });
+      });
+
+      it('should extract edge type from edge(X, Y, "CALS")', () => {
+        const result = extractQueriedTypes('edge(X, Y, "CALS")');
+        assert.deepStrictEqual(result, { nodeTypes: [], edgeTypes: ['CALS'] });
+      });
+
+      it('should extract edge type from incoming(X, Y, "CALS")', () => {
+        const result = extractQueriedTypes('incoming(X, Y, "CALS")');
+        assert.deepStrictEqual(result, { nodeTypes: [], edgeTypes: ['CALS'] });
+      });
+
+      it('should extract both node and edge types from multi-predicate query', () => {
+        const result = extractQueriedTypes('node(X, "FUNCTON"), edge(X, Y, "CALS")');
+        assert.deepStrictEqual(result, { nodeTypes: ['FUNCTON'], edgeTypes: ['CALS'] });
+      });
+
+      it('should extract multiple node types', () => {
+        const result = extractQueriedTypes('node(X, "FUNCTON"), node(Y, "CALASS")');
+        assert.deepStrictEqual(result, { nodeTypes: ['FUNCTON', 'CALASS'], edgeTypes: [] });
+      });
+
+      it('should extract type from rule form with :- syntax', () => {
+        const result = extractQueriedTypes('violation(X) :- node(X, "FUNCTON").');
+        assert.deepStrictEqual(result, { nodeTypes: ['FUNCTON'], edgeTypes: [] });
+      });
+
+      it('should not match attr() as a type (no false positive)', () => {
+        const result = extractQueriedTypes('attr(X, "name", "foo")');
+        assert.deepStrictEqual(result, { nodeTypes: [], edgeTypes: [] });
+      });
+
+      it('should not match variable type node(X, T) without quotes', () => {
+        const result = extractQueriedTypes('node(X, T)');
+        assert.deepStrictEqual(result, { nodeTypes: [], edgeTypes: [] });
+      });
+
+      it('should not match type() predicate (excluded intentionally)', () => {
+        const result = extractQueriedTypes('type(X, "FUNCTON")');
+        assert.deepStrictEqual(result, { nodeTypes: [], edgeTypes: [] });
+      });
+
+      it('should return empty arrays for empty string', () => {
+        const result = extractQueriedTypes('');
+        assert.deepStrictEqual(result, { nodeTypes: [], edgeTypes: [] });
+      });
+    });
+
+    describe('findSimilarTypes - case sensitivity', () => {
+      it('should suggest FUNCTION for case mismatch "function"', () => {
+        const result = findSimilarTypes('function', ['FUNCTION', 'CLASS']);
+        assert.deepStrictEqual(result, ['FUNCTION']);
+      });
+
+      it('should return empty for exact case-sensitive match', () => {
+        const result = findSimilarTypes('FUNCTION', ['FUNCTION', 'CLASS']);
+        assert.deepStrictEqual(result, []);
+      });
+
+      it('should suggest FUNCTION for typo FUNCTON (distance=1)', () => {
+        const result = findSimilarTypes('FUNCTON', ['FUNCTION', 'CLASS']);
+        assert.deepStrictEqual(result, ['FUNCTION']);
+      });
+
+      it('should return empty for distant type (distance > 2)', () => {
+        const result = findSimilarTypes('xyz123', ['FUNCTION', 'CLASS']);
+        assert.deepStrictEqual(result, []);
+      });
+
+      it('should return empty for empty available types', () => {
+        const result = findSimilarTypes('FUNCTON', []);
+        assert.deepStrictEqual(result, []);
+      });
+    });
+
+    describe('Integration - suggestion pipeline with DB', () => {
+      it('should suggest FUNCTION for misspelled node type FUNCTON', async () => {
+        const orchestrator = createTestOrchestrator(backend);
+        await orchestrator.run(FIXTURE_PATH);
+
+        // Verify the fixture has FUNCTION nodes
+        const nodeCounts = await backend.countNodesByType();
+        assert.ok(nodeCounts['FUNCTION'] > 0, 'Fixture should have FUNCTION nodes');
+
+        // Query with misspelled type returns 0 results
+        const results = await backend.checkGuarantee('violation(X) :- node(X, "FUNCTON").');
+        assert.strictEqual(results.length, 0, 'Misspelled type should return no results');
+
+        // Extract queried types from the query
+        const { nodeTypes } = extractQueriedTypes('node(X, "FUNCTON")');
+        assert.deepStrictEqual(nodeTypes, ['FUNCTON']);
+
+        // Find similar types from what the graph actually has
+        const availableNodeTypes = Object.keys(nodeCounts);
+        const suggestions = findSimilarTypes('FUNCTON', availableNodeTypes);
+        assert.ok(suggestions.includes('FUNCTION'), 'Should suggest FUNCTION for FUNCTON');
+      });
+
+      it('should suggest CALLS for misspelled edge type CALS', async () => {
+        const orchestrator = createTestOrchestrator(backend);
+        await orchestrator.run(FIXTURE_PATH);
+
+        const edgeCounts = await backend.countEdgesByType();
+        // The fixture should produce CALLS edges (via MethodCallResolver enrichment)
+        const hasCallsEdges = edgeCounts['CALLS'] > 0;
+
+        if (hasCallsEdges) {
+          const { edgeTypes } = extractQueriedTypes('edge(X, Y, "CALS")');
+          assert.deepStrictEqual(edgeTypes, ['CALS']);
+
+          const availableEdgeTypes = Object.keys(edgeCounts);
+          const suggestions = findSimilarTypes('CALS', availableEdgeTypes);
+          assert.ok(suggestions.includes('CALLS'), 'Should suggest CALLS for CALS');
+        }
+      });
+
+      it('should fall back to available types for completely alien type', async () => {
+        const orchestrator = createTestOrchestrator(backend);
+        await orchestrator.run(FIXTURE_PATH);
+
+        const nodeCounts = await backend.countNodesByType();
+        const availableNodeTypes = Object.keys(nodeCounts);
+
+        // A completely alien type should have no similar suggestions
+        const suggestions = findSimilarTypes('XYZABC123_TOTALLY_WRONG', availableNodeTypes);
+        assert.strictEqual(suggestions.length, 0, 'Alien type should have no similar suggestions');
+        // Fallback: the caller should list available types instead
+        assert.ok(availableNodeTypes.length > 0, 'Available types list should be non-empty for fallback');
+      });
+
+      it('should handle empty graph scenario (no available types)', () => {
+        // When graph has no nodes, availableTypes is empty.
+        // findSimilarTypes returns [] and the handler falls back to "Graph has no nodes".
+        const suggestions = findSimilarTypes('FUNCTON', []);
+        assert.deepStrictEqual(suggestions, [], 'No suggestions when graph is empty');
+
+        // The handler checks: if (nodeTypes.length > 0 && availableNodeTypes.length === 0)
+        // and produces "Graph has no nodes". We verify the condition inputs here.
+        const { nodeTypes } = extractQueriedTypes('node(X, "FUNCTON")');
+        assert.ok(nodeTypes.length > 0, 'Query has node types');
+        // availableNodeTypes.length === 0 is the empty graph condition
+      });
     });
   });
 
