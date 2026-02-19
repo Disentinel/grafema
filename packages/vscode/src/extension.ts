@@ -19,6 +19,7 @@ import { findAndSetRoot, updateStatusBar } from './cursorTracker';
 import { ValueTraceProvider } from './valueTraceProvider';
 import { GrafemaHoverProvider } from './hoverProvider';
 import { CallersProvider } from './callersProvider';
+import { IssuesProvider } from './issuesProvider';
 import { GrafemaCodeLensProvider } from './codeLensProvider';
 
 let clientManager: GrafemaClientManager | null = null;
@@ -31,6 +32,7 @@ let statusBarItem: vscode.StatusBarItem | null = null;
 let selectedTreeItem: GraphTreeItem | null = null; // Track selected item for state export
 let valueTraceProvider: ValueTraceProvider | null = null;
 let callersProvider: CallersProvider | null = null;
+let issuesProvider: IssuesProvider | null = null;
 
 /**
  * Extension activation
@@ -98,6 +100,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     callersProvider
   );
 
+  // Register ISSUES panel provider
+  issuesProvider = new IssuesProvider(clientManager, workspaceRoot);
+  const issuesView = vscode.window.createTreeView('grafemaIssues', {
+    treeDataProvider: issuesProvider,
+  });
+  issuesProvider.setTreeView(issuesView);
+
+  const diagnosticCollection = vscode.languages.createDiagnosticCollection('grafema');
+  issuesProvider.setDiagnosticCollection(diagnosticCollection);
+
   // Register CodeLens provider (JS/TS files only)
   const codeLensProvider = new GrafemaCodeLensProvider(clientManager);
   const codeLensDisposable = vscode.languages.registerCodeLensProvider(
@@ -158,6 +170,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     debugTreeRegistration,
     valueTraceRegistration,
     callersRegistration,
+    issuesView,
+    diagnosticCollection,
     codeLensDisposable,
     hoverDisposable,
     treeView,
@@ -533,6 +547,11 @@ function registerCommands(): vscode.Disposable[] {
   // Refresh CALLERS panel
   disposables.push(vscode.commands.registerCommand('grafema.refreshCallers', () => {
     callersProvider?.refresh();
+  }));
+
+  // Refresh ISSUES panel
+  disposables.push(vscode.commands.registerCommand('grafema.refreshIssues', () => {
+    issuesProvider?.refresh();
   }));
 
   // Blast radius placeholder (Phase 4)
