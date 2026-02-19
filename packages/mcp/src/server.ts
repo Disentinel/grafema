@@ -2,7 +2,25 @@
 /**
  * Grafema MCP Server
  *
- * Provides code analysis tools via Model Context Protocol.
+ * Graph-driven code analysis for AI agents. Query the code graph instead of reading files.
+ *
+ * Use Grafema when you need to:
+ * - Navigate code structure (find callers, trace data flow, understand impact)
+ * - Answer "who calls this?", "where is this used?", "what does this affect?"
+ * - Analyze untyped/dynamic codebases where static analysis falls short
+ * - Track relationships across files without manual grep
+ *
+ * Core capabilities:
+ * - Datalog queries for pattern matching (query_graph)
+ * - Call graph navigation (find_calls, get_function_details)
+ * - Data flow tracing (trace_dataflow, trace_alias)
+ * - Graph traversal primitives (get_node, get_neighbors, traverse_graph)
+ * - Code guarantees/invariants (create_guarantee, check_guarantees)
+ *
+ * Workflow:
+ * 1. discover_services — identify project structure
+ * 2. analyze_project — build the graph
+ * 3. Use query tools to explore code relationships
  */
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
@@ -15,7 +33,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import { PROMPTS, getPrompt } from './prompts.js';
 
-import { TOOLS } from './definitions.js';
+import { TOOLS } from './definitions/index.js';
 import { initializeFromArgs, setupLogging, getProjectPath } from './state.js';
 import { textResult, errorResult, log } from './utils.js';
 import { discoverServices } from './analysis.js';
@@ -43,6 +61,9 @@ import {
   handleReadProjectStructure,
   handleWriteConfig,
   handleGetFileOverview,
+  handleGetNode,
+  handleGetNeighbors,
+  handleTraverseGraph,
 } from './handlers/index.js';
 import type {
   ToolResult,
@@ -66,6 +87,9 @@ import type {
   ReadProjectStructureArgs,
   WriteConfigArgs,
   GetFileOverviewArgs,
+  GetNodeArgs,
+  GetNeighborsArgs,
+  TraverseGraphArgs,
 } from './types.js';
 
 /**
@@ -89,6 +113,7 @@ const server = new Server(
   {
     name: 'grafema-mcp',
     version: '0.1.0',
+    description: 'Graph-driven code analysis. Query the code graph instead of reading files. Navigate call graphs, trace data flow, verify guarantees. For AI agents working with untyped/dynamic codebases.',
   },
   {
     capabilities: {
@@ -221,6 +246,18 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
 
       case 'write_config':
         result = await handleWriteConfig(asArgs<WriteConfigArgs>(args));
+        break;
+
+      case 'get_node':
+        result = await handleGetNode(asArgs<GetNodeArgs>(args));
+        break;
+
+      case 'get_neighbors':
+        result = await handleGetNeighbors(asArgs<GetNeighborsArgs>(args));
+        break;
+
+      case 'traverse_graph':
+        result = await handleTraverseGraph(asArgs<TraverseGraphArgs>(args));
         break;
 
       default:

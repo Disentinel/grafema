@@ -345,3 +345,22 @@ export interface WriteConfigArgs {
     roots?: string[];
   };
 }
+
+// === Graph traversal tools (REG-521) ===
+
+export interface GetNodeArgs {
+  semanticId: string;
+}
+
+export interface GetNeighborsArgs {
+  semanticId: string;
+  direction?: 'outgoing' | 'incoming' | 'both';
+  edgeTypes?: string[];
+}
+
+export interface TraverseGraphArgs {
+  startNodeIds: string[];
+  edgeTypes: string[];
+  maxDepth?: number;
+  direction?: 'outgoing' | 'incoming';
+}

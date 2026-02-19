@@ -12,3 +12,4 @@ export { handleGetCoverage } from './coverage-handlers.js';
 export { handleFindGuards } from './guard-handlers.js';
 export { handleGetDocumentation } from './documentation-handlers.js';
 export { handleReportIssue } from './issue-handlers.js';
+export { handleGetNode, handleGetNeighbors, handleTraverseGraph } from './graph-handlers.js';
