@@ -40,11 +40,11 @@ export class RustFFIEnricher extends Plugin {
   }
 
   async execute(context: PluginContext): Promise<PluginResult> {
-    const { graph } = context;
+    const { graph, onProgress } = context;
     const logger = this.log(context);
 
     // 1. Build index of NAPI-exported Rust functions/methods
-    const napiIndex = await this.buildNapiIndex(graph);
+    const napiIndex = await this.buildNapiIndex(graph, onProgress);
 
     if (napiIndex.size === 0) {
       logger.info('No NAPI exports found, skipping');
@@ -54,14 +54,26 @@ export class RustFFIEnricher extends Plugin {
     logger.debug('Indexed NAPI exports', { count: napiIndex.size });
 
     // 2. Find JS CALL nodes that target Rust
-    const jsCalls = await this.findRustCallingJsCalls(graph);
+    const jsCalls = await this.findRustCallingJsCalls(graph, onProgress);
     logger.debug('Found candidate JS calls', { count: jsCalls.length });
 
     // 3. Match and create FFI_CALLS edges
     let edgesCreated = 0;
     const unmatched: string[] = [];
 
-    for (const call of jsCalls) {
+    for (let ci = 0; ci < jsCalls.length; ci++) {
+      const call = jsCalls[ci];
+
+      if (onProgress && ci % 100 === 0) {
+        onProgress({
+          phase: 'enrichment',
+          currentPlugin: 'RustFFIEnricher',
+          message: `Matching FFI calls ${ci}/${jsCalls.length}`,
+          totalFiles: jsCalls.length,
+          processedFiles: ci,
+        });
+      }
+
       const rustTarget = this.matchJsCallToRust(call, napiIndex);
 
       if (rustTarget) {
@@ -87,12 +99,26 @@ export class RustFFIEnricher extends Plugin {
     return createSuccessResult({ nodes: 0, edges: edgesCreated }, { unmatched: unmatched.length });
   }
 
-  private async buildNapiIndex(graph: PluginContext['graph']): Promise<Map<string, RustNapiNode>> {
+  private async buildNapiIndex(
+    graph: PluginContext['graph'],
+    onProgress?: PluginContext['onProgress']
+  ): Promise<Map<string, RustNapiNode>> {
     const index = new Map<string, RustNapiNode>();
 
     // Index RUST_FUNCTION with napi=true
+    let funcCounter = 0;
     for await (const node of graph.queryNodes({ nodeType: 'RUST_FUNCTION' })) {
       const rustNode = node as RustNapiNode;
+      funcCounter++;
+      if (onProgress && funcCounter % 100 === 0) {
+        onProgress({
+          phase: 'enrichment',
+          currentPlugin: 'RustFFIEnricher',
+          message: `Indexing RUST_FUNCTION nodes ${funcCounter}`,
+          totalFiles: 0,
+          processedFiles: funcCounter,
+        });
+      }
       if (rustNode.napi) {
         const jsName = rustNode.napiJsName || this.rustNameToJs(rustNode.name as string);
         index.set(jsName, rustNode);
@@ -102,8 +128,19 @@ export class RustFFIEnricher extends Plugin {
     }
 
     // Index RUST_METHOD with napi=true
+    let methodCounter = 0;
     for await (const node of graph.queryNodes({ nodeType: 'RUST_METHOD' })) {
       const rustNode = node as RustNapiNode;
+      methodCounter++;
+      if (onProgress && methodCounter % 100 === 0) {
+        onProgress({
+          phase: 'enrichment',
+          currentPlugin: 'RustFFIEnricher',
+          message: `Indexing RUST_METHOD nodes ${methodCounter}`,
+          totalFiles: 0,
+          processedFiles: methodCounter,
+        });
+      }
       if (rustNode.napi) {
         const jsName = rustNode.napiJsName || this.rustNameToJs(rustNode.name as string);
         // Methods are called as object.method() in JS
@@ -120,12 +157,26 @@ export class RustFFIEnricher extends Plugin {
     return index;
   }
 
-  private async findRustCallingJsCalls(graph: PluginContext['graph']): Promise<JSCallNode[]> {
+  private async findRustCallingJsCalls(
+    graph: PluginContext['graph'],
+    onProgress?: PluginContext['onProgress']
+  ): Promise<JSCallNode[]> {
     const candidates: JSCallNode[] = [];
     const seen = new Set<string>();
+    let callCounter = 0;
 
     for await (const call of graph.queryNodes({ nodeType: 'CALL' })) {
       const callNode = call as JSCallNode;
+      callCounter++;
+      if (onProgress && callCounter % 500 === 0) {
+        onProgress({
+          phase: 'enrichment',
+          currentPlugin: 'RustFFIEnricher',
+          message: `Scanning CALL nodes ${callCounter}`,
+          totalFiles: 0,
+          processedFiles: callCounter,
+        });
+      }
 
       // Skip duplicates
       if (seen.has(callNode.id)) continue;

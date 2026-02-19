@@ -13,6 +13,7 @@ import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { BaseNodeRecord } from '@grafema/types';
 import { StrictModeError, ValidationError } from '../../errors/GrafemaError.js';
+import { pathsMatch, hasParams, deduplicateById } from './httpPathUtils.js';
 
 /**
  * HTTP route node
@@ -62,20 +63,42 @@ export class HTTPConnectionEnricher extends Plugin {
   }
 
   async execute(context: PluginContext): Promise<PluginResult> {
-    const { graph } = context;
+    const { graph, onProgress } = context;
     const logger = this.log(context);
 
     try {
       // Собираем все http:route (backend endpoints)
       const routes: HTTPRouteNode[] = [];
+      let routeCounter = 0;
       for await (const node of graph.queryNodes({ type: 'http:route' })) {
         routes.push(node as HTTPRouteNode);
+        routeCounter++;
+        if (onProgress && routeCounter % 100 === 0) {
+          onProgress({
+            phase: 'enrichment',
+            currentPlugin: 'HTTPConnectionEnricher',
+            message: `Collecting routes ${routeCounter}`,
+            totalFiles: 0,
+            processedFiles: routeCounter,
+          });
+        }
       }
 
       // Собираем все http:request (frontend requests)
       const requests: HTTPRequestNode[] = [];
+      let requestCounter = 0;
       for await (const node of graph.queryNodes({ type: 'http:request' })) {
         requests.push(node as HTTPRequestNode);
+        requestCounter++;
+        if (onProgress && requestCounter % 100 === 0) {
+          onProgress({
+            phase: 'enrichment',
+            currentPlugin: 'HTTPConnectionEnricher',
+            message: `Collecting requests ${requestCounter}`,
+            totalFiles: 0,
+            processedFiles: requestCounter,
+          });
+        }
       }
 
       logger.debug('Found routes and requests', {
@@ -84,8 +107,8 @@ export class HTTPConnectionEnricher extends Plugin {
       });
 
       // Дедуплицируем по ID (из-за multi-service анализа)
-      const uniqueRoutes = this.deduplicateById(routes);
-      const uniqueRequests = this.deduplicateById(requests);
+      const uniqueRoutes = deduplicateById(routes);
+      const uniqueRequests = deduplicateById(requests);
 
       logger.info('Unique routes and requests', {
         routes: uniqueRoutes.length,
@@ -97,7 +120,19 @@ export class HTTPConnectionEnricher extends Plugin {
       const connections: ConnectionInfo[] = [];
 
       // Для каждого request ищем matching route
-      for (const request of uniqueRequests) {
+      for (let ri = 0; ri < uniqueRequests.length; ri++) {
+        const request = uniqueRequests[ri];
+
+        if (onProgress && ri % 50 === 0) {
+          onProgress({
+            phase: 'enrichment',
+            currentPlugin: 'HTTPConnectionEnricher',
+            message: `Matching requests ${ri}/${uniqueRequests.length}`,
+            totalFiles: uniqueRequests.length,
+            processedFiles: ri,
+          });
+        }
+
         const methodSource = request.methodSource ?? 'explicit';
         const method = request.method ? request.method.toUpperCase() : null;
         const url = request.url;
@@ -151,13 +186,13 @@ export class HTTPConnectionEnricher extends Plugin {
           if (methodSource === 'default' && routeMethod !== 'GET') continue;
           if (methodSource === 'explicit' && (!method || method !== routeMethod)) continue;
 
-          if (routePath && this.pathsMatch(url, routePath)) {
+          if (routePath && pathsMatch(url, routePath)) {
             // 1. Create INTERACTS_WITH edge (existing)
             await graph.addEdge({
               type: 'INTERACTS_WITH',
               src: request.id,
               dst: route.id,
-              matchType: this.hasParams(routePath) ? 'parametric' : 'exact'
+              matchType: hasParams(routePath) ? 'parametric' : 'exact'
             });
 
             edgesCreated++;
@@ -219,84 +254,4 @@ export class HTTPConnectionEnricher extends Plugin {
     }
   }
 
-  /**
-   * Normalize URL to canonical form for comparison.
-   * Converts both Express params (:id) and template literals (${...}) to {param}.
-   */
-  private normalizeUrl(url: string): string {
-    return url
-      .replace(/:[A-Za-z0-9_]+/g, '{param}')      // :id -> {param}
-      .replace(/\$\{[^}]*\}/g, '{param}'); // ${...} -> {param}, ${userId} -> {param}
-  }
-
-  /**
-   * Check if URL has any parameter placeholders (after normalization)
-   */
-  private hasParamsNormalized(normalizedUrl: string): boolean {
-    return normalizedUrl.includes('{param}');
-  }
-
-  /**
-   * Check if request URL matches route path.
-   * Supports:
-   * - Exact match
-   * - Express params (:id)
-   * - Template literals (${...})
-   * - Concrete values matching params (/users/123 matches /users/:id)
-   */
-  private pathsMatch(requestUrl: string, routePath: string): boolean {
-    // Normalize both to canonical form
-    const normRequest = this.normalizeUrl(requestUrl);
-    const normRoute = this.normalizeUrl(routePath);
-
-    // If both normalize to same string, they match
-    if (normRequest === normRoute) {
-      return true;
-    }
-
-    // If route has no params after normalization, require exact match
-    if (!this.hasParamsNormalized(normRoute)) {
-      return false;
-    }
-
-    // Handle case where request has concrete value (e.g., '/users/123')
-    // and route has param (e.g., '/users/{param}')
-    return this.buildParamRegex(normRoute).test(normRequest);
-  }
-
-  private escapeRegExp(value: string): string {
-    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  }
-
-  private buildParamRegex(normalizedRoute: string): RegExp {
-    const parts = normalizedRoute.split('{param}');
-    const pattern = parts.map(part => this.escapeRegExp(part)).join('[^/]+');
-    return new RegExp(`^${pattern}$`);
-  }
-
-  /**
-   * Check if path has parameters (for edge matchType metadata)
-   */
-  private hasParams(path: string): boolean {
-    if (!path) return false;
-    // Check for Express params or template literals
-    return path.includes(':') || path.includes('${');
-  }
-
-  /**
-   * Убирает дубликаты по ID
-   */
-  private deduplicateById<T extends BaseNodeRecord>(nodes: T[]): T[] {
-    const seen = new Set<string>();
-    const unique: T[] = [];
-
-    for (const node of nodes) {
-      if (!seen.has(node.id)) {
-        seen.add(node.id);
-        unique.push(node);
-      }
-    }
-
-    return unique;
-  }
 }
