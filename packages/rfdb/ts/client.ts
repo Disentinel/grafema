@@ -872,6 +872,7 @@ export class RFDBClient extends EventEmitter implements IRFDBClient {
       stats: r.stats,
       profile: r.profile,
       explainSteps: r.explainSteps || [],
+      warnings: r.warnings || [],
     };
   }
 

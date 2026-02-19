@@ -90,6 +90,8 @@ pub struct QueryResult {
     pub profile: QueryProfile,
     /// Explain steps (only if explain=true)
     pub explain_steps: Vec<ExplainStep>,
+    /// Warnings about expensive query patterns
+    pub warnings: Vec<String>,
 }
 
 /// Evaluator with explain and profiling support
@@ -108,6 +110,8 @@ pub struct EvaluatorExplain<'a> {
     predicate_times: HashMap<String, Duration>,
     /// Query start time
     query_start: Option<Instant>,
+    /// Warnings about expensive query patterns
+    warnings: Vec<String>,
 }
 
 impl<'a> EvaluatorExplain<'a> {
@@ -122,6 +126,7 @@ impl<'a> EvaluatorExplain<'a> {
             step_counter: 0,
             predicate_times: HashMap::new(),
             query_start: None,
+            warnings: Vec::new(),
         }
     }
 
@@ -145,6 +150,7 @@ impl<'a> EvaluatorExplain<'a> {
         self.explain_steps.clear();
         self.step_counter = 0;
         self.predicate_times.clear();
+        self.warnings.clear();
 
         let bindings = self.eval_atom(goal);
 
@@ -163,6 +169,7 @@ impl<'a> EvaluatorExplain<'a> {
         self.explain_steps.clear();
         self.step_counter = 0;
         self.predicate_times.clear();
+        self.warnings.clear();
 
         let mut current = vec![Bindings::new()];
         for literal in &ordered {
@@ -231,6 +238,12 @@ impl<'a> EvaluatorExplain<'a> {
                 self.explain_steps.clone()
             } else {
                 Vec::new()
+            },
+            warnings: {
+                let mut w = std::mem::take(&mut self.warnings);
+                w.sort_unstable();
+                w.dedup();
+                w
             },
         }
     }
@@ -334,6 +347,7 @@ impl<'a> EvaluatorExplain<'a> {
             }
             // node(X, Y) - enumerate all nodes (expensive!)
             (Term::Var(id_var), Term::Var(type_var)) => {
+                self.warnings.push("Full node scan: consider binding type".to_string());
                 let type_counts = self.engine.count_nodes_by_type(None);
                 let mut results = vec![];
 
@@ -412,6 +426,7 @@ impl<'a> EvaluatorExplain<'a> {
             }
             Term::Var(src_var) => {
                 // Enumerate all edges when source is unbound
+                self.warnings.push("Full edge scan: consider binding source node".to_string());
                 self.stats.all_edges_calls += 1;
                 let all_edges = self.engine.get_all_edges();
                 self.stats.edges_traversed += all_edges.len();

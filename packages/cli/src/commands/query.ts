@@ -1183,6 +1183,15 @@ async function executeRawQuery(
 }
 
 function renderExplainOutput(result: DatalogExplainResult, limit: number): void {
+  // Print warnings to stderr first so they're immediately visible
+  if (result.warnings && result.warnings.length > 0) {
+    console.error('Warnings:');
+    for (const warning of result.warnings) {
+      console.error(`  ${warning}`);
+    }
+    console.error('');
+  }
+
   console.log('Explain mode \u2014 step-by-step execution:\n');
 
   for (const step of result.explainSteps) {

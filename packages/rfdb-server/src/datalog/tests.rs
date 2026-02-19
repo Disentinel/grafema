@@ -2567,4 +2567,138 @@ mod eval_tests {
             "should find at least one match"
         );
     }
+
+    // ============================================================================
+    // Slow Query Warnings Tests (REG-506)
+    // ============================================================================
+
+    #[test]
+    fn test_warning_node_full_scan() {
+        use crate::datalog::eval_explain::EvaluatorExplain;
+
+        let engine = setup_test_graph();
+        let mut evaluator = EvaluatorExplain::new(&engine, true);
+
+        // node(X, Y) — both variables unbound → full node scan warning
+        let literals = parse_query("node(X, Y)").unwrap();
+        let result = evaluator.eval_query(&literals).unwrap();
+
+        assert!(result.warnings.contains(&"Full node scan: consider binding type".to_string()),
+            "should warn about full node scan when both args are variables");
+    }
+
+    #[test]
+    fn test_no_warning_node_bound_type() {
+        use crate::datalog::eval_explain::EvaluatorExplain;
+
+        let engine = setup_test_graph();
+        let mut evaluator = EvaluatorExplain::new(&engine, true);
+
+        // node(X, "FUNCTION") — type is bound → no warning
+        let literals = parse_query("node(X, \"FUNCTION\")").unwrap();
+        let result = evaluator.eval_query(&literals).unwrap();
+
+        assert!(result.warnings.is_empty(),
+            "should not warn when type is bound: {:?}", result.warnings);
+    }
+
+    #[test]
+    fn test_warning_edge_full_scan() {
+        use crate::datalog::eval_explain::EvaluatorExplain;
+
+        let engine = setup_test_graph();
+        let mut evaluator = EvaluatorExplain::new(&engine, true);
+
+        // edge(X, Y, T) — source unbound → full edge scan warning
+        let literals = parse_query("edge(X, Y, T)").unwrap();
+        let result = evaluator.eval_query(&literals).unwrap();
+
+        assert!(result.warnings.contains(&"Full edge scan: consider binding source node".to_string()),
+            "should warn about full edge scan when source is unbound");
+    }
+
+    #[test]
+    fn test_no_warning_edge_bound_source() {
+        use crate::datalog::eval_explain::EvaluatorExplain;
+
+        let engine = setup_test_graph();
+        let mut evaluator = EvaluatorExplain::new(&engine, true);
+
+        // edge("1", Y, T) — source is bound → no warning
+        let literals = parse_query("edge(\"1\", Y, T)").unwrap();
+        let result = evaluator.eval_query(&literals).unwrap();
+
+        assert!(result.warnings.is_empty(),
+            "should not warn when source is bound: {:?}", result.warnings);
+    }
+
+    #[test]
+    fn test_warnings_without_explain_mode() {
+        use crate::datalog::eval_explain::EvaluatorExplain;
+
+        let engine = setup_test_graph();
+        let mut evaluator = EvaluatorExplain::new(&engine, false);
+
+        // Warnings should still be collected even without explain mode
+        let literals = parse_query("node(X, Y)").unwrap();
+        let result = evaluator.eval_query(&literals).unwrap();
+
+        assert!(result.warnings.contains(&"Full node scan: consider binding type".to_string()),
+            "should collect warnings even when explain_mode=false");
+        assert!(result.explain_steps.is_empty(),
+            "explain_steps should be empty when explain_mode=false");
+    }
+
+    #[test]
+    fn test_warnings_empty_for_efficient_query() {
+        use crate::datalog::eval_explain::EvaluatorExplain;
+
+        let engine = setup_test_graph();
+        let mut evaluator = EvaluatorExplain::new(&engine, true);
+
+        // Efficient query: bound type + bound source
+        let literals = parse_query("node(X, \"FUNCTION\"), edge(X, Y, \"CALLS\")").unwrap();
+        let result = evaluator.eval_query(&literals).unwrap();
+
+        assert!(result.warnings.is_empty(),
+            "efficient query should not produce warnings: {:?}", result.warnings);
+    }
+
+    #[test]
+    fn test_warnings_deduplicated_in_multi_literal_query() {
+        use crate::datalog::eval_explain::EvaluatorExplain;
+
+        let engine = setup_test_graph();
+        let mut evaluator = EvaluatorExplain::new(&engine, true);
+
+        // Multi-literal query where node(X, Y) triggers per-binding evaluation
+        // of node(Z, W) — both arms hit (Var, Var), but warning should appear once
+        let literals = parse_query("node(X, Y), node(Z, W)").unwrap();
+        let result = evaluator.eval_query(&literals).unwrap();
+
+        let node_warnings: Vec<_> = result.warnings.iter()
+            .filter(|w| w.contains("Full node scan"))
+            .collect();
+        assert_eq!(node_warnings.len(), 1,
+            "duplicate full-scan warnings should be deduplicated: {:?}", result.warnings);
+    }
+
+    #[test]
+    fn test_warnings_cleared_between_queries() {
+        use crate::datalog::eval_explain::EvaluatorExplain;
+
+        let engine = setup_test_graph();
+        let mut evaluator = EvaluatorExplain::new(&engine, true);
+
+        // First query: full scan → warning
+        let literals1 = parse_query("node(X, Y)").unwrap();
+        let result1 = evaluator.eval_query(&literals1).unwrap();
+        assert!(!result1.warnings.is_empty(), "first query should have warnings");
+
+        // Second query: efficient → no warning
+        let literals2 = parse_query("node(X, \"FUNCTION\")").unwrap();
+        let result2 = evaluator.eval_query(&literals2).unwrap();
+        assert!(result2.warnings.is_empty(),
+            "second query should not carry over warnings from first: {:?}", result2.warnings);
+    }
 }

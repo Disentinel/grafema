@@ -396,6 +396,7 @@ export interface DatalogExplainResult {
   stats: QueryStats;
   profile: QueryProfile;
   explainSteps: ExplainStep[];
+  warnings: string[];
 }
 
 // === SNAPSHOT TYPES ===
