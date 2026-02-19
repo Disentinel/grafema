@@ -8,7 +8,7 @@
  */
 
 import * as vscode from 'vscode';
-import type { WireNode } from '@grafema/types';
+import type { WireNode, WireEdge } from '@grafema/types';
 import type { GrafemaClientManager } from './grafemaClient';
 import type {
   GraphTreeItem,
@@ -19,12 +19,22 @@ import {
 } from './types';
 import { getNodeIcon } from './utils';
 
+/**
+ * Return last 2 path segments for compact display.
+ * Example: 'src/auth/login.js' -> 'auth/login.js'
+ */
+export function formatFilePath(filePath: string): string {
+  const parts = filePath.split('/');
+  return parts.length <= 2 ? filePath : parts.slice(-2).join('/');
+}
+
 export class EdgesProvider implements vscode.TreeDataProvider<GraphTreeItem> {
   private _onDidChangeTreeData = new vscode.EventEmitter<GraphTreeItem | undefined | null | void>();
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
 
   private rootNode: WireNode | null = null;
   private clientManager: GrafemaClientManager;
+  private context: vscode.ExtensionContext | null = null;
   private statusMessage: string | null = null;
 
   // Navigation history - stack of previous root nodes (for back navigation)
@@ -34,8 +44,19 @@ export class EdgesProvider implements vscode.TreeDataProvider<GraphTreeItem> {
   // Navigation path - tracks how we got to current root (for breadcrumb highlighting)
   private navigationPath: Set<string> = new Set();
 
-  constructor(clientManager: GrafemaClientManager) {
+  // Edge type filter — edge types in this set are hidden from the tree
+  private hiddenEdgeTypes: Set<string> = new Set();
+
+  // Bookmarks — persisted via workspaceState
+  private bookmarks: WireNode[] = [];
+  private static readonly MAX_BOOKMARKS = 20;
+
+  constructor(clientManager: GrafemaClientManager, context?: vscode.ExtensionContext) {
     this.clientManager = clientManager;
+    if (context) {
+      this.context = context;
+      this.loadBookmarks();
+    }
 
     // Listen for connection state changes
     clientManager.on('stateChange', () => {
@@ -154,6 +175,35 @@ export class EdgesProvider implements vscode.TreeDataProvider<GraphTreeItem> {
    * Get tree item for display
    */
   getTreeItem(element: GraphTreeItem): vscode.TreeItem {
+    if (element.kind === 'bookmark-section') {
+      const item = new vscode.TreeItem(
+        `Bookmarks (${element.count})`,
+        vscode.TreeItemCollapsibleState.Collapsed
+      );
+      item.iconPath = new vscode.ThemeIcon('bookmark');
+      item.contextValue = 'grafemaBookmarkSection';
+      return item;
+    }
+
+    if (element.kind === 'bookmark') {
+      const label = formatNodeLabel(element.node);
+      const item = new vscode.TreeItem(label, vscode.TreeItemCollapsibleState.None);
+      item.description = formatFilePath(element.node.file);
+      item.iconPath = new vscode.ThemeIcon('star-full');
+      item.contextValue = 'grafemaBookmark';
+
+      // Click to go to location
+      if (element.metadata.line !== undefined) {
+        item.command = {
+          command: 'grafema.gotoLocation',
+          title: 'Go to Location',
+          arguments: [element.node.file, element.metadata.line, element.metadata.column ?? 0],
+        };
+      }
+
+      return item;
+    }
+
     if (element.kind === 'node') {
       const label = formatNodeLabel(element.node);
       // Root node is expanded by default, others are collapsed
@@ -172,6 +222,9 @@ export class EdgesProvider implements vscode.TreeDataProvider<GraphTreeItem> {
         item.description = '← path';
       } else {
         item.iconPath = getNodeIcon(element.node.nodeType);
+        const filePart = formatFilePath(element.node.file);
+        const exportedPart = element.node.exported ? ' exported' : '';
+        item.description = `${filePart}${exportedPart}`;
       }
 
       // Command to go to location on click
@@ -266,14 +319,35 @@ export class EdgesProvider implements vscode.TreeDataProvider<GraphTreeItem> {
       return [];
     }
 
-    // Root level - return the root node
+    // Root level - return bookmarks section (if any) and the root node
     if (!element) {
+      const items: GraphTreeItem[] = [];
+
+      // Prepend bookmark section when bookmarks exist
+      if (this.bookmarks.length > 0) {
+        items.push({ kind: 'bookmark-section', count: this.bookmarks.length });
+      }
+
       if (this.rootNode) {
         const metadata = parseNodeMetadata(this.rootNode);
         // Start with empty visited set for cycle detection
         // Mark as root so it's expanded by default
-        return [{ kind: 'node', node: this.rootNode, metadata, visitedNodeIds: new Set(), isRoot: true }];
+        items.push({ kind: 'node', node: this.rootNode, metadata, visitedNodeIds: new Set(), isRoot: true });
       }
+      return items;
+    }
+
+    // Bookmark section - return bookmark items
+    if (element.kind === 'bookmark-section') {
+      return this.bookmarks.map((node) => ({
+        kind: 'bookmark' as const,
+        node,
+        metadata: parseNodeMetadata(node),
+      }));
+    }
+
+    // Bookmark item - not expandable
+    if (element.kind === 'bookmark') {
       return [];
     }
 
@@ -290,47 +364,11 @@ export class EdgesProvider implements vscode.TreeDataProvider<GraphTreeItem> {
       visitedNodeIds.add(nodeId);
 
       try {
-        // Get outgoing edges
         const outgoing = await client.getOutgoingEdges(nodeId);
-        for (const edge of outgoing) {
-          // Deduplicate by edgeType + targetId + direction
-          const edgeKey = `outgoing:${edge.edgeType}:${edge.dst}`;
-          if (seenEdges.has(edgeKey)) {
-            continue;
-          }
-          seenEdges.add(edgeKey);
+        await this.buildEdgeItems(client, outgoing, 'outgoing', seenEdges, visitedNodeIds, edges);
 
-          // Pre-fetch target node for better labels
-          const targetNode = await client.getNode(edge.dst);
-          edges.push({
-            kind: 'edge',
-            edge,
-            direction: 'outgoing',
-            targetNode: targetNode ?? undefined,
-            visitedNodeIds,
-          });
-        }
-
-        // Get incoming edges
         const incoming = await client.getIncomingEdges(nodeId);
-        for (const edge of incoming) {
-          // Deduplicate by edgeType + targetId + direction
-          const edgeKey = `incoming:${edge.edgeType}:${edge.src}`;
-          if (seenEdges.has(edgeKey)) {
-            continue;
-          }
-          seenEdges.add(edgeKey);
-
-          // Pre-fetch source node for better labels
-          const targetNode = await client.getNode(edge.src);
-          edges.push({
-            kind: 'edge',
-            edge,
-            direction: 'incoming',
-            targetNode: targetNode ?? undefined,
-            visitedNodeIds,
-          });
-        }
+        await this.buildEdgeItems(client, incoming, 'incoming', seenEdges, visitedNodeIds, edges);
       } catch (err) {
         console.error('[grafema-explore] Error fetching edges:', err);
         this.setStatusMessage('Error fetching edges');
@@ -374,6 +412,38 @@ export class EdgesProvider implements vscode.TreeDataProvider<GraphTreeItem> {
   getParent(_element: GraphTreeItem): vscode.ProviderResult<GraphTreeItem> {
     // Not implementing parent navigation for now
     return null;
+  }
+
+  /**
+   * Build edge tree items for one direction (outgoing or incoming).
+   * Deduplicates by edgeType + targetId + direction, pre-fetches target nodes.
+   */
+  private async buildEdgeItems(
+    client: { getNode(id: string): Promise<WireNode | null> },
+    rawEdges: (WireEdge & Record<string, unknown>)[],
+    direction: 'outgoing' | 'incoming',
+    seenEdges: Set<string>,
+    visitedNodeIds: Set<string>,
+    out: GraphTreeItem[]
+  ): Promise<void> {
+    for (const edge of rawEdges) {
+      if (!edge.edgeType) continue;
+      const targetId = direction === 'outgoing' ? edge.dst : edge.src;
+      const edgeKey = `${direction}:${edge.edgeType}:${targetId}`;
+      if (seenEdges.has(edgeKey)) continue;
+      seenEdges.add(edgeKey);
+
+      if (this.hiddenEdgeTypes.has(edge.edgeType)) continue;
+
+      const targetNode = await client.getNode(targetId);
+      out.push({
+        kind: 'edge',
+        edge,
+        direction,
+        targetNode: targetNode ?? undefined,
+        visitedNodeIds,
+      });
+    }
   }
 
   /**
@@ -449,5 +519,90 @@ export class EdgesProvider implements vscode.TreeDataProvider<GraphTreeItem> {
     }
 
     return null;
+  }
+
+  // === EDGE TYPE FILTER ===
+
+  /**
+   * Get the set of hidden edge types (for UI display)
+   */
+  getHiddenEdgeTypes(): Set<string> {
+    return new Set(this.hiddenEdgeTypes);
+  }
+
+  /**
+   * Set hidden edge types and refresh tree
+   */
+  setHiddenEdgeTypes(types: Set<string>): void {
+    this.hiddenEdgeTypes = new Set(types);
+    this._onDidChangeTreeData.fire();
+  }
+
+  // === BOOKMARKS ===
+
+  /**
+   * Load bookmarks from workspaceState with safety guard
+   */
+  private loadBookmarks(): void {
+    if (!this.context) return;
+    const stored = this.context.workspaceState.get<unknown>('grafema.bookmarks');
+    if (Array.isArray(stored)) {
+      this.bookmarks = stored.filter(
+        (item): item is WireNode => item != null && typeof item === 'object' && typeof (item as WireNode).id === 'string'
+      );
+    }
+  }
+
+  /**
+   * Save bookmarks to workspaceState
+   */
+  private saveBookmarks(): void {
+    if (!this.context) return;
+    this.context.workspaceState.update('grafema.bookmarks', this.bookmarks);
+  }
+
+  /**
+   * Add a bookmark (if not already present, cap at MAX_BOOKMARKS)
+   */
+  addBookmark(node: WireNode): void {
+    if (this.bookmarks.some((b) => b.id === node.id)) return;
+    this.bookmarks.push(node);
+    if (this.bookmarks.length > EdgesProvider.MAX_BOOKMARKS) {
+      this.bookmarks.shift();
+    }
+    this.saveBookmarks();
+    this._onDidChangeTreeData.fire();
+  }
+
+  /**
+   * Remove a bookmark by node id
+   */
+  removeBookmark(nodeId: string): void {
+    this.bookmarks = this.bookmarks.filter((b) => b.id !== nodeId);
+    this.saveBookmarks();
+    this._onDidChangeTreeData.fire();
+  }
+
+  /**
+   * Check if a node is bookmarked
+   */
+  isBookmarked(nodeId: string): boolean {
+    return this.bookmarks.some((b) => b.id === nodeId);
+  }
+
+  /**
+   * Get a copy of current bookmarks
+   */
+  getBookmarks(): WireNode[] {
+    return [...this.bookmarks];
+  }
+
+  /**
+   * Clear all bookmarks
+   */
+  clearBookmarks(): void {
+    this.bookmarks = [];
+    this.saveBookmarks();
+    this._onDidChangeTreeData.fire();
   }
 }

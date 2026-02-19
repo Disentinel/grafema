@@ -145,6 +145,26 @@
         "command": "grafema.refreshBlastRadius",
         "title": "Refresh",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "grafema.filterEdgeTypes",
+        "title": "Filter Edge Types",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "grafema.bookmarkNode",
+        "title": "Bookmark Node",
+        "icon": "$(bookmark)"
+      },
+      {
+        "command": "grafema.removeBookmark",
+        "title": "Remove Bookmark",
+        "icon": "$(close)"
+      },
+      {
+        "command": "grafema.clearBookmarks",
+        "title": "Clear All Bookmarks",
+        "icon": "$(clear-all)"
       }
     ],
     "menus": {
@@ -180,9 +200,14 @@
           "group": "navigation@5"
         },
         {
-          "command": "grafema.copyTreeState",
+          "command": "grafema.filterEdgeTypes",
           "when": "view == grafemaExplore",
           "group": "navigation@6"
+        },
+        {
+          "command": "grafema.copyTreeState",
+          "when": "view == grafemaExplore",
+          "group": "navigation@7"
         },
         {
           "command": "grafema.clearDebugLog",
@@ -240,6 +265,16 @@
           "command": "grafema.setAsRoot",
           "when": "view == grafemaExplore && viewItem == grafemaEdge",
           "group": "navigation@1"
+        },
+        {
+          "command": "grafema.bookmarkNode",
+          "when": "view == grafemaExplore && viewItem == grafemaNode",
+          "group": "navigation@2"
+        },
+        {
+          "command": "grafema.removeBookmark",
+          "when": "view == grafemaExplore && viewItem == grafemaBookmark",
+          "group": "navigation@1"
         }
       ],
       "view/item/inline": [
@@ -251,6 +286,11 @@
         {
           "command": "grafema.setAsRoot",
           "when": "view == grafemaExplore && viewItem == grafemaEdge",
+          "group": "inline"
+        },
+        {
+          "command": "grafema.setAsRoot",
+          "when": "view == grafemaExplore && viewItem == grafemaBookmark",
           "group": "inline"
         }
       ]

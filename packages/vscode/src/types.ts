@@ -22,7 +22,9 @@ export interface NodeMetadata {
  */
 export type GraphTreeItem =
   | { kind: 'node'; node: WireNode; metadata: NodeMetadata; isOnPath?: boolean; visitedNodeIds?: Set<string>; isRoot?: boolean }
-  | { kind: 'edge'; edge: WireEdge & Record<string, unknown>; direction: 'outgoing' | 'incoming'; targetNode?: WireNode; isOnPath?: boolean; visitedNodeIds?: Set<string> };
+  | { kind: 'edge'; edge: WireEdge & Record<string, unknown>; direction: 'outgoing' | 'incoming'; targetNode?: WireNode; isOnPath?: boolean; visitedNodeIds?: Set<string> }
+  | { kind: 'bookmark-section'; count: number }
+  | { kind: 'bookmark'; node: WireNode; metadata: NodeMetadata };
 
 /**
  * Graph statistics returned by getStats()
