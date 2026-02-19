@@ -108,12 +108,33 @@ export function findSimilarTypes(
 
   for (const type of availableTypes) {
     const dist = levenshtein(queriedLower, type.toLowerCase());
-    if (dist > 0 && dist <= maxDistance) {
+    if (dist <= maxDistance && (dist > 0 || queriedType !== type)) {
       similar.push(type);
     }
   }
 
   return similar;
+}
+
+export function extractQueriedTypes(query: string): { nodeTypes: string[]; edgeTypes: string[] } {
+  const nodeTypes: string[] = [];
+  const edgeTypes: string[] = [];
+
+  // Match node(VAR, "TYPE") and type(VAR, "TYPE") — both are valid node predicates.
+  // type() is an alias for node(), added in REG-518.
+  const nodeRegex = /\b(?:node|type)\([^,)]+,\s*"([^"]+)"\)/g;
+  let m: RegExpExecArray | null;
+  while ((m = nodeRegex.exec(query)) !== null) {
+    nodeTypes.push(m[1]);
+  }
+
+  // Match edge(SRC, DST, "TYPE") and incoming(DST, SRC, "TYPE")
+  const edgeRegex = /\b(?:edge|incoming)\([^,)]+,\s*[^,)]+,\s*"([^"]+)"\)/g;
+  while ((m = edgeRegex.exec(query)) !== null) {
+    edgeTypes.push(m[1]);
+  }
+
+  return { nodeTypes, edgeTypes };
 }
 
 // Levenshtein distance implementation

@@ -12,7 +12,8 @@
   ],
   "activationEvents": [
     "onView:grafemaStatus",
-    "onView:grafemaExplore"
+    "onView:grafemaExplore",
+    "onView:grafemaValueTrace"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -37,10 +38,6 @@
       ]
     },
     "viewsWelcome": [
-      {
-        "view": "grafemaValueTrace",
-        "contents": "Value tracing shows where values come from and where they go.\n\nComing in Phase 1."
-      },
       {
         "view": "grafemaCallers",
         "contents": "Call hierarchy shows who calls this function and what it calls.\n\nComing in Phase 2."
@@ -107,6 +104,20 @@
         "command": "grafema.filterTree",
         "title": "Grafema: Filter Tree",
         "icon": "$(filter)"
+      },
+      {
+        "command": "grafema.openValueTrace",
+        "title": "Grafema: Open Value Trace"
+      },
+      {
+        "command": "grafema.toggleValueTraceDirection",
+        "title": "Toggle Direction",
+        "icon": "$(arrow-swap)"
+      },
+      {
+        "command": "grafema.refreshValueTrace",
+        "title": "Refresh",
+        "icon": "$(refresh)"
       }
     ],
     "menus": {
@@ -149,6 +160,16 @@
         {
           "command": "grafema.clearDebugLog",
           "when": "view == grafemaDebug",
+          "group": "navigation@1"
+        },
+        {
+          "command": "grafema.toggleValueTraceDirection",
+          "when": "view == grafemaValueTrace",
+          "group": "navigation@0"
+        },
+        {
+          "command": "grafema.refreshValueTrace",
+          "when": "view == grafemaValueTrace",
           "group": "navigation@1"
         }
       ],

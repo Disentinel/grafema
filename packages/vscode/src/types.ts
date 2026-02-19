@@ -91,3 +91,90 @@ export function formatEdgeLabel(
       : edge.src;
   return `${edge.edgeType} \u2192 ${targetLabel}`;
 }
+
+// === VALUE TRACE TYPES ===
+
+/**
+ * Classification of leaf nodes in backward trace.
+ * Determines annotation display in hover and tree view.
+ *
+ * Priority order when multiple categories match:
+ *   user-input > external > config > literal > unknown
+ */
+export type SourceKind =
+  | 'user-input'  // HTTP request body/params, form data, WebSocket messages
+  | 'literal'     // String/number/boolean/null literal in source
+  | 'config'      // CONSTANT or file in config directory
+  | 'external'    // DB result, API response, external system input
+  | 'unknown';    // No classification possible
+
+/**
+ * A single node in a value trace path.
+ * Children are populated by the trace engine during BFS.
+ */
+export interface TraceNode {
+  node: WireNode;
+  metadata: NodeMetadata;
+  /** Edge type connecting this node to its parent in the trace */
+  edgeType: string;
+  /** 0 = first hop from root, 1 = second hop, etc. */
+  depth: number;
+  /** Only set on leaf nodes in backward trace (no further origins found) */
+  sourceKind?: SourceKind;
+  /** Direct children in the trace tree */
+  children: TraceNode[];
+  /** True if there are more children than MAX_BRANCHING_FACTOR */
+  hasMoreChildren?: boolean;
+}
+
+/**
+ * Return value from traceBackward / traceForward.
+ * `truncated` is true when the root-level edge list exceeded MAX_BRANCHING_FACTOR.
+ */
+export interface TraceOutput {
+  nodes: TraceNode[];
+  truncated: boolean;
+}
+
+/**
+ * Complete result of tracing a root node.
+ */
+export interface TraceResult {
+  rootNode: WireNode;
+  rootMetadata: NodeMetadata;
+  /** Direct origins (backward trace) */
+  backward: TraceNode[];
+  /** Direct destinations (forward trace) */
+  forward: TraceNode[];
+  gaps: TraceGap[];
+  /** Coverage ratio: traced / total leaf paths in backward trace */
+  coverage: { traced: number; total: number };
+  /** True when backward trace had more top-level edges than MAX_BRANCHING_FACTOR */
+  backwardTruncated?: boolean;
+  /** True when forward trace had more top-level edges than MAX_BRANCHING_FACTOR */
+  forwardTruncated?: boolean;
+}
+
+/**
+ * Represents a detected connectivity gap in the trace.
+ */
+export interface TraceGap {
+  /** ID of the node with no traced origins */
+  nodeId: string;
+  /** Name of the node for display */
+  nodeName: string;
+  /** Human-readable description of the gap */
+  description: string;
+  /** The gap heuristic that detected this */
+  heuristic: 'no-origins';
+}
+
+/**
+ * Union type for all items in the VALUE TRACE TreeDataProvider.
+ */
+export type ValueTraceItem =
+  | { kind: 'section'; label: string; icon: string; direction: 'backward' | 'forward' | 'gaps' }
+  | { kind: 'trace-node'; traceNode: TraceNode; direction: 'backward' | 'forward' }
+  | { kind: 'gap'; gap: TraceGap }
+  | { kind: 'status'; message: string }
+  | { kind: 'more'; parentNodeId: string; count: number };
