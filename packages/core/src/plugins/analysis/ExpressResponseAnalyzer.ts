@@ -61,7 +61,7 @@ export class ExpressResponseAnalyzer extends Plugin {
     const logger = this.log(context);
 
     try {
-      const { graph } = context;
+      const { graph, onProgress } = context;
       const projectPath = (context.manifest as { projectPath?: string })?.projectPath ?? '';
 
       // Get all http:route nodes
@@ -77,10 +77,21 @@ export class ExpressResponseAnalyzer extends Plugin {
       const allNodes: AnyBrandedNode[] = [];
       const allEdges: Array<{ type: string; src: string; dst: string; metadata?: unknown }> = [];
 
-      for (const route of routes) {
+      for (let i = 0; i < routes.length; i++) {
+        const route = routes[i];
         const result = await this.analyzeRouteResponses(route, graph, projectPath, allNodes, allEdges);
         edgesCreated += result.edges;
         nodesCreated += result.nodes;
+
+        if ((i + 1) % 20 === 0 || i === routes.length - 1) {
+          onProgress?.({
+            phase: 'analysis',
+            currentPlugin: 'ExpressResponseAnalyzer',
+            message: `Processing routes ${i + 1}/${routes.length}`,
+            totalFiles: routes.length,
+            processedFiles: i + 1,
+          });
+        }
       }
 
       // Flush all nodes and edges

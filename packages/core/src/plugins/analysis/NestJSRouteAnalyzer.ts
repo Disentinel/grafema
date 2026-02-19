@@ -121,7 +121,7 @@ export class NestJSRouteAnalyzer extends Plugin {
     const logger = this.log(context);
 
     try {
-      const { graph } = context;
+      const { graph, onProgress } = context;
       // Single pass: collect all DECORATOR nodes, partition by relevance
       const controllers: ControllerInfo[] = [];
       const httpMethods: HttpMethodInfo[] = [];
@@ -169,7 +169,8 @@ export class NestJSRouteAnalyzer extends Plugin {
       let nodesCreated = 0;
       let edgesCreated = 0;
 
-      for (const controller of controllers) {
+      for (let i = 0; i < controllers.length; i++) {
+        const controller = controllers[i];
         // Get class node to find its children
         const classNode = await graph.getNode(controller.targetId);
         if (!classNode) {
@@ -218,6 +219,16 @@ export class NestJSRouteAnalyzer extends Plugin {
               }
             }
           }
+        }
+
+        if ((i + 1) % 20 === 0 || i === controllers.length - 1) {
+          onProgress?.({
+            phase: 'analysis',
+            currentPlugin: 'NestJSRouteAnalyzer',
+            message: `Processing controllers ${i + 1}/${controllers.length}`,
+            totalFiles: controllers.length,
+            processedFiles: i + 1,
+          });
         }
       }
 

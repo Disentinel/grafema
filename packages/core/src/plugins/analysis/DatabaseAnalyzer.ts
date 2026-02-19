@@ -62,7 +62,7 @@ export class DatabaseAnalyzer extends Plugin {
     const logger = this.log(context);
 
     try {
-      const { graph } = context;
+      const { graph, onProgress } = context;
       const projectPath = (context.manifest as { projectPath?: string })?.projectPath ?? '';
 
       // Получаем все MODULE ноды
@@ -92,6 +92,13 @@ export class DatabaseAnalyzer extends Plugin {
             total: modules.length,
             elapsed: `${elapsed}s`,
             avgTime: `${avgTime}ms/module`
+          });
+          onProgress?.({
+            phase: 'analysis',
+            currentPlugin: 'DatabaseAnalyzer',
+            message: `Processing modules ${i + 1}/${modules.length}`,
+            totalFiles: modules.length,
+            processedFiles: i + 1,
           });
         }
       }
