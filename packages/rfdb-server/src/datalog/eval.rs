@@ -5,6 +5,7 @@
 use std::collections::HashMap;
 use crate::graph::GraphStore;
 use crate::datalog::types::*;
+use super::utils::reorder_literals;
 
 /// A value in Datalog bindings
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -125,12 +126,16 @@ impl<'a> Evaluator<'a> {
 
     /// Evaluate a query (conjunction of literals)
     ///
+    /// Reorders literals so that predicates requiring bound variables come after
+    /// the predicates that provide those bindings, then evaluates left-to-right.
+    ///
     /// Returns all bindings satisfying the conjunction.
     /// This allows queries like `node(X, "type"), attr(X, "url", U)`.
-    pub fn eval_query(&self, literals: &[Literal]) -> Vec<Bindings> {
+    pub fn eval_query(&self, literals: &[Literal]) -> Result<Vec<Bindings>, String> {
+        let ordered = reorder_literals(literals)?;
         let mut current = vec![Bindings::new()];
 
-        for literal in literals {
+        for literal in &ordered {
             let mut next = vec![];
 
             for bindings in &current {
@@ -166,7 +171,7 @@ impl<'a> Evaluator<'a> {
             }
         }
 
-        current
+        Ok(current)
     }
 
     /// Evaluate an atom (built-in or derived)
@@ -771,7 +776,13 @@ impl<'a> Evaluator<'a> {
 
         for rule in rules {
             // Evaluate rule body and collect bindings
-            let body_results = self.eval_rule_body(rule);
+            let body_results = match self.eval_rule_body(rule) {
+                Ok(b) => b,
+                Err(e) => {
+                    eprintln!("datalog eval_derived: reorder error for rule {:?}: {}", rule, e);
+                    continue;
+                }
+            };
 
             // Project bindings to head variables
             for bindings in body_results {
@@ -785,10 +796,13 @@ impl<'a> Evaluator<'a> {
     }
 
     /// Evaluate rule body and return all satisfying bindings
-    fn eval_rule_body(&self, rule: &Rule) -> Vec<Bindings> {
+    ///
+    /// Reorders body literals before evaluation to ensure correct variable binding order.
+    fn eval_rule_body(&self, rule: &Rule) -> Result<Vec<Bindings>, String> {
+        let ordered = reorder_literals(rule.body())?;
         let mut current = vec![Bindings::new()];
 
-        for literal in rule.body() {
+        for literal in &ordered {
             let mut next = vec![];
 
             for bindings in &current {
@@ -824,7 +838,7 @@ impl<'a> Evaluator<'a> {
             }
         }
 
-        current
+        Ok(current)
     }
 
     /// Substitute known bindings into an atom

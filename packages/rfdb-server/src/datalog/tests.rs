@@ -1355,7 +1355,7 @@ mod eval_tests {
 
         // Single atom query
         let literals = parse_query("node(X, \"queue:publish\")").unwrap();
-        let results = evaluator.eval_query(&literals);
+        let results = evaluator.eval_query(&literals).unwrap();
 
         // Should find nodes 1 and 3
         assert_eq!(results.len(), 2);
@@ -1368,7 +1368,7 @@ mod eval_tests {
 
         // Conjunction: find CALLS edges and bind source/dest
         let literals = parse_query("edge(X, Y, \"CALLS\"), node(Y, T)").unwrap();
-        let results = evaluator.eval_query(&literals);
+        let results = evaluator.eval_query(&literals).unwrap();
 
         // Should find 2 edges, each with bound X, Y, and T
         assert_eq!(results.len(), 2);
@@ -1421,7 +1421,7 @@ mod eval_tests {
         // Query: node(X, "http:request"), attr(X, "url", U)
         // Should return both X (node ID) and U (url attribute value)
         let literals = parse_query("node(X, \"http:request\"), attr(X, \"url\", U)").unwrap();
-        let results = evaluator.eval_query(&literals);
+        let results = evaluator.eval_query(&literals).unwrap();
 
         // Should find both http:request nodes
         assert_eq!(results.len(), 2);
@@ -1482,7 +1482,7 @@ mod eval_tests {
 
         // Query: filter by specific attribute value
         let literals = parse_query("node(X, \"http:request\"), attr(X, \"method\", \"GET\")").unwrap();
-        let results = evaluator.eval_query(&literals);
+        let results = evaluator.eval_query(&literals).unwrap();
 
         // Should find only the GET request
         assert_eq!(results.len(), 1);
@@ -1497,7 +1497,7 @@ mod eval_tests {
         // Find publishers without any outgoing path
         // Node 3 is orphan (no edges)
         let literals = parse_query("node(X, \"queue:publish\"), \\+ path(X, _)").unwrap();
-        let results = evaluator.eval_query(&literals);
+        let results = evaluator.eval_query(&literals).unwrap();
 
         // Should find node 3 (orphan publisher)
         assert_eq!(results.len(), 1);
@@ -1906,7 +1906,7 @@ mod eval_tests {
         let mut evaluator = EvaluatorExplain::new(&engine, true);
 
         let literals = parse_query("node(X, \"queue:publish\")").unwrap();
-        let result = evaluator.eval_query(&literals);
+        let result = evaluator.eval_query(&literals).unwrap();
 
         assert!(!result.explain_steps.is_empty(), "explain_steps should be non-empty when explain=true");
         assert_eq!(result.explain_steps[0].step, 1);
@@ -1920,7 +1920,7 @@ mod eval_tests {
         let mut evaluator = EvaluatorExplain::new(&engine, false);
 
         let literals = parse_query("node(X, \"queue:publish\")").unwrap();
-        let result = evaluator.eval_query(&literals);
+        let result = evaluator.eval_query(&literals).unwrap();
 
         assert!(result.explain_steps.is_empty(), "explain_steps should be empty when explain=false");
         assert_eq!(result.bindings.len(), 2, "should still produce correct bindings");
@@ -1948,12 +1948,12 @@ mod eval_tests {
         // Run with plain Evaluator
         let evaluator = Evaluator::new(&engine);
         let literals = parse_query("node(X, \"queue:publish\")").unwrap();
-        let plain_bindings = evaluator.eval_query(&literals);
+        let plain_bindings = evaluator.eval_query(&literals).unwrap();
 
         // Run with EvaluatorExplain
         let mut explain_eval = EvaluatorExplain::new(&engine, true);
         let literals2 = parse_query("node(X, \"queue:publish\")").unwrap();
-        let explain_result = explain_eval.eval_query(&literals2);
+        let explain_result = explain_eval.eval_query(&literals2).unwrap();
 
         // Both should produce the same number of results
         assert_eq!(plain_bindings.len(), explain_result.bindings.len(),
@@ -1982,7 +1982,7 @@ mod eval_tests {
         let mut evaluator = EvaluatorExplain::new(&engine, true);
 
         let literals = parse_query("node(X, \"queue:publish\")").unwrap();
-        let result = evaluator.eval_query(&literals);
+        let result = evaluator.eval_query(&literals).unwrap();
 
         assert!(result.stats.nodes_visited > 0,
             "stats.nodes_visited should be > 0 after querying nodes");
@@ -2099,5 +2099,422 @@ mod eval_tests {
         assert_eq!(results[0].get("Loop"), Some(&Value::Id(1)));
         assert_eq!(results[0].get("Var"), Some(&Value::Id(10)));
         assert_eq!(results[0].get("File"), Some(&Value::Str("api.js".to_string())));
+    }
+
+    // ============================================================================
+    // Query Reordering Tests (REG-504)
+    // ============================================================================
+
+    // --- Tests 0a-0d: reorder_literals unit tests (no graph needed) ---
+
+    mod reorder_tests {
+        use super::*;
+        use crate::datalog::utils::reorder_literals;
+
+        #[test]
+        fn test_reorder_empty_input() {
+            // 0a: empty input returns empty output
+            let result = reorder_literals(&[]);
+            assert_eq!(result.unwrap(), vec![]);
+        }
+
+        #[test]
+        fn test_reorder_already_correct_order() {
+            // 0b: [node(X, "CALL"), attr(X, "name", V)] is already correct — preserved
+            let lit_node = Literal::positive(Atom::new("node", vec![
+                Term::var("X"),
+                Term::constant("CALL"),
+            ]));
+            let lit_attr = Literal::positive(Atom::new("attr", vec![
+                Term::var("X"),
+                Term::constant("name"),
+                Term::var("V"),
+            ]));
+
+            let input = vec![lit_node.clone(), lit_attr.clone()];
+            let result = reorder_literals(&input).unwrap();
+
+            assert_eq!(result.len(), 2);
+            assert_eq!(result[0], lit_node);
+            assert_eq!(result[1], lit_attr);
+        }
+
+        #[test]
+        fn test_reorder_wrong_order_fixed() {
+            // 0c: [attr(X, "name", V), node(X, "CALL")] reordered to [node first, attr second]
+            let lit_node = Literal::positive(Atom::new("node", vec![
+                Term::var("X"),
+                Term::constant("CALL"),
+            ]));
+            let lit_attr = Literal::positive(Atom::new("attr", vec![
+                Term::var("X"),
+                Term::constant("name"),
+                Term::var("V"),
+            ]));
+
+            let input = vec![lit_attr.clone(), lit_node.clone()];
+            let result = reorder_literals(&input).unwrap();
+
+            assert_eq!(result.len(), 2);
+            // node must come first because attr requires X to be bound
+            assert_eq!(result[0], lit_node);
+            assert_eq!(result[1], lit_attr);
+        }
+
+        #[test]
+        fn test_reorder_circular_dependency_returns_err() {
+            // 0d: [attr(X, "n", Y), attr(Y, "n", X)] — both require bound id, neither provides seed
+            let lit1 = Literal::positive(Atom::new("attr", vec![
+                Term::var("X"),
+                Term::constant("n"),
+                Term::var("Y"),
+            ]));
+            let lit2 = Literal::positive(Atom::new("attr", vec![
+                Term::var("Y"),
+                Term::constant("n"),
+                Term::var("X"),
+            ]));
+
+            let input = vec![lit1, lit2];
+            let result = reorder_literals(&input);
+
+            assert!(result.is_err(), "circular dependency should return Err");
+            let err_msg = result.unwrap_err();
+            assert!(
+                err_msg.contains("circular"),
+                "error message should contain 'circular', got: {err_msg}"
+            );
+        }
+    }
+
+    // --- Tests 1-8: Integration tests via evaluator ---
+
+    /// Helper: set up a graph with CALL nodes, attributes, and edges for reorder tests
+    fn setup_reorder_test_graph() -> GraphEngine {
+        let dir = tempdir().unwrap();
+        let mut engine = GraphEngine::create(dir.path()).unwrap();
+
+        engine.add_nodes(vec![
+            // CALL node: handleRequest
+            NodeRecord {
+                id: 1,
+                node_type: Some("CALL".to_string()),
+                name: Some("handleRequest".to_string()),
+                file: Some("api.js".to_string()),
+                file_id: 0,
+                name_offset: 0,
+                version: "main".into(),
+                exported: false,
+                replaces: None,
+                deleted: false,
+                metadata: None,
+                semantic_id: None,
+            },
+            // CALL node: handleOrder
+            NodeRecord {
+                id: 2,
+                node_type: Some("CALL".to_string()),
+                name: Some("handleOrder".to_string()),
+                file: Some("order.js".to_string()),
+                file_id: 0,
+                name_offset: 0,
+                version: "main".into(),
+                exported: false,
+                replaces: None,
+                deleted: false,
+                metadata: None,
+                semantic_id: None,
+            },
+            // FUNCTION node: target of CALL 1
+            NodeRecord {
+                id: 3,
+                node_type: Some("FUNCTION".to_string()),
+                name: Some("processRequest".to_string()),
+                file: Some("handler.js".to_string()),
+                file_id: 0,
+                name_offset: 0,
+                version: "main".into(),
+                exported: false,
+                replaces: None,
+                deleted: false,
+                metadata: None,
+                semantic_id: None,
+            },
+            // queue:publish node (for negation/incoming tests)
+            NodeRecord {
+                id: 4,
+                node_type: Some("queue:publish".to_string()),
+                name: Some("events-pub".to_string()),
+                file: Some("events.js".to_string()),
+                file_id: 0,
+                name_offset: 0,
+                version: "main".into(),
+                exported: false,
+                replaces: None,
+                deleted: false,
+                metadata: None,
+                semantic_id: None,
+            },
+            // Another CALL node: doWork (does NOT start with "handle")
+            NodeRecord {
+                id: 5,
+                node_type: Some("CALL".to_string()),
+                name: Some("doWork".to_string()),
+                file: Some("worker.js".to_string()),
+                file_id: 0,
+                name_offset: 0,
+                version: "main".into(),
+                exported: false,
+                replaces: None,
+                deleted: false,
+                metadata: None,
+                semantic_id: None,
+            },
+        ]);
+
+        // Edges: 1 calls 3, 3 calls 4 (creating a path 1->3->4)
+        engine.add_edges(vec![
+            EdgeRecord {
+                src: 1,
+                dst: 3,
+                edge_type: Some("calls".to_string()),
+                version: "main".into(),
+                metadata: None,
+                deleted: false,
+            },
+            EdgeRecord {
+                src: 3,
+                dst: 4,
+                edge_type: Some("calls".to_string()),
+                version: "main".into(),
+                metadata: None,
+                deleted: false,
+            },
+        ], false);
+
+        engine
+    }
+
+    #[test]
+    fn test_reorder_attr_before_node_gives_same_results() {
+        // Test 1: attr before node (wrong order) gives same results as correct order
+        let engine = setup_reorder_test_graph();
+        let evaluator = Evaluator::new(&engine);
+
+        let wrong_order = parse_query(r#"attr(X, "name", N), node(X, "CALL")"#).unwrap();
+        let correct_order = parse_query(r#"node(X, "CALL"), attr(X, "name", N)"#).unwrap();
+
+        let results_wrong = evaluator.eval_query(&wrong_order).unwrap();
+        let results_correct = evaluator.eval_query(&correct_order).unwrap();
+
+        assert_eq!(
+            results_wrong.len(), results_correct.len(),
+            "wrong order and correct order should produce same number of results"
+        );
+        assert!(
+            !results_correct.is_empty(),
+            "results should be non-empty (graph has CALL nodes)"
+        );
+
+        // Collect and sort values for deterministic comparison
+        let mut wrong_vals: Vec<String> = results_wrong.iter()
+            .filter_map(|b| b.get("N").map(|v| v.as_str()))
+            .collect();
+        wrong_vals.sort();
+
+        let mut correct_vals: Vec<String> = results_correct.iter()
+            .filter_map(|b| b.get("N").map(|v| v.as_str()))
+            .collect();
+        correct_vals.sort();
+
+        assert_eq!(wrong_vals, correct_vals, "bound values should match regardless of order");
+    }
+
+    #[test]
+    fn test_reorder_negation_before_positive_gives_same_results() {
+        // Test 2: negation before positive (wrong order) gives same results
+        let engine = setup_reorder_test_graph();
+        let evaluator = Evaluator::new(&engine);
+
+        let wrong_order = parse_query(r#"\+ path(X, _), node(X, "queue:publish")"#).unwrap();
+        let correct_order = parse_query(r#"node(X, "queue:publish"), \+ path(X, _)"#).unwrap();
+
+        let results_wrong = evaluator.eval_query(&wrong_order).unwrap();
+        let results_correct = evaluator.eval_query(&correct_order).unwrap();
+
+        assert_eq!(
+            results_wrong.len(), results_correct.len(),
+            "negation-first and positive-first should produce same results"
+        );
+    }
+
+    #[test]
+    fn test_reorder_already_correct_order_still_works() {
+        // Test 3: already correct order returns expected results
+        let engine = setup_reorder_test_graph();
+        let evaluator = Evaluator::new(&engine);
+
+        let literals = parse_query(r#"node(X, "CALL"), attr(X, "name", N)"#).unwrap();
+        let results = evaluator.eval_query(&literals).unwrap();
+
+        // Graph has 3 CALL nodes (ids 1, 2, 5)
+        assert_eq!(results.len(), 3, "should find all 3 CALL nodes");
+
+        let mut names: Vec<String> = results.iter()
+            .filter_map(|b| b.get("N").map(|v| v.as_str()))
+            .collect();
+        names.sort();
+
+        assert_eq!(names, vec!["doWork", "handleOrder", "handleRequest"]);
+    }
+
+    #[test]
+    fn test_reorder_circular_dependency_returns_err() {
+        // Test 4: circular dependency via eval_query returns Err
+        let engine = setup_reorder_test_graph();
+        let evaluator = Evaluator::new(&engine);
+
+        // Construct a pathological query: attr(X, "k", Y), attr(Y, "k", X)
+        // Both need bound first arg, neither provides a seed
+        let circular = vec![
+            Literal::positive(Atom::new("attr", vec![
+                Term::var("X"),
+                Term::constant("k"),
+                Term::var("Y"),
+            ])),
+            Literal::positive(Atom::new("attr", vec![
+                Term::var("Y"),
+                Term::constant("k"),
+                Term::var("X"),
+            ])),
+        ];
+
+        let result = evaluator.eval_query(&circular);
+        assert!(result.is_err(), "circular dependency should return Err from eval_query");
+        let err_msg = result.unwrap_err();
+        assert!(
+            err_msg.contains("circular"),
+            "error message should contain 'circular', got: {err_msg}"
+        );
+    }
+
+    #[test]
+    fn test_reorder_multi_variable_chain() {
+        // Test 5: node -> attr -> edge -> attr chain reordered from wrong order
+        let engine = setup_reorder_test_graph();
+        let evaluator = Evaluator::new(&engine);
+
+        // Wrong order: attr of Dst first, then edge, then attr of X, then node
+        let wrong_order = parse_query(
+            r#"attr(Dst, "name", L), edge(X, Dst, "calls"), attr(X, "name", N), node(X, "CALL")"#
+        ).unwrap();
+        // Correct order: node first, then attr(X), then edge, then attr(Dst)
+        let correct_order = parse_query(
+            r#"node(X, "CALL"), attr(X, "name", N), edge(X, Dst, "calls"), attr(Dst, "name", L)"#
+        ).unwrap();
+
+        let results_wrong = evaluator.eval_query(&wrong_order).unwrap();
+        let results_correct = evaluator.eval_query(&correct_order).unwrap();
+
+        assert_eq!(
+            results_wrong.len(), results_correct.len(),
+            "multi-variable chain: wrong and correct order should produce same number of results"
+        );
+        assert!(
+            !results_correct.is_empty(),
+            "should find at least one match (node 1 calls node 3)"
+        );
+
+        // Verify the bound values match
+        let mut wrong_labels: Vec<String> = results_wrong.iter()
+            .filter_map(|b| b.get("L").map(|v| v.as_str()))
+            .collect();
+        wrong_labels.sort();
+
+        let mut correct_labels: Vec<String> = results_correct.iter()
+            .filter_map(|b| b.get("L").map(|v| v.as_str()))
+            .collect();
+        correct_labels.sort();
+
+        assert_eq!(wrong_labels, correct_labels, "bound labels should match");
+    }
+
+    #[test]
+    fn test_reorder_constraint_predicates_after_bindings() {
+        // Test 6: neq before node bindings (wrong order) gives same results
+        let engine = setup_reorder_test_graph();
+        let evaluator = Evaluator::new(&engine);
+
+        let wrong_order = parse_query(
+            r#"neq(X, Y), node(X, "CALL"), node(Y, "CALL")"#
+        ).unwrap();
+        let correct_order = parse_query(
+            r#"node(X, "CALL"), node(Y, "CALL"), neq(X, Y)"#
+        ).unwrap();
+
+        let results_wrong = evaluator.eval_query(&wrong_order).unwrap();
+        let results_correct = evaluator.eval_query(&correct_order).unwrap();
+
+        assert_eq!(
+            results_wrong.len(), results_correct.len(),
+            "neq before/after node bindings should produce same results"
+        );
+        // 3 CALL nodes: 3*2=6 ordered pairs where X != Y
+        assert_eq!(results_correct.len(), 6, "3 CALL nodes, 6 ordered pairs");
+    }
+
+    #[test]
+    fn test_reorder_rule_body() {
+        // Test 7: rule body with wrong order (attr and starts_with before node) still works
+        let engine = setup_reorder_test_graph();
+        let mut evaluator = Evaluator::new(&engine);
+
+        // Rule body has attr and starts_with before node — needs reordering
+        let rule = parse_rule(
+            r#"caller(X) :- attr(X, "name", N), node(X, "CALL"), starts_with(N, "handle")."#
+        ).unwrap();
+        evaluator.add_rule(rule);
+
+        let query = parse_atom("caller(X)").unwrap();
+        let results = evaluator.query(&query);
+
+        // Should find nodes 1 (handleRequest) and 2 (handleOrder)
+        assert_eq!(results.len(), 2, "should find 2 CALL nodes starting with 'handle'");
+
+        let mut ids: Vec<u128> = results.iter()
+            .filter_map(|b| b.get("X").and_then(|v| v.as_id()))
+            .collect();
+        ids.sort();
+
+        assert_eq!(ids, vec![1, 2]);
+    }
+
+    #[test]
+    fn test_reorder_incoming_with_unbound_dst() {
+        // Test 8: incoming with unbound dst before node that provides dst
+        let engine = setup_reorder_test_graph();
+        let evaluator = Evaluator::new(&engine);
+
+        // Wrong order: incoming before node (X is unbound when incoming is evaluated)
+        let wrong_order = parse_query(
+            r#"incoming(X, Src, "calls"), node(X, "FUNCTION")"#
+        ).unwrap();
+        // Correct order: node first, then incoming
+        let correct_order = parse_query(
+            r#"node(X, "FUNCTION"), incoming(X, Src, "calls")"#
+        ).unwrap();
+
+        let results_wrong = evaluator.eval_query(&wrong_order).unwrap();
+        let results_correct = evaluator.eval_query(&correct_order).unwrap();
+
+        assert_eq!(
+            results_wrong.len(), results_correct.len(),
+            "incoming with unbound dst: wrong and correct order should produce same results"
+        );
+        // Node 3 is FUNCTION and has incoming edge from node 1
+        assert!(
+            !results_correct.is_empty(),
+            "should find at least one match"
+        );
     }
 }
