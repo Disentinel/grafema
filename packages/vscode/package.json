@@ -15,7 +15,8 @@
     "onView:grafemaExplore",
     "onView:grafemaValueTrace",
     "onView:grafemaCallers",
-    "onView:grafemaIssues"
+    "onView:grafemaIssues",
+    "onView:grafemaBlastRadius"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -39,12 +40,6 @@
         { "id": "grafemaDebug", "name": "Debug Log", "visibility": "collapsed" }
       ]
     },
-    "viewsWelcome": [
-      {
-        "view": "grafemaBlastRadius",
-        "contents": "Blast radius shows what breaks if you change this code.\n\nComing in Phase 4."
-      }
-    ],
     "commands": [
       {
         "command": "grafema.focusStatus",
@@ -143,8 +138,13 @@
         "icon": "$(refresh)"
       },
       {
-        "command": "grafema.blastRadiusPlaceholder",
-        "title": "Blast Radius (coming Phase 4)"
+        "command": "grafema.openBlastRadius",
+        "title": "Grafema: Open Blast Radius"
+      },
+      {
+        "command": "grafema.refreshBlastRadius",
+        "title": "Refresh",
+        "icon": "$(refresh)"
       }
     ],
     "menus": {
@@ -222,6 +222,11 @@
         {
           "command": "grafema.refreshIssues",
           "when": "view == grafemaIssues",
+          "group": "navigation@0"
+        },
+        {
+          "command": "grafema.refreshBlastRadius",
+          "when": "view == grafemaBlastRadius",
           "group": "navigation@0"
         }
       ],

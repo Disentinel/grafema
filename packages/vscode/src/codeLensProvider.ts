@@ -153,7 +153,7 @@ export class GrafemaCodeLensProvider implements vscode.CodeLensProvider {
       // Lens 3: blast radius (only if enabled)
       if (showBlast) {
         lenses.push(new vscode.CodeLens(range, {
-          command: 'grafema.blastRadiusPlaceholder',
+          command: 'grafema.openBlastRadius',
           title: 'blast: ?',
           arguments: [node.id, filePath, 'blast'],
         }));
@@ -197,7 +197,7 @@ export class GrafemaCodeLensProvider implements vscode.CodeLensProvider {
         }));
         if (showBlast) {
           lenses.push(new vscode.CodeLens(range, {
-            command: 'grafema.blastRadiusPlaceholder',
+            command: 'grafema.openBlastRadius',
             title: 'blast: ?',
             arguments: [node.id, filePath, 'blast'],
           }));
@@ -210,7 +210,7 @@ export class GrafemaCodeLensProvider implements vscode.CodeLensProvider {
       lenses.push(new vscode.CodeLens(range, this.buildCommand(node.id, filePath, 'callees', counts)));
       if (showBlast) {
         lenses.push(new vscode.CodeLens(range, {
-          command: 'grafema.blastRadiusPlaceholder',
+          command: 'grafema.openBlastRadius',
           title: 'blast: ?',
           arguments: [node.id, filePath, 'blast'],
         }));
@@ -244,7 +244,7 @@ export class GrafemaCodeLensProvider implements vscode.CodeLensProvider {
       };
     }
     return {
-      command: 'grafema.blastRadiusPlaceholder',
+      command: 'grafema.openBlastRadius',
       title: 'blast: ?',
       arguments: [nodeId, filePath, 'blast'],
     };

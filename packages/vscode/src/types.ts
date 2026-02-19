@@ -198,6 +198,29 @@ export type CallersItem =
   | { kind: 'status'; message: string }
   | { kind: 'more'; count: number };
 
+// === BLAST RADIUS PANEL TYPES ===
+
+/**
+ * Union type for all items in the BLAST RADIUS TreeDataProvider.
+ *
+ * Kinds:
+ *   - 'root'       : root node with impact level badge
+ *   - 'section'    : "Direct dependents (N)" / "Indirect dependents (N)" / "Guarantees at risk (N)"
+ *   - 'dependent'  : a direct or indirect dependent node
+ *   - 'guarantee'  : a guarantee node governing the root's file
+ *   - 'summary'    : summary line ("N total * M files * K guarantees")
+ *   - 'status'     : placeholder when not connected / no node / no dependents
+ *   - 'loading'    : shown while BFS is in progress
+ */
+export type BlastRadiusItem =
+  | { kind: 'root'; label: string; impactLevel: 'LOW' | 'MEDIUM' | 'HIGH'; file?: string; line?: number }
+  | { kind: 'section'; label: string; sectionKind: 'direct' | 'indirect' | 'guarantee'; count: number }
+  | { kind: 'dependent'; name: string; file?: string; line?: number; nodeType: string; viaPath: string[]; isIndirect: boolean }
+  | { kind: 'guarantee'; name: string; file?: string; metadata?: Record<string, unknown> }
+  | { kind: 'summary'; text: string }
+  | { kind: 'status'; message: string }
+  | { kind: 'loading' };
+
 // === ISSUES PANEL TYPES ===
 
 /**
