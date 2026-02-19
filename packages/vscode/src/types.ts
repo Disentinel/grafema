@@ -178,3 +178,22 @@ export type ValueTraceItem =
   | { kind: 'gap'; gap: TraceGap }
   | { kind: 'status'; message: string }
   | { kind: 'more'; parentNodeId: string; count: number };
+
+// === CALLERS PANEL TYPES ===
+
+/**
+ * Union type for all items in the CALLERS TreeDataProvider.
+ *
+ * Kinds:
+ *   - 'root'      : pinned root node label (the function being analyzed)
+ *   - 'section'   : "Incoming (N callers)" or "Outgoing (N callees)" header
+ *   - 'call-node' : a caller or callee function node (recursively expandable)
+ *   - 'status'    : placeholder when not connected / no node pinned
+ *   - 'more'      : "N+ more" leaf when capped by MAX_BRANCHING_FACTOR
+ */
+export type CallersItem =
+  | { kind: 'root'; node: WireNode; metadata: NodeMetadata }
+  | { kind: 'section'; label: string; icon: string; direction: 'incoming' | 'outgoing'; count: number }
+  | { kind: 'call-node'; node: WireNode; metadata: NodeMetadata; direction: 'incoming' | 'outgoing'; depth: number; visitedIds: Set<string> }
+  | { kind: 'status'; message: string }
+  | { kind: 'more'; count: number };

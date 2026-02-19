@@ -18,6 +18,8 @@ import { buildTreeState } from './treeStateExporter';
 import { findAndSetRoot, updateStatusBar } from './cursorTracker';
 import { ValueTraceProvider } from './valueTraceProvider';
 import { GrafemaHoverProvider } from './hoverProvider';
+import { CallersProvider } from './callersProvider';
+import { GrafemaCodeLensProvider } from './codeLensProvider';
 
 let clientManager: GrafemaClientManager | null = null;
 let edgesProvider: EdgesProvider | null = null;
@@ -28,6 +30,7 @@ let followCursor = true; // Follow cursor mode (toggle with cmd+shift+g)
 let statusBarItem: vscode.StatusBarItem | null = null;
 let selectedTreeItem: GraphTreeItem | null = null; // Track selected item for state export
 let valueTraceProvider: ValueTraceProvider | null = null;
+let callersProvider: CallersProvider | null = null;
 
 /**
  * Extension activation
@@ -88,6 +91,25 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     hoverProvider
   );
 
+  // Register CALLERS panel provider
+  callersProvider = new CallersProvider(clientManager);
+  const callersRegistration = vscode.window.registerTreeDataProvider(
+    'grafemaCallers',
+    callersProvider
+  );
+
+  // Register CodeLens provider (JS/TS files only)
+  const codeLensProvider = new GrafemaCodeLensProvider(clientManager);
+  const codeLensDisposable = vscode.languages.registerCodeLensProvider(
+    [
+      { scheme: 'file', language: 'javascript' },
+      { scheme: 'file', language: 'typescript' },
+      { scheme: 'file', language: 'javascriptreact' },
+      { scheme: 'file', language: 'typescriptreact' },
+    ],
+    codeLensProvider
+  );
+
   // Track selection changes for state export
   const selectionTracker = treeView.onDidChangeSelection((event) => {
     selectedTreeItem = event.selection[0] ?? null;
@@ -135,6 +157,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     statusTreeRegistration,
     debugTreeRegistration,
     valueTraceRegistration,
+    callersRegistration,
+    codeLensDisposable,
     hoverDisposable,
     treeView,
     selectionTracker,
@@ -437,6 +461,85 @@ function registerCommands(): vscode.Disposable[] {
     await findAndTraceAtCursor();
   }));
 
+  // Open CALLERS panel — B4: uses nodeId+direction from args when provided
+  disposables.push(vscode.commands.registerCommand(
+    'grafema.openCallers',
+    async (nodeId?: string, _filePath?: string, lensType?: string) => {
+      await vscode.commands.executeCommand('grafemaCallers.focus');
+      if (nodeId && clientManager?.isConnected()) {
+        try {
+          const node = await clientManager.getClient().getNode(nodeId);
+          if (node) {
+            callersProvider?.setRootNode(node);
+            if (lensType === 'callers') {
+              callersProvider?.setDirection('incoming');
+            } else if (lensType === 'callees') {
+              callersProvider?.setDirection('outgoing');
+            }
+          }
+        } catch {
+          // Fallback to cursor
+          await findAndSetCallersAtCursor();
+        }
+      } else {
+        await findAndSetCallersAtCursor();
+      }
+    }
+  ));
+
+  // Set max depth for CALLERS panel via Quick Pick
+  disposables.push(vscode.commands.registerCommand('grafema.setCallersDepth', async () => {
+    const currentDepth = callersProvider?.getMaxDepth() ?? 3;
+    const items = ['1', '2', '3', '4', '5'].map((d) => ({
+      label: d,
+      description: d === String(currentDepth) ? '(current)' : '',
+    }));
+    const picked = await vscode.window.showQuickPick(items, {
+      placeHolder: 'Max call hierarchy depth',
+    });
+    if (picked) {
+      callersProvider?.setMaxDepth(parseInt(picked.label, 10));
+    }
+  }));
+
+  // Toggle CALLERS panel filters via Quick Pick
+  disposables.push(vscode.commands.registerCommand('grafema.toggleCallersFilter', async () => {
+    if (!callersProvider) return;
+    const items: vscode.QuickPickItem[] = [
+      {
+        label: 'Hide test files',
+        picked: callersProvider.getHideTestFiles(),
+      },
+      {
+        label: 'Hide node_modules',
+        picked: callersProvider.getHideNodeModules(),
+      },
+    ];
+    const picked = await vscode.window.showQuickPick(items, {
+      placeHolder: 'Toggle callers filters',
+      canPickMany: true,
+    });
+    if (picked) {
+      callersProvider.setHideTestFiles(picked.some((p) => p.label === 'Hide test files'));
+      callersProvider.setHideNodeModules(picked.some((p) => p.label === 'Hide node_modules'));
+    }
+  }));
+
+  // Toggle CALLERS direction: both -> incoming -> outgoing -> both
+  disposables.push(vscode.commands.registerCommand('grafema.toggleCallersDirection', () => {
+    callersProvider?.cycleDirection();
+  }));
+
+  // Refresh CALLERS panel
+  disposables.push(vscode.commands.registerCommand('grafema.refreshCallers', () => {
+    callersProvider?.refresh();
+  }));
+
+  // Blast radius placeholder (Phase 4)
+  disposables.push(vscode.commands.registerCommand('grafema.blastRadiusPlaceholder', () => {
+    vscode.window.showInformationMessage('Blast Radius analysis is coming in Phase 4.');
+  }));
+
   // Status bar — click focuses STATUS view
   statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
   statusBarItem.command = 'grafema.focusStatus';
@@ -451,6 +554,7 @@ function registerCommands(): vscode.Disposable[] {
       if (followCursor && clientManager?.isConnected()) {
         await findAndSetRoot(clientManager, edgesProvider, debugProvider, false);
         await findAndTraceAtCursor();
+        await findAndSetCallersAtCursor();
       }
     }, 150)
   ));
@@ -487,6 +591,36 @@ async function findAndTraceAtCursor(): Promise<void> {
     }
   } catch {
     // Silent fail — VALUE TRACE panel errors should not disrupt the editor
+  }
+}
+
+/**
+ * Find node at current cursor and update CALLERS panel if on a function.
+ * Only sets root when cursor is on a FUNCTION or METHOD node.
+ */
+async function findAndSetCallersAtCursor(): Promise<void> {
+  if (!callersProvider || !clientManager) return;
+
+  const editor = vscode.window.activeTextEditor;
+  if (!editor) return;
+  if (!clientManager.isConnected()) return;
+  if (editor.document.uri.scheme !== 'file') return;
+
+  const position = editor.selection.active;
+  const absPath = editor.document.uri.fsPath;
+  const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  const filePath = workspaceRoot && absPath.startsWith(workspaceRoot)
+    ? absPath.slice(workspaceRoot.length + 1)
+    : absPath;
+
+  try {
+    const client = clientManager.getClient();
+    const node = await findNodeAtCursor(client, filePath, position.line + 1, position.character);
+    if (node && (node.nodeType === 'FUNCTION' || node.nodeType === 'METHOD')) {
+      callersProvider.setRootNode(node);
+    }
+  } catch {
+    // Silent fail -- CALLERS panel errors should not disrupt the editor
   }
 }
 
