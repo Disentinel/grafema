@@ -13,7 +13,8 @@
   "activationEvents": [
     "onView:grafemaStatus",
     "onView:grafemaExplore",
-    "onView:grafemaValueTrace"
+    "onView:grafemaValueTrace",
+    "onView:grafemaCallers"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -38,10 +39,6 @@
       ]
     },
     "viewsWelcome": [
-      {
-        "view": "grafemaCallers",
-        "contents": "Call hierarchy shows who calls this function and what it calls.\n\nComing in Phase 2."
-      },
       {
         "view": "grafemaBlastRadius",
         "contents": "Blast radius shows what breaks if you change this code.\n\nComing in Phase 4."
@@ -118,6 +115,34 @@
         "command": "grafema.refreshValueTrace",
         "title": "Refresh",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "grafema.openCallers",
+        "title": "Grafema: Open Callers"
+      },
+      {
+        "command": "grafema.setCallersDepth",
+        "title": "Set Max Depth",
+        "icon": "$(layers)"
+      },
+      {
+        "command": "grafema.toggleCallersFilter",
+        "title": "Toggle Filters",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "grafema.toggleCallersDirection",
+        "title": "Toggle Direction",
+        "icon": "$(arrow-swap)"
+      },
+      {
+        "command": "grafema.refreshCallers",
+        "title": "Refresh",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "grafema.blastRadiusPlaceholder",
+        "title": "Blast Radius (coming Phase 4)"
       }
     ],
     "menus": {
@@ -171,6 +196,26 @@
           "command": "grafema.refreshValueTrace",
           "when": "view == grafemaValueTrace",
           "group": "navigation@1"
+        },
+        {
+          "command": "grafema.toggleCallersDirection",
+          "when": "view == grafemaCallers",
+          "group": "navigation@0"
+        },
+        {
+          "command": "grafema.toggleCallersFilter",
+          "when": "view == grafemaCallers",
+          "group": "navigation@1"
+        },
+        {
+          "command": "grafema.setCallersDepth",
+          "when": "view == grafemaCallers",
+          "group": "navigation@2"
+        },
+        {
+          "command": "grafema.refreshCallers",
+          "when": "view == grafemaCallers",
+          "group": "navigation@3"
         }
       ],
       "view/item/context": [
@@ -224,6 +269,33 @@
           "type": "string",
           "default": "",
           "description": "Path to RFDB unix socket. If empty, uses {workspace}/.grafema/rfdb.sock"
+        },
+        "grafema.codeLens.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show Grafema CodeLens above functions (caller/callee counts)."
+        },
+        "grafema.codeLens.showBlastRadius": {
+          "type": "boolean",
+          "default": false,
+          "description": "Show blast radius count in CodeLens. Requires Phase 4 (Blast Radius panel)."
+        },
+        "grafema.callers.defaultDepth": {
+          "type": "number",
+          "default": 3,
+          "minimum": 1,
+          "maximum": 5,
+          "description": "Default max depth for call hierarchy expansion in CALLERS panel."
+        },
+        "grafema.callers.hideTestFiles": {
+          "type": "boolean",
+          "default": true,
+          "description": "Hide test files from CALLERS panel (matches /test/, /tests/, .test., .spec., __tests__, cypress/, e2e/)."
+        },
+        "grafema.callers.hideNodeModules": {
+          "type": "boolean",
+          "default": true,
+          "description": "Hide node_modules from CALLERS panel."
         }
       }
     }
