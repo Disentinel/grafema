@@ -1,8 +1,9 @@
 # MLA Workflow Reference
 
-**Workflow version: v2.1** (2026-02-16)
+**Workflow version: v2.2** (2026-02-19)
 
 Changelog:
+- **v2.2** — Data-driven review optimization. Analyzed rejection history across 200+ reviews: Dijkstra's 4-Review correctness role had 6.5% rejection rate (2/31) because his verification phase already catches issues. Removed Dijkstra from review, kept in plan verification. 4-Review → 3-Review: Steve ∥ Вадим auto ∥ Uncle Bob run in single parallel batch.
 - **v2.1** — RFD-4 post-mortem fix. Added Dijkstra (plan verification — catches edge cases before they cascade into spec/implementation). Split Combined Auto-Review into 4 independent reviewers: Steve (vision), Вадим auto (completeness), Uncle Bob (code quality), Dijkstra (correctness). Reviews run in 2 batches of 2 parallel.
 - **v2.0** — Streamlined pipeline: removed Kevlin/Donald from standard flow, Joel only for Full MLA, combined Steve+Вадим auto into single Auto-Review, strengthened Uncle Bob (file-level checks), added model assignment table, parallel Kent ∥ Rob, max 3 subagents, per-task metrics tracking.
 - **v1.0** — Original MLA with all personas sequential.
@@ -27,12 +28,11 @@ All implementation happens through subagents. Top-level agent only coordinates.
 - **Kent Beck** (Test Engineer) — TDD discipline, tests communicate intent, no mocks in production paths. Can run **parallel** with Rob when test structure is clear from plan.
 - **Rob Pike** (Implementation Engineer) — Simplicity over cleverness, match existing patterns, pragmatic solutions
 
-**Review (4 independent perspectives — 2 batches of 2 parallel subagents):**
+**Review (3 independent perspectives — 1 batch of 3 parallel subagents):**
 - **Steve Jobs** (Vision) — Does this align with project vision? Did we cut corners? Complexity & architecture checklist. Would shipping this embarrass us?
 - **Вадим auto** (Completeness) — Does the code do what the task requires? Edge cases, regressions, scope creep. Tests meaningful? Commits atomic?
 - **Robert Martin** (Code Quality) — Structure, naming, duplication, readability. File/method size limits.
-- **Edsger Dijkstra** (Correctness) — For every function: enumerate ALL possible inputs. For every condition: what passes that shouldn't? What's blocked that should pass?
-- **Вадим Решетников** (Final confirmation, human) — Called only AFTER all 4 reviewers approve. User sees combined review summary and confirms or overrides.
+- **Вадим Решетников** (Final confirmation, human) — Called only AFTER all 3 reviewers approve. User sees combined review summary and confirms or overrides.
 
 **Project Management:**
 - **Andy Grove** (PM / Tech Debt) — Manages Linear, prioritizes backlog, tracks tech debt. Ruthless prioritization: what moves the needle NOW?
@@ -64,7 +64,6 @@ Use the cheapest model that can handle the task. **Max 3 parallel subagents** (r
 | Steve (vision review) | **Sonnet** | Architecture judgment |
 | Вадим auto (completeness review) | **Sonnet** | Practical quality check |
 | Uncle Bob (code quality review) | **Sonnet** | Structure/naming check |
-| Dijkstra (correctness review) | **Sonnet** | Edge case verification |
 | Andy Grove (Linear ops) | **Haiku** | Structured CRUD, template-based |
 | Save user request | **Haiku** | Formatting and file write |
 | Report formatting | **Haiku** | Template-based markdown |
@@ -86,19 +85,19 @@ START
      └─ NO
          ├─ Does it change core architecture? (affects multiple systems, long-term impact)
          │   → YES → Full MLA (all personas)
-         └─ NO → Mini-MLA (Don, Dijkstra, Uncle Bob, Kent ∥ Rob, 4-Review, Vadim)
+         └─ NO → Mini-MLA (Don, Dijkstra, Uncle Bob, Kent ∥ Rob, 3-Review, Vadim)
 ```
 
 **Configurations:**
 
 | Config | Team | When to Use |
 |--------|------|-------------|
-| **Single Agent** | Rob (impl + tests) → 4-Review → Vadim | Trivial changes, hotfixes, single file <50 LOC |
-| **Mini-MLA** | Don → Dijkstra → Uncle Bob → Kent ∥ Rob → 4-Review → Vadim | Medium complexity, local scope |
-| **Full MLA** | Don → Joel → Dijkstra → Uncle Bob → Kent ∥ Rob → 4-Review → Vadim | Architecture, complex debugging, ambiguous requirements |
+| **Single Agent** | Rob (impl + tests) → 3-Review → Vadim | Trivial changes, hotfixes, single file <50 LOC |
+| **Mini-MLA** | Don → Dijkstra → Uncle Bob → Kent ∥ Rob → 3-Review → Vadim | Medium complexity, local scope |
+| **Full MLA** | Don → Joel → Dijkstra → Uncle Bob → Kent ∥ Rob → 3-Review → Vadim | Architecture, complex debugging, ambiguous requirements |
 
 `Kent ∥ Rob` = parallel execution when test structure is clear from plan.
-`4-Review` = Steve ∥ Вадим auto, then Dijkstra ∥ Uncle Bob (2 batches of 2 parallel subagents).
+`3-Review` = Steve ∥ Вадим auto ∥ Uncle Bob (1 batch of 3 parallel subagents).
 
 Dijkstra runs in **all configurations except Single Agent** — verifies the final plan before implementation.
 Uncle Bob runs in **all configurations except Single Agent** — PREPARE (before) + review (after).
@@ -167,13 +166,12 @@ Before implementation, improve the code we're about to touch. This is "Boy Scout
 
 **STEP 3 — EXECUTE:**
 1. Kent writes tests ∥ Rob implements (parallel when possible), create reports
-2. **4-Review** (2 batches of 2 parallel subagents):
-   - Batch 1: Вадим auto (completeness) ∥ Steve (vision)
-   - Batch 2: Dijkstra (correctness) ∥ Uncle Bob (code quality)
-   - ANY reviewer REJECT → back to implementation, fix issues, re-run ALL 4 reviews
-   - ALL 4 approve → present combined summary to user
+2. **3-Review** (1 batch of 3 parallel subagents):
+   - Steve (vision) ∥ Вадим auto (completeness) ∥ Uncle Bob (code quality)
+   - ANY reviewer REJECT → back to implementation, fix issues, re-run ALL 3 reviews
+   - ALL 3 approve → present combined summary to user
 3. **Вадим (human)** confirms or rejects with feedback
-4. Loop until all 4 reviewers AND user ALL agree task is FULLY DONE
+4. Loop until all 3 reviewers AND user ALL agree task is FULLY DONE
 
 **STEP 4 — FINALIZE:**
 - Write **task metrics report** (see template below) → `0XX-metrics.md`
@@ -182,7 +180,7 @@ Before implementation, improve the code we're about to touch. This is "Boy Scout
 - Check backlog, prioritize, offer next task
 - **IMPORTANT:** Task reports (`_tasks/REG-XXX/`) must be committed to main when merging the task branch. Don't forget to copy them from worker worktrees!
 
-**IMPORTANT:** 4-Review runs after ALL implementation is complete, not after every individual agent.
+**IMPORTANT:** 3-Review runs after ALL implementation is complete, not after every individual agent.
 
 ## Task Metrics (REQUIRED for every task)
 
@@ -224,7 +222,7 @@ Each `Task` tool call returns `total_tokens`, `tool_uses`, `duration_ms` in its 
 | Est. subagent cost | $X.XX |
 | Top-level overhead | ~20-30% (not tracked) |
 | **Est. total cost** | **$X.XX** |
-| 4-Review cycles | N (how many REJECT→retry across all 4 reviewers) |
+| 3-Review cycles | N (how many REJECT→retry across all 3 reviewers) |
 
 ### Grafema Dogfooding
 
@@ -248,7 +246,7 @@ Each `Task` tool call returns `total_tokens`, `tool_uses`, `duration_ms` in its 
 - Metrics are NON-OPTIONAL. Every task gets a metrics report.
 - If a subagent doesn't return usage data, note "N/A" and estimate.
 - Wall clock = time from user request to user approval (not including PR/CI).
-- 4-Review cycles count: 1 = all 4 passed first time, 2+ = had rejections.
+- 3-Review cycles count: 1 = all 3 passed first time, 2+ = had rejections.
 
 ## When Stuck
 
