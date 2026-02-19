@@ -95,7 +95,7 @@ export class PrefixEvaluator extends Plugin {
 
   async execute(context: PluginContext): Promise<PluginResult> {
     try {
-      const { graph } = context;
+      const { graph, onProgress } = context;
       const projectPath = (context.manifest as { projectPath?: string })?.projectPath ?? '';
       const logger = this.log(context);
       const graphTyped = graph as unknown as Graph;
@@ -119,8 +119,19 @@ export class PrefixEvaluator extends Plugin {
       logger.info('Found mount points with placeholders', { count: mountPoints.length });
 
       // For each mount point try to evaluate prefix
+      const startTime = Date.now();
       for (const mountPoint of mountPoints) {
         mountPointsEvaluated++;
+        if (onProgress && mountPointsEvaluated % 50 === 0) {
+          const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+          onProgress({
+            phase: 'enrichment',
+            currentPlugin: 'PrefixEvaluator',
+            message: `Evaluating prefixes ${mountPointsEvaluated}/${mountPoints.length} (${elapsed}s)`,
+            totalFiles: mountPoints.length,
+            processedFiles: mountPointsEvaluated
+          });
+        }
 
         // Find MODULE that defines this mount point
         const definesEdges = this.findEdges(graphTyped, {
