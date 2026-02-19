@@ -62,7 +62,6 @@ plugins:
     - CallResolverValidator
     - SQLInjectionValidator
     - ShadowingDetector
-    - TypeScriptDeadCodeValidator
     - BrokenImportValidator
 
 # Optional: Explicit service definitions for multi-service projects
@@ -202,7 +201,6 @@ Validation plugins check invariants and detect issues.
 | **CallResolverValidator** | Reports unresolved function calls for debugging. |
 | **SQLInjectionValidator** | **Security:** Detects SQL injection vulnerabilities. |
 | **ShadowingDetector** | Detects variable shadowing issues. |
-| **TypeScriptDeadCodeValidator** | Detects unreachable/dead code in TypeScript. |
 | **BrokenImportValidator** | Detects broken imports (missing files, wrong exports). |
 
 ## Configuration Examples

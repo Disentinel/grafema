@@ -313,7 +313,6 @@ export { AwaitInLoopValidator } from './plugins/validation/AwaitInLoopValidator.
 export { ShadowingDetector } from './plugins/validation/ShadowingDetector.js';
 export { GraphConnectivityValidator } from './plugins/validation/GraphConnectivityValidator.js';
 export { DataFlowValidator } from './plugins/validation/DataFlowValidator.js';
-export { TypeScriptDeadCodeValidator } from './plugins/validation/TypeScriptDeadCodeValidator.js';
 export { BrokenImportValidator } from './plugins/validation/BrokenImportValidator.js';
 export { UnconnectedRouteValidator } from './plugins/validation/UnconnectedRouteValidator.js';
 export { PackageCoverageValidator, COVERED_PACKAGES_RESOURCE_ID, createCoveredPackagesResource } from './plugins/validation/PackageCoverageValidator.js';

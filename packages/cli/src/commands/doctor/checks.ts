@@ -38,7 +38,7 @@ const VALID_PLUGIN_NAMES = new Set([
   'RustFFIEnricher',
   // Validation
   'CallResolverValidator', 'EvalBanValidator', 'SQLInjectionValidator', 'ShadowingDetector',
-  'GraphConnectivityValidator', 'DataFlowValidator', 'TypeScriptDeadCodeValidator',
+  'GraphConnectivityValidator', 'DataFlowValidator',
 ]);
 
 // =============================================================================
