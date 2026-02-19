@@ -13,7 +13,11 @@ import { StatusProvider } from './statusProvider';
 import { DebugProvider } from './debugProvider';
 import { findNodeAtCursor } from './nodeLocator';
 import type { GraphTreeItem } from './types';
-import { parseNodeMetadata } from './types';
+import { debounce, getIconName } from './utils';
+import { buildTreeState } from './treeStateExporter';
+import { findAndSetRoot, updateStatusBar } from './cursorTracker';
+import { ValueTraceProvider } from './valueTraceProvider';
+import { GrafemaHoverProvider } from './hoverProvider';
 
 let clientManager: GrafemaClientManager | null = null;
 let edgesProvider: EdgesProvider | null = null;
@@ -23,6 +27,7 @@ let treeView: vscode.TreeView<GraphTreeItem> | null = null;
 let followCursor = true; // Follow cursor mode (toggle with cmd+shift+g)
 let statusBarItem: vscode.StatusBarItem | null = null;
 let selectedTreeItem: GraphTreeItem | null = null; // Track selected item for state export
+let valueTraceProvider: ValueTraceProvider | null = null;
 
 /**
  * Extension activation
@@ -64,6 +69,25 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     showCollapseAll: true,
   });
 
+  // Register VALUE TRACE provider
+  valueTraceProvider = new ValueTraceProvider(clientManager);
+  const valueTraceRegistration = vscode.window.registerTreeDataProvider(
+    'grafemaValueTrace',
+    valueTraceProvider
+  );
+
+  // Register Hover Provider (JS/TS files only)
+  const hoverProvider = new GrafemaHoverProvider(clientManager);
+  const hoverDisposable = vscode.languages.registerHoverProvider(
+    [
+      { scheme: 'file', language: 'javascript' },
+      { scheme: 'file', language: 'typescript' },
+      { scheme: 'file', language: 'javascriptreact' },
+      { scheme: 'file', language: 'typescriptreact' },
+    ],
+    hoverProvider
+  );
+
   // Track selection changes for state export
   const selectionTracker = treeView.onDidChangeSelection((event) => {
     selectedTreeItem = event.selection[0] ?? null;
@@ -77,7 +101,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     } else if (treeView) {
       treeView.message = undefined;
     }
-    updateStatusBar();
+    updateStatusBar(statusBarItem, clientManager, followCursor);
     // Fetch stats asynchronously for status bar node count
     if (clientManager?.isConnected()) {
       const stats = await clientManager.getStats();
@@ -110,6 +134,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(
     statusTreeRegistration,
     debugTreeRegistration,
+    valueTraceRegistration,
+    hoverDisposable,
     treeView,
     selectionTracker,
     ...disposables,
@@ -310,7 +336,7 @@ function registerCommands(): vscode.Disposable[] {
   // Find node at cursor and set as root (clears history)
   disposables.push(vscode.commands.registerCommand('grafema.findAtCursor', async () => {
     console.log('[grafema-explore] findAtCursor command fired');
-    await findAndSetRoot(false);
+    await findAndSetRoot(clientManager, edgesProvider, debugProvider, false);
   }));
 
   // Set selected tree item as new root (preserves history)
@@ -353,9 +379,9 @@ function registerCommands(): vscode.Disposable[] {
   // Toggle follow cursor mode
   disposables.push(vscode.commands.registerCommand('grafema.toggleFollowCursor', () => {
     followCursor = !followCursor;
-    updateStatusBar();
+    updateStatusBar(statusBarItem, clientManager, followCursor);
     if (followCursor) {
-      findAndSetRoot(false);
+      findAndSetRoot(clientManager, edgesProvider, debugProvider, false);
       vscode.window.showInformationMessage('Grafema: Follow cursor enabled');
     } else {
       vscode.window.showInformationMessage('Grafema: Follow cursor disabled (locked)');
@@ -392,10 +418,29 @@ function registerCommands(): vscode.Disposable[] {
     debugProvider?.clear();
   }));
 
+  // Open VALUE TRACE panel at current cursor (called from hover command link)
+  disposables.push(vscode.commands.registerCommand('grafema.openValueTrace', async () => {
+    await vscode.commands.executeCommand('grafemaValueTrace.focus');
+    if (valueTraceProvider && clientManager?.isConnected()) {
+      await findAndTraceAtCursor();
+    }
+  }));
+
+  // Toggle trace direction: both -> backward -> forward -> both
+  disposables.push(vscode.commands.registerCommand('grafema.toggleValueTraceDirection', () => {
+    valueTraceProvider?.cycleDirection();
+  }));
+
+  // Refresh VALUE TRACE (clears cache and re-traces current cursor)
+  disposables.push(vscode.commands.registerCommand('grafema.refreshValueTrace', async () => {
+    valueTraceProvider?.refresh();
+    await findAndTraceAtCursor();
+  }));
+
   // Status bar — click focuses STATUS view
   statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
   statusBarItem.command = 'grafema.focusStatus';
-  updateStatusBar();
+  updateStatusBar(statusBarItem, clientManager, followCursor);
   statusBarItem.show();
   disposables.push(statusBarItem);
 
@@ -404,7 +449,8 @@ function registerCommands(): vscode.Disposable[] {
     debounce(async (_event: vscode.TextEditorSelectionChangeEvent) => {
       console.log(`[grafema-explore] selection changed, followCursor=${followCursor}, connected=${clientManager?.isConnected()}`);
       if (followCursor && clientManager?.isConnected()) {
-        await findAndSetRoot(false);
+        await findAndSetRoot(clientManager, edgesProvider, debugProvider, false);
+        await findAndTraceAtCursor();
       }
     }, 150)
   ));
@@ -413,317 +459,35 @@ function registerCommands(): vscode.Disposable[] {
 }
 
 /**
- * Find node at current cursor and set as root
+ * Find node at current cursor and trigger VALUE TRACE panel update.
+ * Parallel to findAndSetRoot() but for the VALUE TRACE panel.
  */
-async function findAndSetRoot(preserveHistory: boolean): Promise<void> {
-  console.log('[grafema-explore] findAndSetRoot called');
-
-  if (!edgesProvider || !clientManager) {
-    console.log('[grafema-explore] findAndSetRoot: no edgesProvider or clientManager');
-    debugProvider?.log({
-      timestamp: Date.now(),
-      operation: 'findAndSetRoot',
-      query: {},
-      result: 'error: extension not initialized',
-      details: [`edgesProvider: ${!!edgesProvider}`, `clientManager: ${!!clientManager}`],
-    });
-    return;
-  }
+async function findAndTraceAtCursor(): Promise<void> {
+  if (!valueTraceProvider || !clientManager) return;
 
   const editor = vscode.window.activeTextEditor;
-  if (!editor) {
-    console.log('[grafema-explore] findAndSetRoot: no active editor');
-    debugProvider?.log({
-      timestamp: Date.now(),
-      operation: 'findAndSetRoot',
-      query: {},
-      result: 'error: no active editor',
-    });
-    edgesProvider.setStatusMessage('No active editor');
-    return;
-  }
-
-  if (!clientManager.isConnected()) {
-    console.log('[grafema-explore] findAndSetRoot: not connected');
-    debugProvider?.log({
-      timestamp: Date.now(),
-      operation: 'findAndSetRoot',
-      query: {},
-      result: `error: not connected (status: ${clientManager.state.status})`,
-    });
-    edgesProvider.setStatusMessage('Not connected to graph');
-    return;
-  }
+  if (!editor) return;
+  if (!clientManager.isConnected()) return;
 
   const document = editor.document;
+  if (document.uri.scheme !== 'file') return;
+
   const position = editor.selection.active;
   const absPath = document.uri.fsPath;
-  const line = position.line + 1;
-  const column = position.character;
-
-  // Convert absolute path to relative (graph stores paths relative to workspace root)
   const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
   const filePath = workspaceRoot && absPath.startsWith(workspaceRoot)
-    ? absPath.slice(workspaceRoot.length + 1) // +1 for trailing slash
+    ? absPath.slice(workspaceRoot.length + 1)
     : absPath;
-  console.log(`[grafema-explore] findAndSetRoot: file=${filePath} L${line}:${column}`);
 
   try {
     const client = clientManager.getClient();
-
-    // Debug: log the raw query before node search
-    const allNodes = await client.getAllNodes({ file: filePath });
-    const details: string[] = [
-      `cursor: L${line}:${column}`,
-      `getAllNodes({ file }) returned ${allNodes.length} nodes`,
-    ];
-
-    if (allNodes.length === 0) {
-      // Try a small sample query to see what file paths look like in the graph
-      const sampleNodes = await client.getAllNodes({ nodeType: 'MODULE' });
-      const files = new Set(sampleNodes.slice(0, 20).map((n) => n.file));
-      details.push(`--- sample MODULE files in graph (first ${files.size}) ---`);
-      for (const f of files) {
-        details.push(`  ${f}`);
-      }
-    } else {
-      // Show first few nodes for context
-      for (const n of allNodes.slice(0, 5)) {
-        const meta = JSON.parse(n.metadata || '{}');
-        details.push(`  ${n.nodeType} "${n.name}" L${meta.line ?? '?'}:${meta.column ?? '?'}`);
-      }
-      if (allNodes.length > 5) {
-        details.push(`  ... and ${allNodes.length - 5} more`);
-      }
-    }
-
-    const node = await findNodeAtCursor(client, filePath, line, column);
-
-    debugProvider?.log({
-      timestamp: Date.now(),
-      operation: 'findNodeAtCursor',
-      query: { file: filePath, line, column },
-      result: node
-        ? `found: ${node.nodeType} "${node.name}"`
-        : `${allNodes.length} nodes in file, none matched`,
-      details,
-    });
-
+    const node = await findNodeAtCursor(client, filePath, position.line + 1, position.character);
     if (node) {
-      if (preserveHistory) {
-        edgesProvider.navigateToNode(node);
-      } else {
-        edgesProvider.clearAndSetRoot(node);
-      }
-    } else {
-      edgesProvider.setStatusMessage('No graph node at cursor');
+      await valueTraceProvider.traceNode(node);
     }
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error('[grafema-explore] Error finding node:', err);
-    debugProvider?.log({
-      timestamp: Date.now(),
-      operation: 'findNodeAtCursor',
-      query: { file: filePath, line, column },
-      result: `error: ${message}`,
-    });
-    edgesProvider.setStatusMessage('Error querying graph');
+  } catch {
+    // Silent fail — VALUE TRACE panel errors should not disrupt the editor
   }
-}
-
-/**
- * Update status bar to show connection state + follow mode in tooltip
- */
-function updateStatusBar(): void {
-  if (!statusBarItem) return;
-
-  const followState = followCursor ? 'Following cursor' : 'Locked';
-  const state = clientManager?.state;
-
-  switch (state?.status) {
-    case 'connected':
-      statusBarItem.text = '$(pass-filled) Grafema';
-      statusBarItem.tooltip = `Grafema: Connected | ${followState} (Cmd+Shift+G to toggle)`;
-      break;
-    case 'connecting':
-      statusBarItem.text = '$(loading~spin) Grafema: connecting...';
-      statusBarItem.tooltip = 'Grafema: Connecting to RFDB server';
-      break;
-    case 'starting-server':
-      statusBarItem.text = '$(loading~spin) Grafema: starting...';
-      statusBarItem.tooltip = 'Grafema: Starting RFDB server';
-      break;
-    case 'error':
-      statusBarItem.text = '$(error) Grafema: disconnected';
-      statusBarItem.tooltip = `Grafema: ${state.message}`;
-      break;
-    case 'no-database':
-      statusBarItem.text = '$(circle-large-outline) Grafema: no database';
-      statusBarItem.tooltip = 'Grafema: Run `grafema analyze` first';
-      break;
-    default:
-      statusBarItem.text = '$(circle-large-outline) Grafema';
-      statusBarItem.tooltip = 'Grafema: Disconnected';
-      break;
-  }
-}
-
-/**
- * Map node type to VS Code icon name (for QuickPick labels)
- */
-function getIconName(nodeType: string): string {
-  const map: Record<string, string> = {
-    FUNCTION: 'function',
-    METHOD: 'method',
-    CLASS: 'class',
-    VARIABLE: 'variable',
-    PARAMETER: 'parameter',
-    CONSTANT: 'constant',
-    MODULE: 'module',
-    IMPORT: 'package',
-    EXPORT: 'event',
-    FILE: 'file',
-  };
-  return map[nodeType] || 'misc';
-}
-
-/**
- * Simple debounce helper
- */
-function debounce<Args extends unknown[]>(
-  fn: (...args: Args) => void | Promise<void>,
-  delay: number
-): (...args: Args) => void {
-  let timeoutId: ReturnType<typeof setTimeout> | null = null;
-
-  return (...args: Args) => {
-    if (timeoutId) {
-      clearTimeout(timeoutId);
-    }
-    timeoutId = setTimeout(() => {
-      fn(...args);
-      timeoutId = null;
-    }, delay);
-  };
-}
-
-/**
- * Build tree state object for debugging export
- */
-interface NodeStateInfo {
-  id: string;
-  type: string;
-  name: string;
-  file: string;
-  line?: number;
-}
-
-interface TreeStateExport {
-  connection: string;
-  serverVersion: string | null;
-  stats: { nodes: number; edges: number } | null;
-  rootNode: NodeStateInfo | null;
-  selectedNode: NodeStateInfo | null;
-  visibleEdges: Array<{
-    direction: 'outgoing' | 'incoming';
-    type: string;
-    target: string;
-  }>;
-  navigationPath: string[];
-  historyDepth: number;
-}
-
-function nodeToStateInfo(node: WireNode): NodeStateInfo {
-  const metadata = parseNodeMetadata(node);
-  return {
-    id: node.id,
-    type: node.nodeType,
-    name: node.name,
-    file: node.file,
-    line: metadata.line,
-  };
-}
-
-async function buildTreeState(
-  clientManager: GrafemaClientManager,
-  edgesProvider: EdgesProvider,
-  selectedItem: GraphTreeItem | null
-): Promise<TreeStateExport> {
-  const state: TreeStateExport = {
-    connection: clientManager.state.status,
-    serverVersion: null,
-    stats: null,
-    rootNode: null,
-    selectedNode: null,
-    visibleEdges: [],
-    navigationPath: edgesProvider.getNavigationPathIds(),
-    historyDepth: edgesProvider.getHistoryDepth(),
-  };
-
-  // Get server info if connected
-  if (clientManager.isConnected()) {
-    try {
-      const client = clientManager.getClient();
-      const version = await client.ping();
-      state.serverVersion = version || null;
-
-      const [nodeCount, edgeCount] = await Promise.all([
-        client.nodeCount(),
-        client.edgeCount(),
-      ]);
-      state.stats = { nodes: nodeCount, edges: edgeCount };
-    } catch {
-      // Ignore errors - just leave as null
-    }
-  }
-
-  // Root node info
-  const rootNode = edgesProvider.getRootNode();
-  if (rootNode) {
-    state.rootNode = nodeToStateInfo(rootNode);
-  }
-
-  // Selected node info
-  const selectedNode = selectedItem?.kind === 'node'
-    ? selectedItem.node
-    : selectedItem?.kind === 'edge'
-      ? selectedItem.targetNode ?? null
-      : null;
-
-  if (selectedNode) {
-    state.selectedNode = nodeToStateInfo(selectedNode);
-  }
-
-  // Fetch visible edges for selected node if connected
-  if (selectedItem?.kind === 'node' && clientManager.isConnected()) {
-    try {
-      const client = clientManager.getClient();
-      const [outgoing, incoming] = await Promise.all([
-        client.getOutgoingEdges(selectedItem.node.id),
-        client.getIncomingEdges(selectedItem.node.id),
-      ]);
-
-      for (const edge of outgoing) {
-        state.visibleEdges.push({
-          direction: 'outgoing',
-          type: edge.edgeType,
-          target: edge.dst,
-        });
-      }
-
-      for (const edge of incoming) {
-        state.visibleEdges.push({
-          direction: 'incoming',
-          type: edge.edgeType,
-          target: edge.src,
-        });
-      }
-    } catch {
-      // Ignore errors
-    }
-  }
-
-  return state;
 }
 
 /**

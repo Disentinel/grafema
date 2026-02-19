@@ -17,6 +17,7 @@ import {
   parseNodeMetadata,
   formatNodeLabel
 } from './types';
+import { getNodeIcon } from './utils';
 
 export class EdgesProvider implements vscode.TreeDataProvider<GraphTreeItem> {
   private _onDidChangeTreeData = new vscode.EventEmitter<GraphTreeItem | undefined | null | void>();
@@ -170,7 +171,7 @@ export class EdgesProvider implements vscode.TreeDataProvider<GraphTreeItem> {
         item.iconPath = new vscode.ThemeIcon('debug-stackframe', new vscode.ThemeColor('testing.iconPassed'));
         item.description = '← path';
       } else {
-        item.iconPath = this.getNodeIcon(element.node.nodeType);
+        item.iconPath = getNodeIcon(element.node.nodeType);
       }
 
       // Command to go to location on click
@@ -394,34 +395,6 @@ export class EdgesProvider implements vscode.TreeDataProvider<GraphTreeItem> {
     }
 
     return lines.join('\n');
-  }
-
-  /**
-   * Get icon for a node type
-   */
-  private getNodeIcon(nodeType: string): vscode.ThemeIcon {
-    // Map node types to VS Code icons
-    const iconMap: Record<string, string> = {
-      FUNCTION: 'symbol-function',
-      METHOD: 'symbol-method',
-      CLASS: 'symbol-class',
-      VARIABLE: 'symbol-variable',
-      PARAMETER: 'symbol-parameter',
-      CONSTANT: 'symbol-constant',
-      MODULE: 'symbol-module',
-      IMPORT: 'package',
-      EXPORT: 'export',
-      CALL: 'call-outgoing',
-      FILE: 'file-code',
-      SCOPE: 'bracket',
-      BRANCH: 'git-branch',
-      LOOP: 'sync',
-      LITERAL: 'symbol-string',
-      EXPRESSION: 'symbol-operator',
-    };
-
-    const iconName = iconMap[nodeType] || 'symbol-misc';
-    return new vscode.ThemeIcon(iconName);
   }
 
   /**
