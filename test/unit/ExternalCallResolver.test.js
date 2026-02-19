@@ -926,8 +926,8 @@ describe('ExternalCallResolver', () => {
         assert.ok(result.metadata.unresolvedByReason.unknown >= 1,
           'Unknown call should be counted');
 
-        // Overall counts
-        assert.strictEqual(result.created.edges, 1, 'Should create 1 CALLS edge (external)');
+        // Overall counts (CALLS + HANDLED_BY = 2 edges for the external call)
+        assert.strictEqual(result.created.edges, 2, 'Should create 2 edges (CALLS + HANDLED_BY)');
         assert.strictEqual(result.metadata.externalResolved, 1);
         assert.strictEqual(result.metadata.builtinResolved, 1);
         assert.ok(result.metadata.unresolvedByReason.unknown >= 1);
@@ -1057,7 +1057,7 @@ describe('ExternalCallResolver', () => {
 
         // First run
         const result1 = await resolver.execute({ graph: backend });
-        assert.strictEqual(result1.created.edges, 1, 'First run should create 1 edge');
+        assert.strictEqual(result1.created.edges, 2, 'First run should create 2 edges (CALLS + HANDLED_BY)');
         assert.ok(result1.created.nodes >= 1, 'First run should create nodes');
 
         // Second run (should be no-op)
@@ -1097,10 +1097,470 @@ describe('ExternalCallResolver', () => {
 
       assert.strictEqual(metadata.name, 'ExternalCallResolver');
       assert.strictEqual(metadata.phase, 'ENRICHMENT');
-      assert.deepStrictEqual(metadata.creates.edges, ['CALLS']);
+      assert.deepStrictEqual(metadata.creates.edges, ['CALLS', 'HANDLED_BY']);
       assert.deepStrictEqual(metadata.creates.nodes, ['EXTERNAL_MODULE']);
       assert.ok(metadata.dependencies.includes('FunctionCallResolver'),
         'Should depend on FunctionCallResolver');
+    });
+  });
+
+  // ============================================================================
+  // HANDLED_BY EDGES (REG-492)
+  // ============================================================================
+
+  describe('HANDLED_BY Edges (REG-492)', () => {
+    it('should create HANDLED_BY edge for named import call', async () => {
+      if (!ExternalCallResolver) {
+        console.log('SKIP: ExternalCallResolver not implemented yet');
+        return;
+      }
+
+      const { backend } = await setupBackend();
+
+      try {
+        const resolver = new ExternalCallResolver();
+
+        // import { Router } from 'express';
+        // Router();
+        await backend.addNodes([
+          {
+            id: 'main-import-router',
+            type: 'IMPORT',
+            name: 'Router',
+            file: '/project/main.js',
+            line: 1,
+            source: 'express',
+            importType: 'named',
+            importBinding: 'value',
+            imported: 'Router',
+            local: 'Router'
+          },
+          {
+            id: 'main-call-router',
+            type: 'CALL',
+            name: 'Router',
+            file: '/project/main.js',
+            line: 3
+          }
+        ]);
+
+        await backend.flush();
+        await resolver.execute({ graph: backend });
+
+        // Should create HANDLED_BY edge: CALL -> IMPORT
+        const handledByEdges = await backend.getOutgoingEdges('main-call-router', ['HANDLED_BY']);
+        assert.strictEqual(handledByEdges.length, 1,
+          'Should create one HANDLED_BY edge');
+        assert.strictEqual(handledByEdges[0].dst, 'main-import-router',
+          'HANDLED_BY should point to the IMPORT node');
+
+        // Should ALSO create CALLS edge to EXTERNAL_MODULE (existing behavior preserved)
+        const callsEdges = await backend.getOutgoingEdges('main-call-router', ['CALLS']);
+        assert.strictEqual(callsEdges.length, 1,
+          'Should also create CALLS edge to EXTERNAL_MODULE');
+        assert.strictEqual(callsEdges[0].dst, 'EXTERNAL_MODULE:express');
+      } finally {
+        await backend.close();
+      }
+    });
+
+    it('should create HANDLED_BY edge for default import call', async () => {
+      if (!ExternalCallResolver) {
+        console.log('SKIP: ExternalCallResolver not implemented yet');
+        return;
+      }
+
+      const { backend } = await setupBackend();
+
+      try {
+        const resolver = new ExternalCallResolver();
+
+        // import express from 'express';
+        // express();
+        await backend.addNodes([
+          {
+            id: 'main-import-express-default',
+            type: 'IMPORT',
+            name: 'express',
+            file: '/project/main.js',
+            line: 1,
+            source: 'express',
+            importType: 'default',
+            importBinding: 'value',
+            imported: 'default',
+            local: 'express'
+          },
+          {
+            id: 'main-call-express',
+            type: 'CALL',
+            name: 'express',
+            file: '/project/main.js',
+            line: 3
+          }
+        ]);
+
+        await backend.flush();
+        await resolver.execute({ graph: backend });
+
+        // Should create HANDLED_BY edge: CALL -> IMPORT
+        const handledByEdges = await backend.getOutgoingEdges('main-call-express', ['HANDLED_BY']);
+        assert.strictEqual(handledByEdges.length, 1,
+          'Should create HANDLED_BY edge for default import');
+        assert.strictEqual(handledByEdges[0].dst, 'main-import-express-default',
+          'HANDLED_BY should point to the default IMPORT node');
+      } finally {
+        await backend.close();
+      }
+    });
+
+    it('should create HANDLED_BY edge to aliased import using local name', async () => {
+      if (!ExternalCallResolver) {
+        console.log('SKIP: ExternalCallResolver not implemented yet');
+        return;
+      }
+
+      const { backend } = await setupBackend();
+
+      try {
+        const resolver = new ExternalCallResolver();
+
+        // import { Router as R } from 'express';
+        // R();
+        await backend.addNodes([
+          {
+            id: 'main-import-router-aliased',
+            type: 'IMPORT',
+            name: 'R',
+            file: '/project/main.js',
+            line: 1,
+            source: 'express',
+            importType: 'named',
+            importBinding: 'value',
+            imported: 'Router',
+            local: 'R'
+          },
+          {
+            id: 'main-call-r',
+            type: 'CALL',
+            name: 'R',
+            file: '/project/main.js',
+            line: 3
+          }
+        ]);
+
+        await backend.flush();
+        await resolver.execute({ graph: backend });
+
+        // Should create HANDLED_BY edge pointing to the aliased IMPORT node
+        const handledByEdges = await backend.getOutgoingEdges('main-call-r', ['HANDLED_BY']);
+        assert.strictEqual(handledByEdges.length, 1,
+          'Should create HANDLED_BY edge for aliased import');
+        assert.strictEqual(handledByEdges[0].dst, 'main-import-router-aliased',
+          'HANDLED_BY should point to IMPORT node with local name R');
+      } finally {
+        await backend.close();
+      }
+    });
+
+    it('should NOT create HANDLED_BY edge for type-only import', async () => {
+      if (!ExternalCallResolver) {
+        console.log('SKIP: ExternalCallResolver not implemented yet');
+        return;
+      }
+
+      const { backend } = await setupBackend();
+
+      try {
+        const resolver = new ExternalCallResolver();
+
+        // import type { Router } from 'express';
+        // Router(); // This would be a TS error, but we should handle it gracefully
+        await backend.addNodes([
+          {
+            id: 'main-import-router-type',
+            type: 'IMPORT',
+            name: 'Router',
+            file: '/project/main.js',
+            line: 1,
+            source: 'express',
+            importType: 'named',
+            importBinding: 'type',
+            imported: 'Router',
+            local: 'Router'
+          },
+          {
+            id: 'main-call-router-type',
+            type: 'CALL',
+            name: 'Router',
+            file: '/project/main.js',
+            line: 3
+          }
+        ]);
+
+        await backend.flush();
+        await resolver.execute({ graph: backend });
+
+        // Should NOT create HANDLED_BY edge for type-only imports
+        const handledByEdges = await backend.getOutgoingEdges('main-call-router-type', ['HANDLED_BY']);
+        assert.strictEqual(handledByEdges.length, 0,
+          'Should NOT create HANDLED_BY edge for type-only import');
+      } finally {
+        await backend.close();
+      }
+    });
+
+    it('should NOT create HANDLED_BY edge for method calls (namespace)', async () => {
+      if (!ExternalCallResolver) {
+        console.log('SKIP: ExternalCallResolver not implemented yet');
+        return;
+      }
+
+      const { backend } = await setupBackend();
+
+      try {
+        const resolver = new ExternalCallResolver();
+
+        // import express from 'express';
+        // express.Router(); — method call with object field
+        await backend.addNodes([
+          {
+            id: 'main-import-express-ns',
+            type: 'IMPORT',
+            name: 'express',
+            file: '/project/main.js',
+            line: 1,
+            source: 'express',
+            importType: 'default',
+            importBinding: 'value',
+            imported: 'default',
+            local: 'express'
+          },
+          {
+            id: 'main-call-express-router',
+            type: 'CALL',
+            name: 'express.Router',
+            file: '/project/main.js',
+            line: 3,
+            object: 'express',
+            method: 'Router'
+          }
+        ]);
+
+        await backend.flush();
+        await resolver.execute({ graph: backend });
+
+        // Method calls (with object field) are skipped entirely — no HANDLED_BY
+        const handledByEdges = await backend.getOutgoingEdges('main-call-express-router', ['HANDLED_BY']);
+        assert.strictEqual(handledByEdges.length, 0,
+          'Should NOT create HANDLED_BY edge for method calls');
+
+        // Should also have no CALLS edge (method calls are skipped)
+        const callsEdges = await backend.getOutgoingEdges('main-call-express-router', ['CALLS']);
+        assert.strictEqual(callsEdges.length, 0,
+          'Method calls should be skipped entirely');
+      } finally {
+        await backend.close();
+      }
+    });
+
+    it('should NOT create HANDLED_BY edge for already resolved CALL', async () => {
+      if (!ExternalCallResolver) {
+        console.log('SKIP: ExternalCallResolver not implemented yet');
+        return;
+      }
+
+      const { backend } = await setupBackend();
+
+      try {
+        const resolver = new ExternalCallResolver();
+
+        // import { Router } from 'express';
+        // Router(); — but already has a CALLS edge (pre-resolved)
+        await backend.addNodes([
+          {
+            id: 'main-import-router-preseed',
+            type: 'IMPORT',
+            name: 'Router',
+            file: '/project/main.js',
+            line: 1,
+            source: 'express',
+            importType: 'named',
+            importBinding: 'value',
+            imported: 'Router',
+            local: 'Router'
+          },
+          {
+            id: 'some-function-router',
+            type: 'FUNCTION',
+            name: 'Router',
+            file: '/project/utils.js',
+            line: 10
+          },
+          {
+            id: 'main-call-router-preseed',
+            type: 'CALL',
+            name: 'Router',
+            file: '/project/main.js',
+            line: 3
+          }
+        ]);
+
+        // Pre-seed CALLS edge (simulates FunctionCallResolver having resolved it)
+        await backend.addEdge({
+          src: 'main-call-router-preseed',
+          dst: 'some-function-router',
+          type: 'CALLS'
+        });
+
+        await backend.flush();
+        await resolver.execute({ graph: backend });
+
+        // Already resolved calls are skipped — no HANDLED_BY edge
+        const handledByEdges = await backend.getOutgoingEdges('main-call-router-preseed', ['HANDLED_BY']);
+        assert.strictEqual(handledByEdges.length, 0,
+          'Should NOT create HANDLED_BY edge for already resolved call');
+
+        // Should still have only the pre-existing CALLS edge
+        const callsEdges = await backend.getOutgoingEdges('main-call-router-preseed', ['CALLS']);
+        assert.strictEqual(callsEdges.length, 1,
+          'Should still have only the pre-existing CALLS edge');
+        assert.strictEqual(callsEdges[0].dst, 'some-function-router');
+      } finally {
+        await backend.close();
+      }
+    });
+
+    it('should isolate HANDLED_BY edges per file (multi-file)', async () => {
+      if (!ExternalCallResolver) {
+        console.log('SKIP: ExternalCallResolver not implemented yet');
+        return;
+      }
+
+      const { backend } = await setupBackend();
+
+      try {
+        const resolver = new ExternalCallResolver();
+
+        // file1.js: import { Router } from 'express'; Router();
+        // file2.js: import { Router } from 'express'; Router();
+        await backend.addNodes([
+          {
+            id: 'file1-import-router',
+            type: 'IMPORT',
+            name: 'Router',
+            file: '/project/file1.js',
+            line: 1,
+            source: 'express',
+            importType: 'named',
+            importBinding: 'value',
+            imported: 'Router',
+            local: 'Router'
+          },
+          {
+            id: 'file1-call-router',
+            type: 'CALL',
+            name: 'Router',
+            file: '/project/file1.js',
+            line: 3
+          },
+          {
+            id: 'file2-import-router',
+            type: 'IMPORT',
+            name: 'Router',
+            file: '/project/file2.js',
+            line: 1,
+            source: 'express',
+            importType: 'named',
+            importBinding: 'value',
+            imported: 'Router',
+            local: 'Router'
+          },
+          {
+            id: 'file2-call-router',
+            type: 'CALL',
+            name: 'Router',
+            file: '/project/file2.js',
+            line: 3
+          }
+        ]);
+
+        await backend.flush();
+        await resolver.execute({ graph: backend });
+
+        // file1's CALL should get HANDLED_BY to file1's IMPORT
+        const file1HandledBy = await backend.getOutgoingEdges('file1-call-router', ['HANDLED_BY']);
+        assert.strictEqual(file1HandledBy.length, 1,
+          'file1 CALL should have HANDLED_BY edge');
+        assert.strictEqual(file1HandledBy[0].dst, 'file1-import-router',
+          'file1 CALL should point to file1 IMPORT');
+
+        // file2's CALL should get HANDLED_BY to file2's IMPORT
+        const file2HandledBy = await backend.getOutgoingEdges('file2-call-router', ['HANDLED_BY']);
+        assert.strictEqual(file2HandledBy.length, 1,
+          'file2 CALL should have HANDLED_BY edge');
+        assert.strictEqual(file2HandledBy[0].dst, 'file2-import-router',
+          'file2 CALL should point to file2 IMPORT');
+      } finally {
+        await backend.close();
+      }
+    });
+
+    it('should create both CALLS and HANDLED_BY edges together (regression)', async () => {
+      if (!ExternalCallResolver) {
+        console.log('SKIP: ExternalCallResolver not implemented yet');
+        return;
+      }
+
+      const { backend } = await setupBackend();
+
+      try {
+        const resolver = new ExternalCallResolver();
+
+        // import { map } from 'lodash';
+        // map(arr, fn);
+        await backend.addNodes([
+          {
+            id: 'main-import-lodash-hb',
+            type: 'IMPORT',
+            name: 'map',
+            file: '/project/main.js',
+            line: 1,
+            source: 'lodash',
+            importType: 'named',
+            importBinding: 'value',
+            imported: 'map',
+            local: 'map'
+          },
+          {
+            id: 'main-call-map-hb',
+            type: 'CALL',
+            name: 'map',
+            file: '/project/main.js',
+            line: 5
+          }
+        ]);
+
+        await backend.flush();
+        const result = await resolver.execute({ graph: backend });
+
+        // CALLS edge to EXTERNAL_MODULE must still be created
+        const callsEdges = await backend.getOutgoingEdges('main-call-map-hb', ['CALLS']);
+        assert.strictEqual(callsEdges.length, 1,
+          'CALLS edge to EXTERNAL_MODULE must be present');
+        assert.strictEqual(callsEdges[0].dst, 'EXTERNAL_MODULE:lodash');
+
+        // HANDLED_BY edge to IMPORT must also be created
+        const handledByEdges = await backend.getOutgoingEdges('main-call-map-hb', ['HANDLED_BY']);
+        assert.strictEqual(handledByEdges.length, 1,
+          'HANDLED_BY edge to IMPORT must be present');
+        assert.strictEqual(handledByEdges[0].dst, 'main-import-lodash-hb');
+
+        // Result should count both edge types
+        assert.ok(result.created.edges >= 2,
+          'Should report at least 2 edges created (CALLS + HANDLED_BY)');
+      } finally {
+        await backend.close();
+      }
     });
   });
 
