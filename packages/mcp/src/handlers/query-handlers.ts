@@ -9,6 +9,7 @@ import {
   guardResponseSize,
   serializeBigInt,
   findSimilarTypes,
+  extractQueriedTypes,
   textResult,
   errorResult,
 } from '../utils.js';
@@ -50,26 +51,60 @@ export async function handleQueryGraph(args: QueryGraphArgs): Promise<ToolResult
     const total = results.length;
 
     if (total === 0) {
-      const nodeCounts = await db.countNodesByType();
-      const totalNodes = Object.values(nodeCounts).reduce((a, b) => a + b, 0);
+      const { nodeTypes, edgeTypes } = extractQueriedTypes(query);
+      const hasQueriedTypes = nodeTypes.length > 0 || edgeTypes.length > 0;
 
-      const typeMatch = query.match(/node\([^,]+,\s*"([^"]+)"\)/);
-      const queriedType = typeMatch ? typeMatch[1] : null;
+      const nodeCounts = await db.countNodesByType();
+      const edgeCounts = edgeTypes.length > 0 ? await db.countEdgesByType() : {};
+      const availableNodeTypes = Object.keys(nodeCounts);
+      const availableEdgeTypes = Object.keys(edgeCounts);
 
       let hint = '';
-      if (queriedType && !nodeCounts[queriedType]) {
-        const availableTypes = Object.keys(nodeCounts);
-        const similar = findSimilarTypes(queriedType, availableTypes);
-        if (similar.length > 0) {
-          hint = `\n💡 Did you mean: ${similar.join(', ')}?`;
+      if (hasQueriedTypes) {
+        const hintLines: string[] = [];
+
+        if (nodeTypes.length > 0 && availableNodeTypes.length === 0) {
+          hintLines.push('Graph has no nodes');
         } else {
-          hint = `\n💡 Available types: ${availableTypes.slice(0, 10).join(', ')}${availableTypes.length > 10 ? '...' : ''}`;
+          for (const queriedType of nodeTypes) {
+            if (!nodeCounts[queriedType]) {
+              const similar = findSimilarTypes(queriedType, availableNodeTypes);
+              if (similar.length > 0) {
+                hintLines.push(`Did you mean: ${similar.join(', ')}? (node type)`);
+              } else {
+                const typeList = availableNodeTypes.slice(0, 10).join(', ');
+                const more = availableNodeTypes.length > 10 ? '...' : '';
+                hintLines.push(`Available node types: ${typeList}${more}`);
+              }
+            }
+          }
+        }
+
+        if (edgeTypes.length > 0 && availableEdgeTypes.length === 0) {
+          hintLines.push('Graph has no edges');
+        } else {
+          for (const queriedType of edgeTypes) {
+            if (!edgeCounts[queriedType]) {
+              const similar = findSimilarTypes(queriedType, availableEdgeTypes);
+              if (similar.length > 0) {
+                hintLines.push(`Did you mean: ${similar.join(', ')}? (edge type)`);
+              } else {
+                const typeList = availableEdgeTypes.slice(0, 10).join(', ');
+                const more = availableEdgeTypes.length > 10 ? '...' : '';
+                hintLines.push(`Available edge types: ${typeList}${more}`);
+              }
+            }
+          }
+        }
+
+        if (hintLines.length > 0) {
+          hint = '\n' + hintLines.map(l => `Hint: ${l}`).join('\n');
         }
       }
 
-      return textResult(
-        `Query returned no results.${hint}\n📊 Graph: ${totalNodes.toLocaleString()} nodes`
-      );
+      const totalNodes = Object.values(nodeCounts).reduce((a, b) => a + b, 0);
+
+      return textResult(`Query returned no results.${hint}\nGraph: ${totalNodes.toLocaleString()} nodes`);
     }
 
     const paginatedResults = results.slice(offset, offset + limit);

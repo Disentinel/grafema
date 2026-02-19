@@ -17,6 +17,7 @@ import { RFDBServerBackend, parseSemanticId, parseSemanticIdV2, findCallsInFunct
 import { formatNodeDisplay, formatNodeInline, formatLocation } from '../utils/formatNode.js';
 import { exitWithError } from '../utils/errorFormatter.js';
 import { Spinner } from '../utils/spinner.js';
+import { extractQueriedTypes, findSimilarTypes } from '../utils/queryHints.js';
 import type { DatalogExplainResult } from '@grafema/types';
 
 // Node type constants to avoid magic string duplication
@@ -1134,6 +1135,49 @@ async function executeRawQuery(
       const unknownList = unknown.map(p => `'${p}'`).join(', ');
       const builtinList = [...BUILTIN_PREDICATES].join(', ');
       console.error(`Note: unknown predicate ${unknownList}. Built-in predicates: ${builtinList}`);
+    }
+
+    // Type suggestions: only if there are type literals in the query
+    const { nodeTypes, edgeTypes } = extractQueriedTypes(query);
+    if (nodeTypes.length > 0 || edgeTypes.length > 0) {
+      const nodeCounts = nodeTypes.length > 0 ? await backend.countNodesByType() : {};
+      const edgeCounts = edgeTypes.length > 0 ? await backend.countEdgesByType() : {};
+      const availableNodeTypes = Object.keys(nodeCounts);
+      const availableEdgeTypes = Object.keys(edgeCounts);
+
+      if (nodeTypes.length > 0 && availableNodeTypes.length === 0) {
+        console.error('Note: graph has no nodes');
+      } else {
+        for (const queriedType of nodeTypes) {
+          if (!nodeCounts[queriedType]) {
+            const similar = findSimilarTypes(queriedType, availableNodeTypes);
+            if (similar.length > 0) {
+              console.error(`Note: unknown node type "${queriedType}". Did you mean: ${similar.join(', ')}?`);
+            } else {
+              const typeList = availableNodeTypes.slice(0, 10).join(', ');
+              const more = availableNodeTypes.length > 10 ? '...' : '';
+              console.error(`Note: unknown node type "${queriedType}". Available: ${typeList}${more}`);
+            }
+          }
+        }
+      }
+
+      if (edgeTypes.length > 0 && availableEdgeTypes.length === 0) {
+        console.error('Note: graph has no edges');
+      } else {
+        for (const queriedType of edgeTypes) {
+          if (!edgeCounts[queriedType]) {
+            const similar = findSimilarTypes(queriedType, availableEdgeTypes);
+            if (similar.length > 0) {
+              console.error(`Note: unknown edge type "${queriedType}". Did you mean: ${similar.join(', ')}?`);
+            } else {
+              const typeList = availableEdgeTypes.slice(0, 10).join(', ');
+              const more = availableEdgeTypes.length > 10 ? '...' : '';
+              console.error(`Note: unknown edge type "${queriedType}". Available: ${typeList}${more}`);
+            }
+          }
+        }
+      }
     }
   }
 }

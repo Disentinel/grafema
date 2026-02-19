@@ -108,12 +108,34 @@ export function findSimilarTypes(
 
   for (const type of availableTypes) {
     const dist = levenshtein(queriedLower, type.toLowerCase());
-    if (dist > 0 && dist <= maxDistance) {
+    if (dist <= maxDistance && (dist > 0 || queriedType !== type)) {
       similar.push(type);
     }
   }
 
   return similar;
+}
+
+export function extractQueriedTypes(query: string): { nodeTypes: string[]; edgeTypes: string[] } {
+  const nodeTypes: string[] = [];
+  const edgeTypes: string[] = [];
+
+  // Match node(VAR, "TYPE") — the only working node predicate in the Rust evaluator.
+  // Note: type(VAR, "TYPE") is intentionally excluded: the Rust evaluator has no "type"
+  // branch and silently returns empty results. See separate issue for the root cause fix.
+  const nodeRegex = /\bnode\([^,)]+,\s*"([^"]+)"\)/g;
+  let m: RegExpExecArray | null;
+  while ((m = nodeRegex.exec(query)) !== null) {
+    nodeTypes.push(m[1]);
+  }
+
+  // Match edge(SRC, DST, "TYPE") and incoming(DST, SRC, "TYPE")
+  const edgeRegex = /\b(?:edge|incoming)\([^,)]+,\s*[^,)]+,\s*"([^"]+)"\)/g;
+  while ((m = edgeRegex.exec(query)) !== null) {
+    edgeTypes.push(m[1]);
+  }
+
+  return { nodeTypes, edgeTypes };
 }
 
 // Levenshtein distance implementation
