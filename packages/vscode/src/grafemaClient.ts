@@ -12,7 +12,7 @@ import { existsSync, unlinkSync, watch } from 'fs';
 import { join, dirname, basename } from 'path';
 import { EventEmitter } from 'events';
 import { RFDBClient } from '@grafema/rfdb-client';
-import type { ConnectionState } from './types';
+import type { ConnectionState, GraphStats } from './types';
 
 const GRAFEMA_DIR = '.grafema';
 const SOCKET_FILE = 'rfdb.sock';
@@ -352,6 +352,26 @@ export class GrafemaClientManager extends EventEmitter {
 
       return null;
     }
+  }
+
+  /**
+   * Get graph statistics (node/edge count, version, db path).
+   * Returns null if not connected.
+   */
+  async getStats(): Promise<GraphStats | null> {
+    if (!this.isConnected()) return null;
+    const client = this.getClient();
+    const [version, nodeCount, edgeCount] = await Promise.all([
+      client.ping(),
+      client.nodeCount(),
+      client.edgeCount(),
+    ]);
+    return {
+      version: version || 'unknown',
+      nodeCount,
+      edgeCount,
+      dbPath: this.dbPath,
+    };
   }
 
   /**

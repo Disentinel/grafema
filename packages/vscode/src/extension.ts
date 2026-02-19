@@ -9,12 +9,16 @@ import * as vscode from 'vscode';
 import type { WireNode } from '@grafema/types';
 import { GrafemaClientManager } from './grafemaClient';
 import { EdgesProvider } from './edgesProvider';
+import { StatusProvider } from './statusProvider';
+import { DebugProvider } from './debugProvider';
 import { findNodeAtCursor } from './nodeLocator';
 import type { GraphTreeItem } from './types';
 import { parseNodeMetadata } from './types';
 
 let clientManager: GrafemaClientManager | null = null;
 let edgesProvider: EdgesProvider | null = null;
+let statusProvider: StatusProvider | null = null;
+let debugProvider: DebugProvider | null = null;
 let treeView: vscode.TreeView<GraphTreeItem> | null = null;
 let followCursor = true; // Follow cursor mode (toggle with cmd+shift+g)
 let statusBarItem: vscode.StatusBarItem | null = null;
@@ -46,6 +50,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // Initialize tree provider
   edgesProvider = new EdgesProvider(clientManager);
 
+  // Register status provider
+  statusProvider = new StatusProvider(clientManager);
+  const statusTreeRegistration = vscode.window.registerTreeDataProvider('grafemaStatus', statusProvider);
+
+  // Register debug provider
+  debugProvider = new DebugProvider();
+  const debugTreeRegistration = vscode.window.registerTreeDataProvider('grafemaDebug', debugProvider);
+
   // Register tree view
   treeView = vscode.window.createTreeView('grafemaExplore', {
     treeDataProvider: edgesProvider,
@@ -57,13 +69,21 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     selectedTreeItem = event.selection[0] ?? null;
   });
 
-  // Update welcome message based on connection state
-  clientManager.on('stateChange', () => {
+  // Update welcome message and status bar based on connection state
+  clientManager.on('stateChange', async () => {
     const message = edgesProvider?.getStatusMessage();
     if (message && treeView) {
       treeView.message = message;
     } else if (treeView) {
       treeView.message = undefined;
+    }
+    updateStatusBar();
+    // Fetch stats asynchronously for status bar node count
+    if (clientManager?.isConnected()) {
+      const stats = await clientManager.getStats();
+      if (stats && statusBarItem) {
+        statusBarItem.text = `$(pass-filled) Grafema: ${stats.nodeCount.toLocaleString()} nodes`;
+      }
     }
   });
 
@@ -88,6 +108,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   // Register all disposables
   context.subscriptions.push(
+    statusTreeRegistration,
+    debugTreeRegistration,
     treeView,
     selectionTracker,
     ...disposables,
@@ -113,7 +135,10 @@ function registerCommands(): vscode.Disposable[] {
     'grafema.gotoLocation',
     async (file: string, line: number, column: number) => {
       try {
-        const uri = vscode.Uri.file(file);
+        // Graph stores relative paths — resolve to absolute using workspace root
+        const wsRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+        const absFile = wsRoot && !file.startsWith('/') ? `${wsRoot}/${file}` : file;
+        const uri = vscode.Uri.file(absFile);
         const position = new vscode.Position(Math.max(0, line - 1), column);
         const document = await vscode.workspace.openTextDocument(uri);
         const editor = await vscode.window.showTextDocument(document);
@@ -126,8 +151,165 @@ function registerCommands(): vscode.Disposable[] {
     }
   ));
 
+  // Search nodes in graph — streaming search with timeout
+  const SEARCH_TIMEOUT_MS = 5000;
+  const SEARCH_MAX_RESULTS = 50;
+
+  disposables.push(vscode.commands.registerCommand('grafema.searchNodes', async () => {
+    if (!clientManager?.isConnected() || !edgesProvider) {
+      vscode.window.showWarningMessage('Grafema: Not connected to graph');
+      return;
+    }
+
+    const client = clientManager.getClient();
+
+    const quickPick = vscode.window.createQuickPick();
+    quickPick.placeholder = 'Search: exact name, or TYPE:substring (e.g. FUNCTION:handle, MODULE:)';
+    quickPick.matchOnDescription = true;
+
+    const nodeIdMap = new Map<string, string>(); // detail display text → numeric id
+    let activeAbort: AbortController | null = null;
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+    quickPick.onDidChangeValue((value) => {
+      // Cancel previous search
+      if (activeAbort) activeAbort.abort();
+      if (debounceTimer) clearTimeout(debounceTimer);
+
+      if (!value || value.length < 2) {
+        quickPick.items = [];
+        return;
+      }
+
+      debounceTimer = setTimeout(async () => {
+        const abort = new AbortController();
+        activeAbort = abort;
+
+        // Parse TYPE:name syntax
+        const colonIdx = value.indexOf(':');
+        let typeFilter = '';
+        let nameFilter = '';
+        if (colonIdx > 0) {
+          typeFilter = value.slice(0, colonIdx).toUpperCase();
+          nameFilter = value.slice(colonIdx + 1).toLowerCase();
+        } else {
+          nameFilter = value.toLowerCase();
+        }
+
+        // Build RFDB query — use exact match fields where possible
+        const query: Record<string, string> = {};
+        if (typeFilter) query.nodeType = typeFilter;
+        // If no type prefix and input looks like an exact name (no spaces), try exact match
+        if (!typeFilter && !nameFilter.includes(' ')) query.name = value;
+
+        quickPick.busy = true;
+        const startTime = Date.now();
+
+        try {
+          const matches: WireNode[] = [];
+          const timeoutPromise = new Promise<'timeout'>((resolve) =>
+            setTimeout(() => resolve('timeout'), SEARCH_TIMEOUT_MS)
+          );
+
+          // Stream results — collect up to SEARCH_MAX_RESULTS
+          const streamPromise = (async () => {
+            for await (const node of client.queryNodes(query)) {
+              if (abort.signal.aborted) return 'aborted';
+              // If we used exact name query, accept all results
+              // If we used type query, filter by name substring
+              if (typeFilter && nameFilter && !node.name.toLowerCase().includes(nameFilter)) {
+                continue;
+              }
+              matches.push(node);
+              if (matches.length >= SEARCH_MAX_RESULTS) return 'limit';
+            }
+            return 'done';
+          })();
+
+          const reason = await Promise.race([streamPromise, timeoutPromise]);
+          if (abort.signal.aborted) return;
+
+          const elapsed = Date.now() - startTime;
+          debugProvider?.log({
+            timestamp: Date.now(),
+            operation: 'searchNodes',
+            query: { ...query, nameFilter: nameFilter || '(none)' },
+            result: `${matches.length} found (${reason}, ${elapsed}ms)`,
+            details: matches.slice(0, 5).map((n) => `${n.nodeType} "${n.name}" ${n.file}`),
+          });
+
+          if (matches.length === 0) {
+            const hint = !typeFilter
+              ? 'Try TYPE:name syntax (e.g. FUNCTION:handle)'
+              : `no "${typeFilter}" nodes${nameFilter ? ` matching "${nameFilter}"` : ''}`;
+            quickPick.items = [{
+              label: `$(circle-slash) No results`,
+              description: hint,
+              alwaysShow: true,
+            }];
+          } else {
+            const items: vscode.QuickPickItem[] = [];
+            nodeIdMap.clear();
+            for (const node of matches) {
+              const meta = JSON.parse(node.metadata || '{}');
+              const loc = meta.line ? `:${meta.line}` : '';
+              const displayId = node.semanticId || node.id;
+              nodeIdMap.set(displayId, node.id);
+              items.push({
+                label: `$(symbol-${getIconName(node.nodeType)}) ${node.nodeType} "${node.name}"`,
+                description: `${node.file}${loc}`,
+                detail: displayId,
+                alwaysShow: true,
+              });
+            }
+            if (reason === 'limit') {
+              items.push({
+                label: `$(info) ${SEARCH_MAX_RESULTS}+ results, refine your query`,
+                kind: vscode.QuickPickItemKind.Separator,
+              });
+            }
+            quickPick.items = items;
+          }
+        } catch (err) {
+          if (abort.signal.aborted) return;
+          const message = err instanceof Error ? err.message : String(err);
+          debugProvider?.log({
+            timestamp: Date.now(),
+            operation: 'searchNodes',
+            query,
+            result: `error: ${message}`,
+          });
+          quickPick.items = [{ label: `$(error) Search failed: ${message}` }];
+        } finally {
+          if (!abort.signal.aborted) quickPick.busy = false;
+        }
+      }, 300);
+    });
+
+    quickPick.onDidAccept(() => {
+      const selected = quickPick.selectedItems[0];
+      if (selected?.detail && clientManager?.isConnected()) {
+        const nodeId = nodeIdMap.get(selected.detail) || selected.detail;
+        clientManager.getClient().getNode(nodeId).then((node) => {
+          if (node && edgesProvider) {
+            edgesProvider.navigateToNode(node);
+          }
+        });
+      }
+      quickPick.dispose();
+    });
+
+    quickPick.onDidHide(() => {
+      if (activeAbort) activeAbort.abort();
+      quickPick.dispose();
+    });
+
+    quickPick.show();
+  }));
+
   // Find node at cursor and set as root (clears history)
   disposables.push(vscode.commands.registerCommand('grafema.findAtCursor', async () => {
+    console.log('[grafema-explore] findAtCursor command fired');
     await findAndSetRoot(false);
   }));
 
@@ -193,9 +375,26 @@ function registerCommands(): vscode.Disposable[] {
     vscode.window.showInformationMessage('Grafema: Tree state copied to clipboard');
   }));
 
-  // Status bar
+  // Filter tree — opens VS Code's built-in find widget for the tree view
+  disposables.push(vscode.commands.registerCommand('grafema.filterTree', () => {
+    vscode.commands.executeCommand('grafemaExplore.focus').then(() => {
+      vscode.commands.executeCommand('list.find');
+    });
+  }));
+
+  // Focus status view command
+  disposables.push(vscode.commands.registerCommand('grafema.focusStatus', () => {
+    vscode.commands.executeCommand('grafemaStatus.focus');
+  }));
+
+  // Clear debug log command
+  disposables.push(vscode.commands.registerCommand('grafema.clearDebugLog', () => {
+    debugProvider?.clear();
+  }));
+
+  // Status bar — click focuses STATUS view
   statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
-  statusBarItem.command = 'grafema.toggleFollowCursor';
+  statusBarItem.command = 'grafema.focusStatus';
   updateStatusBar();
   statusBarItem.show();
   disposables.push(statusBarItem);
@@ -203,6 +402,7 @@ function registerCommands(): vscode.Disposable[] {
   // Follow cursor on selection change
   disposables.push(vscode.window.onDidChangeTextEditorSelection(
     debounce(async (_event: vscode.TextEditorSelectionChangeEvent) => {
+      console.log(`[grafema-explore] selection changed, followCursor=${followCursor}, connected=${clientManager?.isConnected()}`);
       if (followCursor && clientManager?.isConnected()) {
         await findAndSetRoot(false);
       }
@@ -216,30 +416,98 @@ function registerCommands(): vscode.Disposable[] {
  * Find node at current cursor and set as root
  */
 async function findAndSetRoot(preserveHistory: boolean): Promise<void> {
+  console.log('[grafema-explore] findAndSetRoot called');
+
   if (!edgesProvider || !clientManager) {
+    console.log('[grafema-explore] findAndSetRoot: no edgesProvider or clientManager');
+    debugProvider?.log({
+      timestamp: Date.now(),
+      operation: 'findAndSetRoot',
+      query: {},
+      result: 'error: extension not initialized',
+      details: [`edgesProvider: ${!!edgesProvider}`, `clientManager: ${!!clientManager}`],
+    });
     return;
   }
 
   const editor = vscode.window.activeTextEditor;
   if (!editor) {
+    console.log('[grafema-explore] findAndSetRoot: no active editor');
+    debugProvider?.log({
+      timestamp: Date.now(),
+      operation: 'findAndSetRoot',
+      query: {},
+      result: 'error: no active editor',
+    });
     edgesProvider.setStatusMessage('No active editor');
     return;
   }
 
   if (!clientManager.isConnected()) {
+    console.log('[grafema-explore] findAndSetRoot: not connected');
+    debugProvider?.log({
+      timestamp: Date.now(),
+      operation: 'findAndSetRoot',
+      query: {},
+      result: `error: not connected (status: ${clientManager.state.status})`,
+    });
     edgesProvider.setStatusMessage('Not connected to graph');
     return;
   }
 
   const document = editor.document;
   const position = editor.selection.active;
-  const filePath = document.uri.fsPath;
+  const absPath = document.uri.fsPath;
   const line = position.line + 1;
   const column = position.character;
 
+  // Convert absolute path to relative (graph stores paths relative to workspace root)
+  const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  const filePath = workspaceRoot && absPath.startsWith(workspaceRoot)
+    ? absPath.slice(workspaceRoot.length + 1) // +1 for trailing slash
+    : absPath;
+  console.log(`[grafema-explore] findAndSetRoot: file=${filePath} L${line}:${column}`);
+
   try {
     const client = clientManager.getClient();
+
+    // Debug: log the raw query before node search
+    const allNodes = await client.getAllNodes({ file: filePath });
+    const details: string[] = [
+      `cursor: L${line}:${column}`,
+      `getAllNodes({ file }) returned ${allNodes.length} nodes`,
+    ];
+
+    if (allNodes.length === 0) {
+      // Try a small sample query to see what file paths look like in the graph
+      const sampleNodes = await client.getAllNodes({ nodeType: 'MODULE' });
+      const files = new Set(sampleNodes.slice(0, 20).map((n) => n.file));
+      details.push(`--- sample MODULE files in graph (first ${files.size}) ---`);
+      for (const f of files) {
+        details.push(`  ${f}`);
+      }
+    } else {
+      // Show first few nodes for context
+      for (const n of allNodes.slice(0, 5)) {
+        const meta = JSON.parse(n.metadata || '{}');
+        details.push(`  ${n.nodeType} "${n.name}" L${meta.line ?? '?'}:${meta.column ?? '?'}`);
+      }
+      if (allNodes.length > 5) {
+        details.push(`  ... and ${allNodes.length - 5} more`);
+      }
+    }
+
     const node = await findNodeAtCursor(client, filePath, line, column);
+
+    debugProvider?.log({
+      timestamp: Date.now(),
+      operation: 'findNodeAtCursor',
+      query: { file: filePath, line, column },
+      result: node
+        ? `found: ${node.nodeType} "${node.name}"`
+        : `${allNodes.length} nodes in file, none matched`,
+      details,
+    });
 
     if (node) {
       if (preserveHistory) {
@@ -251,24 +519,72 @@ async function findAndSetRoot(preserveHistory: boolean): Promise<void> {
       edgesProvider.setStatusMessage('No graph node at cursor');
     }
   } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
     console.error('[grafema-explore] Error finding node:', err);
+    debugProvider?.log({
+      timestamp: Date.now(),
+      operation: 'findNodeAtCursor',
+      query: { file: filePath, line, column },
+      result: `error: ${message}`,
+    });
     edgesProvider.setStatusMessage('Error querying graph');
   }
 }
 
 /**
- * Update status bar to show follow cursor state
+ * Update status bar to show connection state + follow mode in tooltip
  */
 function updateStatusBar(): void {
   if (!statusBarItem) return;
 
-  if (followCursor) {
-    statusBarItem.text = '$(eye) Grafema: Follow';
-    statusBarItem.tooltip = 'Grafema: Following cursor (click to lock)';
-  } else {
-    statusBarItem.text = '$(lock) Grafema: Locked';
-    statusBarItem.tooltip = 'Grafema: Locked (click to follow cursor)';
+  const followState = followCursor ? 'Following cursor' : 'Locked';
+  const state = clientManager?.state;
+
+  switch (state?.status) {
+    case 'connected':
+      statusBarItem.text = '$(pass-filled) Grafema';
+      statusBarItem.tooltip = `Grafema: Connected | ${followState} (Cmd+Shift+G to toggle)`;
+      break;
+    case 'connecting':
+      statusBarItem.text = '$(loading~spin) Grafema: connecting...';
+      statusBarItem.tooltip = 'Grafema: Connecting to RFDB server';
+      break;
+    case 'starting-server':
+      statusBarItem.text = '$(loading~spin) Grafema: starting...';
+      statusBarItem.tooltip = 'Grafema: Starting RFDB server';
+      break;
+    case 'error':
+      statusBarItem.text = '$(error) Grafema: disconnected';
+      statusBarItem.tooltip = `Grafema: ${state.message}`;
+      break;
+    case 'no-database':
+      statusBarItem.text = '$(circle-large-outline) Grafema: no database';
+      statusBarItem.tooltip = 'Grafema: Run `grafema analyze` first';
+      break;
+    default:
+      statusBarItem.text = '$(circle-large-outline) Grafema';
+      statusBarItem.tooltip = 'Grafema: Disconnected';
+      break;
   }
+}
+
+/**
+ * Map node type to VS Code icon name (for QuickPick labels)
+ */
+function getIconName(nodeType: string): string {
+  const map: Record<string, string> = {
+    FUNCTION: 'function',
+    METHOD: 'method',
+    CLASS: 'class',
+    VARIABLE: 'variable',
+    PARAMETER: 'parameter',
+    CONSTANT: 'constant',
+    MODULE: 'module',
+    IMPORT: 'package',
+    EXPORT: 'event',
+    FILE: 'file',
+  };
+  return map[nodeType] || 'misc';
 }
 
 /**

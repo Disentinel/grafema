@@ -25,6 +25,16 @@ export type GraphTreeItem =
   | { kind: 'edge'; edge: WireEdge & Record<string, unknown>; direction: 'outgoing' | 'incoming'; targetNode?: WireNode; isOnPath?: boolean; visitedNodeIds?: Set<string> };
 
 /**
+ * Graph statistics returned by getStats()
+ */
+export interface GraphStats {
+  version: string;
+  nodeCount: number;
+  edgeCount: number;
+  dbPath: string;
+}
+
+/**
  * Connection states for the RFDB client
  */
 export type ConnectionState =

@@ -11,27 +11,72 @@
     "Other"
   ],
   "activationEvents": [
+    "onView:grafemaStatus",
     "onView:grafemaExplore"
   ],
   "main": "./dist/extension.js",
   "contributes": {
-    "views": {
-      "explorer": [
+    "viewsContainers": {
+      "activitybar": [
         {
-          "id": "grafemaExplore",
-          "name": "Grafema Explore"
+          "id": "grafema",
+          "title": "Grafema",
+          "icon": "resources/grafema-icon.svg"
         }
       ]
     },
+    "views": {
+      "grafema": [
+        { "id": "grafemaStatus", "name": "Status", "visibility": "visible" },
+        { "id": "grafemaValueTrace", "name": "Value Trace", "visibility": "collapsed" },
+        { "id": "grafemaCallers", "name": "Callers", "visibility": "collapsed" },
+        { "id": "grafemaBlastRadius", "name": "Blast Radius", "visibility": "collapsed" },
+        { "id": "grafemaIssues", "name": "Issues", "visibility": "collapsed" },
+        { "id": "grafemaExplore", "name": "Explorer", "visibility": "collapsed" },
+        { "id": "grafemaDebug", "name": "Debug Log", "visibility": "collapsed" }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "grafemaValueTrace",
+        "contents": "Value tracing shows where values come from and where they go.\n\nComing in Phase 1."
+      },
+      {
+        "view": "grafemaCallers",
+        "contents": "Call hierarchy shows who calls this function and what it calls.\n\nComing in Phase 2."
+      },
+      {
+        "view": "grafemaBlastRadius",
+        "contents": "Blast radius shows what breaks if you change this code.\n\nComing in Phase 4."
+      },
+      {
+        "view": "grafemaIssues",
+        "contents": "Issues panel shows guarantee violations and connectivity gaps.\n\nComing in Phase 3."
+      }
+    ],
     "commands": [
+      {
+        "command": "grafema.focusStatus",
+        "title": "Grafema: Show Status"
+      },
+      {
+        "command": "grafema.clearDebugLog",
+        "title": "Clear Log",
+        "icon": "$(clear-all)"
+      },
       {
         "command": "grafema.gotoLocation",
         "title": "Go to Location"
       },
       {
+        "command": "grafema.searchNodes",
+        "title": "Grafema: Search Nodes",
+        "icon": "$(search)"
+      },
+      {
         "command": "grafema.findAtCursor",
         "title": "Grafema: Find Node at Cursor",
-        "icon": "$(search)"
+        "icon": "$(inspect)"
       },
       {
         "command": "grafema.toggleFollowCursor",
@@ -57,10 +102,20 @@
         "command": "grafema.copyTreeState",
         "title": "Grafema: Copy Tree State",
         "icon": "$(clippy)"
+      },
+      {
+        "command": "grafema.filterTree",
+        "title": "Grafema: Filter Tree",
+        "icon": "$(filter)"
       }
     ],
     "menus": {
       "view/title": [
+        {
+          "command": "grafema.searchNodes",
+          "when": "view == grafemaExplore",
+          "group": "navigation@0"
+        },
         {
           "command": "grafema.goBack",
           "when": "view == grafemaExplore",
@@ -82,9 +137,19 @@
           "group": "navigation@4"
         },
         {
-          "command": "grafema.copyTreeState",
+          "command": "grafema.filterTree",
           "when": "view == grafemaExplore",
           "group": "navigation@5"
+        },
+        {
+          "command": "grafema.copyTreeState",
+          "when": "view == grafemaExplore",
+          "group": "navigation@6"
+        },
+        {
+          "command": "grafema.clearDebugLog",
+          "when": "view == grafemaDebug",
+          "group": "navigation@1"
         }
       ],
       "view/item/context": [
