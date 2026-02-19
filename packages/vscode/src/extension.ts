@@ -20,6 +20,7 @@ import { ValueTraceProvider } from './valueTraceProvider';
 import { GrafemaHoverProvider } from './hoverProvider';
 import { CallersProvider } from './callersProvider';
 import { IssuesProvider } from './issuesProvider';
+import { BlastRadiusProvider } from './blastRadiusProvider';
 import { GrafemaCodeLensProvider } from './codeLensProvider';
 
 let clientManager: GrafemaClientManager | null = null;
@@ -33,6 +34,7 @@ let selectedTreeItem: GraphTreeItem | null = null; // Track selected item for st
 let valueTraceProvider: ValueTraceProvider | null = null;
 let callersProvider: CallersProvider | null = null;
 let issuesProvider: IssuesProvider | null = null;
+let blastRadiusProvider: BlastRadiusProvider | null = null;
 
 /**
  * Extension activation
@@ -110,6 +112,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const diagnosticCollection = vscode.languages.createDiagnosticCollection('grafema');
   issuesProvider.setDiagnosticCollection(diagnosticCollection);
 
+  // Register BLAST RADIUS panel provider (Pattern B: createTreeView)
+  blastRadiusProvider = new BlastRadiusProvider(clientManager);
+  const blastRadiusView = vscode.window.createTreeView('grafemaBlastRadius', {
+    treeDataProvider: blastRadiusProvider,
+  });
+  blastRadiusProvider.setTreeView(blastRadiusView);
+
   // Register CodeLens provider (JS/TS files only)
   const codeLensProvider = new GrafemaCodeLensProvider(clientManager);
   const codeLensDisposable = vscode.languages.registerCodeLensProvider(
@@ -171,6 +180,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     valueTraceRegistration,
     callersRegistration,
     issuesView,
+    blastRadiusView,
     diagnosticCollection,
     codeLensDisposable,
     hoverDisposable,
@@ -554,9 +564,30 @@ function registerCommands(): vscode.Disposable[] {
     issuesProvider?.refresh();
   }));
 
-  // Blast radius placeholder (Phase 4)
-  disposables.push(vscode.commands.registerCommand('grafema.blastRadiusPlaceholder', () => {
-    vscode.window.showInformationMessage('Blast Radius analysis is coming in Phase 4.');
+  // Open BLAST RADIUS panel — accepts optional nodeId from CodeLens
+  disposables.push(vscode.commands.registerCommand(
+    'grafema.openBlastRadius',
+    async (nodeId?: string) => {
+      await vscode.commands.executeCommand('grafemaBlastRadius.focus');
+      if (nodeId && clientManager?.isConnected()) {
+        try {
+          const node = await clientManager.getClient().getNode(nodeId);
+          if (node) {
+            blastRadiusProvider?.setRootNode(node);
+          }
+        } catch {
+          // Fallback to cursor
+          await findAndSetBlastRadiusAtCursor();
+        }
+      } else {
+        await findAndSetBlastRadiusAtCursor();
+      }
+    }
+  ));
+
+  // Refresh BLAST RADIUS panel
+  disposables.push(vscode.commands.registerCommand('grafema.refreshBlastRadius', () => {
+    blastRadiusProvider?.refresh();
   }));
 
   // Status bar — click focuses STATUS view
@@ -574,6 +605,7 @@ function registerCommands(): vscode.Disposable[] {
         await findAndSetRoot(clientManager, edgesProvider, debugProvider, false);
         await findAndTraceAtCursor();
         await findAndSetCallersAtCursor();
+        await findAndSetBlastRadiusAtCursor();
       }
     }, 150)
   ));
@@ -640,6 +672,41 @@ async function findAndSetCallersAtCursor(): Promise<void> {
     }
   } catch {
     // Silent fail -- CALLERS panel errors should not disrupt the editor
+  }
+}
+
+/**
+ * Find node at current cursor and update BLAST RADIUS panel.
+ * Triggers on FUNCTION, METHOD, VARIABLE, and CONSTANT node types.
+ */
+async function findAndSetBlastRadiusAtCursor(): Promise<void> {
+  if (!blastRadiusProvider || !clientManager) return;
+
+  const editor = vscode.window.activeTextEditor;
+  if (!editor) return;
+  if (!clientManager.isConnected()) return;
+  if (editor.document.uri.scheme !== 'file') return;
+
+  const position = editor.selection.active;
+  const absPath = editor.document.uri.fsPath;
+  const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  const filePath = workspaceRoot && absPath.startsWith(workspaceRoot)
+    ? absPath.slice(workspaceRoot.length + 1)
+    : absPath;
+
+  try {
+    const client = clientManager.getClient();
+    const node = await findNodeAtCursor(client, filePath, position.line + 1, position.character);
+    if (node && (
+      node.nodeType === 'FUNCTION'
+      || node.nodeType === 'METHOD'
+      || node.nodeType === 'VARIABLE'
+      || node.nodeType === 'CONSTANT'
+    )) {
+      blastRadiusProvider.setRootNode(node);
+    }
+  } catch {
+    // Silent fail -- BLAST RADIUS panel errors should not disrupt the editor
   }
 }
 
