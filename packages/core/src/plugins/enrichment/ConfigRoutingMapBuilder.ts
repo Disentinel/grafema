@@ -28,6 +28,7 @@ export class ConfigRoutingMapBuilder extends Plugin {
   }
 
   async execute(context: PluginContext): Promise<PluginResult> {
+    const { onProgress } = context;
     const logger = this.log(context);
 
     // Read routing rules from config
@@ -56,6 +57,16 @@ export class ConfigRoutingMapBuilder extends Plugin {
     }));
 
     routingMap.addRules(rulesWithSource);
+
+    if (onProgress) {
+      onProgress({
+        phase: 'enrichment',
+        currentPlugin: 'ConfigRoutingMapBuilder',
+        message: `Loaded ${routing.length} routing rules from config`,
+        totalFiles: routing.length,
+        processedFiles: routing.length,
+      });
+    }
 
     logger.info('Loaded routing rules from config', {
       count: routing.length,

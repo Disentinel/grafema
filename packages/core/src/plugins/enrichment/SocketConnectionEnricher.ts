@@ -49,13 +49,52 @@ export class SocketConnectionEnricher extends Plugin {
   }
 
   async execute(context: PluginContext): Promise<PluginResult> {
-    const { graph } = context;
+    const { graph, onProgress } = context;
     const logger = this.log(context);
 
     try {
+      if (onProgress) {
+        onProgress({
+          phase: 'enrichment',
+          currentPlugin: 'SocketConnectionEnricher',
+          message: 'Collecting unix socket clients',
+          totalFiles: 0,
+          processedFiles: 0,
+        });
+      }
       const unixClients = await this.collectNodes<UnixSocketNode>(graph, 'os:unix-socket');
+
+      if (onProgress) {
+        onProgress({
+          phase: 'enrichment',
+          currentPlugin: 'SocketConnectionEnricher',
+          message: 'Collecting unix socket servers',
+          totalFiles: 0,
+          processedFiles: 0,
+        });
+      }
       const unixServers = await this.collectNodes<UnixSocketNode>(graph, 'os:unix-server');
+
+      if (onProgress) {
+        onProgress({
+          phase: 'enrichment',
+          currentPlugin: 'SocketConnectionEnricher',
+          message: 'Collecting TCP clients',
+          totalFiles: 0,
+          processedFiles: 0,
+        });
+      }
       const tcpClients = await this.collectNodes<TcpSocketNode>(graph, 'net:tcp-connection');
+
+      if (onProgress) {
+        onProgress({
+          phase: 'enrichment',
+          currentPlugin: 'SocketConnectionEnricher',
+          message: 'Collecting TCP servers',
+          totalFiles: 0,
+          processedFiles: 0,
+        });
+      }
       const tcpServers = await this.collectNodes<TcpSocketNode>(graph, 'net:tcp-server');
 
       logger.info('Socket nodes found', {
@@ -69,11 +108,29 @@ export class SocketConnectionEnricher extends Plugin {
       const connections: ConnectionInfo[] = [];
 
       // Match Unix socket clients to servers by path
+      if (onProgress) {
+        onProgress({
+          phase: 'enrichment',
+          currentPlugin: 'SocketConnectionEnricher',
+          message: `Matching unix sockets ${unixClients.length} clients x ${unixServers.length} servers`,
+          totalFiles: unixClients.length,
+          processedFiles: 0,
+        });
+      }
       edgesCreated += await this.matchUnixSockets(
         unixClients, unixServers, graph, connections
       );
 
       // Match TCP clients to servers by port/host
+      if (onProgress) {
+        onProgress({
+          phase: 'enrichment',
+          currentPlugin: 'SocketConnectionEnricher',
+          message: `Matching TCP sockets ${tcpClients.length} clients x ${tcpServers.length} servers`,
+          totalFiles: tcpClients.length,
+          processedFiles: 0,
+        });
+      }
       edgesCreated += await this.matchTcpSockets(
         tcpClients, tcpServers, graph, connections
       );
