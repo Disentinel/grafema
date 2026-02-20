@@ -15662,6 +15662,38 @@
       "file": "middleware/auth.js",
       "name": "",
       "type": "LITERAL",
+      "value": "Insufficient permissions",
+      "valueType": "string"
+    },
+    {
+      "exported": false,
+      "file": "middleware/auth.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": "Invalid token",
+      "valueType": "string"
+    },
+    {
+      "exported": false,
+      "file": "middleware/auth.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": "Invalid token",
+      "valueType": "string"
+    },
+    {
+      "exported": false,
+      "file": "middleware/auth.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": "Invalid token",
+      "valueType": "string"
+    },
+    {
+      "exported": false,
+      "file": "middleware/auth.js",
+      "name": "",
+      "type": "LITERAL",
       "value": "Permissions error:",
       "valueType": "string"
     },
@@ -15718,6 +15750,30 @@
       "file": "middleware/auth.js",
       "name": "",
       "type": "LITERAL",
+      "value": "Token blacklisted",
+      "valueType": "string"
+    },
+    {
+      "exported": false,
+      "file": "middleware/auth.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": "Token blacklisted",
+      "valueType": "string"
+    },
+    {
+      "exported": false,
+      "file": "middleware/auth.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": "Token blacklisted",
+      "valueType": "string"
+    },
+    {
+      "exported": false,
+      "file": "middleware/auth.js",
+      "name": "",
+      "type": "LITERAL",
       "value": "Token verification failed:",
       "valueType": "string"
     },
@@ -15727,6 +15783,38 @@
       "name": "",
       "type": "LITERAL",
       "value": "true",
+      "valueType": "string"
+    },
+    {
+      "exported": false,
+      "file": "middleware/auth.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": "User not found",
+      "valueType": "string"
+    },
+    {
+      "exported": false,
+      "file": "middleware/auth.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": "User not found",
+      "valueType": "string"
+    },
+    {
+      "exported": false,
+      "file": "middleware/auth.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": "User not found",
+      "valueType": "string"
+    },
+    {
+      "exported": false,
+      "file": "middleware/auth.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": "User not found",
       "valueType": "string"
     },
     {
@@ -16006,6 +16094,14 @@
       "file": "models/User.js",
       "name": "",
       "type": "LITERAL",
+      "value": "user",
+      "valueType": "string"
+    },
+    {
+      "exported": false,
+      "file": "models/User.js",
+      "name": "",
+      "type": "LITERAL",
       "value": "User",
       "valueType": "string"
     },
@@ -16014,6 +16110,14 @@
       "file": "models/User.js",
       "name": "",
       "type": "LITERAL",
+      "value": 0,
+      "valueType": "number"
+    },
+    {
+      "exported": false,
+      "file": "models/User.js",
+      "name": "",
+      "type": "LITERAL",
       "value": 10,
       "valueType": "number"
     },
@@ -16024,6 +16128,30 @@
       "type": "LITERAL",
       "value": 10,
       "valueType": "number"
+    },
+    {
+      "exported": false,
+      "file": "models/User.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": true,
+      "valueType": "boolean"
+    },
+    {
+      "exported": false,
+      "file": "models/User.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": true,
+      "valueType": "boolean"
+    },
+    {
+      "exported": false,
+      "file": "models/User.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": true,
+      "valueType": "boolean"
     },
     {
       "exported": false,
@@ -16247,6 +16375,14 @@
       "name": "",
       "type": "LITERAL",
       "value": "settings",
+      "valueType": "string"
+    },
+    {
+      "exported": false,
+      "file": "routes/api.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": "User not found",
       "valueType": "string"
     },
     {
@@ -16703,6 +16839,14 @@
       "type": "LITERAL",
       "value": 3600,
       "valueType": "number"
+    },
+    {
+      "exported": false,
+      "file": "utils/asyncHelpers.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": "Both primary and fallback failed",
+      "valueType": "string"
     },
     {
       "exported": false,
@@ -17203,6 +17347,64 @@
     {
       "exported": false,
       "file": "middleware/auth.js",
+      "name": "<object>",
+      "type": "OBJECT_LITERAL"
+    },
+    {
+      "argIndex": 0,
+      "exported": false,
+      "file": "models/User.js",
+      "name": "<object>",
+      "parentCallId": "models/User.js:CONSTRUCTOR_CALL:Schema:6:19",
+      "type": "OBJECT_LITERAL"
+    },
+    {
+      "exported": false,
+      "file": "models/User.js",
+      "name": "<object>",
+      "type": "OBJECT_LITERAL"
+    },
+    {
+      "exported": false,
+      "file": "models/User.js",
+      "name": "<object>",
+      "type": "OBJECT_LITERAL"
+    },
+    {
+      "exported": false,
+      "file": "models/User.js",
+      "name": "<object>",
+      "type": "OBJECT_LITERAL"
+    },
+    {
+      "exported": false,
+      "file": "models/User.js",
+      "name": "<object>",
+      "type": "OBJECT_LITERAL"
+    },
+    {
+      "exported": false,
+      "file": "models/User.js",
+      "name": "<object>",
+      "type": "OBJECT_LITERAL"
+    },
+    {
+      "exported": false,
+      "file": "models/User.js",
+      "name": "<object>",
+      "type": "OBJECT_LITERAL"
+    },
+    {
+      "argIndex": 0,
+      "exported": false,
+      "file": "routes/api.js",
+      "name": "<object>",
+      "parentCallId": "routes/api.js:CONSTRUCTOR_CALL:User:25:20",
+      "type": "OBJECT_LITERAL"
+    },
+    {
+      "exported": false,
+      "file": "routes/api.js",
       "name": "<object>",
       "type": "OBJECT_LITERAL"
     },
@@ -27230,6 +27432,14 @@
     },
     {
       "from": "CALL:activeUsers.map",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:activeUsers.map",
       "type": "PASSES_ARGUMENT",
       "to": "FUNCTION:anonymous[0]",
       "metadata": {
@@ -27245,6 +27455,38 @@
       "from": "CALL:activeUsers.map",
       "type": "USES",
       "to": "PARAMETER:activeUsers"
+    },
+    {
+      "from": "CALL:app.get",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[2]",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:app.get",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[3]",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:app.get",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:app.get",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
     },
     {
       "from": "CALL:app.get",
@@ -27290,6 +27532,22 @@
     },
     {
       "from": "CALL:app.listen",
+      "type": "DERIVES_FROM",
+      "to": "CALL:config.getPort",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:app.listen",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:app.listen",
       "type": "PASSES_ARGUMENT",
       "to": "CALL:config.getPort",
       "metadata": {
@@ -27308,6 +27566,22 @@
       "from": "CALL:app.listen",
       "type": "USES",
       "to": "CONSTANT:app"
+    },
+    {
+      "from": "CALL:app.post",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[1]",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:app.post",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
     },
     {
       "from": "CALL:app.post",
@@ -27334,6 +27608,46 @@
       "from": "CALL:app.post",
       "type": "USES",
       "to": "CONSTANT:app"
+    },
+    {
+      "from": "CALL:app.use",
+      "type": "DERIVES_FROM",
+      "to": "CALL:errorHandler.handleError.bind",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:app.use",
+      "type": "DERIVES_FROM",
+      "to": "CALL:express.json",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:app.use",
+      "type": "DERIVES_FROM",
+      "to": "IMPORT:apiRouter",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:app.use",
+      "type": "DERIVES_FROM",
+      "to": "IMPORT:authMiddleware",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:app.use",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
     },
     {
       "from": "CALL:app.use",
@@ -27397,6 +27711,14 @@
     },
     {
       "from": "CALL:batch.push",
+      "type": "DERIVES_FROM",
+      "to": "CONSTANT:item",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:batch.push",
       "type": "PASSES_ARGUMENT",
       "to": "CONSTANT:item",
       "metadata": {
@@ -27412,6 +27734,22 @@
       "from": "CALL:batches.flat",
       "type": "USES",
       "to": "CONSTANT:batches"
+    },
+    {
+      "from": "CALL:batches.push",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:currentBatch",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:batches.push",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:currentBatch",
+      "metadata": {
+        "argIndex": 0
+      }
     },
     {
       "from": "CALL:batches.push",
@@ -27441,10 +27779,42 @@
     },
     {
       "from": "CALL:bcrypt.compare",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 2
+      }
+    },
+    {
+      "from": "CALL:bcrypt.compare",
       "type": "PASSES_ARGUMENT",
       "to": "FUNCTION:anonymous[0]",
       "metadata": {
         "argIndex": 2
+      }
+    },
+    {
+      "from": "CALL:bcrypt.genSalt",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:bcrypt.genSalt",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:bcrypt.genSalt",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
       }
     },
     {
@@ -27469,6 +27839,30 @@
       "to": "LITERAL:",
       "metadata": {
         "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:bcrypt.hash",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 2
+      }
+    },
+    {
+      "from": "CALL:bcrypt.hash",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:salt",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:bcrypt.hash",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:salt",
+      "metadata": {
+        "argIndex": 1
       }
     },
     {
@@ -27602,6 +27996,14 @@
     },
     {
       "from": "CALL:chain.then",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:chain.then",
       "type": "PASSES_ARGUMENT",
       "to": "FUNCTION:anonymous[0]",
       "metadata": {
@@ -27645,6 +28047,14 @@
     },
     {
       "from": "CALL:config.handleError",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:error",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:config.handleError",
       "type": "PASSES_ARGUMENT",
       "to": "VARIABLE:error",
       "metadata": {
@@ -27678,6 +28088,382 @@
     },
     {
       "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:err",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:err",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:err",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:err",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:err",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:err",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:err",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:err",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:err",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:err",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:err",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:err",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:error",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:error",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:console.error",
       "type": "PASSES_ARGUMENT",
       "to": "LITERAL:",
       "metadata": {
@@ -28224,7 +29010,55 @@
     },
     {
       "from": "CALL:console.log",
-      "type": "PASSES_ARGUMENT",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.log",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.log",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.log",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.log",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.log",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.log",
+      "type": "DERIVES_FROM",
       "to": "LITERAL:",
       "metadata": {
         "argIndex": 0
@@ -28280,8 +29114,11 @@
     },
     {
       "from": "CALL:console.log",
-      "type": "WRITES_TO",
-      "to": "net:stdio:__stdio__"
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
     },
     {
       "from": "CALL:console.log",
@@ -28337,6 +29174,19 @@
       "from": "CALL:console.log",
       "type": "WRITES_TO",
       "to": "net:stdio:__stdio__"
+    },
+    {
+      "from": "CALL:console.log",
+      "type": "WRITES_TO",
+      "to": "net:stdio:__stdio__"
+    },
+    {
+      "from": "CALL:currentBatch.push",
+      "type": "DERIVES_FROM",
+      "to": "CONSTANT:item",
+      "metadata": {
+        "argIndex": 0
+      }
     },
     {
       "from": "CALL:currentBatch.push",
@@ -28448,6 +29298,54 @@
     },
     {
       "from": "CALL:JSON.parse",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:permissions",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:JSON.parse",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:permissions",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:JSON.parse",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:permissions",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:JSON.parse",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:session",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:JSON.parse",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:session",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:JSON.parse",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:session",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:JSON.parse",
       "type": "PASSES_ARGUMENT",
       "to": "VARIABLE:permissions",
       "metadata": {
@@ -28490,6 +29388,46 @@
       "from": "CALL:JSON.parse",
       "type": "PASSES_ARGUMENT",
       "to": "VARIABLE:session",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:JSON.stringify",
+      "type": "DERIVES_FROM",
+      "to": "CONSTANT:results",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:JSON.stringify",
+      "type": "DERIVES_FROM",
+      "to": "CONSTANT:results",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:JSON.stringify",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:batch",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:JSON.stringify",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:processed",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:JSON.stringify",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:sessionData",
       "metadata": {
         "argIndex": 0
       }
@@ -28536,6 +29474,22 @@
     },
     {
       "from": "CALL:jwt.sign",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 3
+      }
+    },
+    {
+      "from": "CALL:jwt.sign",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:jwt.sign",
       "type": "PASSES_ARGUMENT",
       "to": "FUNCTION:anonymous[0]",
       "metadata": {
@@ -28548,6 +29502,126 @@
       "to": "LITERAL:",
       "metadata": {
         "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:jwt.verify",
+      "type": "DERIVES_FROM",
+      "to": "CONSTANT:SECRET_KEY",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:jwt.verify",
+      "type": "DERIVES_FROM",
+      "to": "CONSTANT:SECRET_KEY",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:jwt.verify",
+      "type": "DERIVES_FROM",
+      "to": "CONSTANT:SECRET_KEY",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:jwt.verify",
+      "type": "DERIVES_FROM",
+      "to": "CONSTANT:SECRET_KEY",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:jwt.verify",
+      "type": "DERIVES_FROM",
+      "to": "CONSTANT:SECRET_KEY",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:jwt.verify",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 2
+      }
+    },
+    {
+      "from": "CALL:jwt.verify",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 2
+      }
+    },
+    {
+      "from": "CALL:jwt.verify",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 2
+      }
+    },
+    {
+      "from": "CALL:jwt.verify",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 2
+      }
+    },
+    {
+      "from": "CALL:jwt.verify",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 2
+      }
+    },
+    {
+      "from": "CALL:jwt.verify",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:token",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:jwt.verify",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:token",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:jwt.verify",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:token",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:jwt.verify",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:token",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:jwt.verify",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:token",
+      "metadata": {
+        "argIndex": 0
       }
     },
     {
@@ -28677,6 +29751,14 @@
     },
     {
       "from": "CALL:logs.push",
+      "type": "DERIVES_FROM",
+      "to": "CONSTANT:logEntry",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:logs.push",
       "type": "PASSES_ARGUMENT",
       "to": "CONSTANT:logEntry",
       "metadata": {
@@ -28687,6 +29769,22 @@
       "from": "CALL:logs.push",
       "type": "USES",
       "to": "CONSTANT:logs"
+    },
+    {
+      "from": "CALL:Math.pow",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:Math.pow",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:attempt",
+      "metadata": {
+        "argIndex": 1
+      }
     },
     {
       "from": "CALL:Math.pow",
@@ -28706,6 +29804,14 @@
     },
     {
       "from": "CALL:mongoose.connect",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:mongoose.connect",
       "type": "PASSES_ARGUMENT",
       "to": "FUNCTION:anonymous[0]",
       "metadata": {
@@ -28719,6 +29825,14 @@
     },
     {
       "from": "CALL:mongoose.connection.close",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:mongoose.connection.close",
       "type": "PASSES_ARGUMENT",
       "to": "FUNCTION:anonymous[0]",
       "metadata": {
@@ -28727,7 +29841,295 @@
     },
     {
       "from": "CALL:mongoose.connection.db.collection",
-      "type": "PASSES_ARGUMENT",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:mongoose.connection.db.collection",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:mongoose.connection.db.collection",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:mongoose.connection.db.collection",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:mongoose.connection.db.collection",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:mongoose.connection.db.collection",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:mongoose.connection.db.collection",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:mongoose.connection.db.collection",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:mongoose.connection.db.collection",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:mongoose.connection.db.collection",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:mongoose.connection.db.collection",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:mongoose.connection.db.collection",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:mongoose.connection.db.collection",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:mongoose.connection.db.collection",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:mongoose.connection.db.collection",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:mongoose.connection.db.collection",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:mongoose.connection.db.collection",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:mongoose.connection.db.collection",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:mongoose.connection.db.collection",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:mongoose.connection.db.collection",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:mongoose.connection.db.collection",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:mongoose.connection.db.collection",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:mongoose.connection.db.collection",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:mongoose.connection.db.collection",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:mongoose.connection.db.collection",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:mongoose.connection.db.collection",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:mongoose.connection.db.collection",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:mongoose.connection.db.collection",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:mongoose.connection.db.collection",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:mongoose.connection.db.collection",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:mongoose.connection.db.collection",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:mongoose.connection.db.collection",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:mongoose.connection.db.collection",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:mongoose.connection.db.collection",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:mongoose.connection.db.collection",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:mongoose.connection.db.collection",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:mongoose.connection.db.collection",
+      "type": "DERIVES_FROM",
       "to": "LITERAL:",
       "metadata": {
         "argIndex": 0
@@ -29016,6 +30418,30 @@
     {
       "from": "CALL:mongoose.connection.db.collection",
       "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:mongoose.connection.db.collection",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:mongoose.model",
+      "type": "DERIVES_FROM",
+      "to": "CONSTANT:userSchema",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:mongoose.model",
+      "type": "DERIVES_FROM",
       "to": "LITERAL:",
       "metadata": {
         "argIndex": 0
@@ -29033,6 +30459,14 @@
       "from": "CALL:mongoose.model",
       "type": "PASSES_ARGUMENT",
       "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:newUser.save",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
       "metadata": {
         "argIndex": 0
       }
@@ -29074,6 +30508,22 @@
       "from": "CALL:postsWithComments.push",
       "type": "USES",
       "to": "CONSTANT:postsWithComments"
+    },
+    {
+      "from": "CALL:process.exit",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:process.exit",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
     },
     {
       "from": "CALL:process.exit",
@@ -29188,6 +30638,14 @@
     },
     {
       "from": "CALL:processor.processUser",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:user",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:processor.processUser",
       "type": "PASSES_ARGUMENT",
       "to": "VARIABLE:user",
       "metadata": {
@@ -29211,8 +30669,32 @@
     },
     {
       "from": "CALL:Promise.all",
+      "type": "DERIVES_FROM",
+      "to": "CONSTANT:promises",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:Promise.all",
       "type": "PASSES_ARGUMENT",
       "to": "CONSTANT:promises",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:Promise.resolve",
+      "type": "DERIVES_FROM",
+      "to": "CALL:processor",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:Promise.resolve",
+      "type": "DERIVES_FROM",
+      "to": "CALL:task",
       "metadata": {
         "argIndex": 0
       }
@@ -29240,6 +30722,14 @@
     },
     {
       "from": "CALL:promise.then",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[1]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:promise.then",
       "type": "PASSES_ARGUMENT",
       "to": "FUNCTION:anonymous[1]",
       "metadata": {
@@ -29255,6 +30745,14 @@
       "from": "CALL:promiseGenerator",
       "type": "CALLS",
       "to": "FUNCTION:promiseGenerator"
+    },
+    {
+      "from": "CALL:promises.push",
+      "type": "DERIVES_FROM",
+      "to": "CONSTANT:promise",
+      "metadata": {
+        "argIndex": 0
+      }
     },
     {
       "from": "CALL:promises.push",
@@ -29286,6 +30784,22 @@
     },
     {
       "from": "CALL:redis.del",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:redis.del",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:redis.del",
       "type": "PASSES_ARGUMENT",
       "to": "FUNCTION:anonymous[0]",
       "metadata": {
@@ -29309,6 +30823,38 @@
       "from": "CALL:redis.del",
       "type": "USES",
       "to": "VARIABLE:redis"
+    },
+    {
+      "from": "CALL:redis.expire",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 2
+      }
+    },
+    {
+      "from": "CALL:redis.expire",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:redis.expire",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:redis.expire",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:key",
+      "metadata": {
+        "argIndex": 0
+      }
     },
     {
       "from": "CALL:redis.expire",
@@ -29359,6 +30905,54 @@
     },
     {
       "from": "CALL:redis.get",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:redis.get",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:redis.get",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:redis.get",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:redis.get",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:redis.get",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:key",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:redis.get",
       "type": "PASSES_ARGUMENT",
       "to": "FUNCTION:anonymous[0]",
       "metadata": {
@@ -29467,6 +31061,14 @@
     },
     {
       "from": "CALL:redis.incr",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:key",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:redis.incr",
       "type": "PASSES_ARGUMENT",
       "to": "VARIABLE:key",
       "metadata": {
@@ -29477,6 +31079,182 @@
       "from": "CALL:redis.incr",
       "type": "USES",
       "to": "VARIABLE:redis"
+    },
+    {
+      "from": "CALL:redis.set",
+      "type": "DERIVES_FROM",
+      "to": "CALL:JSON.stringify",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:redis.set",
+      "type": "DERIVES_FROM",
+      "to": "CALL:JSON.stringify",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:redis.set",
+      "type": "DERIVES_FROM",
+      "to": "CALL:JSON.stringify",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:redis.set",
+      "type": "DERIVES_FROM",
+      "to": "CALL:JSON.stringify",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:redis.set",
+      "type": "DERIVES_FROM",
+      "to": "CALL:JSON.stringify",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:redis.set",
+      "type": "DERIVES_FROM",
+      "to": "CALL:JSON.stringify",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:redis.set",
+      "type": "DERIVES_FROM",
+      "to": "CALL:JSON.stringify",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:redis.set",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 2
+      }
+    },
+    {
+      "from": "CALL:redis.set",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 2
+      }
+    },
+    {
+      "from": "CALL:redis.set",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 2
+      }
+    },
+    {
+      "from": "CALL:redis.set",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 2
+      }
+    },
+    {
+      "from": "CALL:redis.set",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:redis.set",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:redis.set",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:redis.set",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:redis.set",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 2
+      }
+    },
+    {
+      "from": "CALL:redis.set",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 2
+      }
+    },
+    {
+      "from": "CALL:redis.set",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 2
+      }
+    },
+    {
+      "from": "CALL:redis.set",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 3
+      }
+    },
+    {
+      "from": "CALL:redis.set",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 3
+      }
+    },
+    {
+      "from": "CALL:redis.set",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:cacheKey",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:redis.set",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:expiresIn",
+      "metadata": {
+        "argIndex": 3
+      }
     },
     {
       "from": "CALL:redis.set",
@@ -29706,6 +31484,14 @@
     },
     {
       "from": "CALL:redisClient.connect",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:redisClient.connect",
       "type": "PASSES_ARGUMENT",
       "to": "FUNCTION:anonymous[0]",
       "metadata": {
@@ -29716,6 +31502,22 @@
       "from": "CALL:redisClient.connect",
       "type": "USES",
       "to": "VARIABLE:redisClient"
+    },
+    {
+      "from": "CALL:redisClient.get",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:redisClient.get",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
     },
     {
       "from": "CALL:redisClient.get",
@@ -29750,6 +31552,14 @@
     },
     {
       "from": "CALL:redisClient.quit",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:redisClient.quit",
       "type": "PASSES_ARGUMENT",
       "to": "FUNCTION:anonymous[0]",
       "metadata": {
@@ -29760,6 +31570,46 @@
       "from": "CALL:redisClient.quit",
       "type": "USES",
       "to": "VARIABLE:redisClient"
+    },
+    {
+      "from": "CALL:redisClient.set",
+      "type": "DERIVES_FROM",
+      "to": "CALL:JSON.stringify",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:redisClient.set",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 2
+      }
+    },
+    {
+      "from": "CALL:redisClient.set",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 2
+      }
+    },
+    {
+      "from": "CALL:redisClient.set",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:redisClient.set",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 1
+      }
     },
     {
       "from": "CALL:redisClient.set",
@@ -29810,6 +31660,46 @@
       "from": "CALL:redisClient.set",
       "type": "USES",
       "to": "VARIABLE:redisClient"
+    },
+    {
+      "from": "CALL:reject",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:err",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:reject",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:err",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:reject",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:err",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:reject",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:err",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:reject",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:err",
+      "metadata": {
+        "argIndex": 0
+      }
     },
     {
       "from": "CALL:reject",
@@ -29954,6 +31844,14 @@
     },
     {
       "from": "CALL:res.json",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:data",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:res.json",
       "type": "PASSES_ARGUMENT",
       "to": "VARIABLE:data",
       "metadata": {
@@ -30017,6 +31915,350 @@
     },
     {
       "from": "CALL:res.status",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:res.status",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:res.status",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:res.status",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:res.status",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:res.status",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:res.status",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:res.status",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:res.status",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:res.status",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:res.status",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:res.status",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:res.status",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:res.status",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:res.status",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:res.status",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:res.status",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:res.status",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:res.status",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:res.status",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:res.status",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:res.status",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:res.status",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:res.status",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:res.status",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:res.status",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:res.status",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:res.status",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:res.status",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:res.status",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:res.status",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:res.status",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:res.status",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:res.status",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:res.status",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:res.status",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:res.status",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:res.status",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:res.status",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:res.status",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:res.status",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:res.status",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:res.status",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:res.status",
       "type": "PASSES_ARGUMENT",
       "to": "LITERAL:",
       "metadata": {
@@ -30573,6 +32815,78 @@
       "from": "CALL:res.status",
       "type": "USES",
       "to": "PARAMETER:res"
+    },
+    {
+      "from": "CALL:resolve",
+      "type": "DERIVES_FROM",
+      "to": "CONSTANT:results",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:resolve",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:allResults",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:resolve",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:decoded",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:resolve",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:decoded",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:resolve",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:decoded",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:resolve",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:result",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:resolve",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:result",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:resolve",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:result",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:resolve",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:server",
+      "metadata": {
+        "argIndex": 0
+      }
     },
     {
       "from": "CALL:resolve",
@@ -30754,6 +33068,62 @@
     },
     {
       "from": "CALL:results.push",
+      "type": "DERIVES_FROM",
+      "to": "CONSTANT:item",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:results.push",
+      "type": "DERIVES_FROM",
+      "to": "CONSTANT:value",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:results.push",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:data",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:results.push",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:data",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:results.push",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:processed",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:results.push",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:result",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:results.push",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:result",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:results.push",
       "type": "PASSES_ARGUMENT",
       "to": "CONSTANT:item",
       "metadata": {
@@ -30855,6 +33225,22 @@
     },
     {
       "from": "CALL:results.reduce",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:results.reduce",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:results.reduce",
       "type": "PASSES_ARGUMENT",
       "to": "FUNCTION:anonymous[0]",
       "metadata": {
@@ -30886,6 +33272,22 @@
     },
     {
       "from": "CALL:router.delete",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[4]",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:router.delete",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:router.delete",
       "type": "HAS_CALLBACK",
       "to": "FUNCTION:anonymous[4]"
     },
@@ -30909,6 +33311,54 @@
       "from": "CALL:router.delete",
       "type": "USES",
       "to": "VARIABLE:router"
+    },
+    {
+      "from": "CALL:router.get",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[1]",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:router.get",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[3]",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:router.get",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[5]",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:router.get",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:router.get",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:router.get",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
     },
     {
       "from": "CALL:router.get",
@@ -30975,6 +33425,22 @@
     },
     {
       "from": "CALL:router.post",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:router.post",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:router.post",
       "type": "HAS_CALLBACK",
       "to": "FUNCTION:anonymous[0]"
     },
@@ -30998,6 +33464,22 @@
       "from": "CALL:router.post",
       "type": "USES",
       "to": "VARIABLE:router"
+    },
+    {
+      "from": "CALL:router.put",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[2]",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:router.put",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
     },
     {
       "from": "CALL:router.put",
@@ -31037,7 +33519,31 @@
     },
     {
       "from": "CALL:savedUser.generateAuthToken",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:savedUser.generateAuthToken",
       "type": "PASSES_ARGUMENT",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:self.save",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:self.save",
+      "type": "DERIVES_FROM",
       "to": "FUNCTION:anonymous[0]",
       "metadata": {
         "argIndex": 0
@@ -31068,6 +33574,14 @@
       "from": "CALL:self.save",
       "type": "USES",
       "to": "VARIABLE:self"
+    },
+    {
+      "from": "CALL:server.on",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
     },
     {
       "from": "CALL:server.on",
@@ -31086,6 +33600,22 @@
       "from": "CALL:setTimeout",
       "type": "FLOWS_INTO",
       "to": "VARIABLE:timeoutId"
+    },
+    {
+      "from": "CALL:tasks.reduce",
+      "type": "DERIVES_FROM",
+      "to": "CALL:Promise.resolve",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:tasks.reduce",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
     },
     {
       "from": "CALL:tasks.reduce",
@@ -31115,6 +33645,14 @@
     },
     {
       "from": "CALL:this.cache.get",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:cacheKey",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:this.cache.get",
       "type": "PASSES_ARGUMENT",
       "to": "VARIABLE:cacheKey",
       "metadata": {
@@ -31128,10 +33666,34 @@
     },
     {
       "from": "CALL:this.cache.has",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:cacheKey",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:this.cache.has",
       "type": "PASSES_ARGUMENT",
       "to": "VARIABLE:cacheKey",
       "metadata": {
         "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:this.cache.set",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:cacheKey",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:this.cache.set",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:processed",
+      "metadata": {
+        "argIndex": 1
       }
     },
     {
@@ -31154,6 +33716,22 @@
       "from": "CALL:this.fetchUsersStream",
       "type": "CALLS",
       "to": "FUNCTION:fetchUsersStream"
+    },
+    {
+      "from": "CALL:this.fetchUsersStream",
+      "type": "DERIVES_FROM",
+      "to": "CONSTANT:userId",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:this.fetchUsersStream",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 1
+      }
     },
     {
       "from": "CALL:this.fetchUsersStream",
@@ -31238,6 +33816,22 @@
     },
     {
       "from": "CALL:user.deleteOne",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:user.deleteOne",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:user.deleteOne",
       "type": "PASSES_ARGUMENT",
       "to": "FUNCTION:anonymous[0]",
       "metadata": {
@@ -31261,6 +33855,22 @@
       "from": "CALL:user.deleteOne",
       "type": "USES",
       "to": "VARIABLE:user"
+    },
+    {
+      "from": "CALL:User.findByEmail",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:User.findByEmail",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:email",
+      "metadata": {
+        "argIndex": 0
+      }
     },
     {
       "from": "CALL:User.findByEmail",
@@ -31274,6 +33884,102 @@
       "from": "CALL:User.findByEmail",
       "type": "PASSES_ARGUMENT",
       "to": "VARIABLE:email",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:User.findById",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:User.findById",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:User.findById",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:User.findById",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:User.findById",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:User.findById",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:User.findById",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:User.findById",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:userId",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:User.findById",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:userId",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:User.findById",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:userId",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:User.findById",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:userId",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:User.findById",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:userId",
       "metadata": {
         "argIndex": 0
       }
@@ -31396,6 +34102,14 @@
     },
     {
       "from": "CALL:user.isModified",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:user.isModified",
       "type": "PASSES_ARGUMENT",
       "to": "LITERAL:",
       "metadata": {
@@ -31414,6 +34128,14 @@
     },
     {
       "from": "CALL:user.updateLastLogin",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:user.updateLastLogin",
       "type": "PASSES_ARGUMENT",
       "to": "FUNCTION:anonymous[0]",
       "metadata": {
@@ -31434,6 +34156,14 @@
       "from": "CALL:user.updateLastLogin",
       "type": "USES",
       "to": "VARIABLE:user"
+    },
+    {
+      "from": "CALL:users.filter",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
     },
     {
       "from": "CALL:users.filter",
@@ -31452,6 +34182,22 @@
       "from": "CALL:users.filter",
       "type": "USES",
       "to": "PARAMETER:users"
+    },
+    {
+      "from": "CALL:userSchema.post",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[8]",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:userSchema.post",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
     },
     {
       "from": "CALL:userSchema.post",
@@ -31481,6 +34227,22 @@
     },
     {
       "from": "CALL:userSchema.pre",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[7]",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:userSchema.pre",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:userSchema.pre",
       "type": "HAS_CALLBACK",
       "to": "FUNCTION:anonymous[7]"
     },
@@ -31504,6 +34266,14 @@
       "from": "CALL:userSchema.pre",
       "type": "USES",
       "to": "CONSTANT:userSchema"
+    },
+    {
+      "from": "CALL:userSchema.virtual",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
     },
     {
       "from": "CALL:userSchema.virtual",
@@ -32322,6 +35092,454 @@
       "from": "CONSTANT:userSchema",
       "type": "ASSIGNED_FROM",
       "to": "CONSTRUCTOR_CALL:new Schema()"
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Error()",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Error()",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Error()",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Error()",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Error()",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Error()",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Error()",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Error()",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Error()",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Error()",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Error()",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Error()",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Error()",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Error()",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Error()",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Error()",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Error()",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Error()",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Error()",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Error()",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Error()",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Error()",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Error()",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Error()",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Error()",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Error()",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Promise()",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Promise()",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Promise()",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Promise()",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Promise()",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Promise()",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Promise()",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Promise()",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Promise()",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Promise()",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Promise()",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Promise()",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Promise()",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[1]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Promise()",
+      "type": "PASSES_ARGUMENT",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Promise()",
+      "type": "PASSES_ARGUMENT",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Promise()",
+      "type": "PASSES_ARGUMENT",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Promise()",
+      "type": "PASSES_ARGUMENT",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Promise()",
+      "type": "PASSES_ARGUMENT",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Promise()",
+      "type": "PASSES_ARGUMENT",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Promise()",
+      "type": "PASSES_ARGUMENT",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Promise()",
+      "type": "PASSES_ARGUMENT",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Promise()",
+      "type": "PASSES_ARGUMENT",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Promise()",
+      "type": "PASSES_ARGUMENT",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Promise()",
+      "type": "PASSES_ARGUMENT",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Promise()",
+      "type": "PASSES_ARGUMENT",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Promise()",
+      "type": "PASSES_ARGUMENT",
+      "to": "FUNCTION:anonymous[1]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Schema()",
+      "type": "DERIVES_FROM",
+      "to": "OBJECT_LITERAL:<object>",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Schema()",
+      "type": "PASSES_ARGUMENT",
+      "to": "OBJECT_LITERAL:<object>",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new User()",
+      "type": "DERIVES_FROM",
+      "to": "OBJECT_LITERAL:<object>",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new User()",
+      "type": "PASSES_ARGUMENT",
+      "to": "OBJECT_LITERAL:<object>",
+      "metadata": {
+        "argIndex": 0
+      }
     },
     {
       "from": "event:listener:SIGINT",
@@ -37989,7 +41207,135 @@
       "type": "HAS_PROPERTY",
       "to": "LITERAL:",
       "metadata": {
+        "propertyName": "default"
+      }
+    },
+    {
+      "from": "OBJECT_LITERAL:<object>",
+      "type": "HAS_PROPERTY",
+      "to": "LITERAL:",
+      "metadata": {
+        "propertyName": "default"
+      }
+    },
+    {
+      "from": "OBJECT_LITERAL:<object>",
+      "type": "HAS_PROPERTY",
+      "to": "LITERAL:",
+      "metadata": {
         "propertyName": "logFile"
+      }
+    },
+    {
+      "from": "OBJECT_LITERAL:<object>",
+      "type": "HAS_PROPERTY",
+      "to": "LITERAL:",
+      "metadata": {
+        "propertyName": "required"
+      }
+    },
+    {
+      "from": "OBJECT_LITERAL:<object>",
+      "type": "HAS_PROPERTY",
+      "to": "LITERAL:",
+      "metadata": {
+        "propertyName": "required"
+      }
+    },
+    {
+      "from": "OBJECT_LITERAL:<object>",
+      "type": "HAS_PROPERTY",
+      "to": "LITERAL:",
+      "metadata": {
+        "propertyName": "unique"
+      }
+    },
+    {
+      "from": "OBJECT_LITERAL:<object>",
+      "type": "HAS_PROPERTY",
+      "to": "OBJECT_LITERAL:<object>",
+      "metadata": {
+        "propertyName": "createdAt"
+      }
+    },
+    {
+      "from": "OBJECT_LITERAL:<object>",
+      "type": "HAS_PROPERTY",
+      "to": "OBJECT_LITERAL:<object>",
+      "metadata": {
+        "propertyName": "email"
+      }
+    },
+    {
+      "from": "OBJECT_LITERAL:<object>",
+      "type": "HAS_PROPERTY",
+      "to": "OBJECT_LITERAL:<object>",
+      "metadata": {
+        "propertyName": "loginAttempts"
+      }
+    },
+    {
+      "from": "OBJECT_LITERAL:<object>",
+      "type": "HAS_PROPERTY",
+      "to": "OBJECT_LITERAL:<object>",
+      "metadata": {
+        "propertyName": "password"
+      }
+    },
+    {
+      "from": "OBJECT_LITERAL:<object>",
+      "type": "HAS_PROPERTY",
+      "to": "OBJECT_LITERAL:<object>",
+      "metadata": {
+        "propertyName": "profile"
+      }
+    },
+    {
+      "from": "OBJECT_LITERAL:<object>",
+      "type": "HAS_PROPERTY",
+      "to": "OBJECT_LITERAL:<object>",
+      "metadata": {
+        "propertyName": "profile"
+      }
+    },
+    {
+      "from": "OBJECT_LITERAL:<object>",
+      "type": "HAS_PROPERTY",
+      "to": "OBJECT_LITERAL:<object>",
+      "metadata": {
+        "propertyName": "role"
+      }
+    },
+    {
+      "from": "OBJECT_LITERAL:<object>",
+      "type": "HAS_PROPERTY",
+      "to": "VARIABLE:email",
+      "metadata": {
+        "propertyName": "email"
+      }
+    },
+    {
+      "from": "OBJECT_LITERAL:<object>",
+      "type": "HAS_PROPERTY",
+      "to": "VARIABLE:firstName",
+      "metadata": {
+        "propertyName": "firstName"
+      }
+    },
+    {
+      "from": "OBJECT_LITERAL:<object>",
+      "type": "HAS_PROPERTY",
+      "to": "VARIABLE:lastName",
+      "metadata": {
+        "propertyName": "lastName"
+      }
+    },
+    {
+      "from": "OBJECT_LITERAL:<object>",
+      "type": "HAS_PROPERTY",
+      "to": "VARIABLE:password",
+      "metadata": {
+        "propertyName": "password"
       }
     },
     {

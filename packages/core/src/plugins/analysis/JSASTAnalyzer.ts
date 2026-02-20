@@ -58,6 +58,8 @@ import { IdGenerator } from './ast/IdGenerator.js';
 import { CollisionResolver } from './ast/CollisionResolver.js';
 import { ExpressionNode } from '../../core/nodes/ExpressionNode.js';
 import { ConstructorCallNode } from '../../core/nodes/ConstructorCallNode.js';
+import { ArgumentExtractor } from './ast/visitors/ArgumentExtractor.js';
+import type { ArgumentInfo, LiteralInfo as ExtractorLiteralInfo } from './ast/visitors/call-expression-types.js';
 import { ObjectLiteralNode } from '../../core/nodes/ObjectLiteralNode.js';
 import { ArrayLiteralNode } from '../../core/nodes/ArrayLiteralNode.js';
 import { NodeFactory } from '../../core/NodeFactory.js';
@@ -1767,6 +1769,16 @@ export class JSASTAnalyzer extends Plugin {
               column,
               parentScopeId: module.id
             });
+
+            // REG-532: Extract constructor arguments for PASSES_ARGUMENT + DERIVES_FROM edges
+            if (newNode.arguments.length > 0) {
+              ArgumentExtractor.extract(
+                newNode.arguments, constructorCallId, module,
+                callArguments as unknown as ArgumentInfo[],
+                literals as unknown as ExtractorLiteralInfo[], literalCounterRef,
+                allCollections as unknown as Record<string, unknown>, scopeTracker
+              );
+            }
 
             // REG-334: If this is Promise constructor with executor callback,
             // register the context for resolve/reject detection

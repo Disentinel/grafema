@@ -3033,7 +3033,31 @@
       "file": "src/exceptions.js",
       "name": "",
       "type": "LITERAL",
+      "value": "Data is required",
+      "valueType": "string"
+    },
+    {
+      "exported": false,
+      "file": "src/exceptions.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": "Empty input",
+      "valueType": "string"
+    },
+    {
+      "exported": false,
+      "file": "src/exceptions.js",
+      "name": "",
+      "type": "LITERAL",
       "value": "Error reading file:",
+      "valueType": "string"
+    },
+    {
+      "exported": false,
+      "file": "src/exceptions.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": "Missing id",
       "valueType": "string"
     },
     {
@@ -5294,6 +5318,94 @@
     },
     {
       "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:error",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:parseError",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:result",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:validationError",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:console.error",
       "type": "PASSES_ARGUMENT",
       "to": "LITERAL:",
       "metadata": {
@@ -5419,6 +5531,70 @@
       "from": "CALL:console.error",
       "type": "WRITES_TO",
       "to": "net:stdio:__stdio__"
+    },
+    {
+      "from": "CALL:console.log",
+      "type": "DERIVES_FROM",
+      "to": "CONSTANT:key",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.log",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.log",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.log",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.log",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:count",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.log",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:result",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.log",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:result",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.log",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:result",
+      "metadata": {
+        "argIndex": 0
+      }
     },
     {
       "from": "CALL:console.log",
@@ -5576,6 +5752,14 @@
     },
     {
       "from": "CALL:keys.push",
+      "type": "DERIVES_FROM",
+      "to": "CONSTANT:key",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:keys.push",
       "type": "PASSES_ARGUMENT",
       "to": "CONSTANT:key",
       "metadata": {
@@ -5591,6 +5775,14 @@
       "from": "CALL:Math.random",
       "type": "FLOWS_INTO",
       "to": "VARIABLE:value"
+    },
+    {
+      "from": "CALL:matrix.push",
+      "type": "DERIVES_FROM",
+      "to": "CONSTANT:row",
+      "metadata": {
+        "argIndex": 0
+      }
     },
     {
       "from": "CALL:matrix.push",
@@ -5816,6 +6008,54 @@
       "from": "CONSTANT:row",
       "type": "ASSIGNED_FROM",
       "to": "LITERAL:"
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Error()",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Error()",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Error()",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Error()",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Error()",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Error()",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
     },
     {
       "from": "EXPRESSION:<LogicalExpression>",

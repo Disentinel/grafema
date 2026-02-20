@@ -1589,6 +1589,22 @@
     },
     {
       "from": "CALL:axios.get",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:axios.get",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:axios.get",
       "type": "MAKES_REQUEST",
       "to": "http:request:GET /api/users"
     },
@@ -1608,6 +1624,14 @@
     {
       "from": "CALL:axios.get",
       "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:axios.post",
+      "type": "DERIVES_FROM",
       "to": "LITERAL:",
       "metadata": {
         "argIndex": 0
@@ -1678,6 +1702,14 @@
     },
     {
       "from": "CALL:headers.set",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:headers.set",
       "type": "PASSES_ARGUMENT",
       "to": "LITERAL:",
       "metadata": {
@@ -1688,6 +1720,14 @@
       "from": "CALL:headers.set",
       "type": "USES",
       "to": "CONSTANT:headers"
+    },
+    {
+      "from": "CALL:localStorage.getItem",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
     },
     {
       "from": "CALL:localStorage.getItem",

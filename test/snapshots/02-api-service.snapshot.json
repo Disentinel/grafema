@@ -1320,6 +1320,14 @@
     },
     {
       "exported": false,
+      "file": "src/db.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": "Database not connected",
+      "valueType": "string"
+    },
+    {
+      "exported": false,
       "file": "src/index.js",
       "name": "",
       "type": "LITERAL",
@@ -1835,6 +1843,22 @@
     },
     {
       "from": "CALL:app.get",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:app.get",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:app.get",
       "type": "HAS_CALLBACK",
       "to": "FUNCTION:anonymous[0]"
     },
@@ -1861,6 +1885,22 @@
     },
     {
       "from": "CALL:app.listen",
+      "type": "DERIVES_FROM",
+      "to": "CONSTANT:PORT",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:app.listen",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:app.listen",
       "type": "PASSES_ARGUMENT",
       "to": "CONSTANT:PORT",
       "metadata": {
@@ -1879,6 +1919,46 @@
       "from": "CALL:app.listen",
       "type": "USES",
       "to": "VARIABLE:app"
+    },
+    {
+      "from": "CALL:app.use",
+      "type": "DERIVES_FROM",
+      "to": "CALL:express.json",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:app.use",
+      "type": "DERIVES_FROM",
+      "to": "CALL:getOrdersRoute",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:app.use",
+      "type": "DERIVES_FROM",
+      "to": "CALL:getUsersRoute",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:app.use",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:app.use",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
     },
     {
       "from": "CALL:app.use",
@@ -1937,7 +2017,39 @@
     },
     {
       "from": "CALL:console.log",
-      "type": "PASSES_ARGUMENT",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.log",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.log",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.log",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.log",
+      "type": "DERIVES_FROM",
       "to": "LITERAL:",
       "metadata": {
         "argIndex": 0
@@ -1977,8 +2089,11 @@
     },
     {
       "from": "CALL:console.log",
-      "type": "WRITES_TO",
-      "to": "net:stdio:__stdio__"
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
     },
     {
       "from": "CALL:console.log",
@@ -2024,6 +2139,51 @@
       "from": "CALL:console.log",
       "type": "WRITES_TO",
       "to": "net:stdio:__stdio__"
+    },
+    {
+      "from": "CALL:console.log",
+      "type": "WRITES_TO",
+      "to": "net:stdio:__stdio__"
+    },
+    {
+      "from": "CALL:db.query",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:db.query",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:db.query",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:db.query",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:db.query",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
     },
     {
       "from": "CALL:db.query",
@@ -2067,8 +2227,40 @@
     },
     {
       "from": "CALL:JSON.stringify",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:items",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:JSON.stringify",
       "type": "PASSES_ARGUMENT",
       "to": "VARIABLE:items",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:res.json",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:orders",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:res.json",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:user",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:res.json",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:users",
       "metadata": {
         "argIndex": 0
       }
@@ -2101,6 +2293,54 @@
       "from": "CALL:res.json",
       "type": "USES",
       "to": "PARAMETER:res"
+    },
+    {
+      "from": "CALL:router.get",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:router.get",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:router.get",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[1]",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:router.get",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:router.get",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:router.get",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
     },
     {
       "from": "CALL:router.get",
@@ -2164,6 +2404,38 @@
       "from": "CALL:router.get",
       "type": "USES",
       "to": "VARIABLE:router"
+    },
+    {
+      "from": "CALL:router.post",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[1]",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:router.post",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[2]",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:router.post",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:router.post",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
     },
     {
       "from": "CALL:router.post",
@@ -2231,6 +2503,22 @@
       "from": "CONSTANT:PORT",
       "type": "ASSIGNED_FROM",
       "to": "LITERAL:"
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Error()",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Error()",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
     },
     {
       "from": "EXPRESSION:ArrayExpression",
