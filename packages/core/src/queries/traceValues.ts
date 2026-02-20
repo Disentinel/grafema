@@ -7,7 +7,7 @@
  * Graph structure:
  * ```
  * VARIABLE -[ASSIGNED_FROM]-> LITERAL (concrete value)
- * VARIABLE -[ASSIGNED_FROM]-> PARAMETER (unknown: runtime input)
+ * VARIABLE -[ASSIGNED_FROM]-> PARAMETER -[DERIVES_FROM]-> argument source (interprocedural)
  * VARIABLE -[ASSIGNED_FROM]-> CALL (unknown: function return)
  * VARIABLE -[DERIVES_FROM]-> EXPRESSION (check nondeterministic patterns)
  * VARIABLE -[ASSIGNED_FROM]-> VARIABLE (chain - recurse)
@@ -176,8 +176,28 @@ async function traceRecursive(
     return;
   }
 
-  // Terminal: PARAMETER - runtime input
+  // PARAMETER - try to follow DERIVES_FROM edges to call-site arguments
   if (nodeType === 'PARAMETER') {
+    if (followDerivesFrom) {
+      const derivesEdges = await backend.getOutgoingEdges(nodeId, ['DERIVES_FROM']);
+      if (derivesEdges.length > 0) {
+        for (const edge of derivesEdges) {
+          await traceRecursive(
+            backend,
+            edge.dst,
+            visited,
+            depth + 1,
+            maxDepth,
+            followDerivesFrom,
+            detectNondeterministic,
+            results
+          );
+        }
+        return;
+      }
+    }
+
+    // No DERIVES_FROM edges or followDerivesFrom disabled
     results.push({
       value: undefined,
       source,
