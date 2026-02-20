@@ -15162,6 +15162,7 @@
       "url": "dynamic"
     },
     {
+      "endColumn": 28,
       "exported": false,
       "file": "app.js",
       "importBinding": "value",
@@ -15174,6 +15175,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 23,
       "exported": false,
       "file": "app.js",
       "importBinding": "value",
@@ -15186,6 +15188,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 13,
       "exported": false,
       "file": "models/User.js",
       "importBinding": "value",
@@ -15198,6 +15201,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 21,
       "exported": false,
       "file": "app.js",
       "importBinding": "value",
@@ -15210,6 +15214,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 21,
       "exported": false,
       "file": "middleware/auth.js",
       "importBinding": "value",
@@ -15222,6 +15227,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 21,
       "exported": false,
       "file": "routes/api.js",
       "importBinding": "value",
@@ -15234,6 +15240,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 21,
       "exported": false,
       "file": "services/dataProcessor.js",
       "importBinding": "value",
@@ -15246,6 +15253,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 22,
       "exported": false,
       "file": "app.js",
       "importBinding": "value",
@@ -15258,6 +15266,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 14,
       "exported": false,
       "file": "app.js",
       "importBinding": "value",
@@ -15270,6 +15279,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 10,
       "exported": false,
       "file": "middleware/auth.js",
       "importBinding": "value",
@@ -15282,6 +15292,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 10,
       "exported": false,
       "file": "models/User.js",
       "importBinding": "value",
@@ -15294,6 +15305,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 15,
       "exported": false,
       "file": "app.js",
       "importBinding": "value",
@@ -15306,6 +15318,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 15,
       "exported": false,
       "file": "models/User.js",
       "importBinding": "value",
@@ -15318,6 +15331,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 15,
       "exported": false,
       "file": "routes/api.js",
       "importBinding": "value",
@@ -15330,6 +15344,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 15,
       "exported": false,
       "file": "services/dataProcessor.js",
       "importBinding": "value",
@@ -15342,6 +15357,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 38,
       "exported": false,
       "file": "app.js",
       "importBinding": "value",
@@ -15354,6 +15370,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 25,
       "exported": false,
       "file": "app.js",
       "importBinding": "value",
@@ -15366,6 +15383,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 15,
       "exported": false,
       "file": "routes/api.js",
       "importBinding": "value",
@@ -15378,6 +15396,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 13,
       "exported": false,
       "file": "middleware/auth.js",
       "importBinding": "value",
@@ -15390,6 +15409,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 13,
       "exported": false,
       "file": "routes/api.js",
       "importBinding": "value",
