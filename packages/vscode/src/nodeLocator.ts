@@ -4,7 +4,7 @@
  * Finds graph nodes at a given cursor position in a file.
  */
 
-import type { RFDBClient } from '@grafema/rfdb-client';
+import type { BaseRFDBClient } from '@grafema/rfdb-client';
 import type { WireNode } from '@grafema/types';
 import { parseNodeMetadata } from './types';
 
@@ -17,7 +17,7 @@ import { parseNodeMetadata } from './types';
  * 3. Return the most specific (smallest scope) node
  */
 export async function findNodeAtCursor(
-  client: RFDBClient,
+  client: BaseRFDBClient,
   filePath: string,
   line: number,
   column: number
@@ -97,6 +97,6 @@ export async function findNodeAtCursor(
 /**
  * Find all nodes in a file (for caching purposes)
  */
-export async function findNodesInFile(client: RFDBClient, filePath: string): Promise<WireNode[]> {
+export async function findNodesInFile(client: BaseRFDBClient, filePath: string): Promise<WireNode[]> {
   return client.getAllNodes({ file: filePath });
 }
