@@ -512,6 +512,8 @@ export interface ImportSpecifier {
   imported: string;  // имя в экспортируемом модуле (default, *, или имя)
   local: string;     // имя в текущем модуле
   importKind?: 'value' | 'type' | 'typeof';  // specifier-level: import { type X } from '...'
+  column?: number;      // specifier start column
+  endColumn?: number;   // specifier end column (exclusive)
 }
 
 // === EXPORT INFO ===

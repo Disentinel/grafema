@@ -1,26 +1,11 @@
 # Smoke tests for the Grafema demo environment (code-server + rfdb-server + Grafema extension).
-#
-# Triggers:
-#   - Push to main
-#   - PRs that modify demo/ or packages/vscode/
+# DISABLED: workspace:* protocol incompatible with npm install in CI.
+# Re-enable when demo tests use pnpm or vendored dependencies.
 
 name: Demo Smoke Tests
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'demo/**'
-      - 'packages/vscode/**'
-      - 'test/e2e/demo-smoke.spec.js'
-      - '.github/workflows/demo-test.yml'
-  pull_request:
-    branches: [main]
-    paths:
-      - 'demo/**'
-      - 'packages/vscode/**'
-      - 'test/e2e/demo-smoke.spec.js'
-      - '.github/workflows/demo-test.yml'
+  workflow_dispatch:
 
 jobs:
   demo-smoke:

@@ -1215,6 +1215,7 @@
       "type": "GRAPH_META"
     },
     {
+      "endColumn": 9,
       "exported": false,
       "file": "src/index.js",
       "importBinding": "value",
@@ -1227,6 +1228,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 9,
       "exported": false,
       "file": "src/routes/orders.js",
       "importBinding": "value",
@@ -1239,6 +1241,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 9,
       "exported": false,
       "file": "src/routes/users.js",
       "importBinding": "value",
@@ -1251,6 +1254,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 14,
       "exported": false,
       "file": "src/index.js",
       "importBinding": "value",
@@ -1263,6 +1267,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 14,
       "exported": false,
       "file": "src/routes/orders.js",
       "importBinding": "value",
@@ -1275,6 +1280,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 14,
       "exported": false,
       "file": "src/routes/users.js",
       "importBinding": "value",
@@ -1287,6 +1293,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 23,
       "exported": false,
       "file": "src/index.js",
       "importBinding": "value",
@@ -1299,6 +1306,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 22,
       "exported": false,
       "file": "src/index.js",
       "importBinding": "value",

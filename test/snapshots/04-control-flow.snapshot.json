@@ -2890,6 +2890,7 @@
       "url": "dynamic"
     },
     {
+      "endColumn": 24,
       "exported": false,
       "file": "index.js",
       "importBinding": "value",
@@ -2902,6 +2903,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 22,
       "exported": false,
       "file": "index.js",
       "importBinding": "value",
@@ -2914,6 +2916,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 17,
       "exported": false,
       "file": "index.js",
       "importBinding": "value",
