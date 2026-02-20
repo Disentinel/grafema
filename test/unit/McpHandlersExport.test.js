@@ -3,7 +3,7 @@
  *
  * Verifies the public API surface of packages/mcp handlers.
  * This test runs BEFORE and AFTER refactoring to ensure the barrel
- * export preserves all 23 handler functions without leaking internals.
+ * export preserves all 26 handler functions without leaking internals.
  */
 
 import { describe, it } from 'node:test';
@@ -35,17 +35,20 @@ const EXPECTED_HANDLERS = [
   'handleReadProjectStructure',
   'handleWriteConfig',
   'handleGetFileOverview',
+  'handleGetNode',
+  'handleGetNeighbors',
+  'handleTraverseGraph',
 ];
 
 describe('MCP handlers export surface', () => {
-  it('should export exactly 23 handler functions', () => {
+  it('should export exactly 26 handler functions', () => {
     const exportedKeys = Object.keys(handlers).filter(
       k => typeof handlers[k] === 'function'
     );
     assert.equal(
       exportedKeys.length,
-      23,
-      `Expected 23 function exports, got ${exportedKeys.length}: ${exportedKeys.join(', ')}`
+      26,
+      `Expected 26 function exports, got ${exportedKeys.length}: ${exportedKeys.join(', ')}`
     );
   });
 
