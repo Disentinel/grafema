@@ -9,7 +9,7 @@
  * Mirrors the separation pattern from traceEngine.ts.
  */
 
-import type { RFDBClient } from '@grafema/rfdb-client';
+import type { BaseRFDBClient } from '@grafema/rfdb-client';
 import type { WireNode } from '@grafema/types';
 
 /**
@@ -141,7 +141,7 @@ function toBlastNode(node: WireNode, viaPath: string[]): BlastNode {
  * @returns BlastRadiusResult with all computed data
  */
 export async function computeBlastRadius(
-  client: RFDBClient,
+  client: BaseRFDBClient,
   rootNodeId: string,
   maxDepth: number = DEFAULT_MAX_DEPTH
 ): Promise<BlastRadiusResult> {
@@ -274,7 +274,7 @@ export async function computeBlastRadius(
  * @returns Array of GuaranteeInfo for guarantees governing root's file
  */
 async function discoverGuarantees(
-  client: RFDBClient,
+  client: BaseRFDBClient,
   rootNode: WireNode | null
 ): Promise<GuaranteeInfo[]> {
   if (!rootNode?.file) {

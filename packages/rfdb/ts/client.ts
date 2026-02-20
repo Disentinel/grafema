@@ -7,35 +7,17 @@
 
 import { createConnection, Socket } from 'net';
 import { encode, decode } from '@msgpack/msgpack';
-import { EventEmitter } from 'events';
 import { StreamQueue } from './stream-queue.js';
+import { BaseRFDBClient } from './base-client.js';
 
 import type {
   RFDBCommand,
   WireNode,
-  WireEdge,
   RFDBResponse,
-  IRFDBClient,
   AttrQuery,
-  FieldDeclaration,
-  DatalogResult,
-  DatalogExplainResult,
-  NodeType,
-  EdgeType,
   HelloResponse,
-  CreateDatabaseResponse,
-  OpenDatabaseResponse,
-  ListDatabasesResponse,
-  CurrentDatabaseResponse,
-  SnapshotRef,
-  SnapshotDiff,
-  SnapshotInfo,
-  DiffSnapshotsResponse,
-  FindSnapshotResponse,
-  ListSnapshotsResponse,
-  CommitDelta,
-  CommitBatchResponse,
   NodesChunkResponse,
+  CommitDelta,
 } from '@grafema/types';
 
 interface PendingRequest {
@@ -43,19 +25,13 @@ interface PendingRequest {
   reject: (error: Error) => void;
 }
 
-export class RFDBClient extends EventEmitter implements IRFDBClient {
+export class RFDBClient extends BaseRFDBClient {
   readonly socketPath: string;
   private socket: Socket | null;
   connected: boolean;
   private pending: Map<number, PendingRequest>;
   private reqId: number;
   private buffer: Buffer;
-
-  // Batch state
-  private _batching: boolean = false;
-  private _batchNodes: WireNode[] = [];
-  private _batchEdges: WireEdge[] = [];
-  private _batchFiles: Set<string> = new Set();
 
   // Streaming state
   private _supportsStreaming: boolean = false;
@@ -76,7 +52,7 @@ export class RFDBClient extends EventEmitter implements IRFDBClient {
    * Whether the connected server supports streaming responses.
    * Set after calling hello(). Defaults to false.
    */
-  get supportsStreaming(): boolean {
+  override get supportsStreaming(): boolean {
     return this._supportsStreaming;
   }
 
@@ -193,7 +169,7 @@ export class RFDBClient extends EventEmitter implements IRFDBClient {
   }
 
   /**
-   * Handle decoded response — match by requestId, route streaming chunks
+   * Handle decoded response -- match by requestId, route streaming chunks
    * to StreamQueue or resolve single-response Promise.
    */
   private _handleResponse(response: RFDBResponse): void {
@@ -228,7 +204,7 @@ export class RFDBClient extends EventEmitter implements IRFDBClient {
       return;
     }
 
-    // Non-streaming response — existing behavior
+    // Non-streaming response -- existing behavior
     if (!this.pending.has(id)) {
       this.emit('error', new Error(`Received response for unknown requestId: ${response.requestId}`));
       return;
@@ -246,22 +222,18 @@ export class RFDBClient extends EventEmitter implements IRFDBClient {
 
   /**
    * Handle a response for a streaming request.
-   * Routes chunk data to StreamQueue and manages stream lifecycle.
-   * Resets per-chunk timeout on each successful chunk arrival.
    */
   private _handleStreamingResponse(
     id: number,
     response: RFDBResponse,
     streamQueue: StreamQueue<WireNode>,
   ): void {
-    // Error response — fail the stream
     if (response.error) {
       this._cleanupStream(id);
       streamQueue.fail(new Error(response.error));
       return;
     }
 
-    // Streaming chunk (has `done` field)
     if ('done' in response) {
       const chunk = response as unknown as NodesChunkResponse;
       const nodes = chunk.nodes || [];
@@ -273,14 +245,12 @@ export class RFDBClient extends EventEmitter implements IRFDBClient {
         this._cleanupStream(id);
         streamQueue.end();
       } else {
-        // Reset per-chunk timeout
         this._resetStreamTimer(id, streamQueue);
       }
       return;
     }
 
     // Auto-fallback: server sent a non-streaming Nodes response
-    // (server doesn't support streaming or result was below threshold)
     const nodesResponse = response as unknown as { nodes?: WireNode[] };
     const nodes = nodesResponse.nodes || [];
     for (const node of nodes) {
@@ -290,9 +260,6 @@ export class RFDBClient extends EventEmitter implements IRFDBClient {
     streamQueue.end();
   }
 
-  /**
-   * Reset the per-chunk timeout for a streaming request.
-   */
   private _resetStreamTimer(id: number, streamQueue: StreamQueue<WireNode>): void {
     const existing = this._streamTimers.get(id);
     if (existing) clearTimeout(existing);
@@ -307,9 +274,6 @@ export class RFDBClient extends EventEmitter implements IRFDBClient {
     this._streamTimers.set(id, timer);
   }
 
-  /**
-   * Clean up all state for a completed/failed streaming request.
-   */
   private _cleanupStream(id: number): void {
     this._pendingStreams.delete(id);
     this.pending.delete(id);
@@ -326,19 +290,15 @@ export class RFDBClient extends EventEmitter implements IRFDBClient {
     return Number.isNaN(num) ? null : num;
   }
 
-  /**
-   * Default timeout for operations (60 seconds)
-   * Flush/compact may take time for large graphs, but should not hang indefinitely
-   */
   private static readonly DEFAULT_TIMEOUT_MS = 60_000;
 
   /**
    * Send a request and wait for response with timeout
    */
-  private async _send(
+  protected async _send(
     cmd: RFDBCommand,
     payload: Record<string, unknown> = {},
-    timeoutMs: number = RFDBClient.DEFAULT_TIMEOUT_MS
+    timeoutMs: number = RFDBClient.DEFAULT_TIMEOUT_MS,
   ): Promise<RFDBResponse> {
     if (!this.connected || !this.socket) {
       throw new Error('Not connected to RFDB server');
@@ -349,13 +309,11 @@ export class RFDBClient extends EventEmitter implements IRFDBClient {
       const request = { requestId: `r${id}`, cmd, ...payload };
       const msgBytes = encode(request);
 
-      // Setup timeout
       const timer = setTimeout(() => {
         this.pending.delete(id);
         reject(new Error(`RFDB ${cmd} timed out after ${timeoutMs}ms. Server may be unresponsive or dbPath may be invalid.`));
       }, timeoutMs);
 
-      // Handle socket errors during this request
       const errorHandler = (err: NodeJS.ErrnoException) => {
         this.pending.delete(id);
         clearTimeout(timer);
@@ -373,329 +331,36 @@ export class RFDBClient extends EventEmitter implements IRFDBClient {
           clearTimeout(timer);
           this.socket?.removeListener('error', errorHandler);
           reject(error);
-        }
+        },
       });
 
       // Write length prefix + message
       const header = Buffer.alloc(4);
       header.writeUInt32BE(msgBytes.length);
-
       this.socket!.write(Buffer.concat([header, Buffer.from(msgBytes)]));
     });
   }
 
   // ===========================================================================
-  // Write Operations
+  // Streaming Overrides (Unix socket supports streaming)
   // ===========================================================================
 
   /**
-   * Add nodes to the graph
-   * Extra properties beyond id/type/name/file/exported/metadata are merged into metadata
+   * Negotiate protocol version with server.
+   * Overrides base to set streaming flag.
    */
-  async addNodes(nodes: Array<Partial<WireNode> & { id: string; type?: string; node_type?: string; nodeType?: string }>): Promise<RFDBResponse> {
-    const wireNodes: WireNode[] = nodes.map(n => {
-      // Cast to Record to allow iteration over extra properties
-      const nodeRecord = n as Record<string, unknown>;
-
-      // Extract known wire format fields, rest goes to metadata
-      const { id, type, node_type, nodeType, name, file, exported, metadata, semanticId, semantic_id, ...rest } = nodeRecord;
-
-      // Merge explicit metadata with extra properties
-      const existingMeta = typeof metadata === 'string' ? JSON.parse(metadata as string) : (metadata || {});
-      const combinedMeta = { ...existingMeta, ...rest };
-
-      const wire: WireNode = {
-        id: String(id),
-        nodeType: (node_type || nodeType || type || 'UNKNOWN') as NodeType,
-        name: (name as string) || '',
-        file: (file as string) || '',
-        exported: (exported as boolean) || false,
-        metadata: JSON.stringify(combinedMeta),
-      };
-
-      // Preserve semanticId as top-level field for v3 protocol
-      const sid = semanticId || semantic_id;
-      if (sid) {
-        (wire as WireNode & { semanticId: string }).semanticId = String(sid);
-      }
-
-      return wire;
-    });
-
-    if (this._batching) {
-      this._batchNodes.push(...wireNodes);
-      for (const node of wireNodes) {
-        if (node.file) this._batchFiles.add(node.file);
-      }
-      return { ok: true } as RFDBResponse;
-    }
-
-    return this._send('addNodes', { nodes: wireNodes });
+  override async hello(protocolVersion: number = 3): Promise<HelloResponse> {
+    const response = await this._send('hello' as RFDBCommand, { protocolVersion });
+    const hello = response as HelloResponse;
+    this._supportsStreaming = hello.features?.includes('streaming') ?? false;
+    return hello;
   }
 
   /**
-   * Add edges to the graph
-   * Extra properties beyond src/dst/type are merged into metadata
+   * Query nodes (async generator).
+   * Overrides base to support streaming for protocol v3+.
    */
-  async addEdges(
-    edges: WireEdge[],
-    skipValidation: boolean = false
-  ): Promise<RFDBResponse> {
-    const wireEdges: WireEdge[] = edges.map(e => {
-      // Cast to unknown first then to Record to allow extra properties
-      const edge = e as unknown as Record<string, unknown>;
-
-      // Extract known fields, rest goes to metadata
-      const { src, dst, type, edge_type, edgeType, metadata, ...rest } = edge;
-
-      // Merge explicit metadata with extra properties
-      const existingMeta = typeof metadata === 'string' ? JSON.parse(metadata as string) : (metadata || {});
-      const combinedMeta = { ...existingMeta, ...rest };
-
-      return {
-        src: String(src),
-        dst: String(dst),
-        edgeType: (edge_type || edgeType || type || e.edgeType || 'UNKNOWN') as EdgeType,
-        metadata: JSON.stringify(combinedMeta),
-      };
-    });
-
-    if (this._batching) {
-      this._batchEdges.push(...wireEdges);
-      return { ok: true } as RFDBResponse;
-    }
-
-    return this._send('addEdges', { edges: wireEdges, skipValidation });
-  }
-
-  /**
-   * Delete a node
-   */
-  async deleteNode(id: string): Promise<RFDBResponse> {
-    return this._send('deleteNode', { id: String(id) });
-  }
-
-  /**
-   * Delete an edge
-   */
-  async deleteEdge(src: string, dst: string, edgeType: EdgeType): Promise<RFDBResponse> {
-    return this._send('deleteEdge', {
-      src: String(src),
-      dst: String(dst),
-      edgeType
-    });
-  }
-
-  // ===========================================================================
-  // Read Operations
-  // ===========================================================================
-
-  /**
-   * Get a node by ID
-   */
-  async getNode(id: string): Promise<WireNode | null> {
-    const response = await this._send('getNode', { id: String(id) });
-    return (response as { node?: WireNode }).node || null;
-  }
-
-  /**
-   * Check if node exists
-   */
-  async nodeExists(id: string): Promise<boolean> {
-    const response = await this._send('nodeExists', { id: String(id) });
-    return (response as { value: boolean }).value;
-  }
-
-  /**
-   * Find nodes by type
-   */
-  async findByType(nodeType: NodeType): Promise<string[]> {
-    const response = await this._send('findByType', { nodeType });
-    return (response as { ids?: string[] }).ids || [];
-  }
-
-  /**
-   * Find nodes by attributes
-   */
-  async findByAttr(query: Record<string, unknown>): Promise<string[]> {
-    const response = await this._send('findByAttr', { query });
-    return (response as { ids?: string[] }).ids || [];
-  }
-
-  // ===========================================================================
-  // Graph Traversal
-  // ===========================================================================
-
-  /**
-   * Get neighbors of a node
-   */
-  async neighbors(id: string, edgeTypes: EdgeType[] = []): Promise<string[]> {
-    const response = await this._send('neighbors', {
-      id: String(id),
-      edgeTypes
-    });
-    return (response as { ids?: string[] }).ids || [];
-  }
-
-  /**
-   * Breadth-first search
-   */
-  async bfs(startIds: string[], maxDepth: number, edgeTypes: EdgeType[] = []): Promise<string[]> {
-    const response = await this._send('bfs', {
-      startIds: startIds.map(String),
-      maxDepth,
-      edgeTypes
-    });
-    return (response as { ids?: string[] }).ids || [];
-  }
-
-  /**
-   * Depth-first search
-   */
-  async dfs(startIds: string[], maxDepth: number, edgeTypes: EdgeType[] = []): Promise<string[]> {
-    const response = await this._send('dfs', {
-      startIds: startIds.map(String),
-      maxDepth,
-      edgeTypes
-    });
-    return (response as { ids?: string[] }).ids || [];
-  }
-
-  /**
-   * Reachability query - find all nodes reachable from start nodes
-   */
-  async reachability(
-    startIds: string[],
-    maxDepth: number,
-    edgeTypes: EdgeType[] = [],
-    backward: boolean = false
-  ): Promise<string[]> {
-    const response = await this._send('reachability', {
-      startIds: startIds.map(String),
-      maxDepth,
-      edgeTypes,
-      backward
-    });
-    return (response as { ids?: string[] }).ids || [];
-  }
-
-  /**
-   * Get outgoing edges from a node
-   * Parses metadata JSON and spreads it onto the edge object for convenience
-   */
-  async getOutgoingEdges(id: string, edgeTypes: EdgeType[] | null = null): Promise<(WireEdge & Record<string, unknown>)[]> {
-    const response = await this._send('getOutgoingEdges', {
-      id: String(id),
-      edgeTypes
-    });
-    const edges = (response as { edges?: WireEdge[] }).edges || [];
-
-    // Parse metadata and spread onto edge for convenience
-    return edges.map(e => {
-      let meta = {};
-      try {
-        meta = e.metadata ? JSON.parse(e.metadata) : {};
-      } catch {
-        // Keep empty metadata on parse error
-      }
-      return { ...e, type: e.edgeType, ...meta };
-    });
-  }
-
-  /**
-   * Get incoming edges to a node
-   * Parses metadata JSON and spreads it onto the edge object for convenience
-   */
-  async getIncomingEdges(id: string, edgeTypes: EdgeType[] | null = null): Promise<(WireEdge & Record<string, unknown>)[]> {
-    const response = await this._send('getIncomingEdges', {
-      id: String(id),
-      edgeTypes
-    });
-    const edges = (response as { edges?: WireEdge[] }).edges || [];
-
-    // Parse metadata and spread onto edge for convenience
-    return edges.map(e => {
-      let meta = {};
-      try {
-        meta = e.metadata ? JSON.parse(e.metadata) : {};
-      } catch {
-        // Keep empty metadata on parse error
-      }
-      return { ...e, type: e.edgeType, ...meta };
-    });
-  }
-
-  // ===========================================================================
-  // Stats
-  // ===========================================================================
-
-  /**
-   * Get node count
-   */
-  async nodeCount(): Promise<number> {
-    const response = await this._send('nodeCount');
-    return (response as { count: number }).count;
-  }
-
-  /**
-   * Get edge count
-   */
-  async edgeCount(): Promise<number> {
-    const response = await this._send('edgeCount');
-    return (response as { count: number }).count;
-  }
-
-  /**
-   * Count nodes by type
-   */
-  async countNodesByType(types: NodeType[] | null = null): Promise<Record<string, number>> {
-    const response = await this._send('countNodesByType', { types });
-    return (response as { counts?: Record<string, number> }).counts || {};
-  }
-
-  /**
-   * Count edges by type
-   */
-  async countEdgesByType(edgeTypes: EdgeType[] | null = null): Promise<Record<string, number>> {
-    const response = await this._send('countEdgesByType', { edgeTypes });
-    return (response as { counts?: Record<string, number> }).counts || {};
-  }
-
-  // ===========================================================================
-  // Control
-  // ===========================================================================
-
-  /**
-   * Flush data to disk
-   */
-  async flush(): Promise<RFDBResponse> {
-    return this._send('flush');
-  }
-
-  /**
-   * Compact the database
-   */
-  async compact(): Promise<RFDBResponse> {
-    return this._send('compact');
-  }
-
-  /**
-   * Clear the database
-   */
-  async clear(): Promise<RFDBResponse> {
-    return this._send('clear');
-  }
-
-  // ===========================================================================
-  // Bulk Read Operations
-  // ===========================================================================
-
-  /**
-   * Query nodes (async generator)
-   */
-  async *queryNodes(query: AttrQuery): AsyncGenerator<WireNode, void, unknown> {
-    // When server supports streaming (protocol v3+), delegate to streaming handler
-    // to correctly handle chunked NodesChunk responses for large result sets.
+  override async *queryNodes(query: AttrQuery): AsyncGenerator<WireNode, void, unknown> {
     if (this._supportsStreaming) {
       yield* this.queryNodesStream(query);
       return;
@@ -711,32 +376,12 @@ export class RFDBClient extends EventEmitter implements IRFDBClient {
   }
 
   /**
-   * Build a server query object from an AttrQuery.
-   */
-  private _buildServerQuery(query: AttrQuery): Record<string, unknown> {
-    const serverQuery: Record<string, unknown> = {};
-    if (query.nodeType) serverQuery.nodeType = query.nodeType;
-    if (query.type) serverQuery.nodeType = query.type;
-    if (query.name) serverQuery.name = query.name;
-    if (query.file) serverQuery.file = query.file;
-    if (query.exported !== undefined) serverQuery.exported = query.exported;
-    return serverQuery;
-  }
-
-  /**
    * Stream nodes matching query with true streaming support.
-   *
-   * Behavior depends on server capabilities:
-   * - Server supports streaming (protocol v3): receives chunked NodesChunk
-   *   responses via StreamQueue. Nodes are yielded as they arrive.
-   * - Server does NOT support streaming (fallback): delegates to queryNodes()
-   *   which yields nodes one by one from bulk response.
-   *
-   * The generator can be aborted by breaking out of the loop or calling .return().
+   * Overrides base to use StreamQueue for protocol v3+.
    */
-  async *queryNodesStream(query: AttrQuery): AsyncGenerator<WireNode, void, unknown> {
+  override async *queryNodesStream(query: AttrQuery): AsyncGenerator<WireNode, void, unknown> {
     if (!this._supportsStreaming) {
-      yield* this.queryNodes(query);
+      yield* super.queryNodes(query);
       return;
     }
 
@@ -749,13 +394,11 @@ export class RFDBClient extends EventEmitter implements IRFDBClient {
     const streamQueue = new StreamQueue<WireNode>();
     this._pendingStreams.set(id, streamQueue);
 
-    // Build and send request manually (can't use _send which expects single response)
     const request = { requestId: `r${id}`, cmd: 'queryNodes', query: serverQuery };
     const msgBytes = encode(request);
     const header = Buffer.alloc(4);
     header.writeUInt32BE(msgBytes.length);
 
-    // Register in pending map for error routing
     this.pending.set(id, {
       resolve: () => { this._cleanupStream(id); },
       reject: (error) => {
@@ -764,9 +407,7 @@ export class RFDBClient extends EventEmitter implements IRFDBClient {
       },
     });
 
-    // Start per-chunk timeout (resets on each chunk in _handleStreamingResponse)
     this._resetStreamTimer(id, streamQueue);
-
     this.socket!.write(Buffer.concat([header, Buffer.from(msgBytes)]));
 
     try {
@@ -779,514 +420,14 @@ export class RFDBClient extends EventEmitter implements IRFDBClient {
   }
 
   /**
-   * Get all nodes matching query
-   */
-  async getAllNodes(query: AttrQuery = {}): Promise<WireNode[]> {
-    const nodes: WireNode[] = [];
-    for await (const node of this.queryNodes(query)) {
-      nodes.push(node);
-    }
-    return nodes;
-  }
-
-  /**
-   * Get all edges
-   * Parses metadata JSON and spreads it onto the edge object for convenience
-   */
-  async getAllEdges(): Promise<(WireEdge & Record<string, unknown>)[]> {
-    const response = await this._send('getAllEdges');
-    const edges = (response as { edges?: WireEdge[] }).edges || [];
-
-    // Parse metadata and spread onto edge for convenience
-    return edges.map(e => {
-      let meta = {};
-      try {
-        meta = e.metadata ? JSON.parse(e.metadata) : {};
-      } catch {
-        // Keep empty metadata on parse error
-      }
-      return { ...e, type: e.edgeType, ...meta };
-    });
-  }
-
-  // ===========================================================================
-  // Node Utility Methods
-  // ===========================================================================
-
-  /**
-   * Check if node is an endpoint (has no outgoing edges)
-   */
-  async isEndpoint(id: string): Promise<boolean> {
-    const response = await this._send('isEndpoint', { id: String(id) });
-    return (response as { value: boolean }).value;
-  }
-
-  /**
-   * Get node identifier string
-   */
-  async getNodeIdentifier(id: string): Promise<string | null> {
-    const response = await this._send('getNodeIdentifier', { id: String(id) });
-    return (response as { identifier?: string | null }).identifier || null;
-  }
-
-  /**
-   * Update node version
-   */
-  async updateNodeVersion(id: string, version: string): Promise<RFDBResponse> {
-    return this._send('updateNodeVersion', { id: String(id), version });
-  }
-
-  /**
-   * Declare metadata fields for server-side indexing.
-   * Call before adding nodes so the server builds indexes on flush.
-   * Returns the number of declared fields.
-   */
-  async declareFields(fields: FieldDeclaration[]): Promise<number> {
-    const response = await this._send('declareFields', { fields });
-    return (response as { count?: number }).count || 0;
-  }
-
-  // ===========================================================================
-  // Datalog API
-  // ===========================================================================
-
-  /**
-   * Load Datalog rules
-   */
-  async datalogLoadRules(source: string): Promise<number> {
-    const response = await this._send('datalogLoadRules', { source });
-    return (response as { count: number }).count;
-  }
-
-  /**
-   * Clear Datalog rules
-   */
-  async datalogClearRules(): Promise<RFDBResponse> {
-    return this._send('datalogClearRules');
-  }
-
-  private _parseExplainResponse(response: RFDBResponse): DatalogExplainResult {
-    const r = response as unknown as DatalogExplainResult & { requestId?: string };
-    return {
-      bindings: r.bindings || [],
-      stats: r.stats,
-      profile: r.profile,
-      explainSteps: r.explainSteps || [],
-      warnings: r.warnings || [],
-    };
-  }
-
-  /**
-   * Execute Datalog query.
-   * @param explain Pass literal `true` to get explain data.
-   *   A boolean variable won't narrow the return type.
-   */
-  async datalogQuery(query: string): Promise<DatalogResult[]>;
-  async datalogQuery(query: string, explain: true): Promise<DatalogExplainResult>;
-  async datalogQuery(query: string, explain?: boolean): Promise<DatalogResult[] | DatalogExplainResult> {
-    const payload: Record<string, unknown> = { query };
-    if (explain) payload.explain = true;
-    const response = await this._send('datalogQuery', payload);
-    if (explain) {
-      return this._parseExplainResponse(response);
-    }
-    return (response as { results?: DatalogResult[] }).results || [];
-  }
-
-  /**
-   * Check a guarantee (Datalog rule) and return violations.
-   * @param explain Pass literal `true` to get explain data.
-   *   A boolean variable won't narrow the return type.
-   */
-  async checkGuarantee(ruleSource: string): Promise<DatalogResult[]>;
-  async checkGuarantee(ruleSource: string, explain: true): Promise<DatalogExplainResult>;
-  async checkGuarantee(ruleSource: string, explain?: boolean): Promise<DatalogResult[] | DatalogExplainResult> {
-    const payload: Record<string, unknown> = { ruleSource };
-    if (explain) payload.explain = true;
-    const response = await this._send('checkGuarantee', payload);
-    if (explain) {
-      return this._parseExplainResponse(response);
-    }
-    return (response as { violations?: DatalogResult[] }).violations || [];
-  }
-
-  /**
-   * Execute unified Datalog -- handles both direct queries and rule-based programs.
-   * Auto-detects the head predicate instead of hardcoding violation(X).
-   * @param explain Pass literal `true` to get explain data.
-   *   A boolean variable won't narrow the return type.
-   */
-  async executeDatalog(source: string): Promise<DatalogResult[]>;
-  async executeDatalog(source: string, explain: true): Promise<DatalogExplainResult>;
-  async executeDatalog(source: string, explain?: boolean): Promise<DatalogResult[] | DatalogExplainResult> {
-    const payload: Record<string, unknown> = { source };
-    if (explain) payload.explain = true;
-    const response = await this._send('executeDatalog', payload);
-    if (explain) {
-      return this._parseExplainResponse(response);
-    }
-    return (response as { results?: DatalogResult[] }).results || [];
-  }
-
-  /**
-   * Ping the server
-   */
-  async ping(): Promise<string | false> {
-    const response = await this._send('ping') as { pong?: boolean; version?: string };
-    return response.pong && response.version ? response.version : false;
-  }
-
-  // ===========================================================================
-  // Protocol v2 - Multi-Database Commands
-  // ===========================================================================
-
-  /**
-   * Negotiate protocol version with server
-   * @param protocolVersion - Protocol version to negotiate (default: 2)
-   * @returns Server capabilities including protocolVersion, serverVersion, features
-   */
-  async hello(protocolVersion: number = 3): Promise<HelloResponse> {
-    const response = await this._send('hello' as RFDBCommand, { protocolVersion });
-    const hello = response as HelloResponse;
-    this._supportsStreaming = hello.features?.includes('streaming') ?? false;
-    return hello;
-  }
-
-  /**
-   * Create a new database
-   * @param name - Database name (alphanumeric, _, -)
-   * @param ephemeral - If true, database is in-memory and auto-cleaned on disconnect
-   */
-  async createDatabase(name: string, ephemeral: boolean = false): Promise<CreateDatabaseResponse> {
-    const response = await this._send('createDatabase' as RFDBCommand, { name, ephemeral });
-    return response as CreateDatabaseResponse;
-  }
-
-  /**
-   * Open a database and set as current for this session
-   * @param name - Database name
-   * @param mode - 'rw' (read-write) or 'ro' (read-only)
-   */
-  async openDatabase(name: string, mode: 'rw' | 'ro' = 'rw'): Promise<OpenDatabaseResponse> {
-    const response = await this._send('openDatabase' as RFDBCommand, { name, mode });
-    return response as OpenDatabaseResponse;
-  }
-
-  /**
-   * Close current database
-   */
-  async closeDatabase(): Promise<RFDBResponse> {
-    return this._send('closeDatabase' as RFDBCommand);
-  }
-
-  /**
-   * Drop (delete) a database - must not be in use
-   * @param name - Database name
-   */
-  async dropDatabase(name: string): Promise<RFDBResponse> {
-    return this._send('dropDatabase' as RFDBCommand, { name });
-  }
-
-  /**
-   * List all databases
-   */
-  async listDatabases(): Promise<ListDatabasesResponse> {
-    const response = await this._send('listDatabases' as RFDBCommand);
-    return response as ListDatabasesResponse;
-  }
-
-  /**
-   * Get current database for this session
-   */
-  async currentDatabase(): Promise<CurrentDatabaseResponse> {
-    const response = await this._send('currentDatabase' as RFDBCommand);
-    return response as CurrentDatabaseResponse;
-  }
-
-  // ===========================================================================
-  // Snapshot Operations
-  // ===========================================================================
-
-  /**
-   * Convert a SnapshotRef to wire format payload fields.
-   *
-   * - number -> { version: N }
-   * - { tag, value } -> { tagKey, tagValue }
-   */
-  private _resolveSnapshotRef(ref: SnapshotRef): Record<string, unknown> {
-    if (typeof ref === 'number') return { version: ref };
-    return { tagKey: ref.tag, tagValue: ref.value };
-  }
-
-  /**
-   * Compute diff between two snapshots.
-   * @param from - Source snapshot (version number or tag reference)
-   * @param to - Target snapshot (version number or tag reference)
-   * @returns SnapshotDiff with added/removed segments and stats
-   */
-  async diffSnapshots(from: SnapshotRef, to: SnapshotRef): Promise<SnapshotDiff> {
-    const response = await this._send('diffSnapshots', {
-      from: this._resolveSnapshotRef(from),
-      to: this._resolveSnapshotRef(to),
-    });
-    return (response as DiffSnapshotsResponse).diff;
-  }
-
-  /**
-   * Tag a snapshot with key-value metadata.
-   * @param version - Snapshot version to tag
-   * @param tags - Key-value pairs to apply (e.g. { "release": "v1.0" })
-   */
-  async tagSnapshot(version: number, tags: Record<string, string>): Promise<void> {
-    await this._send('tagSnapshot', { version, tags });
-  }
-
-  /**
-   * Find a snapshot by tag key/value pair.
-   * @param tagKey - Tag key to search for
-   * @param tagValue - Tag value to match
-   * @returns Snapshot version number, or null if not found
-   */
-  async findSnapshot(tagKey: string, tagValue: string): Promise<number | null> {
-    const response = await this._send('findSnapshot', { tagKey, tagValue });
-    return (response as FindSnapshotResponse).version;
-  }
-
-  /**
-   * List snapshots, optionally filtered by tag key.
-   * @param filterTag - Optional tag key to filter by (only snapshots with this tag)
-   * @returns Array of SnapshotInfo objects
-   */
-  async listSnapshots(filterTag?: string): Promise<SnapshotInfo[]> {
-    const payload: Record<string, unknown> = {};
-    if (filterTag !== undefined) payload.filterTag = filterTag;
-    const response = await this._send('listSnapshots', payload);
-    return (response as ListSnapshotsResponse).snapshots;
-  }
-
-  // ===========================================================================
-  // Batch Operations
-  // ===========================================================================
-
-  /**
-   * Begin a batch operation.
-   * While batching, addNodes/addEdges buffer locally instead of sending to server.
-   * Call commitBatch() to send all buffered data atomically.
-   */
-  beginBatch(): void {
-    if (this._batching) throw new Error('Batch already in progress');
-    this._batching = true;
-    this._batchNodes = [];
-    this._batchEdges = [];
-    this._batchFiles = new Set();
-  }
-
-  /**
-   * Synchronously batch a single node. Must be inside beginBatch/commitBatch.
-   * Skips async wrapper — pushes directly to batch array.
-   */
-  batchNode(node: Partial<WireNode> & { id: string; type?: string; node_type?: string; nodeType?: string }): void {
-    if (!this._batching) throw new Error('No batch in progress');
-    const nodeRecord = node as Record<string, unknown>;
-    const { id, type, node_type, nodeType, name, file, exported, metadata, semanticId, semantic_id, ...rest } = nodeRecord;
-    const existingMeta = typeof metadata === 'string' ? JSON.parse(metadata as string) : (metadata || {});
-    const combinedMeta = { ...existingMeta, ...rest };
-    const wire: WireNode = {
-      id: String(id),
-      nodeType: (node_type || nodeType || type || 'UNKNOWN') as NodeType,
-      name: (name as string) || '',
-      file: (file as string) || '',
-      exported: (exported as boolean) || false,
-      metadata: JSON.stringify(combinedMeta),
-    };
-    const sid = semanticId || semantic_id;
-    if (sid) {
-      (wire as WireNode & { semanticId: string }).semanticId = String(sid);
-    }
-    this._batchNodes.push(wire);
-    if (wire.file) this._batchFiles.add(wire.file);
-  }
-
-  /**
-   * Synchronously batch a single edge. Must be inside beginBatch/commitBatch.
-   */
-  batchEdge(edge: WireEdge | Record<string, unknown>): void {
-    if (!this._batching) throw new Error('No batch in progress');
-    const edgeRecord = edge as Record<string, unknown>;
-    const { src, dst, type, edge_type, edgeType, metadata, ...rest } = edgeRecord;
-    const existingMeta = typeof metadata === 'string' ? JSON.parse(metadata as string) : (metadata || {});
-    const combinedMeta = { ...existingMeta, ...rest };
-    this._batchEdges.push({
-      src: String(src),
-      dst: String(dst),
-      edgeType: (edge_type || edgeType || type || (edge as WireEdge).edgeType || 'UNKNOWN') as EdgeType,
-      metadata: JSON.stringify(combinedMeta),
-    });
-  }
-
-  /**
-   * Commit the current batch to the server.
-   * Sends all buffered nodes/edges with the list of changed files.
-   * Server atomically replaces old data for changed files with new data.
-   *
-   * @param tags - Optional tags for the commit (e.g., plugin name, phase)
-   * @param deferIndex - When true, server writes data but skips index rebuild.
-   *   Caller must send rebuildIndexes() after all deferred commits complete.
-   */
-  async commitBatch(tags?: string[], deferIndex?: boolean, protectedTypes?: string[]): Promise<CommitDelta> {
-    if (!this._batching) throw new Error('No batch in progress');
-
-    const allNodes = this._batchNodes;
-    const allEdges = this._batchEdges;
-    const changedFiles = [...this._batchFiles];
-
-    this._batching = false;
-    this._batchNodes = [];
-    this._batchEdges = [];
-    this._batchFiles = new Set();
-
-    return this._sendCommitBatch(changedFiles, allNodes, allEdges, tags, deferIndex, protectedTypes);
-  }
-
-  /**
-   * Internal helper: send a commitBatch with chunking for large payloads.
-   * Used by both commitBatch() and BatchHandle.commit().
-   * @internal
-   */
-  async _sendCommitBatch(
-    changedFiles: string[],
-    allNodes: WireNode[],
-    allEdges: WireEdge[],
-    tags?: string[],
-    deferIndex?: boolean,
-    protectedTypes?: string[],
-  ): Promise<CommitDelta> {
-    // Chunk large batches to stay under server's 100MB message limit.
-    // First chunk includes changedFiles (triggers old data deletion),
-    // subsequent chunks use empty changedFiles (additive only).
-    const CHUNK = 10_000;
-    if (allNodes.length <= CHUNK && allEdges.length <= CHUNK) {
-      const response = await this._send('commitBatch', {
-        changedFiles, nodes: allNodes, edges: allEdges, tags,
-        ...(deferIndex ? { deferIndex: true } : {}),
-        ...(protectedTypes?.length ? { protectedTypes } : {}),
-      });
-      return (response as CommitBatchResponse).delta;
-    }
-
-    const merged: CommitDelta = {
-      changedFiles,
-      nodesAdded: 0, nodesRemoved: 0,
-      edgesAdded: 0, edgesRemoved: 0,
-      changedNodeTypes: [], changedEdgeTypes: [],
-    };
-    const nodeTypes = new Set<string>();
-    const edgeTypes = new Set<string>();
-
-    const maxI = Math.max(
-      Math.ceil(allNodes.length / CHUNK),
-      Math.ceil(allEdges.length / CHUNK),
-      1,
-    );
-
-    for (let i = 0; i < maxI; i++) {
-      const nodes = allNodes.slice(i * CHUNK, (i + 1) * CHUNK);
-      const edges = allEdges.slice(i * CHUNK, (i + 1) * CHUNK);
-      const response = await this._send('commitBatch', {
-        changedFiles: i === 0 ? changedFiles : [],
-        nodes, edges, tags,
-        ...(deferIndex ? { deferIndex: true } : {}),
-        ...(i === 0 && protectedTypes?.length ? { protectedTypes } : {}),
-      });
-      const d = (response as CommitBatchResponse).delta;
-      merged.nodesAdded += d.nodesAdded;
-      merged.nodesRemoved += d.nodesRemoved;
-      merged.edgesAdded += d.edgesAdded;
-      merged.edgesRemoved += d.edgesRemoved;
-      for (const t of d.changedNodeTypes) nodeTypes.add(t);
-      for (const t of d.changedEdgeTypes) edgeTypes.add(t);
-    }
-
-    merged.changedNodeTypes = [...nodeTypes];
-    merged.changedEdgeTypes = [...edgeTypes];
-    return merged;
-  }
-
-  /**
-   * Rebuild all secondary indexes after a series of deferred-index commits.
-   * Call this once after bulk loading data with commitBatch(tags, true).
-   */
-  async rebuildIndexes(): Promise<void> {
-    await this._send('rebuildIndexes', {});
-  }
-
-  /**
    * Create an isolated batch handle for concurrent-safe batching.
-   * Each BatchHandle has its own node/edge buffers, avoiding the shared
-   * instance-level _batching state race condition with multiple workers.
    */
   createBatch(): BatchHandle {
     return new BatchHandle(this);
   }
 
   /**
-   * Abort the current batch, discarding all buffered data.
-   */
-  abortBatch(): void {
-    this._batching = false;
-    this._batchNodes = [];
-    this._batchEdges = [];
-    this._batchFiles = new Set();
-  }
-
-  /**
-   * Check if a batch is currently in progress.
-   */
-  isBatching(): boolean {
-    return this._batching;
-  }
-
-  /**
-   * Find files that depend on the given changed files.
-   * Uses backward reachability to find dependent modules.
-   *
-   * Note: For large result sets, each reachable node requires a separate
-   * getNode RPC. A future server-side optimization could return file paths
-   * directly from the reachability query.
-   */
-  async findDependentFiles(changedFiles: string[]): Promise<string[]> {
-    const nodeIds: string[] = [];
-    for (const file of changedFiles) {
-      const ids = await this.findByAttr({ file });
-      nodeIds.push(...ids);
-    }
-
-    if (nodeIds.length === 0) return [];
-
-    const reachable = await this.reachability(
-      nodeIds,
-      2,
-      ['IMPORTS_FROM', 'DEPENDS_ON', 'CALLS'] as EdgeType[],
-      true,
-    );
-
-    const changedSet = new Set(changedFiles);
-    const files = new Set<string>();
-    for (const id of reachable) {
-      const node = await this.getNode(id);
-      if (node?.file && !changedSet.has(node.file)) {
-        files.add(node.file);
-      }
-    }
-
-    return [...files];
-  }
-
-  /**
    * Unref the socket so it doesn't keep the process alive.
-   *
-   * Call this in test environments to allow process to exit
-   * even if connections remain open.
    */
   unref(): void {
     if (this.socket) {
@@ -1304,31 +445,14 @@ export class RFDBClient extends EventEmitter implements IRFDBClient {
       this.connected = false;
     }
   }
-
-  /**
-   * Shutdown the server
-   */
-  async shutdown(): Promise<void> {
-    try {
-      await this._send('shutdown');
-    } catch {
-      // Expected - server closes connection
-    }
-    await this.close();
-  }
 }
 
 /**
  * Isolated batch handle for concurrent-safe batching (REG-487).
- *
- * Each BatchHandle maintains its own node/edge/file buffers, completely
- * independent of the RFDBClient's instance-level _batching state.
- * Multiple workers can each create their own BatchHandle and commit
- * independently without race conditions.
  */
 export class BatchHandle {
   private _nodes: WireNode[] = [];
-  private _edges: WireEdge[] = [];
+  private _edges: import('@grafema/types').WireEdge[] = [];
   private _files: Set<string> = new Set();
 
   constructor(private client: RFDBClient) {}
@@ -1339,7 +463,7 @@ export class BatchHandle {
     else if (node.file) this._files.add(node.file);
   }
 
-  addEdge(edge: WireEdge): void {
+  addEdge(edge: import('@grafema/types').WireEdge): void {
     this._edges.push(edge);
   }
 

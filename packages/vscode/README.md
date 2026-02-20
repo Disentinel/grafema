@@ -36,6 +36,30 @@ cd packages/vscode
 | Setting | Description | Default |
 |---------|-------------|---------|
 | `grafema.rfdbBinaryPath` | Custom path to rfdb-server binary | Auto-detected |
+| `grafema.rfdbTransport` | Transport type: "unix" or "websocket" | "unix" |
+| `grafema.rfdbWebSocketUrl` | WebSocket URL (when transport is "websocket") | "ws://localhost:7474" |
+
+### WebSocket Transport (for Web / Remote Environments)
+
+For browser-based VS Code (vscode.dev) or remote development (code-server, Gitpod), configure WebSocket transport:
+
+1. Start rfdb-server with WebSocket support:
+   ```bash
+   rfdb-server ./path/to/graph.rfdb --socket /tmp/rfdb.sock --ws-port 7474
+   ```
+
+2. Configure the extension:
+   ```json
+   {
+     "grafema.rfdbTransport": "websocket",
+     "grafema.rfdbWebSocketUrl": "ws://localhost:7474"
+   }
+   ```
+
+For remote access via SSH tunnel:
+```bash
+ssh -L 7474:127.0.0.1:7474 user@remote-server
+```
 
 ## Development
 

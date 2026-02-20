@@ -8,7 +8,7 @@
 
 import type * as vscode from 'vscode';
 import type { WireNode } from '@grafema/types';
-import type { RFDBClient } from '@grafema/rfdb-client';
+import type { BaseRFDBClient } from '@grafema/rfdb-client';
 import { parseNodeMetadata } from './types';
 import type { TraceNode, TraceOutput, TraceGap, SourceKind } from './types';
 
@@ -41,7 +41,7 @@ export const MAX_BRANCHING_FACTOR = 5;
  * @returns TraceOutput with nodes and truncated flag
  */
 export async function traceBackward(
-  client: RFDBClient,
+  client: BaseRFDBClient,
   startNodeId: string,
   maxDepth: number,
   token?: vscode.CancellationToken
@@ -120,7 +120,7 @@ export async function traceBackward(
  * @returns TraceOutput with nodes and truncated flag
  */
 export async function traceForward(
-  client: RFDBClient,
+  client: BaseRFDBClient,
   startNodeId: string,
   maxDepth: number,
   token?: vscode.CancellationToken

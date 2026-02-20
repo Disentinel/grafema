@@ -37,6 +37,50 @@ npx @grafema/rfdb ./my-graph.rfdb --socket /tmp/rfdb.sock
 rfdb-server ./my-graph.rfdb
 ```
 
+### Web / Remote Setup (WebSocket Transport)
+
+For browser-based environments (VS Code web, code-server, Gitpod) or remote access scenarios, use WebSocket transport instead of Unix sockets.
+
+**Start Server with WebSocket:**
+
+```bash
+rfdb-server ./path/to/graph.rfdb --socket /tmp/rfdb.sock --ws-port 7474
+```
+
+This starts BOTH transports simultaneously:
+- Unix socket at `/tmp/rfdb.sock` (for local CLI/MCP)
+- WebSocket at `ws://127.0.0.1:7474` (for web/remote clients)
+
+**Configure VS Code Extension:**
+
+In VS Code settings (Cmd+, or Ctrl+,):
+
+```json
+{
+  "grafema.rfdbTransport": "websocket",
+  "grafema.rfdbWebSocketUrl": "ws://localhost:7474"
+}
+```
+
+Or via UI: Search for "Grafema" → Set "RFDB Transport" to "websocket".
+
+**When to Use WebSocket:**
+
+- **VS Code web (vscode.dev)** - Unix sockets unavailable in browser
+- **code-server / Gitpod** - Remote development environments
+- **Browser clients** - When building web-based graph explorers
+- **Remote access** - Connect to graph database on different machine (via SSH tunnel)
+
+**Security Note:**
+
+WebSocket binds to `127.0.0.1` only (localhost). For remote access, use SSH tunnel:
+
+```bash
+ssh -L 7474:127.0.0.1:7474 user@remote-server
+```
+
+Then connect to `ws://localhost:7474` locally.
+
 ### Programmatic usage
 
 Server lifecycle is managed through `@grafema/core`:
