@@ -34,6 +34,10 @@ rmp-serde = "1.3"  # MessagePack for RFDB server protocol
 # Async runtime
 tokio = { version = "1.38", features = ["full"] }
 
+# WebSocket support (REG-523)
+tokio-tungstenite = "0.24"
+futures-util = "0.3"
+
 # Channels for worker thread
 crossbeam-channel = "0.5"
 

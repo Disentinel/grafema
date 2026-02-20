@@ -31,6 +31,12 @@ use std::time::Instant;
 use serde::{Deserialize, Serialize};
 use sysinfo::System;
 
+// WebSocket support (REG-523)
+use tokio::net::TcpListener;
+use tokio::time::{timeout, Duration};
+use tokio_tungstenite::tungstenite::protocol::Message;
+use futures_util::{StreamExt, SinkExt};
+
 // Import from library
 use rfdb::graph::{GraphEngine, GraphEngineV2, GraphStore};
 use rfdb::storage::{NodeRecord, EdgeRecord, AttrQuery, FieldDecl, FieldType};
@@ -2085,7 +2091,7 @@ fn write_message(stream: &mut UnixStream, data: &[u8]) -> std::io::Result<()> {
     Ok(())
 }
 
-fn handle_client(
+fn handle_client_unix(
     mut stream: UnixStream,
     manager: Arc<DatabaseManager>,
     client_id: usize,
@@ -2194,10 +2200,164 @@ fn handle_client(
 }
 
 // ============================================================================
+// WebSocket Client Connection Handler (REG-523)
+// ============================================================================
+
+/// Send timeout for WebSocket writes. Protects against slow/stalled clients.
+const WS_SEND_TIMEOUT: Duration = Duration::from_secs(60);
+
+async fn handle_client_websocket(
+    tcp_stream: tokio::net::TcpStream,
+    manager: Arc<DatabaseManager>,
+    client_id: usize,
+    metrics: Option<Arc<Metrics>>,
+) {
+    eprintln!("[rfdb-server] WebSocket client {} connected", client_id);
+
+    let ws_stream = match tokio_tungstenite::accept_async(tcp_stream).await {
+        Ok(ws) => ws,
+        Err(e) => {
+            eprintln!("[rfdb-server] WebSocket upgrade failed for client {}: {}", client_id, e);
+            return;
+        }
+    };
+
+    let (mut ws_write, mut ws_read) = ws_stream.split();
+    let mut session = Some(ClientSession::new(client_id));
+
+    // WebSocket clients MUST send Hello first (no legacy mode)
+
+    loop {
+        let msg = match ws_read.next().await {
+            Some(Ok(Message::Binary(data))) => data,
+            Some(Ok(Message::Close(_))) => {
+                eprintln!("[rfdb-server] WebSocket client {} disconnected (Close frame)", client_id);
+                break;
+            }
+            Some(Ok(Message::Text(_))) => {
+                eprintln!("[rfdb-server] WebSocket client {} sent text frame (expected binary), ignoring", client_id);
+                continue;
+            }
+            Some(Ok(Message::Ping(_))) | Some(Ok(Message::Pong(_))) => {
+                continue;
+            }
+            Some(Ok(Message::Frame(_))) => {
+                continue;
+            }
+            Some(Err(e)) => {
+                eprintln!("[rfdb-server] WebSocket client {} read error: {}", client_id, e);
+                break;
+            }
+            None => {
+                eprintln!("[rfdb-server] WebSocket client {} stream closed", client_id);
+                break;
+            }
+        };
+
+        let (request_id, request) = match rmp_serde::from_slice::<RequestEnvelope>(&msg) {
+            Ok(env) => (env.request_id, env.request),
+            Err(e) => {
+                eprintln!("[rfdb-server] WebSocket client {} invalid MessagePack: {}", client_id, e);
+                let envelope = ResponseEnvelope {
+                    request_id: None,
+                    response: Response::Error { error: format!("Invalid request: {}", e) },
+                };
+                if let Ok(resp_bytes) = rmp_serde::to_vec_named(&envelope) {
+                    let _ = timeout(WS_SEND_TIMEOUT, ws_write.send(Message::Binary(resp_bytes))).await;
+                }
+                continue;
+            }
+        };
+
+        let is_shutdown = matches!(request, Request::Shutdown);
+        let start = Instant::now();
+        let op_name = get_operation_name(&request);
+
+        // Handle request -- NO streaming for WebSocket MVP, always single response.
+        // Wrap in spawn_blocking because handle_request may block (e.g., flush writes to disk).
+        let manager_clone = Arc::clone(&manager);
+        let metrics_clone = metrics.clone();
+        let mut sess = session.take().unwrap();
+        let result = tokio::task::spawn_blocking(move || {
+            let resp = handle_request(&manager_clone, &mut sess, request, &metrics_clone);
+            (resp, sess)
+        }).await;
+        let response;
+        match result {
+            Ok((resp, sess_back)) => {
+                response = resp;
+                session = Some(sess_back);
+            }
+            Err(e) => {
+                eprintln!("[rfdb-server] WebSocket client {} handler panic: {}", client_id, e);
+                break;
+            }
+        }
+
+        if let Some(ref m) = metrics {
+            let duration_ms = start.elapsed().as_millis() as u64;
+            m.record_query(&op_name, duration_ms);
+            if duration_ms >= SLOW_QUERY_THRESHOLD_MS {
+                eprintln!("[RUST SLOW] {}: {}ms (ws client {})", op_name, duration_ms, client_id);
+            }
+        }
+
+        let envelope = ResponseEnvelope { request_id: request_id.clone(), response };
+        let resp_bytes = match rmp_serde::to_vec_named(&envelope) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                eprintln!("[rfdb-server] WebSocket client {} serialize error: {}", client_id, e);
+                // Try to send a fallback error so client doesn't hang
+                let fallback = ResponseEnvelope {
+                    request_id,
+                    response: Response::Error {
+                        error: format!("Response serialization failed: {}", e),
+                    },
+                };
+                match rmp_serde::to_vec_named(&fallback) {
+                    Ok(fallback_bytes) => {
+                        let _ = timeout(WS_SEND_TIMEOUT, ws_write.send(Message::Binary(fallback_bytes))).await;
+                    }
+                    Err(e2) => {
+                        eprintln!("[rfdb-server] WebSocket client {} fallback serialize also failed: {}", client_id, e2);
+                        break;
+                    }
+                }
+                continue;
+            }
+        };
+
+        match timeout(WS_SEND_TIMEOUT, ws_write.send(Message::Binary(resp_bytes))).await {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => {
+                eprintln!("[rfdb-server] WebSocket client {} write error: {}", client_id, e);
+                break;
+            }
+            Err(_) => {
+                eprintln!("[rfdb-server] WebSocket client {} write timeout ({}s) - closing connection",
+                          client_id, WS_SEND_TIMEOUT.as_secs());
+                break;
+            }
+        }
+
+        if is_shutdown {
+            eprintln!("[rfdb-server] Shutdown requested by WebSocket client {}", client_id);
+            std::process::exit(0);
+        }
+    }
+
+    if let Some(ref mut sess) = session {
+        handle_close_database(&manager, sess);
+    }
+    eprintln!("[rfdb-server] WebSocket client {} cleaned up", client_id);
+}
+
+// ============================================================================
 // Main
 // ============================================================================
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let args: Vec<String> = std::env::args().collect();
 
     // Handle --version / -V flag
@@ -2212,11 +2372,12 @@ fn main() {
         println!();
         println!("High-performance disk-backed graph database server for Grafema");
         println!();
-        println!("Usage: rfdb-server <db-path> [--socket <socket-path>] [--data-dir <dir>] [--metrics]");
+        println!("Usage: rfdb-server <db-path> [--socket <socket-path>] [--ws-port <port>] [--data-dir <dir>] [--metrics]");
         println!();
         println!("Arguments:");
         println!("  <db-path>      Path to default graph database directory");
         println!("  --socket       Unix socket path (default: /tmp/rfdb.sock)");
+        println!("  --ws-port      WebSocket port (1-65535, e.g., 7474, localhost-only)");
         println!("  --data-dir     Base directory for multi-database storage");
         println!();
         println!("Flags:");
@@ -2227,11 +2388,12 @@ fn main() {
     }
 
     if args.len() < 2 {
-        eprintln!("Usage: rfdb-server <db-path> [--socket <socket-path>] [--data-dir <dir>] [--metrics]");
+        eprintln!("Usage: rfdb-server <db-path> [--socket <socket-path>] [--ws-port <port>] [--data-dir <dir>] [--metrics]");
         eprintln!("");
         eprintln!("Arguments:");
         eprintln!("  <db-path>      Path to default graph database directory");
         eprintln!("  --socket       Unix socket path (default: /tmp/rfdb.sock)");
+        eprintln!("  --ws-port      WebSocket port (1-65535, e.g., 7474, localhost-only)");
         eprintln!("  --data-dir     Base directory for multi-database storage");
         eprintln!("  --metrics      Enable performance metrics collection");
         std::process::exit(1);
@@ -2257,6 +2419,23 @@ fn main() {
         .and_then(|i| args.get(i + 1))
         .map(|s| s.as_str())
         .unwrap_or("/tmp/rfdb.sock");
+
+    let ws_port: Option<u16> = args.iter()
+        .position(|a| a == "--ws-port")
+        .and_then(|i| args.get(i + 1))
+        .map(|s| {
+            match s.parse::<u16>() {
+                Ok(0) => {
+                    eprintln!("[rfdb-server] ERROR: --ws-port 0 is not allowed (port must be 1-65535)");
+                    std::process::exit(1);
+                }
+                Ok(port) => port,
+                Err(_) => {
+                    eprintln!("[rfdb-server] ERROR: Invalid --ws-port value '{}' (must be 1-65535)", s);
+                    std::process::exit(1);
+                }
+            }
+        });
 
     let data_dir = args.iter()
         .position(|a| a == "--data-dir")
@@ -2327,22 +2506,80 @@ fn main() {
         }
     });
 
-    // Accept connections
-    for stream in listener.incoming() {
-        match stream {
-            Ok(stream) => {
-                let client_id = NEXT_CLIENT_ID.fetch_add(1, Ordering::SeqCst);
-                let manager_clone = Arc::clone(&manager);
-                let metrics_clone = metrics.clone();
-                thread::spawn(move || {
-                    // legacy_mode: true until client sends Hello
-                    handle_client(stream, manager_clone, client_id, true, metrics_clone);
-                });
+    // Bind WebSocket listener (if --ws-port provided)
+    let ws_listener = if let Some(port) = ws_port {
+        let addr = format!("127.0.0.1:{}", port);
+        match TcpListener::bind(&addr).await {
+            Ok(listener) => {
+                eprintln!("[rfdb-server] WebSocket listening on {}", addr);
+                Some(listener)
             }
             Err(e) => {
-                eprintln!("[rfdb-server] Accept error: {}", e);
+                eprintln!("[rfdb-server] ERROR: Failed to bind WebSocket port {}: {}", port, e);
+                eprintln!("[rfdb-server] Hint: Port may be in use. Try a different port.");
+                std::process::exit(1);
             }
         }
+    } else {
+        None
+    };
+
+    // Spawn Unix socket accept loop in blocking task
+    let manager_unix = Arc::clone(&manager);
+    let metrics_unix = metrics.clone();
+    let unix_handle = tokio::task::spawn_blocking(move || {
+        for stream in listener.incoming() {
+            match stream {
+                Ok(stream) => {
+                    let client_id = NEXT_CLIENT_ID.fetch_add(1, Ordering::SeqCst);
+                    let manager_clone = Arc::clone(&manager_unix);
+                    let metrics_clone = metrics_unix.clone();
+                    thread::spawn(move || {
+                        // legacy_mode: true until client sends Hello
+                        handle_client_unix(stream, manager_clone, client_id, true, metrics_clone);
+                    });
+                }
+                Err(e) => {
+                    eprintln!("[rfdb-server] Unix socket accept error: {}", e);
+                }
+            }
+        }
+    });
+
+    // Spawn WebSocket accept loop (if enabled)
+    let ws_handle = if let Some(ws_listener) = ws_listener {
+        let manager_ws = Arc::clone(&manager);
+        let metrics_ws = metrics.clone();
+        Some(tokio::spawn(async move {
+            loop {
+                match ws_listener.accept().await {
+                    Ok((tcp_stream, addr)) => {
+                        eprintln!("[rfdb-server] WebSocket connection from {}", addr);
+                        let client_id = NEXT_CLIENT_ID.fetch_add(1, Ordering::SeqCst);
+                        let manager_clone = Arc::clone(&manager_ws);
+                        let metrics_clone = metrics_ws.clone();
+                        tokio::spawn(handle_client_websocket(
+                            tcp_stream,
+                            manager_clone,
+                            client_id,
+                            metrics_clone,
+                        ));
+                    }
+                    Err(e) => {
+                        eprintln!("[rfdb-server] WebSocket accept error: {}", e);
+                    }
+                }
+            }
+        }))
+    } else {
+        None
+    };
+
+    // Wait for both tasks (or just Unix if WebSocket disabled)
+    if let Some(ws) = ws_handle {
+        let _ = tokio::try_join!(unix_handle, ws);
+    } else {
+        let _ = unix_handle.await;
     }
 }
 
