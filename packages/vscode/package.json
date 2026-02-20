@@ -322,6 +322,21 @@
           "default": "",
           "description": "Path to RFDB unix socket. If empty, uses {workspace}/.grafema/rfdb.sock"
         },
+        "grafema.rfdbTransport": {
+          "type": "string",
+          "enum": ["unix", "websocket"],
+          "default": "unix",
+          "description": "RFDB transport protocol (unix socket or WebSocket)",
+          "enumDescriptions": [
+            "Unix socket (default, local filesystem)",
+            "WebSocket (for browser-based VS Code)"
+          ]
+        },
+        "grafema.rfdbWebSocketUrl": {
+          "type": "string",
+          "default": "ws://localhost:7474",
+          "description": "RFDB WebSocket URL (when transport is 'websocket')"
+        },
         "grafema.codeLens.enabled": {
           "type": "boolean",
           "default": true,

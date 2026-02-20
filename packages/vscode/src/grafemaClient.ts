@@ -11,7 +11,8 @@ import type { FSWatcher } from 'fs';
 import { existsSync, unlinkSync, watch } from 'fs';
 import { join, dirname, basename } from 'path';
 import { EventEmitter } from 'events';
-import { RFDBClient } from '@grafema/rfdb-client';
+import { RFDBClient, RFDBWebSocketClient } from '@grafema/rfdb-client';
+import * as vscode from 'vscode';
 import type { ConnectionState, GraphStats } from './types';
 
 const GRAFEMA_DIR = '.grafema';
@@ -37,7 +38,7 @@ export class GrafemaClientManager extends EventEmitter {
   private workspaceRoot: string;
   private explicitBinaryPath: string | null;
   private explicitSocketPath: string | null;
-  private client: RFDBClient | null = null;
+  private client: RFDBClient | RFDBWebSocketClient | null = null;
   private serverProcess: ChildProcess | null = null;
   private _state: ConnectionState = { status: 'disconnected' };
   private watchers: FSWatcher[] = [];
@@ -70,7 +71,7 @@ export class GrafemaClientManager extends EventEmitter {
   /**
    * Get the connected client. Throws if not connected.
    */
-  getClient(): RFDBClient {
+  getClient(): RFDBClient | RFDBWebSocketClient {
     if (!this.client || this._state.status !== 'connected') {
       throw new Error('Not connected to RFDB server');
     }
@@ -85,10 +86,42 @@ export class GrafemaClientManager extends EventEmitter {
   }
 
   /**
-   * Connect to RFDB server, auto-starting if necessary
+   * Connect to RFDB server, auto-starting if necessary.
+   * Supports Unix socket (default) and WebSocket transport via configuration.
    */
   async connect(): Promise<void> {
-    // Check if database exists
+    const config = vscode.workspace.getConfiguration('grafema');
+    const transport = config.get<string>('rfdbTransport') || 'unix';
+
+    if (transport === 'websocket') {
+      // WebSocket mode: connect directly, no auto-start
+      const wsUrl = config.get<string>('rfdbWebSocketUrl') || 'ws://localhost:7474';
+      this.setState({ status: 'connecting' });
+
+      try {
+        const wsClient = new RFDBWebSocketClient(wsUrl);
+        await wsClient.connect();
+
+        const pong = await wsClient.ping();
+        if (!pong) {
+          await wsClient.close();
+          throw new Error('Server did not respond to ping');
+        }
+
+        this.client = wsClient;
+        this.setState({ status: 'connected' });
+        this.startWatching();
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        this.setState({
+          status: 'error',
+          message: `WebSocket connection failed: ${message}\n\nMake sure rfdb-server is running with --ws-port flag.`,
+        });
+      }
+      return;
+    }
+
+    // Unix socket mode: existing logic with auto-start
     if (!existsSync(this.dbPath)) {
       this.setState({
         status: 'no-database',
@@ -97,7 +130,6 @@ export class GrafemaClientManager extends EventEmitter {
       return;
     }
 
-    // Try to connect first (server may already be running)
     this.setState({ status: 'connecting' });
 
     try {
@@ -107,7 +139,6 @@ export class GrafemaClientManager extends EventEmitter {
       // Connection failed, try to start server
     }
 
-    // Start server
     this.setState({ status: 'starting-server' });
     try {
       await this.startServer();
@@ -326,7 +357,7 @@ export class GrafemaClientManager extends EventEmitter {
   /**
    * Execute a client operation with auto-reconnect on failure
    */
-  async withReconnect<T>(operation: (client: RFDBClient) => Promise<T>): Promise<T | null> {
+  async withReconnect<T>(operation: (client: RFDBClient | RFDBWebSocketClient) => Promise<T>): Promise<T | null> {
     if (!this.client || this._state.status !== 'connected') {
       // Try to reconnect first
       const reconnected = await this.reconnect();
