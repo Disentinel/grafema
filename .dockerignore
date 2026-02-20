@@ -1,0 +1,20 @@
+# Docker build context exclusions (used by demo/Dockerfile)
+.git
+**/node_modules
+**/dist
+**/*.tsbuildinfo
+coverage
+logs
+tmp
+.DS_Store
+_tasks
+_ai
+_scripts
+.claude
+.eslintcache
+.env
+.env.local
+.npmrc
+.npmrc.local
+.rfguard
+demo/onboarding-tests

@@ -1,0 +1,92 @@
+# Smoke tests for the Grafema demo environment (code-server + rfdb-server + Grafema extension).
+#
+# Triggers:
+#   - Push to main
+#   - PRs that modify demo/ or packages/vscode/
+
+name: Demo Smoke Tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'demo/**'
+      - 'packages/vscode/**'
+      - 'test/e2e/demo-smoke.spec.js'
+      - '.github/workflows/demo-test.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'demo/**'
+      - 'packages/vscode/**'
+      - 'test/e2e/demo-smoke.spec.js'
+      - '.github/workflows/demo-test.yml'
+
+jobs:
+  demo-smoke:
+    name: Demo Smoke Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build demo Docker image
+        run: docker build -t grafema-demo-test -f demo/Dockerfile .
+
+      - name: Start demo container
+        run: |
+          docker run -d \
+            --name grafema-demo \
+            -p 8080:8080 \
+            -p 7432:7432 \
+            grafema-demo-test
+
+      - name: Wait for code-server to be ready
+        run: |
+          echo "Waiting for code-server on port 8080..."
+          timeout 120 bash -c '
+            until curl -sf http://localhost:8080 > /dev/null 2>&1; do
+              sleep 2
+              echo "  still waiting..."
+            done
+          ' || {
+            echo "::error::code-server did not become ready within 120 seconds"
+            docker logs grafema-demo
+            exit 1
+          }
+          echo "code-server is ready"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install Playwright
+        run: |
+          npm install @playwright/test
+          npx playwright install chromium --with-deps
+
+      - name: Run Playwright smoke tests
+        run: npx playwright test test/e2e/demo-smoke.spec.js --reporter=html
+        env:
+          DEMO_URL: http://localhost:8080
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: demo-playwright-report
+          path: playwright-report/
+          retention-days: 14
+
+      - name: Show container logs on failure
+        if: failure()
+        run: docker logs grafema-demo
+
+      - name: Cleanup
+        if: always()
+        run: |
+          docker stop grafema-demo || true
+          docker rm grafema-demo || true
