@@ -108,6 +108,9 @@ export class GrafemaClientManager extends EventEmitter {
           throw new Error('Server did not respond to ping');
         }
 
+        // Negotiate protocol and select database
+        await this.negotiateAndSelectDatabase(wsClient);
+
         this.client = wsClient;
         this.setState({ status: 'connected' });
         this.startWatching();
@@ -163,11 +166,49 @@ export class GrafemaClientManager extends EventEmitter {
       throw new Error('Server did not respond to ping');
     }
 
+    // Negotiate protocol and select database
+    await this.negotiateAndSelectDatabase(client);
+
     this.client = client;
     this.setState({ status: 'connected' });
 
     // Start watching for changes
     this.startWatching();
+  }
+
+  /**
+   * Negotiate protocol version and auto-select default database.
+   * Called after successful connection to rfdb-server.
+   */
+  private async negotiateAndSelectDatabase(
+    client: RFDBClient | RFDBWebSocketClient
+  ): Promise<void> {
+    await client.hello();
+
+    try {
+      await client.openDatabase('default', 'rw');
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+
+      // Only attempt recovery for "not found" errors
+      if (!message.includes('not found')) {
+        throw err;
+      }
+
+      const { databases } = await client.listDatabases();
+
+      if (databases.length === 0) {
+        throw new Error(
+          'No graph databases found. Run `grafema analyze` to create one.'
+        );
+      }
+
+      const dbNames = databases.map((d: { name: string }) => d.name).join(', ');
+      throw new Error(
+        `Database "default" not found. Available: ${dbNames}. ` +
+        'Run `grafema analyze` to create the default database.'
+      );
+    }
   }
 
   /**
