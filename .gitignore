@@ -30,6 +30,7 @@ npm-debug.log*
 .mcp.json
 .claude/*
 !.claude/skills/
+!.claude/agents/
 .grafema/*
 !.grafema/config.yaml
 
@@ -50,6 +51,11 @@ coverage/
 **/.grafema/rfdb.sock
 **/.grafema/diagnostics.log
 .eslintcache
+
+# QA automation screenshots (large, ephemeral, regenerable)
+_qa/screenshots/*
+!_qa/screenshots/.gitkeep
+!_qa/screenshots/*.cjs
 
 # SWE-bench artifacts
 logs/run_evaluation/
