@@ -169,8 +169,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   try {
     await clientManager.connect();
   } catch (err) {
-    console.error('[grafema-explore] Connection error:', err);
-    edgesProvider.setStatusMessage('Connection failed');
+    const message = err instanceof Error ? err.message : 'Connection failed';
+    console.error('[grafema-explore] Connection error:', message);
+    edgesProvider.setStatusMessage(message);
   }
 
   // Register all disposables
