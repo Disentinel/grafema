@@ -10,6 +10,7 @@ type ImportType = 'default' | 'named' | 'namespace';
 interface ImportNodeRecord extends BaseNodeRecord {
   type: 'IMPORT';
   column: number;
+  endColumn?: number;          // specifier end column (exclusive, for cursor matching)
   source: string;
   importType: ImportType;      // NEW: HOW it's imported (syntax)
   importBinding: ImportBinding; // RENAMED: WHAT is imported (semantics)
@@ -30,6 +31,7 @@ interface ImportNodeOptions {
   isResolvable?: boolean;       // true if path is a string literal (statically analyzable)
   dynamicPath?: string;         // original expression for template/variable paths
   sideEffect?: boolean;         // REG-273: true for side-effect-only imports
+  endColumn?: number;           // specifier end column (exclusive, for cursor matching)
 }
 
 export class ImportNode {
@@ -98,6 +100,11 @@ export class ImportNode {
     // REG-273: Add sideEffect field if provided
     if (options.sideEffect !== undefined) {
       record.sideEffect = options.sideEffect;
+    }
+
+    // REG-530: Add endColumn for per-specifier cursor matching
+    if (options.endColumn !== undefined) {
+      record.endColumn = options.endColumn;
     }
 
     return record;
