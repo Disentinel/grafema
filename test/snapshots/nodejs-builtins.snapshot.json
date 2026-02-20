@@ -5430,6 +5430,22 @@
     },
     {
       "from": "CALL:child.stdout.on",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:child.stdout.on",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:child.stdout.on",
       "type": "PASSES_ARGUMENT",
       "to": "FUNCTION:anonymous[0]",
       "metadata": {
@@ -5448,6 +5464,14 @@
       "from": "CALL:child.stdout.on",
       "type": "USES",
       "to": "VARIABLE:child"
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
     },
     {
       "from": "CALL:console.error",
@@ -5519,6 +5543,22 @@
     },
     {
       "from": "CALL:fs.readFile",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 2
+      }
+    },
+    {
+      "from": "CALL:fs.readFile",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:fs.readFile",
       "type": "PASSES_ARGUMENT",
       "to": "FUNCTION:anonymous[0]",
       "metadata": {
@@ -5560,6 +5600,14 @@
     },
     {
       "from": "CALL:JSON.parse",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:content",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:JSON.parse",
       "type": "PASSES_ARGUMENT",
       "to": "VARIABLE:content",
       "metadata": {
@@ -5570,6 +5618,14 @@
       "from": "CALL:JSON.parse",
       "type": "RETURNS",
       "to": "FUNCTION:loadAsync"
+    },
+    {
+      "from": "CALL:JSON.stringify",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 2
+      }
     },
     {
       "from": "CALL:JSON.stringify",
@@ -5691,7 +5747,23 @@
     },
     {
       "from": "CALL:res.end",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:res.end",
       "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:res.writeHead",
+      "type": "DERIVES_FROM",
       "to": "LITERAL:",
       "metadata": {
         "argIndex": 0
@@ -5729,6 +5801,14 @@
       "from": "CALL:resolve",
       "type": "CALLS",
       "to": "EXTERNAL_FUNCTION:path.resolve"
+    },
+    {
+      "from": "CALL:resolve",
+      "type": "DERIVES_FROM",
+      "to": "CALL:JSON.parse",
+      "metadata": {
+        "argIndex": 0
+      }
     },
     {
       "from": "CALL:resolve",
@@ -5887,6 +5967,86 @@
       "from": "CATCH_BLOCK:",
       "type": "CONTAINS",
       "to": "SCOPE:"
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Promise()",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Promise()",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Promise()",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Promise()",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Promise()",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Promise()",
+      "type": "PASSES_ARGUMENT",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Promise()",
+      "type": "PASSES_ARGUMENT",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Promise()",
+      "type": "PASSES_ARGUMENT",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Promise()",
+      "type": "PASSES_ARGUMENT",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Promise()",
+      "type": "PASSES_ARGUMENT",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
     },
     {
       "from": "EXPRESSION:AwaitExpression",
