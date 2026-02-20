@@ -9,7 +9,9 @@
  */
 
 // Client
+export { BaseRFDBClient } from './base-client.js';
 export { RFDBClient, BatchHandle } from './client.js';
+export { RFDBWebSocketClient } from './websocket-client.js';
 export { StreamQueue } from './stream-queue.js';
 
 // Protocol types (re-exported from @grafema/types for convenience)
