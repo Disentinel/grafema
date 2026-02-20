@@ -1,0 +1,83 @@
+{
+  "version": "0.2.0",
+  "schemaVersion": "1.0.0",
+  "lastSession": "2026-02-20T14:00:00Z",
+  "files": {
+    "packages/core/src/Orchestrator.ts": {
+      "totalLines": 613,
+      "lastCheckedLine": 0,
+      "status": "blocked",
+      "blockedBy": "GAP-001",
+      "entities": {
+        "total": 0,
+        "checked": 0,
+        "ok": 0,
+        "bugs": 0
+      },
+      "sessions": [
+        {
+          "date": "2026-02-20T12:55:00Z",
+          "linesChecked": 0,
+          "bugsFound": 0,
+          "stoppedReason": "GAP-001: No database selected (initially misclassified as timing)"
+        },
+        {
+          "date": "2026-02-20T14:00:00Z",
+          "linesChecked": 0,
+          "bugsFound": 0,
+          "stoppedReason": "GAP-001 confirmed: WebSocket transport missing openDatabase(). Waited 80s, error persists."
+        }
+      ]
+    }
+  },
+  "bugs": {},
+  "gaps": {
+    "GAP-001": {
+      "verdict": "confirmed-bug",
+      "description": "Extension connects via WebSocket but never calls hello() + openDatabase(). Unix socket has legacy auto-open; WebSocket does not. All queries fail with 'No database selected'.",
+      "panel": "all",
+      "blocking": ["packages/core/src/Orchestrator.ts"],
+      "evidence": {
+        "screenshotSample": "_qa/screenshots/ready-attempt-5.png",
+        "debugLogError": "findNodeAtCursor error: No database selected. Use openDatabase first.",
+        "codeAnalysis": "grafemaClient.ts WebSocket connect: ping() only, no hello()/openDatabase(). rfdb_server.rs: unix socket has legacy auto-open, WebSocket does not.",
+        "verificationRun": "80s exponential backoff (5+10+15+20+30s), error unchanged at every attempt"
+      },
+      "rootCause": {
+        "file": "packages/vscode/src/grafemaClient.ts",
+        "issue": "WebSocket connect flow calls ping() but not hello() + openDatabase('default')",
+        "serverContext": "rfdb_server.rs handle_client_websocket has no legacy auto-open unlike handle_client_unix"
+      },
+      "fix": "Add wsClient.hello() + wsClient.openDatabase('default') after WebSocket connect in grafemaClient.ts",
+      "linearIssue": "REG-528",
+      "status": "confirmed",
+      "foundAt": "2026-02-20T12:55:00Z",
+      "updatedAt": "2026-02-20T14:00:00Z"
+    }
+  },
+  "customTasks": {},
+  "coverage": {
+    "totalFiles": 1,
+    "checkedFiles": 0,
+    "totalEntities": 0,
+    "checkedEntities": 0,
+    "passRate": 0
+  },
+  "history": [
+    {
+      "version": "0.2.0",
+      "date": "2026-02-20T12:55:00Z",
+      "action": "initial-session"
+    },
+    {
+      "version": "0.2.0",
+      "date": "2026-02-20T13:20:00Z",
+      "action": "gap-001-reclassified-as-timing-issue"
+    },
+    {
+      "version": "0.2.0",
+      "date": "2026-02-20T14:00:00Z",
+      "action": "gap-001-confirmed-as-real-bug-websocket-missing-openDatabase"
+    }
+  ]
+}
