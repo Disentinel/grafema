@@ -2,6 +2,7 @@
   "nodes": [
     {
       "branchType": "if",
+      "discriminantObjectSourceName": "token",
       "exported": false,
       "file": "client.js",
       "name": "",
@@ -1796,6 +1797,11 @@
       "from": "EXPRESSION:data.gigs",
       "type": "RETURNS",
       "to": "FUNCTION:anonymous[1]"
+    },
+    {
+      "from": "EXPRESSION:Identifier",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:token"
     },
     {
       "from": "EXPRESSION:ObjectExpression",

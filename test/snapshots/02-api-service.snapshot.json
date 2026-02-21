@@ -2,6 +2,7 @@
   "nodes": [
     {
       "branchType": "if",
+      "discriminantOperator": "!",
       "exported": false,
       "file": "src/db.js",
       "name": "",

@@ -2,6 +2,7 @@
   "nodes": [
     {
       "branchType": "if",
+      "discriminantObjectSourceName": "err",
       "exported": false,
       "file": "app.js",
       "name": "",
@@ -10,6 +11,7 @@
     },
     {
       "branchType": "if",
+      "discriminantObjectSourceName": "err",
       "exported": false,
       "file": "app.js",
       "name": "",
@@ -18,6 +20,7 @@
     },
     {
       "branchType": "if",
+      "discriminantObjectSourceName": "err",
       "exported": false,
       "file": "app.js",
       "name": "",
@@ -26,14 +29,7 @@
     },
     {
       "branchType": "if",
-      "exported": false,
-      "file": "app.js",
-      "name": "",
-      "semanticId": "app.js->anonymous[1]->anonymous[0]->BRANCH->if#6",
-      "type": "BRANCH"
-    },
-    {
-      "branchType": "if",
+      "discriminantObjectSourceName": "err",
       "exported": false,
       "file": "app.js",
       "name": "",
@@ -42,14 +38,7 @@
     },
     {
       "branchType": "if",
-      "exported": false,
-      "file": "app.js",
-      "name": "",
-      "semanticId": "app.js->connectServices->anonymous[0]->anonymous[0]->anonymous[0]->BRANCH->if#3",
-      "type": "BRANCH"
-    },
-    {
-      "branchType": "if",
+      "discriminantObjectSourceName": "err",
       "exported": false,
       "file": "app.js",
       "name": "",
@@ -58,6 +47,7 @@
     },
     {
       "branchType": "if",
+      "discriminantObjectSourceName": "err",
       "exported": false,
       "file": "app.js",
       "name": "",
@@ -66,6 +56,7 @@
     },
     {
       "branchType": "if",
+      "discriminantObjectSourceName": "err",
       "exported": false,
       "file": "app.js",
       "name": "",
@@ -74,6 +65,7 @@
     },
     {
       "branchType": "if",
+      "discriminantObjectSourceName": "err",
       "exported": false,
       "file": "app.js",
       "name": "",
@@ -81,9 +73,29 @@
       "type": "BRANCH"
     },
     {
+      "branchType": "if",
+      "discriminantObjectSourceName": "existing",
+      "exported": false,
+      "file": "app.js",
+      "name": "",
+      "semanticId": "app.js->anonymous[1]->anonymous[0]->BRANCH->if#6",
+      "type": "BRANCH"
+    },
+    {
+      "branchType": "if",
+      "discriminantOperator": "!",
+      "discriminantUnaryArgSourceName": "value",
+      "exported": false,
+      "file": "app.js",
+      "name": "",
+      "semanticId": "app.js->connectServices->anonymous[0]->anonymous[0]->anonymous[0]->BRANCH->if#3",
+      "type": "BRANCH"
+    },
+    {
       "alternateExpressionId": "middleware/auth.js:EXPRESSION:ArrayExpression:220:66",
       "branchType": "ternary",
       "consequentExpressionId": "middleware/auth.js:EXPRESSION:CallExpression:220:40",
+      "discriminantObjectSourceName": "permissions",
       "exported": false,
       "file": "middleware/auth.js",
       "name": "",
@@ -94,6 +106,7 @@
       "alternateExpressionId": "middleware/auth.js:EXPRESSION:ArrayExpression:248:66",
       "branchType": "ternary",
       "consequentExpressionId": "middleware/auth.js:EXPRESSION:CallExpression:248:40",
+      "discriminantObjectSourceName": "permissions",
       "exported": false,
       "file": "middleware/auth.js",
       "name": "",
@@ -104,6 +117,7 @@
       "alternateExpressionId": "middleware/auth.js:EXPRESSION:ArrayExpression:272:64",
       "branchType": "ternary",
       "consequentExpressionId": "middleware/auth.js:EXPRESSION:CallExpression:272:38",
+      "discriminantObjectSourceName": "permissions",
       "exported": false,
       "file": "middleware/auth.js",
       "name": "",
@@ -114,6 +128,7 @@
       "alternateExpressionId": "middleware/auth.js:EXPRESSION:NullLiteral:142:56",
       "branchType": "ternary",
       "consequentExpressionId": "middleware/auth.js:EXPRESSION:CallExpression:142:34",
+      "discriminantObjectSourceName": "session",
       "exported": false,
       "file": "middleware/auth.js",
       "name": "",
@@ -124,6 +139,7 @@
       "alternateExpressionId": "middleware/auth.js:EXPRESSION:NullLiteral:168:52",
       "branchType": "ternary",
       "consequentExpressionId": "middleware/auth.js:EXPRESSION:CallExpression:168:30",
+      "discriminantObjectSourceName": "session",
       "exported": false,
       "file": "middleware/auth.js",
       "name": "",
@@ -134,6 +150,7 @@
       "alternateExpressionId": "middleware/auth.js:EXPRESSION:NullLiteral:191:50",
       "branchType": "ternary",
       "consequentExpressionId": "middleware/auth.js:EXPRESSION:CallExpression:191:28",
+      "discriminantObjectSourceName": "session",
       "exported": false,
       "file": "middleware/auth.js",
       "name": "",
@@ -142,94 +159,8 @@
     },
     {
       "branchType": "if",
-      "exported": false,
-      "file": "middleware/auth.js",
-      "name": "",
-      "semanticId": "auth.js->authMiddleware->try#0->BRANCH->if#21",
-      "type": "BRANCH"
-    },
-    {
-      "branchType": "if",
-      "exported": false,
-      "file": "middleware/auth.js",
-      "name": "",
-      "semanticId": "auth.js->authMiddlewareCallback->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->BRANCH->if#17",
-      "type": "BRANCH"
-    },
-    {
-      "branchType": "if",
-      "exported": false,
-      "file": "middleware/auth.js",
-      "name": "",
-      "semanticId": "auth.js->authMiddlewareCallback->anonymous[0]->anonymous[0]->anonymous[0]->BRANCH->if#15",
-      "type": "BRANCH"
-    },
-    {
-      "branchType": "if",
-      "exported": false,
-      "file": "middleware/auth.js",
-      "name": "",
-      "semanticId": "auth.js->authMiddlewareCallback->anonymous[0]->anonymous[0]->anonymous[0]->BRANCH->if#16",
-      "type": "BRANCH"
-    },
-    {
-      "branchType": "if",
-      "exported": false,
-      "file": "middleware/auth.js",
-      "name": "",
-      "semanticId": "auth.js->authMiddlewareCallback->anonymous[0]->anonymous[0]->BRANCH->if#13",
-      "type": "BRANCH"
-    },
-    {
-      "branchType": "if",
-      "exported": false,
-      "file": "middleware/auth.js",
-      "name": "",
-      "semanticId": "auth.js->authMiddlewareCallback->anonymous[0]->anonymous[0]->BRANCH->if#14",
-      "type": "BRANCH"
-    },
-    {
-      "branchType": "if",
-      "exported": false,
-      "file": "middleware/auth.js",
-      "name": "",
-      "semanticId": "auth.js->authMiddlewareCallback->anonymous[0]->BRANCH->if#12",
-      "type": "BRANCH"
-    },
-    {
-      "branchType": "if",
-      "exported": false,
-      "file": "middleware/auth.js",
-      "name": "",
-      "semanticId": "auth.js->authMiddlewareCallback->BRANCH->if#11",
-      "type": "BRANCH"
-    },
-    {
-      "branchType": "if",
-      "exported": false,
-      "file": "middleware/auth.js",
-      "name": "",
-      "semanticId": "auth.js->authMiddlewarePromise->BRANCH->if#19",
-      "type": "BRANCH"
-    },
-    {
-      "branchType": "if",
-      "exported": false,
-      "file": "middleware/auth.js",
-      "name": "",
-      "semanticId": "auth.js->blacklistToken->anonymous[0]->anonymous[0]->BRANCH->if#41",
-      "type": "BRANCH"
-    },
-    {
-      "branchType": "if",
-      "exported": false,
-      "file": "middleware/auth.js",
-      "name": "",
-      "semanticId": "auth.js->rateLimitMiddleware->anonymous[0]->BRANCH->if#34",
-      "type": "BRANCH"
-    },
-    {
-      "branchType": "if",
+      "discriminantLeftSourceName": "requests",
+      "discriminantOperator": ">=",
       "exported": false,
       "file": "middleware/auth.js",
       "name": "",
@@ -238,62 +169,9 @@
     },
     {
       "branchType": "if",
-      "exported": false,
-      "file": "middleware/auth.js",
-      "name": "",
-      "semanticId": "auth.js->refreshSession->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->BRANCH->if#40",
-      "type": "BRANCH"
-    },
-    {
-      "branchType": "if",
-      "exported": false,
-      "file": "middleware/auth.js",
-      "name": "",
-      "semanticId": "auth.js->refreshSession->anonymous[0]->anonymous[0]->anonymous[0]->BRANCH->if#39",
-      "type": "BRANCH"
-    },
-    {
-      "branchType": "if",
-      "exported": false,
-      "file": "middleware/auth.js",
-      "name": "",
-      "semanticId": "auth.js->refreshSession->anonymous[0]->anonymous[0]->BRANCH->if#38",
-      "type": "BRANCH"
-    },
-    {
-      "branchType": "if",
-      "exported": false,
-      "file": "middleware/auth.js",
-      "name": "",
-      "semanticId": "auth.js->refreshSession->anonymous[0]->BRANCH->if#36",
-      "type": "BRANCH"
-    },
-    {
-      "branchType": "if",
-      "exported": false,
-      "file": "middleware/auth.js",
-      "name": "",
-      "semanticId": "auth.js->refreshSession->anonymous[0]->BRANCH->if#37",
-      "type": "BRANCH"
-    },
-    {
-      "branchType": "if",
-      "exported": false,
-      "file": "middleware/auth.js",
-      "name": "",
-      "semanticId": "auth.js->requireRole->anonymous[0]->anonymous[0]->anonymous[0]->BRANCH->if#26",
-      "type": "BRANCH"
-    },
-    {
-      "branchType": "if",
-      "exported": false,
-      "file": "middleware/auth.js",
-      "name": "",
-      "semanticId": "auth.js->requireRole->anonymous[0]->anonymous[0]->BRANCH->if#24",
-      "type": "BRANCH"
-    },
-    {
-      "branchType": "if",
+      "discriminantLeftSourceName": "user",
+      "discriminantOperator": "!==",
+      "discriminantRightSourceName": "role",
       "exported": false,
       "file": "middleware/auth.js",
       "name": "",
@@ -302,22 +180,9 @@
     },
     {
       "branchType": "if",
-      "exported": false,
-      "file": "middleware/auth.js",
-      "name": "",
-      "semanticId": "auth.js->requireRole->anonymous[0]->BRANCH->if#23",
-      "type": "BRANCH"
-    },
-    {
-      "branchType": "if",
-      "exported": false,
-      "file": "middleware/auth.js",
-      "name": "",
-      "semanticId": "auth.js->requireRoleAsync->anonymous[0]->try#0->BRANCH->if#31",
-      "type": "BRANCH"
-    },
-    {
-      "branchType": "if",
+      "discriminantLeftSourceName": "user",
+      "discriminantOperator": "!==",
+      "discriminantRightSourceName": "role",
       "exported": false,
       "file": "middleware/auth.js",
       "name": "",
@@ -326,6 +191,9 @@
     },
     {
       "branchType": "if",
+      "discriminantLeftSourceName": "user",
+      "discriminantOperator": "!==",
+      "discriminantRightSourceName": "role",
       "exported": false,
       "file": "middleware/auth.js",
       "name": "",
@@ -334,22 +202,16 @@
     },
     {
       "branchType": "if",
+      "discriminantObjectSourceName": "blacklisted",
       "exported": false,
       "file": "middleware/auth.js",
       "name": "",
-      "semanticId": "auth.js->requireRolePromise->anonymous[0]->BRANCH->if#28",
+      "semanticId": "auth.js->authMiddlewareCallback->anonymous[0]->anonymous[0]->anonymous[0]->BRANCH->if#16",
       "type": "BRANCH"
     },
     {
       "branchType": "if",
-      "exported": false,
-      "file": "middleware/auth.js",
-      "name": "",
-      "semanticId": "auth.js->verifyTokenAsync->try#0->anonymous[0]->anonymous[0]->BRANCH->if#8",
-      "type": "BRANCH"
-    },
-    {
-      "branchType": "if",
+      "discriminantObjectSourceName": "blacklisted",
       "exported": false,
       "file": "middleware/auth.js",
       "name": "",
@@ -358,22 +220,7 @@
     },
     {
       "branchType": "if",
-      "exported": false,
-      "file": "middleware/auth.js",
-      "name": "",
-      "semanticId": "auth.js->verifyTokenAsync->try#0->BRANCH->if#9",
-      "type": "BRANCH"
-    },
-    {
-      "branchType": "if",
-      "exported": false,
-      "file": "middleware/auth.js",
-      "name": "",
-      "semanticId": "auth.js->verifyTokenCallback->anonymous[0]->anonymous[0]->anonymous[0]->BRANCH->if#3",
-      "type": "BRANCH"
-    },
-    {
-      "branchType": "if",
+      "discriminantObjectSourceName": "blacklisted",
       "exported": false,
       "file": "middleware/auth.js",
       "name": "",
@@ -382,46 +229,7 @@
     },
     {
       "branchType": "if",
-      "exported": false,
-      "file": "middleware/auth.js",
-      "name": "",
-      "semanticId": "auth.js->verifyTokenCallback->anonymous[0]->anonymous[0]->BRANCH->if#1",
-      "type": "BRANCH"
-    },
-    {
-      "branchType": "if",
-      "exported": false,
-      "file": "middleware/auth.js",
-      "name": "",
-      "semanticId": "auth.js->verifyTokenCallback->anonymous[0]->anonymous[0]->BRANCH->if#2",
-      "type": "BRANCH"
-    },
-    {
-      "branchType": "if",
-      "exported": false,
-      "file": "middleware/auth.js",
-      "name": "",
-      "semanticId": "auth.js->verifyTokenCallback->anonymous[0]->BRANCH->if#0",
-      "type": "BRANCH"
-    },
-    {
-      "branchType": "if",
-      "exported": false,
-      "file": "middleware/auth.js",
-      "name": "",
-      "semanticId": "auth.js->verifyTokenPromise->anonymous[0]->anonymous[0]->BRANCH->if#5",
-      "type": "BRANCH"
-    },
-    {
-      "branchType": "if",
-      "exported": false,
-      "file": "middleware/auth.js",
-      "name": "",
-      "semanticId": "auth.js->verifyTokenPromise->anonymous[1]->anonymous[0]->BRANCH->if#6",
-      "type": "BRANCH"
-    },
-    {
-      "branchType": "if",
+      "discriminantObjectSourceName": "blacklisted",
       "exported": false,
       "file": "middleware/auth.js",
       "name": "",
@@ -430,86 +238,271 @@
     },
     {
       "branchType": "if",
+      "discriminantObjectSourceName": "err",
       "exported": false,
-      "file": "models/User.js",
+      "file": "middleware/auth.js",
       "name": "",
-      "semanticId": "User.js->anonymous[0]->anonymous[0]->BRANCH->if#0",
+      "semanticId": "auth.js->authMiddlewareCallback->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->BRANCH->if#17",
       "type": "BRANCH"
     },
     {
       "branchType": "if",
+      "discriminantObjectSourceName": "err",
       "exported": false,
-      "file": "models/User.js",
+      "file": "middleware/auth.js",
       "name": "",
-      "semanticId": "User.js->anonymous[6]->BRANCH->if#1",
+      "semanticId": "auth.js->authMiddlewareCallback->anonymous[0]->anonymous[0]->anonymous[0]->BRANCH->if#15",
       "type": "BRANCH"
     },
     {
       "branchType": "if",
+      "discriminantObjectSourceName": "err",
       "exported": false,
-      "file": "models/User.js",
+      "file": "middleware/auth.js",
       "name": "",
-      "semanticId": "User.js->anonymous[7]->anonymous[0]->anonymous[0]->BRANCH->if#11",
+      "semanticId": "auth.js->authMiddlewareCallback->anonymous[0]->anonymous[0]->BRANCH->if#13",
       "type": "BRANCH"
     },
     {
       "branchType": "if",
+      "discriminantObjectSourceName": "err",
       "exported": false,
-      "file": "models/User.js",
+      "file": "middleware/auth.js",
       "name": "",
-      "semanticId": "User.js->anonymous[7]->anonymous[0]->BRANCH->if#10",
+      "semanticId": "auth.js->authMiddlewareCallback->anonymous[0]->BRANCH->if#12",
       "type": "BRANCH"
     },
     {
       "branchType": "if",
+      "discriminantObjectSourceName": "err",
       "exported": false,
-      "file": "models/User.js",
+      "file": "middleware/auth.js",
       "name": "",
-      "semanticId": "User.js->anonymous[7]->BRANCH->if#9",
+      "semanticId": "auth.js->blacklistToken->anonymous[0]->anonymous[0]->BRANCH->if#41",
       "type": "BRANCH"
     },
     {
       "branchType": "if",
+      "discriminantObjectSourceName": "err",
       "exported": false,
-      "file": "models/User.js",
+      "file": "middleware/auth.js",
       "name": "",
-      "semanticId": "User.js->anonymous[8]->anonymous[0]->BRANCH->if#12",
+      "semanticId": "auth.js->rateLimitMiddleware->anonymous[0]->BRANCH->if#34",
       "type": "BRANCH"
     },
     {
       "branchType": "if",
+      "discriminantObjectSourceName": "err",
       "exported": false,
-      "file": "models/User.js",
+      "file": "middleware/auth.js",
       "name": "",
-      "semanticId": "User.js->anonymous[9]->BRANCH->if#13",
+      "semanticId": "auth.js->refreshSession->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->BRANCH->if#40",
       "type": "BRANCH"
     },
     {
       "branchType": "if",
+      "discriminantObjectSourceName": "err",
       "exported": false,
-      "file": "models/User.js",
+      "file": "middleware/auth.js",
       "name": "",
-      "semanticId": "User.js->comparePassword->anonymous[0]->BRANCH->if#2",
+      "semanticId": "auth.js->refreshSession->anonymous[0]->anonymous[0]->anonymous[0]->BRANCH->if#39",
       "type": "BRANCH"
     },
     {
       "branchType": "if",
+      "discriminantObjectSourceName": "err",
       "exported": false,
-      "file": "models/User.js",
+      "file": "middleware/auth.js",
       "name": "",
-      "semanticId": "User.js->comparePassword->anonymous[0]->BRANCH->if#3",
+      "semanticId": "auth.js->refreshSession->anonymous[0]->anonymous[0]->BRANCH->if#38",
       "type": "BRANCH"
     },
     {
       "branchType": "if",
+      "discriminantObjectSourceName": "err",
       "exported": false,
-      "file": "models/User.js",
+      "file": "middleware/auth.js",
       "name": "",
-      "semanticId": "User.js->comparePassword->anonymous[0]->else#0->anonymous[0]->BRANCH->if#7",
+      "semanticId": "auth.js->refreshSession->anonymous[0]->BRANCH->if#36",
       "type": "BRANCH"
     },
     {
       "branchType": "if",
+      "discriminantObjectSourceName": "err",
+      "exported": false,
+      "file": "middleware/auth.js",
+      "name": "",
+      "semanticId": "auth.js->requireRole->anonymous[0]->anonymous[0]->anonymous[0]->BRANCH->if#26",
+      "type": "BRANCH"
+    },
+    {
+      "branchType": "if",
+      "discriminantObjectSourceName": "err",
+      "exported": false,
+      "file": "middleware/auth.js",
+      "name": "",
+      "semanticId": "auth.js->requireRole->anonymous[0]->anonymous[0]->BRANCH->if#24",
+      "type": "BRANCH"
+    },
+    {
+      "branchType": "if",
+      "discriminantObjectSourceName": "err",
+      "exported": false,
+      "file": "middleware/auth.js",
+      "name": "",
+      "semanticId": "auth.js->verifyTokenAsync->try#0->anonymous[0]->anonymous[0]->BRANCH->if#8",
+      "type": "BRANCH"
+    },
+    {
+      "branchType": "if",
+      "discriminantObjectSourceName": "err",
+      "exported": false,
+      "file": "middleware/auth.js",
+      "name": "",
+      "semanticId": "auth.js->verifyTokenCallback->anonymous[0]->anonymous[0]->anonymous[0]->BRANCH->if#3",
+      "type": "BRANCH"
+    },
+    {
+      "branchType": "if",
+      "discriminantObjectSourceName": "err",
+      "exported": false,
+      "file": "middleware/auth.js",
+      "name": "",
+      "semanticId": "auth.js->verifyTokenCallback->anonymous[0]->anonymous[0]->BRANCH->if#1",
+      "type": "BRANCH"
+    },
+    {
+      "branchType": "if",
+      "discriminantObjectSourceName": "err",
+      "exported": false,
+      "file": "middleware/auth.js",
+      "name": "",
+      "semanticId": "auth.js->verifyTokenCallback->anonymous[0]->BRANCH->if#0",
+      "type": "BRANCH"
+    },
+    {
+      "branchType": "if",
+      "discriminantObjectSourceName": "err",
+      "exported": false,
+      "file": "middleware/auth.js",
+      "name": "",
+      "semanticId": "auth.js->verifyTokenPromise->anonymous[0]->anonymous[0]->BRANCH->if#5",
+      "type": "BRANCH"
+    },
+    {
+      "branchType": "if",
+      "discriminantOperator": "!",
+      "discriminantUnaryArgSourceName": "req",
+      "exported": false,
+      "file": "middleware/auth.js",
+      "name": "",
+      "semanticId": "auth.js->requireRole->anonymous[0]->BRANCH->if#23",
+      "type": "BRANCH"
+    },
+    {
+      "branchType": "if",
+      "discriminantOperator": "!",
+      "discriminantUnaryArgSourceName": "req",
+      "exported": false,
+      "file": "middleware/auth.js",
+      "name": "",
+      "semanticId": "auth.js->requireRoleAsync->anonymous[0]->try#0->BRANCH->if#31",
+      "type": "BRANCH"
+    },
+    {
+      "branchType": "if",
+      "discriminantOperator": "!",
+      "discriminantUnaryArgSourceName": "req",
+      "exported": false,
+      "file": "middleware/auth.js",
+      "name": "",
+      "semanticId": "auth.js->requireRolePromise->anonymous[0]->BRANCH->if#28",
+      "type": "BRANCH"
+    },
+    {
+      "branchType": "if",
+      "discriminantOperator": "!",
+      "discriminantUnaryArgSourceName": "token",
+      "exported": false,
+      "file": "middleware/auth.js",
+      "name": "",
+      "semanticId": "auth.js->authMiddleware->try#0->BRANCH->if#21",
+      "type": "BRANCH"
+    },
+    {
+      "branchType": "if",
+      "discriminantOperator": "!",
+      "discriminantUnaryArgSourceName": "token",
+      "exported": false,
+      "file": "middleware/auth.js",
+      "name": "",
+      "semanticId": "auth.js->authMiddlewareCallback->BRANCH->if#11",
+      "type": "BRANCH"
+    },
+    {
+      "branchType": "if",
+      "discriminantOperator": "!",
+      "discriminantUnaryArgSourceName": "token",
+      "exported": false,
+      "file": "middleware/auth.js",
+      "name": "",
+      "semanticId": "auth.js->authMiddlewarePromise->BRANCH->if#19",
+      "type": "BRANCH"
+    },
+    {
+      "branchType": "if",
+      "discriminantOperator": "!",
+      "discriminantUnaryArgSourceName": "user",
+      "exported": false,
+      "file": "middleware/auth.js",
+      "name": "",
+      "semanticId": "auth.js->authMiddlewareCallback->anonymous[0]->anonymous[0]->BRANCH->if#14",
+      "type": "BRANCH"
+    },
+    {
+      "branchType": "if",
+      "discriminantOperator": "!",
+      "discriminantUnaryArgSourceName": "user",
+      "exported": false,
+      "file": "middleware/auth.js",
+      "name": "",
+      "semanticId": "auth.js->refreshSession->anonymous[0]->BRANCH->if#37",
+      "type": "BRANCH"
+    },
+    {
+      "branchType": "if",
+      "discriminantOperator": "!",
+      "discriminantUnaryArgSourceName": "user",
+      "exported": false,
+      "file": "middleware/auth.js",
+      "name": "",
+      "semanticId": "auth.js->verifyTokenAsync->try#0->BRANCH->if#9",
+      "type": "BRANCH"
+    },
+    {
+      "branchType": "if",
+      "discriminantOperator": "!",
+      "discriminantUnaryArgSourceName": "user",
+      "exported": false,
+      "file": "middleware/auth.js",
+      "name": "",
+      "semanticId": "auth.js->verifyTokenCallback->anonymous[0]->anonymous[0]->BRANCH->if#2",
+      "type": "BRANCH"
+    },
+    {
+      "branchType": "if",
+      "discriminantOperator": "!",
+      "discriminantUnaryArgSourceName": "user",
+      "exported": false,
+      "file": "middleware/auth.js",
+      "name": "",
+      "semanticId": "auth.js->verifyTokenPromise->anonymous[1]->anonymous[0]->BRANCH->if#6",
+      "type": "BRANCH"
+    },
+    {
+      "branchType": "if",
+      "discriminantLeftSourceName": "self",
+      "discriminantOperator": ">=",
       "exported": false,
       "file": "models/User.js",
       "name": "",
@@ -518,14 +511,70 @@
     },
     {
       "branchType": "if",
+      "discriminantObjectSourceName": "err",
       "exported": false,
       "file": "models/User.js",
       "name": "",
-      "semanticId": "User.js->comparePassword->anonymous[0]->if#1->BRANCH->if#4",
+      "semanticId": "User.js->anonymous[0]->anonymous[0]->BRANCH->if#0",
       "type": "BRANCH"
     },
     {
       "branchType": "if",
+      "discriminantObjectSourceName": "err",
+      "exported": false,
+      "file": "models/User.js",
+      "name": "",
+      "semanticId": "User.js->anonymous[6]->BRANCH->if#1",
+      "type": "BRANCH"
+    },
+    {
+      "branchType": "if",
+      "discriminantObjectSourceName": "err",
+      "exported": false,
+      "file": "models/User.js",
+      "name": "",
+      "semanticId": "User.js->anonymous[7]->anonymous[0]->anonymous[0]->BRANCH->if#11",
+      "type": "BRANCH"
+    },
+    {
+      "branchType": "if",
+      "discriminantObjectSourceName": "err",
+      "exported": false,
+      "file": "models/User.js",
+      "name": "",
+      "semanticId": "User.js->anonymous[7]->anonymous[0]->BRANCH->if#10",
+      "type": "BRANCH"
+    },
+    {
+      "branchType": "if",
+      "discriminantObjectSourceName": "err",
+      "exported": false,
+      "file": "models/User.js",
+      "name": "",
+      "semanticId": "User.js->anonymous[8]->anonymous[0]->BRANCH->if#12",
+      "type": "BRANCH"
+    },
+    {
+      "branchType": "if",
+      "discriminantObjectSourceName": "err",
+      "exported": false,
+      "file": "models/User.js",
+      "name": "",
+      "semanticId": "User.js->comparePassword->anonymous[0]->BRANCH->if#2",
+      "type": "BRANCH"
+    },
+    {
+      "branchType": "if",
+      "discriminantObjectSourceName": "err",
+      "exported": false,
+      "file": "models/User.js",
+      "name": "",
+      "semanticId": "User.js->comparePassword->anonymous[0]->else#0->anonymous[0]->BRANCH->if#7",
+      "type": "BRANCH"
+    },
+    {
+      "branchType": "if",
+      "discriminantObjectSourceName": "err",
       "exported": false,
       "file": "models/User.js",
       "name": "",
@@ -534,6 +583,7 @@
     },
     {
       "branchType": "if",
+      "discriminantObjectSourceName": "err",
       "exported": false,
       "file": "models/User.js",
       "name": "",
@@ -542,110 +592,45 @@
     },
     {
       "branchType": "if",
+      "discriminantObjectSourceName": "isMatch",
       "exported": false,
-      "file": "routes/api.js",
+      "file": "models/User.js",
       "name": "",
-      "semanticId": "api.js->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->BRANCH->if#6",
+      "semanticId": "User.js->comparePassword->anonymous[0]->BRANCH->if#3",
       "type": "BRANCH"
     },
     {
       "branchType": "if",
+      "discriminantOperator": "!",
       "exported": false,
-      "file": "routes/api.js",
+      "file": "models/User.js",
       "name": "",
-      "semanticId": "api.js->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->BRANCH->if#5",
+      "semanticId": "User.js->anonymous[7]->BRANCH->if#9",
       "type": "BRANCH"
     },
     {
       "branchType": "if",
+      "discriminantOperator": "&&",
       "exported": false,
-      "file": "routes/api.js",
+      "file": "models/User.js",
       "name": "",
-      "semanticId": "api.js->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->BRANCH->if#4",
+      "semanticId": "User.js->anonymous[9]->BRANCH->if#13",
       "type": "BRANCH"
     },
     {
       "branchType": "if",
+      "discriminantOperator": "||",
+      "discriminantRightSourceName": "self",
       "exported": false,
-      "file": "routes/api.js",
+      "file": "models/User.js",
       "name": "",
-      "semanticId": "api.js->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->BRANCH->if#3",
+      "semanticId": "User.js->comparePassword->anonymous[0]->if#1->BRANCH->if#4",
       "type": "BRANCH"
     },
     {
       "branchType": "if",
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "",
-      "semanticId": "api.js->anonymous[0]->anonymous[0]->anonymous[0]->BRANCH->if#2",
-      "type": "BRANCH"
-    },
-    {
-      "branchType": "if",
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "",
-      "semanticId": "api.js->anonymous[0]->anonymous[0]->BRANCH->if#0",
-      "type": "BRANCH"
-    },
-    {
-      "branchType": "if",
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "",
-      "semanticId": "api.js->anonymous[0]->anonymous[0]->BRANCH->if#1",
-      "type": "BRANCH"
-    },
-    {
-      "branchType": "if",
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "",
-      "semanticId": "api.js->anonymous[1]->anonymous[0]->BRANCH->if#7",
-      "type": "BRANCH"
-    },
-    {
-      "branchType": "if",
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "",
-      "semanticId": "api.js->anonymous[2]->anonymous[0]->anonymous[1]->anonymous[0]->BRANCH->if#10",
-      "type": "BRANCH"
-    },
-    {
-      "branchType": "if",
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "",
-      "semanticId": "api.js->anonymous[2]->anonymous[0]->BRANCH->if#8",
-      "type": "BRANCH"
-    },
-    {
-      "branchType": "if",
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "",
-      "semanticId": "api.js->anonymous[2]->anonymous[0]->BRANCH->if#9",
-      "type": "BRANCH"
-    },
-    {
-      "branchType": "if",
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "",
-      "semanticId": "api.js->anonymous[3]->try#0->BRANCH->if#11",
-      "type": "BRANCH"
-    },
-    {
-      "branchType": "if",
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "",
-      "semanticId": "api.js->anonymous[4]->anonymous[0]->anonymous[0]->BRANCH->if#14",
-      "type": "BRANCH"
-    },
-    {
-      "branchType": "if",
+      "discriminantLeftSourceName": "postCount",
+      "discriminantOperator": ">",
       "exported": false,
       "file": "routes/api.js",
       "name": "",
@@ -654,6 +639,88 @@
     },
     {
       "branchType": "if",
+      "discriminantObjectSourceName": "err",
+      "exported": false,
+      "file": "routes/api.js",
+      "name": "",
+      "semanticId": "api.js->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->BRANCH->if#6",
+      "type": "BRANCH"
+    },
+    {
+      "branchType": "if",
+      "discriminantObjectSourceName": "err",
+      "exported": false,
+      "file": "routes/api.js",
+      "name": "",
+      "semanticId": "api.js->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->BRANCH->if#5",
+      "type": "BRANCH"
+    },
+    {
+      "branchType": "if",
+      "discriminantObjectSourceName": "err",
+      "exported": false,
+      "file": "routes/api.js",
+      "name": "",
+      "semanticId": "api.js->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->BRANCH->if#4",
+      "type": "BRANCH"
+    },
+    {
+      "branchType": "if",
+      "discriminantObjectSourceName": "err",
+      "exported": false,
+      "file": "routes/api.js",
+      "name": "",
+      "semanticId": "api.js->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->BRANCH->if#3",
+      "type": "BRANCH"
+    },
+    {
+      "branchType": "if",
+      "discriminantObjectSourceName": "err",
+      "exported": false,
+      "file": "routes/api.js",
+      "name": "",
+      "semanticId": "api.js->anonymous[0]->anonymous[0]->anonymous[0]->BRANCH->if#2",
+      "type": "BRANCH"
+    },
+    {
+      "branchType": "if",
+      "discriminantObjectSourceName": "err",
+      "exported": false,
+      "file": "routes/api.js",
+      "name": "",
+      "semanticId": "api.js->anonymous[0]->anonymous[0]->BRANCH->if#0",
+      "type": "BRANCH"
+    },
+    {
+      "branchType": "if",
+      "discriminantObjectSourceName": "err",
+      "exported": false,
+      "file": "routes/api.js",
+      "name": "",
+      "semanticId": "api.js->anonymous[2]->anonymous[0]->anonymous[1]->anonymous[0]->BRANCH->if#10",
+      "type": "BRANCH"
+    },
+    {
+      "branchType": "if",
+      "discriminantObjectSourceName": "err",
+      "exported": false,
+      "file": "routes/api.js",
+      "name": "",
+      "semanticId": "api.js->anonymous[2]->anonymous[0]->BRANCH->if#8",
+      "type": "BRANCH"
+    },
+    {
+      "branchType": "if",
+      "discriminantObjectSourceName": "err",
+      "exported": false,
+      "file": "routes/api.js",
+      "name": "",
+      "semanticId": "api.js->anonymous[4]->anonymous[0]->anonymous[0]->BRANCH->if#14",
+      "type": "BRANCH"
+    },
+    {
+      "branchType": "if",
+      "discriminantObjectSourceName": "err",
       "exported": false,
       "file": "routes/api.js",
       "name": "",
@@ -662,6 +729,7 @@
     },
     {
       "branchType": "if",
+      "discriminantObjectSourceName": "err",
       "exported": false,
       "file": "routes/api.js",
       "name": "",
@@ -670,6 +738,7 @@
     },
     {
       "branchType": "if",
+      "discriminantObjectSourceName": "err",
       "exported": false,
       "file": "routes/api.js",
       "name": "",
@@ -678,6 +747,7 @@
     },
     {
       "branchType": "if",
+      "discriminantObjectSourceName": "err",
       "exported": false,
       "file": "routes/api.js",
       "name": "",
@@ -686,6 +756,7 @@
     },
     {
       "branchType": "if",
+      "discriminantObjectSourceName": "err",
       "exported": false,
       "file": "routes/api.js",
       "name": "",
@@ -694,6 +765,7 @@
     },
     {
       "branchType": "if",
+      "discriminantObjectSourceName": "err",
       "exported": false,
       "file": "routes/api.js",
       "name": "",
@@ -702,14 +774,7 @@
     },
     {
       "branchType": "if",
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "",
-      "semanticId": "api.js->anonymous[4]->anonymous[0]->BRANCH->if#13",
-      "type": "BRANCH"
-    },
-    {
-      "branchType": "if",
+      "discriminantObjectSourceName": "err",
       "exported": false,
       "file": "routes/api.js",
       "name": "",
@@ -718,6 +783,57 @@
     },
     {
       "branchType": "if",
+      "discriminantObjectSourceName": "existingUser",
+      "exported": false,
+      "file": "routes/api.js",
+      "name": "",
+      "semanticId": "api.js->anonymous[0]->anonymous[0]->BRANCH->if#1",
+      "type": "BRANCH"
+    },
+    {
+      "branchType": "if",
+      "discriminantOperator": "!",
+      "discriminantUnaryArgSourceName": "user",
+      "exported": false,
+      "file": "routes/api.js",
+      "name": "",
+      "semanticId": "api.js->anonymous[1]->anonymous[0]->BRANCH->if#7",
+      "type": "BRANCH"
+    },
+    {
+      "branchType": "if",
+      "discriminantOperator": "!",
+      "discriminantUnaryArgSourceName": "user",
+      "exported": false,
+      "file": "routes/api.js",
+      "name": "",
+      "semanticId": "api.js->anonymous[2]->anonymous[0]->BRANCH->if#9",
+      "type": "BRANCH"
+    },
+    {
+      "branchType": "if",
+      "discriminantOperator": "!",
+      "discriminantUnaryArgSourceName": "user",
+      "exported": false,
+      "file": "routes/api.js",
+      "name": "",
+      "semanticId": "api.js->anonymous[3]->try#0->BRANCH->if#11",
+      "type": "BRANCH"
+    },
+    {
+      "branchType": "if",
+      "discriminantOperator": "!",
+      "discriminantUnaryArgSourceName": "user",
+      "exported": false,
+      "file": "routes/api.js",
+      "name": "",
+      "semanticId": "api.js->anonymous[4]->anonymous[0]->BRANCH->if#13",
+      "type": "BRANCH"
+    },
+    {
+      "branchType": "if",
+      "discriminantOperator": "!",
+      "discriminantUnaryArgSourceName": "user",
       "exported": false,
       "file": "routes/api.js",
       "name": "",
@@ -726,6 +842,10 @@
     },
     {
       "branchType": "if",
+      "discriminantComputed": false,
+      "discriminantObject": "next",
+      "discriminantObjectSourceName": "next",
+      "discriminantProperty": "done",
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "",
@@ -734,14 +854,44 @@
     },
     {
       "branchType": "if",
+      "discriminantComputed": false,
+      "discriminantObject": "next",
+      "discriminantObjectSourceName": "next",
+      "discriminantProperty": "done",
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "",
-      "semanticId": "dataProcessor.js->anonymous[5]->anonymous[0]->BRANCH->if#4",
+      "semanticId": "dataProcessor.js->DataProcessor->processWithCallbacks->processNext->BRANCH->if#13",
       "type": "BRANCH"
     },
     {
       "branchType": "if",
+      "discriminantComputed": false,
+      "discriminantObject": "next",
+      "discriminantObjectSourceName": "next",
+      "discriminantProperty": "done",
+      "exported": false,
+      "file": "services/dataProcessor.js",
+      "name": "",
+      "semanticId": "dataProcessor.js->DataProcessor->processWithPromises->anonymous[0]->processItem->BRANCH->if#16",
+      "type": "BRANCH"
+    },
+    {
+      "branchType": "if",
+      "discriminantComputed": false,
+      "discriminantObject": "next",
+      "discriminantObjectSourceName": "next",
+      "discriminantProperty": "done",
+      "exported": false,
+      "file": "services/dataProcessor.js",
+      "name": "",
+      "semanticId": "dataProcessor.js->processNext->BRANCH->if#0",
+      "type": "BRANCH"
+    },
+    {
+      "branchType": "if",
+      "discriminantLeftSourceName": "batch",
+      "discriminantOperator": "===",
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "",
@@ -750,6 +900,41 @@
     },
     {
       "branchType": "if",
+      "discriminantLeftSourceName": "batchIndex",
+      "discriminantOperator": ">=",
+      "discriminantRightSourceName": "batches",
+      "exported": false,
+      "file": "services/dataProcessor.js",
+      "name": "",
+      "semanticId": "dataProcessor.js->processInBatches->anonymous[0]->processBatch->BRANCH->if#7",
+      "type": "BRANCH"
+    },
+    {
+      "branchType": "if",
+      "discriminantLeftSourceName": "currentBatch",
+      "discriminantOperator": ">",
+      "exported": false,
+      "file": "services/dataProcessor.js",
+      "name": "",
+      "semanticId": "dataProcessor.js->processInBatches->anonymous[0]->BRANCH->if#6",
+      "type": "BRANCH"
+    },
+    {
+      "branchType": "if",
+      "discriminantLeftSourceName": "currentBatch",
+      "discriminantOperator": ">=",
+      "discriminantRightSourceName": "batchSize",
+      "exported": false,
+      "file": "services/dataProcessor.js",
+      "name": "",
+      "semanticId": "dataProcessor.js->processInBatches->anonymous[0]->for-of#0->BRANCH->if#5",
+      "type": "BRANCH"
+    },
+    {
+      "branchType": "if",
+      "discriminantLeftSourceName": "processed",
+      "discriminantOperator": ">=",
+      "discriminantRightSourceName": "limit",
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "",
@@ -758,6 +943,16 @@
     },
     {
       "branchType": "if",
+      "discriminantObjectSourceName": "err",
+      "exported": false,
+      "file": "services/dataProcessor.js",
+      "name": "",
+      "semanticId": "dataProcessor.js->anonymous[5]->anonymous[0]->BRANCH->if#4",
+      "type": "BRANCH"
+    },
+    {
+      "branchType": "if",
+      "discriminantObjectSourceName": "err",
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "",
@@ -766,6 +961,53 @@
     },
     {
       "branchType": "if",
+      "discriminantObjectSourceName": "err",
+      "exported": false,
+      "file": "services/dataProcessor.js",
+      "name": "",
+      "semanticId": "dataProcessor.js->DataProcessor->processWithCallbacks->processNext->if#0->anonymous[0]->anonymous[0]->BRANCH->if#15",
+      "type": "BRANCH"
+    },
+    {
+      "branchType": "if",
+      "discriminantObjectSourceName": "err",
+      "exported": false,
+      "file": "services/dataProcessor.js",
+      "name": "",
+      "semanticId": "dataProcessor.js->DataProcessor->processWithCallbacks->processNext->if#0->anonymous[0]->BRANCH->if#14",
+      "type": "BRANCH"
+    },
+    {
+      "branchType": "if",
+      "discriminantObjectSourceName": "err",
+      "exported": false,
+      "file": "services/dataProcessor.js",
+      "name": "",
+      "semanticId": "dataProcessor.js->processInBatches->anonymous[0]->processBatch->anonymous[0]->BRANCH->if#8",
+      "type": "BRANCH"
+    },
+    {
+      "branchType": "if",
+      "discriminantObjectSourceName": "err",
+      "exported": false,
+      "file": "services/dataProcessor.js",
+      "name": "",
+      "semanticId": "dataProcessor.js->processNext->if#0->anonymous[0]->anonymous[0]->BRANCH->if#2",
+      "type": "BRANCH"
+    },
+    {
+      "branchType": "if",
+      "discriminantObjectSourceName": "err",
+      "exported": false,
+      "file": "services/dataProcessor.js",
+      "name": "",
+      "semanticId": "dataProcessor.js->processNext->if#0->anonymous[0]->BRANCH->if#1",
+      "type": "BRANCH"
+    },
+    {
+      "branchType": "if",
+      "discriminantOperator": "!",
+      "discriminantUnaryArgSourceName": "data",
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "",
@@ -782,126 +1024,20 @@
     },
     {
       "branchType": "if",
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "",
-      "semanticId": "dataProcessor.js->DataProcessor->processWithCallbacks->processNext->BRANCH->if#13",
-      "type": "BRANCH"
-    },
-    {
-      "branchType": "if",
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "",
-      "semanticId": "dataProcessor.js->DataProcessor->processWithCallbacks->processNext->if#0->anonymous[0]->anonymous[0]->BRANCH->if#15",
-      "type": "BRANCH"
-    },
-    {
-      "branchType": "if",
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "",
-      "semanticId": "dataProcessor.js->DataProcessor->processWithCallbacks->processNext->if#0->anonymous[0]->BRANCH->if#14",
-      "type": "BRANCH"
-    },
-    {
-      "branchType": "if",
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "",
-      "semanticId": "dataProcessor.js->DataProcessor->processWithPromises->anonymous[0]->processItem->BRANCH->if#16",
-      "type": "BRANCH"
-    },
-    {
-      "branchType": "if",
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "",
-      "semanticId": "dataProcessor.js->processInBatches->anonymous[0]->BRANCH->if#6",
-      "type": "BRANCH"
-    },
-    {
-      "branchType": "if",
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "",
-      "semanticId": "dataProcessor.js->processInBatches->anonymous[0]->for-of#0->BRANCH->if#5",
-      "type": "BRANCH"
-    },
-    {
-      "branchType": "if",
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "",
-      "semanticId": "dataProcessor.js->processInBatches->anonymous[0]->processBatch->anonymous[0]->BRANCH->if#8",
-      "type": "BRANCH"
-    },
-    {
-      "branchType": "if",
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "",
-      "semanticId": "dataProcessor.js->processInBatches->anonymous[0]->processBatch->BRANCH->if#7",
-      "type": "BRANCH"
-    },
-    {
-      "branchType": "if",
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "",
-      "semanticId": "dataProcessor.js->processNext->BRANCH->if#0",
-      "type": "BRANCH"
-    },
-    {
-      "branchType": "if",
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "",
-      "semanticId": "dataProcessor.js->processNext->if#0->anonymous[0]->anonymous[0]->BRANCH->if#2",
-      "type": "BRANCH"
-    },
-    {
-      "branchType": "if",
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "",
-      "semanticId": "dataProcessor.js->processNext->if#0->anonymous[0]->BRANCH->if#1",
-      "type": "BRANCH"
-    },
-    {
-      "branchType": "if",
+      "discriminantLeftSourceName": "attempt",
+      "discriminantOperator": ">=",
+      "discriminantRightSourceName": "maxRetries",
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "name": "",
-      "semanticId": "asyncHelpers.js->callbackToPromise->anonymous[0]->anonymous[0]->BRANCH->if#1",
+      "semanticId": "asyncHelpers.js->retryWithBackoff->anonymous[0]->execute->anonymous[1]->BRANCH->if#0",
       "type": "BRANCH"
     },
     {
       "branchType": "if",
-      "exported": false,
-      "file": "utils/asyncHelpers.js",
-      "name": "",
-      "semanticId": "asyncHelpers.js->debouncePromise->anonymous[0]->anonymous[0]->anonymous[0]->try#0->BRANCH->if#5",
-      "type": "BRANCH"
-    },
-    {
-      "branchType": "if",
-      "exported": false,
-      "file": "utils/asyncHelpers.js",
-      "name": "",
-      "semanticId": "asyncHelpers.js->debouncePromise->anonymous[0]->anonymous[0]->BRANCH->if#4",
-      "type": "BRANCH"
-    },
-    {
-      "branchType": "if",
-      "exported": false,
-      "file": "utils/asyncHelpers.js",
-      "name": "",
-      "semanticId": "asyncHelpers.js->processBatch->processNext->BRANCH->if#2",
-      "type": "BRANCH"
-    },
-    {
-      "branchType": "if",
+      "discriminantLeftSourceName": "completed",
+      "discriminantOperator": "===",
+      "discriminantRightSourceName": "tasks",
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "name": "",
@@ -910,6 +1046,19 @@
     },
     {
       "branchType": "if",
+      "discriminantLeftSourceName": "index",
+      "discriminantOperator": ">=",
+      "discriminantRightSourceName": "items",
+      "exported": false,
+      "file": "utils/asyncHelpers.js",
+      "name": "",
+      "semanticId": "asyncHelpers.js->processBatch->processNext->BRANCH->if#2",
+      "type": "BRANCH"
+    },
+    {
+      "branchType": "if",
+      "discriminantLeftSourceName": "n",
+      "discriminantOperator": "<=",
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "name": "",
@@ -918,10 +1067,30 @@
     },
     {
       "branchType": "if",
+      "discriminantLeftSourceName": "result",
+      "discriminantOperator": "&&",
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "name": "",
-      "semanticId": "asyncHelpers.js->retryWithBackoff->anonymous[0]->execute->anonymous[1]->BRANCH->if#0",
+      "semanticId": "asyncHelpers.js->debouncePromise->anonymous[0]->anonymous[0]->anonymous[0]->try#0->BRANCH->if#5",
+      "type": "BRANCH"
+    },
+    {
+      "branchType": "if",
+      "discriminantObjectSourceName": "err",
+      "exported": false,
+      "file": "utils/asyncHelpers.js",
+      "name": "",
+      "semanticId": "asyncHelpers.js->callbackToPromise->anonymous[0]->anonymous[0]->BRANCH->if#1",
+      "type": "BRANCH"
+    },
+    {
+      "branchType": "if",
+      "discriminantObjectSourceName": "timeoutId",
+      "exported": false,
+      "file": "utils/asyncHelpers.js",
+      "name": "",
+      "semanticId": "asyncHelpers.js->debouncePromise->anonymous[0]->anonymous[0]->BRANCH->if#4",
       "type": "BRANCH"
     },
     {
@@ -17080,12 +17249,17 @@
       "testColumn": 18,
       "testExpressionId": "app.js:EXPRESSION:BinaryExpression:111:18",
       "testExpressionType": "BinaryExpression",
+      "testLeftSourceName": "i",
       "testLine": 111,
+      "testOperator": "<",
+      "testRightSourceName": "count",
       "type": "LOOP",
+      "updateArgSourceName": "i",
       "updateColumn": 29,
       "updateExpressionId": "app.js:EXPRESSION:UpdateExpression:111:29",
       "updateExpressionType": "UpdateExpression",
-      "updateLine": 111
+      "updateLine": 111,
+      "updateOperator": "++"
     },
     {
       "exported": false,
@@ -17148,12 +17322,17 @@
       "testColumn": 18,
       "testExpressionId": "services/dataProcessor.js:EXPRESSION:BinaryExpression:301:18",
       "testExpressionType": "BinaryExpression",
+      "testLeftSourceName": "i",
       "testLine": 301,
+      "testOperator": "<",
+      "testRightSourceName": "count",
       "type": "LOOP",
+      "updateArgSourceName": "i",
       "updateColumn": 29,
       "updateExpressionId": "services/dataProcessor.js:EXPRESSION:UpdateExpression:301:29",
       "updateExpressionType": "UpdateExpression",
-      "updateLine": 301
+      "updateLine": 301,
+      "updateOperator": "++"
     },
     {
       "exported": false,
@@ -17166,12 +17345,17 @@
       "testColumn": 18,
       "testExpressionId": "services/dataProcessor.js:EXPRESSION:BinaryExpression:310:18",
       "testExpressionType": "BinaryExpression",
+      "testLeftSourceName": "i",
       "testLine": 310,
+      "testOperator": "<",
+      "testRightSourceName": "count",
       "type": "LOOP",
+      "updateArgSourceName": "i",
       "updateColumn": 29,
       "updateExpressionId": "services/dataProcessor.js:EXPRESSION:UpdateExpression:310:29",
       "updateExpressionType": "UpdateExpression",
-      "updateLine": 310
+      "updateLine": 310,
+      "updateOperator": "++"
     },
     {
       "exported": false,
@@ -17262,7 +17446,10 @@
       "testColumn": 11,
       "testExpressionId": "services/dataProcessor.js:EXPRESSION:BinaryExpression:45:11",
       "testExpressionType": "BinaryExpression",
+      "testLeftSourceName": "processed",
       "testLine": 45,
+      "testOperator": "<",
+      "testRightSourceName": "limit",
       "type": "LOOP"
     },
     {
@@ -17276,12 +17463,17 @@
       "testColumn": 18,
       "testExpressionId": "utils/asyncHelpers.js:EXPRESSION:BinaryExpression:239:18",
       "testExpressionType": "BinaryExpression",
+      "testLeftSourceName": "i",
       "testLine": 239,
+      "testOperator": "<",
+      "testRightSourceName": "count",
       "type": "LOOP",
+      "updateArgSourceName": "i",
       "updateColumn": 29,
       "updateExpressionId": "utils/asyncHelpers.js:EXPRESSION:UpdateExpression:239:29",
       "updateExpressionType": "UpdateExpression",
-      "updateLine": 239
+      "updateLine": 239,
+      "updateOperator": "++"
     },
     {
       "exported": false,
@@ -17301,6 +17493,7 @@
       "testExpressionId": "utils/asyncHelpers.js:EXPRESSION:LogicalExpression:335:13",
       "testExpressionType": "LogicalExpression",
       "testLine": 335,
+      "testOperator": "&&",
       "type": "LOOP"
     },
     {
@@ -35637,6 +35830,166 @@
       "to": "FUNCTION:anonymous[1]"
     },
     {
+      "from": "EXPRESSION:BinaryExpression",
+      "type": "DERIVES_FROM",
+      "to": "CONSTANT:batches"
+    },
+    {
+      "from": "EXPRESSION:BinaryExpression",
+      "type": "DERIVES_FROM",
+      "to": "PARAMETER:batchSize"
+    },
+    {
+      "from": "EXPRESSION:BinaryExpression",
+      "type": "DERIVES_FROM",
+      "to": "PARAMETER:count"
+    },
+    {
+      "from": "EXPRESSION:BinaryExpression",
+      "type": "DERIVES_FROM",
+      "to": "PARAMETER:count"
+    },
+    {
+      "from": "EXPRESSION:BinaryExpression",
+      "type": "DERIVES_FROM",
+      "to": "PARAMETER:count"
+    },
+    {
+      "from": "EXPRESSION:BinaryExpression",
+      "type": "DERIVES_FROM",
+      "to": "PARAMETER:count"
+    },
+    {
+      "from": "EXPRESSION:BinaryExpression",
+      "type": "DERIVES_FROM",
+      "to": "PARAMETER:items"
+    },
+    {
+      "from": "EXPRESSION:BinaryExpression",
+      "type": "DERIVES_FROM",
+      "to": "PARAMETER:limit"
+    },
+    {
+      "from": "EXPRESSION:BinaryExpression",
+      "type": "DERIVES_FROM",
+      "to": "PARAMETER:limit"
+    },
+    {
+      "from": "EXPRESSION:BinaryExpression",
+      "type": "DERIVES_FROM",
+      "to": "PARAMETER:maxRetries"
+    },
+    {
+      "from": "EXPRESSION:BinaryExpression",
+      "type": "DERIVES_FROM",
+      "to": "PARAMETER:n"
+    },
+    {
+      "from": "EXPRESSION:BinaryExpression",
+      "type": "DERIVES_FROM",
+      "to": "PARAMETER:role"
+    },
+    {
+      "from": "EXPRESSION:BinaryExpression",
+      "type": "DERIVES_FROM",
+      "to": "PARAMETER:role"
+    },
+    {
+      "from": "EXPRESSION:BinaryExpression",
+      "type": "DERIVES_FROM",
+      "to": "PARAMETER:role"
+    },
+    {
+      "from": "EXPRESSION:BinaryExpression",
+      "type": "DERIVES_FROM",
+      "to": "PARAMETER:tasks"
+    },
+    {
+      "from": "EXPRESSION:BinaryExpression",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:attempt"
+    },
+    {
+      "from": "EXPRESSION:BinaryExpression",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:batch"
+    },
+    {
+      "from": "EXPRESSION:BinaryExpression",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:completed"
+    },
+    {
+      "from": "EXPRESSION:BinaryExpression",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:currentBatch"
+    },
+    {
+      "from": "EXPRESSION:BinaryExpression",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:currentBatch"
+    },
+    {
+      "from": "EXPRESSION:BinaryExpression",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:i"
+    },
+    {
+      "from": "EXPRESSION:BinaryExpression",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:i"
+    },
+    {
+      "from": "EXPRESSION:BinaryExpression",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:i"
+    },
+    {
+      "from": "EXPRESSION:BinaryExpression",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:i"
+    },
+    {
+      "from": "EXPRESSION:BinaryExpression",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:index"
+    },
+    {
+      "from": "EXPRESSION:BinaryExpression",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:processed"
+    },
+    {
+      "from": "EXPRESSION:BinaryExpression",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:processed"
+    },
+    {
+      "from": "EXPRESSION:BinaryExpression",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:requests"
+    },
+    {
+      "from": "EXPRESSION:BinaryExpression",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:self"
+    },
+    {
+      "from": "EXPRESSION:BinaryExpression",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:user"
+    },
+    {
+      "from": "EXPRESSION:BinaryExpression",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:user"
+    },
+    {
+      "from": "EXPRESSION:BinaryExpression",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:user"
+    },
+    {
       "from": "EXPRESSION:FunctionExpression",
       "type": "RETURNS",
       "to": "FUNCTION:debouncePromise"
@@ -35657,6 +36010,161 @@
       "to": "FUNCTION:requireRolePromise"
     },
     {
+      "from": "EXPRESSION:Identifier",
+      "type": "DERIVES_FROM",
+      "to": "PARAMETER:err"
+    },
+    {
+      "from": "EXPRESSION:Identifier",
+      "type": "DERIVES_FROM",
+      "to": "PARAMETER:err"
+    },
+    {
+      "from": "EXPRESSION:Identifier",
+      "type": "DERIVES_FROM",
+      "to": "PARAMETER:err"
+    },
+    {
+      "from": "EXPRESSION:Identifier",
+      "type": "DERIVES_FROM",
+      "to": "PARAMETER:err"
+    },
+    {
+      "from": "EXPRESSION:Identifier",
+      "type": "DERIVES_FROM",
+      "to": "PARAMETER:err"
+    },
+    {
+      "from": "EXPRESSION:Identifier",
+      "type": "DERIVES_FROM",
+      "to": "PARAMETER:err"
+    },
+    {
+      "from": "EXPRESSION:Identifier",
+      "type": "DERIVES_FROM",
+      "to": "PARAMETER:err"
+    },
+    {
+      "from": "EXPRESSION:Identifier",
+      "type": "DERIVES_FROM",
+      "to": "PARAMETER:err"
+    },
+    {
+      "from": "EXPRESSION:Identifier",
+      "type": "DERIVES_FROM",
+      "to": "PARAMETER:err"
+    },
+    {
+      "from": "EXPRESSION:Identifier",
+      "type": "DERIVES_FROM",
+      "to": "PARAMETER:err"
+    },
+    {
+      "from": "EXPRESSION:Identifier",
+      "type": "DERIVES_FROM",
+      "to": "PARAMETER:err"
+    },
+    {
+      "from": "EXPRESSION:Identifier",
+      "type": "DERIVES_FROM",
+      "to": "PARAMETER:err"
+    },
+    {
+      "from": "EXPRESSION:Identifier",
+      "type": "DERIVES_FROM",
+      "to": "PARAMETER:err"
+    },
+    {
+      "from": "EXPRESSION:Identifier",
+      "type": "DERIVES_FROM",
+      "to": "PARAMETER:err"
+    },
+    {
+      "from": "EXPRESSION:Identifier",
+      "type": "DERIVES_FROM",
+      "to": "PARAMETER:err"
+    },
+    {
+      "from": "EXPRESSION:Identifier",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:blacklisted"
+    },
+    {
+      "from": "EXPRESSION:Identifier",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:blacklisted"
+    },
+    {
+      "from": "EXPRESSION:Identifier",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:blacklisted"
+    },
+    {
+      "from": "EXPRESSION:Identifier",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:blacklisted"
+    },
+    {
+      "from": "EXPRESSION:Identifier",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:err"
+    },
+    {
+      "from": "EXPRESSION:Identifier",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:err"
+    },
+    {
+      "from": "EXPRESSION:Identifier",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:err"
+    },
+    {
+      "from": "EXPRESSION:Identifier",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:err"
+    },
+    {
+      "from": "EXPRESSION:Identifier",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:err"
+    },
+    {
+      "from": "EXPRESSION:Identifier",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:permissions"
+    },
+    {
+      "from": "EXPRESSION:Identifier",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:permissions"
+    },
+    {
+      "from": "EXPRESSION:Identifier",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:permissions"
+    },
+    {
+      "from": "EXPRESSION:Identifier",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:session"
+    },
+    {
+      "from": "EXPRESSION:Identifier",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:session"
+    },
+    {
+      "from": "EXPRESSION:Identifier",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:session"
+    },
+    {
+      "from": "EXPRESSION:Identifier",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:timeoutId"
+    },
+    {
       "from": "EXPRESSION:item.id",
       "type": "DERIVES_FROM",
       "to": "CONSTANT:item"
@@ -35675,6 +36183,26 @@
       "from": "EXPRESSION:item.name",
       "type": "YIELDS",
       "to": "FUNCTION:processDataGenerator"
+    },
+    {
+      "from": "EXPRESSION:LogicalExpression",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:result"
+    },
+    {
+      "from": "EXPRESSION:LogicalExpression",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:self"
+    },
+    {
+      "from": "EXPRESSION:MemberExpression",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:next"
+    },
+    {
+      "from": "EXPRESSION:MemberExpression",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:next"
     },
     {
       "from": "EXPRESSION:MemberExpression",
@@ -35875,6 +36403,116 @@
       "from": "EXPRESSION:ThisExpression",
       "type": "RETURNS",
       "to": "FUNCTION:initialize"
+    },
+    {
+      "from": "EXPRESSION:UnaryExpression",
+      "type": "DERIVES_FROM",
+      "to": "CONSTANT:value"
+    },
+    {
+      "from": "EXPRESSION:UnaryExpression",
+      "type": "DERIVES_FROM",
+      "to": "PARAMETER:req"
+    },
+    {
+      "from": "EXPRESSION:UnaryExpression",
+      "type": "DERIVES_FROM",
+      "to": "PARAMETER:req"
+    },
+    {
+      "from": "EXPRESSION:UnaryExpression",
+      "type": "DERIVES_FROM",
+      "to": "PARAMETER:req"
+    },
+    {
+      "from": "EXPRESSION:UnaryExpression",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:data"
+    },
+    {
+      "from": "EXPRESSION:UnaryExpression",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:token"
+    },
+    {
+      "from": "EXPRESSION:UnaryExpression",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:token"
+    },
+    {
+      "from": "EXPRESSION:UnaryExpression",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:token"
+    },
+    {
+      "from": "EXPRESSION:UnaryExpression",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:user"
+    },
+    {
+      "from": "EXPRESSION:UnaryExpression",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:user"
+    },
+    {
+      "from": "EXPRESSION:UnaryExpression",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:user"
+    },
+    {
+      "from": "EXPRESSION:UnaryExpression",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:user"
+    },
+    {
+      "from": "EXPRESSION:UnaryExpression",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:user"
+    },
+    {
+      "from": "EXPRESSION:UnaryExpression",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:user"
+    },
+    {
+      "from": "EXPRESSION:UnaryExpression",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:user"
+    },
+    {
+      "from": "EXPRESSION:UnaryExpression",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:user"
+    },
+    {
+      "from": "EXPRESSION:UnaryExpression",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:user"
+    },
+    {
+      "from": "EXPRESSION:UnaryExpression",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:user"
+    },
+    {
+      "from": "EXPRESSION:UpdateExpression",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:i"
+    },
+    {
+      "from": "EXPRESSION:UpdateExpression",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:i"
+    },
+    {
+      "from": "EXPRESSION:UpdateExpression",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:i"
+    },
+    {
+      "from": "EXPRESSION:UpdateExpression",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:i"
     },
     {
       "from": "EXPRESSION:verifyTokenAsync().decoded",
