@@ -53,6 +53,13 @@ export async function findNodeAtCursor(
         specificity = 10000 - spanSize;
       }
     }
+    // Phase 1a: Same-line containment using only endColumn (e.g. IMPORT specifiers)
+    else if (endColumn !== undefined && nodeLine === line) {
+      if (column >= nodeColumn && column <= endColumn) {
+        const spanSize = endColumn - nodeColumn;
+        specificity = 10000 - spanSize;
+      }
+    }
     // Phase 1b: Fallback to proximity (legacy nodes without end position)
     else if (nodeLine === line) {
       const distance = Math.abs(nodeColumn - column);
