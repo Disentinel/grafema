@@ -5577,6 +5577,11 @@
     {
       "from": "BRANCH:",
       "type": "HAS_CONSEQUENT",
+      "to": "EXPRESSION:user.name"
+    },
+    {
+      "from": "BRANCH:",
+      "type": "HAS_CONSEQUENT",
       "to": "SCOPE:if:14:4:0"
     },
     {
