@@ -7597,13 +7597,6 @@
     },
     {
       "exported": false,
-      "file": "app.js",
-      "name": "app",
-      "scopePath": [],
-      "type": "CONSTANT"
-    },
-    {
-      "exported": false,
       "file": "services/dataProcessor.js",
       "name": "batch",
       "type": "CONSTANT",
@@ -7615,13 +7608,6 @@
       "name": "batches",
       "type": "CONSTANT",
       "value": []
-    },
-    {
-      "exported": false,
-      "file": "app.js",
-      "name": "config",
-      "scopePath": [],
-      "type": "CONSTANT"
     },
     {
       "exported": false,
@@ -7687,12 +7673,6 @@
     {
       "exported": false,
       "file": "routes/api.js",
-      "name": "newUser",
-      "type": "CONSTANT"
-    },
-    {
-      "exported": false,
-      "file": "routes/api.js",
       "name": "post",
       "type": "CONSTANT"
     },
@@ -7707,30 +7687,6 @@
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "processed",
-      "type": "CONSTANT"
-    },
-    {
-      "exported": false,
-      "file": "app.js",
-      "name": "processor",
-      "type": "CONSTANT"
-    },
-    {
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "processor",
-      "type": "CONSTANT"
-    },
-    {
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "processor",
-      "type": "CONSTANT"
-    },
-    {
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "processor",
       "type": "CONSTANT"
     },
     {
@@ -7825,12 +7781,6 @@
     },
     {
       "exported": false,
-      "file": "models/User.js",
-      "name": "user",
-      "type": "CONSTANT"
-    },
-    {
-      "exported": false,
       "file": "services/dataProcessor.js",
       "name": "user",
       "type": "CONSTANT"
@@ -7851,13 +7801,6 @@
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "userId",
-      "type": "CONSTANT"
-    },
-    {
-      "exported": false,
-      "file": "models/User.js",
-      "name": "userSchema",
-      "scopePath": [],
       "type": "CONSTANT"
     },
     {
@@ -25890,6 +25833,13 @@
     },
     {
       "exported": false,
+      "file": "app.js",
+      "name": "app",
+      "scopePath": [],
+      "type": "VARIABLE"
+    },
+    {
+      "exported": false,
       "file": "utils/asyncHelpers.js",
       "name": "attempt",
       "type": "VARIABLE"
@@ -25922,6 +25872,13 @@
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "name": "completed",
+      "type": "VARIABLE"
+    },
+    {
+      "exported": false,
+      "file": "app.js",
+      "name": "config",
+      "scopePath": [],
       "type": "VARIABLE"
     },
     {
@@ -26197,6 +26154,12 @@
     },
     {
       "exported": false,
+      "file": "routes/api.js",
+      "name": "newUser",
+      "type": "VARIABLE"
+    },
+    {
+      "exported": false,
       "file": "services/dataProcessor.js",
       "name": "next",
       "type": "VARIABLE"
@@ -26301,6 +26264,30 @@
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "name": "processNext",
+      "type": "VARIABLE"
+    },
+    {
+      "exported": false,
+      "file": "app.js",
+      "name": "processor",
+      "type": "VARIABLE"
+    },
+    {
+      "exported": false,
+      "file": "services/dataProcessor.js",
+      "name": "processor",
+      "type": "VARIABLE"
+    },
+    {
+      "exported": false,
+      "file": "services/dataProcessor.js",
+      "name": "processor",
+      "type": "VARIABLE"
+    },
+    {
+      "exported": false,
+      "file": "services/dataProcessor.js",
+      "name": "processor",
       "type": "VARIABLE"
     },
     {
@@ -26532,6 +26519,12 @@
     },
     {
       "exported": false,
+      "file": "models/User.js",
+      "name": "user",
+      "type": "VARIABLE"
+    },
+    {
+      "exported": false,
       "file": "routes/api.js",
       "name": "user",
       "type": "VARIABLE"
@@ -26577,6 +26570,13 @@
       "exported": false,
       "file": "routes/api.js",
       "name": "userId",
+      "type": "VARIABLE"
+    },
+    {
+      "exported": false,
+      "file": "models/User.js",
+      "name": "userSchema",
+      "scopePath": [],
       "type": "VARIABLE"
     }
   ],
@@ -28324,12 +28324,12 @@
     {
       "from": "CALL:app.get",
       "type": "USES",
-      "to": "CONSTANT:app"
+      "to": "VARIABLE:app"
     },
     {
       "from": "CALL:app.get",
       "type": "USES",
-      "to": "CONSTANT:app"
+      "to": "VARIABLE:app"
     },
     {
       "from": "CALL:app.listen",
@@ -28366,7 +28366,7 @@
     {
       "from": "CALL:app.listen",
       "type": "USES",
-      "to": "CONSTANT:app"
+      "to": "VARIABLE:app"
     },
     {
       "from": "CALL:app.post",
@@ -28408,7 +28408,7 @@
     {
       "from": "CALL:app.post",
       "type": "USES",
-      "to": "CONSTANT:app"
+      "to": "VARIABLE:app"
     },
     {
       "from": "CALL:app.use",
@@ -28493,22 +28493,22 @@
     {
       "from": "CALL:app.use",
       "type": "USES",
-      "to": "CONSTANT:app"
+      "to": "VARIABLE:app"
     },
     {
       "from": "CALL:app.use",
       "type": "USES",
-      "to": "CONSTANT:app"
+      "to": "VARIABLE:app"
     },
     {
       "from": "CALL:app.use",
       "type": "USES",
-      "to": "CONSTANT:app"
+      "to": "VARIABLE:app"
     },
     {
       "from": "CALL:app.use",
       "type": "USES",
-      "to": "CONSTANT:app"
+      "to": "VARIABLE:app"
     },
     {
       "from": "CALL:batch.push",
@@ -28829,12 +28829,12 @@
     {
       "from": "CALL:config.getPort",
       "type": "USES",
-      "to": "CONSTANT:config"
+      "to": "VARIABLE:config"
     },
     {
       "from": "CALL:config.getPort",
       "type": "USES",
-      "to": "CONSTANT:config"
+      "to": "VARIABLE:config"
     },
     {
       "from": "CALL:config.handleError",
@@ -28865,12 +28865,12 @@
     {
       "from": "CALL:config.handleError",
       "type": "USES",
-      "to": "CONSTANT:config"
+      "to": "VARIABLE:config"
     },
     {
       "from": "CALL:config.handleError",
       "type": "USES",
-      "to": "CONSTANT:config"
+      "to": "VARIABLE:config"
     },
     {
       "from": "CALL:config.initDatabase",
@@ -28880,7 +28880,7 @@
     {
       "from": "CALL:config.initDatabase",
       "type": "USES",
-      "to": "CONSTANT:config"
+      "to": "VARIABLE:config"
     },
     {
       "from": "CALL:connectServices",
@@ -31300,23 +31300,15 @@
     {
       "from": "CALL:mongoose.model",
       "type": "DERIVES_FROM",
-      "to": "CONSTANT:userSchema",
+      "to": "LITERAL:",
       "metadata": {
-        "argIndex": 1
+        "argIndex": 0
       }
     },
     {
       "from": "CALL:mongoose.model",
       "type": "DERIVES_FROM",
-      "to": "LITERAL:",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:mongoose.model",
-      "type": "PASSES_ARGUMENT",
-      "to": "CONSTANT:userSchema",
+      "to": "VARIABLE:userSchema",
       "metadata": {
         "argIndex": 1
       }
@@ -31327,6 +31319,14 @@
       "to": "LITERAL:",
       "metadata": {
         "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:mongoose.model",
+      "type": "PASSES_ARGUMENT",
+      "to": "VARIABLE:userSchema",
+      "metadata": {
+        "argIndex": 1
       }
     },
     {
@@ -31348,7 +31348,7 @@
     {
       "from": "CALL:newUser.save",
       "type": "USES",
-      "to": "CONSTANT:newUser"
+      "to": "VARIABLE:newUser"
     },
     {
       "from": "CALL:next",
@@ -31475,17 +31475,17 @@
     {
       "from": "CALL:processor.initialize",
       "type": "USES",
-      "to": "CONSTANT:processor"
+      "to": "VARIABLE:processor"
     },
     {
       "from": "CALL:processor.initialize",
       "type": "USES",
-      "to": "CONSTANT:processor"
+      "to": "VARIABLE:processor"
     },
     {
       "from": "CALL:processor.initialize",
       "type": "USES",
-      "to": "CONSTANT:processor"
+      "to": "VARIABLE:processor"
     },
     {
       "from": "CALL:processor.processBatch",
@@ -31495,7 +31495,7 @@
     {
       "from": "CALL:processor.processBatch",
       "type": "USES",
-      "to": "CONSTANT:processor"
+      "to": "VARIABLE:processor"
     },
     {
       "from": "CALL:processor.processUser",
@@ -31521,7 +31521,7 @@
     {
       "from": "CALL:processor.processUser",
       "type": "USES",
-      "to": "CONSTANT:processor"
+      "to": "VARIABLE:processor"
     },
     {
       "from": "CALL:processUserRequest",
@@ -35107,7 +35107,7 @@
     {
       "from": "CALL:userSchema.post",
       "type": "USES",
-      "to": "CONSTANT:userSchema"
+      "to": "VARIABLE:userSchema"
     },
     {
       "from": "CALL:userSchema.pre",
@@ -35149,7 +35149,7 @@
     {
       "from": "CALL:userSchema.pre",
       "type": "USES",
-      "to": "CONSTANT:userSchema"
+      "to": "VARIABLE:userSchema"
     },
     {
       "from": "CALL:userSchema.virtual",
@@ -35170,7 +35170,7 @@
     {
       "from": "CALL:userSchema.virtual",
       "type": "USES",
-      "to": "CONSTANT:userSchema"
+      "to": "VARIABLE:userSchema"
     },
     {
       "from": "CALL:verifyTokenAsync",
@@ -35738,11 +35738,6 @@
       "to": "FUNCTION:processWithPromises"
     },
     {
-      "from": "CONSTANT:app",
-      "type": "ASSIGNED_FROM",
-      "to": "CONSTRUCTOR_CALL:new express()"
-    },
-    {
       "from": "CONSTANT:batch",
       "type": "ASSIGNED_FROM",
       "to": "ARRAY_LITERAL:<array>"
@@ -35751,16 +35746,6 @@
       "from": "CONSTANT:batches",
       "type": "ASSIGNED_FROM",
       "to": "ARRAY_LITERAL:<array>"
-    },
-    {
-      "from": "CONSTANT:config",
-      "type": "ASSIGNED_FROM",
-      "to": "CONSTRUCTOR_CALL:new AppConfig()"
-    },
-    {
-      "from": "CONSTANT:config",
-      "type": "INSTANCE_OF",
-      "to": "CLASS:AppConfig"
     },
     {
       "from": "CONSTANT:data",
@@ -35803,11 +35788,6 @@
       "to": "ARRAY_LITERAL:<array>"
     },
     {
-      "from": "CONSTANT:newUser",
-      "type": "ASSIGNED_FROM",
-      "to": "CONSTRUCTOR_CALL:new User()"
-    },
-    {
       "from": "CONSTANT:postsWithComments",
       "type": "ASSIGNED_FROM",
       "to": "ARRAY_LITERAL:<array>"
@@ -35816,51 +35796,6 @@
       "from": "CONSTANT:processed",
       "type": "READS_FROM",
       "to": "CONSTANT:processed"
-    },
-    {
-      "from": "CONSTANT:processor",
-      "type": "ASSIGNED_FROM",
-      "to": "CONSTRUCTOR_CALL:new DataProcessor()"
-    },
-    {
-      "from": "CONSTANT:processor",
-      "type": "ASSIGNED_FROM",
-      "to": "CONSTRUCTOR_CALL:new DataProcessor()"
-    },
-    {
-      "from": "CONSTANT:processor",
-      "type": "ASSIGNED_FROM",
-      "to": "CONSTRUCTOR_CALL:new DataProcessor()"
-    },
-    {
-      "from": "CONSTANT:processor",
-      "type": "ASSIGNED_FROM",
-      "to": "CONSTRUCTOR_CALL:new DataProcessor()"
-    },
-    {
-      "from": "CONSTANT:processor",
-      "type": "INSTANCE_OF",
-      "to": "CLASS:DataProcessor"
-    },
-    {
-      "from": "CONSTANT:processor",
-      "type": "INSTANCE_OF",
-      "to": "CLASS:DataProcessor"
-    },
-    {
-      "from": "CONSTANT:processor",
-      "type": "INSTANCE_OF",
-      "to": "CLASS:DataProcessor"
-    },
-    {
-      "from": "CONSTANT:processor",
-      "type": "YIELDS",
-      "to": "FUNCTION:createAsyncProcessors"
-    },
-    {
-      "from": "CONSTANT:processor",
-      "type": "YIELDS",
-      "to": "FUNCTION:createProcessors"
     },
     {
       "from": "CONSTANT:promise",
@@ -35961,11 +35896,6 @@
       "from": "CONSTANT:userId",
       "type": "DERIVES_FROM",
       "to": "PARAMETER:userIds"
-    },
-    {
-      "from": "CONSTANT:userSchema",
-      "type": "ASSIGNED_FROM",
-      "to": "CONSTRUCTOR_CALL:new Schema()"
     },
     {
       "from": "CONSTRUCTOR_CALL:new Error()",
@@ -41290,12 +41220,12 @@
     {
       "from": "MODULE:app.js",
       "type": "DECLARES",
-      "to": "CONSTANT:app"
+      "to": "VARIABLE:app"
     },
     {
       "from": "MODULE:app.js",
       "type": "DECLARES",
-      "to": "CONSTANT:config"
+      "to": "VARIABLE:config"
     },
     {
       "from": "MODULE:app.js",
@@ -41665,12 +41595,12 @@
     {
       "from": "MODULE:models/User.js",
       "type": "DECLARES",
-      "to": "CONSTANT:userSchema"
+      "to": "VARIABLE:User"
     },
     {
       "from": "MODULE:models/User.js",
       "type": "DECLARES",
-      "to": "VARIABLE:User"
+      "to": "VARIABLE:userSchema"
     },
     {
       "from": "MODULE:models/User.js",
@@ -42309,7 +42239,7 @@
     {
       "from": "PARAMETER:batchSize",
       "type": "FLOWS_INTO",
-      "to": "CONSTANT:processor",
+      "to": "VARIABLE:processor",
       "metadata": {
         "mutationType": "property",
         "propertyName": "batchSize"
@@ -43021,21 +42951,6 @@
     {
       "from": "SCOPE:",
       "type": "DECLARES",
-      "to": "CONSTANT:processor"
-    },
-    {
-      "from": "SCOPE:",
-      "type": "DECLARES",
-      "to": "CONSTANT:processor"
-    },
-    {
-      "from": "SCOPE:",
-      "type": "DECLARES",
-      "to": "CONSTANT:processor"
-    },
-    {
-      "from": "SCOPE:",
-      "type": "DECLARES",
       "to": "CONSTANT:promise"
     },
     {
@@ -43247,6 +43162,21 @@
       "from": "SCOPE:",
       "type": "DECLARES",
       "to": "VARIABLE:processed"
+    },
+    {
+      "from": "SCOPE:",
+      "type": "DECLARES",
+      "to": "VARIABLE:processor"
+    },
+    {
+      "from": "SCOPE:",
+      "type": "DECLARES",
+      "to": "VARIABLE:processor"
+    },
+    {
+      "from": "SCOPE:",
+      "type": "DECLARES",
+      "to": "VARIABLE:processor"
     },
     {
       "from": "SCOPE:",
@@ -44946,11 +44876,6 @@
     {
       "from": "SCOPE:anonymous[0]:body",
       "type": "DECLARES",
-      "to": "CONSTANT:newUser"
-    },
-    {
-      "from": "SCOPE:anonymous[0]:body",
-      "type": "DECLARES",
       "to": "CONSTANT:results"
     },
     {
@@ -44997,6 +44922,11 @@
       "from": "SCOPE:anonymous[0]:body",
       "type": "DECLARES",
       "to": "VARIABLE:logGenerator"
+    },
+    {
+      "from": "SCOPE:anonymous[0]:body",
+      "type": "DECLARES",
+      "to": "VARIABLE:newUser"
     },
     {
       "from": "SCOPE:anonymous[0]:body",
@@ -45996,12 +45926,12 @@
     {
       "from": "SCOPE:createWithProfile:body",
       "type": "DECLARES",
-      "to": "CONSTANT:user"
+      "to": "VARIABLE:salt"
     },
     {
       "from": "SCOPE:createWithProfile:body",
       "type": "DECLARES",
-      "to": "VARIABLE:salt"
+      "to": "VARIABLE:user"
     },
     {
       "from": "SCOPE:DataProcessor.constructor:body",
@@ -47241,7 +47171,7 @@
     {
       "from": "SCOPE:processInBatches:body",
       "type": "DECLARES",
-      "to": "CONSTANT:processor"
+      "to": "VARIABLE:processor"
     },
     {
       "from": "SCOPE:processItem:body",
@@ -47822,6 +47752,11 @@
       "to": "CALL:processItem"
     },
     {
+      "from": "VARIABLE:app",
+      "type": "ASSIGNED_FROM",
+      "to": "CONSTRUCTOR_CALL:new express()"
+    },
+    {
       "from": "VARIABLE:attempt",
       "type": "ASSIGNED_FROM",
       "to": "LITERAL:"
@@ -47865,6 +47800,16 @@
       "from": "VARIABLE:completed",
       "type": "READS_FROM",
       "to": "VARIABLE:completed"
+    },
+    {
+      "from": "VARIABLE:config",
+      "type": "ASSIGNED_FROM",
+      "to": "CONSTRUCTOR_CALL:new AppConfig()"
+    },
+    {
+      "from": "VARIABLE:config",
+      "type": "INSTANCE_OF",
+      "to": "CLASS:AppConfig"
     },
     {
       "from": "VARIABLE:currentBatch",
@@ -48076,6 +48021,11 @@
       "to": "CALL:user.getActivityLog"
     },
     {
+      "from": "VARIABLE:newUser",
+      "type": "ASSIGNED_FROM",
+      "to": "CONSTRUCTOR_CALL:new User()"
+    },
+    {
       "from": "VARIABLE:next",
       "type": "ASSIGNED_FROM",
       "to": "CALL:generator.next"
@@ -48169,6 +48119,51 @@
       "from": "VARIABLE:processor",
       "type": "ASSIGNED_FROM",
       "to": "CALL:this.processBatch"
+    },
+    {
+      "from": "VARIABLE:processor",
+      "type": "ASSIGNED_FROM",
+      "to": "CONSTRUCTOR_CALL:new DataProcessor()"
+    },
+    {
+      "from": "VARIABLE:processor",
+      "type": "ASSIGNED_FROM",
+      "to": "CONSTRUCTOR_CALL:new DataProcessor()"
+    },
+    {
+      "from": "VARIABLE:processor",
+      "type": "ASSIGNED_FROM",
+      "to": "CONSTRUCTOR_CALL:new DataProcessor()"
+    },
+    {
+      "from": "VARIABLE:processor",
+      "type": "ASSIGNED_FROM",
+      "to": "CONSTRUCTOR_CALL:new DataProcessor()"
+    },
+    {
+      "from": "VARIABLE:processor",
+      "type": "INSTANCE_OF",
+      "to": "CLASS:DataProcessor"
+    },
+    {
+      "from": "VARIABLE:processor",
+      "type": "INSTANCE_OF",
+      "to": "CLASS:DataProcessor"
+    },
+    {
+      "from": "VARIABLE:processor",
+      "type": "INSTANCE_OF",
+      "to": "CLASS:DataProcessor"
+    },
+    {
+      "from": "VARIABLE:processor",
+      "type": "YIELDS",
+      "to": "FUNCTION:createAsyncProcessors"
+    },
+    {
+      "from": "VARIABLE:processor",
+      "type": "YIELDS",
+      "to": "FUNCTION:createProcessors"
     },
     {
       "from": "VARIABLE:profile",
@@ -48388,6 +48383,11 @@
       "from": "VARIABLE:userId",
       "type": "ASSIGNED_FROM",
       "to": "EXPRESSION:req.ip"
+    },
+    {
+      "from": "VARIABLE:userSchema",
+      "type": "ASSIGNED_FROM",
+      "to": "CONSTRUCTOR_CALL:new Schema()"
     }
   ]
 }
