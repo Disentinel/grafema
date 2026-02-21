@@ -285,6 +285,8 @@ export interface PropertyAccessInfo {
   file: string;
   line: number;
   column: number;
+  endLine?: number;
+  endColumn?: number;
   parentScopeId?: string;
 }
 
@@ -297,6 +299,8 @@ export interface CallSiteInfo {
   file: string;
   line: number;
   column?: number;
+  endLine?: number;
+  endColumn?: number;
   parentScopeId?: string;
   targetFunctionName?: string;
   isNew?: boolean;
@@ -323,6 +327,8 @@ export interface MethodCallInfo {
   file: string;
   line: number;
   column?: number;
+  endLine?: number;
+  endColumn?: number;
   parentScopeId?: string;
   arguments?: unknown[];
   isNew?: boolean;

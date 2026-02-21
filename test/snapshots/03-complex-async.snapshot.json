@@ -1096,6 +1096,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 33,
+      "endLine": 282,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -1109,6 +1111,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 9,
+      "endLine": 144,
       "exported": false,
       "file": "models/User.js",
       "isAwaited": false,
@@ -1122,6 +1126,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 2,
+      "endLine": 212,
       "exported": false,
       "file": "app.js",
       "method": "get",
@@ -1132,6 +1138,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 2,
+      "endLine": 222,
       "exported": false,
       "file": "app.js",
       "method": "get",
@@ -1142,6 +1150,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 12,
+      "endLine": 260,
       "exported": false,
       "file": "app.js",
       "isAwaited": false,
@@ -1155,6 +1165,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 2,
+      "endLine": 196,
       "exported": false,
       "file": "app.js",
       "method": "post",
@@ -1165,6 +1177,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 23,
+      "endLine": 162,
       "exported": false,
       "file": "app.js",
       "method": "use",
@@ -1175,6 +1189,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 23,
+      "endLine": 163,
       "exported": false,
       "file": "app.js",
       "method": "use",
@@ -1185,6 +1201,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 26,
+      "endLine": 225,
       "exported": false,
       "file": "app.js",
       "method": "use",
@@ -1195,6 +1213,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 52,
+      "endLine": 242,
       "exported": false,
       "file": "app.js",
       "method": "use",
@@ -1203,6 +1223,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 30,
+      "endLine": 45,
       "exported": false,
       "file": "app.js",
       "isNew": true,
@@ -1212,6 +1234,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 22,
+      "endLine": 213,
       "exported": false,
       "file": "services/dataProcessor.js",
       "isAwaited": false,
@@ -1225,6 +1249,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 46,
+      "endLine": 346,
       "exported": false,
       "file": "services/dataProcessor.js",
       "isAwaited": false,
@@ -1238,6 +1264,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 34,
+      "endLine": 338,
       "exported": false,
       "file": "services/dataProcessor.js",
       "isAwaited": false,
@@ -1251,6 +1279,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 36,
+      "endLine": 332,
       "exported": false,
       "file": "services/dataProcessor.js",
       "isAwaited": false,
@@ -1264,6 +1294,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 4,
+      "endLine": 53,
       "exported": false,
       "file": "models/User.js",
       "isAwaited": false,
@@ -1277,19 +1309,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
-      "exported": false,
-      "file": "models/User.js",
-      "isAwaited": false,
-      "isInsideTry": false,
-      "isMethodCall": true,
-      "method": "genSalt",
-      "name": "bcrypt.genSalt",
-      "object": "bcrypt",
-      "type": "CALL"
-    },
-    {
-      "computed": false,
-      "computedPropertyVar": null,
+      "endColumn": 39,
+      "endLine": 153,
       "exported": false,
       "file": "models/User.js",
       "isAwaited": true,
@@ -1303,19 +1324,23 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 4,
+      "endLine": 189,
       "exported": false,
       "file": "models/User.js",
       "isAwaited": false,
       "isInsideTry": false,
       "isMethodCall": true,
-      "method": "hash",
-      "name": "bcrypt.hash",
+      "method": "genSalt",
+      "name": "bcrypt.genSalt",
       "object": "bcrypt",
       "type": "CALL"
     },
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 56,
+      "endLine": 154,
       "exported": false,
       "file": "models/User.js",
       "isAwaited": true,
@@ -1327,6 +1352,23 @@
       "type": "CALL"
     },
     {
+      "computed": false,
+      "computedPropertyVar": null,
+      "endColumn": 6,
+      "endLine": 188,
+      "exported": false,
+      "file": "models/User.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "hash",
+      "name": "bcrypt.hash",
+      "object": "bcrypt",
+      "type": "CALL"
+    },
+    {
+      "endColumn": 33,
+      "endLine": 50,
       "exported": false,
       "file": "app.js",
       "isAwaited": false,
@@ -1335,6 +1377,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 35,
+      "endLine": 53,
       "exported": false,
       "file": "app.js",
       "isAwaited": false,
@@ -1343,6 +1387,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 37,
+      "endLine": 56,
       "exported": false,
       "file": "app.js",
       "isAwaited": false,
@@ -1351,6 +1397,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 41,
+      "endLine": 60,
       "exported": false,
       "file": "app.js",
       "isAwaited": false,
@@ -1359,6 +1407,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 52,
+      "endLine": 61,
       "exported": false,
       "file": "app.js",
       "isAwaited": false,
@@ -1367,6 +1417,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 56,
+      "endLine": 64,
       "exported": false,
       "file": "app.js",
       "isAwaited": false,
@@ -1375,6 +1427,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 28,
+      "endLine": 18,
       "exported": false,
       "file": "middleware/auth.js",
       "isAwaited": false,
@@ -1383,6 +1437,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 33,
+      "endLine": 317,
       "exported": false,
       "file": "middleware/auth.js",
       "isAwaited": false,
@@ -1391,6 +1447,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 35,
+      "endLine": 328,
       "exported": false,
       "file": "middleware/auth.js",
       "isAwaited": false,
@@ -1399,6 +1457,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 37,
+      "endLine": 331,
       "exported": false,
       "file": "middleware/auth.js",
       "isAwaited": false,
@@ -1407,6 +1467,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 39,
+      "endLine": 334,
       "exported": false,
       "file": "middleware/auth.js",
       "isAwaited": false,
@@ -1415,6 +1477,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 41,
+      "endLine": 34,
       "exported": false,
       "file": "middleware/auth.js",
       "isAwaited": false,
@@ -1423,6 +1487,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 49,
+      "endLine": 13,
       "exported": false,
       "file": "middleware/auth.js",
       "isAwaited": false,
@@ -1431,6 +1497,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 52,
+      "endLine": 22,
       "exported": false,
       "file": "middleware/auth.js",
       "isAwaited": false,
@@ -1439,6 +1507,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 57,
+      "endLine": 31,
       "exported": false,
       "file": "middleware/auth.js",
       "isAwaited": false,
@@ -1447,6 +1517,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 59,
+      "endLine": 318,
       "exported": false,
       "file": "middleware/auth.js",
       "isAwaited": false,
@@ -1455,6 +1527,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 69,
+      "endLine": 336,
       "exported": false,
       "file": "middleware/auth.js",
       "isAwaited": false,
@@ -1463,6 +1537,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 29,
+      "endLine": 50,
       "exported": false,
       "file": "models/User.js",
       "isAwaited": false,
@@ -1471,6 +1547,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 31,
+      "endLine": 38,
       "exported": false,
       "file": "models/User.js",
       "isAwaited": false,
@@ -1479,6 +1557,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 33,
+      "endLine": 26,
       "exported": false,
       "file": "models/User.js",
       "isAwaited": false,
@@ -1487,6 +1567,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 33,
+      "endLine": 35,
       "exported": false,
       "file": "models/User.js",
       "isAwaited": false,
@@ -1495,6 +1577,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 37,
+      "endLine": 49,
       "exported": false,
       "file": "models/User.js",
       "isAwaited": false,
@@ -1503,6 +1587,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 39,
+      "endLine": 34,
       "exported": false,
       "file": "models/User.js",
       "isAwaited": false,
@@ -1511,6 +1597,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 32,
+      "endLine": 224,
       "exported": false,
       "file": "services/dataProcessor.js",
       "isAwaited": false,
@@ -1519,6 +1607,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 35,
+      "endLine": 136,
       "exported": false,
       "file": "services/dataProcessor.js",
       "isAwaited": false,
@@ -1527,6 +1617,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 35,
+      "endLine": 236,
       "exported": false,
       "file": "services/dataProcessor.js",
       "isAwaited": false,
@@ -1535,6 +1627,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 39,
+      "endLine": 130,
       "exported": false,
       "file": "services/dataProcessor.js",
       "isAwaited": false,
@@ -1543,6 +1637,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 41,
+      "endLine": 352,
       "exported": false,
       "file": "services/dataProcessor.js",
       "isAwaited": false,
@@ -1551,6 +1647,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 47,
+      "endLine": 346,
       "exported": false,
       "file": "services/dataProcessor.js",
       "isAwaited": false,
@@ -1559,6 +1657,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 21,
+      "endLine": 95,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -1567,6 +1667,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 36,
+      "endLine": 83,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -1575,6 +1677,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 57,
+      "endLine": 161,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -1585,6 +1689,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 8,
+      "endLine": 72,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -1596,6 +1702,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 27,
+      "endLine": 40,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -1604,6 +1712,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 27,
+      "endLine": 44,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -1612,6 +1722,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 31,
+      "endLine": 300,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -1622,6 +1734,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 52,
+      "endLine": 257,
       "exported": false,
       "file": "app.js",
       "isAwaited": false,
@@ -1635,6 +1749,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 66,
+      "endLine": 258,
       "exported": false,
       "file": "app.js",
       "isAwaited": false,
@@ -1648,6 +1764,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 25,
+      "endLine": 280,
       "exported": false,
       "file": "app.js",
       "isAwaited": false,
@@ -1661,6 +1779,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 29,
+      "endLine": 156,
       "exported": false,
       "file": "app.js",
       "isAwaited": false,
@@ -1674,6 +1794,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 27,
+      "endLine": 255,
       "exported": false,
       "file": "app.js",
       "isAwaited": false,
@@ -1685,6 +1807,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 6,
+      "endLine": 265,
       "exported": false,
       "file": "app.js",
       "isAwaited": false,
@@ -1695,6 +1819,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 41,
+      "endLine": 41,
       "exported": false,
       "file": "app.js",
       "isAwaited": false,
@@ -1708,6 +1834,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 44,
+      "endLine": 186,
       "exported": false,
       "file": "app.js",
       "isAwaited": false,
@@ -1721,6 +1849,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 52,
+      "endLine": 95,
       "exported": false,
       "file": "app.js",
       "isAwaited": false,
@@ -1734,6 +1864,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 60,
+      "endLine": 36,
       "exported": false,
       "file": "app.js",
       "isAwaited": false,
@@ -1747,6 +1879,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 42,
+      "endLine": 362,
       "exported": false,
       "file": "middleware/auth.js",
       "isAwaited": false,
@@ -1760,6 +1894,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 44,
+      "endLine": 129,
       "exported": false,
       "file": "middleware/auth.js",
       "isAwaited": false,
@@ -1773,6 +1909,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 44,
+      "endLine": 27,
       "exported": false,
       "file": "middleware/auth.js",
       "isAwaited": false,
@@ -1786,6 +1924,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 45,
+      "endLine": 289,
       "exported": false,
       "file": "middleware/auth.js",
       "isAwaited": false,
@@ -1799,6 +1939,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 45,
+      "endLine": 70,
       "exported": false,
       "file": "middleware/auth.js",
       "isAwaited": false,
@@ -1812,6 +1954,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 48,
+      "endLine": 138,
       "exported": false,
       "file": "middleware/auth.js",
       "isAwaited": false,
@@ -1825,6 +1969,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 50,
+      "endLine": 217,
       "exported": false,
       "file": "middleware/auth.js",
       "isAwaited": false,
@@ -1838,6 +1984,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 54,
+      "endLine": 308,
       "exported": false,
       "file": "middleware/auth.js",
       "isAwaited": false,
@@ -1851,6 +1999,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 54,
+      "endLine": 99,
       "exported": false,
       "file": "middleware/auth.js",
       "isAwaited": false,
@@ -1864,6 +2014,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 44,
+      "endLine": 203,
       "exported": false,
       "file": "models/User.js",
       "isAwaited": false,
@@ -1877,6 +2029,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 54,
+      "endLine": 98,
       "exported": false,
       "file": "models/User.js",
       "isAwaited": false,
@@ -1890,6 +2044,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 34,
+      "endLine": 136,
       "exported": false,
       "file": "routes/api.js",
       "isAwaited": false,
@@ -1903,6 +2059,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 47,
+      "endLine": 52,
       "exported": false,
       "file": "routes/api.js",
       "isAwaited": false,
@@ -1916,6 +2074,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 48,
+      "endLine": 186,
       "exported": false,
       "file": "routes/api.js",
       "isAwaited": false,
@@ -1929,6 +2089,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 52,
+      "endLine": 245,
       "exported": false,
       "file": "routes/api.js",
       "isAwaited": false,
@@ -1942,6 +2104,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 53,
+      "endLine": 170,
       "exported": false,
       "file": "routes/api.js",
       "isAwaited": false,
@@ -1955,6 +2119,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 55,
+      "endLine": 68,
       "exported": false,
       "file": "routes/api.js",
       "isAwaited": false,
@@ -1968,6 +2134,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 57,
+      "endLine": 43,
       "exported": false,
       "file": "routes/api.js",
       "isAwaited": false,
@@ -1981,6 +2149,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 45,
+      "endLine": 185,
       "exported": false,
       "file": "services/dataProcessor.js",
       "isAwaited": false,
@@ -1994,6 +2164,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 48,
+      "endLine": 134,
       "exported": false,
       "file": "services/dataProcessor.js",
       "isAwaited": false,
@@ -2007,6 +2179,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 51,
+      "endLine": 293,
       "exported": false,
       "file": "services/dataProcessor.js",
       "isAwaited": false,
@@ -2020,6 +2194,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 54,
+      "endLine": 286,
       "exported": false,
       "file": "services/dataProcessor.js",
       "isAwaited": false,
@@ -2033,6 +2209,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 41,
+      "endLine": 140,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -2046,6 +2224,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 44,
+      "endLine": 232,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -2059,6 +2239,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 50,
+      "endLine": 286,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -2072,6 +2254,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 51,
+      "endLine": 198,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -2085,6 +2269,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 51,
+      "endLine": 228,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -2098,6 +2284,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 52,
+      "endLine": 106,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -2111,6 +2299,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 55,
+      "endLine": 262,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -2124,6 +2314,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 58,
+      "endLine": 110,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -2137,6 +2329,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 26,
+      "endLine": 253,
       "exported": false,
       "file": "app.js",
       "isAwaited": false,
@@ -2150,6 +2344,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 41,
+      "endLine": 271,
       "exported": false,
       "file": "app.js",
       "isAwaited": false,
@@ -2163,6 +2359,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 46,
+      "endLine": 27,
       "exported": false,
       "file": "app.js",
       "isAwaited": false,
@@ -2176,6 +2374,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 69,
+      "endLine": 258,
       "exported": false,
       "file": "app.js",
       "isAwaited": false,
@@ -2189,6 +2389,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 45,
+      "endLine": 194,
       "exported": false,
       "file": "models/User.js",
       "isAwaited": false,
@@ -2202,6 +2404,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 48,
+      "endLine": 16,
       "exported": false,
       "file": "services/dataProcessor.js",
       "isAwaited": false,
@@ -2215,6 +2419,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 25,
+      "endLine": 148,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -2228,6 +2434,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 27,
+      "endLine": 151,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -2241,6 +2449,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 29,
+      "endLine": 154,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -2254,6 +2464,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 31,
+      "endLine": 157,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -2267,6 +2479,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 33,
+      "endLine": 160,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -2280,6 +2494,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 66,
+      "endLine": 19,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -2291,24 +2507,32 @@
       "type": "CALL"
     },
     {
+      "endColumn": 34,
+      "endLine": 11,
       "exported": false,
       "file": "app.js",
       "name": "createClient",
       "type": "CALL"
     },
     {
+      "endColumn": 28,
+      "endLine": 6,
       "exported": false,
       "file": "middleware/auth.js",
       "name": "createClient",
       "type": "CALL"
     },
     {
+      "endColumn": 28,
+      "endLine": 8,
       "exported": false,
       "file": "routes/api.js",
       "name": "createClient",
       "type": "CALL"
     },
     {
+      "endColumn": 28,
+      "endLine": 5,
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "createClient",
@@ -2317,6 +2541,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 31,
+      "endLine": 329,
       "exported": false,
       "file": "services/dataProcessor.js",
       "isAwaited": false,
@@ -2328,6 +2554,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 41,
+      "endLine": 131,
       "exported": false,
       "file": "app.js",
       "isNew": true,
@@ -2335,6 +2563,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 39,
+      "endLine": 319,
       "exported": false,
       "file": "services/dataProcessor.js",
       "isNew": true,
@@ -2342,6 +2572,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 41,
+      "endLine": 302,
       "exported": false,
       "file": "services/dataProcessor.js",
       "isNew": true,
@@ -2349,6 +2581,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 41,
+      "endLine": 311,
       "exported": false,
       "file": "services/dataProcessor.js",
       "isNew": true,
@@ -2356,6 +2590,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 27,
+      "endLine": 180,
       "exported": false,
       "file": "app.js",
       "isNew": true,
@@ -2363,6 +2599,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 30,
+      "endLine": 324,
       "exported": false,
       "file": "middleware/auth.js",
       "isNew": true,
@@ -2370,6 +2608,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 25,
+      "endLine": 164,
       "exported": false,
       "file": "models/User.js",
       "isNew": true,
@@ -2377,6 +2617,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 25,
+      "endLine": 200,
       "exported": false,
       "file": "models/User.js",
       "isNew": true,
@@ -2384,6 +2626,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 29,
+      "endLine": 82,
       "exported": false,
       "file": "models/User.js",
       "isNew": true,
@@ -2391,6 +2635,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 35,
+      "endLine": 180,
       "exported": false,
       "file": "routes/api.js",
       "isNew": true,
@@ -2398,6 +2644,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 35,
+      "endLine": 65,
       "exported": false,
       "file": "routes/api.js",
       "isNew": true,
@@ -2405,6 +2653,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 31,
+      "endLine": 83,
       "exported": false,
       "file": "services/dataProcessor.js",
       "isNew": true,
@@ -2412,6 +2662,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 35,
+      "endLine": 233,
       "exported": false,
       "file": "services/dataProcessor.js",
       "isNew": true,
@@ -2421,6 +2673,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 57,
+      "endLine": 355,
       "exported": false,
       "file": "middleware/auth.js",
       "isAwaited": false,
@@ -2434,6 +2688,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 35,
+      "endLine": 45,
       "exported": false,
       "file": "models/User.js",
       "isAwaited": false,
@@ -2447,6 +2703,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 29,
+      "endLine": 28,
       "exported": false,
       "file": "services/dataProcessor.js",
       "isAwaited": false,
@@ -2458,6 +2716,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 39,
+      "endLine": 88,
       "exported": false,
       "file": "middleware/auth.js",
       "isNew": true,
@@ -2465,6 +2725,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 41,
+      "endLine": 348,
       "exported": false,
       "file": "middleware/auth.js",
       "isNew": true,
@@ -2472,6 +2734,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 41,
+      "endLine": 45,
       "exported": false,
       "file": "middleware/auth.js",
       "isNew": true,
@@ -2479,6 +2743,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 42,
+      "endLine": 94,
       "exported": false,
       "file": "middleware/auth.js",
       "isNew": true,
@@ -2486,6 +2752,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 43,
+      "endLine": 55,
       "exported": false,
       "file": "middleware/auth.js",
       "isNew": true,
@@ -2493,6 +2761,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 46,
+      "endLine": 64,
       "exported": false,
       "file": "middleware/auth.js",
       "isNew": true,
@@ -2500,6 +2770,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 48,
+      "endLine": 13,
       "exported": false,
       "file": "middleware/auth.js",
       "isNew": true,
@@ -2507,6 +2779,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 51,
+      "endLine": 22,
       "exported": false,
       "file": "middleware/auth.js",
       "isNew": true,
@@ -2514,6 +2788,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 53,
+      "endLine": 237,
       "exported": false,
       "file": "middleware/auth.js",
       "isNew": true,
@@ -2521,6 +2797,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 56,
+      "endLine": 31,
       "exported": false,
       "file": "middleware/auth.js",
       "isNew": true,
@@ -2528,6 +2806,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 58,
+      "endLine": 318,
       "exported": false,
       "file": "middleware/auth.js",
       "isNew": true,
@@ -2535,6 +2815,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 41,
+      "endLine": 95,
       "exported": false,
       "file": "routes/api.js",
       "isNew": true,
@@ -2542,6 +2824,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 57,
+      "endLine": 111,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isNew": true,
@@ -2549,6 +2833,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 66,
+      "endLine": 35,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isNew": true,
@@ -2556,6 +2842,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 90,
+      "endLine": 15,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isNew": true,
@@ -2563,6 +2851,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 51,
+      "endLine": 242,
       "exported": false,
       "file": "app.js",
       "method": "bind",
@@ -2571,6 +2861,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 13,
+      "endLine": 27,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -2579,6 +2871,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 21,
+      "endLine": 22,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -2587,6 +2881,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 25,
+      "endLine": 10,
       "exported": false,
       "file": "app.js",
       "isNew": true,
@@ -2596,6 +2892,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 22,
+      "endLine": 162,
       "exported": false,
       "file": "app.js",
       "method": "json",
@@ -2604,6 +2902,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 25,
+      "endLine": 107,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -2612,6 +2912,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 23,
+      "endLine": 119,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -2620,6 +2922,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 32,
+      "endLine": 124,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -2628,6 +2932,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 38,
+      "endLine": 180,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -2636,6 +2942,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 40,
+      "endLine": 129,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -2644,6 +2952,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 41,
+      "endLine": 178,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -2652,6 +2962,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 42,
+      "endLine": 179,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -2660,30 +2972,8 @@
       "type": "CALL"
     },
     {
-      "exported": false,
-      "file": "utils/asyncHelpers.js",
-      "isAwaited": false,
-      "isInsideTry": false,
-      "name": "fetch",
-      "type": "CALL"
-    },
-    {
-      "exported": false,
-      "file": "utils/asyncHelpers.js",
-      "isAwaited": false,
-      "isInsideTry": false,
-      "name": "fetch",
-      "type": "CALL"
-    },
-    {
-      "exported": false,
-      "file": "utils/asyncHelpers.js",
-      "isAwaited": false,
-      "isInsideTry": false,
-      "name": "fetch",
-      "type": "CALL"
-    },
-    {
+      "endColumn": 43,
+      "endLine": 209,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -2692,6 +2982,18 @@
       "type": "CALL"
     },
     {
+      "endColumn": 48,
+      "endLine": 212,
+      "exported": false,
+      "file": "utils/asyncHelpers.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "name": "fetch",
+      "type": "CALL"
+    },
+    {
+      "endColumn": 52,
+      "endLine": 206,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -2700,6 +3002,28 @@
       "type": "CALL"
     },
     {
+      "endColumn": 55,
+      "endLine": 215,
+      "exported": false,
+      "file": "utils/asyncHelpers.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "name": "fetch",
+      "type": "CALL"
+    },
+    {
+      "endColumn": 8,
+      "endLine": 191,
+      "exported": false,
+      "file": "utils/asyncHelpers.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "name": "fetch",
+      "type": "CALL"
+    },
+    {
+      "endColumn": 55,
+      "endLine": 144,
       "exported": false,
       "file": "app.js",
       "isAwaited": false,
@@ -2708,6 +3032,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 10,
+      "endLine": 9,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -2716,6 +3042,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 13,
+      "endLine": 104,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -2724,14 +3052,8 @@
       "type": "CALL"
     },
     {
-      "exported": false,
-      "file": "utils/asyncHelpers.js",
-      "isAwaited": false,
-      "isInsideTry": false,
-      "name": "fn",
-      "type": "CALL"
-    },
-    {
+      "endColumn": 36,
+      "endLine": 308,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -2740,8 +3062,20 @@
       "type": "CALL"
     },
     {
+      "endColumn": 6,
+      "endLine": 59,
+      "exported": false,
+      "file": "utils/asyncHelpers.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "name": "fn",
+      "type": "CALL"
+    },
+    {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 35,
+      "endLine": 125,
       "exported": false,
       "file": "services/dataProcessor.js",
       "isAwaited": false,
@@ -2755,6 +3089,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 37,
+      "endLine": 159,
       "exported": false,
       "file": "services/dataProcessor.js",
       "isAwaited": false,
@@ -2768,6 +3104,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 44,
+      "endLine": 152,
       "exported": false,
       "file": "app.js",
       "isAwaited": false,
@@ -2781,58 +3119,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
-      "exported": false,
-      "file": "middleware/auth.js",
-      "isAwaited": false,
-      "isInsideTry": false,
-      "isMethodCall": true,
-      "method": "parse",
-      "name": "JSON.parse",
-      "object": "JSON",
-      "type": "CALL"
-    },
-    {
-      "computed": false,
-      "computedPropertyVar": null,
-      "exported": false,
-      "file": "middleware/auth.js",
-      "isAwaited": false,
-      "isInsideTry": false,
-      "isMethodCall": true,
-      "method": "parse",
-      "name": "JSON.parse",
-      "object": "JSON",
-      "type": "CALL"
-    },
-    {
-      "computed": false,
-      "computedPropertyVar": null,
-      "exported": false,
-      "file": "middleware/auth.js",
-      "isAwaited": false,
-      "isInsideTry": false,
-      "isMethodCall": true,
-      "method": "parse",
-      "name": "JSON.parse",
-      "object": "JSON",
-      "type": "CALL"
-    },
-    {
-      "computed": false,
-      "computedPropertyVar": null,
-      "exported": false,
-      "file": "middleware/auth.js",
-      "isAwaited": false,
-      "isInsideTry": false,
-      "isMethodCall": true,
-      "method": "parse",
-      "name": "JSON.parse",
-      "object": "JSON",
-      "type": "CALL"
-    },
-    {
-      "computed": false,
-      "computedPropertyVar": null,
+      "endColumn": 47,
+      "endLine": 191,
       "exported": false,
       "file": "middleware/auth.js",
       "isAwaited": false,
@@ -2846,6 +3134,38 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 49,
+      "endLine": 168,
+      "exported": false,
+      "file": "middleware/auth.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "parse",
+      "name": "JSON.parse",
+      "object": "JSON",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "endColumn": 53,
+      "endLine": 142,
+      "exported": false,
+      "file": "middleware/auth.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "parse",
+      "name": "JSON.parse",
+      "object": "JSON",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "endColumn": 61,
+      "endLine": 272,
       "exported": false,
       "file": "middleware/auth.js",
       "isAwaited": false,
@@ -2859,6 +3179,38 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 63,
+      "endLine": 220,
+      "exported": false,
+      "file": "middleware/auth.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "parse",
+      "name": "JSON.parse",
+      "object": "JSON",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "endColumn": 63,
+      "endLine": 248,
+      "exported": false,
+      "file": "middleware/auth.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "parse",
+      "name": "JSON.parse",
+      "object": "JSON",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "endColumn": 62,
+      "endLine": 120,
       "exported": false,
       "file": "routes/api.js",
       "isAwaited": false,
@@ -2872,6 +3224,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 76,
+      "endLine": 184,
       "exported": false,
       "file": "app.js",
       "isAwaited": false,
@@ -2885,6 +3239,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 62,
+      "endLine": 327,
       "exported": false,
       "file": "middleware/auth.js",
       "isAwaited": false,
@@ -2898,6 +3254,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 10,
+      "endLine": 50,
       "exported": false,
       "file": "routes/api.js",
       "isAwaited": false,
@@ -2911,6 +3269,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 59,
+      "endLine": 234,
       "exported": false,
       "file": "routes/api.js",
       "isAwaited": false,
@@ -2924,6 +3284,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 56,
+      "endLine": 222,
       "exported": false,
       "file": "services/dataProcessor.js",
       "isAwaited": false,
@@ -2937,6 +3299,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 57,
+      "endLine": 132,
       "exported": false,
       "file": "services/dataProcessor.js",
       "isAwaited": false,
@@ -2950,6 +3314,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 57,
+      "endLine": 91,
       "exported": false,
       "file": "services/dataProcessor.js",
       "isAwaited": false,
@@ -2963,6 +3329,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 68,
+      "endLine": 182,
       "exported": false,
       "file": "services/dataProcessor.js",
       "isAwaited": false,
@@ -2976,6 +3344,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 38,
+      "endLine": 190,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -2989,6 +3359,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 5,
+      "endLine": 76,
       "exported": false,
       "file": "models/User.js",
       "isAwaited": false,
@@ -3002,6 +3374,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 4,
+      "endLine": 147,
       "exported": false,
       "file": "middleware/auth.js",
       "isAwaited": false,
@@ -3015,6 +3389,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 4,
+      "endLine": 37,
       "exported": false,
       "file": "middleware/auth.js",
       "isAwaited": false,
@@ -3028,6 +3404,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 6,
+      "endLine": 352,
       "exported": false,
       "file": "middleware/auth.js",
       "isAwaited": false,
@@ -3041,6 +3419,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 6,
+      "endLine": 49,
       "exported": false,
       "file": "middleware/auth.js",
       "isAwaited": false,
@@ -3054,6 +3434,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 8,
+      "endLine": 82,
       "exported": false,
       "file": "middleware/auth.js",
       "isAwaited": false,
@@ -3065,6 +3447,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 29,
+      "endLine": 200,
       "exported": false,
       "file": "app.js",
       "isAwaited": false,
@@ -3075,6 +3459,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 25,
+      "endLine": 312,
       "exported": false,
       "file": "routes/api.js",
       "isAwaited": false,
@@ -3086,6 +3472,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 26,
+      "endLine": 11,
       "exported": false,
       "file": "services/dataProcessor.js",
       "isNew": true,
@@ -3095,6 +3483,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 65,
+      "endLine": 355,
       "exported": false,
       "file": "middleware/auth.js",
       "isAwaited": false,
@@ -3108,6 +3498,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 56,
+      "endLine": 18,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -3121,6 +3513,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 6,
+      "endLine": 31,
       "exported": false,
       "file": "app.js",
       "isAwaited": false,
@@ -3134,6 +3528,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 6,
+      "endLine": 67,
       "exported": false,
       "file": "app.js",
       "isAwaited": false,
@@ -3145,6 +3541,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 4,
+      "endLine": 276,
       "exported": false,
       "file": "app.js",
       "isMethodCall": true,
@@ -3154,6 +3552,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 25,
+      "endLine": 114,
       "exported": false,
       "file": "app.js",
       "isMethodCall": true,
@@ -3163,6 +3563,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 44,
+      "endLine": 170,
       "exported": false,
       "file": "app.js",
       "isMethodCall": true,
@@ -3172,6 +3574,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 46,
+      "endLine": 177,
       "exported": false,
       "file": "app.js",
       "isMethodCall": true,
@@ -3181,6 +3585,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 48,
+      "endLine": 125,
       "exported": false,
       "file": "app.js",
       "isMethodCall": true,
@@ -3190,6 +3596,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 51,
+      "endLine": 73,
       "exported": false,
       "file": "app.js",
       "isMethodCall": true,
@@ -3199,6 +3607,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 54,
+      "endLine": 126,
       "exported": false,
       "file": "app.js",
       "isMethodCall": true,
@@ -3208,6 +3618,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 58,
+      "endLine": 76,
       "exported": false,
       "file": "app.js",
       "isMethodCall": true,
@@ -3217,6 +3629,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 62,
+      "endLine": 79,
       "exported": false,
       "file": "app.js",
       "isMethodCall": true,
@@ -3226,6 +3640,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 36,
+      "endLine": 87,
       "exported": false,
       "file": "models/User.js",
       "isMethodCall": true,
@@ -3235,6 +3651,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 46,
+      "endLine": 109,
       "exported": false,
       "file": "models/User.js",
       "isMethodCall": true,
@@ -3244,6 +3662,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 48,
+      "endLine": 197,
       "exported": false,
       "file": "models/User.js",
       "isMethodCall": true,
@@ -3253,6 +3673,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 49,
+      "endLine": 115,
       "exported": false,
       "file": "models/User.js",
       "isMethodCall": true,
@@ -3262,6 +3684,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 52,
+      "endLine": 112,
       "exported": false,
       "file": "models/User.js",
       "isMethodCall": true,
@@ -3271,6 +3695,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 53,
+      "endLine": 160,
       "exported": false,
       "file": "models/User.js",
       "isMethodCall": true,
@@ -3280,6 +3706,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 28,
+      "endLine": 101,
       "exported": false,
       "file": "routes/api.js",
       "isMethodCall": true,
@@ -3289,6 +3717,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 31,
+      "endLine": 110,
       "exported": false,
       "file": "routes/api.js",
       "isMethodCall": true,
@@ -3298,6 +3728,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 31,
+      "endLine": 221,
       "exported": false,
       "file": "routes/api.js",
       "isMethodCall": true,
@@ -3307,6 +3739,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 33,
+      "endLine": 160,
       "exported": false,
       "file": "routes/api.js",
       "isMethodCall": true,
@@ -3316,6 +3750,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 34,
+      "endLine": 125,
       "exported": false,
       "file": "routes/api.js",
       "isMethodCall": true,
@@ -3325,6 +3761,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 36,
+      "endLine": 175,
       "exported": false,
       "file": "routes/api.js",
       "isMethodCall": true,
@@ -3334,6 +3772,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 46,
+      "endLine": 259,
       "exported": false,
       "file": "routes/api.js",
       "isMethodCall": true,
@@ -3343,6 +3783,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 48,
+      "endLine": 205,
       "exported": false,
       "file": "routes/api.js",
       "isMethodCall": true,
@@ -3352,6 +3794,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 50,
+      "endLine": 264,
       "exported": false,
       "file": "routes/api.js",
       "isMethodCall": true,
@@ -3361,6 +3805,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 51,
+      "endLine": 37,
       "exported": false,
       "file": "routes/api.js",
       "isMethodCall": true,
@@ -3370,6 +3816,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 54,
+      "endLine": 206,
       "exported": false,
       "file": "routes/api.js",
       "isMethodCall": true,
@@ -3379,6 +3827,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 55,
+      "endLine": 268,
       "exported": false,
       "file": "routes/api.js",
       "isMethodCall": true,
@@ -3388,6 +3838,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 58,
+      "endLine": 62,
       "exported": false,
       "file": "routes/api.js",
       "isMethodCall": true,
@@ -3397,6 +3849,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 60,
+      "endLine": 272,
       "exported": false,
       "file": "routes/api.js",
       "isMethodCall": true,
@@ -3406,6 +3860,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 27,
+      "endLine": 68,
       "exported": false,
       "file": "services/dataProcessor.js",
       "isMethodCall": true,
@@ -3415,6 +3871,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 28,
+      "endLine": 248,
       "exported": false,
       "file": "services/dataProcessor.js",
       "isMethodCall": true,
@@ -3424,6 +3882,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 28,
+      "endLine": 47,
       "exported": false,
       "file": "services/dataProcessor.js",
       "isMethodCall": true,
@@ -3433,6 +3893,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 35,
+      "endLine": 218,
       "exported": false,
       "file": "services/dataProcessor.js",
       "isMethodCall": true,
@@ -3442,6 +3904,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 36,
+      "endLine": 229,
       "exported": false,
       "file": "services/dataProcessor.js",
       "isMethodCall": true,
@@ -3451,6 +3915,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 37,
+      "endLine": 178,
       "exported": false,
       "file": "services/dataProcessor.js",
       "isMethodCall": true,
@@ -3460,6 +3926,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 41,
+      "endLine": 281,
       "exported": false,
       "file": "services/dataProcessor.js",
       "isMethodCall": true,
@@ -3469,6 +3937,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 59,
+      "endLine": 129,
       "exported": false,
       "file": "services/dataProcessor.js",
       "isMethodCall": true,
@@ -3478,6 +3948,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 59,
+      "endLine": 349,
       "exported": false,
       "file": "services/dataProcessor.js",
       "isMethodCall": true,
@@ -3489,6 +3961,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 54,
+      "endLine": 226,
       "exported": false,
       "file": "models/User.js",
       "method": "model",
@@ -3497,6 +3971,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 2,
+      "endLine": 19,
       "exported": false,
       "file": "models/User.js",
       "isNew": true,
@@ -3508,6 +3984,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 6,
+      "endLine": 84,
       "exported": false,
       "file": "routes/api.js",
       "isAwaited": false,
@@ -3519,62 +3997,8 @@
       "type": "CALL"
     },
     {
-      "exported": false,
-      "file": "middleware/auth.js",
-      "isAwaited": false,
-      "isInsideTry": false,
-      "name": "next",
-      "type": "CALL"
-    },
-    {
-      "exported": false,
-      "file": "middleware/auth.js",
-      "isAwaited": false,
-      "isInsideTry": false,
-      "name": "next",
-      "type": "CALL"
-    },
-    {
-      "exported": false,
-      "file": "middleware/auth.js",
-      "isAwaited": false,
-      "isInsideTry": false,
-      "name": "next",
-      "type": "CALL"
-    },
-    {
-      "exported": false,
-      "file": "middleware/auth.js",
-      "isAwaited": false,
-      "isInsideTry": false,
-      "name": "next",
-      "type": "CALL"
-    },
-    {
-      "exported": false,
-      "file": "middleware/auth.js",
-      "isAwaited": false,
-      "isInsideTry": false,
-      "name": "next",
-      "type": "CALL"
-    },
-    {
-      "exported": false,
-      "file": "middleware/auth.js",
-      "isAwaited": false,
-      "isInsideTry": false,
-      "name": "next",
-      "type": "CALL"
-    },
-    {
-      "exported": false,
-      "file": "middleware/auth.js",
-      "isAwaited": false,
-      "isInsideTry": false,
-      "name": "next",
-      "type": "CALL"
-    },
-    {
+      "endColumn": 10,
+      "endLine": 193,
       "exported": false,
       "file": "middleware/auth.js",
       "isAwaited": false,
@@ -3583,6 +4007,18 @@
       "type": "CALL"
     },
     {
+      "endColumn": 12,
+      "endLine": 169,
+      "exported": false,
+      "file": "middleware/auth.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "name": "next",
+      "type": "CALL"
+    },
+    {
+      "endColumn": 12,
+      "endLine": 274,
       "exported": false,
       "file": "middleware/auth.js",
       "isAwaited": false,
@@ -3591,6 +4027,68 @@
       "type": "CALL"
     },
     {
+      "endColumn": 14,
+      "endLine": 221,
+      "exported": false,
+      "file": "middleware/auth.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "name": "next",
+      "type": "CALL"
+    },
+    {
+      "endColumn": 14,
+      "endLine": 249,
+      "exported": false,
+      "file": "middleware/auth.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "name": "next",
+      "type": "CALL"
+    },
+    {
+      "endColumn": 14,
+      "endLine": 305,
+      "exported": false,
+      "file": "middleware/auth.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "name": "next",
+      "type": "CALL"
+    },
+    {
+      "endColumn": 14,
+      "endLine": 309,
+      "exported": false,
+      "file": "middleware/auth.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "name": "next",
+      "type": "CALL"
+    },
+    {
+      "endColumn": 16,
+      "endLine": 143,
+      "exported": false,
+      "file": "middleware/auth.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "name": "next",
+      "type": "CALL"
+    },
+    {
+      "endColumn": 19,
+      "endLine": 290,
+      "exported": false,
+      "file": "middleware/auth.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "name": "next",
+      "type": "CALL"
+    },
+    {
+      "endColumn": 10,
+      "endLine": 205,
       "exported": false,
       "file": "models/User.js",
       "isAwaited": false,
@@ -3599,6 +4097,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 12,
+      "endLine": 187,
       "exported": false,
       "file": "models/User.js",
       "isAwaited": false,
@@ -3607,6 +4107,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 17,
+      "endLine": 176,
       "exported": false,
       "file": "models/User.js",
       "isAwaited": false,
@@ -3615,6 +4117,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 29,
+      "endLine": 181,
       "exported": false,
       "file": "models/User.js",
       "isAwaited": false,
@@ -3623,6 +4127,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 31,
+      "endLine": 184,
       "exported": false,
       "file": "models/User.js",
       "isAwaited": false,
@@ -3631,6 +4137,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 45,
+      "endLine": 293,
       "exported": false,
       "file": "middleware/auth.js",
       "isAwaited": false,
@@ -3641,6 +4149,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 8,
+      "endLine": 228,
       "exported": false,
       "file": "routes/api.js",
       "isAwaited": false,
@@ -3654,6 +4164,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 17,
+      "endLine": 281,
       "exported": false,
       "file": "app.js",
       "isAwaited": false,
@@ -3667,6 +4179,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 21,
+      "endLine": 274,
       "exported": false,
       "file": "app.js",
       "isAwaited": false,
@@ -3678,6 +4192,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 21,
+      "endLine": 360,
       "exported": false,
       "file": "services/dataProcessor.js",
       "isAwaited": false,
@@ -3686,6 +4202,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 40,
+      "endLine": 355,
       "exported": false,
       "file": "services/dataProcessor.js",
       "isAwaited": false,
@@ -3694,6 +4212,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 49,
+      "endLine": 137,
       "exported": false,
       "file": "app.js",
       "isAwaited": false,
@@ -3702,6 +4222,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 28,
+      "endLine": 166,
       "exported": false,
       "file": "services/dataProcessor.js",
       "isAwaited": false,
@@ -3710,6 +4232,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 40,
+      "endLine": 170,
       "exported": false,
       "file": "services/dataProcessor.js",
       "isAwaited": false,
@@ -3718,6 +4242,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 17,
+      "endLine": 149,
       "exported": false,
       "file": "services/dataProcessor.js",
       "isAwaited": false,
@@ -3726,6 +4252,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 23,
+      "endLine": 144,
       "exported": false,
       "file": "services/dataProcessor.js",
       "isAwaited": false,
@@ -3734,6 +4262,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 15,
+      "endLine": 99,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -3742,6 +4272,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 21,
+      "endLine": 92,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -3750,6 +4282,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 35,
+      "endLine": 89,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -3760,6 +4294,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 32,
+      "endLine": 132,
       "exported": false,
       "file": "app.js",
       "isAwaited": true,
@@ -3773,6 +4309,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 24,
+      "endLine": 322,
       "exported": false,
       "file": "services/dataProcessor.js",
       "isAwaited": false,
@@ -3786,6 +4324,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 32,
+      "endLine": 312,
       "exported": false,
       "file": "services/dataProcessor.js",
       "isAwaited": true,
@@ -3800,6 +4340,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 53,
+      "endLine": 324,
       "exported": false,
       "file": "services/dataProcessor.js",
       "isAwaited": false,
@@ -3813,6 +4355,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 55,
+      "endLine": 134,
       "exported": false,
       "file": "app.js",
       "isAwaited": true,
@@ -3824,6 +4368,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 56,
+      "endLine": 217,
       "exported": false,
       "file": "app.js",
       "isAwaited": true,
@@ -3832,6 +4378,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 4,
+      "endLine": 266,
       "exported": false,
       "file": "app.js",
       "isNew": true,
@@ -3839,6 +4387,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 4,
+      "endLine": 353,
       "exported": false,
       "file": "middleware/auth.js",
       "isNew": true,
@@ -3846,6 +4396,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 4,
+      "endLine": 50,
       "exported": false,
       "file": "middleware/auth.js",
       "isNew": true,
@@ -3853,6 +4405,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 6,
+      "endLine": 83,
       "exported": false,
       "file": "middleware/auth.js",
       "isNew": true,
@@ -3860,6 +4414,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 4,
+      "endLine": 77,
       "exported": false,
       "file": "models/User.js",
       "isNew": true,
@@ -3867,6 +4423,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 6,
+      "endLine": 175,
       "exported": false,
       "file": "services/dataProcessor.js",
       "isNew": true,
@@ -3874,6 +4432,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 4,
+      "endLine": 28,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isNew": true,
@@ -3881,6 +4441,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 4,
+      "endLine": 355,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isNew": true,
@@ -3888,6 +4450,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 4,
+      "endLine": 47,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isNew": true,
@@ -3895,6 +4459,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 4,
+      "endLine": 60,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isNew": true,
@@ -3902,6 +4468,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 6,
+      "endLine": 244,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isNew": true,
@@ -3909,6 +4477,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 6,
+      "endLine": 318,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isNew": true,
@@ -3916,6 +4486,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 8,
+      "endLine": 279,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isNew": true,
@@ -3925,6 +4497,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 6,
+      "endLine": 128,
       "exported": false,
       "file": "app.js",
       "isAwaited": true,
@@ -3938,6 +4512,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 4,
+      "endLine": 117,
       "exported": false,
       "file": "models/User.js",
       "isAwaited": true,
@@ -3951,6 +4527,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 6,
+      "endLine": 207,
       "exported": false,
       "file": "routes/api.js",
       "isAwaited": true,
@@ -3964,6 +4542,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 30,
+      "endLine": 257,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -3977,6 +4557,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 8,
+      "endLine": 181,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -3990,6 +4572,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 24,
+      "endLine": 73,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -4003,6 +4587,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 27,
+      "endLine": 273,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -4016,6 +4602,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 31,
+      "endLine": 341,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -4029,6 +4617,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 32,
+      "endLine": 172,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -4042,6 +4632,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 33,
+      "endLine": 117,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -4055,6 +4647,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 36,
+      "endLine": 89,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -4068,6 +4662,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 39,
+      "endLine": 270,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -4081,6 +4677,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 41,
+      "endLine": 122,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -4094,6 +4692,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 49,
+      "endLine": 127,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -4107,6 +4707,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 8,
+      "endLine": 42,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -4118,6 +4720,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 37,
+      "endLine": 250,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -4128,6 +4732,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 26,
+      "endLine": 254,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -4139,6 +4745,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 54,
+      "endLine": 283,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -4149,6 +4757,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 25,
+      "endLine": 18,
       "exported": false,
       "file": "services/dataProcessor.js",
       "isAwaited": true,
@@ -4162,6 +4772,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 10,
+      "endLine": 189,
       "exported": false,
       "file": "routes/api.js",
       "isAwaited": false,
@@ -4175,6 +4787,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 18,
+      "endLine": 281,
       "exported": false,
       "file": "routes/api.js",
       "isAwaited": false,
@@ -4188,6 +4802,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 38,
+      "endLine": 302,
       "exported": false,
       "file": "middleware/auth.js",
       "isAwaited": false,
@@ -4201,6 +4817,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 8,
+      "endLine": 338,
       "exported": false,
       "file": "middleware/auth.js",
       "isAwaited": false,
@@ -4214,6 +4832,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 10,
+      "endLine": 144,
       "exported": false,
       "file": "middleware/auth.js",
       "isAwaited": false,
@@ -4227,6 +4847,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 4,
+      "endLine": 311,
       "exported": false,
       "file": "middleware/auth.js",
       "isAwaited": false,
@@ -4240,6 +4862,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 42,
+      "endLine": 61,
       "exported": false,
       "file": "middleware/auth.js",
       "isAwaited": false,
@@ -4253,6 +4877,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 45,
+      "endLine": 160,
       "exported": false,
       "file": "middleware/auth.js",
       "isAwaited": false,
@@ -4266,6 +4892,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 51,
+      "endLine": 242,
       "exported": false,
       "file": "middleware/auth.js",
       "isAwaited": false,
@@ -4279,45 +4907,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
-      "exported": false,
-      "file": "middleware/auth.js",
-      "isAwaited": false,
-      "isInsideTry": false,
-      "isMethodCall": true,
-      "method": "get",
-      "name": "redis.get",
-      "object": "redis",
-      "type": "CALL"
-    },
-    {
-      "computed": false,
-      "computedPropertyVar": null,
-      "exported": false,
-      "file": "middleware/auth.js",
-      "isAwaited": false,
-      "isInsideTry": false,
-      "isMethodCall": true,
-      "method": "get",
-      "name": "redis.get",
-      "object": "redis",
-      "type": "CALL"
-    },
-    {
-      "computed": false,
-      "computedPropertyVar": null,
-      "exported": false,
-      "file": "middleware/auth.js",
-      "isAwaited": false,
-      "isInsideTry": false,
-      "isMethodCall": true,
-      "method": "get",
-      "name": "redis.get",
-      "object": "redis",
-      "type": "CALL"
-    },
-    {
-      "computed": false,
-      "computedPropertyVar": null,
+      "endColumn": 58,
+      "endLine": 187,
       "exported": false,
       "file": "middleware/auth.js",
       "isAwaited": true,
@@ -4331,6 +4922,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 61,
+      "endLine": 91,
       "exported": false,
       "file": "middleware/auth.js",
       "isAwaited": true,
@@ -4344,6 +4937,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 68,
+      "endLine": 271,
       "exported": false,
       "file": "middleware/auth.js",
       "isAwaited": true,
@@ -4357,6 +4952,53 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 8,
+      "endLine": 145,
+      "exported": false,
+      "file": "middleware/auth.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "get",
+      "name": "redis.get",
+      "object": "redis",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "endColumn": 8,
+      "endLine": 222,
+      "exported": false,
+      "file": "middleware/auth.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "get",
+      "name": "redis.get",
+      "object": "redis",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "endColumn": 8,
+      "endLine": 35,
+      "exported": false,
+      "file": "middleware/auth.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "get",
+      "name": "redis.get",
+      "object": "redis",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "endColumn": 46,
+      "endLine": 118,
       "exported": false,
       "file": "routes/api.js",
       "isAwaited": false,
@@ -4370,6 +5012,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 19,
+      "endLine": 300,
       "exported": false,
       "file": "middleware/auth.js",
       "isAwaited": false,
@@ -4383,6 +5027,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 6,
+      "endLine": 339,
       "exported": false,
       "file": "middleware/auth.js",
       "isAwaited": false,
@@ -4396,6 +5042,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 67,
+      "endLine": 356,
       "exported": false,
       "file": "middleware/auth.js",
       "isAwaited": false,
@@ -4409,6 +5057,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 10,
+      "endLine": 82,
       "exported": false,
       "file": "routes/api.js",
       "isAwaited": false,
@@ -4422,6 +5072,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 5,
+      "endLine": 237,
       "exported": false,
       "file": "routes/api.js",
       "isAwaited": true,
@@ -4435,6 +5087,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 10,
+      "endLine": 239,
       "exported": false,
       "file": "services/dataProcessor.js",
       "isAwaited": false,
@@ -4448,6 +5102,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 12,
+      "endLine": 137,
       "exported": false,
       "file": "services/dataProcessor.js",
       "isAwaited": false,
@@ -4461,6 +5117,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 69,
+      "endLine": 182,
       "exported": false,
       "file": "services/dataProcessor.js",
       "isAwaited": false,
@@ -4474,6 +5132,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 70,
+      "endLine": 91,
       "exported": false,
       "file": "services/dataProcessor.js",
       "isAwaited": true,
@@ -4488,6 +5148,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 4,
+      "endLine": 68,
       "exported": false,
       "file": "app.js",
       "isAwaited": false,
@@ -4501,32 +5163,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
-      "exported": false,
-      "file": "app.js",
-      "isAwaited": false,
-      "isInsideTry": false,
-      "isMethodCall": true,
-      "method": "get",
-      "name": "redisClient.get",
-      "object": "redisClient",
-      "type": "CALL"
-    },
-    {
-      "computed": false,
-      "computedPropertyVar": null,
-      "exported": false,
-      "file": "app.js",
-      "isAwaited": false,
-      "isInsideTry": false,
-      "isMethodCall": true,
-      "method": "get",
-      "name": "redisClient.get",
-      "object": "redisClient",
-      "type": "CALL"
-    },
-    {
-      "computed": false,
-      "computedPropertyVar": null,
+      "endColumn": 43,
+      "endLine": 127,
       "exported": false,
       "file": "app.js",
       "isAwaited": false,
@@ -4540,6 +5178,38 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 60,
+      "endLine": 82,
+      "exported": false,
+      "file": "app.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "get",
+      "name": "redisClient.get",
+      "object": "redisClient",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "endColumn": 8,
+      "endLine": 66,
+      "exported": false,
+      "file": "app.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "get",
+      "name": "redisClient.get",
+      "object": "redisClient",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "endColumn": 6,
+      "endLine": 275,
       "exported": false,
       "file": "app.js",
       "isAwaited": false,
@@ -4553,6 +5223,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 12,
+      "endLine": 62,
       "exported": false,
       "file": "app.js",
       "isAwaited": false,
@@ -4566,6 +5238,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 8,
+      "endLine": 193,
       "exported": false,
       "file": "app.js",
       "isAwaited": false,
@@ -4577,6 +5251,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 19,
+      "endLine": 249,
       "exported": false,
       "file": "app.js",
       "isAwaited": false,
@@ -4585,6 +5261,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 28,
+      "endLine": 80,
       "exported": false,
       "file": "middleware/auth.js",
       "isAwaited": false,
@@ -4593,6 +5271,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 42,
+      "endLine": 348,
       "exported": false,
       "file": "middleware/auth.js",
       "isAwaited": false,
@@ -4601,6 +5281,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 42,
+      "endLine": 45,
       "exported": false,
       "file": "middleware/auth.js",
       "isAwaited": false,
@@ -4609,6 +5291,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 21,
+      "endLine": 71,
       "exported": false,
       "file": "models/User.js",
       "isAwaited": false,
@@ -4617,6 +5301,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 19,
+      "endLine": 173,
       "exported": false,
       "file": "services/dataProcessor.js",
       "isAwaited": false,
@@ -4625,6 +5311,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 19,
+      "endLine": 45,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -4633,6 +5321,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 19,
+      "endLine": 55,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -4641,6 +5331,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 21,
+      "endLine": 315,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -4649,6 +5341,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 23,
+      "endLine": 349,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -4657,6 +5351,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 67,
+      "endLine": 35,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -4665,6 +5361,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 91,
+      "endLine": 15,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -4675,6 +5373,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 10,
+      "endLine": 192,
       "exported": false,
       "file": "app.js",
       "isAwaited": false,
@@ -4688,19 +5388,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
-      "exported": false,
-      "file": "app.js",
-      "isAwaited": false,
-      "isInsideTry": false,
-      "isMethodCall": true,
-      "method": "json",
-      "name": "res.json",
-      "object": "res",
-      "type": "CALL"
-    },
-    {
-      "computed": false,
-      "computedPropertyVar": null,
+      "endColumn": 18,
+      "endLine": 218,
       "exported": false,
       "file": "app.js",
       "isAwaited": false,
@@ -4714,6 +5403,23 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 33,
+      "endLine": 207,
+      "exported": false,
+      "file": "app.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "json",
+      "name": "res.json",
+      "object": "res",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "endColumn": 16,
+      "endLine": 79,
       "exported": false,
       "file": "routes/api.js",
       "isAwaited": false,
@@ -4727,6 +5433,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 22,
+      "endLine": 315,
       "exported": false,
       "file": "routes/api.js",
       "isAwaited": false,
@@ -4740,6 +5448,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 25,
+      "endLine": 133,
       "exported": false,
       "file": "routes/api.js",
       "isAwaited": false,
@@ -4753,6 +5463,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 41,
+      "endLine": 183,
       "exported": false,
       "file": "routes/api.js",
       "isAwaited": false,
@@ -4766,45 +5478,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
-      "exported": false,
-      "file": "routes/api.js",
-      "isAwaited": false,
-      "isInsideTry": false,
-      "isMethodCall": true,
-      "method": "json",
-      "name": "res.json",
-      "object": "res",
-      "type": "CALL"
-    },
-    {
-      "computed": false,
-      "computedPropertyVar": null,
-      "exported": false,
-      "file": "routes/api.js",
-      "isAwaited": false,
-      "isInsideTry": false,
-      "isMethodCall": true,
-      "method": "json",
-      "name": "res.json",
-      "object": "res",
-      "type": "CALL"
-    },
-    {
-      "computed": false,
-      "computedPropertyVar": null,
-      "exported": false,
-      "file": "routes/api.js",
-      "isAwaited": false,
-      "isInsideTry": false,
-      "isMethodCall": true,
-      "method": "json",
-      "name": "res.json",
-      "object": "res",
-      "type": "CALL"
-    },
-    {
-      "computed": false,
-      "computedPropertyVar": null,
+      "endColumn": 6,
+      "endLine": 243,
       "exported": false,
       "file": "routes/api.js",
       "isAwaited": false,
@@ -4818,6 +5493,53 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 62,
+      "endLine": 290,
+      "exported": false,
+      "file": "routes/api.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "json",
+      "name": "res.json",
+      "object": "res",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "endColumn": 70,
+      "endLine": 187,
+      "exported": false,
+      "file": "routes/api.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "json",
+      "name": "res.json",
+      "object": "res",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "endColumn": 70,
+      "endLine": 280,
+      "exported": false,
+      "file": "routes/api.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "json",
+      "name": "res.json",
+      "object": "res",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "endColumn": 19,
+      "endLine": 220,
       "exported": false,
       "file": "app.js",
       "isAwaited": false,
@@ -4831,6 +5553,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 21,
+      "endLine": 210,
       "exported": false,
       "file": "app.js",
       "isAwaited": false,
@@ -4844,6 +5568,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 28,
+      "endLine": 174,
       "exported": false,
       "file": "app.js",
       "isAwaited": false,
@@ -4857,6 +5583,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 35,
+      "endLine": 171,
       "exported": false,
       "file": "app.js",
       "isAwaited": false,
@@ -4870,6 +5598,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 37,
+      "endLine": 182,
       "exported": false,
       "file": "app.js",
       "isAwaited": false,
@@ -4883,6 +5613,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 19,
+      "endLine": 195,
       "exported": false,
       "file": "middleware/auth.js",
       "isAwaited": false,
@@ -4896,6 +5628,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 21,
+      "endLine": 172,
       "exported": false,
       "file": "middleware/auth.js",
       "isAwaited": false,
@@ -4909,6 +5643,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 21,
+      "endLine": 276,
       "exported": false,
       "file": "middleware/auth.js",
       "isAwaited": false,
@@ -4922,6 +5658,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 23,
+      "endLine": 252,
       "exported": false,
       "file": "middleware/auth.js",
       "isAwaited": false,
@@ -4935,6 +5673,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 26,
+      "endLine": 109,
       "exported": false,
       "file": "middleware/auth.js",
       "isAwaited": false,
@@ -4948,6 +5688,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 26,
+      "endLine": 155,
       "exported": false,
       "file": "middleware/auth.js",
       "isAwaited": false,
@@ -4961,6 +5703,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 28,
+      "endLine": 115,
       "exported": false,
       "file": "middleware/auth.js",
       "isAwaited": false,
@@ -4974,110 +5718,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
-      "exported": false,
-      "file": "middleware/auth.js",
-      "isAwaited": false,
-      "isInsideTry": false,
-      "isMethodCall": true,
-      "method": "status",
-      "name": "res.status",
-      "object": "res",
-      "type": "CALL"
-    },
-    {
-      "computed": false,
-      "computedPropertyVar": null,
-      "exported": false,
-      "file": "middleware/auth.js",
-      "isAwaited": false,
-      "isInsideTry": false,
-      "isMethodCall": true,
-      "method": "status",
-      "name": "res.status",
-      "object": "res",
-      "type": "CALL"
-    },
-    {
-      "computed": false,
-      "computedPropertyVar": null,
-      "exported": false,
-      "file": "middleware/auth.js",
-      "isAwaited": false,
-      "isInsideTry": false,
-      "isMethodCall": true,
-      "method": "status",
-      "name": "res.status",
-      "object": "res",
-      "type": "CALL"
-    },
-    {
-      "computed": false,
-      "computedPropertyVar": null,
-      "exported": false,
-      "file": "middleware/auth.js",
-      "isAwaited": false,
-      "isInsideTry": false,
-      "isMethodCall": true,
-      "method": "status",
-      "name": "res.status",
-      "object": "res",
-      "type": "CALL"
-    },
-    {
-      "computed": false,
-      "computedPropertyVar": null,
-      "exported": false,
-      "file": "middleware/auth.js",
-      "isAwaited": false,
-      "isInsideTry": false,
-      "isMethodCall": true,
-      "method": "status",
-      "name": "res.status",
-      "object": "res",
-      "type": "CALL"
-    },
-    {
-      "computed": false,
-      "computedPropertyVar": null,
-      "exported": false,
-      "file": "middleware/auth.js",
-      "isAwaited": false,
-      "isInsideTry": false,
-      "isMethodCall": true,
-      "method": "status",
-      "name": "res.status",
-      "object": "res",
-      "type": "CALL"
-    },
-    {
-      "computed": false,
-      "computedPropertyVar": null,
-      "exported": false,
-      "file": "middleware/auth.js",
-      "isAwaited": false,
-      "isInsideTry": false,
-      "isMethodCall": true,
-      "method": "status",
-      "name": "res.status",
-      "object": "res",
-      "type": "CALL"
-    },
-    {
-      "computed": false,
-      "computedPropertyVar": null,
-      "exported": false,
-      "file": "middleware/auth.js",
-      "isAwaited": false,
-      "isInsideTry": false,
-      "isMethodCall": true,
-      "method": "status",
-      "name": "res.status",
-      "object": "res",
-      "type": "CALL"
-    },
-    {
-      "computed": false,
-      "computedPropertyVar": null,
+      "endColumn": 28,
+      "endLine": 182,
       "exported": false,
       "file": "middleware/auth.js",
       "isAwaited": false,
@@ -5091,6 +5733,113 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 28,
+      "endLine": 203,
+      "exported": false,
+      "file": "middleware/auth.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "status",
+      "name": "res.status",
+      "object": "res",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "endColumn": 28,
+      "endLine": 231,
+      "exported": false,
+      "file": "middleware/auth.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "status",
+      "name": "res.status",
+      "object": "res",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "endColumn": 28,
+      "endLine": 296,
+      "exported": false,
+      "file": "middleware/auth.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "status",
+      "name": "res.status",
+      "object": "res",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "endColumn": 30,
+      "endLine": 120,
+      "exported": false,
+      "file": "middleware/auth.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "status",
+      "name": "res.status",
+      "object": "res",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "endColumn": 30,
+      "endLine": 124,
+      "exported": false,
+      "file": "middleware/auth.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "status",
+      "name": "res.status",
+      "object": "res",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "endColumn": 30,
+      "endLine": 208,
+      "exported": false,
+      "file": "middleware/auth.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "status",
+      "name": "res.status",
+      "object": "res",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "endColumn": 30,
+      "endLine": 212,
+      "exported": false,
+      "file": "middleware/auth.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "status",
+      "name": "res.status",
+      "object": "res",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "endColumn": 30,
+      "endLine": 262,
       "exported": false,
       "file": "middleware/auth.js",
       "isAwaited": false,
@@ -5104,6 +5853,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 30,
+      "endLine": 268,
       "exported": false,
       "file": "middleware/auth.js",
       "isAwaited": false,
@@ -5117,6 +5868,23 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 32,
+      "endLine": 133,
+      "exported": false,
+      "file": "middleware/auth.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "status",
+      "name": "res.status",
+      "object": "res",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "endColumn": 19,
+      "endLine": 246,
       "exported": false,
       "file": "routes/api.js",
       "isAwaited": false,
@@ -5130,6 +5898,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 21,
+      "endLine": 137,
       "exported": false,
       "file": "routes/api.js",
       "isAwaited": false,
@@ -5143,6 +5913,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 23,
+      "endLine": 192,
       "exported": false,
       "file": "routes/api.js",
       "isAwaited": false,
@@ -5156,6 +5928,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 28,
+      "endLine": 149,
       "exported": false,
       "file": "routes/api.js",
       "isAwaited": false,
@@ -5169,6 +5943,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 28,
+      "endLine": 153,
       "exported": false,
       "file": "routes/api.js",
       "isAwaited": false,
@@ -5182,6 +5958,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 28,
+      "endLine": 17,
       "exported": false,
       "file": "routes/api.js",
       "isAwaited": false,
@@ -5195,6 +5973,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 28,
+      "endLine": 21,
       "exported": false,
       "file": "routes/api.js",
       "isAwaited": false,
@@ -5208,162 +5988,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
-      "exported": false,
-      "file": "routes/api.js",
-      "isAwaited": false,
-      "isInsideTry": false,
-      "isMethodCall": true,
-      "method": "status",
-      "name": "res.status",
-      "object": "res",
-      "type": "CALL"
-    },
-    {
-      "computed": false,
-      "computedPropertyVar": null,
-      "exported": false,
-      "file": "routes/api.js",
-      "isAwaited": false,
-      "isInsideTry": false,
-      "isMethodCall": true,
-      "method": "status",
-      "name": "res.status",
-      "object": "res",
-      "type": "CALL"
-    },
-    {
-      "computed": false,
-      "computedPropertyVar": null,
-      "exported": false,
-      "file": "routes/api.js",
-      "isAwaited": false,
-      "isInsideTry": false,
-      "isMethodCall": true,
-      "method": "status",
-      "name": "res.status",
-      "object": "res",
-      "type": "CALL"
-    },
-    {
-      "computed": false,
-      "computedPropertyVar": null,
-      "exported": false,
-      "file": "routes/api.js",
-      "isAwaited": false,
-      "isInsideTry": false,
-      "isMethodCall": true,
-      "method": "status",
-      "name": "res.status",
-      "object": "res",
-      "type": "CALL"
-    },
-    {
-      "computed": false,
-      "computedPropertyVar": null,
-      "exported": false,
-      "file": "routes/api.js",
-      "isAwaited": false,
-      "isInsideTry": false,
-      "isMethodCall": true,
-      "method": "status",
-      "name": "res.status",
-      "object": "res",
-      "type": "CALL"
-    },
-    {
-      "computed": false,
-      "computedPropertyVar": null,
-      "exported": false,
-      "file": "routes/api.js",
-      "isAwaited": false,
-      "isInsideTry": false,
-      "isMethodCall": true,
-      "method": "status",
-      "name": "res.status",
-      "object": "res",
-      "type": "CALL"
-    },
-    {
-      "computed": false,
-      "computedPropertyVar": null,
-      "exported": false,
-      "file": "routes/api.js",
-      "isAwaited": false,
-      "isInsideTry": false,
-      "isMethodCall": true,
-      "method": "status",
-      "name": "res.status",
-      "object": "res",
-      "type": "CALL"
-    },
-    {
-      "computed": false,
-      "computedPropertyVar": null,
-      "exported": false,
-      "file": "routes/api.js",
-      "isAwaited": false,
-      "isInsideTry": false,
-      "isMethodCall": true,
-      "method": "status",
-      "name": "res.status",
-      "object": "res",
-      "type": "CALL"
-    },
-    {
-      "computed": false,
-      "computedPropertyVar": null,
-      "exported": false,
-      "file": "routes/api.js",
-      "isAwaited": false,
-      "isInsideTry": false,
-      "isMethodCall": true,
-      "method": "status",
-      "name": "res.status",
-      "object": "res",
-      "type": "CALL"
-    },
-    {
-      "computed": false,
-      "computedPropertyVar": null,
-      "exported": false,
-      "file": "routes/api.js",
-      "isAwaited": false,
-      "isInsideTry": false,
-      "isMethodCall": true,
-      "method": "status",
-      "name": "res.status",
-      "object": "res",
-      "type": "CALL"
-    },
-    {
-      "computed": false,
-      "computedPropertyVar": null,
-      "exported": false,
-      "file": "routes/api.js",
-      "isAwaited": false,
-      "isInsideTry": false,
-      "isMethodCall": true,
-      "method": "status",
-      "name": "res.status",
-      "object": "res",
-      "type": "CALL"
-    },
-    {
-      "computed": false,
-      "computedPropertyVar": null,
-      "exported": false,
-      "file": "routes/api.js",
-      "isAwaited": false,
-      "isInsideTry": false,
-      "isMethodCall": true,
-      "method": "status",
-      "name": "res.status",
-      "object": "res",
-      "type": "CALL"
-    },
-    {
-      "computed": false,
-      "computedPropertyVar": null,
+      "endColumn": 28,
+      "endLine": 210,
       "exported": false,
       "file": "routes/api.js",
       "isAwaited": false,
@@ -5375,6 +6001,188 @@
       "type": "CALL"
     },
     {
+      "computed": false,
+      "computedPropertyVar": null,
+      "endColumn": 28,
+      "endLine": 301,
+      "exported": false,
+      "file": "routes/api.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "status",
+      "name": "res.status",
+      "object": "res",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "endColumn": 28,
+      "endLine": 305,
+      "exported": false,
+      "file": "routes/api.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "status",
+      "name": "res.status",
+      "object": "res",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "endColumn": 30,
+      "endLine": 33,
+      "exported": false,
+      "file": "routes/api.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "status",
+      "name": "res.status",
+      "object": "res",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "endColumn": 35,
+      "endLine": 255,
+      "exported": false,
+      "file": "routes/api.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "status",
+      "name": "res.status",
+      "object": "res",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "endColumn": 36,
+      "endLine": 58,
+      "exported": false,
+      "file": "routes/api.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "status",
+      "name": "res.status",
+      "object": "res",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "endColumn": 37,
+      "endLine": 256,
+      "exported": false,
+      "file": "routes/api.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "status",
+      "name": "res.status",
+      "object": "res",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "endColumn": 37,
+      "endLine": 260,
+      "exported": false,
+      "file": "routes/api.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "status",
+      "name": "res.status",
+      "object": "res",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "endColumn": 41,
+      "endLine": 265,
+      "exported": false,
+      "file": "routes/api.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "status",
+      "name": "res.status",
+      "object": "res",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "endColumn": 41,
+      "endLine": 289,
+      "exported": false,
+      "file": "routes/api.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "status",
+      "name": "res.status",
+      "object": "res",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "endColumn": 43,
+      "endLine": 269,
+      "exported": false,
+      "file": "routes/api.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "status",
+      "name": "res.status",
+      "object": "res",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "endColumn": 45,
+      "endLine": 273,
+      "exported": false,
+      "file": "routes/api.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "status",
+      "name": "res.status",
+      "object": "res",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "endColumn": 47,
+      "endLine": 277,
+      "exported": false,
+      "file": "routes/api.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "status",
+      "name": "res.status",
+      "object": "res",
+      "type": "CALL"
+    },
+    {
+      "endColumn": 27,
+      "endLine": 259,
       "exported": false,
       "file": "app.js",
       "isAwaited": false,
@@ -5383,6 +6191,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 24,
+      "endLine": 350,
       "exported": false,
       "file": "middleware/auth.js",
       "isAwaited": false,
@@ -5391,6 +6201,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 24,
+      "endLine": 47,
       "exported": false,
       "file": "middleware/auth.js",
       "isAwaited": false,
@@ -5399,6 +6211,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 29,
+      "endLine": 81,
       "exported": false,
       "file": "middleware/auth.js",
       "isAwaited": false,
@@ -5407,6 +6221,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 24,
+      "endLine": 73,
       "exported": false,
       "file": "models/User.js",
       "isAwaited": false,
@@ -5415,6 +6231,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 27,
+      "endLine": 171,
       "exported": false,
       "file": "services/dataProcessor.js",
       "isAwaited": false,
@@ -5423,6 +6241,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 22,
+      "endLine": 242,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -5431,6 +6251,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 23,
+      "endLine": 41,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -5439,6 +6261,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 23,
+      "endLine": 57,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -5447,22 +6271,8 @@
       "type": "CALL"
     },
     {
-      "exported": false,
-      "file": "utils/asyncHelpers.js",
-      "isAwaited": false,
-      "isInsideTry": false,
-      "name": "resolve",
-      "type": "CALL"
-    },
-    {
-      "exported": false,
-      "file": "utils/asyncHelpers.js",
-      "isAwaited": false,
-      "isInsideTry": false,
-      "name": "resolve",
-      "type": "CALL"
-    },
-    {
+      "endColumn": 27,
+      "endLine": 312,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -5471,8 +6281,30 @@
       "type": "CALL"
     },
     {
+      "endColumn": 28,
+      "endLine": 277,
+      "exported": false,
+      "file": "utils/asyncHelpers.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "name": "resolve",
+      "type": "CALL"
+    },
+    {
+      "endColumn": 31,
+      "endLine": 332,
+      "exported": false,
+      "file": "utils/asyncHelpers.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "name": "resolve",
+      "type": "CALL"
+    },
+    {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 32,
+      "endLine": 310,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -5486,6 +6318,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 24,
+      "endLine": 146,
       "exported": false,
       "file": "app.js",
       "isAwaited": false,
@@ -5499,6 +6333,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 25,
+      "endLine": 140,
       "exported": false,
       "file": "app.js",
       "isAwaited": false,
@@ -5512,6 +6348,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 24,
+      "endLine": 196,
       "exported": false,
       "file": "services/dataProcessor.js",
       "isAwaited": false,
@@ -5525,6 +6363,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 26,
+      "endLine": 260,
       "exported": false,
       "file": "services/dataProcessor.js",
       "isAwaited": false,
@@ -5538,45 +6378,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "isAwaited": false,
-      "isInsideTry": false,
-      "isMethodCall": true,
-      "method": "push",
-      "name": "results.push",
-      "object": "results",
-      "type": "CALL"
-    },
-    {
-      "computed": false,
-      "computedPropertyVar": null,
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "isAwaited": false,
-      "isInsideTry": false,
-      "isMethodCall": true,
-      "method": "push",
-      "name": "results.push",
-      "object": "results",
-      "type": "CALL"
-    },
-    {
-      "computed": false,
-      "computedPropertyVar": null,
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "isAwaited": false,
-      "isInsideTry": false,
-      "isMethodCall": true,
-      "method": "push",
-      "name": "results.push",
-      "object": "results",
-      "type": "CALL"
-    },
-    {
-      "computed": false,
-      "computedPropertyVar": null,
+      "endColumn": 28,
+      "endLine": 284,
       "exported": false,
       "file": "services/dataProcessor.js",
       "isAwaited": false,
@@ -5590,6 +6393,53 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 32,
+      "endLine": 140,
+      "exported": false,
+      "file": "services/dataProcessor.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "push",
+      "name": "results.push",
+      "object": "results",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "endColumn": 32,
+      "endLine": 165,
+      "exported": false,
+      "file": "services/dataProcessor.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "push",
+      "name": "results.push",
+      "object": "results",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "endColumn": 33,
+      "endLine": 110,
+      "exported": false,
+      "file": "services/dataProcessor.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "push",
+      "name": "results.push",
+      "object": "results",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "endColumn": 28,
+      "endLine": 91,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -5603,6 +6453,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 55,
+      "endLine": 259,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -5614,6 +6466,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 7,
+      "endLine": 204,
       "exported": false,
       "file": "app.js",
       "isAwaited": false,
@@ -5622,6 +6476,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 23,
+      "endLine": 7,
       "exported": false,
       "file": "routes/api.js",
       "name": "Router",
@@ -5630,6 +6486,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 2,
+      "endLine": 295,
       "exported": false,
       "file": "routes/api.js",
       "method": "delete",
@@ -5640,6 +6498,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 2,
+      "endLine": 139,
       "exported": false,
       "file": "routes/api.js",
       "method": "get",
@@ -5650,6 +6510,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 2,
+      "endLine": 248,
       "exported": false,
       "file": "routes/api.js",
       "method": "get",
@@ -5660,6 +6522,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 2,
+      "endLine": 317,
       "exported": false,
       "file": "routes/api.js",
       "method": "get",
@@ -5670,6 +6534,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 2,
+      "endLine": 86,
       "exported": false,
       "file": "routes/api.js",
       "method": "post",
@@ -5680,6 +6546,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 2,
+      "endLine": 195,
       "exported": false,
       "file": "routes/api.js",
       "method": "put",
@@ -5688,6 +6556,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 13,
+      "endLine": 354,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -5696,6 +6566,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 21,
+      "endLine": 346,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -5706,6 +6578,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 12,
+      "endLine": 81,
       "exported": false,
       "file": "routes/api.js",
       "isAwaited": false,
@@ -5719,6 +6593,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 10,
+      "endLine": 36,
       "exported": false,
       "file": "models/User.js",
       "isAwaited": false,
@@ -5732,6 +6608,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 8,
+      "endLine": 51,
       "exported": false,
       "file": "models/User.js",
       "isAwaited": false,
@@ -5745,6 +6623,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 48,
+      "endLine": 262,
       "exported": false,
       "file": "app.js",
       "isAwaited": false,
@@ -5756,6 +6636,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 10,
+      "endLine": 145,
       "exported": false,
       "file": "services/dataProcessor.js",
       "isAwaited": false,
@@ -5764,6 +6646,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 11,
+      "endLine": 165,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -5772,6 +6656,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 13,
+      "endLine": 164,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -5780,6 +6666,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 14,
+      "endLine": 278,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -5788,6 +6676,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 15,
+      "endLine": 163,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -5796,6 +6686,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 15,
+      "endLine": 317,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -5804,6 +6696,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 17,
+      "endLine": 162,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -5812,6 +6706,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 17,
+      "endLine": 243,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -5820,6 +6716,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 17,
+      "endLine": 36,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -5828,6 +6726,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 19,
+      "endLine": 23,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -5836,6 +6736,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 9,
+      "endLine": 166,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -5844,6 +6746,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 21,
+      "endLine": 68,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -5852,6 +6756,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 30,
+      "endLine": 341,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -5862,6 +6768,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 25,
+      "endLine": 73,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "isAwaited": false,
@@ -5873,6 +6781,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 38,
+      "endLine": 76,
       "exported": false,
       "file": "services/dataProcessor.js",
       "isMethodCall": true,
@@ -5882,6 +6792,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 34,
+      "endLine": 75,
       "exported": false,
       "file": "services/dataProcessor.js",
       "isMethodCall": true,
@@ -5891,6 +6803,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 41,
+      "endLine": 88,
       "exported": false,
       "file": "services/dataProcessor.js",
       "isMethodCall": true,
@@ -5902,6 +6816,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 54,
+      "endLine": 103,
       "exported": false,
       "file": "services/dataProcessor.js",
       "isAwaited": false,
@@ -5915,6 +6831,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 53,
+      "endLine": 135,
       "exported": false,
       "file": "models/User.js",
       "isAwaited": false,
@@ -5928,6 +6846,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 42,
+      "endLine": 130,
       "exported": false,
       "file": "models/User.js",
       "isAwaited": false,
@@ -5941,6 +6861,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 53,
+      "endLine": 255,
       "exported": false,
       "file": "services/dataProcessor.js",
       "isAwaited": false,
@@ -5954,6 +6876,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 26,
+      "endLine": 269,
       "exported": false,
       "file": "services/dataProcessor.js",
       "isAwaited": false,
@@ -5967,6 +6891,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 22,
+      "endLine": 37,
       "exported": false,
       "file": "app.js",
       "isAwaited": false,
@@ -5980,6 +6906,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 35,
+      "endLine": 268,
       "exported": false,
       "file": "services/dataProcessor.js",
       "isAwaited": false,
@@ -5993,6 +6921,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 46,
+      "endLine": 120,
       "exported": false,
       "file": "services/dataProcessor.js",
       "isAwaited": false,
@@ -6006,6 +6936,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 46,
+      "endLine": 208,
       "exported": false,
       "file": "services/dataProcessor.js",
       "isAwaited": false,
@@ -6019,6 +6951,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 48,
+      "endLine": 155,
       "exported": false,
       "file": "services/dataProcessor.js",
       "isAwaited": false,
@@ -6032,19 +6966,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "isAwaited": false,
-      "isInsideTry": false,
-      "isMethodCall": true,
-      "method": "processBatch",
-      "name": "this.processBatch",
-      "object": "this",
-      "type": "CALL"
-    },
-    {
-      "computed": false,
-      "computedPropertyVar": null,
+      "endColumn": 48,
+      "endLine": 275,
       "exported": false,
       "file": "services/dataProcessor.js",
       "isAwaited": false,
@@ -6058,6 +6981,23 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 51,
+      "endLine": 107,
+      "exported": false,
+      "file": "services/dataProcessor.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "processBatch",
+      "name": "this.processBatch",
+      "object": "this",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "endColumn": 60,
+      "endLine": 192,
       "exported": false,
       "file": "services/dataProcessor.js",
       "isAwaited": false,
@@ -6071,6 +7011,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 20,
+      "endLine": 84,
       "exported": false,
       "file": "models/User.js",
       "isAwaited": false,
@@ -6082,6 +7024,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 6,
+      "endLine": 29,
       "exported": false,
       "file": "routes/api.js",
       "isNew": true,
@@ -6089,6 +7033,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 32,
+      "endLine": 63,
       "exported": false,
       "file": "models/User.js",
       "isMethodCall": true,
@@ -6100,6 +7046,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 10,
+      "endLine": 291,
       "exported": false,
       "file": "routes/api.js",
       "isAwaited": false,
@@ -6113,6 +7061,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 16,
+      "endLine": 282,
       "exported": false,
       "file": "routes/api.js",
       "isAwaited": false,
@@ -6126,6 +7076,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 4,
+      "endLine": 85,
       "exported": false,
       "file": "routes/api.js",
       "isAwaited": false,
@@ -6139,6 +7091,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 31,
+      "endLine": 234,
       "exported": false,
       "file": "middleware/auth.js",
       "isAwaited": false,
@@ -6152,6 +7106,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 37,
+      "endLine": 52,
       "exported": false,
       "file": "middleware/auth.js",
       "isAwaited": false,
@@ -6165,6 +7121,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 4,
+      "endLine": 340,
       "exported": false,
       "file": "middleware/auth.js",
       "isAwaited": false,
@@ -6178,45 +7136,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
-      "exported": false,
-      "file": "middleware/auth.js",
-      "isAwaited": false,
-      "isInsideTry": false,
-      "isMethodCall": true,
-      "method": "findById",
-      "name": "User.findById",
-      "object": "User",
-      "type": "CALL"
-    },
-    {
-      "computed": false,
-      "computedPropertyVar": null,
-      "exported": false,
-      "file": "middleware/auth.js",
-      "isAwaited": false,
-      "isInsideTry": false,
-      "isMethodCall": true,
-      "method": "findById",
-      "name": "User.findById",
-      "object": "User",
-      "type": "CALL"
-    },
-    {
-      "computed": false,
-      "computedPropertyVar": null,
-      "exported": false,
-      "file": "middleware/auth.js",
-      "isAwaited": false,
-      "isInsideTry": false,
-      "isMethodCall": true,
-      "method": "findById",
-      "name": "User.findById",
-      "object": "User",
-      "type": "CALL"
-    },
-    {
-      "computed": false,
-      "computedPropertyVar": null,
+      "endColumn": 49,
+      "endLine": 85,
       "exported": false,
       "file": "middleware/auth.js",
       "isAwaited": true,
@@ -6230,6 +7151,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 52,
+      "endLine": 265,
       "exported": false,
       "file": "middleware/auth.js",
       "isAwaited": true,
@@ -6243,6 +7166,53 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 6,
+      "endLine": 146,
+      "exported": false,
+      "file": "middleware/auth.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "findById",
+      "name": "User.findById",
+      "object": "User",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "endColumn": 6,
+      "endLine": 223,
+      "exported": false,
+      "file": "middleware/auth.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "findById",
+      "name": "User.findById",
+      "object": "User",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "endColumn": 6,
+      "endLine": 36,
+      "exported": false,
+      "file": "middleware/auth.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "findById",
+      "name": "User.findById",
+      "object": "User",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "endColumn": 23,
+      "endLine": 92,
       "exported": false,
       "file": "routes/api.js",
       "isAwaited": false,
@@ -6256,45 +7226,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
-      "exported": false,
-      "file": "routes/api.js",
-      "isAwaited": false,
-      "isInsideTry": false,
-      "isMethodCall": true,
-      "method": "findById",
-      "name": "User.findById",
-      "object": "User",
-      "type": "CALL"
-    },
-    {
-      "computed": false,
-      "computedPropertyVar": null,
-      "exported": false,
-      "file": "routes/api.js",
-      "isAwaited": false,
-      "isInsideTry": false,
-      "isMethodCall": true,
-      "method": "findById",
-      "name": "User.findById",
-      "object": "User",
-      "type": "CALL"
-    },
-    {
-      "computed": false,
-      "computedPropertyVar": null,
-      "exported": false,
-      "file": "routes/api.js",
-      "isAwaited": false,
-      "isInsideTry": false,
-      "isMethodCall": true,
-      "method": "findById",
-      "name": "User.findById",
-      "object": "User",
-      "type": "CALL"
-    },
-    {
-      "computed": false,
-      "computedPropertyVar": null,
+      "endColumn": 27,
+      "endLine": 204,
       "exported": false,
       "file": "routes/api.js",
       "isAwaited": false,
@@ -6308,6 +7241,53 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 4,
+      "endLine": 194,
+      "exported": false,
+      "file": "routes/api.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "findById",
+      "name": "User.findById",
+      "object": "User",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "endColumn": 4,
+      "endLine": 294,
+      "exported": false,
+      "file": "routes/api.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "findById",
+      "name": "User.findById",
+      "object": "User",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "endColumn": 4,
+      "endLine": 316,
+      "exported": false,
+      "file": "routes/api.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "findById",
+      "name": "User.findById",
+      "object": "User",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "endColumn": 46,
+      "endLine": 308,
       "exported": false,
       "file": "routes/api.js",
       "isAwaited": false,
@@ -6321,6 +7301,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 34,
+      "endLine": 97,
       "exported": false,
       "file": "routes/api.js",
       "isAwaited": false,
@@ -6334,6 +7316,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 47,
+      "endLine": 214,
       "exported": false,
       "file": "routes/api.js",
       "isAwaited": true,
@@ -6347,6 +7331,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 34,
+      "endLine": 175,
       "exported": false,
       "file": "models/User.js",
       "isAwaited": false,
@@ -6360,6 +7346,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 19,
+      "endLine": 157,
       "exported": false,
       "file": "models/User.js",
       "isAwaited": true,
@@ -6373,6 +7361,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 10,
+      "endLine": 337,
       "exported": false,
       "file": "middleware/auth.js",
       "isAwaited": false,
@@ -6386,6 +7376,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 26,
+      "endLine": 157,
       "exported": false,
       "file": "routes/api.js",
       "isAwaited": false,
@@ -6399,6 +7391,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 32,
+      "endLine": 215,
       "exported": false,
       "file": "routes/api.js",
       "isAwaited": true,
@@ -6412,6 +7406,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 57,
+      "endLine": 137,
       "exported": false,
       "file": "models/User.js",
       "isAwaited": false,
@@ -6425,6 +7421,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 2,
+      "endLine": 207,
       "exported": false,
       "file": "models/User.js",
       "method": "post",
@@ -6435,6 +7433,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 2,
+      "endLine": 190,
       "exported": false,
       "file": "models/User.js",
       "method": "pre",
@@ -6445,6 +7445,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 30,
+      "endLine": 210,
       "exported": false,
       "file": "models/User.js",
       "method": "virtual",
@@ -6453,6 +7455,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 59,
+      "endLine": 185,
       "exported": false,
       "file": "middleware/auth.js",
       "isAwaited": true,
@@ -6461,6 +7465,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 27,
+      "endLine": 158,
       "exported": false,
       "file": "middleware/auth.js",
       "isAwaited": false,
@@ -18753,6 +19759,8 @@
       "type": "PARAMETER"
     },
     {
+      "endColumn": 39,
+      "endLine": 80,
       "exported": false,
       "file": "app.js",
       "name": "_id",
@@ -18761,6 +19769,18 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 22,
+      "endLine": 321,
+      "exported": false,
+      "file": "middleware/auth.js",
+      "name": "_id",
+      "objectName": "user",
+      "semanticId": "middleware/auth.js->PROPERTY_ACCESS->user._id[in:refreshSession]",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "endColumn": 29,
+      "endLine": 118,
       "exported": false,
       "file": "middleware/auth.js",
       "name": "_id",
@@ -18769,14 +19789,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
-      "exported": false,
-      "file": "middleware/auth.js",
-      "name": "_id",
-      "objectName": "decoded",
-      "semanticId": "middleware/auth.js->PROPERTY_ACCESS->decoded._id[in:verifyTokenAsync]",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
+      "endColumn": 29,
+      "endLine": 16,
       "exported": false,
       "file": "middleware/auth.js",
       "name": "_id",
@@ -18785,14 +19799,28 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 30,
+      "endLine": 206,
       "exported": false,
       "file": "middleware/auth.js",
       "name": "_id",
-      "objectName": "decoded",
-      "semanticId": "middleware/auth.js->PROPERTY_ACCESS->decoded._id[in:verifyTokenPromise]",
+      "objectName": "req.user",
+      "semanticId": "middleware/auth.js->PROPERTY_ACCESS->req.user._id[in:requireRole]",
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 30,
+      "endLine": 234,
+      "exported": false,
+      "file": "middleware/auth.js",
+      "name": "_id",
+      "objectName": "req.user",
+      "semanticId": "middleware/auth.js->PROPERTY_ACCESS->req.user._id[in:requireRolePromise]",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "endColumn": 30,
+      "endLine": 283,
       "exported": false,
       "file": "middleware/auth.js",
       "name": "_id",
@@ -18802,38 +19830,18 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 36,
+      "endLine": 52,
       "exported": false,
       "file": "middleware/auth.js",
       "name": "_id",
-      "objectName": "req.user",
-      "semanticId": "middleware/auth.js->PROPERTY_ACCESS->req.user._id[in:requireRole]",
+      "objectName": "decoded",
+      "semanticId": "middleware/auth.js->PROPERTY_ACCESS->decoded._id[in:verifyTokenPromise]",
       "type": "PROPERTY_ACCESS"
     },
     {
-      "exported": false,
-      "file": "middleware/auth.js",
-      "name": "_id",
-      "objectName": "req.user",
-      "semanticId": "middleware/auth.js->PROPERTY_ACCESS->req.user._id[in:requireRoleAsync]",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "middleware/auth.js",
-      "name": "_id",
-      "objectName": "req.user",
-      "semanticId": "middleware/auth.js->PROPERTY_ACCESS->req.user._id[in:requireRolePromise]",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "middleware/auth.js",
-      "name": "_id",
-      "objectName": "user",
-      "semanticId": "middleware/auth.js->PROPERTY_ACCESS->user._id[in:authMiddleware]",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
+      "endColumn": 37,
+      "endLine": 136,
       "exported": false,
       "file": "middleware/auth.js",
       "name": "_id",
@@ -18842,22 +19850,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
-      "exported": false,
-      "file": "middleware/auth.js",
-      "name": "_id",
-      "objectName": "user",
-      "semanticId": "middleware/auth.js->PROPERTY_ACCESS->user._id[in:authMiddlewarePromise]",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "middleware/auth.js",
-      "name": "_id",
-      "objectName": "user",
-      "semanticId": "middleware/auth.js->PROPERTY_ACCESS->user._id[in:refreshSession]",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
+      "endColumn": 39,
+      "endLine": 215,
       "exported": false,
       "file": "middleware/auth.js",
       "name": "_id",
@@ -18866,14 +19860,18 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 42,
+      "endLine": 160,
       "exported": false,
       "file": "middleware/auth.js",
       "name": "_id",
       "objectName": "user",
-      "semanticId": "middleware/auth.js->PROPERTY_ACCESS->user._id[in:requireRoleAsync]",
+      "semanticId": "middleware/auth.js->PROPERTY_ACCESS->user._id[in:authMiddlewarePromise]",
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 48,
+      "endLine": 242,
       "exported": false,
       "file": "middleware/auth.js",
       "name": "_id",
@@ -18882,54 +19880,48 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 48,
+      "endLine": 85,
       "exported": false,
-      "file": "models/User.js",
+      "file": "middleware/auth.js",
       "name": "_id",
-      "objectName": "this",
-      "semanticId": "models/User.js->PROPERTY_ACCESS->this._id",
+      "objectName": "decoded",
+      "semanticId": "middleware/auth.js->PROPERTY_ACCESS->decoded._id[in:verifyTokenAsync]",
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 51,
+      "endLine": 265,
       "exported": false,
-      "file": "models/User.js",
+      "file": "middleware/auth.js",
       "name": "_id",
-      "objectName": "this",
-      "semanticId": "models/User.js->PROPERTY_ACCESS->this._id[in:getFullProfile]",
+      "objectName": "req.user",
+      "semanticId": "middleware/auth.js->PROPERTY_ACCESS->req.user._id[in:requireRoleAsync]",
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 55,
+      "endLine": 187,
       "exported": false,
-      "file": "models/User.js",
-      "name": "_id",
-      "objectName": "this",
-      "semanticId": "models/User.js->PROPERTY_ACCESS->this._id[in:getFullProfile]#1",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "models/User.js",
-      "name": "_id",
-      "objectName": "this",
-      "semanticId": "models/User.js->PROPERTY_ACCESS->this._id[in:getFullProfile]#2",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "models/User.js",
-      "name": "_id",
-      "objectName": "this",
-      "semanticId": "models/User.js->PROPERTY_ACCESS->this._id[in:updateLastLogin]",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "models/User.js",
+      "file": "middleware/auth.js",
       "name": "_id",
       "objectName": "user",
-      "semanticId": "models/User.js->PROPERTY_ACCESS->user._id",
+      "semanticId": "middleware/auth.js->PROPERTY_ACCESS->user._id[in:authMiddleware]",
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 65,
+      "endLine": 271,
+      "exported": false,
+      "file": "middleware/auth.js",
+      "name": "_id",
+      "objectName": "user",
+      "semanticId": "middleware/auth.js->PROPERTY_ACCESS->user._id[in:requireRoleAsync]",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "endColumn": 20,
+      "endLine": 161,
       "exported": false,
       "file": "models/User.js",
       "name": "_id",
@@ -18938,6 +19930,28 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 20,
+      "endLine": 199,
+      "exported": false,
+      "file": "models/User.js",
+      "name": "_id",
+      "objectName": "this",
+      "semanticId": "models/User.js->PROPERTY_ACCESS->this._id",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "endColumn": 21,
+      "endLine": 63,
+      "exported": false,
+      "file": "models/User.js",
+      "name": "_id",
+      "objectName": "user",
+      "semanticId": "models/User.js->PROPERTY_ACCESS->user._id",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "endColumn": 21,
+      "endLine": 63,
       "exported": false,
       "file": "models/User.js",
       "name": "_id",
@@ -18946,46 +19960,48 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 26,
+      "endLine": 89,
       "exported": false,
-      "file": "routes/api.js",
+      "file": "models/User.js",
       "name": "_id",
-      "objectName": "data.profile",
-      "semanticId": "routes/api.js->PROPERTY_ACCESS->data.profile._id",
+      "objectName": "this",
+      "semanticId": "models/User.js->PROPERTY_ACCESS->this._id[in:updateLastLogin]",
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 30,
+      "endLine": 110,
       "exported": false,
-      "file": "routes/api.js",
+      "file": "models/User.js",
       "name": "_id",
-      "objectName": "post",
-      "semanticId": "routes/api.js->PROPERTY_ACCESS->post._id",
+      "objectName": "this",
+      "semanticId": "models/User.js->PROPERTY_ACCESS->this._id[in:getFullProfile]",
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 30,
+      "endLine": 113,
       "exported": false,
-      "file": "routes/api.js",
+      "file": "models/User.js",
       "name": "_id",
-      "objectName": "profile",
-      "semanticId": "routes/api.js->PROPERTY_ACCESS->profile._id",
+      "objectName": "this",
+      "semanticId": "models/User.js->PROPERTY_ACCESS->this._id[in:getFullProfile]#1",
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 33,
+      "endLine": 116,
       "exported": false,
-      "file": "routes/api.js",
+      "file": "models/User.js",
       "name": "_id",
-      "objectName": "savedUser",
-      "semanticId": "routes/api.js->PROPERTY_ACCESS->savedUser._id",
+      "objectName": "this",
+      "semanticId": "models/User.js->PROPERTY_ACCESS->this._id[in:getFullProfile]#2",
       "type": "PROPERTY_ACCESS"
     },
     {
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "_id",
-      "objectName": "updatedUser",
-      "semanticId": "routes/api.js->PROPERTY_ACCESS->updatedUser._id",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
+      "endColumn": 30,
+      "endLine": 178,
       "exported": false,
       "file": "routes/api.js",
       "name": "_id",
@@ -18994,7 +20010,59 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 32,
+      "endLine": 222,
+      "exported": false,
+      "file": "routes/api.js",
+      "name": "_id",
+      "objectName": "post",
+      "semanticId": "routes/api.js->PROPERTY_ACCESS->post._id",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "endColumn": 35,
+      "endLine": 102,
+      "exported": false,
+      "file": "routes/api.js",
+      "name": "_id",
+      "objectName": "profile",
+      "semanticId": "routes/api.js->PROPERTY_ACCESS->profile._id",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "endColumn": 35,
+      "endLine": 74,
+      "exported": false,
+      "file": "routes/api.js",
+      "name": "_id",
+      "objectName": "savedUser",
+      "semanticId": "routes/api.js->PROPERTY_ACCESS->savedUser._id",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "endColumn": 37,
+      "endLine": 162,
+      "exported": false,
+      "file": "routes/api.js",
+      "name": "_id",
+      "objectName": "updatedUser",
+      "semanticId": "routes/api.js->PROPERTY_ACCESS->updatedUser._id",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "endColumn": 40,
+      "endLine": 126,
+      "exported": false,
+      "file": "routes/api.js",
+      "name": "_id",
+      "objectName": "data.profile",
+      "semanticId": "routes/api.js->PROPERTY_ACCESS->data.profile._id",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
       "computed": true,
+      "endColumn": 44,
+      "endLine": 354,
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "<computed>",
@@ -19004,6 +20072,8 @@
     },
     {
       "computed": true,
+      "endColumn": 31,
+      "endLine": 86,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "name": "<computed>",
@@ -19013,6 +20083,8 @@
     },
     {
       "computed": true,
+      "endColumn": 37,
+      "endLine": 337,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "name": "<computed>",
@@ -19022,6 +20094,8 @@
     },
     {
       "computed": true,
+      "endColumn": 31,
+      "endLine": 172,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "name": "0",
@@ -19031,6 +20105,8 @@
     },
     {
       "computed": true,
+      "endColumn": 32,
+      "endLine": 117,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "name": "0",
@@ -19040,6 +20116,8 @@
     },
     {
       "computed": true,
+      "endColumn": 40,
+      "endLine": 122,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "name": "1",
@@ -19049,6 +20127,8 @@
     },
     {
       "computed": true,
+      "endColumn": 48,
+      "endLine": 127,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "name": "2",
@@ -19057,14 +20137,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
-      "exported": false,
-      "file": "middleware/auth.js",
-      "name": "authorization",
-      "objectName": "req.headers",
-      "semanticId": "middleware/auth.js->PROPERTY_ACCESS->req.headers.authorization[in:authMiddleware]",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
+      "endColumn": 41,
+      "endLine": 106,
       "exported": false,
       "file": "middleware/auth.js",
       "name": "authorization",
@@ -19073,6 +20147,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 41,
+      "endLine": 152,
       "exported": false,
       "file": "middleware/auth.js",
       "name": "authorization",
@@ -19081,6 +20157,18 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 43,
+      "endLine": 179,
+      "exported": false,
+      "file": "middleware/auth.js",
+      "name": "authorization",
+      "objectName": "req.headers",
+      "semanticId": "middleware/auth.js->PROPERTY_ACCESS->req.headers.authorization[in:authMiddleware]",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "endColumn": 29,
+      "endLine": 49,
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "batchSize",
@@ -19089,14 +20177,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "batchSize",
-      "objectName": "this",
-      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->this.batchSize[in:getStats]",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
+      "endColumn": 33,
+      "endLine": 84,
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "batchSize",
@@ -19105,6 +20187,18 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 39,
+      "endLine": 36,
+      "exported": false,
+      "file": "services/dataProcessor.js",
+      "name": "batchSize",
+      "objectName": "this",
+      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->this.batchSize[in:getStats]",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "endColumn": 38,
+      "endLine": 167,
       "exported": false,
       "file": "app.js",
       "name": "body",
@@ -19113,6 +20207,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 26,
+      "endLine": 144,
       "exported": false,
       "file": "routes/api.js",
       "name": "body",
@@ -19121,14 +20217,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "cache",
-      "objectName": "this",
-      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->this.cache[in:getStats]",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
+      "endColumn": 16,
+      "endLine": 88,
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "cache",
@@ -19137,6 +20227,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 24,
+      "endLine": 76,
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "cache",
@@ -19145,6 +20237,18 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 35,
+      "endLine": 38,
+      "exported": false,
+      "file": "services/dataProcessor.js",
+      "name": "cache",
+      "objectName": "this",
+      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->this.cache[in:getStats]",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "endColumn": 21,
+      "endLine": 272,
       "exported": false,
       "file": "app.js",
       "name": "connection",
@@ -19153,22 +20257,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
-      "exported": false,
-      "file": "app.js",
-      "name": "connection",
-      "objectName": "mongoose",
-      "semanticId": "app.js->PROPERTY_ACCESS->mongoose.connection[in:fetchDataStream]",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "app.js",
-      "name": "connection",
-      "objectName": "mongoose",
-      "semanticId": "app.js->PROPERTY_ACCESS->mongoose.connection[in:loadUserData]",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
+      "endColumn": 25,
+      "endLine": 125,
       "exported": false,
       "file": "app.js",
       "name": "connection",
@@ -19177,6 +20267,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 25,
+      "endLine": 126,
       "exported": false,
       "file": "app.js",
       "name": "connection",
@@ -19185,6 +20277,28 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 36,
+      "endLine": 79,
+      "exported": false,
+      "file": "app.js",
+      "name": "connection",
+      "objectName": "mongoose",
+      "semanticId": "app.js->PROPERTY_ACCESS->mongoose.connection[in:loadUserData]",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "endColumn": 42,
+      "endLine": 113,
+      "exported": false,
+      "file": "app.js",
+      "name": "connection",
+      "objectName": "mongoose",
+      "semanticId": "app.js->PROPERTY_ACCESS->mongoose.connection[in:fetchDataStream]",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "endColumn": 21,
+      "endLine": 197,
       "exported": false,
       "file": "models/User.js",
       "name": "connection",
@@ -19193,14 +20307,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
-      "exported": false,
-      "file": "models/User.js",
-      "name": "connection",
-      "objectName": "mongoose",
-      "semanticId": "models/User.js->PROPERTY_ACCESS->mongoose.connection[in:createWithProfile]",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
+      "endColumn": 23,
+      "endLine": 109,
       "exported": false,
       "file": "models/User.js",
       "name": "connection",
@@ -19209,6 +20317,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 23,
+      "endLine": 112,
       "exported": false,
       "file": "models/User.js",
       "name": "connection",
@@ -19217,6 +20327,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 23,
+      "endLine": 115,
       "exported": false,
       "file": "models/User.js",
       "name": "connection",
@@ -19225,6 +20337,18 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 27,
+      "endLine": 160,
+      "exported": false,
+      "file": "models/User.js",
+      "name": "connection",
+      "objectName": "mongoose",
+      "semanticId": "models/User.js->PROPERTY_ACCESS->mongoose.connection[in:createWithProfile]",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "endColumn": 32,
+      "endLine": 86,
       "exported": false,
       "file": "models/User.js",
       "name": "connection",
@@ -19233,14 +20357,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "connection",
-      "objectName": "mongoose",
-      "semanticId": "routes/api.js->PROPERTY_ACCESS->mongoose.connection",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
+      "endColumn": 25,
+      "endLine": 206,
       "exported": false,
       "file": "routes/api.js",
       "name": "connection",
@@ -19249,54 +20367,18 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 31,
+      "endLine": 272,
       "exported": false,
-      "file": "services/dataProcessor.js",
+      "file": "routes/api.js",
       "name": "connection",
       "objectName": "mongoose",
-      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->mongoose.connection",
+      "semanticId": "routes/api.js->PROPERTY_ACCESS->mongoose.connection",
       "type": "PROPERTY_ACCESS"
     },
     {
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "connection",
-      "objectName": "mongoose",
-      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->mongoose.connection[in:fetchUsersStream]",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "connection",
-      "objectName": "mongoose",
-      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->mongoose.connection[in:generatePromises]",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "connection",
-      "objectName": "mongoose",
-      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->mongoose.connection[in:processBatch]",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "connection",
-      "objectName": "mongoose",
-      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->mongoose.connection[in:processComplex]",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "connection",
-      "objectName": "mongoose",
-      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->mongoose.connection[in:processDataStream]",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
+      "endColumn": 27,
+      "endLine": 129,
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "connection",
@@ -19305,14 +20387,48 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 27,
+      "endLine": 349,
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "connection",
       "objectName": "mongoose",
-      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->mongoose.connection[in:processWithErrorHandling]",
+      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->mongoose.connection[in:processBatch]",
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 29,
+      "endLine": 228,
+      "exported": false,
+      "file": "services/dataProcessor.js",
+      "name": "connection",
+      "objectName": "mongoose",
+      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->mongoose.connection",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "endColumn": 29,
+      "endLine": 228,
+      "exported": false,
+      "file": "services/dataProcessor.js",
+      "name": "connection",
+      "objectName": "mongoose",
+      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->mongoose.connection[in:processComplex]",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "endColumn": 31,
+      "endLine": 247,
+      "exported": false,
+      "file": "services/dataProcessor.js",
+      "name": "connection",
+      "objectName": "mongoose",
+      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->mongoose.connection[in:generatePromises]",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "endColumn": 32,
+      "endLine": 177,
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "connection",
@@ -19321,6 +20437,38 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 35,
+      "endLine": 280,
+      "exported": false,
+      "file": "services/dataProcessor.js",
+      "name": "connection",
+      "objectName": "mongoose",
+      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->mongoose.connection[in:processWithErrorHandling]",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "endColumn": 44,
+      "endLine": 67,
+      "exported": false,
+      "file": "services/dataProcessor.js",
+      "name": "connection",
+      "objectName": "mongoose",
+      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->mongoose.connection[in:processDataStream]",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "endColumn": 45,
+      "endLine": 46,
+      "exported": false,
+      "file": "services/dataProcessor.js",
+      "name": "connection",
+      "objectName": "mongoose",
+      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->mongoose.connection[in:fetchUsersStream]",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "endColumn": 34,
+      "endLine": 221,
       "exported": false,
       "file": "models/User.js",
       "name": "createdAt",
@@ -19329,6 +20477,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 58,
+      "endLine": 192,
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "dataId",
@@ -19337,6 +20487,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 50,
+      "endLine": 144,
       "exported": false,
       "file": "app.js",
       "name": "dataOffset",
@@ -19345,6 +20497,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 26,
+      "endLine": 177,
       "exported": false,
       "file": "app.js",
       "name": "db",
@@ -19353,22 +20507,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
-      "exported": false,
-      "file": "app.js",
-      "name": "db",
-      "objectName": "mongoose.connection",
-      "semanticId": "app.js->PROPERTY_ACCESS->mongoose.connection.db[in:fetchDataStream]",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "app.js",
-      "name": "db",
-      "objectName": "mongoose.connection",
-      "semanticId": "app.js->PROPERTY_ACCESS->mongoose.connection.db[in:loadUserData]",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
+      "endColumn": 28,
+      "endLine": 125,
       "exported": false,
       "file": "app.js",
       "name": "db",
@@ -19377,6 +20517,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 28,
+      "endLine": 126,
       "exported": false,
       "file": "app.js",
       "name": "db",
@@ -19385,6 +20527,28 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 39,
+      "endLine": 79,
+      "exported": false,
+      "file": "app.js",
+      "name": "db",
+      "objectName": "mongoose.connection",
+      "semanticId": "app.js->PROPERTY_ACCESS->mongoose.connection.db[in:loadUserData]",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "endColumn": 45,
+      "endLine": 113,
+      "exported": false,
+      "file": "app.js",
+      "name": "db",
+      "objectName": "mongoose.connection",
+      "semanticId": "app.js->PROPERTY_ACCESS->mongoose.connection.db[in:fetchDataStream]",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "endColumn": 24,
+      "endLine": 197,
       "exported": false,
       "file": "models/User.js",
       "name": "db",
@@ -19393,14 +20557,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
-      "exported": false,
-      "file": "models/User.js",
-      "name": "db",
-      "objectName": "mongoose.connection",
-      "semanticId": "models/User.js->PROPERTY_ACCESS->mongoose.connection.db[in:createWithProfile]",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
+      "endColumn": 26,
+      "endLine": 109,
       "exported": false,
       "file": "models/User.js",
       "name": "db",
@@ -19409,6 +20567,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 26,
+      "endLine": 112,
       "exported": false,
       "file": "models/User.js",
       "name": "db",
@@ -19417,6 +20577,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 26,
+      "endLine": 115,
       "exported": false,
       "file": "models/User.js",
       "name": "db",
@@ -19425,6 +20587,18 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 30,
+      "endLine": 160,
+      "exported": false,
+      "file": "models/User.js",
+      "name": "db",
+      "objectName": "mongoose.connection",
+      "semanticId": "models/User.js->PROPERTY_ACCESS->mongoose.connection.db[in:createWithProfile]",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "endColumn": 35,
+      "endLine": 86,
       "exported": false,
       "file": "models/User.js",
       "name": "db",
@@ -19433,14 +20607,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "db",
-      "objectName": "mongoose.connection",
-      "semanticId": "routes/api.js->PROPERTY_ACCESS->mongoose.connection.db",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
+      "endColumn": 28,
+      "endLine": 206,
       "exported": false,
       "file": "routes/api.js",
       "name": "db",
@@ -19449,54 +20617,18 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 34,
+      "endLine": 272,
       "exported": false,
-      "file": "services/dataProcessor.js",
+      "file": "routes/api.js",
       "name": "db",
       "objectName": "mongoose.connection",
-      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->mongoose.connection.db",
+      "semanticId": "routes/api.js->PROPERTY_ACCESS->mongoose.connection.db",
       "type": "PROPERTY_ACCESS"
     },
     {
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "db",
-      "objectName": "mongoose.connection",
-      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->mongoose.connection.db[in:fetchUsersStream]",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "db",
-      "objectName": "mongoose.connection",
-      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->mongoose.connection.db[in:generatePromises]",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "db",
-      "objectName": "mongoose.connection",
-      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->mongoose.connection.db[in:processBatch]",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "db",
-      "objectName": "mongoose.connection",
-      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->mongoose.connection.db[in:processComplex]",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "db",
-      "objectName": "mongoose.connection",
-      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->mongoose.connection.db[in:processDataStream]",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
+      "endColumn": 30,
+      "endLine": 129,
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "db",
@@ -19505,14 +20637,48 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 30,
+      "endLine": 349,
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "db",
       "objectName": "mongoose.connection",
-      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->mongoose.connection.db[in:processWithErrorHandling]",
+      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->mongoose.connection.db[in:processBatch]",
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 32,
+      "endLine": 228,
+      "exported": false,
+      "file": "services/dataProcessor.js",
+      "name": "db",
+      "objectName": "mongoose.connection",
+      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->mongoose.connection.db",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "endColumn": 32,
+      "endLine": 228,
+      "exported": false,
+      "file": "services/dataProcessor.js",
+      "name": "db",
+      "objectName": "mongoose.connection",
+      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->mongoose.connection.db[in:processComplex]",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "endColumn": 34,
+      "endLine": 247,
+      "exported": false,
+      "file": "services/dataProcessor.js",
+      "name": "db",
+      "objectName": "mongoose.connection",
+      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->mongoose.connection.db[in:generatePromises]",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "endColumn": 35,
+      "endLine": 177,
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "db",
@@ -19521,6 +20687,38 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 38,
+      "endLine": 280,
+      "exported": false,
+      "file": "services/dataProcessor.js",
+      "name": "db",
+      "objectName": "mongoose.connection",
+      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->mongoose.connection.db[in:processWithErrorHandling]",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "endColumn": 47,
+      "endLine": 67,
+      "exported": false,
+      "file": "services/dataProcessor.js",
+      "name": "db",
+      "objectName": "mongoose.connection",
+      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->mongoose.connection.db[in:processDataStream]",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "endColumn": 48,
+      "endLine": 46,
+      "exported": false,
+      "file": "services/dataProcessor.js",
+      "name": "db",
+      "objectName": "mongoose.connection",
+      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->mongoose.connection.db[in:fetchUsersStream]",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "endColumn": 33,
+      "endLine": 52,
       "exported": false,
       "file": "app.js",
       "name": "dbUrl",
@@ -19529,14 +20727,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
-      "exported": false,
-      "file": "app.js",
-      "name": "dbUrl",
-      "objectName": "this",
-      "semanticId": "app.js->PROPERTY_ACCESS->this.dbUrl[in:initDatabase]",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
+      "endColumn": 38,
+      "endLine": 28,
       "exported": false,
       "file": "app.js",
       "name": "dbUrl",
@@ -19545,14 +20737,18 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 43,
+      "endLine": 27,
       "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "done",
-      "objectName": "next",
-      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->next.done[in:processItem]",
+      "file": "app.js",
+      "name": "dbUrl",
+      "objectName": "this",
+      "semanticId": "app.js->PROPERTY_ACCESS->this.dbUrl[in:initDatabase]",
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 19,
+      "endLine": 127,
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "done",
@@ -19561,6 +20757,18 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 21,
+      "endLine": 161,
+      "exported": false,
+      "file": "services/dataProcessor.js",
+      "name": "done",
+      "objectName": "next",
+      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->next.done[in:processItem]",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "endColumn": 23,
+      "endLine": 322,
       "exported": false,
       "file": "middleware/auth.js",
       "name": "email",
@@ -19569,6 +20777,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 19,
+      "endLine": 214,
       "exported": false,
       "file": "models/User.js",
       "name": "email",
@@ -19577,14 +20787,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
-      "exported": false,
-      "file": "models/User.js",
-      "name": "email",
-      "objectName": "this",
-      "semanticId": "models/User.js->PROPERTY_ACCESS->this.email[in:getActivityLog]",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
+      "endColumn": 21,
+      "endLine": 120,
       "exported": false,
       "file": "models/User.js",
       "name": "email",
@@ -19593,6 +20797,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 25,
+      "endLine": 64,
       "exported": false,
       "file": "models/User.js",
       "name": "email",
@@ -19601,6 +20807,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 25,
+      "endLine": 64,
       "exported": false,
       "file": "models/User.js",
       "name": "email",
@@ -19609,6 +20817,18 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 27,
+      "endLine": 219,
+      "exported": false,
+      "file": "models/User.js",
+      "name": "email",
+      "objectName": "this",
+      "semanticId": "models/User.js->PROPERTY_ACCESS->this.email[in:getActivityLog]",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "endColumn": 40,
+      "endLine": 75,
       "exported": false,
       "file": "routes/api.js",
       "name": "email",
@@ -19617,6 +20837,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 33,
+      "endLine": 355,
       "exported": false,
       "file": "middleware/auth.js",
       "name": "exp",
@@ -19625,6 +20847,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 28,
+      "endLine": 211,
       "exported": false,
       "file": "models/User.js",
       "name": "firstName",
@@ -19633,6 +20857,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 36,
+      "endLine": 212,
       "exported": false,
       "file": "models/User.js",
       "name": "firstName",
@@ -19641,6 +20867,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 46,
+      "endLine": 76,
       "exported": false,
       "file": "routes/api.js",
       "name": "fullName",
@@ -19649,14 +20877,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
-      "exported": false,
-      "file": "app.js",
-      "name": "handleError",
-      "objectName": "config",
-      "semanticId": "app.js->PROPERTY_ACCESS->config.handleError[in:startServer]",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
+      "endColumn": 32,
+      "endLine": 242,
       "exported": false,
       "file": "app.js",
       "name": "handleError",
@@ -19665,14 +20887,18 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 47,
+      "endLine": 262,
       "exported": false,
-      "file": "middleware/auth.js",
-      "name": "headers",
-      "objectName": "req",
-      "semanticId": "middleware/auth.js->PROPERTY_ACCESS->req.headers[in:authMiddleware]",
+      "file": "app.js",
+      "name": "handleError",
+      "objectName": "config",
+      "semanticId": "app.js->PROPERTY_ACCESS->config.handleError[in:startServer]",
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 27,
+      "endLine": 106,
       "exported": false,
       "file": "middleware/auth.js",
       "name": "headers",
@@ -19681,6 +20907,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 27,
+      "endLine": 152,
       "exported": false,
       "file": "middleware/auth.js",
       "name": "headers",
@@ -19689,6 +20917,18 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 29,
+      "endLine": 179,
+      "exported": false,
+      "file": "middleware/auth.js",
+      "name": "headers",
+      "objectName": "req",
+      "semanticId": "middleware/auth.js->PROPERTY_ACCESS->req.headers[in:authMiddleware]",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "endColumn": 17,
+      "endLine": 103,
       "exported": false,
       "file": "app.js",
       "name": "id",
@@ -19697,6 +20937,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 55,
+      "endLine": 217,
       "exported": false,
       "file": "app.js",
       "name": "id",
@@ -19705,6 +20947,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 29,
+      "endLine": 299,
       "exported": false,
       "file": "routes/api.js",
       "name": "id",
@@ -19713,6 +20957,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 19,
+      "endLine": 26,
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "id",
@@ -19721,22 +20967,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
-      "exported": false,
-      "file": "utils/asyncHelpers.js",
-      "name": "id",
-      "objectName": "data1",
-      "semanticId": "utils/asyncHelpers.js->PROPERTY_ACCESS->data1.id[in:mixedParallelSequential]",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "utils/asyncHelpers.js",
-      "name": "id",
-      "objectName": "data1",
-      "semanticId": "utils/asyncHelpers.js->PROPERTY_ACCESS->data1.id[in:mixedParallelSequential]#1",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
+      "endColumn": 35,
+      "endLine": 180,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "name": "id",
@@ -19745,6 +20977,28 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 38,
+      "endLine": 178,
+      "exported": false,
+      "file": "utils/asyncHelpers.js",
+      "name": "id",
+      "objectName": "data1",
+      "semanticId": "utils/asyncHelpers.js->PROPERTY_ACCESS->data1.id[in:mixedParallelSequential]",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "endColumn": 39,
+      "endLine": 179,
+      "exported": false,
+      "file": "utils/asyncHelpers.js",
+      "name": "id",
+      "objectName": "data1",
+      "semanticId": "utils/asyncHelpers.js->PROPERTY_ACCESS->data1.id[in:mixedParallelSequential]#1",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "endColumn": 52,
+      "endLine": 215,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "name": "id",
@@ -19753,6 +21007,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 42,
+      "endLine": 37,
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "initialized",
@@ -19761,6 +21017,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 31,
+      "endLine": 190,
       "exported": false,
       "file": "app.js",
       "name": "insertedId",
@@ -19769,6 +21027,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 40,
+      "endLine": 283,
       "exported": false,
       "file": "middleware/auth.js",
       "name": "ip",
@@ -19777,6 +21037,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 35,
+      "endLine": 90,
       "exported": false,
       "file": "models/User.js",
       "name": "lastLogin",
@@ -19785,14 +21047,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
-      "exported": false,
-      "file": "models/User.js",
-      "name": "lastLogin",
-      "objectName": "this",
-      "semanticId": "models/User.js->PROPERTY_ACCESS->this.lastLogin[in:getActivityLog]",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
+      "endColumn": 35,
+      "endLine": 90,
       "exported": false,
       "file": "models/User.js",
       "name": "lastLogin",
@@ -19801,6 +21057,18 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 37,
+      "endLine": 222,
+      "exported": false,
+      "file": "models/User.js",
+      "name": "lastLogin",
+      "objectName": "this",
+      "semanticId": "models/User.js->PROPERTY_ACCESS->this.lastLogin[in:getActivityLog]",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "endColumn": 53,
+      "endLine": 211,
       "exported": false,
       "file": "models/User.js",
       "name": "lastName",
@@ -19809,6 +21077,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 61,
+      "endLine": 212,
       "exported": false,
       "file": "models/User.js",
       "name": "lastName",
@@ -19817,14 +21087,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
-      "exported": false,
-      "file": "models/User.js",
-      "name": "length",
-      "objectName": "friends",
-      "semanticId": "models/User.js->PROPERTY_ACCESS->friends.length[in:getFullProfile]",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
+      "endColumn": 28,
+      "endLine": 122,
       "exported": false,
       "file": "models/User.js",
       "name": "length",
@@ -19833,14 +21097,18 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 32,
+      "endLine": 123,
       "exported": false,
-      "file": "routes/api.js",
+      "file": "models/User.js",
       "name": "length",
-      "objectName": "comments",
-      "semanticId": "routes/api.js->PROPERTY_ACCESS->comments.length",
+      "objectName": "friends",
+      "semanticId": "models/User.js->PROPERTY_ACCESS->friends.length[in:getFullProfile]",
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 34,
+      "endLine": 242,
       "exported": false,
       "file": "routes/api.js",
       "name": "length",
@@ -19849,6 +21117,18 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 38,
+      "endLine": 227,
+      "exported": false,
+      "file": "routes/api.js",
+      "name": "length",
+      "objectName": "comments",
+      "semanticId": "routes/api.js->PROPERTY_ACCESS->comments.length",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "endColumn": 56,
+      "endLine": 234,
       "exported": false,
       "file": "routes/api.js",
       "name": "length",
@@ -19857,14 +21137,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "length",
-      "objectName": "batch",
-      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->batch.length",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
+      "endColumn": 22,
+      "endLine": 52,
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "length",
@@ -19873,30 +21147,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "length",
-      "objectName": "batch",
-      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->batch.length[in:processComplex]",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "length",
-      "objectName": "batches.<computed>",
-      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->batches.<computed>.length[in:processBatch]",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "length",
-      "objectName": "batches",
-      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->batches.length[in:processBatch]",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
+      "endColumn": 29,
+      "endLine": 337,
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "length",
@@ -19905,6 +21157,48 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 33,
+      "endLine": 232,
+      "exported": false,
+      "file": "services/dataProcessor.js",
+      "name": "length",
+      "objectName": "batch",
+      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->batch.length",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "endColumn": 33,
+      "endLine": 232,
+      "exported": false,
+      "file": "services/dataProcessor.js",
+      "name": "length",
+      "objectName": "batch",
+      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->batch.length[in:processComplex]",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "endColumn": 40,
+      "endLine": 345,
+      "exported": false,
+      "file": "services/dataProcessor.js",
+      "name": "length",
+      "objectName": "batches",
+      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->batches.length[in:processBatch]",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "endColumn": 51,
+      "endLine": 354,
+      "exported": false,
+      "file": "services/dataProcessor.js",
+      "name": "length",
+      "objectName": "batches.<computed>",
+      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->batches.<computed>.length[in:processBatch]",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "endColumn": 29,
+      "endLine": 82,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "name": "length",
@@ -19913,6 +21207,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 58,
+      "endLine": 335,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "name": "length",
@@ -19921,6 +21217,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 50,
+      "endLine": 30,
       "exported": false,
       "file": "models/User.js",
       "name": "lockUntil",
@@ -19929,6 +21227,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 28,
+      "endLine": 44,
       "exported": false,
       "file": "models/User.js",
       "name": "loginAttempts",
@@ -19937,6 +21237,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 45,
+      "endLine": 223,
       "exported": false,
       "file": "models/User.js",
       "name": "loginAttempts",
@@ -19945,14 +21247,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
-      "exported": false,
-      "file": "app.js",
-      "name": "message",
-      "objectName": "err",
-      "semanticId": "app.js->PROPERTY_ACCESS->err.message",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
+      "endColumn": 40,
+      "endLine": 41,
       "exported": false,
       "file": "app.js",
       "name": "message",
@@ -19961,6 +21257,18 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 47,
+      "endLine": 210,
+      "exported": false,
+      "file": "app.js",
+      "name": "message",
+      "objectName": "err",
+      "semanticId": "app.js->PROPERTY_ACCESS->err.message",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "endColumn": 47,
+      "endLine": 220,
       "exported": false,
       "file": "app.js",
       "name": "message",
@@ -19969,6 +21277,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 47,
+      "endLine": 172,
       "exported": false,
       "file": "middleware/auth.js",
       "name": "message",
@@ -19977,14 +21287,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
-      "exported": false,
-      "file": "middleware/auth.js",
-      "name": "message",
-      "objectName": "err",
-      "semanticId": "middleware/auth.js->PROPERTY_ACCESS->err.message[in:requireRolePromise]",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
+      "endColumn": 47,
+      "endLine": 195,
       "exported": false,
       "file": "middleware/auth.js",
       "name": "message",
@@ -19993,6 +21297,18 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 49,
+      "endLine": 252,
+      "exported": false,
+      "file": "middleware/auth.js",
+      "name": "message",
+      "objectName": "err",
+      "semanticId": "middleware/auth.js->PROPERTY_ACCESS->err.message[in:requireRolePromise]",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "endColumn": 49,
+      "endLine": 276,
       "exported": false,
       "file": "middleware/auth.js",
       "name": "message",
@@ -20001,14 +21317,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "message",
-      "objectName": "err",
-      "semanticId": "routes/api.js->PROPERTY_ACCESS->err.message",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
+      "endColumn": 47,
+      "endLine": 246,
       "exported": false,
       "file": "routes/api.js",
       "name": "message",
@@ -20017,6 +21327,18 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 54,
+      "endLine": 301,
+      "exported": false,
+      "file": "routes/api.js",
+      "name": "message",
+      "objectName": "err",
+      "semanticId": "routes/api.js->PROPERTY_ACCESS->err.message",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "endColumn": 87,
+      "endLine": 15,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "name": "message",
@@ -20025,6 +21347,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 19,
+      "endLine": 104,
       "exported": false,
       "file": "app.js",
       "name": "name",
@@ -20033,6 +21357,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 44,
+      "endLine": 15,
       "exported": false,
       "file": "models/User.js",
       "name": "now",
@@ -20041,6 +21367,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 52,
+      "endLine": 217,
       "exported": false,
       "file": "app.js",
       "name": "params",
@@ -20049,6 +21377,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 26,
+      "endLine": 299,
       "exported": false,
       "file": "routes/api.js",
       "name": "params",
@@ -20057,14 +21387,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
-      "exported": false,
-      "file": "models/User.js",
-      "name": "password",
-      "objectName": "this",
-      "semanticId": "models/User.js->PROPERTY_ACCESS->this.password[in:comparePassword]",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
+      "endColumn": 29,
+      "endLine": 183,
       "exported": false,
       "file": "models/User.js",
       "name": "password",
@@ -20073,6 +21397,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 49,
+      "endLine": 154,
       "exported": false,
       "file": "models/User.js",
       "name": "password",
@@ -20081,14 +21407,18 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 49,
+      "endLine": 25,
       "exported": false,
-      "file": "app.js",
-      "name": "port",
+      "file": "models/User.js",
+      "name": "password",
       "objectName": "this",
-      "semanticId": "app.js->PROPERTY_ACCESS->this.port",
+      "semanticId": "models/User.js->PROPERTY_ACCESS->this.password[in:comparePassword]",
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 20,
+      "endLine": 22,
       "exported": false,
       "file": "app.js",
       "name": "port",
@@ -20097,6 +21427,18 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 51,
+      "endLine": 36,
+      "exported": false,
+      "file": "app.js",
+      "name": "port",
+      "objectName": "this",
+      "semanticId": "app.js->PROPERTY_ACCESS->this.port",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "endColumn": 51,
+      "endLine": 36,
       "exported": false,
       "file": "app.js",
       "name": "port",
@@ -20105,6 +21447,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 18,
+      "endLine": 211,
       "exported": false,
       "file": "models/User.js",
       "name": "profile",
@@ -20113,22 +21457,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
-      "exported": false,
-      "file": "models/User.js",
-      "name": "profile",
-      "objectName": "this",
-      "semanticId": "models/User.js->PROPERTY_ACCESS->this.profile[in:getFullProfile]",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "models/User.js",
-      "name": "profile",
-      "objectName": "this",
-      "semanticId": "models/User.js->PROPERTY_ACCESS->this.profile#1",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
+      "endColumn": 26,
+      "endLine": 212,
       "exported": false,
       "file": "models/User.js",
       "name": "profile",
@@ -20137,6 +21467,28 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 30,
+      "endLine": 105,
+      "exported": false,
+      "file": "models/User.js",
+      "name": "profile",
+      "objectName": "this",
+      "semanticId": "models/User.js->PROPERTY_ACCESS->this.profile[in:getFullProfile]",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "endColumn": 44,
+      "endLine": 211,
+      "exported": false,
+      "file": "models/User.js",
+      "name": "profile",
+      "objectName": "this",
+      "semanticId": "models/User.js->PROPERTY_ACCESS->this.profile#1",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "endColumn": 52,
+      "endLine": 212,
       "exported": false,
       "file": "models/User.js",
       "name": "profile",
@@ -20145,6 +21497,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 36,
+      "endLine": 126,
       "exported": false,
       "file": "routes/api.js",
       "name": "profile",
@@ -20153,6 +21507,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 37,
+      "endLine": 30,
       "exported": false,
       "file": "app.js",
       "name": "retryAttempts",
@@ -20161,14 +21517,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
-      "exported": false,
-      "file": "middleware/auth.js",
-      "name": "role",
-      "objectName": "user",
-      "semanticId": "middleware/auth.js->PROPERTY_ACCESS->user.role[in:refreshSession]",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
+      "endColumn": 19,
+      "endLine": 211,
       "exported": false,
       "file": "middleware/auth.js",
       "name": "role",
@@ -20177,6 +21527,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 19,
+      "endLine": 267,
       "exported": false,
       "file": "middleware/auth.js",
       "name": "role",
@@ -20185,6 +21537,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 21,
+      "endLine": 236,
       "exported": false,
       "file": "middleware/auth.js",
       "name": "role",
@@ -20193,14 +21547,18 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 21,
+      "endLine": 323,
       "exported": false,
-      "file": "models/User.js",
+      "file": "middleware/auth.js",
       "name": "role",
-      "objectName": "this",
-      "semanticId": "models/User.js->PROPERTY_ACCESS->this.role[in:getActivityLog]",
+      "objectName": "user",
+      "semanticId": "middleware/auth.js->PROPERTY_ACCESS->user.role[in:refreshSession]",
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 23,
+      "endLine": 65,
       "exported": false,
       "file": "models/User.js",
       "name": "role",
@@ -20209,6 +21567,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 23,
+      "endLine": 65,
       "exported": false,
       "file": "models/User.js",
       "name": "role",
@@ -20217,6 +21577,18 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 26,
+      "endLine": 220,
+      "exported": false,
+      "file": "models/User.js",
+      "name": "role",
+      "objectName": "this",
+      "semanticId": "models/User.js->PROPERTY_ACCESS->this.role[in:getActivityLog]",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "endColumn": 40,
+      "endLine": 38,
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "size",
@@ -20225,6 +21597,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 42,
+      "endLine": 309,
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "name": "then",
@@ -20233,6 +21607,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 25,
+      "endLine": 283,
       "exported": false,
       "file": "middleware/auth.js",
       "name": "user",
@@ -20241,6 +21617,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 26,
+      "endLine": 206,
       "exported": false,
       "file": "middleware/auth.js",
       "name": "user",
@@ -20249,14 +21627,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
-      "exported": false,
-      "file": "middleware/auth.js",
-      "name": "user",
-      "objectName": "req",
-      "semanticId": "middleware/auth.js->PROPERTY_ACCESS->req.user[in:requireRoleAsync]",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
+      "endColumn": 26,
+      "endLine": 234,
       "exported": false,
       "file": "middleware/auth.js",
       "name": "user",
@@ -20265,6 +21637,18 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 47,
+      "endLine": 265,
+      "exported": false,
+      "file": "middleware/auth.js",
+      "name": "user",
+      "objectName": "req",
+      "semanticId": "middleware/auth.js->PROPERTY_ACCESS->req.user[in:requireRoleAsync]",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "endColumn": 20,
+      "endLine": 105,
       "exported": false,
       "file": "app.js",
       "name": "value",
@@ -20273,6 +21657,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 25,
+      "endLine": 29,
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "value",
@@ -20281,19 +21667,23 @@
       "type": "PROPERTY_ACCESS"
     },
     {
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "value",
-      "objectName": "next",
-      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->next.value[in:processItem]",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
+      "endColumn": 31,
+      "endLine": 140,
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "value",
       "objectName": "next",
       "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->next.value[in:processNext]",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "endColumn": 31,
+      "endLine": 165,
+      "exported": false,
+      "file": "services/dataProcessor.js",
+      "name": "value",
+      "objectName": "next",
+      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->next.value[in:processItem]",
       "type": "PROPERTY_ACCESS"
     },
     {

@@ -50,7 +50,7 @@ import { PriorityQueue } from '../../core/PriorityQueue.js';
 import { WorkerPool } from '../../core/WorkerPool.js';
 import { ASTWorkerPool, type ModuleInfo as ASTModuleInfo, type ParseResult } from '../../core/ASTWorkerPool.js';
 import { ConditionParser } from './ast/ConditionParser.js';
-import { getLine, getColumn } from './ast/utils/location.js';
+import { getLine, getColumn, getEndLocation } from './ast/utils/location.js';
 import { Profiler } from '../../core/Profiler.js';
 import { ScopeTracker } from '../../core/ScopeTracker.js';
 import { computeSemanticId } from '../../core/SemanticId.js';
@@ -3081,6 +3081,8 @@ export class JSASTAnalyzer extends Plugin {
         file: module.file,
         line: getLine(callNode),
         column: getColumn(callNode),  // REG-223: Add column for coordinate-based lookup
+        endLine: getEndLocation(callNode).line,
+        endColumn: getEndLocation(callNode).column,
         parentScopeId,
         targetFunctionName: calleeName,
         // REG-311: Async error tracking metadata
@@ -3128,6 +3130,8 @@ export class JSASTAnalyzer extends Plugin {
           file: module.file,
           line: getLine(callNode),
           column: getColumn(callNode),
+          endLine: getEndLocation(callNode).line,
+          endColumn: getEndLocation(callNode).column,
           parentScopeId,
           // REG-311: Async error tracking metadata
           isAwaited,
@@ -3240,6 +3244,8 @@ export class JSASTAnalyzer extends Plugin {
               file: module.file,
               line: getLine(callNode),
               column: getColumn(callNode),
+              endLine: getEndLocation(callNode).line,
+              endColumn: getEndLocation(callNode).column,
               parentScopeId,
               isMethodCall: true
             });

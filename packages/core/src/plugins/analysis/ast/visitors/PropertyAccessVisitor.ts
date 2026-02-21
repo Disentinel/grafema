@@ -22,7 +22,7 @@ import { ASTVisitor, type VisitorModule, type VisitorCollections, type VisitorHa
 import type { PropertyAccessInfo, CounterRef } from '../types.js';
 import type { ScopeTracker } from '../../../../core/ScopeTracker.js';
 import { computeSemanticIdV2 } from '../../../../core/SemanticId.js';
-import { getLine, getColumn } from '../utils/location.js';
+import { getLine, getColumn, getEndLocation } from '../utils/location.js';
 
 /**
  * Type alias for member-like expressions (both regular and optional chaining).
@@ -151,6 +151,7 @@ export class PropertyAccessVisitor extends ASTVisitor {
         id = `PROPERTY_ACCESS#${fullName}#${module.file}#${info.line}:${info.column}:${propertyAccessCounterRef.value++}`;
       }
 
+      const endLoc = getEndLocation(info.node as Node);
       propertyAccesses.push({
         id,
         semanticId: id,
@@ -162,6 +163,8 @@ export class PropertyAccessVisitor extends ASTVisitor {
         file: module.file,
         line: info.line,
         column: info.column,
+        endLine: endLoc.line,
+        endColumn: endLoc.column,
         parentScopeId
       });
     }
@@ -196,6 +199,7 @@ export class PropertyAccessVisitor extends ASTVisitor {
       id = `PROPERTY_ACCESS#${fullName}#${module.file}#${line}:${column}:${propertyAccessCounterRef.value++}`;
     }
 
+    const endLoc = getEndLocation(node as unknown as Node);
     propertyAccesses.push({
       id,
       semanticId: id,
@@ -205,6 +209,8 @@ export class PropertyAccessVisitor extends ASTVisitor {
       file: module.file,
       line: node.loc?.start?.line ?? 0,
       column: node.loc?.start?.column ?? 0,
+      endLine: endLoc.line,
+      endColumn: endLoc.column,
       parentScopeId
     });
   }
@@ -287,6 +293,7 @@ export class PropertyAccessVisitor extends ASTVisitor {
     computed?: boolean;
     line: number;
     column: number;
+    node: MemberLikeExpression;
   }> {
     // First, flatten the chain from outermost to innermost
     const segments: Array<{
@@ -329,6 +336,7 @@ export class PropertyAccessVisitor extends ASTVisitor {
       computed?: boolean;
       line: number;
       column: number;
+      node: MemberLikeExpression;
     }> = [];
 
     // Get the base object name
@@ -363,7 +371,8 @@ export class PropertyAccessVisitor extends ASTVisitor {
         optional: seg.optional || undefined,
         computed: seg.computed || undefined,
         line: seg.line,
-        column: seg.column
+        column: seg.column,
+        node: seg.objectNode
       });
 
       // Build next prefix
