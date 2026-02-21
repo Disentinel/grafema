@@ -130,7 +130,7 @@ export class RFDBServerBackend {
    */
   private log(message: string): void {
     if (!this.silent) {
-      console.log(message);
+      console.error(message);
     }
   }
 

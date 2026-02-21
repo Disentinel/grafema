@@ -84,7 +84,7 @@ export async function startRfdbServer(options: StartRfdbServerOptions): Promise<
   const state = { spawnError: null as Error | null };
 
   const serverProcess = _spawn(binaryPath, [dbPath, '--socket', socketPath, '--data-dir', dataDir], {
-    stdio: ['ignore', 'ignore', 'inherit'],
+    stdio: ['ignore', 'ignore', process.stderr.isTTY ? 'inherit' : 'ignore'],
     detached: true,
   });
 
