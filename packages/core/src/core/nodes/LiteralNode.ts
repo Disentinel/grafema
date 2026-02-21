@@ -25,6 +25,34 @@ export class LiteralNode {
   static readonly REQUIRED = ['file', 'line', 'column'] as const;
   static readonly OPTIONAL = ['value', 'valueType', 'parentCallId', 'argIndex'] as const;
 
+  private static readonly MAX_NAME_LENGTH = 64;
+
+  private static formatName(value: unknown): string {
+    let formatted: string;
+
+    if (value === null) {
+      formatted = 'null';
+    } else if (typeof value === 'string') {
+      const escaped = value.replace(/'/g, "\\'");
+      const MAX_CONTENT = this.MAX_NAME_LENGTH - 2; // room for surrounding quotes
+      if (escaped.length > MAX_CONTENT) {
+        formatted = `'${escaped.slice(0, MAX_CONTENT - 1)}\u2026'`;
+      } else {
+        formatted = `'${escaped}'`;
+      }
+    } else if (typeof value === 'number' || typeof value === 'boolean') {
+      formatted = String(value);
+    } else {
+      formatted = String(value);
+    }
+
+    if (formatted.length > this.MAX_NAME_LENGTH) {
+      return formatted.slice(0, this.MAX_NAME_LENGTH - 1) + '\u2026';
+    }
+
+    return formatted;
+  }
+
   static create(
     value: unknown,
     file: string,
@@ -43,7 +71,7 @@ export class LiteralNode {
     return {
       id,
       type: this.TYPE,
-      name: file,
+      name: LiteralNode.formatName(value),
       value,
       valueType: typeof value,
       file,
