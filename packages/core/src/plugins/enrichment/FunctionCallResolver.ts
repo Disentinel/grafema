@@ -74,51 +74,17 @@ export class FunctionCallResolver extends Plugin {
 
     const startTime = Date.now();
 
-    // Step 1: Build Import Index - Map<file:local, ImportNode>
-    const importIndex = new Map<string, ImportNode>();
-    for await (const node of graph.queryNodes({ nodeType: 'IMPORT' })) {
-      const imp = node as ImportNode;
-      if (!imp.file || !imp.local) continue;
-
-      // Skip external imports (non-relative)
-      const isRelative = imp.source && (imp.source.startsWith('./') || imp.source.startsWith('../'));
-      if (!isRelative) continue;
-
-      const key = `${imp.file}:${imp.local}`;
-      importIndex.set(key, imp);
-    }
+    // Step 1: Build indexes
+    const importIndex = await this.buildImportIndex(graph);
     logger.debug('Indexed imports', { count: importIndex.size });
 
-    // Step 2: Build Function Index - Map<file, Map<name, FunctionNode>>
-    const functionIndex = new Map<string, Map<string, FunctionNode>>();
-    for await (const node of graph.queryNodes({ nodeType: 'FUNCTION' })) {
-      const func = node as FunctionNode;
-      if (!func.file || !func.name) continue;
-
-      if (!functionIndex.has(func.file)) {
-        functionIndex.set(func.file, new Map());
-      }
-      functionIndex.get(func.file)!.set(func.name, func);
-    }
+    const functionIndex = await this.buildFunctionIndex(graph);
     logger.debug('Indexed functions', { files: functionIndex.size });
 
-    // Step 2.5: Build Export Index - Map<file, Map<exportKey, ExportNode>>
-    // This enables O(1) lookup when following re-export chains
-    const exportIndex = new Map<string, Map<string, ExportNode>>();
-    for await (const node of graph.queryNodes({ nodeType: 'EXPORT' })) {
-      const exp = node as ExportNode;
-      if (!exp.file) continue;
-
-      if (!exportIndex.has(exp.file)) {
-        exportIndex.set(exp.file, new Map());
-      }
-
-      const fileExports = exportIndex.get(exp.file)!;
-      fileExports.set(this.buildExportKey(exp), exp);
-    }
+    const exportIndex = await this.buildExportIndex(graph);
     logger.debug('Indexed exports', { files: exportIndex.size });
 
-    // Step 2.6: Build set of known files for path resolution
+    // Step 1.5: Build set of known files for path resolution
     const knownFiles = new Set<string>();
     for (const file of exportIndex.keys()) {
       knownFiles.add(file);
@@ -311,6 +277,64 @@ export class FunctionCallResolver extends Plugin {
       },
       errors
     );
+  }
+
+  /**
+   * Build import index mapping file:local to ImportNode.
+   * Only indexes relative imports (skips external packages).
+   */
+  private async buildImportIndex(graph: PluginContext['graph']): Promise<Map<string, ImportNode>> {
+    const importIndex = new Map<string, ImportNode>();
+    for await (const node of graph.queryNodes({ nodeType: 'IMPORT' })) {
+      const imp = node as ImportNode;
+      if (!imp.file || !imp.local) continue;
+
+      // Skip external imports (non-relative)
+      const isRelative = imp.source && (imp.source.startsWith('./') || imp.source.startsWith('../'));
+      if (!isRelative) continue;
+
+      const key = `${imp.file}:${imp.local}`;
+      importIndex.set(key, imp);
+    }
+    return importIndex;
+  }
+
+  /**
+   * Build function index mapping file -> name -> FunctionNode.
+   * Used for O(1) lookup when resolving call targets.
+   */
+  private async buildFunctionIndex(graph: PluginContext['graph']): Promise<Map<string, Map<string, FunctionNode>>> {
+    const functionIndex = new Map<string, Map<string, FunctionNode>>();
+    for await (const node of graph.queryNodes({ nodeType: 'FUNCTION' })) {
+      const func = node as FunctionNode;
+      if (!func.file || !func.name) continue;
+
+      if (!functionIndex.has(func.file)) {
+        functionIndex.set(func.file, new Map());
+      }
+      functionIndex.get(func.file)!.set(func.name, func);
+    }
+    return functionIndex;
+  }
+
+  /**
+   * Build export index mapping file -> exportKey -> ExportNode.
+   * Enables O(1) lookup when following re-export chains.
+   */
+  private async buildExportIndex(graph: PluginContext['graph']): Promise<Map<string, Map<string, ExportNode>>> {
+    const exportIndex = new Map<string, Map<string, ExportNode>>();
+    for await (const node of graph.queryNodes({ nodeType: 'EXPORT' })) {
+      const exp = node as ExportNode;
+      if (!exp.file) continue;
+
+      if (!exportIndex.has(exp.file)) {
+        exportIndex.set(exp.file, new Map());
+      }
+
+      const fileExports = exportIndex.get(exp.file)!;
+      fileExports.set(this.buildExportKey(exp), exp);
+    }
+    return exportIndex;
   }
 
   /**
