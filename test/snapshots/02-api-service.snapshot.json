@@ -193,13 +193,6 @@
       "type": "CALL"
     },
     {
-      "exported": false,
-      "file": "src/db.js",
-      "isNew": true,
-      "name": "Database",
-      "type": "CALL"
-    },
-    {
       "computed": false,
       "computedPropertyVar": null,
       "exported": false,
@@ -275,13 +268,6 @@
       "method": "query",
       "name": "db.query",
       "object": "db",
-      "type": "CALL"
-    },
-    {
-      "exported": false,
-      "file": "src/db.js",
-      "isNew": true,
-      "name": "Error",
       "type": "CALL"
     },
     {
@@ -2749,11 +2735,6 @@
     {
       "from": "MODULE:src/db.js",
       "type": "CONTAINS",
-      "to": "CALL:Database"
-    },
-    {
-      "from": "MODULE:src/db.js",
-      "type": "CONTAINS",
       "to": "CONSTRUCTOR_CALL:new Database()"
     },
     {
@@ -3210,11 +3191,6 @@
       "from": "SCOPE:getUsersRoute:body",
       "type": "DECLARES",
       "to": "VARIABLE:router"
-    },
-    {
-      "from": "SCOPE:if:13:4:0",
-      "type": "CONTAINS",
-      "to": "CALL:Error"
     },
     {
       "from": "SCOPE:if:13:4:0",

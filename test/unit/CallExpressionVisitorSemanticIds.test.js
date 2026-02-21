@@ -326,7 +326,7 @@ const result = array.map(x => x * 2).filter(x => x > 5);
   // ===========================================================================
 
   describe('constructor calls (new)', () => {
-    it('should generate semantic ID for new expression', async () => {
+    it('should track new expression as CONSTRUCTOR_CALL (not CALL with isNew)', async () => {
       await setupTest(backend, {
         'index.js': `
 class User {}
@@ -336,26 +336,22 @@ const user = new User();
 
       const allNodes = await backend.getAllNodes();
 
-      // Find the new expression call
-      const newCall = allNodes.find(n =>
+      // REG-547: new expressions should produce CONSTRUCTOR_CALL, not CALL(isNew:true)
+      const constructorCall = allNodes.find(n =>
+        n.type === 'CONSTRUCTOR_CALL' && n.className === 'User'
+      );
+      assert.ok(constructorCall, 'CONSTRUCTOR_CALL node for User should exist');
+
+      // No spurious CALL(isNew:true) should exist
+      const spuriousCall = allNodes.find(n =>
         n.type === 'CALL' && n.isNew === true
       );
+      assert.strictEqual(
+        spuriousCall, undefined,
+        `No CALL(isNew:true) should exist after REG-547 fix. Found: ${JSON.stringify(spuriousCall)}`
+      );
 
-      // If constructor calls are tracked as CALL nodes with isNew flag
-      if (newCall) {
-        assert.ok(
-          newCall.id.includes('User') || newCall.id.includes('new'),
-          `Constructor call ID should reference User. Got: ${newCall.id}`
-        );
-        // Check for line:column format (digits:digits) but allow new:ClassName format
-        const hasLineColumnFormat = /:\d+:\d+/.test(newCall.id);
-        assert.ok(
-          !hasLineColumnFormat,
-          `ID should not have line:column format. Got: ${newCall.id}`
-        );
-      }
-
-      // Alternatively, check for class instantiation tracking
+      // Class instantiation should still be tracked
       const classInstantiation = allNodes.find(n =>
         n.className === 'User' || (n.type === 'CONSTANT' && n.name === 'user')
       );
@@ -365,7 +361,7 @@ const user = new User();
       );
     });
 
-    it('should handle multiple constructor calls', async () => {
+    it('should handle multiple constructor calls as CONSTRUCTOR_CALL nodes', async () => {
       await setupTest(backend, {
         'index.js': `
 class Item {}
@@ -376,17 +372,21 @@ const b = new Item();
 
       const allNodes = await backend.getAllNodes();
 
-      // Find all constructor calls for Item
-      const newCalls = allNodes.filter(n =>
-        n.type === 'CALL' && n.isNew === true && n.name?.includes('Item')
+      // REG-547: constructor calls tracked as CONSTRUCTOR_CALL, not CALL(isNew:true)
+      const constructorCalls = allNodes.filter(n =>
+        n.type === 'CONSTRUCTOR_CALL' && n.className === 'Item'
       );
+      assert.strictEqual(constructorCalls.length, 2, 'Should have 2 CONSTRUCTOR_CALL nodes for Item');
 
-      // If tracked as CALL nodes
-      if (newCalls.length >= 2) {
-        const ids = newCalls.map(c => c.id);
-        const uniqueIds = new Set(ids);
-        assert.strictEqual(uniqueIds.size, newCalls.length, 'Constructor calls should have unique IDs');
-      }
+      const ids = constructorCalls.map(c => c.id);
+      const uniqueIds = new Set(ids);
+      assert.strictEqual(uniqueIds.size, 2, 'CONSTRUCTOR_CALL nodes should have unique IDs');
+
+      // No spurious CALL(isNew:true)
+      const spuriousCalls = allNodes.filter(n =>
+        n.type === 'CALL' && n.isNew === true
+      );
+      assert.strictEqual(spuriousCalls.length, 0, 'No CALL(isNew:true) nodes should exist');
 
       // Verify the constants are created
       const aVar = allNodes.find(n => n.name === 'a');

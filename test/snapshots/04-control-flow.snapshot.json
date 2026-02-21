@@ -422,27 +422,6 @@
       "type": "CALL"
     },
     {
-      "exported": false,
-      "file": "src/exceptions.js",
-      "isNew": true,
-      "name": "Error",
-      "type": "CALL"
-    },
-    {
-      "exported": false,
-      "file": "src/exceptions.js",
-      "isNew": true,
-      "name": "Error",
-      "type": "CALL"
-    },
-    {
-      "exported": false,
-      "file": "src/exceptions.js",
-      "isNew": true,
-      "name": "Error",
-      "type": "CALL"
-    },
-    {
       "computed": false,
       "computedPropertyVar": null,
       "exported": false,
@@ -8237,27 +8216,12 @@
     {
       "from": "SCOPE:if:28:4:1",
       "type": "CONTAINS",
-      "to": "CALL:Error"
-    },
-    {
-      "from": "SCOPE:if:28:4:1",
-      "type": "CONTAINS",
       "to": "CONSTRUCTOR_CALL:new Error()"
     },
     {
       "from": "SCOPE:if:63:2:2",
       "type": "CONTAINS",
-      "to": "CALL:Error"
-    },
-    {
-      "from": "SCOPE:if:63:2:2",
-      "type": "CONTAINS",
       "to": "CONSTRUCTOR_CALL:new Error()"
-    },
-    {
-      "from": "SCOPE:if:68:2:3",
-      "type": "CONTAINS",
-      "to": "CALL:Error"
     },
     {
       "from": "SCOPE:if:68:2:3",

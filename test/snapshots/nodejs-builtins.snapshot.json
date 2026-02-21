@@ -148,13 +148,6 @@
     },
     {
       "exported": false,
-      "file": "node-prefix.js",
-      "isNew": true,
-      "name": "EventEmitter",
-      "type": "CALL"
-    },
-    {
-      "exported": false,
       "file": "index.js",
       "isAwaited": false,
       "isInsideTry": false,
@@ -332,41 +325,6 @@
       "isAwaited": false,
       "isInsideTry": false,
       "name": "pathResolve",
-      "type": "CALL"
-    },
-    {
-      "exported": false,
-      "file": "aliased-imports.js",
-      "isNew": true,
-      "name": "Promise",
-      "type": "CALL"
-    },
-    {
-      "exported": false,
-      "file": "aliased-imports.js",
-      "isNew": true,
-      "name": "Promise",
-      "type": "CALL"
-    },
-    {
-      "exported": false,
-      "file": "index.js",
-      "isNew": true,
-      "name": "Promise",
-      "type": "CALL"
-    },
-    {
-      "exported": false,
-      "file": "namespace-import.js",
-      "isNew": true,
-      "name": "Promise",
-      "type": "CALL"
-    },
-    {
-      "exported": false,
-      "file": "unused-imports.js",
-      "isNew": true,
-      "name": "Promise",
       "type": "CALL"
     },
     {
@@ -650,13 +608,6 @@
       "isAwaited": false,
       "isInsideTry": false,
       "name": "wf",
-      "type": "CALL"
-    },
-    {
-      "exported": false,
-      "file": "node-prefix.js",
-      "isNew": true,
-      "name": "Worker",
       "type": "CALL"
     },
     {
@@ -1269,14 +1220,6 @@
       "exported": false,
       "file": "",
       "isBuiltin": true,
-      "name": "events.EventEmitter",
-      "pure": false,
-      "type": "EXTERNAL_FUNCTION"
-    },
-    {
-      "exported": false,
-      "file": "",
-      "isBuiltin": true,
       "name": "fs.existsSync",
       "pure": false,
       "security": "file-io",
@@ -1461,14 +1404,6 @@
       "isBuiltin": true,
       "name": "util.promisify",
       "pure": true,
-      "type": "EXTERNAL_FUNCTION"
-    },
-    {
-      "exported": false,
-      "file": "",
-      "isBuiltin": true,
-      "name": "worker_threads.Worker",
-      "pure": false,
       "type": "EXTERNAL_FUNCTION"
     },
     {
@@ -5571,11 +5506,6 @@
       "to": "FUNCTION:createServerWithNodePrefix"
     },
     {
-      "from": "CALL:EventEmitter",
-      "type": "CALLS",
-      "to": "EXTERNAL_FUNCTION:events.EventEmitter"
-    },
-    {
       "from": "CALL:exec",
       "type": "CALLS",
       "to": "EXTERNAL_FUNCTION:child_process.exec"
@@ -5996,11 +5926,6 @@
       "from": "CALL:wf",
       "type": "CALLS",
       "to": "EXTERNAL_FUNCTION:fs.writeFile"
-    },
-    {
-      "from": "CALL:Worker",
-      "type": "CALLS",
-      "to": "EXTERNAL_FUNCTION:worker_threads.Worker"
     },
     {
       "from": "CALL:writeFile",
@@ -8083,11 +8008,6 @@
     {
       "from": "SCOPE:createEmitter:body",
       "type": "CONTAINS",
-      "to": "CALL:EventEmitter"
-    },
-    {
-      "from": "SCOPE:createEmitter:body",
-      "type": "CONTAINS",
       "to": "CONSTRUCTOR_CALL:new EventEmitter()"
     },
     {
@@ -8193,11 +8113,6 @@
     {
       "from": "SCOPE:if:36:2:0",
       "type": "CONTAINS",
-      "to": "CALL:Worker"
-    },
-    {
-      "from": "SCOPE:if:36:2:0",
-      "type": "CONTAINS",
       "to": "CONSTRUCTOR_CALL:new Worker()"
     },
     {
@@ -8238,11 +8153,6 @@
     {
       "from": "SCOPE:loadConfig:body",
       "type": "CONTAINS",
-      "to": "CALL:Promise"
-    },
-    {
-      "from": "SCOPE:loadConfig:body",
-      "type": "CONTAINS",
       "to": "CONSTRUCTOR_CALL:new Promise()"
     },
     {
@@ -8253,22 +8163,12 @@
     {
       "from": "SCOPE:loadViaNamespace:body",
       "type": "CONTAINS",
-      "to": "CALL:Promise"
-    },
-    {
-      "from": "SCOPE:loadViaNamespace:body",
-      "type": "CONTAINS",
       "to": "CONSTRUCTOR_CALL:new Promise()"
     },
     {
       "from": "SCOPE:loadViaNamespace:body",
       "type": "CONTAINS",
       "to": "FUNCTION:anonymous[0]"
-    },
-    {
-      "from": "SCOPE:loadWithAlias:body",
-      "type": "CONTAINS",
-      "to": "CALL:Promise"
     },
     {
       "from": "SCOPE:loadWithAlias:body",
@@ -8299,11 +8199,6 @@
       "from": "SCOPE:onlyJoinAndResolve:body",
       "type": "CONTAINS",
       "to": "CALL:resolve"
-    },
-    {
-      "from": "SCOPE:onlyReadFile:body",
-      "type": "CONTAINS",
-      "to": "CALL:Promise"
     },
     {
       "from": "SCOPE:onlyReadFile:body",
@@ -8369,11 +8264,6 @@
       "from": "SCOPE:saveData:body",
       "type": "CONTAINS",
       "to": "FUNCTION:anonymous[0]"
-    },
-    {
-      "from": "SCOPE:saveWithAlias:body",
-      "type": "CONTAINS",
-      "to": "CALL:Promise"
     },
     {
       "from": "SCOPE:saveWithAlias:body",

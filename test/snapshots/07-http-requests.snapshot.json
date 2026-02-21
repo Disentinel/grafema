@@ -129,13 +129,6 @@
       "type": "CALL"
     },
     {
-      "exported": false,
-      "file": "client.js",
-      "isNew": true,
-      "name": "Headers",
-      "type": "CALL"
-    },
-    {
       "computed": false,
       "computedPropertyVar": null,
       "exported": false,
@@ -2328,11 +2321,6 @@
       "from": "SCOPE:authFetch:body",
       "type": "CONTAINS",
       "to": "CALL:fetch"
-    },
-    {
-      "from": "SCOPE:authFetch:body",
-      "type": "CONTAINS",
-      "to": "CALL:Headers"
     },
     {
       "from": "SCOPE:authFetch:body",

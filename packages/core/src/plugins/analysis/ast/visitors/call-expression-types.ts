@@ -109,7 +109,6 @@ export interface CallSiteInfo {
   column: number;
   parentScopeId: string;
   targetFunctionName: string;
-  isNew?: boolean;
   /** REG-297: true if wrapped in await expression */
   isAwaited?: boolean;
 }
@@ -129,7 +128,6 @@ export interface MethodCallInfo {
   line: number;
   column: number;
   parentScopeId: string;
-  isNew?: boolean;
   /** REG-332: Annotation to suppress strict mode errors */
   grafemaIgnore?: GrafemaIgnoreAnnotation;
   /** REG-297: true if wrapped in await expression */
