@@ -5,7 +5,6 @@
 
 import { readFileSync } from 'fs';
 import { createHash } from 'crypto';
-import { basename } from 'path';
 import { parse } from '@babel/parser';
 import traverseModule from '@babel/traverse';
 import type { NodePath, TraverseOptions, Visitor } from '@babel/traverse';
@@ -528,6 +527,7 @@ export class JSASTAnalyzer extends Plugin {
       const moduleInfos: ASTModuleInfo[] = modules.map(m => ({
         id: m.id,
         file: resolveNodeFile(m.file, projectPath),
+        relativeFile: m.file,
         name: m.name
       }));
 
@@ -1688,8 +1688,8 @@ export class JSASTAnalyzer extends Plugin {
       this.profiler.end('babel_parse');
 
       // Create ScopeTracker for semantic ID generation
-      // Use basename for shorter, more readable semantic IDs
-      const scopeTracker = new ScopeTracker(basename(module.file));
+      // Use module.file (relative path from workspace root) for consistent file references
+      const scopeTracker = new ScopeTracker(module.file);
 
       // REG-464: Shared IdGenerator for v2 collision resolution across visitors
       const sharedIdGenerator = new IdGenerator(scopeTracker);

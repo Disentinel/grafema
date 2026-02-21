@@ -6,7 +6,7 @@
       "exported": false,
       "file": "src/db.js",
       "name": "",
-      "semanticId": "db.js->Database->query->BRANCH->if#0",
+      "semanticId": "src/db.js->Database->query->BRANCH->if#0",
       "type": "BRANCH"
     },
     {
@@ -586,7 +586,7 @@
     },
     {
       "exported": false,
-      "file": "db.js",
+      "file": "src/db.js",
       "name": "Database",
       "type": "CLASS"
     },
