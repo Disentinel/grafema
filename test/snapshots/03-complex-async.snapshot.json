@@ -42007,11 +42007,27 @@
     },
     {
       "from": "PARAMETER:err",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:error",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "PARAMETER:err",
       "type": "RECEIVES_ARGUMENT",
       "to": "VARIABLE:error",
       "metadata": {
         "argIndex": 0,
         "callId": "app.js->processUserRequest->catch#0->CALL->config.handleError#0"
+      }
+    },
+    {
+      "from": "PARAMETER:limit",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 1
       }
     },
     {
@@ -42025,11 +42041,27 @@
     },
     {
       "from": "PARAMETER:startId",
+      "type": "DERIVES_FROM",
+      "to": "CONSTANT:userId",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "PARAMETER:startId",
       "type": "RECEIVES_ARGUMENT",
       "to": "CONSTANT:userId",
       "metadata": {
         "argIndex": 0,
         "callId": "dataProcessor.js->DataProcessor->processWithNestedGenerators->for-of#0->CALL->this.fetchUsersStream#0"
+      }
+    },
+    {
+      "from": "PARAMETER:user",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:user",
+      "metadata": {
+        "argIndex": 0
       }
     },
     {
