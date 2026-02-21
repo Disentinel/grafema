@@ -31,13 +31,16 @@ export class BranchHandler extends FunctionBodyHandler {
       SwitchStatement: (switchPath: NodePath<t.SwitchStatement>) => {
         analyzer.handleSwitchStatement(
           switchPath,
-          ctx.parentScopeId,
+          ctx.getCurrentScopeId(),
           ctx.module,
           ctx.collections,
           ctx.scopeTracker,
-          ctx.controlFlowState
+          ctx.controlFlowState,
+          ctx.switchCaseScopeMap
         );
       },
+
+      SwitchCase: this.createSwitchCaseVisitor(),
     };
   }
 
@@ -331,6 +334,77 @@ export class BranchHandler extends FunctionBodyHandler {
             scopeInfo.currentBlock = 'finally';
           }
         }
+      }
+    };
+  }
+
+  /**
+   * REG-536: Create SCOPE nodes for switch/case bodies so that
+   * nodes inside case clauses are connected to the main graph.
+   *
+   * Follows the same enter/exit pattern as LoopHandler:
+   * - enter: create SCOPE, push onto scopeIdStack, enter scopeTracker
+   * - exit: pop scopeIdStack, exit scopeTracker
+   */
+  private createSwitchCaseVisitor(): {
+    enter: (casePath: NodePath<t.SwitchCase>) => void;
+    exit: (casePath: NodePath<t.SwitchCase>) => void;
+  } {
+    const ctx = this.ctx;
+    const analyzer = this.analyzer;
+
+    return {
+      enter: (casePath: NodePath<t.SwitchCase>) => {
+        const caseNode = casePath.node;
+
+        // Skip empty cases (fall-through with no body)
+        if (caseNode.consequent.length === 0) return;
+
+        const caseId = ctx.switchCaseScopeMap.get(caseNode);
+        if (!caseId) return;
+
+        // Generate SCOPE id in parent context BEFORE entering child scope — matches LoopHandler pattern
+        const scopeType = caseNode.test === null ? 'default-case' : 'switch-case';
+        const scopeId = `SCOPE#${scopeType}#${ctx.module.file}#${getLine(caseNode)}:${ctx.scopeCounterRef.value++}`;
+        const semanticId = analyzer.generateSemanticId(scopeType, ctx.scopeTracker);
+
+        // Buffer the SCOPE node with parentScopeId = caseId (CASE -> CONTAINS -> SCOPE)
+        ctx.scopes.push({
+          id: scopeId,
+          type: 'SCOPE',
+          scopeType,
+          semanticId,
+          file: ctx.module.file,
+          line: getLine(caseNode),
+          parentScopeId: caseId,
+        });
+
+        // Push onto stack so nested nodes get CONTAINS edges to this scope
+        ctx.scopeIdStack.push(scopeId);
+
+        // Enter child scope for nested nodes' semantic ID generation AFTER push — matches LoopHandler pattern
+        const scopeLabel = caseNode.test === null ? 'default' : 'case';
+        if (ctx.scopeTracker) {
+          ctx.scopeTracker.enterCountedScope(scopeLabel);
+        }
+      },
+      exit: (casePath: NodePath<t.SwitchCase>) => {
+        const caseNode = casePath.node;
+
+        // Only pop if we pushed (non-empty case with a mapping)
+        if (caseNode.consequent.length === 0) return;
+        if (!ctx.switchCaseScopeMap.has(caseNode)) return;
+
+        // Pop scope from stack
+        ctx.scopeIdStack.pop();
+
+        // Exit scope for semantic ID tracking
+        if (ctx.scopeTracker) {
+          ctx.scopeTracker.exitScope();
+        }
+
+        // Clean up the mapping
+        ctx.switchCaseScopeMap.delete(caseNode);
       }
     };
   }

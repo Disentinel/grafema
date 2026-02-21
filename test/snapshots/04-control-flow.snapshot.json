@@ -4134,6 +4134,78 @@
     },
     {
       "exported": false,
+      "file": "src/conditionals.js",
+      "name": "",
+      "scopeType": "default-case",
+      "semanticId": "getCategory:default-case[0]",
+      "type": "SCOPE"
+    },
+    {
+      "exported": false,
+      "file": "src/conditionals.js",
+      "name": "",
+      "scopeType": "default-case",
+      "semanticId": "processCommand:default-case[0]",
+      "type": "SCOPE"
+    },
+    {
+      "exported": false,
+      "file": "src/conditionals.js",
+      "name": "",
+      "scopeType": "switch-case",
+      "semanticId": "getCategory:switch-case[0]",
+      "type": "SCOPE"
+    },
+    {
+      "exported": false,
+      "file": "src/conditionals.js",
+      "name": "",
+      "scopeType": "switch-case",
+      "semanticId": "getCategory:switch-case[1]",
+      "type": "SCOPE"
+    },
+    {
+      "exported": false,
+      "file": "src/conditionals.js",
+      "name": "",
+      "scopeType": "switch-case",
+      "semanticId": "getCategory:switch-case[2]",
+      "type": "SCOPE"
+    },
+    {
+      "exported": false,
+      "file": "src/conditionals.js",
+      "name": "",
+      "scopeType": "switch-case",
+      "semanticId": "processCommand:switch-case[0]",
+      "type": "SCOPE"
+    },
+    {
+      "exported": false,
+      "file": "src/conditionals.js",
+      "name": "",
+      "scopeType": "switch-case",
+      "semanticId": "processCommand:switch-case[1]",
+      "type": "SCOPE"
+    },
+    {
+      "exported": false,
+      "file": "src/conditionals.js",
+      "name": "",
+      "scopeType": "switch-case",
+      "semanticId": "processCommand:switch-case[2]",
+      "type": "SCOPE"
+    },
+    {
+      "exported": false,
+      "file": "src/conditionals.js",
+      "name": "",
+      "scopeType": "switch-case",
+      "semanticId": "processCommand:switch-case[3]",
+      "type": "SCOPE"
+    },
+    {
+      "exported": false,
       "file": "src/exceptions.js",
       "name": "",
       "scopeType": "catch-block",
@@ -5908,6 +5980,51 @@
       "from": "CALL:validateInput",
       "type": "CALLS",
       "to": "FUNCTION:validateInput"
+    },
+    {
+      "from": "CASE:",
+      "type": "CONTAINS",
+      "to": "SCOPE:"
+    },
+    {
+      "from": "CASE:",
+      "type": "CONTAINS",
+      "to": "SCOPE:"
+    },
+    {
+      "from": "CASE:",
+      "type": "CONTAINS",
+      "to": "SCOPE:"
+    },
+    {
+      "from": "CASE:",
+      "type": "CONTAINS",
+      "to": "SCOPE:"
+    },
+    {
+      "from": "CASE:",
+      "type": "CONTAINS",
+      "to": "SCOPE:"
+    },
+    {
+      "from": "CASE:",
+      "type": "CONTAINS",
+      "to": "SCOPE:"
+    },
+    {
+      "from": "CASE:",
+      "type": "CONTAINS",
+      "to": "SCOPE:"
+    },
+    {
+      "from": "CASE:",
+      "type": "CONTAINS",
+      "to": "SCOPE:"
+    },
+    {
+      "from": "CASE:",
+      "type": "CONTAINS",
+      "to": "SCOPE:"
     },
     {
       "from": "CATCH_BLOCK:",
@@ -7730,6 +7847,26 @@
     {
       "from": "SCOPE:",
       "type": "CONTAINS",
+      "to": "CALL:console.error"
+    },
+    {
+      "from": "SCOPE:",
+      "type": "CONTAINS",
+      "to": "CALL:console.log"
+    },
+    {
+      "from": "SCOPE:",
+      "type": "CONTAINS",
+      "to": "CALL:console.log"
+    },
+    {
+      "from": "SCOPE:",
+      "type": "CONTAINS",
+      "to": "CALL:console.log"
+    },
+    {
+      "from": "SCOPE:",
+      "type": "CONTAINS",
       "to": "CALL:console.log"
     },
     {
@@ -8166,26 +8303,6 @@
       "from": "SCOPE:processCommand:body",
       "type": "CONTAINS",
       "to": "BRANCH:"
-    },
-    {
-      "from": "SCOPE:processCommand:body",
-      "type": "CONTAINS",
-      "to": "CALL:console.error"
-    },
-    {
-      "from": "SCOPE:processCommand:body",
-      "type": "CONTAINS",
-      "to": "CALL:console.log"
-    },
-    {
-      "from": "SCOPE:processCommand:body",
-      "type": "CONTAINS",
-      "to": "CALL:console.log"
-    },
-    {
-      "from": "SCOPE:processCommand:body",
-      "type": "CONTAINS",
-      "to": "CALL:console.log"
     },
     {
       "from": "SCOPE:processCommand:body",
