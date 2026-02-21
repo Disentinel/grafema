@@ -165,7 +165,7 @@ async function run(): Promise<void> {
     const socketPath = config.analysis?.parallel?.socketPath || join(projectPath, '.grafema', 'rfdb.sock');
 
     console.log(`[Worker] Connecting to RFDB server: socket=${socketPath}, db=${dbPath}`);
-    db = new RFDBServerBackend({ socketPath, dbPath });
+    db = new RFDBServerBackend({ socketPath, dbPath, clientName: 'mcp' });
     await db.connect();
 
     // NOTE: db.clear() is NOT called here.

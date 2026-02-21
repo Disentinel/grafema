@@ -85,7 +85,8 @@ export async function analyzeAction(path: string, options: { service?: string; e
   const backend = new RFDBServerBackend({
     dbPath,
     autoStart: options.autoStart ?? false,
-    silent: !options.verbose  // Silent in normal mode (show progress), verbose shows logs
+    silent: !options.verbose,  // Silent in normal mode (show progress), verbose shows logs
+    clientName: 'cli'
   });
 
   try {

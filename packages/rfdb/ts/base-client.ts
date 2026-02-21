@@ -42,6 +42,7 @@ const DEFAULT_TIMEOUT_MS = 60_000;
 
 export abstract class BaseRFDBClient extends EventEmitter implements IRFDBClient {
   abstract readonly socketPath: string;
+  abstract readonly clientName: string;
   abstract connected: boolean;
 
   /**

@@ -45,7 +45,7 @@ Use with query --type:
       exitWithError('No graph database found', ['Run: grafema analyze']);
     }
 
-    const backend = new RFDBServerBackend({ dbPath });
+    const backend = new RFDBServerBackend({ dbPath, clientName: 'cli' });
     await backend.connect();
 
     try {

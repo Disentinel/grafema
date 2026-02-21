@@ -28,15 +28,17 @@ const DEFAULT_TIMEOUT_MS = 60_000;
 
 export class RFDBWebSocketClient extends BaseRFDBClient {
   readonly socketPath: string;
+  readonly clientName: string;
   private ws: WebSocket | null = null;
   connected: boolean = false;
   private pending: Map<number, PendingRequest> = new Map();
   private reqId: number = 0;
 
-  constructor(private url: string) {
+  constructor(private url: string, clientName: string = 'unknown') {
     super();
     // socketPath returns the URL to satisfy IRFDBClient interface
     this.socketPath = url;
+    this.clientName = clientName;
   }
 
   /**

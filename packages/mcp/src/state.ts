@@ -230,7 +230,7 @@ export async function getOrCreateBackend(): Promise<GraphBackend> {
 
   log(`[Grafema MCP] Using RFDB server backend: socket=${socketPath || 'auto'}, db=${dbPath}`);
 
-  const rfdbBackend = new RFDBServerBackend({ socketPath, dbPath });
+  const rfdbBackend = new RFDBServerBackend({ socketPath, dbPath, clientName: 'mcp' });
   await rfdbBackend.connect();
   backend = rfdbBackend as unknown as GraphBackend;
 

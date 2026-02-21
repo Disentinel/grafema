@@ -485,6 +485,7 @@ export interface ListSnapshotsResponse extends RFDBResponse {
 // === CLIENT INTERFACE ===
 export interface IRFDBClient {
   readonly socketPath: string;
+  readonly clientName: string;
   readonly connected: boolean;
   readonly supportsStreaming: boolean;
 

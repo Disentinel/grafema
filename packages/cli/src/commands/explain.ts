@@ -81,7 +81,7 @@ If a file shows NOT_ANALYZED:
     // Keep relative path for display
     const relativeFilePath = relative(projectPath, absoluteFilePath);
 
-    const backend = new RFDBServerBackend({ dbPath });
+    const backend = new RFDBServerBackend({ dbPath, clientName: 'cli' });
     await backend.connect();
 
     try {
