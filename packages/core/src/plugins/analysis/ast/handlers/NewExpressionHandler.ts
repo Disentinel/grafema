@@ -6,8 +6,7 @@
  */
 import type { Visitor, NodePath } from '@babel/traverse';
 import * as t from '@babel/types';
-import { getLine, getColumn, getEndLocation } from '../utils/location.js';
-import { computeSemanticId } from '../../../../core/SemanticId.js';
+import { getLine, getColumn } from '../utils/location.js';
 import { ConstructorCallNode } from '../../../../core/nodes/ConstructorCallNode.js';
 import { FunctionBodyHandler } from './FunctionBodyHandler.js';
 import { ArgumentExtractor } from '../visitors/ArgumentExtractor.js';
@@ -102,77 +101,6 @@ export class NewExpressionHandler extends FunctionBodyHandler {
           }
         }
 
-        // Handle simple constructor: new Foo()
-        if (newNode.callee.type === 'Identifier') {
-          if (ctx.processedCallSites.has(nodeKey)) {
-            return;
-          }
-          ctx.processedCallSites.add(nodeKey);
-
-          // Generate semantic ID (primary) or legacy ID (fallback)
-          const constructorName = newNode.callee.name;
-          const legacyId = `CALL#new:${constructorName}#${ctx.module.file}#${getLine(newNode)}:${getColumn(newNode)}:${ctx.callSiteCounterRef.value++}`;
-
-          let newCallId = legacyId;
-          if (ctx.scopeTracker) {
-            const discriminator = ctx.scopeTracker.getItemCounter(`CALL:new:${constructorName}`);
-            newCallId = computeSemanticId('CALL', `new:${constructorName}`, ctx.scopeTracker.getContext(), { discriminator });
-          }
-
-          ctx.callSites.push({
-            id: newCallId,
-            type: 'CALL',
-            name: constructorName,
-            file: ctx.module.file,
-            line: getLine(newNode),
-            endLine: getEndLocation(newNode).line,
-            endColumn: getEndLocation(newNode).column,
-            parentScopeId: ctx.getCurrentScopeId(),
-            targetFunctionName: constructorName,
-            isNew: true
-          });
-        }
-        // Handle namespaced constructor: new ns.Constructor()
-        else if (newNode.callee.type === 'MemberExpression') {
-          const memberCallee = newNode.callee;
-          const object = memberCallee.object;
-          const property = memberCallee.property;
-
-          if (object.type === 'Identifier' && property.type === 'Identifier') {
-            if (ctx.processedMethodCalls.has(nodeKey)) {
-              return;
-            }
-            ctx.processedMethodCalls.add(nodeKey);
-
-            const objectName = object.name;
-            const constructorName = property.name;
-            const fullName = `${objectName}.${constructorName}`;
-
-            // Generate semantic ID for method-style constructor call
-            const legacyId = `CALL#new:${fullName}#${ctx.module.file}#${getLine(newNode)}:${getColumn(newNode)}:${ctx.callSiteCounterRef.value++}`;
-
-            let newMethodCallId = legacyId;
-            if (ctx.scopeTracker) {
-              const discriminator = ctx.scopeTracker.getItemCounter(`CALL:new:${fullName}`);
-              newMethodCallId = computeSemanticId('CALL', `new:${fullName}`, ctx.scopeTracker.getContext(), { discriminator });
-            }
-
-            ctx.methodCalls.push({
-              id: newMethodCallId,
-              type: 'CALL',
-              name: fullName,
-              object: objectName,
-              method: constructorName,
-              file: ctx.module.file,
-              line: getLine(newNode),
-              column: getColumn(newNode),
-              endLine: getEndLocation(newNode).line,
-              endColumn: getEndLocation(newNode).column,
-              parentScopeId: ctx.getCurrentScopeId(),
-              isNew: true
-            });
-          }
-        }
       },
     };
   }

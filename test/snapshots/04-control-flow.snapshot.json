@@ -488,33 +488,6 @@
       "type": "CALL"
     },
     {
-      "endColumn": 41,
-      "endLine": 29,
-      "exported": false,
-      "file": "src/exceptions.js",
-      "isNew": true,
-      "name": "Error",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 44,
-      "endLine": 63,
-      "exported": false,
-      "file": "src/exceptions.js",
-      "isNew": true,
-      "name": "Error",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 45,
-      "endLine": 68,
-      "exported": false,
-      "file": "src/exceptions.js",
-      "isNew": true,
-      "name": "Error",
-      "type": "CALL"
-    },
-    {
       "computed": false,
       "computedPropertyVar": null,
       "endColumn": 26,
@@ -8431,27 +8404,12 @@
     {
       "from": "SCOPE:if:28:4:1",
       "type": "CONTAINS",
-      "to": "CALL:Error"
-    },
-    {
-      "from": "SCOPE:if:28:4:1",
-      "type": "CONTAINS",
       "to": "CONSTRUCTOR_CALL:new Error()"
     },
     {
       "from": "SCOPE:if:63:2:2",
       "type": "CONTAINS",
-      "to": "CALL:Error"
-    },
-    {
-      "from": "SCOPE:if:63:2:2",
-      "type": "CONTAINS",
       "to": "CONSTRUCTOR_CALL:new Error()"
-    },
-    {
-      "from": "SCOPE:if:68:2:3",
-      "type": "CONTAINS",
-      "to": "CALL:Error"
     },
     {
       "from": "SCOPE:if:68:2:3",

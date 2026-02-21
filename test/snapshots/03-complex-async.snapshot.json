@@ -1319,15 +1319,6 @@
       "type": "CALL"
     },
     {
-      "endColumn": 30,
-      "endLine": 45,
-      "exported": false,
-      "file": "app.js",
-      "isNew": true,
-      "name": "AppConfig",
-      "type": "CALL"
-    },
-    {
       "computed": false,
       "computedPropertyVar": null,
       "endColumn": 22,
@@ -2650,123 +2641,6 @@
       "type": "CALL"
     },
     {
-      "endColumn": 41,
-      "endLine": 131,
-      "exported": false,
-      "file": "app.js",
-      "isNew": true,
-      "name": "DataProcessor",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 39,
-      "endLine": 319,
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "isNew": true,
-      "name": "DataProcessor",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 41,
-      "endLine": 302,
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "isNew": true,
-      "name": "DataProcessor",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 41,
-      "endLine": 311,
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "isNew": true,
-      "name": "DataProcessor",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 27,
-      "endLine": 180,
-      "exported": false,
-      "file": "app.js",
-      "isNew": true,
-      "name": "Date",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 30,
-      "endLine": 324,
-      "exported": false,
-      "file": "middleware/auth.js",
-      "isNew": true,
-      "name": "Date",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 25,
-      "endLine": 164,
-      "exported": false,
-      "file": "models/User.js",
-      "isNew": true,
-      "name": "Date",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 25,
-      "endLine": 200,
-      "exported": false,
-      "file": "models/User.js",
-      "isNew": true,
-      "name": "Date",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 29,
-      "endLine": 82,
-      "exported": false,
-      "file": "models/User.js",
-      "isNew": true,
-      "name": "Date",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 35,
-      "endLine": 180,
-      "exported": false,
-      "file": "routes/api.js",
-      "isNew": true,
-      "name": "Date",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 35,
-      "endLine": 65,
-      "exported": false,
-      "file": "routes/api.js",
-      "isNew": true,
-      "name": "Date",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 31,
-      "endLine": 83,
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "isNew": true,
-      "name": "Date",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 35,
-      "endLine": 233,
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "isNew": true,
-      "name": "Date",
-      "type": "CALL"
-    },
-    {
       "computed": false,
       "computedPropertyVar": null,
       "endColumn": 57,
@@ -2812,141 +2686,6 @@
       "type": "CALL"
     },
     {
-      "endColumn": 39,
-      "endLine": 88,
-      "exported": false,
-      "file": "middleware/auth.js",
-      "isNew": true,
-      "name": "Error",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 41,
-      "endLine": 348,
-      "exported": false,
-      "file": "middleware/auth.js",
-      "isNew": true,
-      "name": "Error",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 41,
-      "endLine": 45,
-      "exported": false,
-      "file": "middleware/auth.js",
-      "isNew": true,
-      "name": "Error",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 42,
-      "endLine": 94,
-      "exported": false,
-      "file": "middleware/auth.js",
-      "isNew": true,
-      "name": "Error",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 43,
-      "endLine": 55,
-      "exported": false,
-      "file": "middleware/auth.js",
-      "isNew": true,
-      "name": "Error",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 46,
-      "endLine": 64,
-      "exported": false,
-      "file": "middleware/auth.js",
-      "isNew": true,
-      "name": "Error",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 48,
-      "endLine": 13,
-      "exported": false,
-      "file": "middleware/auth.js",
-      "isNew": true,
-      "name": "Error",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 51,
-      "endLine": 22,
-      "exported": false,
-      "file": "middleware/auth.js",
-      "isNew": true,
-      "name": "Error",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 53,
-      "endLine": 237,
-      "exported": false,
-      "file": "middleware/auth.js",
-      "isNew": true,
-      "name": "Error",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 56,
-      "endLine": 31,
-      "exported": false,
-      "file": "middleware/auth.js",
-      "isNew": true,
-      "name": "Error",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 58,
-      "endLine": 318,
-      "exported": false,
-      "file": "middleware/auth.js",
-      "isNew": true,
-      "name": "Error",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 41,
-      "endLine": 95,
-      "exported": false,
-      "file": "routes/api.js",
-      "isNew": true,
-      "name": "Error",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 57,
-      "endLine": 111,
-      "exported": false,
-      "file": "utils/asyncHelpers.js",
-      "isNew": true,
-      "name": "Error",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 66,
-      "endLine": 35,
-      "exported": false,
-      "file": "utils/asyncHelpers.js",
-      "isNew": true,
-      "name": "Error",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 90,
-      "endLine": 15,
-      "exported": false,
-      "file": "utils/asyncHelpers.js",
-      "isNew": true,
-      "name": "Error",
-      "type": "CALL"
-    },
-    {
       "endColumn": 51,
       "endLine": 242,
       "exported": false,
@@ -2974,15 +2713,6 @@
       "isAwaited": false,
       "isInsideTry": false,
       "name": "execute",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 25,
-      "endLine": 10,
-      "exported": false,
-      "file": "app.js",
-      "isNew": true,
-      "name": "express",
       "type": "CALL"
     },
     {
@@ -3568,15 +3298,6 @@
       "type": "CALL"
     },
     {
-      "endColumn": 26,
-      "endLine": 11,
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "isNew": true,
-      "name": "Map",
-      "type": "CALL"
-    },
-    {
       "computed": false,
       "computedPropertyVar": null,
       "endColumn": 65,
@@ -4067,17 +3788,6 @@
       "type": "CALL"
     },
     {
-      "endColumn": 2,
-      "endLine": 19,
-      "exported": false,
-      "file": "models/User.js",
-      "isNew": true,
-      "method": "Schema",
-      "name": "mongoose.Schema",
-      "object": "mongoose",
-      "type": "CALL"
-    },
-    {
       "computed": false,
       "computedPropertyVar": null,
       "endColumn": 6,
@@ -4471,123 +4181,6 @@
       "isAwaited": true,
       "isInsideTry": true,
       "name": "processUserRequest",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 4,
-      "endLine": 266,
-      "exported": false,
-      "file": "app.js",
-      "isNew": true,
-      "name": "Promise",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 4,
-      "endLine": 353,
-      "exported": false,
-      "file": "middleware/auth.js",
-      "isNew": true,
-      "name": "Promise",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 4,
-      "endLine": 50,
-      "exported": false,
-      "file": "middleware/auth.js",
-      "isNew": true,
-      "name": "Promise",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 6,
-      "endLine": 83,
-      "exported": false,
-      "file": "middleware/auth.js",
-      "isNew": true,
-      "name": "Promise",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 4,
-      "endLine": 77,
-      "exported": false,
-      "file": "models/User.js",
-      "isNew": true,
-      "name": "Promise",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 6,
-      "endLine": 175,
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "isNew": true,
-      "name": "Promise",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 4,
-      "endLine": 28,
-      "exported": false,
-      "file": "utils/asyncHelpers.js",
-      "isNew": true,
-      "name": "Promise",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 4,
-      "endLine": 355,
-      "exported": false,
-      "file": "utils/asyncHelpers.js",
-      "isNew": true,
-      "name": "Promise",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 4,
-      "endLine": 47,
-      "exported": false,
-      "file": "utils/asyncHelpers.js",
-      "isNew": true,
-      "name": "Promise",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 4,
-      "endLine": 60,
-      "exported": false,
-      "file": "utils/asyncHelpers.js",
-      "isNew": true,
-      "name": "Promise",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 6,
-      "endLine": 244,
-      "exported": false,
-      "file": "utils/asyncHelpers.js",
-      "isNew": true,
-      "name": "Promise",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 6,
-      "endLine": 318,
-      "exported": false,
-      "file": "utils/asyncHelpers.js",
-      "isNew": true,
-      "name": "Promise",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 8,
-      "endLine": 279,
-      "exported": false,
-      "file": "utils/asyncHelpers.js",
-      "isNew": true,
-      "name": "Promise",
       "type": "CALL"
     },
     {
@@ -7117,15 +6710,6 @@
       "method": "save",
       "name": "this.save",
       "object": "this",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 6,
-      "endLine": 29,
-      "exported": false,
-      "file": "routes/api.js",
-      "isNew": true,
-      "name": "User",
       "type": "CALL"
     },
     {
@@ -31019,19 +30603,6 @@
       "to": "FUNCTION:execute"
     },
     {
-      "from": "CALL:express",
-      "type": "CALLS",
-      "to": "EXTERNAL_MODULE:express",
-      "metadata": {
-        "exportedName": "default"
-      }
-    },
-    {
-      "from": "CALL:express",
-      "type": "HANDLED_BY",
-      "to": "IMPORT:express"
-    },
-    {
       "from": "CALL:fallbackFn",
       "type": "RETURNS",
       "to": "FUNCTION:anonymous[0]"
@@ -42275,22 +41846,12 @@
     {
       "from": "MODULE:app.js",
       "type": "CONTAINS",
-      "to": "CALL:AppConfig"
-    },
-    {
-      "from": "MODULE:app.js",
-      "type": "CONTAINS",
       "to": "CALL:createClient"
     },
     {
       "from": "MODULE:app.js",
       "type": "CONTAINS",
       "to": "CALL:errorHandler.handleError.bind"
-    },
-    {
-      "from": "MODULE:app.js",
-      "type": "CONTAINS",
-      "to": "CALL:express"
     },
     {
       "from": "MODULE:app.js",
@@ -42751,11 +42312,6 @@
       "from": "MODULE:models/User.js",
       "type": "CONTAINS",
       "to": "CALL:mongoose.model"
-    },
-    {
-      "from": "MODULE:models/User.js",
-      "type": "CONTAINS",
-      "to": "CALL:mongoose.Schema"
     },
     {
       "from": "MODULE:models/User.js",
@@ -43756,26 +43312,6 @@
     {
       "from": "SCOPE:",
       "type": "CONTAINS",
-      "to": "CALL:DataProcessor"
-    },
-    {
-      "from": "SCOPE:",
-      "type": "CONTAINS",
-      "to": "CALL:DataProcessor"
-    },
-    {
-      "from": "SCOPE:",
-      "type": "CONTAINS",
-      "to": "CALL:DataProcessor"
-    },
-    {
-      "from": "SCOPE:",
-      "type": "CONTAINS",
-      "to": "CALL:Date"
-    },
-    {
-      "from": "SCOPE:",
-      "type": "CONTAINS",
       "to": "CALL:Date.now"
     },
     {
@@ -43922,16 +43458,6 @@
       "from": "SCOPE:",
       "type": "CONTAINS",
       "to": "CALL:processUserRequest"
-    },
-    {
-      "from": "SCOPE:",
-      "type": "CONTAINS",
-      "to": "CALL:Promise"
-    },
-    {
-      "from": "SCOPE:",
-      "type": "CONTAINS",
-      "to": "CALL:Promise"
     },
     {
       "from": "SCOPE:",
@@ -45161,36 +44687,6 @@
     {
       "from": "SCOPE:anonymous[0]:body",
       "type": "CONTAINS",
-      "to": "CALL:Date"
-    },
-    {
-      "from": "SCOPE:anonymous[0]:body",
-      "type": "CONTAINS",
-      "to": "CALL:Date"
-    },
-    {
-      "from": "SCOPE:anonymous[0]:body",
-      "type": "CONTAINS",
-      "to": "CALL:Date"
-    },
-    {
-      "from": "SCOPE:anonymous[0]:body",
-      "type": "CONTAINS",
-      "to": "CALL:Date"
-    },
-    {
-      "from": "SCOPE:anonymous[0]:body",
-      "type": "CONTAINS",
-      "to": "CALL:Date"
-    },
-    {
-      "from": "SCOPE:anonymous[0]:body",
-      "type": "CONTAINS",
-      "to": "CALL:Error"
-    },
-    {
-      "from": "SCOPE:anonymous[0]:body",
-      "type": "CONTAINS",
       "to": "CALL:execute"
     },
     {
@@ -45387,16 +44883,6 @@
       "from": "SCOPE:anonymous[0]:body",
       "type": "CONTAINS",
       "to": "CALL:processor.processBatch"
-    },
-    {
-      "from": "SCOPE:anonymous[0]:body",
-      "type": "CONTAINS",
-      "to": "CALL:Promise"
-    },
-    {
-      "from": "SCOPE:anonymous[0]:body",
-      "type": "CONTAINS",
-      "to": "CALL:Promise"
     },
     {
       "from": "SCOPE:anonymous[0]:body",
@@ -45612,11 +45098,6 @@
       "from": "SCOPE:anonymous[0]:body",
       "type": "CONTAINS",
       "to": "CALL:task"
-    },
-    {
-      "from": "SCOPE:anonymous[0]:body",
-      "type": "CONTAINS",
-      "to": "CALL:User"
     },
     {
       "from": "SCOPE:anonymous[0]:body",
@@ -46351,11 +45832,6 @@
     {
       "from": "SCOPE:anonymous[1]:body",
       "type": "CONTAINS",
-      "to": "CALL:Error"
-    },
-    {
-      "from": "SCOPE:anonymous[1]:body",
-      "type": "CONTAINS",
       "to": "CALL:fetch"
     },
     {
@@ -47081,11 +46557,6 @@
     {
       "from": "SCOPE:anonymous[8]:body",
       "type": "CONTAINS",
-      "to": "CALL:Date"
-    },
-    {
-      "from": "SCOPE:anonymous[8]:body",
-      "type": "CONTAINS",
       "to": "CALL:mongoose.connection.db.collection"
     },
     {
@@ -47201,11 +46672,6 @@
     {
       "from": "SCOPE:blacklistToken:body",
       "type": "CONTAINS",
-      "to": "CALL:Promise"
-    },
-    {
-      "from": "SCOPE:blacklistToken:body",
-      "type": "CONTAINS",
       "to": "CONSTRUCTOR_CALL:new Promise()"
     },
     {
@@ -47237,11 +46703,6 @@
       "from": "SCOPE:callbackHell:body",
       "type": "CONTAINS",
       "to": "FUNCTION:anonymous[0]"
-    },
-    {
-      "from": "SCOPE:callbackToPromise:body",
-      "type": "CONTAINS",
-      "to": "CALL:Promise"
     },
     {
       "from": "SCOPE:callbackToPromise:body",
@@ -47306,11 +46767,6 @@
     {
       "from": "SCOPE:createWithProfile:body",
       "type": "CONTAINS",
-      "to": "CALL:Date"
-    },
-    {
-      "from": "SCOPE:createWithProfile:body",
-      "type": "CONTAINS",
       "to": "CALL:mongoose.connection.db.collection"
     },
     {
@@ -47352,11 +46808,6 @@
       "from": "SCOPE:createWithProfile:body",
       "type": "DECLARES",
       "to": "VARIABLE:user"
-    },
-    {
-      "from": "SCOPE:DataProcessor.constructor:body",
-      "type": "CONTAINS",
-      "to": "CALL:Map"
     },
     {
       "from": "SCOPE:DataProcessor.constructor:body",
@@ -47522,11 +46973,6 @@
       "from": "SCOPE:DataProcessor.processWithNestedGenerators:body",
       "type": "DECLARES",
       "to": "CONSTANT:results"
-    },
-    {
-      "from": "SCOPE:DataProcessor.processWithPromises:body",
-      "type": "CONTAINS",
-      "to": "CALL:Promise"
     },
     {
       "from": "SCOPE:DataProcessor.processWithPromises:body",
@@ -47711,11 +47157,6 @@
     {
       "from": "SCOPE:generateAuthToken:body",
       "type": "CONTAINS",
-      "to": "CALL:Promise"
-    },
-    {
-      "from": "SCOPE:generateAuthToken:body",
-      "type": "CONTAINS",
       "to": "CONSTRUCTOR_CALL:new Promise()"
     },
     {
@@ -47881,11 +47322,6 @@
     {
       "from": "SCOPE:if:12:4:0",
       "type": "CONTAINS",
-      "to": "CALL:Error"
-    },
-    {
-      "from": "SCOPE:if:12:4:0",
-      "type": "CONTAINS",
       "to": "CONSTRUCTOR_CALL:new Error()"
     },
     {
@@ -47922,11 +47358,6 @@
       "from": "SCOPE:if:137:10:19",
       "type": "CONTAINS",
       "to": "CALL:console.error"
-    },
-    {
-      "from": "SCOPE:if:14:10:0",
-      "type": "CONTAINS",
-      "to": "CALL:Error"
     },
     {
       "from": "SCOPE:if:14:10:0",
@@ -48046,11 +47477,6 @@
     {
       "from": "SCOPE:if:21:6:2",
       "type": "CONTAINS",
-      "to": "CALL:Error"
-    },
-    {
-      "from": "SCOPE:if:21:6:2",
-      "type": "CONTAINS",
       "to": "CONSTRUCTOR_CALL:new Error()"
     },
     {
@@ -48072,11 +47498,6 @@
       "from": "SCOPE:if:230:4:26",
       "type": "CONTAINS",
       "to": "CALL:res.status"
-    },
-    {
-      "from": "SCOPE:if:236:8:27",
-      "type": "CONTAINS",
-      "to": "CALL:Error"
     },
     {
       "from": "SCOPE:if:236:8:27",
@@ -48196,11 +47617,6 @@
     {
       "from": "SCOPE:if:30:8:4",
       "type": "CONTAINS",
-      "to": "CALL:Error"
-    },
-    {
-      "from": "SCOPE:if:30:8:4",
-      "type": "CONTAINS",
       "to": "CONSTRUCTOR_CALL:new Error()"
     },
     {
@@ -48227,11 +47643,6 @@
       "from": "SCOPE:if:318:4:33",
       "type": "CONTAINS",
       "to": "CALL:callback"
-    },
-    {
-      "from": "SCOPE:if:318:4:33",
-      "type": "CONTAINS",
-      "to": "CALL:Error"
     },
     {
       "from": "SCOPE:if:318:4:33",
@@ -48291,11 +47702,6 @@
     {
       "from": "SCOPE:if:347:6:37",
       "type": "CONTAINS",
-      "to": "CALL:Error"
-    },
-    {
-      "from": "SCOPE:if:347:6:37",
-      "type": "CONTAINS",
       "to": "CALL:reject"
     },
     {
@@ -48312,11 +47718,6 @@
       "from": "SCOPE:if:42:8:3",
       "type": "CONTAINS",
       "to": "CALL:console.error"
-    },
-    {
-      "from": "SCOPE:if:44:6:5",
-      "type": "CONTAINS",
-      "to": "CALL:Error"
     },
     {
       "from": "SCOPE:if:44:6:5",
@@ -48361,11 +47762,6 @@
     {
       "from": "SCOPE:if:54:8:7",
       "type": "CONTAINS",
-      "to": "CALL:Error"
-    },
-    {
-      "from": "SCOPE:if:54:8:7",
-      "type": "CONTAINS",
       "to": "CONSTRUCTOR_CALL:new Error()"
     },
     {
@@ -48387,11 +47783,6 @@
       "from": "SCOPE:if:60:12:5",
       "type": "CONTAINS",
       "to": "CALL:callback"
-    },
-    {
-      "from": "SCOPE:if:63:8:8",
-      "type": "CONTAINS",
-      "to": "CALL:Error"
     },
     {
       "from": "SCOPE:if:63:8:8",
@@ -48436,27 +47827,12 @@
     {
       "from": "SCOPE:if:87:4:11",
       "type": "CONTAINS",
-      "to": "CALL:Error"
-    },
-    {
-      "from": "SCOPE:if:87:4:11",
-      "type": "CONTAINS",
       "to": "CONSTRUCTOR_CALL:new Error()"
     },
     {
       "from": "SCOPE:if:93:4:12",
       "type": "CONTAINS",
-      "to": "CALL:Error"
-    },
-    {
-      "from": "SCOPE:if:93:4:12",
-      "type": "CONTAINS",
       "to": "CONSTRUCTOR_CALL:new Error()"
-    },
-    {
-      "from": "SCOPE:if:94:6:7",
-      "type": "CONTAINS",
-      "to": "CALL:Error"
     },
     {
       "from": "SCOPE:if:94:6:7",
@@ -48567,11 +47943,6 @@
       "from": "SCOPE:processDataGenerator:body",
       "type": "CONTAINS",
       "to": "LOOP:"
-    },
-    {
-      "from": "SCOPE:processInBatches:body",
-      "type": "CONTAINS",
-      "to": "CALL:DataProcessor"
     },
     {
       "from": "SCOPE:processInBatches:body",
@@ -48726,22 +48097,12 @@
     {
       "from": "SCOPE:promisePool:body",
       "type": "CONTAINS",
-      "to": "CALL:Promise"
-    },
-    {
-      "from": "SCOPE:promisePool:body",
-      "type": "CONTAINS",
       "to": "CONSTRUCTOR_CALL:new Promise()"
     },
     {
       "from": "SCOPE:promisePool:body",
       "type": "CONTAINS",
       "to": "FUNCTION:anonymous[0]"
-    },
-    {
-      "from": "SCOPE:promiseRace:body",
-      "type": "CONTAINS",
-      "to": "CALL:Promise"
     },
     {
       "from": "SCOPE:promiseRace:body",
@@ -48826,11 +48187,6 @@
     {
       "from": "SCOPE:retryWithBackoff:body",
       "type": "CONTAINS",
-      "to": "CALL:Promise"
-    },
-    {
-      "from": "SCOPE:retryWithBackoff:body",
-      "type": "CONTAINS",
       "to": "CONSTRUCTOR_CALL:new Promise()"
     },
     {
@@ -48876,22 +48232,12 @@
     {
       "from": "SCOPE:startServer:body",
       "type": "CONTAINS",
-      "to": "CALL:Promise"
-    },
-    {
-      "from": "SCOPE:startServer:body",
-      "type": "CONTAINS",
       "to": "CONSTRUCTOR_CALL:new Promise()"
     },
     {
       "from": "SCOPE:startServer:body",
       "type": "CONTAINS",
       "to": "FUNCTION:anonymous[0]"
-    },
-    {
-      "from": "SCOPE:updateLastLogin:body",
-      "type": "CONTAINS",
-      "to": "CALL:Date"
     },
     {
       "from": "SCOPE:updateLastLogin:body",
@@ -48937,11 +48283,6 @@
       "from": "SCOPE:verifyTokenCallback:body",
       "type": "CONTAINS",
       "to": "FUNCTION:anonymous[0]"
-    },
-    {
-      "from": "SCOPE:verifyTokenPromise:body",
-      "type": "CONTAINS",
-      "to": "CALL:Promise"
     },
     {
       "from": "SCOPE:verifyTokenPromise:body",
