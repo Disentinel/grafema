@@ -70,6 +70,7 @@ export class SQLiteAnalyzer extends Plugin {
 
     try {
       const { graph } = context;
+      const factory = this.getFactory(context);
       const projectPath = (context.manifest as { projectPath?: string })?.projectPath ?? '';
 
       // Получаем все MODULE ноды
@@ -81,7 +82,7 @@ export class SQLiteAnalyzer extends Plugin {
 
       // Анализируем каждый модуль
       for (const module of modules) {
-        const result = await this.analyzeModule(module, graph, projectPath);
+        const result = await this.analyzeModule(module, graph, projectPath, factory);
         queriesCreated += result.queries;
         operationsCreated += result.operations;
         edgesCreated += result.edges;
@@ -102,7 +103,8 @@ export class SQLiteAnalyzer extends Plugin {
   private async analyzeModule(
     module: NodeRecord,
     graph: PluginContext['graph'],
-    projectPath: string
+    projectPath: string,
+    factory: PluginContext['factory'],
   ): Promise<AnalysisResult> {
     let queriesCreated = 0;
     let operationsCreated = 0;
@@ -303,7 +305,7 @@ export class SQLiteAnalyzer extends Plugin {
       }
 
       // Flush nodes first so queryNodes can find them
-      await graph.addNodes(nodes);
+      await factory!.storeMany(nodes);
 
       // Fetch functions once per module, scoped by file
       const fileFunctions: NodeRecord[] = [];
@@ -334,7 +336,7 @@ export class SQLiteAnalyzer extends Plugin {
       }
 
       // Flush all edges
-      await graph.addEdges(edges);
+      await factory!.linkMany(edges);
     } catch {
       // Silent - per-module errors shouldn't spam logs
     }

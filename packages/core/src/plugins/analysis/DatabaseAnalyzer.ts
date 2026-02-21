@@ -63,6 +63,7 @@ export class DatabaseAnalyzer extends Plugin {
 
     try {
       const { graph, onProgress } = context;
+      const factory = this.getFactory(context);
       const projectPath = (context.manifest as { projectPath?: string })?.projectPath ?? '';
 
       // Получаем все MODULE ноды
@@ -78,7 +79,7 @@ export class DatabaseAnalyzer extends Plugin {
       for (let i = 0; i < modules.length; i++) {
         const module = modules[i];
         const functions = await this.getFunctions(graph, module.file!);
-        const result = await this.analyzeModule(module, functions, graph, projectPath);
+        const result = await this.analyzeModule(module, functions, graph, projectPath, factory);
         queriesCreated += result.queries;
         tablesCreated += result.tables;
         edgesCreated += result.edges;
@@ -140,7 +141,8 @@ export class DatabaseAnalyzer extends Plugin {
     module: NodeRecord,
     functions: NodeRecord[],
     graph: PluginContext['graph'],
-    projectPath: string
+    projectPath: string,
+    factory: PluginContext['factory'],
   ): Promise<AnalysisResult> {
     let queriesCreated = 0;
     let tablesCreated = 0;
@@ -318,8 +320,8 @@ export class DatabaseAnalyzer extends Plugin {
         }
 
         // Flush all nodes and edges
-        await graph.addNodes(nodes);
-        await graph.addEdges(edges);
+        await factory!.storeMany(nodes);
+        await factory!.linkMany(edges);
       }
     } catch {
       // Silent - per-module errors shouldn't spam logs

@@ -83,6 +83,7 @@ export class AliasTracker extends Plugin {
 
   async execute(context: PluginContext): Promise<PluginResult> {
     const { graph, onProgress } = context;
+    const factory = this.getFactory(context);
     const logger = this.log(context);
 
     logger.info('Starting alias resolution');
@@ -146,7 +147,7 @@ export class AliasTracker extends Plugin {
       aliasesFound++;
 
       // Создаём ALIAS_OF ребро для трассировки
-      await graph.addEdge({
+      await factory!.link({
         src: call.id,
         dst: alias.expressionId,
         type: 'ALIAS_OF'
@@ -165,7 +166,7 @@ export class AliasTracker extends Plugin {
         );
 
         if (targetMethod) {
-          await graph.addEdge({
+          await factory!.link({
             src: call.id,
             dst: targetMethod.id,
             type: 'CALLS'

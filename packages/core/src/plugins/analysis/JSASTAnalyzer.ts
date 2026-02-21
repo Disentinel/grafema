@@ -63,9 +63,8 @@ import type { ArgumentInfo, LiteralInfo as ExtractorLiteralInfo } from './ast/vi
 import { ObjectLiteralNode } from '../../core/nodes/ObjectLiteralNode.js';
 import { ArrayLiteralNode } from '../../core/nodes/ArrayLiteralNode.js';
 import { NodeFactory } from '../../core/NodeFactory.js';
-import { brandNodeInternal } from '../../core/brandNodeInternal.js';
 import { resolveNodeFile } from '../../utils/resolveNodeFile.js';
-import type { PluginContext, PluginResult, PluginMetadata, GraphBackend } from '@grafema/types';
+import type { PluginContext, PluginResult, PluginMetadata, GraphBackend, NodeRecord } from '@grafema/types';
 import type {
   ModuleNode,
   FunctionInfo,
@@ -320,13 +319,13 @@ export class JSASTAnalyzer extends Plugin {
     }
 
     if (currentHash !== module.contentHash) {
-      await graph.addNode(brandNodeInternal({
+      await graph.updateNode!({
         id: module.id,
         type: 'MODULE' as const,
         name: module.name,
         file: module.file,
-        contentHash: currentHash
-      }));
+        contentHash: currentHash,
+      } as NodeRecord);
       return true;
     }
 

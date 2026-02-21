@@ -103,6 +103,7 @@ export class SocketIOAnalyzer extends Plugin {
 
     try {
       const { graph, onProgress } = context;
+      const factory = this.getFactory(context);
       const projectPath = (context.manifest as { projectPath?: string })?.projectPath ?? '';
 
       // Получаем все модули
@@ -117,7 +118,7 @@ export class SocketIOAnalyzer extends Plugin {
       // PHASE 1: Analyze modules and create emit/listener/room nodes
       for (let i = 0; i < modules.length; i++) {
         const module = modules[i];
-        const result = await this.analyzeModule(module, graph, projectPath);
+        const result = await this.analyzeModule(module, graph, projectPath, factory);
         emitsCount += result.emits;
         listenersCount += result.listeners;
         roomsCount += result.rooms;
@@ -143,7 +144,7 @@ export class SocketIOAnalyzer extends Plugin {
       }
 
       // PHASE 2: Create event channel nodes and edges
-      const eventCount = await this.createEventChannels(graph, logger);
+      const eventCount = await this.createEventChannels(graph, logger, factory);
 
       logger.info('Analysis complete', {
         emitsCount,
@@ -176,7 +177,8 @@ export class SocketIOAnalyzer extends Plugin {
    */
   private async createEventChannels(
     graph: PluginContext['graph'],
-    logger: ReturnType<typeof this.log>
+    logger: ReturnType<typeof this.log>,
+    factory: PluginContext['factory'],
   ): Promise<number> {
     try {
       // Step 1: Get all emit and listener nodes
@@ -252,8 +254,8 @@ export class SocketIOAnalyzer extends Plugin {
       }
 
       // Flush all nodes and edges
-      await graph.addNodes(nodes);
-      await graph.addEdges(edges);
+      await factory!.storeMany(nodes);
+      await factory!.linkMany(edges);
 
       return createdCount;
     } catch (error) {
@@ -265,7 +267,8 @@ export class SocketIOAnalyzer extends Plugin {
   private async analyzeModule(
     module: NodeRecord,
     graph: PluginContext['graph'],
-    projectPath: string
+    projectPath: string,
+    factory: PluginContext['factory'],
   ): Promise<AnalysisResult> {
     try {
       const code = readFileSync(resolveNodeFile(module.file!, projectPath), 'utf-8');
@@ -478,8 +481,8 @@ export class SocketIOAnalyzer extends Plugin {
       }
 
       // Flush all nodes and edges
-      await graph.addNodes(nodes);
-      await graph.addEdges(edges);
+      await factory!.storeMany(nodes);
+      await factory!.linkMany(edges);
 
       return {
         emits: emits.length,

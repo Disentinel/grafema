@@ -62,6 +62,7 @@ export class ExternalCallResolver extends Plugin {
 
   async execute(context: PluginContext): Promise<PluginResult> {
     const { graph, onProgress } = context;
+    const factory = this.getFactory(context);
     const logger = this.log(context);
 
     logger.info('Starting external call resolution');
@@ -108,7 +109,7 @@ export class ExternalCallResolver extends Plugin {
       }
 
       const result = await this.resolveCall(
-        callNode, importIndex, graph, createdExternalModules
+        callNode, importIndex, graph, createdExternalModules, factory
       );
 
       if (result.type === 'external') {
@@ -204,7 +205,8 @@ export class ExternalCallResolver extends Plugin {
     callNode: CallNode,
     importIndex: Map<string, ImportNode>,
     graph: PluginContext['graph'],
-    createdExternalModules: Set<string>
+    createdExternalModules: Set<string>,
+    factory: PluginContext['factory'],
   ): Promise<
     | { type: 'external'; nodesCreated: number; handledByCreated: number }
     | { type: 'builtin' }
@@ -249,7 +251,7 @@ export class ExternalCallResolver extends Plugin {
       // Check if node already exists in graph
       const existingNode = await graph.getNode(externalModuleId);
       if (!existingNode) {
-        await graph.addNode(NodeFactory.createExternalModule(packageName));
+        await factory!.store(NodeFactory.createExternalModule(packageName));
         nodesCreated++;
       }
       createdExternalModules.add(externalModuleId);
@@ -261,7 +263,7 @@ export class ExternalCallResolver extends Plugin {
     // For named imports with alias, 'imported' is the original name
     const exportedName = imp.imported || calledName;
 
-    await graph.addEdge({
+    await factory!.link({
       type: 'CALLS',
       src: callNode.id,
       dst: externalModuleId,
@@ -272,7 +274,7 @@ export class ExternalCallResolver extends Plugin {
     // Skip type-only imports — they have no runtime relationship
     let handledByCreated = 0;
     if (imp.importBinding !== 'type') {
-      await graph.addEdge({
+      await factory!.link({
         type: 'HANDLED_BY',
         src: callNode.id,
         dst: imp.id

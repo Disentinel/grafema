@@ -115,6 +115,9 @@ export class PhaseRunner {
   ): PluginContext {
     const { onProgress, forceAnalysis, logger, strictMode, resourceRegistry, configServices, routing } = this.deps;
 
+    // REG-541: Use explicitly-passed factory from context (set by Orchestrator)
+    const factory = baseContext.factory;
+
     const pluginContext: PluginContext = {
       ...baseContext,
       onProgress: onProgress as unknown as PluginContext['onProgress'],
@@ -127,6 +130,8 @@ export class PhaseRunner {
       resources: resourceRegistry,
       // REG-487: Pass deferIndexing flag for bulk load optimization
       deferIndexing: this.deps.deferIndexing ?? false,
+      // REG-541: Pass factory for non-restricted write operations
+      factory,
     };
 
     // REG-256: Ensure config is available with routing and services for all plugins
@@ -160,13 +165,16 @@ export class PhaseRunner {
           issue.column || 0,
           { context: issue.context }
         );
-        await baseContext.graph.addNode(node);
-        if (issue.targetNodeId) {
-          await baseContext.graph.addEdge({
-            src: node.id,
-            dst: issue.targetNodeId,
-            type: 'AFFECTS',
-          });
+        if (factory) {
+          await factory.store(node);
+          if (issue.targetNodeId) {
+            await factory.link({ src: node.id, dst: issue.targetNodeId, type: 'AFFECTS' });
+          }
+        } else {
+          await baseContext.graph.addNode(node);
+          if (issue.targetNodeId) {
+            await baseContext.graph.addEdge({ src: node.id, dst: issue.targetNodeId, type: 'AFFECTS' });
+          }
         }
         return node.id;
       };
@@ -175,11 +183,6 @@ export class PhaseRunner {
     return pluginContext;
   }
 
-  /**
-   * Extract service dependency package names from the ANALYSIS phase manifest.
-   * Merges dependencies + devDependencies + peerDependencies from package.json.
-   * Returns empty Set when no package.json is available (non-npm service).
-   */
   /**
    * Extract service dependency package names from the manifest.
    * Handles both per-service (manifest.service) and global (manifest.services[]) contexts.

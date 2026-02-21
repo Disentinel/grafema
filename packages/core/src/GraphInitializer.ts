@@ -9,13 +9,13 @@
  */
 
 import type { Plugin } from './plugins/Plugin.js';
-import type { GraphBackend, Logger, FieldDeclaration, NodeRecord } from '@grafema/types';
+import type { Logger, FieldDeclaration } from '@grafema/types';
 import { NodeFactory } from './core/NodeFactory.js';
-import { brandNodeInternal } from './core/brandNodeInternal.js';
+import type { GraphFactory } from './core/GraphFactory.js';
 
 export class GraphInitializer {
   constructor(
-    private graph: GraphBackend,
+    private graph: GraphFactory,
     private plugins: Plugin[],
     private logger: Logger,
   ) {}
@@ -35,14 +35,11 @@ export class GraphInitializer {
    * Called once at the start of analysis (single-root or multi-root).
    */
   private async createGraphMetaNode(projectPath: string): Promise<void> {
-    await this.graph.addNode(brandNodeInternal({
+    const node = NodeFactory.createGraphMeta({
       id: '__graph_meta__',
-      type: 'GRAPH_META' as NodeRecord['type'],
-      name: 'graph_metadata',
-      file: '',
       projectPath: projectPath,
-      analyzedAt: new Date().toISOString()
-    }));
+    });
+    await this.graph.store(node);
   }
 
   /**
@@ -72,7 +69,7 @@ export class GraphInitializer {
         dependencies: meta.dependencies ?? [],
       });
 
-      await this.graph.addNode(node);
+      await this.graph.store(node);
       pluginNodes.push({
         id: node.id,
         name: meta.name,
@@ -90,7 +87,7 @@ export class GraphInitializer {
       for (const dep of pn.dependencies) {
         const depId = nameToId.get(dep);
         if (depId) {
-          await this.graph.addEdge({
+          await this.graph.link({
             src: pn.id,
             dst: depId,
             type: 'DEPENDS_ON',
@@ -111,7 +108,8 @@ export class GraphInitializer {
    * Called once before analysis to enable server-side metadata indexing.
    */
   private async declarePluginFields(): Promise<void> {
-    if (!this.graph.declareFields) return;
+    const rawGraph = this.graph.rawGraph;
+    if (!rawGraph.declareFields) return;
 
     const fieldMap = new Map<string, FieldDeclaration>();
     for (const plugin of this.plugins) {
@@ -125,7 +123,7 @@ export class GraphInitializer {
     if (fieldMap.size === 0) return;
 
     const fields = [...fieldMap.values()];
-    const count = await this.graph.declareFields(fields);
+    const count = await rawGraph.declareFields(fields);
     this.logger.debug('Declared metadata fields for indexing', { fields: count });
   }
 }

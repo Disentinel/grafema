@@ -20,6 +20,7 @@ import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { NodeRecord, AnyBrandedNode } from '@grafema/types';
 import { NodeFactory } from '../../core/NodeFactory.js';
+import { GraphFactory } from '../../core/GraphFactory.js';
 import { getLine, getColumn } from './ast/utils/location.js';
 import { resolveNodeFile } from '../../utils/resolveNodeFile.js';
 import { REACT_HOOKS } from './react-internal/types.js';
@@ -67,6 +68,7 @@ export class ReactAnalyzer extends Plugin {
 
     try {
       const { graph } = context;
+      const factory = this.getFactory(context);
       const projectPath = (context.manifest as { projectPath?: string })?.projectPath ?? '';
       const modules = await this.getModules(graph);
 
@@ -86,7 +88,7 @@ export class ReactAnalyzer extends Plugin {
         }
 
         try {
-          const result = await this.analyzeModule(module, graph, projectPath);
+          const result = await this.analyzeModule(module, graph, projectPath, factory);
           stats.components += result.components;
           stats.hooks += result.hooks;
           stats.events += result.events;
@@ -127,14 +129,14 @@ export class ReactAnalyzer extends Plugin {
     return false;
   }
 
-  private async analyzeModule(module: NodeRecord, graph: PluginContext['graph'], projectPath: string): Promise<AnalysisStats> {
+  private async analyzeModule(module: NodeRecord, graph: PluginContext['graph'], projectPath: string, factory: PluginContext['factory']): Promise<AnalysisStats> {
     const code = readFileSync(resolveNodeFile(module.file!, projectPath), 'utf-8');
     const ast = parse(code, {
       sourceType: 'module',
       plugins: ['jsx', 'typescript'] as ParserPlugin[]
     });
 
-    return this.analyzeAST(ast, module.file!, graph, module.id);
+    return this.analyzeAST(ast, module.file!, graph, module.id, factory);
   }
 
   /**
@@ -144,8 +146,11 @@ export class ReactAnalyzer extends Plugin {
     ast: Node,
     filePath: string,
     graph: PluginContext['graph'],
-    moduleId: string | null = null
+    moduleId: string | null = null,
+    factory?: PluginContext['factory'],
   ): Promise<AnalysisStats> {
+    // Create factory shim when called directly (tests) without factory
+    if (!factory) factory = GraphFactory.createShim(graph);
     const analysis: AnalysisResult = {
       components: [],
       hooks: [],
@@ -253,7 +258,7 @@ export class ReactAnalyzer extends Plugin {
     });
 
     // Add all nodes and edges to graph
-    await this.addToGraph(analysis, graph, moduleId);
+    await this.addToGraph(analysis, graph, moduleId, factory);
 
     return {
       components: analysis.components.length,
@@ -271,7 +276,8 @@ export class ReactAnalyzer extends Plugin {
   private async addToGraph(
     analysis: AnalysisResult,
     graph: PluginContext['graph'],
-    moduleId: string | null
+    moduleId: string | null,
+    factory?: PluginContext['factory'],
   ): Promise<void> {
     const nodes: AnyBrandedNode[] = [];
     const edges: Array<{ type: string; src: string; dst: string; [key: string]: unknown }> = [];
@@ -318,7 +324,7 @@ export class ReactAnalyzer extends Plugin {
     }
 
     // Batch write to graph
-    await graph.addNodes(nodes);
-    await graph.addEdges(edges);
+    await factory!.storeMany(nodes);
+    await factory!.linkMany(edges);
   }
 }

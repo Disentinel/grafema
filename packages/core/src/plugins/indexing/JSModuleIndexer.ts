@@ -250,7 +250,8 @@ export class JSModuleIndexer extends Plugin {
   async execute(context: PluginContext): Promise<PluginResult> {
     const logger = this.log(context);
     try {
-      const { graph, onProgress, config } = context;
+      const { onProgress, config } = context;
+      const factory = this.getFactory(context);
       const manifest = context.manifest as IndexerManifest | undefined;
       const projectPath = manifest?.projectPath ?? '';
       const service = manifest?.service ?? { id: '', name: '', path: '' };
@@ -379,15 +380,15 @@ export class JSModuleIndexer extends Plugin {
         const moduleId = moduleNode.id;
 
         logger.debug('Creating MODULE node', { moduleId: moduleNode.id });
-        await graph.addNode(moduleNode);
+        await factory!.store(moduleNode);
         nodesCreated++;
 
         // Always create SERVICE -> CONTAINS -> MODULE edge (even if module exists)
-        await graph.addEdge({
+        await factory!.link({
           src: service.id,
           dst: moduleId,
           type: 'CONTAINS',
-          version: 'main'
+          metadata: { version: 'main' }
         });
         // Обрабатываем зависимости
         for (const dep of deps) {
@@ -421,14 +422,14 @@ export class JSModuleIndexer extends Plugin {
             src: moduleId,
             dst: depModuleId,
             type: 'DEPENDS_ON',
-            version: 'main'
+            metadata: { version: 'main' }
           });
         }
       }
 
       // Create all DEPENDS_ON edges in one batch (faster than loop)
       if (pendingDependsOnEdges.length > 0) {
-        await graph.addEdges(pendingDependsOnEdges);
+        await factory!.linkMany(pendingDependsOnEdges);
         edgesCreated += pendingDependsOnEdges.length;
       }
 

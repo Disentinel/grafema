@@ -23,7 +23,6 @@ import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { GraphBackend } from '@grafema/types';
 import type { NodeRecord } from '@grafema/types';
-import { brandNodeInternal } from '../../core/brandNodeInternal.js';
 import type { VersionedNode } from '../../core/VersionManager.js';
 import { versionManager } from '../../core/VersionManager.js';
 import { VCSPluginFactory } from '../vcs/index.js';
@@ -107,6 +106,7 @@ export class IncrementalAnalysisPlugin extends Plugin {
 
     try {
       const { graph } = context;
+      const factory = this.getFactory(context);
       const manifest = context.manifest as AnalysisManifest | undefined;
       const projectPath = manifest?.projectPath ?? '';
 
@@ -168,7 +168,8 @@ export class IncrementalAnalysisPlugin extends Plugin {
           fileInfo,
           projectPath,
           graph as unknown as VersionAwareGraph,
-          logger
+          logger,
+          factory,
         );
         totalNodesCreated += result.nodesCreated;
         totalEdgesCreated += result.edgesCreated;
@@ -197,7 +198,8 @@ export class IncrementalAnalysisPlugin extends Plugin {
     fileInfo: ChangedFileInfo,
     projectPath: string,
     graph: VersionAwareGraph,
-    logger: ReturnType<typeof this.log>
+    logger: ReturnType<typeof this.log>,
+    factory: PluginContext['factory'],
   ): Promise<{ nodesCreated: number; edgesCreated: number }> {
     const { path: relativePath, status } = fileInfo;
     // relativePath can start with / or be relative
@@ -212,7 +214,7 @@ export class IncrementalAnalysisPlugin extends Plugin {
     }
 
     // Execute fine-grained merge
-    const result = await this.finegrainedMerge(fullPath, graph, logger);
+    const result = await this.finegrainedMerge(fullPath, graph, logger, factory);
 
     logger.debug('Merge result', {
       added: result.added,
@@ -233,7 +235,8 @@ export class IncrementalAnalysisPlugin extends Plugin {
   private async finegrainedMerge(
     filePath: string,
     graph: VersionAwareGraph,
-    logger: ReturnType<typeof this.log>
+    logger: ReturnType<typeof this.log>,
+    factory: PluginContext['factory'],
   ): Promise<{
     added: number;
     modified: number;
@@ -274,7 +277,7 @@ export class IncrementalAnalysisPlugin extends Plugin {
     // 4a. ADDED nodes - create with __local version
     for (const node of changes.added) {
       const enrichedNode = versionManager.enrichNodeWithVersion(node, '__local');
-      await graph.addNode(brandNodeInternal(enrichedNode as unknown as NodeRecord));
+      await factory!.update(enrichedNode as unknown as NodeRecord);
     }
 
     // 4b. MODIFIED nodes - create __local version + REPLACES edge
@@ -284,12 +287,12 @@ export class IncrementalAnalysisPlugin extends Plugin {
         replacesId: mainNodeId
       });
 
-      await graph.addNode(brandNodeInternal(enrichedNode as unknown as NodeRecord));
+      await factory!.update(enrichedNode as unknown as NodeRecord);
 
       // Create REPLACES edge
       const replacesEdge = versionManager.createReplacesEdge(enrichedNode.id!, mainNodeId);
       logger.debug('Node replacement', { name: newNode.name, from: enrichedNode.id, to: mainNodeId });
-      await graph.addEdge({
+      await factory!.link({
         type: replacesEdge.type,
         src: replacesEdge.fromId,
         dst: replacesEdge.toId

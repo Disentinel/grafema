@@ -49,6 +49,7 @@ import {
   type IssueSeverity,
 } from '../nodes/index.js';
 
+import type { BaseNodeRecord } from '@grafema/types';
 import { brandNodeInternal } from '../brandNodeInternal.js';
 import type { ScopeContext } from '../SemanticId.js';
 
@@ -233,6 +234,22 @@ interface ArgumentExpressionOptions extends ExpressionOptions {
   parentCallId: string;
   argIndex: number;
   counter?: number;
+}
+
+interface GraphMetaOptions {
+  id: string;
+  name?: string;
+  file?: string;
+  projectPath: string;
+  analyzedAt?: string;
+}
+
+interface DatalogGuaranteeOptions {
+  id: string;
+  name?: string;
+  rule: string;
+  severity?: 'error' | 'warning' | 'info';
+  governs?: string[];
 }
 
 export class CoreFactory {
@@ -481,6 +498,35 @@ export class CoreFactory {
     } = {}
   ) {
     return brandNodeInternal(PluginNode.create(name, phase, options));
+  }
+
+  static createGraphMeta(params: GraphMetaOptions) {
+    if (!params.id) throw new Error('CoreFactory.createGraphMeta: id is required');
+
+    return brandNodeInternal({
+      id: params.id,
+      type: 'GRAPH_META',
+      name: params.name || 'graph_metadata',
+      file: params.file || '',
+      projectPath: params.projectPath,
+      analyzedAt: params.analyzedAt || new Date().toISOString(),
+    } as BaseNodeRecord);
+  }
+
+  static createGuarantee(params: DatalogGuaranteeOptions) {
+    if (!params.id) throw new Error('CoreFactory.createGuarantee: id is required');
+    if (!params.rule) throw new Error('CoreFactory.createGuarantee: rule is required');
+
+    return brandNodeInternal({
+      id: `GUARANTEE:${params.id}`,
+      type: 'GUARANTEE',
+      name: params.name || params.id,
+      rule: params.rule,
+      severity: params.severity || 'warning',
+      governs: params.governs || ['**/*.js'],
+      version: 'meta',
+      createdAt: Date.now(),
+    } as BaseNodeRecord);
   }
 
   static _hashFile(filePath: string): string {

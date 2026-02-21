@@ -94,7 +94,7 @@ async function matchUnixSockets(graph) {
           type: 'INTERACTS_WITH',
           src: client.id,
           dst: server.id,
-          matchType: 'path',
+          metadata: { matchType: 'path', path: normalizedClientPath },
           protocol: 'unix'
         });
         break; // One client -> one server (first match)
@@ -146,7 +146,7 @@ async function matchTcpSockets(graph) {
           type: 'INTERACTS_WITH',
           src: client.id,
           dst: server.id,
-          matchType: 'port',
+          metadata: { matchType: 'port', port: clientPort, host: clientHost },
           protocol: 'tcp'
         });
         break; // One client -> one server (first match)

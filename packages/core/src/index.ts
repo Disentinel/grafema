@@ -79,6 +79,8 @@ export { RFDBServerBackend } from './storage/backends/RFDBServerBackend.js';
 
 // Core utilities
 export { NodeFactory } from './core/NodeFactory.js';
+export { EdgeFactory } from './core/EdgeFactory.js';
+export { GraphFactory } from './core/GraphFactory.js';
 export { Profiler } from './core/Profiler.js';
 export {
   computeSemanticId,
