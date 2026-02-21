@@ -28,7 +28,7 @@ import type {
 import type { NodePath } from '@babel/traverse';
 import { ASTVisitor, type VisitorModule, type VisitorCollections, type VisitorHandlers } from './ASTVisitor.js';
 import type { VariableInfo } from './VariableVisitor.js';
-import { getLine, getColumn } from '../utils/location.js';
+import { getLine, getColumn, getEndLocation } from '../utils/location.js';
 
 /**
  * Callback type for extracting variable names from patterns
@@ -42,6 +42,8 @@ interface ImportSpecifierInfo {
   imported: string;
   local: string;
   importKind?: 'value' | 'type' | 'typeof';  // specifier-level: import { type X } from '...'
+  column?: number;      // specifier start column
+  endColumn?: number;   // specifier end column (exclusive)
 }
 
 /**
@@ -117,21 +119,27 @@ export class ImportExportVisitor extends ASTVisitor {
             specifiers.push({
               imported: importedName,
               local: importSpec.local.name,
-              importKind: specKind as ImportSpecifierInfo['importKind']
+              importKind: specKind as ImportSpecifierInfo['importKind'],
+              column: getColumn(importSpec),
+              endColumn: getEndLocation(importSpec).column
             });
           } else if (spec.type === 'ImportDefaultSpecifier') {
             // import foo from './module'
             const defaultSpec = spec as ImportDefaultSpecifier;
             specifiers.push({
               imported: 'default',
-              local: defaultSpec.local.name
+              local: defaultSpec.local.name,
+              column: getColumn(defaultSpec),
+              endColumn: getEndLocation(defaultSpec).column
             });
           } else if (spec.type === 'ImportNamespaceSpecifier') {
             // import * as foo from './module'
             const namespaceSpec = spec as ImportNamespaceSpecifier;
             specifiers.push({
               imported: '*',
-              local: namespaceSpec.local.name
+              local: namespaceSpec.local.name,
+              column: getColumn(namespaceSpec),
+              endColumn: getEndLocation(namespaceSpec).column
             });
           }
         });

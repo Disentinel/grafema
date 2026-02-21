@@ -2,6 +2,7 @@
   "nodes": [
     {
       "branchType": "if",
+      "discriminantObjectSourceName": "token",
       "exported": false,
       "file": "client.js",
       "name": "",
@@ -9,6 +10,8 @@
       "type": "BRANCH"
     },
     {
+      "endColumn": 52,
+      "endLine": 75,
       "exported": false,
       "file": "client.js",
       "isAwaited": true,
@@ -19,6 +22,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 48,
+      "endLine": 43,
       "exported": false,
       "file": "client.js",
       "isAwaited": true,
@@ -32,6 +37,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 72,
+      "endLine": 57,
       "exported": false,
       "file": "client.js",
       "isAwaited": true,
@@ -45,6 +52,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 4,
+      "endLine": 51,
       "exported": false,
       "file": "client.js",
       "isAwaited": true,
@@ -56,6 +65,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 22,
+      "endLine": 92,
       "exported": false,
       "file": "client.js",
       "isAwaited": false,
@@ -64,6 +75,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 23,
+      "endLine": 91,
       "exported": false,
       "file": "client.js",
       "isAwaited": false,
@@ -72,6 +85,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 24,
+      "endLine": 93,
       "exported": false,
       "file": "client.js",
       "isAwaited": false,
@@ -80,6 +95,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 39,
+      "endLine": 81,
       "exported": false,
       "file": "client.js",
       "isAwaited": false,
@@ -88,14 +105,8 @@
       "type": "CALL"
     },
     {
-      "exported": false,
-      "file": "client.js",
-      "isAwaited": false,
-      "isInsideTry": false,
-      "name": "fetch",
-      "type": "CALL"
-    },
-    {
+      "endColumn": 4,
+      "endLine": 21,
       "exported": false,
       "file": "client.js",
       "isAwaited": true,
@@ -104,6 +115,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 4,
+      "endLine": 37,
       "exported": false,
       "file": "client.js",
       "isAwaited": true,
@@ -112,6 +125,18 @@
       "type": "CALL"
     },
     {
+      "endColumn": 44,
+      "endLine": 70,
+      "exported": false,
+      "file": "client.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "name": "fetch",
+      "type": "CALL"
+    },
+    {
+      "endColumn": 44,
+      "endLine": 8,
       "exported": false,
       "file": "client.js",
       "isAwaited": true,
@@ -120,6 +145,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 52,
+      "endLine": 27,
       "exported": false,
       "file": "client.js",
       "isAwaited": true,
@@ -128,6 +155,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 46,
+      "endLine": 64,
       "exported": false,
       "file": "client.js",
       "isNew": true,
@@ -137,6 +166,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 51,
+      "endLine": 67,
       "exported": false,
       "file": "client.js",
       "isAwaited": false,
@@ -150,6 +181,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 34,
+      "endLine": 20,
       "exported": false,
       "file": "client.js",
       "isAwaited": false,
@@ -163,6 +196,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 50,
+      "endLine": 63,
       "exported": false,
       "file": "client.js",
       "isAwaited": false,
@@ -176,6 +211,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 4,
+      "endLine": 94,
       "exported": false,
       "file": "client.js",
       "isAwaited": true,
@@ -189,6 +226,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 24,
+      "endLine": 22,
       "exported": false,
       "file": "client.js",
       "isAwaited": false,
@@ -202,6 +241,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 24,
+      "endLine": 28,
       "exported": false,
       "file": "client.js",
       "isAwaited": false,
@@ -215,6 +256,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 24,
+      "endLine": 38,
       "exported": false,
       "file": "client.js",
       "isAwaited": false,
@@ -228,6 +271,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 24,
+      "endLine": 76,
       "exported": false,
       "file": "client.js",
       "isAwaited": false,
@@ -241,6 +286,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 36,
+      "endLine": 9,
       "exported": false,
       "file": "client.js",
       "isAwaited": true,
@@ -1321,22 +1368,8 @@
       "type": "PARAMETER"
     },
     {
-      "exported": false,
-      "file": "client.js",
-      "name": "data",
-      "objectName": "response",
-      "semanticId": "client.js->PROPERTY_ACCESS->response.data[in:createUserAxios]",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "client.js",
-      "name": "data",
-      "objectName": "response",
-      "semanticId": "client.js->PROPERTY_ACCESS->response.data[in:fetchGitlab]",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
+      "endColumn": 22,
+      "endLine": 44,
       "exported": false,
       "file": "client.js",
       "name": "data",
@@ -1345,6 +1378,28 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 22,
+      "endLine": 52,
+      "exported": false,
+      "file": "client.js",
+      "name": "data",
+      "objectName": "response",
+      "semanticId": "client.js->PROPERTY_ACCESS->response.data[in:createUserAxios]",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "endColumn": 22,
+      "endLine": 58,
+      "exported": false,
+      "file": "client.js",
+      "name": "data",
+      "objectName": "response",
+      "semanticId": "client.js->PROPERTY_ACCESS->response.data[in:fetchGitlab]",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "endColumn": 45,
+      "endLine": 64,
       "exported": false,
       "file": "client.js",
       "name": "headers",
@@ -1589,6 +1644,22 @@
     },
     {
       "from": "CALL:axios.get",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:axios.get",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:axios.get",
       "type": "MAKES_REQUEST",
       "to": "http:request:GET /api/users"
     },
@@ -1608,6 +1679,14 @@
     {
       "from": "CALL:axios.get",
       "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:axios.post",
+      "type": "DERIVES_FROM",
       "to": "LITERAL:",
       "metadata": {
         "argIndex": 0
@@ -1678,6 +1757,14 @@
     },
     {
       "from": "CALL:headers.set",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:headers.set",
       "type": "PASSES_ARGUMENT",
       "to": "LITERAL:",
       "metadata": {
@@ -1688,6 +1775,14 @@
       "from": "CALL:headers.set",
       "type": "USES",
       "to": "CONSTANT:headers"
+    },
+    {
+      "from": "CALL:localStorage.getItem",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
     },
     {
       "from": "CALL:localStorage.getItem",
@@ -1756,6 +1851,11 @@
       "from": "EXPRESSION:data.gigs",
       "type": "RETURNS",
       "to": "FUNCTION:anonymous[1]"
+    },
+    {
+      "from": "EXPRESSION:Identifier",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:token"
     },
     {
       "from": "EXPRESSION:ObjectExpression",

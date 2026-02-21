@@ -193,6 +193,14 @@ export class CallFlowBuilder implements DomainBuilder {
         }
 
         this.ctx.bufferEdge(edgeData);
+
+        // REG-532: Buffer DERIVES_FROM edge (call result depends on argument data)
+        this.ctx.bufferEdge({
+          type: 'DERIVES_FROM',
+          src: callId,
+          dst: targetNodeId,
+          metadata: { sourceType: 'argument', argIndex }
+        });
       }
     }
   }

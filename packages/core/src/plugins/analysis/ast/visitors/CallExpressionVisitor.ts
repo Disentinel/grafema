@@ -16,7 +16,7 @@ import type { ContentHashHints } from '../../../../core/SemanticId.js';
 import { MutationDetector } from './MutationDetector.js';
 import { IdGenerator } from '../IdGenerator.js';
 import { ExpressionEvaluator } from '../ExpressionEvaluator.js';
-import { getLine, getColumn } from '../utils/location.js';
+import { getLine, getColumn, getEndLocation } from '../utils/location.js';
 import { getGrafemaIgnore } from './call-expression-helpers.js';
 import { ArgumentExtractor } from './ArgumentExtractor.js';
 import type {
@@ -307,6 +307,8 @@ export class CallExpressionVisitor extends ASTVisitor {
       file: s.module.file,
       line,
       column,
+      endLine: getEndLocation(callNode).line,
+      endColumn: getEndLocation(callNode).column,
       parentScopeId,
       targetFunctionName: callee.name,
       isAwaited: isAwaited || undefined
@@ -420,6 +422,8 @@ export class CallExpressionVisitor extends ASTVisitor {
       file: s.module.file,
       line: methodLine,
       column: methodColumn,
+      endLine: getEndLocation(callNode).line,
+      endColumn: getEndLocation(callNode).column,
       parentScopeId,
       grafemaIgnore: grafemaIgnore ?? undefined,
       isAwaited: isAwaited || undefined,
@@ -531,6 +535,8 @@ export class CallExpressionVisitor extends ASTVisitor {
           file: s.module.file,
           line: methodLine,
           column: methodColumn,
+          endLine: getEndLocation(callNode).line,
+          endColumn: getEndLocation(callNode).column,
           parentScopeId,
           grafemaIgnore: grafemaIgnore ?? undefined,
         };
@@ -583,6 +589,8 @@ export class CallExpressionVisitor extends ASTVisitor {
         file: s.module.file,
         line: newLine,
         column: newColumn,
+        endLine: getEndLocation(newNode).line,
+        endColumn: getEndLocation(newNode).column,
         parentScopeId,
         targetFunctionName: constructorName,
         isNew: true
@@ -628,6 +636,8 @@ export class CallExpressionVisitor extends ASTVisitor {
           file: s.module.file,
           line: memberNewLine,
           column: memberNewColumn,
+          endLine: getEndLocation(newNode).line,
+          endColumn: getEndLocation(newNode).column,
           parentScopeId,
           isNew: true,
           grafemaIgnore: grafemaIgnore ?? undefined,

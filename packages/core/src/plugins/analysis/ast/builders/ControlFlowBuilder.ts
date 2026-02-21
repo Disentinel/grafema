@@ -44,6 +44,10 @@ export class ControlFlowBuilder implements DomainBuilder {
     this.bufferCaseEdges(cases);
     this.bufferTryCatchFinallyEdges(tryBlocks, catchBlocks, finallyBlocks);
     this.bufferDiscriminantExpressions(branches, callSites);
+    // REG-533: DERIVES_FROM edges for EXPRESSION nodes in control flow
+    this.bufferLoopTestDerivesFromEdges(loops, variableDeclarations, parameters);
+    this.bufferLoopUpdateDerivesFromEdges(loops, variableDeclarations, parameters);
+    this.bufferBranchDiscriminantDerivesFromEdges(branches, variableDeclarations, parameters);
   }
 
   /**
@@ -463,6 +467,229 @@ export class ControlFlowBuilder implements DomainBuilder {
             column: branch.discriminantColumn,
             expressionType: branch.discriminantExpressionType
           });
+        }
+      }
+    }
+  }
+
+  /**
+   * REG-533: Buffer DERIVES_FROM edges for loop test (condition) EXPRESSION nodes.
+   *
+   * Links EXPRESSION nodes for loop conditions (i < 10, !done, obj.active) to
+   * the VARIABLE/PARAMETER nodes they derive from.
+   * Follows the same pattern as ReturnBuilder.findSource.
+   */
+  private bufferLoopTestDerivesFromEdges(
+    loops: LoopInfo[],
+    variableDeclarations: VariableDeclarationInfo[],
+    parameters: ParameterInfo[]
+  ): void {
+    for (const loop of loops) {
+      // Use conditionExpressionId (while/do-while) or testExpressionId (for)
+      const expressionId = loop.conditionExpressionId || loop.testExpressionId;
+      const expressionType = loop.conditionExpressionType || loop.testExpressionType;
+      if (!expressionId || !expressionType) continue;
+      // Skip CallExpression - linked to CALL_SITE, not EXPRESSION
+      if (expressionType === 'CallExpression') continue;
+
+      const file = loop.file;
+      const findSource = (name: string): string | null => {
+        const variable = variableDeclarations.find(v => v.name === name && v.file === file);
+        if (variable) return variable.id;
+        const param = parameters.find(p => p.name === name && p.file === file);
+        if (param) return param.id;
+        return null;
+      };
+
+      if (expressionType === 'Identifier' && loop.testObjectSourceName) {
+        const sourceId = findSource(loop.testObjectSourceName);
+        if (sourceId) {
+          this.ctx.bufferEdge({ type: 'DERIVES_FROM', src: expressionId, dst: sourceId });
+        }
+      }
+
+      if (expressionType === 'MemberExpression' && loop.testObjectSourceName) {
+        const sourceId = findSource(loop.testObjectSourceName);
+        if (sourceId) {
+          this.ctx.bufferEdge({ type: 'DERIVES_FROM', src: expressionId, dst: sourceId });
+        }
+      }
+
+      if (expressionType === 'BinaryExpression' || expressionType === 'LogicalExpression') {
+        if (loop.testLeftSourceName) {
+          const sourceId = findSource(loop.testLeftSourceName);
+          if (sourceId) {
+            this.ctx.bufferEdge({ type: 'DERIVES_FROM', src: expressionId, dst: sourceId });
+          }
+        }
+        if (loop.testRightSourceName) {
+          const sourceId = findSource(loop.testRightSourceName);
+          if (sourceId) {
+            this.ctx.bufferEdge({ type: 'DERIVES_FROM', src: expressionId, dst: sourceId });
+          }
+        }
+      }
+
+      if (expressionType === 'ConditionalExpression') {
+        if (loop.testConsequentSourceName) {
+          const sourceId = findSource(loop.testConsequentSourceName);
+          if (sourceId) {
+            this.ctx.bufferEdge({ type: 'DERIVES_FROM', src: expressionId, dst: sourceId });
+          }
+        }
+        if (loop.testAlternateSourceName) {
+          const sourceId = findSource(loop.testAlternateSourceName);
+          if (sourceId) {
+            this.ctx.bufferEdge({ type: 'DERIVES_FROM', src: expressionId, dst: sourceId });
+          }
+        }
+      }
+
+      if (expressionType === 'UnaryExpression' && loop.testUnaryArgSourceName) {
+        const sourceId = findSource(loop.testUnaryArgSourceName);
+        if (sourceId) {
+          this.ctx.bufferEdge({ type: 'DERIVES_FROM', src: expressionId, dst: sourceId });
+        }
+      }
+
+      if (expressionType === 'UpdateExpression' && loop.testUpdateArgSourceName) {
+        const sourceId = findSource(loop.testUpdateArgSourceName);
+        if (sourceId) {
+          this.ctx.bufferEdge({ type: 'DERIVES_FROM', src: expressionId, dst: sourceId });
+        }
+      }
+
+      if (expressionType === 'TemplateLiteral' && loop.testExpressionSourceNames) {
+        for (const sourceName of loop.testExpressionSourceNames) {
+          const sourceId = findSource(sourceName);
+          if (sourceId) {
+            this.ctx.bufferEdge({ type: 'DERIVES_FROM', src: expressionId, dst: sourceId });
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * REG-533: Buffer DERIVES_FROM edges for loop update EXPRESSION nodes.
+   *
+   * Links EXPRESSION nodes for for-loop updates (i++) to the VARIABLE/PARAMETER
+   * nodes they derive from.
+   */
+  private bufferLoopUpdateDerivesFromEdges(
+    loops: LoopInfo[],
+    variableDeclarations: VariableDeclarationInfo[],
+    parameters: ParameterInfo[]
+  ): void {
+    for (const loop of loops) {
+      if (loop.loopType !== 'for') continue;
+      if (!loop.updateExpressionId || !loop.updateExpressionType) continue;
+      // Skip CallExpression - linked to CALL_SITE, not EXPRESSION
+      if (loop.updateExpressionType === 'CallExpression') continue;
+
+      const file = loop.file;
+      const findSource = (name: string): string | null => {
+        const variable = variableDeclarations.find(v => v.name === name && v.file === file);
+        if (variable) return variable.id;
+        const param = parameters.find(p => p.name === name && p.file === file);
+        if (param) return param.id;
+        return null;
+      };
+
+      if (loop.updateArgSourceName) {
+        const sourceId = findSource(loop.updateArgSourceName);
+        if (sourceId) {
+          this.ctx.bufferEdge({ type: 'DERIVES_FROM', src: loop.updateExpressionId, dst: sourceId });
+        }
+      }
+    }
+  }
+
+  /**
+   * REG-533: Buffer DERIVES_FROM edges for branch discriminant EXPRESSION nodes.
+   *
+   * Links EXPRESSION nodes for branch conditions (if(x), switch(action.type))
+   * to the VARIABLE/PARAMETER nodes they derive from.
+   */
+  private bufferBranchDiscriminantDerivesFromEdges(
+    branches: BranchInfo[],
+    variableDeclarations: VariableDeclarationInfo[],
+    parameters: ParameterInfo[]
+  ): void {
+    for (const branch of branches) {
+      if (!branch.discriminantExpressionId || !branch.discriminantExpressionType) continue;
+      // Skip CallExpression - linked to CALL_SITE, not EXPRESSION
+      if (branch.discriminantExpressionType === 'CallExpression') continue;
+
+      const file = branch.file;
+      const expressionId = branch.discriminantExpressionId;
+      const expressionType = branch.discriminantExpressionType;
+
+      const findSource = (name: string): string | null => {
+        const variable = variableDeclarations.find(v => v.name === name && v.file === file);
+        if (variable) return variable.id;
+        const param = parameters.find(p => p.name === name && p.file === file);
+        if (param) return param.id;
+        return null;
+      };
+
+      if (expressionType === 'Identifier' && branch.discriminantObjectSourceName) {
+        const sourceId = findSource(branch.discriminantObjectSourceName);
+        if (sourceId) {
+          this.ctx.bufferEdge({ type: 'DERIVES_FROM', src: expressionId, dst: sourceId });
+        }
+      }
+
+      if (expressionType === 'MemberExpression' && branch.discriminantObjectSourceName) {
+        const sourceId = findSource(branch.discriminantObjectSourceName);
+        if (sourceId) {
+          this.ctx.bufferEdge({ type: 'DERIVES_FROM', src: expressionId, dst: sourceId });
+        }
+      }
+
+      if (expressionType === 'BinaryExpression' || expressionType === 'LogicalExpression') {
+        if (branch.discriminantLeftSourceName) {
+          const sourceId = findSource(branch.discriminantLeftSourceName);
+          if (sourceId) {
+            this.ctx.bufferEdge({ type: 'DERIVES_FROM', src: expressionId, dst: sourceId });
+          }
+        }
+        if (branch.discriminantRightSourceName) {
+          const sourceId = findSource(branch.discriminantRightSourceName);
+          if (sourceId) {
+            this.ctx.bufferEdge({ type: 'DERIVES_FROM', src: expressionId, dst: sourceId });
+          }
+        }
+      }
+
+      if (expressionType === 'ConditionalExpression') {
+        if (branch.discriminantConsequentSourceName) {
+          const sourceId = findSource(branch.discriminantConsequentSourceName);
+          if (sourceId) {
+            this.ctx.bufferEdge({ type: 'DERIVES_FROM', src: expressionId, dst: sourceId });
+          }
+        }
+        if (branch.discriminantAlternateSourceName) {
+          const sourceId = findSource(branch.discriminantAlternateSourceName);
+          if (sourceId) {
+            this.ctx.bufferEdge({ type: 'DERIVES_FROM', src: expressionId, dst: sourceId });
+          }
+        }
+      }
+
+      if (expressionType === 'UnaryExpression' && branch.discriminantUnaryArgSourceName) {
+        const sourceId = findSource(branch.discriminantUnaryArgSourceName);
+        if (sourceId) {
+          this.ctx.bufferEdge({ type: 'DERIVES_FROM', src: expressionId, dst: sourceId });
+        }
+      }
+
+      if (expressionType === 'TemplateLiteral' && branch.discriminantExpressionSourceNames) {
+        for (const sourceName of branch.discriminantExpressionSourceNames) {
+          const sourceId = findSource(sourceName);
+          if (sourceId) {
+            this.ctx.bufferEdge({ type: 'DERIVES_FROM', src: expressionId, dst: sourceId });
+          }
         }
       }
     }

@@ -100,6 +100,19 @@ export interface BranchInfo {
   // For ternary: IDs of consequent and alternate expressions
   consequentExpressionId?: string;
   alternateExpressionId?: string;
+
+  // REG-533: Operand metadata for DERIVES_FROM edges on discriminant EXPRESSION nodes
+  discriminantLeftSourceName?: string;
+  discriminantRightSourceName?: string;
+  discriminantObjectSourceName?: string;
+  discriminantConsequentSourceName?: string;
+  discriminantAlternateSourceName?: string;
+  discriminantUnaryArgSourceName?: string;
+  discriminantOperator?: string;
+  discriminantObject?: string;
+  discriminantProperty?: string;
+  discriminantComputed?: boolean;
+  discriminantExpressionSourceNames?: string[];
 }
 
 // === CASE INFO ===
@@ -157,6 +170,24 @@ export interface LoopInfo {
 
   // For for-await-of (REG-284)
   async?: boolean;                // true for for-await-of loops
+
+  // REG-533: Operand metadata for DERIVES_FROM edges on test EXPRESSION nodes
+  testLeftSourceName?: string;
+  testRightSourceName?: string;
+  testObjectSourceName?: string;
+  testConsequentSourceName?: string;
+  testAlternateSourceName?: string;
+  testUnaryArgSourceName?: string;
+  testUpdateArgSourceName?: string;
+  testOperator?: string;
+  testObject?: string;
+  testProperty?: string;
+  testComputed?: boolean;
+  testExpressionSourceNames?: string[];
+
+  // REG-533: Operand metadata for DERIVES_FROM edges on update EXPRESSION nodes
+  updateArgSourceName?: string;
+  updateOperator?: string;
 }
 
 // === TRY BLOCK INFO ===
@@ -254,6 +285,8 @@ export interface PropertyAccessInfo {
   file: string;
   line: number;
   column: number;
+  endLine?: number;
+  endColumn?: number;
   parentScopeId?: string;
 }
 
@@ -266,6 +299,8 @@ export interface CallSiteInfo {
   file: string;
   line: number;
   column?: number;
+  endLine?: number;
+  endColumn?: number;
   parentScopeId?: string;
   targetFunctionName?: string;
   isNew?: boolean;
@@ -292,6 +327,8 @@ export interface MethodCallInfo {
   file: string;
   line: number;
   column?: number;
+  endLine?: number;
+  endColumn?: number;
   parentScopeId?: string;
   arguments?: unknown[];
   isNew?: boolean;
@@ -512,6 +549,8 @@ export interface ImportSpecifier {
   imported: string;  // имя в экспортируемом модуле (default, *, или имя)
   local: string;     // имя в текущем модуле
   importKind?: 'value' | 'type' | 'typeof';  // specifier-level: import { type X } from '...'
+  column?: number;      // specifier start column
+  endColumn?: number;   // specifier end column (exclusive)
 }
 
 // === EXPORT INFO ===

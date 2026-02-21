@@ -6,10 +6,12 @@
  */
 import type { Visitor, NodePath } from '@babel/traverse';
 import * as t from '@babel/types';
-import { getLine, getColumn } from '../utils/location.js';
+import { getLine, getColumn, getEndLocation } from '../utils/location.js';
 import { computeSemanticId } from '../../../../core/SemanticId.js';
 import { ConstructorCallNode } from '../../../../core/nodes/ConstructorCallNode.js';
 import { FunctionBodyHandler } from './FunctionBodyHandler.js';
+import { ArgumentExtractor } from '../visitors/ArgumentExtractor.js';
+import type { ArgumentInfo, LiteralInfo as ExtractorLiteralInfo } from '../visitors/call-expression-types.js';
 
 export class NewExpressionHandler extends FunctionBodyHandler {
   getHandlers(): Visitor {
@@ -50,6 +52,19 @@ export class NewExpressionHandler extends FunctionBodyHandler {
               column,
               parentScopeId: ctx.getCurrentScopeId()
             });
+
+            // REG-532: Extract constructor arguments for PASSES_ARGUMENT + DERIVES_FROM edges
+            if (newNode.arguments.length > 0) {
+              if (!ctx.collections.callArguments) {
+                ctx.collections.callArguments = [];
+              }
+              ArgumentExtractor.extract(
+                newNode.arguments, constructorCallId, ctx.module,
+                ctx.collections.callArguments as unknown as ArgumentInfo[],
+                ctx.literals as unknown as ExtractorLiteralInfo[], ctx.literalCounterRef,
+                ctx.collections, ctx.scopeTracker
+              );
+            }
 
             // REG-334: If this is Promise constructor with executor callback,
             // register the context for resolve/reject detection
@@ -110,6 +125,8 @@ export class NewExpressionHandler extends FunctionBodyHandler {
             name: constructorName,
             file: ctx.module.file,
             line: getLine(newNode),
+            endLine: getEndLocation(newNode).line,
+            endColumn: getEndLocation(newNode).column,
             parentScopeId: ctx.getCurrentScopeId(),
             targetFunctionName: constructorName,
             isNew: true
@@ -149,6 +166,8 @@ export class NewExpressionHandler extends FunctionBodyHandler {
               file: ctx.module.file,
               line: getLine(newNode),
               column: getColumn(newNode),
+              endLine: getEndLocation(newNode).line,
+              endColumn: getEndLocation(newNode).column,
               parentScopeId: ctx.getCurrentScopeId(),
               isNew: true
             });

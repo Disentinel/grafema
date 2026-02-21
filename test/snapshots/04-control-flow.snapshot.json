@@ -34,6 +34,7 @@
       "alternateExpressionId": "src/conditionals.js:EXPRESSION:CallExpression:85:44",
       "branchType": "ternary",
       "consequentExpressionId": "src/conditionals.js:EXPRESSION:CallExpression:85:26",
+      "discriminantObjectSourceName": "user",
       "exported": false,
       "file": "src/conditionals.js",
       "name": "",
@@ -44,6 +45,8 @@
       "alternateExpressionId": "src/conditionals.js:EXPRESSION:ConditionalExpression:77:9",
       "branchType": "ternary",
       "consequentExpressionId": "src/conditionals.js:EXPRESSION:StringLiteral:76:23",
+      "discriminantLeftSourceName": "score",
+      "discriminantOperator": ">=",
       "exported": false,
       "file": "src/conditionals.js",
       "name": "",
@@ -54,6 +57,8 @@
       "alternateExpressionId": "src/conditionals.js:EXPRESSION:ConditionalExpression:78:9",
       "branchType": "ternary",
       "consequentExpressionId": "src/conditionals.js:EXPRESSION:StringLiteral:77:23",
+      "discriminantLeftSourceName": "score",
+      "discriminantOperator": ">=",
       "exported": false,
       "file": "src/conditionals.js",
       "name": "",
@@ -64,6 +69,8 @@
       "alternateExpressionId": "src/conditionals.js:EXPRESSION:ConditionalExpression:79:9",
       "branchType": "ternary",
       "consequentExpressionId": "src/conditionals.js:EXPRESSION:StringLiteral:78:23",
+      "discriminantLeftSourceName": "score",
+      "discriminantOperator": ">=",
       "exported": false,
       "file": "src/conditionals.js",
       "name": "",
@@ -74,6 +81,7 @@
       "alternateExpressionId": "src/conditionals.js:EXPRESSION:Identifier:71:39",
       "branchType": "ternary",
       "consequentExpressionId": "src/conditionals.js:EXPRESSION:BinaryExpression:71:21",
+      "discriminantObjectSourceName": "isPremium",
       "exported": false,
       "file": "src/conditionals.js",
       "name": "",
@@ -84,6 +92,7 @@
       "alternateExpressionId": "src/conditionals.js:EXPRESSION:StringLiteral:66:31",
       "branchType": "ternary",
       "consequentExpressionId": "src/conditionals.js:EXPRESSION:StringLiteral:66:20",
+      "discriminantObjectSourceName": "isActive",
       "exported": false,
       "file": "src/conditionals.js",
       "name": "",
@@ -94,6 +103,8 @@
       "alternateExpressionId": "src/conditionals.js:EXPRESSION:StringLiteral:79:29",
       "branchType": "ternary",
       "consequentExpressionId": "src/conditionals.js:EXPRESSION:StringLiteral:79:23",
+      "discriminantLeftSourceName": "score",
+      "discriminantOperator": ">=",
       "exported": false,
       "file": "src/conditionals.js",
       "name": "",
@@ -104,6 +115,7 @@
       "alternateExpressionId": "src/conditionals.js:EXPRESSION:StringLiteral:84:34",
       "branchType": "ternary",
       "consequentExpressionId": "src/conditionals.js:EXPRESSION:MemberExpression:84:22",
+      "discriminantObjectSourceName": "user",
       "exported": false,
       "file": "src/conditionals.js",
       "name": "",
@@ -112,14 +124,7 @@
     },
     {
       "branchType": "switch",
-      "exported": false,
-      "file": "src/conditionals.js",
-      "name": "",
-      "semanticId": "conditionals.js->getCategory->BRANCH->switch#1",
-      "type": "BRANCH"
-    },
-    {
-      "branchType": "switch",
+      "discriminantObjectSourceName": "command",
       "exported": false,
       "file": "src/conditionals.js",
       "name": "",
@@ -127,7 +132,18 @@
       "type": "BRANCH"
     },
     {
+      "branchType": "switch",
+      "discriminantObjectSourceName": "value",
+      "exported": false,
+      "file": "src/conditionals.js",
+      "name": "",
+      "semanticId": "conditionals.js->getCategory->BRANCH->switch#1",
+      "type": "BRANCH"
+    },
+    {
       "branchType": "if",
+      "discriminantLeftSourceName": "error",
+      "discriminantOperator": "===",
       "exported": false,
       "file": "src/exceptions.js",
       "isAlternateOfBranchId": "exceptions.js->handleDifferentErrors->catch#0->BRANCH->if#4",
@@ -137,6 +153,8 @@
     },
     {
       "branchType": "if",
+      "discriminantLeftSourceName": "error",
+      "discriminantOperator": "===",
       "exported": false,
       "file": "src/exceptions.js",
       "name": "",
@@ -145,14 +163,7 @@
     },
     {
       "branchType": "if",
-      "exported": false,
-      "file": "src/exceptions.js",
-      "name": "",
-      "semanticId": "exceptions.js->parseInput->BRANCH->if#2",
-      "type": "BRANCH"
-    },
-    {
-      "branchType": "if",
+      "discriminantObjectSourceName": "file",
       "exported": false,
       "file": "src/exceptions.js",
       "name": "",
@@ -161,6 +172,8 @@
     },
     {
       "branchType": "if",
+      "discriminantOperator": "!",
+      "discriminantUnaryArgSourceName": "data",
       "exported": false,
       "file": "src/exceptions.js",
       "name": "",
@@ -169,10 +182,31 @@
     },
     {
       "branchType": "if",
+      "discriminantOperator": "!",
+      "discriminantUnaryArgSourceName": "data",
       "exported": false,
       "file": "src/exceptions.js",
       "name": "",
       "semanticId": "exceptions.js->validateInput->BRANCH->if#3",
+      "type": "BRANCH"
+    },
+    {
+      "branchType": "if",
+      "discriminantOperator": "!",
+      "discriminantUnaryArgSourceName": "input",
+      "exported": false,
+      "file": "src/exceptions.js",
+      "name": "",
+      "semanticId": "exceptions.js->parseInput->BRANCH->if#2",
+      "type": "BRANCH"
+    },
+    {
+      "branchType": "if",
+      "discriminantOperator": "!==",
+      "exported": false,
+      "file": "src/loops.js",
+      "name": "",
+      "semanticId": "loops.js->processEvenOnly->for#0->BRANCH->if#1",
       "type": "BRANCH"
     },
     {
@@ -184,16 +218,10 @@
       "type": "BRANCH"
     },
     {
-      "branchType": "if",
-      "exported": false,
-      "file": "src/loops.js",
-      "name": "",
-      "semanticId": "loops.js->processEvenOnly->for#0->BRANCH->if#1",
-      "type": "BRANCH"
-    },
-    {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 27,
+      "endLine": 27,
       "exported": false,
       "file": "src/conditionals.js",
       "isAwaited": false,
@@ -207,6 +235,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 45,
+      "endLine": 57,
       "exported": false,
       "file": "src/exceptions.js",
       "isAwaited": false,
@@ -220,6 +250,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 46,
+      "endLine": 35,
       "exported": false,
       "file": "src/exceptions.js",
       "isAwaited": false,
@@ -233,6 +265,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 49,
+      "endLine": 95,
       "exported": false,
       "file": "src/exceptions.js",
       "isAwaited": false,
@@ -246,6 +280,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 52,
+      "endLine": 101,
       "exported": false,
       "file": "src/exceptions.js",
       "isAwaited": false,
@@ -259,6 +295,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 54,
+      "endLine": 98,
       "exported": false,
       "file": "src/exceptions.js",
       "isAwaited": false,
@@ -272,6 +310,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 55,
+      "endLine": 11,
       "exported": false,
       "file": "src/exceptions.js",
       "isAwaited": false,
@@ -285,6 +325,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 57,
+      "endLine": 53,
       "exported": false,
       "file": "src/exceptions.js",
       "isAwaited": false,
@@ -298,6 +340,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 25,
+      "endLine": 13,
       "exported": false,
       "file": "src/conditionals.js",
       "isAwaited": false,
@@ -311,6 +355,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 25,
+      "endLine": 18,
       "exported": false,
       "file": "src/conditionals.js",
       "isAwaited": false,
@@ -324,6 +370,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 25,
+      "endLine": 8,
       "exported": false,
       "file": "src/conditionals.js",
       "isAwaited": false,
@@ -337,32 +385,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
-      "exported": false,
-      "file": "src/exceptions.js",
-      "isAwaited": false,
-      "isInsideTry": false,
-      "isMethodCall": true,
-      "method": "log",
-      "name": "console.log",
-      "object": "console",
-      "type": "CALL"
-    },
-    {
-      "computed": false,
-      "computedPropertyVar": null,
-      "exported": false,
-      "file": "src/exceptions.js",
-      "isAwaited": false,
-      "isInsideTry": false,
-      "isMethodCall": true,
-      "method": "log",
-      "name": "console.log",
-      "object": "console",
-      "type": "CALL"
-    },
-    {
-      "computed": false,
-      "computedPropertyVar": null,
+      "endColumn": 26,
+      "endLine": 113,
       "exported": false,
       "file": "src/exceptions.js",
       "isAwaited": false,
@@ -376,6 +400,23 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 33,
+      "endLine": 15,
+      "exported": false,
+      "file": "src/exceptions.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "log",
+      "name": "console.log",
+      "object": "console",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "endColumn": 42,
+      "endLine": 6,
       "exported": false,
       "file": "src/exceptions.js",
       "isAwaited": false,
@@ -389,6 +430,23 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 60,
+      "endLine": 81,
+      "exported": false,
+      "file": "src/exceptions.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "log",
+      "name": "console.log",
+      "object": "console",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "endColumn": 22,
+      "endLine": 42,
       "exported": false,
       "file": "src/loops.js",
       "isAwaited": false,
@@ -402,6 +460,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 30,
+      "endLine": 31,
       "exported": false,
       "file": "src/loops.js",
       "isAwaited": false,
@@ -415,6 +475,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 27,
+      "endLine": 41,
       "exported": false,
       "file": "src/exceptions.js",
       "isAwaited": false,
@@ -426,6 +488,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 41,
+      "endLine": 29,
       "exported": false,
       "file": "src/exceptions.js",
       "isNew": true,
@@ -433,6 +497,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 44,
+      "endLine": 63,
       "exported": false,
       "file": "src/exceptions.js",
       "isNew": true,
@@ -440,6 +506,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 45,
+      "endLine": 68,
       "exported": false,
       "file": "src/exceptions.js",
       "isNew": true,
@@ -449,6 +517,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 26,
+      "endLine": 95,
       "exported": false,
       "file": "src/loops.js",
       "isAwaited": false,
@@ -460,6 +530,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 39,
+      "endLine": 78,
       "exported": false,
       "file": "src/exceptions.js",
       "isAwaited": true,
@@ -471,6 +543,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 18,
+      "endLine": 16,
       "exported": false,
       "file": "src/exceptions.js",
       "isAwaited": false,
@@ -484,6 +558,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 31,
+      "endLine": 8,
       "exported": false,
       "file": "src/exceptions.js",
       "isAwaited": false,
@@ -495,6 +571,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 56,
+      "endLine": 85,
       "exported": false,
       "file": "src/conditionals.js",
       "isAwaited": false,
@@ -503,6 +581,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 41,
+      "endLine": 85,
       "exported": false,
       "file": "src/conditionals.js",
       "isAwaited": false,
@@ -513,6 +593,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 26,
+      "endLine": 64,
       "exported": false,
       "file": "src/exceptions.js",
       "isAwaited": false,
@@ -526,6 +608,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 18,
+      "endLine": 30,
       "exported": false,
       "file": "src/loops.js",
       "isAwaited": false,
@@ -539,6 +623,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 25,
+      "endLine": 55,
       "exported": false,
       "file": "src/loops.js",
       "isAwaited": false,
@@ -552,6 +638,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 20,
+      "endLine": 71,
       "exported": false,
       "file": "src/loops.js",
       "isAwaited": false,
@@ -563,6 +651,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 29,
+      "endLine": 7,
       "exported": false,
       "file": "src/exceptions.js",
       "isAwaited": false,
@@ -571,6 +661,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 22,
+      "endLine": 92,
       "exported": false,
       "file": "src/exceptions.js",
       "isAwaited": false,
@@ -579,6 +671,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 24,
+      "endLine": 111,
       "exported": false,
       "file": "src/exceptions.js",
       "isAwaited": false,
@@ -587,6 +681,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 36,
+      "endLine": 47,
       "exported": false,
       "file": "src/exceptions.js",
       "isAwaited": false,
@@ -595,6 +691,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 27,
+      "endLine": 80,
       "exported": false,
       "file": "src/loops.js",
       "isAwaited": false,
@@ -603,6 +701,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 36,
+      "endLine": 32,
       "exported": false,
       "file": "src/exceptions.js",
       "isAwaited": false,
@@ -613,6 +713,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 34,
+      "endLine": 79,
       "exported": false,
       "file": "src/exceptions.js",
       "isAwaited": true,
@@ -627,6 +729,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 26,
+      "endLine": 8,
       "exported": false,
       "file": "src/loops.js",
       "isAwaited": false,
@@ -640,6 +744,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 28,
+      "endLine": 69,
       "exported": false,
       "file": "src/loops.js",
       "isAwaited": false,
@@ -651,6 +757,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 45,
+      "endLine": 50,
       "exported": false,
       "file": "src/exceptions.js",
       "isAwaited": false,
@@ -659,6 +767,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 28,
+      "endLine": 57,
       "exported": false,
       "file": "src/loops.js",
       "isAwaited": false,
@@ -2920,6 +3030,7 @@
       "url": "dynamic"
     },
     {
+      "endColumn": 24,
       "exported": false,
       "file": "index.js",
       "importBinding": "value",
@@ -2932,6 +3043,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 22,
       "exported": false,
       "file": "index.js",
       "importBinding": "value",
@@ -2944,6 +3056,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 17,
       "exported": false,
       "file": "index.js",
       "importBinding": "value",
@@ -3063,7 +3176,31 @@
       "file": "src/exceptions.js",
       "name": "",
       "type": "LITERAL",
+      "value": "Data is required",
+      "valueType": "string"
+    },
+    {
+      "exported": false,
+      "file": "src/exceptions.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": "Empty input",
+      "valueType": "string"
+    },
+    {
+      "exported": false,
+      "file": "src/exceptions.js",
+      "name": "",
+      "type": "LITERAL",
       "value": "Error reading file:",
+      "valueType": "string"
+    },
+    {
+      "exported": false,
+      "file": "src/exceptions.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": "Missing id",
       "valueType": "string"
     },
     {
@@ -3237,12 +3374,17 @@
       "testColumn": 18,
       "testExpressionId": "src/exceptions.js:EXPRESSION:BinaryExpression:76:18",
       "testExpressionType": "BinaryExpression",
+      "testLeftSourceName": "i",
       "testLine": 76,
+      "testOperator": "<",
+      "testRightSourceName": "retries",
       "type": "LOOP",
+      "updateArgSourceName": "i",
       "updateColumn": 31,
       "updateExpressionId": "src/exceptions.js:EXPRESSION:UpdateExpression:76:31",
       "updateExpressionType": "UpdateExpression",
-      "updateLine": 76
+      "updateLine": 76,
+      "updateOperator": "++"
     },
     {
       "exported": false,
@@ -3255,12 +3397,17 @@
       "testColumn": 18,
       "testExpressionId": "src/loops.js:EXPRESSION:BinaryExpression:6:18",
       "testExpressionType": "BinaryExpression",
+      "testLeftSourceName": "i",
       "testLine": 6,
+      "testOperator": "<",
+      "testRightSourceName": "items",
       "type": "LOOP",
+      "updateArgSourceName": "i",
       "updateColumn": 36,
       "updateExpressionId": "src/loops.js:EXPRESSION:UpdateExpression:6:36",
       "updateExpressionType": "UpdateExpression",
-      "updateLine": 6
+      "updateLine": 6,
+      "updateOperator": "++"
     },
     {
       "exported": false,
@@ -3273,12 +3420,17 @@
       "testColumn": 18,
       "testExpressionId": "src/loops.js:EXPRESSION:BinaryExpression:66:18",
       "testExpressionType": "BinaryExpression",
+      "testLeftSourceName": "i",
       "testLine": 66,
+      "testOperator": "<",
+      "testRightSourceName": "rows",
       "type": "LOOP",
+      "updateArgSourceName": "i",
       "updateColumn": 28,
       "updateExpressionId": "src/loops.js:EXPRESSION:UpdateExpression:66:28",
       "updateExpressionType": "UpdateExpression",
-      "updateLine": 66
+      "updateLine": 66,
+      "updateOperator": "++"
     },
     {
       "exported": false,
@@ -3291,12 +3443,17 @@
       "testColumn": 20,
       "testExpressionId": "src/loops.js:EXPRESSION:BinaryExpression:68:20",
       "testExpressionType": "BinaryExpression",
+      "testLeftSourceName": "j",
       "testLine": 68,
+      "testOperator": "<",
+      "testRightSourceName": "cols",
       "type": "LOOP",
+      "updateArgSourceName": "j",
       "updateColumn": 30,
       "updateExpressionId": "src/loops.js:EXPRESSION:UpdateExpression:68:30",
       "updateExpressionType": "UpdateExpression",
-      "updateLine": 68
+      "updateLine": 68,
+      "updateOperator": "++"
     },
     {
       "exported": false,
@@ -3309,12 +3466,17 @@
       "testColumn": 18,
       "testExpressionId": "src/loops.js:EXPRESSION:BinaryExpression:79:18",
       "testExpressionType": "BinaryExpression",
+      "testLeftSourceName": "i",
       "testLine": 79,
+      "testOperator": "<",
+      "testRightSourceName": "items",
       "type": "LOOP",
+      "updateArgSourceName": "i",
       "updateColumn": 36,
       "updateExpressionId": "src/loops.js:EXPRESSION:UpdateExpression:79:36",
       "updateExpressionType": "UpdateExpression",
-      "updateLine": 79
+      "updateLine": 79,
+      "updateOperator": "++"
     },
     {
       "exported": false,
@@ -3327,12 +3489,17 @@
       "testColumn": 18,
       "testExpressionId": "src/loops.js:EXPRESSION:BinaryExpression:91:18",
       "testExpressionType": "BinaryExpression",
+      "testLeftSourceName": "i",
       "testLine": 91,
+      "testOperator": "<",
+      "testRightSourceName": "numbers",
       "type": "LOOP",
+      "updateArgSourceName": "i",
       "updateColumn": 38,
       "updateExpressionId": "src/loops.js:EXPRESSION:UpdateExpression:91:38",
       "updateExpressionType": "UpdateExpression",
-      "updateLine": 91
+      "updateLine": 91,
+      "updateOperator": "++"
     },
     {
       "exported": false,
@@ -3344,6 +3511,7 @@
       "testExpressionId": "src/loops.js:EXPRESSION:LogicalExpression:57:11",
       "testExpressionType": "LogicalExpression",
       "testLine": 57,
+      "testOperator": "&&",
       "type": "LOOP"
     },
     {
@@ -3371,7 +3539,9 @@
       "testColumn": 9,
       "testExpressionId": "src/loops.js:EXPRESSION:BinaryExpression:41:9",
       "testExpressionType": "BinaryExpression",
+      "testLeftSourceName": "count",
       "testLine": 41,
+      "testOperator": ">",
       "type": "LOOP"
     },
     {
@@ -3850,6 +4020,8 @@
     },
     {
       "computed": true,
+      "endColumn": 20,
+      "endLine": 108,
       "exported": false,
       "file": "src/conditionals.js",
       "name": "<computed>",
@@ -3859,15 +4031,8 @@
     },
     {
       "computed": true,
-      "exported": false,
-      "file": "src/loops.js",
-      "name": "<computed>",
-      "objectName": "items",
-      "semanticId": "src/loops.js->PROPERTY_ACCESS->items.<computed>[in:findFirst]",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "computed": true,
+      "endColumn": 21,
+      "endLine": 81,
       "exported": false,
       "file": "src/loops.js",
       "name": "<computed>",
@@ -3877,6 +4042,8 @@
     },
     {
       "computed": true,
+      "endColumn": 25,
+      "endLine": 7,
       "exported": false,
       "file": "src/loops.js",
       "name": "<computed>",
@@ -3886,6 +4053,8 @@
     },
     {
       "computed": true,
+      "endColumn": 25,
+      "endLine": 95,
       "exported": false,
       "file": "src/loops.js",
       "name": "<computed>",
@@ -3895,6 +4064,19 @@
     },
     {
       "computed": true,
+      "endColumn": 26,
+      "endLine": 80,
+      "exported": false,
+      "file": "src/loops.js",
+      "name": "<computed>",
+      "objectName": "items",
+      "semanticId": "src/loops.js->PROPERTY_ACCESS->items.<computed>[in:findFirst]",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "computed": true,
+      "endColumn": 29,
+      "endLine": 31,
       "exported": false,
       "file": "src/loops.js",
       "name": "<computed>",
@@ -3904,6 +4086,8 @@
     },
     {
       "computed": true,
+      "endColumn": 25,
+      "endLine": 117,
       "exported": false,
       "file": "src/conditionals.js",
       "name": "0",
@@ -3913,6 +4097,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 29,
+      "endLine": 113,
       "exported": false,
       "file": "src/conditionals.js",
       "name": "email",
@@ -3922,6 +4108,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 14,
+      "endLine": 68,
       "exported": false,
       "file": "src/exceptions.js",
       "name": "id",
@@ -3930,6 +4118,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 20,
+      "endLine": 117,
       "exported": false,
       "file": "src/conditionals.js",
       "name": "items",
@@ -3939,14 +4129,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
-      "exported": false,
-      "file": "src/loops.js",
-      "name": "length",
-      "objectName": "items",
-      "semanticId": "src/loops.js->PROPERTY_ACCESS->items.length[in:findFirst]",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
+      "endColumn": 34,
+      "endLine": 6,
       "exported": false,
       "file": "src/loops.js",
       "name": "length",
@@ -3955,6 +4139,18 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 34,
+      "endLine": 79,
+      "exported": false,
+      "file": "src/loops.js",
+      "name": "length",
+      "objectName": "items",
+      "semanticId": "src/loops.js->PROPERTY_ACCESS->items.length[in:findFirst]",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "endColumn": 36,
+      "endLine": 91,
       "exported": false,
       "file": "src/loops.js",
       "name": "length",
@@ -3963,14 +4159,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
-      "exported": false,
-      "file": "src/exceptions.js",
-      "name": "message",
-      "objectName": "error",
-      "semanticId": "src/exceptions.js->PROPERTY_ACCESS->error.message[in:fetchWithRetry]",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
+      "endColumn": 51,
+      "endLine": 101,
       "exported": false,
       "file": "src/exceptions.js",
       "name": "message",
@@ -3979,6 +4169,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 54,
+      "endLine": 11,
       "exported": false,
       "file": "src/exceptions.js",
       "name": "message",
@@ -3987,6 +4179,28 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 59,
+      "endLine": 81,
+      "exported": false,
+      "file": "src/exceptions.js",
+      "name": "message",
+      "objectName": "error",
+      "semanticId": "src/exceptions.js->PROPERTY_ACCESS->error.message[in:fetchWithRetry]",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "endColumn": 28,
+      "endLine": 90,
+      "exported": false,
+      "file": "src/conditionals.js",
+      "name": "name",
+      "objectName": "user",
+      "semanticId": "src/conditionals.js->PROPERTY_ACCESS->user.name[in:greetUser]",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "endColumn": 31,
+      "endLine": 117,
       "exported": false,
       "file": "src/conditionals.js",
       "name": "name",
@@ -3996,14 +4210,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
-      "exported": false,
-      "file": "src/conditionals.js",
-      "name": "name",
-      "objectName": "user",
-      "semanticId": "src/conditionals.js->PROPERTY_ACCESS->user.name[in:greetUser]",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
+      "endColumn": 31,
+      "endLine": 84,
       "exported": false,
       "file": "src/conditionals.js",
       "name": "name",
@@ -4012,6 +4220,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 25,
+      "endLine": 97,
       "exported": false,
       "file": "src/exceptions.js",
       "name": "name",
@@ -4020,6 +4230,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 22,
+      "endLine": 113,
       "exported": false,
       "file": "src/conditionals.js",
       "name": "profile",
@@ -4029,6 +4241,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 28,
+      "endLine": 103,
       "exported": false,
       "file": "src/conditionals.js",
       "name": "property",
@@ -5284,6 +5498,94 @@
     },
     {
       "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:error",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:parseError",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:result",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:validationError",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:console.error",
       "type": "PASSES_ARGUMENT",
       "to": "LITERAL:",
       "metadata": {
@@ -5409,6 +5711,70 @@
       "from": "CALL:console.error",
       "type": "WRITES_TO",
       "to": "net:stdio:__stdio__"
+    },
+    {
+      "from": "CALL:console.log",
+      "type": "DERIVES_FROM",
+      "to": "CONSTANT:key",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.log",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.log",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.log",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.log",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:count",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.log",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:result",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.log",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:result",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.log",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:result",
+      "metadata": {
+        "argIndex": 0
+      }
     },
     {
       "from": "CALL:console.log",
@@ -5566,6 +5932,14 @@
     },
     {
       "from": "CALL:keys.push",
+      "type": "DERIVES_FROM",
+      "to": "CONSTANT:key",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:keys.push",
       "type": "PASSES_ARGUMENT",
       "to": "CONSTANT:key",
       "metadata": {
@@ -5581,6 +5955,14 @@
       "from": "CALL:Math.random",
       "type": "FLOWS_INTO",
       "to": "VARIABLE:value"
+    },
+    {
+      "from": "CALL:matrix.push",
+      "type": "DERIVES_FROM",
+      "to": "CONSTANT:row",
+      "metadata": {
+        "argIndex": 0
+      }
     },
     {
       "from": "CALL:matrix.push",
@@ -5808,6 +6190,54 @@
       "to": "ARRAY_LITERAL:<array>"
     },
     {
+      "from": "CONSTRUCTOR_CALL:new Error()",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Error()",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Error()",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Error()",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Error()",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Error()",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
       "from": "EXPRESSION:<LogicalExpression>",
       "type": "DERIVES_FROM",
       "to": "PARAMETER:defaultValue"
@@ -5868,6 +6298,136 @@
       "to": "FUNCTION:fetchWithRetry"
     },
     {
+      "from": "EXPRESSION:BinaryExpression",
+      "type": "DERIVES_FROM",
+      "to": "PARAMETER:cols"
+    },
+    {
+      "from": "EXPRESSION:BinaryExpression",
+      "type": "DERIVES_FROM",
+      "to": "PARAMETER:items"
+    },
+    {
+      "from": "EXPRESSION:BinaryExpression",
+      "type": "DERIVES_FROM",
+      "to": "PARAMETER:items"
+    },
+    {
+      "from": "EXPRESSION:BinaryExpression",
+      "type": "DERIVES_FROM",
+      "to": "PARAMETER:numbers"
+    },
+    {
+      "from": "EXPRESSION:BinaryExpression",
+      "type": "DERIVES_FROM",
+      "to": "PARAMETER:retries"
+    },
+    {
+      "from": "EXPRESSION:BinaryExpression",
+      "type": "DERIVES_FROM",
+      "to": "PARAMETER:rows"
+    },
+    {
+      "from": "EXPRESSION:BinaryExpression",
+      "type": "DERIVES_FROM",
+      "to": "PARAMETER:score"
+    },
+    {
+      "from": "EXPRESSION:BinaryExpression",
+      "type": "DERIVES_FROM",
+      "to": "PARAMETER:score"
+    },
+    {
+      "from": "EXPRESSION:BinaryExpression",
+      "type": "DERIVES_FROM",
+      "to": "PARAMETER:score"
+    },
+    {
+      "from": "EXPRESSION:BinaryExpression",
+      "type": "DERIVES_FROM",
+      "to": "PARAMETER:score"
+    },
+    {
+      "from": "EXPRESSION:BinaryExpression",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:count"
+    },
+    {
+      "from": "EXPRESSION:BinaryExpression",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:error"
+    },
+    {
+      "from": "EXPRESSION:BinaryExpression",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:error"
+    },
+    {
+      "from": "EXPRESSION:BinaryExpression",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:i"
+    },
+    {
+      "from": "EXPRESSION:BinaryExpression",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:i"
+    },
+    {
+      "from": "EXPRESSION:BinaryExpression",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:i"
+    },
+    {
+      "from": "EXPRESSION:BinaryExpression",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:i"
+    },
+    {
+      "from": "EXPRESSION:BinaryExpression",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:i"
+    },
+    {
+      "from": "EXPRESSION:BinaryExpression",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:j"
+    },
+    {
+      "from": "EXPRESSION:Identifier",
+      "type": "DERIVES_FROM",
+      "to": "PARAMETER:command"
+    },
+    {
+      "from": "EXPRESSION:Identifier",
+      "type": "DERIVES_FROM",
+      "to": "PARAMETER:isActive"
+    },
+    {
+      "from": "EXPRESSION:Identifier",
+      "type": "DERIVES_FROM",
+      "to": "PARAMETER:isPremium"
+    },
+    {
+      "from": "EXPRESSION:Identifier",
+      "type": "DERIVES_FROM",
+      "to": "PARAMETER:user"
+    },
+    {
+      "from": "EXPRESSION:Identifier",
+      "type": "DERIVES_FROM",
+      "to": "PARAMETER:user"
+    },
+    {
+      "from": "EXPRESSION:Identifier",
+      "type": "DERIVES_FROM",
+      "to": "PARAMETER:value"
+    },
+    {
+      "from": "EXPRESSION:Identifier",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:file"
+    },
+    {
       "from": "EXPRESSION:items.i",
       "type": "DERIVES_FROM",
       "to": "PARAMETER:items"
@@ -5901,6 +6461,51 @@
       "from": "EXPRESSION:OptionalMemberExpression",
       "type": "RETURNS",
       "to": "FUNCTION:getUserEmail"
+    },
+    {
+      "from": "EXPRESSION:UnaryExpression",
+      "type": "DERIVES_FROM",
+      "to": "PARAMETER:data"
+    },
+    {
+      "from": "EXPRESSION:UnaryExpression",
+      "type": "DERIVES_FROM",
+      "to": "PARAMETER:data"
+    },
+    {
+      "from": "EXPRESSION:UnaryExpression",
+      "type": "DERIVES_FROM",
+      "to": "PARAMETER:input"
+    },
+    {
+      "from": "EXPRESSION:UpdateExpression",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:i"
+    },
+    {
+      "from": "EXPRESSION:UpdateExpression",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:i"
+    },
+    {
+      "from": "EXPRESSION:UpdateExpression",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:i"
+    },
+    {
+      "from": "EXPRESSION:UpdateExpression",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:i"
+    },
+    {
+      "from": "EXPRESSION:UpdateExpression",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:i"
+    },
+    {
+      "from": "EXPRESSION:UpdateExpression",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:j"
     },
     {
       "from": "FINALLY_BLOCK:",
