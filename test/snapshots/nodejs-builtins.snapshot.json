@@ -2,6 +2,7 @@
   "nodes": [
     {
       "branchType": "if",
+      "discriminantObjectSourceName": "err",
       "exported": false,
       "file": "aliased-imports.js",
       "name": "",
@@ -10,6 +11,7 @@
     },
     {
       "branchType": "if",
+      "discriminantObjectSourceName": "err",
       "exported": false,
       "file": "aliased-imports.js",
       "name": "",
@@ -18,6 +20,7 @@
     },
     {
       "branchType": "if",
+      "discriminantObjectSourceName": "err",
       "exported": false,
       "file": "index.js",
       "name": "",
@@ -26,6 +29,7 @@
     },
     {
       "branchType": "if",
+      "discriminantObjectSourceName": "err",
       "exported": false,
       "file": "index.js",
       "name": "",
@@ -34,6 +38,7 @@
     },
     {
       "branchType": "if",
+      "discriminantObjectSourceName": "err",
       "exported": false,
       "file": "namespace-import.js",
       "name": "",
@@ -42,6 +47,7 @@
     },
     {
       "branchType": "if",
+      "discriminantObjectSourceName": "isMainThread",
       "exported": false,
       "file": "node-prefix.js",
       "name": "",
@@ -50,6 +56,7 @@
     },
     {
       "branchType": "if",
+      "discriminantObjectSourceName": "err",
       "exported": false,
       "file": "unused-imports.js",
       "name": "",
@@ -3389,6 +3396,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 21,
       "exported": false,
       "file": "fs-promises.js",
       "importBinding": "value",
@@ -3401,6 +3409,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 40,
       "exported": false,
       "file": "unused-imports.js",
       "importBinding": "value",
@@ -3413,6 +3422,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 32,
       "exported": false,
       "file": "index.js",
       "importBinding": "value",
@@ -3425,6 +3435,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 57,
       "exported": false,
       "file": "unused-imports.js",
       "importBinding": "value",
@@ -3437,6 +3448,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 31,
       "exported": false,
       "file": "fs-promises.js",
       "importBinding": "value",
@@ -3449,6 +3461,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 19,
       "exported": false,
       "file": "unused-imports.js",
       "importBinding": "value",
@@ -3461,6 +3474,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 21,
       "exported": false,
       "file": "index.js",
       "importBinding": "value",
@@ -3473,6 +3487,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 21,
       "exported": false,
       "file": "node-prefix.js",
       "importBinding": "value",
@@ -3485,6 +3500,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 21,
       "exported": false,
       "file": "node-prefix.js",
       "importBinding": "value",
@@ -3497,6 +3513,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 13,
       "exported": false,
       "file": "index.js",
       "importBinding": "value",
@@ -3509,6 +3526,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 14,
       "exported": false,
       "file": "namespace-import.js",
       "importBinding": "value",
@@ -3521,6 +3539,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 27,
       "exported": false,
       "file": "aliased-imports.js",
       "importBinding": "value",
@@ -3533,6 +3552,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 55,
       "exported": false,
       "file": "unused-imports.js",
       "importBinding": "value",
@@ -3545,6 +3565,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 29,
       "exported": false,
       "file": "node-prefix.js",
       "importBinding": "value",
@@ -3557,6 +3578,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 13,
       "exported": false,
       "file": "index.js",
       "importBinding": "value",
@@ -3569,6 +3591,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 13,
       "exported": false,
       "file": "node-prefix.js",
       "importBinding": "value",
@@ -3581,6 +3604,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 13,
       "exported": false,
       "file": "unused-imports.js",
       "importBinding": "value",
@@ -3593,6 +3617,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 44,
       "exported": false,
       "file": "fs-promises.js",
       "importBinding": "value",
@@ -3605,6 +3630,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 33,
       "exported": false,
       "file": "unused-imports.js",
       "importBinding": "value",
@@ -3617,6 +3643,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 16,
       "exported": false,
       "file": "namespace-import.js",
       "importBinding": "value",
@@ -3629,6 +3656,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 25,
       "exported": false,
       "file": "aliased-imports.js",
       "importBinding": "value",
@@ -3641,6 +3669,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 49,
       "exported": false,
       "file": "aliased-imports.js",
       "importBinding": "value",
@@ -3653,6 +3682,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 32,
       "exported": false,
       "file": "unused-imports.js",
       "importBinding": "value",
@@ -3665,6 +3695,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 37,
       "exported": false,
       "file": "fs-promises.js",
       "importBinding": "value",
@@ -3677,6 +3708,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 37,
       "exported": false,
       "file": "index.js",
       "importBinding": "value",
@@ -3689,6 +3721,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 17,
       "exported": false,
       "file": "fs-promises.js",
       "importBinding": "value",
@@ -3701,6 +3734,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 17,
       "exported": false,
       "file": "index.js",
       "importBinding": "value",
@@ -3713,6 +3747,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 17,
       "exported": false,
       "file": "node-prefix.js",
       "importBinding": "value",
@@ -3725,6 +3760,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 17,
       "exported": false,
       "file": "unused-imports.js",
       "importBinding": "value",
@@ -3737,6 +3773,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 43,
       "exported": false,
       "file": "unused-imports.js",
       "importBinding": "value",
@@ -3749,6 +3786,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 22,
       "exported": false,
       "file": "index.js",
       "importBinding": "value",
@@ -3761,6 +3799,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 22,
       "exported": false,
       "file": "node-prefix.js",
       "importBinding": "value",
@@ -3773,6 +3812,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 22,
       "exported": false,
       "file": "unused-imports.js",
       "importBinding": "value",
@@ -3785,6 +3825,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 23,
       "exported": false,
       "file": "aliased-imports.js",
       "importBinding": "value",
@@ -3797,6 +3838,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 48,
       "exported": false,
       "file": "fs-promises.js",
       "importBinding": "value",
@@ -3809,6 +3851,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 40,
       "exported": false,
       "file": "unused-imports.js",
       "importBinding": "value",
@@ -3821,6 +3864,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 20,
       "exported": false,
       "file": "index.js",
       "importBinding": "value",
@@ -3833,6 +3877,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 13,
       "exported": false,
       "file": "fs-promises.js",
       "importBinding": "value",
@@ -3845,6 +3890,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 50,
       "exported": false,
       "file": "unused-imports.js",
       "importBinding": "value",
@@ -3857,6 +3903,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 15,
       "exported": false,
       "file": "namespace-import.js",
       "importBinding": "value",
@@ -3869,6 +3916,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 16,
       "exported": false,
       "file": "namespace-import.js",
       "importBinding": "value",
@@ -3881,6 +3929,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 40,
       "exported": false,
       "file": "aliased-imports.js",
       "importBinding": "value",
@@ -3893,6 +3942,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 15,
       "exported": false,
       "file": "node-prefix.js",
       "importBinding": "value",
@@ -3905,6 +3955,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 28,
       "exported": false,
       "file": "fs-promises.js",
       "importBinding": "value",
@@ -3917,6 +3968,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 28,
       "exported": false,
       "file": "index.js",
       "importBinding": "value",
@@ -3929,6 +3981,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 28,
       "exported": false,
       "file": "node-prefix.js",
       "importBinding": "value",
@@ -3941,6 +3994,7 @@
       "type": "IMPORT"
     },
     {
+      "endColumn": 28,
       "exported": false,
       "file": "unused-imports.js",
       "importBinding": "value",
@@ -5566,6 +5620,22 @@
     },
     {
       "from": "CALL:child.stdout.on",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:child.stdout.on",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:child.stdout.on",
       "type": "PASSES_ARGUMENT",
       "to": "FUNCTION:anonymous[0]",
       "metadata": {
@@ -5584,6 +5654,14 @@
       "from": "CALL:child.stdout.on",
       "type": "USES",
       "to": "VARIABLE:child"
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
     },
     {
       "from": "CALL:console.error",
@@ -5655,6 +5733,22 @@
     },
     {
       "from": "CALL:fs.readFile",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 2
+      }
+    },
+    {
+      "from": "CALL:fs.readFile",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:fs.readFile",
       "type": "PASSES_ARGUMENT",
       "to": "FUNCTION:anonymous[0]",
       "metadata": {
@@ -5696,6 +5790,14 @@
     },
     {
       "from": "CALL:JSON.parse",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:content",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:JSON.parse",
       "type": "PASSES_ARGUMENT",
       "to": "VARIABLE:content",
       "metadata": {
@@ -5706,6 +5808,14 @@
       "from": "CALL:JSON.parse",
       "type": "RETURNS",
       "to": "FUNCTION:loadAsync"
+    },
+    {
+      "from": "CALL:JSON.stringify",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 2
+      }
     },
     {
       "from": "CALL:JSON.stringify",
@@ -5827,7 +5937,23 @@
     },
     {
       "from": "CALL:res.end",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:res.end",
       "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:res.writeHead",
+      "type": "DERIVES_FROM",
       "to": "LITERAL:",
       "metadata": {
         "argIndex": 0
@@ -5865,6 +5991,14 @@
       "from": "CALL:resolve",
       "type": "CALLS",
       "to": "EXTERNAL_FUNCTION:path.resolve"
+    },
+    {
+      "from": "CALL:resolve",
+      "type": "DERIVES_FROM",
+      "to": "CALL:JSON.parse",
+      "metadata": {
+        "argIndex": 0
+      }
     },
     {
       "from": "CALL:resolve",
@@ -6023,6 +6157,86 @@
       "from": "CATCH_BLOCK:",
       "type": "CONTAINS",
       "to": "SCOPE:"
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Promise()",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Promise()",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Promise()",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Promise()",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Promise()",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Promise()",
+      "type": "PASSES_ARGUMENT",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Promise()",
+      "type": "PASSES_ARGUMENT",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Promise()",
+      "type": "PASSES_ARGUMENT",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Promise()",
+      "type": "PASSES_ARGUMENT",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Promise()",
+      "type": "PASSES_ARGUMENT",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
     },
     {
       "from": "EXPRESSION:AwaitExpression",

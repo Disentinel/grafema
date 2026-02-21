@@ -1,11 +1,12 @@
 /**
- * Unit tests for nodeLocator.ts — REG-531
+ * Unit tests for nodeLocator.ts — REG-531 + REG-530
  *
- * Tests findNodeAtCursor with the new containment-based algorithm:
+ * Tests findNodeAtCursor with the containment-based algorithm:
  * 1. Containment matching: cursor within [start, end] range, smaller span = more specific
  * 2. Proximity fallback: nodes without end positions use column distance
  * 3. Type bonus: CALL nodes get +100 specificity bonus
  * 4. Zero-location guard: endLine=0 or endColumn=0 skips containment
+ * 5. Multi-specifier imports: endColumn differentiates import bindings on same line
  *
  * Mock setup: in-memory graph with synthetic WireNode objects.
  * No RFDB server needed — pure logic tests.
@@ -53,6 +54,7 @@ function makeNode(
   nodeType: string,
   name: string,
   pos: { line: number; column: number; endLine?: number; endColumn?: number },
+  file = 'src/service.ts',
 ): WireNode {
   const metadata: Record<string, unknown> = {
     line: pos.line,
@@ -65,7 +67,7 @@ function makeNode(
     id,
     nodeType: nodeType as WireNode['nodeType'],
     name,
-    file: 'src/service.ts',
+    file,
     exported: false,
     metadata: JSON.stringify(metadata),
   };
@@ -331,5 +333,195 @@ describe('findNodeAtCursor — empty file', () => {
     const result = await findNodeAtCursor(client, 'src/empty.ts', 1, 0);
 
     assert.strictEqual(result, null, 'Should return null for file with no nodes');
+  });
+});
+
+// ============================================================================
+// REG-530: Multi-specifier import — cursor on each specifier
+//
+// Simulates: import { join, resolve, basename } from 'path'
+// 3 IMPORT nodes, all line=1, with different column ranges
+// ============================================================================
+
+const IMPORT_FILE = '/project/src/utils.js';
+
+describe('findNodeAtCursor — multi-specifier imports (REG-530)', () => {
+  const graph: MockGraph = {
+    nodes: {
+      'imp-join': makeNode('imp-join', 'IMPORT', 'join',
+        { line: 1, column: 9, endLine: 1, endColumn: 13 }, IMPORT_FILE),
+      'imp-resolve': makeNode('imp-resolve', 'IMPORT', 'resolve',
+        { line: 1, column: 15, endLine: 1, endColumn: 22 }, IMPORT_FILE),
+      'imp-basename': makeNode('imp-basename', 'IMPORT', 'basename',
+        { line: 1, column: 24, endLine: 1, endColumn: 32 }, IMPORT_FILE),
+    },
+  };
+
+  it('cursor inside "join" range -> returns join node', async () => {
+    const client = createMockClient(graph);
+    const result = await findNodeAtCursor(client, IMPORT_FILE, 1, 10);
+
+    assert.ok(result, 'Should find a node');
+    assert.strictEqual(result.id, 'imp-join');
+    assert.strictEqual(result.name, 'join');
+  });
+
+  it('cursor inside "resolve" range -> returns resolve node', async () => {
+    const client = createMockClient(graph);
+    const result = await findNodeAtCursor(client, IMPORT_FILE, 1, 17);
+
+    assert.ok(result, 'Should find a node');
+    assert.strictEqual(result.id, 'imp-resolve');
+    assert.strictEqual(result.name, 'resolve');
+  });
+
+  it('cursor inside "basename" range -> returns basename node', async () => {
+    const client = createMockClient(graph);
+    const result = await findNodeAtCursor(client, IMPORT_FILE, 1, 26);
+
+    assert.ok(result, 'Should find a node');
+    assert.strictEqual(result.id, 'imp-basename');
+    assert.strictEqual(result.name, 'basename');
+  });
+
+  it('cursor at exact start of "join" range (column=9) -> returns join node', async () => {
+    const client = createMockClient(graph);
+    const result = await findNodeAtCursor(client, IMPORT_FILE, 1, 9);
+
+    assert.ok(result, 'Should find a node');
+    assert.strictEqual(result.id, 'imp-join');
+  });
+
+  it('cursor at exact start of "resolve" range (column=15) -> returns resolve node', async () => {
+    const client = createMockClient(graph);
+    const result = await findNodeAtCursor(client, IMPORT_FILE, 1, 15);
+
+    assert.ok(result, 'Should find a node');
+    assert.strictEqual(result.id, 'imp-resolve');
+  });
+});
+
+// ============================================================================
+// REG-530: Backward compat — nodes WITHOUT endColumn
+// ============================================================================
+
+describe('findNodeAtCursor — backward compat (no endColumn)', () => {
+  it('nodes without endColumn fall back to distance-based matching', async () => {
+    const graph: MockGraph = {
+      nodes: {
+        'imp-a': makeNode('imp-a', 'IMPORT', 'useState', { line: 1, column: 0 }, IMPORT_FILE),
+        'imp-b': makeNode('imp-b', 'IMPORT', 'useEffect', { line: 1, column: 0 }, IMPORT_FILE),
+        'imp-c': makeNode('imp-c', 'IMPORT', 'useMemo', { line: 1, column: 0 }, IMPORT_FILE),
+      },
+    };
+
+    const client = createMockClient(graph);
+    const result = await findNodeAtCursor(client, IMPORT_FILE, 1, 10);
+
+    // All have equal distance from cursor (column=0, distance=10).
+    // Should return one of them (first wins in stable sort).
+    assert.ok(result, 'Should find a node via distance fallback');
+    assert.strictEqual(result.nodeType, 'IMPORT');
+  });
+
+  it('nodes with column but no endColumn — closest column wins', async () => {
+    const graph: MockGraph = {
+      nodes: {
+        'imp-a': makeNode('imp-a', 'IMPORT', 'join', { line: 1, column: 5 }, IMPORT_FILE),
+        'imp-b': makeNode('imp-b', 'IMPORT', 'resolve', { line: 1, column: 20 }, IMPORT_FILE),
+      },
+    };
+
+    const client = createMockClient(graph);
+
+    // Cursor at col 8: distance to A is 3, distance to B is 12. A wins.
+    const result = await findNodeAtCursor(client, IMPORT_FILE, 1, 8);
+    assert.ok(result, 'Should find a node');
+    assert.strictEqual(result.id, 'imp-a');
+  });
+});
+
+// ============================================================================
+// REG-530: No match on line — fallback to closest by line
+// ============================================================================
+
+describe('findNodeAtCursor — no nodes on cursor line', () => {
+  it('cursor on empty line — falls back to closest node by line distance', async () => {
+    const graph: MockGraph = {
+      nodes: {
+        'fn-a': makeNode('fn-a', 'FUNCTION', 'handleRequest', { line: 3, column: 0 }, IMPORT_FILE),
+        'fn-b': makeNode('fn-b', 'FUNCTION', 'validate', { line: 10, column: 0 }, IMPORT_FILE),
+      },
+    };
+
+    const client = createMockClient(graph);
+
+    // Cursor at line 5 — closest by line: line 3 (distance=2) beats line 10 (distance=5).
+    const result = await findNodeAtCursor(client, IMPORT_FILE, 5, 0);
+
+    assert.ok(result, 'Should find a node via line fallback');
+    assert.strictEqual(result.id, 'fn-a', 'Should return closest node by line number');
+  });
+
+  it('no nodes in file at all -> returns null', async () => {
+    const graph: MockGraph = { nodes: {} };
+    const client = createMockClient(graph);
+    const result = await findNodeAtCursor(client, IMPORT_FILE, 1, 0);
+
+    assert.strictEqual(result, null);
+  });
+
+  it('nodes exist but in different file -> returns null', async () => {
+    const graph: MockGraph = {
+      nodes: {
+        'imp-x': makeNode('imp-x', 'IMPORT', 'foo', { line: 1, column: 0 }, '/other/file.js'),
+      },
+    };
+
+    const client = createMockClient(graph);
+    const result = await findNodeAtCursor(client, IMPORT_FILE, 1, 0);
+
+    assert.strictEqual(result, null);
+  });
+});
+
+// ============================================================================
+// REG-530: Edge cases
+// ============================================================================
+
+describe('findNodeAtCursor — metadata edge cases', () => {
+  it('nodes with no metadata line are skipped in matching', async () => {
+    const noLineNode: WireNode = {
+      id: 'no-line',
+      nodeType: 'IMPORT' as WireNode['nodeType'],
+      name: 'orphan',
+      file: IMPORT_FILE,
+      exported: false,
+      metadata: '{}',
+    };
+    const validNode = makeNode('valid', 'IMPORT', 'join', { line: 1, column: 0 }, IMPORT_FILE);
+
+    const graph: MockGraph = { nodes: { 'no-line': noLineNode, valid: validNode } };
+    const client = createMockClient(graph);
+    const result = await findNodeAtCursor(client, IMPORT_FILE, 1, 0);
+
+    assert.ok(result, 'Should find the valid node');
+    assert.strictEqual(result.id, 'valid');
+  });
+
+  it('single node on line — always returned regardless of column', async () => {
+    const graph: MockGraph = {
+      nodes: {
+        only: makeNode('only', 'IMPORT', 'React', { line: 1, column: 0, endLine: 1, endColumn: 5 }, IMPORT_FILE),
+      },
+    };
+
+    const client = createMockClient(graph);
+
+    // Cursor far from node's column range — should still match via distance fallback
+    const result = await findNodeAtCursor(client, IMPORT_FILE, 1, 50);
+
+    assert.ok(result, 'Should find the only node on the line');
+    assert.strictEqual(result.id, 'only');
   });
 });

@@ -73,8 +73,8 @@ export class DataFlowValidator extends Plugin {
       'event:listener',
       'CLASS',
       'FUNCTION',
-      'METHOD_CALL',
-      'CALL_SITE'
+      'CALL',
+      'CONSTRUCTOR_CALL'
     ]);
 
     let checked = 0;
@@ -213,10 +213,6 @@ export class DataFlowValidator extends Plugin {
     const assignment = outgoing[0];
 
     if (!assignment) {
-      if (startNode.type === 'METHOD_CALL' || startNode.type === 'CALL_SITE') {
-        return { found: true, chain: [...chain, '(intermediate node)'] };
-      }
-
       return { found: false, chain: [...chain, '(no assignment)'] };
     }
 

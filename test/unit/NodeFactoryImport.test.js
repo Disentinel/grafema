@@ -599,4 +599,111 @@ describe('NodeFactory.createImport', () => {
       assert.strictEqual(useCallback.id, '/project/src/App.js:IMPORT:react:useCallback');
     });
   });
+
+  describe('endColumn field (REG-530)', () => {
+    it('should store endColumn when provided in options', () => {
+      const node = NodeFactory.createImport(
+        'join',
+        '/project/src/utils.js',
+        1,
+        9,
+        'path',
+        { imported: 'join', endColumn: 13 }
+      );
+
+      assert.strictEqual(node.endColumn, 13);
+      assert.strictEqual(node.column, 9);
+    });
+
+    it('should leave endColumn undefined when not provided (backward compat)', () => {
+      const node = NodeFactory.createImport(
+        'React',
+        '/project/src/App.js',
+        1,
+        0,
+        'react',
+        { imported: 'default' }
+      );
+
+      assert.strictEqual(node.endColumn, undefined);
+    });
+
+    it('should leave endColumn undefined when options is empty', () => {
+      const node = NodeFactory.createImport(
+        'React',
+        '/project/src/App.js',
+        1,
+        0,
+        'react'
+      );
+
+      assert.strictEqual(node.endColumn, undefined);
+    });
+
+    it('should store different columns/endColumns for multiple imports from same source', () => {
+      // Simulates: import { join, resolve, basename } from 'path'
+      const join = NodeFactory.createImport(
+        'join',
+        '/project/src/utils.js',
+        1,
+        9,
+        'path',
+        { imported: 'join', endColumn: 13 }
+      );
+
+      const resolve = NodeFactory.createImport(
+        'resolve',
+        '/project/src/utils.js',
+        1,
+        15,
+        'path',
+        { imported: 'resolve', endColumn: 22 }
+      );
+
+      const basename = NodeFactory.createImport(
+        'basename',
+        '/project/src/utils.js',
+        1,
+        24,
+        'path',
+        { imported: 'basename', endColumn: 32 }
+      );
+
+      // All on same line, same source — but different column ranges
+      assert.strictEqual(join.line, 1);
+      assert.strictEqual(resolve.line, 1);
+      assert.strictEqual(basename.line, 1);
+
+      // Different columns
+      assert.strictEqual(join.column, 9);
+      assert.strictEqual(resolve.column, 15);
+      assert.strictEqual(basename.column, 24);
+
+      // Different endColumns
+      assert.strictEqual(join.endColumn, 13);
+      assert.strictEqual(resolve.endColumn, 22);
+      assert.strictEqual(basename.endColumn, 32);
+
+      // No column range overlaps
+      assert.ok(join.endColumn <= resolve.column,
+        'join endColumn should not overlap resolve column');
+      assert.ok(resolve.endColumn <= basename.column,
+        'resolve endColumn should not overlap basename column');
+    });
+
+    it('should not include endColumn in semantic ID', () => {
+      const node = NodeFactory.createImport(
+        'join',
+        '/project/src/utils.js',
+        1,
+        9,
+        'path',
+        { imported: 'join', endColumn: 13 }
+      );
+
+      assert.strictEqual(node.id, '/project/src/utils.js:IMPORT:path:join');
+      assert.ok(!node.id.includes('13'),
+        `Semantic ID should not contain endColumn: ${node.id}`);
+    });
+  });
 });

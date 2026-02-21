@@ -110,7 +110,19 @@ export class BranchHandler extends FunctionBodyHandler {
           discriminantExpressionType: conditionResult.expressionType,
           discriminantLine: conditionResult.line,
           discriminantColumn: conditionResult.column,
-          isAlternateOfBranchId
+          isAlternateOfBranchId,
+          // REG-533: Operand metadata for DERIVES_FROM edges
+          discriminantLeftSourceName: conditionResult.leftSourceName,
+          discriminantRightSourceName: conditionResult.rightSourceName,
+          discriminantObjectSourceName: conditionResult.objectSourceName,
+          discriminantConsequentSourceName: conditionResult.consequentSourceName,
+          discriminantAlternateSourceName: conditionResult.alternateSourceName,
+          discriminantUnaryArgSourceName: conditionResult.unaryArgSourceName,
+          discriminantOperator: conditionResult.operator,
+          discriminantObject: conditionResult.object,
+          discriminantProperty: conditionResult.property,
+          discriminantComputed: conditionResult.computed,
+          discriminantExpressionSourceNames: conditionResult.expressionSourceNames
         });
 
         // 3. Create if-body SCOPE (backward compatibility)
@@ -256,7 +268,19 @@ export class BranchHandler extends FunctionBodyHandler {
         discriminantLine: conditionResult.line,
         discriminantColumn: conditionResult.column,
         consequentExpressionId,
-        alternateExpressionId
+        alternateExpressionId,
+        // REG-533: Operand metadata for DERIVES_FROM edges
+        discriminantLeftSourceName: conditionResult.leftSourceName,
+        discriminantRightSourceName: conditionResult.rightSourceName,
+        discriminantObjectSourceName: conditionResult.objectSourceName,
+        discriminantConsequentSourceName: conditionResult.consequentSourceName,
+        discriminantAlternateSourceName: conditionResult.alternateSourceName,
+        discriminantUnaryArgSourceName: conditionResult.unaryArgSourceName,
+        discriminantOperator: conditionResult.operator,
+        discriminantObject: conditionResult.object,
+        discriminantProperty: conditionResult.property,
+        discriminantComputed: conditionResult.computed,
+        discriminantExpressionSourceNames: conditionResult.expressionSourceNames
       });
     };
   }

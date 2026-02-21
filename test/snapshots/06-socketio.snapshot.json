@@ -1994,6 +1994,46 @@
   "edges": [
     {
       "from": "CALL:console.log",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.log",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.log",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.log",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.log",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.log",
       "type": "PASSES_ARGUMENT",
       "to": "LITERAL:",
       "metadata": {
@@ -2059,10 +2099,50 @@
     },
     {
       "from": "CALL:io",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:io",
       "type": "PASSES_ARGUMENT",
       "to": "LITERAL:",
       "metadata": {
         "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:io.emit",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:io.emit",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:io.emit",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:io.emit",
+      "type": "DERIVES_FROM",
+      "to": "OBJECT_LITERAL:<object>",
+      "metadata": {
+        "argIndex": 1
       }
     },
     {
@@ -2114,6 +2194,14 @@
     },
     {
       "from": "CALL:io.of",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:io.of",
       "type": "PASSES_ARGUMENT",
       "to": "LITERAL:",
       "metadata": {
@@ -2127,6 +2215,22 @@
     },
     {
       "from": "CALL:io.to",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:io.to",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:io.to",
       "type": "PASSES_ARGUMENT",
       "to": "LITERAL:",
       "metadata": {
@@ -2153,7 +2257,31 @@
     },
     {
       "from": "CALL:require",
-      "type": "PASSES_ARGUMENT",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:require",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:require",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:require",
+      "type": "DERIVES_FROM",
       "to": "LITERAL:",
       "metadata": {
         "argIndex": 0
@@ -2181,6 +2309,30 @@
       "to": "LITERAL:",
       "metadata": {
         "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:require",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:setInterval",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[1]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:setInterval",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 1
       }
     },
     {
@@ -2201,6 +2353,14 @@
     },
     {
       "from": "CALL:socket.broadcast.emit",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:socket.broadcast.emit",
       "type": "PASSES_ARGUMENT",
       "to": "LITERAL:",
       "metadata": {
@@ -2211,6 +2371,38 @@
       "from": "CALL:socket.broadcast.emit",
       "type": "USES",
       "to": "PARAMETER:socket"
+    },
+    {
+      "from": "CALL:socket.emit",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:socket.emit",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:socket.emit",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:socket.emit",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:result",
+      "metadata": {
+        "argIndex": 1
+      }
     },
     {
       "from": "CALL:socket.emit",
@@ -2261,6 +2453,14 @@
     },
     {
       "from": "CALL:socket.join",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:socket.join",
       "type": "PASSES_ARGUMENT",
       "to": "LITERAL:",
       "metadata": {
@@ -2276,6 +2476,70 @@
       "from": "CALL:socket.join",
       "type": "USES",
       "to": "PARAMETER:socket"
+    },
+    {
+      "from": "CALL:socket.on",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:socket.on",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[1]",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:socket.on",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[2]",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:socket.on",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[3]",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:socket.on",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:socket.on",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:socket.on",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:socket.on",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
     },
     {
       "from": "CALL:socket.on",
@@ -2368,6 +2632,14 @@
     },
     {
       "from": "CALL:socket.to",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:socket.to",
       "type": "PASSES_ARGUMENT",
       "to": "LITERAL:",
       "metadata": {
@@ -2378,6 +2650,14 @@
       "from": "CALL:socket.to",
       "type": "USES",
       "to": "PARAMETER:socket"
+    },
+    {
+      "from": "CALL:socketService.emitToGig",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 1
+      }
     },
     {
       "from": "CALL:socketService.emitToGig",

@@ -142,6 +142,20 @@ export class LoopHandler extends FunctionBodyHandler {
         let conditionLine: number | undefined;
         let conditionColumn: number | undefined;
 
+        // REG-533: Operand metadata for test EXPRESSION DERIVES_FROM edges
+        let testLeftSourceName: string | undefined;
+        let testRightSourceName: string | undefined;
+        let testObjectSourceName: string | undefined;
+        let testConsequentSourceName: string | undefined;
+        let testAlternateSourceName: string | undefined;
+        let testUnaryArgSourceName: string | undefined;
+        let testUpdateArgSourceName: string | undefined;
+        let testOperator: string | undefined;
+        let testObject: string | undefined;
+        let testProperty: string | undefined;
+        let testComputed: boolean | undefined;
+        let testExpressionSourceNames: string[] | undefined;
+
         if (loopType === 'while' || loopType === 'do-while') {
           const testNode = (node as t.WhileStatement | t.DoWhileStatement).test;
           if (testNode) {
@@ -150,6 +164,19 @@ export class LoopHandler extends FunctionBodyHandler {
             conditionExpressionType = condResult.expressionType;
             conditionLine = condResult.line;
             conditionColumn = condResult.column;
+            // REG-533: Extract operand metadata
+            testLeftSourceName = condResult.leftSourceName;
+            testRightSourceName = condResult.rightSourceName;
+            testObjectSourceName = condResult.objectSourceName;
+            testConsequentSourceName = condResult.consequentSourceName;
+            testAlternateSourceName = condResult.alternateSourceName;
+            testUnaryArgSourceName = condResult.unaryArgSourceName;
+            testUpdateArgSourceName = condResult.updateArgSourceName;
+            testOperator = condResult.operator;
+            testObject = condResult.object;
+            testProperty = condResult.property;
+            testComputed = condResult.computed;
+            testExpressionSourceNames = condResult.expressionSourceNames;
           }
         } else if (loopType === 'for') {
           const forNode = node as t.ForStatement;
@@ -160,6 +187,31 @@ export class LoopHandler extends FunctionBodyHandler {
             conditionExpressionType = condResult.expressionType;
             conditionLine = condResult.line;
             conditionColumn = condResult.column;
+            // REG-533: Extract operand metadata
+            testLeftSourceName = condResult.leftSourceName;
+            testRightSourceName = condResult.rightSourceName;
+            testObjectSourceName = condResult.objectSourceName;
+            testConsequentSourceName = condResult.consequentSourceName;
+            testAlternateSourceName = condResult.alternateSourceName;
+            testUnaryArgSourceName = condResult.unaryArgSourceName;
+            testUpdateArgSourceName = condResult.updateArgSourceName;
+            testOperator = condResult.operator;
+            testObject = condResult.object;
+            testProperty = condResult.property;
+            testComputed = condResult.computed;
+            testExpressionSourceNames = condResult.expressionSourceNames;
+          }
+        }
+
+        // REG-533: Extract operand metadata for for-loop update expression
+        let updateArgSourceName: string | undefined;
+        let updateOperator: string | undefined;
+        if (loopType === 'for') {
+          const forNode = node as t.ForStatement;
+          if (forNode.update) {
+            const updateResult = analyzer.extractDiscriminantExpression(forNode.update, ctx.module);
+            updateArgSourceName = updateResult.updateArgSourceName;
+            updateOperator = updateResult.operator;
           }
         }
 
@@ -192,7 +244,22 @@ export class LoopHandler extends FunctionBodyHandler {
           updateLine,
           updateColumn,
           // REG-284: async flag for for-await-of
-          async: isAsync
+          async: isAsync,
+          // REG-533: Operand metadata for DERIVES_FROM edges
+          testLeftSourceName,
+          testRightSourceName,
+          testObjectSourceName,
+          testConsequentSourceName,
+          testAlternateSourceName,
+          testUnaryArgSourceName,
+          testUpdateArgSourceName,
+          testOperator,
+          testObject,
+          testProperty,
+          testComputed,
+          testExpressionSourceNames,
+          updateArgSourceName,
+          updateOperator
         });
 
         // 5. Create body SCOPE (backward compatibility)
