@@ -173,7 +173,24 @@ export interface AnalyzerDelegate {
   extractDiscriminantExpression(
     discriminant: t.Expression,
     module: VisitorModule,
-  ): { id: string; expressionType: string; line: number; column: number };
+  ): {
+    id: string;
+    expressionType: string;
+    line: number;
+    column: number;
+    objectSourceName?: string;
+    object?: string;
+    property?: string;
+    computed?: boolean;
+    leftSourceName?: string;
+    rightSourceName?: string;
+    operator?: string;
+    consequentSourceName?: string;
+    alternateSourceName?: string;
+    unaryArgSourceName?: string;
+    updateArgSourceName?: string;
+    expressionSourceNames?: string[];
+  };
 
   extractVariableNamesFromPattern(
     pattern: t.Node | null | undefined,

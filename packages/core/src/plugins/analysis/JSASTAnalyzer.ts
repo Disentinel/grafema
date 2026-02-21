@@ -58,6 +58,8 @@ import { IdGenerator } from './ast/IdGenerator.js';
 import { CollisionResolver } from './ast/CollisionResolver.js';
 import { ExpressionNode } from '../../core/nodes/ExpressionNode.js';
 import { ConstructorCallNode } from '../../core/nodes/ConstructorCallNode.js';
+import { ArgumentExtractor } from './ast/visitors/ArgumentExtractor.js';
+import type { ArgumentInfo, LiteralInfo as ExtractorLiteralInfo } from './ast/visitors/call-expression-types.js';
 import { ObjectLiteralNode } from '../../core/nodes/ObjectLiteralNode.js';
 import { ArrayLiteralNode } from '../../core/nodes/ArrayLiteralNode.js';
 import { NodeFactory } from '../../core/NodeFactory.js';
@@ -1768,6 +1770,16 @@ export class JSASTAnalyzer extends Plugin {
               parentScopeId: module.id
             });
 
+            // REG-532: Extract constructor arguments for PASSES_ARGUMENT + DERIVES_FROM edges
+            if (newNode.arguments.length > 0) {
+              ArgumentExtractor.extract(
+                newNode.arguments, constructorCallId, module,
+                callArguments as unknown as ArgumentInfo[],
+                literals as unknown as ExtractorLiteralInfo[], literalCounterRef,
+                allCollections as unknown as Record<string, unknown>, scopeTracker
+              );
+            }
+
             // REG-334: If this is Promise constructor with executor callback,
             // register the context for resolve/reject detection
             if (className === 'Promise' && newNode.arguments.length > 0) {
@@ -2269,6 +2281,19 @@ export class JSASTAnalyzer extends Plugin {
     let discriminantLine: number | undefined;
     let discriminantColumn: number | undefined;
 
+    // REG-533: Operand metadata variables for DERIVES_FROM edges
+    let discriminantLeftSourceName: string | undefined;
+    let discriminantRightSourceName: string | undefined;
+    let discriminantObjectSourceName: string | undefined;
+    let discriminantConsequentSourceName: string | undefined;
+    let discriminantAlternateSourceName: string | undefined;
+    let discriminantUnaryArgSourceName: string | undefined;
+    let discriminantOperator: string | undefined;
+    let discriminantObject: string | undefined;
+    let discriminantProperty: string | undefined;
+    let discriminantComputed: boolean | undefined;
+    let discriminantExpressionSourceNames: string[] | undefined;
+
     if (switchNode.discriminant) {
       const discResult = this.extractDiscriminantExpression(
         switchNode.discriminant,
@@ -2278,6 +2303,18 @@ export class JSASTAnalyzer extends Plugin {
       discriminantExpressionType = discResult.expressionType;
       discriminantLine = discResult.line;
       discriminantColumn = discResult.column;
+      // REG-533: Extract operand metadata
+      discriminantLeftSourceName = discResult.leftSourceName;
+      discriminantRightSourceName = discResult.rightSourceName;
+      discriminantObjectSourceName = discResult.objectSourceName;
+      discriminantConsequentSourceName = discResult.consequentSourceName;
+      discriminantAlternateSourceName = discResult.alternateSourceName;
+      discriminantUnaryArgSourceName = discResult.unaryArgSourceName;
+      discriminantOperator = discResult.operator;
+      discriminantObject = discResult.object;
+      discriminantProperty = discResult.property;
+      discriminantComputed = discResult.computed;
+      discriminantExpressionSourceNames = discResult.expressionSourceNames;
     }
 
     branches.push({
@@ -2291,7 +2328,19 @@ export class JSASTAnalyzer extends Plugin {
       discriminantExpressionId,
       discriminantExpressionType,
       discriminantLine,
-      discriminantColumn
+      discriminantColumn,
+      // REG-533: Operand metadata for DERIVES_FROM edges
+      discriminantLeftSourceName,
+      discriminantRightSourceName,
+      discriminantObjectSourceName,
+      discriminantConsequentSourceName,
+      discriminantAlternateSourceName,
+      discriminantUnaryArgSourceName,
+      discriminantOperator,
+      discriminantObject,
+      discriminantProperty,
+      discriminantComputed,
+      discriminantExpressionSourceNames
     });
 
     // Process each case clause
@@ -2329,35 +2378,136 @@ export class JSASTAnalyzer extends Plugin {
   }
 
   /**
-   * Extract EXPRESSION node ID and metadata for switch discriminant
+   * Extract EXPRESSION node ID, metadata, and operand source names for discriminant/condition expressions.
+   *
+   * REG-533: Enhanced to return operand metadata for DERIVES_FROM edge creation.
+   * Each expression type extracts the names of variables it derives from,
+   * following the same pattern as ReturnStatementInfo/VariableAssignmentInfo.
    */
   private extractDiscriminantExpression(
     discriminant: t.Expression,
     module: VisitorModule
-  ): { id: string; expressionType: string; line: number; column: number } {
+  ): {
+    id: string;
+    expressionType: string;
+    line: number;
+    column: number;
+    objectSourceName?: string;
+    object?: string;
+    property?: string;
+    computed?: boolean;
+    leftSourceName?: string;
+    rightSourceName?: string;
+    operator?: string;
+    consequentSourceName?: string;
+    alternateSourceName?: string;
+    unaryArgSourceName?: string;
+    updateArgSourceName?: string;
+    expressionSourceNames?: string[];
+  } {
     const line = getLine(discriminant);
     const column = getColumn(discriminant);
 
     if (t.isIdentifier(discriminant)) {
-      // Simple identifier: switch(x) - create EXPRESSION node
+      // Simple identifier: switch(x), while(running) - create EXPRESSION node
       return {
         id: ExpressionNode.generateId('Identifier', module.file, line, column),
         expressionType: 'Identifier',
         line,
-        column
+        column,
+        objectSourceName: discriminant.name
       };
     } else if (t.isMemberExpression(discriminant)) {
-      // Member expression: switch(action.type)
+      // Member expression: switch(action.type), while(obj.active)
+      const objectSourceName = this.extractOperandName(discriminant.object);
+      const object = t.isIdentifier(discriminant.object) ? discriminant.object.name
+        : t.isMemberExpression(discriminant.object) ? this.memberExpressionToString(discriminant.object)
+        : undefined;
+      const property = t.isIdentifier(discriminant.property) ? discriminant.property.name
+        : t.isStringLiteral(discriminant.property) ? discriminant.property.value
+        : '<computed>';
+      const computed = discriminant.computed;
       return {
         id: ExpressionNode.generateId('MemberExpression', module.file, line, column),
         expressionType: 'MemberExpression',
         line,
-        column
+        column,
+        objectSourceName,
+        object,
+        property,
+        computed
+      };
+    } else if (t.isBinaryExpression(discriminant)) {
+      // Binary expression: while(i < 10), for(; i < n;)
+      return {
+        id: ExpressionNode.generateId('BinaryExpression', module.file, line, column),
+        expressionType: 'BinaryExpression',
+        line,
+        column,
+        leftSourceName: this.extractOperandName(discriminant.left as t.Expression),
+        rightSourceName: this.extractOperandName(discriminant.right),
+        operator: discriminant.operator
+      };
+    } else if (t.isLogicalExpression(discriminant)) {
+      // Logical expression: while(a && b)
+      return {
+        id: ExpressionNode.generateId('LogicalExpression', module.file, line, column),
+        expressionType: 'LogicalExpression',
+        line,
+        column,
+        leftSourceName: this.extractOperandName(discriminant.left),
+        rightSourceName: this.extractOperandName(discriminant.right),
+        operator: discriminant.operator
+      };
+    } else if (t.isConditionalExpression(discriminant)) {
+      // Conditional expression: unlikely as discriminant but handle it
+      return {
+        id: ExpressionNode.generateId('ConditionalExpression', module.file, line, column),
+        expressionType: 'ConditionalExpression',
+        line,
+        column,
+        consequentSourceName: this.extractOperandName(discriminant.consequent),
+        alternateSourceName: this.extractOperandName(discriminant.alternate)
+      };
+    } else if (t.isUnaryExpression(discriminant)) {
+      // Unary expression: while(!done), if(!valid)
+      return {
+        id: ExpressionNode.generateId('UnaryExpression', module.file, line, column),
+        expressionType: 'UnaryExpression',
+        line,
+        column,
+        unaryArgSourceName: this.extractOperandName(discriminant.argument),
+        operator: discriminant.operator
+      };
+    } else if (t.isUpdateExpression(discriminant)) {
+      // Update expression: for(; ; i++)
+      return {
+        id: ExpressionNode.generateId('UpdateExpression', module.file, line, column),
+        expressionType: 'UpdateExpression',
+        line,
+        column,
+        updateArgSourceName: this.extractOperandName(discriminant.argument),
+        operator: discriminant.operator
+      };
+    } else if (t.isTemplateLiteral(discriminant)) {
+      // Template literal: switch(`${prefix}_${suffix}`)
+      const expressionSourceNames: string[] = [];
+      for (const expr of discriminant.expressions) {
+        const name = this.extractOperandName(expr as t.Expression);
+        if (name) {
+          expressionSourceNames.push(name);
+        }
+      }
+      return {
+        id: ExpressionNode.generateId('TemplateLiteral', module.file, line, column),
+        expressionType: 'TemplateLiteral',
+        line,
+        column,
+        expressionSourceNames: expressionSourceNames.length > 0 ? expressionSourceNames : undefined
       };
     } else if (t.isCallExpression(discriminant)) {
-      // Call expression: switch(getType())
+      // Call expression: switch(getType()) - reuse existing CALL_SITE tracking
       const callee = t.isIdentifier(discriminant.callee) ? discriminant.callee.name : '<complex>';
-      // Return CALL node ID instead of EXPRESSION (reuse existing call tracking)
       return {
         id: `${module.file}:CALL:${callee}:${line}:${column}`,
         expressionType: 'CallExpression',
@@ -2366,13 +2516,23 @@ export class JSASTAnalyzer extends Plugin {
       };
     }
 
-    // Default: create generic EXPRESSION
+    // Default: create generic EXPRESSION (ThisExpression, SequenceExpression, etc.)
     return {
       id: ExpressionNode.generateId(discriminant.type, module.file, line, column),
       expressionType: discriminant.type,
       line,
       column
     };
+  }
+
+  /**
+   * Extract variable name from an expression node for DERIVES_FROM edge creation.
+   * Returns the name of the identifier or the base object of a member expression.
+   */
+  private extractOperandName(node: t.Expression | t.PrivateName): string | undefined {
+    if (t.isIdentifier(node)) return node.name;
+    if (t.isMemberExpression(node) && t.isIdentifier(node.object)) return node.object.name;
+    return undefined;
   }
 
   /**
