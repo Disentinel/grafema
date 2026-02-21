@@ -186,6 +186,7 @@ impl<'a> Evaluator<'a> {
             "neq" => self.eval_neq(atom),
             "starts_with" => self.eval_starts_with(atom),
             "not_starts_with" => self.eval_not_starts_with(atom),
+            "parent_function" => self.eval_parent_function(atom),
             _ => self.eval_derived(atom),
         }
     }
@@ -762,6 +763,121 @@ impl<'a> Evaluator<'a> {
             vec![Bindings::new()]
         } else {
             vec![]
+        }
+    }
+
+    /// Evaluate parent_function(NodeId, FunctionId) predicate.
+    ///
+    /// Finds the nearest containing FUNCTION or METHOD node by traversing
+    /// incoming CONTAINS, HAS_SCOPE, and DECLARES edges upward from NodeId.
+    ///
+    /// Special case: PARAMETER nodes are connected via FUNCTION -[HAS_PARAMETER]-> PARAMETER
+    /// (an outgoing edge from FUNCTION). From a PARAMETER node, incoming HAS_PARAMETER
+    /// edges return the parent FUNCTION directly — no BFS traversal needed.
+    ///
+    /// - NodeId must be bound (constant or previously bound variable)
+    /// - FunctionId can be a variable (bind result), constant (check), or wildcard
+    ///
+    /// Returns empty if:
+    /// - NodeId is at module level (not inside any function)
+    /// - NodeId is a PARAMETER with no HAS_PARAMETER incoming edge
+    /// - NodeId is in a class body but not inside a method/function
+    /// - Traversal exceeds MAX_DEPTH=20 hops (TypeScript uses 15, Rust is more permissive)
+    ///
+    /// If the graph has multiple CONTAINS parent paths (malformed), the predicate
+    /// returns the first function found (non-deterministic).
+    fn eval_parent_function(&self, atom: &Atom) -> Vec<Bindings> {
+        let args = atom.args();
+        if args.len() < 2 {
+            return vec![];
+        }
+
+        let node_id = match &args[0] {
+            Term::Const(id_str) => match id_str.parse::<u128>() {
+                Ok(id) => id,
+                Err(_) => return vec![],
+            },
+            _ => return vec![], // NodeId must be bound
+        };
+
+        let fn_term = &args[1];
+
+        const FUNCTION_TYPES: &[&str] = &["FUNCTION", "METHOD"];
+        const STOP_TYPES: &[&str] = &["FUNCTION", "METHOD", "MODULE", "CLASS"];
+        const TRAVERSAL_TYPES: &[&str] = &["CONTAINS", "HAS_SCOPE", "DECLARES"];
+        const MAX_DEPTH: usize = 20;
+
+        // PARAMETER special case: FUNCTION -[HAS_PARAMETER]-> PARAMETER
+        // From PARAMETER, get_incoming_edges returns edges where src=FUNCTION.
+        if let Some(input_node) = self.engine.get_node(node_id) {
+            if input_node.node_type.as_deref() == Some("PARAMETER") {
+                let param_edges = self.engine.get_incoming_edges(node_id, Some(&["HAS_PARAMETER"]));
+                for edge in param_edges {
+                    let parent_id = edge.src;
+                    if let Some(parent_node) = self.engine.get_node(parent_id) {
+                        let parent_type = parent_node.node_type.as_deref().unwrap_or("");
+                        if FUNCTION_TYPES.contains(&parent_type) {
+                            return Self::match_fn_term(fn_term, parent_id);
+                        }
+                    }
+                }
+                return vec![];
+            }
+        } else {
+            return vec![];
+        }
+
+        // BFS: walk incoming CONTAINS/HAS_SCOPE/DECLARES edges upward
+        let mut visited = std::collections::HashSet::new();
+        let mut queue = std::collections::VecDeque::new();
+        queue.push_back((node_id, 0usize));
+
+        while let Some((current_id, depth)) = queue.pop_front() {
+            if depth > MAX_DEPTH || !visited.insert(current_id) {
+                continue;
+            }
+
+            let edges = self.engine.get_incoming_edges(current_id, Some(TRAVERSAL_TYPES));
+
+            for edge in edges {
+                let parent_id = edge.src;
+                if visited.contains(&parent_id) {
+                    continue;
+                }
+
+                if let Some(parent_node) = self.engine.get_node(parent_id) {
+                    let parent_type = parent_node.node_type.as_deref().unwrap_or("");
+
+                    if FUNCTION_TYPES.contains(&parent_type) {
+                        return Self::match_fn_term(fn_term, parent_id);
+                    } else if STOP_TYPES.contains(&parent_type) {
+                        return vec![];
+                    } else {
+                        queue.push_back((parent_id, depth + 1));
+                    }
+                }
+            }
+        }
+
+        vec![]
+    }
+
+    /// Match the FunctionId term against a found parent function ID.
+    fn match_fn_term(fn_term: &Term, parent_id: u128) -> Vec<Bindings> {
+        match fn_term {
+            Term::Var(var) => {
+                let mut b = Bindings::new();
+                b.set(var, Value::Id(parent_id));
+                vec![b]
+            }
+            Term::Const(expected) => {
+                if expected.parse::<u128>().ok() == Some(parent_id) {
+                    vec![Bindings::new()]
+                } else {
+                    vec![]
+                }
+            }
+            Term::Wildcard => vec![Bindings::new()],
         }
     }
 

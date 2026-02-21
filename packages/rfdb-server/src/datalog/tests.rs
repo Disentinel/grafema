@@ -2701,4 +2701,572 @@ mod eval_tests {
         assert!(result2.warnings.is_empty(),
             "second query should not carry over warnings from first: {:?}", result2.warnings);
     }
+
+    // ============================================================================
+    // parent_function() Predicate Tests (REG-544)
+    // ============================================================================
+
+    mod parent_function_tests {
+        use super::*;
+
+        /// Build a graph that exercises all parent_function traversal cases:
+        ///
+        /// MODULE(id=1)
+        ///   -[CONTAINS]-> FUNCTION(id=10, name="myFunc")
+        ///     -[HAS_SCOPE]-> SCOPE(id=20)
+        ///       -[CONTAINS]-> CALL(id=30, method="doSomething")
+        ///       -[CONTAINS]-> SCOPE(id=21)       // nested if-block
+        ///         -[CONTAINS]-> CALL(id=31)      // nested call
+        ///       -[DECLARES]-> VARIABLE(id=40)
+        ///     -[HAS_PARAMETER]-> PARAMETER(id=50, name="x")
+        ///   -[CONTAINS]-> CALL(id=60)            // module-level call, NO parent function
+        ///
+        /// CLASS(id=2)
+        ///   -[CONTAINS]-> FUNCTION(id=11, name="myMethod")
+        ///     -[HAS_SCOPE]-> SCOPE(id=22)
+        ///       -[CONTAINS]-> CALL(id=32)
+        fn setup_parent_function_graph() -> GraphEngine {
+            let dir = tempdir().unwrap();
+            let mut engine = GraphEngine::create(dir.path()).unwrap();
+
+            engine.add_nodes(vec![
+                // MODULE node
+                NodeRecord {
+                    id: 1,
+                    node_type: Some("MODULE".to_string()),
+                    name: Some("index.js".to_string()),
+                    file: Some("index.js".to_string()),
+                    file_id: 0,
+                    name_offset: 0,
+                    version: "main".into(),
+                    exported: false,
+                    replaces: None,
+                    deleted: false,
+                    metadata: None,
+                    semantic_id: None,
+                },
+                // CLASS node
+                NodeRecord {
+                    id: 2,
+                    node_type: Some("CLASS".to_string()),
+                    name: Some("MyClass".to_string()),
+                    file: Some("index.js".to_string()),
+                    file_id: 0,
+                    name_offset: 0,
+                    version: "main".into(),
+                    exported: false,
+                    replaces: None,
+                    deleted: false,
+                    metadata: None,
+                    semantic_id: None,
+                },
+                // FUNCTION node (top-level function)
+                NodeRecord {
+                    id: 10,
+                    node_type: Some("FUNCTION".to_string()),
+                    name: Some("myFunc".to_string()),
+                    file: Some("index.js".to_string()),
+                    file_id: 0,
+                    name_offset: 0,
+                    version: "main".into(),
+                    exported: false,
+                    replaces: None,
+                    deleted: false,
+                    metadata: None,
+                    semantic_id: None,
+                },
+                // FUNCTION node (class method — stored as FUNCTION per ClassVisitor.ts:358)
+                NodeRecord {
+                    id: 11,
+                    node_type: Some("FUNCTION".to_string()),
+                    name: Some("myMethod".to_string()),
+                    file: Some("index.js".to_string()),
+                    file_id: 0,
+                    name_offset: 0,
+                    version: "main".into(),
+                    exported: false,
+                    replaces: None,
+                    deleted: false,
+                    metadata: None,
+                    semantic_id: None,
+                },
+                // SCOPE node (function body of myFunc)
+                NodeRecord {
+                    id: 20,
+                    node_type: Some("SCOPE".to_string()),
+                    name: None,
+                    file: Some("index.js".to_string()),
+                    file_id: 0,
+                    name_offset: 0,
+                    version: "main".into(),
+                    exported: false,
+                    replaces: None,
+                    deleted: false,
+                    metadata: None,
+                    semantic_id: None,
+                },
+                // SCOPE node (nested if-block inside myFunc)
+                NodeRecord {
+                    id: 21,
+                    node_type: Some("SCOPE".to_string()),
+                    name: None,
+                    file: Some("index.js".to_string()),
+                    file_id: 0,
+                    name_offset: 0,
+                    version: "main".into(),
+                    exported: false,
+                    replaces: None,
+                    deleted: false,
+                    metadata: None,
+                    semantic_id: None,
+                },
+                // SCOPE node (function body of myMethod)
+                NodeRecord {
+                    id: 22,
+                    node_type: Some("SCOPE".to_string()),
+                    name: None,
+                    file: Some("index.js".to_string()),
+                    file_id: 0,
+                    name_offset: 0,
+                    version: "main".into(),
+                    exported: false,
+                    replaces: None,
+                    deleted: false,
+                    metadata: None,
+                    semantic_id: None,
+                },
+                // CALL node (direct call in myFunc body)
+                NodeRecord {
+                    id: 30,
+                    node_type: Some("CALL".to_string()),
+                    name: Some("doSomething".to_string()),
+                    file: Some("index.js".to_string()),
+                    file_id: 0,
+                    name_offset: 0,
+                    version: "main".into(),
+                    exported: false,
+                    replaces: None,
+                    deleted: false,
+                    metadata: Some(r#"{"method":"doSomething"}"#.to_string()),
+                    semantic_id: None,
+                },
+                // CALL node (nested call inside if-block in myFunc)
+                NodeRecord {
+                    id: 31,
+                    node_type: Some("CALL".to_string()),
+                    name: Some("nestedCall".to_string()),
+                    file: Some("index.js".to_string()),
+                    file_id: 0,
+                    name_offset: 0,
+                    version: "main".into(),
+                    exported: false,
+                    replaces: None,
+                    deleted: false,
+                    metadata: None,
+                    semantic_id: None,
+                },
+                // CALL node (call inside class method myMethod)
+                NodeRecord {
+                    id: 32,
+                    node_type: Some("CALL".to_string()),
+                    name: Some("classCall".to_string()),
+                    file: Some("index.js".to_string()),
+                    file_id: 0,
+                    name_offset: 0,
+                    version: "main".into(),
+                    exported: false,
+                    replaces: None,
+                    deleted: false,
+                    metadata: None,
+                    semantic_id: None,
+                },
+                // VARIABLE node (declared in myFunc body via DECLARES)
+                NodeRecord {
+                    id: 40,
+                    node_type: Some("VARIABLE".to_string()),
+                    name: Some("localVar".to_string()),
+                    file: Some("index.js".to_string()),
+                    file_id: 0,
+                    name_offset: 0,
+                    version: "main".into(),
+                    exported: false,
+                    replaces: None,
+                    deleted: false,
+                    metadata: None,
+                    semantic_id: None,
+                },
+                // PARAMETER node (parameter of myFunc)
+                NodeRecord {
+                    id: 50,
+                    node_type: Some("PARAMETER".to_string()),
+                    name: Some("x".to_string()),
+                    file: Some("index.js".to_string()),
+                    file_id: 0,
+                    name_offset: 0,
+                    version: "main".into(),
+                    exported: false,
+                    replaces: None,
+                    deleted: false,
+                    metadata: None,
+                    semantic_id: None,
+                },
+                // CALL node (module-level call, no parent function)
+                NodeRecord {
+                    id: 60,
+                    node_type: Some("CALL".to_string()),
+                    name: Some("moduleLevelCall".to_string()),
+                    file: Some("index.js".to_string()),
+                    file_id: 0,
+                    name_offset: 0,
+                    version: "main".into(),
+                    exported: false,
+                    replaces: None,
+                    deleted: false,
+                    metadata: None,
+                    semantic_id: None,
+                },
+            ]);
+
+            engine.add_edges(vec![
+                // MODULE(1) -[CONTAINS]-> FUNCTION(10)
+                EdgeRecord {
+                    src: 1,
+                    dst: 10,
+                    edge_type: Some("CONTAINS".to_string()),
+                    version: "main".into(),
+                    metadata: None,
+                    deleted: false,
+                },
+                // MODULE(1) -[CONTAINS]-> CALL(60)  (module-level call)
+                EdgeRecord {
+                    src: 1,
+                    dst: 60,
+                    edge_type: Some("CONTAINS".to_string()),
+                    version: "main".into(),
+                    metadata: None,
+                    deleted: false,
+                },
+                // FUNCTION(10) -[HAS_SCOPE]-> SCOPE(20)
+                EdgeRecord {
+                    src: 10,
+                    dst: 20,
+                    edge_type: Some("HAS_SCOPE".to_string()),
+                    version: "main".into(),
+                    metadata: None,
+                    deleted: false,
+                },
+                // FUNCTION(10) -[HAS_PARAMETER]-> PARAMETER(50)
+                EdgeRecord {
+                    src: 10,
+                    dst: 50,
+                    edge_type: Some("HAS_PARAMETER".to_string()),
+                    version: "main".into(),
+                    metadata: None,
+                    deleted: false,
+                },
+                // SCOPE(20) -[CONTAINS]-> CALL(30)
+                EdgeRecord {
+                    src: 20,
+                    dst: 30,
+                    edge_type: Some("CONTAINS".to_string()),
+                    version: "main".into(),
+                    metadata: None,
+                    deleted: false,
+                },
+                // SCOPE(20) -[CONTAINS]-> SCOPE(21) (nested if-block)
+                EdgeRecord {
+                    src: 20,
+                    dst: 21,
+                    edge_type: Some("CONTAINS".to_string()),
+                    version: "main".into(),
+                    metadata: None,
+                    deleted: false,
+                },
+                // SCOPE(20) -[DECLARES]-> VARIABLE(40)
+                EdgeRecord {
+                    src: 20,
+                    dst: 40,
+                    edge_type: Some("DECLARES".to_string()),
+                    version: "main".into(),
+                    metadata: None,
+                    deleted: false,
+                },
+                // SCOPE(21) -[CONTAINS]-> CALL(31) (nested call)
+                EdgeRecord {
+                    src: 21,
+                    dst: 31,
+                    edge_type: Some("CONTAINS".to_string()),
+                    version: "main".into(),
+                    metadata: None,
+                    deleted: false,
+                },
+                // CLASS(2) -[CONTAINS]-> FUNCTION(11) (class method)
+                EdgeRecord {
+                    src: 2,
+                    dst: 11,
+                    edge_type: Some("CONTAINS".to_string()),
+                    version: "main".into(),
+                    metadata: None,
+                    deleted: false,
+                },
+                // FUNCTION(11) -[HAS_SCOPE]-> SCOPE(22) (method body)
+                EdgeRecord {
+                    src: 11,
+                    dst: 22,
+                    edge_type: Some("HAS_SCOPE".to_string()),
+                    version: "main".into(),
+                    metadata: None,
+                    deleted: false,
+                },
+                // SCOPE(22) -[CONTAINS]-> CALL(32) (call inside class method)
+                EdgeRecord {
+                    src: 22,
+                    dst: 32,
+                    edge_type: Some("CONTAINS".to_string()),
+                    version: "main".into(),
+                    metadata: None,
+                    deleted: false,
+                },
+            ], false);
+
+            engine
+        }
+
+        // Test 1: CALL(30) directly inside function body SCOPE(20) → returns FUNCTION(10)
+        // BFS path: CALL(30) <-[CONTAINS]- SCOPE(20) <-[HAS_SCOPE]- FUNCTION(10) → match
+        #[test]
+        fn test_parent_function_direct_call() {
+            let engine = setup_parent_function_graph();
+            let evaluator = Evaluator::new(&engine);
+
+            let query = Atom::new("parent_function", vec![
+                Term::constant("30"),
+                Term::var("F"),
+            ]);
+
+            let results = evaluator.eval_atom(&query);
+            assert_eq!(results.len(), 1, "should find exactly one parent function");
+            assert_eq!(results[0].get("F"), Some(&Value::Id(10)),
+                "parent function of CALL(30) should be FUNCTION(10)");
+        }
+
+        // Test 2: CALL(31) inside nested SCOPE(21) inside SCOPE(20) inside FUNCTION(10)
+        // BFS path: CALL(31) <-[CONTAINS]- SCOPE(21) <-[CONTAINS]- SCOPE(20)
+        //           <-[HAS_SCOPE]- FUNCTION(10) → match
+        #[test]
+        fn test_parent_function_nested_scope() {
+            let engine = setup_parent_function_graph();
+            let evaluator = Evaluator::new(&engine);
+
+            let query = Atom::new("parent_function", vec![
+                Term::constant("31"),
+                Term::var("F"),
+            ]);
+
+            let results = evaluator.eval_atom(&query);
+            assert_eq!(results.len(), 1, "should find exactly one parent function");
+            assert_eq!(results[0].get("F"), Some(&Value::Id(10)),
+                "parent function of nested CALL(31) should still be FUNCTION(10)");
+        }
+
+        // Test 3: CALL(60) at module level → returns empty
+        // BFS path: CALL(60) <-[CONTAINS]- MODULE(1) → MODULE is STOP_TYPE → empty
+        #[test]
+        fn test_parent_function_module_level_returns_empty() {
+            let engine = setup_parent_function_graph();
+            let evaluator = Evaluator::new(&engine);
+
+            let query = Atom::new("parent_function", vec![
+                Term::constant("60"),
+                Term::var("F"),
+            ]);
+
+            let results = evaluator.eval_atom(&query);
+            assert_eq!(results.len(), 0,
+                "module-level CALL(60) should have no parent function");
+        }
+
+        // Test 4: VARIABLE(40) inside SCOPE(20) connected via DECLARES → returns FUNCTION(10)
+        // BFS path: VARIABLE(40) <-[DECLARES]- SCOPE(20) <-[HAS_SCOPE]- FUNCTION(10) → match
+        // Verifies Gap 1 fix (DECLARES in traversal set)
+        #[test]
+        fn test_parent_function_variable_node() {
+            let engine = setup_parent_function_graph();
+            let evaluator = Evaluator::new(&engine);
+
+            let query = Atom::new("parent_function", vec![
+                Term::constant("40"),
+                Term::var("F"),
+            ]);
+
+            let results = evaluator.eval_atom(&query);
+            assert_eq!(results.len(), 1, "should find exactly one parent function for VARIABLE");
+            assert_eq!(results[0].get("F"), Some(&Value::Id(10)),
+                "parent function of VARIABLE(40) should be FUNCTION(10) via DECLARES edge");
+        }
+
+        // Test 5: PARAMETER(50) connected via FUNCTION(10) -[HAS_PARAMETER]-> PARAMETER(50)
+        // Pre-check: input node type = PARAMETER → look up incoming HAS_PARAMETER
+        // get_incoming_edges(50, ["HAS_PARAMETER"]) → edge.src = FUNCTION(10) → match
+        // Verifies Gap 2 fix (PARAMETER special case)
+        #[test]
+        fn test_parent_function_parameter_node() {
+            let engine = setup_parent_function_graph();
+            let evaluator = Evaluator::new(&engine);
+
+            let query = Atom::new("parent_function", vec![
+                Term::constant("50"),
+                Term::var("F"),
+            ]);
+
+            let results = evaluator.eval_atom(&query);
+            assert_eq!(results.len(), 1, "should find exactly one parent function for PARAMETER");
+            assert_eq!(results[0].get("F"), Some(&Value::Id(10)),
+                "parent function of PARAMETER(50) should be FUNCTION(10) via HAS_PARAMETER edge");
+        }
+
+        // Test 6: CALL(32) inside class method (stored as FUNCTION, not METHOD) → FUNCTION(11)
+        // BFS path: CALL(32) <-[CONTAINS]- SCOPE(22) <-[HAS_SCOPE]- FUNCTION(11) → match
+        // Verifies Gap 4: class methods are stored as FUNCTION type
+        #[test]
+        fn test_parent_function_class_method_call() {
+            let engine = setup_parent_function_graph();
+            let evaluator = Evaluator::new(&engine);
+
+            let query = Atom::new("parent_function", vec![
+                Term::constant("32"),
+                Term::var("F"),
+            ]);
+
+            let results = evaluator.eval_atom(&query);
+            assert_eq!(results.len(), 1, "should find exactly one parent function for class method call");
+            assert_eq!(results[0].get("F"), Some(&Value::Id(11)),
+                "parent function of CALL(32) should be class method FUNCTION(11)");
+        }
+
+        // Test 7: parent_function(30, "10") with constant FunctionId that matches → one empty Bindings
+        #[test]
+        fn test_parent_function_constant_fn_id_match() {
+            let engine = setup_parent_function_graph();
+            let evaluator = Evaluator::new(&engine);
+
+            let query = Atom::new("parent_function", vec![
+                Term::constant("30"),
+                Term::constant("10"),
+            ]);
+
+            let results = evaluator.eval_atom(&query);
+            assert_eq!(results.len(), 1,
+                "parent_function(30, \"10\") should match (FUNCTION 10 is the parent)");
+            assert!(results[0].is_empty(),
+                "constant-constant match should return empty bindings (no variables to bind)");
+        }
+
+        // Test 8: parent_function(30, "999") with constant FunctionId that does NOT match → empty
+        #[test]
+        fn test_parent_function_constant_fn_id_no_match() {
+            let engine = setup_parent_function_graph();
+            let evaluator = Evaluator::new(&engine);
+
+            let query = Atom::new("parent_function", vec![
+                Term::constant("30"),
+                Term::constant("999"),
+            ]);
+
+            let results = evaluator.eval_atom(&query);
+            assert_eq!(results.len(), 0,
+                "parent_function(30, \"999\") should return empty (999 is not the parent)");
+        }
+
+        // Test 9: parent_function(30, _) with wildcard FunctionId → one empty Bindings
+        #[test]
+        fn test_parent_function_wildcard() {
+            let engine = setup_parent_function_graph();
+            let evaluator = Evaluator::new(&engine);
+
+            let query = Atom::new("parent_function", vec![
+                Term::constant("30"),
+                Term::wildcard(),
+            ]);
+
+            let results = evaluator.eval_atom(&query);
+            assert_eq!(results.len(), 1,
+                "parent_function(30, _) should succeed with one empty Bindings");
+            assert!(results[0].is_empty(),
+                "wildcard match should return empty bindings");
+        }
+
+        // Test 10: parent_function("99999", F) with nonexistent NodeId → empty
+        #[test]
+        fn test_parent_function_nonexistent_node() {
+            let engine = setup_parent_function_graph();
+            let evaluator = Evaluator::new(&engine);
+
+            let query = Atom::new("parent_function", vec![
+                Term::constant("99999"),
+                Term::var("F"),
+            ]);
+
+            let results = evaluator.eval_atom(&query);
+            assert_eq!(results.len(), 0,
+                "nonexistent node 99999 should return empty results");
+        }
+
+        // Test 11: Full Datalog rule using parent_function
+        // Rule: answer(Name) :- node(C, "CALL"), parent_function(C, F), attr(F, "name", Name).
+        // Expected: should return function names for all CALL nodes that have a parent function
+        // CALL(30) → FUNCTION(10, "myFunc"), CALL(31) → FUNCTION(10, "myFunc"),
+        // CALL(32) → FUNCTION(11, "myMethod"), CALL(60) → no parent (module-level)
+        #[test]
+        fn test_parent_function_in_datalog_rule() {
+            let engine = setup_parent_function_graph();
+            let mut evaluator = Evaluator::new(&engine);
+
+            let rule = parse_rule(
+                "answer(Name) :- node(C, \"CALL\"), parent_function(C, F), attr(F, \"name\", Name)."
+            ).unwrap();
+            evaluator.add_rule(rule);
+
+            let query = parse_atom("answer(Name)").unwrap();
+            let results = evaluator.query(&query);
+
+            // CALL(30) → myFunc, CALL(31) → myFunc, CALL(32) → myMethod
+            // CALL(60) is module-level → no result
+            assert_eq!(results.len(), 3,
+                "should find 3 CALL nodes with parent functions, got {}", results.len());
+
+            let mut names: Vec<String> = results.iter()
+                .filter_map(|b| b.get("Name").map(|v| v.as_str()))
+                .collect();
+            names.sort();
+
+            assert_eq!(names, vec!["myFunc", "myFunc", "myMethod"],
+                "expected [myFunc, myFunc, myMethod], got {:?}", names);
+        }
+
+        // Test 12: Same as test 1 but using EvaluatorExplain to verify eval_explain.rs mirror
+        // Verifies Gap 3: eval_explain.rs has the parent_function dispatch
+        #[test]
+        fn test_parent_function_explain_evaluator() {
+            use crate::datalog::eval_explain::EvaluatorExplain;
+
+            let engine = setup_parent_function_graph();
+            // EvaluatorExplain methods use &mut self (not &self)
+            let mut evaluator = EvaluatorExplain::new(&engine, true);
+
+            // Use eval_query with a conjunction that includes parent_function
+            let literals = parse_query("parent_function(\"30\", F)").unwrap();
+            let result = evaluator.eval_query(&literals).unwrap();
+
+            assert_eq!(result.bindings.len(), 1,
+                "EvaluatorExplain should find exactly one parent function for CALL(30)");
+            assert_eq!(result.bindings[0].get("F"), Some(&"10".to_string()),
+                "EvaluatorExplain: parent function of CALL(30) should be FUNCTION(10)");
+
+            // Verify explain steps were recorded (confirms the predicate ran through
+            // eval_atom dispatch, not silently fell through to eval_derived)
+            assert!(!result.explain_steps.is_empty(),
+                "explain steps should be non-empty, confirming parent_function dispatch works");
+        }
+    }
 }
