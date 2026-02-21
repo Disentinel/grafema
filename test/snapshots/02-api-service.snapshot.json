@@ -908,6 +908,34 @@
       "builtin": true,
       "creates": {
         "edges": [
+          "CALLS",
+          "HANDLED_BY"
+        ],
+        "nodes": [
+          "EXTERNAL_MODULE"
+        ]
+      },
+      "createsEdges": [
+        "CALLS",
+        "HANDLED_BY"
+      ],
+      "createsNodes": [
+        "EXTERNAL_MODULE"
+      ],
+      "dependencies": [
+        "FunctionCallResolver"
+      ],
+      "exported": false,
+      "file": "",
+      "name": "ExternalCallResolver",
+      "phase": "ENRICHMENT",
+      "priority": 0,
+      "type": "grafema:plugin"
+    },
+    {
+      "builtin": true,
+      "creates": {
+        "edges": [
           "CONTAINS",
           "MAKES_REQUEST",
           "CALLS_API"
@@ -934,6 +962,34 @@
       "file": "",
       "name": "FetchAnalyzer",
       "phase": "ANALYSIS",
+      "priority": 0,
+      "type": "grafema:plugin"
+    },
+    {
+      "builtin": true,
+      "creates": {
+        "edges": [
+          "CALLS",
+          "HANDLED_BY"
+        ],
+        "nodes": [
+          "EXTERNAL_MODULE"
+        ]
+      },
+      "createsEdges": [
+        "CALLS",
+        "HANDLED_BY"
+      ],
+      "createsNodes": [
+        "EXTERNAL_MODULE"
+      ],
+      "dependencies": [
+        "ImportExportLinker"
+      ],
+      "exported": false,
+      "file": "",
+      "name": "FunctionCallResolver",
+      "phase": "ENRICHMENT",
       "priority": 0,
       "type": "grafema:plugin"
     },
@@ -2226,6 +2282,39 @@
       }
     },
     {
+      "from": "CALL:express",
+      "type": "CALLS",
+      "to": "EXTERNAL_MODULE:express",
+      "metadata": {
+        "exportedName": "default"
+      }
+    },
+    {
+      "from": "CALL:express",
+      "type": "HANDLED_BY",
+      "to": "IMPORT:express"
+    },
+    {
+      "from": "CALL:getOrdersRoute",
+      "type": "CALLS",
+      "to": "FUNCTION:getOrdersRoute"
+    },
+    {
+      "from": "CALL:getOrdersRoute",
+      "type": "HANDLED_BY",
+      "to": "IMPORT:getOrdersRoute"
+    },
+    {
+      "from": "CALL:getUsersRoute",
+      "type": "CALLS",
+      "to": "FUNCTION:getUsersRoute"
+    },
+    {
+      "from": "CALL:getUsersRoute",
+      "type": "HANDLED_BY",
+      "to": "IMPORT:getUsersRoute"
+    },
+    {
       "from": "CALL:JSON.stringify",
       "type": "DERIVES_FROM",
       "to": "VARIABLE:items",
@@ -2665,7 +2754,17 @@
     {
       "from": "grafema:plugin:CallbackCallResolver",
       "type": "DEPENDS_ON",
+      "to": "grafema:plugin:FunctionCallResolver"
+    },
+    {
+      "from": "grafema:plugin:CallbackCallResolver",
+      "type": "DEPENDS_ON",
       "to": "grafema:plugin:ImportExportLinker"
+    },
+    {
+      "from": "grafema:plugin:ExternalCallResolver",
+      "type": "DEPENDS_ON",
+      "to": "grafema:plugin:FunctionCallResolver"
     },
     {
       "from": "grafema:plugin:FetchAnalyzer",
@@ -2676,6 +2775,11 @@
       "from": "grafema:plugin:FetchAnalyzer",
       "type": "DEPENDS_ON",
       "to": "grafema:plugin:JSModuleIndexer"
+    },
+    {
+      "from": "grafema:plugin:FunctionCallResolver",
+      "type": "DEPENDS_ON",
+      "to": "grafema:plugin:ImportExportLinker"
     },
     {
       "from": "grafema:plugin:ImportExportLinker",
