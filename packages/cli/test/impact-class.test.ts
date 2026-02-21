@@ -61,7 +61,7 @@ describe('grafema impact for CLASS nodes', { timeout: 60000 }, () => {
   let tempDir: string;
 
   beforeEach(() => {
-    tempDir = mkdtempSync(join(tmpdir(), 'grafema-impact-class-test-'));
+    tempDir = mkdtempSync(join(tmpdir(), 'gfm-cls-'));
   });
 
   afterEach(() => {
@@ -159,6 +159,12 @@ function handleCreateRequest(req) {
 
 module.exports = { handleGetRequest, handleCreateRequest };
 `
+    );
+
+    // Entry point so JSModuleIndexer can follow imports to all fixture files
+    writeFileSync(
+      join(srcDir, 'index.js'),
+      `require('./services');\nrequire('./controllers');\n`
     );
 
     writeFileSync(
@@ -344,14 +350,12 @@ module.exports = { handleGetRequest, handleCreateRequest };
         'Should have at least one affected module'
       );
 
-      // Should include services.js and controllers.js
+      // getModulePath groups by parent directory: src/services.js → 'src/*'
       const modules = Object.keys(parsed.affectedModules);
-      const hasServicesOrControllers = modules.some(m =>
-        m.includes('services') || m.includes('controllers')
-      );
+      const hasSrcModule = modules.some(m => m.includes('src'));
       assert.ok(
-        hasServicesOrControllers,
-        `Should show services or controllers in affected modules. Got: ${modules.join(', ')}`
+        hasSrcModule,
+        `Should show src module in affected modules. Got: ${modules.join(', ')}`
       );
     });
   });

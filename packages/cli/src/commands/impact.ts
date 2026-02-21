@@ -65,14 +65,20 @@ Examples:
       const { type, name } = parsePattern(pattern);
       const maxDepth = parseInt(options.depth, 10);
 
-      console.log(`Analyzing impact of changing ${name}...`);
-      console.log('');
+      if (!options.json) {
+        console.log(`Analyzing impact of changing ${name}...`);
+        console.log('');
+      }
 
       // Find target node
       const target = await findTarget(backend, type, name);
 
       if (!target) {
-        console.log(`No ${type || 'node'} "${name}" found`);
+        if (options.json) {
+          process.stderr.write(`No ${type || 'node'} "${name}" found\n`);
+        } else {
+          console.log(`No ${type || 'node'} "${name}" found`);
+        }
         return;
       }
 
@@ -152,34 +158,238 @@ async function findTarget(
 }
 
 /**
- * Analyze impact of changing a node
+ * Extract bare method name from a possibly-qualified name.
+ * "RFDBServerBackend.addNode" -> "addNode"
+ * "addNode" -> "addNode"
  */
-async function analyzeImpact(
+function extractMethodName(fullName: string): string {
+  if (!fullName) return '';
+  const dotIdx = fullName.lastIndexOf('.');
+  return dotIdx >= 0 ? fullName.slice(dotIdx + 1) : fullName;
+}
+
+/**
+ * Find the FUNCTION child node ID for `methodName` in a CLASS node.
+ * Returns the concrete function node ID if found, null otherwise.
+ */
+async function findMethodInClass(
+  backend: RFDBServerBackend,
+  classId: string,
+  methodName: string
+): Promise<string | null> {
+  const containsEdges = await backend.getOutgoingEdges(classId, ['CONTAINS']);
+  for (const edge of containsEdges) {
+    const child = await backend.getNode(edge.dst);
+    if (child && child.type === 'FUNCTION' && child.name === methodName) {
+      return child.id;
+    }
+  }
+  return null;
+}
+
+/**
+ * Check whether `methodName` is declared in an INTERFACE node's `properties` array.
+ *
+ * Interface method signatures are stored as JSON on the INTERFACE node itself,
+ * NOT as separate FUNCTION graph nodes. There are no CALLS edges pointing to them.
+ * When found, returns the INTERFACE node's own ID as a proxy: including it in
+ * initialTargetIds causes the findByAttr fallback to fire and surface unresolved
+ * call sites whose receiver was typed as this interface.
+ *
+ * Returns the interface node ID (proxy) if declared, null otherwise.
+ */
+async function findInterfaceMethodProxy(
+  backend: RFDBServerBackend,
+  interfaceId: string,
+  methodName: string
+): Promise<string | null> {
+  const node = await backend.getNode(interfaceId);
+  if (!node) return null;
+  const properties = (node as any).properties;
+  if (Array.isArray(properties)) {
+    for (const prop of properties) {
+      if (prop && prop.name === methodName) return interfaceId;
+    }
+  }
+  return null;
+}
+
+/**
+ * Collect all ancestor class/interface IDs by walking outgoing DERIVES_FROM and
+ * IMPLEMENTS edges upward through the hierarchy.
+ *
+ * Depth-bounded to 5 hops. Visited set prevents infinite loops on malformed data.
+ */
+async function collectAncestors(
+  backend: RFDBServerBackend,
+  classId: string,
+  visited = new Set<string>(),
+  depth = 0
+): Promise<string[]> {
+  if (depth > 5 || visited.has(classId)) return [];
+  visited.add(classId);
+  const ancestors: string[] = [];
+
+  const outgoing = await backend.getOutgoingEdges(classId, ['DERIVES_FROM', 'IMPLEMENTS']);
+  for (const edge of outgoing) {
+    ancestors.push(edge.dst);
+    const more = await collectAncestors(backend, edge.dst, visited, depth + 1);
+    ancestors.push(...more);
+  }
+  return ancestors;
+}
+
+/**
+ * Collect all descendant class IDs by recursively walking incoming DERIVES_FROM
+ * and IMPLEMENTS edges downward through the hierarchy.
+ *
+ * Depth-bounded to 5 hops. Visited set prevents infinite loops on malformed data.
+ */
+async function collectDescendants(
+  backend: RFDBServerBackend,
+  classId: string,
+  visited = new Set<string>(),
+  depth = 0
+): Promise<string[]> {
+  if (depth > 5 || visited.has(classId)) return [];
+  visited.add(classId);
+  const descendants: string[] = [];
+  const incoming = await backend.getIncomingEdges(classId, ['DERIVES_FROM', 'IMPLEMENTS']);
+  for (const edge of incoming) {
+    descendants.push(edge.src);
+    const more = await collectDescendants(backend, edge.src, visited, depth + 1);
+    descendants.push(...more);
+  }
+  return descendants;
+}
+
+/**
+ * Given a concrete method node, find all related nodes in the class hierarchy
+ * that represent the same conceptual method (parent interfaces, abstract methods,
+ * sibling and descendant implementations).
+ *
+ * This enables CHA-style impact analysis: callers that type their receiver
+ * as an interface or abstract class will have CALLS edges pointing to the abstract
+ * node, not to the concrete one. Including those abstract nodes in the initial target
+ * set lets the BFS reach those call sites.
+ *
+ * Returns a set of node IDs:
+ * - The original targetId
+ * - FUNCTION child node IDs from CLASS ancestors/descendants that declare the method
+ * - INTERFACE node IDs (findByAttr-trigger proxies) from INTERFACE ancestors
+ */
+async function expandTargetSet(
+  backend: RFDBServerBackend,
+  targetId: string,
+  methodName: string
+): Promise<Set<string>> {
+  const result = new Set<string>([targetId]);
+
+  if (!methodName) return result;
+
+  try {
+    // Find the containing class or interface
+    const containsEdges = await backend.getIncomingEdges(targetId, ['CONTAINS']);
+    const parentIds: string[] = [];
+    for (const edge of containsEdges) {
+      const parent = await backend.getNode(edge.src);
+      if (parent && (parent.type === 'CLASS' || parent.type === 'INTERFACE')) {
+        parentIds.push(parent.id);
+      }
+    }
+
+    // For each parent, walk the full hierarchy (ancestors + all descendants)
+    for (const classId of parentIds) {
+      const ancestors = await collectAncestors(backend, classId);
+      for (const ancestorId of ancestors) {
+        const ancestorNode = await backend.getNode(ancestorId);
+        if (!ancestorNode) continue;
+
+        if (ancestorNode.type === 'CLASS') {
+          const method = await findMethodInClass(backend, ancestorId, methodName);
+          if (method) result.add(method);
+          // All descendants of this ancestor may implement the method too
+          const descendants = await collectDescendants(backend, ancestorId);
+          for (const descId of descendants) {
+            const descNode = await backend.getNode(descId);
+            if (!descNode) continue;
+            if (descNode.type === 'CLASS') {
+              const descMethod = await findMethodInClass(backend, descId, methodName);
+              if (descMethod) result.add(descMethod);
+            } else if (descNode.type === 'INTERFACE') {
+              const proxy = await findInterfaceMethodProxy(backend, descId, methodName);
+              if (proxy) result.add(proxy);
+            }
+          }
+        } else if (ancestorNode.type === 'INTERFACE') {
+          const proxy = await findInterfaceMethodProxy(backend, ancestorId, methodName);
+          if (proxy) result.add(proxy);
+        }
+      }
+    }
+  } catch (err) {
+    process.stderr.write(`[grafema impact] Warning: hierarchy expansion failed: ${err}\n`);
+  }
+
+  return result;
+}
+
+/**
+ * Determine the initial set of nodes to BFS from and the per-node method names
+ * for the findByAttr fallback.
+ *
+ * For CLASS targets: seeds from the class node + all its method nodes.
+ * For function/method targets: CHA-style expansion via expandTargetSet.
+ */
+async function resolveTargetSet(
+  backend: RFDBServerBackend,
+  target: NodeInfo
+): Promise<{ targetIds: string[]; targetMethodNames: Map<string, string> }> {
+  const targetMethodNames = new Map<string, string>();
+
+  if (target.type === 'CLASS') {
+    const methods = await getClassMethods(backend, target.id);
+    for (const m of methods) {
+      if (m.name) targetMethodNames.set(m.id, m.name);
+    }
+    return { targetIds: [target.id, ...methods.map(m => m.id)], targetMethodNames };
+  }
+
+  const methodName = extractMethodName(target.name);
+  const expanded = await expandTargetSet(backend, target.id, methodName);
+  const targetIds = [...expanded];
+  if (methodName) {
+    for (const id of targetIds) targetMethodNames.set(id, methodName);
+  }
+  return { targetIds, targetMethodNames };
+}
+
+/**
+ * BFS over caller graph starting from `targetIds`, collecting direct and transitive
+ * callers up to `maxDepth` hops.
+ *
+ * The `initialTargetIds` set gates the findByAttr fallback: it runs only for nodes
+ * in the initial seed, never for callers discovered during traversal.
+ */
+async function collectCallersBFS(
   backend: RFDBServerBackend,
   target: NodeInfo,
+  targetIds: string[],
+  targetMethodNames: Map<string, string>,
   maxDepth: number,
   projectPath: string
-): Promise<ImpactResult> {
+): Promise<{ directCallers: NodeInfo[]; transitiveCallers: NodeInfo[]; affectedModules: Map<string, number>; callChains: string[][] }> {
   const directCallers: NodeInfo[] = [];
   const transitiveCallers: NodeInfo[] = [];
   const affectedModules = new Map<string, number>();
   const callChains: string[][] = [];
   const visited = new Set<string>();
+  const initialTargetIds = new Set(targetIds);
 
-  // If target is a CLASS, aggregate callers from all methods
-  let targetIds: string[];
-  if (target.type === 'CLASS') {
-    const methodIds = await getClassMethods(backend, target.id);
-    targetIds = [target.id, ...methodIds];
-  } else {
-    targetIds = [target.id];
-  }
-
-  // BFS to find all callers
   const queue: Array<{ id: string; depth: number; chain: string[] }> = targetIds.map(id => ({
     id,
     depth: 0,
-    chain: [target.name]
+    chain: [target.name],
   }));
 
   while (queue.length > 0) {
@@ -191,19 +401,18 @@ async function analyzeImpact(
     if (depth > maxDepth) continue;
 
     try {
-      // Find what calls this node
-      // First, find CALL nodes that have this as target
-      const containingCalls = await findCallsToNode(backend, id);
+      const containingCalls = await findCallsToNode(
+        backend,
+        id,
+        initialTargetIds.has(id) ? targetMethodNames.get(id) : undefined
+      );
 
       for (const callNode of containingCalls) {
-        // Find the function containing this call
         const container = await findContainingFunctionCore(backend, callNode.id);
 
         if (container && !visited.has(container.id)) {
-          // Filter out internal callers (methods of the same class)
-          if (target.type === 'CLASS' && targetIds.includes(container.id)) {
-            continue;
-          }
+          // Skip internal callers (methods of the same class being analyzed)
+          if (target.type === 'CLASS' && targetIds.includes(container.id)) continue;
 
           const caller: NodeInfo = {
             id: container.id,
@@ -219,45 +428,48 @@ async function analyzeImpact(
             transitiveCallers.push(caller);
           }
 
-          // Track affected modules
           const modulePath = getModulePath(caller.file, projectPath);
           affectedModules.set(modulePath, (affectedModules.get(modulePath) || 0) + 1);
 
-          // Track call chain
           const newChain = [...chain, caller.name];
-          if (newChain.length <= 4) {
-            callChains.push(newChain);
-          }
+          if (newChain.length <= 4) callChains.push(newChain);
 
-          // Continue BFS
           queue.push({ id: container.id, depth: depth + 1, chain: newChain });
         }
       }
-    } catch {
-      // Ignore errors
+    } catch (err) {
+      process.stderr.write(`[grafema impact] Warning: query failed for node ${id}: ${err}\n`);
     }
   }
 
-  // Sort call chains by length
   callChains.sort((a, b) => b.length - a.length);
-
-  return {
-    target,
-    directCallers,
-    transitiveCallers,
-    affectedModules,
-    callChains,
-  };
+  return { directCallers, transitiveCallers, affectedModules, callChains };
 }
 
 /**
- * Get method IDs for a class
+ * Analyze impact of changing a node: resolve the target set, then BFS for callers.
+ */
+async function analyzeImpact(
+  backend: RFDBServerBackend,
+  target: NodeInfo,
+  maxDepth: number,
+  projectPath: string
+): Promise<ImpactResult> {
+  const { targetIds, targetMethodNames } = await resolveTargetSet(backend, target);
+  const { directCallers, transitiveCallers, affectedModules, callChains } =
+    await collectCallersBFS(backend, target, targetIds, targetMethodNames, maxDepth, projectPath);
+
+  return { target, directCallers, transitiveCallers, affectedModules, callChains };
+}
+
+/**
+ * Get method nodes for a class (id + name pairs for findByAttr fallback)
  */
 async function getClassMethods(
   backend: RFDBServerBackend,
   classId: string
-): Promise<string[]> {
-  const methods: string[] = [];
+): Promise<Array<{ id: string; name: string }>> {
+  const methods: Array<{ id: string; name: string }> = [];
 
   try {
     const edges = await backend.getOutgoingEdges(classId, ['CONTAINS']);
@@ -265,32 +477,48 @@ async function getClassMethods(
     for (const edge of edges) {
       const node = await backend.getNode(edge.dst);
       if (node && node.type === 'FUNCTION') {
-        methods.push(node.id);
+        methods.push({ id: node.id, name: node.name || '' });
       }
     }
-  } catch {
-    // Ignore errors
+  } catch (err) {
+    process.stderr.write(`[grafema impact] Warning: method enumeration failed for ${classId}: ${err}\n`);
   }
 
   return methods;
 }
 
 /**
- * Find CALL nodes that reference a target
+ * Find CALL nodes that reference a target via CALLS edges.
+ *
+ * If methodName is provided, also searches for unresolved CALL nodes that
+ * have a matching `method` attribute but no CALLS edge (e.g., calls through
+ * abstract-typed or parameter-typed receivers that MethodCallResolver could
+ * not resolve).
+ *
+ * IMPORTANT: Only pass methodName for initial target IDs (depth 0 in BFS),
+ * never for transitive callers. The findByAttr query scans the entire graph
+ * and returns the same results regardless of which node is being queried --
+ * running it for every BFS node is redundant and costly.
+ *
+ * Known imprecision: findByAttr matches by bare method name only, not by
+ * class. All call sites for any method with the same name across all classes
+ * are returned. This is intentionally conservative (sound but imprecise).
  */
 async function findCallsToNode(
   backend: RFDBServerBackend,
-  targetId: string
+  targetId: string,
+  methodName?: string
 ): Promise<NodeInfo[]> {
   const calls: NodeInfo[] = [];
+  const seen = new Set<string>();
 
   try {
-    // Get incoming CALLS edges
     const edges = await backend.getIncomingEdges(targetId, ['CALLS']);
 
     for (const edge of edges) {
       const callNode = await backend.getNode(edge.src);
-      if (callNode) {
+      if (callNode && !seen.has(callNode.id)) {
+        seen.add(callNode.id);
         calls.push({
           id: callNode.id,
           type: callNode.type || 'CALL',
@@ -300,8 +528,43 @@ async function findCallsToNode(
         });
       }
     }
-  } catch {
-    // Ignore
+  } catch (err) {
+    process.stderr.write(`[grafema impact] Warning: CALLS edge query failed for ${targetId}: ${err}\n`);
+  }
+
+  // Fallback: CALL nodes with matching method attribute but no CALLS edge.
+  // Only runs when methodName is provided (i.e., for initial target IDs only).
+  // Known imprecision: matches by bare method name across all classes — may include
+  // call sites from unrelated classes that happen to share the method name.
+  if (methodName) {
+    try {
+      const callNodeIds = await backend.findByAttr({ nodeType: 'CALL', method: methodName });
+      const newMatches: string[] = [];
+      for (const id of callNodeIds) {
+        if (!seen.has(id)) {
+          seen.add(id);
+          newMatches.push(id);
+          const callNode = await backend.getNode(id);
+          if (callNode) {
+            calls.push({
+              id: callNode.id,
+              type: callNode.type || 'CALL',
+              name: callNode.name || '',
+              file: callNode.file || '',
+              line: callNode.line,
+            });
+          }
+        }
+      }
+      if (newMatches.length > 0) {
+        process.stderr.write(
+          `[grafema impact] Note: name-only fallback matched ${newMatches.length} unresolved call(s) for '${methodName}' — may include calls from unrelated classes\n`
+        );
+      }
+    } catch (err) {
+      process.stderr.write(`[grafema impact] Warning: findByAttr fallback failed for '${methodName}': ${err}\n`);
+
+    }
   }
 
   return calls;
