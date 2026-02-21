@@ -567,6 +567,76 @@
       "type": "EXPRESSION"
     },
     {
+      "computed": false,
+      "exported": false,
+      "expressionType": "MemberExpression",
+      "file": "src/routes/users.js",
+      "name": "req.body.email",
+      "object": "req.body",
+      "path": "req.body.email",
+      "property": "email",
+      "propertyPath": [
+        "email"
+      ],
+      "type": "EXPRESSION"
+    },
+    {
+      "computed": false,
+      "exported": false,
+      "expressionType": "MemberExpression",
+      "file": "src/routes/orders.js",
+      "name": "req.body.items",
+      "object": "req.body",
+      "path": "req.body.items",
+      "property": "items",
+      "propertyPath": [
+        "items"
+      ],
+      "type": "EXPRESSION"
+    },
+    {
+      "computed": false,
+      "exported": false,
+      "expressionType": "MemberExpression",
+      "file": "src/routes/users.js",
+      "name": "req.body.name",
+      "object": "req.body",
+      "path": "req.body.name",
+      "property": "name",
+      "propertyPath": [
+        "name"
+      ],
+      "type": "EXPRESSION"
+    },
+    {
+      "computed": false,
+      "exported": false,
+      "expressionType": "MemberExpression",
+      "file": "src/routes/orders.js",
+      "name": "req.body.userId",
+      "object": "req.body",
+      "path": "req.body.userId",
+      "property": "userId",
+      "propertyPath": [
+        "userId"
+      ],
+      "type": "EXPRESSION"
+    },
+    {
+      "computed": false,
+      "exported": false,
+      "expressionType": "MemberExpression",
+      "file": "src/routes/users.js",
+      "name": "req.params.id",
+      "object": "req.params",
+      "path": "req.params.id",
+      "property": "id",
+      "propertyPath": [
+        "id"
+      ],
+      "type": "EXPRESSION"
+    },
+    {
       "exported": false,
       "expressionType": "UnaryExpression",
       "file": "src/db.js",
@@ -2982,6 +3052,26 @@
       "to": "CALL:express"
     },
     {
+      "from": "VARIABLE:email",
+      "type": "ASSIGNED_FROM",
+      "to": "EXPRESSION:req.body.email"
+    },
+    {
+      "from": "VARIABLE:id",
+      "type": "ASSIGNED_FROM",
+      "to": "EXPRESSION:req.params.id"
+    },
+    {
+      "from": "VARIABLE:items",
+      "type": "ASSIGNED_FROM",
+      "to": "EXPRESSION:req.body.items"
+    },
+    {
+      "from": "VARIABLE:name",
+      "type": "ASSIGNED_FROM",
+      "to": "EXPRESSION:req.body.name"
+    },
+    {
       "from": "VARIABLE:orders",
       "type": "ASSIGNED_FROM",
       "to": "CALL:db.query"
@@ -3020,6 +3110,11 @@
       "from": "VARIABLE:user",
       "type": "ASSIGNED_FROM",
       "to": "CALL:db.query"
+    },
+    {
+      "from": "VARIABLE:userId",
+      "type": "ASSIGNED_FROM",
+      "to": "EXPRESSION:req.body.userId"
     },
     {
       "from": "VARIABLE:users",

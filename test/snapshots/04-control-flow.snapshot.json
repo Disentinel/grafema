@@ -1,6 +1,36 @@
 {
   "nodes": [
     {
+      "exported": false,
+      "file": "src/loops.js",
+      "name": "<array>",
+      "type": "ARRAY_LITERAL"
+    },
+    {
+      "exported": false,
+      "file": "src/loops.js",
+      "name": "<array>",
+      "type": "ARRAY_LITERAL"
+    },
+    {
+      "exported": false,
+      "file": "src/loops.js",
+      "name": "<array>",
+      "type": "ARRAY_LITERAL"
+    },
+    {
+      "exported": false,
+      "file": "src/loops.js",
+      "name": "<array>",
+      "type": "ARRAY_LITERAL"
+    },
+    {
+      "exported": false,
+      "file": "src/loops.js",
+      "name": "<array>",
+      "type": "ARRAY_LITERAL"
+    },
+    {
       "alternateExpressionId": "src/conditionals.js:EXPRESSION:CallExpression:85:44",
       "branchType": "ternary",
       "consequentExpressionId": "src/conditionals.js:EXPRESSION:CallExpression:85:26",
@@ -3137,46 +3167,6 @@
       "file": "src/loops.js",
       "name": "",
       "type": "LITERAL",
-      "value": [],
-      "valueType": "object"
-    },
-    {
-      "exported": false,
-      "file": "src/loops.js",
-      "name": "",
-      "type": "LITERAL",
-      "value": [],
-      "valueType": "object"
-    },
-    {
-      "exported": false,
-      "file": "src/loops.js",
-      "name": "",
-      "type": "LITERAL",
-      "value": [],
-      "valueType": "object"
-    },
-    {
-      "exported": false,
-      "file": "src/loops.js",
-      "name": "",
-      "type": "LITERAL",
-      "value": [],
-      "valueType": "object"
-    },
-    {
-      "exported": false,
-      "file": "src/loops.js",
-      "name": "",
-      "type": "LITERAL",
-      "value": [],
-      "valueType": "object"
-    },
-    {
-      "exported": false,
-      "file": "src/loops.js",
-      "name": "",
-      "type": "LITERAL",
       "value": 0,
       "valueType": "number"
     },
@@ -5760,7 +5750,7 @@
     {
       "from": "CONSTANT:evens",
       "type": "ASSIGNED_FROM",
-      "to": "LITERAL:"
+      "to": "ARRAY_LITERAL:<array>"
     },
     {
       "from": "CONSTANT:evens",
@@ -5775,7 +5765,7 @@
     {
       "from": "CONSTANT:keys",
       "type": "ASSIGNED_FROM",
-      "to": "LITERAL:"
+      "to": "ARRAY_LITERAL:<array>"
     },
     {
       "from": "CONSTANT:keys",
@@ -5785,7 +5775,7 @@
     {
       "from": "CONSTANT:matrix",
       "type": "ASSIGNED_FROM",
-      "to": "LITERAL:"
+      "to": "ARRAY_LITERAL:<array>"
     },
     {
       "from": "CONSTANT:matrix",
@@ -5805,7 +5795,7 @@
     {
       "from": "CONSTANT:results",
       "type": "ASSIGNED_FROM",
-      "to": "LITERAL:"
+      "to": "ARRAY_LITERAL:<array>"
     },
     {
       "from": "CONSTANT:results",
@@ -5815,7 +5805,7 @@
     {
       "from": "CONSTANT:row",
       "type": "ASSIGNED_FROM",
-      "to": "LITERAL:"
+      "to": "ARRAY_LITERAL:<array>"
     },
     {
       "from": "EXPRESSION:<LogicalExpression>",

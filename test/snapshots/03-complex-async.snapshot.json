@@ -1,6 +1,102 @@
 {
   "nodes": [
     {
+      "exported": false,
+      "file": "app.js",
+      "name": "<array>",
+      "type": "ARRAY_LITERAL"
+    },
+    {
+      "exported": false,
+      "file": "routes/api.js",
+      "name": "<array>",
+      "type": "ARRAY_LITERAL"
+    },
+    {
+      "exported": false,
+      "file": "routes/api.js",
+      "name": "<array>",
+      "type": "ARRAY_LITERAL"
+    },
+    {
+      "exported": false,
+      "file": "services/dataProcessor.js",
+      "name": "<array>",
+      "type": "ARRAY_LITERAL"
+    },
+    {
+      "exported": false,
+      "file": "services/dataProcessor.js",
+      "name": "<array>",
+      "type": "ARRAY_LITERAL"
+    },
+    {
+      "exported": false,
+      "file": "services/dataProcessor.js",
+      "name": "<array>",
+      "type": "ARRAY_LITERAL"
+    },
+    {
+      "exported": false,
+      "file": "services/dataProcessor.js",
+      "name": "<array>",
+      "type": "ARRAY_LITERAL"
+    },
+    {
+      "exported": false,
+      "file": "services/dataProcessor.js",
+      "name": "<array>",
+      "type": "ARRAY_LITERAL"
+    },
+    {
+      "exported": false,
+      "file": "services/dataProcessor.js",
+      "name": "<array>",
+      "type": "ARRAY_LITERAL"
+    },
+    {
+      "exported": false,
+      "file": "services/dataProcessor.js",
+      "name": "<array>",
+      "type": "ARRAY_LITERAL"
+    },
+    {
+      "exported": false,
+      "file": "services/dataProcessor.js",
+      "name": "<array>",
+      "type": "ARRAY_LITERAL"
+    },
+    {
+      "exported": false,
+      "file": "services/dataProcessor.js",
+      "name": "<array>",
+      "type": "ARRAY_LITERAL"
+    },
+    {
+      "exported": false,
+      "file": "services/dataProcessor.js",
+      "name": "<array>",
+      "type": "ARRAY_LITERAL"
+    },
+    {
+      "exported": false,
+      "file": "utils/asyncHelpers.js",
+      "name": "<array>",
+      "type": "ARRAY_LITERAL"
+    },
+    {
+      "exported": false,
+      "file": "utils/asyncHelpers.js",
+      "name": "<array>",
+      "type": "ARRAY_LITERAL"
+    },
+    {
+      "exported": false,
+      "file": "utils/asyncHelpers.js",
+      "name": "<array>",
+      "type": "ARRAY_LITERAL"
+    },
+    {
       "branchType": "if",
       "exported": false,
       "file": "app.js",
@@ -7509,6 +7605,16 @@
       "computed": false,
       "exported": false,
       "expressionType": "MemberExpression",
+      "file": "middleware/auth.js",
+      "name": "<complex>._id",
+      "object": "<complex>",
+      "property": "_id",
+      "type": "EXPRESSION"
+    },
+    {
+      "computed": false,
+      "exported": false,
+      "expressionType": "MemberExpression",
       "file": "routes/api.js",
       "name": "<complex>.id",
       "object": "<complex>",
@@ -8531,6 +8637,27 @@
       "type": "EXPRESSION"
     },
     {
+      "exported": false,
+      "expressionType": "OptionalCallExpression",
+      "file": "middleware/auth.js",
+      "name": "OptionalCallExpression",
+      "type": "EXPRESSION"
+    },
+    {
+      "exported": false,
+      "expressionType": "OptionalCallExpression",
+      "file": "middleware/auth.js",
+      "name": "OptionalCallExpression",
+      "type": "EXPRESSION"
+    },
+    {
+      "exported": false,
+      "expressionType": "OptionalCallExpression",
+      "file": "middleware/auth.js",
+      "name": "OptionalCallExpression",
+      "type": "EXPRESSION"
+    },
+    {
       "arrayIndex": 0,
       "computed": true,
       "exported": false,
@@ -8637,6 +8764,90 @@
       "name": "req.body",
       "object": "req",
       "property": "body",
+      "type": "EXPRESSION"
+    },
+    {
+      "computed": false,
+      "exported": false,
+      "expressionType": "MemberExpression",
+      "file": "app.js",
+      "name": "req.body.email",
+      "object": "req.body",
+      "path": "req.body.email",
+      "property": "email",
+      "propertyPath": [
+        "email"
+      ],
+      "type": "EXPRESSION"
+    },
+    {
+      "computed": false,
+      "exported": false,
+      "expressionType": "MemberExpression",
+      "file": "routes/api.js",
+      "name": "req.body.email",
+      "object": "req.body",
+      "path": "req.body.email",
+      "property": "email",
+      "propertyPath": [
+        "email"
+      ],
+      "type": "EXPRESSION"
+    },
+    {
+      "computed": false,
+      "exported": false,
+      "expressionType": "MemberExpression",
+      "file": "routes/api.js",
+      "name": "req.body.firstName",
+      "object": "req.body",
+      "path": "req.body.firstName",
+      "property": "firstName",
+      "propertyPath": [
+        "firstName"
+      ],
+      "type": "EXPRESSION"
+    },
+    {
+      "computed": false,
+      "exported": false,
+      "expressionType": "MemberExpression",
+      "file": "routes/api.js",
+      "name": "req.body.lastName",
+      "object": "req.body",
+      "path": "req.body.lastName",
+      "property": "lastName",
+      "propertyPath": [
+        "lastName"
+      ],
+      "type": "EXPRESSION"
+    },
+    {
+      "computed": false,
+      "exported": false,
+      "expressionType": "MemberExpression",
+      "file": "app.js",
+      "name": "req.body.password",
+      "object": "req.body",
+      "path": "req.body.password",
+      "property": "password",
+      "propertyPath": [
+        "password"
+      ],
+      "type": "EXPRESSION"
+    },
+    {
+      "computed": false,
+      "exported": false,
+      "expressionType": "MemberExpression",
+      "file": "routes/api.js",
+      "name": "req.body.password",
+      "object": "req.body",
+      "path": "req.body.password",
+      "property": "password",
+      "propertyPath": [
+        "password"
+      ],
       "type": "EXPRESSION"
     },
     {
@@ -15574,14 +15785,6 @@
       "file": "app.js",
       "name": "",
       "type": "LITERAL",
-      "value": [],
-      "valueType": "object"
-    },
-    {
-      "exported": false,
-      "file": "app.js",
-      "name": "",
-      "type": "LITERAL",
       "value": 0,
       "valueType": "number"
     },
@@ -16254,22 +16457,6 @@
       "file": "routes/api.js",
       "name": "",
       "type": "LITERAL",
-      "value": [],
-      "valueType": "object"
-    },
-    {
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "",
-      "type": "LITERAL",
-      "value": [],
-      "valueType": "object"
-    },
-    {
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "",
-      "type": "LITERAL",
       "value": 3600,
       "valueType": "number"
     },
@@ -16582,78 +16769,6 @@
       "file": "services/dataProcessor.js",
       "name": "",
       "type": "LITERAL",
-      "value": [],
-      "valueType": "object"
-    },
-    {
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "",
-      "type": "LITERAL",
-      "value": [],
-      "valueType": "object"
-    },
-    {
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "",
-      "type": "LITERAL",
-      "value": [],
-      "valueType": "object"
-    },
-    {
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "",
-      "type": "LITERAL",
-      "value": [],
-      "valueType": "object"
-    },
-    {
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "",
-      "type": "LITERAL",
-      "value": [],
-      "valueType": "object"
-    },
-    {
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "",
-      "type": "LITERAL",
-      "value": [],
-      "valueType": "object"
-    },
-    {
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "",
-      "type": "LITERAL",
-      "value": [],
-      "valueType": "object"
-    },
-    {
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "",
-      "type": "LITERAL",
-      "value": [],
-      "valueType": "object"
-    },
-    {
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "",
-      "type": "LITERAL",
-      "value": [],
-      "valueType": "object"
-    },
-    {
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "",
-      "type": "LITERAL",
       "value": []
     },
     {
@@ -16807,30 +16922,6 @@
       "type": "LITERAL",
       "value": "User fetch failed:",
       "valueType": "string"
-    },
-    {
-      "exported": false,
-      "file": "utils/asyncHelpers.js",
-      "name": "",
-      "type": "LITERAL",
-      "value": [],
-      "valueType": "object"
-    },
-    {
-      "exported": false,
-      "file": "utils/asyncHelpers.js",
-      "name": "",
-      "type": "LITERAL",
-      "value": [],
-      "valueType": "object"
-    },
-    {
-      "exported": false,
-      "file": "utils/asyncHelpers.js",
-      "name": "",
-      "type": "LITERAL",
-      "value": [],
-      "valueType": "object"
     },
     {
       "exported": false,
@@ -32096,12 +32187,12 @@
     {
       "from": "CONSTANT:batch",
       "type": "ASSIGNED_FROM",
-      "to": "LITERAL:"
+      "to": "ARRAY_LITERAL:<array>"
     },
     {
       "from": "CONSTANT:batches",
       "type": "ASSIGNED_FROM",
-      "to": "LITERAL:"
+      "to": "ARRAY_LITERAL:<array>"
     },
     {
       "from": "CONSTANT:config",
@@ -32151,7 +32242,7 @@
     {
       "from": "CONSTANT:logs",
       "type": "ASSIGNED_FROM",
-      "to": "LITERAL:"
+      "to": "ARRAY_LITERAL:<array>"
     },
     {
       "from": "CONSTANT:newUser",
@@ -32161,7 +32252,7 @@
     {
       "from": "CONSTANT:postsWithComments",
       "type": "ASSIGNED_FROM",
-      "to": "LITERAL:"
+      "to": "ARRAY_LITERAL:<array>"
     },
     {
       "from": "CONSTANT:processed",
@@ -32226,57 +32317,57 @@
     {
       "from": "CONSTANT:promises",
       "type": "ASSIGNED_FROM",
-      "to": "LITERAL:"
+      "to": "ARRAY_LITERAL:<array>"
     },
     {
       "from": "CONSTANT:results",
       "type": "ASSIGNED_FROM",
-      "to": "LITERAL:"
+      "to": "ARRAY_LITERAL:<array>"
     },
     {
       "from": "CONSTANT:results",
       "type": "ASSIGNED_FROM",
-      "to": "LITERAL:"
+      "to": "ARRAY_LITERAL:<array>"
     },
     {
       "from": "CONSTANT:results",
       "type": "ASSIGNED_FROM",
-      "to": "LITERAL:"
+      "to": "ARRAY_LITERAL:<array>"
     },
     {
       "from": "CONSTANT:results",
       "type": "ASSIGNED_FROM",
-      "to": "LITERAL:"
+      "to": "ARRAY_LITERAL:<array>"
     },
     {
       "from": "CONSTANT:results",
       "type": "ASSIGNED_FROM",
-      "to": "LITERAL:"
+      "to": "ARRAY_LITERAL:<array>"
     },
     {
       "from": "CONSTANT:results",
       "type": "ASSIGNED_FROM",
-      "to": "LITERAL:"
+      "to": "ARRAY_LITERAL:<array>"
     },
     {
       "from": "CONSTANT:results",
       "type": "ASSIGNED_FROM",
-      "to": "LITERAL:"
+      "to": "ARRAY_LITERAL:<array>"
     },
     {
       "from": "CONSTANT:results",
       "type": "ASSIGNED_FROM",
-      "to": "LITERAL:"
+      "to": "ARRAY_LITERAL:<array>"
     },
     {
       "from": "CONSTANT:results",
       "type": "ASSIGNED_FROM",
-      "to": "LITERAL:"
+      "to": "ARRAY_LITERAL:<array>"
     },
     {
       "from": "CONSTANT:results",
       "type": "ASSIGNED_FROM",
-      "to": "LITERAL:"
+      "to": "ARRAY_LITERAL:<array>"
     },
     {
       "from": "CONSTANT:results",
@@ -43658,7 +43749,7 @@
     {
       "from": "VARIABLE:currentBatch",
       "type": "ASSIGNED_FROM",
-      "to": "LITERAL:"
+      "to": "ARRAY_LITERAL:<array>"
     },
     {
       "from": "VARIABLE:data",
@@ -43710,6 +43801,16 @@
       "to": "EXPRESSION:<BinaryExpression>"
     },
     {
+      "from": "VARIABLE:email",
+      "type": "ASSIGNED_FROM",
+      "to": "EXPRESSION:req.body.email"
+    },
+    {
+      "from": "VARIABLE:email",
+      "type": "ASSIGNED_FROM",
+      "to": "EXPRESSION:req.body.email"
+    },
+    {
       "from": "VARIABLE:errorHandler",
       "type": "ASSIGNED_FROM",
       "to": "OBJECT_LITERAL:<object>"
@@ -43723,6 +43824,11 @@
       "from": "VARIABLE:expiresIn",
       "type": "ASSIGNED_FROM",
       "to": "EXPRESSION:<BinaryExpression>"
+    },
+    {
+      "from": "VARIABLE:firstName",
+      "type": "ASSIGNED_FROM",
+      "to": "EXPRESSION:req.body.firstName"
     },
     {
       "from": "VARIABLE:friends",
@@ -43845,6 +43951,11 @@
       "to": "VARIABLE:userId"
     },
     {
+      "from": "VARIABLE:lastName",
+      "type": "ASSIGNED_FROM",
+      "to": "EXPRESSION:req.body.lastName"
+    },
+    {
       "from": "VARIABLE:logGenerator",
       "type": "ASSIGNED_FROM",
       "to": "CALL:user.getActivityLog"
@@ -43868,6 +43979,16 @@
       "from": "VARIABLE:next",
       "type": "ASSIGNED_FROM",
       "to": "CALL:generator.next"
+    },
+    {
+      "from": "VARIABLE:password",
+      "type": "ASSIGNED_FROM",
+      "to": "EXPRESSION:req.body.password"
+    },
+    {
+      "from": "VARIABLE:password",
+      "type": "ASSIGNED_FROM",
+      "to": "EXPRESSION:req.body.password"
     },
     {
       "from": "VARIABLE:permissions",
@@ -44070,6 +44191,21 @@
       "to": "CALL:setTimeout"
     },
     {
+      "from": "VARIABLE:token",
+      "type": "ASSIGNED_FROM",
+      "to": "EXPRESSION:OptionalCallExpression"
+    },
+    {
+      "from": "VARIABLE:token",
+      "type": "ASSIGNED_FROM",
+      "to": "EXPRESSION:OptionalCallExpression"
+    },
+    {
+      "from": "VARIABLE:token",
+      "type": "ASSIGNED_FROM",
+      "to": "EXPRESSION:OptionalCallExpression"
+    },
+    {
       "from": "VARIABLE:updates",
       "type": "ASSIGNED_FROM",
       "to": "EXPRESSION:req.body"
@@ -44117,6 +44253,11 @@
       "from": "VARIABLE:user",
       "type": "RETURNS",
       "to": "FUNCTION:anonymous[0]"
+    },
+    {
+      "from": "VARIABLE:userId",
+      "type": "ASSIGNED_FROM",
+      "to": "EXPRESSION:<complex>._id"
     },
     {
       "from": "VARIABLE:userId",
