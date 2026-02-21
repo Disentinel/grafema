@@ -805,7 +805,7 @@ export class JSASTAnalyzer extends Plugin {
         ? initExpression.property.name
         : null;
 
-      const column = initExpression.start ?? 0;
+      const column = getColumn(initExpression);
       const expressionId = ExpressionNode.generateId('MemberExpression', module.file, line, column);
 
       variableAssignments.push({
@@ -827,7 +827,7 @@ export class JSASTAnalyzer extends Plugin {
 
     // 8. BinaryExpression
     if (initExpression.type === 'BinaryExpression') {
-      const column = initExpression.start ?? 0;
+      const column = getColumn(initExpression);
       const expressionId = ExpressionNode.generateId('BinaryExpression', module.file, line, column);
 
       variableAssignments.push({
@@ -847,7 +847,7 @@ export class JSASTAnalyzer extends Plugin {
 
     // 9. ConditionalExpression
     if (initExpression.type === 'ConditionalExpression') {
-      const column = initExpression.start ?? 0;
+      const column = getColumn(initExpression);
       const expressionId = ExpressionNode.generateId('ConditionalExpression', module.file, line, column);
 
       variableAssignments.push({
@@ -869,7 +869,7 @@ export class JSASTAnalyzer extends Plugin {
 
     // 10. LogicalExpression
     if (initExpression.type === 'LogicalExpression') {
-      const column = initExpression.start ?? 0;
+      const column = getColumn(initExpression);
       const expressionId = ExpressionNode.generateId('LogicalExpression', module.file, line, column);
 
       variableAssignments.push({
@@ -892,7 +892,7 @@ export class JSASTAnalyzer extends Plugin {
 
     // 11. TemplateLiteral
     if (initExpression.type === 'TemplateLiteral' && initExpression.expressions.length > 0) {
-      const column = initExpression.start ?? 0;
+      const column = getColumn(initExpression);
       const expressionId = ExpressionNode.generateId('TemplateLiteral', module.file, line, column);
 
       const expressionSourceNames = initExpression.expressions
@@ -921,7 +921,7 @@ export class JSASTAnalyzer extends Plugin {
 
     // 12. UnaryExpression (REG-534): !flag, -x, typeof x, void 0
     if (initExpression.type === 'UnaryExpression') {
-      const column = initExpression.start ?? 0;
+      const column = getColumn(initExpression);
       const expressionId = ExpressionNode.generateId('UnaryExpression', module.file, line, column);
 
       variableAssignments.push({
@@ -962,7 +962,7 @@ export class JSASTAnalyzer extends Plugin {
         });
       } else {
         // Fallback for complex tag expressions (e.g., tagged template with call expr as tag)
-        const column = initExpression.start ?? 0;
+        const column = getColumn(initExpression);
         const expressionId = ExpressionNode.generateId('TaggedTemplateExpression', module.file, line, column);
         variableAssignments.push({
           variableId,
@@ -994,7 +994,7 @@ export class JSASTAnalyzer extends Plugin {
     // Note: CallExpressionVisitor doesn't handle OptionalCallExpression, so there may be
     // no CALL node to match. Use EXPRESSION pattern to ensure the assignment edge is created.
     if (initExpression.type === 'OptionalCallExpression') {
-      const column = initExpression.start ?? 0;
+      const column = getColumn(initExpression);
       const expressionId = ExpressionNode.generateId('OptionalCallExpression', module.file, line, column);
 
       variableAssignments.push({
@@ -1022,7 +1022,7 @@ export class JSASTAnalyzer extends Plugin {
         ? initExpression.property.name
         : null;
 
-      const column = initExpression.start ?? 0;
+      const column = getColumn(initExpression);
       const expressionId = ExpressionNode.generateId('MemberExpression', module.file, line, column);
 
       variableAssignments.push({
@@ -1516,7 +1516,7 @@ export class JSASTAnalyzer extends Plugin {
       for (const varInfo of variables) {
         const variableId = varInfo.id;
         if (varInfo.isRest) {
-          const column = initNode.start ?? 0;
+          const column = getColumn(initNode);
           const expressionId = ExpressionNode.generateId('MemberExpression', module.file, varInfo.loc.start.line, column);
           variableAssignments.push({
             variableId,
