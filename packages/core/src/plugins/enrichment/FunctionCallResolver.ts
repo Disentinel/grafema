@@ -68,6 +68,7 @@ export class FunctionCallResolver extends Plugin {
 
   async execute(context: PluginContext): Promise<PluginResult> {
     const { graph, onProgress } = context;
+    const factory = this.getFactory(context);
     const logger = this.log(context);
 
     logger.info('Starting function call resolution');
@@ -250,11 +251,11 @@ export class FunctionCallResolver extends Plugin {
           const externalNode = await graph.getNode(externalModuleId);
           if (!externalNode) {
             // Create EXTERNAL_MODULE node
-            await graph.addNode(NodeFactory.createExternalModule(externalResult.packageName));
+            await factory!.store(NodeFactory.createExternalModule(externalResult.packageName));
           }
 
           // Create CALLS edge with metadata
-          await graph.addEdge({
+          await factory!.link({
             type: 'CALLS',
             src: callSite.id,
             dst: externalModuleId,
@@ -284,7 +285,7 @@ export class FunctionCallResolver extends Plugin {
       if (!targetFunction) continue;
 
       // Step 4.5: Create CALLS edge
-      await graph.addEdge({
+      await factory!.link({
         type: 'CALLS',
         src: callSite.id,
         dst: targetFunction.id

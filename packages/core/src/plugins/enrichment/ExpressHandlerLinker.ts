@@ -53,6 +53,7 @@ export class ExpressHandlerLinker extends Plugin {
 
   async execute(context: PluginContext): Promise<PluginResult> {
     const { graph, onProgress } = context;
+    const factory = this.getFactory(context);
     const logger = this.log(context);
 
     logger.info('Starting Express handler linking');
@@ -148,7 +149,7 @@ export class ExpressHandlerLinker extends Plugin {
         }
 
         // Create HANDLED_BY edge: route -> handler function
-        await graph.addEdge({
+        await factory!.link({
           type: 'HANDLED_BY',
           src: route.id,
           dst: handlerId

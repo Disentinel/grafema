@@ -92,6 +92,7 @@ export class CallbackCallResolver extends Plugin {
 
   async execute(context: PluginContext): Promise<PluginResult> {
     const { graph, onProgress } = context;
+    const factory = this.getFactory(context);
     const logger = this.log(context);
 
     logger.info('Starting callback call resolution');
@@ -239,7 +240,7 @@ export class CallbackCallResolver extends Plugin {
         }
 
         // Create CALLS edge: CALL/METHOD_CALL -> FUNCTION
-        await graph.addEdge({
+        await factory!.link({
           type: 'CALLS',
           src: callNode.id,
           dst: targetFunction.id,
@@ -304,7 +305,7 @@ export class CallbackCallResolver extends Plugin {
                 argTargetNode.id, binding.propertyPath, graph, functionIndex
               );
               if (resolvedId) {
-                await graph.addEdge({
+                await factory!.link({
                   type: 'CALLS',
                   src: callSiteId,
                   dst: resolvedId,
@@ -317,7 +318,7 @@ export class CallbackCallResolver extends Plugin {
           }
 
           if (targetFunctionId) {
-            await graph.addEdge({
+            await factory!.link({
               type: 'CALLS',
               src: callSiteId,
               dst: targetFunctionId,

@@ -67,6 +67,7 @@ export class NodejsBuiltinsResolver extends Plugin {
 
   async execute(context: PluginContext): Promise<PluginResult> {
     const { graph, onProgress } = context;
+    const factory = this.getFactory(context);
     const logger = this.log(context);
 
     logger.info('Starting Node.js builtins resolution');
@@ -100,7 +101,7 @@ export class NodejsBuiltinsResolver extends Plugin {
           // Check if node already exists in graph
           const existingNode = await graph.getNode(moduleNodeId);
           if (!existingNode) {
-            await graph.addNode(NodeFactory.createExternalModule(normalizedSource));
+            await factory!.store(NodeFactory.createExternalModule(normalizedSource));
             externalModulesCreated++;
           }
           createdExternalModules.add(normalizedSource);
@@ -116,7 +117,7 @@ export class NodejsBuiltinsResolver extends Plugin {
           const alreadyExists = existingEdges.some(e => e.dst === moduleNodeId);
 
           if (!alreadyExists) {
-            await graph.addEdge({
+            await factory!.link({
               type: 'IMPORTS_FROM',
               src: importNodeId,
               dst: moduleNodeId
@@ -177,7 +178,7 @@ export class NodejsBuiltinsResolver extends Plugin {
         // Check if node already exists in graph
         const existingNode = await graph.getNode(externalFuncId);
         if (!existingNode) {
-          await graph.addNode(NodeFactory.createExternalFunction(
+          await factory!.store(NodeFactory.createExternalFunction(
             this.registry.normalizeModule(moduleName),
             functionName,
             {
@@ -198,7 +199,7 @@ export class NodejsBuiltinsResolver extends Plugin {
         const alreadyExists = existingEdges.some(e => e.dst === externalFuncId);
 
         if (!alreadyExists) {
-          await graph.addEdge({
+          await factory!.link({
             type: 'CALLS',
             src: callNode.id,
             dst: externalFuncId

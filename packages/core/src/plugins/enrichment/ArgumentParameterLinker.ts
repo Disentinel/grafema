@@ -82,6 +82,7 @@ export class ArgumentParameterLinker extends Plugin {
 
   async execute(context: PluginContext): Promise<PluginResult> {
     const { graph, onProgress } = context;
+    const factory = this.getFactory(context);
     const logger = this.log(context);
 
     logger.info('Starting argument-parameter linking');
@@ -215,7 +216,7 @@ export class ArgumentParameterLinker extends Plugin {
         // Create RECEIVES_ARGUMENT edge (per call site)
         const edgeKey = `${paramNode.id}:${passesEdge.dst}:${callNode.id}`;
         if (!existingEdges.has(edgeKey)) {
-          await graph.addEdge({
+          await factory!.link({
             type: 'RECEIVES_ARGUMENT',
             src: paramNode.id,
             dst: passesEdge.dst,
@@ -231,7 +232,7 @@ export class ArgumentParameterLinker extends Plugin {
         // Create DERIVES_FROM edge (aggregate data flow)
         const derivesKey = `${paramNode.id}:${passesEdge.dst}`;
         if (!existingDerivesEdges.has(derivesKey)) {
-          await graph.addEdge({
+          await factory!.link({
             type: 'DERIVES_FROM',
             src: paramNode.id,
             dst: passesEdge.dst,

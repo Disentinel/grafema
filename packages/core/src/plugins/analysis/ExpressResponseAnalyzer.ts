@@ -62,6 +62,7 @@ export class ExpressResponseAnalyzer extends Plugin {
 
     try {
       const { graph, onProgress } = context;
+      const factory = this.getFactory(context);
       const projectPath = (context.manifest as { projectPath?: string })?.projectPath ?? '';
 
       // Get all http:route nodes
@@ -95,8 +96,8 @@ export class ExpressResponseAnalyzer extends Plugin {
       }
 
       // Flush all nodes and edges
-      await graph.addNodes(allNodes);
-      await graph.addEdges(allEdges);
+      await factory!.storeMany(allNodes);
+      await factory!.linkMany(allEdges);
 
       logger.info('Analysis complete', { nodesCreated, edgesCreated });
 

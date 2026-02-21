@@ -16,6 +16,7 @@ import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { join, isAbsolute, relative } from 'path';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import { minimatch } from 'minimatch';
+import { NodeFactory } from './NodeFactory.js';
 
 /**
  * Severity level for guarantees
@@ -215,17 +216,9 @@ export class GuaranteeManager {
       throw new Error('Guarantee must have id and rule');
     }
 
-    // Создаём GUARANTEE ноду
-    const guaranteeNode: GuaranteeNode = {
-      id: `GUARANTEE:${id}`,
-      type: 'GUARANTEE',
-      name: name || id,
-      rule: rule,
-      severity: severity,
-      governs: governs, // Сохраняем patterns для export
-      version: 'meta', // Гарантии в отдельном слое
-      createdAt: Date.now()
-    };
+    // Создаём GUARANTEE ноду через NodeFactory
+    const branded = NodeFactory.createGuarantee({ id, name, rule, severity, governs });
+    const guaranteeNode = branded as unknown as GuaranteeNode;
 
     await this.graph.addNode(guaranteeNode);
 

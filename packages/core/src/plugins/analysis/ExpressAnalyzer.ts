@@ -84,6 +84,7 @@ export class ExpressAnalyzer extends Plugin {
 
     try {
       const { graph } = context;
+      const factory = this.getFactory(context);
       const projectPath = (context.manifest as { projectPath?: string })?.projectPath ?? '';
 
       // Batch arrays
@@ -110,8 +111,8 @@ export class ExpressAnalyzer extends Plugin {
       }
 
       // Add all nodes and edges in batch
-      await graph.addNodes(nodes);
-      await graph.addEdges(edges);
+      await factory!.storeMany(nodes);
+      await factory!.linkMany(edges);
 
       logger.info('Analysis complete', { endpointsCreated, mountPointsCreated });
 

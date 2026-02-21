@@ -105,6 +105,7 @@ export class ServiceLayerAnalyzer extends Plugin {
 
     try {
       const { graph, onProgress } = context;
+      const factory = this.getFactory(context);
       const projectPath = (context.manifest as { projectPath?: string })?.projectPath ?? '';
 
       // Получаем все модули
@@ -119,7 +120,7 @@ export class ServiceLayerAnalyzer extends Plugin {
 
       for (let i = 0; i < modules.length; i++) {
         const module = modules[i];
-        const result = await this.analyzeModule(module, graph, projectPath);
+        const result = await this.analyzeModule(module, graph, projectPath, factory);
         classesCount += result.classes;
         instancesCount += result.instances;
         registrationsCount += result.registrations;
@@ -174,7 +175,8 @@ export class ServiceLayerAnalyzer extends Plugin {
   private async analyzeModule(
     module: NodeRecord,
     graph: PluginContext['graph'],
-    projectPath: string
+    projectPath: string,
+    factory: PluginContext['factory'],
   ): Promise<AnalysisResult> {
     try {
       const code = readFileSync(resolveNodeFile(module.file!, projectPath), 'utf-8');
@@ -374,7 +376,7 @@ export class ServiceLayerAnalyzer extends Plugin {
       }
 
       // First flush: add all nodes to graph
-      await graph.addNodes(nodes);
+      await factory!.storeMany(nodes);
 
       // Create INSTANTIATES edges (requires querying graph)
       for (const instance of serviceInstances) {
@@ -389,7 +391,7 @@ export class ServiceLayerAnalyzer extends Plugin {
       }
 
       // Second flush: add all edges to graph
-      await graph.addEdges(edges);
+      await factory!.linkMany(edges);
 
       return {
         classes: serviceClasses.length,

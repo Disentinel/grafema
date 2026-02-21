@@ -57,6 +57,7 @@ export class MethodCallResolver extends Plugin {
 
   async execute(context: PluginContext): Promise<PluginResult> {
     const { graph, onProgress } = context;
+    const factory = this.getFactory(context);
     const logger = this.log(context);
 
     logger.info('Starting method call resolution');
@@ -180,7 +181,7 @@ export class MethodCallResolver extends Plugin {
       );
 
       if (targetMethod) {
-        await graph.addEdge({
+        await factory!.link({
           src: methodCall.id,
           dst: targetMethod.id,
           type: 'CALLS'

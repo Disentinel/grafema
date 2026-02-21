@@ -82,6 +82,7 @@ export class ExpressRouteAnalyzer extends Plugin {
 
     try {
       const { graph, onProgress } = context;
+      const factory = this.getFactory(context);
       const projectPath = (context.manifest as { projectPath?: string })?.projectPath ?? '';
 
       // Получаем все MODULE ноды
@@ -96,7 +97,7 @@ export class ExpressRouteAnalyzer extends Plugin {
       // Анализируем каждый модуль
       for (let i = 0; i < modules.length; i++) {
         const module = modules[i];
-        const result = await this.analyzeModule(module, graph, projectPath);
+        const result = await this.analyzeModule(module, graph, projectPath, factory);
         endpointsCreated += result.endpoints;
         middlewareCreated += result.middleware;
         edgesCreated += result.edges;
@@ -139,7 +140,8 @@ export class ExpressRouteAnalyzer extends Plugin {
   private async analyzeModule(
     module: NodeRecord,
     graph: PluginContext['graph'],
-    projectPath: string
+    projectPath: string,
+    factory: PluginContext['factory'],
   ): Promise<AnalysisResult> {
     let endpointsCreated = 0;
     let middlewareCreated = 0;
@@ -437,7 +439,7 @@ export class ExpressRouteAnalyzer extends Plugin {
       }
 
       // Flush nodes first so they exist for edge queries
-      await graph.addNodes(nodes);
+      await factory!.storeMany(nodes);
 
       // Query for HANDLED_BY edges (needs nodes to exist first)
       for (let i = 0; i < middlewares.length; i++) {
@@ -463,7 +465,7 @@ export class ExpressRouteAnalyzer extends Plugin {
       }
 
       // Flush all edges
-      await graph.addEdges(edges);
+      await factory!.linkMany(edges);
     } catch {
       // Silent - per-module errors shouldn't spam logs
     }

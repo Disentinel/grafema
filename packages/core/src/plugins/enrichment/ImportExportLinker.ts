@@ -51,6 +51,7 @@ export class ImportExportLinker extends Plugin {
 
   async execute(context: PluginContext): Promise<PluginResult> {
     const { graph, onProgress } = context;
+    const factory = this.getFactory(context);
     const logger = this.log(context);
 
     logger.info('Starting import-export linking');
@@ -141,7 +142,7 @@ export class ImportExportLinker extends Plugin {
       const sourceModule = modulesByFile.get(imp.file!);
       const targetModule = modulesByFile.get(targetFile);
       if (sourceModule && targetModule) {
-        await graph.addEdge({
+        await factory!.link({
           type: 'IMPORTS',
           src: sourceModule.id,
           dst: targetModule.id
@@ -167,7 +168,7 @@ export class ImportExportLinker extends Plugin {
       }
 
       if (targetExport) {
-        await graph.addEdge({
+        await factory!.link({
           type: 'IMPORTS_FROM',
           src: imp.id,
           dst: targetExport.id

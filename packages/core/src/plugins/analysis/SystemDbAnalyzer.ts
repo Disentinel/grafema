@@ -20,8 +20,8 @@ import type { CallExpression, Identifier, Node } from '@babel/types';
 import type { NodePath } from '@babel/traverse';
 import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
-import type { NodeRecord, AnyBrandedNode } from '@grafema/types';
-import { brandNodeInternal } from '../../core/brandNodeInternal.js';
+import type { AnyBrandedNode } from '@grafema/types';
+import { NodeFactory } from '../../core/NodeFactory.js';
 
 
 const traverse = (traverseModule as any).default || traverseModule;
@@ -65,6 +65,7 @@ export class SystemDbAnalyzer extends Plugin {
 
     try {
       const { graph } = context;
+      const factory = this.getFactory(context);
       const projectPath = (context.manifest as { projectPath?: string })?.projectPath ?? '';
 
       let nodesCreated = 0;
@@ -185,16 +186,13 @@ export class SystemDbAnalyzer extends Plugin {
               line: reg.line
             });
 
-            allNodes.push(brandNodeInternal({
-              id: nodeId,
-              type: 'SYSTEM_DB_VIEW_REGISTRATION' as NodeRecord['type'],
-              name: `${reg.type}('${reg.viewName}', '${reg.serverName}')`,
+            allNodes.push(NodeFactory.createSystemDbViewRegistration(nodeId, {
+              viewName: reg.viewName,
+              serverName: reg.serverName,
+              callType: reg.type,
               file: module.file!,
               line: reg.line,
               column: reg.column,
-              viewName: reg.viewName,
-              serverName: reg.serverName,
-              callType: reg.type
             }));
             nodesCreated++;
 
@@ -211,14 +209,11 @@ export class SystemDbAnalyzer extends Plugin {
           for (const sub of subscriptions) {
             const nodeId = `${module.file}:SYSTEM_DB_SUBSCRIPTION:${sub.line}`;
 
-            allNodes.push(brandNodeInternal({
-              id: nodeId,
-              type: 'SYSTEM_DB_SUBSCRIPTION' as NodeRecord['type'],
-              name: `subscribe([${sub.servers.join(', ')}])`,
+            allNodes.push(NodeFactory.createSystemDbSubscription(nodeId, {
+              servers: sub.servers,
               file: module.file!,
               line: sub.line,
               column: sub.column,
-              servers: sub.servers
             }));
             nodesCreated++;
 
@@ -243,8 +238,8 @@ export class SystemDbAnalyzer extends Plugin {
       }
 
       // Flush all nodes and edges at once
-      await graph.addNodes(allNodes);
-      await graph.addEdges(allEdges);
+      await factory!.storeMany(allNodes);
+      await factory!.linkMany(allEdges);
 
       logger.info('Analysis complete', { nodesCreated, edgesCreated });
 

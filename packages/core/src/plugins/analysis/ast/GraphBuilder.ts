@@ -162,7 +162,7 @@ export class GraphBuilder {
 
     let edgesCreated = 0;
     if (this._edgeBuffer.length > 0) {
-      await (graph as GraphBackend & { addEdges(e: GraphEdge[], skip?: boolean): Promise<void> }).addEdges(this._edgeBuffer, true);
+      await graph.addEdges(this._edgeBuffer as unknown as Parameters<GraphBackend['addEdges']>[0], true);
       edgesCreated = this._edgeBuffer.length;
     }
 

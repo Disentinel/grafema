@@ -14,8 +14,9 @@ import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { resolveSourceEntrypoint } from './plugins/discovery/resolveSourceEntrypoint.js';
 import type { Plugin, PluginContext } from './plugins/Plugin.js';
-import type { GraphBackend, Logger, ServiceDefinition } from '@grafema/types';
+import type { Logger, ServiceDefinition } from '@grafema/types';
 import { NodeFactory } from './core/NodeFactory.js';
+import type { GraphFactory } from './core/GraphFactory.js';
 import { toposort } from './core/toposort.js';
 import type { ProgressCallback } from './PhaseRunner.js';
 import type {
@@ -29,7 +30,7 @@ import type {
 export class DiscoveryManager {
   constructor(
     private plugins: Plugin[],
-    private graph: GraphBackend,
+    private graph: GraphFactory,
     private config: OrchestratorOptions,
     private logger: Logger,
     private onProgress: ProgressCallback,
@@ -177,7 +178,7 @@ export class DiscoveryManager {
         discoveryMethod: 'config',
         entrypoint: entrypoint,
       });
-      await this.graph.addNode(serviceNode);
+      await this.graph.store(serviceNode);
 
       services.push({
         id: serviceNode.id,
@@ -209,7 +210,8 @@ export class DiscoveryManager {
   private async discoverFromPlugins(projectPath: string): Promise<DiscoveryManifest> {
     const context = {
       projectPath,
-      graph: this.graph,
+      graph: this.graph.rawGraph,
+      factory: this.graph,
       config: this.config,
       phase: 'DISCOVERY',
       logger: this.logger,
@@ -244,7 +246,7 @@ export class DiscoveryManager {
         message: `Running ${plugin.metadata.name}... (${i + 1}/${discoveryPlugins.length})`
       });
 
-      const result = await plugin.execute(context as PluginContext);
+      const result = await plugin.execute(context as unknown as PluginContext);
 
       if (result.success && result.metadata?.services) {
         allServices.push(...(result.metadata.services as ServiceInfo[]));

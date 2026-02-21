@@ -192,6 +192,7 @@ export class RustAnalyzer extends Plugin {
 
   async execute(context: PluginContext): Promise<PluginResult> {
     const { graph, onProgress } = context;
+    const factory = this.getFactory(context);
     const projectPath = (context.manifest as { projectPath?: string })?.projectPath ?? '';
     const logger = this.log(context);
 
@@ -236,7 +237,7 @@ export class RustAnalyzer extends Plugin {
         const code = readFileSync(resolveNodeFile(module.file!, projectPath), 'utf-8');
         const parseResult = parseRustFile(code);
 
-        const result = await this.processParseResult(parseResult, module, graph);
+        const result = await this.processParseResult(parseResult, module, graph, factory);
         stats.functions += result.functions;
         stats.structs += result.structs;
         stats.impls += result.impls;
@@ -278,7 +279,8 @@ export class RustAnalyzer extends Plugin {
   private async processParseResult(
     parseResult: RustParseResult,
     module: NodeRecord,
-    graph: PluginContext['graph']
+    graph: PluginContext['graph'],
+    factory: PluginContext['factory'],
   ): Promise<AnalysisStats> {
     const nodes: AnyBrandedNode[] = [];
     const edges: EdgeToAdd[] = [];
@@ -437,8 +439,8 @@ export class RustAnalyzer extends Plugin {
     }
 
     // 5. Write all nodes and edges in batch
-    await graph.addNodes(nodes);
-    await graph.addEdges(edges);
+    await factory!.storeMany(nodes);
+    await factory!.linkMany(edges);
 
     return {
       functions: parseResult.functions.length,

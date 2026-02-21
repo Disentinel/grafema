@@ -60,6 +60,7 @@ export class InstanceOfResolver extends Plugin {
 
   async execute(context: PluginContext): Promise<PluginResult> {
     const { graph, onProgress } = context;
+    const factory = this.getFactory(context);
     const logger = this.log(context);
     let resolvedCount = 0;
     let removedStubs = 0;
@@ -157,7 +158,7 @@ export class InstanceOfResolver extends Plugin {
       }
 
       // Создаём новый edge
-      await graph.addEdge({
+      await factory!.link({
         type: 'INSTANCE_OF',
         src: update.src,
         dst: update.newDst

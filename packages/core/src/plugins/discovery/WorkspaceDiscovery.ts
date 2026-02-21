@@ -52,7 +52,8 @@ export class WorkspaceDiscovery extends DiscoveryPlugin {
 
   async execute(context: PluginContext): Promise<PluginResult> {
     const logger = this.log(context);
-    const { projectPath, graph } = context;
+    const { projectPath } = context;
+    const factory = this.getFactory(context);
 
     // Validate projectPath
     if (!projectPath) {
@@ -116,7 +117,7 @@ export class WorkspaceDiscovery extends DiscoveryPlugin {
     for (const pkg of packages) {
       const serviceNode = this.createServiceNode(pkg, detection.type!, projectPath);
 
-      await graph.addNode(serviceNode);
+      await factory!.store(serviceNode);
 
       services.push({
         id: serviceNode.id,

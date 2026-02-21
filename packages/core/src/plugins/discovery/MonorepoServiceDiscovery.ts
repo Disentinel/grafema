@@ -57,7 +57,8 @@ export class MonorepoServiceDiscovery extends DiscoveryPlugin {
 
   async execute(context: PluginContext): Promise<PluginResult> {
     const logger = this.log(context);
-    const { projectPath, graph } = context;
+    const { projectPath } = context;
+    const factory = this.getFactory(context);
     const servicesPath = join(projectPath!, this.servicesDir);
 
     logger.debug('Looking for services', { servicesPath });
@@ -88,7 +89,7 @@ export class MonorepoServiceDiscovery extends DiscoveryPlugin {
         });
         const serviceId = serviceNode.id;
 
-        await graph.addNode(serviceNode);
+        await factory!.store(serviceNode);
 
         services.push({
           id: serviceId,
