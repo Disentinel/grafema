@@ -768,6 +768,34 @@
       "builtin": true,
       "creates": {
         "edges": [
+          "CALLS",
+          "HANDLED_BY"
+        ],
+        "nodes": [
+          "EXTERNAL_MODULE"
+        ]
+      },
+      "createsEdges": [
+        "CALLS",
+        "HANDLED_BY"
+      ],
+      "createsNodes": [
+        "EXTERNAL_MODULE"
+      ],
+      "dependencies": [
+        "FunctionCallResolver"
+      ],
+      "exported": false,
+      "file": "",
+      "name": "ExternalCallResolver",
+      "phase": "ENRICHMENT",
+      "priority": 0,
+      "type": "grafema:plugin"
+    },
+    {
+      "builtin": true,
+      "creates": {
+        "edges": [
           "CONTAINS",
           "MAKES_REQUEST",
           "CALLS_API"
@@ -794,6 +822,34 @@
       "file": "",
       "name": "FetchAnalyzer",
       "phase": "ANALYSIS",
+      "priority": 0,
+      "type": "grafema:plugin"
+    },
+    {
+      "builtin": true,
+      "creates": {
+        "edges": [
+          "CALLS",
+          "HANDLED_BY"
+        ],
+        "nodes": [
+          "EXTERNAL_MODULE"
+        ]
+      },
+      "createsEdges": [
+        "CALLS",
+        "HANDLED_BY"
+      ],
+      "createsNodes": [
+        "EXTERNAL_MODULE"
+      ],
+      "dependencies": [
+        "ImportExportLinker"
+      ],
+      "exported": false,
+      "file": "",
+      "name": "FunctionCallResolver",
+      "phase": "ENRICHMENT",
       "priority": 0,
       "type": "grafema:plugin"
     },
@@ -2108,7 +2164,17 @@
     {
       "from": "grafema:plugin:CallbackCallResolver",
       "type": "DEPENDS_ON",
+      "to": "grafema:plugin:FunctionCallResolver"
+    },
+    {
+      "from": "grafema:plugin:CallbackCallResolver",
+      "type": "DEPENDS_ON",
       "to": "grafema:plugin:ImportExportLinker"
+    },
+    {
+      "from": "grafema:plugin:ExternalCallResolver",
+      "type": "DEPENDS_ON",
+      "to": "grafema:plugin:FunctionCallResolver"
     },
     {
       "from": "grafema:plugin:FetchAnalyzer",
@@ -2119,6 +2185,11 @@
       "from": "grafema:plugin:FetchAnalyzer",
       "type": "DEPENDS_ON",
       "to": "grafema:plugin:JSModuleIndexer"
+    },
+    {
+      "from": "grafema:plugin:FunctionCallResolver",
+      "type": "DEPENDS_ON",
+      "to": "grafema:plugin:ImportExportLinker"
     },
     {
       "from": "grafema:plugin:ImportExportLinker",

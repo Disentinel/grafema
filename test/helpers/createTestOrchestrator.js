@@ -23,6 +23,8 @@ import { ImportExportLinker } from '@grafema/core';
 import { NodejsBuiltinsResolver } from '@grafema/core';
 import { RejectionPropagationEnricher } from '@grafema/core';
 import { CallbackCallResolver } from '@grafema/core';
+import { FunctionCallResolver } from '@grafema/core';
+import { ExternalCallResolver } from '@grafema/core';
 
 /**
  * Создать Orchestrator для тестов
@@ -59,6 +61,10 @@ export function createTestOrchestrator(backend, options = {}) {
     plugins.push(new RejectionPropagationEnricher());
     // REG-400: Callback function reference resolution (cross-file)
     plugins.push(new CallbackCallResolver());
+    // REG-545: Function call resolution + HANDLED_BY edges
+    plugins.push(new FunctionCallResolver());
+    // REG-226: External call resolution (depends on FunctionCallResolver)
+    plugins.push(new ExternalCallResolver());
   }
 
   // Дополнительные плагины
