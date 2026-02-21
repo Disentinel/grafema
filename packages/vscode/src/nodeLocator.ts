@@ -43,14 +43,23 @@ export async function findNodeAtCursor(
     // Simple matching: node line matches cursor line
     // More sophisticated matching could use startLine/endLine ranges
     if (nodeLine === line) {
-      // Prefer nodes with column info closer to cursor
       const nodeColumn = metadata.column ?? 0;
-      const distance = Math.abs(nodeColumn - column);
+      const nodeEndColumn = metadata.endColumn;
 
-      matchingNodes.push({
-        node,
-        specificity: 1000 - distance, // Higher specificity for closer matches
-      });
+      if (nodeEndColumn !== undefined && column >= nodeColumn && column < nodeEndColumn) {
+        // Exact range match — cursor is within [column, endColumn)
+        matchingNodes.push({
+          node,
+          specificity: 2000, // Higher priority than distance-based
+        });
+      } else {
+        // Fallback: distance-based matching
+        const distance = Math.abs(nodeColumn - column);
+        matchingNodes.push({
+          node,
+          specificity: 1000 - distance,
+        });
+      }
     }
 
     // Also check for range-based matching if we have endLine

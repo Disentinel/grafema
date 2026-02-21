@@ -105,7 +105,7 @@ export class ModuleRuntimeBuilder implements DomainBuilder {
             spec.local,           // name = local binding
             module.file,          // file
             line,                 // line (stored as field, not in ID)
-            column || 0,          // column
+            spec.column ?? column ?? 0,  // prefer specifier column over declaration column
             source,               // source module
             {
               imported: spec.imported,
@@ -116,7 +116,8 @@ export class ModuleRuntimeBuilder implements DomainBuilder {
               // Dynamic import fields
               isDynamic,
               isResolvable,
-              dynamicPath
+              dynamicPath,
+              endColumn: spec.endColumn  // per-specifier end column for cursor matching
             }
           );
 
