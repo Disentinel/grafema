@@ -2569,7 +2569,8 @@ export class JSASTAnalyzer extends Plugin {
     module: VisitorModule,
     collections: VisitorCollections,
     scopeTracker: ScopeTracker | undefined,
-    controlFlowState?: { branchCount: number; caseCount: number }
+    controlFlowState?: { branchCount: number; caseCount: number },
+    switchCaseScopeMap?: Map<t.SwitchCase, string>,
   ): void {
     const switchNode = switchPath.node;
 
@@ -2709,6 +2710,11 @@ export class JSASTAnalyzer extends Plugin {
         line: getLine(caseNode),
         parentBranchId: branchId
       });
+
+      // REG-536: Populate switchCaseScopeMap for SwitchCase body SCOPE creation
+      if (switchCaseScopeMap && !isEmpty) {
+        switchCaseScopeMap.set(caseNode, caseId);
+      }
     }
   }
 

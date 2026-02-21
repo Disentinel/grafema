@@ -105,6 +105,7 @@ export interface AnalyzerDelegate {
     collections: VisitorCollections,
     scopeTracker: ScopeTracker | undefined,
     controlFlowState?: { branchCount: number; caseCount: number },
+    switchCaseScopeMap?: Map<t.SwitchCase, string>,
   ): void;
 
   // --- Naming / ID generation ---

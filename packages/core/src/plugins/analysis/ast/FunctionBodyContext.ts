@@ -127,6 +127,7 @@ export interface FunctionBodyContext {
   // Scope tracking maps
   ifElseScopeMap: Map<t.IfStatement, IfElseScopeInfo>;
   tryScopeMap: Map<t.TryStatement, TryScopeInfo>;
+  switchCaseScopeMap: Map<t.SwitchCase, string>;  // Maps SwitchCase node -> caseId (CaseInfo.id)
   // Parameter invocation tracking (REG-401, REG-416, REG-417)
   paramNameToIndex: Map<string, number>;
   paramNameToPropertyPath: Map<string, string[]>;
@@ -289,6 +290,7 @@ export function createFunctionBodyContext(
     parentScopeVariables: new Set<{ name: string; id: string; scopeId: string }>(),
     ifElseScopeMap: new Map<t.IfStatement, IfElseScopeInfo>(),
     tryScopeMap: new Map<t.TryStatement, TryScopeInfo>(),
+    switchCaseScopeMap: new Map<t.SwitchCase, string>(),
     paramNameToIndex, paramNameToPropertyPath, restParamNames,
     invokedParamIndexes, invokesParamBindings, aliasToParamIndex,
     controlFlowState,
