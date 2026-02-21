@@ -5,6 +5,7 @@
  * property accesses, callbacks, literals, object/array literals.
  */
 
+import { basename } from 'path';
 import type {
   ModuleNode,
   FunctionInfo,
@@ -18,6 +19,7 @@ import type {
   ObjectLiteralInfo,
   ArrayLiteralInfo,
   ParameterInfo,
+  ClassDeclarationInfo,
   ASTCollections,
   GraphNode,
 } from '../types.js';
@@ -39,6 +41,7 @@ export class CoreBuilder implements DomainBuilder {
       objectLiterals = [],
       arrayLiterals = [],
       parameters = [],
+      classDeclarations = [],
     } = data;
 
     this.bufferFunctionEdges(module, functions);
@@ -46,7 +49,7 @@ export class CoreBuilder implements DomainBuilder {
     this.bufferVariableEdges(variableDeclarations);
     this.bufferCallSiteEdges(callSites, functions);
     this.bufferMethodCalls(methodCalls, variableDeclarations, parameters);
-    this.bufferPropertyAccessNodes(module, propertyAccesses);
+    this.bufferPropertyAccessNodes(module, propertyAccesses, variableDeclarations, parameters, classDeclarations);
     this.bufferCallbackEdges(methodCallbacks, functions);
     this.bufferLiterals(literals);
     this.bufferObjectLiteralNodes(objectLiterals);
@@ -210,12 +213,19 @@ export class CoreBuilder implements DomainBuilder {
   }
 
   /**
-   * Buffer PROPERTY_ACCESS nodes and CONTAINS edges (REG-395).
+   * Buffer PROPERTY_ACCESS nodes, CONTAINS edges, and READS_FROM edges (REG-395, REG-555).
    *
-   * Creates nodes for property reads (obj.prop, a.b.c) and
-   * CONTAINS edges from the enclosing scope (function or module).
+   * Creates nodes for property reads (obj.prop, a.b.c),
+   * CONTAINS edges from the enclosing scope (function or module),
+   * and READS_FROM edges to the source variable, parameter, or class node.
    */
-  private bufferPropertyAccessNodes(module: ModuleNode, propertyAccesses: PropertyAccessInfo[]): void {
+  private bufferPropertyAccessNodes(
+    module: ModuleNode,
+    propertyAccesses: PropertyAccessInfo[],
+    variableDeclarations: VariableDeclarationInfo[],
+    parameters: ParameterInfo[],
+    classDeclarations: ClassDeclarationInfo[]
+  ): void {
     for (const propAccess of propertyAccesses) {
       // Buffer node with all relevant fields
       this.ctx.bufferNode({
@@ -240,6 +250,51 @@ export class CoreBuilder implements DomainBuilder {
         src: containsSrc,
         dst: propAccess.id
       });
+
+      // REG-555: PROPERTY_ACCESS -> READS_FROM -> source node
+      const { objectName } = propAccess;
+      const scopePath = propAccess.scopePath ?? [];
+
+      if (objectName === 'this') {
+        // Link to CLASS node (same pattern as MutationBuilder REG-152)
+        if (propAccess.enclosingClassName) {
+          // Compare using basename since classes use scopeTracker.file (basename)
+          // but property accesses use module.file (full path)
+          const fileBasename = basename(propAccess.file);
+          const classDecl = classDeclarations.find(c =>
+            c.name === propAccess.enclosingClassName && c.file === fileBasename
+          );
+          if (classDecl) {
+            this.ctx.bufferEdge({
+              type: 'READS_FROM',
+              src: propAccess.id,
+              dst: classDecl.id
+            });
+          }
+        }
+      } else if (objectName === 'import.meta' || objectName.includes('.')) {
+        // Skip: import.meta has no variable node, chained objects (a.b) are
+        // handled transitively through the first link in the chain
+      } else {
+        // Resolve variable or parameter using scope chain
+        const variable = this.ctx.resolveVariableInScope(objectName, scopePath, propAccess.file, variableDeclarations);
+        if (variable) {
+          this.ctx.bufferEdge({
+            type: 'READS_FROM',
+            src: propAccess.id,
+            dst: variable.id
+          });
+        } else {
+          const param = this.ctx.resolveParameterInScope(objectName, scopePath, propAccess.file, parameters);
+          if (param) {
+            this.ctx.bufferEdge({
+              type: 'READS_FROM',
+              src: propAccess.id,
+              dst: param.id
+            });
+          }
+        }
+      }
     }
   }
 
