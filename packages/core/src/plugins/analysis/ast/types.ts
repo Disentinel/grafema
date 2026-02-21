@@ -892,6 +892,8 @@ export interface VariableAssignmentInfo {
   consequentSourceName?: string | null;
   alternateSourceName?: string | null;
   expressionSourceNames?: string[];
+  // UnaryExpression support (REG-534)
+  unaryArgSourceName?: string | null;
   file?: string;
   // Destructuring support (REG-201)
   path?: string;               // Full property path string, e.g., "req.headers.contentType"

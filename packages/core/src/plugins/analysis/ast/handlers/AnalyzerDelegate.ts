@@ -17,6 +17,7 @@ import type {
   CounterRef,
   ObjectLiteralInfo,
   ObjectPropertyInfo,
+  ArrayLiteralInfo,
   CallSiteInfo,
   MethodCallInfo,
   ConstructorCallInfo,
@@ -49,6 +50,8 @@ export interface AnalyzerDelegate {
     objectLiterals: ObjectLiteralInfo[],
     objectProperties: ObjectPropertyInfo[],
     objectLiteralCounterRef: CounterRef,
+    arrayLiterals: ArrayLiteralInfo[],
+    arrayLiteralCounterRef: CounterRef,
   ): void;
 
   detectVariableReassignment(

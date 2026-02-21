@@ -371,6 +371,35 @@ export class AssignmentBuilder implements DomainBuilder {
             }
           }
         }
+
+        // REG-534: UnaryExpression DERIVES_FROM — link to the argument variable
+        if (expressionType === 'UnaryExpression') {
+          const { unaryArgSourceName } = assignment;
+          if (unaryArgSourceName) {
+            const argVar = variableDeclarations.find(v =>
+              v.name === unaryArgSourceName && (!varFile || v.file === varFile)
+            );
+            if (argVar) {
+              this.ctx.bufferEdge({
+                type: 'DERIVES_FROM',
+                src: sourceId,
+                dst: argVar.id
+              });
+            } else {
+              // Check parameters
+              const argParam = parameters.find(p =>
+                p.name === unaryArgSourceName && (!varFile || p.file === varFile)
+              );
+              if (argParam) {
+                this.ctx.bufferEdge({
+                  type: 'DERIVES_FROM',
+                  src: sourceId,
+                  dst: argParam.id
+                });
+              }
+            }
+          }
+        }
       }
       // DERIVES_FROM_VARIABLE
       else if (sourceType === 'DERIVES_FROM_VARIABLE' && sourceName) {

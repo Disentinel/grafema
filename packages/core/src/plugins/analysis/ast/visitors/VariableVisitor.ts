@@ -50,7 +50,9 @@ export type TrackVariableAssignmentCallback = (
   literalCounterRef: CounterRef,
   objectLiterals: unknown[],
   objectProperties: unknown[],
-  objectLiteralCounterRef: CounterRef
+  objectLiteralCounterRef: CounterRef,
+  arrayLiterals: unknown[],
+  arrayLiteralCounterRef: CounterRef
 ) => void;
 
 /**
@@ -188,6 +190,9 @@ export class VariableVisitor extends ASTVisitor {
     const objectLiterals = (this.collections.objectLiterals ?? []) as unknown[];
     const objectProperties = (this.collections.objectProperties ?? []) as unknown[];
     const objectLiteralCounterRef = (this.collections.objectLiteralCounterRef ?? { value: 0 }) as CounterRef;
+    // Array literal tracking collections (REG-534)
+    const arrayLiterals = (this.collections.arrayLiterals ?? []) as unknown[];
+    const arrayLiteralCounterRef = (this.collections.arrayLiteralCounterRef ?? { value: 0 }) as CounterRef;
     const scopeTracker = this.scopeTracker;
 
     const extractVariableNamesFromPattern = this.extractVariableNamesFromPattern;
@@ -456,8 +461,164 @@ export class VariableVisitor extends ASTVisitor {
                       column: expressionColumn
                     });
                   }
-                  // Unsupported init type (MemberExpression without call, etc.)
-                  // Skip silently
+                  // Phase 3: MemberExpression init (REG-534): const { a } = obj.nested
+                  else if (initExpression.type === 'MemberExpression') {
+                    const objectName = initExpression.object?.type === 'Identifier'
+                      ? (initExpression.object as Identifier).name : '<complex>';
+                    const propNode = (initExpression as { property: Node; computed?: boolean }).property;
+                    const isComputed = (initExpression as { computed?: boolean }).computed ?? false;
+                    const propertyName = !isComputed && propNode.type === 'Identifier'
+                      ? (propNode as Identifier).name : '<computed>';
+                    const sourceRepresentation = `${objectName}.${propertyName}`;
+
+                    const expressionLine = varInfo.loc.start.line;
+                    const expressionColumn = varInfo.loc.start.column;
+
+                    // Determine property for display
+                    let property: string;
+                    if (varInfo.propertyPath && varInfo.propertyPath.length > 0) {
+                      property = varInfo.propertyPath[varInfo.propertyPath.length - 1];
+                    } else if (varInfo.arrayIndex !== undefined) {
+                      property = String(varInfo.arrayIndex);
+                    } else {
+                      property = '';
+                    }
+
+                    // Build property path string
+                    let fullPath = sourceRepresentation;
+                    if (varInfo.propertyPath && varInfo.propertyPath.length > 0) {
+                      fullPath = `${sourceRepresentation}.${varInfo.propertyPath.join('.')}`;
+                    }
+
+                    const expressionId = `${module.file}:EXPRESSION:MemberExpression:${expressionLine}:${expressionColumn}`;
+
+                    (variableAssignments as unknown[]).push({
+                      variableId: varId,
+                      sourceId: expressionId,
+                      sourceType: 'EXPRESSION',
+                      expressionType: 'MemberExpression',
+                      object: sourceRepresentation,
+                      property: property,
+                      computed: varInfo.arrayIndex !== undefined,
+                      path: fullPath,
+                      objectSourceName: initExpression.object?.type === 'Identifier'
+                        ? (initExpression.object as Identifier).name : null,
+                      propertyPath: varInfo.propertyPath || undefined,
+                      arrayIndex: varInfo.arrayIndex,
+                      file: module.file,
+                      line: expressionLine,
+                      column: expressionColumn
+                    });
+                  }
+                  // Phase 4: NewExpression init (REG-534): const { data } = new Response()
+                  else if (initExpression.type === 'NewExpression') {
+                    const newExpr = initExpression as NewExpression;
+                    const callee = newExpr.callee;
+                    let constructorName: string;
+                    if (callee.type === 'Identifier') {
+                      constructorName = (callee as Identifier).name;
+                    } else if (callee.type === 'MemberExpression' &&
+                               (callee as { property: Node }).property.type === 'Identifier') {
+                      constructorName = ((callee as { property: Node }).property as Identifier).name;
+                    } else {
+                      return; // Unknown callee
+                    }
+
+                    const callRepresentation = `new ${constructorName}()`;
+                    const expressionLine = varInfo.loc.start.line;
+                    const expressionColumn = varInfo.loc.start.column;
+
+                    let property: string;
+                    if (varInfo.propertyPath && varInfo.propertyPath.length > 0) {
+                      property = varInfo.propertyPath[varInfo.propertyPath.length - 1];
+                    } else if (varInfo.arrayIndex !== undefined) {
+                      property = String(varInfo.arrayIndex);
+                    } else {
+                      property = '';
+                    }
+
+                    let fullPath = callRepresentation;
+                    if (varInfo.propertyPath && varInfo.propertyPath.length > 0) {
+                      fullPath = `${callRepresentation}.${varInfo.propertyPath.join('.')}`;
+                    }
+
+                    const expressionId = `${module.file}:EXPRESSION:MemberExpression:${expressionLine}:${expressionColumn}`;
+
+                    (variableAssignments as unknown[]).push({
+                      variableId: varId,
+                      sourceId: expressionId,
+                      sourceType: 'EXPRESSION',
+                      expressionType: 'MemberExpression',
+                      object: callRepresentation,
+                      property: property,
+                      computed: varInfo.arrayIndex !== undefined,
+                      path: fullPath,
+                      propertyPath: varInfo.propertyPath || undefined,
+                      arrayIndex: varInfo.arrayIndex,
+                      file: module.file,
+                      line: expressionLine,
+                      column: expressionColumn
+                    });
+                  }
+                  // Phase 5: TS wrapper unwrapping for destructuring (REG-534)
+                  else if (initExpression.type === 'TSAsExpression' || initExpression.type === 'TSSatisfiesExpression' ||
+                           initExpression.type === 'TSNonNullExpression' || initExpression.type === 'TSTypeAssertion') {
+                    // Unwrap TS assertion and re-enter with unwrapped expression.
+                    // We can't easily recurse the whole destructuring loop from here,
+                    // so just re-dispatch with unwrapped init — this handles the common case.
+                    const unwrappedInit = (initExpression as { expression: Node }).expression;
+                    // Re-run the same logic with unwrapped init for this one variable
+                    if (unwrappedInit.type === 'Identifier') {
+                      const sourceBaseName = (unwrappedInit as Identifier).name;
+                      const expressionLine = varInfo.loc.start.line;
+                      const expressionColumn = varInfo.loc.start.column;
+
+                      if (varInfo.isRest) {
+                        (variableAssignments as unknown[]).push({
+                          variableId: varId,
+                          sourceType: 'VARIABLE',
+                          sourceName: sourceBaseName,
+                          line: expressionLine
+                        });
+                        return;
+                      }
+
+                      let fullPath = sourceBaseName;
+                      if (varInfo.propertyPath && varInfo.propertyPath.length > 0) {
+                        fullPath = `${sourceBaseName}.${varInfo.propertyPath.join('.')}`;
+                      }
+
+                      const expressionId = `${module.file}:EXPRESSION:MemberExpression:${expressionLine}:${expressionColumn}`;
+
+                      let property: string;
+                      if (varInfo.propertyPath && varInfo.propertyPath.length > 0) {
+                        property = varInfo.propertyPath[varInfo.propertyPath.length - 1];
+                      } else if (varInfo.arrayIndex !== undefined) {
+                        property = String(varInfo.arrayIndex);
+                      } else {
+                        property = '';
+                      }
+
+                      (variableAssignments as unknown[]).push({
+                        variableId: varId,
+                        sourceId: expressionId,
+                        sourceType: 'EXPRESSION',
+                        expressionType: 'MemberExpression',
+                        object: sourceBaseName,
+                        property: property,
+                        computed: varInfo.arrayIndex !== undefined,
+                        path: fullPath,
+                        objectSourceName: sourceBaseName,
+                        propertyPath: varInfo.propertyPath || undefined,
+                        arrayIndex: varInfo.arrayIndex,
+                        file: module.file,
+                        line: expressionLine,
+                        column: expressionColumn
+                      });
+                    }
+                    // For non-Identifier unwrapped (e.g., call as Type), fallthrough to trackVariableAssignment
+                  }
+                  // Unsupported init type — skip silently
                 } else {
                   // Normal assignment tracking
                   trackVariableAssignment(
@@ -471,7 +632,9 @@ export class VariableVisitor extends ASTVisitor {
                     literalCounterRef as CounterRef,
                     objectLiterals,
                     objectProperties,
-                    objectLiteralCounterRef
+                    objectLiteralCounterRef,
+                    arrayLiterals,
+                    arrayLiteralCounterRef
                   );
                 }
               }
