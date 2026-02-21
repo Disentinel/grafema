@@ -54,7 +54,7 @@ export class SimpleProjectDiscovery extends Plugin {
   }
 
   async execute(context: PluginContext): Promise<PluginResult> {
-    const { graph } = context;
+    const factory = this.getFactory(context);
     // projectPath can be at top level (DISCOVERY phase) or in manifest/config
     const projectPath = context.projectPath || (context.manifest as { projectPath?: string })?.projectPath || context.config?.projectPath;
 
@@ -85,7 +85,7 @@ export class SimpleProjectDiscovery extends Plugin {
         dependencies: Object.keys(packageJson.dependencies || {})
       });
 
-      await graph.addNode(serviceNode);
+      await factory!.store(serviceNode);
 
       const service: ServiceInfo = {
         id: serviceNode.id,

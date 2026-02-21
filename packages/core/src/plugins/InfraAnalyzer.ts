@@ -129,7 +129,7 @@ export abstract class InfraAnalyzer extends Plugin {
     const logger = this.log(context);
 
     try {
-      const { graph } = context;
+      const factory = this.getFactory(context);
 
       // Step 1: Discover files
       const files = await this.discoverFiles(context);
@@ -158,7 +158,7 @@ export abstract class InfraAnalyzer extends Plugin {
           // Step 3: Create concrete graph nodes
           for (const resource of resources) {
             try {
-              await graph.addNode({
+              await factory!.store({
                 id: resource.id,
                 type: resource.type,
                 name: resource.name,

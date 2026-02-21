@@ -17,6 +17,8 @@ import type {
   Logger,
 } from '@grafema/types';
 import type { NodeRecord } from '@grafema/types';
+import { GraphFactory } from '../core/GraphFactory.js';
+import type { FactoryLike } from '../core/GraphFactory.js';
 
 // Re-export types for convenience
 export type { PluginMetadata, PluginContext, PluginResult, IPlugin };
@@ -71,6 +73,16 @@ export abstract class Plugin implements IPlugin {
       modules.push(node);
     }
     return modules;
+  }
+
+  /**
+   * Get factory from context, with fallback shim for test contexts.
+   * When running through Orchestrator/PhaseRunner, returns context.factory (GraphFactory).
+   * When running in tests without factory, creates a lightweight shim from graph.
+   * This ensures plugins always have a factory and never need null checks.
+   */
+  protected getFactory(context: PluginContext): FactoryLike {
+    return context.factory ?? GraphFactory.createShim(context.graph);
   }
 
   /**

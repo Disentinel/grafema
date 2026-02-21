@@ -14,7 +14,7 @@ import { resolveNodeFile } from '../utils/resolveNodeFile.js';
 import { JSASTAnalyzer } from '../plugins/analysis/JSASTAnalyzer.js';
 import { InstanceOfResolver } from '../plugins/enrichment/InstanceOfResolver.js';
 import { ImportExportLinker } from '../plugins/enrichment/ImportExportLinker.js';
-import type { GraphBackend, PluginContext } from '@grafema/types';
+import type { GraphBackend, PluginContext, BaseNodeRecord } from '@grafema/types';
 import { brandNodeInternal } from './brandNodeInternal.js';
 import type { StaleModule } from './GraphFreshnessChecker.js';
 
@@ -113,7 +113,7 @@ export class IncrementalReanalyzer {
         line: 0
       };
 
-      await this.graph.addNode(brandNodeInternal(moduleNode));
+      await this.graph.addNode(brandNodeInternal(moduleNode as BaseNodeRecord));
       nodesCreated++;
       modulesToAnalyze.push(moduleNode);
     }

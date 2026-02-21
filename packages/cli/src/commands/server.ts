@@ -40,7 +40,7 @@ async function isServerRunning(socketPath: string): Promise<{ running: boolean; 
     return { running: false };
   }
 
-  const client = new RFDBClient(socketPath);
+  const client = new RFDBClient(socketPath, 'cli');
   // Suppress error events (we handle via try/catch)
   client.on('error', () => {});
 
@@ -92,7 +92,7 @@ function resolveBinaryPath(projectPath: string, explicitBinary?: string): string
  * Stop a running RFDB server: send shutdown, wait for socket removal, clean PID
  */
 async function stopRunningServer(socketPath: string, pidPath: string): Promise<void> {
-  const client = new RFDBClient(socketPath);
+  const client = new RFDBClient(socketPath, 'cli');
   client.on('error', () => {});
 
   try {
@@ -262,7 +262,7 @@ serverCommand
     let nodeCount: number | undefined;
     let edgeCount: number | undefined;
     if (status.running) {
-      const client = new RFDBClient(socketPath);
+      const client = new RFDBClient(socketPath, 'cli');
       client.on('error', () => {}); // Suppress error events
 
       try {
@@ -408,7 +408,7 @@ serverCommand
     }
 
     // Create backend connection
-    const backend = new RFDBServerBackend({ socketPath });
+    const backend = new RFDBServerBackend({ socketPath, clientName: 'cli' });
     await backend.connect();
 
     // Import and start GraphQL server

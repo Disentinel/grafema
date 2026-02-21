@@ -228,6 +228,25 @@ fn positive_can_place_and_provides(
             }
             (can_place, provides)
         }
+        "parent_function" => {
+            // parent_function(node_id, fn_id) — requires first arg bound.
+            // If bound, provides second arg (FunctionId) if it is a free variable.
+            if args.is_empty() {
+                return (true, HashSet::new());
+            }
+            let can_place = is_bound_or_const(&args[0], bound);
+            let mut provides = HashSet::new();
+            if can_place {
+                if let Some(arg) = args.get(1) {
+                    if let Term::Var(v) = arg {
+                        if !bound.contains(v) {
+                            provides.insert(v.clone());
+                        }
+                    }
+                }
+            }
+            (can_place, provides)
+        }
         "neq" | "starts_with" | "not_starts_with" => {
             // All Var args must be in bound
             let all_bound = args.iter().all(|t| match t {

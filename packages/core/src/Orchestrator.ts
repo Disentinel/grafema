@@ -17,6 +17,7 @@ import type { ProgressCallback } from './PhaseRunner.js';
 import { GraphInitializer } from './GraphInitializer.js';
 import { DiscoveryManager } from './DiscoveryManager.js';
 import { GuaranteeChecker } from './GuaranteeChecker.js';
+import { GraphFactory } from './core/GraphFactory.js';
 import { ParallelAnalysisRunner } from './ParallelAnalysisRunner.js';
 import { COVERED_PACKAGES_RESOURCE_ID, createCoveredPackagesResource } from './plugins/validation/PackageCoverageValidator.js';
 export type { ProgressInfo, ProgressCallback } from './PhaseRunner.js';
@@ -78,6 +79,8 @@ export class Orchestrator {
   private guaranteeChecker!: GuaranteeChecker;
   /** Parallel analysis runner (REG-462) */
   private parallelRunner: ParallelAnalysisRunner | null = null;
+  /** Graph factory proxy for intercepting write operations (REG-541) */
+  private graphFactory!: GraphFactory;
 
   constructor(options: OrchestratorOptions = {}) {
     this.graph = options.graph!;
@@ -125,12 +128,15 @@ export class Orchestrator {
       routing: this.routing,
     });
 
+    // Initialize graph factory proxy (REG-541: all graph writes go through factory)
+    this.graphFactory = new GraphFactory(this.graph);
+
     // Initialize graph initializer (REG-462: extracted from Orchestrator)
-    this.graphInitializer = new GraphInitializer(this.graph, this.plugins, this.logger);
+    this.graphInitializer = new GraphInitializer(this.graphFactory, this.plugins, this.logger);
 
     // Initialize discovery manager (REG-462: extracted from Orchestrator)
     this.discoveryManager = new DiscoveryManager(
-      this.plugins, this.graph, this.config, this.logger, this.onProgress, this.configServices,
+      this.plugins, this.graphFactory, this.config, this.logger, this.onProgress, this.configServices,
     );
 
     // Initialize guarantee checker (REG-462: extracted from Orchestrator)
@@ -263,7 +269,7 @@ export class Orchestrator {
       // Sequential processing avoids concurrent graph writes that cause race conditions.
       // REG-487: Pass deferIndexing so JSASTAnalyzer defers per-module index rebuilds.
       await this.runPhase('ANALYSIS', {
-        manifest, graph: this.graph, workerCount: 1,
+        manifest, graph: this.graphFactory.rawGraph, factory: this.graphFactory, workerCount: 1,
         deferIndexing: this._deferIndexing,
       });
     }
@@ -388,7 +394,7 @@ export class Orchestrator {
       // Sequential processing avoids concurrent graph writes that cause race conditions.
       // REG-487: Pass deferIndexing so JSASTAnalyzer defers per-module index rebuilds.
       await this.runPhase('ANALYSIS', {
-        manifest: unifiedManifest, graph: this.graph, workerCount: 1,
+        manifest: unifiedManifest, graph: this.graphFactory.rawGraph, factory: this.graphFactory, workerCount: 1,
         deferIndexing: this._deferIndexing,
       });
     }
@@ -452,7 +458,8 @@ export class Orchestrator {
 
         await this.runPhase(phaseName, {
           manifest: unitManifest,
-          graph: this.graph,
+          graph: this.graphFactory.rawGraph,
+          factory: this.graphFactory,
           workerCount: 1,
           ...(options?.rootPrefix ? { rootPrefix: options.rootPrefix } : {}),
         });
@@ -484,7 +491,7 @@ export class Orchestrator {
     const enrichmentStart = Date.now();
     this.profiler.start('ENRICHMENT');
     this.onProgress({ phase: 'enrichment', currentPlugin: 'Starting enrichment...', message: 'Enriching graph data...', totalFiles: 0, processedFiles: 0 });
-    const enrichmentTypes = await this.runPhase('ENRICHMENT', { manifest, graph: this.graph, workerCount: this.workerCount });
+    const enrichmentTypes = await this.runPhase('ENRICHMENT', { manifest, graph: this.graphFactory.rawGraph, factory: this.graphFactory, workerCount: this.workerCount });
     this.profiler.end('ENRICHMENT');
     this.logger.info('ENRICHMENT phase complete', { duration: ((Date.now() - enrichmentStart) / 1000).toFixed(2) });
 
@@ -509,7 +516,7 @@ export class Orchestrator {
     const validationStart = Date.now();
     this.profiler.start('VALIDATION');
     this.onProgress({ phase: 'validation', currentPlugin: 'Starting validation...', message: 'Validating graph structure...', totalFiles: 0, processedFiles: 0 });
-    await this.runPhase('VALIDATION', { manifest, graph: this.graph, workerCount: this.workerCount });
+    await this.runPhase('VALIDATION', { manifest, graph: this.graphFactory.rawGraph, factory: this.graphFactory, workerCount: this.workerCount });
     this.profiler.end('VALIDATION');
     this.logger.info('VALIDATION phase complete', { duration: ((Date.now() - validationStart) / 1000).toFixed(2) });
 

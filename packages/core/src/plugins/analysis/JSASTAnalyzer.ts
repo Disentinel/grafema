@@ -50,7 +50,7 @@ import { PriorityQueue } from '../../core/PriorityQueue.js';
 import { WorkerPool } from '../../core/WorkerPool.js';
 import { ASTWorkerPool, type ModuleInfo as ASTModuleInfo, type ParseResult } from '../../core/ASTWorkerPool.js';
 import { ConditionParser } from './ast/ConditionParser.js';
-import { getLine, getColumn } from './ast/utils/location.js';
+import { getLine, getColumn, getEndLocation } from './ast/utils/location.js';
 import { Profiler } from '../../core/Profiler.js';
 import { ScopeTracker } from '../../core/ScopeTracker.js';
 import { computeSemanticId } from '../../core/SemanticId.js';
@@ -63,9 +63,8 @@ import type { ArgumentInfo, LiteralInfo as ExtractorLiteralInfo } from './ast/vi
 import { ObjectLiteralNode } from '../../core/nodes/ObjectLiteralNode.js';
 import { ArrayLiteralNode } from '../../core/nodes/ArrayLiteralNode.js';
 import { NodeFactory } from '../../core/NodeFactory.js';
-import { brandNodeInternal } from '../../core/brandNodeInternal.js';
 import { resolveNodeFile } from '../../utils/resolveNodeFile.js';
-import type { PluginContext, PluginResult, PluginMetadata, GraphBackend } from '@grafema/types';
+import type { PluginContext, PluginResult, PluginMetadata, GraphBackend, NodeRecord } from '@grafema/types';
 import type {
   ModuleNode,
   FunctionInfo,
@@ -320,13 +319,13 @@ export class JSASTAnalyzer extends Plugin {
     }
 
     if (currentHash !== module.contentHash) {
-      await graph.addNode(brandNodeInternal({
+      await graph.updateNode!({
         id: module.id,
         type: 'MODULE' as const,
         name: module.name,
         file: module.file,
-        contentHash: currentHash
-      }));
+        contentHash: currentHash,
+      } as NodeRecord);
       return true;
     }
 
@@ -618,7 +617,9 @@ export class JSASTAnalyzer extends Plugin {
     literalCounterRef: CounterRef,
     objectLiterals: ObjectLiteralInfo[],
     objectProperties: ObjectPropertyInfo[],
-    objectLiteralCounterRef: CounterRef
+    objectLiteralCounterRef: CounterRef,
+    arrayLiterals: ArrayLiteralInfo[],
+    arrayLiteralCounterRef: CounterRef
   ): void {
     if (!initNode) return;
     // initNode is already typed as t.Expression
@@ -626,7 +627,13 @@ export class JSASTAnalyzer extends Plugin {
 
     // 0. AwaitExpression
     if (initExpression.type === 'AwaitExpression') {
-      return this.trackVariableAssignment(initExpression.argument, variableId, variableName, module, line, literals, variableAssignments, literalCounterRef, objectLiterals, objectProperties, objectLiteralCounterRef);
+      return this.trackVariableAssignment(initExpression.argument, variableId, variableName, module, line, literals, variableAssignments, literalCounterRef, objectLiterals, objectProperties, objectLiteralCounterRef, arrayLiterals, arrayLiteralCounterRef);
+    }
+
+    // 0.1. TS type assertion unwrapping (REG-534) — these are type-only wrappers, the value is in .expression
+    if (initExpression.type === 'TSAsExpression' || initExpression.type === 'TSSatisfiesExpression' ||
+        initExpression.type === 'TSNonNullExpression' || initExpression.type === 'TSTypeAssertion') {
+      return this.trackVariableAssignment((initExpression as any).expression, variableId, variableName, module, line, literals, variableAssignments, literalCounterRef, objectLiterals, objectProperties, objectLiteralCounterRef, arrayLiterals, arrayLiteralCounterRef);
     }
 
     // 0.5. ObjectExpression (REG-328) - must be before literal check
@@ -659,6 +666,29 @@ export class JSASTAnalyzer extends Plugin {
         variableId,
         sourceId: objectNode.id,
         sourceType: 'OBJECT_LITERAL'
+      });
+      return;
+    }
+
+    // 0.6. ArrayExpression (REG-534) — must be before literal check (like ObjectExpression at 0.5)
+    // Creates proper ARRAY_LITERAL node for queryability: "find all array literals"
+    if (initExpression.type === 'ArrayExpression') {
+      const column = initExpression.loc?.start.column ?? 0;
+      const arrayNode = ArrayLiteralNode.create(
+        module.file,
+        line,
+        column,
+        { counter: arrayLiteralCounterRef.value++ }
+      );
+
+      // Add to arrayLiterals collection for CoreBuilder to create the node
+      arrayLiterals.push(arrayNode as unknown as ArrayLiteralInfo);
+
+      // Create ASSIGNED_FROM edge: VARIABLE -> ARRAY_LITERAL
+      variableAssignments.push({
+        variableId,
+        sourceId: arrayNode.id,
+        sourceType: 'ARRAY_LITERAL'
       });
       return;
     }
@@ -832,8 +862,8 @@ export class JSASTAnalyzer extends Plugin {
         column: column
       });
 
-      this.trackVariableAssignment(initExpression.consequent, variableId, variableName, module, line, literals, variableAssignments, literalCounterRef, objectLiterals, objectProperties, objectLiteralCounterRef);
-      this.trackVariableAssignment(initExpression.alternate, variableId, variableName, module, line, literals, variableAssignments, literalCounterRef, objectLiterals, objectProperties, objectLiteralCounterRef);
+      this.trackVariableAssignment(initExpression.consequent, variableId, variableName, module, line, literals, variableAssignments, literalCounterRef, objectLiterals, objectProperties, objectLiteralCounterRef, arrayLiterals, arrayLiteralCounterRef);
+      this.trackVariableAssignment(initExpression.alternate, variableId, variableName, module, line, literals, variableAssignments, literalCounterRef, objectLiterals, objectProperties, objectLiteralCounterRef, arrayLiterals, arrayLiteralCounterRef);
       return;
     }
 
@@ -855,8 +885,8 @@ export class JSASTAnalyzer extends Plugin {
         column: column
       });
 
-      this.trackVariableAssignment(initExpression.left, variableId, variableName, module, line, literals, variableAssignments, literalCounterRef, objectLiterals, objectProperties, objectLiteralCounterRef);
-      this.trackVariableAssignment(initExpression.right, variableId, variableName, module, line, literals, variableAssignments, literalCounterRef, objectLiterals, objectProperties, objectLiteralCounterRef);
+      this.trackVariableAssignment(initExpression.left, variableId, variableName, module, line, literals, variableAssignments, literalCounterRef, objectLiterals, objectProperties, objectLiteralCounterRef, arrayLiterals, arrayLiteralCounterRef);
+      this.trackVariableAssignment(initExpression.right, variableId, variableName, module, line, literals, variableAssignments, literalCounterRef, objectLiterals, objectProperties, objectLiteralCounterRef, arrayLiterals, arrayLiteralCounterRef);
       return;
     }
 
@@ -883,11 +913,163 @@ export class JSASTAnalyzer extends Plugin {
       for (const expr of initExpression.expressions) {
         // Filter out TSType nodes (only in TypeScript code)
         if (t.isExpression(expr)) {
-          this.trackVariableAssignment(expr, variableId, variableName, module, line, literals, variableAssignments, literalCounterRef, objectLiterals, objectProperties, objectLiteralCounterRef);
+          this.trackVariableAssignment(expr, variableId, variableName, module, line, literals, variableAssignments, literalCounterRef, objectLiterals, objectProperties, objectLiteralCounterRef, arrayLiterals, arrayLiteralCounterRef);
         }
       }
       return;
     }
+
+    // 12. UnaryExpression (REG-534): !flag, -x, typeof x, void 0
+    if (initExpression.type === 'UnaryExpression') {
+      const column = initExpression.start ?? 0;
+      const expressionId = ExpressionNode.generateId('UnaryExpression', module.file, line, column);
+
+      variableAssignments.push({
+        variableId,
+        sourceType: 'EXPRESSION',
+        sourceId: expressionId,
+        expressionType: 'UnaryExpression',
+        operator: initExpression.operator,
+        unaryArgSourceName: initExpression.argument.type === 'Identifier' ? initExpression.argument.name : null,
+        file: module.file,
+        line: line,
+        column: column
+      });
+      return;
+    }
+
+    // 13. TaggedTemplateExpression (REG-534): html`<div>` — effectively a function call
+    // CallExpressionVisitor now handles TaggedTemplateExpression and creates CALL nodes.
+    // Use CALL_SITE/METHOD_CALL sourceType so AssignmentBuilder resolves to the CALL node.
+    if (initExpression.type === 'TaggedTemplateExpression') {
+      if (initExpression.tag.type === 'Identifier') {
+        variableAssignments.push({
+          variableId,
+          sourceId: null,
+          sourceType: 'CALL_SITE',
+          callName: initExpression.tag.name,
+          callLine: getLine(initExpression),
+          callColumn: getColumn(initExpression)
+        });
+      } else if (initExpression.tag.type === 'MemberExpression') {
+        variableAssignments.push({
+          variableId,
+          sourceType: 'METHOD_CALL',
+          sourceLine: getLine(initExpression),
+          sourceColumn: getColumn(initExpression),
+          sourceFile: module.file,
+          line: line
+        });
+      } else {
+        // Fallback for complex tag expressions (e.g., tagged template with call expr as tag)
+        const column = initExpression.start ?? 0;
+        const expressionId = ExpressionNode.generateId('TaggedTemplateExpression', module.file, line, column);
+        variableAssignments.push({
+          variableId,
+          sourceType: 'EXPRESSION',
+          sourceId: expressionId,
+          expressionType: 'TaggedTemplateExpression',
+          file: module.file,
+          line: line,
+          column: column
+        });
+      }
+      return;
+    }
+
+    // 14. ClassExpression (REG-534): const MyClass = class { ... }
+    // ClassVisitor handles ClassExpression and creates a CLASS node.
+    // Use CLASS sourceType so AssignmentBuilder's createClassAssignmentEdges() resolves it.
+    if (initExpression.type === 'ClassExpression') {
+      variableAssignments.push({
+        variableId,
+        sourceType: 'CLASS',
+        className: variableName,
+        line: line
+      });
+      return;
+    }
+
+    // 15. OptionalCallExpression (REG-534): obj?.method()
+    // Note: CallExpressionVisitor doesn't handle OptionalCallExpression, so there may be
+    // no CALL node to match. Use EXPRESSION pattern to ensure the assignment edge is created.
+    if (initExpression.type === 'OptionalCallExpression') {
+      const column = initExpression.start ?? 0;
+      const expressionId = ExpressionNode.generateId('OptionalCallExpression', module.file, line, column);
+
+      variableAssignments.push({
+        variableId,
+        sourceType: 'EXPRESSION',
+        sourceId: expressionId,
+        expressionType: 'OptionalCallExpression',
+        file: module.file,
+        line: line,
+        column: column
+      });
+      return;
+    }
+
+    // 16. OptionalMemberExpression (REG-534): obj?.prop — same logic as MemberExpression (branch 7)
+    if (initExpression.type === 'OptionalMemberExpression') {
+      const objectName = initExpression.object.type === 'Identifier'
+        ? initExpression.object.name
+        : '<complex>';
+      const propertyName = initExpression.computed
+        ? '<computed>'
+        : (initExpression.property.type === 'Identifier' ? initExpression.property.name : '<unknown>');
+
+      const computedPropertyVar = initExpression.computed && initExpression.property.type === 'Identifier'
+        ? initExpression.property.name
+        : null;
+
+      const column = initExpression.start ?? 0;
+      const expressionId = ExpressionNode.generateId('MemberExpression', module.file, line, column);
+
+      variableAssignments.push({
+        variableId,
+        sourceType: 'EXPRESSION',
+        sourceId: expressionId,
+        expressionType: 'MemberExpression',
+        object: objectName,
+        property: propertyName,
+        computed: initExpression.computed,
+        computedPropertyVar,
+        objectSourceName: initExpression.object.type === 'Identifier' ? initExpression.object.name : null,
+        file: module.file,
+        line: line,
+        column: column
+      });
+      return;
+    }
+
+    // 17. SequenceExpression (REG-534): (a, b, c) — last expression is the value
+    if (initExpression.type === 'SequenceExpression' && initExpression.expressions.length > 0) {
+      const lastExpr = initExpression.expressions[initExpression.expressions.length - 1];
+      if (t.isExpression(lastExpr)) {
+        return this.trackVariableAssignment(lastExpr, variableId, variableName, module, line, literals, variableAssignments, literalCounterRef, objectLiterals, objectProperties, objectLiteralCounterRef, arrayLiterals, arrayLiteralCounterRef);
+      }
+      return;
+    }
+
+    // 18. YieldExpression (REG-534): yield value — recurse into argument if present
+    if (initExpression.type === 'YieldExpression') {
+      if (initExpression.argument) {
+        return this.trackVariableAssignment(initExpression.argument, variableId, variableName, module, line, literals, variableAssignments, literalCounterRef, objectLiterals, objectProperties, objectLiteralCounterRef, arrayLiterals, arrayLiteralCounterRef);
+      }
+      return;
+    }
+
+    // 19. AssignmentExpression (REG-534): (a = b) — right side is the effective value
+    if (initExpression.type === 'AssignmentExpression') {
+      return this.trackVariableAssignment(initExpression.right, variableId, variableName, module, line, literals, variableAssignments, literalCounterRef, objectLiterals, objectProperties, objectLiteralCounterRef, arrayLiterals, arrayLiteralCounterRef);
+    }
+
+    // Fallback: unknown expression type — log warning, no edge created (REG-534)
+    console.warn(
+      `[REG-534] Unhandled expression type "${initExpression.type}" ` +
+      `for variable "${variableName}" at ${module.file}:${line}. ` +
+      `No assignment edge created.`
+    );
   }
 
   /**
@@ -1324,8 +1506,155 @@ export class JSASTAnalyzer extends Plugin {
         }
       }
     }
-    // Unsupported init type (MemberExpression without call, etc.)
-    // else: do nothing - skip silently
+    // Phase 3: MemberExpression init (REG-534): const { a } = obj.nested
+    else if (t.isMemberExpression(initNode)) {
+      const objectName = initNode.object.type === 'Identifier' ? initNode.object.name : '<complex>';
+      const propertyName = !initNode.computed && initNode.property.type === 'Identifier'
+        ? initNode.property.name : '<computed>';
+      const sourceRepresentation = `${objectName}.${propertyName}`;
+
+      for (const varInfo of variables) {
+        const variableId = varInfo.id;
+        if (varInfo.isRest) {
+          const column = initNode.start ?? 0;
+          const expressionId = ExpressionNode.generateId('MemberExpression', module.file, varInfo.loc.start.line, column);
+          variableAssignments.push({
+            variableId,
+            sourceType: 'EXPRESSION', sourceId: expressionId,
+            expressionType: 'MemberExpression',
+            object: objectName, property: propertyName,
+            computed: initNode.computed,
+            objectSourceName: initNode.object.type === 'Identifier' ? initNode.object.name : null,
+            file: module.file,
+            line: varInfo.loc.start.line,
+            column: column
+          });
+          continue;
+        }
+
+        if (t.isObjectPattern(pattern) && varInfo.propertyPath && varInfo.propertyPath.length > 0) {
+          const expressionLine = varInfo.loc.start.line;
+          const expressionColumn = varInfo.loc.start.column;
+          const fullPath = [sourceRepresentation, ...varInfo.propertyPath].join('.');
+          const expressionId = ExpressionNode.generateId('MemberExpression', module.file, expressionLine, expressionColumn);
+
+          variableAssignments.push({
+            variableId,
+            sourceType: 'EXPRESSION', sourceId: expressionId,
+            expressionType: 'MemberExpression',
+            object: sourceRepresentation,
+            property: varInfo.propertyPath[varInfo.propertyPath.length - 1],
+            computed: false, path: fullPath,
+            objectSourceName: initNode.object.type === 'Identifier' ? initNode.object.name : null,
+            propertyPath: varInfo.propertyPath,
+            file: module.file,
+            line: expressionLine, column: expressionColumn
+          });
+        } else if (t.isArrayPattern(pattern) && varInfo.arrayIndex !== undefined) {
+          const expressionLine = varInfo.loc.start.line;
+          const expressionColumn = varInfo.loc.start.column;
+          const expressionId = ExpressionNode.generateId('MemberExpression', module.file, expressionLine, expressionColumn);
+
+          variableAssignments.push({
+            variableId,
+            sourceType: 'EXPRESSION', sourceId: expressionId,
+            expressionType: 'MemberExpression',
+            object: sourceRepresentation,
+            property: String(varInfo.arrayIndex),
+            computed: true,
+            objectSourceName: initNode.object.type === 'Identifier' ? initNode.object.name : null,
+            arrayIndex: varInfo.arrayIndex,
+            file: module.file,
+            line: expressionLine, column: expressionColumn
+          });
+        }
+      }
+    }
+    // Phase 4: NewExpression init (REG-534): const { data } = new Response()
+    else if (t.isNewExpression(initNode)) {
+      const callee = initNode.callee;
+      let constructorName: string;
+      if (callee.type === 'Identifier') {
+        constructorName = callee.name;
+      } else if (callee.type === 'MemberExpression' && callee.property.type === 'Identifier') {
+        constructorName = callee.property.name;
+      } else {
+        return; // Unknown callee
+      }
+
+      const callRepresentation = `new ${constructorName}()`;
+      const callLine = initNode.loc?.start.line ?? 0;
+      const callColumn = initNode.loc?.start.column ?? 0;
+
+      for (const varInfo of variables) {
+        const variableId = varInfo.id;
+        if (varInfo.isRest) {
+          variableAssignments.push({
+            variableId,
+            sourceType: 'CONSTRUCTOR_CALL',
+            className: constructorName,
+            file: module.file,
+            line: callLine, column: callColumn
+          });
+          continue;
+        }
+
+        if (t.isObjectPattern(pattern) && varInfo.propertyPath && varInfo.propertyPath.length > 0) {
+          const expressionLine = varInfo.loc.start.line;
+          const expressionColumn = varInfo.loc.start.column;
+          const fullPath = [callRepresentation, ...varInfo.propertyPath].join('.');
+          const expressionId = ExpressionNode.generateId('MemberExpression', module.file, expressionLine, expressionColumn);
+
+          variableAssignments.push({
+            variableId,
+            sourceType: 'EXPRESSION', sourceId: expressionId,
+            expressionType: 'MemberExpression',
+            object: callRepresentation,
+            property: varInfo.propertyPath[varInfo.propertyPath.length - 1],
+            computed: false, path: fullPath,
+            propertyPath: varInfo.propertyPath,
+            file: module.file,
+            line: expressionLine, column: expressionColumn
+          });
+        } else if (t.isArrayPattern(pattern) && varInfo.arrayIndex !== undefined) {
+          const expressionLine = varInfo.loc.start.line;
+          const expressionColumn = varInfo.loc.start.column;
+          const expressionId = ExpressionNode.generateId('MemberExpression', module.file, expressionLine, expressionColumn);
+
+          variableAssignments.push({
+            variableId,
+            sourceType: 'EXPRESSION', sourceId: expressionId,
+            expressionType: 'MemberExpression',
+            object: callRepresentation,
+            property: String(varInfo.arrayIndex),
+            computed: true,
+            arrayIndex: varInfo.arrayIndex,
+            file: module.file,
+            line: expressionLine, column: expressionColumn
+          });
+        }
+      }
+    }
+    // Phase 5: TS wrapper unwrapping for destructuring (REG-534)
+    else if (initNode.type === 'TSAsExpression' || initNode.type === 'TSSatisfiesExpression' ||
+             initNode.type === 'TSNonNullExpression' || initNode.type === 'TSTypeAssertion') {
+      return this.trackDestructuringAssignment(pattern, (initNode as any).expression, variables, module, variableAssignments);
+    }
+    // Phase 6: ConditionalExpression init (REG-534): const { a } = cond ? x : y
+    // Unlike non-destructuring ConditionalExpression (which creates an intermediate EXPRESSION node
+    // AND recurses), destructuring only recurses into branches. This is intentional because
+    // destructured variables need per-property tracking from each branch individually — an
+    // intermediate EXPRESSION node would not provide useful queryability here.
+    else if (t.isConditionalExpression(initNode)) {
+      this.trackDestructuringAssignment(pattern, initNode.consequent, variables, module, variableAssignments);
+      this.trackDestructuringAssignment(pattern, initNode.alternate, variables, module, variableAssignments);
+    }
+    // Phase 7: LogicalExpression init (REG-534): const { a } = x || defaults
+    // Same rationale as ConditionalExpression above — destructured variables get per-property
+    // EXPRESSION nodes from recursing into the right branch. No intermediate node needed.
+    else if (t.isLogicalExpression(initNode)) {
+      this.trackDestructuringAssignment(pattern, initNode.right, variables, module, variableAssignments);
+    }
   }
 
   /**
@@ -1462,7 +1791,7 @@ export class JSASTAnalyzer extends Plugin {
       this.profiler.start('traverse_variables');
       const variableVisitor = new VariableVisitor(
         module,
-        { variableDeclarations, classInstantiations, literals, variableAssignments, varDeclCounterRef, literalCounterRef, scopes, scopeCounterRef, objectLiterals, objectProperties, objectLiteralCounterRef },
+        { variableDeclarations, classInstantiations, literals, variableAssignments, varDeclCounterRef, literalCounterRef, scopes, scopeCounterRef, objectLiterals, objectProperties, objectLiteralCounterRef, arrayLiterals, arrayLiteralCounterRef },
         this.extractVariableNamesFromPattern.bind(this),
         this.trackVariableAssignment.bind(this) as TrackVariableAssignmentCallback,
         scopeTracker  // Pass ScopeTracker for semantic ID generation
@@ -2061,7 +2390,9 @@ export class JSASTAnalyzer extends Plugin {
     parentScopeVariables: Set<{ name: string; id: string; scopeId: string }>,
     objectLiterals: ObjectLiteralInfo[],
     objectProperties: ObjectPropertyInfo[],
-    objectLiteralCounterRef: CounterRef
+    objectLiteralCounterRef: CounterRef,
+    arrayLiterals: ArrayLiteralInfo[],
+    arrayLiteralCounterRef: CounterRef
   ): void {
     const varNode = varPath.node;
     const isConst = varNode.kind === 'const';
@@ -2080,8 +2411,8 @@ export class JSASTAnalyzer extends Plugin {
         const isNewExpression = declarator.init && declarator.init.type === 'NewExpression';
 
         // Loop variables with const should be CONSTANT (they can't be reassigned in loop body)
-        // Regular variables with const are CONSTANT only if initialized with literal or new expression
-        const shouldBeConstant = isConst && (isLoopVariable || isLiteral || isNewExpression);
+        // Regular variables with const are CONSTANT only if initialized with literal
+        const shouldBeConstant = isConst && (isLoopVariable || isLiteral);
         const nodeType = shouldBeConstant ? 'CONSTANT' : 'VARIABLE';
 
         // Generate semantic ID (primary) or legacy ID (fallback)
@@ -2115,24 +2446,25 @@ export class JSASTAnalyzer extends Plugin {
           }
 
           variableDeclarations.push(constantData);
-
-          const init = declarator.init;
-          if (isNewExpression && t.isNewExpression(init) && t.isIdentifier(init.callee)) {
-            const className = init.callee.name;
-            classInstantiations.push({
-              variableId: varId,
-              variableName: varInfo.name,
-              className: className,
-              line: varInfo.loc.start.line,
-              parentScopeId
-            });
-          }
         } else {
           variableDeclarations.push({
             id: varId,
             type: 'VARIABLE',
             name: varInfo.name,
             file: module.file,
+            line: varInfo.loc.start.line,
+            parentScopeId
+          });
+        }
+
+        // If NewExpression, track for CLASS and INSTANCE_OF
+        const init = declarator.init;
+        if (isNewExpression && t.isNewExpression(init) && t.isIdentifier(init.callee)) {
+          const className = init.callee.name;
+          classInstantiations.push({
+            variableId: varId,
+            variableName: varInfo.name,
+            className: className,
             line: varInfo.loc.start.line,
             parentScopeId
           });
@@ -2179,7 +2511,9 @@ export class JSASTAnalyzer extends Plugin {
                 literalCounterRef,
                 objectLiterals,
                 objectProperties,
-                objectLiteralCounterRef
+                objectLiteralCounterRef,
+                arrayLiterals,
+                arrayLiteralCounterRef
               );
             }
           });
@@ -2209,7 +2543,9 @@ export class JSASTAnalyzer extends Plugin {
             literalCounterRef,
             objectLiterals,
             objectProperties,
-            objectLiteralCounterRef
+            objectLiteralCounterRef,
+            arrayLiterals,
+            arrayLiteralCounterRef
           );
         }
       }
@@ -3087,6 +3423,8 @@ export class JSASTAnalyzer extends Plugin {
         file: module.file,
         line: getLine(callNode),
         column: getColumn(callNode),  // REG-223: Add column for coordinate-based lookup
+        endLine: getEndLocation(callNode).line,
+        endColumn: getEndLocation(callNode).column,
         parentScopeId,
         targetFunctionName: calleeName,
         // REG-311: Async error tracking metadata
@@ -3134,6 +3472,8 @@ export class JSASTAnalyzer extends Plugin {
           file: module.file,
           line: getLine(callNode),
           column: getColumn(callNode),
+          endLine: getEndLocation(callNode).line,
+          endColumn: getEndLocation(callNode).column,
           parentScopeId,
           // REG-311: Async error tracking metadata
           isAwaited,
@@ -3246,6 +3586,8 @@ export class JSASTAnalyzer extends Plugin {
               file: module.file,
               line: getLine(callNode),
               column: getColumn(callNode),
+              endLine: getEndLocation(callNode).line,
+              endColumn: getEndLocation(callNode).column,
               parentScopeId,
               isMethodCall: true
             });

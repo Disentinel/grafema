@@ -34,7 +34,9 @@ export class VariableHandler extends FunctionBodyHandler {
           ctx.parentScopeVariables,
           ctx.objectLiterals,
           ctx.objectProperties,
-          ctx.objectLiteralCounterRef
+          ctx.objectLiteralCounterRef,
+          ctx.arrayLiterals,
+          ctx.arrayLiteralCounterRef
         );
 
         // REG-416: Track parameter aliases for HOF detection

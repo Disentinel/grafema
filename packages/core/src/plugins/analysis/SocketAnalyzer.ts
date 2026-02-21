@@ -83,6 +83,7 @@ export class SocketAnalyzer extends Plugin {
 
     try {
       const { graph, onProgress } = context;
+      const factory = this.getFactory(context);
       const projectPath = (context.manifest as { projectPath?: string })?.projectPath ?? '';
 
       const modules = await this.getModules(graph);
@@ -94,7 +95,7 @@ export class SocketAnalyzer extends Plugin {
 
       for (let i = 0; i < modules.length; i++) {
         const module = modules[i];
-        const result = await this.analyzeModule(module, graph, projectPath);
+        const result = await this.analyzeModule(module, graph, projectPath, factory);
         socketsCount += result.sockets;
         edgesCount += result.edges;
 
@@ -133,7 +134,8 @@ export class SocketAnalyzer extends Plugin {
   private async analyzeModule(
     module: NodeRecord,
     graph: PluginContext['graph'],
-    projectPath: string
+    projectPath: string,
+    factory: PluginContext['factory'],
   ): Promise<AnalysisResult> {
     const nodes: AnyBrandedNode[] = [];
     const edges: Array<{ type: string; src: string; dst: string }> = [];
@@ -194,10 +196,10 @@ export class SocketAnalyzer extends Plugin {
       }
 
       if (nodes.length > 0) {
-        await graph.addNodes(nodes);
+        await factory!.storeMany(nodes);
       }
       if (edges.length > 0) {
-        await graph.addEdges(edges);
+        await factory!.linkMany(edges);
       }
 
       return { sockets: socketNodes.length, edges: edges.length };

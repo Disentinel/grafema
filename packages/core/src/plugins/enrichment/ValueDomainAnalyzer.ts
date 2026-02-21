@@ -120,6 +120,7 @@ export class ValueDomainAnalyzer extends Plugin {
 
   async execute(context: PluginContext): Promise<PluginResult> {
     const { graph } = context;
+    const factory = this.getFactory(context);
     const logger = this.log(context);
     const onProgress = (context as unknown as { onProgress?: ProgressCallback }).onProgress;
     const graphTyped = graph as unknown as Graph;
@@ -187,7 +188,7 @@ export class ValueDomainAnalyzer extends Plugin {
         const targetMethod = await this.findMethod(objectName, methodName as string, call.file, graphTyped);
 
         if (targetMethod) {
-          await graphTyped.addEdge({
+          await factory.link({
             src: call.id,
             dst: targetMethod.id,
             type: 'CALLS',
@@ -211,7 +212,7 @@ export class ValueDomainAnalyzer extends Plugin {
 
     // 5. Resolve computed property mutations in FLOWS_INTO edges
     logger.debug('Resolving computed property mutations');
-    const mutationStats = await this.resolveComputedMutations(graphTyped, logger);
+    const mutationStats = await this.resolveComputedMutations(graphTyped, logger, factory);
     logger.debug('Mutation resolution stats', mutationStats);
 
     const summary = {
@@ -578,7 +579,7 @@ export class ValueDomainAnalyzer extends Plugin {
    * @param graph - Graph backend with edge operations
    * @returns Statistics about resolution
    */
-  async resolveComputedMutations(graph: Graph, _logger: ReturnType<typeof this.log>): Promise<{
+  async resolveComputedMutations(graph: Graph, _logger: ReturnType<typeof this.log>, factory?: PluginContext['factory']): Promise<{
     resolved: number;
     conditional: number;
     unknownParameter: number;
@@ -672,7 +673,7 @@ export class ValueDomainAnalyzer extends Plugin {
 
         // Preserve original edge data and add resolution info
         // For UNKNOWN cases, keep propertyName as '<computed>' and resolvedPropertyNames empty
-        await graph.addEdge({
+        await factory!.link({
           src: edge.src,
           dst: edge.dst,
           type: 'FLOWS_INTO',

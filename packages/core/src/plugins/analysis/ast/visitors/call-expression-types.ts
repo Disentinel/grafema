@@ -107,6 +107,8 @@ export interface CallSiteInfo {
   file: string;
   line: number;
   column: number;
+  endLine?: number;
+  endColumn?: number;
   parentScopeId: string;
   targetFunctionName: string;
   /** REG-297: true if wrapped in await expression */
@@ -127,6 +129,8 @@ export interface MethodCallInfo {
   file: string;
   line: number;
   column: number;
+  endLine?: number;
+  endColumn?: number;
   parentScopeId: string;
   /** REG-332: Annotation to suppress strict mode errors */
   grafemaIgnore?: GrafemaIgnoreAnnotation;

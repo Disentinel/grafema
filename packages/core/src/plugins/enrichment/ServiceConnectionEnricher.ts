@@ -16,9 +16,8 @@
 
 import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
-import type { BaseNodeRecord, ServiceDefinition, RoutingMap, OrchestratorConfig } from '@grafema/types';
+import type { BaseNodeRecord, ServiceDefinition, RoutingMap, OrchestratorConfig, NodeRecord } from '@grafema/types';
 import { ROUTING_MAP_RESOURCE_ID } from '@grafema/types';
-import { brandNodeInternal } from '../../core/brandNodeInternal.js';
 import { StrictModeError, ValidationError } from '../../errors/GrafemaError.js';
 import { pathsMatch, hasParams, deduplicateById } from './httpPathUtils.js';
 
@@ -87,6 +86,7 @@ export class ServiceConnectionEnricher extends Plugin {
 
   async execute(context: PluginContext): Promise<PluginResult> {
     const { graph, onProgress } = context;
+    const factory = this.getFactory(context);
     const logger = this.log(context);
 
     try {
@@ -153,7 +153,7 @@ export class ServiceConnectionEnricher extends Plugin {
       });
 
       // 7. Mark customerFacing routes
-      await this.markCustomerFacingRoutes(graph, uniqueRoutes, serviceMap, services, logger);
+      await this.markCustomerFacingRoutes(graph, uniqueRoutes, serviceMap, services, logger, factory);
 
       // 8. Match requests to routes
       let edgesCreated = 0;
@@ -241,11 +241,11 @@ export class ServiceConnectionEnricher extends Plugin {
 
           if (routePath && pathsMatch(urlToMatch, routePath)) {
             // 1. Create INTERACTS_WITH edge
-            await graph.addEdge({
+            await factory!.link({
               type: 'INTERACTS_WITH',
               src: request.id,
               dst: route.id,
-              matchType: hasParams(routePath) ? 'parametric' : 'exact',
+              metadata: { matchType: hasParams(routePath) ? 'parametric' : 'exact' },
             });
             edgesCreated++;
 
@@ -254,7 +254,7 @@ export class ServiceConnectionEnricher extends Plugin {
             if (responseDataNode) {
               const respondsWithEdges = await graph.getOutgoingEdges(route.id, ['RESPONDS_WITH']);
               for (const respEdge of respondsWithEdges) {
-                await graph.addEdge({
+                await factory!.link({
                   type: 'HTTP_RECEIVES',
                   src: responseDataNode,
                   dst: respEdge.dst,
@@ -361,7 +361,8 @@ export class ServiceConnectionEnricher extends Plugin {
     routes: HTTPRouteNode[],
     serviceMap: ServiceEntry[],
     services: ServiceDefinition[],
-    logger: ReturnType<typeof this.log>
+    logger: ReturnType<typeof this.log>,
+    factory: PluginContext['factory'],
   ): Promise<number> {
     const cfServices = new Set(
       services.filter(s => s.customerFacing).map(s => s.name)
@@ -374,14 +375,10 @@ export class ServiceConnectionEnricher extends Plugin {
       if (!route.file) continue;
       const serviceName = this.getServiceForFile(route.file, serviceMap);
       if (serviceName && cfServices.has(serviceName)) {
-        // LEGITIMATE USE: brandNodeInternal() is correct here because:
-        // 1. This node was already created and validated by ExpressRouteAnalyzer
-        // 2. We're enriching it with customerFacing metadata, not creating a new node
-        // 3. The original node structure and type remain unchanged
-        await graph.addNode(brandNodeInternal({
+        await factory!.update({
           ...route,
           customerFacing: true,
-        }));
+        } as NodeRecord);
         // Update the in-memory object for later validation
         route.customerFacing = true;
         count++;

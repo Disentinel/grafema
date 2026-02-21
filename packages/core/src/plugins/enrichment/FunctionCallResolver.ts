@@ -1,14 +1,16 @@
 /**
- * FunctionCallResolver - creates CALLS edges for imported function calls
+ * FunctionCallResolver - creates CALLS and HANDLED_BY edges for imported function calls
  *
  * This enrichment plugin runs AFTER ImportExportLinker (priority 80 vs 90) and:
  * 1. Finds CALL_SITE nodes without CALLS edges (excluding method calls)
  * 2. For each, looks for IMPORT with matching local name in same file
  * 3. Follows IMPORTS_FROM -> EXPORT -> FUNCTION chain
  * 4. Creates CALLS edge to target FUNCTION
+ * 5. Creates HANDLED_BY edge from CALL to IMPORT (REG-545)
  *
  * CREATES EDGES:
  * - CALL_SITE -> CALLS -> FUNCTION (for imported functions)
+ * - CALL_SITE -> HANDLED_BY -> IMPORT (links call to its import declaration)
  */
 
 import { Plugin, createSuccessResult } from '../Plugin.js';
@@ -28,6 +30,7 @@ interface CallNode extends BaseNodeRecord {
 interface ImportNode extends BaseNodeRecord {
   source?: string;
   importType?: string; // 'default' | 'named' | 'namespace'
+  importBinding?: string; // 'value' | 'type' | 'typeof'
   imported?: string; // Original name in source file
   local?: string; // Local binding name
 }
@@ -58,67 +61,38 @@ export class FunctionCallResolver extends Plugin {
       phase: 'ENRICHMENT',
       creates: {
         nodes: ['EXTERNAL_MODULE'],
-        edges: ['CALLS']
+        edges: ['CALLS', 'HANDLED_BY']
       },
       dependencies: ['ImportExportLinker'], // Requires IMPORTS_FROM edges
       consumes: ['IMPORTS_FROM'],
-      produces: ['CALLS']
+      produces: ['CALLS', 'HANDLED_BY']
     };
   }
 
   async execute(context: PluginContext): Promise<PluginResult> {
     const { graph, onProgress } = context;
+    const factory = this.getFactory(context);
     const logger = this.log(context);
 
     logger.info('Starting function call resolution');
 
     const startTime = Date.now();
 
-    // Step 1: Build Import Index - Map<file:local, ImportNode>
-    const importIndex = new Map<string, ImportNode>();
-    for await (const node of graph.queryNodes({ nodeType: 'IMPORT' })) {
-      const imp = node as ImportNode;
-      if (!imp.file || !imp.local) continue;
-
-      // Skip external imports (non-relative)
-      const isRelative = imp.source && (imp.source.startsWith('./') || imp.source.startsWith('../'));
-      if (!isRelative) continue;
-
-      const key = `${imp.file}:${imp.local}`;
-      importIndex.set(key, imp);
-    }
+    // Step 1: Build indexes
+    const importIndex = await this.buildImportIndex(graph);
     logger.debug('Indexed imports', { count: importIndex.size });
 
-    // Step 2: Build Function Index - Map<file, Map<name, FunctionNode>>
-    const functionIndex = new Map<string, Map<string, FunctionNode>>();
-    for await (const node of graph.queryNodes({ nodeType: 'FUNCTION' })) {
-      const func = node as FunctionNode;
-      if (!func.file || !func.name) continue;
-
-      if (!functionIndex.has(func.file)) {
-        functionIndex.set(func.file, new Map());
-      }
-      functionIndex.get(func.file)!.set(func.name, func);
-    }
+    const functionIndex = await this.buildFunctionIndex(graph);
     logger.debug('Indexed functions', { files: functionIndex.size });
 
-    // Step 2.5: Build Export Index - Map<file, Map<exportKey, ExportNode>>
-    // This enables O(1) lookup when following re-export chains
-    const exportIndex = new Map<string, Map<string, ExportNode>>();
-    for await (const node of graph.queryNodes({ nodeType: 'EXPORT' })) {
-      const exp = node as ExportNode;
-      if (!exp.file) continue;
-
-      if (!exportIndex.has(exp.file)) {
-        exportIndex.set(exp.file, new Map());
-      }
-
-      const fileExports = exportIndex.get(exp.file)!;
-      fileExports.set(this.buildExportKey(exp), exp);
-    }
+    const exportIndex = await this.buildExportIndex(graph);
     logger.debug('Indexed exports', { files: exportIndex.size });
 
-    // Step 2.6: Build set of known files for path resolution
+    // Step 1.5: Build conservative shadowing index (REG-545)
+    const shadowedImportKeys = await this.buildShadowIndex(graph);
+    logger.debug('Indexed shadow keys', { count: shadowedImportKeys.size });
+
+    // Step 1.6: Build set of known files for path resolution
     const knownFiles = new Set<string>();
     for (const file of exportIndex.keys()) {
       knownFiles.add(file);
@@ -146,6 +120,7 @@ export class FunctionCallResolver extends Plugin {
 
     // Step 4: Resolution
     let edgesCreated = 0;
+    let handledByEdgesCreated = 0;
     const skipped = {
       alreadyResolved: 0,
       methodCalls: 0,
@@ -250,11 +225,11 @@ export class FunctionCallResolver extends Plugin {
           const externalNode = await graph.getNode(externalModuleId);
           if (!externalNode) {
             // Create EXTERNAL_MODULE node
-            await graph.addNode(NodeFactory.createExternalModule(externalResult.packageName));
+            await factory!.store(NodeFactory.createExternalModule(externalResult.packageName));
           }
 
           // Create CALLS edge with metadata
-          await graph.addEdge({
+          await factory!.link({
             type: 'CALLS',
             src: callSite.id,
             dst: externalModuleId,
@@ -263,6 +238,21 @@ export class FunctionCallResolver extends Plugin {
 
           edgesCreated++;
           reExportsResolved++;
+
+          // Step 4.3.1: Create HANDLED_BY edge from CALL to IMPORT (REG-545, GAP 3 fix)
+          // Links the call to the original import declaration in the calling file
+          if (imp.importBinding !== 'type') {
+            const shadowKey = `${file}:${calledName}`;
+            if (!shadowedImportKeys.has(shadowKey)) {
+              await graph.addEdge({
+                type: 'HANDLED_BY',
+                src: callSite.id,
+                dst: imp.id
+              });
+              handledByEdgesCreated++;
+            }
+          }
+
           continue;
         }
 
@@ -284,33 +274,134 @@ export class FunctionCallResolver extends Plugin {
       if (!targetFunction) continue;
 
       // Step 4.5: Create CALLS edge
-      await graph.addEdge({
+      await factory!.link({
         type: 'CALLS',
         src: callSite.id,
         dst: targetFunction.id
       });
 
       edgesCreated++;
+
+      // Step 4.6: Create HANDLED_BY edge from CALL to IMPORT (REG-545)
+      // Links the call to the original import declaration in the calling file
+      // Skip type-only imports (GAP 1 fix) and shadowed names
+      if (imp.importBinding !== 'type') {
+        const shadowKey = `${file}:${calledName}`;
+        if (!shadowedImportKeys.has(shadowKey)) {
+          await graph.addEdge({
+            type: 'HANDLED_BY',
+            src: callSite.id,
+            dst: imp.id
+          });
+          handledByEdgesCreated++;
+        }
+      }
     }
 
     const totalTime = ((Date.now() - startTime) / 1000).toFixed(2);
     logger.info('Complete', {
       edgesCreated,
+      handledByEdgesCreated,
       skipped,
       time: `${totalTime}s`
     });
 
     return createSuccessResult(
-      { nodes: 0, edges: edgesCreated },
+      { nodes: 0, edges: edgesCreated + handledByEdgesCreated },
       {
         callSitesProcessed: callSitesToResolve.length,
         edgesCreated,
+        handledByEdgesCreated,
         reExportsResolved,
         skipped,
         timeMs: Date.now() - startTime
       },
       errors
     );
+  }
+
+  /**
+   * Build import index mapping file:local to ImportNode.
+   * Only indexes relative imports (skips external packages).
+   */
+  private async buildImportIndex(graph: PluginContext['graph']): Promise<Map<string, ImportNode>> {
+    const importIndex = new Map<string, ImportNode>();
+    for await (const node of graph.queryNodes({ nodeType: 'IMPORT' })) {
+      const imp = node as ImportNode;
+      if (!imp.file || !imp.local) continue;
+
+      // Skip external imports (non-relative)
+      const isRelative = imp.source && (imp.source.startsWith('./') || imp.source.startsWith('../'));
+      if (!isRelative) continue;
+
+      const key = `${imp.file}:${imp.local}`;
+      importIndex.set(key, imp);
+    }
+    return importIndex;
+  }
+
+  /**
+   * Build function index mapping file -> name -> FunctionNode.
+   * Used for O(1) lookup when resolving call targets.
+   */
+  private async buildFunctionIndex(graph: PluginContext['graph']): Promise<Map<string, Map<string, FunctionNode>>> {
+    const functionIndex = new Map<string, Map<string, FunctionNode>>();
+    for await (const node of graph.queryNodes({ nodeType: 'FUNCTION' })) {
+      const func = node as FunctionNode;
+      if (!func.file || !func.name) continue;
+
+      if (!functionIndex.has(func.file)) {
+        functionIndex.set(func.file, new Map());
+      }
+      functionIndex.get(func.file)!.set(func.name, func);
+    }
+    return functionIndex;
+  }
+
+  /**
+   * Build export index mapping file -> exportKey -> ExportNode.
+   * Enables O(1) lookup when following re-export chains.
+   */
+  private async buildExportIndex(graph: PluginContext['graph']): Promise<Map<string, Map<string, ExportNode>>> {
+    const exportIndex = new Map<string, Map<string, ExportNode>>();
+    for await (const node of graph.queryNodes({ nodeType: 'EXPORT' })) {
+      const exp = node as ExportNode;
+      if (!exp.file) continue;
+
+      if (!exportIndex.has(exp.file)) {
+        exportIndex.set(exp.file, new Map());
+      }
+
+      const fileExports = exportIndex.get(exp.file)!;
+      fileExports.set(this.buildExportKey(exp), exp);
+    }
+    return exportIndex;
+  }
+
+  /**
+   * Build conservative shadowing index (REG-545).
+   *
+   * Returns Set<file:localName> where a local variable, constant, or parameter
+   * exists that could shadow an import of the same name. Conservative: any matching
+   * name in any scope within the file blocks HANDLED_BY creation.
+   *
+   * Queries VARIABLE, CONSTANT, and PARAMETER node types.
+   * - VARIABLE/CONSTANT: checked via parentScopeId (present when inside any scope)
+   * - PARAMETER: checked via parentScopeId (PARAMETER nodes use parentFunctionId instead,
+   *   so this is a known gap — Dijkstra GAP 2)
+   *
+   * Full scope-chain traversal deferred as follow-up.
+   */
+  private async buildShadowIndex(graph: PluginContext['graph']): Promise<Set<string>> {
+    const shadowedKeys = new Set<string>();
+    for (const nodeType of ['VARIABLE', 'CONSTANT', 'PARAMETER'] as const) {
+      for await (const node of graph.queryNodes({ nodeType })) {
+        if (node.file && node.name && (node as BaseNodeRecord & { parentScopeId?: string }).parentScopeId) {
+          shadowedKeys.add(`${node.file}:${node.name}`);
+        }
+      }
+    }
+    return shadowedKeys;
   }
 
   /**

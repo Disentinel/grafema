@@ -663,6 +663,176 @@ export class ClassVisitor extends ASTVisitor {
 
         // Exit class scope
         scopeTracker.exitScope();
+      },
+
+      ClassExpression: (classPath: NodePath) => {
+        const classNode = classPath.node as ClassDeclaration; // ClassExpression has same shape
+        const classLine = getLine(classNode);
+        const classColumn = getColumn(classNode);
+
+        // Determine class name from context
+        let className: string;
+        if (classNode.id) {
+          // Named class expression: const x = class MyClass {}
+          className = classNode.id.name;
+        } else {
+          // Anonymous class expression: const MyClass = class {}
+          // Get name from parent VariableDeclarator
+          const parent = classPath.parent;
+          if (parent?.type === 'VariableDeclarator' && (parent as any).id?.type === 'Identifier') {
+            className = (parent as any).id.name;
+          } else {
+            className = '<anonymous>';
+          }
+        }
+
+        // Extract superClass name
+        const superClassName = classNode.superClass?.type === 'Identifier'
+          ? (classNode.superClass as Identifier).name
+          : null;
+
+        // Create CLASS node using NodeFactory with semantic ID
+        const classRecord = ClassNode.createWithContext(
+          className,
+          scopeTracker.getContext(),
+          { line: classLine, column: classColumn },
+          { superClass: superClassName || undefined }
+        );
+
+        // Extract implements (TypeScript)
+        const implementsNames: string[] = [];
+        const classNodeWithImplements = classNode as ClassDeclaration & { implements?: Array<{ expression: { type: string; name?: string } }> };
+        if (classNodeWithImplements.implements && classNodeWithImplements.implements.length > 0) {
+          for (const impl of classNodeWithImplements.implements) {
+            if (impl.expression.type === 'Identifier') {
+              implementsNames.push(impl.expression.name!);
+            }
+          }
+        }
+
+        // Store ClassNodeRecord + TypeScript metadata
+        (classDeclarations as ClassInfo[]).push({
+          ...classRecord,
+          implements: implementsNames.length > 0 ? implementsNames : undefined
+        });
+
+        // Enter class scope for tracking
+        scopeTracker.enterScope(className, 'CLASS');
+
+        // Get reference to current class for adding methods
+        const classDeclarationsTyped = classDeclarations as ClassInfo[];
+        const currentClass = classDeclarationsTyped[classDeclarationsTyped.length - 1];
+
+        // Process class methods and properties (same traversal as ClassDeclaration)
+        classPath.traverse({
+          ClassProperty: (propPath: NodePath) => {
+            const propNode = propPath.node as ClassProperty;
+            if (propPath.parent !== classNode.body) return;
+
+            const propName = propNode.key.type === 'Identifier'
+              ? propNode.key.name
+              : (propNode.key as { value?: string }).value || 'anonymous';
+            const propLine = getLine(propNode);
+            const propColumn = getColumn(propNode);
+
+            if (propNode.value &&
+                (propNode.value.type === 'ArrowFunctionExpression' ||
+                 propNode.value.type === 'FunctionExpression')) {
+              const funcNode = propNode.value as ArrowFunctionExpression | FunctionExpression;
+              const functionId = computeSemanticIdV2('FUNCTION', propName, module.file, scopeTracker.getNamedParent());
+              currentClass.methods.push(functionId);
+
+              (functions as ClassFunctionInfo[]).push({
+                id: functionId,
+                type: 'FUNCTION',
+                name: propName,
+                file: module.file,
+                line: propLine,
+                column: propColumn,
+                async: funcNode.async || false,
+                generator: funcNode.type === 'FunctionExpression' ? funcNode.generator || false : false,
+                arrowFunction: funcNode.type === 'ArrowFunctionExpression',
+                isClassProperty: true,
+                className: className,
+              });
+
+              scopeTracker.enterScope(propName, 'FUNCTION');
+              if (parameters) {
+                createParameterNodes(funcNode.params, functionId, module.file, propLine, parameters as ParameterInfo[], scopeTracker);
+              }
+
+              const propBodySemanticId = computeSemanticIdV2('SCOPE', 'body', module.file, scopeTracker.getNamedParent());
+              const propBodyScopeId = `SCOPE#${className}.${propName}:body#${module.file}#${propLine}`;
+              (scopes as ScopeInfo[]).push({
+                id: propBodyScopeId,
+                semanticId: propBodySemanticId,
+                type: 'SCOPE',
+                scopeType: 'property_body',
+                name: `${className}.${propName}:body`,
+                conditional: false,
+                file: module.file,
+                line: propLine,
+                parentFunctionId: functionId
+              });
+
+              const funcPath = propPath.get('value') as NodePath<ArrowFunctionExpression | FunctionExpression>;
+              analyzeFunctionBody(funcPath, propBodyScopeId, module, collections);
+              scopeTracker.exitScope();
+            }
+          },
+
+          ClassMethod: (methodPath: NodePath<ClassMethod>) => {
+            const methodNode = methodPath.node;
+            const methodName = methodNode.key.type === 'Identifier'
+              ? methodNode.key.name
+              : (methodNode.key as { value?: string }).value || 'anonymous';
+            if (methodPath.parent !== classNode.body) return;
+
+            const methodLine = getLine(methodNode);
+            const methodColumn = getColumn(methodNode);
+            const functionId = computeSemanticIdV2('FUNCTION', methodName, module.file, scopeTracker.getNamedParent());
+            currentClass.methods.push(functionId);
+
+            (functions as ClassFunctionInfo[]).push({
+              id: functionId,
+              type: 'FUNCTION',
+              name: methodName,
+              file: module.file,
+              line: methodLine,
+              column: methodColumn,
+              async: methodNode.async || false,
+              generator: methodNode.generator || false,
+              isClassMethod: true,
+              className: className,
+              methodKind: methodNode.kind as 'constructor' | 'method' | 'get' | 'set',
+            });
+
+            scopeTracker.enterScope(methodName, 'FUNCTION');
+            if (parameters) {
+              createParameterNodes(methodNode.params, functionId, module.file, methodLine, parameters as ParameterInfo[], scopeTracker);
+            }
+
+            const methodBodyScopeId = `SCOPE#${className}.${methodName}:body#${module.file}#${methodLine}`;
+            const methodBodySemanticId = computeSemanticIdV2('SCOPE', 'body', module.file, scopeTracker.getNamedParent());
+            (scopes as ScopeInfo[]).push({
+              id: methodBodyScopeId,
+              semanticId: methodBodySemanticId,
+              type: 'SCOPE',
+              scopeType: 'method_body',
+              name: `${className}.${methodName}:body`,
+              conditional: false,
+              file: module.file,
+              line: methodLine,
+              parentFunctionId: functionId
+            });
+
+            analyzeFunctionBody(methodPath, methodBodyScopeId, module, collections);
+            scopeTracker.exitScope();
+          },
+        });
+
+        // Exit class scope
+        scopeTracker.exitScope();
       }
     };
   }

@@ -63,6 +63,7 @@ export class ClosureCaptureEnricher extends Plugin {
 
   async execute(context: PluginContext): Promise<PluginResult> {
     const { graph, onProgress } = context;
+    const factory = this.getFactory(context);
     const logger = this.log(context);
 
     logger.info('Starting transitive capture resolution');
@@ -126,7 +127,7 @@ export class ClosureCaptureEnricher extends Plugin {
             continue;
           }
 
-          await graph.addEdge({
+          await factory!.link({
             src: closure.id,
             dst: variable.id,
             type: 'CAPTURES',

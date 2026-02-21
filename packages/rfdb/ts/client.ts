@@ -27,6 +27,7 @@ interface PendingRequest {
 
 export class RFDBClient extends BaseRFDBClient {
   readonly socketPath: string;
+  readonly clientName: string;
   private socket: Socket | null;
   connected: boolean;
   private pending: Map<number, PendingRequest>;
@@ -38,9 +39,10 @@ export class RFDBClient extends BaseRFDBClient {
   private _pendingStreams: Map<number, StreamQueue<WireNode>> = new Map();
   private _streamTimers: Map<number, ReturnType<typeof setTimeout>> = new Map();
 
-  constructor(socketPath: string = '/tmp/rfdb.sock') {
+  constructor(socketPath: string = '/tmp/rfdb.sock', clientName: string = 'unknown') {
     super();
     this.socketPath = socketPath;
+    this.clientName = clientName;
     this.socket = null;
     this.connected = false;
     this.pending = new Map();

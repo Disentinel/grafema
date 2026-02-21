@@ -18,8 +18,7 @@
 import { Plugin } from '../Plugin.js';
 import { createSuccessResult, createErrorResult } from '@grafema/types';
 import type { PluginMetadata, PluginContext, PluginResult } from '@grafema/types';
-import type { BaseNodeRecord } from '@grafema/types';
-import { brandNodeInternal } from '../../core/brandNodeInternal.js';
+import type { NodeRecord } from '@grafema/types';
 import { isRelativeImport, resolveRelativeSpecifier } from '../../utils/moduleResolution.js';
 
 interface MountNode {
@@ -77,6 +76,7 @@ export class MountPointResolver extends Plugin {
   async execute(context: PluginContext): Promise<PluginResult> {
     try {
       const { graph, onProgress } = context;
+      const factory = this.getFactory(context);
       const logger = this.log(context);
 
       let routesUpdated = 0;
@@ -248,11 +248,7 @@ export class MountPointResolver extends Plugin {
             fullPath: route.fullPath || fullPath
           };
 
-          // LEGITIMATE USE: brandNodeInternal() is correct here because:
-          // 1. This node was already created and validated by ExpressRouteAnalyzer
-          // 2. We're enriching it with mount path data, not creating a new node
-          // 3. The original node structure and type remain unchanged
-          await graph.addNode(brandNodeInternal(updatedRoute as BaseNodeRecord));
+          await factory!.update(updatedRoute as NodeRecord);
           routesUpdated++;
         }
 

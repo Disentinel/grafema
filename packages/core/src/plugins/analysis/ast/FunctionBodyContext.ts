@@ -10,6 +10,7 @@ import type {
   EventListenerInfo, MethodCallbackInfo, ClassInstantiationInfo,
   ConstructorCallInfo, HttpRequestInfo, LiteralInfo,
   VariableAssignmentInfo, ObjectLiteralInfo, ObjectPropertyInfo,
+  ArrayLiteralInfo,
   ReturnStatementInfo, YieldExpressionInfo, UpdateExpressionInfo,
   PromiseExecutorContext, PromiseResolutionInfo, RejectionPatternInfo,
   CatchesFromInfo, ParameterInfo, CounterRef, ProcessedNodes,
@@ -88,6 +89,7 @@ export interface FunctionBodyContext {
   updateExpressions: UpdateExpressionInfo[];
   objectLiterals: ObjectLiteralInfo[];
   objectProperties: ObjectPropertyInfo[];
+  arrayLiterals: ArrayLiteralInfo[];
   // Control flow
   loops: LoopInfo[];
   branches: BranchInfo[];
@@ -101,6 +103,7 @@ export interface FunctionBodyContext {
   catchesFromInfos: CatchesFromInfo[];
   // Counter refs
   objectLiteralCounterRef: CounterRef;
+  arrayLiteralCounterRef: CounterRef;
   loopCounterRef: CounterRef;
   branchCounterRef: CounterRef;
   tryBlockCounterRef: CounterRef;
@@ -179,6 +182,8 @@ export function createFunctionBodyContext(
   const objectLiterals = ensure<ObjectLiteralInfo[]>(c, 'objectLiterals', () => []);
   const objectProperties = ensure<ObjectPropertyInfo[]>(c, 'objectProperties', () => []);
   const objectLiteralCounterRef = ensure<CounterRef>(c, 'objectLiteralCounterRef', () => ({ value: 0 }));
+  const arrayLiterals = ensure<ArrayLiteralInfo[]>(c, 'arrayLiterals', () => []);
+  const arrayLiteralCounterRef = ensure<CounterRef>(c, 'arrayLiteralCounterRef', () => ({ value: 0 }));
   const yieldExpressions = ensure<YieldExpressionInfo[]>(c, 'yieldExpressions', () => []);
   const loops = ensure<LoopInfo[]>(c, 'loops', () => []);
   const loopCounterRef = ensure<CounterRef>(c, 'loopCounterRef', () => ({ value: 0 }));
@@ -269,10 +274,10 @@ export function createFunctionBodyContext(
     eventListeners, methodCallbacks, classInstantiations, constructorCalls,
     httpRequests, literals, variableAssignments, parameters,
     returnStatements, yieldExpressions, updateExpressions,
-    objectLiterals, objectProperties,
+    objectLiterals, objectProperties, arrayLiterals,
     loops, branches, tryBlocks, catchBlocks, finallyBlocks,
     promiseExecutorContexts, promiseResolutions, rejectionPatterns, catchesFromInfos,
-    objectLiteralCounterRef, loopCounterRef, branchCounterRef,
+    objectLiteralCounterRef, arrayLiteralCounterRef, loopCounterRef, branchCounterRef,
     tryBlockCounterRef, catchBlockCounterRef, finallyBlockCounterRef,
     ifScopeCounterRef, scopeCounterRef, varDeclCounterRef,
     callSiteCounterRef, functionCounterRef, httpRequestCounterRef,

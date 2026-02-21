@@ -18,7 +18,7 @@
 
 import { Plugin, createSuccessResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
-import type { BaseNodeRecord, EdgeRecord } from '@grafema/types';
+import type { BaseNodeRecord } from '@grafema/types';
 
 interface FunctionNode extends BaseNodeRecord {
   async?: boolean;
@@ -48,6 +48,7 @@ export class RejectionPropagationEnricher extends Plugin {
 
   async execute(context: PluginContext): Promise<PluginResult> {
     const { graph, onProgress } = context;
+    const factory = this.getFactory(context);
     const logger = this.log(context);
 
     logger.info('Starting rejection propagation through await chains');
@@ -170,12 +171,9 @@ export class RejectionPropagationEnricher extends Plugin {
             // Propagate each rejection type
             for (const errorClassId of targetRejects) {
               if (!callerRejects.has(errorClassId)) {
-                // Use addEdges with skipValidation=true because the dst (CLASS node)
-                // may not exist as a graph node (e.g., built-in Error classes)
-                const graphWithAddEdges = graph as unknown as {
-                  addEdges(edges: EdgeRecord[], skipValidation?: boolean): Promise<void>
-                };
-                await graphWithAddEdges.addEdges([{
+                // skipValidation=true because dst (CLASS node) may not exist
+                // as a graph node (e.g., built-in Error classes)
+                await factory!.linkMany([{
                   type: 'REJECTS',
                   src: asyncFunc.id,
                   dst: errorClassId,
@@ -183,7 +181,7 @@ export class RejectionPropagationEnricher extends Plugin {
                     rejectionType: 'propagated',
                     propagatedFrom: targetId
                   }
-                }], true /* skipValidation */);
+                }], true);
 
                 callerRejects.add(errorClassId);
                 iterationEdges++;

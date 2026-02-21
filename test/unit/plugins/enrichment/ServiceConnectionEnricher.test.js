@@ -63,6 +63,10 @@ class MockGraphBackend {
   getNode(id) {
     return this.nodes.get(id);
   }
+
+  async updateNode(node) {
+    this.nodes.set(node.id, { ...this.nodes.get(node.id), ...node });
+  }
 }
 
 // =============================================================================
@@ -111,7 +115,7 @@ describe('ServiceConnectionEnricher', () => {
       assert.ok(edge, 'Should create INTERACTS_WITH edge');
       assert.strictEqual(edge.src, 'request:fetch-users');
       assert.strictEqual(edge.dst, 'route:get-users');
-      assert.strictEqual(edge.matchType, 'exact');
+      assert.strictEqual(edge.metadata.matchType, 'exact');
     });
 
     it('should NOT match when using only path (without fullPath)', async () => {
@@ -215,7 +219,7 @@ describe('ServiceConnectionEnricher', () => {
       assert.ok(result.success);
       const edge = graph.edges.find(e => e.type === 'INTERACTS_WITH');
       assert.ok(edge);
-      assert.strictEqual(edge.matchType, 'parametric');
+      assert.strictEqual(edge.metadata.matchType, 'parametric');
     });
 
     it('should treat dots in routes as literal characters', async () => {
@@ -647,7 +651,7 @@ describe('ServiceConnectionEnricher', () => {
 
       const edges = graph.edges.filter(e => e.type === 'INTERACTS_WITH');
       assert.strictEqual(edges.length, 1);
-      assert.strictEqual(edges[0].matchType, 'parametric');
+      assert.strictEqual(edges[0].metadata.matchType, 'parametric');
     });
 
     it('should match named template literal ${userId} to :id', async () => {
@@ -698,7 +702,7 @@ describe('ServiceConnectionEnricher', () => {
 
       const edges = graph.edges.filter(e => e.type === 'INTERACTS_WITH');
       assert.strictEqual(edges.length, 1);
-      assert.strictEqual(edges[0].matchType, 'parametric');
+      assert.strictEqual(edges[0].metadata.matchType, 'parametric');
     });
 
     it('should match concrete value to :param', async () => {
@@ -723,7 +727,7 @@ describe('ServiceConnectionEnricher', () => {
 
       const edges = graph.edges.filter(e => e.type === 'INTERACTS_WITH');
       assert.strictEqual(edges.length, 1);
-      assert.strictEqual(edges[0].matchType, 'parametric');
+      assert.strictEqual(edges[0].metadata.matchType, 'parametric');
     });
 
     it('should NOT match different base paths', async () => {
@@ -1258,7 +1262,7 @@ describe('ServiceConnectionEnricher', () => {
       assert.ok(edge);
       assert.strictEqual(edge.src, 'request:fetch-users');
       assert.strictEqual(edge.dst, 'route:get-users');
-      assert.strictEqual(edge.matchType, 'exact');
+      assert.strictEqual(edge.metadata.matchType, 'exact');
       assert.strictEqual(result.metadata.connections, 1);
     });
   });

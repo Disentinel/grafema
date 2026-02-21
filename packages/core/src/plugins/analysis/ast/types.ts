@@ -285,6 +285,8 @@ export interface PropertyAccessInfo {
   file: string;
   line: number;
   column: number;
+  endLine?: number;
+  endColumn?: number;
   parentScopeId?: string;
 }
 
@@ -297,6 +299,8 @@ export interface CallSiteInfo {
   file: string;
   line: number;
   column?: number;
+  endLine?: number;
+  endColumn?: number;
   parentScopeId?: string;
   targetFunctionName?: string;
   /** REG-332: Annotation to suppress strict mode errors */
@@ -322,6 +326,8 @@ export interface MethodCallInfo {
   file: string;
   line: number;
   column?: number;
+  endLine?: number;
+  endColumn?: number;
   parentScopeId?: string;
   arguments?: unknown[];
   /** REG-332: Annotation to suppress strict mode errors */
@@ -884,6 +890,8 @@ export interface VariableAssignmentInfo {
   consequentSourceName?: string | null;
   alternateSourceName?: string | null;
   expressionSourceNames?: string[];
+  // UnaryExpression support (REG-534)
+  unaryArgSourceName?: string | null;
   file?: string;
   // Destructuring support (REG-201)
   path?: string;               // Full property path string, e.g., "req.headers.contentType"

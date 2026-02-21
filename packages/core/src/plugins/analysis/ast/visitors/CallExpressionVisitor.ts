@@ -15,7 +15,7 @@ import type { ContentHashHints } from '../../../../core/SemanticId.js';
 import { MutationDetector } from './MutationDetector.js';
 import { IdGenerator } from '../IdGenerator.js';
 import { ExpressionEvaluator } from '../ExpressionEvaluator.js';
-import { getLine, getColumn } from '../utils/location.js';
+import { getLine, getColumn, getEndLocation } from '../utils/location.js';
 import { getGrafemaIgnore } from './call-expression-helpers.js';
 import { ArgumentExtractor } from './ArgumentExtractor.js';
 import type {
@@ -198,6 +198,93 @@ export class CallExpressionVisitor extends ASTVisitor {
         }
       },
 
+      // REG-534: TaggedTemplateExpression creates CALL node (html`...`, styled.div`...`)
+      TaggedTemplateExpression: (path: NodePath) => {
+        const tagNode = path.node as { tag: Node; loc?: { start: { line: number; column: number } }; start?: number; end?: number };
+        const functionParent = path.getFunctionParent();
+
+        // Skip if inside function - handled by analyzeFunctionBody
+        if (functionParent) return;
+
+        const parentScopeId = s.module.id;
+        const tag = tagNode.tag;
+
+        if (tag.type === 'Identifier') {
+          // Simple tag: html`...`
+          const tagName = (tag as Identifier).name;
+          const tagLine = getLine(tagNode as Node);
+          const tagColumn = getColumn(tagNode as Node);
+
+          const callInfo: CallSiteInfo = {
+            id: '',
+            type: 'CALL',
+            name: tagName,
+            file: s.module.file,
+            line: tagLine,
+            column: tagColumn,
+            parentScopeId,
+            targetFunctionName: tagName,
+          };
+
+          if (this.sharedIdGenerator) {
+            const contentHints: ContentHashHints = { arity: 1, firstLiteralArg: undefined };
+            this.sharedIdGenerator.generateV2('CALL', tagName, s.module.file, contentHints, callInfo);
+          } else {
+            const idGenerator = new IdGenerator(s.scopeTracker);
+            callInfo.id = idGenerator.generate(
+              'CALL', tagName, s.module.file,
+              tagLine, tagColumn,
+              s.callSiteCounterRef,
+              { useDiscriminator: true, discriminatorKey: `CALL:${tagName}` }
+            );
+          }
+          s.callSites.push(callInfo);
+        } else if (tag.type === 'MemberExpression') {
+          // Member tag: styled.div`...`
+          const memberTag = tag as MemberExpression;
+          const object = memberTag.object;
+          const property = memberTag.property;
+
+          if ((object.type === 'Identifier' || object.type === 'ThisExpression') && property.type === 'Identifier') {
+            const objectName = object.type === 'Identifier' ? (object as Identifier).name : 'this';
+            const methodName = (property as Identifier).name;
+            const fullName = `${objectName}.${methodName}`;
+            const tagLine = getLine(tagNode as Node);
+            const tagColumn = getColumn(tagNode as Node);
+
+            const nodeKey = `tagged:${(tagNode as { start?: number }).start}:${(tagNode as { end?: number }).end}`;
+            if (!s.processedNodes.methodCalls.has(nodeKey)) {
+              s.processedNodes.methodCalls.add(nodeKey);
+
+              const methodCallInfo: MethodCallInfo = {
+                id: '',
+                type: 'CALL',
+                name: fullName,
+                object: objectName,
+                method: methodName,
+                file: s.module.file,
+                line: tagLine,
+                column: tagColumn,
+                parentScopeId,
+              };
+
+              if (this.sharedIdGenerator) {
+                const contentHints: ContentHashHints = { arity: 1, firstLiteralArg: undefined };
+                this.sharedIdGenerator.generateV2('CALL', fullName, s.module.file, contentHints, methodCallInfo);
+              } else {
+                const idGenerator = new IdGenerator(s.scopeTracker);
+                methodCallInfo.id = idGenerator.generate(
+                  'CALL', fullName, s.module.file,
+                  tagLine, tagColumn,
+                  s.callSiteCounterRef,
+                  { useDiscriminator: true, discriminatorKey: `CALL:${fullName}` }
+                );
+              }
+              s.methodCalls.push(methodCallInfo);
+            }
+          }
+        }
+      },
     };
   }
 
@@ -217,6 +304,8 @@ export class CallExpressionVisitor extends ASTVisitor {
       file: s.module.file,
       line,
       column,
+      endLine: getEndLocation(callNode).line,
+      endColumn: getEndLocation(callNode).column,
       parentScopeId,
       targetFunctionName: callee.name,
       isAwaited: isAwaited || undefined
@@ -330,6 +419,8 @@ export class CallExpressionVisitor extends ASTVisitor {
       file: s.module.file,
       line: methodLine,
       column: methodColumn,
+      endLine: getEndLocation(callNode).line,
+      endColumn: getEndLocation(callNode).column,
       parentScopeId,
       grafemaIgnore: grafemaIgnore ?? undefined,
       isAwaited: isAwaited || undefined,
@@ -441,6 +532,8 @@ export class CallExpressionVisitor extends ASTVisitor {
           file: s.module.file,
           line: methodLine,
           column: methodColumn,
+          endLine: getEndLocation(callNode).line,
+          endColumn: getEndLocation(callNode).column,
           parentScopeId,
           grafemaIgnore: grafemaIgnore ?? undefined,
         };

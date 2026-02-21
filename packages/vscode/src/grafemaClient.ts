@@ -99,7 +99,7 @@ export class GrafemaClientManager extends EventEmitter {
       this.setState({ status: 'connecting' });
 
       try {
-        const wsClient = new RFDBWebSocketClient(wsUrl);
+        const wsClient = new RFDBWebSocketClient(wsUrl, 'extension');
         await wsClient.connect();
 
         const pong = await wsClient.ping();
@@ -156,7 +156,7 @@ export class GrafemaClientManager extends EventEmitter {
    * Try to connect to existing server
    */
   private async tryConnect(): Promise<void> {
-    const client = new RFDBClient(this.socketPath);
+    const client = new RFDBClient(this.socketPath, 'extension');
     await client.connect();
 
     // Verify connection with ping

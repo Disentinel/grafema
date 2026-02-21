@@ -94,7 +94,8 @@ export class RustModuleIndexer extends Plugin {
 
   async execute(context: PluginContext): Promise<PluginResult> {
     const logger = this.log(context);
-    const { manifest, graph, onProgress } = context;
+    const { manifest, onProgress } = context;
+    const factory = this.getFactory(context);
     // Cast manifest to expected shape
     const typedManifest = manifest as { projectPath: string } | undefined;
     const { projectPath } = typedManifest!;
@@ -138,7 +139,7 @@ export class RustModuleIndexer extends Plugin {
             isTest: this.isTestFile(filePath),
           }
         );
-        await graph.addNode(node);
+        await factory!.store(node);
 
         nodesCreated++;
 

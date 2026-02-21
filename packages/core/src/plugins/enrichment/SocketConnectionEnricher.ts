@@ -50,6 +50,7 @@ export class SocketConnectionEnricher extends Plugin {
 
   async execute(context: PluginContext): Promise<PluginResult> {
     const { graph, onProgress } = context;
+    const factory = this.getFactory(context);
     const logger = this.log(context);
 
     try {
@@ -118,7 +119,7 @@ export class SocketConnectionEnricher extends Plugin {
         });
       }
       edgesCreated += await this.matchUnixSockets(
-        unixClients, unixServers, graph, connections
+        unixClients, unixServers, graph, connections, factory
       );
 
       // Match TCP clients to servers by port/host
@@ -132,7 +133,7 @@ export class SocketConnectionEnricher extends Plugin {
         });
       }
       edgesCreated += await this.matchTcpSockets(
-        tcpClients, tcpServers, graph, connections
+        tcpClients, tcpServers, graph, connections, factory
       );
 
       if (connections.length > 0) {
@@ -178,7 +179,8 @@ export class SocketConnectionEnricher extends Plugin {
     clients: UnixSocketNode[],
     servers: UnixSocketNode[],
     graph: PluginContext['graph'],
-    connections: ConnectionInfo[]
+    connections: ConnectionInfo[],
+    factory: PluginContext['factory'],
   ): Promise<number> {
     let edgesCreated = 0;
 
@@ -191,12 +193,11 @@ export class SocketConnectionEnricher extends Plugin {
         if (!serverPath) continue;
 
         if (clientPath === serverPath) {
-          await graph.addEdge({
+          await factory!.link({
             type: 'INTERACTS_WITH',
             src: client.id,
             dst: server.id,
-            matchType: 'path',
-            path: clientPath
+            metadata: { matchType: 'path', path: clientPath }
           });
           edgesCreated++;
 
@@ -223,7 +224,8 @@ export class SocketConnectionEnricher extends Plugin {
     clients: TcpSocketNode[],
     servers: TcpSocketNode[],
     graph: PluginContext['graph'],
-    connections: ConnectionInfo[]
+    connections: ConnectionInfo[],
+    factory: PluginContext['factory'],
   ): Promise<number> {
     let edgesCreated = 0;
 
@@ -239,13 +241,11 @@ export class SocketConnectionEnricher extends Plugin {
         const serverHost = this.normalizeHost(server.host);
         if (clientHost !== serverHost) continue;
 
-        await graph.addEdge({
+        await factory!.link({
           type: 'INTERACTS_WITH',
           src: client.id,
           dst: server.id,
-          matchType: 'port',
-          port: client.port,
-          host: clientHost
+          metadata: { matchType: 'port', port: client.port, host: clientHost }
         });
         edgesCreated++;
 

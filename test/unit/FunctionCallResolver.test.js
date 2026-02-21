@@ -109,7 +109,7 @@ describe('FunctionCallResolver', () => {
         assert.strictEqual(edges[0].dst, 'utils-foo-func', 'Should point to the function');
 
         assert.strictEqual(result.success, true, 'Plugin should succeed');
-        assert.strictEqual(result.created.edges, 1, 'Should report 1 edge created');
+        assert.strictEqual(result.created.edges, 2, 'Should report 2 edges created (CALLS + HANDLED_BY)');
 
         console.log('Named import function call resolution works');
       } finally {
@@ -641,7 +641,7 @@ describe('FunctionCallResolver', () => {
           'Should resolve through re-export to actual function');
 
         assert.strictEqual(result.success, true);
-        assert.strictEqual(result.created.edges, 1);
+        assert.strictEqual(result.created.edges, 2, 'Should create 2 edges (CALLS + HANDLED_BY)');
         assert.strictEqual(result.metadata.reExportsResolved, 1,
           'Should report 1 re-export resolved');
 
@@ -1220,7 +1220,7 @@ describe('FunctionCallResolver', () => {
         assert.strictEqual(edges2[0].dst, 'utils-foo-func');
         assert.strictEqual(edges3[0].dst, 'utils-foo-func');
 
-        assert.strictEqual(result.created.edges, 3, 'Should create 3 edges');
+        assert.strictEqual(result.created.edges, 6, 'Should create 6 edges (3 CALLS + 3 HANDLED_BY)');
 
         console.log('Multiple calls to same function resolved correctly');
       } finally {
@@ -1362,7 +1362,7 @@ describe('FunctionCallResolver', () => {
         assert.strictEqual(edgesBar[0].dst, 'utils-bar-func');
         assert.strictEqual(edgesBaz[0].dst, 'utils-baz-func');
 
-        assert.strictEqual(result.created.edges, 3, 'Should create 3 edges');
+        assert.strictEqual(result.created.edges, 6, 'Should create 6 edges (3 CALLS + 3 HANDLED_BY)');
 
         console.log('Multiple imports from same file resolved correctly');
       } finally {
@@ -1462,11 +1462,525 @@ describe('FunctionCallResolver', () => {
 
       assert.strictEqual(metadata.name, 'FunctionCallResolver');
       assert.strictEqual(metadata.phase, 'ENRICHMENT');
-      assert.deepStrictEqual(metadata.creates.edges, ['CALLS']);
+      assert.deepStrictEqual(metadata.creates.edges, ['CALLS', 'HANDLED_BY']);
       assert.deepStrictEqual(metadata.creates.nodes, ['EXTERNAL_MODULE']);
       assert.ok(metadata.dependencies.includes('ImportExportLinker'), 'Should depend on ImportExportLinker');
 
       console.log('Plugin metadata is correct');
+    });
+  });
+
+  // ============================================================================
+  // HANDLED_BY EDGES (REG-545)
+  // ============================================================================
+
+  describe('HANDLED_BY Edges (REG-545)', () => {
+    it('should create HANDLED_BY edge for named import called at top level', async () => {
+      const { backend } = await setupBackend();
+
+      try {
+        const resolver = new FunctionCallResolver();
+
+        // import { foo } from './utils'; foo();
+        // CALL at top level (no parentScopeId) -> should get HANDLED_BY -> IMPORT
+
+        await backend.addNodes([
+          // FUNCTION in utils.js
+          {
+            id: 'utils-foo-func',
+            type: 'FUNCTION',
+            name: 'foo',
+            file: '/project/utils.js',
+            line: 1
+          },
+          // EXPORT in utils.js
+          {
+            id: 'utils-export-foo',
+            type: 'EXPORT',
+            name: 'foo',
+            file: '/project/utils.js',
+            line: 1,
+            exportType: 'named',
+            local: 'foo'
+          },
+          // IMPORT in main.js
+          {
+            id: 'main-import-foo',
+            type: 'IMPORT',
+            name: 'foo',
+            file: '/project/main.js',
+            line: 1,
+            source: './utils',
+            importType: 'named',
+            importBinding: 'value',
+            imported: 'foo',
+            local: 'foo'
+          },
+          // CALL at top level (no parentScopeId)
+          {
+            id: 'main-call-foo',
+            type: 'CALL',
+            name: 'foo',
+            file: '/project/main.js',
+            line: 3
+          }
+        ]);
+
+        // Pre-existing edge from ImportExportLinker
+        await backend.addEdge({
+          type: 'IMPORTS_FROM',
+          src: 'main-import-foo',
+          dst: 'utils-export-foo'
+        });
+
+        await backend.flush();
+
+        const result = await resolver.execute({ graph: backend });
+
+        // CALLS edge should still be created
+        const callsEdges = await backend.getOutgoingEdges('main-call-foo', ['CALLS']);
+        assert.strictEqual(callsEdges.length, 1, 'Should create CALLS edge');
+        assert.strictEqual(callsEdges[0].dst, 'utils-foo-func', 'CALLS should point to function');
+
+        // HANDLED_BY edge should be created: CALL -> IMPORT
+        const handledByEdges = await backend.getOutgoingEdges('main-call-foo', ['HANDLED_BY']);
+        assert.strictEqual(handledByEdges.length, 1, 'Should create one HANDLED_BY edge');
+        assert.strictEqual(handledByEdges[0].dst, 'main-import-foo',
+          'HANDLED_BY should point to the IMPORT node');
+
+        console.log('HANDLED_BY edge created for top-level named import call');
+      } finally {
+        await backend.close();
+      }
+    });
+
+    it('should create HANDLED_BY edge for named import called inside nested scope (not shadowed)', async () => {
+      const { backend } = await setupBackend();
+
+      try {
+        const resolver = new FunctionCallResolver();
+
+        // import { foo } from './utils';
+        // function bar() { foo(); }
+        // CALL has parentScopeId but no local VARIABLE/CONSTANT shadows import name
+
+        await backend.addNodes([
+          // FUNCTION in utils.js
+          {
+            id: 'utils-foo-func',
+            type: 'FUNCTION',
+            name: 'foo',
+            file: '/project/utils.js',
+            line: 1
+          },
+          // EXPORT in utils.js
+          {
+            id: 'utils-export-foo',
+            type: 'EXPORT',
+            name: 'foo',
+            file: '/project/utils.js',
+            line: 1,
+            exportType: 'named',
+            local: 'foo'
+          },
+          // IMPORT in main.js
+          {
+            id: 'main-import-foo',
+            type: 'IMPORT',
+            name: 'foo',
+            file: '/project/main.js',
+            line: 1,
+            source: './utils',
+            importType: 'named',
+            importBinding: 'value',
+            imported: 'foo',
+            local: 'foo'
+          },
+          // Enclosing FUNCTION in main.js
+          {
+            id: 'main-bar-func',
+            type: 'FUNCTION',
+            name: 'bar',
+            file: '/project/main.js',
+            line: 3
+          },
+          // CALL inside nested scope (has parentScopeId)
+          {
+            id: 'main-call-foo-nested',
+            type: 'CALL',
+            name: 'foo',
+            file: '/project/main.js',
+            line: 4,
+            parentScopeId: 'main-bar-func'
+          }
+        ]);
+
+        // Pre-existing edge from ImportExportLinker
+        await backend.addEdge({
+          type: 'IMPORTS_FROM',
+          src: 'main-import-foo',
+          dst: 'utils-export-foo'
+        });
+
+        await backend.flush();
+
+        const result = await resolver.execute({ graph: backend });
+
+        // CALLS edge should still be created
+        const callsEdges = await backend.getOutgoingEdges('main-call-foo-nested', ['CALLS']);
+        assert.strictEqual(callsEdges.length, 1, 'Should create CALLS edge');
+        assert.strictEqual(callsEdges[0].dst, 'utils-foo-func', 'CALLS should point to function');
+
+        // HANDLED_BY edge should be created (no shadowing)
+        const handledByEdges = await backend.getOutgoingEdges('main-call-foo-nested', ['HANDLED_BY']);
+        assert.strictEqual(handledByEdges.length, 1,
+          'Should create HANDLED_BY edge even in nested scope (not shadowed)');
+        assert.strictEqual(handledByEdges[0].dst, 'main-import-foo',
+          'HANDLED_BY should point to the IMPORT node');
+
+        console.log('HANDLED_BY edge created for nested scope call (no shadow)');
+      } finally {
+        await backend.close();
+      }
+    });
+
+    it('should NOT create HANDLED_BY edge when import name is shadowed by local variable', async () => {
+      const { backend } = await setupBackend();
+
+      try {
+        const resolver = new FunctionCallResolver();
+
+        // import { foo } from './utils';
+        // function bar() { const foo = 42; foo(); }
+        // Local VARIABLE 'foo' with parentScopeId shadows the import
+
+        await backend.addNodes([
+          // FUNCTION in utils.js
+          {
+            id: 'utils-foo-func',
+            type: 'FUNCTION',
+            name: 'foo',
+            file: '/project/utils.js',
+            line: 1
+          },
+          // EXPORT in utils.js
+          {
+            id: 'utils-export-foo',
+            type: 'EXPORT',
+            name: 'foo',
+            file: '/project/utils.js',
+            line: 1,
+            exportType: 'named',
+            local: 'foo'
+          },
+          // IMPORT in main.js
+          {
+            id: 'main-import-foo',
+            type: 'IMPORT',
+            name: 'foo',
+            file: '/project/main.js',
+            line: 1,
+            source: './utils',
+            importType: 'named',
+            importBinding: 'value',
+            imported: 'foo',
+            local: 'foo'
+          },
+          // Enclosing FUNCTION in main.js
+          {
+            id: 'main-bar-func',
+            type: 'FUNCTION',
+            name: 'bar',
+            file: '/project/main.js',
+            line: 3
+          },
+          // Local VARIABLE that shadows the import name
+          // MUST have parentScopeId to trigger shadow detection
+          {
+            id: 'main-var-foo',
+            type: 'VARIABLE',
+            name: 'foo',
+            file: '/project/main.js',
+            line: 4,
+            parentScopeId: 'main-bar-func'
+          },
+          // CALL inside the same scope as the shadowing variable
+          {
+            id: 'main-call-foo-shadowed',
+            type: 'CALL',
+            name: 'foo',
+            file: '/project/main.js',
+            line: 5,
+            parentScopeId: 'main-bar-func'
+          }
+        ]);
+
+        // Pre-existing edge from ImportExportLinker
+        await backend.addEdge({
+          type: 'IMPORTS_FROM',
+          src: 'main-import-foo',
+          dst: 'utils-export-foo'
+        });
+
+        await backend.flush();
+
+        const result = await resolver.execute({ graph: backend });
+
+        // HANDLED_BY edge should NOT be created (shadowed by local variable)
+        const handledByEdges = await backend.getOutgoingEdges('main-call-foo-shadowed', ['HANDLED_BY']);
+        assert.strictEqual(handledByEdges.length, 0,
+          'Should NOT create HANDLED_BY edge when import is shadowed by local variable');
+
+        console.log('HANDLED_BY edge correctly skipped for shadowed import');
+      } finally {
+        await backend.close();
+      }
+    });
+
+    it('should NOT create HANDLED_BY edge for type-only import (Dijkstra GAP 1)', async () => {
+      const { backend } = await setupBackend();
+
+      try {
+        const resolver = new FunctionCallResolver();
+
+        // import type { Foo } from './utils';
+        // Foo(); // Type-only import should not get HANDLED_BY
+        // (would be a TS error at runtime, but we handle it gracefully)
+
+        await backend.addNodes([
+          // FUNCTION in utils.js
+          {
+            id: 'utils-foo-func',
+            type: 'FUNCTION',
+            name: 'Foo',
+            file: '/project/utils.js',
+            line: 1
+          },
+          // EXPORT in utils.js
+          {
+            id: 'utils-export-foo',
+            type: 'EXPORT',
+            name: 'Foo',
+            file: '/project/utils.js',
+            line: 1,
+            exportType: 'named',
+            local: 'Foo'
+          },
+          // IMPORT with importBinding: 'type' (type-only import)
+          {
+            id: 'main-import-foo-type',
+            type: 'IMPORT',
+            name: 'Foo',
+            file: '/project/main.js',
+            line: 1,
+            source: './utils',
+            importType: 'named',
+            importBinding: 'type',
+            imported: 'Foo',
+            local: 'Foo'
+          },
+          // CALL to Foo()
+          {
+            id: 'main-call-foo-type',
+            type: 'CALL',
+            name: 'Foo',
+            file: '/project/main.js',
+            line: 3
+          }
+        ]);
+
+        // Pre-existing edge from ImportExportLinker
+        await backend.addEdge({
+          type: 'IMPORTS_FROM',
+          src: 'main-import-foo-type',
+          dst: 'utils-export-foo'
+        });
+
+        await backend.flush();
+
+        const result = await resolver.execute({ graph: backend });
+
+        // HANDLED_BY edge should NOT be created for type-only imports
+        const handledByEdges = await backend.getOutgoingEdges('main-call-foo-type', ['HANDLED_BY']);
+        assert.strictEqual(handledByEdges.length, 0,
+          'Should NOT create HANDLED_BY edge for type-only import');
+
+        console.log('HANDLED_BY edge correctly skipped for type-only import');
+      } finally {
+        await backend.close();
+      }
+    });
+
+    it('should create HANDLED_BY edge for re-export chain terminating at external module (Dijkstra GAP 3)', async () => {
+      const { backend } = await setupBackend();
+
+      try {
+        const resolver = new FunctionCallResolver();
+
+        // main.js: import { foo } from './utils'; foo();
+        // utils.js: export { foo } from 'external-lib';
+        // Re-export chain resolves to external module.
+        // HANDLED_BY should still link CALL to the local IMPORT in main.js.
+
+        await backend.addNodes([
+          // Re-export in utils.js pointing to external module
+          {
+            id: 'utils-reexport-foo',
+            type: 'EXPORT',
+            name: 'foo',
+            file: '/project/utils.js',
+            line: 1,
+            exportType: 'named',
+            local: 'foo',
+            source: 'external-lib'  // External (non-relative) re-export
+          },
+          // IMPORT in main.js (from relative ./utils)
+          {
+            id: 'main-import-foo',
+            type: 'IMPORT',
+            name: 'foo',
+            file: '/project/main.js',
+            line: 1,
+            source: './utils',
+            importType: 'named',
+            importBinding: 'value',
+            imported: 'foo',
+            local: 'foo'
+          },
+          // CALL in main.js
+          {
+            id: 'main-call-foo',
+            type: 'CALL',
+            name: 'foo',
+            file: '/project/main.js',
+            line: 3
+          }
+        ]);
+
+        // Pre-existing edge from ImportExportLinker
+        await backend.addEdge({
+          type: 'IMPORTS_FROM',
+          src: 'main-import-foo',
+          dst: 'utils-reexport-foo'
+        });
+
+        await backend.flush();
+
+        const result = await resolver.execute({ graph: backend });
+
+        // HANDLED_BY edge should be created pointing to the local IMPORT
+        const handledByEdges = await backend.getOutgoingEdges('main-call-foo', ['HANDLED_BY']);
+        assert.strictEqual(handledByEdges.length, 1,
+          'Should create HANDLED_BY edge even when re-export resolves to external module');
+        assert.strictEqual(handledByEdges[0].dst, 'main-import-foo',
+          'HANDLED_BY should point to the local IMPORT node in the calling file');
+
+        console.log('HANDLED_BY edge created for re-export chain to external module');
+      } finally {
+        await backend.close();
+      }
+    });
+
+    it('should NOT shadow via PARAMETER node (Dijkstra GAP 2 - known limitation)', async () => {
+      const { backend } = await setupBackend();
+
+      try {
+        const resolver = new FunctionCallResolver();
+
+        // import { foo } from './utils';
+        // function bar(foo) { foo(); }
+        // PARAMETER named 'foo' does NOT have parentScopeId — uses functionId instead.
+        // The shadow index queries VARIABLE/CONSTANT with parentScopeId,
+        // so PARAMETER shadows are NOT detected. This test documents the gap.
+
+        await backend.addNodes([
+          // FUNCTION in utils.js
+          {
+            id: 'utils-foo-func',
+            type: 'FUNCTION',
+            name: 'foo',
+            file: '/project/utils.js',
+            line: 1
+          },
+          // EXPORT in utils.js
+          {
+            id: 'utils-export-foo',
+            type: 'EXPORT',
+            name: 'foo',
+            file: '/project/utils.js',
+            line: 1,
+            exportType: 'named',
+            local: 'foo'
+          },
+          // IMPORT in main.js
+          {
+            id: 'main-import-foo',
+            type: 'IMPORT',
+            name: 'foo',
+            file: '/project/main.js',
+            line: 1,
+            source: './utils',
+            importType: 'named',
+            importBinding: 'value',
+            imported: 'foo',
+            local: 'foo'
+          },
+          // Enclosing FUNCTION in main.js
+          {
+            id: 'main-bar-func',
+            type: 'FUNCTION',
+            name: 'bar',
+            file: '/project/main.js',
+            line: 3
+          },
+          // PARAMETER named 'foo' — uses functionId, NOT parentScopeId
+          {
+            id: 'main-param-foo',
+            type: 'PARAMETER',
+            name: 'foo',
+            file: '/project/main.js',
+            line: 3,
+            column: 14,
+            functionId: 'main-bar-func',
+            index: 0,
+            rest: false
+          },
+          // CALL inside the function
+          {
+            id: 'main-call-foo-param',
+            type: 'CALL',
+            name: 'foo',
+            file: '/project/main.js',
+            line: 4,
+            parentScopeId: 'main-bar-func'
+          }
+        ]);
+
+        // Pre-existing edge from ImportExportLinker
+        await backend.addEdge({
+          type: 'IMPORTS_FROM',
+          src: 'main-import-foo',
+          dst: 'utils-export-foo'
+        });
+
+        await backend.flush();
+
+        const result = await resolver.execute({ graph: backend });
+
+        // GAP: PARAMETER nodes don't have parentScopeId, so buildShadowIndex()
+        // won't detect the shadow. HANDLED_BY edge WILL be created even though
+        // the parameter shadows the import at runtime.
+        // This documents the known limitation (Dijkstra GAP 2).
+        const handledByEdges = await backend.getOutgoingEdges('main-call-foo-param', ['HANDLED_BY']);
+        assert.strictEqual(handledByEdges.length, 1,
+          'HANDLED_BY edge IS created (PARAMETER shadow not detected — known GAP 2)');
+        assert.strictEqual(handledByEdges[0].dst, 'main-import-foo',
+          'HANDLED_BY points to IMPORT (parameter shadow undetected)');
+
+        console.log('PARAMETER shadow gap documented (Dijkstra GAP 2)');
+      } finally {
+        await backend.close();
+      }
     });
   });
 });

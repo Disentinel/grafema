@@ -47,6 +47,11 @@ export interface RFDBServerBackendOptions {
    * Default: false
    */
   silent?: boolean;
+  /**
+   * Name identifying this client in server logs (e.g. 'cli', 'mcp', 'core').
+   * Default: 'core'
+   */
+  clientName?: string;
 }
 
 /**
@@ -98,6 +103,7 @@ export class RFDBServerBackend {
   readonly dbPath: string | undefined;
   private readonly autoStart: boolean;
   private readonly silent: boolean;
+  private readonly _clientName: string;
   private client: RFDBClient | null;
   private serverProcess: ChildProcess | null;
   connected: boolean;  // Public for compatibility
@@ -110,6 +116,7 @@ export class RFDBServerBackend {
     this.dbPath = options.dbPath;
     this.autoStart = options.autoStart ?? true; // Default true for backwards compat
     this.silent = options.silent ?? false;
+    this._clientName = options.clientName ?? 'core';
     // Default socket path: next to the database in .grafema folder
     // This ensures each project has its own socket, avoiding conflicts
     if (options.socketPath) {
@@ -130,7 +137,7 @@ export class RFDBServerBackend {
    */
   private log(message: string): void {
     if (!this.silent) {
-      console.log(message);
+      console.error(message);
     }
   }
 
@@ -150,7 +157,7 @@ export class RFDBServerBackend {
     if (this.connected) return;
 
     // Try to connect first
-    this.client = new RFDBClient(this.socketPath);
+    this.client = new RFDBClient(this.socketPath, this._clientName);
 
     // Attach error handler to prevent unhandled 'error' events
     // This is important for stale sockets (socket file exists but server is dead)
@@ -181,7 +188,7 @@ export class RFDBServerBackend {
     await this._startServer();
 
     // Connect again with fresh client
-    this.client = new RFDBClient(this.socketPath);
+    this.client = new RFDBClient(this.socketPath, this._clientName);
     this.client.on('error', (err: Error) => {
       this.logError('[RFDBServerBackend] Client error:', err.message);
     });

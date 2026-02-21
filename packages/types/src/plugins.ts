@@ -146,6 +146,31 @@ export interface PluginContext {
   resources?: ResourceRegistry;
 
   /**
+   * Graph write factory with non-restricted method names (REG-541).
+   * Plugins should use factory.store/link/storeMany/linkMany/update
+   * instead of graph.addNode/addEdge to satisfy guarantee rules.
+   * Also exposes read methods (getNode, queryNodes, etc.) so plugins
+   * can read from the graph through the factory.
+   * Injected by PhaseRunner when GraphFactory is available.
+   */
+  factory?: {
+    store(node: AnyBrandedNode): Promise<void>;
+    storeMany(nodes: AnyBrandedNode[]): Promise<void>;
+    link(edge: InputEdge): Promise<void>;
+    linkMany(edges: InputEdge[], skipValidation?: boolean): Promise<void>;
+    update(node: NodeRecord): Promise<void>;
+    getNode(id: string): Promise<NodeRecord | null>;
+    queryNodes(filter: NodeFilter): AsyncIterable<NodeRecord> | AsyncGenerator<NodeRecord>;
+    getOutgoingEdges(nodeId: string, edgeTypes?: EdgeType[] | null): Promise<EdgeRecord[]>;
+    getIncomingEdges(nodeId: string, edgeTypes?: EdgeType[] | null): Promise<EdgeRecord[]>;
+    nodeCount(): Promise<number>;
+    edgeCount(): Promise<number>;
+    countNodesByType(types?: string[] | null): Promise<Record<string, number>>;
+    countEdgesByType(types?: string[] | null): Promise<Record<string, number>>;
+    clear(): Promise<void>;
+  };
+
+  /**
    * When true, commitBatch should defer index rebuilding (REG-487).
    * Used during initial/full analysis for O(1) per-commit cost.
    * Caller must send rebuildIndexes() after all deferred commits complete.
@@ -286,7 +311,7 @@ export interface GraphBackend {
   addNode(node: AnyBrandedNode): Promise<void> | void;
   addEdge(edge: InputEdge): Promise<void> | void;
   addNodes(nodes: AnyBrandedNode[]): Promise<void> | void;
-  addEdges(edges: InputEdge[]): Promise<void> | void;
+  addEdges(edges: InputEdge[], skipValidation?: boolean): Promise<void> | void;
 
   getNode(id: string): Promise<NodeRecord | null>;
   queryNodes(filter: NodeFilter): AsyncIterable<NodeRecord> | AsyncGenerator<NodeRecord>;
@@ -329,6 +354,9 @@ export interface GraphBackend {
   // Synchronous batch operations (REG-483: direct batch insertion)
   batchNode?(node: AnyBrandedNode): void;
   batchEdge?(edge: InputEdge): void;
+
+  // Enrichment mutation (REG-541: re-brand and upsert existing node)
+  updateNode?(node: NodeRecord): Promise<void>;
 }
 
 export interface NodeFilter {

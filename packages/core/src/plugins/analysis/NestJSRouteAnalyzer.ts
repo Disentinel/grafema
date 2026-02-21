@@ -122,6 +122,7 @@ export class NestJSRouteAnalyzer extends Plugin {
 
     try {
       const { graph, onProgress } = context;
+      const factory = this.getFactory(context);
       // Single pass: collect all DECORATOR nodes, partition by relevance
       const controllers: ControllerInfo[] = [];
       const httpMethods: HttpMethodInfo[] = [];
@@ -206,11 +207,11 @@ export class NestJSRouteAnalyzer extends Plugin {
                   handlerName: `${className}.${methodName}`,
                 }
               );
-              await graph.addNode(routeNode);
+              await factory!.store(routeNode);
               nodesCreated++;
 
               if (moduleId) {
-                await graph.addEdge({
+                await factory!.link({
                   type: 'CONTAINS',
                   src: moduleId,
                   dst: routeNode.id,

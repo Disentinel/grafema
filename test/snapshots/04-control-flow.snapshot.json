@@ -1,6 +1,36 @@
 {
   "nodes": [
     {
+      "exported": false,
+      "file": "src/loops.js",
+      "name": "<array>",
+      "type": "ARRAY_LITERAL"
+    },
+    {
+      "exported": false,
+      "file": "src/loops.js",
+      "name": "<array>",
+      "type": "ARRAY_LITERAL"
+    },
+    {
+      "exported": false,
+      "file": "src/loops.js",
+      "name": "<array>",
+      "type": "ARRAY_LITERAL"
+    },
+    {
+      "exported": false,
+      "file": "src/loops.js",
+      "name": "<array>",
+      "type": "ARRAY_LITERAL"
+    },
+    {
+      "exported": false,
+      "file": "src/loops.js",
+      "name": "<array>",
+      "type": "ARRAY_LITERAL"
+    },
+    {
       "alternateExpressionId": "src/conditionals.js:EXPRESSION:CallExpression:85:44",
       "branchType": "ternary",
       "consequentExpressionId": "src/conditionals.js:EXPRESSION:CallExpression:85:26",
@@ -190,6 +220,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 27,
+      "endLine": 27,
       "exported": false,
       "file": "src/conditionals.js",
       "isAwaited": false,
@@ -203,6 +235,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 45,
+      "endLine": 57,
       "exported": false,
       "file": "src/exceptions.js",
       "isAwaited": false,
@@ -216,6 +250,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 46,
+      "endLine": 35,
       "exported": false,
       "file": "src/exceptions.js",
       "isAwaited": false,
@@ -229,6 +265,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 49,
+      "endLine": 95,
       "exported": false,
       "file": "src/exceptions.js",
       "isAwaited": false,
@@ -242,6 +280,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 52,
+      "endLine": 101,
       "exported": false,
       "file": "src/exceptions.js",
       "isAwaited": false,
@@ -255,6 +295,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 54,
+      "endLine": 98,
       "exported": false,
       "file": "src/exceptions.js",
       "isAwaited": false,
@@ -268,6 +310,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 55,
+      "endLine": 11,
       "exported": false,
       "file": "src/exceptions.js",
       "isAwaited": false,
@@ -281,6 +325,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 57,
+      "endLine": 53,
       "exported": false,
       "file": "src/exceptions.js",
       "isAwaited": false,
@@ -294,6 +340,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 25,
+      "endLine": 13,
       "exported": false,
       "file": "src/conditionals.js",
       "isAwaited": false,
@@ -307,6 +355,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 25,
+      "endLine": 18,
       "exported": false,
       "file": "src/conditionals.js",
       "isAwaited": false,
@@ -320,6 +370,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 25,
+      "endLine": 8,
       "exported": false,
       "file": "src/conditionals.js",
       "isAwaited": false,
@@ -333,32 +385,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
-      "exported": false,
-      "file": "src/exceptions.js",
-      "isAwaited": false,
-      "isInsideTry": false,
-      "isMethodCall": true,
-      "method": "log",
-      "name": "console.log",
-      "object": "console",
-      "type": "CALL"
-    },
-    {
-      "computed": false,
-      "computedPropertyVar": null,
-      "exported": false,
-      "file": "src/exceptions.js",
-      "isAwaited": false,
-      "isInsideTry": false,
-      "isMethodCall": true,
-      "method": "log",
-      "name": "console.log",
-      "object": "console",
-      "type": "CALL"
-    },
-    {
-      "computed": false,
-      "computedPropertyVar": null,
+      "endColumn": 26,
+      "endLine": 113,
       "exported": false,
       "file": "src/exceptions.js",
       "isAwaited": false,
@@ -372,6 +400,23 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 33,
+      "endLine": 15,
+      "exported": false,
+      "file": "src/exceptions.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "log",
+      "name": "console.log",
+      "object": "console",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "endColumn": 42,
+      "endLine": 6,
       "exported": false,
       "file": "src/exceptions.js",
       "isAwaited": false,
@@ -385,6 +430,23 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 60,
+      "endLine": 81,
+      "exported": false,
+      "file": "src/exceptions.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "isMethodCall": true,
+      "method": "log",
+      "name": "console.log",
+      "object": "console",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "endColumn": 22,
+      "endLine": 42,
       "exported": false,
       "file": "src/loops.js",
       "isAwaited": false,
@@ -398,6 +460,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 30,
+      "endLine": 31,
       "exported": false,
       "file": "src/loops.js",
       "isAwaited": false,
@@ -411,6 +475,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 27,
+      "endLine": 41,
       "exported": false,
       "file": "src/exceptions.js",
       "isAwaited": false,
@@ -424,6 +490,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 26,
+      "endLine": 95,
       "exported": false,
       "file": "src/loops.js",
       "isAwaited": false,
@@ -435,6 +503,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 39,
+      "endLine": 78,
       "exported": false,
       "file": "src/exceptions.js",
       "isAwaited": true,
@@ -446,6 +516,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 18,
+      "endLine": 16,
       "exported": false,
       "file": "src/exceptions.js",
       "isAwaited": false,
@@ -459,6 +531,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 31,
+      "endLine": 8,
       "exported": false,
       "file": "src/exceptions.js",
       "isAwaited": false,
@@ -470,6 +544,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 56,
+      "endLine": 85,
       "exported": false,
       "file": "src/conditionals.js",
       "isAwaited": false,
@@ -478,6 +554,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 41,
+      "endLine": 85,
       "exported": false,
       "file": "src/conditionals.js",
       "isAwaited": false,
@@ -488,6 +566,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 26,
+      "endLine": 64,
       "exported": false,
       "file": "src/exceptions.js",
       "isAwaited": false,
@@ -501,6 +581,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 18,
+      "endLine": 30,
       "exported": false,
       "file": "src/loops.js",
       "isAwaited": false,
@@ -514,6 +596,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 25,
+      "endLine": 55,
       "exported": false,
       "file": "src/loops.js",
       "isAwaited": false,
@@ -527,6 +611,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 20,
+      "endLine": 71,
       "exported": false,
       "file": "src/loops.js",
       "isAwaited": false,
@@ -538,6 +624,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 29,
+      "endLine": 7,
       "exported": false,
       "file": "src/exceptions.js",
       "isAwaited": false,
@@ -546,6 +634,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 22,
+      "endLine": 92,
       "exported": false,
       "file": "src/exceptions.js",
       "isAwaited": false,
@@ -554,6 +644,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 24,
+      "endLine": 111,
       "exported": false,
       "file": "src/exceptions.js",
       "isAwaited": false,
@@ -562,6 +654,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 36,
+      "endLine": 47,
       "exported": false,
       "file": "src/exceptions.js",
       "isAwaited": false,
@@ -570,6 +664,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 27,
+      "endLine": 80,
       "exported": false,
       "file": "src/loops.js",
       "isAwaited": false,
@@ -578,6 +674,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 36,
+      "endLine": 32,
       "exported": false,
       "file": "src/exceptions.js",
       "isAwaited": false,
@@ -588,6 +686,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 34,
+      "endLine": 79,
       "exported": false,
       "file": "src/exceptions.js",
       "isAwaited": true,
@@ -602,6 +702,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 26,
+      "endLine": 8,
       "exported": false,
       "file": "src/loops.js",
       "isAwaited": false,
@@ -615,6 +717,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 28,
+      "endLine": 69,
       "exported": false,
       "file": "src/loops.js",
       "isAwaited": false,
@@ -626,6 +730,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 45,
+      "endLine": 50,
       "exported": false,
       "file": "src/exceptions.js",
       "isAwaited": false,
@@ -634,6 +740,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 28,
+      "endLine": 57,
       "exported": false,
       "file": "src/loops.js",
       "isAwaited": false,
@@ -2576,6 +2684,34 @@
       "builtin": true,
       "creates": {
         "edges": [
+          "CALLS",
+          "HANDLED_BY"
+        ],
+        "nodes": [
+          "EXTERNAL_MODULE"
+        ]
+      },
+      "createsEdges": [
+        "CALLS",
+        "HANDLED_BY"
+      ],
+      "createsNodes": [
+        "EXTERNAL_MODULE"
+      ],
+      "dependencies": [
+        "FunctionCallResolver"
+      ],
+      "exported": false,
+      "file": "",
+      "name": "ExternalCallResolver",
+      "phase": "ENRICHMENT",
+      "priority": 0,
+      "type": "grafema:plugin"
+    },
+    {
+      "builtin": true,
+      "creates": {
+        "edges": [
           "CONTAINS",
           "MAKES_REQUEST",
           "CALLS_API"
@@ -2602,6 +2738,34 @@
       "file": "",
       "name": "FetchAnalyzer",
       "phase": "ANALYSIS",
+      "priority": 0,
+      "type": "grafema:plugin"
+    },
+    {
+      "builtin": true,
+      "creates": {
+        "edges": [
+          "CALLS",
+          "HANDLED_BY"
+        ],
+        "nodes": [
+          "EXTERNAL_MODULE"
+        ]
+      },
+      "createsEdges": [
+        "CALLS",
+        "HANDLED_BY"
+      ],
+      "createsNodes": [
+        "EXTERNAL_MODULE"
+      ],
+      "dependencies": [
+        "ImportExportLinker"
+      ],
+      "exported": false,
+      "file": "",
+      "name": "FunctionCallResolver",
+      "phase": "ENRICHMENT",
       "priority": 0,
       "type": "grafema:plugin"
     },
@@ -3162,46 +3326,6 @@
       "name": "",
       "type": "LITERAL",
       "value": null,
-      "valueType": "object"
-    },
-    {
-      "exported": false,
-      "file": "src/loops.js",
-      "name": "",
-      "type": "LITERAL",
-      "value": [],
-      "valueType": "object"
-    },
-    {
-      "exported": false,
-      "file": "src/loops.js",
-      "name": "",
-      "type": "LITERAL",
-      "value": [],
-      "valueType": "object"
-    },
-    {
-      "exported": false,
-      "file": "src/loops.js",
-      "name": "",
-      "type": "LITERAL",
-      "value": [],
-      "valueType": "object"
-    },
-    {
-      "exported": false,
-      "file": "src/loops.js",
-      "name": "",
-      "type": "LITERAL",
-      "value": [],
-      "valueType": "object"
-    },
-    {
-      "exported": false,
-      "file": "src/loops.js",
-      "name": "",
-      "type": "LITERAL",
-      "value": [],
       "valueType": "object"
     },
     {
@@ -3925,6 +4049,8 @@
     },
     {
       "computed": true,
+      "endColumn": 20,
+      "endLine": 108,
       "exported": false,
       "file": "src/conditionals.js",
       "name": "<computed>",
@@ -3934,15 +4060,8 @@
     },
     {
       "computed": true,
-      "exported": false,
-      "file": "src/loops.js",
-      "name": "<computed>",
-      "objectName": "items",
-      "semanticId": "src/loops.js->PROPERTY_ACCESS->items.<computed>[in:findFirst]",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "computed": true,
+      "endColumn": 21,
+      "endLine": 81,
       "exported": false,
       "file": "src/loops.js",
       "name": "<computed>",
@@ -3952,6 +4071,8 @@
     },
     {
       "computed": true,
+      "endColumn": 25,
+      "endLine": 7,
       "exported": false,
       "file": "src/loops.js",
       "name": "<computed>",
@@ -3961,6 +4082,8 @@
     },
     {
       "computed": true,
+      "endColumn": 25,
+      "endLine": 95,
       "exported": false,
       "file": "src/loops.js",
       "name": "<computed>",
@@ -3970,6 +4093,19 @@
     },
     {
       "computed": true,
+      "endColumn": 26,
+      "endLine": 80,
+      "exported": false,
+      "file": "src/loops.js",
+      "name": "<computed>",
+      "objectName": "items",
+      "semanticId": "src/loops.js->PROPERTY_ACCESS->items.<computed>[in:findFirst]",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "computed": true,
+      "endColumn": 29,
+      "endLine": 31,
       "exported": false,
       "file": "src/loops.js",
       "name": "<computed>",
@@ -3979,6 +4115,8 @@
     },
     {
       "computed": true,
+      "endColumn": 25,
+      "endLine": 117,
       "exported": false,
       "file": "src/conditionals.js",
       "name": "0",
@@ -3988,6 +4126,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 29,
+      "endLine": 113,
       "exported": false,
       "file": "src/conditionals.js",
       "name": "email",
@@ -3997,6 +4137,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 14,
+      "endLine": 68,
       "exported": false,
       "file": "src/exceptions.js",
       "name": "id",
@@ -4005,6 +4147,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 20,
+      "endLine": 117,
       "exported": false,
       "file": "src/conditionals.js",
       "name": "items",
@@ -4014,14 +4158,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
-      "exported": false,
-      "file": "src/loops.js",
-      "name": "length",
-      "objectName": "items",
-      "semanticId": "src/loops.js->PROPERTY_ACCESS->items.length[in:findFirst]",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
+      "endColumn": 34,
+      "endLine": 6,
       "exported": false,
       "file": "src/loops.js",
       "name": "length",
@@ -4030,6 +4168,18 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 34,
+      "endLine": 79,
+      "exported": false,
+      "file": "src/loops.js",
+      "name": "length",
+      "objectName": "items",
+      "semanticId": "src/loops.js->PROPERTY_ACCESS->items.length[in:findFirst]",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "endColumn": 36,
+      "endLine": 91,
       "exported": false,
       "file": "src/loops.js",
       "name": "length",
@@ -4038,14 +4188,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
-      "exported": false,
-      "file": "src/exceptions.js",
-      "name": "message",
-      "objectName": "error",
-      "semanticId": "src/exceptions.js->PROPERTY_ACCESS->error.message[in:fetchWithRetry]",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
+      "endColumn": 51,
+      "endLine": 101,
       "exported": false,
       "file": "src/exceptions.js",
       "name": "message",
@@ -4054,6 +4198,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 54,
+      "endLine": 11,
       "exported": false,
       "file": "src/exceptions.js",
       "name": "message",
@@ -4062,6 +4208,28 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 59,
+      "endLine": 81,
+      "exported": false,
+      "file": "src/exceptions.js",
+      "name": "message",
+      "objectName": "error",
+      "semanticId": "src/exceptions.js->PROPERTY_ACCESS->error.message[in:fetchWithRetry]",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "endColumn": 28,
+      "endLine": 90,
+      "exported": false,
+      "file": "src/conditionals.js",
+      "name": "name",
+      "objectName": "user",
+      "semanticId": "src/conditionals.js->PROPERTY_ACCESS->user.name[in:greetUser]",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "endColumn": 31,
+      "endLine": 117,
       "exported": false,
       "file": "src/conditionals.js",
       "name": "name",
@@ -4071,14 +4239,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
-      "exported": false,
-      "file": "src/conditionals.js",
-      "name": "name",
-      "objectName": "user",
-      "semanticId": "src/conditionals.js->PROPERTY_ACCESS->user.name[in:greetUser]",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
+      "endColumn": 31,
+      "endLine": 84,
       "exported": false,
       "file": "src/conditionals.js",
       "name": "name",
@@ -4087,6 +4249,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 25,
+      "endLine": 97,
       "exported": false,
       "file": "src/exceptions.js",
       "name": "name",
@@ -4095,6 +4259,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 22,
+      "endLine": 113,
       "exported": false,
       "file": "src/conditionals.js",
       "name": "profile",
@@ -4104,6 +4270,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 28,
+      "endLine": 103,
       "exported": false,
       "file": "src/conditionals.js",
       "name": "property",
@@ -6110,7 +6278,7 @@
     {
       "from": "CONSTANT:evens",
       "type": "ASSIGNED_FROM",
-      "to": "LITERAL:"
+      "to": "ARRAY_LITERAL:<array>"
     },
     {
       "from": "CONSTANT:evens",
@@ -6125,7 +6293,7 @@
     {
       "from": "CONSTANT:keys",
       "type": "ASSIGNED_FROM",
-      "to": "LITERAL:"
+      "to": "ARRAY_LITERAL:<array>"
     },
     {
       "from": "CONSTANT:keys",
@@ -6135,7 +6303,7 @@
     {
       "from": "CONSTANT:matrix",
       "type": "ASSIGNED_FROM",
-      "to": "LITERAL:"
+      "to": "ARRAY_LITERAL:<array>"
     },
     {
       "from": "CONSTANT:matrix",
@@ -6155,7 +6323,7 @@
     {
       "from": "CONSTANT:results",
       "type": "ASSIGNED_FROM",
-      "to": "LITERAL:"
+      "to": "ARRAY_LITERAL:<array>"
     },
     {
       "from": "CONSTANT:results",
@@ -6165,7 +6333,7 @@
     {
       "from": "CONSTANT:row",
       "type": "ASSIGNED_FROM",
-      "to": "LITERAL:"
+      "to": "ARRAY_LITERAL:<array>"
     },
     {
       "from": "CONSTRUCTOR_CALL:new Error()",
@@ -7071,7 +7239,17 @@
     {
       "from": "grafema:plugin:CallbackCallResolver",
       "type": "DEPENDS_ON",
+      "to": "grafema:plugin:FunctionCallResolver"
+    },
+    {
+      "from": "grafema:plugin:CallbackCallResolver",
+      "type": "DEPENDS_ON",
       "to": "grafema:plugin:ImportExportLinker"
+    },
+    {
+      "from": "grafema:plugin:ExternalCallResolver",
+      "type": "DEPENDS_ON",
+      "to": "grafema:plugin:FunctionCallResolver"
     },
     {
       "from": "grafema:plugin:FetchAnalyzer",
@@ -7082,6 +7260,11 @@
       "from": "grafema:plugin:FetchAnalyzer",
       "type": "DEPENDS_ON",
       "to": "grafema:plugin:JSModuleIndexer"
+    },
+    {
+      "from": "grafema:plugin:FunctionCallResolver",
+      "type": "DEPENDS_ON",
+      "to": "grafema:plugin:ImportExportLinker"
     },
     {
       "from": "grafema:plugin:ImportExportLinker",

@@ -65,6 +65,7 @@ import { SocketFactory } from './factories/SocketFactory.js';
 import { DatabaseFactory } from './factories/DatabaseFactory.js';
 import { ServiceFactory } from './factories/ServiceFactory.js';
 import { ExternalFactory } from './factories/ExternalFactory.js';
+import { SystemFactory } from './factories/SystemFactory.js';
 
 // Validator type for node classes
 interface NodeValidator {
@@ -182,6 +183,20 @@ export class NodeFactory {
   static createExternalFunction = ExternalFactory.createExternalFunction.bind(ExternalFactory);
 
   // ==========================================
+  // System DB domain (delegate to SystemFactory)
+  // ==========================================
+
+  static createSystemDbViewRegistration = SystemFactory.createSystemDbViewRegistration.bind(SystemFactory);
+  static createSystemDbSubscription = SystemFactory.createSystemDbSubscription.bind(SystemFactory);
+
+  // ==========================================
+  // Core infrastructure (delegate to CoreFactory)
+  // ==========================================
+
+  static createGraphMeta = CoreFactory.createGraphMeta.bind(CoreFactory);
+  static createGuarantee = CoreFactory.createGuarantee.bind(CoreFactory);
+
+  // ==========================================
   // Validation (stays in facade - needs all node types)
   // ==========================================
 
@@ -263,6 +278,16 @@ export class NodeFactory {
     // Handle service layer types (SERVICE_*)
     if (ServiceLayerNode.isServiceLayerType(node.type)) {
       return ServiceLayerNode.validate(node);
+    }
+
+    // Handle system_db domain types (SYSTEM_DB_*)
+    if (SystemFactory.isSystemDbType(node.type)) {
+      return SystemFactory.validate(node);
+    }
+
+    // Handle core infrastructure types
+    if (node.type === 'GRAPH_META' || node.type === 'GUARANTEE') {
+      return [];
     }
 
     const validator = validators[node.type];

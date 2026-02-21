@@ -9,9 +9,16 @@
  *   - PASSES_ARGUMENT: CALL -> argument (call site perspective)
  *   - RECEIVES_ARGUMENT: PARAMETER -> argument (function perspective)
  *
+ * Also creates DERIVES_FROM edges for data flow tracing:
+ *   PARAMETER node -> DERIVES_FROM -> argument source
+ *
+ * DERIVES_FROM vs RECEIVES_ARGUMENT:
+ *   - RECEIVES_ARGUMENT: per-call-site binding (has callId metadata)
+ *   - DERIVES_FROM: aggregate data flow (deduplicated across calls, no callId)
+ *
  * Edge attributes:
  *   - argIndex: position of the argument (0-based)
- *   - callId: ID of the CALL node that passed this argument
+ *   - callId: ID of the CALL node that passed this argument (RECEIVES_ARGUMENT only)
  *
  * Algorithm:
  * For each CALL node with PASSES_ARGUMENT edges:
@@ -69,12 +76,13 @@ export class ArgumentParameterLinker extends Plugin {
       },
       dependencies: ['JSASTAnalyzer', 'MethodCallResolver'], // Requires CALLS edges
       consumes: ['PASSES_ARGUMENT', 'CALLS', 'HAS_PARAMETER', 'RECEIVES_ARGUMENT'],
-      produces: ['RECEIVES_ARGUMENT']
+      produces: ['RECEIVES_ARGUMENT'] // DERIVES_FROM also created but not in produces to avoid cycle with MethodCallResolver
     };
   }
 
   async execute(context: PluginContext): Promise<PluginResult> {
     const { graph, onProgress } = context;
+    const factory = this.getFactory(context);
     const logger = this.log(context);
 
     logger.info('Starting argument-parameter linking');
@@ -82,7 +90,8 @@ export class ArgumentParameterLinker extends Plugin {
     const startTime = Date.now();
 
     let callsProcessed = 0;
-    let edgesCreated = 0;
+    let receivesEdgesCreated = 0;
+    let derivesEdgesCreated = 0;
     let unresolvedCalls = 0;
     let noParams = 0;
     const errors: Error[] = [];
@@ -95,17 +104,26 @@ export class ArgumentParameterLinker extends Plugin {
 
     logger.info('Found calls to process', { count: callNodes.length });
 
-    // Build a Set of existing RECEIVES_ARGUMENT edges to avoid duplicates
-    // Key: `${paramId}:${dstId}:${callId}`
-    const existingEdges = new Set<string>();
+    // Build Sets of existing edges to avoid duplicates
+    const existingEdges = new Set<string>(); // RECEIVES_ARGUMENT: paramId:dstId:callId
+    const existingDerivesEdges = new Set<string>(); // DERIVES_FROM: paramId:dstId
+
     for await (const node of graph.queryNodes({ nodeType: 'PARAMETER' })) {
-      const edges = await graph.getOutgoingEdges(node.id, ['RECEIVES_ARGUMENT']) as ExtendedEdgeRecord[];
-      for (const edge of edges) {
+      const receivesEdges = await graph.getOutgoingEdges(node.id, ['RECEIVES_ARGUMENT']) as ExtendedEdgeRecord[];
+      for (const edge of receivesEdges) {
         const callId = edge.callId ?? (edge.metadata?.callId as string | undefined) ?? '';
         existingEdges.add(`${node.id}:${edge.dst}:${callId}`);
       }
+
+      const derivesEdges = await graph.getOutgoingEdges(node.id, ['DERIVES_FROM']);
+      for (const edge of derivesEdges) {
+        existingDerivesEdges.add(`${node.id}:${edge.dst}`);
+      }
     }
-    logger.debug('Found existing RECEIVES_ARGUMENT edges', { count: existingEdges.size });
+    logger.debug('Found existing edges', {
+      receivesArgument: existingEdges.size,
+      derivesFrom: existingDerivesEdges.size
+    });
 
     for (const callNode of callNodes) {
       callsProcessed++;
@@ -181,7 +199,7 @@ export class ArgumentParameterLinker extends Plugin {
         continue;
       }
 
-      // 4. For each PASSES_ARGUMENT edge, create RECEIVES_ARGUMENT edge
+      // 4. For each PASSES_ARGUMENT edge, create RECEIVES_ARGUMENT and DERIVES_FROM edges
       for (const passesEdge of passesArgumentEdges as PassesArgumentEdge[]) {
         // Get argIndex from edge (can be top-level or in metadata)
         const argIndex = passesEdge.argIndex ?? (passesEdge.metadata?.argIndex as number | undefined);
@@ -195,42 +213,55 @@ export class ArgumentParameterLinker extends Plugin {
           continue; // No parameter for this argument index (extra arg)
         }
 
-        // Check for duplicate
+        // Create RECEIVES_ARGUMENT edge (per call site)
         const edgeKey = `${paramNode.id}:${passesEdge.dst}:${callNode.id}`;
-        if (existingEdges.has(edgeKey)) {
-          continue; // Already exists
+        if (!existingEdges.has(edgeKey)) {
+          await factory!.link({
+            type: 'RECEIVES_ARGUMENT',
+            src: paramNode.id,
+            dst: passesEdge.dst,
+            metadata: {
+              argIndex,
+              callId: callNode.id
+            }
+          });
+          existingEdges.add(edgeKey);
+          receivesEdgesCreated++;
         }
 
-        // Create RECEIVES_ARGUMENT edge: PARAMETER -> argument_source
-        await graph.addEdge({
-          type: 'RECEIVES_ARGUMENT',
-          src: paramNode.id,
-          dst: passesEdge.dst,
-          metadata: {
-            argIndex,
-            callId: callNode.id
-          }
-        });
-
-        existingEdges.add(edgeKey);
-        edgesCreated++;
+        // Create DERIVES_FROM edge (aggregate data flow)
+        const derivesKey = `${paramNode.id}:${passesEdge.dst}`;
+        if (!existingDerivesEdges.has(derivesKey)) {
+          await factory!.link({
+            type: 'DERIVES_FROM',
+            src: paramNode.id,
+            dst: passesEdge.dst,
+            metadata: {
+              argIndex
+            }
+          });
+          existingDerivesEdges.add(derivesKey);
+          derivesEdgesCreated++;
+        }
       }
     }
 
     const totalTime = ((Date.now() - startTime) / 1000).toFixed(2);
     logger.info('Complete', {
       callsProcessed,
-      edgesCreated,
+      receivesEdgesCreated,
+      derivesEdgesCreated,
       unresolvedCalls,
       noParams,
       time: `${totalTime}s`
     });
 
     return createSuccessResult(
-      { nodes: 0, edges: edgesCreated },
+      { nodes: 0, edges: receivesEdgesCreated + derivesEdgesCreated },
       {
         callsProcessed,
-        edgesCreated,
+        receivesEdgesCreated,
+        derivesEdgesCreated,
         unresolvedCalls,
         noParams,
         timeMs: Date.now() - startTime

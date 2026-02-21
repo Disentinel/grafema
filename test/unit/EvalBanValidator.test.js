@@ -60,12 +60,13 @@ describe('EvalBanValidator', () => {
 
       const functionViolations = await backend.checkGuarantee(`
         violation(X) :- node(X, "CALL"), attr(X, "name", "Function").
+        violation(X) :- node(X, "CONSTRUCTOR_CALL"), attr(X, "className", "Function").
       `);
 
       // Detects both Function() and new Function():
-      // - line 4: new Function('a', 'b', 'return a + b')
-      // - line 8: Function('a', 'b', 'return a * b')
-      // - line 13: new Function('a', 'b', 'return a / b')
+      // - line 4: new Function('a', 'b', 'return a + b') → CONSTRUCTOR_CALL (REG-533)
+      // - line 8: Function('a', 'b', 'return a * b')     → CALL
+      // - line 13: new Function('a', 'b', 'return a / b') → CONSTRUCTOR_CALL (REG-533)
       assert.ok(functionViolations.length >= 3, `Should detect at least 3 Function calls, got ${functionViolations.length}`);
     });
   });

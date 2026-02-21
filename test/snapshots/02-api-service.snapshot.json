@@ -12,6 +12,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 2,
+      "endLine": 20,
       "exported": false,
       "file": "src/index.js",
       "method": "get",
@@ -22,6 +24,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 4,
+      "endLine": 28,
       "exported": false,
       "file": "src/index.js",
       "isAwaited": false,
@@ -35,6 +39,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 23,
+      "endLine": 10,
       "exported": false,
       "file": "src/index.js",
       "method": "use",
@@ -45,6 +51,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 38,
+      "endLine": 13,
       "exported": false,
       "file": "src/index.js",
       "method": "use",
@@ -55,6 +63,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 40,
+      "endLine": 14,
       "exported": false,
       "file": "src/index.js",
       "method": "use",
@@ -65,6 +75,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 42,
+      "endLine": 16,
       "exported": false,
       "file": "src/db.js",
       "isAwaited": false,
@@ -78,6 +90,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 44,
+      "endLine": 7,
       "exported": false,
       "file": "src/db.js",
       "isAwaited": false,
@@ -91,6 +105,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 35,
+      "endLine": 24,
       "exported": false,
       "file": "src/index.js",
       "isAwaited": false,
@@ -104,6 +120,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 39,
+      "endLine": 18,
       "exported": false,
       "file": "src/index.js",
       "isAwaited": false,
@@ -117,6 +135,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 51,
+      "endLine": 27,
       "exported": false,
       "file": "src/index.js",
       "isAwaited": false,
@@ -130,6 +150,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 38,
+      "endLine": 9,
       "exported": false,
       "file": "src/routes/orders.js",
       "isAwaited": false,
@@ -143,6 +165,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 52,
+      "endLine": 17,
       "exported": false,
       "file": "src/routes/orders.js",
       "isAwaited": false,
@@ -156,6 +180,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 37,
+      "endLine": 9,
       "exported": false,
       "file": "src/routes/users.js",
       "isAwaited": false,
@@ -169,6 +195,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 38,
+      "endLine": 17,
       "exported": false,
       "file": "src/routes/users.js",
       "isAwaited": false,
@@ -182,6 +210,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 41,
+      "endLine": 25,
       "exported": false,
       "file": "src/routes/users.js",
       "isAwaited": false,
@@ -195,6 +225,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 20,
+      "endLine": 23,
       "exported": false,
       "file": "src/index.js",
       "isAwaited": true,
@@ -208,6 +240,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 119,
+      "endLine": 18,
       "exported": false,
       "file": "src/routes/orders.js",
       "isAwaited": true,
@@ -221,6 +255,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 57,
+      "endLine": 10,
       "exported": false,
       "file": "src/routes/orders.js",
       "isAwaited": true,
@@ -234,6 +270,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 55,
+      "endLine": 10,
       "exported": false,
       "file": "src/routes/users.js",
       "isAwaited": true,
@@ -247,6 +285,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 73,
+      "endLine": 18,
       "exported": false,
       "file": "src/routes/users.js",
       "isAwaited": true,
@@ -260,6 +300,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 97,
+      "endLine": 26,
       "exported": false,
       "file": "src/routes/users.js",
       "isAwaited": true,
@@ -271,6 +313,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 21,
+      "endLine": 6,
       "exported": false,
       "file": "src/index.js",
       "name": "express",
@@ -279,6 +323,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 22,
+      "endLine": 10,
       "exported": false,
       "file": "src/index.js",
       "method": "json",
@@ -289,6 +335,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 33,
+      "endLine": 5,
       "exported": false,
       "file": "src/routes/orders.js",
       "isAwaited": false,
@@ -302,6 +350,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 33,
+      "endLine": 5,
       "exported": false,
       "file": "src/routes/users.js",
       "isAwaited": false,
@@ -313,12 +363,16 @@
       "type": "CALL"
     },
     {
+      "endColumn": 39,
+      "endLine": 14,
       "exported": false,
       "file": "src/index.js",
       "name": "getOrdersRoute",
       "type": "CALL"
     },
     {
+      "endColumn": 37,
+      "endLine": 13,
       "exported": false,
       "file": "src/index.js",
       "name": "getUsersRoute",
@@ -327,6 +381,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 117,
+      "endLine": 18,
       "exported": false,
       "file": "src/routes/orders.js",
       "isAwaited": false,
@@ -340,6 +396,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 28,
+      "endLine": 19,
       "exported": false,
       "file": "src/index.js",
       "isAwaited": false,
@@ -353,6 +411,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 20,
+      "endLine": 11,
       "exported": false,
       "file": "src/routes/orders.js",
       "isAwaited": false,
@@ -366,6 +426,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 37,
+      "endLine": 19,
       "exported": false,
       "file": "src/routes/orders.js",
       "isAwaited": false,
@@ -379,6 +441,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 18,
+      "endLine": 19,
       "exported": false,
       "file": "src/routes/users.js",
       "isAwaited": false,
@@ -392,6 +456,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 19,
+      "endLine": 11,
       "exported": false,
       "file": "src/routes/users.js",
       "isAwaited": false,
@@ -405,6 +471,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 37,
+      "endLine": 27,
       "exported": false,
       "file": "src/routes/users.js",
       "isAwaited": false,
@@ -418,6 +486,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 4,
+      "endLine": 12,
       "exported": false,
       "file": "src/routes/orders.js",
       "isAwaited": false,
@@ -431,6 +501,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 4,
+      "endLine": 12,
       "exported": false,
       "file": "src/routes/users.js",
       "isAwaited": false,
@@ -444,6 +516,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 4,
+      "endLine": 20,
       "exported": false,
       "file": "src/routes/users.js",
       "isAwaited": false,
@@ -457,6 +531,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 4,
+      "endLine": 20,
       "exported": false,
       "file": "src/routes/orders.js",
       "isAwaited": false,
@@ -470,6 +546,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 4,
+      "endLine": 28,
       "exported": false,
       "file": "src/routes/users.js",
       "isAwaited": false,
@@ -481,6 +559,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 7,
+      "endLine": 31,
       "exported": false,
       "file": "src/index.js",
       "name": "start",
@@ -551,6 +631,76 @@
       "expressionType": "ArrayExpression",
       "file": "src/db.js",
       "name": "ArrayExpression",
+      "type": "EXPRESSION"
+    },
+    {
+      "computed": false,
+      "exported": false,
+      "expressionType": "MemberExpression",
+      "file": "src/routes/users.js",
+      "name": "req.body.email",
+      "object": "req.body",
+      "path": "req.body.email",
+      "property": "email",
+      "propertyPath": [
+        "email"
+      ],
+      "type": "EXPRESSION"
+    },
+    {
+      "computed": false,
+      "exported": false,
+      "expressionType": "MemberExpression",
+      "file": "src/routes/orders.js",
+      "name": "req.body.items",
+      "object": "req.body",
+      "path": "req.body.items",
+      "property": "items",
+      "propertyPath": [
+        "items"
+      ],
+      "type": "EXPRESSION"
+    },
+    {
+      "computed": false,
+      "exported": false,
+      "expressionType": "MemberExpression",
+      "file": "src/routes/users.js",
+      "name": "req.body.name",
+      "object": "req.body",
+      "path": "req.body.name",
+      "property": "name",
+      "propertyPath": [
+        "name"
+      ],
+      "type": "EXPRESSION"
+    },
+    {
+      "computed": false,
+      "exported": false,
+      "expressionType": "MemberExpression",
+      "file": "src/routes/orders.js",
+      "name": "req.body.userId",
+      "object": "req.body",
+      "path": "req.body.userId",
+      "property": "userId",
+      "propertyPath": [
+        "userId"
+      ],
+      "type": "EXPRESSION"
+    },
+    {
+      "computed": false,
+      "exported": false,
+      "expressionType": "MemberExpression",
+      "file": "src/routes/users.js",
+      "name": "req.params.id",
+      "object": "req.params",
+      "path": "req.params.id",
+      "property": "id",
+      "propertyPath": [
+        "id"
+      ],
       "type": "EXPRESSION"
     },
     {
@@ -895,6 +1045,34 @@
       "builtin": true,
       "creates": {
         "edges": [
+          "CALLS",
+          "HANDLED_BY"
+        ],
+        "nodes": [
+          "EXTERNAL_MODULE"
+        ]
+      },
+      "createsEdges": [
+        "CALLS",
+        "HANDLED_BY"
+      ],
+      "createsNodes": [
+        "EXTERNAL_MODULE"
+      ],
+      "dependencies": [
+        "FunctionCallResolver"
+      ],
+      "exported": false,
+      "file": "",
+      "name": "ExternalCallResolver",
+      "phase": "ENRICHMENT",
+      "priority": 0,
+      "type": "grafema:plugin"
+    },
+    {
+      "builtin": true,
+      "creates": {
+        "edges": [
           "CONTAINS",
           "MAKES_REQUEST",
           "CALLS_API"
@@ -921,6 +1099,34 @@
       "file": "",
       "name": "FetchAnalyzer",
       "phase": "ANALYSIS",
+      "priority": 0,
+      "type": "grafema:plugin"
+    },
+    {
+      "builtin": true,
+      "creates": {
+        "edges": [
+          "CALLS",
+          "HANDLED_BY"
+        ],
+        "nodes": [
+          "EXTERNAL_MODULE"
+        ]
+      },
+      "createsEdges": [
+        "CALLS",
+        "HANDLED_BY"
+      ],
+      "createsNodes": [
+        "EXTERNAL_MODULE"
+      ],
+      "dependencies": [
+        "ImportExportLinker"
+      ],
+      "exported": false,
+      "file": "",
+      "name": "FunctionCallResolver",
+      "phase": "ENRICHMENT",
       "priority": 0,
       "type": "grafema:plugin"
     },
@@ -1558,6 +1764,8 @@
       "type": "PARAMETER"
     },
     {
+      "endColumn": 38,
+      "endLine": 16,
       "exported": false,
       "file": "src/routes/orders.js",
       "name": "body",
@@ -1566,6 +1774,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 36,
+      "endLine": 24,
       "exported": false,
       "file": "src/routes/users.js",
       "name": "body",
@@ -1574,6 +1784,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 23,
+      "endLine": 13,
       "exported": false,
       "file": "src/db.js",
       "name": "connected",
@@ -1582,6 +1794,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 34,
+      "endLine": 19,
       "exported": false,
       "file": "src/routes/orders.js",
       "name": "insertId",
@@ -1590,6 +1804,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 34,
+      "endLine": 27,
       "exported": false,
       "file": "src/routes/users.js",
       "name": "insertId",
@@ -1598,6 +1814,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 29,
+      "endLine": 16,
       "exported": false,
       "file": "src/routes/users.js",
       "name": "params",
@@ -2221,6 +2439,39 @@
       }
     },
     {
+      "from": "CALL:express",
+      "type": "CALLS",
+      "to": "EXTERNAL_MODULE:express",
+      "metadata": {
+        "exportedName": "default"
+      }
+    },
+    {
+      "from": "CALL:express",
+      "type": "HANDLED_BY",
+      "to": "IMPORT:express"
+    },
+    {
+      "from": "CALL:getOrdersRoute",
+      "type": "CALLS",
+      "to": "FUNCTION:getOrdersRoute"
+    },
+    {
+      "from": "CALL:getOrdersRoute",
+      "type": "HANDLED_BY",
+      "to": "IMPORT:getOrdersRoute"
+    },
+    {
+      "from": "CALL:getUsersRoute",
+      "type": "CALLS",
+      "to": "FUNCTION:getUsersRoute"
+    },
+    {
+      "from": "CALL:getUsersRoute",
+      "type": "HANDLED_BY",
+      "to": "IMPORT:getUsersRoute"
+    },
+    {
       "from": "CALL:JSON.stringify",
       "type": "DERIVES_FROM",
       "to": "VARIABLE:items",
@@ -2660,7 +2911,17 @@
     {
       "from": "grafema:plugin:CallbackCallResolver",
       "type": "DEPENDS_ON",
+      "to": "grafema:plugin:FunctionCallResolver"
+    },
+    {
+      "from": "grafema:plugin:CallbackCallResolver",
+      "type": "DEPENDS_ON",
       "to": "grafema:plugin:ImportExportLinker"
+    },
+    {
+      "from": "grafema:plugin:ExternalCallResolver",
+      "type": "DEPENDS_ON",
+      "to": "grafema:plugin:FunctionCallResolver"
     },
     {
       "from": "grafema:plugin:FetchAnalyzer",
@@ -2671,6 +2932,11 @@
       "from": "grafema:plugin:FetchAnalyzer",
       "type": "DEPENDS_ON",
       "to": "grafema:plugin:JSModuleIndexer"
+    },
+    {
+      "from": "grafema:plugin:FunctionCallResolver",
+      "type": "DEPENDS_ON",
+      "to": "grafema:plugin:ImportExportLinker"
     },
     {
       "from": "grafema:plugin:ImportExportLinker",
@@ -3255,6 +3521,26 @@
       "to": "CALL:express"
     },
     {
+      "from": "VARIABLE:email",
+      "type": "ASSIGNED_FROM",
+      "to": "EXPRESSION:req.body.email"
+    },
+    {
+      "from": "VARIABLE:id",
+      "type": "ASSIGNED_FROM",
+      "to": "EXPRESSION:req.params.id"
+    },
+    {
+      "from": "VARIABLE:items",
+      "type": "ASSIGNED_FROM",
+      "to": "EXPRESSION:req.body.items"
+    },
+    {
+      "from": "VARIABLE:name",
+      "type": "ASSIGNED_FROM",
+      "to": "EXPRESSION:req.body.name"
+    },
+    {
       "from": "VARIABLE:orders",
       "type": "ASSIGNED_FROM",
       "to": "CALL:db.query"
@@ -3293,6 +3579,11 @@
       "from": "VARIABLE:user",
       "type": "ASSIGNED_FROM",
       "to": "CALL:db.query"
+    },
+    {
+      "from": "VARIABLE:userId",
+      "type": "ASSIGNED_FROM",
+      "to": "EXPRESSION:req.body.userId"
     },
     {
       "from": "VARIABLE:users",

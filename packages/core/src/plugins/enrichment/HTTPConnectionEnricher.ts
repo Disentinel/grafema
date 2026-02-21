@@ -64,6 +64,7 @@ export class HTTPConnectionEnricher extends Plugin {
 
   async execute(context: PluginContext): Promise<PluginResult> {
     const { graph, onProgress } = context;
+    const factory = this.getFactory(context);
     const logger = this.log(context);
 
     try {
@@ -188,11 +189,11 @@ export class HTTPConnectionEnricher extends Plugin {
 
           if (routePath && pathsMatch(url, routePath)) {
             // 1. Create INTERACTS_WITH edge (existing)
-            await graph.addEdge({
+            await factory!.link({
               type: 'INTERACTS_WITH',
               src: request.id,
               dst: route.id,
-              matchType: hasParams(routePath) ? 'parametric' : 'exact'
+              metadata: { matchType: hasParams(routePath) ? 'parametric' : 'exact' }
             });
 
             edgesCreated++;
@@ -202,7 +203,7 @@ export class HTTPConnectionEnricher extends Plugin {
             if (responseDataNode) {
               const respondsWithEdges = await graph.getOutgoingEdges(route.id, ['RESPONDS_WITH']);
               for (const respEdge of respondsWithEdges) {
-                await graph.addEdge({
+                await factory!.link({
                   type: 'HTTP_RECEIVES',
                   src: responseDataNode,
                   dst: respEdge.dst,

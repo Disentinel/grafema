@@ -17,6 +17,7 @@ import type { CallExpression, Identifier, MemberExpression, ObjectExpression, No
 import type { NodePath } from '@babel/traverse';
 import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
+import type { FactoryLike } from '../../core/GraphFactory.js';
 import type { NodeRecord } from '@grafema/types';
 import type { AnyBrandedNode } from '@grafema/types';
 import { NodeFactory } from '../../core/NodeFactory.js';
@@ -83,11 +84,12 @@ export class FetchAnalyzer extends Plugin {
 
     try {
       const { graph, onProgress } = context;
+      const factory = this.getFactory(context);
       const projectPath = (context.manifest as { projectPath?: string })?.projectPath ?? '';
 
       // Create net:request singleton once before processing modules
       const networkNode = NodeFactory.createNetworkRequest();
-      await graph.addNode(networkNode);
+      await factory.store(networkNode);
       this.networkNodeCreated = true;
       this.networkNodeId = networkNode.id;
 
@@ -101,7 +103,7 @@ export class FetchAnalyzer extends Plugin {
 
       for (let i = 0; i < modules.length; i++) {
         const module = modules[i];
-        const result = await this.analyzeModule(module, graph, projectPath);
+        const result = await this.analyzeModule(module, graph, projectPath, factory);
         requestsCount += result.requests;
         apisCount += result.apis;
 
@@ -149,7 +151,8 @@ export class FetchAnalyzer extends Plugin {
   private async analyzeModule(
     module: NodeRecord,
     graph: PluginContext['graph'],
-    projectPath: string
+    projectPath: string,
+    factory: FactoryLike,
   ): Promise<AnalysisResult> {
     // Batch arrays for nodes and edges
     const nodes: AnyBrandedNode[] = [];
@@ -452,10 +455,10 @@ export class FetchAnalyzer extends Plugin {
 
       // Flush batched operations
       if (nodes.length > 0) {
-        await graph.addNodes(nodes);
+        await factory.storeMany(nodes);
       }
       if (edges.length > 0) {
-        await graph.addEdges(edges);
+        await factory.linkMany(edges);
       }
 
       return {

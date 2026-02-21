@@ -103,7 +103,7 @@ export async function checkServerStatus(
     };
   }
 
-  const client = new RFDBClient(socketPath);
+  const client = new RFDBClient(socketPath, 'cli');
   client.on('error', () => {}); // Suppress error events
 
   try {
@@ -330,7 +330,7 @@ export async function checkGraphStats(
     };
   }
 
-  const backend = new RFDBServerBackend({ dbPath });
+  const backend = new RFDBServerBackend({ dbPath, clientName: 'cli' });
   try {
     await backend.connect();
     const stats = await backend.getStats();
@@ -387,7 +387,7 @@ export async function checkConnectivity(
     };
   }
 
-  const backend = new RFDBServerBackend({ dbPath });
+  const backend = new RFDBServerBackend({ dbPath, clientName: 'cli' });
   try {
     await backend.connect();
 
@@ -523,7 +523,7 @@ export async function checkFreshness(
     };
   }
 
-  const backend = new RFDBServerBackend({ dbPath });
+  const backend = new RFDBServerBackend({ dbPath, clientName: 'cli' });
   try {
     await backend.connect();
     const freshnessChecker = new GraphFreshnessChecker();
@@ -594,7 +594,7 @@ export async function checkVersions(
   // Get RFDB version from server if running
   const socketPath = join(projectPath, '.grafema', 'rfdb.sock');
   if (existsSync(socketPath)) {
-    const client = new RFDBClient(socketPath);
+    const client = new RFDBClient(socketPath, 'cli');
     client.on('error', () => {});
     try {
       await client.connect();

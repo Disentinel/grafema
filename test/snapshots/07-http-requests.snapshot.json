@@ -10,6 +10,8 @@
       "type": "BRANCH"
     },
     {
+      "endColumn": 52,
+      "endLine": 75,
       "exported": false,
       "file": "client.js",
       "isAwaited": true,
@@ -20,6 +22,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 48,
+      "endLine": 43,
       "exported": false,
       "file": "client.js",
       "isAwaited": true,
@@ -33,6 +37,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 72,
+      "endLine": 57,
       "exported": false,
       "file": "client.js",
       "isAwaited": true,
@@ -46,6 +52,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 4,
+      "endLine": 51,
       "exported": false,
       "file": "client.js",
       "isAwaited": true,
@@ -57,6 +65,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 22,
+      "endLine": 92,
       "exported": false,
       "file": "client.js",
       "isAwaited": false,
@@ -65,6 +75,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 23,
+      "endLine": 91,
       "exported": false,
       "file": "client.js",
       "isAwaited": false,
@@ -73,6 +85,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 24,
+      "endLine": 93,
       "exported": false,
       "file": "client.js",
       "isAwaited": false,
@@ -81,6 +95,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 39,
+      "endLine": 81,
       "exported": false,
       "file": "client.js",
       "isAwaited": false,
@@ -89,14 +105,8 @@
       "type": "CALL"
     },
     {
-      "exported": false,
-      "file": "client.js",
-      "isAwaited": false,
-      "isInsideTry": false,
-      "name": "fetch",
-      "type": "CALL"
-    },
-    {
+      "endColumn": 4,
+      "endLine": 21,
       "exported": false,
       "file": "client.js",
       "isAwaited": true,
@@ -105,6 +115,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 4,
+      "endLine": 37,
       "exported": false,
       "file": "client.js",
       "isAwaited": true,
@@ -113,6 +125,18 @@
       "type": "CALL"
     },
     {
+      "endColumn": 44,
+      "endLine": 70,
+      "exported": false,
+      "file": "client.js",
+      "isAwaited": false,
+      "isInsideTry": false,
+      "name": "fetch",
+      "type": "CALL"
+    },
+    {
+      "endColumn": 44,
+      "endLine": 8,
       "exported": false,
       "file": "client.js",
       "isAwaited": true,
@@ -121,6 +145,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 52,
+      "endLine": 27,
       "exported": false,
       "file": "client.js",
       "isAwaited": true,
@@ -131,6 +157,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 51,
+      "endLine": 67,
       "exported": false,
       "file": "client.js",
       "isAwaited": false,
@@ -144,6 +172,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 34,
+      "endLine": 20,
       "exported": false,
       "file": "client.js",
       "isAwaited": false,
@@ -157,6 +187,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 50,
+      "endLine": 63,
       "exported": false,
       "file": "client.js",
       "isAwaited": false,
@@ -170,6 +202,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 4,
+      "endLine": 94,
       "exported": false,
       "file": "client.js",
       "isAwaited": true,
@@ -183,6 +217,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 24,
+      "endLine": 22,
       "exported": false,
       "file": "client.js",
       "isAwaited": false,
@@ -196,6 +232,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 24,
+      "endLine": 28,
       "exported": false,
       "file": "client.js",
       "isAwaited": false,
@@ -209,6 +247,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 24,
+      "endLine": 38,
       "exported": false,
       "file": "client.js",
       "isAwaited": false,
@@ -222,6 +262,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 24,
+      "endLine": 76,
       "exported": false,
       "file": "client.js",
       "isAwaited": false,
@@ -235,6 +277,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 36,
+      "endLine": 9,
       "exported": false,
       "file": "client.js",
       "isAwaited": true,
@@ -244,12 +288,6 @@
       "name": "response.json",
       "object": "response",
       "type": "CALL"
-    },
-    {
-      "exported": false,
-      "file": "client.js",
-      "name": "headers",
-      "type": "CONSTANT"
     },
     {
       "className": "Headers",
@@ -715,6 +753,34 @@
       "builtin": true,
       "creates": {
         "edges": [
+          "CALLS",
+          "HANDLED_BY"
+        ],
+        "nodes": [
+          "EXTERNAL_MODULE"
+        ]
+      },
+      "createsEdges": [
+        "CALLS",
+        "HANDLED_BY"
+      ],
+      "createsNodes": [
+        "EXTERNAL_MODULE"
+      ],
+      "dependencies": [
+        "FunctionCallResolver"
+      ],
+      "exported": false,
+      "file": "",
+      "name": "ExternalCallResolver",
+      "phase": "ENRICHMENT",
+      "priority": 0,
+      "type": "grafema:plugin"
+    },
+    {
+      "builtin": true,
+      "creates": {
+        "edges": [
           "CONTAINS",
           "MAKES_REQUEST",
           "CALLS_API"
@@ -741,6 +807,34 @@
       "file": "",
       "name": "FetchAnalyzer",
       "phase": "ANALYSIS",
+      "priority": 0,
+      "type": "grafema:plugin"
+    },
+    {
+      "builtin": true,
+      "creates": {
+        "edges": [
+          "CALLS",
+          "HANDLED_BY"
+        ],
+        "nodes": [
+          "EXTERNAL_MODULE"
+        ]
+      },
+      "createsEdges": [
+        "CALLS",
+        "HANDLED_BY"
+      ],
+      "createsNodes": [
+        "EXTERNAL_MODULE"
+      ],
+      "dependencies": [
+        "ImportExportLinker"
+      ],
+      "exported": false,
+      "file": "",
+      "name": "FunctionCallResolver",
+      "phase": "ENRICHMENT",
       "priority": 0,
       "type": "grafema:plugin"
     },
@@ -1315,22 +1409,8 @@
       "type": "PARAMETER"
     },
     {
-      "exported": false,
-      "file": "client.js",
-      "name": "data",
-      "objectName": "response",
-      "semanticId": "client.js->PROPERTY_ACCESS->response.data[in:createUserAxios]",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "exported": false,
-      "file": "client.js",
-      "name": "data",
-      "objectName": "response",
-      "semanticId": "client.js->PROPERTY_ACCESS->response.data[in:fetchGitlab]",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
+      "endColumn": 22,
+      "endLine": 44,
       "exported": false,
       "file": "client.js",
       "name": "data",
@@ -1339,6 +1419,28 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 22,
+      "endLine": 52,
+      "exported": false,
+      "file": "client.js",
+      "name": "data",
+      "objectName": "response",
+      "semanticId": "client.js->PROPERTY_ACCESS->response.data[in:createUserAxios]",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "endColumn": 22,
+      "endLine": 58,
+      "exported": false,
+      "file": "client.js",
+      "name": "data",
+      "objectName": "response",
+      "semanticId": "client.js->PROPERTY_ACCESS->response.data[in:fetchGitlab]",
+      "type": "PROPERTY_ACCESS"
+    },
+    {
+      "endColumn": 45,
+      "endLine": 64,
       "exported": false,
       "file": "client.js",
       "name": "headers",
@@ -1486,6 +1588,12 @@
       "exported": false,
       "file": "client.js",
       "name": "gigs",
+      "type": "VARIABLE"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "name": "headers",
       "type": "VARIABLE"
     },
     {
@@ -1713,7 +1821,7 @@
     {
       "from": "CALL:headers.set",
       "type": "USES",
-      "to": "CONSTANT:headers"
+      "to": "VARIABLE:headers"
     },
     {
       "from": "CALL:localStorage.getItem",
@@ -1775,11 +1883,6 @@
       "from": "CALL:response.json",
       "type": "USES",
       "to": "VARIABLE:response"
-    },
-    {
-      "from": "CONSTANT:headers",
-      "type": "ASSIGNED_FROM",
-      "to": "CONSTRUCTOR_CALL:new Headers()"
     },
     {
       "from": "EXPRESSION:data.gigs",
@@ -2047,7 +2150,17 @@
     {
       "from": "grafema:plugin:CallbackCallResolver",
       "type": "DEPENDS_ON",
+      "to": "grafema:plugin:FunctionCallResolver"
+    },
+    {
+      "from": "grafema:plugin:CallbackCallResolver",
+      "type": "DEPENDS_ON",
       "to": "grafema:plugin:ImportExportLinker"
+    },
+    {
+      "from": "grafema:plugin:ExternalCallResolver",
+      "type": "DEPENDS_ON",
+      "to": "grafema:plugin:FunctionCallResolver"
     },
     {
       "from": "grafema:plugin:FetchAnalyzer",
@@ -2058,6 +2171,11 @@
       "from": "grafema:plugin:FetchAnalyzer",
       "type": "DEPENDS_ON",
       "to": "grafema:plugin:JSModuleIndexer"
+    },
+    {
+      "from": "grafema:plugin:FunctionCallResolver",
+      "type": "DEPENDS_ON",
+      "to": "grafema:plugin:ImportExportLinker"
     },
     {
       "from": "grafema:plugin:ImportExportLinker",
@@ -2335,7 +2453,7 @@
     {
       "from": "SCOPE:authFetch:body",
       "type": "DECLARES",
-      "to": "CONSTANT:headers"
+      "to": "VARIABLE:headers"
     },
     {
       "from": "SCOPE:authFetch:body",
@@ -2572,6 +2690,11 @@
       "from": "VARIABLE:gigs",
       "type": "RETURNS",
       "to": "FUNCTION:fetchAndProcess"
+    },
+    {
+      "from": "VARIABLE:headers",
+      "type": "ASSIGNED_FROM",
+      "to": "CONSTRUCTOR_CALL:new Headers()"
     },
     {
       "from": "VARIABLE:response",

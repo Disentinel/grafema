@@ -20,17 +20,6 @@ import { resolveModulePath } from '../../utils/moduleResolution.js';
 const traverse = (traverseModule as any).default || traverseModule;
 
 /**
- * Edge to add - compatible with InputEdge
- */
-interface EdgeToAdd {
-  src: string;
-  dst: string;
-  type: string;
-  version?: string;
-  [key: string]: unknown;
-}
-
-/**
  * Pending import edge
  */
 interface PendingImport {
@@ -144,7 +133,8 @@ export class IncrementalModuleIndexer extends Plugin {
   async execute(context: PluginContext): Promise<PluginResult> {
     const logger = this.log(context);
     try {
-      const { manifest, graph } = context;
+      const { manifest } = context;
+      const factory = this.getFactory(context);
       // Cast manifest to expected shape
       const typedManifest = manifest as { projectPath: string; service: { id: string; name: string }; entryFile: string } | undefined;
       const { projectPath, service, entryFile } = typedManifest!;
@@ -181,16 +171,16 @@ export class IncrementalModuleIndexer extends Plugin {
           { contentHash: fileHash || '' }
         );
 
-        await graph.addNode(moduleNode);
+        await factory!.store(moduleNode);
         nodesCreated++;
 
         // Link to SERVICE
-        await graph.addEdge({
+        await factory!.link({
           src: service.id,
           dst: moduleNode.id,
           type: 'CONTAINS',
-          version: 'main'
-        } as EdgeToAdd);
+          metadata: { version: 'main' }
+        });
         edgesCreated++;
 
         // Parse imports and add to queue
@@ -256,12 +246,12 @@ export class IncrementalModuleIndexer extends Plugin {
 
       // Now create all IMPORTS edges after all MODULE nodes exist
       for (const { src, dst } of pendingImports) {
-        await graph.addEdge({
+        await factory!.link({
           src,
           dst,
           type: 'IMPORTS',
-          version: 'main'
-        } as EdgeToAdd);
+          metadata: { version: 'main' }
+        });
         edgesCreated++;
       }
 

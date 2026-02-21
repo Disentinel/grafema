@@ -1,6 +1,8 @@
 {
   "nodes": [
     {
+      "endColumn": 39,
+      "endLine": 28,
       "exported": false,
       "file": "server.js",
       "isAwaited": true,
@@ -11,6 +13,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 35,
+      "endLine": 14,
       "exported": false,
       "file": "client.js",
       "isAwaited": false,
@@ -24,6 +28,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 36,
+      "endLine": 10,
       "exported": false,
       "file": "client.js",
       "isAwaited": false,
@@ -37,6 +43,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 41,
+      "endLine": 27,
       "exported": false,
       "file": "client.js",
       "isAwaited": false,
@@ -50,6 +58,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 43,
+      "endLine": 20,
       "exported": false,
       "file": "server.js",
       "isAwaited": false,
@@ -63,6 +73,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 48,
+      "endLine": 44,
       "exported": false,
       "file": "server.js",
       "isAwaited": false,
@@ -76,6 +88,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 54,
+      "endLine": 36,
       "exported": false,
       "file": "client.js",
       "isAwaited": false,
@@ -89,6 +103,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 46,
+      "endLine": 56,
       "exported": false,
       "file": "server.js",
       "isAwaited": false,
@@ -100,6 +116,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 21,
+      "endLine": 19,
       "exported": false,
       "file": "client.js",
       "isAwaited": false,
@@ -108,6 +126,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 61,
+      "endLine": 32,
       "exported": false,
       "file": "client.js",
       "isAwaited": false,
@@ -116,6 +136,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 42,
+      "endLine": 6,
       "exported": false,
       "file": "client.js",
       "name": "io",
@@ -124,6 +146,20 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 45,
+      "endLine": 10,
+      "exported": false,
+      "file": "server.js",
+      "method": "emit",
+      "name": "io.emit",
+      "object": "io",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "endColumn": 49,
+      "endLine": 56,
       "exported": false,
       "file": "server.js",
       "isAwaited": false,
@@ -137,6 +173,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 51,
+      "endLine": 45,
       "exported": false,
       "file": "server.js",
       "isAwaited": false,
@@ -150,16 +188,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
-      "exported": false,
-      "file": "server.js",
-      "method": "emit",
-      "name": "io.emit",
-      "object": "io",
-      "type": "CALL"
-    },
-    {
-      "computed": false,
-      "computedPropertyVar": null,
+      "endColumn": 15,
+      "endLine": 16,
       "exported": false,
       "file": "server.js",
       "method": "of",
@@ -170,6 +200,20 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 16,
+      "endLine": 13,
+      "exported": false,
+      "file": "server.js",
+      "method": "to",
+      "name": "io.to",
+      "object": "io",
+      "type": "CALL"
+    },
+    {
+      "computed": false,
+      "computedPropertyVar": null,
+      "endColumn": 20,
+      "endLine": 34,
       "exported": false,
       "file": "server.js",
       "isAwaited": false,
@@ -181,46 +225,48 @@
       "type": "CALL"
     },
     {
-      "computed": false,
-      "computedPropertyVar": null,
-      "exported": false,
-      "file": "server.js",
-      "method": "to",
-      "name": "io.to",
-      "object": "io",
-      "type": "CALL"
-    },
-    {
+      "endColumn": 22,
+      "endLine": 6,
       "exported": false,
       "file": "index.js",
       "name": "require",
       "type": "CALL"
     },
     {
+      "endColumn": 22,
+      "endLine": 7,
       "exported": false,
       "file": "index.js",
       "name": "require",
       "type": "CALL"
     },
     {
+      "endColumn": 31,
+      "endLine": 6,
       "exported": false,
       "file": "server.js",
       "name": "require",
       "type": "CALL"
     },
     {
+      "endColumn": 57,
+      "endLine": 7,
       "exported": false,
       "file": "server.js",
       "name": "require",
       "type": "CALL"
     },
     {
+      "endColumn": 9,
+      "endLine": 57,
       "exported": false,
       "file": "server.js",
       "name": "setInterval",
       "type": "CALL"
     },
     {
+      "endColumn": 49,
+      "endLine": 54,
       "exported": false,
       "file": "client.js",
       "isAwaited": false,
@@ -229,6 +275,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 45,
+      "endLine": 50,
       "exported": false,
       "file": "client.js",
       "isAwaited": false,
@@ -237,6 +285,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 34,
+      "endLine": 23,
       "exported": false,
       "file": "client.js",
       "isAwaited": false,
@@ -245,6 +295,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 67,
+      "endLine": 39,
       "exported": false,
       "file": "server.js",
       "isMethodCall": true,
@@ -256,6 +308,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 57,
+      "endLine": 36,
       "exported": false,
       "file": "client.js",
       "isAwaited": false,
@@ -269,6 +323,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 64,
+      "endLine": 32,
       "exported": false,
       "file": "client.js",
       "isAwaited": false,
@@ -282,6 +338,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 38,
+      "endLine": 29,
       "exported": false,
       "file": "server.js",
       "isAwaited": false,
@@ -295,6 +353,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 24,
+      "endLine": 23,
       "exported": false,
       "file": "server.js",
       "isAwaited": false,
@@ -308,6 +368,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 38,
+      "endLine": 24,
       "exported": false,
       "file": "server.js",
       "isAwaited": false,
@@ -321,6 +383,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 29,
+      "endLine": 42,
       "exported": false,
       "file": "client.js",
       "isAwaited": false,
@@ -334,6 +398,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 4,
+      "endLine": 31,
       "exported": false,
       "file": "server.js",
       "isAwaited": false,
@@ -347,6 +413,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 4,
+      "endLine": 35,
       "exported": false,
       "file": "server.js",
       "isAwaited": false,
@@ -360,6 +428,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 4,
+      "endLine": 40,
       "exported": false,
       "file": "server.js",
       "isAwaited": false,
@@ -373,6 +443,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 4,
+      "endLine": 46,
       "exported": false,
       "file": "server.js",
       "isAwaited": false,
@@ -386,6 +458,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 24,
+      "endLine": 30,
       "exported": false,
       "file": "server.js",
       "isAwaited": false,
@@ -399,6 +473,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 53,
+      "endLine": 51,
       "exported": false,
       "file": "server.js",
       "isAwaited": false,
@@ -410,6 +486,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 16,
+      "endLine": 15,
       "exported": false,
       "file": "client.js",
       "isAwaited": false,
@@ -418,6 +496,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 22,
+      "endLine": 44,
       "exported": false,
       "file": "client.js",
       "isAwaited": false,
@@ -426,6 +506,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 4,
+      "endLine": 51,
       "exported": false,
       "file": "client.js",
       "isAwaited": false,
@@ -434,6 +516,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 4,
+      "endLine": 55,
       "exported": false,
       "file": "client.js",
       "isAwaited": false,
@@ -997,6 +1081,34 @@
       "builtin": true,
       "creates": {
         "edges": [
+          "CALLS",
+          "HANDLED_BY"
+        ],
+        "nodes": [
+          "EXTERNAL_MODULE"
+        ]
+      },
+      "createsEdges": [
+        "CALLS",
+        "HANDLED_BY"
+      ],
+      "createsNodes": [
+        "EXTERNAL_MODULE"
+      ],
+      "dependencies": [
+        "FunctionCallResolver"
+      ],
+      "exported": false,
+      "file": "",
+      "name": "ExternalCallResolver",
+      "phase": "ENRICHMENT",
+      "priority": 0,
+      "type": "grafema:plugin"
+    },
+    {
+      "builtin": true,
+      "creates": {
+        "edges": [
           "CONTAINS",
           "MAKES_REQUEST",
           "CALLS_API"
@@ -1023,6 +1135,34 @@
       "file": "",
       "name": "FetchAnalyzer",
       "phase": "ANALYSIS",
+      "priority": 0,
+      "type": "grafema:plugin"
+    },
+    {
+      "builtin": true,
+      "creates": {
+        "edges": [
+          "CALLS",
+          "HANDLED_BY"
+        ],
+        "nodes": [
+          "EXTERNAL_MODULE"
+        ]
+      },
+      "createsEdges": [
+        "CALLS",
+        "HANDLED_BY"
+      ],
+      "createsNodes": [
+        "EXTERNAL_MODULE"
+      ],
+      "dependencies": [
+        "ImportExportLinker"
+      ],
+      "exported": false,
+      "file": "",
+      "name": "FunctionCallResolver",
+      "phase": "ENRICHMENT",
       "priority": 0,
       "type": "grafema:plugin"
     },
@@ -1709,6 +1849,8 @@
       "type": "PARAMETER"
     },
     {
+      "endColumn": 20,
+      "endLine": 39,
       "exported": false,
       "file": "server.js",
       "name": "broadcast",
@@ -1717,6 +1859,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 47,
+      "endLine": 44,
       "exported": false,
       "file": "server.js",
       "name": "id",
@@ -1725,6 +1869,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 33,
+      "endLine": 23,
       "exported": false,
       "file": "client.js",
       "name": "userId",
@@ -1733,6 +1879,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 48,
+      "endLine": 45,
       "exported": false,
       "file": "server.js",
       "name": "userId",
@@ -2861,7 +3009,17 @@
     {
       "from": "grafema:plugin:CallbackCallResolver",
       "type": "DEPENDS_ON",
+      "to": "grafema:plugin:FunctionCallResolver"
+    },
+    {
+      "from": "grafema:plugin:CallbackCallResolver",
+      "type": "DEPENDS_ON",
       "to": "grafema:plugin:ImportExportLinker"
+    },
+    {
+      "from": "grafema:plugin:ExternalCallResolver",
+      "type": "DEPENDS_ON",
+      "to": "grafema:plugin:FunctionCallResolver"
     },
     {
       "from": "grafema:plugin:FetchAnalyzer",
@@ -2872,6 +3030,11 @@
       "from": "grafema:plugin:FetchAnalyzer",
       "type": "DEPENDS_ON",
       "to": "grafema:plugin:JSModuleIndexer"
+    },
+    {
+      "from": "grafema:plugin:FunctionCallResolver",
+      "type": "DEPENDS_ON",
+      "to": "grafema:plugin:ImportExportLinker"
     },
     {
       "from": "grafema:plugin:ImportExportLinker",

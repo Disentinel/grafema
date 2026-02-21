@@ -106,7 +106,7 @@ async function matchRequestsToRoutes(graph) {
           type: 'INTERACTS_WITH',
           src: request.id,
           dst: route.id,
-          matchType: hasParams(routePath) ? 'parametric' : 'exact'
+          metadata: { matchType: hasParams(routePath) ? 'parametric' : 'exact' }
         });
         break; // One request → one route
       }
@@ -149,7 +149,7 @@ describe('HTTPConnectionEnricher - Mount Prefix Support', () => {
       assert.strictEqual(edges.length, 1, 'Should create 1 edge');
       assert.strictEqual(edges[0].src, 'request:fetch-users');
       assert.strictEqual(edges[0].dst, 'route:get-users');
-      assert.strictEqual(edges[0].matchType, 'exact');
+      assert.strictEqual(edges[0].metadata.matchType, 'exact');
     });
 
     it('should NOT match when using only path (without fullPath)', async () => {
@@ -257,7 +257,7 @@ describe('HTTPConnectionEnricher - Mount Prefix Support', () => {
       const edges = await matchRequestsToRoutes(graph);
 
       assert.strictEqual(edges.length, 1);
-      assert.strictEqual(edges[0].matchType, 'parametric');
+      assert.strictEqual(edges[0].metadata.matchType, 'parametric');
     });
 
     it('should treat dots in routes as literal characters', async () => {
@@ -561,7 +561,7 @@ async function matchRequestsToRoutesWithHttpReceives(graph) {
           type: 'INTERACTS_WITH',
           src: request.id,
           dst: route.id,
-          matchType: hasParams(routePath) ? 'parametric' : 'exact'
+          metadata: { matchType: hasParams(routePath) ? 'parametric' : 'exact' }
         });
 
         // Create HTTP_RECEIVES edges (NEW)
@@ -1073,7 +1073,7 @@ async function matchRequestsToRoutesNormalized(graph) {
           type: 'INTERACTS_WITH',
           src: request.id,
           dst: route.id,
-          matchType: hasParamsNew(routePath) || hasParamsNew(url) ? 'parametric' : 'exact'
+          metadata: { matchType: hasParamsNew(routePath) || hasParamsNew(url) ? 'parametric' : 'exact' }
         });
         break; // One request → one route
       }
@@ -1107,7 +1107,7 @@ describe('HTTPConnectionEnricher - Template Literal Matching (REG-318)', () => {
       const edges = await matchRequestsToRoutesNormalized(graph);
 
       assert.strictEqual(edges.length, 1, 'Should match template literal to param');
-      assert.strictEqual(edges[0].matchType, 'parametric');
+      assert.strictEqual(edges[0].metadata.matchType, 'parametric');
     });
 
     it('should match named template literal ${userId} to :id', async () => {
@@ -1157,7 +1157,7 @@ describe('HTTPConnectionEnricher - Template Literal Matching (REG-318)', () => {
       const edges = await matchRequestsToRoutesNormalized(graph);
 
       assert.strictEqual(edges.length, 1, 'Should match multiple params');
-      assert.strictEqual(edges[0].matchType, 'parametric');
+      assert.strictEqual(edges[0].metadata.matchType, 'parametric');
     });
 
     it('should match mixed params (:id and ${value})', async () => {
@@ -1207,7 +1207,7 @@ describe('HTTPConnectionEnricher - Template Literal Matching (REG-318)', () => {
       const edges = await matchRequestsToRoutesNormalized(graph);
 
       assert.strictEqual(edges.length, 1, 'Should match concrete value to param');
-      assert.strictEqual(edges[0].matchType, 'parametric');
+      assert.strictEqual(edges[0].metadata.matchType, 'parametric');
     });
 
     it('should match concrete UUID to :param', async () => {
@@ -1252,7 +1252,7 @@ describe('HTTPConnectionEnricher - Template Literal Matching (REG-318)', () => {
       const edges = await matchRequestsToRoutesNormalized(graph);
 
       assert.strictEqual(edges.length, 1);
-      assert.strictEqual(edges[0].matchType, 'parametric');
+      assert.strictEqual(edges[0].metadata.matchType, 'parametric');
     });
   });
 
@@ -1371,7 +1371,7 @@ describe('HTTPConnectionEnricher - Template Literal Matching (REG-318)', () => {
       const edges = await matchRequestsToRoutesNormalized(graph);
 
       assert.strictEqual(edges.length, 1);
-      assert.strictEqual(edges[0].matchType, 'exact');
+      assert.strictEqual(edges[0].metadata.matchType, 'exact');
     });
 
     it('should handle empty template literal ${} correctly', async () => {

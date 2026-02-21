@@ -41,6 +41,7 @@ export class RustFFIEnricher extends Plugin {
 
   async execute(context: PluginContext): Promise<PluginResult> {
     const { graph, onProgress } = context;
+    const factory = this.getFactory(context);
     const logger = this.log(context);
 
     // 1. Build index of NAPI-exported Rust functions/methods
@@ -77,7 +78,7 @@ export class RustFFIEnricher extends Plugin {
       const rustTarget = this.matchJsCallToRust(call, napiIndex);
 
       if (rustTarget) {
-        await graph.addEdge({
+        await factory!.link({
           src: call.id,
           dst: rustTarget.id,
           type: 'FFI_CALLS'
