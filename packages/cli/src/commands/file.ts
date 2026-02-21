@@ -79,7 +79,7 @@ Use 'grafema context <id>' to dive deeper into any specific entity.
     const absoluteFilePath = realpathSync(resolvedPath);
     const relativeFilePath = relative(projectPath, absoluteFilePath);
 
-    const backend = new RFDBServerBackend({ dbPath });
+    const backend = new RFDBServerBackend({ dbPath, clientName: 'cli' });
     await backend.connect();
 
     const spinner = new Spinner('Loading file overview...');

@@ -120,7 +120,7 @@ export class ParallelAnalysisRunner {
     if (existsSync(socketPath)) {
       try {
         const { RFDBClient } = await import('@grafema/rfdb-client');
-        const testClient = new RFDBClient(socketPath);
+        const testClient = new RFDBClient(socketPath, 'core');
         await testClient.connect();
         await testClient.ping();
         await testClient.close();
