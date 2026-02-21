@@ -206,6 +206,9 @@ const helper = new Helper();
         const helper = allNodes.find(n => n.name === 'helper');
         assert.ok(helper, 'Variable "helper" not found');
 
+        // REG-546: NewExpression initializer should create VARIABLE, not CONSTANT
+        assert.strictEqual(helper.type, 'VARIABLE', 'NewExpression initializer should create VARIABLE node, not CONSTANT');
+
         const assignment = edges.find(e => e.type === 'ASSIGNED_FROM' && e.src === helper.id);
         assert.ok(assignment, 'Variable "helper" should have ASSIGNED_FROM edge to CLASS node');
 
@@ -215,6 +218,124 @@ const helper = new Helper();
         assert.ok(
           source.type === 'CLASS' || source.type === 'EXTERNAL_MODULE' || source.type === 'CONSTRUCTOR_CALL',
           `Expected CLASS, EXTERNAL_MODULE, or CONSTRUCTOR_CALL, got ${source.type}`
+        );
+      } finally {
+        await backend.close();
+      }
+    });
+
+    it('should create VARIABLE node for module-level const x = new Map() (VariableVisitor path)', async () => {
+      // Tests the VariableVisitor.ts code path — module-level variable declarations
+      const { backend } = await setupTest({
+        'index.js': `const myMap = new Map();`
+      });
+
+      try {
+        const allNodes = await backend.getAllNodes();
+        const myMap = allNodes.find(n => n.name === 'myMap');
+
+        assert.ok(myMap, 'Node "myMap" not found in graph');
+        assert.strictEqual(
+          myMap.type, 'VARIABLE',
+          `Module-level "const myMap = new Map()" should create VARIABLE node, got ${myMap.type}`
+        );
+      } finally {
+        await backend.close();
+      }
+    });
+
+    it('should create VARIABLE node for in-function const x = new Set() (JSASTAnalyzer path)', async () => {
+      // Tests the handleVariableDeclaration path in JSASTAnalyzer.ts — in-function declarations
+      const { backend } = await setupTest({
+        'index.js': `
+function buildSet() {
+  const mySet = new Set();
+  return mySet;
+}
+        `
+      });
+
+      try {
+        const allNodes = await backend.getAllNodes();
+        const mySet = allNodes.find(n => n.name === 'mySet');
+
+        assert.ok(mySet, 'Node "mySet" not found in graph');
+        assert.strictEqual(
+          mySet.type, 'VARIABLE',
+          `In-function "const mySet = new Set()" should create VARIABLE node, got ${mySet.type}`
+        );
+      } finally {
+        await backend.close();
+      }
+    });
+
+    it('should create VARIABLE node for const x = new Map<string, number>() with TypeScript generics', async () => {
+      // Verifies that TSTypeParameterInstantiation does not break callee detection;
+      // the callee is still Identifier 'Map' even with type params
+      const { backend } = await setupTest({
+        'index.ts': `const myTypedMap = new Map<string, number>();`
+      });
+
+      try {
+        const allNodes = await backend.getAllNodes();
+        const myTypedMap = allNodes.find(n => n.name === 'myTypedMap');
+
+        assert.ok(myTypedMap, 'Node "myTypedMap" not found in graph');
+        assert.strictEqual(
+          myTypedMap.type, 'VARIABLE',
+          `"const myTypedMap = new Map<string, number>()" should create VARIABLE node, got ${myTypedMap.type}`
+        );
+      } finally {
+        await backend.close();
+      }
+    });
+
+    it('should preserve INSTANCE_OF edge when const x = new Foo() creates VARIABLE node', async () => {
+      // After moving classInstantiations.push() outside the shouldBeConstant guard,
+      // INSTANCE_OF edges must still be created for NewExpression assignments
+      const { backend } = await setupTest({
+        'index.js': `
+class Foo {
+  constructor() {}
+}
+const myFoo = new Foo();
+        `
+      });
+
+      try {
+        const allNodes = await backend.getAllNodes();
+        const edges = await backend.getAllEdges();
+
+        const myFoo = allNodes.find(n => n.name === 'myFoo');
+        assert.ok(myFoo, 'Node "myFoo" not found in graph');
+
+        // REG-546: must be VARIABLE, not CONSTANT
+        assert.strictEqual(
+          myFoo.type, 'VARIABLE',
+          `"const myFoo = new Foo()" should create VARIABLE node, got ${myFoo.type}`
+        );
+
+        // Verify INSTANCE_OF edge still exists (myFoo -[INSTANCE_OF]-> Foo class)
+        const fooClass = allNodes.find(n => n.name === 'Foo' && n.type === 'CLASS');
+        assert.ok(fooClass, 'CLASS node "Foo" not found');
+
+        const instanceOfEdge = edges.find(e =>
+          e.type === 'INSTANCE_OF' && e.src === myFoo.id && e.dst === fooClass.id
+        );
+        assert.ok(
+          instanceOfEdge,
+          `Expected INSTANCE_OF edge from "myFoo" to CLASS "Foo". ` +
+          `Edges from myFoo: ${jsonStringify(edges.filter(e => e.src === myFoo.id))}`
+        );
+
+        // Also verify ASSIGNED_FROM edge exists (myFoo -[ASSIGNED_FROM]-> CONSTRUCTOR_CALL)
+        const assignedFromEdge = edges.find(e =>
+          e.type === 'ASSIGNED_FROM' && e.src === myFoo.id
+        );
+        assert.ok(
+          assignedFromEdge,
+          `Expected ASSIGNED_FROM edge from "myFoo". ` +
+          `Edges from myFoo: ${jsonStringify(edges.filter(e => e.src === myFoo.id))}`
         );
       } finally {
         await backend.close();

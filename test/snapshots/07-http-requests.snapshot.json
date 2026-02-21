@@ -299,12 +299,6 @@
       "type": "CALL"
     },
     {
-      "exported": false,
-      "file": "client.js",
-      "name": "headers",
-      "type": "CONSTANT"
-    },
-    {
       "className": "Headers",
       "exported": false,
       "file": "client.js",
@@ -1664,6 +1658,12 @@
     {
       "exported": false,
       "file": "client.js",
+      "name": "headers",
+      "type": "VARIABLE"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
       "name": "response",
       "type": "VARIABLE"
     },
@@ -1998,7 +1998,7 @@
     {
       "from": "CALL:headers.set",
       "type": "USES",
-      "to": "CONSTANT:headers"
+      "to": "VARIABLE:headers"
     },
     {
       "from": "CALL:localStorage.getItem",
@@ -2060,11 +2060,6 @@
       "from": "CALL:response.json",
       "type": "USES",
       "to": "VARIABLE:response"
-    },
-    {
-      "from": "CONSTANT:headers",
-      "type": "ASSIGNED_FROM",
-      "to": "CONSTRUCTOR_CALL:new Headers()"
     },
     {
       "from": "EXPRESSION:data.gigs",
@@ -2657,7 +2652,7 @@
     {
       "from": "SCOPE:authFetch:body",
       "type": "DECLARES",
-      "to": "CONSTANT:headers"
+      "to": "VARIABLE:headers"
     },
     {
       "from": "SCOPE:authFetch:body",
@@ -2894,6 +2889,11 @@
       "from": "VARIABLE:gigs",
       "type": "RETURNS",
       "to": "FUNCTION:fetchAndProcess"
+    },
+    {
+      "from": "VARIABLE:headers",
+      "type": "ASSIGNED_FROM",
+      "to": "CONSTRUCTOR_CALL:new Headers()"
     },
     {
       "from": "VARIABLE:response",

@@ -254,8 +254,8 @@ export class VariableVisitor extends ASTVisitor {
               const isNewExpression = declarator.init && declarator.init.type === 'NewExpression';
 
               // Loop variables with const should be CONSTANT (they can't be reassigned in loop body)
-              // Regular variables with const are CONSTANT only if initialized with literal or new expression
-              const shouldBeConstant = isConst && (isLoopVariable || isLiteral || isNewExpression);
+              // Regular variables with const are CONSTANT only if initialized with literal
+              const shouldBeConstant = isConst && (isLoopVariable || isLiteral);
 
               const nodeType = shouldBeConstant ? 'CONSTANT' : 'VARIABLE';
 
@@ -282,21 +282,6 @@ export class VariableVisitor extends ASTVisitor {
                 }
 
                 (variableDeclarations as VariableDeclarationInfo[]).push(constantData);
-
-                // If NewExpression, track for CLASS and INSTANCE_OF
-                if (isNewExpression) {
-                  const newExpr = declarator.init as NewExpression;
-                  if (newExpr.callee.type === 'Identifier') {
-                    const className = (newExpr.callee as Identifier).name;
-                    (classInstantiations as ClassInstantiationInfo[]).push({
-                      variableId: varId,
-                      variableName: varInfo.name,
-                      className: className,
-                      line: varInfo.loc.start.line,
-                      parentScopeId: module.id
-                    });
-                  }
-                }
               } else {
                 (variableDeclarations as VariableDeclarationInfo[]).push({
                   id: varId,
@@ -307,6 +292,21 @@ export class VariableVisitor extends ASTVisitor {
                   parentScopeId: module.id,
                   scopePath: currentScopePath
                 });
+              }
+
+              // If NewExpression, track for CLASS and INSTANCE_OF
+              if (isNewExpression) {
+                const newExpr = declarator.init as NewExpression;
+                if (newExpr.callee.type === 'Identifier') {
+                  const className = (newExpr.callee as Identifier).name;
+                  (classInstantiations as ClassInstantiationInfo[]).push({
+                    variableId: varId,
+                    variableName: varInfo.name,
+                    className: className,
+                    line: varInfo.loc.start.line,
+                    parentScopeId: module.id
+                  });
+                }
               }
 
               // Track assignment for data flow analysis

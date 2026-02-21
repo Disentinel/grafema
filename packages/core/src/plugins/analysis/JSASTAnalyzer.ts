@@ -2411,8 +2411,8 @@ export class JSASTAnalyzer extends Plugin {
         const isNewExpression = declarator.init && declarator.init.type === 'NewExpression';
 
         // Loop variables with const should be CONSTANT (they can't be reassigned in loop body)
-        // Regular variables with const are CONSTANT only if initialized with literal or new expression
-        const shouldBeConstant = isConst && (isLoopVariable || isLiteral || isNewExpression);
+        // Regular variables with const are CONSTANT only if initialized with literal
+        const shouldBeConstant = isConst && (isLoopVariable || isLiteral);
         const nodeType = shouldBeConstant ? 'CONSTANT' : 'VARIABLE';
 
         // Generate semantic ID (primary) or legacy ID (fallback)
@@ -2446,24 +2446,25 @@ export class JSASTAnalyzer extends Plugin {
           }
 
           variableDeclarations.push(constantData);
-
-          const init = declarator.init;
-          if (isNewExpression && t.isNewExpression(init) && t.isIdentifier(init.callee)) {
-            const className = init.callee.name;
-            classInstantiations.push({
-              variableId: varId,
-              variableName: varInfo.name,
-              className: className,
-              line: varInfo.loc.start.line,
-              parentScopeId
-            });
-          }
         } else {
           variableDeclarations.push({
             id: varId,
             type: 'VARIABLE',
             name: varInfo.name,
             file: module.file,
+            line: varInfo.loc.start.line,
+            parentScopeId
+          });
+        }
+
+        // If NewExpression, track for CLASS and INSTANCE_OF
+        const init = declarator.init;
+        if (isNewExpression && t.isNewExpression(init) && t.isIdentifier(init.callee)) {
+          const className = init.callee.name;
+          classInstantiations.push({
+            variableId: varId,
+            variableName: varInfo.name,
+            className: className,
             line: varInfo.loc.start.line,
             parentScopeId
           });
