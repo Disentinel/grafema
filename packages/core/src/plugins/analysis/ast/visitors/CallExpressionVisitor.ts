@@ -613,6 +613,15 @@ export class CallExpressionVisitor extends ASTVisitor {
       }
 
       s.callSites.push(callInfo);
+
+      // REG-556: Extract arguments for PASSES_ARGUMENT edges
+      if (newNode.arguments.length > 0) {
+        ArgumentExtractor.extract(
+          newNode.arguments, callInfo.id, s.module,
+          s.callArguments, s.literals, s.literalCounterRef,
+          this.collections, s.scopeTracker
+        );
+      }
     } else if (newNode.callee.type === 'MemberExpression') {
       const memberCallee = newNode.callee as MemberExpression;
       const object = memberCallee.object;
@@ -660,6 +669,15 @@ export class CallExpressionVisitor extends ASTVisitor {
         }
 
         s.methodCalls.push(methodCallInfo);
+
+        // REG-556: Extract arguments for PASSES_ARGUMENT edges
+        if (newNode.arguments.length > 0) {
+          ArgumentExtractor.extract(
+            newNode.arguments, methodCallInfo.id, s.module,
+            s.callArguments, s.literals, s.literalCounterRef,
+            this.collections, s.scopeTracker
+          );
+        }
       }
     }
   }

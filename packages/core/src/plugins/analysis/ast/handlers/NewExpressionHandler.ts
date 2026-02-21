@@ -131,6 +131,19 @@ export class NewExpressionHandler extends FunctionBodyHandler {
             targetFunctionName: constructorName,
             isNew: true
           });
+
+          // REG-556: Extract arguments for PASSES_ARGUMENT edges on CALL node
+          if (newNode.arguments.length > 0) {
+            if (!ctx.collections.callArguments) {
+              ctx.collections.callArguments = [];
+            }
+            ArgumentExtractor.extract(
+              newNode.arguments, newCallId, ctx.module,
+              ctx.collections.callArguments as unknown as ArgumentInfo[],
+              ctx.literals as unknown as ExtractorLiteralInfo[],
+              ctx.literalCounterRef, ctx.collections, ctx.scopeTracker
+            );
+          }
         }
         // Handle namespaced constructor: new ns.Constructor()
         else if (newNode.callee.type === 'MemberExpression') {
@@ -171,6 +184,19 @@ export class NewExpressionHandler extends FunctionBodyHandler {
               parentScopeId: ctx.getCurrentScopeId(),
               isNew: true
             });
+
+            // REG-556: Extract arguments for PASSES_ARGUMENT edges on CALL node
+            if (newNode.arguments.length > 0) {
+              if (!ctx.collections.callArguments) {
+                ctx.collections.callArguments = [];
+              }
+              ArgumentExtractor.extract(
+                newNode.arguments, newMethodCallId, ctx.module,
+                ctx.collections.callArguments as unknown as ArgumentInfo[],
+                ctx.literals as unknown as ExtractorLiteralInfo[],
+                ctx.literalCounterRef, ctx.collections, ctx.scopeTracker
+              );
+            }
           }
         }
       },

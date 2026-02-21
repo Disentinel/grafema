@@ -1295,6 +1295,62 @@
       "file": "client.js",
       "name": "",
       "type": "LITERAL",
+      "value": "/api/gigs",
+      "valueType": "string"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": "/api/gigs",
+      "valueType": "string"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": "/api/protected",
+      "valueType": "string"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": "/api/tracks",
+      "valueType": "string"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": "/api/users",
+      "valueType": "string"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": "/api/users",
+      "valueType": "string"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": "/api/users",
+      "valueType": "string"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "name": "",
+      "type": "LITERAL",
       "value": "/api/users",
       "valueType": "string"
     },
@@ -1695,8 +1751,24 @@
     },
     {
       "from": "CALL:authFetch",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:authFetch",
       "type": "MAKES_REQUEST",
       "to": "http:request:GET /api/protected"
+    },
+    {
+      "from": "CALL:authFetch",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
     },
     {
       "from": "CALL:axios.get",
@@ -1763,6 +1835,54 @@
     },
     {
       "from": "CALL:fetch",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:fetch",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:fetch",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:fetch",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:fetch",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:fetch",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:fetch",
       "type": "MAKES_REQUEST",
       "to": "http:request:GET /api/gigs"
     },
@@ -1805,6 +1925,54 @@
       "from": "CALL:fetch",
       "type": "MAKES_REQUEST",
       "to": "http:request:POST /api/users"
+    },
+    {
+      "from": "CALL:fetch",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:fetch",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:fetch",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:fetch",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:fetch",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:fetch",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
     },
     {
       "from": "CALL:fetch",
@@ -2443,6 +2611,23 @@
       "from": "MODULE:index.js",
       "type": "IMPORTS",
       "to": "MODULE:client.js"
+    },
+    {
+      "from": "PARAMETER:url",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "PARAMETER:url",
+      "type": "RECEIVES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0,
+        "callId": "client.js->fetchProtectedData->CALL->authFetch#0"
+      }
     },
     {
       "from": "SCOPE:authFetch:body",

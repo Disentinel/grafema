@@ -12,6 +12,7 @@ import type {
   CallSiteInfo,
   MethodCallInfo,
   CallArgumentInfo,
+  ConstructorCallInfo,
   ImportInfo,
   ObjectPropertyInfo,
   ASTCollections,
@@ -46,12 +47,13 @@ export class CallFlowBuilder implements DomainBuilder {
       callSites,
       methodCalls = [],
       callArguments = [],
+      constructorCalls = [],
       imports = [],
       objectProperties = [],
       parameters = [],
     } = data;
 
-    this.bufferArgumentEdges(callArguments, variableDeclarations, functions, callSites, methodCalls, imports);
+    this.bufferArgumentEdges(callArguments, variableDeclarations, functions, callSites, methodCalls, constructorCalls, imports);
     this.bufferObjectPropertyEdges(objectProperties, variableDeclarations, parameters, functions);
   }
 
@@ -61,6 +63,7 @@ export class CallFlowBuilder implements DomainBuilder {
     functions: FunctionInfo[],
     callSites: CallSiteInfo[],
     methodCalls: MethodCallInfo[],
+    constructorCalls: ConstructorCallInfo[],
     imports: ImportInfo[]
   ): void {
     for (const arg of callArguments) {
@@ -142,6 +145,14 @@ export class CallFlowBuilder implements DomainBuilder {
             }
           }
         }
+
+        // REG-556: Fallback — resolve objectName to a VARIABLE node for b.c style args
+        if (!targetNodeId && objectName && objectName !== 'this') {
+          const varNode = variableDeclarations.find(v => v.name === objectName && v.file === file);
+          if (varNode) {
+            targetNodeId = varNode.id;
+          }
+        }
       }
       else if (targetType === 'FUNCTION' && functionLine && functionColumn) {
         const funcNode = functions.find(f =>
@@ -159,6 +170,15 @@ export class CallFlowBuilder implements DomainBuilder {
         );
         if (nestedCall) {
           targetNodeId = nestedCall.id;
+        }
+      }
+      // REG-556: NewExpression arguments resolve to CONSTRUCTOR_CALL node by position
+      else if (targetType === 'CONSTRUCTOR_CALL' && nestedCallLine !== undefined && nestedCallColumn !== undefined) {
+        const constructorCall = constructorCalls.find(c =>
+          c.file === file && c.line === nestedCallLine && c.column === nestedCallColumn
+        );
+        if (constructorCall) {
+          targetNodeId = constructorCall.id;
         }
       }
       else if (targetType === 'LITERAL' ||
