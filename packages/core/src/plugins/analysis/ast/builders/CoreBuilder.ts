@@ -226,6 +226,8 @@ export class CoreBuilder implements DomainBuilder {
         file: propAccess.file,
         line: propAccess.line,
         column: propAccess.column,
+        endLine: propAccess.endLine,
+        endColumn: propAccess.endColumn,
         semanticId: propAccess.semanticId,
         optional: propAccess.optional,
         computed: propAccess.computed

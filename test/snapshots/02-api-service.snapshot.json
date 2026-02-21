@@ -11,6 +11,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 2,
+      "endLine": 20,
       "exported": false,
       "file": "src/index.js",
       "method": "get",
@@ -21,6 +23,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 4,
+      "endLine": 28,
       "exported": false,
       "file": "src/index.js",
       "isAwaited": false,
@@ -34,6 +38,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 23,
+      "endLine": 10,
       "exported": false,
       "file": "src/index.js",
       "method": "use",
@@ -44,6 +50,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 38,
+      "endLine": 13,
       "exported": false,
       "file": "src/index.js",
       "method": "use",
@@ -54,6 +62,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 40,
+      "endLine": 14,
       "exported": false,
       "file": "src/index.js",
       "method": "use",
@@ -64,6 +74,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 42,
+      "endLine": 16,
       "exported": false,
       "file": "src/db.js",
       "isAwaited": false,
@@ -77,6 +89,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 44,
+      "endLine": 7,
       "exported": false,
       "file": "src/db.js",
       "isAwaited": false,
@@ -90,6 +104,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 35,
+      "endLine": 24,
       "exported": false,
       "file": "src/index.js",
       "isAwaited": false,
@@ -103,6 +119,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 39,
+      "endLine": 18,
       "exported": false,
       "file": "src/index.js",
       "isAwaited": false,
@@ -116,6 +134,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 51,
+      "endLine": 27,
       "exported": false,
       "file": "src/index.js",
       "isAwaited": false,
@@ -129,6 +149,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 38,
+      "endLine": 9,
       "exported": false,
       "file": "src/routes/orders.js",
       "isAwaited": false,
@@ -142,6 +164,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 52,
+      "endLine": 17,
       "exported": false,
       "file": "src/routes/orders.js",
       "isAwaited": false,
@@ -155,6 +179,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 37,
+      "endLine": 9,
       "exported": false,
       "file": "src/routes/users.js",
       "isAwaited": false,
@@ -168,6 +194,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 38,
+      "endLine": 17,
       "exported": false,
       "file": "src/routes/users.js",
       "isAwaited": false,
@@ -181,6 +209,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 41,
+      "endLine": 25,
       "exported": false,
       "file": "src/routes/users.js",
       "isAwaited": false,
@@ -192,6 +222,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 29,
+      "endLine": 22,
       "exported": false,
       "file": "src/db.js",
       "isNew": true,
@@ -201,6 +233,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 20,
+      "endLine": 23,
       "exported": false,
       "file": "src/index.js",
       "isAwaited": true,
@@ -214,6 +248,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 119,
+      "endLine": 18,
       "exported": false,
       "file": "src/routes/orders.js",
       "isAwaited": true,
@@ -227,6 +263,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 57,
+      "endLine": 10,
       "exported": false,
       "file": "src/routes/orders.js",
       "isAwaited": true,
@@ -240,6 +278,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 55,
+      "endLine": 10,
       "exported": false,
       "file": "src/routes/users.js",
       "isAwaited": true,
@@ -253,6 +293,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 73,
+      "endLine": 18,
       "exported": false,
       "file": "src/routes/users.js",
       "isAwaited": true,
@@ -266,6 +308,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 97,
+      "endLine": 26,
       "exported": false,
       "file": "src/routes/users.js",
       "isAwaited": true,
@@ -277,6 +321,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 47,
+      "endLine": 14,
       "exported": false,
       "file": "src/db.js",
       "isNew": true,
@@ -284,6 +330,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 21,
+      "endLine": 6,
       "exported": false,
       "file": "src/index.js",
       "name": "express",
@@ -292,6 +340,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 22,
+      "endLine": 10,
       "exported": false,
       "file": "src/index.js",
       "method": "json",
@@ -302,6 +352,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 33,
+      "endLine": 5,
       "exported": false,
       "file": "src/routes/orders.js",
       "isAwaited": false,
@@ -315,6 +367,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 33,
+      "endLine": 5,
       "exported": false,
       "file": "src/routes/users.js",
       "isAwaited": false,
@@ -326,12 +380,16 @@
       "type": "CALL"
     },
     {
+      "endColumn": 39,
+      "endLine": 14,
       "exported": false,
       "file": "src/index.js",
       "name": "getOrdersRoute",
       "type": "CALL"
     },
     {
+      "endColumn": 37,
+      "endLine": 13,
       "exported": false,
       "file": "src/index.js",
       "name": "getUsersRoute",
@@ -340,6 +398,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 117,
+      "endLine": 18,
       "exported": false,
       "file": "src/routes/orders.js",
       "isAwaited": false,
@@ -353,6 +413,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 28,
+      "endLine": 19,
       "exported": false,
       "file": "src/index.js",
       "isAwaited": false,
@@ -366,6 +428,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 20,
+      "endLine": 11,
       "exported": false,
       "file": "src/routes/orders.js",
       "isAwaited": false,
@@ -379,6 +443,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 37,
+      "endLine": 19,
       "exported": false,
       "file": "src/routes/orders.js",
       "isAwaited": false,
@@ -392,6 +458,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 18,
+      "endLine": 19,
       "exported": false,
       "file": "src/routes/users.js",
       "isAwaited": false,
@@ -405,6 +473,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 19,
+      "endLine": 11,
       "exported": false,
       "file": "src/routes/users.js",
       "isAwaited": false,
@@ -418,6 +488,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 37,
+      "endLine": 27,
       "exported": false,
       "file": "src/routes/users.js",
       "isAwaited": false,
@@ -431,6 +503,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 4,
+      "endLine": 12,
       "exported": false,
       "file": "src/routes/orders.js",
       "isAwaited": false,
@@ -444,6 +518,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 4,
+      "endLine": 12,
       "exported": false,
       "file": "src/routes/users.js",
       "isAwaited": false,
@@ -457,6 +533,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 4,
+      "endLine": 20,
       "exported": false,
       "file": "src/routes/users.js",
       "isAwaited": false,
@@ -470,6 +548,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 4,
+      "endLine": 20,
       "exported": false,
       "file": "src/routes/orders.js",
       "isAwaited": false,
@@ -483,6 +563,8 @@
     {
       "computed": false,
       "computedPropertyVar": null,
+      "endColumn": 4,
+      "endLine": 28,
       "exported": false,
       "file": "src/routes/users.js",
       "isAwaited": false,
@@ -494,6 +576,8 @@
       "type": "CALL"
     },
     {
+      "endColumn": 7,
+      "endLine": 31,
       "exported": false,
       "file": "src/index.js",
       "name": "start",
@@ -1555,6 +1639,8 @@
       "type": "PARAMETER"
     },
     {
+      "endColumn": 38,
+      "endLine": 16,
       "exported": false,
       "file": "src/routes/orders.js",
       "name": "body",
@@ -1563,6 +1649,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 36,
+      "endLine": 24,
       "exported": false,
       "file": "src/routes/users.js",
       "name": "body",
@@ -1571,6 +1659,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 23,
+      "endLine": 13,
       "exported": false,
       "file": "src/db.js",
       "name": "connected",
@@ -1579,6 +1669,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 34,
+      "endLine": 19,
       "exported": false,
       "file": "src/routes/orders.js",
       "name": "insertId",
@@ -1587,6 +1679,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 34,
+      "endLine": 27,
       "exported": false,
       "file": "src/routes/users.js",
       "name": "insertId",
@@ -1595,6 +1689,8 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "endColumn": 29,
+      "endLine": 16,
       "exported": false,
       "file": "src/routes/users.js",
       "name": "params",

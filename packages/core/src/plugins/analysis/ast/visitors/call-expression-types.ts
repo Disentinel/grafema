@@ -107,6 +107,8 @@ export interface CallSiteInfo {
   file: string;
   line: number;
   column: number;
+  endLine?: number;
+  endColumn?: number;
   parentScopeId: string;
   targetFunctionName: string;
   isNew?: boolean;
@@ -128,6 +130,8 @@ export interface MethodCallInfo {
   file: string;
   line: number;
   column: number;
+  endLine?: number;
+  endColumn?: number;
   parentScopeId: string;
   isNew?: boolean;
   /** REG-332: Annotation to suppress strict mode errors */

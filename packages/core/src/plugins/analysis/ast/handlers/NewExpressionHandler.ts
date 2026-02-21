@@ -6,7 +6,7 @@
  */
 import type { Visitor, NodePath } from '@babel/traverse';
 import * as t from '@babel/types';
-import { getLine, getColumn } from '../utils/location.js';
+import { getLine, getColumn, getEndLocation } from '../utils/location.js';
 import { computeSemanticId } from '../../../../core/SemanticId.js';
 import { ConstructorCallNode } from '../../../../core/nodes/ConstructorCallNode.js';
 import { FunctionBodyHandler } from './FunctionBodyHandler.js';
@@ -110,6 +110,8 @@ export class NewExpressionHandler extends FunctionBodyHandler {
             name: constructorName,
             file: ctx.module.file,
             line: getLine(newNode),
+            endLine: getEndLocation(newNode).line,
+            endColumn: getEndLocation(newNode).column,
             parentScopeId: ctx.getCurrentScopeId(),
             targetFunctionName: constructorName,
             isNew: true
@@ -149,6 +151,8 @@ export class NewExpressionHandler extends FunctionBodyHandler {
               file: ctx.module.file,
               line: getLine(newNode),
               column: getColumn(newNode),
+              endLine: getEndLocation(newNode).line,
+              endColumn: getEndLocation(newNode).column,
               parentScopeId: ctx.getCurrentScopeId(),
               isNew: true
             });
