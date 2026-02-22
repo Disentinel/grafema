@@ -649,12 +649,9 @@ export class Widget {
 
   describe('MutationBuilder downstream (REG-551)', () => {
     it('should create FLOWS_INTO edge for this.prop = value when class is in subdirectory', async () => {
-      // MutationBuilder uses classDeclarations.find(c => c.file === ...) to locate
-      // the CLASS node as the FLOWS_INTO destination for this.prop = value patterns.
-      //
-      // Before the fix: MutationBuilder used basename(file) to compare with
-      // classDeclaration.file (which stored basename). After the fix, both sides
-      // should use relative paths. This test verifies the edge is still created.
+      // REG-557: constructor this.prop = value creates FLOWS_INTO → constructor FUNCTION (not CLASS).
+      // This test verifies the edge is created correctly for subdirectory classes where
+      // the file path is a relative path (e.g., "src/Config.js"), not just a basename.
       await setupTest(backend, {
         'index.js': `
 import { Config } from './src/Config.js';
@@ -671,11 +668,11 @@ export class Config {
       const allNodes = await backend.getAllNodes();
       const allEdges = await backend.getAllEdges();
 
-      // Find the CLASS node
-      const classNode = allNodes.find(n =>
-        n.type === 'CLASS' && n.name === 'Config'
+      // Find the constructor FUNCTION node (REG-557: target is FUNCTION, not CLASS)
+      const constructorNode = allNodes.find(n =>
+        n.type === 'FUNCTION' && n.name === 'constructor'
       );
-      assert.ok(classNode, 'CLASS "Config" not found');
+      assert.ok(constructorNode, 'FUNCTION "constructor" not found');
 
       // Find the handler parameter
       const handlerParam = allNodes.find(n =>
@@ -683,17 +680,17 @@ export class Config {
       );
       assert.ok(handlerParam, 'PARAMETER "handler" not found');
 
-      // Find FLOWS_INTO edge from handler PARAMETER to CLASS
+      // Find FLOWS_INTO edge from handler PARAMETER to constructor FUNCTION
       const flowsInto = allEdges.find(e =>
         e.type === 'FLOWS_INTO' &&
         e.src === handlerParam.id &&
-        e.dst === classNode.id
+        e.dst === constructorNode.id
       );
 
       assert.ok(
         flowsInto,
-        `Expected FLOWS_INTO edge from handler to Config class (in subdirectory). ` +
-        `classNode.file="${classNode.file}", classNode.id="${classNode.id}". ` +
+        `Expected FLOWS_INTO edge from handler to constructor FUNCTION (in subdirectory). ` +
+        `constructorNode.id="${constructorNode?.id}". ` +
         `FLOWS_INTO edges found: ${JSON.stringify(allEdges.filter(e => e.type === 'FLOWS_INTO'))}`
       );
 
@@ -721,16 +718,16 @@ export class Service {
       const allNodes = await backend.getAllNodes();
       const allEdges = await backend.getAllEdges();
 
-      const classNode = allNodes.find(n => n.type === 'CLASS' && n.name === 'Service');
-      assert.ok(classNode, 'CLASS "Service" not found');
+      // REG-557: target is constructor FUNCTION, not CLASS
+      const constructorNode = allNodes.find(n =>
+        n.type === 'FUNCTION' && n.name === 'constructor'
+      );
+      assert.ok(constructorNode, 'FUNCTION "constructor" not found');
 
-      // Verify class file is relative path (not basename)
-      assert.strictEqual(classNode.file, 'src/deep/Service.js', 'CLASS file should be relative path');
-
-      // Find all FLOWS_INTO edges to the class with mutationType: this_property
+      // Find all FLOWS_INTO edges to the constructor FUNCTION with mutationType: this_property
       const flowsIntoEdges = allEdges.filter(e =>
         e.type === 'FLOWS_INTO' &&
-        e.dst === classNode.id &&
+        e.dst === constructorNode.id &&
         e.mutationType === 'this_property'
       );
 

@@ -9,6 +9,7 @@ import type {
   VariableDeclarationInfo,
   ParameterInfo,
   ClassDeclarationInfo,
+  FunctionInfo,
   UpdateExpressionInfo,
   ASTCollections,
   GraphNode,
@@ -24,9 +25,10 @@ export class UpdateExpressionBuilder implements DomainBuilder {
       updateExpressions = [],
       parameters = [],
       classDeclarations = [],
+      functions = [],
     } = data;
 
-    this.bufferUpdateExpressionEdges(updateExpressions, variableDeclarations, parameters, classDeclarations);
+    this.bufferUpdateExpressionEdges(updateExpressions, variableDeclarations, parameters, classDeclarations, functions);
   }
 
   /**
@@ -49,7 +51,8 @@ export class UpdateExpressionBuilder implements DomainBuilder {
     updateExpressions: UpdateExpressionInfo[],
     variableDeclarations: VariableDeclarationInfo[],
     parameters: ParameterInfo[],
-    classDeclarations: ClassDeclarationInfo[]
+    classDeclarations: ClassDeclarationInfo[],
+    functions: FunctionInfo[]
   ): void {
     // Build lookup caches: O(n) instead of O(n*m)
     const varLookup = new Map<string, VariableDeclarationInfo>();
@@ -68,7 +71,7 @@ export class UpdateExpressionBuilder implements DomainBuilder {
         this.bufferIdentifierUpdate(update, varLookup, paramLookup);
       } else if (update.targetType === 'MEMBER_EXPRESSION') {
         // REG-312: Member expression (obj.prop++, arr[i]++)
-        this.bufferMemberExpressionUpdate(update, varLookup, paramLookup, classDeclarations);
+        this.bufferMemberExpressionUpdate(update, varLookup, paramLookup, classDeclarations, functions);
       }
     }
   }
@@ -158,7 +161,8 @@ export class UpdateExpressionBuilder implements DomainBuilder {
     update: UpdateExpressionInfo,
     varLookup: Map<string, VariableDeclarationInfo>,
     paramLookup: Map<string, ParameterInfo>,
-    classDeclarations: ClassDeclarationInfo[]
+    classDeclarations: ClassDeclarationInfo[],
+    functions: FunctionInfo[]
   ): void {
     const {
       objectName,
@@ -166,6 +170,7 @@ export class UpdateExpressionBuilder implements DomainBuilder {
       mutationType,
       computedPropertyVar,
       enclosingClassName,
+      enclosingFunctionName,
       operator,
       prefix,
       file,
@@ -188,10 +193,19 @@ export class UpdateExpressionBuilder implements DomainBuilder {
       // this.prop++ - follow REG-152 pattern from bufferObjectMutationEdges
       if (!enclosingClassName) return;
 
-      const classDecl = classDeclarations.find(c =>
-        c.name === enclosingClassName && c.file === file
-      );
-      objectNodeId = classDecl?.id ?? null;
+      // REG-557: Constructor this.prop++ targets constructor FUNCTION node
+      if (enclosingFunctionName === 'constructor') {
+        const constructorFn = functions.find(f => f.isClassMethod && f.className === enclosingClassName && f.name === 'constructor' && f.file === file);
+        objectNodeId = constructorFn?.id ?? null;
+      }
+
+      // For non-constructor methods, or if constructor FUNCTION not found, use CLASS node
+      if (!objectNodeId) {
+        const classDecl = classDeclarations.find(c =>
+          c.name === enclosingClassName && c.file === file
+        );
+        objectNodeId = classDecl?.id ?? null;
+      }
     }
 
     if (!objectNodeId) {
