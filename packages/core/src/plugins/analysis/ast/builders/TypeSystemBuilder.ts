@@ -8,7 +8,6 @@
  * bufferPromiseResolutionEdges.
  */
 
-import { basename } from 'path';
 import { InterfaceNode } from '../../../../core/nodes/InterfaceNode.js';
 import { EnumNode } from '../../../../core/nodes/EnumNode.js';
 import { DecoratorNode } from '../../../../core/nodes/DecoratorNode.js';
@@ -133,11 +132,9 @@ export class TypeSystemBuilder implements DomainBuilder {
 
   private bufferClassNodes(module: ModuleNode, classInstantiations: ClassInstantiationInfo[], classDeclarations: ClassDeclarationInfo[]): void {
     // Create lookup map: className -> declaration ID
-    // Use basename for comparison because CLASS nodes use scopeTracker.file (basename)
-    const moduleBasename = basename(module.file);
     const declarationMap = new Map<string, string>();
     for (const decl of classDeclarations) {
-      if (decl.file === moduleBasename) {
+      if (decl.file === module.file) {
         declarationMap.set(decl.name, decl.id);
       }
     }
@@ -149,9 +146,8 @@ export class TypeSystemBuilder implements DomainBuilder {
 
       if (!classId) {
         // External class - compute semantic ID
-        // Use basename to match CLASS node format (scopeTracker uses basename)
         // When class is in different file, edge will be dangling until that file analyzed
-        const globalContext = { file: moduleBasename, scopePath: [] as string[] };
+        const globalContext = { file: module.file, scopePath: [] as string[] };
         classId = computeSemanticId('CLASS', className, globalContext);
 
         // NO node creation - node will exist when class file analyzed

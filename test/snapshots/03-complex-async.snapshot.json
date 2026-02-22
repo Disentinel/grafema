@@ -195,7 +195,7 @@
       "exported": false,
       "file": "middleware/auth.js",
       "name": "",
-      "semanticId": "auth.js->requireRole->anonymous[0]->anonymous[0]->anonymous[0]->BRANCH->ternary#27",
+      "semanticId": "middleware/auth.js->requireRole->anonymous[0]->anonymous[0]->anonymous[0]->BRANCH->ternary#27",
       "type": "BRANCH"
     },
     {
@@ -206,7 +206,7 @@
       "exported": false,
       "file": "middleware/auth.js",
       "name": "",
-      "semanticId": "auth.js->requireRolePromise->anonymous[0]->anonymous[2]->BRANCH->ternary#30",
+      "semanticId": "middleware/auth.js->requireRolePromise->anonymous[0]->anonymous[2]->BRANCH->ternary#30",
       "type": "BRANCH"
     },
     {
@@ -217,7 +217,7 @@
       "exported": false,
       "file": "middleware/auth.js",
       "name": "",
-      "semanticId": "auth.js->requireRoleAsync->anonymous[0]->try#0->BRANCH->ternary#33",
+      "semanticId": "middleware/auth.js->requireRoleAsync->anonymous[0]->try#0->BRANCH->ternary#33",
       "type": "BRANCH"
     },
     {
@@ -228,7 +228,7 @@
       "exported": false,
       "file": "middleware/auth.js",
       "name": "",
-      "semanticId": "auth.js->authMiddlewareCallback->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->BRANCH->ternary#18",
+      "semanticId": "middleware/auth.js->authMiddlewareCallback->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->BRANCH->ternary#18",
       "type": "BRANCH"
     },
     {
@@ -239,7 +239,7 @@
       "exported": false,
       "file": "middleware/auth.js",
       "name": "",
-      "semanticId": "auth.js->authMiddlewarePromise->anonymous[1]->BRANCH->ternary#20",
+      "semanticId": "middleware/auth.js->authMiddlewarePromise->anonymous[1]->BRANCH->ternary#20",
       "type": "BRANCH"
     },
     {
@@ -250,7 +250,7 @@
       "exported": false,
       "file": "middleware/auth.js",
       "name": "",
-      "semanticId": "auth.js->authMiddleware->try#0->BRANCH->ternary#22",
+      "semanticId": "middleware/auth.js->authMiddleware->try#0->BRANCH->ternary#22",
       "type": "BRANCH"
     },
     {
@@ -260,7 +260,7 @@
       "exported": false,
       "file": "middleware/auth.js",
       "name": "",
-      "semanticId": "auth.js->rateLimitMiddleware->anonymous[0]->BRANCH->if#35",
+      "semanticId": "middleware/auth.js->rateLimitMiddleware->anonymous[0]->BRANCH->if#35",
       "type": "BRANCH"
     },
     {
@@ -271,7 +271,7 @@
       "exported": false,
       "file": "middleware/auth.js",
       "name": "",
-      "semanticId": "auth.js->requireRole->anonymous[0]->anonymous[0]->BRANCH->if#25",
+      "semanticId": "middleware/auth.js->requireRole->anonymous[0]->anonymous[0]->BRANCH->if#25",
       "type": "BRANCH"
     },
     {
@@ -282,7 +282,7 @@
       "exported": false,
       "file": "middleware/auth.js",
       "name": "",
-      "semanticId": "auth.js->requireRoleAsync->anonymous[0]->try#0->BRANCH->if#32",
+      "semanticId": "middleware/auth.js->requireRoleAsync->anonymous[0]->try#0->BRANCH->if#32",
       "type": "BRANCH"
     },
     {
@@ -293,7 +293,7 @@
       "exported": false,
       "file": "middleware/auth.js",
       "name": "",
-      "semanticId": "auth.js->requireRolePromise->anonymous[0]->anonymous[0]->BRANCH->if#29",
+      "semanticId": "middleware/auth.js->requireRolePromise->anonymous[0]->anonymous[0]->BRANCH->if#29",
       "type": "BRANCH"
     },
     {
@@ -302,7 +302,7 @@
       "exported": false,
       "file": "middleware/auth.js",
       "name": "",
-      "semanticId": "auth.js->authMiddlewareCallback->anonymous[0]->anonymous[0]->anonymous[0]->BRANCH->if#16",
+      "semanticId": "middleware/auth.js->authMiddlewareCallback->anonymous[0]->anonymous[0]->anonymous[0]->BRANCH->if#16",
       "type": "BRANCH"
     },
     {
@@ -311,7 +311,7 @@
       "exported": false,
       "file": "middleware/auth.js",
       "name": "",
-      "semanticId": "auth.js->verifyTokenAsync->try#0->BRANCH->if#10",
+      "semanticId": "middleware/auth.js->verifyTokenAsync->try#0->BRANCH->if#10",
       "type": "BRANCH"
     },
     {
@@ -320,7 +320,7 @@
       "exported": false,
       "file": "middleware/auth.js",
       "name": "",
-      "semanticId": "auth.js->verifyTokenCallback->anonymous[0]->anonymous[0]->anonymous[0]->BRANCH->if#4",
+      "semanticId": "middleware/auth.js->verifyTokenCallback->anonymous[0]->anonymous[0]->anonymous[0]->BRANCH->if#4",
       "type": "BRANCH"
     },
     {
@@ -329,7 +329,7 @@
       "exported": false,
       "file": "middleware/auth.js",
       "name": "",
-      "semanticId": "auth.js->verifyTokenPromise->anonymous[2]->anonymous[0]->BRANCH->if#7",
+      "semanticId": "middleware/auth.js->verifyTokenPromise->anonymous[2]->anonymous[0]->BRANCH->if#7",
       "type": "BRANCH"
     },
     {
@@ -338,7 +338,7 @@
       "exported": false,
       "file": "middleware/auth.js",
       "name": "",
-      "semanticId": "auth.js->authMiddlewareCallback->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->BRANCH->if#17",
+      "semanticId": "middleware/auth.js->authMiddlewareCallback->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->BRANCH->if#17",
       "type": "BRANCH"
     },
     {
@@ -347,7 +347,7 @@
       "exported": false,
       "file": "middleware/auth.js",
       "name": "",
-      "semanticId": "auth.js->authMiddlewareCallback->anonymous[0]->anonymous[0]->anonymous[0]->BRANCH->if#15",
+      "semanticId": "middleware/auth.js->authMiddlewareCallback->anonymous[0]->anonymous[0]->anonymous[0]->BRANCH->if#15",
       "type": "BRANCH"
     },
     {
@@ -356,7 +356,7 @@
       "exported": false,
       "file": "middleware/auth.js",
       "name": "",
-      "semanticId": "auth.js->authMiddlewareCallback->anonymous[0]->anonymous[0]->BRANCH->if#13",
+      "semanticId": "middleware/auth.js->authMiddlewareCallback->anonymous[0]->anonymous[0]->BRANCH->if#13",
       "type": "BRANCH"
     },
     {
@@ -365,7 +365,7 @@
       "exported": false,
       "file": "middleware/auth.js",
       "name": "",
-      "semanticId": "auth.js->authMiddlewareCallback->anonymous[0]->BRANCH->if#12",
+      "semanticId": "middleware/auth.js->authMiddlewareCallback->anonymous[0]->BRANCH->if#12",
       "type": "BRANCH"
     },
     {
@@ -374,7 +374,7 @@
       "exported": false,
       "file": "middleware/auth.js",
       "name": "",
-      "semanticId": "auth.js->blacklistToken->anonymous[0]->anonymous[0]->BRANCH->if#41",
+      "semanticId": "middleware/auth.js->blacklistToken->anonymous[0]->anonymous[0]->BRANCH->if#41",
       "type": "BRANCH"
     },
     {
@@ -383,7 +383,7 @@
       "exported": false,
       "file": "middleware/auth.js",
       "name": "",
-      "semanticId": "auth.js->rateLimitMiddleware->anonymous[0]->BRANCH->if#34",
+      "semanticId": "middleware/auth.js->rateLimitMiddleware->anonymous[0]->BRANCH->if#34",
       "type": "BRANCH"
     },
     {
@@ -392,7 +392,7 @@
       "exported": false,
       "file": "middleware/auth.js",
       "name": "",
-      "semanticId": "auth.js->refreshSession->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->BRANCH->if#40",
+      "semanticId": "middleware/auth.js->refreshSession->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->BRANCH->if#40",
       "type": "BRANCH"
     },
     {
@@ -401,7 +401,7 @@
       "exported": false,
       "file": "middleware/auth.js",
       "name": "",
-      "semanticId": "auth.js->refreshSession->anonymous[0]->anonymous[0]->anonymous[0]->BRANCH->if#39",
+      "semanticId": "middleware/auth.js->refreshSession->anonymous[0]->anonymous[0]->anonymous[0]->BRANCH->if#39",
       "type": "BRANCH"
     },
     {
@@ -410,7 +410,7 @@
       "exported": false,
       "file": "middleware/auth.js",
       "name": "",
-      "semanticId": "auth.js->refreshSession->anonymous[0]->anonymous[0]->BRANCH->if#38",
+      "semanticId": "middleware/auth.js->refreshSession->anonymous[0]->anonymous[0]->BRANCH->if#38",
       "type": "BRANCH"
     },
     {
@@ -419,7 +419,7 @@
       "exported": false,
       "file": "middleware/auth.js",
       "name": "",
-      "semanticId": "auth.js->refreshSession->anonymous[0]->BRANCH->if#36",
+      "semanticId": "middleware/auth.js->refreshSession->anonymous[0]->BRANCH->if#36",
       "type": "BRANCH"
     },
     {
@@ -428,7 +428,7 @@
       "exported": false,
       "file": "middleware/auth.js",
       "name": "",
-      "semanticId": "auth.js->requireRole->anonymous[0]->anonymous[0]->anonymous[0]->BRANCH->if#26",
+      "semanticId": "middleware/auth.js->requireRole->anonymous[0]->anonymous[0]->anonymous[0]->BRANCH->if#26",
       "type": "BRANCH"
     },
     {
@@ -437,7 +437,7 @@
       "exported": false,
       "file": "middleware/auth.js",
       "name": "",
-      "semanticId": "auth.js->requireRole->anonymous[0]->anonymous[0]->BRANCH->if#24",
+      "semanticId": "middleware/auth.js->requireRole->anonymous[0]->anonymous[0]->BRANCH->if#24",
       "type": "BRANCH"
     },
     {
@@ -446,7 +446,7 @@
       "exported": false,
       "file": "middleware/auth.js",
       "name": "",
-      "semanticId": "auth.js->verifyTokenAsync->try#0->anonymous[0]->anonymous[0]->BRANCH->if#8",
+      "semanticId": "middleware/auth.js->verifyTokenAsync->try#0->anonymous[0]->anonymous[0]->BRANCH->if#8",
       "type": "BRANCH"
     },
     {
@@ -455,7 +455,7 @@
       "exported": false,
       "file": "middleware/auth.js",
       "name": "",
-      "semanticId": "auth.js->verifyTokenCallback->anonymous[0]->anonymous[0]->anonymous[0]->BRANCH->if#3",
+      "semanticId": "middleware/auth.js->verifyTokenCallback->anonymous[0]->anonymous[0]->anonymous[0]->BRANCH->if#3",
       "type": "BRANCH"
     },
     {
@@ -464,7 +464,7 @@
       "exported": false,
       "file": "middleware/auth.js",
       "name": "",
-      "semanticId": "auth.js->verifyTokenCallback->anonymous[0]->anonymous[0]->BRANCH->if#1",
+      "semanticId": "middleware/auth.js->verifyTokenCallback->anonymous[0]->anonymous[0]->BRANCH->if#1",
       "type": "BRANCH"
     },
     {
@@ -473,7 +473,7 @@
       "exported": false,
       "file": "middleware/auth.js",
       "name": "",
-      "semanticId": "auth.js->verifyTokenCallback->anonymous[0]->BRANCH->if#0",
+      "semanticId": "middleware/auth.js->verifyTokenCallback->anonymous[0]->BRANCH->if#0",
       "type": "BRANCH"
     },
     {
@@ -482,7 +482,7 @@
       "exported": false,
       "file": "middleware/auth.js",
       "name": "",
-      "semanticId": "auth.js->verifyTokenPromise->anonymous[0]->anonymous[0]->BRANCH->if#5",
+      "semanticId": "middleware/auth.js->verifyTokenPromise->anonymous[0]->anonymous[0]->BRANCH->if#5",
       "type": "BRANCH"
     },
     {
@@ -492,7 +492,7 @@
       "exported": false,
       "file": "middleware/auth.js",
       "name": "",
-      "semanticId": "auth.js->requireRole->anonymous[0]->BRANCH->if#23",
+      "semanticId": "middleware/auth.js->requireRole->anonymous[0]->BRANCH->if#23",
       "type": "BRANCH"
     },
     {
@@ -502,7 +502,7 @@
       "exported": false,
       "file": "middleware/auth.js",
       "name": "",
-      "semanticId": "auth.js->requireRoleAsync->anonymous[0]->try#0->BRANCH->if#31",
+      "semanticId": "middleware/auth.js->requireRoleAsync->anonymous[0]->try#0->BRANCH->if#31",
       "type": "BRANCH"
     },
     {
@@ -512,7 +512,7 @@
       "exported": false,
       "file": "middleware/auth.js",
       "name": "",
-      "semanticId": "auth.js->requireRolePromise->anonymous[0]->BRANCH->if#28",
+      "semanticId": "middleware/auth.js->requireRolePromise->anonymous[0]->BRANCH->if#28",
       "type": "BRANCH"
     },
     {
@@ -522,7 +522,7 @@
       "exported": false,
       "file": "middleware/auth.js",
       "name": "",
-      "semanticId": "auth.js->authMiddleware->try#0->BRANCH->if#21",
+      "semanticId": "middleware/auth.js->authMiddleware->try#0->BRANCH->if#21",
       "type": "BRANCH"
     },
     {
@@ -532,7 +532,7 @@
       "exported": false,
       "file": "middleware/auth.js",
       "name": "",
-      "semanticId": "auth.js->authMiddlewareCallback->BRANCH->if#11",
+      "semanticId": "middleware/auth.js->authMiddlewareCallback->BRANCH->if#11",
       "type": "BRANCH"
     },
     {
@@ -542,7 +542,7 @@
       "exported": false,
       "file": "middleware/auth.js",
       "name": "",
-      "semanticId": "auth.js->authMiddlewarePromise->BRANCH->if#19",
+      "semanticId": "middleware/auth.js->authMiddlewarePromise->BRANCH->if#19",
       "type": "BRANCH"
     },
     {
@@ -552,7 +552,7 @@
       "exported": false,
       "file": "middleware/auth.js",
       "name": "",
-      "semanticId": "auth.js->authMiddlewareCallback->anonymous[0]->anonymous[0]->BRANCH->if#14",
+      "semanticId": "middleware/auth.js->authMiddlewareCallback->anonymous[0]->anonymous[0]->BRANCH->if#14",
       "type": "BRANCH"
     },
     {
@@ -562,7 +562,7 @@
       "exported": false,
       "file": "middleware/auth.js",
       "name": "",
-      "semanticId": "auth.js->refreshSession->anonymous[0]->BRANCH->if#37",
+      "semanticId": "middleware/auth.js->refreshSession->anonymous[0]->BRANCH->if#37",
       "type": "BRANCH"
     },
     {
@@ -572,7 +572,7 @@
       "exported": false,
       "file": "middleware/auth.js",
       "name": "",
-      "semanticId": "auth.js->verifyTokenAsync->try#0->BRANCH->if#9",
+      "semanticId": "middleware/auth.js->verifyTokenAsync->try#0->BRANCH->if#9",
       "type": "BRANCH"
     },
     {
@@ -582,7 +582,7 @@
       "exported": false,
       "file": "middleware/auth.js",
       "name": "",
-      "semanticId": "auth.js->verifyTokenCallback->anonymous[0]->anonymous[0]->BRANCH->if#2",
+      "semanticId": "middleware/auth.js->verifyTokenCallback->anonymous[0]->anonymous[0]->BRANCH->if#2",
       "type": "BRANCH"
     },
     {
@@ -592,7 +592,7 @@
       "exported": false,
       "file": "middleware/auth.js",
       "name": "",
-      "semanticId": "auth.js->verifyTokenPromise->anonymous[1]->anonymous[0]->BRANCH->if#6",
+      "semanticId": "middleware/auth.js->verifyTokenPromise->anonymous[1]->anonymous[0]->BRANCH->if#6",
       "type": "BRANCH"
     },
     {
@@ -602,7 +602,7 @@
       "exported": false,
       "file": "models/User.js",
       "name": "",
-      "semanticId": "User.js->comparePassword->anonymous[0]->else#0->BRANCH->if#6",
+      "semanticId": "models/User.js->comparePassword->anonymous[0]->else#0->BRANCH->if#6",
       "type": "BRANCH"
     },
     {
@@ -611,7 +611,7 @@
       "exported": false,
       "file": "models/User.js",
       "name": "",
-      "semanticId": "User.js->anonymous[0]->anonymous[0]->BRANCH->if#0",
+      "semanticId": "models/User.js->anonymous[0]->anonymous[0]->BRANCH->if#0",
       "type": "BRANCH"
     },
     {
@@ -620,7 +620,7 @@
       "exported": false,
       "file": "models/User.js",
       "name": "",
-      "semanticId": "User.js->anonymous[6]->BRANCH->if#1",
+      "semanticId": "models/User.js->anonymous[6]->BRANCH->if#1",
       "type": "BRANCH"
     },
     {
@@ -629,7 +629,7 @@
       "exported": false,
       "file": "models/User.js",
       "name": "",
-      "semanticId": "User.js->anonymous[7]->anonymous[0]->anonymous[0]->BRANCH->if#11",
+      "semanticId": "models/User.js->anonymous[7]->anonymous[0]->anonymous[0]->BRANCH->if#11",
       "type": "BRANCH"
     },
     {
@@ -638,7 +638,7 @@
       "exported": false,
       "file": "models/User.js",
       "name": "",
-      "semanticId": "User.js->anonymous[7]->anonymous[0]->BRANCH->if#10",
+      "semanticId": "models/User.js->anonymous[7]->anonymous[0]->BRANCH->if#10",
       "type": "BRANCH"
     },
     {
@@ -647,7 +647,7 @@
       "exported": false,
       "file": "models/User.js",
       "name": "",
-      "semanticId": "User.js->anonymous[8]->anonymous[0]->BRANCH->if#12",
+      "semanticId": "models/User.js->anonymous[8]->anonymous[0]->BRANCH->if#12",
       "type": "BRANCH"
     },
     {
@@ -656,7 +656,7 @@
       "exported": false,
       "file": "models/User.js",
       "name": "",
-      "semanticId": "User.js->comparePassword->anonymous[0]->BRANCH->if#2",
+      "semanticId": "models/User.js->comparePassword->anonymous[0]->BRANCH->if#2",
       "type": "BRANCH"
     },
     {
@@ -665,7 +665,7 @@
       "exported": false,
       "file": "models/User.js",
       "name": "",
-      "semanticId": "User.js->comparePassword->anonymous[0]->else#0->anonymous[0]->BRANCH->if#7",
+      "semanticId": "models/User.js->comparePassword->anonymous[0]->else#0->anonymous[0]->BRANCH->if#7",
       "type": "BRANCH"
     },
     {
@@ -674,7 +674,7 @@
       "exported": false,
       "file": "models/User.js",
       "name": "",
-      "semanticId": "User.js->comparePassword->anonymous[0]->if#1->if#0->anonymous[0]->BRANCH->if#5",
+      "semanticId": "models/User.js->comparePassword->anonymous[0]->if#1->if#0->anonymous[0]->BRANCH->if#5",
       "type": "BRANCH"
     },
     {
@@ -683,7 +683,7 @@
       "exported": false,
       "file": "models/User.js",
       "name": "",
-      "semanticId": "User.js->generateAuthToken->anonymous[0]->anonymous[0]->BRANCH->if#8",
+      "semanticId": "models/User.js->generateAuthToken->anonymous[0]->anonymous[0]->BRANCH->if#8",
       "type": "BRANCH"
     },
     {
@@ -692,7 +692,7 @@
       "exported": false,
       "file": "models/User.js",
       "name": "",
-      "semanticId": "User.js->comparePassword->anonymous[0]->BRANCH->if#3",
+      "semanticId": "models/User.js->comparePassword->anonymous[0]->BRANCH->if#3",
       "type": "BRANCH"
     },
     {
@@ -701,7 +701,7 @@
       "exported": false,
       "file": "models/User.js",
       "name": "",
-      "semanticId": "User.js->anonymous[7]->BRANCH->if#9",
+      "semanticId": "models/User.js->anonymous[7]->BRANCH->if#9",
       "type": "BRANCH"
     },
     {
@@ -710,7 +710,7 @@
       "exported": false,
       "file": "models/User.js",
       "name": "",
-      "semanticId": "User.js->anonymous[9]->BRANCH->if#13",
+      "semanticId": "models/User.js->anonymous[9]->BRANCH->if#13",
       "type": "BRANCH"
     },
     {
@@ -720,7 +720,7 @@
       "exported": false,
       "file": "models/User.js",
       "name": "",
-      "semanticId": "User.js->comparePassword->anonymous[0]->if#1->BRANCH->if#4",
+      "semanticId": "models/User.js->comparePassword->anonymous[0]->if#1->BRANCH->if#4",
       "type": "BRANCH"
     },
     {
@@ -730,7 +730,7 @@
       "exported": false,
       "file": "routes/api.js",
       "name": "",
-      "semanticId": "api.js->anonymous[4]->anonymous[0]->anonymous[0]->BRANCH->if#15",
+      "semanticId": "routes/api.js->anonymous[4]->anonymous[0]->anonymous[0]->BRANCH->if#15",
       "type": "BRANCH"
     },
     {
@@ -739,7 +739,7 @@
       "exported": false,
       "file": "routes/api.js",
       "name": "",
-      "semanticId": "api.js->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->BRANCH->if#6",
+      "semanticId": "routes/api.js->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->BRANCH->if#6",
       "type": "BRANCH"
     },
     {
@@ -748,7 +748,7 @@
       "exported": false,
       "file": "routes/api.js",
       "name": "",
-      "semanticId": "api.js->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->BRANCH->if#5",
+      "semanticId": "routes/api.js->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->BRANCH->if#5",
       "type": "BRANCH"
     },
     {
@@ -757,7 +757,7 @@
       "exported": false,
       "file": "routes/api.js",
       "name": "",
-      "semanticId": "api.js->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->BRANCH->if#4",
+      "semanticId": "routes/api.js->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->BRANCH->if#4",
       "type": "BRANCH"
     },
     {
@@ -766,7 +766,7 @@
       "exported": false,
       "file": "routes/api.js",
       "name": "",
-      "semanticId": "api.js->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->BRANCH->if#3",
+      "semanticId": "routes/api.js->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->BRANCH->if#3",
       "type": "BRANCH"
     },
     {
@@ -775,7 +775,7 @@
       "exported": false,
       "file": "routes/api.js",
       "name": "",
-      "semanticId": "api.js->anonymous[0]->anonymous[0]->anonymous[0]->BRANCH->if#2",
+      "semanticId": "routes/api.js->anonymous[0]->anonymous[0]->anonymous[0]->BRANCH->if#2",
       "type": "BRANCH"
     },
     {
@@ -784,7 +784,7 @@
       "exported": false,
       "file": "routes/api.js",
       "name": "",
-      "semanticId": "api.js->anonymous[0]->anonymous[0]->BRANCH->if#0",
+      "semanticId": "routes/api.js->anonymous[0]->anonymous[0]->BRANCH->if#0",
       "type": "BRANCH"
     },
     {
@@ -793,7 +793,7 @@
       "exported": false,
       "file": "routes/api.js",
       "name": "",
-      "semanticId": "api.js->anonymous[2]->anonymous[0]->anonymous[1]->anonymous[0]->BRANCH->if#10",
+      "semanticId": "routes/api.js->anonymous[2]->anonymous[0]->anonymous[1]->anonymous[0]->BRANCH->if#10",
       "type": "BRANCH"
     },
     {
@@ -802,7 +802,7 @@
       "exported": false,
       "file": "routes/api.js",
       "name": "",
-      "semanticId": "api.js->anonymous[2]->anonymous[0]->BRANCH->if#8",
+      "semanticId": "routes/api.js->anonymous[2]->anonymous[0]->BRANCH->if#8",
       "type": "BRANCH"
     },
     {
@@ -811,7 +811,7 @@
       "exported": false,
       "file": "routes/api.js",
       "name": "",
-      "semanticId": "api.js->anonymous[4]->anonymous[0]->anonymous[0]->BRANCH->if#14",
+      "semanticId": "routes/api.js->anonymous[4]->anonymous[0]->anonymous[0]->BRANCH->if#14",
       "type": "BRANCH"
     },
     {
@@ -820,7 +820,7 @@
       "exported": false,
       "file": "routes/api.js",
       "name": "",
-      "semanticId": "api.js->anonymous[4]->anonymous[0]->anonymous[0]->else#0->anonymous[0]->BRANCH->if#20",
+      "semanticId": "routes/api.js->anonymous[4]->anonymous[0]->anonymous[0]->else#0->anonymous[0]->BRANCH->if#20",
       "type": "BRANCH"
     },
     {
@@ -829,7 +829,7 @@
       "exported": false,
       "file": "routes/api.js",
       "name": "",
-      "semanticId": "api.js->anonymous[4]->anonymous[0]->anonymous[0]->if#1->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->BRANCH->if#19",
+      "semanticId": "routes/api.js->anonymous[4]->anonymous[0]->anonymous[0]->if#1->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->BRANCH->if#19",
       "type": "BRANCH"
     },
     {
@@ -838,7 +838,7 @@
       "exported": false,
       "file": "routes/api.js",
       "name": "",
-      "semanticId": "api.js->anonymous[4]->anonymous[0]->anonymous[0]->if#1->anonymous[0]->anonymous[0]->anonymous[0]->BRANCH->if#18",
+      "semanticId": "routes/api.js->anonymous[4]->anonymous[0]->anonymous[0]->if#1->anonymous[0]->anonymous[0]->anonymous[0]->BRANCH->if#18",
       "type": "BRANCH"
     },
     {
@@ -847,7 +847,7 @@
       "exported": false,
       "file": "routes/api.js",
       "name": "",
-      "semanticId": "api.js->anonymous[4]->anonymous[0]->anonymous[0]->if#1->anonymous[0]->anonymous[0]->BRANCH->if#17",
+      "semanticId": "routes/api.js->anonymous[4]->anonymous[0]->anonymous[0]->if#1->anonymous[0]->anonymous[0]->BRANCH->if#17",
       "type": "BRANCH"
     },
     {
@@ -856,7 +856,7 @@
       "exported": false,
       "file": "routes/api.js",
       "name": "",
-      "semanticId": "api.js->anonymous[4]->anonymous[0]->anonymous[0]->if#1->anonymous[0]->BRANCH->if#16",
+      "semanticId": "routes/api.js->anonymous[4]->anonymous[0]->anonymous[0]->if#1->anonymous[0]->BRANCH->if#16",
       "type": "BRANCH"
     },
     {
@@ -865,7 +865,7 @@
       "exported": false,
       "file": "routes/api.js",
       "name": "",
-      "semanticId": "api.js->anonymous[4]->anonymous[0]->BRANCH->if#12",
+      "semanticId": "routes/api.js->anonymous[4]->anonymous[0]->BRANCH->if#12",
       "type": "BRANCH"
     },
     {
@@ -874,7 +874,7 @@
       "exported": false,
       "file": "routes/api.js",
       "name": "",
-      "semanticId": "api.js->anonymous[5]->anonymous[0]->BRANCH->if#21",
+      "semanticId": "routes/api.js->anonymous[5]->anonymous[0]->BRANCH->if#21",
       "type": "BRANCH"
     },
     {
@@ -883,7 +883,7 @@
       "exported": false,
       "file": "routes/api.js",
       "name": "",
-      "semanticId": "api.js->anonymous[0]->anonymous[0]->BRANCH->if#1",
+      "semanticId": "routes/api.js->anonymous[0]->anonymous[0]->BRANCH->if#1",
       "type": "BRANCH"
     },
     {
@@ -893,7 +893,7 @@
       "exported": false,
       "file": "routes/api.js",
       "name": "",
-      "semanticId": "api.js->anonymous[1]->anonymous[0]->BRANCH->if#7",
+      "semanticId": "routes/api.js->anonymous[1]->anonymous[0]->BRANCH->if#7",
       "type": "BRANCH"
     },
     {
@@ -903,7 +903,7 @@
       "exported": false,
       "file": "routes/api.js",
       "name": "",
-      "semanticId": "api.js->anonymous[2]->anonymous[0]->BRANCH->if#9",
+      "semanticId": "routes/api.js->anonymous[2]->anonymous[0]->BRANCH->if#9",
       "type": "BRANCH"
     },
     {
@@ -913,7 +913,7 @@
       "exported": false,
       "file": "routes/api.js",
       "name": "",
-      "semanticId": "api.js->anonymous[3]->try#0->BRANCH->if#11",
+      "semanticId": "routes/api.js->anonymous[3]->try#0->BRANCH->if#11",
       "type": "BRANCH"
     },
     {
@@ -923,7 +923,7 @@
       "exported": false,
       "file": "routes/api.js",
       "name": "",
-      "semanticId": "api.js->anonymous[4]->anonymous[0]->BRANCH->if#13",
+      "semanticId": "routes/api.js->anonymous[4]->anonymous[0]->BRANCH->if#13",
       "type": "BRANCH"
     },
     {
@@ -933,7 +933,7 @@
       "exported": false,
       "file": "routes/api.js",
       "name": "",
-      "semanticId": "api.js->anonymous[5]->anonymous[0]->BRANCH->if#22",
+      "semanticId": "routes/api.js->anonymous[5]->anonymous[0]->BRANCH->if#22",
       "type": "BRANCH"
     },
     {
@@ -945,7 +945,7 @@
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "",
-      "semanticId": "dataProcessor.js->anonymous[1]->processItem->BRANCH->if#3",
+      "semanticId": "services/dataProcessor.js->anonymous[1]->processItem->BRANCH->if#3",
       "type": "BRANCH"
     },
     {
@@ -957,7 +957,7 @@
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "",
-      "semanticId": "dataProcessor.js->DataProcessor->processWithCallbacks->processNext->BRANCH->if#13",
+      "semanticId": "services/dataProcessor.js->DataProcessor->processWithCallbacks->processNext->BRANCH->if#13",
       "type": "BRANCH"
     },
     {
@@ -969,7 +969,7 @@
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "",
-      "semanticId": "dataProcessor.js->DataProcessor->processWithPromises->anonymous[0]->processItem->BRANCH->if#16",
+      "semanticId": "services/dataProcessor.js->DataProcessor->processWithPromises->anonymous[0]->processItem->BRANCH->if#16",
       "type": "BRANCH"
     },
     {
@@ -981,7 +981,7 @@
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "",
-      "semanticId": "dataProcessor.js->processNext->BRANCH->if#0",
+      "semanticId": "services/dataProcessor.js->processNext->BRANCH->if#0",
       "type": "BRANCH"
     },
     {
@@ -991,7 +991,7 @@
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "",
-      "semanticId": "dataProcessor.js->DataProcessor->fetchUsersStream->while#0->BRANCH->if#9",
+      "semanticId": "services/dataProcessor.js->DataProcessor->fetchUsersStream->while#0->BRANCH->if#9",
       "type": "BRANCH"
     },
     {
@@ -1002,7 +1002,7 @@
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "",
-      "semanticId": "dataProcessor.js->processInBatches->anonymous[0]->processBatch->BRANCH->if#7",
+      "semanticId": "services/dataProcessor.js->processInBatches->anonymous[0]->processBatch->BRANCH->if#7",
       "type": "BRANCH"
     },
     {
@@ -1012,7 +1012,7 @@
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "",
-      "semanticId": "dataProcessor.js->processInBatches->anonymous[0]->BRANCH->if#6",
+      "semanticId": "services/dataProcessor.js->processInBatches->anonymous[0]->BRANCH->if#6",
       "type": "BRANCH"
     },
     {
@@ -1023,7 +1023,7 @@
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "",
-      "semanticId": "dataProcessor.js->processInBatches->anonymous[0]->for-of#0->BRANCH->if#5",
+      "semanticId": "services/dataProcessor.js->processInBatches->anonymous[0]->for-of#0->BRANCH->if#5",
       "type": "BRANCH"
     },
     {
@@ -1034,7 +1034,7 @@
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "",
-      "semanticId": "dataProcessor.js->DataProcessor->fetchUsersStream->while#0->for-of#0->BRANCH->if#10",
+      "semanticId": "services/dataProcessor.js->DataProcessor->fetchUsersStream->while#0->for-of#0->BRANCH->if#10",
       "type": "BRANCH"
     },
     {
@@ -1043,7 +1043,7 @@
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "",
-      "semanticId": "dataProcessor.js->anonymous[5]->anonymous[0]->BRANCH->if#4",
+      "semanticId": "services/dataProcessor.js->anonymous[5]->anonymous[0]->BRANCH->if#4",
       "type": "BRANCH"
     },
     {
@@ -1052,7 +1052,7 @@
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "",
-      "semanticId": "dataProcessor.js->DataProcessor->processComplex->anonymous[0]->anonymous[0]->BRANCH->if#17",
+      "semanticId": "services/dataProcessor.js->DataProcessor->processComplex->anonymous[0]->anonymous[0]->BRANCH->if#17",
       "type": "BRANCH"
     },
     {
@@ -1061,7 +1061,7 @@
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "",
-      "semanticId": "dataProcessor.js->DataProcessor->processWithCallbacks->processNext->if#0->anonymous[0]->anonymous[0]->BRANCH->if#15",
+      "semanticId": "services/dataProcessor.js->DataProcessor->processWithCallbacks->processNext->if#0->anonymous[0]->anonymous[0]->BRANCH->if#15",
       "type": "BRANCH"
     },
     {
@@ -1070,7 +1070,7 @@
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "",
-      "semanticId": "dataProcessor.js->DataProcessor->processWithCallbacks->processNext->if#0->anonymous[0]->BRANCH->if#14",
+      "semanticId": "services/dataProcessor.js->DataProcessor->processWithCallbacks->processNext->if#0->anonymous[0]->BRANCH->if#14",
       "type": "BRANCH"
     },
     {
@@ -1079,7 +1079,7 @@
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "",
-      "semanticId": "dataProcessor.js->processInBatches->anonymous[0]->processBatch->anonymous[0]->BRANCH->if#8",
+      "semanticId": "services/dataProcessor.js->processInBatches->anonymous[0]->processBatch->anonymous[0]->BRANCH->if#8",
       "type": "BRANCH"
     },
     {
@@ -1088,7 +1088,7 @@
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "",
-      "semanticId": "dataProcessor.js->processNext->if#0->anonymous[0]->anonymous[0]->BRANCH->if#2",
+      "semanticId": "services/dataProcessor.js->processNext->if#0->anonymous[0]->anonymous[0]->BRANCH->if#2",
       "type": "BRANCH"
     },
     {
@@ -1097,7 +1097,7 @@
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "",
-      "semanticId": "dataProcessor.js->processNext->if#0->anonymous[0]->BRANCH->if#1",
+      "semanticId": "services/dataProcessor.js->processNext->if#0->anonymous[0]->BRANCH->if#1",
       "type": "BRANCH"
     },
     {
@@ -1107,7 +1107,7 @@
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "",
-      "semanticId": "dataProcessor.js->DataProcessor->processDataStream->for-of#0->BRANCH->if#11",
+      "semanticId": "services/dataProcessor.js->DataProcessor->processDataStream->for-of#0->BRANCH->if#11",
       "type": "BRANCH"
     },
     {
@@ -1115,7 +1115,7 @@
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "",
-      "semanticId": "dataProcessor.js->DataProcessor->processDataStream->for-of#0->BRANCH->if#12",
+      "semanticId": "services/dataProcessor.js->DataProcessor->processDataStream->for-of#0->BRANCH->if#12",
       "type": "BRANCH"
     },
     {
@@ -1126,7 +1126,7 @@
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "name": "",
-      "semanticId": "asyncHelpers.js->retryWithBackoff->anonymous[0]->execute->anonymous[1]->BRANCH->if#0",
+      "semanticId": "utils/asyncHelpers.js->retryWithBackoff->anonymous[0]->execute->anonymous[1]->BRANCH->if#0",
       "type": "BRANCH"
     },
     {
@@ -1137,7 +1137,7 @@
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "name": "",
-      "semanticId": "asyncHelpers.js->promisePool->anonymous[0]->runNext->BRANCH->if#6",
+      "semanticId": "utils/asyncHelpers.js->promisePool->anonymous[0]->runNext->BRANCH->if#6",
       "type": "BRANCH"
     },
     {
@@ -1148,7 +1148,7 @@
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "name": "",
-      "semanticId": "asyncHelpers.js->processBatch->processNext->BRANCH->if#2",
+      "semanticId": "utils/asyncHelpers.js->processBatch->processNext->BRANCH->if#2",
       "type": "BRANCH"
     },
     {
@@ -1158,7 +1158,7 @@
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "name": "",
-      "semanticId": "asyncHelpers.js->recursivePromiseChain->BRANCH->if#3",
+      "semanticId": "utils/asyncHelpers.js->recursivePromiseChain->BRANCH->if#3",
       "type": "BRANCH"
     },
     {
@@ -1168,7 +1168,7 @@
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "name": "",
-      "semanticId": "asyncHelpers.js->debouncePromise->anonymous[0]->anonymous[0]->anonymous[0]->try#0->BRANCH->if#5",
+      "semanticId": "utils/asyncHelpers.js->debouncePromise->anonymous[0]->anonymous[0]->anonymous[0]->try#0->BRANCH->if#5",
       "type": "BRANCH"
     },
     {
@@ -1177,7 +1177,7 @@
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "name": "",
-      "semanticId": "asyncHelpers.js->callbackToPromise->anonymous[0]->anonymous[0]->BRANCH->if#1",
+      "semanticId": "utils/asyncHelpers.js->callbackToPromise->anonymous[0]->anonymous[0]->BRANCH->if#1",
       "type": "BRANCH"
     },
     {
@@ -1186,7 +1186,7 @@
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "name": "",
-      "semanticId": "asyncHelpers.js->debouncePromise->anonymous[0]->anonymous[0]->BRANCH->if#4",
+      "semanticId": "utils/asyncHelpers.js->debouncePromise->anonymous[0]->anonymous[0]->BRANCH->if#4",
       "type": "BRANCH"
     },
     {
@@ -1316,15 +1316,6 @@
       "method": "use",
       "name": "app.use",
       "object": "app",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 30,
-      "endLine": 45,
-      "exported": false,
-      "file": "app.js",
-      "isNew": true,
-      "name": "AppConfig",
       "type": "CALL"
     },
     {
@@ -2650,123 +2641,6 @@
       "type": "CALL"
     },
     {
-      "endColumn": 41,
-      "endLine": 131,
-      "exported": false,
-      "file": "app.js",
-      "isNew": true,
-      "name": "DataProcessor",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 39,
-      "endLine": 319,
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "isNew": true,
-      "name": "DataProcessor",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 41,
-      "endLine": 302,
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "isNew": true,
-      "name": "DataProcessor",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 41,
-      "endLine": 311,
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "isNew": true,
-      "name": "DataProcessor",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 27,
-      "endLine": 180,
-      "exported": false,
-      "file": "app.js",
-      "isNew": true,
-      "name": "Date",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 30,
-      "endLine": 324,
-      "exported": false,
-      "file": "middleware/auth.js",
-      "isNew": true,
-      "name": "Date",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 25,
-      "endLine": 164,
-      "exported": false,
-      "file": "models/User.js",
-      "isNew": true,
-      "name": "Date",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 25,
-      "endLine": 200,
-      "exported": false,
-      "file": "models/User.js",
-      "isNew": true,
-      "name": "Date",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 29,
-      "endLine": 82,
-      "exported": false,
-      "file": "models/User.js",
-      "isNew": true,
-      "name": "Date",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 35,
-      "endLine": 180,
-      "exported": false,
-      "file": "routes/api.js",
-      "isNew": true,
-      "name": "Date",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 35,
-      "endLine": 65,
-      "exported": false,
-      "file": "routes/api.js",
-      "isNew": true,
-      "name": "Date",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 31,
-      "endLine": 83,
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "isNew": true,
-      "name": "Date",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 35,
-      "endLine": 233,
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "isNew": true,
-      "name": "Date",
-      "type": "CALL"
-    },
-    {
       "computed": false,
       "computedPropertyVar": null,
       "endColumn": 57,
@@ -2812,141 +2686,6 @@
       "type": "CALL"
     },
     {
-      "endColumn": 39,
-      "endLine": 88,
-      "exported": false,
-      "file": "middleware/auth.js",
-      "isNew": true,
-      "name": "Error",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 41,
-      "endLine": 348,
-      "exported": false,
-      "file": "middleware/auth.js",
-      "isNew": true,
-      "name": "Error",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 41,
-      "endLine": 45,
-      "exported": false,
-      "file": "middleware/auth.js",
-      "isNew": true,
-      "name": "Error",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 42,
-      "endLine": 94,
-      "exported": false,
-      "file": "middleware/auth.js",
-      "isNew": true,
-      "name": "Error",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 43,
-      "endLine": 55,
-      "exported": false,
-      "file": "middleware/auth.js",
-      "isNew": true,
-      "name": "Error",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 46,
-      "endLine": 64,
-      "exported": false,
-      "file": "middleware/auth.js",
-      "isNew": true,
-      "name": "Error",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 48,
-      "endLine": 13,
-      "exported": false,
-      "file": "middleware/auth.js",
-      "isNew": true,
-      "name": "Error",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 51,
-      "endLine": 22,
-      "exported": false,
-      "file": "middleware/auth.js",
-      "isNew": true,
-      "name": "Error",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 53,
-      "endLine": 237,
-      "exported": false,
-      "file": "middleware/auth.js",
-      "isNew": true,
-      "name": "Error",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 56,
-      "endLine": 31,
-      "exported": false,
-      "file": "middleware/auth.js",
-      "isNew": true,
-      "name": "Error",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 58,
-      "endLine": 318,
-      "exported": false,
-      "file": "middleware/auth.js",
-      "isNew": true,
-      "name": "Error",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 41,
-      "endLine": 95,
-      "exported": false,
-      "file": "routes/api.js",
-      "isNew": true,
-      "name": "Error",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 57,
-      "endLine": 111,
-      "exported": false,
-      "file": "utils/asyncHelpers.js",
-      "isNew": true,
-      "name": "Error",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 66,
-      "endLine": 35,
-      "exported": false,
-      "file": "utils/asyncHelpers.js",
-      "isNew": true,
-      "name": "Error",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 90,
-      "endLine": 15,
-      "exported": false,
-      "file": "utils/asyncHelpers.js",
-      "isNew": true,
-      "name": "Error",
-      "type": "CALL"
-    },
-    {
       "endColumn": 51,
       "endLine": 242,
       "exported": false,
@@ -2974,15 +2713,6 @@
       "isAwaited": false,
       "isInsideTry": false,
       "name": "execute",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 25,
-      "endLine": 10,
-      "exported": false,
-      "file": "app.js",
-      "isNew": true,
-      "name": "express",
       "type": "CALL"
     },
     {
@@ -3568,15 +3298,6 @@
       "type": "CALL"
     },
     {
-      "endColumn": 26,
-      "endLine": 11,
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "isNew": true,
-      "name": "Map",
-      "type": "CALL"
-    },
-    {
       "computed": false,
       "computedPropertyVar": null,
       "endColumn": 65,
@@ -4067,17 +3788,6 @@
       "type": "CALL"
     },
     {
-      "endColumn": 2,
-      "endLine": 19,
-      "exported": false,
-      "file": "models/User.js",
-      "isNew": true,
-      "method": "Schema",
-      "name": "mongoose.Schema",
-      "object": "mongoose",
-      "type": "CALL"
-    },
-    {
       "computed": false,
       "computedPropertyVar": null,
       "endColumn": 6,
@@ -4471,123 +4181,6 @@
       "isAwaited": true,
       "isInsideTry": true,
       "name": "processUserRequest",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 4,
-      "endLine": 266,
-      "exported": false,
-      "file": "app.js",
-      "isNew": true,
-      "name": "Promise",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 4,
-      "endLine": 353,
-      "exported": false,
-      "file": "middleware/auth.js",
-      "isNew": true,
-      "name": "Promise",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 4,
-      "endLine": 50,
-      "exported": false,
-      "file": "middleware/auth.js",
-      "isNew": true,
-      "name": "Promise",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 6,
-      "endLine": 83,
-      "exported": false,
-      "file": "middleware/auth.js",
-      "isNew": true,
-      "name": "Promise",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 4,
-      "endLine": 77,
-      "exported": false,
-      "file": "models/User.js",
-      "isNew": true,
-      "name": "Promise",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 6,
-      "endLine": 175,
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "isNew": true,
-      "name": "Promise",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 4,
-      "endLine": 28,
-      "exported": false,
-      "file": "utils/asyncHelpers.js",
-      "isNew": true,
-      "name": "Promise",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 4,
-      "endLine": 355,
-      "exported": false,
-      "file": "utils/asyncHelpers.js",
-      "isNew": true,
-      "name": "Promise",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 4,
-      "endLine": 47,
-      "exported": false,
-      "file": "utils/asyncHelpers.js",
-      "isNew": true,
-      "name": "Promise",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 4,
-      "endLine": 60,
-      "exported": false,
-      "file": "utils/asyncHelpers.js",
-      "isNew": true,
-      "name": "Promise",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 6,
-      "endLine": 244,
-      "exported": false,
-      "file": "utils/asyncHelpers.js",
-      "isNew": true,
-      "name": "Promise",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 6,
-      "endLine": 318,
-      "exported": false,
-      "file": "utils/asyncHelpers.js",
-      "isNew": true,
-      "name": "Promise",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 8,
-      "endLine": 279,
-      "exported": false,
-      "file": "utils/asyncHelpers.js",
-      "isNew": true,
-      "name": "Promise",
       "type": "CALL"
     },
     {
@@ -7120,15 +6713,6 @@
       "type": "CALL"
     },
     {
-      "endColumn": 6,
-      "endLine": 29,
-      "exported": false,
-      "file": "routes/api.js",
-      "isNew": true,
-      "name": "User",
-      "type": "CALL"
-    },
-    {
       "endColumn": 32,
       "endLine": 63,
       "exported": false,
@@ -7591,7 +7175,7 @@
       "file": "middleware/auth.js",
       "name": "",
       "parameterName": "error",
-      "semanticId": "auth.js->authMiddleware->CATCH_BLOCK->catch#1",
+      "semanticId": "middleware/auth.js->authMiddleware->CATCH_BLOCK->catch#1",
       "type": "CATCH_BLOCK"
     },
     {
@@ -7599,7 +7183,7 @@
       "file": "middleware/auth.js",
       "name": "",
       "parameterName": "error",
-      "semanticId": "auth.js->requireRoleAsync->anonymous[0]->CATCH_BLOCK->catch#2",
+      "semanticId": "middleware/auth.js->requireRoleAsync->anonymous[0]->CATCH_BLOCK->catch#2",
       "type": "CATCH_BLOCK"
     },
     {
@@ -7607,7 +7191,7 @@
       "file": "middleware/auth.js",
       "name": "",
       "parameterName": "error",
-      "semanticId": "auth.js->verifyTokenAsync->CATCH_BLOCK->catch#0",
+      "semanticId": "middleware/auth.js->verifyTokenAsync->CATCH_BLOCK->catch#0",
       "type": "CATCH_BLOCK"
     },
     {
@@ -7615,7 +7199,7 @@
       "file": "routes/api.js",
       "name": "",
       "parameterName": "error",
-      "semanticId": "api.js->anonymous[3]->CATCH_BLOCK->catch#0",
+      "semanticId": "routes/api.js->anonymous[3]->CATCH_BLOCK->catch#0",
       "type": "CATCH_BLOCK"
     },
     {
@@ -7623,7 +7207,7 @@
       "file": "services/dataProcessor.js",
       "name": "",
       "parameterName": "err",
-      "semanticId": "dataProcessor.js->anonymous[1]->CATCH_BLOCK->catch#0",
+      "semanticId": "services/dataProcessor.js->anonymous[1]->CATCH_BLOCK->catch#0",
       "type": "CATCH_BLOCK"
     },
     {
@@ -7631,7 +7215,7 @@
       "file": "services/dataProcessor.js",
       "name": "",
       "parameterName": "err",
-      "semanticId": "dataProcessor.js->DataProcessor->processWithErrorHandling->CATCH_BLOCK->catch#2",
+      "semanticId": "services/dataProcessor.js->DataProcessor->processWithErrorHandling->CATCH_BLOCK->catch#2",
       "type": "CATCH_BLOCK"
     },
     {
@@ -7639,7 +7223,7 @@
       "file": "services/dataProcessor.js",
       "name": "",
       "parameterName": "err",
-      "semanticId": "dataProcessor.js->DataProcessor->processWithErrorHandling->try#0->for-of#0->CATCH_BLOCK->catch#3",
+      "semanticId": "services/dataProcessor.js->DataProcessor->processWithErrorHandling->try#0->for-of#0->CATCH_BLOCK->catch#3",
       "type": "CATCH_BLOCK"
     },
     {
@@ -7647,7 +7231,7 @@
       "file": "services/dataProcessor.js",
       "name": "",
       "parameterName": "err",
-      "semanticId": "dataProcessor.js->DataProcessor->processWithPromises->anonymous[0]->CATCH_BLOCK->catch#1",
+      "semanticId": "services/dataProcessor.js->DataProcessor->processWithPromises->anonymous[0]->CATCH_BLOCK->catch#1",
       "type": "CATCH_BLOCK"
     },
     {
@@ -7655,7 +7239,7 @@
       "file": "utils/asyncHelpers.js",
       "name": "",
       "parameterName": "err",
-      "semanticId": "asyncHelpers.js->asyncWithPromiseChain->CATCH_BLOCK->catch#0",
+      "semanticId": "utils/asyncHelpers.js->asyncWithPromiseChain->CATCH_BLOCK->catch#0",
       "type": "CATCH_BLOCK"
     },
     {
@@ -7663,7 +7247,7 @@
       "file": "utils/asyncHelpers.js",
       "name": "",
       "parameterName": "err",
-      "semanticId": "asyncHelpers.js->debouncePromise->anonymous[0]->anonymous[0]->anonymous[0]->CATCH_BLOCK->catch#1",
+      "semanticId": "utils/asyncHelpers.js->debouncePromise->anonymous[0]->anonymous[0]->anonymous[0]->CATCH_BLOCK->catch#1",
       "type": "CATCH_BLOCK"
     },
     {
@@ -7674,7 +7258,7 @@
     },
     {
       "exported": false,
-      "file": "dataProcessor.js",
+      "file": "services/dataProcessor.js",
       "name": "DataProcessor",
       "type": "CLASS"
     },
@@ -18378,7 +17962,7 @@
       "file": "routes/api.js",
       "loopType": "for-of",
       "name": "",
-      "semanticId": "api.js->anonymous[3]->try#0->LOOP->for-of#0",
+      "semanticId": "routes/api.js->anonymous[3]->try#0->LOOP->for-of#0",
       "type": "LOOP"
     },
     {
@@ -18386,7 +17970,7 @@
       "file": "routes/api.js",
       "loopType": "for-of",
       "name": "",
-      "semanticId": "api.js->anonymous[5]->anonymous[0]->LOOP->for-of#1",
+      "semanticId": "routes/api.js->anonymous[5]->anonymous[0]->LOOP->for-of#1",
       "type": "LOOP"
     },
     {
@@ -18395,7 +17979,7 @@
       "file": "services/dataProcessor.js",
       "loopType": "for-of",
       "name": "",
-      "semanticId": "dataProcessor.js->DataProcessor->processUser->LOOP->for-of#10",
+      "semanticId": "services/dataProcessor.js->DataProcessor->processUser->LOOP->for-of#10",
       "type": "LOOP"
     },
     {
@@ -18404,7 +17988,7 @@
       "file": "services/dataProcessor.js",
       "loopType": "for-of",
       "name": "",
-      "semanticId": "dataProcessor.js->DataProcessor->processWithNestedGenerators->for-of#0->LOOP->for-of#8",
+      "semanticId": "services/dataProcessor.js->DataProcessor->processWithNestedGenerators->for-of#0->LOOP->for-of#8",
       "type": "LOOP"
     },
     {
@@ -18414,7 +17998,7 @@
       "initVariableName": "i",
       "loopType": "for",
       "name": "",
-      "semanticId": "dataProcessor.js->createProcessors->LOOP->for#0",
+      "semanticId": "services/dataProcessor.js->createProcessors->LOOP->for#0",
       "testColumn": 18,
       "testExpressionId": "services/dataProcessor.js:EXPRESSION:BinaryExpression:301:18",
       "testExpressionType": "BinaryExpression",
@@ -18437,7 +18021,7 @@
       "initVariableName": "i",
       "loopType": "for",
       "name": "",
-      "semanticId": "dataProcessor.js->createAsyncProcessors->LOOP->for#1",
+      "semanticId": "services/dataProcessor.js->createAsyncProcessors->LOOP->for#1",
       "testColumn": 18,
       "testExpressionId": "services/dataProcessor.js:EXPRESSION:BinaryExpression:310:18",
       "testExpressionType": "BinaryExpression",
@@ -18458,7 +18042,7 @@
       "file": "services/dataProcessor.js",
       "loopType": "for-of",
       "name": "",
-      "semanticId": "dataProcessor.js->DataProcessor->fetchUsersStream->while#0->LOOP->for-of#5",
+      "semanticId": "services/dataProcessor.js->DataProcessor->fetchUsersStream->while#0->LOOP->for-of#5",
       "type": "LOOP"
     },
     {
@@ -18466,7 +18050,7 @@
       "file": "services/dataProcessor.js",
       "loopType": "for-of",
       "name": "",
-      "semanticId": "dataProcessor.js->DataProcessor->generatePromises->LOOP->for-of#12",
+      "semanticId": "services/dataProcessor.js->DataProcessor->generatePromises->LOOP->for-of#12",
       "type": "LOOP"
     },
     {
@@ -18474,7 +18058,7 @@
       "file": "services/dataProcessor.js",
       "loopType": "for-of",
       "name": "",
-      "semanticId": "dataProcessor.js->DataProcessor->processBatch->LOOP->for-of#3",
+      "semanticId": "services/dataProcessor.js->DataProcessor->processBatch->LOOP->for-of#3",
       "type": "LOOP"
     },
     {
@@ -18482,7 +18066,7 @@
       "file": "services/dataProcessor.js",
       "loopType": "for-of",
       "name": "",
-      "semanticId": "dataProcessor.js->DataProcessor->processComplex->LOOP->for-of#11",
+      "semanticId": "services/dataProcessor.js->DataProcessor->processComplex->LOOP->for-of#11",
       "type": "LOOP"
     },
     {
@@ -18490,7 +18074,7 @@
       "file": "services/dataProcessor.js",
       "loopType": "for-of",
       "name": "",
-      "semanticId": "dataProcessor.js->DataProcessor->processDataStream->LOOP->for-of#6",
+      "semanticId": "services/dataProcessor.js->DataProcessor->processDataStream->LOOP->for-of#6",
       "type": "LOOP"
     },
     {
@@ -18498,7 +18082,7 @@
       "file": "services/dataProcessor.js",
       "loopType": "for-of",
       "name": "",
-      "semanticId": "dataProcessor.js->DataProcessor->processPromiseGenerator->LOOP->for-of#13",
+      "semanticId": "services/dataProcessor.js->DataProcessor->processPromiseGenerator->LOOP->for-of#13",
       "type": "LOOP"
     },
     {
@@ -18506,7 +18090,7 @@
       "file": "services/dataProcessor.js",
       "loopType": "for-of",
       "name": "",
-      "semanticId": "dataProcessor.js->DataProcessor->processWithErrorHandling->try#0->LOOP->for-of#14",
+      "semanticId": "services/dataProcessor.js->DataProcessor->processWithErrorHandling->try#0->LOOP->for-of#14",
       "type": "LOOP"
     },
     {
@@ -18514,7 +18098,7 @@
       "file": "services/dataProcessor.js",
       "loopType": "for-of",
       "name": "",
-      "semanticId": "dataProcessor.js->DataProcessor->processWithNestedGenerators->for-of#0->for-of#0->LOOP->for-of#9",
+      "semanticId": "services/dataProcessor.js->DataProcessor->processWithNestedGenerators->for-of#0->for-of#0->LOOP->for-of#9",
       "type": "LOOP"
     },
     {
@@ -18522,7 +18106,7 @@
       "file": "services/dataProcessor.js",
       "loopType": "for-of",
       "name": "",
-      "semanticId": "dataProcessor.js->DataProcessor->processWithNestedGenerators->LOOP->for-of#7",
+      "semanticId": "services/dataProcessor.js->DataProcessor->processWithNestedGenerators->LOOP->for-of#7",
       "type": "LOOP"
     },
     {
@@ -18530,7 +18114,7 @@
       "file": "services/dataProcessor.js",
       "loopType": "for-of",
       "name": "",
-      "semanticId": "dataProcessor.js->processInBatches->anonymous[0]->LOOP->for-of#2",
+      "semanticId": "services/dataProcessor.js->processInBatches->anonymous[0]->LOOP->for-of#2",
       "type": "LOOP"
     },
     {
@@ -18538,7 +18122,7 @@
       "file": "services/dataProcessor.js",
       "loopType": "while",
       "name": "",
-      "semanticId": "dataProcessor.js->DataProcessor->fetchUsersStream->LOOP->while#4",
+      "semanticId": "services/dataProcessor.js->DataProcessor->fetchUsersStream->LOOP->while#4",
       "testColumn": 11,
       "testExpressionId": "services/dataProcessor.js:EXPRESSION:BinaryExpression:45:11",
       "testExpressionType": "BinaryExpression",
@@ -18555,7 +18139,7 @@
       "initVariableName": "i",
       "loopType": "for",
       "name": "",
-      "semanticId": "asyncHelpers.js->promiseGenerator->LOOP->for#0",
+      "semanticId": "utils/asyncHelpers.js->promiseGenerator->LOOP->for#0",
       "testColumn": 18,
       "testExpressionId": "utils/asyncHelpers.js:EXPRESSION:BinaryExpression:239:18",
       "testExpressionType": "BinaryExpression",
@@ -18576,7 +18160,7 @@
       "file": "utils/asyncHelpers.js",
       "loopType": "for-of",
       "name": "",
-      "semanticId": "asyncHelpers.js->executePromiseGenerator->LOOP->for-of#1",
+      "semanticId": "utils/asyncHelpers.js->executePromiseGenerator->LOOP->for-of#1",
       "type": "LOOP"
     },
     {
@@ -18584,7 +18168,7 @@
       "file": "utils/asyncHelpers.js",
       "loopType": "while",
       "name": "",
-      "semanticId": "asyncHelpers.js->promisePool->anonymous[0]->runNext->LOOP->while#2",
+      "semanticId": "utils/asyncHelpers.js->promisePool->anonymous[0]->runNext->LOOP->while#2",
       "testColumn": 13,
       "testExpressionId": "utils/asyncHelpers.js:EXPRESSION:LogicalExpression:335:13",
       "testExpressionType": "LogicalExpression",
@@ -22986,12 +22570,12 @@
       "modifies": [
         {
           "line": 344,
-          "variableId": "asyncHelpers.js->promisePool->anonymous[0]->VARIABLE->completed",
+          "variableId": "utils/asyncHelpers.js->promisePool->anonymous[0]->VARIABLE->completed",
           "variableName": "completed"
         },
         {
           "line": 345,
-          "variableId": "asyncHelpers.js->promisePool->anonymous[0]->VARIABLE->running",
+          "variableId": "utils/asyncHelpers.js->promisePool->anonymous[0]->VARIABLE->running",
           "variableName": "running"
         }
       ],
@@ -23385,7 +22969,7 @@
       "modifies": [
         {
           "line": 12,
-          "variableId": "asyncHelpers.js->retryWithBackoff->anonymous[0]->VARIABLE->attempt",
+          "variableId": "utils/asyncHelpers.js->retryWithBackoff->anonymous[0]->VARIABLE->attempt",
           "variableName": "attempt"
         }
       ],
@@ -23925,7 +23509,7 @@
       "modifies": [
         {
           "line": 310,
-          "variableId": "dataProcessor.js->createAsyncProcessors->for#0->VARIABLE->i",
+          "variableId": "services/dataProcessor.js->createAsyncProcessors->for#0->VARIABLE->i",
           "variableName": "i"
         }
       ],
@@ -23940,7 +23524,7 @@
       "modifies": [
         {
           "line": 301,
-          "variableId": "dataProcessor.js->createProcessors->for#0->VARIABLE->i",
+          "variableId": "services/dataProcessor.js->createProcessors->for#0->VARIABLE->i",
           "variableName": "i"
         }
       ],
@@ -23982,7 +23566,7 @@
       "modifies": [
         {
           "line": 56,
-          "variableId": "dataProcessor.js->DataProcessor->fetchUsersStream->VARIABLE->processed",
+          "variableId": "services/dataProcessor.js->DataProcessor->fetchUsersStream->VARIABLE->processed",
           "variableName": "processed"
         }
       ],
@@ -26214,7 +25798,7 @@
       "modifies": [
         {
           "line": 86,
-          "variableId": "asyncHelpers.js->processBatch->VARIABLE->index",
+          "variableId": "utils/asyncHelpers.js->processBatch->VARIABLE->index",
           "variableName": "index"
         }
       ],
@@ -26238,7 +25822,7 @@
       "modifies": [
         {
           "line": 239,
-          "variableId": "asyncHelpers.js->promiseGenerator->for#0->VARIABLE->i",
+          "variableId": "utils/asyncHelpers.js->promiseGenerator->for#0->VARIABLE->i",
           "variableName": "i"
         }
       ],
@@ -26325,12 +25909,12 @@
       "modifies": [
         {
           "line": 336,
-          "variableId": "asyncHelpers.js->processBatch->VARIABLE->index",
+          "variableId": "utils/asyncHelpers.js->processBatch->VARIABLE->index",
           "variableName": "index"
         },
         {
           "line": 339,
-          "variableId": "asyncHelpers.js->promisePool->anonymous[0]->VARIABLE->running",
+          "variableId": "utils/asyncHelpers.js->promisePool->anonymous[0]->VARIABLE->running",
           "variableName": "running"
         }
       ],
@@ -26432,70 +26016,70 @@
       "exported": false,
       "file": "middleware/auth.js",
       "name": "",
-      "semanticId": "auth.js->authMiddleware->TRY_BLOCK->try#1",
+      "semanticId": "middleware/auth.js->authMiddleware->TRY_BLOCK->try#1",
       "type": "TRY_BLOCK"
     },
     {
       "exported": false,
       "file": "middleware/auth.js",
       "name": "",
-      "semanticId": "auth.js->requireRoleAsync->anonymous[0]->TRY_BLOCK->try#2",
+      "semanticId": "middleware/auth.js->requireRoleAsync->anonymous[0]->TRY_BLOCK->try#2",
       "type": "TRY_BLOCK"
     },
     {
       "exported": false,
       "file": "middleware/auth.js",
       "name": "",
-      "semanticId": "auth.js->verifyTokenAsync->TRY_BLOCK->try#0",
+      "semanticId": "middleware/auth.js->verifyTokenAsync->TRY_BLOCK->try#0",
       "type": "TRY_BLOCK"
     },
     {
       "exported": false,
       "file": "routes/api.js",
       "name": "",
-      "semanticId": "api.js->anonymous[3]->TRY_BLOCK->try#0",
+      "semanticId": "routes/api.js->anonymous[3]->TRY_BLOCK->try#0",
       "type": "TRY_BLOCK"
     },
     {
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "",
-      "semanticId": "dataProcessor.js->anonymous[1]->TRY_BLOCK->try#0",
+      "semanticId": "services/dataProcessor.js->anonymous[1]->TRY_BLOCK->try#0",
       "type": "TRY_BLOCK"
     },
     {
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "",
-      "semanticId": "dataProcessor.js->DataProcessor->processWithErrorHandling->TRY_BLOCK->try#2",
+      "semanticId": "services/dataProcessor.js->DataProcessor->processWithErrorHandling->TRY_BLOCK->try#2",
       "type": "TRY_BLOCK"
     },
     {
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "",
-      "semanticId": "dataProcessor.js->DataProcessor->processWithErrorHandling->try#0->for-of#0->TRY_BLOCK->try#3",
+      "semanticId": "services/dataProcessor.js->DataProcessor->processWithErrorHandling->try#0->for-of#0->TRY_BLOCK->try#3",
       "type": "TRY_BLOCK"
     },
     {
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "",
-      "semanticId": "dataProcessor.js->DataProcessor->processWithPromises->anonymous[0]->TRY_BLOCK->try#1",
+      "semanticId": "services/dataProcessor.js->DataProcessor->processWithPromises->anonymous[0]->TRY_BLOCK->try#1",
       "type": "TRY_BLOCK"
     },
     {
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "name": "",
-      "semanticId": "asyncHelpers.js->asyncWithPromiseChain->TRY_BLOCK->try#0",
+      "semanticId": "utils/asyncHelpers.js->asyncWithPromiseChain->TRY_BLOCK->try#0",
       "type": "TRY_BLOCK"
     },
     {
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "name": "",
-      "semanticId": "asyncHelpers.js->debouncePromise->anonymous[0]->anonymous[0]->anonymous[0]->TRY_BLOCK->try#1",
+      "semanticId": "utils/asyncHelpers.js->debouncePromise->anonymous[0]->anonymous[0]->anonymous[0]->TRY_BLOCK->try#1",
       "type": "TRY_BLOCK"
     },
     {
@@ -31017,19 +30601,6 @@
       "from": "CALL:execute",
       "type": "CALLS",
       "to": "FUNCTION:execute"
-    },
-    {
-      "from": "CALL:express",
-      "type": "CALLS",
-      "to": "EXTERNAL_MODULE:express",
-      "metadata": {
-        "exportedName": "default"
-      }
-    },
-    {
-      "from": "CALL:express",
-      "type": "HANDLED_BY",
-      "to": "IMPORT:express"
     },
     {
       "from": "CALL:fallbackFn",
@@ -42275,22 +41846,12 @@
     {
       "from": "MODULE:app.js",
       "type": "CONTAINS",
-      "to": "CALL:AppConfig"
-    },
-    {
-      "from": "MODULE:app.js",
-      "type": "CONTAINS",
       "to": "CALL:createClient"
     },
     {
       "from": "MODULE:app.js",
       "type": "CONTAINS",
       "to": "CALL:errorHandler.handleError.bind"
-    },
-    {
-      "from": "MODULE:app.js",
-      "type": "CONTAINS",
-      "to": "CALL:express"
     },
     {
       "from": "MODULE:app.js",
@@ -42751,11 +42312,6 @@
       "from": "MODULE:models/User.js",
       "type": "CONTAINS",
       "to": "CALL:mongoose.model"
-    },
-    {
-      "from": "MODULE:models/User.js",
-      "type": "CONTAINS",
-      "to": "CALL:mongoose.Schema"
     },
     {
       "from": "MODULE:models/User.js",
@@ -43606,7 +43162,7 @@
       "to": "LITERAL:",
       "metadata": {
         "argIndex": 1,
-        "callId": "dataProcessor.js->DataProcessor->processWithNestedGenerators->for-of#0->CALL->this.fetchUsersStream#0"
+        "callId": "services/dataProcessor.js->DataProcessor->processWithNestedGenerators->for-of#0->CALL->this.fetchUsersStream#0"
       }
     },
     {
@@ -43623,7 +43179,7 @@
       "to": "CONSTANT:userId",
       "metadata": {
         "argIndex": 0,
-        "callId": "dataProcessor.js->DataProcessor->processWithNestedGenerators->for-of#0->CALL->this.fetchUsersStream#0"
+        "callId": "services/dataProcessor.js->DataProcessor->processWithNestedGenerators->for-of#0->CALL->this.fetchUsersStream#0"
       }
     },
     {
@@ -43752,26 +43308,6 @@
       "from": "SCOPE:",
       "type": "CONTAINS",
       "to": "CALL:currentBatch.push"
-    },
-    {
-      "from": "SCOPE:",
-      "type": "CONTAINS",
-      "to": "CALL:DataProcessor"
-    },
-    {
-      "from": "SCOPE:",
-      "type": "CONTAINS",
-      "to": "CALL:DataProcessor"
-    },
-    {
-      "from": "SCOPE:",
-      "type": "CONTAINS",
-      "to": "CALL:DataProcessor"
-    },
-    {
-      "from": "SCOPE:",
-      "type": "CONTAINS",
-      "to": "CALL:Date"
     },
     {
       "from": "SCOPE:",
@@ -43922,16 +43458,6 @@
       "from": "SCOPE:",
       "type": "CONTAINS",
       "to": "CALL:processUserRequest"
-    },
-    {
-      "from": "SCOPE:",
-      "type": "CONTAINS",
-      "to": "CALL:Promise"
-    },
-    {
-      "from": "SCOPE:",
-      "type": "CONTAINS",
-      "to": "CALL:Promise"
     },
     {
       "from": "SCOPE:",
@@ -45161,36 +44687,6 @@
     {
       "from": "SCOPE:anonymous[0]:body",
       "type": "CONTAINS",
-      "to": "CALL:Date"
-    },
-    {
-      "from": "SCOPE:anonymous[0]:body",
-      "type": "CONTAINS",
-      "to": "CALL:Date"
-    },
-    {
-      "from": "SCOPE:anonymous[0]:body",
-      "type": "CONTAINS",
-      "to": "CALL:Date"
-    },
-    {
-      "from": "SCOPE:anonymous[0]:body",
-      "type": "CONTAINS",
-      "to": "CALL:Date"
-    },
-    {
-      "from": "SCOPE:anonymous[0]:body",
-      "type": "CONTAINS",
-      "to": "CALL:Date"
-    },
-    {
-      "from": "SCOPE:anonymous[0]:body",
-      "type": "CONTAINS",
-      "to": "CALL:Error"
-    },
-    {
-      "from": "SCOPE:anonymous[0]:body",
-      "type": "CONTAINS",
       "to": "CALL:execute"
     },
     {
@@ -45387,16 +44883,6 @@
       "from": "SCOPE:anonymous[0]:body",
       "type": "CONTAINS",
       "to": "CALL:processor.processBatch"
-    },
-    {
-      "from": "SCOPE:anonymous[0]:body",
-      "type": "CONTAINS",
-      "to": "CALL:Promise"
-    },
-    {
-      "from": "SCOPE:anonymous[0]:body",
-      "type": "CONTAINS",
-      "to": "CALL:Promise"
     },
     {
       "from": "SCOPE:anonymous[0]:body",
@@ -45612,11 +45098,6 @@
       "from": "SCOPE:anonymous[0]:body",
       "type": "CONTAINS",
       "to": "CALL:task"
-    },
-    {
-      "from": "SCOPE:anonymous[0]:body",
-      "type": "CONTAINS",
-      "to": "CALL:User"
     },
     {
       "from": "SCOPE:anonymous[0]:body",
@@ -46351,11 +45832,6 @@
     {
       "from": "SCOPE:anonymous[1]:body",
       "type": "CONTAINS",
-      "to": "CALL:Error"
-    },
-    {
-      "from": "SCOPE:anonymous[1]:body",
-      "type": "CONTAINS",
       "to": "CALL:fetch"
     },
     {
@@ -47081,11 +46557,6 @@
     {
       "from": "SCOPE:anonymous[8]:body",
       "type": "CONTAINS",
-      "to": "CALL:Date"
-    },
-    {
-      "from": "SCOPE:anonymous[8]:body",
-      "type": "CONTAINS",
       "to": "CALL:mongoose.connection.db.collection"
     },
     {
@@ -47201,11 +46672,6 @@
     {
       "from": "SCOPE:blacklistToken:body",
       "type": "CONTAINS",
-      "to": "CALL:Promise"
-    },
-    {
-      "from": "SCOPE:blacklistToken:body",
-      "type": "CONTAINS",
       "to": "CONSTRUCTOR_CALL:new Promise()"
     },
     {
@@ -47237,11 +46703,6 @@
       "from": "SCOPE:callbackHell:body",
       "type": "CONTAINS",
       "to": "FUNCTION:anonymous[0]"
-    },
-    {
-      "from": "SCOPE:callbackToPromise:body",
-      "type": "CONTAINS",
-      "to": "CALL:Promise"
     },
     {
       "from": "SCOPE:callbackToPromise:body",
@@ -47306,11 +46767,6 @@
     {
       "from": "SCOPE:createWithProfile:body",
       "type": "CONTAINS",
-      "to": "CALL:Date"
-    },
-    {
-      "from": "SCOPE:createWithProfile:body",
-      "type": "CONTAINS",
       "to": "CALL:mongoose.connection.db.collection"
     },
     {
@@ -47352,11 +46808,6 @@
       "from": "SCOPE:createWithProfile:body",
       "type": "DECLARES",
       "to": "VARIABLE:user"
-    },
-    {
-      "from": "SCOPE:DataProcessor.constructor:body",
-      "type": "CONTAINS",
-      "to": "CALL:Map"
     },
     {
       "from": "SCOPE:DataProcessor.constructor:body",
@@ -47522,11 +46973,6 @@
       "from": "SCOPE:DataProcessor.processWithNestedGenerators:body",
       "type": "DECLARES",
       "to": "CONSTANT:results"
-    },
-    {
-      "from": "SCOPE:DataProcessor.processWithPromises:body",
-      "type": "CONTAINS",
-      "to": "CALL:Promise"
     },
     {
       "from": "SCOPE:DataProcessor.processWithPromises:body",
@@ -47711,11 +47157,6 @@
     {
       "from": "SCOPE:generateAuthToken:body",
       "type": "CONTAINS",
-      "to": "CALL:Promise"
-    },
-    {
-      "from": "SCOPE:generateAuthToken:body",
-      "type": "CONTAINS",
       "to": "CONSTRUCTOR_CALL:new Promise()"
     },
     {
@@ -47881,11 +47322,6 @@
     {
       "from": "SCOPE:if:12:4:0",
       "type": "CONTAINS",
-      "to": "CALL:Error"
-    },
-    {
-      "from": "SCOPE:if:12:4:0",
-      "type": "CONTAINS",
       "to": "CONSTRUCTOR_CALL:new Error()"
     },
     {
@@ -47922,11 +47358,6 @@
       "from": "SCOPE:if:137:10:19",
       "type": "CONTAINS",
       "to": "CALL:console.error"
-    },
-    {
-      "from": "SCOPE:if:14:10:0",
-      "type": "CONTAINS",
-      "to": "CALL:Error"
     },
     {
       "from": "SCOPE:if:14:10:0",
@@ -48046,11 +47477,6 @@
     {
       "from": "SCOPE:if:21:6:2",
       "type": "CONTAINS",
-      "to": "CALL:Error"
-    },
-    {
-      "from": "SCOPE:if:21:6:2",
-      "type": "CONTAINS",
       "to": "CONSTRUCTOR_CALL:new Error()"
     },
     {
@@ -48072,11 +47498,6 @@
       "from": "SCOPE:if:230:4:26",
       "type": "CONTAINS",
       "to": "CALL:res.status"
-    },
-    {
-      "from": "SCOPE:if:236:8:27",
-      "type": "CONTAINS",
-      "to": "CALL:Error"
     },
     {
       "from": "SCOPE:if:236:8:27",
@@ -48196,11 +47617,6 @@
     {
       "from": "SCOPE:if:30:8:4",
       "type": "CONTAINS",
-      "to": "CALL:Error"
-    },
-    {
-      "from": "SCOPE:if:30:8:4",
-      "type": "CONTAINS",
       "to": "CONSTRUCTOR_CALL:new Error()"
     },
     {
@@ -48227,11 +47643,6 @@
       "from": "SCOPE:if:318:4:33",
       "type": "CONTAINS",
       "to": "CALL:callback"
-    },
-    {
-      "from": "SCOPE:if:318:4:33",
-      "type": "CONTAINS",
-      "to": "CALL:Error"
     },
     {
       "from": "SCOPE:if:318:4:33",
@@ -48291,11 +47702,6 @@
     {
       "from": "SCOPE:if:347:6:37",
       "type": "CONTAINS",
-      "to": "CALL:Error"
-    },
-    {
-      "from": "SCOPE:if:347:6:37",
-      "type": "CONTAINS",
       "to": "CALL:reject"
     },
     {
@@ -48312,11 +47718,6 @@
       "from": "SCOPE:if:42:8:3",
       "type": "CONTAINS",
       "to": "CALL:console.error"
-    },
-    {
-      "from": "SCOPE:if:44:6:5",
-      "type": "CONTAINS",
-      "to": "CALL:Error"
     },
     {
       "from": "SCOPE:if:44:6:5",
@@ -48361,11 +47762,6 @@
     {
       "from": "SCOPE:if:54:8:7",
       "type": "CONTAINS",
-      "to": "CALL:Error"
-    },
-    {
-      "from": "SCOPE:if:54:8:7",
-      "type": "CONTAINS",
       "to": "CONSTRUCTOR_CALL:new Error()"
     },
     {
@@ -48387,11 +47783,6 @@
       "from": "SCOPE:if:60:12:5",
       "type": "CONTAINS",
       "to": "CALL:callback"
-    },
-    {
-      "from": "SCOPE:if:63:8:8",
-      "type": "CONTAINS",
-      "to": "CALL:Error"
     },
     {
       "from": "SCOPE:if:63:8:8",
@@ -48436,27 +47827,12 @@
     {
       "from": "SCOPE:if:87:4:11",
       "type": "CONTAINS",
-      "to": "CALL:Error"
-    },
-    {
-      "from": "SCOPE:if:87:4:11",
-      "type": "CONTAINS",
       "to": "CONSTRUCTOR_CALL:new Error()"
     },
     {
       "from": "SCOPE:if:93:4:12",
       "type": "CONTAINS",
-      "to": "CALL:Error"
-    },
-    {
-      "from": "SCOPE:if:93:4:12",
-      "type": "CONTAINS",
       "to": "CONSTRUCTOR_CALL:new Error()"
-    },
-    {
-      "from": "SCOPE:if:94:6:7",
-      "type": "CONTAINS",
-      "to": "CALL:Error"
     },
     {
       "from": "SCOPE:if:94:6:7",
@@ -48567,11 +47943,6 @@
       "from": "SCOPE:processDataGenerator:body",
       "type": "CONTAINS",
       "to": "LOOP:"
-    },
-    {
-      "from": "SCOPE:processInBatches:body",
-      "type": "CONTAINS",
-      "to": "CALL:DataProcessor"
     },
     {
       "from": "SCOPE:processInBatches:body",
@@ -48726,22 +48097,12 @@
     {
       "from": "SCOPE:promisePool:body",
       "type": "CONTAINS",
-      "to": "CALL:Promise"
-    },
-    {
-      "from": "SCOPE:promisePool:body",
-      "type": "CONTAINS",
       "to": "CONSTRUCTOR_CALL:new Promise()"
     },
     {
       "from": "SCOPE:promisePool:body",
       "type": "CONTAINS",
       "to": "FUNCTION:anonymous[0]"
-    },
-    {
-      "from": "SCOPE:promiseRace:body",
-      "type": "CONTAINS",
-      "to": "CALL:Promise"
     },
     {
       "from": "SCOPE:promiseRace:body",
@@ -48826,11 +48187,6 @@
     {
       "from": "SCOPE:retryWithBackoff:body",
       "type": "CONTAINS",
-      "to": "CALL:Promise"
-    },
-    {
-      "from": "SCOPE:retryWithBackoff:body",
-      "type": "CONTAINS",
       "to": "CONSTRUCTOR_CALL:new Promise()"
     },
     {
@@ -48876,22 +48232,12 @@
     {
       "from": "SCOPE:startServer:body",
       "type": "CONTAINS",
-      "to": "CALL:Promise"
-    },
-    {
-      "from": "SCOPE:startServer:body",
-      "type": "CONTAINS",
       "to": "CONSTRUCTOR_CALL:new Promise()"
     },
     {
       "from": "SCOPE:startServer:body",
       "type": "CONTAINS",
       "to": "FUNCTION:anonymous[0]"
-    },
-    {
-      "from": "SCOPE:updateLastLogin:body",
-      "type": "CONTAINS",
-      "to": "CALL:Date"
     },
     {
       "from": "SCOPE:updateLastLogin:body",
@@ -48937,11 +48283,6 @@
       "from": "SCOPE:verifyTokenCallback:body",
       "type": "CONTAINS",
       "to": "FUNCTION:anonymous[0]"
-    },
-    {
-      "from": "SCOPE:verifyTokenPromise:body",
-      "type": "CONTAINS",
-      "to": "CALL:Promise"
     },
     {
       "from": "SCOPE:verifyTokenPromise:body",
