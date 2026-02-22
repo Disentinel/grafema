@@ -27,7 +27,7 @@ import type { NodePath } from '@babel/traverse';
 import { ASTVisitor, type VisitorModule, type VisitorCollections, type VisitorHandlers } from './ASTVisitor.js';
 import type { AnalyzeFunctionBodyCallback } from './FunctionVisitor.js';
 import type { DecoratorInfo, ParameterInfo, VariableDeclarationInfo, TypeParameterInfo } from '../types.js';
-import { extractTypeParameters } from './TypeScriptVisitor.js';
+import { extractTypeParameters, typeNodeToString } from './TypeScriptVisitor.js';
 import { ExpressionEvaluator } from '../ExpressionEvaluator.js';
 import { createParameterNodes } from '../utils/createParameterNodes.js';
 import type { ScopeTracker } from '../../../../core/ScopeTracker.js';
@@ -155,6 +155,61 @@ export class ClassVisitor extends ASTVisitor {
       targetId,
       targetType
     };
+  }
+
+  /**
+   * Handle a non-function ClassProperty node (e.g. `private graph: GraphBackend`).
+   * Creates a VARIABLE node with class property metadata and wires it to the parent class.
+   * Shared by both ClassDeclaration and ClassExpression handlers (REG-552).
+   */
+  private handleNonFunctionClassProperty(
+    propNode: ClassProperty,
+    propName: string,
+    propLine: number,
+    propColumn: number,
+    currentClass: ClassInfo,
+    className: string,
+    module: VisitorModule,
+    collections: VisitorCollections,
+    scopeTracker: ScopeTracker
+  ): void {
+    const fieldId = computeSemanticIdV2('VARIABLE', propName, module.file, scopeTracker.getNamedParent());
+
+    if (!currentClass.properties) {
+      currentClass.properties = [];
+    }
+    currentClass.properties.push(fieldId);
+
+    // Compute modifier
+    const parts: string[] = [];
+    const acc = (propNode as any).accessibility as string | null | undefined;
+    if (acc && acc !== 'public') parts.push(acc);
+    if ((propNode as any).readonly) parts.push('readonly');
+    const modifier = parts.length > 0 ? parts.join(' ') : 'public';
+
+    // Extract TypeScript type annotation
+    const ann = (propNode as any).typeAnnotation;
+    let declaredType: string | undefined;
+    if (ann?.type === 'TSTypeAnnotation') {
+      declaredType = typeNodeToString(ann.typeAnnotation);
+    }
+
+    (collections.variableDeclarations as VariableDeclarationInfo[]).push({
+      id: fieldId,
+      semanticId: fieldId,
+      type: 'VARIABLE',
+      name: propName,
+      file: module.file,
+      line: propLine,
+      column: propColumn,
+      isClassProperty: true,
+      isStatic: (propNode as any).static || false,
+      parentScopeId: currentClass.id,
+      metadata: {
+        modifier,
+        ...(declaredType !== undefined ? { declaredType } : {})
+      }
+    });
   }
 
   getHandlers(): VisitorHandlers {
@@ -331,6 +386,12 @@ export class ClassVisitor extends ASTVisitor {
 
               // Exit method scope
               scopeTracker.exitScope();
+            } else {
+              // REG-552: Non-function class property declaration
+              this.handleNonFunctionClassProperty(
+                propNode, propName, propLine, propColumn,
+                currentClass, className, module, collections, scopeTracker
+              );
             }
           },
 
@@ -778,6 +839,14 @@ export class ClassVisitor extends ASTVisitor {
               const funcPath = propPath.get('value') as NodePath<ArrowFunctionExpression | FunctionExpression>;
               analyzeFunctionBody(funcPath, propBodyScopeId, module, collections);
               scopeTracker.exitScope();
+            } else {
+              // REG-552: Non-function class property declaration
+              // Note: decorator extraction is intentionally omitted for ClassExpression properties.
+              // The ClassExpression handler has no decorator infrastructure — handle separately if needed.
+              this.handleNonFunctionClassProperty(
+                propNode, propName, propLine, propColumn,
+                currentClass, className, module, collections, scopeTracker
+              );
             }
           },
 

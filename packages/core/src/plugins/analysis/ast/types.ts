@@ -259,6 +259,8 @@ export interface VariableDeclarationInfo {
   isPrivate?: boolean;      // true for #privateField
   isStatic?: boolean;       // true for static #field
   isClassProperty?: boolean; // true for class properties (vs local variables)
+  // REG-552: Class property metadata (modifier, declared type, etc.)
+  metadata?: Record<string, unknown>;
 }
 
 // === GRAFEMA-IGNORE ANNOTATION (REG-332) ===
