@@ -1326,17 +1326,9 @@
     },
     {
       "exported": false,
-      "expressionType": "BinaryExpression",
-      "file": "src/conditionals.js",
-      "name": "<BinaryExpression>",
-      "operator": "*",
-      "type": "EXPRESSION"
-    },
-    {
-      "exported": false,
       "expressionType": "LogicalExpression",
       "file": "src/conditionals.js",
-      "name": "<LogicalExpression>",
+      "name": "… ?? …",
       "operator": "??",
       "type": "EXPRESSION"
     },
@@ -1344,7 +1336,7 @@
       "exported": false,
       "expressionType": "LogicalExpression",
       "file": "src/conditionals.js",
-      "name": "<LogicalExpression>",
+      "name": "… && …",
       "operator": "&&",
       "type": "EXPRESSION"
     },
@@ -1352,8 +1344,16 @@
       "exported": false,
       "expressionType": "LogicalExpression",
       "file": "src/conditionals.js",
-      "name": "<LogicalExpression>",
+      "name": "… || …",
       "operator": "||",
+      "type": "EXPRESSION"
+    },
+    {
+      "exported": false,
+      "expressionType": "BinaryExpression",
+      "file": "src/conditionals.js",
+      "name": "<BinaryExpression>",
+      "operator": "*",
       "type": "EXPRESSION"
     },
     {
@@ -6389,34 +6389,34 @@
       }
     },
     {
-      "from": "EXPRESSION:<LogicalExpression>",
-      "type": "DERIVES_FROM",
-      "to": "PARAMETER:defaultValue"
-    },
-    {
-      "from": "EXPRESSION:<LogicalExpression>",
-      "type": "DERIVES_FROM",
-      "to": "PARAMETER:input"
-    },
-    {
-      "from": "EXPRESSION:<LogicalExpression>",
-      "type": "DERIVES_FROM",
-      "to": "PARAMETER:obj"
-    },
-    {
-      "from": "EXPRESSION:<LogicalExpression>",
+      "from": "EXPRESSION:… ?? …",
       "type": "RETURNS",
       "to": "FUNCTION:getConfigValue"
     },
     {
-      "from": "EXPRESSION:<LogicalExpression>",
-      "type": "RETURNS",
-      "to": "FUNCTION:getValue"
+      "from": "EXPRESSION:… && …",
+      "type": "DERIVES_FROM",
+      "to": "PARAMETER:obj"
     },
     {
-      "from": "EXPRESSION:<LogicalExpression>",
+      "from": "EXPRESSION:… && …",
       "type": "RETURNS",
       "to": "FUNCTION:safeAccess"
+    },
+    {
+      "from": "EXPRESSION:… || …",
+      "type": "DERIVES_FROM",
+      "to": "PARAMETER:defaultValue"
+    },
+    {
+      "from": "EXPRESSION:… || …",
+      "type": "DERIVES_FROM",
+      "to": "PARAMETER:input"
+    },
+    {
+      "from": "EXPRESSION:… || …",
+      "type": "RETURNS",
+      "to": "FUNCTION:getValue"
     },
     {
       "from": "EXPRESSION:<template>",
