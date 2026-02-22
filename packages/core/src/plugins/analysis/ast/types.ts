@@ -567,6 +567,8 @@ export interface ExportInfo {
 export interface ExportSpecifier {
   local: string;
   exported: string;
+  column?: number;
+  endColumn?: number;
 }
 
 // === HTTP REQUEST INFO ===
