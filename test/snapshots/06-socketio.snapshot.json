@@ -3447,6 +3447,26 @@
       }
     },
     {
+      "from": "PROPERTY_ACCESS:broadcast",
+      "type": "READS_FROM",
+      "to": "PARAMETER:socket"
+    },
+    {
+      "from": "PROPERTY_ACCESS:id",
+      "type": "READS_FROM",
+      "to": "PARAMETER:socket"
+    },
+    {
+      "from": "PROPERTY_ACCESS:userId",
+      "type": "READS_FROM",
+      "to": "PARAMETER:data"
+    },
+    {
+      "from": "PROPERTY_ACCESS:userId",
+      "type": "READS_FROM",
+      "to": "PARAMETER:socket"
+    },
+    {
       "from": "SCOPE:anonymous[0]:body",
       "type": "CONTAINS",
       "to": "CALL:bookSlot"
