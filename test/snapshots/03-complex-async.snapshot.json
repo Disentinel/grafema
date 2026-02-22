@@ -41935,6 +41935,21 @@
       "to": "PARAMETER:urls"
     },
     {
+      "from": "PROPERTY_ACCESS:batchSize",
+      "type": "READS_FROM",
+      "to": "CLASS:DataProcessor"
+    },
+    {
+      "from": "PROPERTY_ACCESS:batchSize",
+      "type": "READS_FROM",
+      "to": "CLASS:DataProcessor"
+    },
+    {
+      "from": "PROPERTY_ACCESS:batchSize",
+      "type": "READS_FROM",
+      "to": "CLASS:DataProcessor"
+    },
+    {
       "from": "PROPERTY_ACCESS:body",
       "type": "READS_FROM",
       "to": "PARAMETER:req"
@@ -41943,6 +41958,21 @@
       "from": "PROPERTY_ACCESS:body",
       "type": "READS_FROM",
       "to": "PARAMETER:req"
+    },
+    {
+      "from": "PROPERTY_ACCESS:cache",
+      "type": "READS_FROM",
+      "to": "CLASS:DataProcessor"
+    },
+    {
+      "from": "PROPERTY_ACCESS:cache",
+      "type": "READS_FROM",
+      "to": "CLASS:DataProcessor"
+    },
+    {
+      "from": "PROPERTY_ACCESS:cache",
+      "type": "READS_FROM",
+      "to": "CLASS:DataProcessor"
     },
     {
       "from": "PROPERTY_ACCESS:dataId",
@@ -41968,16 +41998,6 @@
       "from": "PROPERTY_ACCESS:dbUrl",
       "type": "READS_FROM",
       "to": "VARIABLE:config"
-    },
-    {
-      "from": "PROPERTY_ACCESS:done",
-      "type": "READS_FROM",
-      "to": "VARIABLE:next"
-    },
-    {
-      "from": "PROPERTY_ACCESS:done",
-      "type": "READS_FROM",
-      "to": "VARIABLE:next"
     },
     {
       "from": "PROPERTY_ACCESS:done",
@@ -42033,6 +42053,11 @@
       "from": "PROPERTY_ACCESS:id",
       "type": "READS_FROM",
       "to": "VARIABLE:user"
+    },
+    {
+      "from": "PROPERTY_ACCESS:initialized",
+      "type": "READS_FROM",
+      "to": "CLASS:DataProcessor"
     },
     {
       "from": "PROPERTY_ACCESS:ip",
@@ -42198,16 +42223,6 @@
       "from": "PROPERTY_ACCESS:value",
       "type": "READS_FROM",
       "to": "CONSTANT:item"
-    },
-    {
-      "from": "PROPERTY_ACCESS:value",
-      "type": "READS_FROM",
-      "to": "VARIABLE:next"
-    },
-    {
-      "from": "PROPERTY_ACCESS:value",
-      "type": "READS_FROM",
-      "to": "VARIABLE:next"
     },
     {
       "from": "PROPERTY_ACCESS:value",

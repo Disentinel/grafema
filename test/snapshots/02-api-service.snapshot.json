@@ -3229,6 +3229,11 @@
       "to": "MODULE:src/db.js"
     },
     {
+      "from": "PROPERTY_ACCESS:connected",
+      "type": "READS_FROM",
+      "to": "CLASS:Database"
+    },
+    {
       "from": "PROPERTY_ACCESS:insertId",
       "type": "READS_FROM",
       "to": "VARIABLE:result"
