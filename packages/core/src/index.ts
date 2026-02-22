@@ -132,7 +132,7 @@ export { findRfdbBinary, getBinaryNotFoundMessage, getPlatformDir } from './util
 export type { FindBinaryOptions } from './utils/findRfdbBinary.js';
 
 // RFDB server lifecycle (RFD-40)
-export { startRfdbServer } from './utils/startRfdbServer.js';
+export { startRfdbServer, checkExistingServer } from './utils/startRfdbServer.js';
 export type { StartRfdbServerOptions } from './utils/startRfdbServer.js';
 
 // Module resolution utilities (REG-320)
