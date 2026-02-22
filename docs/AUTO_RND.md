@@ -153,6 +153,38 @@ Human (you):
 
 If there's a visible difference on one bug — architecture is validated.
 
+## Prior Art
+
+All component ideas have been explored in research — but not in this specific combination.
+
+### What exists
+
+**[LIVE-SWE-AGENT](https://arxiv.org/abs/2511.13646)** (Nov 2025) — closest in spirit. Agent synthesizes and modifies its own tools at runtime while solving issues: notices a missing tool, writes it, uses it. Achieves 77.4% on SWE-bench Verified without test-time scaling. Key difference: the agent improves *itself*, not an external tool.
+
+**[SWE-rebench](https://arxiv.org/abs/2505.20411)** — automated pipeline that continuously extracts real-world tasks from GitHub repos (21k+ tasks for RL training). Exactly the "closed issues as infinite corpus" idea, ready to use.
+
+**[R2E-Gym](https://github.com/R2E-Gym/R2E-Gym)** (COLM 2025) — turns any GitHub repo into a benchmark environment with executable tests. The "verify against open-source codebases" infrastructure, already built.
+
+**[SWE-Search](https://proceedings.iclr.cc/paper_files/paper/2025/file/a1e6783e4d739196cad3336f12d402bf-Paper-Conference.pdf)** (ICLR 2025) — MCTS over code edits with a value function that identifies coverage gaps. Similar to the hypothesis-driven search idea.
+
+### What nobody has done
+
+All of the above improve the **agent** or the **benchmark**. None of them do:
+
+> An A/B loop where the variable is an external **graph tool** (Grafema), not the agent itself. When the agent with the tool loses — the tool improves, not the agent.
+
+This is the inverse of LIVE-SWE-AGENT: not "agent learns to build better tools for itself" but "external tool becomes better by measuring its own usefulness to agents."
+
+The closest analogy in ML is improving a **retrieval system** via downstream task signal — but for a code graph, this hasn't been done.
+
+### What to reuse for POC
+
+- **SWE-rebench** as crawler — already extracts issues with ground truth from GitHub
+- **R2E** for spinning up execution environments per repo
+- **mini-SWE-agent** (LIVE-SWE-AGENT's base) as a lightweight agent for A/B runs
+
+The POC can be assembled from existing components rather than built from scratch.
+
 ## Open Questions
 
 - How fast is a full test suite run on target repos? (determines iterations/hour)
