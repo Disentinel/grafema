@@ -5,10 +5,9 @@
  * - Direct function calls: foo()
  * - Method calls: obj.method()
  * - Event handlers: obj.on('event', handler)
- * - Constructor calls: new Foo(), new Function()
  */
 
-import type { Node, CallExpression, NewExpression, Identifier, MemberExpression } from '@babel/types';
+import type { Node, CallExpression, Identifier, MemberExpression } from '@babel/types';
 import type { NodePath } from '@babel/traverse';
 import { ASTVisitor, type VisitorModule, type VisitorCollections, type VisitorHandlers, type CounterRef } from './ASTVisitor.js';
 import type { ScopeTracker } from '../../../../core/ScopeTracker.js';
@@ -49,7 +48,7 @@ interface HandlerState {
 /**
  * Extract the first literal argument value from a CallExpression for content hash hints.
  */
-function extractFirstLiteralArg(node: CallExpression | NewExpression): string | undefined {
+function extractFirstLiteralArg(node: CallExpression): string | undefined {
   if (node.arguments.length === 0) return undefined;
   const firstArg = node.arguments[0];
   if (!firstArg) return undefined;
@@ -198,8 +197,6 @@ export class CallExpressionVisitor extends ASTVisitor {
           this.handleMemberCall(path, callNode, s, parentScopeId, isAwaited);
         }
       },
-
-      NewExpression: (path: NodePath) => this.handleNewExpression(path, s),
 
       // REG-534: TaggedTemplateExpression creates CALL node (html`...`, styled.div`...`)
       TaggedTemplateExpression: (path: NodePath) => {
@@ -562,123 +559,4 @@ export class CallExpressionVisitor extends ASTVisitor {
     }
   }
 
-  /** Handle new expressions: new Foo(), new obj.Constructor() */
-  private handleNewExpression(path: NodePath, s: HandlerState): void {
-    const newNode = path.node as NewExpression;
-    const functionParent = path.getFunctionParent();
-
-    // Skip if inside function - handled by analyzeFunctionBody
-    if (functionParent) return;
-
-    const parentScopeId = s.module.id;
-
-    // Dedup check
-    const nodeKey = `new:${newNode.start}:${newNode.end}`;
-    if (s.processedNodes.methodCalls.has(nodeKey)) return;
-    s.processedNodes.methodCalls.add(nodeKey);
-
-    if (newNode.callee.type === 'Identifier') {
-      const constructorName = (newNode.callee as Identifier).name;
-      const newLine = getLine(newNode);
-      const newColumn = getColumn(newNode);
-
-      const callInfo: CallSiteInfo = {
-        id: '', // Placeholder — resolved by generateV2 or set below
-        type: 'CALL',
-        name: constructorName,
-        file: s.module.file,
-        line: newLine,
-        column: newColumn,
-        endLine: getEndLocation(newNode).line,
-        endColumn: getEndLocation(newNode).column,
-        parentScopeId,
-        targetFunctionName: constructorName,
-        isNew: true
-      };
-
-      if (this.sharedIdGenerator) {
-        const contentHints: ContentHashHints = {
-          arity: newNode.arguments.length,
-          firstLiteralArg: undefined  // constructor args not used for hash
-        };
-        this.sharedIdGenerator.generateV2('CALL', `new:${constructorName}`, s.module.file, contentHints, callInfo);
-      } else {
-        const idGenerator = new IdGenerator(s.scopeTracker);
-        callInfo.id = idGenerator.generate(
-          'CALL', `new:${constructorName}`, s.module.file,
-          newLine, newColumn,
-          s.callSiteCounterRef,
-          { useDiscriminator: true, discriminatorKey: `CALL:new:${constructorName}` }
-        );
-      }
-
-      s.callSites.push(callInfo);
-
-      // REG-556: Extract arguments for PASSES_ARGUMENT edges
-      if (newNode.arguments.length > 0) {
-        ArgumentExtractor.extract(
-          newNode.arguments, callInfo.id, s.module,
-          s.callArguments, s.literals, s.literalCounterRef,
-          this.collections, s.scopeTracker
-        );
-      }
-    } else if (newNode.callee.type === 'MemberExpression') {
-      const memberCallee = newNode.callee as MemberExpression;
-      const object = memberCallee.object;
-      const property = memberCallee.property;
-
-      if (object.type === 'Identifier' && property.type === 'Identifier') {
-        const objectName = (object as Identifier).name;
-        const constructorName = (property as Identifier).name;
-        const fullName = `${objectName}.${constructorName}`;
-        const memberNewLine = getLine(newNode);
-        const memberNewColumn = getColumn(newNode);
-
-        const grafemaIgnore = getGrafemaIgnore(path);
-
-        const methodCallInfo: MethodCallInfo = {
-          id: '', // Placeholder — resolved by generateV2 or set below
-          type: 'CALL',
-          name: fullName,
-          object: objectName,
-          method: constructorName,
-          file: s.module.file,
-          line: memberNewLine,
-          column: memberNewColumn,
-          endLine: getEndLocation(newNode).line,
-          endColumn: getEndLocation(newNode).column,
-          parentScopeId,
-          isNew: true,
-          grafemaIgnore: grafemaIgnore ?? undefined,
-        };
-
-        if (this.sharedIdGenerator) {
-          const contentHints: ContentHashHints = {
-            arity: newNode.arguments.length,
-            firstLiteralArg: undefined  // constructor args not used for hash
-          };
-          this.sharedIdGenerator.generateV2('CALL', `new:${fullName}`, s.module.file, contentHints, methodCallInfo);
-        } else {
-          const idGenerator = new IdGenerator(s.scopeTracker);
-          methodCallInfo.id = idGenerator.generate(
-            'CALL', `new:${fullName}`, s.module.file,
-            memberNewLine, memberNewColumn,
-            s.callSiteCounterRef,
-            { useDiscriminator: true, discriminatorKey: `CALL:new:${fullName}` }
-          );
-        }
-
-        s.methodCalls.push(methodCallInfo);
-
-        // REG-556: Extract arguments for PASSES_ARGUMENT edges
-        if (newNode.arguments.length > 0) {
-          ArgumentExtractor.extract(
-            newNode.arguments, methodCallInfo.id, s.module,
-            s.callArguments, s.literals, s.literalCounterRef,
-            this.collections, s.scopeTracker
-          );
-        }
-      }
-    }
-  }
 }

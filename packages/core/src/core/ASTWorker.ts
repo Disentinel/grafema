@@ -10,7 +10,6 @@
 
 import { parentPort } from 'worker_threads';
 import { readFileSync } from 'fs';
-import { basename } from 'path';
 import type { ParserPlugin } from '@babel/parser';
 import { parse } from '@babel/parser';
 import traverseModule from '@babel/traverse';
@@ -36,6 +35,7 @@ interface ParseMessage {
   type: 'parse';
   taskId: number;
   filePath: string;
+  relativeFile: string;
   moduleId: string;
   moduleName: string;
 }
@@ -176,7 +176,7 @@ interface ModuleInfo {
  * Uses ScopeTracker for semantic ID generation - IDs are stable
  * and don't change when unrelated code is added/removed.
  */
-function parseModule(filePath: string, moduleId: string, moduleName: string): ASTCollections {
+function parseModule(filePath: string, relativeFile: string, moduleId: string, moduleName: string): ASTCollections {
   const code = readFileSync(filePath, 'utf-8');
 
   const ast = parse(code, {
@@ -185,8 +185,8 @@ function parseModule(filePath: string, moduleId: string, moduleName: string): AS
   });
 
   // Create ScopeTracker for semantic ID generation
-  // Use basename for shorter, more readable IDs
-  const scopeTracker = new ScopeTracker(basename(filePath));
+  // Use relativeFile (relative path from workspace root) for consistent file references
+  const scopeTracker = new ScopeTracker(relativeFile);
 
   // Collections to extract
   const collections: ASTCollections = {
@@ -550,7 +550,7 @@ if (parentPort) {
   parentPort.on('message', (msg: WorkerMessage) => {
     if (msg.type === 'parse') {
       try {
-        const collections = parseModule(msg.filePath, msg.moduleId, msg.moduleName);
+        const collections = parseModule(msg.filePath, msg.relativeFile, msg.moduleId, msg.moduleName);
         parentPort!.postMessage({ type: 'result', taskId: msg.taskId, collections });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);

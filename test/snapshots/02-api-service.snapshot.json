@@ -6,7 +6,7 @@
       "exported": false,
       "file": "src/db.js",
       "name": "",
-      "semanticId": "db.js->Database->query->BRANCH->if#0",
+      "semanticId": "src/db.js->Database->query->BRANCH->if#0",
       "type": "BRANCH"
     },
     {
@@ -223,15 +223,6 @@
       "type": "CALL"
     },
     {
-      "endColumn": 29,
-      "endLine": 22,
-      "exported": false,
-      "file": "src/db.js",
-      "isNew": true,
-      "name": "Database",
-      "type": "CALL"
-    },
-    {
       "computed": false,
       "computedPropertyVar": null,
       "endColumn": 20,
@@ -319,15 +310,6 @@
       "method": "query",
       "name": "db.query",
       "object": "db",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 47,
-      "endLine": 14,
-      "exported": false,
-      "file": "src/db.js",
-      "isNew": true,
-      "name": "Error",
       "type": "CALL"
     },
     {
@@ -586,7 +568,7 @@
     },
     {
       "exported": false,
-      "file": "db.js",
+      "file": "src/db.js",
       "name": "Database",
       "type": "CLASS"
     },
@@ -3043,11 +3025,6 @@
     {
       "from": "MODULE:src/db.js",
       "type": "CONTAINS",
-      "to": "CALL:Database"
-    },
-    {
-      "from": "MODULE:src/db.js",
-      "type": "CONTAINS",
       "to": "CONSTRUCTOR_CALL:new Database()"
     },
     {
@@ -3504,11 +3481,6 @@
       "from": "SCOPE:getUsersRoute:body",
       "type": "DECLARES",
       "to": "VARIABLE:router"
-    },
-    {
-      "from": "SCOPE:if:13:4:0",
-      "type": "CONTAINS",
-      "to": "CALL:Error"
     },
     {
       "from": "SCOPE:if:13:4:0",

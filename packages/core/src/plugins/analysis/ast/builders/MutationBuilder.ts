@@ -6,7 +6,6 @@
  * bufferVariableReassignmentEdges (REG-422).
  */
 
-import { basename } from 'path';
 import { NodeFactory } from '../../../../core/NodeFactory.js';
 import type {
   ModuleNode,
@@ -195,10 +194,7 @@ export class MutationBuilder implements DomainBuilder {
         // REG-152: 'this' mutations - find the CLASS node
         if (!enclosingClassName) continue;  // Skip if no class context (e.g., standalone function)
 
-        // Compare using basename since classes use scopeTracker.file (basename)
-        // but mutations use module.file (full path)
-        const fileBasename = basename(file);
-        const classDecl = classDeclarations.find(c => c.name === enclosingClassName && c.file === fileBasename);
+        const classDecl = classDeclarations.find(c => c.name === enclosingClassName && c.file === file);
         objectNodeId = classDecl?.id ?? null;
 
         if (!objectNodeId) continue;  // Skip if class not found

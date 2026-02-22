@@ -155,15 +155,6 @@
       "type": "CALL"
     },
     {
-      "endColumn": 46,
-      "endLine": 64,
-      "exported": false,
-      "file": "client.js",
-      "isNew": true,
-      "name": "Headers",
-      "type": "CALL"
-    },
-    {
       "computed": false,
       "computedPropertyVar": null,
       "endColumn": 51,
@@ -2633,11 +2624,6 @@
       "from": "SCOPE:authFetch:body",
       "type": "CONTAINS",
       "to": "CALL:fetch"
-    },
-    {
-      "from": "SCOPE:authFetch:body",
-      "type": "CONTAINS",
-      "to": "CALL:Headers"
     },
     {
       "from": "SCOPE:authFetch:body",

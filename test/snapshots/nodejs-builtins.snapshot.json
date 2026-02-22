@@ -165,15 +165,6 @@
       "type": "CALL"
     },
     {
-      "endColumn": 27,
-      "endLine": 44,
-      "exported": false,
-      "file": "node-prefix.js",
-      "isNew": true,
-      "name": "EventEmitter",
-      "type": "CALL"
-    },
-    {
       "endColumn": 4,
       "endLine": 66,
       "exported": false,
@@ -386,51 +377,6 @@
       "isAwaited": false,
       "isInsideTry": false,
       "name": "pathResolve",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 4,
-      "endLine": 19,
-      "exported": false,
-      "file": "aliased-imports.js",
-      "isNew": true,
-      "name": "Promise",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 4,
-      "endLine": 29,
-      "exported": false,
-      "file": "aliased-imports.js",
-      "isNew": true,
-      "name": "Promise",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 4,
-      "endLine": 26,
-      "exported": false,
-      "file": "index.js",
-      "isNew": true,
-      "name": "Promise",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 4,
-      "endLine": 20,
-      "exported": false,
-      "file": "namespace-import.js",
-      "isNew": true,
-      "name": "Promise",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 4,
-      "endLine": 20,
-      "exported": false,
-      "file": "unused-imports.js",
-      "isNew": true,
-      "name": "Promise",
       "type": "CALL"
     },
     {
@@ -776,15 +722,6 @@
       "isAwaited": false,
       "isInsideTry": false,
       "name": "wf",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 29,
-      "endLine": 37,
-      "exported": false,
-      "file": "node-prefix.js",
-      "isNew": true,
-      "name": "Worker",
       "type": "CALL"
     },
     {
@@ -1403,14 +1340,6 @@
       "exported": false,
       "file": "",
       "isBuiltin": true,
-      "name": "events.EventEmitter",
-      "pure": false,
-      "type": "EXTERNAL_FUNCTION"
-    },
-    {
-      "exported": false,
-      "file": "",
-      "isBuiltin": true,
       "name": "fs.existsSync",
       "pure": false,
       "security": "file-io",
@@ -1595,14 +1524,6 @@
       "isBuiltin": true,
       "name": "util.promisify",
       "pure": true,
-      "type": "EXTERNAL_FUNCTION"
-    },
-    {
-      "exported": false,
-      "file": "",
-      "isBuiltin": true,
-      "name": "worker_threads.Worker",
-      "pure": false,
       "type": "EXTERNAL_FUNCTION"
     },
     {
@@ -4064,30 +3985,6 @@
     },
     {
       "exported": false,
-      "file": "aliased-imports.js",
-      "name": "",
-      "type": "LITERAL",
-      "value": "sha256",
-      "valueType": "string"
-    },
-    {
-      "exported": false,
-      "file": "aliased-imports.js",
-      "name": "",
-      "type": "LITERAL",
-      "value": "utf8",
-      "valueType": "string"
-    },
-    {
-      "exported": false,
-      "file": "fs-promises.js",
-      "name": "",
-      "type": "LITERAL",
-      "value": "utf8",
-      "valueType": "string"
-    },
-    {
-      "exported": false,
       "file": "fs-promises.js",
       "name": "",
       "type": "LITERAL",
@@ -4131,14 +4028,6 @@
       "file": "index.js",
       "name": "",
       "type": "LITERAL",
-      "value": "utf8",
-      "valueType": "string"
-    },
-    {
-      "exported": false,
-      "file": "index.js",
-      "name": "",
-      "type": "LITERAL",
       "value": "Write failed:",
       "valueType": "string"
     },
@@ -4163,32 +4052,8 @@
       "file": "node-prefix.js",
       "name": "",
       "type": "LITERAL",
-      "value": "utf8",
-      "valueType": "string"
-    },
-    {
-      "exported": false,
-      "file": "node-prefix.js",
-      "name": "",
-      "type": "LITERAL",
       "value": null,
       "valueType": "object"
-    },
-    {
-      "exported": false,
-      "file": "unused-imports.js",
-      "name": "",
-      "type": "LITERAL",
-      "value": "sha256",
-      "valueType": "string"
-    },
-    {
-      "exported": false,
-      "file": "unused-imports.js",
-      "name": "",
-      "type": "LITERAL",
-      "value": "utf8",
-      "valueType": "string"
     },
     {
       "exported": false,
@@ -5804,22 +5669,6 @@
       "to": "EXTERNAL_FUNCTION:crypto.createHash"
     },
     {
-      "from": "CALL:createHash",
-      "type": "DERIVES_FROM",
-      "to": "LITERAL:",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:createHash",
-      "type": "PASSES_ARGUMENT",
-      "to": "LITERAL:",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
       "from": "CALL:createServer",
       "type": "CALLS",
       "to": "EXTERNAL_FUNCTION:http.createServer"
@@ -5828,22 +5677,6 @@
       "from": "CALL:createServer",
       "type": "CALLS",
       "to": "EXTERNAL_FUNCTION:http.createServer"
-    },
-    {
-      "from": "CALL:createServer",
-      "type": "DERIVES_FROM",
-      "to": "FUNCTION:anonymous[0]",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:createServer",
-      "type": "PASSES_ARGUMENT",
-      "to": "FUNCTION:anonymous[0]",
-      "metadata": {
-        "argIndex": 0
-      }
     },
     {
       "from": "CALL:createServer",
@@ -5851,30 +5684,9 @@
       "to": "FUNCTION:createServerWithNodePrefix"
     },
     {
-      "from": "CALL:EventEmitter",
-      "type": "CALLS",
-      "to": "EXTERNAL_FUNCTION:events.EventEmitter"
-    },
-    {
       "from": "CALL:exec",
       "type": "CALLS",
       "to": "EXTERNAL_FUNCTION:child_process.exec"
-    },
-    {
-      "from": "CALL:exec",
-      "type": "DERIVES_FROM",
-      "to": "FUNCTION:anonymous[0]",
-      "metadata": {
-        "argIndex": 1
-      }
-    },
-    {
-      "from": "CALL:exec",
-      "type": "PASSES_ARGUMENT",
-      "to": "FUNCTION:anonymous[0]",
-      "metadata": {
-        "argIndex": 1
-      }
     },
     {
       "from": "CALL:fs.existsSync",
@@ -5932,22 +5744,6 @@
       "from": "CALL:hash",
       "type": "CALLS",
       "to": "EXTERNAL_FUNCTION:crypto.createHash"
-    },
-    {
-      "from": "CALL:hash",
-      "type": "DERIVES_FROM",
-      "to": "LITERAL:",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:hash",
-      "type": "PASSES_ARGUMENT",
-      "to": "LITERAL:",
-      "metadata": {
-        "argIndex": 0
-      }
     },
     {
       "from": "CALL:join",
@@ -6038,104 +5834,8 @@
     },
     {
       "from": "CALL:pathResolve",
-      "type": "DERIVES_FROM",
-      "to": "VARIABLE:joined",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:pathResolve",
-      "type": "PASSES_ARGUMENT",
-      "to": "VARIABLE:joined",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:pathResolve",
       "type": "RETURNS",
       "to": "FUNCTION:buildPathWithAlias"
-    },
-    {
-      "from": "CALL:Promise",
-      "type": "DERIVES_FROM",
-      "to": "FUNCTION:anonymous[0]",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:Promise",
-      "type": "DERIVES_FROM",
-      "to": "FUNCTION:anonymous[0]",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:Promise",
-      "type": "DERIVES_FROM",
-      "to": "FUNCTION:anonymous[0]",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:Promise",
-      "type": "DERIVES_FROM",
-      "to": "FUNCTION:anonymous[0]",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:Promise",
-      "type": "DERIVES_FROM",
-      "to": "FUNCTION:anonymous[0]",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:Promise",
-      "type": "PASSES_ARGUMENT",
-      "to": "FUNCTION:anonymous[0]",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:Promise",
-      "type": "PASSES_ARGUMENT",
-      "to": "FUNCTION:anonymous[0]",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:Promise",
-      "type": "PASSES_ARGUMENT",
-      "to": "FUNCTION:anonymous[0]",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:Promise",
-      "type": "PASSES_ARGUMENT",
-      "to": "FUNCTION:anonymous[0]",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:Promise",
-      "type": "PASSES_ARGUMENT",
-      "to": "FUNCTION:anonymous[0]",
-      "metadata": {
-        "argIndex": 0
-      }
     },
     {
       "from": "CALL:readdir",
@@ -6168,102 +5868,6 @@
       "to": "EXTERNAL_FUNCTION:fs/promises.readFile"
     },
     {
-      "from": "CALL:readFile",
-      "type": "DERIVES_FROM",
-      "to": "FUNCTION:anonymous[0]",
-      "metadata": {
-        "argIndex": 2
-      }
-    },
-    {
-      "from": "CALL:readFile",
-      "type": "DERIVES_FROM",
-      "to": "FUNCTION:anonymous[0]",
-      "metadata": {
-        "argIndex": 2
-      }
-    },
-    {
-      "from": "CALL:readFile",
-      "type": "DERIVES_FROM",
-      "to": "LITERAL:",
-      "metadata": {
-        "argIndex": 1
-      }
-    },
-    {
-      "from": "CALL:readFile",
-      "type": "DERIVES_FROM",
-      "to": "LITERAL:",
-      "metadata": {
-        "argIndex": 1
-      }
-    },
-    {
-      "from": "CALL:readFile",
-      "type": "DERIVES_FROM",
-      "to": "LITERAL:",
-      "metadata": {
-        "argIndex": 1
-      }
-    },
-    {
-      "from": "CALL:readFile",
-      "type": "DERIVES_FROM",
-      "to": "LITERAL:",
-      "metadata": {
-        "argIndex": 1
-      }
-    },
-    {
-      "from": "CALL:readFile",
-      "type": "PASSES_ARGUMENT",
-      "to": "FUNCTION:anonymous[0]",
-      "metadata": {
-        "argIndex": 2
-      }
-    },
-    {
-      "from": "CALL:readFile",
-      "type": "PASSES_ARGUMENT",
-      "to": "FUNCTION:anonymous[0]",
-      "metadata": {
-        "argIndex": 2
-      }
-    },
-    {
-      "from": "CALL:readFile",
-      "type": "PASSES_ARGUMENT",
-      "to": "LITERAL:",
-      "metadata": {
-        "argIndex": 1
-      }
-    },
-    {
-      "from": "CALL:readFile",
-      "type": "PASSES_ARGUMENT",
-      "to": "LITERAL:",
-      "metadata": {
-        "argIndex": 1
-      }
-    },
-    {
-      "from": "CALL:readFile",
-      "type": "PASSES_ARGUMENT",
-      "to": "LITERAL:",
-      "metadata": {
-        "argIndex": 1
-      }
-    },
-    {
-      "from": "CALL:readFile",
-      "type": "PASSES_ARGUMENT",
-      "to": "LITERAL:",
-      "metadata": {
-        "argIndex": 1
-      }
-    },
-    {
       "from": "CALL:reject",
       "type": "RESOLVES_TO",
       "to": "CONSTRUCTOR_CALL:new Promise()",
@@ -6363,54 +5967,6 @@
     {
       "from": "CALL:resolve",
       "type": "DERIVES_FROM",
-      "to": "CALL:join",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:resolve",
-      "type": "DERIVES_FROM",
-      "to": "CALL:join",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:resolve",
-      "type": "DERIVES_FROM",
-      "to": "CALL:JSON.parse",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:resolve",
-      "type": "DERIVES_FROM",
-      "to": "VARIABLE:full",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:resolve",
-      "type": "PASSES_ARGUMENT",
-      "to": "CALL:join",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:resolve",
-      "type": "PASSES_ARGUMENT",
-      "to": "CALL:join",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:resolve",
-      "type": "PASSES_ARGUMENT",
       "to": "CALL:JSON.parse",
       "metadata": {
         "argIndex": 0
@@ -6419,7 +5975,7 @@
     {
       "from": "CALL:resolve",
       "type": "PASSES_ARGUMENT",
-      "to": "VARIABLE:full",
+      "to": "CALL:JSON.parse",
       "metadata": {
         "argIndex": 0
       }
@@ -6483,38 +6039,6 @@
       "from": "CALL:rf",
       "type": "CALLS",
       "to": "EXTERNAL_FUNCTION:fs.readFile"
-    },
-    {
-      "from": "CALL:rf",
-      "type": "DERIVES_FROM",
-      "to": "FUNCTION:anonymous[0]",
-      "metadata": {
-        "argIndex": 2
-      }
-    },
-    {
-      "from": "CALL:rf",
-      "type": "DERIVES_FROM",
-      "to": "LITERAL:",
-      "metadata": {
-        "argIndex": 1
-      }
-    },
-    {
-      "from": "CALL:rf",
-      "type": "PASSES_ARGUMENT",
-      "to": "FUNCTION:anonymous[0]",
-      "metadata": {
-        "argIndex": 2
-      }
-    },
-    {
-      "from": "CALL:rf",
-      "type": "PASSES_ARGUMENT",
-      "to": "LITERAL:",
-      "metadata": {
-        "argIndex": 1
-      }
     },
     {
       "from": "CALL:rm",
@@ -6582,27 +6106,6 @@
       "to": "EXTERNAL_FUNCTION:fs.writeFile"
     },
     {
-      "from": "CALL:wf",
-      "type": "DERIVES_FROM",
-      "to": "FUNCTION:anonymous[0]",
-      "metadata": {
-        "argIndex": 2
-      }
-    },
-    {
-      "from": "CALL:wf",
-      "type": "PASSES_ARGUMENT",
-      "to": "FUNCTION:anonymous[0]",
-      "metadata": {
-        "argIndex": 2
-      }
-    },
-    {
-      "from": "CALL:Worker",
-      "type": "CALLS",
-      "to": "EXTERNAL_FUNCTION:worker_threads.Worker"
-    },
-    {
       "from": "CALL:writeFile",
       "type": "CALLS",
       "to": "EXTERNAL_FUNCTION:fs.writeFile"
@@ -6616,54 +6119,6 @@
       "from": "CALL:writeFile",
       "type": "CALLS",
       "to": "EXTERNAL_FUNCTION:fs/promises.writeFile"
-    },
-    {
-      "from": "CALL:writeFile",
-      "type": "DERIVES_FROM",
-      "to": "CALL:JSON.stringify",
-      "metadata": {
-        "argIndex": 1
-      }
-    },
-    {
-      "from": "CALL:writeFile",
-      "type": "DERIVES_FROM",
-      "to": "CALL:JSON.stringify",
-      "metadata": {
-        "argIndex": 1
-      }
-    },
-    {
-      "from": "CALL:writeFile",
-      "type": "DERIVES_FROM",
-      "to": "FUNCTION:anonymous[0]",
-      "metadata": {
-        "argIndex": 2
-      }
-    },
-    {
-      "from": "CALL:writeFile",
-      "type": "PASSES_ARGUMENT",
-      "to": "CALL:JSON.stringify",
-      "metadata": {
-        "argIndex": 1
-      }
-    },
-    {
-      "from": "CALL:writeFile",
-      "type": "PASSES_ARGUMENT",
-      "to": "CALL:JSON.stringify",
-      "metadata": {
-        "argIndex": 1
-      }
-    },
-    {
-      "from": "CALL:writeFile",
-      "type": "PASSES_ARGUMENT",
-      "to": "FUNCTION:anonymous[0]",
-      "metadata": {
-        "argIndex": 2
-      }
     },
     {
       "from": "CATCH_BLOCK:",
@@ -8746,11 +8201,6 @@
     {
       "from": "SCOPE:createEmitter:body",
       "type": "CONTAINS",
-      "to": "CALL:EventEmitter"
-    },
-    {
-      "from": "SCOPE:createEmitter:body",
-      "type": "CONTAINS",
       "to": "CONSTRUCTOR_CALL:new EventEmitter()"
     },
     {
@@ -8856,11 +8306,6 @@
     {
       "from": "SCOPE:if:36:2:0",
       "type": "CONTAINS",
-      "to": "CALL:Worker"
-    },
-    {
-      "from": "SCOPE:if:36:2:0",
-      "type": "CONTAINS",
       "to": "CONSTRUCTOR_CALL:new Worker()"
     },
     {
@@ -8901,11 +8346,6 @@
     {
       "from": "SCOPE:loadConfig:body",
       "type": "CONTAINS",
-      "to": "CALL:Promise"
-    },
-    {
-      "from": "SCOPE:loadConfig:body",
-      "type": "CONTAINS",
       "to": "CONSTRUCTOR_CALL:new Promise()"
     },
     {
@@ -8916,22 +8356,12 @@
     {
       "from": "SCOPE:loadViaNamespace:body",
       "type": "CONTAINS",
-      "to": "CALL:Promise"
-    },
-    {
-      "from": "SCOPE:loadViaNamespace:body",
-      "type": "CONTAINS",
       "to": "CONSTRUCTOR_CALL:new Promise()"
     },
     {
       "from": "SCOPE:loadViaNamespace:body",
       "type": "CONTAINS",
       "to": "FUNCTION:anonymous[0]"
-    },
-    {
-      "from": "SCOPE:loadWithAlias:body",
-      "type": "CONTAINS",
-      "to": "CALL:Promise"
     },
     {
       "from": "SCOPE:loadWithAlias:body",
@@ -8962,11 +8392,6 @@
       "from": "SCOPE:onlyJoinAndResolve:body",
       "type": "CONTAINS",
       "to": "CALL:resolve"
-    },
-    {
-      "from": "SCOPE:onlyReadFile:body",
-      "type": "CONTAINS",
-      "to": "CALL:Promise"
     },
     {
       "from": "SCOPE:onlyReadFile:body",
@@ -9032,11 +8457,6 @@
       "from": "SCOPE:saveData:body",
       "type": "CONTAINS",
       "to": "FUNCTION:anonymous[0]"
-    },
-    {
-      "from": "SCOPE:saveWithAlias:body",
-      "type": "CONTAINS",
-      "to": "CALL:Promise"
     },
     {
       "from": "SCOPE:saveWithAlias:body",
