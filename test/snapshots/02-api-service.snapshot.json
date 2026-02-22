@@ -1529,14 +1529,6 @@
     },
     {
       "exported": false,
-      "file": "src/db.js",
-      "name": "",
-      "type": "LITERAL",
-      "value": "Database not connected",
-      "valueType": "string"
-    },
-    {
-      "exported": false,
       "file": "src/index.js",
       "name": "",
       "type": "LITERAL",
@@ -2440,22 +2432,6 @@
     },
     {
       "from": "CALL:db.query",
-      "type": "PASSES_ARGUMENT",
-      "to": "LITERAL:",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:Error",
-      "type": "DERIVES_FROM",
-      "to": "LITERAL:",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:Error",
       "type": "PASSES_ARGUMENT",
       "to": "LITERAL:",
       "metadata": {

@@ -16675,38 +16675,6 @@
       "file": "middleware/auth.js",
       "name": "",
       "type": "LITERAL",
-      "value": "Insufficient permissions",
-      "valueType": "string"
-    },
-    {
-      "exported": false,
-      "file": "middleware/auth.js",
-      "name": "",
-      "type": "LITERAL",
-      "value": "Invalid token",
-      "valueType": "string"
-    },
-    {
-      "exported": false,
-      "file": "middleware/auth.js",
-      "name": "",
-      "type": "LITERAL",
-      "value": "Invalid token",
-      "valueType": "string"
-    },
-    {
-      "exported": false,
-      "file": "middleware/auth.js",
-      "name": "",
-      "type": "LITERAL",
-      "value": "Invalid token",
-      "valueType": "string"
-    },
-    {
-      "exported": false,
-      "file": "middleware/auth.js",
-      "name": "",
-      "type": "LITERAL",
       "value": "Invalid token",
       "valueType": "string"
     },
@@ -16811,30 +16779,6 @@
       "file": "middleware/auth.js",
       "name": "",
       "type": "LITERAL",
-      "value": "Token blacklisted",
-      "valueType": "string"
-    },
-    {
-      "exported": false,
-      "file": "middleware/auth.js",
-      "name": "",
-      "type": "LITERAL",
-      "value": "Token blacklisted",
-      "valueType": "string"
-    },
-    {
-      "exported": false,
-      "file": "middleware/auth.js",
-      "name": "",
-      "type": "LITERAL",
-      "value": "Token blacklisted",
-      "valueType": "string"
-    },
-    {
-      "exported": false,
-      "file": "middleware/auth.js",
-      "name": "",
-      "type": "LITERAL",
       "value": "Token verification failed:",
       "valueType": "string"
     },
@@ -16844,38 +16788,6 @@
       "name": "",
       "type": "LITERAL",
       "value": "true",
-      "valueType": "string"
-    },
-    {
-      "exported": false,
-      "file": "middleware/auth.js",
-      "name": "",
-      "type": "LITERAL",
-      "value": "User not found",
-      "valueType": "string"
-    },
-    {
-      "exported": false,
-      "file": "middleware/auth.js",
-      "name": "",
-      "type": "LITERAL",
-      "value": "User not found",
-      "valueType": "string"
-    },
-    {
-      "exported": false,
-      "file": "middleware/auth.js",
-      "name": "",
-      "type": "LITERAL",
-      "value": "User not found",
-      "valueType": "string"
-    },
-    {
-      "exported": false,
-      "file": "middleware/auth.js",
-      "name": "",
-      "type": "LITERAL",
-      "value": "User not found",
       "valueType": "string"
     },
     {
@@ -17195,24 +17107,8 @@
       "file": "models/User.js",
       "name": "",
       "type": "LITERAL",
-      "value": "user",
-      "valueType": "string"
-    },
-    {
-      "exported": false,
-      "file": "models/User.js",
-      "name": "",
-      "type": "LITERAL",
       "value": "User",
       "valueType": "string"
-    },
-    {
-      "exported": false,
-      "file": "models/User.js",
-      "name": "",
-      "type": "LITERAL",
-      "value": 0,
-      "valueType": "number"
     },
     {
       "exported": false,
@@ -17244,30 +17140,6 @@
       "name": "",
       "type": "LITERAL",
       "value": false,
-      "valueType": "boolean"
-    },
-    {
-      "exported": false,
-      "file": "models/User.js",
-      "name": "",
-      "type": "LITERAL",
-      "value": true,
-      "valueType": "boolean"
-    },
-    {
-      "exported": false,
-      "file": "models/User.js",
-      "name": "",
-      "type": "LITERAL",
-      "value": true,
-      "valueType": "boolean"
-    },
-    {
-      "exported": false,
-      "file": "models/User.js",
-      "name": "",
-      "type": "LITERAL",
-      "value": true,
       "valueType": "boolean"
     },
     {
@@ -17516,14 +17388,6 @@
       "name": "",
       "type": "LITERAL",
       "value": "settings",
-      "valueType": "string"
-    },
-    {
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "",
-      "type": "LITERAL",
-      "value": "User not found",
       "valueType": "string"
     },
     {
@@ -17915,14 +17779,6 @@
       "name": "",
       "type": "LITERAL",
       "value": "/api/save",
-      "valueType": "string"
-    },
-    {
-      "exported": false,
-      "file": "utils/asyncHelpers.js",
-      "name": "",
-      "type": "LITERAL",
-      "value": "Both primary and fallback failed",
       "valueType": "string"
     },
     {
@@ -18488,14 +18344,6 @@
       "exported": false,
       "file": "models/User.js",
       "name": "<object>",
-      "parentCallId": "models/User.js->CALL->new:mongoose.Schema",
-      "type": "OBJECT_LITERAL"
-    },
-    {
-      "argIndex": 0,
-      "exported": false,
-      "file": "models/User.js",
-      "name": "<object>",
       "parentCallId": "models/User.js:CONSTRUCTOR_CALL:Schema:6:19",
       "type": "OBJECT_LITERAL"
     },
@@ -18536,61 +18384,11 @@
       "type": "OBJECT_LITERAL"
     },
     {
-      "exported": false,
-      "file": "models/User.js",
-      "name": "<object>",
-      "type": "OBJECT_LITERAL"
-    },
-    {
-      "exported": false,
-      "file": "models/User.js",
-      "name": "<object>",
-      "type": "OBJECT_LITERAL"
-    },
-    {
-      "exported": false,
-      "file": "models/User.js",
-      "name": "<object>",
-      "type": "OBJECT_LITERAL"
-    },
-    {
-      "exported": false,
-      "file": "models/User.js",
-      "name": "<object>",
-      "type": "OBJECT_LITERAL"
-    },
-    {
-      "exported": false,
-      "file": "models/User.js",
-      "name": "<object>",
-      "type": "OBJECT_LITERAL"
-    },
-    {
-      "exported": false,
-      "file": "models/User.js",
-      "name": "<object>",
-      "type": "OBJECT_LITERAL"
-    },
-    {
-      "argIndex": 0,
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "<object>",
-      "parentCallId": "api.js->anonymous[0]->anonymous[0]->CALL->new:User#0",
-      "type": "OBJECT_LITERAL"
-    },
-    {
       "argIndex": 0,
       "exported": false,
       "file": "routes/api.js",
       "name": "<object>",
       "parentCallId": "routes/api.js:CONSTRUCTOR_CALL:User:25:20",
-      "type": "OBJECT_LITERAL"
-    },
-    {
-      "exported": false,
-      "file": "routes/api.js",
-      "name": "<object>",
       "type": "OBJECT_LITERAL"
     },
     {
@@ -31222,214 +31020,6 @@
       "to": "VARIABLE:currentBatch"
     },
     {
-      "from": "CALL:Error",
-      "type": "DERIVES_FROM",
-      "to": "LITERAL:",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:Error",
-      "type": "DERIVES_FROM",
-      "to": "LITERAL:",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:Error",
-      "type": "DERIVES_FROM",
-      "to": "LITERAL:",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:Error",
-      "type": "DERIVES_FROM",
-      "to": "LITERAL:",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:Error",
-      "type": "DERIVES_FROM",
-      "to": "LITERAL:",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:Error",
-      "type": "DERIVES_FROM",
-      "to": "LITERAL:",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:Error",
-      "type": "DERIVES_FROM",
-      "to": "LITERAL:",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:Error",
-      "type": "DERIVES_FROM",
-      "to": "LITERAL:",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:Error",
-      "type": "DERIVES_FROM",
-      "to": "LITERAL:",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:Error",
-      "type": "DERIVES_FROM",
-      "to": "LITERAL:",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:Error",
-      "type": "DERIVES_FROM",
-      "to": "LITERAL:",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:Error",
-      "type": "DERIVES_FROM",
-      "to": "LITERAL:",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:Error",
-      "type": "DERIVES_FROM",
-      "to": "LITERAL:",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:Error",
-      "type": "PASSES_ARGUMENT",
-      "to": "LITERAL:",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:Error",
-      "type": "PASSES_ARGUMENT",
-      "to": "LITERAL:",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:Error",
-      "type": "PASSES_ARGUMENT",
-      "to": "LITERAL:",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:Error",
-      "type": "PASSES_ARGUMENT",
-      "to": "LITERAL:",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:Error",
-      "type": "PASSES_ARGUMENT",
-      "to": "LITERAL:",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:Error",
-      "type": "PASSES_ARGUMENT",
-      "to": "LITERAL:",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:Error",
-      "type": "PASSES_ARGUMENT",
-      "to": "LITERAL:",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:Error",
-      "type": "PASSES_ARGUMENT",
-      "to": "LITERAL:",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:Error",
-      "type": "PASSES_ARGUMENT",
-      "to": "LITERAL:",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:Error",
-      "type": "PASSES_ARGUMENT",
-      "to": "LITERAL:",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:Error",
-      "type": "PASSES_ARGUMENT",
-      "to": "LITERAL:",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:Error",
-      "type": "PASSES_ARGUMENT",
-      "to": "LITERAL:",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:Error",
-      "type": "PASSES_ARGUMENT",
-      "to": "LITERAL:",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
       "from": "CALL:errorHandler.handleError.bind",
       "type": "USES",
       "to": "VARIABLE:errorHandler"
@@ -32772,22 +32362,6 @@
       }
     },
     {
-      "from": "CALL:mongoose.Schema",
-      "type": "DERIVES_FROM",
-      "to": "OBJECT_LITERAL:<object>",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:mongoose.Schema",
-      "type": "PASSES_ARGUMENT",
-      "to": "OBJECT_LITERAL:<object>",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
       "from": "CALL:newUser.save",
       "type": "DERIVES_FROM",
       "to": "FUNCTION:anonymous[0]",
@@ -33022,214 +32596,6 @@
       "from": "CALL:processUserRequest",
       "type": "MAKES_REQUEST",
       "to": "http:request:GET dynamic"
-    },
-    {
-      "from": "CALL:Promise",
-      "type": "DERIVES_FROM",
-      "to": "FUNCTION:anonymous[0]",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:Promise",
-      "type": "DERIVES_FROM",
-      "to": "FUNCTION:anonymous[0]",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:Promise",
-      "type": "DERIVES_FROM",
-      "to": "FUNCTION:anonymous[0]",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:Promise",
-      "type": "DERIVES_FROM",
-      "to": "FUNCTION:anonymous[0]",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:Promise",
-      "type": "DERIVES_FROM",
-      "to": "FUNCTION:anonymous[0]",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:Promise",
-      "type": "DERIVES_FROM",
-      "to": "FUNCTION:anonymous[0]",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:Promise",
-      "type": "DERIVES_FROM",
-      "to": "FUNCTION:anonymous[0]",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:Promise",
-      "type": "DERIVES_FROM",
-      "to": "FUNCTION:anonymous[0]",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:Promise",
-      "type": "DERIVES_FROM",
-      "to": "FUNCTION:anonymous[0]",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:Promise",
-      "type": "DERIVES_FROM",
-      "to": "FUNCTION:anonymous[0]",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:Promise",
-      "type": "DERIVES_FROM",
-      "to": "FUNCTION:anonymous[0]",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:Promise",
-      "type": "DERIVES_FROM",
-      "to": "FUNCTION:anonymous[0]",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:Promise",
-      "type": "DERIVES_FROM",
-      "to": "FUNCTION:anonymous[1]",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:Promise",
-      "type": "PASSES_ARGUMENT",
-      "to": "FUNCTION:anonymous[0]",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:Promise",
-      "type": "PASSES_ARGUMENT",
-      "to": "FUNCTION:anonymous[0]",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:Promise",
-      "type": "PASSES_ARGUMENT",
-      "to": "FUNCTION:anonymous[0]",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:Promise",
-      "type": "PASSES_ARGUMENT",
-      "to": "FUNCTION:anonymous[0]",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:Promise",
-      "type": "PASSES_ARGUMENT",
-      "to": "FUNCTION:anonymous[0]",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:Promise",
-      "type": "PASSES_ARGUMENT",
-      "to": "FUNCTION:anonymous[0]",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:Promise",
-      "type": "PASSES_ARGUMENT",
-      "to": "FUNCTION:anonymous[0]",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:Promise",
-      "type": "PASSES_ARGUMENT",
-      "to": "FUNCTION:anonymous[0]",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:Promise",
-      "type": "PASSES_ARGUMENT",
-      "to": "FUNCTION:anonymous[0]",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:Promise",
-      "type": "PASSES_ARGUMENT",
-      "to": "FUNCTION:anonymous[0]",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:Promise",
-      "type": "PASSES_ARGUMENT",
-      "to": "FUNCTION:anonymous[0]",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:Promise",
-      "type": "PASSES_ARGUMENT",
-      "to": "FUNCTION:anonymous[0]",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:Promise",
-      "type": "PASSES_ARGUMENT",
-      "to": "FUNCTION:anonymous[1]",
-      "metadata": {
-        "argIndex": 0
-      }
     },
     {
       "from": "CALL:Promise.all",
@@ -36827,22 +36193,6 @@
       "from": "CALL:this.processDataStream",
       "type": "CALLS",
       "to": "FUNCTION:processDataStream"
-    },
-    {
-      "from": "CALL:User",
-      "type": "DERIVES_FROM",
-      "to": "OBJECT_LITERAL:<object>",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:User",
-      "type": "PASSES_ARGUMENT",
-      "to": "OBJECT_LITERAL:<object>",
-      "metadata": {
-        "argIndex": 0
-      }
     },
     {
       "from": "CALL:user._id.toString",
@@ -44729,22 +44079,6 @@
       "type": "HAS_PROPERTY",
       "to": "LITERAL:",
       "metadata": {
-        "propertyName": "default"
-      }
-    },
-    {
-      "from": "OBJECT_LITERAL:<object>",
-      "type": "HAS_PROPERTY",
-      "to": "LITERAL:",
-      "metadata": {
-        "propertyName": "default"
-      }
-    },
-    {
-      "from": "OBJECT_LITERAL:<object>",
-      "type": "HAS_PROPERTY",
-      "to": "LITERAL:",
-      "metadata": {
         "propertyName": "logFile"
       }
     },
@@ -44769,39 +44103,7 @@
       "type": "HAS_PROPERTY",
       "to": "LITERAL:",
       "metadata": {
-        "propertyName": "required"
-      }
-    },
-    {
-      "from": "OBJECT_LITERAL:<object>",
-      "type": "HAS_PROPERTY",
-      "to": "LITERAL:",
-      "metadata": {
-        "propertyName": "required"
-      }
-    },
-    {
-      "from": "OBJECT_LITERAL:<object>",
-      "type": "HAS_PROPERTY",
-      "to": "LITERAL:",
-      "metadata": {
         "propertyName": "unique"
-      }
-    },
-    {
-      "from": "OBJECT_LITERAL:<object>",
-      "type": "HAS_PROPERTY",
-      "to": "LITERAL:",
-      "metadata": {
-        "propertyName": "unique"
-      }
-    },
-    {
-      "from": "OBJECT_LITERAL:<object>",
-      "type": "HAS_PROPERTY",
-      "to": "OBJECT_LITERAL:<object>",
-      "metadata": {
-        "propertyName": "createdAt"
       }
     },
     {
@@ -44825,22 +44127,6 @@
       "type": "HAS_PROPERTY",
       "to": "OBJECT_LITERAL:<object>",
       "metadata": {
-        "propertyName": "email"
-      }
-    },
-    {
-      "from": "OBJECT_LITERAL:<object>",
-      "type": "HAS_PROPERTY",
-      "to": "OBJECT_LITERAL:<object>",
-      "metadata": {
-        "propertyName": "loginAttempts"
-      }
-    },
-    {
-      "from": "OBJECT_LITERAL:<object>",
-      "type": "HAS_PROPERTY",
-      "to": "OBJECT_LITERAL:<object>",
-      "metadata": {
         "propertyName": "loginAttempts"
       }
     },
@@ -44850,30 +44136,6 @@
       "to": "OBJECT_LITERAL:<object>",
       "metadata": {
         "propertyName": "password"
-      }
-    },
-    {
-      "from": "OBJECT_LITERAL:<object>",
-      "type": "HAS_PROPERTY",
-      "to": "OBJECT_LITERAL:<object>",
-      "metadata": {
-        "propertyName": "password"
-      }
-    },
-    {
-      "from": "OBJECT_LITERAL:<object>",
-      "type": "HAS_PROPERTY",
-      "to": "OBJECT_LITERAL:<object>",
-      "metadata": {
-        "propertyName": "profile"
-      }
-    },
-    {
-      "from": "OBJECT_LITERAL:<object>",
-      "type": "HAS_PROPERTY",
-      "to": "OBJECT_LITERAL:<object>",
-      "metadata": {
-        "propertyName": "profile"
       }
     },
     {
@@ -44903,22 +44165,6 @@
     {
       "from": "OBJECT_LITERAL:<object>",
       "type": "HAS_PROPERTY",
-      "to": "OBJECT_LITERAL:<object>",
-      "metadata": {
-        "propertyName": "role"
-      }
-    },
-    {
-      "from": "OBJECT_LITERAL:<object>",
-      "type": "HAS_PROPERTY",
-      "to": "VARIABLE:email",
-      "metadata": {
-        "propertyName": "email"
-      }
-    },
-    {
-      "from": "OBJECT_LITERAL:<object>",
-      "type": "HAS_PROPERTY",
       "to": "VARIABLE:email",
       "metadata": {
         "propertyName": "email"
@@ -44935,33 +44181,9 @@
     {
       "from": "OBJECT_LITERAL:<object>",
       "type": "HAS_PROPERTY",
-      "to": "VARIABLE:firstName",
-      "metadata": {
-        "propertyName": "firstName"
-      }
-    },
-    {
-      "from": "OBJECT_LITERAL:<object>",
-      "type": "HAS_PROPERTY",
       "to": "VARIABLE:lastName",
       "metadata": {
         "propertyName": "lastName"
-      }
-    },
-    {
-      "from": "OBJECT_LITERAL:<object>",
-      "type": "HAS_PROPERTY",
-      "to": "VARIABLE:lastName",
-      "metadata": {
-        "propertyName": "lastName"
-      }
-    },
-    {
-      "from": "OBJECT_LITERAL:<object>",
-      "type": "HAS_PROPERTY",
-      "to": "VARIABLE:password",
-      "metadata": {
-        "propertyName": "password"
       }
     },
     {
@@ -45122,7 +44344,7 @@
       "to": "VARIABLE:token",
       "metadata": {
         "argIndex": 0,
-        "callId": "auth.js->authMiddleware->try#0->CALL->verifyTokenAsync#0"
+        "callId": "middleware/auth.js->authMiddleware->try#0->CALL->verifyTokenAsync#0"
       }
     },
     {
@@ -45131,7 +44353,7 @@
       "to": "VARIABLE:token",
       "metadata": {
         "argIndex": 0,
-        "callId": "auth.js->authMiddlewarePromise->CALL->verifyTokenPromise#0"
+        "callId": "middleware/auth.js->authMiddlewarePromise->CALL->verifyTokenPromise#0"
       }
     },
     {

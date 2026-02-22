@@ -3213,22 +3213,6 @@
       "file": "src/exceptions.js",
       "name": "",
       "type": "LITERAL",
-      "value": "Data is required",
-      "valueType": "string"
-    },
-    {
-      "exported": false,
-      "file": "src/exceptions.js",
-      "name": "",
-      "type": "LITERAL",
-      "value": "Empty input",
-      "valueType": "string"
-    },
-    {
-      "exported": false,
-      "file": "src/exceptions.js",
-      "name": "",
-      "type": "LITERAL",
       "value": "Empty input",
       "valueType": "string"
     },
@@ -3238,14 +3222,6 @@
       "name": "",
       "type": "LITERAL",
       "value": "Error reading file:",
-      "valueType": "string"
-    },
-    {
-      "exported": false,
-      "file": "src/exceptions.js",
-      "name": "",
-      "type": "LITERAL",
-      "value": "Missing id",
       "valueType": "string"
     },
     {
@@ -6106,54 +6082,6 @@
       "to": "PARAMETER:data"
     },
     {
-      "from": "CALL:Error",
-      "type": "DERIVES_FROM",
-      "to": "LITERAL:",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:Error",
-      "type": "DERIVES_FROM",
-      "to": "LITERAL:",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:Error",
-      "type": "DERIVES_FROM",
-      "to": "LITERAL:",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:Error",
-      "type": "PASSES_ARGUMENT",
-      "to": "LITERAL:",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:Error",
-      "type": "PASSES_ARGUMENT",
-      "to": "LITERAL:",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CALL:Error",
-      "type": "PASSES_ARGUMENT",
-      "to": "LITERAL:",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
       "from": "CALL:evens.push",
       "type": "USES",
       "to": "CONSTANT:evens"
@@ -8159,7 +8087,7 @@
       "to": "VARIABLE:parsed",
       "metadata": {
         "argIndex": 0,
-        "callId": "exceptions.js->complexOperation->try#0->try#0->CALL->validateInput#0"
+        "callId": "src/exceptions.js->complexOperation->try#0->try#0->CALL->validateInput#0"
       }
     },
     {
