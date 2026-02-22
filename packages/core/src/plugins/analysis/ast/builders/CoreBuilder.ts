@@ -5,7 +5,6 @@
  * property accesses, callbacks, literals, object/array literals.
  */
 
-import { basename } from 'path';
 import type {
   ModuleNode,
   FunctionInfo,
@@ -256,13 +255,10 @@ export class CoreBuilder implements DomainBuilder {
       const scopePath = propAccess.scopePath ?? [];
 
       if (objectName === 'this') {
-        // Link to CLASS node (same pattern as MutationBuilder REG-152)
+        // Link to CLASS node for this.prop reads (REG-152 pattern, REG-557 fix)
         if (propAccess.enclosingClassName) {
-          // Compare using basename since classes use scopeTracker.file (basename)
-          // but property accesses use module.file (full path)
-          const fileBasename = basename(propAccess.file);
           const classDecl = classDeclarations.find(c =>
-            c.name === propAccess.enclosingClassName && c.file === fileBasename
+            c.name === propAccess.enclosingClassName && c.file === propAccess.file
           );
           if (classDecl) {
             this.ctx.bufferEdge({

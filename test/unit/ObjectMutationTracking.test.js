@@ -597,6 +597,50 @@ const arrowFn = (y) => {
   });
 
   // ============================================================================
+  // this.prop read access (READS_FROM edges to CLASS)
+  // REG-557: basename bug fix for subdirectory files
+  // ============================================================================
+  describe('this.prop read access (READS_FROM)', () => {
+    it('should create READS_FROM edge to CLASS for this.prop in subdirectory file (REG-557)', async () => {
+      await setupTest(backend, {
+        'index.js': `import './src/App.js';`,
+        'src/App.js': `
+class App {
+  constructor(config) {
+    this.config = config;
+  }
+  getConfig() {
+    return this.config;
+  }
+}
+        `
+      });
+
+      const allNodes = await backend.getAllNodes();
+      const allEdges = await backend.getAllEdges();
+
+      const classNode = allNodes.find(n => n.type === 'CLASS' && n.name === 'App');
+      assert.ok(classNode, 'CLASS "App" not found');
+
+      // this.config in getConfig() should be a PROPERTY_ACCESS with name='config', objectName='this'
+      const propAccess = allNodes.find(n =>
+        n.type === 'PROPERTY_ACCESS' && n.name === 'config' && n.objectName === 'this'
+      );
+      assert.ok(propAccess, 'PROPERTY_ACCESS with name="config" and objectName="this" not found');
+
+      const readsFrom = allEdges.find(e =>
+        e.type === 'READS_FROM' &&
+        e.src === propAccess.id &&
+        e.dst === classNode.id
+      );
+      assert.ok(
+        readsFrom,
+        `Expected READS_FROM edge from this.config to CLASS "App". basename bug would cause this to fail for subdirectory files.`
+      );
+    });
+  });
+
+  // ============================================================================
   // Object.assign(target, source)
   // ============================================================================
   describe('Object.assign(target, source)', () => {
