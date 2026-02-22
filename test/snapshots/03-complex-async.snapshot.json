@@ -74,12 +74,6 @@
     },
     {
       "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "<array>",
-      "type": "ARRAY_LITERAL"
-    },
-    {
-      "exported": false,
       "file": "utils/asyncHelpers.js",
       "name": "<array>",
       "type": "ARRAY_LITERAL"
@@ -602,7 +596,7 @@
       "exported": false,
       "file": "models/User.js",
       "name": "",
-      "semanticId": "models/User.js->comparePassword->anonymous[0]->else#0->BRANCH->if#6",
+      "semanticId": "models/User.js->comparePassword->anonymous[0]->else#0->BRANCH->if#4",
       "type": "BRANCH"
     },
     {
@@ -611,7 +605,7 @@
       "exported": false,
       "file": "models/User.js",
       "name": "",
-      "semanticId": "models/User.js->anonymous[0]->anonymous[0]->BRANCH->if#0",
+      "semanticId": "models/User.js->anonymous[0]->anonymous[0]->anonymous[0]->BRANCH->if#9",
       "type": "BRANCH"
     },
     {
@@ -620,7 +614,7 @@
       "exported": false,
       "file": "models/User.js",
       "name": "",
-      "semanticId": "models/User.js->anonymous[6]->BRANCH->if#1",
+      "semanticId": "models/User.js->anonymous[0]->anonymous[0]->BRANCH->if#8",
       "type": "BRANCH"
     },
     {
@@ -629,7 +623,7 @@
       "exported": false,
       "file": "models/User.js",
       "name": "",
-      "semanticId": "models/User.js->anonymous[7]->anonymous[0]->anonymous[0]->BRANCH->if#11",
+      "semanticId": "models/User.js->anonymous[1]->anonymous[0]->BRANCH->if#10",
       "type": "BRANCH"
     },
     {
@@ -638,7 +632,7 @@
       "exported": false,
       "file": "models/User.js",
       "name": "",
-      "semanticId": "models/User.js->anonymous[7]->anonymous[0]->BRANCH->if#10",
+      "semanticId": "models/User.js->comparePassword->anonymous[0]->BRANCH->if#0",
       "type": "BRANCH"
     },
     {
@@ -647,7 +641,7 @@
       "exported": false,
       "file": "models/User.js",
       "name": "",
-      "semanticId": "models/User.js->anonymous[8]->anonymous[0]->BRANCH->if#12",
+      "semanticId": "models/User.js->comparePassword->anonymous[0]->else#0->anonymous[0]->BRANCH->if#5",
       "type": "BRANCH"
     },
     {
@@ -656,7 +650,7 @@
       "exported": false,
       "file": "models/User.js",
       "name": "",
-      "semanticId": "models/User.js->comparePassword->anonymous[0]->BRANCH->if#2",
+      "semanticId": "models/User.js->comparePassword->anonymous[0]->if#1->if#0->anonymous[0]->BRANCH->if#3",
       "type": "BRANCH"
     },
     {
@@ -665,25 +659,7 @@
       "exported": false,
       "file": "models/User.js",
       "name": "",
-      "semanticId": "models/User.js->comparePassword->anonymous[0]->else#0->anonymous[0]->BRANCH->if#7",
-      "type": "BRANCH"
-    },
-    {
-      "branchType": "if",
-      "discriminantObjectSourceName": "err",
-      "exported": false,
-      "file": "models/User.js",
-      "name": "",
-      "semanticId": "models/User.js->comparePassword->anonymous[0]->if#1->if#0->anonymous[0]->BRANCH->if#5",
-      "type": "BRANCH"
-    },
-    {
-      "branchType": "if",
-      "discriminantObjectSourceName": "err",
-      "exported": false,
-      "file": "models/User.js",
-      "name": "",
-      "semanticId": "models/User.js->generateAuthToken->anonymous[0]->anonymous[0]->BRANCH->if#8",
+      "semanticId": "models/User.js->generateAuthToken->anonymous[0]->anonymous[0]->BRANCH->if#6",
       "type": "BRANCH"
     },
     {
@@ -692,7 +668,7 @@
       "exported": false,
       "file": "models/User.js",
       "name": "",
-      "semanticId": "models/User.js->comparePassword->anonymous[0]->BRANCH->if#3",
+      "semanticId": "models/User.js->comparePassword->anonymous[0]->BRANCH->if#1",
       "type": "BRANCH"
     },
     {
@@ -701,7 +677,7 @@
       "exported": false,
       "file": "models/User.js",
       "name": "",
-      "semanticId": "models/User.js->anonymous[7]->BRANCH->if#9",
+      "semanticId": "models/User.js->anonymous[0]->BRANCH->if#7",
       "type": "BRANCH"
     },
     {
@@ -710,7 +686,7 @@
       "exported": false,
       "file": "models/User.js",
       "name": "",
-      "semanticId": "models/User.js->anonymous[9]->BRANCH->if#13",
+      "semanticId": "models/User.js->anonymous[2]->BRANCH->if#11",
       "type": "BRANCH"
     },
     {
@@ -720,7 +696,7 @@
       "exported": false,
       "file": "models/User.js",
       "name": "",
-      "semanticId": "models/User.js->comparePassword->anonymous[0]->if#1->BRANCH->if#4",
+      "semanticId": "models/User.js->comparePassword->anonymous[0]->if#1->BRANCH->if#2",
       "type": "BRANCH"
     },
     {
@@ -945,7 +921,7 @@
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "",
-      "semanticId": "services/dataProcessor.js->anonymous[1]->processItem->BRANCH->if#3",
+      "semanticId": "services/dataProcessor.js->DataProcessor->processWithCallbacks->processNext->BRANCH->if#8",
       "type": "BRANCH"
     },
     {
@@ -957,31 +933,7 @@
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "",
-      "semanticId": "services/dataProcessor.js->DataProcessor->processWithCallbacks->processNext->BRANCH->if#13",
-      "type": "BRANCH"
-    },
-    {
-      "branchType": "if",
-      "discriminantComputed": false,
-      "discriminantObject": "next",
-      "discriminantObjectSourceName": "next",
-      "discriminantProperty": "done",
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "",
-      "semanticId": "services/dataProcessor.js->DataProcessor->processWithPromises->anonymous[0]->processItem->BRANCH->if#16",
-      "type": "BRANCH"
-    },
-    {
-      "branchType": "if",
-      "discriminantComputed": false,
-      "discriminantObject": "next",
-      "discriminantObjectSourceName": "next",
-      "discriminantProperty": "done",
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "",
-      "semanticId": "services/dataProcessor.js->processNext->BRANCH->if#0",
+      "semanticId": "services/dataProcessor.js->DataProcessor->processWithPromises->anonymous[0]->processItem->BRANCH->if#11",
       "type": "BRANCH"
     },
     {
@@ -991,7 +943,7 @@
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "",
-      "semanticId": "services/dataProcessor.js->DataProcessor->fetchUsersStream->while#0->BRANCH->if#9",
+      "semanticId": "services/dataProcessor.js->DataProcessor->fetchUsersStream->while#0->BRANCH->if#4",
       "type": "BRANCH"
     },
     {
@@ -1002,7 +954,7 @@
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "",
-      "semanticId": "services/dataProcessor.js->processInBatches->anonymous[0]->processBatch->BRANCH->if#7",
+      "semanticId": "services/dataProcessor.js->processInBatches->anonymous[0]->processBatch->BRANCH->if#2",
       "type": "BRANCH"
     },
     {
@@ -1012,7 +964,7 @@
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "",
-      "semanticId": "services/dataProcessor.js->processInBatches->anonymous[0]->BRANCH->if#6",
+      "semanticId": "services/dataProcessor.js->processInBatches->anonymous[0]->BRANCH->if#1",
       "type": "BRANCH"
     },
     {
@@ -1023,7 +975,7 @@
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "",
-      "semanticId": "services/dataProcessor.js->processInBatches->anonymous[0]->for-of#0->BRANCH->if#5",
+      "semanticId": "services/dataProcessor.js->processInBatches->anonymous[0]->for-of#0->BRANCH->if#0",
       "type": "BRANCH"
     },
     {
@@ -1034,7 +986,7 @@
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "",
-      "semanticId": "services/dataProcessor.js->DataProcessor->fetchUsersStream->while#0->for-of#0->BRANCH->if#10",
+      "semanticId": "services/dataProcessor.js->DataProcessor->fetchUsersStream->while#0->for-of#0->BRANCH->if#5",
       "type": "BRANCH"
     },
     {
@@ -1043,7 +995,7 @@
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "",
-      "semanticId": "services/dataProcessor.js->anonymous[5]->anonymous[0]->BRANCH->if#4",
+      "semanticId": "services/dataProcessor.js->DataProcessor->processComplex->anonymous[0]->anonymous[0]->BRANCH->if#12",
       "type": "BRANCH"
     },
     {
@@ -1052,7 +1004,7 @@
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "",
-      "semanticId": "services/dataProcessor.js->DataProcessor->processComplex->anonymous[0]->anonymous[0]->BRANCH->if#17",
+      "semanticId": "services/dataProcessor.js->DataProcessor->processWithCallbacks->processNext->if#0->anonymous[0]->anonymous[0]->BRANCH->if#10",
       "type": "BRANCH"
     },
     {
@@ -1061,7 +1013,7 @@
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "",
-      "semanticId": "services/dataProcessor.js->DataProcessor->processWithCallbacks->processNext->if#0->anonymous[0]->anonymous[0]->BRANCH->if#15",
+      "semanticId": "services/dataProcessor.js->DataProcessor->processWithCallbacks->processNext->if#0->anonymous[0]->BRANCH->if#9",
       "type": "BRANCH"
     },
     {
@@ -1070,34 +1022,7 @@
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "",
-      "semanticId": "services/dataProcessor.js->DataProcessor->processWithCallbacks->processNext->if#0->anonymous[0]->BRANCH->if#14",
-      "type": "BRANCH"
-    },
-    {
-      "branchType": "if",
-      "discriminantObjectSourceName": "err",
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "",
-      "semanticId": "services/dataProcessor.js->processInBatches->anonymous[0]->processBatch->anonymous[0]->BRANCH->if#8",
-      "type": "BRANCH"
-    },
-    {
-      "branchType": "if",
-      "discriminantObjectSourceName": "err",
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "",
-      "semanticId": "services/dataProcessor.js->processNext->if#0->anonymous[0]->anonymous[0]->BRANCH->if#2",
-      "type": "BRANCH"
-    },
-    {
-      "branchType": "if",
-      "discriminantObjectSourceName": "err",
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "",
-      "semanticId": "services/dataProcessor.js->processNext->if#0->anonymous[0]->BRANCH->if#1",
+      "semanticId": "services/dataProcessor.js->processInBatches->anonymous[0]->processBatch->anonymous[0]->BRANCH->if#3",
       "type": "BRANCH"
     },
     {
@@ -1107,7 +1032,7 @@
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "",
-      "semanticId": "services/dataProcessor.js->DataProcessor->processDataStream->for-of#0->BRANCH->if#11",
+      "semanticId": "services/dataProcessor.js->DataProcessor->processDataStream->for-of#0->BRANCH->if#6",
       "type": "BRANCH"
     },
     {
@@ -1115,7 +1040,7 @@
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "",
-      "semanticId": "services/dataProcessor.js->DataProcessor->processDataStream->for-of#0->BRANCH->if#12",
+      "semanticId": "services/dataProcessor.js->DataProcessor->processDataStream->for-of#0->BRANCH->if#7",
       "type": "BRANCH"
     },
     {
@@ -7207,7 +7132,7 @@
       "file": "services/dataProcessor.js",
       "name": "",
       "parameterName": "err",
-      "semanticId": "services/dataProcessor.js->anonymous[1]->CATCH_BLOCK->catch#0",
+      "semanticId": "services/dataProcessor.js->DataProcessor->processWithErrorHandling->CATCH_BLOCK->catch#1",
       "type": "CATCH_BLOCK"
     },
     {
@@ -7215,7 +7140,7 @@
       "file": "services/dataProcessor.js",
       "name": "",
       "parameterName": "err",
-      "semanticId": "services/dataProcessor.js->DataProcessor->processWithErrorHandling->CATCH_BLOCK->catch#2",
+      "semanticId": "services/dataProcessor.js->DataProcessor->processWithErrorHandling->try#0->for-of#0->CATCH_BLOCK->catch#2",
       "type": "CATCH_BLOCK"
     },
     {
@@ -7223,15 +7148,7 @@
       "file": "services/dataProcessor.js",
       "name": "",
       "parameterName": "err",
-      "semanticId": "services/dataProcessor.js->DataProcessor->processWithErrorHandling->try#0->for-of#0->CATCH_BLOCK->catch#3",
-      "type": "CATCH_BLOCK"
-    },
-    {
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "",
-      "parameterName": "err",
-      "semanticId": "services/dataProcessor.js->DataProcessor->processWithPromises->anonymous[0]->CATCH_BLOCK->catch#1",
+      "semanticId": "services/dataProcessor.js->DataProcessor->processWithPromises->anonymous[0]->CATCH_BLOCK->catch#0",
       "type": "CATCH_BLOCK"
     },
     {
@@ -7378,13 +7295,6 @@
     {
       "exported": false,
       "file": "app.js",
-      "name": "results",
-      "type": "CONSTANT",
-      "value": []
-    },
-    {
-      "exported": false,
-      "file": "services/dataProcessor.js",
       "name": "results",
       "type": "CONSTANT",
       "value": []
@@ -10723,16 +10633,60 @@
       "exported": false,
       "file": "models/User.js",
       "name": "anonymous[0]",
-      "params": [
-        "resolve",
-        "reject"
-      ],
-      "paramTypes": [
-        "any",
-        "any"
-      ],
-      "returnType": "void",
-      "signature": "(resolve: any, reject: any) => void",
+      "type": "FUNCTION"
+    },
+    {
+      "arrowFunction": true,
+      "async": false,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "models/User.js",
+      "name": "anonymous[0]",
+      "type": "FUNCTION"
+    },
+    {
+      "arrowFunction": true,
+      "async": false,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "models/User.js",
+      "name": "anonymous[0]",
+      "type": "FUNCTION"
+    },
+    {
+      "arrowFunction": true,
+      "async": false,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 2,
+        "hasAsyncThrow": false,
+        "hasBranches": true,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "models/User.js",
+      "name": "anonymous[0]",
       "type": "FUNCTION"
     },
     {
@@ -10752,16 +10706,6 @@
       "file": "models/User.js",
       "name": "anonymous[0]",
       "rejectionPatterns": [
-        {
-          "column": 10,
-          "errorClassName": null,
-          "line": 71,
-          "rejectionType": "variable_unknown",
-          "sourceVariableName": "err",
-          "tracePath": [
-            "err"
-          ]
-        },
         {
           "column": 10,
           "errorClassName": null,
@@ -10792,58 +10736,24 @@
       "type": "FUNCTION"
     },
     {
-      "arrowFunction": true,
       "async": false,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 2,
+        "hasAsyncThrow": false,
+        "hasBranches": true,
+        "hasEarlyReturn": true,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
       "exported": false,
       "file": "models/User.js",
-      "name": "anonymous[0]",
-      "type": "FUNCTION"
-    },
-    {
-      "arrowFunction": true,
-      "async": false,
-      "exported": false,
-      "file": "models/User.js",
-      "name": "anonymous[0]",
-      "type": "FUNCTION"
-    },
-    {
-      "arrowFunction": true,
-      "async": false,
-      "exported": false,
-      "file": "models/User.js",
-      "name": "anonymous[0]",
-      "type": "FUNCTION"
-    },
-    {
-      "arrowFunction": true,
-      "async": false,
-      "exported": false,
-      "file": "models/User.js",
-      "name": "anonymous[0]",
-      "type": "FUNCTION"
-    },
-    {
-      "arrowFunction": true,
-      "async": false,
-      "exported": false,
-      "file": "models/User.js",
-      "name": "anonymous[0]",
-      "type": "FUNCTION"
-    },
-    {
-      "arrowFunction": true,
-      "async": false,
-      "exported": false,
-      "file": "models/User.js",
-      "name": "anonymous[0]",
-      "type": "FUNCTION"
-    },
-    {
-      "arrowFunction": true,
-      "async": false,
-      "exported": false,
-      "file": "models/User.js",
+      "generator": false,
+      "invokesParamIndexes": [
+        0
+      ],
+      "isCallback": true,
       "name": "anonymous[0]",
       "type": "FUNCTION"
     },
@@ -11438,6 +11348,46 @@
       "async": false,
       "controlFlow": {
         "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
+      "exported": false,
+      "file": "services/dataProcessor.js",
+      "name": "anonymous[0]",
+      "type": "FUNCTION"
+    },
+    {
+      "arrowFunction": true,
+      "async": false,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": true
+      },
+      "exported": false,
+      "file": "services/dataProcessor.js",
+      "invokesParamIndexes": [
+        0,
+        1
+      ],
+      "name": "anonymous[0]",
+      "type": "FUNCTION"
+    },
+    {
+      "arrowFunction": true,
+      "async": false,
+      "controlFlow": {
+        "canReject": false,
         "cyclomaticComplexity": 2,
         "hasAsyncThrow": false,
         "hasBranches": true,
@@ -11518,62 +11468,6 @@
         "hasThrow": false,
         "hasTryCatch": false
       },
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "anonymous[0]",
-      "type": "FUNCTION"
-    },
-    {
-      "arrowFunction": true,
-      "async": false,
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "anonymous[0]",
-      "type": "FUNCTION"
-    },
-    {
-      "arrowFunction": true,
-      "async": false,
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "anonymous[0]",
-      "type": "FUNCTION"
-    },
-    {
-      "arrowFunction": true,
-      "async": false,
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "anonymous[0]",
-      "type": "FUNCTION"
-    },
-    {
-      "arrowFunction": true,
-      "async": false,
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "anonymous[0]",
-      "type": "FUNCTION"
-    },
-    {
-      "arrowFunction": true,
-      "async": false,
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "anonymous[0]",
-      "type": "FUNCTION"
-    },
-    {
-      "arrowFunction": true,
-      "async": false,
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "anonymous[0]",
-      "type": "FUNCTION"
-    },
-    {
-      "arrowFunction": true,
-      "async": false,
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "anonymous[0]",
@@ -12389,29 +12283,42 @@
       "exported": false,
       "file": "models/User.js",
       "name": "anonymous[1]",
-      "params": [
-        "savedUser"
-      ],
-      "paramTypes": [
-        "any"
-      ],
-      "returnType": "void",
-      "signature": "(savedUser: any) => void",
       "type": "FUNCTION"
     },
     {
       "arrowFunction": true,
       "async": false,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
       "exported": false,
       "file": "models/User.js",
       "name": "anonymous[1]",
       "type": "FUNCTION"
     },
     {
-      "arrowFunction": true,
       "async": false,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
       "exported": false,
       "file": "models/User.js",
+      "generator": false,
+      "isCallback": true,
       "name": "anonymous[1]",
       "type": "FUNCTION"
     },
@@ -12501,49 +12408,15 @@
       "arrowFunction": true,
       "async": false,
       "controlFlow": {
-        "canReject": true,
+        "canReject": false,
         "cyclomaticComplexity": 1,
         "hasAsyncThrow": false,
         "hasBranches": false,
         "hasEarlyReturn": false,
         "hasLoops": false,
         "hasThrow": false,
-        "hasTryCatch": true
+        "hasTryCatch": false
       },
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "invokesParamIndexes": [
-        0,
-        1
-      ],
-      "name": "anonymous[1]",
-      "params": [
-        "resolve",
-        "reject"
-      ],
-      "paramTypes": [
-        "any",
-        "any"
-      ],
-      "rejectionPatterns": [
-        {
-          "column": 8,
-          "errorClassName": null,
-          "line": 173,
-          "rejectionType": "variable_unknown",
-          "sourceVariableName": "err",
-          "tracePath": [
-            "err"
-          ]
-        }
-      ],
-      "returnType": "void",
-      "signature": "(resolve: any, reject: any) => void",
-      "type": "FUNCTION"
-    },
-    {
-      "arrowFunction": true,
-      "async": false,
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "anonymous[1]",
@@ -12977,17 +12850,24 @@
       "exported": false,
       "file": "models/User.js",
       "name": "anonymous[2]",
-      "params": [],
-      "paramTypes": [],
-      "returnType": "void",
-      "signature": "() => void",
       "type": "FUNCTION"
     },
     {
-      "arrowFunction": true,
       "async": false,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 3,
+        "hasAsyncThrow": false,
+        "hasBranches": true,
+        "hasEarlyReturn": true,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": false
+      },
       "exported": false,
       "file": "models/User.js",
+      "generator": false,
+      "isCallback": true,
       "name": "anonymous[2]",
       "type": "FUNCTION"
     },
@@ -13068,22 +12948,6 @@
         "hasThrow": false,
         "hasTryCatch": false
       },
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "anonymous[2]",
-      "params": [
-        "results"
-      ],
-      "paramTypes": [
-        "any"
-      ],
-      "returnType": "void",
-      "signature": "(results: any) => void",
-      "type": "FUNCTION"
-    },
-    {
-      "arrowFunction": true,
-      "async": false,
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "anonymous[2]",
@@ -13249,32 +13113,6 @@
       "exported": false,
       "file": "middleware/auth.js",
       "name": "anonymous[3]",
-      "type": "FUNCTION"
-    },
-    {
-      "arrowFunction": true,
-      "async": false,
-      "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
-        "hasBranches": false,
-        "hasEarlyReturn": false,
-        "hasLoops": false,
-        "hasThrow": false,
-        "hasTryCatch": false
-      },
-      "exported": false,
-      "file": "models/User.js",
-      "name": "anonymous[3]",
-      "params": [
-        "err"
-      ],
-      "paramTypes": [
-        "any"
-      ],
-      "returnType": "void",
-      "signature": "(err: any) => void",
       "type": "FUNCTION"
     },
     {
@@ -13339,18 +13177,6 @@
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "anonymous[3]",
-      "params": [],
-      "paramTypes": [],
-      "returnType": "void",
-      "signature": "() => void",
-      "type": "FUNCTION"
-    },
-    {
-      "arrowFunction": true,
-      "async": false,
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "anonymous[3]",
       "type": "FUNCTION"
     },
     {
@@ -13443,32 +13269,6 @@
         "hasTryCatch": false
       },
       "exported": false,
-      "file": "models/User.js",
-      "name": "anonymous[4]",
-      "params": [
-        "users"
-      ],
-      "paramTypes": [
-        "any"
-      ],
-      "returnType": "void",
-      "signature": "(users: any) => void",
-      "type": "FUNCTION"
-    },
-    {
-      "arrowFunction": true,
-      "async": false,
-      "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
-        "hasBranches": false,
-        "hasEarlyReturn": false,
-        "hasLoops": false,
-        "hasThrow": false,
-        "hasTryCatch": false
-      },
-      "exported": false,
       "file": "routes/api.js",
       "name": "anonymous[4]",
       "params": [
@@ -13499,32 +13299,6 @@
       "exported": false,
       "file": "routes/api.js",
       "name": "anonymous[4]",
-      "type": "FUNCTION"
-    },
-    {
-      "arrowFunction": true,
-      "async": false,
-      "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
-        "hasBranches": false,
-        "hasEarlyReturn": false,
-        "hasLoops": false,
-        "hasThrow": false,
-        "hasTryCatch": false
-      },
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "anonymous[4]",
-      "params": [
-        "err"
-      ],
-      "paramTypes": [
-        "any"
-      ],
-      "returnType": "void",
-      "signature": "(err: any) => void",
       "type": "FUNCTION"
     },
     {
@@ -13585,32 +13359,6 @@
         "hasTryCatch": false
       },
       "exported": false,
-      "file": "models/User.js",
-      "name": "anonymous[5]",
-      "params": [
-        "activeUsers"
-      ],
-      "paramTypes": [
-        "any"
-      ],
-      "returnType": "void",
-      "signature": "(activeUsers: any) => void",
-      "type": "FUNCTION"
-    },
-    {
-      "arrowFunction": true,
-      "async": false,
-      "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
-        "hasBranches": false,
-        "hasEarlyReturn": false,
-        "hasLoops": false,
-        "hasThrow": false,
-        "hasTryCatch": false
-      },
-      "exported": false,
       "file": "routes/api.js",
       "name": "anonymous[5]",
       "params": [
@@ -13657,120 +13405,8 @@
         "hasTryCatch": false
       },
       "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "anonymous[5]",
-      "params": [
-        "result"
-      ],
-      "paramTypes": [
-        "any"
-      ],
-      "returnType": "void",
-      "signature": "(result: any) => void",
-      "type": "FUNCTION"
-    },
-    {
-      "arrowFunction": true,
-      "async": false,
-      "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
-        "hasBranches": true,
-        "hasEarlyReturn": false,
-        "hasLoops": false,
-        "hasThrow": false,
-        "hasTryCatch": false
-      },
-      "exported": false,
-      "file": "models/User.js",
-      "name": "anonymous[6]",
-      "params": [
-        "err"
-      ],
-      "paramTypes": [
-        "any"
-      ],
-      "returnType": "void",
-      "signature": "(err: any) => void",
-      "type": "FUNCTION"
-    },
-    {
-      "arrowFunction": true,
-      "async": false,
-      "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
-        "hasBranches": false,
-        "hasEarlyReturn": false,
-        "hasLoops": false,
-        "hasThrow": false,
-        "hasTryCatch": false
-      },
-      "exported": false,
       "file": "routes/api.js",
       "name": "anonymous[6]",
-      "type": "FUNCTION"
-    },
-    {
-      "async": false,
-      "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 2,
-        "hasAsyncThrow": false,
-        "hasBranches": true,
-        "hasEarlyReturn": true,
-        "hasLoops": false,
-        "hasThrow": false,
-        "hasTryCatch": false
-      },
-      "exported": false,
-      "file": "models/User.js",
-      "generator": false,
-      "invokesParamIndexes": [
-        0
-      ],
-      "isCallback": true,
-      "name": "anonymous[7]",
-      "type": "FUNCTION"
-    },
-    {
-      "async": false,
-      "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
-        "hasBranches": false,
-        "hasEarlyReturn": false,
-        "hasLoops": false,
-        "hasThrow": false,
-        "hasTryCatch": false
-      },
-      "exported": false,
-      "file": "models/User.js",
-      "generator": false,
-      "isCallback": true,
-      "name": "anonymous[8]",
-      "type": "FUNCTION"
-    },
-    {
-      "async": false,
-      "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 3,
-        "hasAsyncThrow": false,
-        "hasBranches": true,
-        "hasEarlyReturn": true,
-        "hasLoops": false,
-        "hasThrow": false,
-        "hasTryCatch": false
-      },
-      "exported": false,
-      "file": "models/User.js",
-      "generator": false,
-      "isCallback": true,
-      "name": "anonymous[9]",
       "type": "FUNCTION"
     },
     {
@@ -14751,14 +14387,6 @@
     {
       "arrowFunction": true,
       "async": false,
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "processItem",
-      "type": "FUNCTION"
-    },
-    {
-      "arrowFunction": true,
-      "async": false,
       "controlFlow": {
         "canReject": false,
         "cyclomaticComplexity": 2,
@@ -14769,18 +14397,6 @@
         "hasThrow": false,
         "hasTryCatch": false
       },
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "processNext",
-      "params": [],
-      "paramTypes": [],
-      "returnType": "void",
-      "signature": "() => void",
-      "type": "FUNCTION"
-    },
-    {
-      "arrowFunction": true,
-      "async": false,
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "processNext",
@@ -18418,18 +18034,6 @@
     },
     {
       "exported": false,
-      "file": "models/User.js",
-      "index": 0,
-      "name": "activeUsers",
-      "parentFunctionId": "models/User.js->FUNCTION->anonymous[5]",
-      "scopePath": [
-        "anonymous[5]"
-      ],
-      "semanticId": "models/User.js->PARAMETER->activeUsers",
-      "type": "PARAMETER"
-    },
-    {
-      "exported": false,
       "file": "utils/asyncHelpers.js",
       "index": 1,
       "isRest": true,
@@ -18709,30 +18313,6 @@
         "logError"
       ],
       "semanticId": "app.js->PARAMETER->err[in:logError]",
-      "type": "PARAMETER"
-    },
-    {
-      "exported": false,
-      "file": "models/User.js",
-      "index": 0,
-      "name": "err",
-      "parentFunctionId": "models/User.js->FUNCTION->anonymous[6]",
-      "scopePath": [
-        "anonymous[6]"
-      ],
-      "semanticId": "models/User.js->PARAMETER->err",
-      "type": "PARAMETER"
-    },
-    {
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "index": 0,
-      "name": "err",
-      "parentFunctionId": "services/dataProcessor.js->FUNCTION->anonymous[4]",
-      "scopePath": [
-        "anonymous[4]"
-      ],
-      "semanticId": "services/dataProcessor.js->PARAMETER->err",
       "type": "PARAMETER"
     },
     {
@@ -19033,30 +18613,6 @@
     },
     {
       "exported": false,
-      "file": "models/User.js",
-      "index": 1,
-      "name": "reject",
-      "parentFunctionId": "models/User.js->FUNCTION->anonymous[0]",
-      "scopePath": [
-        "anonymous[0]"
-      ],
-      "semanticId": "models/User.js->PARAMETER->reject#1",
-      "type": "PARAMETER"
-    },
-    {
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "index": 1,
-      "name": "reject",
-      "parentFunctionId": "services/dataProcessor.js->FUNCTION->anonymous[1]",
-      "scopePath": [
-        "anonymous[1]"
-      ],
-      "semanticId": "services/dataProcessor.js->PARAMETER->reject#1",
-      "type": "PARAMETER"
-    },
-    {
-      "exported": false,
       "file": "app.js",
       "index": 0,
       "name": "req",
@@ -19201,54 +18757,6 @@
     },
     {
       "exported": false,
-      "file": "models/User.js",
-      "index": 0,
-      "name": "resolve",
-      "parentFunctionId": "models/User.js->FUNCTION->anonymous[0]",
-      "scopePath": [
-        "anonymous[0]"
-      ],
-      "semanticId": "models/User.js->PARAMETER->resolve",
-      "type": "PARAMETER"
-    },
-    {
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "index": 0,
-      "name": "resolve",
-      "parentFunctionId": "services/dataProcessor.js->FUNCTION->anonymous[1]",
-      "scopePath": [
-        "anonymous[1]"
-      ],
-      "semanticId": "services/dataProcessor.js->PARAMETER->resolve",
-      "type": "PARAMETER"
-    },
-    {
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "index": 0,
-      "name": "result",
-      "parentFunctionId": "services/dataProcessor.js->FUNCTION->anonymous[5]",
-      "scopePath": [
-        "anonymous[5]"
-      ],
-      "semanticId": "services/dataProcessor.js->PARAMETER->result",
-      "type": "PARAMETER"
-    },
-    {
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "index": 0,
-      "name": "results",
-      "parentFunctionId": "services/dataProcessor.js->FUNCTION->anonymous[2]",
-      "scopePath": [
-        "anonymous[2]"
-      ],
-      "semanticId": "services/dataProcessor.js->PARAMETER->results",
-      "type": "PARAMETER"
-    },
-    {
-      "exported": false,
       "file": "middleware/auth.js",
       "index": 0,
       "name": "role",
@@ -19281,18 +18789,6 @@
         "requireRolePromise"
       ],
       "semanticId": "middleware/auth.js->PARAMETER->role[in:requireRolePromise]",
-      "type": "PARAMETER"
-    },
-    {
-      "exported": false,
-      "file": "models/User.js",
-      "index": 0,
-      "name": "savedUser",
-      "parentFunctionId": "models/User.js->FUNCTION->anonymous[1]",
-      "scopePath": [
-        "anonymous[1]"
-      ],
-      "semanticId": "models/User.js->PARAMETER->savedUser",
       "type": "PARAMETER"
     },
     {
@@ -19517,18 +19013,6 @@
       "type": "PARAMETER"
     },
     {
-      "exported": false,
-      "file": "models/User.js",
-      "index": 0,
-      "name": "users",
-      "parentFunctionId": "models/User.js->FUNCTION->anonymous[4]",
-      "scopePath": [
-        "anonymous[4]"
-      ],
-      "semanticId": "models/User.js->PARAMETER->users",
-      "type": "PARAMETER"
-    },
-    {
       "endColumn": 39,
       "endLine": 80,
       "exported": false,
@@ -19707,16 +19191,6 @@
       "name": "_id",
       "objectName": "this",
       "semanticId": "models/User.js->PROPERTY_ACCESS->this._id",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "endColumn": 21,
-      "endLine": 63,
-      "exported": false,
-      "file": "models/User.js",
-      "name": "_id",
-      "objectName": "user",
-      "semanticId": "models/User.js->PROPERTY_ACCESS->user._id",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -20173,16 +19647,6 @@
       "file": "services/dataProcessor.js",
       "name": "connection",
       "objectName": "mongoose",
-      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->mongoose.connection",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "endColumn": 29,
-      "endLine": 228,
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "connection",
-      "objectName": "mongoose",
       "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->mongoose.connection[in:processComplex]",
       "type": "PROPERTY_ACCESS"
     },
@@ -20423,16 +19887,6 @@
       "file": "services/dataProcessor.js",
       "name": "db",
       "objectName": "mongoose.connection",
-      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->mongoose.connection.db",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "endColumn": 32,
-      "endLine": 228,
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "db",
-      "objectName": "mongoose.connection",
       "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->mongoose.connection.db[in:processComplex]",
       "type": "PROPERTY_ACCESS"
     },
@@ -20564,16 +20018,6 @@
       "name": "email",
       "objectName": "this",
       "semanticId": "models/User.js->PROPERTY_ACCESS->this.email[in:getFullProfile]",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "endColumn": 25,
-      "endLine": 64,
-      "exported": false,
-      "file": "models/User.js",
-      "name": "email",
-      "objectName": "user",
-      "semanticId": "models/User.js->PROPERTY_ACCESS->user.email",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -20813,16 +20257,6 @@
       "file": "models/User.js",
       "name": "lastLogin",
       "objectName": "this",
-      "semanticId": "models/User.js->PROPERTY_ACCESS->this.lastLogin",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "endColumn": 35,
-      "endLine": 90,
-      "exported": false,
-      "file": "models/User.js",
-      "name": "lastLogin",
-      "objectName": "this",
       "semanticId": "models/User.js->PROPERTY_ACCESS->this.lastLogin[in:updateLastLogin]",
       "type": "PROPERTY_ACCESS"
     },
@@ -20924,16 +20358,6 @@
       "name": "length",
       "objectName": "currentBatch",
       "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->currentBatch.length[in:processInBatches]",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "endColumn": 33,
-      "endLine": 232,
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "length",
-      "objectName": "batch",
-      "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->batch.length",
       "type": "PROPERTY_ACCESS"
     },
     {
@@ -21333,16 +20757,6 @@
       "file": "models/User.js",
       "name": "role",
       "objectName": "user",
-      "semanticId": "models/User.js->PROPERTY_ACCESS->user.role",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "endColumn": 23,
-      "endLine": 65,
-      "exported": false,
-      "file": "models/User.js",
-      "name": "role",
-      "objectName": "user",
       "semanticId": "models/User.js->PROPERTY_ACCESS->user.role[in:generateAuthToken]",
       "type": "PROPERTY_ACCESS"
     },
@@ -21605,14 +21019,6 @@
       "file": "services/dataProcessor.js",
       "name": "",
       "scopeType": "catch-block",
-      "semanticId": "anonymous[1]:catch-block[0]",
-      "type": "SCOPE"
-    },
-    {
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "",
-      "scopeType": "catch-block",
       "semanticId": "DataProcessor->processWithErrorHandling->try#0->for-of#0:catch-block[0]",
       "type": "SCOPE"
     },
@@ -21742,14 +21148,6 @@
       "name": "",
       "scopeType": "for-of-loop",
       "semanticId": "processInBatches->anonymous[0]:for-of-loop[0]",
-      "type": "SCOPE"
-    },
-    {
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "",
-      "scopeType": "try-block",
-      "semanticId": "anonymous[1]:try-block[0]",
       "type": "SCOPE"
     },
     {
@@ -22278,7 +21676,7 @@
       "file": "models/User.js",
       "name": "anonymous[0]:body",
       "scopeType": "arrow_body",
-      "semanticId": "anonymous[8]:arrow_body[0]",
+      "semanticId": "anonymous[1]:arrow_body[0]",
       "type": "SCOPE"
     },
     {
@@ -22322,8 +21720,8 @@
       "exported": false,
       "file": "models/User.js",
       "name": "anonymous[0]:body",
-      "scopeType": "closure",
-      "semanticId": "anonymous[7]->anonymous[0]:closure[0]",
+      "scopeType": "callback_body",
+      "semanticId": "anonymous[0]:callback_body[0]",
       "type": "SCOPE"
     },
     {
@@ -22332,7 +21730,16 @@
       "file": "models/User.js",
       "name": "anonymous[0]:body",
       "scopeType": "closure",
-      "semanticId": "anonymous[7]:closure[0]",
+      "semanticId": "anonymous[0]->anonymous[0]:closure[0]",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "models/User.js",
+      "name": "anonymous[0]:body",
+      "scopeType": "closure",
+      "semanticId": "anonymous[0]:closure[0]",
       "type": "SCOPE"
     },
     {
@@ -23025,6 +22432,15 @@
     {
       "conditional": false,
       "exported": false,
+      "file": "models/User.js",
+      "name": "anonymous[1]:body",
+      "scopeType": "callback_body",
+      "semanticId": "anonymous[1]:callback_body[0]",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
       "file": "routes/api.js",
       "name": "anonymous[1]:body",
       "scopeType": "arrow_body",
@@ -23257,6 +22673,15 @@
     {
       "conditional": false,
       "exported": false,
+      "file": "models/User.js",
+      "name": "anonymous[2]:body",
+      "scopeType": "callback_body",
+      "semanticId": "anonymous[2]:callback_body[0]",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
       "file": "routes/api.js",
       "name": "anonymous[2]:body",
       "scopeType": "arrow_body",
@@ -23431,53 +22856,12 @@
       "type": "SCOPE"
     },
     {
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "anonymous[5]:body",
-      "scopeType": "function-body",
-      "type": "SCOPE"
-    },
-    {
-      "exported": false,
-      "file": "models/User.js",
-      "name": "anonymous[6]:body",
-      "scopeType": "function-body",
-      "type": "SCOPE"
-    },
-    {
       "conditional": false,
       "exported": false,
       "file": "routes/api.js",
       "name": "anonymous[6]:body",
       "scopeType": "arrow_body",
       "semanticId": "anonymous[1]:arrow_body[6]",
-      "type": "SCOPE"
-    },
-    {
-      "conditional": false,
-      "exported": false,
-      "file": "models/User.js",
-      "name": "anonymous[7]:body",
-      "scopeType": "callback_body",
-      "semanticId": "anonymous[7]:callback_body[0]",
-      "type": "SCOPE"
-    },
-    {
-      "conditional": false,
-      "exported": false,
-      "file": "models/User.js",
-      "name": "anonymous[8]:body",
-      "scopeType": "callback_body",
-      "semanticId": "anonymous[8]:callback_body[0]",
-      "type": "SCOPE"
-    },
-    {
-      "conditional": false,
-      "exported": false,
-      "file": "models/User.js",
-      "name": "anonymous[9]:body",
-      "scopeType": "callback_body",
-      "semanticId": "anonymous[9]:callback_body[0]",
       "type": "SCOPE"
     },
     {
@@ -23799,24 +23183,7 @@
       ],
       "exported": false,
       "file": "services/dataProcessor.js",
-      "name": "else:139:13:1",
-      "scopeType": "else_statement",
-      "semanticId": "processNext->if#0:else_statement[0]",
-      "type": "SCOPE"
-    },
-    {
-      "conditional": true,
-      "constraints": [
-        {
-          "excludes": true,
-          "negated": true,
-          "operator": "falsy",
-          "variable": "next.done"
-        }
-      ],
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "else:139:13:15",
+      "name": "else:139:13:9",
       "scopeType": "else_statement",
       "semanticId": "DataProcessor->processWithCallbacks->processNext->if#0:else_statement[0]",
       "type": "SCOPE"
@@ -23881,7 +23248,7 @@
       ],
       "exported": false,
       "file": "models/User.js",
-      "name": "else:37:13:7",
+      "name": "else:37:13:4",
       "scopeType": "else_statement",
       "semanticId": "comparePassword->anonymous[0]->if#1->if#0:else_statement[0]",
       "type": "SCOPE"
@@ -23898,7 +23265,7 @@
       ],
       "exported": false,
       "file": "models/User.js",
-      "name": "else:40:11:5",
+      "name": "else:40:11:2",
       "scopeType": "else_statement",
       "semanticId": "comparePassword->anonymous[0]->if#1:else_statement[0]",
       "type": "SCOPE"
@@ -23966,24 +23333,7 @@
       ],
       "exported": false,
       "file": "models/User.js",
-      "name": "else:72:15:1",
-      "scopeType": "else_statement",
-      "semanticId": "anonymous[0]->anonymous[0]->if#0:else_statement[0]",
-      "type": "SCOPE"
-    },
-    {
-      "conditional": true,
-      "constraints": [
-        {
-          "excludes": true,
-          "negated": true,
-          "operator": "falsy",
-          "variable": "err"
-        }
-      ],
-      "exported": false,
-      "file": "models/User.js",
-      "name": "else:72:15:12",
+      "name": "else:72:15:9",
       "scopeType": "else_statement",
       "semanticId": "generateAuthToken->anonymous[0]->anonymous[0]->if#0:else_statement[0]",
       "type": "SCOPE"
@@ -24179,24 +23529,7 @@
       ],
       "exported": false,
       "file": "services/dataProcessor.js",
-      "name": "if:127:6:0",
-      "scopeType": "if_statement",
-      "semanticId": "processNext:if_statement[0]",
-      "type": "SCOPE"
-    },
-    {
-      "condition": "next.done",
-      "conditional": true,
-      "constraints": [
-        {
-          "negated": false,
-          "operator": "truthy",
-          "variable": "next.done"
-        }
-      ],
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "if:127:6:14",
+      "name": "if:127:6:8",
       "scopeType": "if_statement",
       "semanticId": "DataProcessor->processWithCallbacks->processNext:if_statement[0]",
       "type": "SCOPE"
@@ -24230,26 +23563,9 @@
       ],
       "exported": false,
       "file": "services/dataProcessor.js",
-      "name": "if:130:10:16",
+      "name": "if:130:10:10",
       "scopeType": "if_statement",
       "semanticId": "DataProcessor->processWithCallbacks->processNext->if#0->anonymous[0]:if_statement[0]",
-      "type": "SCOPE"
-    },
-    {
-      "condition": "err",
-      "conditional": true,
-      "constraints": [
-        {
-          "negated": false,
-          "operator": "truthy",
-          "variable": "err"
-        }
-      ],
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "if:130:10:2",
-      "scopeType": "if_statement",
-      "semanticId": "processNext->if#0->anonymous[0]:if_statement[0]",
       "type": "SCOPE"
     },
     {
@@ -24281,26 +23597,9 @@
       ],
       "exported": false,
       "file": "services/dataProcessor.js",
-      "name": "if:133:12:17",
+      "name": "if:133:12:11",
       "scopeType": "if_statement",
       "semanticId": "DataProcessor->processWithCallbacks->processNext->if#0->anonymous[0]->anonymous[0]:if_statement[0]",
-      "type": "SCOPE"
-    },
-    {
-      "condition": "err",
-      "conditional": true,
-      "constraints": [
-        {
-          "negated": false,
-          "operator": "truthy",
-          "variable": "err"
-        }
-      ],
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "if:133:12:3",
-      "scopeType": "if_statement",
-      "semanticId": "processNext->if#0->anonymous[0]->anonymous[0]:if_statement[0]",
       "type": "SCOPE"
     },
     {
@@ -24410,26 +23709,9 @@
       ],
       "exported": false,
       "file": "services/dataProcessor.js",
-      "name": "if:161:8:18",
+      "name": "if:161:8:12",
       "scopeType": "if_statement",
       "semanticId": "DataProcessor->processWithPromises->anonymous[0]->processItem:if_statement[0]",
-      "type": "SCOPE"
-    },
-    {
-      "condition": "next.done",
-      "conditional": true,
-      "constraints": [
-        {
-          "negated": false,
-          "operator": "truthy",
-          "variable": "next.done"
-        }
-      ],
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "if:161:8:4",
-      "scopeType": "if_statement",
-      "semanticId": "anonymous[1]->processItem:if_statement[0]",
       "type": "SCOPE"
     },
     {
@@ -24505,9 +23787,9 @@
       "conditional": true,
       "exported": false,
       "file": "models/User.js",
-      "name": "if:175:2:13",
+      "name": "if:175:2:10",
       "scopeType": "if_statement",
-      "semanticId": "anonymous[7]:if_statement[0]",
+      "semanticId": "anonymous[0]:if_statement[0]",
       "type": "SCOPE"
     },
     {
@@ -24522,9 +23804,9 @@
       ],
       "exported": false,
       "file": "models/User.js",
-      "name": "if:181:4:14",
+      "name": "if:181:4:11",
       "scopeType": "if_statement",
-      "semanticId": "anonymous[7]->anonymous[0]:if_statement[0]",
+      "semanticId": "anonymous[0]->anonymous[0]:if_statement[0]",
       "type": "SCOPE"
     },
     {
@@ -24573,9 +23855,9 @@
       ],
       "exported": false,
       "file": "models/User.js",
-      "name": "if:184:6:15",
+      "name": "if:184:6:12",
       "scopeType": "if_statement",
-      "semanticId": "anonymous[7]->anonymous[0]->anonymous[0]:if_statement[0]",
+      "semanticId": "anonymous[0]->anonymous[0]->anonymous[0]:if_statement[0]",
       "type": "SCOPE"
     },
     {
@@ -24624,26 +23906,9 @@
       ],
       "exported": false,
       "file": "models/User.js",
-      "name": "if:202:4:16",
+      "name": "if:202:4:13",
       "scopeType": "if_statement",
-      "semanticId": "anonymous[8]->anonymous[0]:if_statement[0]",
-      "type": "SCOPE"
-    },
-    {
-      "condition": "err",
-      "conditional": true,
-      "constraints": [
-        {
-          "negated": false,
-          "operator": "truthy",
-          "variable": "err"
-        }
-      ],
-      "exported": false,
-      "file": "models/User.js",
-      "name": "if:202:4:2",
-      "scopeType": "if_statement",
-      "semanticId": "anonymous[6]:if_statement[0]",
+      "semanticId": "anonymous[1]->anonymous[0]:if_statement[0]",
       "type": "SCOPE"
     },
     {
@@ -24719,9 +23984,9 @@
       "conditional": true,
       "exported": false,
       "file": "models/User.js",
-      "name": "if:211:2:17",
+      "name": "if:211:2:14",
       "scopeType": "if_statement",
-      "semanticId": "anonymous[9]:if_statement[0]",
+      "semanticId": "anonymous[2]:if_statement[0]",
       "type": "SCOPE"
     },
     {
@@ -24763,26 +24028,9 @@
       ],
       "exported": false,
       "file": "services/dataProcessor.js",
-      "name": "if:223:10:19",
+      "name": "if:223:10:13",
       "scopeType": "if_statement",
       "semanticId": "DataProcessor->processComplex->anonymous[0]->anonymous[0]:if_statement[0]",
-      "type": "SCOPE"
-    },
-    {
-      "condition": "err",
-      "conditional": true,
-      "constraints": [
-        {
-          "negated": false,
-          "operator": "truthy",
-          "variable": "err"
-        }
-      ],
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "if:223:10:5",
-      "scopeType": "if_statement",
-      "semanticId": "anonymous[5]->anonymous[0]:if_statement[0]",
       "type": "SCOPE"
     },
     {
@@ -24875,7 +24123,7 @@
       ],
       "exported": false,
       "file": "models/User.js",
-      "name": "if:26:4:3",
+      "name": "if:26:4:0",
       "scopeType": "if_statement",
       "semanticId": "comparePassword->anonymous[0]:if_statement[0]",
       "type": "SCOPE"
@@ -25041,7 +24289,7 @@
       ],
       "exported": false,
       "file": "models/User.js",
-      "name": "if:28:4:4",
+      "name": "if:28:4:1",
       "scopeType": "if_statement",
       "semanticId": "comparePassword->anonymous[0]:if_statement[1]",
       "type": "SCOPE"
@@ -25124,7 +24372,7 @@
       ],
       "exported": false,
       "file": "models/User.js",
-      "name": "if:30:6:6",
+      "name": "if:30:6:3",
       "scopeType": "if_statement",
       "semanticId": "comparePassword->anonymous[0]->if#1:if_statement[0]",
       "type": "SCOPE"
@@ -25276,6 +24524,16 @@
       "type": "SCOPE"
     },
     {
+      "condition": "currentBatch.length >= batchSize",
+      "conditional": true,
+      "exported": false,
+      "file": "services/dataProcessor.js",
+      "name": "if:331:8:0",
+      "scopeType": "if_statement",
+      "semanticId": "processInBatches->anonymous[0]->for-of#0:if_statement[0]",
+      "type": "SCOPE"
+    },
+    {
       "condition": "err",
       "conditional": true,
       "constraints": [
@@ -25290,16 +24548,6 @@
       "name": "if:331:8:35",
       "scopeType": "if_statement",
       "semanticId": "refreshSession->anonymous[0]->anonymous[0]->anonymous[0]:if_statement[0]",
-      "type": "SCOPE"
-    },
-    {
-      "condition": "currentBatch.length >= batchSize",
-      "conditional": true,
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "if:331:8:6",
-      "scopeType": "if_statement",
-      "semanticId": "processInBatches->anonymous[0]->for-of#0:if_statement[0]",
       "type": "SCOPE"
     },
     {
@@ -25324,7 +24572,7 @@
       "conditional": true,
       "exported": false,
       "file": "services/dataProcessor.js",
-      "name": "if:337:6:7",
+      "name": "if:337:6:1",
       "scopeType": "if_statement",
       "semanticId": "processInBatches->anonymous[0]:if_statement[0]",
       "type": "SCOPE"
@@ -25341,7 +24589,7 @@
       ],
       "exported": false,
       "file": "models/User.js",
-      "name": "if:34:10:8",
+      "name": "if:34:10:5",
       "scopeType": "if_statement",
       "semanticId": "comparePassword->anonymous[0]->if#1->if#0->anonymous[0]:if_statement[0]",
       "type": "SCOPE"
@@ -25351,7 +24599,7 @@
       "conditional": true,
       "exported": false,
       "file": "services/dataProcessor.js",
-      "name": "if:345:8:8",
+      "name": "if:345:8:2",
       "scopeType": "if_statement",
       "semanticId": "processInBatches->anonymous[0]->processBatch:if_statement[0]",
       "type": "SCOPE"
@@ -25385,7 +24633,7 @@
       ],
       "exported": false,
       "file": "services/dataProcessor.js",
-      "name": "if:352:12:9",
+      "name": "if:352:12:3",
       "scopeType": "if_statement",
       "semanticId": "processInBatches->anonymous[0]->processBatch->anonymous[0]:if_statement[0]",
       "type": "SCOPE"
@@ -25429,7 +24677,7 @@
       "conditional": true,
       "exported": false,
       "file": "models/User.js",
-      "name": "if:44:6:9",
+      "name": "if:44:6:6",
       "scopeType": "if_statement",
       "semanticId": "comparePassword->anonymous[0]->else#0:if_statement[0]",
       "type": "SCOPE"
@@ -25446,7 +24694,7 @@
       ],
       "exported": false,
       "file": "models/User.js",
-      "name": "if:49:8:10",
+      "name": "if:49:8:7",
       "scopeType": "if_statement",
       "semanticId": "comparePassword->anonymous[0]->else#0->anonymous[0]:if_statement[0]",
       "type": "SCOPE"
@@ -25498,7 +24746,7 @@
       ],
       "exported": false,
       "file": "services/dataProcessor.js",
-      "name": "if:52:6:10",
+      "name": "if:52:6:4",
       "scopeType": "if_statement",
       "semanticId": "DataProcessor->fetchUsersStream->while#0:if_statement[0]",
       "type": "SCOPE"
@@ -25589,16 +24837,6 @@
       "type": "SCOPE"
     },
     {
-      "condition": "processed >= limit",
-      "conditional": true,
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "if:58:8:11",
-      "scopeType": "if_statement",
-      "semanticId": "DataProcessor->fetchUsersStream->while#0->for-of#0:if_statement[0]",
-      "type": "SCOPE"
-    },
-    {
       "condition": "!value",
       "conditional": true,
       "constraints": [
@@ -25613,6 +24851,16 @@
       "name": "if:58:8:3",
       "scopeType": "if_statement",
       "semanticId": "connectServices->anonymous[0]->anonymous[0]->anonymous[0]:if_statement[1]",
+      "type": "SCOPE"
+    },
+    {
+      "condition": "processed >= limit",
+      "conditional": true,
+      "exported": false,
+      "file": "services/dataProcessor.js",
+      "name": "if:58:8:5",
+      "scopeType": "if_statement",
+      "semanticId": "DataProcessor->fetchUsersStream->while#0->for-of#0:if_statement[0]",
       "type": "SCOPE"
     },
     {
@@ -25678,24 +24926,7 @@
       ],
       "exported": false,
       "file": "models/User.js",
-      "name": "if:70:8:0",
-      "scopeType": "if_statement",
-      "semanticId": "anonymous[0]->anonymous[0]:if_statement[0]",
-      "type": "SCOPE"
-    },
-    {
-      "condition": "err",
-      "conditional": true,
-      "constraints": [
-        {
-          "negated": false,
-          "operator": "truthy",
-          "variable": "err"
-        }
-      ],
-      "exported": false,
-      "file": "models/User.js",
-      "name": "if:70:8:11",
+      "name": "if:70:8:8",
       "scopeType": "if_statement",
       "semanticId": "generateAuthToken->anonymous[0]->anonymous[0]:if_statement[0]",
       "type": "SCOPE"
@@ -25712,7 +24943,7 @@
       ],
       "exported": false,
       "file": "services/dataProcessor.js",
-      "name": "if:71:6:12",
+      "name": "if:71:6:6",
       "scopeType": "if_statement",
       "semanticId": "DataProcessor->processDataStream->for-of#0:if_statement[0]",
       "type": "SCOPE"
@@ -25722,7 +24953,7 @@
       "conditional": true,
       "exported": false,
       "file": "services/dataProcessor.js",
-      "name": "if:75:6:13",
+      "name": "if:75:6:7",
       "scopeType": "if_statement",
       "semanticId": "DataProcessor->processDataStream->for-of#0:if_statement[1]",
       "type": "SCOPE"
@@ -25878,13 +25109,6 @@
       "name": "processNext:body",
       "scopeType": "arrow_body",
       "semanticId": "DataProcessor->processWithCallbacks:arrow_body[0]",
-      "type": "SCOPE"
-    },
-    {
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "processNext:body",
-      "scopeType": "function-body",
       "type": "SCOPE"
     },
     {
@@ -26140,28 +25364,21 @@
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "",
-      "semanticId": "services/dataProcessor.js->anonymous[1]->TRY_BLOCK->try#0",
+      "semanticId": "services/dataProcessor.js->DataProcessor->processWithErrorHandling->TRY_BLOCK->try#1",
       "type": "TRY_BLOCK"
     },
     {
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "",
-      "semanticId": "services/dataProcessor.js->DataProcessor->processWithErrorHandling->TRY_BLOCK->try#2",
+      "semanticId": "services/dataProcessor.js->DataProcessor->processWithErrorHandling->try#0->for-of#0->TRY_BLOCK->try#2",
       "type": "TRY_BLOCK"
     },
     {
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "",
-      "semanticId": "services/dataProcessor.js->DataProcessor->processWithErrorHandling->try#0->for-of#0->TRY_BLOCK->try#3",
-      "type": "TRY_BLOCK"
-    },
-    {
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "",
-      "semanticId": "services/dataProcessor.js->DataProcessor->processWithPromises->anonymous[0]->TRY_BLOCK->try#1",
+      "semanticId": "services/dataProcessor.js->DataProcessor->processWithPromises->anonymous[0]->TRY_BLOCK->try#0",
       "type": "TRY_BLOCK"
     },
     {
@@ -26296,12 +25513,6 @@
     },
     {
       "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "allResults",
-      "type": "VARIABLE"
-    },
-    {
-      "exported": false,
       "file": "app.js",
       "name": "app",
       "scopePath": [],
@@ -26408,12 +25619,6 @@
       "exported": false,
       "file": "routes/api.js",
       "name": "email",
-      "type": "VARIABLE"
-    },
-    {
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "err",
       "type": "VARIABLE"
     },
     {
@@ -26563,12 +25768,6 @@
     },
     {
       "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "generator",
-      "type": "VARIABLE"
-    },
-    {
-      "exported": false,
       "file": "app.js",
       "name": "i",
       "type": "VARIABLE"
@@ -26637,18 +25836,6 @@
       "exported": false,
       "file": "routes/api.js",
       "name": "newUser",
-      "type": "VARIABLE"
-    },
-    {
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "next",
-      "type": "VARIABLE"
-    },
-    {
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "next",
       "type": "VARIABLE"
     },
     {
@@ -26739,12 +25926,6 @@
       "exported": false,
       "file": "services/dataProcessor.js",
       "name": "processed",
-      "type": "VARIABLE"
-    },
-    {
-      "exported": false,
-      "file": "services/dataProcessor.js",
-      "name": "processItem",
       "type": "VARIABLE"
     },
     {
@@ -27083,12 +26264,7 @@
     {
       "from": "BRANCH:",
       "type": "CONTAINS",
-      "to": "SCOPE:else:139:13:1"
-    },
-    {
-      "from": "BRANCH:",
-      "type": "CONTAINS",
-      "to": "SCOPE:else:139:13:15"
+      "to": "SCOPE:else:139:13:9"
     },
     {
       "from": "BRANCH:",
@@ -27108,12 +26284,12 @@
     {
       "from": "BRANCH:",
       "type": "CONTAINS",
-      "to": "SCOPE:else:37:13:7"
+      "to": "SCOPE:else:37:13:4"
     },
     {
       "from": "BRANCH:",
       "type": "CONTAINS",
-      "to": "SCOPE:else:40:11:5"
+      "to": "SCOPE:else:40:11:2"
     },
     {
       "from": "BRANCH:",
@@ -27133,12 +26309,7 @@
     {
       "from": "BRANCH:",
       "type": "CONTAINS",
-      "to": "SCOPE:else:72:15:1"
-    },
-    {
-      "from": "BRANCH:",
-      "type": "CONTAINS",
-      "to": "SCOPE:else:72:15:12"
+      "to": "SCOPE:else:72:15:9"
     },
     {
       "from": "BRANCH:",
@@ -27173,12 +26344,7 @@
     {
       "from": "BRANCH:",
       "type": "CONTAINS",
-      "to": "SCOPE:if:127:6:0"
-    },
-    {
-      "from": "BRANCH:",
-      "type": "CONTAINS",
-      "to": "SCOPE:if:127:6:14"
+      "to": "SCOPE:if:127:6:8"
     },
     {
       "from": "BRANCH:",
@@ -27188,12 +26354,7 @@
     {
       "from": "BRANCH:",
       "type": "CONTAINS",
-      "to": "SCOPE:if:130:10:16"
-    },
-    {
-      "from": "BRANCH:",
-      "type": "CONTAINS",
-      "to": "SCOPE:if:130:10:2"
+      "to": "SCOPE:if:130:10:10"
     },
     {
       "from": "BRANCH:",
@@ -27203,12 +26364,7 @@
     {
       "from": "BRANCH:",
       "type": "CONTAINS",
-      "to": "SCOPE:if:133:12:17"
-    },
-    {
-      "from": "BRANCH:",
-      "type": "CONTAINS",
-      "to": "SCOPE:if:133:12:3"
+      "to": "SCOPE:if:133:12:11"
     },
     {
       "from": "BRANCH:",
@@ -27243,12 +26399,7 @@
     {
       "from": "BRANCH:",
       "type": "CONTAINS",
-      "to": "SCOPE:if:161:8:18"
-    },
-    {
-      "from": "BRANCH:",
-      "type": "CONTAINS",
-      "to": "SCOPE:if:161:8:4"
+      "to": "SCOPE:if:161:8:12"
     },
     {
       "from": "BRANCH:",
@@ -27273,12 +26424,12 @@
     {
       "from": "BRANCH:",
       "type": "CONTAINS",
-      "to": "SCOPE:if:175:2:13"
+      "to": "SCOPE:if:175:2:10"
     },
     {
       "from": "BRANCH:",
       "type": "CONTAINS",
-      "to": "SCOPE:if:181:4:14"
+      "to": "SCOPE:if:181:4:11"
     },
     {
       "from": "BRANCH:",
@@ -27293,7 +26444,7 @@
     {
       "from": "BRANCH:",
       "type": "CONTAINS",
-      "to": "SCOPE:if:184:6:15"
+      "to": "SCOPE:if:184:6:12"
     },
     {
       "from": "BRANCH:",
@@ -27308,12 +26459,7 @@
     {
       "from": "BRANCH:",
       "type": "CONTAINS",
-      "to": "SCOPE:if:202:4:16"
-    },
-    {
-      "from": "BRANCH:",
-      "type": "CONTAINS",
-      "to": "SCOPE:if:202:4:2"
+      "to": "SCOPE:if:202:4:13"
     },
     {
       "from": "BRANCH:",
@@ -27338,7 +26484,7 @@
     {
       "from": "BRANCH:",
       "type": "CONTAINS",
-      "to": "SCOPE:if:211:2:17"
+      "to": "SCOPE:if:211:2:14"
     },
     {
       "from": "BRANCH:",
@@ -27353,12 +26499,7 @@
     {
       "from": "BRANCH:",
       "type": "CONTAINS",
-      "to": "SCOPE:if:223:10:19"
-    },
-    {
-      "from": "BRANCH:",
-      "type": "CONTAINS",
-      "to": "SCOPE:if:223:10:5"
+      "to": "SCOPE:if:223:10:13"
     },
     {
       "from": "BRANCH:",
@@ -27388,7 +26529,7 @@
     {
       "from": "BRANCH:",
       "type": "CONTAINS",
-      "to": "SCOPE:if:26:4:3"
+      "to": "SCOPE:if:26:4:0"
     },
     {
       "from": "BRANCH:",
@@ -27443,7 +26584,7 @@
     {
       "from": "BRANCH:",
       "type": "CONTAINS",
-      "to": "SCOPE:if:28:4:4"
+      "to": "SCOPE:if:28:4:1"
     },
     {
       "from": "BRANCH:",
@@ -27468,7 +26609,7 @@
     {
       "from": "BRANCH:",
       "type": "CONTAINS",
-      "to": "SCOPE:if:30:6:6"
+      "to": "SCOPE:if:30:6:3"
     },
     {
       "from": "BRANCH:",
@@ -27518,12 +26659,12 @@
     {
       "from": "BRANCH:",
       "type": "CONTAINS",
-      "to": "SCOPE:if:331:8:35"
+      "to": "SCOPE:if:331:8:0"
     },
     {
       "from": "BRANCH:",
       "type": "CONTAINS",
-      "to": "SCOPE:if:331:8:6"
+      "to": "SCOPE:if:331:8:35"
     },
     {
       "from": "BRANCH:",
@@ -27533,17 +26674,17 @@
     {
       "from": "BRANCH:",
       "type": "CONTAINS",
-      "to": "SCOPE:if:337:6:7"
+      "to": "SCOPE:if:337:6:1"
     },
     {
       "from": "BRANCH:",
       "type": "CONTAINS",
-      "to": "SCOPE:if:34:10:8"
+      "to": "SCOPE:if:34:10:5"
     },
     {
       "from": "BRANCH:",
       "type": "CONTAINS",
-      "to": "SCOPE:if:345:8:8"
+      "to": "SCOPE:if:345:8:2"
     },
     {
       "from": "BRANCH:",
@@ -27553,7 +26694,7 @@
     {
       "from": "BRANCH:",
       "type": "CONTAINS",
-      "to": "SCOPE:if:352:12:9"
+      "to": "SCOPE:if:352:12:3"
     },
     {
       "from": "BRANCH:",
@@ -27568,12 +26709,12 @@
     {
       "from": "BRANCH:",
       "type": "CONTAINS",
-      "to": "SCOPE:if:44:6:9"
+      "to": "SCOPE:if:44:6:6"
     },
     {
       "from": "BRANCH:",
       "type": "CONTAINS",
-      "to": "SCOPE:if:49:8:10"
+      "to": "SCOPE:if:49:8:7"
     },
     {
       "from": "BRANCH:",
@@ -27588,7 +26729,7 @@
     {
       "from": "BRANCH:",
       "type": "CONTAINS",
-      "to": "SCOPE:if:52:6:10"
+      "to": "SCOPE:if:52:6:4"
     },
     {
       "from": "BRANCH:",
@@ -27618,12 +26759,12 @@
     {
       "from": "BRANCH:",
       "type": "CONTAINS",
-      "to": "SCOPE:if:58:8:11"
+      "to": "SCOPE:if:58:8:3"
     },
     {
       "from": "BRANCH:",
       "type": "CONTAINS",
-      "to": "SCOPE:if:58:8:3"
+      "to": "SCOPE:if:58:8:5"
     },
     {
       "from": "BRANCH:",
@@ -27643,22 +26784,17 @@
     {
       "from": "BRANCH:",
       "type": "CONTAINS",
-      "to": "SCOPE:if:70:8:0"
+      "to": "SCOPE:if:70:8:8"
     },
     {
       "from": "BRANCH:",
       "type": "CONTAINS",
-      "to": "SCOPE:if:70:8:11"
+      "to": "SCOPE:if:71:6:6"
     },
     {
       "from": "BRANCH:",
       "type": "CONTAINS",
-      "to": "SCOPE:if:71:6:12"
-    },
-    {
-      "from": "BRANCH:",
-      "type": "CONTAINS",
-      "to": "SCOPE:if:75:6:13"
+      "to": "SCOPE:if:75:6:7"
     },
     {
       "from": "BRANCH:",
@@ -27688,12 +26824,7 @@
     {
       "from": "BRANCH:",
       "type": "HAS_ALTERNATE",
-      "to": "SCOPE:else:139:13:1"
-    },
-    {
-      "from": "BRANCH:",
-      "type": "HAS_ALTERNATE",
-      "to": "SCOPE:else:139:13:15"
+      "to": "SCOPE:else:139:13:9"
     },
     {
       "from": "BRANCH:",
@@ -27713,12 +26844,12 @@
     {
       "from": "BRANCH:",
       "type": "HAS_ALTERNATE",
-      "to": "SCOPE:else:37:13:7"
+      "to": "SCOPE:else:37:13:4"
     },
     {
       "from": "BRANCH:",
       "type": "HAS_ALTERNATE",
-      "to": "SCOPE:else:40:11:5"
+      "to": "SCOPE:else:40:11:2"
     },
     {
       "from": "BRANCH:",
@@ -27738,12 +26869,7 @@
     {
       "from": "BRANCH:",
       "type": "HAS_ALTERNATE",
-      "to": "SCOPE:else:72:15:1"
-    },
-    {
-      "from": "BRANCH:",
-      "type": "HAS_ALTERNATE",
-      "to": "SCOPE:else:72:15:12"
+      "to": "SCOPE:else:72:15:9"
     },
     {
       "from": "BRANCH:",
@@ -28163,31 +27289,6 @@
     {
       "from": "BRANCH:",
       "type": "HAS_CONDITION",
-      "to": "EXPRESSION:Identifier"
-    },
-    {
-      "from": "BRANCH:",
-      "type": "HAS_CONDITION",
-      "to": "EXPRESSION:Identifier"
-    },
-    {
-      "from": "BRANCH:",
-      "type": "HAS_CONDITION",
-      "to": "EXPRESSION:Identifier"
-    },
-    {
-      "from": "BRANCH:",
-      "type": "HAS_CONDITION",
-      "to": "EXPRESSION:Identifier"
-    },
-    {
-      "from": "BRANCH:",
-      "type": "HAS_CONDITION",
-      "to": "EXPRESSION:Identifier"
-    },
-    {
-      "from": "BRANCH:",
-      "type": "HAS_CONDITION",
       "to": "EXPRESSION:LogicalExpression"
     },
     {
@@ -28199,16 +27300,6 @@
       "from": "BRANCH:",
       "type": "HAS_CONDITION",
       "to": "EXPRESSION:LogicalExpression"
-    },
-    {
-      "from": "BRANCH:",
-      "type": "HAS_CONDITION",
-      "to": "EXPRESSION:MemberExpression"
-    },
-    {
-      "from": "BRANCH:",
-      "type": "HAS_CONDITION",
-      "to": "EXPRESSION:MemberExpression"
     },
     {
       "from": "BRANCH:",
@@ -28343,12 +27434,7 @@
     {
       "from": "BRANCH:",
       "type": "HAS_CONSEQUENT",
-      "to": "SCOPE:if:127:6:0"
-    },
-    {
-      "from": "BRANCH:",
-      "type": "HAS_CONSEQUENT",
-      "to": "SCOPE:if:127:6:14"
+      "to": "SCOPE:if:127:6:8"
     },
     {
       "from": "BRANCH:",
@@ -28358,12 +27444,7 @@
     {
       "from": "BRANCH:",
       "type": "HAS_CONSEQUENT",
-      "to": "SCOPE:if:130:10:16"
-    },
-    {
-      "from": "BRANCH:",
-      "type": "HAS_CONSEQUENT",
-      "to": "SCOPE:if:130:10:2"
+      "to": "SCOPE:if:130:10:10"
     },
     {
       "from": "BRANCH:",
@@ -28373,12 +27454,7 @@
     {
       "from": "BRANCH:",
       "type": "HAS_CONSEQUENT",
-      "to": "SCOPE:if:133:12:17"
-    },
-    {
-      "from": "BRANCH:",
-      "type": "HAS_CONSEQUENT",
-      "to": "SCOPE:if:133:12:3"
+      "to": "SCOPE:if:133:12:11"
     },
     {
       "from": "BRANCH:",
@@ -28413,12 +27489,7 @@
     {
       "from": "BRANCH:",
       "type": "HAS_CONSEQUENT",
-      "to": "SCOPE:if:161:8:18"
-    },
-    {
-      "from": "BRANCH:",
-      "type": "HAS_CONSEQUENT",
-      "to": "SCOPE:if:161:8:4"
+      "to": "SCOPE:if:161:8:12"
     },
     {
       "from": "BRANCH:",
@@ -28443,12 +27514,12 @@
     {
       "from": "BRANCH:",
       "type": "HAS_CONSEQUENT",
-      "to": "SCOPE:if:175:2:13"
+      "to": "SCOPE:if:175:2:10"
     },
     {
       "from": "BRANCH:",
       "type": "HAS_CONSEQUENT",
-      "to": "SCOPE:if:181:4:14"
+      "to": "SCOPE:if:181:4:11"
     },
     {
       "from": "BRANCH:",
@@ -28463,7 +27534,7 @@
     {
       "from": "BRANCH:",
       "type": "HAS_CONSEQUENT",
-      "to": "SCOPE:if:184:6:15"
+      "to": "SCOPE:if:184:6:12"
     },
     {
       "from": "BRANCH:",
@@ -28478,12 +27549,7 @@
     {
       "from": "BRANCH:",
       "type": "HAS_CONSEQUENT",
-      "to": "SCOPE:if:202:4:16"
-    },
-    {
-      "from": "BRANCH:",
-      "type": "HAS_CONSEQUENT",
-      "to": "SCOPE:if:202:4:2"
+      "to": "SCOPE:if:202:4:13"
     },
     {
       "from": "BRANCH:",
@@ -28508,7 +27574,7 @@
     {
       "from": "BRANCH:",
       "type": "HAS_CONSEQUENT",
-      "to": "SCOPE:if:211:2:17"
+      "to": "SCOPE:if:211:2:14"
     },
     {
       "from": "BRANCH:",
@@ -28523,12 +27589,7 @@
     {
       "from": "BRANCH:",
       "type": "HAS_CONSEQUENT",
-      "to": "SCOPE:if:223:10:19"
-    },
-    {
-      "from": "BRANCH:",
-      "type": "HAS_CONSEQUENT",
-      "to": "SCOPE:if:223:10:5"
+      "to": "SCOPE:if:223:10:13"
     },
     {
       "from": "BRANCH:",
@@ -28558,7 +27619,7 @@
     {
       "from": "BRANCH:",
       "type": "HAS_CONSEQUENT",
-      "to": "SCOPE:if:26:4:3"
+      "to": "SCOPE:if:26:4:0"
     },
     {
       "from": "BRANCH:",
@@ -28613,7 +27674,7 @@
     {
       "from": "BRANCH:",
       "type": "HAS_CONSEQUENT",
-      "to": "SCOPE:if:28:4:4"
+      "to": "SCOPE:if:28:4:1"
     },
     {
       "from": "BRANCH:",
@@ -28638,7 +27699,7 @@
     {
       "from": "BRANCH:",
       "type": "HAS_CONSEQUENT",
-      "to": "SCOPE:if:30:6:6"
+      "to": "SCOPE:if:30:6:3"
     },
     {
       "from": "BRANCH:",
@@ -28688,12 +27749,12 @@
     {
       "from": "BRANCH:",
       "type": "HAS_CONSEQUENT",
-      "to": "SCOPE:if:331:8:35"
+      "to": "SCOPE:if:331:8:0"
     },
     {
       "from": "BRANCH:",
       "type": "HAS_CONSEQUENT",
-      "to": "SCOPE:if:331:8:6"
+      "to": "SCOPE:if:331:8:35"
     },
     {
       "from": "BRANCH:",
@@ -28703,17 +27764,17 @@
     {
       "from": "BRANCH:",
       "type": "HAS_CONSEQUENT",
-      "to": "SCOPE:if:337:6:7"
+      "to": "SCOPE:if:337:6:1"
     },
     {
       "from": "BRANCH:",
       "type": "HAS_CONSEQUENT",
-      "to": "SCOPE:if:34:10:8"
+      "to": "SCOPE:if:34:10:5"
     },
     {
       "from": "BRANCH:",
       "type": "HAS_CONSEQUENT",
-      "to": "SCOPE:if:345:8:8"
+      "to": "SCOPE:if:345:8:2"
     },
     {
       "from": "BRANCH:",
@@ -28723,7 +27784,7 @@
     {
       "from": "BRANCH:",
       "type": "HAS_CONSEQUENT",
-      "to": "SCOPE:if:352:12:9"
+      "to": "SCOPE:if:352:12:3"
     },
     {
       "from": "BRANCH:",
@@ -28738,12 +27799,12 @@
     {
       "from": "BRANCH:",
       "type": "HAS_CONSEQUENT",
-      "to": "SCOPE:if:44:6:9"
+      "to": "SCOPE:if:44:6:6"
     },
     {
       "from": "BRANCH:",
       "type": "HAS_CONSEQUENT",
-      "to": "SCOPE:if:49:8:10"
+      "to": "SCOPE:if:49:8:7"
     },
     {
       "from": "BRANCH:",
@@ -28758,7 +27819,7 @@
     {
       "from": "BRANCH:",
       "type": "HAS_CONSEQUENT",
-      "to": "SCOPE:if:52:6:10"
+      "to": "SCOPE:if:52:6:4"
     },
     {
       "from": "BRANCH:",
@@ -28788,12 +27849,12 @@
     {
       "from": "BRANCH:",
       "type": "HAS_CONSEQUENT",
-      "to": "SCOPE:if:58:8:11"
+      "to": "SCOPE:if:58:8:3"
     },
     {
       "from": "BRANCH:",
       "type": "HAS_CONSEQUENT",
-      "to": "SCOPE:if:58:8:3"
+      "to": "SCOPE:if:58:8:5"
     },
     {
       "from": "BRANCH:",
@@ -28813,22 +27874,17 @@
     {
       "from": "BRANCH:",
       "type": "HAS_CONSEQUENT",
-      "to": "SCOPE:if:70:8:0"
+      "to": "SCOPE:if:70:8:8"
     },
     {
       "from": "BRANCH:",
       "type": "HAS_CONSEQUENT",
-      "to": "SCOPE:if:70:8:11"
+      "to": "SCOPE:if:71:6:6"
     },
     {
       "from": "BRANCH:",
       "type": "HAS_CONSEQUENT",
-      "to": "SCOPE:if:71:6:12"
-    },
-    {
-      "from": "BRANCH:",
-      "type": "HAS_CONSEQUENT",
-      "to": "SCOPE:if:75:6:13"
+      "to": "SCOPE:if:75:6:7"
     },
     {
       "from": "BRANCH:",
@@ -28879,12 +27935,7 @@
     {
       "from": "CALL:activeUsers.map",
       "type": "RETURNS",
-      "to": "FUNCTION:anonymous[5]"
-    },
-    {
-      "from": "CALL:activeUsers.map",
-      "type": "USES",
-      "to": "PARAMETER:activeUsers"
+      "to": "FUNCTION:anonymous[1]"
     },
     {
       "from": "CALL:app.get",
@@ -32400,7 +31451,7 @@
     {
       "from": "CALL:next",
       "type": "RETURNS",
-      "to": "FUNCTION:anonymous[7]"
+      "to": "FUNCTION:anonymous[0]"
     },
     {
       "from": "CALL:postsWithComments.push",
@@ -33370,7 +32421,7 @@
     {
       "from": "CALL:redis.set",
       "type": "RETURNS",
-      "to": "FUNCTION:anonymous[3]"
+      "to": "FUNCTION:anonymous[2]"
     },
     {
       "from": "CALL:redis.set",
@@ -36625,17 +35676,12 @@
     {
       "from": "CALL:users.filter",
       "type": "RETURNS",
-      "to": "FUNCTION:anonymous[4]"
-    },
-    {
-      "from": "CALL:users.filter",
-      "type": "USES",
-      "to": "PARAMETER:users"
+      "to": "FUNCTION:anonymous[0]"
     },
     {
       "from": "CALL:userSchema.post",
       "type": "DERIVES_FROM",
-      "to": "FUNCTION:anonymous[8]",
+      "to": "FUNCTION:anonymous[1]",
       "metadata": {
         "argIndex": 1
       }
@@ -36651,12 +35697,12 @@
     {
       "from": "CALL:userSchema.post",
       "type": "HAS_CALLBACK",
-      "to": "FUNCTION:anonymous[8]"
+      "to": "FUNCTION:anonymous[1]"
     },
     {
       "from": "CALL:userSchema.post",
       "type": "PASSES_ARGUMENT",
-      "to": "FUNCTION:anonymous[8]",
+      "to": "FUNCTION:anonymous[1]",
       "metadata": {
         "argIndex": 1
       }
@@ -36677,7 +35723,7 @@
     {
       "from": "CALL:userSchema.pre",
       "type": "DERIVES_FROM",
-      "to": "FUNCTION:anonymous[7]",
+      "to": "FUNCTION:anonymous[0]",
       "metadata": {
         "argIndex": 1
       }
@@ -36693,12 +35739,12 @@
     {
       "from": "CALL:userSchema.pre",
       "type": "HAS_CALLBACK",
-      "to": "FUNCTION:anonymous[7]"
+      "to": "FUNCTION:anonymous[0]"
     },
     {
       "from": "CALL:userSchema.pre",
       "type": "PASSES_ARGUMENT",
-      "to": "FUNCTION:anonymous[7]",
+      "to": "FUNCTION:anonymous[0]",
       "metadata": {
         "argIndex": 1
       }
@@ -37235,11 +36281,6 @@
       "to": "SCOPE:"
     },
     {
-      "from": "CATCH_BLOCK:",
-      "type": "CONTAINS",
-      "to": "SCOPE:"
-    },
-    {
       "from": "CLASS:AppConfig",
       "type": "CONTAINS",
       "to": "FUNCTION:constructor"
@@ -37411,11 +36452,6 @@
     },
     {
       "from": "CONSTANT:promises",
-      "type": "ASSIGNED_FROM",
-      "to": "ARRAY_LITERAL:<array>"
-    },
-    {
-      "from": "CONSTANT:results",
       "type": "ASSIGNED_FROM",
       "to": "ARRAY_LITERAL:<array>"
     },
@@ -37811,14 +36847,6 @@
     {
       "from": "CONSTRUCTOR_CALL:new Promise()",
       "type": "DERIVES_FROM",
-      "to": "FUNCTION:anonymous[1]",
-      "metadata": {
-        "argIndex": 0
-      }
-    },
-    {
-      "from": "CONSTRUCTOR_CALL:new Promise()",
-      "type": "PASSES_ARGUMENT",
       "to": "FUNCTION:anonymous[0]",
       "metadata": {
         "argIndex": 0
@@ -37915,7 +36943,15 @@
     {
       "from": "CONSTRUCTOR_CALL:new Promise()",
       "type": "PASSES_ARGUMENT",
-      "to": "FUNCTION:anonymous[1]",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CONSTRUCTOR_CALL:new Promise()",
+      "type": "PASSES_ARGUMENT",
+      "to": "FUNCTION:anonymous[0]",
       "metadata": {
         "argIndex": 0
       }
@@ -37979,11 +37015,6 @@
     },
     {
       "from": "EXPRESSION:<BinaryExpression>",
-      "type": "RETURNS",
-      "to": "FUNCTION:anonymous[0]"
-    },
-    {
-      "from": "EXPRESSION:<BinaryExpression>",
       "type": "YIELDS",
       "to": "FUNCTION:processDataGenerator"
     },
@@ -38000,7 +37031,7 @@
     {
       "from": "EXPRESSION:<template>",
       "type": "RETURNS",
-      "to": "FUNCTION:anonymous[9]"
+      "to": "FUNCTION:anonymous[2]"
     },
     {
       "from": "EXPRESSION:<template>",
@@ -38250,41 +37281,6 @@
     {
       "from": "EXPRESSION:Identifier",
       "type": "DERIVES_FROM",
-      "to": "PARAMETER:err"
-    },
-    {
-      "from": "EXPRESSION:Identifier",
-      "type": "DERIVES_FROM",
-      "to": "PARAMETER:err"
-    },
-    {
-      "from": "EXPRESSION:Identifier",
-      "type": "DERIVES_FROM",
-      "to": "PARAMETER:err"
-    },
-    {
-      "from": "EXPRESSION:Identifier",
-      "type": "DERIVES_FROM",
-      "to": "PARAMETER:err"
-    },
-    {
-      "from": "EXPRESSION:Identifier",
-      "type": "DERIVES_FROM",
-      "to": "PARAMETER:err"
-    },
-    {
-      "from": "EXPRESSION:Identifier",
-      "type": "DERIVES_FROM",
-      "to": "PARAMETER:err"
-    },
-    {
-      "from": "EXPRESSION:Identifier",
-      "type": "DERIVES_FROM",
-      "to": "PARAMETER:err"
-    },
-    {
-      "from": "EXPRESSION:Identifier",
-      "type": "DERIVES_FROM",
       "to": "VARIABLE:blacklisted"
     },
     {
@@ -38410,7 +37406,7 @@
     {
       "from": "EXPRESSION:MemberExpression",
       "type": "RETURNS",
-      "to": "FUNCTION:anonymous[9]"
+      "to": "FUNCTION:anonymous[2]"
     },
     {
       "from": "EXPRESSION:MemberExpression",
@@ -38456,11 +37452,6 @@
       "from": "EXPRESSION:NewExpression",
       "type": "YIELDS",
       "to": "FUNCTION:promiseGenerator"
-    },
-    {
-      "from": "EXPRESSION:ObjectExpression",
-      "type": "RETURNS",
-      "to": "FUNCTION:anonymous[0]"
     },
     {
       "from": "EXPRESSION:ObjectExpression",
@@ -38595,7 +37586,7 @@
     {
       "from": "EXPRESSION:ThisExpression",
       "type": "RETURNS",
-      "to": "FUNCTION:anonymous[2]"
+      "to": "FUNCTION:anonymous[1]"
     },
     {
       "from": "EXPRESSION:ThisExpression",
@@ -38990,11 +37981,6 @@
     {
       "from": "FUNCTION:anonymous[0]",
       "type": "CONTAINS",
-      "to": "PROPERTY_ACCESS:email"
-    },
-    {
-      "from": "FUNCTION:anonymous[0]",
-      "type": "CONTAINS",
       "to": "PROPERTY_ACCESS:fullName"
     },
     {
@@ -39020,7 +38006,7 @@
     {
       "from": "FUNCTION:anonymous[0]",
       "type": "CONTAINS",
-      "to": "PROPERTY_ACCESS:length"
+      "to": "PROPERTY_ACCESS:lastLogin"
     },
     {
       "from": "FUNCTION:anonymous[0]",
@@ -39145,11 +38131,6 @@
     {
       "from": "FUNCTION:anonymous[0]",
       "type": "CONTAINS",
-      "to": "PROPERTY_ACCESS:role"
-    },
-    {
-      "from": "FUNCTION:anonymous[0]",
-      "type": "CONTAINS",
       "to": "PROPERTY_ACCESS:then"
     },
     {
@@ -39178,14 +38159,6 @@
     {
       "from": "FUNCTION:anonymous[0]",
       "type": "HAS_PARAMETER",
-      "to": "PARAMETER:reject",
-      "metadata": {
-        "index": 1
-      }
-    },
-    {
-      "from": "FUNCTION:anonymous[0]",
-      "type": "HAS_PARAMETER",
       "to": "PARAMETER:req",
       "metadata": {
         "index": 0
@@ -39201,39 +38174,6 @@
     },
     {
       "from": "FUNCTION:anonymous[0]",
-      "type": "HAS_PARAMETER",
-      "to": "PARAMETER:resolve",
-      "metadata": {
-        "index": 0
-      }
-    },
-    {
-      "from": "FUNCTION:anonymous[0]",
-      "type": "HAS_SCOPE",
-      "to": "SCOPE:anonymous[0]:body"
-    },
-    {
-      "from": "FUNCTION:anonymous[0]",
-      "type": "HAS_SCOPE",
-      "to": "SCOPE:anonymous[0]:body"
-    },
-    {
-      "from": "FUNCTION:anonymous[0]",
-      "type": "HAS_SCOPE",
-      "to": "SCOPE:anonymous[0]:body"
-    },
-    {
-      "from": "FUNCTION:anonymous[0]",
-      "type": "HAS_SCOPE",
-      "to": "SCOPE:anonymous[0]:body"
-    },
-    {
-      "from": "FUNCTION:anonymous[0]",
-      "type": "HAS_SCOPE",
-      "to": "SCOPE:anonymous[0]:body"
-    },
-    {
-      "from": "FUNCTION:anonymous[0]",
       "type": "HAS_SCOPE",
       "to": "SCOPE:anonymous[0]:body"
     },
@@ -39851,11 +38791,6 @@
       "from": "FUNCTION:anonymous[0]",
       "type": "HAS_SCOPE",
       "to": "SCOPE:anonymous[5]:body"
-    },
-    {
-      "from": "FUNCTION:anonymous[0]",
-      "type": "HAS_SCOPE",
-      "to": "SCOPE:anonymous[6]:body"
     },
     {
       "from": "FUNCTION:anonymous[0]",
@@ -39891,11 +38826,6 @@
       "from": "FUNCTION:anonymous[0]",
       "type": "MAKES_REQUEST",
       "to": "http:request:GET dynamic"
-    },
-    {
-      "from": "FUNCTION:anonymous[1]",
-      "type": "CONTAINS",
-      "to": "PROPERTY_ACCESS:_id"
     },
     {
       "from": "FUNCTION:anonymous[1]",
@@ -39975,6 +38905,11 @@
     {
       "from": "FUNCTION:anonymous[1]",
       "type": "CONTAINS",
+      "to": "PROPERTY_ACCESS:email"
+    },
+    {
+      "from": "FUNCTION:anonymous[1]",
+      "type": "CONTAINS",
       "to": "PROPERTY_ACCESS:exp"
     },
     {
@@ -39990,16 +38925,6 @@
     {
       "from": "FUNCTION:anonymous[1]",
       "type": "CONTAINS",
-      "to": "PROPERTY_ACCESS:lastLogin"
-    },
-    {
-      "from": "FUNCTION:anonymous[1]",
-      "type": "CONTAINS",
-      "to": "PROPERTY_ACCESS:lastLogin"
-    },
-    {
-      "from": "FUNCTION:anonymous[1]",
-      "type": "CONTAINS",
       "to": "PROPERTY_ACCESS:message"
     },
     {
@@ -40010,14 +38935,6 @@
     {
       "from": "FUNCTION:anonymous[1]",
       "type": "HAS_PARAMETER",
-      "to": "PARAMETER:reject",
-      "metadata": {
-        "index": 1
-      }
-    },
-    {
-      "from": "FUNCTION:anonymous[1]",
-      "type": "HAS_PARAMETER",
       "to": "PARAMETER:req",
       "metadata": {
         "index": 0
@@ -40049,19 +38966,8 @@
     },
     {
       "from": "FUNCTION:anonymous[1]",
-      "type": "HAS_PARAMETER",
-      "to": "PARAMETER:resolve",
-      "metadata": {
-        "index": 0
-      }
-    },
-    {
-      "from": "FUNCTION:anonymous[1]",
-      "type": "HAS_PARAMETER",
-      "to": "PARAMETER:savedUser",
-      "metadata": {
-        "index": 0
-      }
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:anonymous[1]:body"
     },
     {
       "from": "FUNCTION:anonymous[1]",
@@ -40207,16 +39113,6 @@
       "from": "FUNCTION:anonymous[1]",
       "type": "HAS_SCOPE",
       "to": "SCOPE:anonymous[5]:body"
-    },
-    {
-      "from": "FUNCTION:anonymous[1]",
-      "type": "HAS_SCOPE",
-      "to": "SCOPE:anonymous[5]:body"
-    },
-    {
-      "from": "FUNCTION:anonymous[1]",
-      "type": "HAS_SCOPE",
-      "to": "SCOPE:anonymous[6]:body"
     },
     {
       "from": "FUNCTION:anonymous[1]",
@@ -40246,37 +39142,22 @@
     {
       "from": "FUNCTION:anonymous[2]",
       "type": "CONTAINS",
-      "to": "PROPERTY_ACCESS:connection"
-    },
-    {
-      "from": "FUNCTION:anonymous[2]",
-      "type": "CONTAINS",
-      "to": "PROPERTY_ACCESS:connection"
-    },
-    {
-      "from": "FUNCTION:anonymous[2]",
-      "type": "CONTAINS",
       "to": "PROPERTY_ACCESS:db"
     },
     {
       "from": "FUNCTION:anonymous[2]",
       "type": "CONTAINS",
-      "to": "PROPERTY_ACCESS:db"
+      "to": "PROPERTY_ACCESS:email"
     },
     {
       "from": "FUNCTION:anonymous[2]",
       "type": "CONTAINS",
-      "to": "PROPERTY_ACCESS:db"
+      "to": "PROPERTY_ACCESS:firstName"
     },
     {
       "from": "FUNCTION:anonymous[2]",
       "type": "CONTAINS",
-      "to": "PROPERTY_ACCESS:id"
-    },
-    {
-      "from": "FUNCTION:anonymous[2]",
-      "type": "CONTAINS",
-      "to": "PROPERTY_ACCESS:id"
+      "to": "PROPERTY_ACCESS:firstName"
     },
     {
       "from": "FUNCTION:anonymous[2]",
@@ -40297,6 +39178,26 @@
       "from": "FUNCTION:anonymous[2]",
       "type": "CONTAINS",
       "to": "PROPERTY_ACCESS:id"
+    },
+    {
+      "from": "FUNCTION:anonymous[2]",
+      "type": "CONTAINS",
+      "to": "PROPERTY_ACCESS:id"
+    },
+    {
+      "from": "FUNCTION:anonymous[2]",
+      "type": "CONTAINS",
+      "to": "PROPERTY_ACCESS:id"
+    },
+    {
+      "from": "FUNCTION:anonymous[2]",
+      "type": "CONTAINS",
+      "to": "PROPERTY_ACCESS:lastName"
+    },
+    {
+      "from": "FUNCTION:anonymous[2]",
+      "type": "CONTAINS",
+      "to": "PROPERTY_ACCESS:lastName"
     },
     {
       "from": "FUNCTION:anonymous[2]",
@@ -40322,6 +39223,26 @@
       "from": "FUNCTION:anonymous[2]",
       "type": "CONTAINS",
       "to": "PROPERTY_ACCESS:params"
+    },
+    {
+      "from": "FUNCTION:anonymous[2]",
+      "type": "CONTAINS",
+      "to": "PROPERTY_ACCESS:profile"
+    },
+    {
+      "from": "FUNCTION:anonymous[2]",
+      "type": "CONTAINS",
+      "to": "PROPERTY_ACCESS:profile"
+    },
+    {
+      "from": "FUNCTION:anonymous[2]",
+      "type": "CONTAINS",
+      "to": "PROPERTY_ACCESS:profile"
+    },
+    {
+      "from": "FUNCTION:anonymous[2]",
+      "type": "CONTAINS",
+      "to": "PROPERTY_ACCESS:profile"
     },
     {
       "from": "FUNCTION:anonymous[2]",
@@ -40362,11 +39283,8 @@
     },
     {
       "from": "FUNCTION:anonymous[2]",
-      "type": "HAS_PARAMETER",
-      "to": "PARAMETER:results",
-      "metadata": {
-        "index": 0
-      }
+      "type": "HAS_SCOPE",
+      "to": "SCOPE:anonymous[2]:body"
     },
     {
       "from": "FUNCTION:anonymous[2]",
@@ -40447,16 +39365,6 @@
       "from": "FUNCTION:anonymous[2]",
       "type": "HAS_SCOPE",
       "to": "SCOPE:anonymous[5]:body"
-    },
-    {
-      "from": "FUNCTION:anonymous[2]",
-      "type": "HAS_SCOPE",
-      "to": "SCOPE:anonymous[5]:body"
-    },
-    {
-      "from": "FUNCTION:anonymous[2]",
-      "type": "HAS_SCOPE",
-      "to": "SCOPE:anonymous[6]:body"
     },
     {
       "from": "FUNCTION:anonymous[2]",
@@ -40546,14 +39454,6 @@
     {
       "from": "FUNCTION:anonymous[3]",
       "type": "HAS_PARAMETER",
-      "to": "PARAMETER:err",
-      "metadata": {
-        "index": 0
-      }
-    },
-    {
-      "from": "FUNCTION:anonymous[3]",
-      "type": "HAS_PARAMETER",
       "to": "PARAMETER:req",
       "metadata": {
         "index": 0
@@ -40632,16 +39532,6 @@
       "from": "FUNCTION:anonymous[3]",
       "type": "HAS_SCOPE",
       "to": "SCOPE:anonymous[5]:body"
-    },
-    {
-      "from": "FUNCTION:anonymous[3]",
-      "type": "HAS_SCOPE",
-      "to": "SCOPE:anonymous[5]:body"
-    },
-    {
-      "from": "FUNCTION:anonymous[3]",
-      "type": "HAS_SCOPE",
-      "to": "SCOPE:anonymous[6]:body"
     },
     {
       "from": "FUNCTION:anonymous[3]",
@@ -40691,14 +39581,6 @@
     {
       "from": "FUNCTION:anonymous[4]",
       "type": "HAS_PARAMETER",
-      "to": "PARAMETER:err",
-      "metadata": {
-        "index": 0
-      }
-    },
-    {
-      "from": "FUNCTION:anonymous[4]",
-      "type": "HAS_PARAMETER",
       "to": "PARAMETER:req",
       "metadata": {
         "index": 0
@@ -40714,14 +39596,6 @@
     },
     {
       "from": "FUNCTION:anonymous[4]",
-      "type": "HAS_PARAMETER",
-      "to": "PARAMETER:users",
-      "metadata": {
-        "index": 0
-      }
-    },
-    {
-      "from": "FUNCTION:anonymous[4]",
       "type": "HAS_SCOPE",
       "to": "SCOPE:anonymous[4]:body"
     },
@@ -40739,16 +39613,6 @@
       "from": "FUNCTION:anonymous[4]",
       "type": "HAS_SCOPE",
       "to": "SCOPE:anonymous[5]:body"
-    },
-    {
-      "from": "FUNCTION:anonymous[4]",
-      "type": "HAS_SCOPE",
-      "to": "SCOPE:anonymous[5]:body"
-    },
-    {
-      "from": "FUNCTION:anonymous[4]",
-      "type": "HAS_SCOPE",
-      "to": "SCOPE:anonymous[6]:body"
     },
     {
       "from": "FUNCTION:anonymous[5]",
@@ -40763,14 +39627,6 @@
     {
       "from": "FUNCTION:anonymous[5]",
       "type": "HAS_PARAMETER",
-      "to": "PARAMETER:activeUsers",
-      "metadata": {
-        "index": 0
-      }
-    },
-    {
-      "from": "FUNCTION:anonymous[5]",
-      "type": "HAS_PARAMETER",
       "to": "PARAMETER:err",
       "metadata": {
         "index": 0
@@ -40794,14 +39650,6 @@
     },
     {
       "from": "FUNCTION:anonymous[5]",
-      "type": "HAS_PARAMETER",
-      "to": "PARAMETER:result",
-      "metadata": {
-        "index": 0
-      }
-    },
-    {
-      "from": "FUNCTION:anonymous[5]",
       "type": "HAS_SCOPE",
       "to": "SCOPE:anonymous[5]:body"
     },
@@ -40814,16 +39662,6 @@
       "from": "FUNCTION:anonymous[5]",
       "type": "HAS_SCOPE",
       "to": "SCOPE:anonymous[5]:body"
-    },
-    {
-      "from": "FUNCTION:anonymous[5]",
-      "type": "HAS_SCOPE",
-      "to": "SCOPE:anonymous[5]:body"
-    },
-    {
-      "from": "FUNCTION:anonymous[5]",
-      "type": "HAS_SCOPE",
-      "to": "SCOPE:anonymous[6]:body"
     },
     {
       "from": "FUNCTION:anonymous[6]",
@@ -40832,101 +39670,8 @@
     },
     {
       "from": "FUNCTION:anonymous[6]",
-      "type": "HAS_PARAMETER",
-      "to": "PARAMETER:err",
-      "metadata": {
-        "index": 0
-      }
-    },
-    {
-      "from": "FUNCTION:anonymous[6]",
       "type": "HAS_SCOPE",
       "to": "SCOPE:anonymous[6]:body"
-    },
-    {
-      "from": "FUNCTION:anonymous[6]",
-      "type": "HAS_SCOPE",
-      "to": "SCOPE:anonymous[6]:body"
-    },
-    {
-      "from": "FUNCTION:anonymous[7]",
-      "type": "HAS_SCOPE",
-      "to": "SCOPE:anonymous[7]:body"
-    },
-    {
-      "from": "FUNCTION:anonymous[8]",
-      "type": "CONTAINS",
-      "to": "PROPERTY_ACCESS:_id"
-    },
-    {
-      "from": "FUNCTION:anonymous[8]",
-      "type": "CONTAINS",
-      "to": "PROPERTY_ACCESS:connection"
-    },
-    {
-      "from": "FUNCTION:anonymous[8]",
-      "type": "CONTAINS",
-      "to": "PROPERTY_ACCESS:db"
-    },
-    {
-      "from": "FUNCTION:anonymous[8]",
-      "type": "CONTAINS",
-      "to": "PROPERTY_ACCESS:email"
-    },
-    {
-      "from": "FUNCTION:anonymous[8]",
-      "type": "HAS_SCOPE",
-      "to": "SCOPE:anonymous[8]:body"
-    },
-    {
-      "from": "FUNCTION:anonymous[9]",
-      "type": "CONTAINS",
-      "to": "PROPERTY_ACCESS:email"
-    },
-    {
-      "from": "FUNCTION:anonymous[9]",
-      "type": "CONTAINS",
-      "to": "PROPERTY_ACCESS:firstName"
-    },
-    {
-      "from": "FUNCTION:anonymous[9]",
-      "type": "CONTAINS",
-      "to": "PROPERTY_ACCESS:firstName"
-    },
-    {
-      "from": "FUNCTION:anonymous[9]",
-      "type": "CONTAINS",
-      "to": "PROPERTY_ACCESS:lastName"
-    },
-    {
-      "from": "FUNCTION:anonymous[9]",
-      "type": "CONTAINS",
-      "to": "PROPERTY_ACCESS:lastName"
-    },
-    {
-      "from": "FUNCTION:anonymous[9]",
-      "type": "CONTAINS",
-      "to": "PROPERTY_ACCESS:profile"
-    },
-    {
-      "from": "FUNCTION:anonymous[9]",
-      "type": "CONTAINS",
-      "to": "PROPERTY_ACCESS:profile"
-    },
-    {
-      "from": "FUNCTION:anonymous[9]",
-      "type": "CONTAINS",
-      "to": "PROPERTY_ACCESS:profile"
-    },
-    {
-      "from": "FUNCTION:anonymous[9]",
-      "type": "CONTAINS",
-      "to": "PROPERTY_ACCESS:profile"
-    },
-    {
-      "from": "FUNCTION:anonymous[9]",
-      "type": "HAS_SCOPE",
-      "to": "SCOPE:anonymous[9]:body"
     },
     {
       "from": "FUNCTION:asyncWithPromiseChain",
@@ -41728,11 +40473,6 @@
       "to": "SCOPE:processItem:body"
     },
     {
-      "from": "FUNCTION:processItem",
-      "type": "HAS_SCOPE",
-      "to": "SCOPE:processItem:body"
-    },
-    {
       "from": "FUNCTION:processNext",
       "type": "CONTAINS",
       "to": "PROPERTY_ACCESS:<computed>"
@@ -41761,11 +40501,6 @@
       "from": "FUNCTION:processNext",
       "type": "CONTAINS",
       "to": "PROPERTY_ACCESS:value"
-    },
-    {
-      "from": "FUNCTION:processNext",
-      "type": "HAS_SCOPE",
-      "to": "SCOPE:processNext:body"
     },
     {
       "from": "FUNCTION:processNext",
@@ -43428,41 +42163,6 @@
     {
       "from": "MODULE:models/User.js",
       "type": "CONTAINS",
-      "to": "FUNCTION:anonymous[3]"
-    },
-    {
-      "from": "MODULE:models/User.js",
-      "type": "CONTAINS",
-      "to": "FUNCTION:anonymous[4]"
-    },
-    {
-      "from": "MODULE:models/User.js",
-      "type": "CONTAINS",
-      "to": "FUNCTION:anonymous[5]"
-    },
-    {
-      "from": "MODULE:models/User.js",
-      "type": "CONTAINS",
-      "to": "FUNCTION:anonymous[6]"
-    },
-    {
-      "from": "MODULE:models/User.js",
-      "type": "CONTAINS",
-      "to": "FUNCTION:anonymous[7]"
-    },
-    {
-      "from": "MODULE:models/User.js",
-      "type": "CONTAINS",
-      "to": "FUNCTION:anonymous[8]"
-    },
-    {
-      "from": "MODULE:models/User.js",
-      "type": "CONTAINS",
-      "to": "FUNCTION:anonymous[9]"
-    },
-    {
-      "from": "MODULE:models/User.js",
-      "type": "CONTAINS",
       "to": "FUNCTION:comparePassword"
     },
     {
@@ -43706,31 +42406,6 @@
     {
       "from": "MODULE:services/dataProcessor.js",
       "type": "CONTAINS",
-      "to": "FUNCTION:anonymous[1]"
-    },
-    {
-      "from": "MODULE:services/dataProcessor.js",
-      "type": "CONTAINS",
-      "to": "FUNCTION:anonymous[2]"
-    },
-    {
-      "from": "MODULE:services/dataProcessor.js",
-      "type": "CONTAINS",
-      "to": "FUNCTION:anonymous[3]"
-    },
-    {
-      "from": "MODULE:services/dataProcessor.js",
-      "type": "CONTAINS",
-      "to": "FUNCTION:anonymous[4]"
-    },
-    {
-      "from": "MODULE:services/dataProcessor.js",
-      "type": "CONTAINS",
-      "to": "FUNCTION:anonymous[5]"
-    },
-    {
-      "from": "MODULE:services/dataProcessor.js",
-      "type": "CONTAINS",
       "to": "FUNCTION:constructor"
     },
     {
@@ -43787,11 +42462,6 @@
       "from": "MODULE:services/dataProcessor.js",
       "type": "CONTAINS",
       "to": "FUNCTION:processInBatches"
-    },
-    {
-      "from": "MODULE:services/dataProcessor.js",
-      "type": "CONTAINS",
-      "to": "FUNCTION:processNext"
     },
     {
       "from": "MODULE:services/dataProcessor.js",
@@ -44372,6 +43042,356 @@
         "argIndex": 0,
         "callId": "app.js->processUserRequest->try#0->CALL->processor.processUser#0"
       }
+    },
+    {
+      "from": "PROPERTY_ACCESS:_id",
+      "type": "READS_FROM",
+      "to": "CONSTANT:post"
+    },
+    {
+      "from": "PROPERTY_ACCESS:_id",
+      "type": "READS_FROM",
+      "to": "VARIABLE:decoded"
+    },
+    {
+      "from": "PROPERTY_ACCESS:_id",
+      "type": "READS_FROM",
+      "to": "VARIABLE:user"
+    },
+    {
+      "from": "PROPERTY_ACCESS:_id",
+      "type": "READS_FROM",
+      "to": "VARIABLE:user"
+    },
+    {
+      "from": "PROPERTY_ACCESS:_id",
+      "type": "READS_FROM",
+      "to": "VARIABLE:user"
+    },
+    {
+      "from": "PROPERTY_ACCESS:_id",
+      "type": "READS_FROM",
+      "to": "VARIABLE:user"
+    },
+    {
+      "from": "PROPERTY_ACCESS:<computed>",
+      "type": "READS_FROM",
+      "to": "CONSTANT:batches"
+    },
+    {
+      "from": "PROPERTY_ACCESS:<computed>",
+      "type": "READS_FROM",
+      "to": "PARAMETER:items"
+    },
+    {
+      "from": "PROPERTY_ACCESS:<computed>",
+      "type": "READS_FROM",
+      "to": "PARAMETER:tasks"
+    },
+    {
+      "from": "PROPERTY_ACCESS:0",
+      "type": "READS_FROM",
+      "to": "PARAMETER:ids"
+    },
+    {
+      "from": "PROPERTY_ACCESS:0",
+      "type": "READS_FROM",
+      "to": "PARAMETER:urls"
+    },
+    {
+      "from": "PROPERTY_ACCESS:1",
+      "type": "READS_FROM",
+      "to": "PARAMETER:urls"
+    },
+    {
+      "from": "PROPERTY_ACCESS:2",
+      "type": "READS_FROM",
+      "to": "PARAMETER:urls"
+    },
+    {
+      "from": "PROPERTY_ACCESS:body",
+      "type": "READS_FROM",
+      "to": "PARAMETER:req"
+    },
+    {
+      "from": "PROPERTY_ACCESS:body",
+      "type": "READS_FROM",
+      "to": "PARAMETER:req"
+    },
+    {
+      "from": "PROPERTY_ACCESS:dataId",
+      "type": "READS_FROM",
+      "to": "PARAMETER:user"
+    },
+    {
+      "from": "PROPERTY_ACCESS:dataOffset",
+      "type": "READS_FROM",
+      "to": "VARIABLE:user"
+    },
+    {
+      "from": "PROPERTY_ACCESS:dbUrl",
+      "type": "READS_FROM",
+      "to": "CLASS:AppConfig"
+    },
+    {
+      "from": "PROPERTY_ACCESS:dbUrl",
+      "type": "READS_FROM",
+      "to": "CLASS:AppConfig"
+    },
+    {
+      "from": "PROPERTY_ACCESS:dbUrl",
+      "type": "READS_FROM",
+      "to": "VARIABLE:config"
+    },
+    {
+      "from": "PROPERTY_ACCESS:done",
+      "type": "READS_FROM",
+      "to": "VARIABLE:next"
+    },
+    {
+      "from": "PROPERTY_ACCESS:done",
+      "type": "READS_FROM",
+      "to": "VARIABLE:next"
+    },
+    {
+      "from": "PROPERTY_ACCESS:done",
+      "type": "READS_FROM",
+      "to": "VARIABLE:next"
+    },
+    {
+      "from": "PROPERTY_ACCESS:done",
+      "type": "READS_FROM",
+      "to": "VARIABLE:next"
+    },
+    {
+      "from": "PROPERTY_ACCESS:email",
+      "type": "READS_FROM",
+      "to": "VARIABLE:user"
+    },
+    {
+      "from": "PROPERTY_ACCESS:handleError",
+      "type": "READS_FROM",
+      "to": "VARIABLE:config"
+    },
+    {
+      "from": "PROPERTY_ACCESS:handleError",
+      "type": "READS_FROM",
+      "to": "VARIABLE:errorHandler"
+    },
+    {
+      "from": "PROPERTY_ACCESS:headers",
+      "type": "READS_FROM",
+      "to": "PARAMETER:req"
+    },
+    {
+      "from": "PROPERTY_ACCESS:headers",
+      "type": "READS_FROM",
+      "to": "PARAMETER:req"
+    },
+    {
+      "from": "PROPERTY_ACCESS:headers",
+      "type": "READS_FROM",
+      "to": "PARAMETER:req"
+    },
+    {
+      "from": "PROPERTY_ACCESS:id",
+      "type": "READS_FROM",
+      "to": "CONSTANT:item"
+    },
+    {
+      "from": "PROPERTY_ACCESS:id",
+      "type": "READS_FROM",
+      "to": "CONSTANT:item"
+    },
+    {
+      "from": "PROPERTY_ACCESS:id",
+      "type": "READS_FROM",
+      "to": "VARIABLE:user"
+    },
+    {
+      "from": "PROPERTY_ACCESS:ip",
+      "type": "READS_FROM",
+      "to": "PARAMETER:req"
+    },
+    {
+      "from": "PROPERTY_ACCESS:length",
+      "type": "READS_FROM",
+      "to": "CONSTANT:batch"
+    },
+    {
+      "from": "PROPERTY_ACCESS:length",
+      "type": "READS_FROM",
+      "to": "CONSTANT:batches"
+    },
+    {
+      "from": "PROPERTY_ACCESS:length",
+      "type": "READS_FROM",
+      "to": "PARAMETER:items"
+    },
+    {
+      "from": "PROPERTY_ACCESS:length",
+      "type": "READS_FROM",
+      "to": "PARAMETER:tasks"
+    },
+    {
+      "from": "PROPERTY_ACCESS:length",
+      "type": "READS_FROM",
+      "to": "VARIABLE:batch"
+    },
+    {
+      "from": "PROPERTY_ACCESS:length",
+      "type": "READS_FROM",
+      "to": "VARIABLE:comments"
+    },
+    {
+      "from": "PROPERTY_ACCESS:length",
+      "type": "READS_FROM",
+      "to": "VARIABLE:currentBatch"
+    },
+    {
+      "from": "PROPERTY_ACCESS:length",
+      "type": "READS_FROM",
+      "to": "VARIABLE:friends"
+    },
+    {
+      "from": "PROPERTY_ACCESS:length",
+      "type": "READS_FROM",
+      "to": "VARIABLE:friends"
+    },
+    {
+      "from": "PROPERTY_ACCESS:length",
+      "type": "READS_FROM",
+      "to": "VARIABLE:posts"
+    },
+    {
+      "from": "PROPERTY_ACCESS:length",
+      "type": "READS_FROM",
+      "to": "VARIABLE:posts"
+    },
+    {
+      "from": "PROPERTY_ACCESS:lockUntil",
+      "type": "READS_FROM",
+      "to": "VARIABLE:self"
+    },
+    {
+      "from": "PROPERTY_ACCESS:loginAttempts",
+      "type": "READS_FROM",
+      "to": "VARIABLE:self"
+    },
+    {
+      "from": "PROPERTY_ACCESS:message",
+      "type": "READS_FROM",
+      "to": "PARAMETER:err"
+    },
+    {
+      "from": "PROPERTY_ACCESS:message",
+      "type": "READS_FROM",
+      "to": "VARIABLE:error"
+    },
+    {
+      "from": "PROPERTY_ACCESS:message",
+      "type": "READS_FROM",
+      "to": "VARIABLE:error"
+    },
+    {
+      "from": "PROPERTY_ACCESS:message",
+      "type": "READS_FROM",
+      "to": "VARIABLE:error"
+    },
+    {
+      "from": "PROPERTY_ACCESS:message",
+      "type": "READS_FROM",
+      "to": "VARIABLE:error"
+    },
+    {
+      "from": "PROPERTY_ACCESS:name",
+      "type": "READS_FROM",
+      "to": "CONSTANT:item"
+    },
+    {
+      "from": "PROPERTY_ACCESS:params",
+      "type": "READS_FROM",
+      "to": "PARAMETER:req"
+    },
+    {
+      "from": "PROPERTY_ACCESS:params",
+      "type": "READS_FROM",
+      "to": "PARAMETER:req"
+    },
+    {
+      "from": "PROPERTY_ACCESS:password",
+      "type": "READS_FROM",
+      "to": "VARIABLE:user"
+    },
+    {
+      "from": "PROPERTY_ACCESS:password",
+      "type": "READS_FROM",
+      "to": "VARIABLE:user"
+    },
+    {
+      "from": "PROPERTY_ACCESS:port",
+      "type": "READS_FROM",
+      "to": "CLASS:AppConfig"
+    },
+    {
+      "from": "PROPERTY_ACCESS:port",
+      "type": "READS_FROM",
+      "to": "CLASS:AppConfig"
+    },
+    {
+      "from": "PROPERTY_ACCESS:retryAttempts",
+      "type": "READS_FROM",
+      "to": "CLASS:AppConfig"
+    },
+    {
+      "from": "PROPERTY_ACCESS:role",
+      "type": "READS_FROM",
+      "to": "VARIABLE:user"
+    },
+    {
+      "from": "PROPERTY_ACCESS:role",
+      "type": "READS_FROM",
+      "to": "VARIABLE:user"
+    },
+    {
+      "from": "PROPERTY_ACCESS:then",
+      "type": "READS_FROM",
+      "to": "VARIABLE:result"
+    },
+    {
+      "from": "PROPERTY_ACCESS:user",
+      "type": "READS_FROM",
+      "to": "PARAMETER:req"
+    },
+    {
+      "from": "PROPERTY_ACCESS:value",
+      "type": "READS_FROM",
+      "to": "CONSTANT:item"
+    },
+    {
+      "from": "PROPERTY_ACCESS:value",
+      "type": "READS_FROM",
+      "to": "CONSTANT:item"
+    },
+    {
+      "from": "PROPERTY_ACCESS:value",
+      "type": "READS_FROM",
+      "to": "VARIABLE:next"
+    },
+    {
+      "from": "PROPERTY_ACCESS:value",
+      "type": "READS_FROM",
+      "to": "VARIABLE:next"
+    },
+    {
+      "from": "PROPERTY_ACCESS:value",
+      "type": "READS_FROM",
+      "to": "VARIABLE:next"
+    },
+    {
+      "from": "PROPERTY_ACCESS:value",
+      "type": "READS_FROM",
+      "to": "VARIABLE:next"
     },
     {
       "from": "SCOPE:",
@@ -45031,11 +44051,6 @@
     {
       "from": "SCOPE:",
       "type": "DECLARES",
-      "to": "VARIABLE:allResults"
-    },
-    {
-      "from": "SCOPE:",
-      "type": "DECLARES",
       "to": "VARIABLE:batch"
     },
     {
@@ -45077,11 +44092,6 @@
       "from": "SCOPE:",
       "type": "DECLARES",
       "to": "VARIABLE:decoded"
-    },
-    {
-      "from": "SCOPE:",
-      "type": "DECLARES",
-      "to": "VARIABLE:err"
     },
     {
       "from": "SCOPE:",
@@ -45731,22 +44741,12 @@
     {
       "from": "SCOPE:anonymous[0]:body",
       "type": "CONTAINS",
-      "to": "BRANCH:"
-    },
-    {
-      "from": "SCOPE:anonymous[0]:body",
-      "type": "CONTAINS",
-      "to": "BRANCH:"
-    },
-    {
-      "from": "SCOPE:anonymous[0]:body",
-      "type": "CONTAINS",
-      "to": "BRANCH:"
-    },
-    {
-      "from": "SCOPE:anonymous[0]:body",
-      "type": "CONTAINS",
       "to": "CALL:app.listen"
+    },
+    {
+      "from": "SCOPE:anonymous[0]:body",
+      "type": "CONTAINS",
+      "to": "CALL:bcrypt.genSalt"
     },
     {
       "from": "SCOPE:anonymous[0]:body",
@@ -45931,6 +44931,16 @@
     {
       "from": "SCOPE:anonymous[0]:body",
       "type": "CONTAINS",
+      "to": "CALL:JSON.stringify"
+    },
+    {
+      "from": "SCOPE:anonymous[0]:body",
+      "type": "CONTAINS",
+      "to": "CALL:jwt.sign"
+    },
+    {
+      "from": "SCOPE:anonymous[0]:body",
+      "type": "CONTAINS",
       "to": "CALL:jwt.verify"
     },
     {
@@ -46006,7 +45016,17 @@
     {
       "from": "SCOPE:anonymous[0]:body",
       "type": "CONTAINS",
+      "to": "CALL:mongoose.connection.db.collection"
+    },
+    {
+      "from": "SCOPE:anonymous[0]:body",
+      "type": "CONTAINS",
       "to": "CALL:newUser.save"
+    },
+    {
+      "from": "SCOPE:anonymous[0]:body",
+      "type": "CONTAINS",
+      "to": "CALL:next"
     },
     {
       "from": "SCOPE:anonymous[0]:body",
@@ -46107,6 +45127,11 @@
       "from": "SCOPE:anonymous[0]:body",
       "type": "CONTAINS",
       "to": "CALL:redis.incr"
+    },
+    {
+      "from": "SCOPE:anonymous[0]:body",
+      "type": "CONTAINS",
+      "to": "CALL:redis.set"
     },
     {
       "from": "SCOPE:anonymous[0]:body",
@@ -46276,6 +45301,16 @@
     {
       "from": "SCOPE:anonymous[0]:body",
       "type": "CONTAINS",
+      "to": "CALL:this.processBatch"
+    },
+    {
+      "from": "SCOPE:anonymous[0]:body",
+      "type": "CONTAINS",
+      "to": "CALL:user._id.toString"
+    },
+    {
+      "from": "SCOPE:anonymous[0]:body",
+      "type": "CONTAINS",
       "to": "CALL:user.deleteOne"
     },
     {
@@ -46321,6 +45356,11 @@
     {
       "from": "SCOPE:anonymous[0]:body",
       "type": "CONTAINS",
+      "to": "CALL:users.filter"
+    },
+    {
+      "from": "SCOPE:anonymous[0]:body",
+      "type": "CONTAINS",
       "to": "CONSTRUCTOR_CALL:new Date()"
     },
     {
@@ -46362,11 +45402,6 @@
       "from": "SCOPE:anonymous[0]:body",
       "type": "CONTAINS",
       "to": "CONSTRUCTOR_CALL:new User()"
-    },
-    {
-      "from": "SCOPE:anonymous[0]:body",
-      "type": "CONTAINS",
-      "to": "FUNCTION:anonymous[0]"
     },
     {
       "from": "SCOPE:anonymous[0]:body",
@@ -46944,6 +45979,11 @@
       "to": "VARIABLE:timer"
     },
     {
+      "from": "SCOPE:anonymous[0]:body",
+      "type": "DECLARES",
+      "to": "VARIABLE:user"
+    },
+    {
       "from": "SCOPE:anonymous[1]:body",
       "type": "CONTAINS",
       "to": "BRANCH:"
@@ -46957,6 +45997,11 @@
       "from": "SCOPE:anonymous[1]:body",
       "type": "CONTAINS",
       "to": "CALL:accumulator.push"
+    },
+    {
+      "from": "SCOPE:anonymous[1]:body",
+      "type": "CONTAINS",
+      "to": "CALL:activeUsers.map"
     },
     {
       "from": "SCOPE:anonymous[1]:body",
@@ -47001,6 +46046,11 @@
     {
       "from": "SCOPE:anonymous[1]:body",
       "type": "CONTAINS",
+      "to": "CALL:console.log"
+    },
+    {
+      "from": "SCOPE:anonymous[1]:body",
+      "type": "CONTAINS",
       "to": "CALL:Date.now"
     },
     {
@@ -47022,6 +46072,16 @@
       "from": "SCOPE:anonymous[1]:body",
       "type": "CONTAINS",
       "to": "CALL:Math.pow"
+    },
+    {
+      "from": "SCOPE:anonymous[1]:body",
+      "type": "CONTAINS",
+      "to": "CALL:mongoose.connection.db.collection"
+    },
+    {
+      "from": "SCOPE:anonymous[1]:body",
+      "type": "CONTAINS",
+      "to": "CALL:mongoose.connection.db.collection"
     },
     {
       "from": "SCOPE:anonymous[1]:body",
@@ -47101,7 +46161,17 @@
     {
       "from": "SCOPE:anonymous[1]:body",
       "type": "CONTAINS",
+      "to": "CONSTRUCTOR_CALL:new Date()"
+    },
+    {
+      "from": "SCOPE:anonymous[1]:body",
+      "type": "CONTAINS",
       "to": "CONSTRUCTOR_CALL:new Error()"
+    },
+    {
+      "from": "SCOPE:anonymous[1]:body",
+      "type": "CONTAINS",
+      "to": "FUNCTION:anonymous[0]"
     },
     {
       "from": "SCOPE:anonymous[1]:body",
@@ -47176,7 +46246,17 @@
     {
       "from": "SCOPE:anonymous[2]:body",
       "type": "CONTAINS",
+      "to": "BRANCH:"
+    },
+    {
+      "from": "SCOPE:anonymous[2]:body",
+      "type": "CONTAINS",
       "to": "CALL:clearTimeout"
+    },
+    {
+      "from": "SCOPE:anonymous[2]:body",
+      "type": "CONTAINS",
+      "to": "CALL:console.error"
     },
     {
       "from": "SCOPE:anonymous[2]:body",
@@ -47216,6 +46296,11 @@
     {
       "from": "SCOPE:anonymous[2]:body",
       "type": "CONTAINS",
+      "to": "CALL:JSON.stringify"
+    },
+    {
+      "from": "SCOPE:anonymous[2]:body",
+      "type": "CONTAINS",
       "to": "CALL:mongoose.connection.db.collection"
     },
     {
@@ -47237,6 +46322,11 @@
       "from": "SCOPE:anonymous[2]:body",
       "type": "CONTAINS",
       "to": "CALL:redis.get"
+    },
+    {
+      "from": "SCOPE:anonymous[2]:body",
+      "type": "CONTAINS",
+      "to": "CALL:redis.set"
     },
     {
       "from": "SCOPE:anonymous[2]:body",
@@ -47316,6 +46406,11 @@
     {
       "from": "SCOPE:anonymous[3]:body",
       "type": "CONTAINS",
+      "to": "CALL:console.error"
+    },
+    {
+      "from": "SCOPE:anonymous[3]:body",
+      "type": "CONTAINS",
       "to": "CALL:fetch"
     },
     {
@@ -47376,22 +46471,7 @@
     {
       "from": "SCOPE:anonymous[5]:body",
       "type": "CONTAINS",
-      "to": "CALL:console.error"
-    },
-    {
-      "from": "SCOPE:anonymous[5]:body",
-      "type": "CONTAINS",
       "to": "CALL:console.log"
-    },
-    {
-      "from": "SCOPE:anonymous[5]:body",
-      "type": "CONTAINS",
-      "to": "CALL:JSON.stringify"
-    },
-    {
-      "from": "SCOPE:anonymous[5]:body",
-      "type": "CONTAINS",
-      "to": "CALL:JSON.stringify"
     },
     {
       "from": "SCOPE:anonymous[5]:body",
@@ -47411,22 +46491,7 @@
     {
       "from": "SCOPE:anonymous[5]:body",
       "type": "CONTAINS",
-      "to": "CALL:mongoose.connection.db.collection"
-    },
-    {
-      "from": "SCOPE:anonymous[5]:body",
-      "type": "CONTAINS",
       "to": "CALL:process.exit"
-    },
-    {
-      "from": "SCOPE:anonymous[5]:body",
-      "type": "CONTAINS",
-      "to": "CALL:redis.set"
-    },
-    {
-      "from": "SCOPE:anonymous[5]:body",
-      "type": "CONTAINS",
-      "to": "CALL:redis.set"
     },
     {
       "from": "SCOPE:anonymous[5]:body",
@@ -47437,11 +46502,6 @@
       "from": "SCOPE:anonymous[5]:body",
       "type": "CONTAINS",
       "to": "CALL:this.logError"
-    },
-    {
-      "from": "SCOPE:anonymous[5]:body",
-      "type": "CONTAINS",
-      "to": "CALL:this.processBatch"
     },
     {
       "from": "SCOPE:anonymous[5]:body",
@@ -47467,11 +46527,6 @@
       "from": "SCOPE:anonymous[5]:body",
       "type": "CONTAINS",
       "to": "CALL:User.findById"
-    },
-    {
-      "from": "SCOPE:anonymous[5]:body",
-      "type": "CONTAINS",
-      "to": "FUNCTION:anonymous[0]"
     },
     {
       "from": "SCOPE:anonymous[5]:body",
@@ -47556,27 +46611,12 @@
     {
       "from": "SCOPE:anonymous[5]:body",
       "type": "CONTAINS",
-      "to": "FUNCTION:processItem"
-    },
-    {
-      "from": "SCOPE:anonymous[5]:body",
-      "type": "CONTAINS",
       "to": "TRY_BLOCK:"
     },
     {
       "from": "SCOPE:anonymous[5]:body",
       "type": "CONTAINS",
       "to": "TRY_BLOCK:"
-    },
-    {
-      "from": "SCOPE:anonymous[5]:body",
-      "type": "CONTAINS",
-      "to": "TRY_BLOCK:"
-    },
-    {
-      "from": "SCOPE:anonymous[5]:body",
-      "type": "DECLARES",
-      "to": "CONSTANT:results"
     },
     {
       "from": "SCOPE:anonymous[5]:body",
@@ -47596,11 +46636,6 @@
     {
       "from": "SCOPE:anonymous[5]:body",
       "type": "DECLARES",
-      "to": "VARIABLE:generator"
-    },
-    {
-      "from": "SCOPE:anonymous[5]:body",
-      "type": "DECLARES",
       "to": "VARIABLE:lastName"
     },
     {
@@ -47612,11 +46647,6 @@
       "from": "SCOPE:anonymous[5]:body",
       "type": "DECLARES",
       "to": "VARIABLE:password"
-    },
-    {
-      "from": "SCOPE:anonymous[5]:body",
-      "type": "DECLARES",
-      "to": "VARIABLE:processItem"
     },
     {
       "from": "SCOPE:anonymous[5]:body",
@@ -47641,112 +46671,12 @@
     {
       "from": "SCOPE:anonymous[6]:body",
       "type": "CONTAINS",
-      "to": "BRANCH:"
-    },
-    {
-      "from": "SCOPE:anonymous[6]:body",
-      "type": "CONTAINS",
-      "to": "CALL:activeUsers.map"
-    },
-    {
-      "from": "SCOPE:anonymous[6]:body",
-      "type": "CONTAINS",
       "to": "CALL:console.error"
-    },
-    {
-      "from": "SCOPE:anonymous[6]:body",
-      "type": "CONTAINS",
-      "to": "CALL:console.error"
-    },
-    {
-      "from": "SCOPE:anonymous[6]:body",
-      "type": "CONTAINS",
-      "to": "CALL:jwt.sign"
-    },
-    {
-      "from": "SCOPE:anonymous[6]:body",
-      "type": "CONTAINS",
-      "to": "CALL:mongoose.connection.db.collection"
-    },
-    {
-      "from": "SCOPE:anonymous[6]:body",
-      "type": "CONTAINS",
-      "to": "CALL:next"
     },
     {
       "from": "SCOPE:anonymous[6]:body",
       "type": "CONTAINS",
       "to": "CALL:res.status"
-    },
-    {
-      "from": "SCOPE:anonymous[6]:body",
-      "type": "CONTAINS",
-      "to": "CALL:user._id.toString"
-    },
-    {
-      "from": "SCOPE:anonymous[6]:body",
-      "type": "CONTAINS",
-      "to": "CALL:users.filter"
-    },
-    {
-      "from": "SCOPE:anonymous[6]:body",
-      "type": "CONTAINS",
-      "to": "FUNCTION:anonymous[0]"
-    },
-    {
-      "from": "SCOPE:anonymous[6]:body",
-      "type": "CONTAINS",
-      "to": "FUNCTION:anonymous[0]"
-    },
-    {
-      "from": "SCOPE:anonymous[6]:body",
-      "type": "CONTAINS",
-      "to": "FUNCTION:anonymous[0]"
-    },
-    {
-      "from": "SCOPE:anonymous[7]:body",
-      "type": "CONTAINS",
-      "to": "BRANCH:"
-    },
-    {
-      "from": "SCOPE:anonymous[7]:body",
-      "type": "CONTAINS",
-      "to": "CALL:bcrypt.genSalt"
-    },
-    {
-      "from": "SCOPE:anonymous[7]:body",
-      "type": "CONTAINS",
-      "to": "FUNCTION:anonymous[0]"
-    },
-    {
-      "from": "SCOPE:anonymous[7]:body",
-      "type": "DECLARES",
-      "to": "VARIABLE:user"
-    },
-    {
-      "from": "SCOPE:anonymous[8]:body",
-      "type": "CONTAINS",
-      "to": "CALL:console.log"
-    },
-    {
-      "from": "SCOPE:anonymous[8]:body",
-      "type": "CONTAINS",
-      "to": "CALL:mongoose.connection.db.collection"
-    },
-    {
-      "from": "SCOPE:anonymous[8]:body",
-      "type": "CONTAINS",
-      "to": "CONSTRUCTOR_CALL:new Date()"
-    },
-    {
-      "from": "SCOPE:anonymous[8]:body",
-      "type": "CONTAINS",
-      "to": "FUNCTION:anonymous[0]"
-    },
-    {
-      "from": "SCOPE:anonymous[9]:body",
-      "type": "CONTAINS",
-      "to": "BRANCH:"
     },
     {
       "from": "SCOPE:AppConfig.initDatabase:body",
@@ -48194,12 +47124,12 @@
       "to": "VARIABLE:timeoutId"
     },
     {
-      "from": "SCOPE:else:139:13:1",
+      "from": "SCOPE:else:139:13:9",
       "type": "CONTAINS",
       "to": "CALL:results.push"
     },
     {
-      "from": "SCOPE:else:139:13:1",
+      "from": "SCOPE:else:139:13:9",
       "type": "CONTAINS",
       "to": "CALL:setImmediate"
     },
@@ -48219,17 +47149,17 @@
       "to": "CALL:resolve"
     },
     {
-      "from": "SCOPE:else:37:13:7",
+      "from": "SCOPE:else:37:13:4",
       "type": "CONTAINS",
       "to": "CALL:callback"
     },
     {
-      "from": "SCOPE:else:40:11:5",
+      "from": "SCOPE:else:40:11:2",
       "type": "CONTAINS",
       "to": "BRANCH:"
     },
     {
-      "from": "SCOPE:else:40:11:5",
+      "from": "SCOPE:else:40:11:2",
       "type": "CONTAINS",
       "to": "CALL:self.save"
     },
@@ -48249,7 +47179,7 @@
       "to": "CALL:callback"
     },
     {
-      "from": "SCOPE:else:72:15:1",
+      "from": "SCOPE:else:72:15:9",
       "type": "CONTAINS",
       "to": "CALL:resolve"
     },
@@ -48504,7 +47434,7 @@
       "to": "CALL:res.status"
     },
     {
-      "from": "SCOPE:if:127:6:0",
+      "from": "SCOPE:if:127:6:8",
       "type": "CONTAINS",
       "to": "CALL:mongoose.connection.db.collection"
     },
@@ -48514,7 +47444,7 @@
       "to": "CALL:console.error"
     },
     {
-      "from": "SCOPE:if:130:10:2",
+      "from": "SCOPE:if:130:10:10",
       "type": "CONTAINS",
       "to": "CALL:callback"
     },
@@ -48524,7 +47454,7 @@
       "to": "CALL:res.status"
     },
     {
-      "from": "SCOPE:if:133:12:3",
+      "from": "SCOPE:if:133:12:11",
       "type": "CONTAINS",
       "to": "CALL:console.error"
     },
@@ -48584,17 +47514,17 @@
       "to": "CALL:res.status"
     },
     {
-      "from": "SCOPE:if:175:2:13",
+      "from": "SCOPE:if:175:2:10",
       "type": "CONTAINS",
       "to": "CALL:next"
     },
     {
-      "from": "SCOPE:if:175:2:13",
+      "from": "SCOPE:if:175:2:10",
       "type": "CONTAINS",
       "to": "CALL:user.isModified"
     },
     {
-      "from": "SCOPE:if:181:4:14",
+      "from": "SCOPE:if:181:4:11",
       "type": "CONTAINS",
       "to": "CALL:next"
     },
@@ -48609,7 +47539,7 @@
       "to": "CALL:res.status"
     },
     {
-      "from": "SCOPE:if:184:6:15",
+      "from": "SCOPE:if:184:6:12",
       "type": "CONTAINS",
       "to": "CALL:next"
     },
@@ -48624,7 +47554,7 @@
       "to": "CALL:res.status"
     },
     {
-      "from": "SCOPE:if:202:4:2",
+      "from": "SCOPE:if:202:4:13",
       "type": "CONTAINS",
       "to": "CALL:console.error"
     },
@@ -48664,7 +47594,7 @@
       "to": "CALL:console.error"
     },
     {
-      "from": "SCOPE:if:223:10:5",
+      "from": "SCOPE:if:223:10:13",
       "type": "CONTAINS",
       "to": "CALL:callback"
     },
@@ -48694,7 +47624,7 @@
       "to": "CALL:res.status"
     },
     {
-      "from": "SCOPE:if:26:4:3",
+      "from": "SCOPE:if:26:4:0",
       "type": "CONTAINS",
       "to": "CALL:callback"
     },
@@ -48749,7 +47679,7 @@
       "to": "CALL:res.status"
     },
     {
-      "from": "SCOPE:if:28:4:4",
+      "from": "SCOPE:if:28:4:1",
       "type": "CONTAINS",
       "to": "BRANCH:"
     },
@@ -48779,7 +47709,7 @@
       "to": "CALL:clearTimeout"
     },
     {
-      "from": "SCOPE:if:30:6:6",
+      "from": "SCOPE:if:30:6:3",
       "type": "CONTAINS",
       "to": "CALL:self.save"
     },
@@ -48839,14 +47769,14 @@
       "to": "CALL:resolve"
     },
     {
+      "from": "SCOPE:if:331:8:0",
+      "type": "CONTAINS",
+      "to": "CALL:batches.push"
+    },
+    {
       "from": "SCOPE:if:331:8:35",
       "type": "CONTAINS",
       "to": "CALL:callback"
-    },
-    {
-      "from": "SCOPE:if:331:8:6",
-      "type": "CONTAINS",
-      "to": "CALL:batches.push"
     },
     {
       "from": "SCOPE:if:334:10:36",
@@ -48854,22 +47784,22 @@
       "to": "CALL:callback"
     },
     {
-      "from": "SCOPE:if:337:6:7",
+      "from": "SCOPE:if:337:6:1",
       "type": "CONTAINS",
       "to": "CALL:batches.push"
     },
     {
-      "from": "SCOPE:if:34:10:8",
+      "from": "SCOPE:if:34:10:5",
       "type": "CONTAINS",
       "to": "CALL:callback"
     },
     {
-      "from": "SCOPE:if:345:8:8",
+      "from": "SCOPE:if:345:8:2",
       "type": "CONTAINS",
       "to": "CALL:batches.flat"
     },
     {
-      "from": "SCOPE:if:345:8:8",
+      "from": "SCOPE:if:345:8:2",
       "type": "CONTAINS",
       "to": "CALL:callback"
     },
@@ -48884,7 +47814,7 @@
       "to": "CONSTRUCTOR_CALL:new Error()"
     },
     {
-      "from": "SCOPE:if:352:12:9",
+      "from": "SCOPE:if:352:12:3",
       "type": "CONTAINS",
       "to": "CALL:callback"
     },
@@ -48904,12 +47834,12 @@
       "to": "CONSTRUCTOR_CALL:new Error()"
     },
     {
-      "from": "SCOPE:if:44:6:9",
+      "from": "SCOPE:if:44:6:6",
       "type": "CONTAINS",
       "to": "CALL:Date.now"
     },
     {
-      "from": "SCOPE:if:49:8:10",
+      "from": "SCOPE:if:49:8:7",
       "type": "CONTAINS",
       "to": "CALL:callback"
     },
@@ -48969,17 +47899,17 @@
       "to": "CALL:console.error"
     },
     {
-      "from": "SCOPE:if:70:8:0",
+      "from": "SCOPE:if:70:8:8",
       "type": "CONTAINS",
       "to": "CALL:reject"
     },
     {
-      "from": "SCOPE:if:75:6:13",
+      "from": "SCOPE:if:75:6:7",
       "type": "CONTAINS",
       "to": "CALL:this.cache.get"
     },
     {
-      "from": "SCOPE:if:75:6:13",
+      "from": "SCOPE:if:75:6:7",
       "type": "CONTAINS",
       "to": "CALL:this.cache.has"
     },
@@ -49146,11 +48076,6 @@
     {
       "from": "SCOPE:processItem:body",
       "type": "CONTAINS",
-      "to": "BRANCH:"
-    },
-    {
-      "from": "SCOPE:processItem:body",
-      "type": "CONTAINS",
       "to": "CALL:generator.next"
     },
     {
@@ -49167,16 +48092,6 @@
       "from": "SCOPE:processItem:body",
       "type": "DECLARES",
       "to": "VARIABLE:next"
-    },
-    {
-      "from": "SCOPE:processItem:body",
-      "type": "DECLARES",
-      "to": "VARIABLE:next"
-    },
-    {
-      "from": "SCOPE:processNext:body",
-      "type": "CONTAINS",
-      "to": "BRANCH:"
     },
     {
       "from": "SCOPE:processNext:body",
@@ -49221,16 +48136,6 @@
     {
       "from": "SCOPE:processNext:body",
       "type": "CONTAINS",
-      "to": "FUNCTION:anonymous[0]"
-    },
-    {
-      "from": "SCOPE:processNext:body",
-      "type": "CONTAINS",
-      "to": "FUNCTION:anonymous[0]"
-    },
-    {
-      "from": "SCOPE:processNext:body",
-      "type": "CONTAINS",
       "to": "FUNCTION:anonymous[1]"
     },
     {
@@ -49242,11 +48147,6 @@
       "from": "SCOPE:processNext:body",
       "type": "DECLARES",
       "to": "VARIABLE:item"
-    },
-    {
-      "from": "SCOPE:processNext:body",
-      "type": "DECLARES",
-      "to": "VARIABLE:next"
     },
     {
       "from": "SCOPE:processNext:body",
@@ -49603,16 +48503,6 @@
     },
     {
       "from": "TRY_BLOCK:",
-      "type": "CONTAINS",
-      "to": "SCOPE:"
-    },
-    {
-      "from": "TRY_BLOCK:",
-      "type": "HAS_CATCH",
-      "to": "CATCH_BLOCK:"
-    },
-    {
-      "from": "TRY_BLOCK:",
       "type": "HAS_CATCH",
       "to": "CATCH_BLOCK:"
     },
@@ -49720,11 +48610,6 @@
       "from": "UPDATE_EXPRESSION:running++",
       "type": "MODIFIES",
       "to": "VARIABLE:running"
-    },
-    {
-      "from": "VARIABLE:allResults",
-      "type": "ASSIGNED_FROM",
-      "to": "CALL:processItem"
     },
     {
       "from": "VARIABLE:allResults",
@@ -49921,11 +48806,6 @@
       "to": "CALL:this.processBatch"
     },
     {
-      "from": "VARIABLE:generator",
-      "type": "ASSIGNED_FROM",
-      "to": "CALL:this.processBatch"
-    },
-    {
       "from": "VARIABLE:i",
       "type": "ASSIGNED_FROM",
       "to": "LITERAL:"
@@ -50021,16 +48901,6 @@
       "to": "CALL:generator.next"
     },
     {
-      "from": "VARIABLE:next",
-      "type": "ASSIGNED_FROM",
-      "to": "CALL:generator.next"
-    },
-    {
-      "from": "VARIABLE:next",
-      "type": "ASSIGNED_FROM",
-      "to": "CALL:generator.next"
-    },
-    {
       "from": "VARIABLE:password",
       "type": "ASSIGNED_FROM",
       "to": "EXPRESSION:req.body.password"
@@ -50094,11 +48964,6 @@
       "from": "VARIABLE:processed",
       "type": "YIELDS",
       "to": "FUNCTION:processDataStream"
-    },
-    {
-      "from": "VARIABLE:processItem",
-      "type": "ASSIGNED_FROM",
-      "to": "FUNCTION:processItem"
     },
     {
       "from": "VARIABLE:processItem",

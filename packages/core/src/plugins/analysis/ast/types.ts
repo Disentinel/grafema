@@ -288,6 +288,8 @@ export interface PropertyAccessInfo {
   endLine?: number;
   endColumn?: number;
   parentScopeId?: string;
+  scopePath?: string[];        // scope path for resolveVariable/resolveParam lookup
+  enclosingClassName?: string; // class name when objectName === 'this'
 }
 
 // === CALL SITE INFO ===
