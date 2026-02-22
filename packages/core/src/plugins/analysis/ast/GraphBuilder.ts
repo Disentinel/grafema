@@ -26,6 +26,7 @@ import {
   AssignmentBuilder,
   CallFlowBuilder,
   MutationBuilder,
+  PropertyAssignmentBuilder,
   UpdateExpressionBuilder,
   ReturnBuilder,
   YieldBuilder,
@@ -58,6 +59,7 @@ export class GraphBuilder {
   private readonly _assignmentBuilder: AssignmentBuilder;
   private readonly _callFlowBuilder: CallFlowBuilder;
   private readonly _mutationBuilder: MutationBuilder;
+  private readonly _propertyAssignmentBuilder: PropertyAssignmentBuilder;
   private readonly _updateExpressionBuilder: UpdateExpressionBuilder;
   private readonly _returnBuilder: ReturnBuilder;
   private readonly _yieldBuilder: YieldBuilder;
@@ -71,6 +73,7 @@ export class GraphBuilder {
     this._assignmentBuilder = new AssignmentBuilder(ctx);
     this._callFlowBuilder = new CallFlowBuilder(ctx);
     this._mutationBuilder = new MutationBuilder(ctx);
+    this._propertyAssignmentBuilder = new PropertyAssignmentBuilder(ctx);
     this._updateExpressionBuilder = new UpdateExpressionBuilder(ctx);
     this._returnBuilder = new ReturnBuilder(ctx);
     this._yieldBuilder = new YieldBuilder(ctx);
@@ -337,6 +340,7 @@ export class GraphBuilder {
     this._callFlowBuilder.buffer(module, data);
     this._assignmentBuilder.buffer(module, data);
     this._mutationBuilder.buffer(module, data);
+    this._propertyAssignmentBuilder.buffer(module, data);
     this._updateExpressionBuilder.buffer(module, data);
     this._returnBuilder.buffer(module, data);
     this._yieldBuilder.buffer(module, data);

@@ -101,6 +101,7 @@ import type {
   ArrayMutationArgument,
   ObjectMutationInfo,
   ObjectMutationValue,
+  PropertyAssignmentInfo,
   VariableReassignmentInfo,
   ReturnStatementInfo,
   YieldExpressionInfo,
@@ -185,6 +186,8 @@ interface Collections {
   arrayMutations: ArrayMutationInfo[];
   // Object mutation tracking for FLOWS_INTO edges
   objectMutations: ObjectMutationInfo[];
+  // Property assignment tracking for PROPERTY_ASSIGNMENT nodes (REG-554)
+  propertyAssignments?: PropertyAssignmentInfo[];
   // Variable reassignment tracking for FLOWS_INTO edges (REG-290)
   variableReassignments: VariableReassignmentInfo[];
   // Return statement tracking for RETURNS edges
@@ -1939,7 +1942,10 @@ export class JSASTAnalyzer extends Plugin {
           this.detectIndexedArrayAssignment(assignNode, module, arrayMutations, scopeTracker, allCollections);
 
           // Check for object property assignment at module level: obj.prop = value
-          this.detectObjectPropertyAssignment(assignNode, module, objectMutations, scopeTracker);
+          if (!allCollections.propertyAssignments) {
+            allCollections.propertyAssignments = [];
+          }
+          this.detectObjectPropertyAssignment(assignNode, module, objectMutations, scopeTracker, allCollections.propertyAssignments);
         }
       });
       this.profiler.end('traverse_assignments');
@@ -2297,6 +2303,8 @@ export class JSASTAnalyzer extends Plugin {
           : catchesFromInfos,
         // Property access tracking (REG-395)
         propertyAccesses: allCollections.propertyAccesses || propertyAccesses,
+        // Property assignment tracking (REG-554)
+        propertyAssignments: allCollections.propertyAssignments,
         // REG-297: Top-level await tracking
         hasTopLevelAwait
       });
@@ -4195,7 +4203,8 @@ export class JSASTAnalyzer extends Plugin {
     assignNode: t.AssignmentExpression,
     module: VisitorModule,
     objectMutations: ObjectMutationInfo[],
-    scopeTracker?: ScopeTracker
+    scopeTracker?: ScopeTracker,
+    propertyAssignments?: PropertyAssignmentInfo[]
   ): void {
     // Check for property assignment: obj.prop = value or obj['prop'] = value
     if (assignNode.left.type !== 'MemberExpression') return;
@@ -4293,6 +4302,32 @@ export class JSASTAnalyzer extends Plugin {
       column,
       value: valueInfo
     });
+
+    // REG-554: Create PROPERTY_ASSIGNMENT node data for 'this.x = value' patterns
+    if (propertyAssignments && objectName === 'this' && enclosingClassName) {
+      const paId = scopeTracker
+        ? computeSemanticId('PROPERTY_ASSIGNMENT', `this.${propertyName}`, scopeTracker.getContext(), {
+            discriminator: scopeTracker.getItemCounter(`PROPERTY_ASSIGNMENT:this.${propertyName}`)
+          })
+        : `PROPERTY_ASSIGNMENT#${propertyName}#${module.file}#${line}:${column}`;
+
+      propertyAssignments.push({
+        id: paId,
+        semanticId: paId,
+        type: 'PROPERTY_ASSIGNMENT',
+        name: propertyName,
+        objectName: 'this',
+        enclosingClassName,
+        file: module.file,
+        line,
+        column,
+        mutationScopePath: scopePath,
+        valueType: valueInfo.valueType as PropertyAssignmentInfo['valueType'],
+        valueName: valueInfo.valueName,
+        callLine: valueInfo.callLine,
+        callColumn: valueInfo.callColumn,
+      });
+    }
   }
 
   /**
