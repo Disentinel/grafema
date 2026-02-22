@@ -3433,6 +3433,11 @@ export class JSASTAnalyzer extends Plugin {
         // REG-298: Await-in-loop detection
         ...(isAwaited && isInsideLoop ? { isInsideLoop } : {})
       });
+
+      // REG-556: Extract arguments for direct function calls
+      if (callNode.arguments.length > 0) {
+        this.extractMethodCallArguments(callNode, callId, module, collections);
+      }
     }
     // Handle method calls (obj.method(), data.process())
     else if (callNode.callee.type === 'MemberExpression') {
@@ -3669,6 +3674,11 @@ export class JSASTAnalyzer extends Plugin {
         argInfo.functionColumn = getColumn(arg);
       } else if (t.isCallExpression(arg)) {
         argInfo.targetType = 'CALL';
+        argInfo.nestedCallLine = getLine(arg);
+        argInfo.nestedCallColumn = getColumn(arg);
+      // REG-556: NewExpression arguments (new Foo() passed as arg)
+      } else if (t.isNewExpression(arg)) {
+        argInfo.targetType = 'CONSTRUCTOR_CALL';
         argInfo.nestedCallLine = getLine(arg);
         argInfo.nestedCallColumn = getColumn(arg);
       // REG-402: MemberExpression arguments (this.handler, obj.method)
