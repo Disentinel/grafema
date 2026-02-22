@@ -711,6 +711,7 @@ export interface ObjectMutationInfo {
   objectLine?: number;           // Line where object is referenced (for scope resolution)
   mutationScopePath?: string[];  // Scope path where mutation happens (from ScopeTracker)
   enclosingClassName?: string;   // Class name when objectName === 'this' (REG-152)
+  enclosingFunctionName?: string;  // Function name when objectName === 'this' (REG-557)
   propertyName: string;          // Property name or '<computed>' for obj[x] or '<assign>' for Object.assign
   mutationType: 'property' | 'computed' | 'assign' | 'spread';
   computedPropertyVar?: string;  // Variable name in obj[key] = value (for computed mutation type)
@@ -1007,6 +1008,7 @@ export interface UpdateExpressionInfo {
   objectName?: string;            // Object name ("obj" from obj.prop++, "this" from this.count++)
   objectLine?: number;            // Line where object is referenced (for scope resolution)
   enclosingClassName?: string;    // Class name when objectName === 'this' (follows REG-152 pattern)
+  enclosingFunctionName?: string; // Function name when objectName === 'this' (REG-557)
   propertyName?: string;          // Property name ("prop" from obj.prop++, "<computed>" for obj[key]++)
   mutationType?: 'property' | 'computed';  // 'property' for obj.prop++, 'computed' for obj[key]++
   computedPropertyVar?: string;   // Variable name for computed access: obj[i]++ -> "i"

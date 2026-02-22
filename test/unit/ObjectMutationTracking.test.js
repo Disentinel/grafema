@@ -244,7 +244,7 @@ config[key] = value;
   //   - propertyName: the property being assigned
   // ============================================================================
   describe('this.prop = value', () => {
-    it('should track this.prop = value in constructor as FLOWS_INTO to CLASS', async () => {
+    it('should track this.prop = value in constructor as FLOWS_INTO to constructor FUNCTION', async () => {
       await setupTest(backend, {
         'index.js': `
 class Config {
@@ -258,11 +258,11 @@ class Config {
       const allNodes = await backend.getAllNodes();
       const allEdges = await backend.getAllEdges();
 
-      // Find the CLASS node
-      const classNode = allNodes.find(n =>
-        n.type === 'CLASS' && n.name === 'Config'
+      // REG-557: Constructor this.prop flows to constructor FUNCTION, not CLASS
+      const constructorFn = allNodes.find(n =>
+        n.type === 'FUNCTION' && n.name === 'constructor'
       );
-      assert.ok(classNode, 'CLASS "Config" not found');
+      assert.ok(constructorFn, 'FUNCTION "constructor" not found');
 
       // Find the handler parameter
       const handlerParam = allNodes.find(n =>
@@ -270,16 +270,16 @@ class Config {
       );
       assert.ok(handlerParam, 'PARAMETER "handler" not found');
 
-      // Find FLOWS_INTO edge from handler PARAMETER to CLASS
+      // Find FLOWS_INTO edge from handler PARAMETER to constructor FUNCTION
       const flowsInto = allEdges.find(e =>
         e.type === 'FLOWS_INTO' &&
         e.src === handlerParam.id &&
-        e.dst === classNode.id
+        e.dst === constructorFn.id
       );
 
       assert.ok(
         flowsInto,
-        `Expected FLOWS_INTO edge from handler to Config class. Found: ${JSON.stringify(allEdges.filter(e => e.type === 'FLOWS_INTO'))}`
+        `Expected FLOWS_INTO edge from handler to constructor FUNCTION. Found: ${JSON.stringify(allEdges.filter(e => e.type === 'FLOWS_INTO'))}`
       );
 
       // Verify metadata
@@ -341,13 +341,14 @@ class Config {
       const allNodes = await backend.getAllNodes();
       const allEdges = await backend.getAllEdges();
 
-      const classNode = allNodes.find(n => n.type === 'CLASS' && n.name === 'Config');
-      assert.ok(classNode, 'CLASS "Config" not found');
+      // REG-557: Constructor this.prop flows to constructor FUNCTION
+      const constructorFn = allNodes.find(n => n.type === 'FUNCTION' && n.name === 'constructor');
+      assert.ok(constructorFn, 'FUNCTION "constructor" not found');
 
-      // Find all FLOWS_INTO edges to the class with mutationType: this_property
+      // Find all FLOWS_INTO edges to the constructor with mutationType: this_property
       const flowsIntoEdges = allEdges.filter(e =>
         e.type === 'FLOWS_INTO' &&
-        e.dst === classNode.id &&
+        e.dst === constructorFn.id &&
         e.mutationType === 'this_property'
       );
 
@@ -451,7 +452,13 @@ class Outer {
       );
       assert.ok(valParam, 'PARAMETER "val" not found');
 
-      // The FLOWS_INTO edge should go to Inner, not Outer
+      // REG-557: Constructor flows to constructor FUNCTION of Inner
+      const innerConstructor = allNodes.find(n =>
+        n.type === 'FUNCTION' && n.name === 'constructor' && n.className === 'Inner'
+      );
+      assert.ok(innerConstructor, 'FUNCTION "constructor" for Inner not found');
+
+      // The FLOWS_INTO edge should go to Inner's constructor, not Outer class
       const flowsInto = allEdges.find(e =>
         e.type === 'FLOWS_INTO' &&
         e.src === valParam.id &&
@@ -459,8 +466,52 @@ class Outer {
       );
 
       assert.ok(flowsInto, 'Expected FLOWS_INTO edge from val parameter');
-      assert.strictEqual(flowsInto.dst, innerClass.id, 'Edge should point to Inner class, not Outer');
+      assert.strictEqual(flowsInto.dst, innerConstructor.id, 'Edge should point to Inner constructor FUNCTION, not class');
       assert.strictEqual(flowsInto.propertyName, 'val', 'Edge should have propertyName: val');
+    });
+
+    it('should distinguish constructor FLOWS_INTO target from method FLOWS_INTO target', async () => {
+      await setupTest(backend, {
+        'index.js': `
+class App {
+  constructor(config) {
+    this.config = config;
+  }
+  setLogger(logger) {
+    this.logger = logger;
+  }
+}
+        `
+      });
+
+      const allNodes = await backend.getAllNodes();
+      const allEdges = await backend.getAllEdges();
+
+      const classNode = allNodes.find(n => n.type === 'CLASS' && n.name === 'App');
+      assert.ok(classNode);
+
+      const constructorFn = allNodes.find(n => n.type === 'FUNCTION' && n.name === 'constructor');
+      assert.ok(constructorFn, 'FUNCTION "constructor" not found');
+
+      const configParam = allNodes.find(n => n.type === 'PARAMETER' && n.name === 'config');
+      assert.ok(configParam);
+
+      const loggerParam = allNodes.find(n => n.type === 'PARAMETER' && n.name === 'logger');
+      assert.ok(loggerParam);
+
+      // Constructor param flows to constructor FUNCTION (REG-557)
+      const constructorFlow = allEdges.find(e =>
+        e.type === 'FLOWS_INTO' && e.src === configParam.id
+      );
+      assert.ok(constructorFlow);
+      assert.strictEqual(constructorFlow.dst, constructorFn.id, 'Constructor param should flow to FUNCTION "constructor", not CLASS');
+
+      // Regular method param flows to CLASS (unchanged)
+      const methodFlow = allEdges.find(e =>
+        e.type === 'FLOWS_INTO' && e.src === loggerParam.id
+      );
+      assert.ok(methodFlow);
+      assert.strictEqual(methodFlow.dst, classNode.id, 'Method param should still flow to CLASS');
     });
 
     it('should NOT create edge for this.prop outside class context', async () => {

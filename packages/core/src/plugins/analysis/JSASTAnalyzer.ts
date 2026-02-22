@@ -4217,6 +4217,12 @@ export class JSASTAnalyzer extends Plugin {
       return;
     }
 
+    // REG-557: Capture enclosing function name to distinguish constructor from methods
+    let enclosingFunctionName: string | undefined;
+    if (objectName === 'this' && scopeTracker) {
+      enclosingFunctionName = scopeTracker.getEnclosingScope('FUNCTION');
+    }
+
     // Get property name
     let propertyName: string;
     let mutationType: 'property' | 'computed';
@@ -4268,6 +4274,7 @@ export class JSASTAnalyzer extends Plugin {
       objectName,
       mutationScopePath: scopePath,
       enclosingClassName,  // REG-152: Class name for 'this' mutations
+      enclosingFunctionName,  // REG-557: Function name for constructor detection
       propertyName,
       mutationType,
       computedPropertyVar,
@@ -4342,6 +4349,12 @@ export class JSASTAnalyzer extends Plugin {
         return;
       }
 
+      // REG-557: Capture enclosing function name to distinguish constructor from methods
+      let enclosingFunctionName: string | undefined;
+      if (objectName === 'this' && scopeTracker) {
+        enclosingFunctionName = scopeTracker.getEnclosingScope('FUNCTION');
+      }
+
       // Extract property name (reuses detectObjectPropertyAssignment pattern)
       let propertyName: string;
       let mutationType: 'property' | 'computed';
@@ -4376,6 +4389,7 @@ export class JSASTAnalyzer extends Plugin {
         objectName,
         objectLine: getLine(memberExpr.object),
         enclosingClassName,
+        enclosingFunctionName,  // REG-557: Function name for constructor detection
         propertyName,
         mutationType,
         computedPropertyVar,
