@@ -41870,6 +41870,356 @@
       }
     },
     {
+      "from": "PROPERTY_ACCESS:_id",
+      "type": "READS_FROM",
+      "to": "CONSTANT:post"
+    },
+    {
+      "from": "PROPERTY_ACCESS:_id",
+      "type": "READS_FROM",
+      "to": "VARIABLE:decoded"
+    },
+    {
+      "from": "PROPERTY_ACCESS:_id",
+      "type": "READS_FROM",
+      "to": "VARIABLE:user"
+    },
+    {
+      "from": "PROPERTY_ACCESS:_id",
+      "type": "READS_FROM",
+      "to": "VARIABLE:user"
+    },
+    {
+      "from": "PROPERTY_ACCESS:_id",
+      "type": "READS_FROM",
+      "to": "VARIABLE:user"
+    },
+    {
+      "from": "PROPERTY_ACCESS:_id",
+      "type": "READS_FROM",
+      "to": "VARIABLE:user"
+    },
+    {
+      "from": "PROPERTY_ACCESS:<computed>",
+      "type": "READS_FROM",
+      "to": "CONSTANT:batches"
+    },
+    {
+      "from": "PROPERTY_ACCESS:<computed>",
+      "type": "READS_FROM",
+      "to": "PARAMETER:items"
+    },
+    {
+      "from": "PROPERTY_ACCESS:<computed>",
+      "type": "READS_FROM",
+      "to": "PARAMETER:tasks"
+    },
+    {
+      "from": "PROPERTY_ACCESS:0",
+      "type": "READS_FROM",
+      "to": "PARAMETER:ids"
+    },
+    {
+      "from": "PROPERTY_ACCESS:0",
+      "type": "READS_FROM",
+      "to": "PARAMETER:urls"
+    },
+    {
+      "from": "PROPERTY_ACCESS:1",
+      "type": "READS_FROM",
+      "to": "PARAMETER:urls"
+    },
+    {
+      "from": "PROPERTY_ACCESS:2",
+      "type": "READS_FROM",
+      "to": "PARAMETER:urls"
+    },
+    {
+      "from": "PROPERTY_ACCESS:body",
+      "type": "READS_FROM",
+      "to": "PARAMETER:req"
+    },
+    {
+      "from": "PROPERTY_ACCESS:body",
+      "type": "READS_FROM",
+      "to": "PARAMETER:req"
+    },
+    {
+      "from": "PROPERTY_ACCESS:dataId",
+      "type": "READS_FROM",
+      "to": "PARAMETER:user"
+    },
+    {
+      "from": "PROPERTY_ACCESS:dataOffset",
+      "type": "READS_FROM",
+      "to": "VARIABLE:user"
+    },
+    {
+      "from": "PROPERTY_ACCESS:dbUrl",
+      "type": "READS_FROM",
+      "to": "CLASS:AppConfig"
+    },
+    {
+      "from": "PROPERTY_ACCESS:dbUrl",
+      "type": "READS_FROM",
+      "to": "CLASS:AppConfig"
+    },
+    {
+      "from": "PROPERTY_ACCESS:dbUrl",
+      "type": "READS_FROM",
+      "to": "VARIABLE:config"
+    },
+    {
+      "from": "PROPERTY_ACCESS:done",
+      "type": "READS_FROM",
+      "to": "VARIABLE:next"
+    },
+    {
+      "from": "PROPERTY_ACCESS:done",
+      "type": "READS_FROM",
+      "to": "VARIABLE:next"
+    },
+    {
+      "from": "PROPERTY_ACCESS:done",
+      "type": "READS_FROM",
+      "to": "VARIABLE:next"
+    },
+    {
+      "from": "PROPERTY_ACCESS:done",
+      "type": "READS_FROM",
+      "to": "VARIABLE:next"
+    },
+    {
+      "from": "PROPERTY_ACCESS:email",
+      "type": "READS_FROM",
+      "to": "VARIABLE:user"
+    },
+    {
+      "from": "PROPERTY_ACCESS:handleError",
+      "type": "READS_FROM",
+      "to": "VARIABLE:config"
+    },
+    {
+      "from": "PROPERTY_ACCESS:handleError",
+      "type": "READS_FROM",
+      "to": "VARIABLE:errorHandler"
+    },
+    {
+      "from": "PROPERTY_ACCESS:headers",
+      "type": "READS_FROM",
+      "to": "PARAMETER:req"
+    },
+    {
+      "from": "PROPERTY_ACCESS:headers",
+      "type": "READS_FROM",
+      "to": "PARAMETER:req"
+    },
+    {
+      "from": "PROPERTY_ACCESS:headers",
+      "type": "READS_FROM",
+      "to": "PARAMETER:req"
+    },
+    {
+      "from": "PROPERTY_ACCESS:id",
+      "type": "READS_FROM",
+      "to": "CONSTANT:item"
+    },
+    {
+      "from": "PROPERTY_ACCESS:id",
+      "type": "READS_FROM",
+      "to": "CONSTANT:item"
+    },
+    {
+      "from": "PROPERTY_ACCESS:id",
+      "type": "READS_FROM",
+      "to": "VARIABLE:user"
+    },
+    {
+      "from": "PROPERTY_ACCESS:ip",
+      "type": "READS_FROM",
+      "to": "PARAMETER:req"
+    },
+    {
+      "from": "PROPERTY_ACCESS:length",
+      "type": "READS_FROM",
+      "to": "CONSTANT:batch"
+    },
+    {
+      "from": "PROPERTY_ACCESS:length",
+      "type": "READS_FROM",
+      "to": "CONSTANT:batches"
+    },
+    {
+      "from": "PROPERTY_ACCESS:length",
+      "type": "READS_FROM",
+      "to": "PARAMETER:items"
+    },
+    {
+      "from": "PROPERTY_ACCESS:length",
+      "type": "READS_FROM",
+      "to": "PARAMETER:tasks"
+    },
+    {
+      "from": "PROPERTY_ACCESS:length",
+      "type": "READS_FROM",
+      "to": "VARIABLE:batch"
+    },
+    {
+      "from": "PROPERTY_ACCESS:length",
+      "type": "READS_FROM",
+      "to": "VARIABLE:comments"
+    },
+    {
+      "from": "PROPERTY_ACCESS:length",
+      "type": "READS_FROM",
+      "to": "VARIABLE:currentBatch"
+    },
+    {
+      "from": "PROPERTY_ACCESS:length",
+      "type": "READS_FROM",
+      "to": "VARIABLE:friends"
+    },
+    {
+      "from": "PROPERTY_ACCESS:length",
+      "type": "READS_FROM",
+      "to": "VARIABLE:friends"
+    },
+    {
+      "from": "PROPERTY_ACCESS:length",
+      "type": "READS_FROM",
+      "to": "VARIABLE:posts"
+    },
+    {
+      "from": "PROPERTY_ACCESS:length",
+      "type": "READS_FROM",
+      "to": "VARIABLE:posts"
+    },
+    {
+      "from": "PROPERTY_ACCESS:lockUntil",
+      "type": "READS_FROM",
+      "to": "VARIABLE:self"
+    },
+    {
+      "from": "PROPERTY_ACCESS:loginAttempts",
+      "type": "READS_FROM",
+      "to": "VARIABLE:self"
+    },
+    {
+      "from": "PROPERTY_ACCESS:message",
+      "type": "READS_FROM",
+      "to": "PARAMETER:err"
+    },
+    {
+      "from": "PROPERTY_ACCESS:message",
+      "type": "READS_FROM",
+      "to": "VARIABLE:error"
+    },
+    {
+      "from": "PROPERTY_ACCESS:message",
+      "type": "READS_FROM",
+      "to": "VARIABLE:error"
+    },
+    {
+      "from": "PROPERTY_ACCESS:message",
+      "type": "READS_FROM",
+      "to": "VARIABLE:error"
+    },
+    {
+      "from": "PROPERTY_ACCESS:message",
+      "type": "READS_FROM",
+      "to": "VARIABLE:error"
+    },
+    {
+      "from": "PROPERTY_ACCESS:name",
+      "type": "READS_FROM",
+      "to": "CONSTANT:item"
+    },
+    {
+      "from": "PROPERTY_ACCESS:params",
+      "type": "READS_FROM",
+      "to": "PARAMETER:req"
+    },
+    {
+      "from": "PROPERTY_ACCESS:params",
+      "type": "READS_FROM",
+      "to": "PARAMETER:req"
+    },
+    {
+      "from": "PROPERTY_ACCESS:password",
+      "type": "READS_FROM",
+      "to": "VARIABLE:user"
+    },
+    {
+      "from": "PROPERTY_ACCESS:password",
+      "type": "READS_FROM",
+      "to": "VARIABLE:user"
+    },
+    {
+      "from": "PROPERTY_ACCESS:port",
+      "type": "READS_FROM",
+      "to": "CLASS:AppConfig"
+    },
+    {
+      "from": "PROPERTY_ACCESS:port",
+      "type": "READS_FROM",
+      "to": "CLASS:AppConfig"
+    },
+    {
+      "from": "PROPERTY_ACCESS:retryAttempts",
+      "type": "READS_FROM",
+      "to": "CLASS:AppConfig"
+    },
+    {
+      "from": "PROPERTY_ACCESS:role",
+      "type": "READS_FROM",
+      "to": "VARIABLE:user"
+    },
+    {
+      "from": "PROPERTY_ACCESS:role",
+      "type": "READS_FROM",
+      "to": "VARIABLE:user"
+    },
+    {
+      "from": "PROPERTY_ACCESS:then",
+      "type": "READS_FROM",
+      "to": "VARIABLE:result"
+    },
+    {
+      "from": "PROPERTY_ACCESS:user",
+      "type": "READS_FROM",
+      "to": "PARAMETER:req"
+    },
+    {
+      "from": "PROPERTY_ACCESS:value",
+      "type": "READS_FROM",
+      "to": "CONSTANT:item"
+    },
+    {
+      "from": "PROPERTY_ACCESS:value",
+      "type": "READS_FROM",
+      "to": "CONSTANT:item"
+    },
+    {
+      "from": "PROPERTY_ACCESS:value",
+      "type": "READS_FROM",
+      "to": "VARIABLE:next"
+    },
+    {
+      "from": "PROPERTY_ACCESS:value",
+      "type": "READS_FROM",
+      "to": "VARIABLE:next"
+    },
+    {
+      "from": "PROPERTY_ACCESS:value",
+      "type": "READS_FROM",
+      "to": "VARIABLE:next"
+    },
+    {
+      "from": "PROPERTY_ACCESS:value",
+      "type": "READS_FROM",
+      "to": "VARIABLE:next"
+    },
+    {
       "from": "SCOPE:",
       "type": "CONTAINS",
       "to": "BRANCH:"

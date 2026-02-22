@@ -2431,6 +2431,26 @@
       "to": "MODULE:client.js"
     },
     {
+      "from": "PROPERTY_ACCESS:data",
+      "type": "READS_FROM",
+      "to": "VARIABLE:response"
+    },
+    {
+      "from": "PROPERTY_ACCESS:data",
+      "type": "READS_FROM",
+      "to": "VARIABLE:response"
+    },
+    {
+      "from": "PROPERTY_ACCESS:data",
+      "type": "READS_FROM",
+      "to": "VARIABLE:response"
+    },
+    {
+      "from": "PROPERTY_ACCESS:headers",
+      "type": "READS_FROM",
+      "to": "PARAMETER:options"
+    },
+    {
       "from": "SCOPE:authFetch:body",
       "type": "CONTAINS",
       "to": "BRANCH:"
