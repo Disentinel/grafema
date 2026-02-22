@@ -341,6 +341,41 @@ const myFoo = new Foo();
         await backend.close();
       }
     });
+
+    it('should create VARIABLE node for const x = new SomeService() in ASTWorker parallel path (REG-567)', async () => {
+      // REG-567: ASTWorker.ts had `isNewExpr` in the `shouldBeConstant` condition,
+      // causing `const x = new Foo()` to produce a CONSTANT node instead of VARIABLE.
+      // The fix removes `isNewExpr` from `shouldBeConstant` so that NewExpression
+      // initializers always produce VARIABLE nodes (object instances are mutable).
+      const { backend } = await setupTest({
+        'index.js': `
+class SomeService {
+  constructor() {
+    this.ready = false;
+  }
+  init() {
+    this.ready = true;
+  }
+}
+const myService = new SomeService();
+        `
+      });
+
+      try {
+        const allNodes = await backend.getAllNodes();
+        const myService = allNodes.find(n => n.name === 'myService');
+
+        assert.ok(myService, 'Node "myService" not found in graph');
+        assert.strictEqual(
+          myService.type, 'VARIABLE',
+          `REG-567: "const myService = new SomeService()" must create VARIABLE node, not CONSTANT. ` +
+          `NewExpression initializers produce mutable object instances, so shouldBeConstant must be false. ` +
+          `Got ${myService.type}`
+        );
+      } finally {
+        await backend.close();
+      }
+    });
   });
 
   describe('Arrow Function Assignments', () => {

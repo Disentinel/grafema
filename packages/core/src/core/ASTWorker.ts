@@ -348,7 +348,7 @@ function parseModule(filePath: string, relativeFile: string, moduleId: string, m
           const literalValue = ExpressionEvaluator.extractLiteralValue(decl.init);
           const isLiteral = literalValue !== null;
           const isNewExpr = decl.init?.type === 'NewExpression';
-          const shouldBeConstant = isConst && (isLiteral || isNewExpr);
+          const shouldBeConstant = isConst && isLiteral;
 
           // Generate semantic ID using ScopeTracker
           const nodeType = shouldBeConstant ? 'CONSTANT' : 'VARIABLE';
