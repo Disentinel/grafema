@@ -143,15 +143,38 @@ Human (you):
   → approve batch → release
 ```
 
+## Staged Rollout
+
+### Stage 1: SWE-bench Mini (POC)
+
+Start with [SWE-bench Mini](https://github.com/anthropics/swe-bench) — a curated subset of SWE-bench Verified.
+
+**Why SWE-bench Mini first:**
+- No GitHub crawler needed — tasks and ground truth are ready
+- Known public baselines — compare not just A vs B internally, but against published scores from other agents
+- Already decontaminated and validated — no need to filter "graph-solvable"
+- Less infrastructure for POC — Codex has a simpler target
+
+**What a result looks like:**
+> "Agent with Grafema solves X% of SWE-bench Mini vs Y% without. Delta = Z%."
+
+This is a concrete, externally verifiable number — useful for Early Access pitch.
+
+### Stage 2: Open-Source GitHub Corpus (Production)
+
+Once the A/B infrastructure is proven on Mini, switch to continuous crawling of real GitHub closed issues for gap discovery. This is where the self-improving loop runs 24/7 and finds language constructions that Grafema doesn't yet support.
+
+The transition criteria: SWE-bench Mini delta is measurable and reproducible.
+
 ## POC Validation Steps
 
-1. Pick one closed issue from a JS/TS repo manually (with PR = ground truth)
-2. Run agent A: Ollama, no MCP, "here's the repo and bug, fix it"
-3. Run agent B: Ollama + Grafema MCP, same prompt
-4. Compare both solutions to real fix (visual inspection is fine for POC)
-5. Log: what did B query, what did it get back, where was the graph empty
+1. Run SWE-bench Mini task through agent A (Ollama, no MCP)
+2. Run same task through agent B (Ollama + Grafema MCP)
+3. Compare both solutions to ground truth fix
+4. Log: what did B query, what did it get back, where was the graph empty
+5. Repeat for 10–20 tasks, compute solve rate delta
 
-If there's a visible difference on one bug — architecture is validated.
+If delta is non-zero and consistent — architecture is validated, move to Stage 2.
 
 ## Prior Art
 
