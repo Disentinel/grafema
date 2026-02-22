@@ -303,7 +303,6 @@ export interface CallSiteInfo {
   endColumn?: number;
   parentScopeId?: string;
   targetFunctionName?: string;
-  isNew?: boolean;
   /** REG-332: Annotation to suppress strict mode errors */
   grafemaIgnore?: GrafemaIgnoreAnnotation;
   /** REG-311: true if wrapped in await expression */
@@ -331,7 +330,6 @@ export interface MethodCallInfo {
   endColumn?: number;
   parentScopeId?: string;
   arguments?: unknown[];
-  isNew?: boolean;
   /** REG-332: Annotation to suppress strict mode errors */
   grafemaIgnore?: GrafemaIgnoreAnnotation;
   /** REG-311: true if wrapped in await expression */

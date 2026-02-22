@@ -21,6 +21,7 @@ const WORKER_SCRIPT = join(__dirname, 'ASTWorker.js');
 export interface ModuleInfo {
   id: string;
   file: string;
+  relativeFile: string;
   name: string;
 }
 
@@ -30,6 +31,7 @@ export interface ModuleInfo {
 interface ParseTask {
   taskId: number;
   filePath: string;
+  relativeFile: string;
   moduleId: string;
   moduleName: string;
   resolve: (collections: ASTCollections) => void;
@@ -145,10 +147,10 @@ export class ASTWorkerPool extends EventEmitter {
    * Parse a module using a worker thread
    * Returns promise that resolves to collections
    */
-  parseModule(filePath: string, moduleId: string, moduleName: string): Promise<ASTCollections> {
+  parseModule(filePath: string, moduleId: string, moduleName: string, relativeFile: string): Promise<ASTCollections> {
     return new Promise((resolve, reject) => {
       const taskId = this.taskIdCounter++;
-      const task: ParseTask = { taskId, filePath, moduleId, moduleName, resolve, reject };
+      const task: ParseTask = { taskId, filePath, relativeFile, moduleId, moduleName, resolve, reject };
 
       this.pendingTasks.set(taskId, task);
 
@@ -164,7 +166,7 @@ export class ASTWorkerPool extends EventEmitter {
     await this.init();
 
     const promises = modules.map(m =>
-      this.parseModule(m.file, m.id, m.name)
+      this.parseModule(m.file, m.id, m.name, m.relativeFile)
         .then(collections => ({ module: m, collections, error: null }))
         .catch(error => ({ module: m, collections: null, error: error instanceof Error ? error : new Error(String(error)) }))
     );
@@ -182,6 +184,7 @@ export class ASTWorkerPool extends EventEmitter {
         type: 'parse',
         taskId: task.taskId,
         filePath: task.filePath,
+        relativeFile: task.relativeFile,
         moduleId: task.moduleId,
         moduleName: task.moduleName
       });
@@ -229,6 +232,7 @@ export class ASTWorkerPool extends EventEmitter {
         type: 'parse',
         taskId: nextTask.taskId,
         filePath: nextTask.filePath,
+        relativeFile: nextTask.relativeFile,
         moduleId: nextTask.moduleId,
         moduleName: nextTask.moduleName
       });

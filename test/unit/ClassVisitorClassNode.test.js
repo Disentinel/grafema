@@ -16,7 +16,7 @@
 
 import { describe, it, after, beforeEach } from 'node:test';
 import assert from 'node:assert';
-import { join } from 'path';
+import { join, dirname } from 'path';
 import { writeFileSync, mkdirSync } from 'fs';
 import { tmpdir } from 'os';
 
@@ -44,9 +44,11 @@ async function setupTest(backend, files) {
     })
   );
 
-  // Create test files
+  // Create test files (supports nested paths like 'src/Service.js')
   for (const [filename, content] of Object.entries(files)) {
-    writeFileSync(join(testDir, filename), content);
+    const filePath = join(testDir, filename);
+    mkdirSync(dirname(filePath), { recursive: true });
+    writeFileSync(filePath, content);
   }
 
   const orchestrator = createTestOrchestrator(backend);
@@ -496,6 +498,250 @@ class Order {}
       assert.notStrictEqual(userNode.id, productNode.id, 'User and Product IDs should differ');
       assert.notStrictEqual(userNode.id, orderNode.id, 'User and Order IDs should differ');
       assert.notStrictEqual(productNode.id, orderNode.id, 'Product and Order IDs should differ');
+    });
+  });
+
+  // ===========================================================================
+  // REG-551: CLASS node file field stores relative path, not basename
+  // ===========================================================================
+
+  describe('CLASS node file field (REG-551)', () => {
+    it('should store relative path in file field, not basename, when class is in subdirectory', async () => {
+      // The bug: CLASS nodes store file = "Service.js" (basename)
+      // instead of file = "src/Service.js" (relative path from project root).
+      // This breaks getAllNodes({ file: relPath }) queries.
+      //
+      // To expose the bug, the class MUST be in a subdirectory so that
+      // basename ("Service.js") differs from relative path ("src/Service.js").
+      await setupTest(backend, {
+        'index.js': `
+import { Service } from './src/Service.js';
+        `,
+        'src/Service.js': `
+export class Service {
+  process() {
+    return 42;
+  }
+}
+        `
+      });
+
+      const allNodes = await backend.getAllNodes();
+      const classNode = allNodes.find(n =>
+        n.name === 'Service' && n.type === 'CLASS'
+      );
+
+      assert.ok(classNode, 'CLASS node "Service" not found');
+
+      // The fix: file field must be the relative path from project root
+      assert.strictEqual(
+        classNode.file,
+        'src/Service.js',
+        'CLASS node file should be relative path from project root, not basename'
+      );
+
+      // Explicitly assert it is NOT the basename (the bug)
+      assert.notStrictEqual(
+        classNode.file,
+        'Service.js',
+        'CLASS node file must NOT be basename only — that is the REG-551 bug'
+      );
+    });
+
+    it('should store relative path for class in deeply nested directory', async () => {
+      // Deeper nesting makes the bug even more obvious:
+      // basename = "Controller.js", relative = "src/api/controllers/Controller.js"
+      await setupTest(backend, {
+        'index.js': `
+import { Controller } from './src/api/controllers/Controller.js';
+        `,
+        'src/api/controllers/Controller.js': `
+export class Controller {
+  handle() {}
+}
+        `
+      });
+
+      const allNodes = await backend.getAllNodes();
+      const classNode = allNodes.find(n =>
+        n.name === 'Controller' && n.type === 'CLASS'
+      );
+
+      assert.ok(classNode, 'CLASS node "Controller" not found');
+
+      assert.strictEqual(
+        classNode.file,
+        'src/api/controllers/Controller.js',
+        'CLASS node file should preserve full relative path for deeply nested files'
+      );
+
+      assert.notStrictEqual(
+        classNode.file,
+        'Controller.js',
+        'CLASS node file must NOT be basename only'
+      );
+    });
+
+    it('should store filename without path for class at project root', async () => {
+      // When the file IS at the root, basename === relative path.
+      // This is a regression guard: the fix must not break root-level classes.
+      await setupTest(backend, {
+        'index.js': `
+class RootService {
+  run() {}
+}
+        `
+      });
+
+      const allNodes = await backend.getAllNodes();
+      const classNode = allNodes.find(n =>
+        n.name === 'RootService' && n.type === 'CLASS'
+      );
+
+      assert.ok(classNode, 'CLASS node "RootService" not found');
+
+      // At root level, relative path = filename = "index.js"
+      assert.strictEqual(
+        classNode.file,
+        'index.js',
+        'CLASS node file for root-level class should be just the filename'
+      );
+    });
+
+    it('should use relative path in semantic ID for subdirectory class', async () => {
+      // Semantic ID format: {file}->{scope_path}->CLASS->{name}
+      // If file is relative path, the ID should include it
+      await setupTest(backend, {
+        'index.js': `
+import { Widget } from './src/Widget.js';
+        `,
+        'src/Widget.js': `
+export class Widget {
+  render() {}
+}
+        `
+      });
+
+      const allNodes = await backend.getAllNodes();
+      const classNode = allNodes.find(n =>
+        n.name === 'Widget' && n.type === 'CLASS'
+      );
+
+      assert.ok(classNode, 'CLASS node "Widget" not found');
+
+      // Semantic ID should use relative path
+      assert.ok(
+        classNode.id.startsWith('src/Widget.js->'),
+        `Semantic ID should start with relative path "src/Widget.js->", got: ${classNode.id}`
+      );
+
+      // Should NOT start with just basename
+      assert.ok(
+        !classNode.id.startsWith('Widget.js->'),
+        `Semantic ID must NOT start with basename "Widget.js->", got: ${classNode.id}`
+      );
+    });
+  });
+
+  // ===========================================================================
+  // REG-551: MutationBuilder downstream — this.prop = value with subdirectory classes
+  // ===========================================================================
+
+  describe('MutationBuilder downstream (REG-551)', () => {
+    it('should create FLOWS_INTO edge for this.prop = value when class is in subdirectory', async () => {
+      // MutationBuilder uses classDeclarations.find(c => c.file === ...) to locate
+      // the CLASS node as the FLOWS_INTO destination for this.prop = value patterns.
+      //
+      // Before the fix: MutationBuilder used basename(file) to compare with
+      // classDeclaration.file (which stored basename). After the fix, both sides
+      // should use relative paths. This test verifies the edge is still created.
+      await setupTest(backend, {
+        'index.js': `
+import { Config } from './src/Config.js';
+        `,
+        'src/Config.js': `
+export class Config {
+  constructor(handler) {
+    this.handler = handler;
+  }
+}
+        `
+      });
+
+      const allNodes = await backend.getAllNodes();
+      const allEdges = await backend.getAllEdges();
+
+      // Find the CLASS node
+      const classNode = allNodes.find(n =>
+        n.type === 'CLASS' && n.name === 'Config'
+      );
+      assert.ok(classNode, 'CLASS "Config" not found');
+
+      // Find the handler parameter
+      const handlerParam = allNodes.find(n =>
+        n.name === 'handler' && n.type === 'PARAMETER'
+      );
+      assert.ok(handlerParam, 'PARAMETER "handler" not found');
+
+      // Find FLOWS_INTO edge from handler PARAMETER to CLASS
+      const flowsInto = allEdges.find(e =>
+        e.type === 'FLOWS_INTO' &&
+        e.src === handlerParam.id &&
+        e.dst === classNode.id
+      );
+
+      assert.ok(
+        flowsInto,
+        `Expected FLOWS_INTO edge from handler to Config class (in subdirectory). ` +
+        `classNode.file="${classNode.file}", classNode.id="${classNode.id}". ` +
+        `FLOWS_INTO edges found: ${JSON.stringify(allEdges.filter(e => e.type === 'FLOWS_INTO'))}`
+      );
+
+      // Verify metadata
+      assert.strictEqual(flowsInto.mutationType, 'this_property', 'Edge should have mutationType: this_property');
+      assert.strictEqual(flowsInto.propertyName, 'handler', 'Edge should have propertyName: handler');
+    });
+
+    it('should create FLOWS_INTO edges for multiple this.prop assignments in subdirectory class', async () => {
+      await setupTest(backend, {
+        'index.js': `
+import { Service } from './src/deep/Service.js';
+        `,
+        'src/deep/Service.js': `
+export class Service {
+  constructor(db, cache, logger) {
+    this.db = db;
+    this.cache = cache;
+    this.logger = logger;
+  }
+}
+        `
+      });
+
+      const allNodes = await backend.getAllNodes();
+      const allEdges = await backend.getAllEdges();
+
+      const classNode = allNodes.find(n => n.type === 'CLASS' && n.name === 'Service');
+      assert.ok(classNode, 'CLASS "Service" not found');
+
+      // Verify class file is relative path (not basename)
+      assert.strictEqual(classNode.file, 'src/deep/Service.js', 'CLASS file should be relative path');
+
+      // Find all FLOWS_INTO edges to the class with mutationType: this_property
+      const flowsIntoEdges = allEdges.filter(e =>
+        e.type === 'FLOWS_INTO' &&
+        e.dst === classNode.id &&
+        e.mutationType === 'this_property'
+      );
+
+      assert.strictEqual(flowsIntoEdges.length, 3, 'Expected 3 FLOWS_INTO edges for this.db, this.cache, this.logger');
+
+      const propertyNames = flowsIntoEdges.map(e => e.propertyName).sort();
+      assert.deepStrictEqual(
+        propertyNames,
+        ['cache', 'db', 'logger'],
+        'Should have FLOWS_INTO edges for all three this.prop assignments'
+      );
     });
   });
 });
