@@ -21,9 +21,10 @@
 import { describe, it, before, after } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { spawn, ChildProcess } from 'node:child_process';
-import { existsSync, rmSync, mkdirSync } from 'node:fs';
+import { existsSync, rmSync, mkdirSync, mkdtempSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { tmpdir } from 'node:os';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -32,8 +33,9 @@ const __dirname = dirname(__filename);
 // Test configuration
 const TEST_WS_PORT = 17474; // High port to avoid conflicts
 const TEST_WS_URL = `ws://127.0.0.1:${TEST_WS_PORT}`;
-const TEST_DB_PATH = '/tmp/rfdb-ws-test-db';
-const TEST_SOCKET_PATH = '/tmp/rfdb-ws-test.sock';
+const testDir = mkdtempSync(join(tmpdir(), 'rfdb-ws-'));
+const TEST_DB_PATH = join(testDir, 'graph.rfdb');
+const TEST_SOCKET_PATH = join(testDir, 'rfdb.sock');
 const SERVER_BINARY = join(__dirname, '../../packages/rfdb-server/target/debug/rfdb-server');
 
 /**
@@ -56,15 +58,6 @@ describe('RFDB WebSocket Integration', { skip: !canRunTests() ? 'rfdb-server bin
   let serverProcess: ChildProcess | null = null;
 
   before(async () => {
-    // Clean up any previous test data
-    if (existsSync(TEST_DB_PATH)) {
-      rmSync(TEST_DB_PATH, { recursive: true, force: true });
-    }
-    if (existsSync(TEST_SOCKET_PATH)) {
-      rmSync(TEST_SOCKET_PATH, { force: true });
-    }
-    mkdirSync(TEST_DB_PATH, { recursive: true });
-
     // Start server with both Unix socket and WebSocket
     serverProcess = spawn(SERVER_BINARY, [
       TEST_DB_PATH,
@@ -103,13 +96,8 @@ describe('RFDB WebSocket Integration', { skip: !canRunTests() ? 'rfdb-server bin
       try { serverProcess.kill('SIGKILL'); } catch { /* ignore */ }
     }
 
-    // Clean up
-    if (existsSync(TEST_DB_PATH)) {
-      rmSync(TEST_DB_PATH, { recursive: true, force: true });
-    }
-    if (existsSync(TEST_SOCKET_PATH)) {
-      rmSync(TEST_SOCKET_PATH, { force: true });
-    }
+    // Clean up temp directory
+    rmSync(testDir, { recursive: true, force: true });
   });
 
   // ===========================================================================

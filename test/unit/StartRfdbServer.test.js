@@ -438,3 +438,164 @@ describe('startRfdbServer', () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// checkExistingServer tests (RFD-43)
+//
+// Uses dynamic import so that if checkExistingServer is not yet exported,
+// existing startRfdbServer tests are not broken by a failed static import.
+// ---------------------------------------------------------------------------
+
+// Eagerly try to import checkExistingServer; set to null if not available yet
+let _checkExistingServer = null;
+try {
+  const _mod = await import('../../packages/core/dist/utils/startRfdbServer.js');
+  _checkExistingServer = _mod.checkExistingServer ?? null;
+} catch {
+  // Module not built yet or export missing — tests will be skipped below
+}
+
+describe('checkExistingServer', { skip: !_checkExistingServer ? 'checkExistingServer not yet exported' : false }, () => {
+  const checkExistingServer = _checkExistingServer;
+  const pidPath = join(testDir, 'rfdb.pid');
+  const socketPath = join(testDir, 'rfdb.sock');
+
+  it('returns none when pid file absent', async () => {
+    const result = await checkExistingServer(pidPath, socketPath, {
+      existsSync: () => false,
+      readFileSync: () => { throw new Error('should not be called'); },
+      killProcess: () => { throw new Error('should not be called'); },
+    });
+
+    assert.strictEqual(result, 'none',
+      'Should return "none" when PID file does not exist');
+  });
+
+  it('returns alive when pid is live and socket exists', async () => {
+    const fakePid = 12345;
+
+    const result = await checkExistingServer(pidPath, socketPath, {
+      existsSync: (path) => {
+        if (path === pidPath) return true;
+        if (path === socketPath) return true;
+        return false;
+      },
+      readFileSync: (path) => {
+        if (path === pidPath) return String(fakePid);
+        throw new Error(`Unexpected readFileSync: ${path}`);
+      },
+      killProcess: (pid, signal) => {
+        // process.kill(pid, 0) returns true if process is alive
+        assert.strictEqual(pid, fakePid, 'Should check the PID from file');
+        assert.strictEqual(signal, 0, 'Should use signal 0 for liveness check');
+        return true;
+      },
+    });
+
+    assert.strictEqual(result, 'alive',
+      'Should return "alive" when PID is live and socket exists');
+  });
+
+  it('returns stale when pid is dead (ESRCH)', async () => {
+    const result = await checkExistingServer(pidPath, socketPath, {
+      existsSync: (path) => path === pidPath,
+      readFileSync: () => '99999',
+      killProcess: () => {
+        const err = new Error('kill ESRCH');
+        err.code = 'ESRCH';
+        throw err;
+      },
+    });
+
+    assert.strictEqual(result, 'stale',
+      'Should return "stale" when process.kill throws ESRCH (process is dead)');
+  });
+
+  it('returns stale when pid <= 0 (guards against kill(0) / kill(-1))', async () => {
+    // PID 0 would signal the entire process group
+    const resultZero = await checkExistingServer(pidPath, socketPath, {
+      existsSync: (path) => path === pidPath,
+      readFileSync: () => '0',
+      killProcess: () => { throw new Error('should not be called for pid 0'); },
+    });
+
+    assert.strictEqual(resultZero, 'stale',
+      'Should return "stale" for PID 0 (would signal entire process group)');
+
+    // PID -1 would signal all processes owned by the user
+    const resultNeg = await checkExistingServer(pidPath, socketPath, {
+      existsSync: (path) => path === pidPath,
+      readFileSync: () => '-1',
+      killProcess: () => { throw new Error('should not be called for negative pid'); },
+    });
+
+    assert.strictEqual(resultNeg, 'stale',
+      'Should return "stale" for negative PID (would signal all user processes)');
+  });
+
+  it('returns stale when readFileSync throws EACCES', async () => {
+    const result = await checkExistingServer(pidPath, socketPath, {
+      existsSync: (path) => path === pidPath,
+      readFileSync: () => {
+        const err = new Error('EACCES: permission denied');
+        err.code = 'EACCES';
+        throw err;
+      },
+      killProcess: () => { throw new Error('should not be called'); },
+    });
+
+    assert.strictEqual(result, 'stale',
+      'Should return "stale" when PID file is unreadable (EACCES)');
+  });
+
+  it('returns stale when pid file contains NaN', async () => {
+    const result = await checkExistingServer(pidPath, socketPath, {
+      existsSync: (path) => path === pidPath,
+      readFileSync: () => 'not-a-number',
+      killProcess: () => { throw new Error('should not be called'); },
+    });
+
+    assert.strictEqual(result, 'stale',
+      'Should return "stale" when PID file contains non-numeric content');
+  });
+
+  it('returns stale when process alive but socket absent', async () => {
+    const result = await checkExistingServer(pidPath, socketPath, {
+      existsSync: (path) => {
+        if (path === pidPath) return true;
+        if (path === socketPath) return false; // socket does not exist
+        return false;
+      },
+      readFileSync: () => '12345',
+      killProcess: (pid, signal) => {
+        // Process is alive but socket is gone (partially crashed server)
+        return true;
+      },
+    });
+
+    assert.strictEqual(result, 'stale',
+      'Should return "stale" when PID is alive but socket file is absent');
+  });
+
+  it('re-throws non-ESRCH errors from kill', async () => {
+    // checkExistingServer is synchronous, so use assert.throws (not assert.rejects)
+    assert.throws(
+      () => checkExistingServer(pidPath, socketPath, {
+        existsSync: (path) => path === pidPath,
+        readFileSync: () => '12345',
+        killProcess: () => {
+          const err = new Error('kill EPERM');
+          err.code = 'EPERM';
+          throw err;
+        },
+      }),
+      (err) => {
+        assert.ok(err instanceof Error, 'Should throw an Error');
+        assert.strictEqual(err.code, 'EPERM',
+          'Should re-throw the original error with its code');
+        return true;
+      },
+      'Should re-throw non-ESRCH errors from process.kill'
+    );
+  });
+});
