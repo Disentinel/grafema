@@ -6,7 +6,6 @@
  * bufferVariableReassignmentEdges (REG-422).
  */
 
-import { basename } from 'path';
 import { NodeFactory } from '../../../../core/NodeFactory.js';
 import type {
   ModuleNode,
@@ -195,17 +194,15 @@ export class MutationBuilder implements DomainBuilder {
         // REG-152: 'this' mutations - find the CLASS node (or constructor FUNCTION for REG-557)
         if (!enclosingClassName) continue;  // Skip if no class context (e.g., standalone function)
 
-        const fileBasename = basename(file);
-
         // REG-557: Constructor this.prop = value flows to constructor FUNCTION node
         if (enclosingFunctionName === 'constructor') {
-          const constructorFn = functions.find(f => f.isClassMethod && f.className === enclosingClassName && f.name === 'constructor' && f.file === fileBasename);
+          const constructorFn = functions.find(f => f.isClassMethod && f.className === enclosingClassName && f.name === 'constructor' && f.file === file);
           objectNodeId = constructorFn?.id ?? null;
         }
 
         // For non-constructor methods, or if constructor FUNCTION not found, use CLASS node
         if (!objectNodeId) {
-          const classDecl = classDeclarations.find(c => c.name === enclosingClassName && c.file === fileBasename);
+          const classDecl = classDeclarations.find(c => c.name === enclosingClassName && c.file === file);
           objectNodeId = classDecl?.id ?? null;
         }
 

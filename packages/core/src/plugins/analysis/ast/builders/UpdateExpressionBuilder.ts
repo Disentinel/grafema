@@ -4,7 +4,6 @@
  * Handles: increment/decrement operations for identifiers and member expressions.
  */
 
-import { basename } from 'path';
 import type {
   ModuleNode,
   VariableDeclarationInfo,
@@ -194,18 +193,16 @@ export class UpdateExpressionBuilder implements DomainBuilder {
       // this.prop++ - follow REG-152 pattern from bufferObjectMutationEdges
       if (!enclosingClassName) return;
 
-      const fileBasename = basename(file);
-
       // REG-557: Constructor this.prop++ targets constructor FUNCTION node
       if (enclosingFunctionName === 'constructor') {
-        const constructorFn = functions.find(f => f.isClassMethod && f.className === enclosingClassName && f.name === 'constructor' && f.file === fileBasename);
+        const constructorFn = functions.find(f => f.isClassMethod && f.className === enclosingClassName && f.name === 'constructor' && f.file === file);
         objectNodeId = constructorFn?.id ?? null;
       }
 
       // For non-constructor methods, or if constructor FUNCTION not found, use CLASS node
       if (!objectNodeId) {
         const classDecl = classDeclarations.find(c =>
-          c.name === enclosingClassName && c.file === fileBasename
+          c.name === enclosingClassName && c.file === file
         );
         objectNodeId = classDecl?.id ?? null;
       }
