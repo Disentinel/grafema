@@ -41,6 +41,39 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use crate::graph::{GraphEngine, GraphEngineV2, GraphStore};
 use crate::error::{GraphError, Result};
 
+/// Try to acquire an advisory flock on `db_path/LOCK`.
+///
+/// Returns `Some(file)` on Unix when the lock is acquired (caller must keep
+/// the File alive for the lock duration -- dropping releases the lock).
+/// Returns `None` on non-Unix platforms (no-op).
+///
+/// # Errors
+/// - `GraphError::DatabaseLocked` if another process holds the lock
+/// - `GraphError::Io` on filesystem errors
+#[cfg(unix)]
+fn try_lock_db_dir(db_path: &std::path::Path) -> Result<Option<std::fs::File>> {
+    use std::os::unix::io::AsRawFd;
+
+    std::fs::create_dir_all(db_path)?;
+    let lock_path = db_path.join("LOCK");
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .open(&lock_path)?;
+    let ret = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+    if ret != 0 {
+        return Err(GraphError::DatabaseLocked(
+            lock_path.display().to_string()
+        ));
+    }
+    Ok(Some(file))
+}
+
+#[cfg(not(unix))]
+fn try_lock_db_dir(_db_path: &std::path::Path) -> Result<Option<std::fs::File>> {
+    Ok(None) // No locking on non-Unix platforms
+}
+
 /// Unique identifier for a client connection
 pub type ClientId = usize;
 
@@ -94,6 +127,10 @@ pub struct Database {
     pub ephemeral: bool,
     /// Number of active connections to this database
     connection_count: AtomicUsize,
+    /// Advisory file lock on the database directory (Unix only).
+    /// Held for the lifetime of the Database to prevent concurrent access
+    /// from multiple server processes. Dropping releases the lock.
+    _lock: Option<std::fs::File>,
 }
 
 impl Database {
@@ -104,6 +141,18 @@ impl Database {
             engine: RwLock::new(engine),
             ephemeral,
             connection_count: AtomicUsize::new(0),
+            _lock: None,
+        }
+    }
+
+    /// Create a new database entry with an advisory lock held
+    fn new_with_lock(name: String, engine: Box<dyn GraphStore>, ephemeral: bool, lock: Option<std::fs::File>) -> Self {
+        Self {
+            name,
+            engine: RwLock::new(engine),
+            ephemeral,
+            connection_count: AtomicUsize::new(0),
+            _lock: lock,
         }
     }
 
@@ -221,14 +270,15 @@ impl DatabaseManager {
             return Err(GraphError::DatabaseExists(name.to_string()));
         }
 
-        let engine: Box<dyn GraphStore> = if ephemeral {
-            Box::new(GraphEngineV2::create_ephemeral())
+        let (engine, lock): (Box<dyn GraphStore>, Option<std::fs::File>) = if ephemeral {
+            (Box::new(GraphEngineV2::create_ephemeral()), None)
         } else {
             let db_path = self.base_path.join(format!("{}.rfdb", name));
-            Box::new(GraphEngineV2::create(&db_path)?)
+            let lock = try_lock_db_dir(&db_path)?;
+            (Box::new(GraphEngineV2::create(&db_path)?), lock)
         };
 
-        let database = Arc::new(Database::new(name.to_string(), engine, ephemeral));
+        let database = Arc::new(Database::new_with_lock(name.to_string(), engine, ephemeral, lock));
         databases.insert(name.to_string(), database);
 
         Ok(())
@@ -304,6 +354,8 @@ impl DatabaseManager {
     /// Legacy clients that don't use the new protocol automatically
     /// connect to this "default" database.
     pub fn create_default_from_path(&self, db_path: &PathBuf) -> Result<()> {
+        let lock = try_lock_db_dir(db_path)?;
+
         let engine: Box<dyn GraphStore> = if db_path.join("nodes.bin").exists() {
             // v1 database detected — open with v1 engine
             Box::new(GraphEngine::open(db_path)?)
@@ -315,7 +367,7 @@ impl DatabaseManager {
             Box::new(GraphEngineV2::create(db_path)?)
         };
 
-        let database = Arc::new(Database::new("default".to_string(), engine, false));
+        let database = Arc::new(Database::new_with_lock("default".to_string(), engine, false, lock));
 
         let mut databases = self.databases.write().unwrap();
         databases.insert("default".to_string(), database);
@@ -760,5 +812,105 @@ mod access_mode_tests {
     fn test_access_mode_is_write() {
         assert!(AccessMode::ReadWrite.is_write());
         assert!(!AccessMode::ReadOnly.is_write());
+    }
+}
+
+// ============================================================================
+// Database Locking Tests (RFD-43)
+// ============================================================================
+
+#[cfg(test)]
+mod locking_tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    /// Verify that try_lock_db_dir succeeds on a fresh (existing) directory
+    /// and returns a File handle that keeps the lock alive.
+    #[test]
+    fn test_lock_acquired_on_new_database() {
+        let dir = tempdir().unwrap();
+        let db_dir = dir.path().join("test.rfdb");
+        std::fs::create_dir_all(&db_dir).unwrap();
+
+        let lock = try_lock_db_dir(&db_dir);
+        assert!(lock.is_ok(), "Lock should be acquired on a new database directory");
+
+        // LOCK file should exist inside the db directory
+        assert!(db_dir.join("LOCK").exists(), "LOCK sentinel file should be created");
+    }
+
+    /// Verify that acquiring the lock a second time on the same directory fails
+    /// with DatabaseLocked while the first lock is still held.
+    #[test]
+    fn test_lock_prevents_second_open() {
+        let dir = tempdir().unwrap();
+        let db_dir = dir.path().join("test.rfdb");
+        std::fs::create_dir_all(&db_dir).unwrap();
+
+        let _lock1 = try_lock_db_dir(&db_dir).expect("First lock should succeed");
+
+        let lock2 = try_lock_db_dir(&db_dir);
+        assert!(lock2.is_err(), "Second lock on same directory should fail");
+        assert!(
+            matches!(lock2.unwrap_err(), GraphError::DatabaseLocked(_)),
+            "Error should be DatabaseLocked"
+        );
+    }
+
+    /// Verify that dropping the lock file handle releases the flock,
+    /// allowing a new lock to be acquired on the same directory.
+    #[test]
+    fn test_lock_released_on_drop() {
+        let dir = tempdir().unwrap();
+        let db_dir = dir.path().join("test.rfdb");
+        std::fs::create_dir_all(&db_dir).unwrap();
+
+        {
+            let _lock = try_lock_db_dir(&db_dir).expect("First lock should succeed");
+            // _lock is dropped at end of this block
+        }
+
+        // After drop, a new lock should be acquirable
+        let lock2 = try_lock_db_dir(&db_dir);
+        assert!(lock2.is_ok(), "Lock should be re-acquirable after previous lock is dropped");
+    }
+
+    /// Verify that try_lock_db_dir creates the directory (via create_dir_all)
+    /// if it does not already exist, then acquires the lock.
+    /// This tests the Gap 1 fix from Dijkstra's review: the function must
+    /// handle non-existent directories gracefully.
+    #[test]
+    fn test_lock_creates_dir_if_absent() {
+        let dir = tempdir().unwrap();
+        let db_dir = dir.path().join("nonexistent").join("nested.rfdb");
+
+        // Directory should not exist yet
+        assert!(!db_dir.exists(), "Directory should not exist before lock");
+
+        let lock = try_lock_db_dir(&db_dir);
+        assert!(lock.is_ok(), "Lock should succeed even when directory is absent (creates it)");
+
+        // Both the directory and LOCK file should now exist
+        assert!(db_dir.exists(), "Directory should be created");
+        assert!(db_dir.join("LOCK").exists(), "LOCK file should be created inside new directory");
+    }
+
+    /// Verify that ephemeral databases do not create a LOCK file.
+    /// Ephemeral databases are in-memory only and should not touch the filesystem
+    /// for locking purposes.
+    #[test]
+    fn test_no_lock_for_ephemeral_database() {
+        let dir = tempdir().unwrap();
+        let manager = DatabaseManager::new(dir.path().to_path_buf());
+
+        manager.create_database("ephemeral-test", true).unwrap();
+
+        // No LOCK file should exist anywhere in the base path for ephemeral DBs
+        let ephemeral_db_path = dir.path().join("ephemeral-test.rfdb");
+        let lock_path = ephemeral_db_path.join("LOCK");
+        assert!(
+            !lock_path.exists(),
+            "Ephemeral database should NOT create a LOCK file"
+        );
     }
 }
