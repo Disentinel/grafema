@@ -1036,4 +1036,320 @@ function foo(a, b, ...rest) {
       );
     });
   });
+
+  // ===========================================================================
+  // GROUP 13: PARAMETER Node Column Positions (REG-550)
+  // ===========================================================================
+
+  describe('PARAMETER node column positions (REG-550)', () => {
+    it('should store correct column for simple identifier params', async () => {
+      // 0         1
+      // 0123456789012345678
+      // function foo(p, q) {
+      //              ^  ^
+      //              13 16
+      await setupTest(backend, {
+        'index.js': 'function foo(p, q) {\n  return p + q;\n}\n'
+      });
+
+      const paramNodes = await getNodesByType(backend, 'PARAMETER');
+      const pParam = paramNodes.find((n: NodeRecord) => n.name === 'p');
+      const qParam = paramNodes.find((n: NodeRecord) => n.name === 'q');
+
+      assert.ok(pParam, 'Should have PARAMETER node for p');
+      assert.ok(qParam, 'Should have PARAMETER node for q');
+
+      assert.strictEqual(
+        pParam.column,
+        13,
+        'p should be at column 13'
+      );
+      assert.strictEqual(
+        qParam.column,
+        16,
+        'q should be at column 16'
+      );
+    });
+
+    it('should store correct column for default value param (identifier before = sign)', async () => {
+      // 0         1         2
+      // 0123456789012345678901234567
+      // function foo(options = {}) {
+      //              ^
+      //              13
+      await setupTest(backend, {
+        'index.js': 'function foo(options = {}) {\n  return options;\n}\n'
+      });
+
+      const paramNodes = await getNodesByType(backend, 'PARAMETER');
+      const optionsParam = paramNodes.find((n: NodeRecord) => n.name === 'options');
+
+      assert.ok(optionsParam, 'Should have PARAMETER node for options');
+      assert.strictEqual(
+        optionsParam.column,
+        13,
+        'options should be at column 13 (the identifier, not the = sign)'
+      );
+    });
+
+    it('should store correct column for rest param (identifier after ...)', async () => {
+      // 0         1         2
+      // 01234567890123456789012
+      // function foo(...args) {
+      //                 ^
+      //                 16
+      await setupTest(backend, {
+        'index.js': 'function foo(...args) {\n  return args;\n}\n'
+      });
+
+      const paramNodes = await getNodesByType(backend, 'PARAMETER');
+      const argsParam = paramNodes.find((n: NodeRecord) => n.name === 'args');
+
+      assert.ok(argsParam, 'Should have PARAMETER node for args');
+      assert.strictEqual(
+        argsParam.column,
+        16,
+        'args should be at column 16 (the identifier after ...)'
+      );
+    });
+
+    it('should store correct column for arrow function param', async () => {
+      // 0         1
+      // 012345678901234567
+      // const f = p => p;
+      //           ^
+      //           10
+      await setupTest(backend, {
+        'index.js': 'const f = p => p;\n'
+      });
+
+      const paramNodes = await getNodesByType(backend, 'PARAMETER');
+      const pParam = paramNodes.find((n: NodeRecord) => n.name === 'p');
+
+      assert.ok(pParam, 'Should have PARAMETER node for p');
+      assert.strictEqual(
+        pParam.column,
+        10,
+        'p should be at column 10'
+      );
+    });
+
+    it('should store correct column for each property in object destructuring', async () => {
+      // 0         1         2
+      // 01234567890123456789012345
+      // function foo({ x, y }) {
+      //                ^  ^
+      //                15 18
+      await setupTest(backend, {
+        'index.js': 'function foo({ x, y }) {\n  return x + y;\n}\n'
+      });
+
+      const paramNodes = await getNodesByType(backend, 'PARAMETER');
+      const xParam = paramNodes.find((n: NodeRecord) => n.name === 'x');
+      const yParam = paramNodes.find((n: NodeRecord) => n.name === 'y');
+
+      assert.ok(xParam, 'Should have PARAMETER node for x');
+      assert.ok(yParam, 'Should have PARAMETER node for y');
+
+      assert.strictEqual(
+        xParam.column,
+        15,
+        'x should be at column 15'
+      );
+      assert.strictEqual(
+        yParam.column,
+        18,
+        'y should be at column 18'
+      );
+    });
+
+    it('should store correct column for array destructured params', async () => {
+      // 0         1         2
+      // 01234567890123456789012345678
+      // function foo([first, second]) {
+      //               ^      ^
+      //               14     21
+      await setupTest(backend, {
+        'index.js': 'function foo([first, second]) {\n  return first + second;\n}\n'
+      });
+
+      const paramNodes = await getNodesByType(backend, 'PARAMETER');
+      const firstParam = paramNodes.find((n: NodeRecord) => n.name === 'first');
+      const secondParam = paramNodes.find((n: NodeRecord) => n.name === 'second');
+
+      assert.ok(firstParam, 'Should have PARAMETER node for first');
+      assert.ok(secondParam, 'Should have PARAMETER node for second');
+
+      assert.strictEqual(
+        firstParam.column,
+        14,
+        'first should be at column 14'
+      );
+      assert.strictEqual(
+        secondParam.column,
+        21,
+        'second should be at column 21'
+      );
+    });
+
+    it('should store correct column for renamed destructured param', async () => {
+      // 0         1         2
+      // 0123456789012345678901234567
+      // function foo({ old: newName }) {
+      //                     ^
+      //                     20
+      await setupTest(backend, {
+        'index.js': 'function foo({ old: newName }) {\n  return newName;\n}\n'
+      });
+
+      const paramNodes = await getNodesByType(backend, 'PARAMETER');
+      const newNameParam = paramNodes.find((n: NodeRecord) => n.name === 'newName');
+
+      assert.ok(newNameParam, 'Should have PARAMETER node for newName');
+      assert.strictEqual(
+        newNameParam.column,
+        20,
+        'newName should be at column 20 (the binding identifier, not the original property name)'
+      );
+    });
+
+    it('should store correct column for nested destructured param', async () => {
+      // 0         1         2         3
+      // 0123456789012345678901234567890123456
+      // function foo({ data: { user } }) {
+      //                        ^
+      //                        23
+      await setupTest(backend, {
+        'index.js': 'function foo({ data: { user } }) {\n  return user;\n}\n'
+      });
+
+      const paramNodes = await getNodesByType(backend, 'PARAMETER');
+      const userParam = paramNodes.find((n: NodeRecord) => n.name === 'user');
+
+      assert.ok(userParam, 'Should have PARAMETER node for user');
+      assert.strictEqual(
+        userParam.column,
+        23,
+        'user should be at column 23'
+      );
+    });
+
+    it('should store correct column for destructured param with default value', async () => {
+      // 0         1         2
+      // 01234567890123456789012345
+      // function foo({ x = 42 }) {
+      //                ^
+      //                15
+      await setupTest(backend, {
+        'index.js': 'function foo({ x = 42 }) {\n  return x;\n}\n'
+      });
+
+      const paramNodes = await getNodesByType(backend, 'PARAMETER');
+      const xParam = paramNodes.find((n: NodeRecord) => n.name === 'x');
+
+      assert.ok(xParam, 'Should have PARAMETER node for x');
+      assert.strictEqual(
+        xParam.column,
+        15,
+        'x should be at column 15 (the identifier, not the default value)'
+      );
+    });
+
+    it('should store correct column for mixed simple and destructured params', async () => {
+      // 0         1         2         3
+      // 0123456789012345678901234567890123
+      // function foo(a, { b, c }, d) {
+      //              ^    ^  ^    ^
+      //              13   18 21   26
+      await setupTest(backend, {
+        'index.js': 'function foo(a, { b, c }, d) {\n  return a + b + c + d;\n}\n'
+      });
+
+      const paramNodes = await getNodesByType(backend, 'PARAMETER');
+      const aParam = paramNodes.find((n: NodeRecord) => n.name === 'a');
+      const bParam = paramNodes.find((n: NodeRecord) => n.name === 'b');
+      const cParam = paramNodes.find((n: NodeRecord) => n.name === 'c');
+      const dParam = paramNodes.find((n: NodeRecord) => n.name === 'd');
+
+      assert.ok(aParam, 'Should have PARAMETER node for a');
+      assert.ok(bParam, 'Should have PARAMETER node for b');
+      assert.ok(cParam, 'Should have PARAMETER node for c');
+      assert.ok(dParam, 'Should have PARAMETER node for d');
+
+      assert.strictEqual(aParam.column, 13, 'a should be at column 13');
+      assert.strictEqual(bParam.column, 18, 'b should be at column 18');
+      assert.strictEqual(cParam.column, 21, 'c should be at column 21');
+      assert.strictEqual(dParam.column, 26, 'd should be at column 26');
+    });
+
+    it('should store correct column for pattern-level default params', async () => {
+      // 0         1         2         3
+      // 01234567890123456789012345678901234
+      // function foo({ x, y } = {}) {
+      //                ^  ^
+      //                15 18
+      await setupTest(backend, {
+        'index.js': 'function foo({ x, y } = {}) {\n  return x + y;\n}\n'
+      });
+
+      const paramNodes = await getNodesByType(backend, 'PARAMETER');
+      const xParam = paramNodes.find((n: NodeRecord) => n.name === 'x');
+      const yParam = paramNodes.find((n: NodeRecord) => n.name === 'y');
+
+      assert.ok(xParam, 'Should have PARAMETER node for x');
+      assert.ok(yParam, 'Should have PARAMETER node for y');
+
+      assert.strictEqual(
+        xParam.column,
+        15,
+        'x should be at column 15 (same position regardless of pattern-level default)'
+      );
+      assert.strictEqual(
+        yParam.column,
+        18,
+        'y should be at column 18 (same position regardless of pattern-level default)'
+      );
+    });
+
+    it('should store correct column for rest in destructuring', async () => {
+      // 0         1         2         3
+      // 0123456789012345678901234567890
+      // function foo({ a, ...rest }) {
+      //                ^     ^
+      //                15    21
+      await setupTest(backend, {
+        'index.js': 'function foo({ a, ...rest }) {\n  return rest;\n}\n'
+      });
+
+      const paramNodes = await getNodesByType(backend, 'PARAMETER');
+      const aParam = paramNodes.find((n: NodeRecord) => n.name === 'a');
+      const restParam = paramNodes.find((n: NodeRecord) => n.name === 'rest');
+
+      assert.ok(aParam, 'Should have PARAMETER node for a');
+      assert.ok(restParam, 'Should have PARAMETER node for rest');
+
+      assert.strictEqual(aParam.column, 15, 'a should be at column 15');
+      assert.strictEqual(
+        restParam.column,
+        21,
+        'rest should be at column 21 (the identifier after ...)'
+      );
+    });
+
+    it('should store column as a number, not undefined', async () => {
+      await setupTest(backend, {
+        'index.js': 'function foo(x) {\n  return x;\n}\n'
+      });
+
+      const paramNodes = await getNodesByType(backend, 'PARAMETER');
+      const xParam = paramNodes.find((n: NodeRecord) => n.name === 'x');
+
+      assert.ok(xParam, 'Should have PARAMETER node for x');
+      assert.strictEqual(
+        typeof xParam.column,
+        'number',
+        'column should be a number, not undefined'
+      );
+    });
+  });
 });

@@ -64,6 +64,7 @@ export function createParameterNodes(
         name,
         file: file,
         line: param.loc?.start.line || line,
+        column: param.loc?.start.column ?? 0,
         index: index,
         parentFunctionId: functionId,
         scopePath
@@ -83,6 +84,7 @@ export function createParameterNodes(
           name,
           file: file,
           line: assignmentParam.left.loc?.start.line || line,
+          column: assignmentParam.left.loc?.start.column ?? 0,
           index: index,
           hasDefault: true,
           parentFunctionId: functionId,
@@ -116,6 +118,7 @@ export function createParameterNodes(
             name: paramInfo.name,
             file: file,
             line: paramInfo.loc.start.line,
+            column: paramInfo.loc.start.column,
             index: index,  // Original parameter position in function signature
             hasDefault: true,  // Pattern-level default (e.g., = {})
             parentFunctionId: functionId,
@@ -149,6 +152,7 @@ export function createParameterNodes(
           name,
           file: file,
           line: restParam.argument.loc?.start.line || line,
+          column: restParam.argument.loc?.start.column ?? 0,
           index: index,
           isRest: true,
           parentFunctionId: functionId,
@@ -182,6 +186,7 @@ export function createParameterNodes(
           name: paramInfo.name,
           file: file,
           line: paramInfo.loc.start.line,
+          column: paramInfo.loc.start.column,
           index: index,  // Original parameter position in function signature
           parentFunctionId: functionId,
           scopePath

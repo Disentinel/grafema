@@ -52,6 +52,7 @@ export interface ParameterInfo {
   name: string;
   file: string;
   line: number;
+  column?: number;
   index?: number;
   hasDefault?: boolean;  // Has default value (e.g., function(a = 1))
   isRest?: boolean;      // Rest parameter (e.g., function(...args))
