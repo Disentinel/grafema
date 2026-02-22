@@ -290,6 +290,11 @@ export class FunctionVisitor extends ASTVisitor {
 
       // Arrow functions (module-level, assigned to variables or as callbacks)
       ArrowFunctionExpression: (path: NodePath) => {
+        // Skip arrow functions nested inside other functions — those are handled
+        // by NestedFunctionHandler during analyzeFunctionBody traversal.
+        const functionParent = path.getFunctionParent();
+        if (functionParent) return;
+
         const node = path.node as ArrowFunctionExpression;
         const line = getLine(node);
         const column = getColumn(node);
