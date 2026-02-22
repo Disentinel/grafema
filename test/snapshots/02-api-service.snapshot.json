@@ -3229,16 +3229,6 @@
       "to": "MODULE:src/db.js"
     },
     {
-      "from": "PROPERTY_ACCESS:insertId",
-      "type": "READS_FROM",
-      "to": "VARIABLE:result"
-    },
-    {
-      "from": "PROPERTY_ACCESS:insertId",
-      "type": "READS_FROM",
-      "to": "VARIABLE:result"
-    },
-    {
       "from": "SCOPE:anonymous[0]:body",
       "type": "CONTAINS",
       "to": "CALL:console.log"

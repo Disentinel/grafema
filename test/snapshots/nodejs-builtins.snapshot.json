@@ -8425,11 +8425,6 @@
       "to": "EXTERNAL_MODULE:path"
     },
     {
-      "from": "PROPERTY_ACCESS:stdout",
-      "type": "READS_FROM",
-      "to": "VARIABLE:child"
-    },
-    {
       "from": "SCOPE:",
       "type": "CONTAINS",
       "to": "CALL:access"
