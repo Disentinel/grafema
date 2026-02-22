@@ -1,4 +1,4 @@
-## Вадим auto — Completeness Review
+## Вадим auto — Completeness Review (Round 2)
 
 **Verdict:** APPROVE
 
@@ -8,47 +8,49 @@
 
 ---
 
-### Feature Completeness
+### Does the refactoring change the verdict?
 
-All four acceptance criteria from the original request are met:
-
-1. `private graph: GraphBackend` → VARIABLE node created. Verified by test 1 and confirmed by running tests live (7/7 pass).
-2. Field modifier stored: `private`, `public`, `protected` all stored in `modifier` field (top-level after RFDB flattening). `readonly` stored as `'readonly'` string. Verified by tests 1 and 5.
-3. Source position (file, line, column) recorded. Verified by test 4.
-4. Unit test covering 3 fields with different modifiers. Verified by test 1.
-
-The `metadata.type` requirement from the original spec is delivered as `declaredType` at the top level — this rename is correct and documented. The collision with RFDB's `_parseNode` stripping the `type` field from deserialized metadata is a real constraint, not a workaround. Rob's discovery and fix are sound.
-
-**ClassExpression parity:** The same `else` branch was added to the ClassExpression handler (lines 820-858), which is the correct mirror of ClassDeclaration. The pre-existing asymmetry (no decorator handling in ClassExpression) is out of scope and correctly noted.
-
-**HAS_PROPERTY edge wiring:** The implementation pushes to `currentClass.properties`, which is consumed by `TypeSystemBuilder.ts` (line 95-103) to emit `CLASS -[HAS_PROPERTY]-> VARIABLE` edges. This reuses the existing REG-271 infrastructure correctly — no new edge-emission code was needed. Test 3 confirms edges are created.
-
-**isClassProperty flag:** The `isClassProperty: true` flag causes `CoreBuilder.bufferVariableEdges` to skip emitting a DECLARES edge from scope (line 124), correctly preventing duplicate/wrong edges. This is consistent with the REG-271 pattern for private fields.
-
-**Modifier logic edge case noted (not a blocker):** `public readonly` would produce `modifier = 'readonly'` (the `public` is dropped because `acc === 'public'` is excluded from `parts`). The task requirements do not mention combined modifiers, no acceptance criterion covers this, and no test exercises it. This is acceptable scope for v0.2.
+No. The Round 1 APPROVE stands and is strengthened by the refactoring.
 
 ---
 
-### Test Coverage
+### Refactoring Assessment
 
-7 tests, all meaningful:
+**`handleNonFunctionClassProperty` extraction (lines 165-213):**
 
-| # | What it covers |
-|---|----------------|
-| 1 | Three modifiers: private/public/protected — happy path |
-| 2 | TypeScript type annotation in `declaredType` |
-| 3 | HAS_PROPERTY edge exists (graph structure) |
-| 4 | Source position (file, line) |
-| 5 | `readonly` modifier |
-| 6 | Field with initializer — not skipped |
-| 7 | Regression: arrow function property still creates FUNCTION node |
+The duplicated else-branch that previously existed independently in both `ClassDeclaration` and `ClassExpression` traversal handlers is now a single private method called from both sites. The extraction is clean:
 
-Tests are integration-level (real orchestrator, real RFDB backend) which is the correct level for this visitor code. Assertions correctly use `node.modifier` and `node.declaredType` (top-level) rather than `node.metadata.modifier` / `node.metadata.type`, matching RFDB's flattening behavior.
+- Signature accepts only what is needed: `propNode`, `propName`, `propLine`, `propColumn`, `currentClass`, `className`, `module`, `collections`, `scopeTracker`.
+- No logic changed — the modifier computation, `TSTypeAnnotation` extraction, and `variableDeclarations.push(...)` are identical to what was in both original branches.
+- Both call sites (line 391-395 and line 846-850) delegate correctly.
+- One asymmetry remains intentional: the `ClassDeclaration` handler extracts property decorators before calling `handleNonFunctionClassProperty`, while `ClassExpression` does not. This is not a regression — `ClassExpression` had no decorator infrastructure before the refactoring and still does not. The comment at line 844-845 documents this explicitly.
 
-No trivially-asserting tests. Test 7 (regression) is especially valuable — it guards the existing `if (value && (Arrow|Function))` branch.
+**`metadata?` on `VariableDeclarationInfo` (types.ts line 262-263):**
+
+Adding `metadata?: Record<string, unknown>` to the type contract is correct. The field was being set in practice but was not declared. The declaration now makes the intent visible to TypeScript and documents the REG-552 additions (`modifier`, `declaredType`). No other code paths are affected.
 
 ---
 
-### Scope
+### Verification
 
-Change is minimal and focused. Two parallel `else` branches added (ClassDeclaration and ClassExpression handlers). One import added (`typeNodeToString`). No refactoring outside the feature scope. No unrelated files touched.
+All 7 tests run and pass after the refactoring:
+
+| # | Test | Result |
+|---|------|--------|
+| 1 | private/public/protected modifiers | PASS |
+| 2 | TypeScript type annotation in declaredType | PASS |
+| 3 | HAS_PROPERTY edge from CLASS to VARIABLE | PASS |
+| 4 | Correct source position | PASS |
+| 5 | readonly modifier | PASS |
+| 6 | Field with initializer still indexed | PASS |
+| 7 | Regression: arrow function property stays FUNCTION | PASS |
+
+The refactoring does not introduce any behavioral change. It only reduces duplication — which is the correct application of DRY at this complexity level.
+
+---
+
+### Remaining Notes (unchanged from Round 1)
+
+- `public readonly` produces `modifier = 'readonly'` (public dropped). Out of scope for this task; no acceptance criterion covers it.
+- `ClassExpression` decorator support for non-function properties remains unimplemented. Correct deferral — not part of REG-552.
+- HAS_PROPERTY edge wiring via `TypeSystemBuilder` (REG-271 infrastructure) confirmed working. Test 3 passes.

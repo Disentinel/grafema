@@ -1,64 +1,51 @@
-## Steve Jobs — Vision Review
+## Steve Jobs — Vision Review (Round 2)
 
 **Verdict:** APPROVE
 
 **Vision alignment:** OK
-**Architecture:** OK with one noted asymmetry
+**Architecture:** OK — duplication resolved, one remaining asymmetry is correctly documented
 
 ---
 
-### Summary
+### Does the Refactoring Change the Verdict?
 
-REG-552 adds indexing of non-function class property declarations (data fields) as VARIABLE nodes with `HAS_PROPERTY` edges. This is exactly the kind of structural data that makes the graph a better tool than reading code.
+No. The verdict remains APPROVE. The refactoring tightens the implementation without changing what the graph captures or how it is queryable. The product intent is unchanged and correct.
+
+---
+
+### What Changed
+
+**`handleNonFunctionClassProperty` as a private method (lines 165–213)**
+
+The duplicated `else` branch that existed in both `ClassDeclaration` and `ClassExpression` handlers is now extracted into a single private method. This is the right structural call. The logic — compute semantic ID, push to `currentClass.properties`, extract modifier and declared type, push to `variableDeclarations` — was identical in both sites. One copy is better than two. The graph output is identical.
+
+The method signature takes everything it needs as explicit parameters. That is clean: no hidden state captured from closure, the behavior is transparent from the call site.
+
+**`metadata?: Record<string, unknown>` on `VariableDeclarationInfo`**
+
+The `metadata` field uses the same escape hatch pattern that exists throughout the codebase for carrying enrichment data that does not fit a fixed schema. `modifier` and `declaredType` now travel as `metadata.modifier` and `metadata.declaredType` rather than top-level fields. This is the right tradeoff — it avoids polluting the core interface with fields that only apply to one narrow subtype of VARIABLE nodes (class properties).
+
+The `Record<string, unknown>` type is wide, which means there is no compile-time enforcement of what keys are valid. That is a known cost. For an enrichment bag used in a single code path, it is acceptable. It is the same pattern REG-271 used before.
+
+**Decorator asymmetry comment (line 844–845)**
+
+```typescript
+// Note: decorator extraction is intentionally omitted for ClassExpression properties.
+// The ClassExpression handler has no decorator infrastructure — handle separately if needed.
+```
+
+This comment is correct and appropriate. It makes the asymmetry explicit rather than leaving it as a silent gap. A future developer or AI agent reading this code will not wonder why the behavior differs — it is stated. The asymmetry itself is pre-existing and out of scope for this PR. Documenting it is better than patching it with half-baked scope creep.
+
+---
 
 ### Vision Alignment
 
-The core thesis — "AI should query the graph, not read code" — demands that the graph capture class structure completely. Before this change, an AI agent querying the graph for a class like `GraphBuilder` would see its methods but be blind to its data fields. It could not answer "what does this class hold?", "what are its dependencies by type?", or "which fields are mutable vs readonly?" without falling back to reading the file.
+Unchanged from Round 1. The graph now captures data fields on classes — their modifiers, declared types, static/instance distinction, and structural membership via HAS_PROPERTY edges. An AI agent can answer "what data does class X hold?" and "which classes reference type Y as a field?" without reading source files. That is the product thesis executed correctly.
 
-This change closes that gap. After REG-552:
+The `metadata` bag makes `modifier` and `declaredType` queryable via graph traversal. Nothing is silently discarded.
 
-- `modifier` is queryable — find all `private` fields, find all `readonly` fields across a codebase
-- `declaredType` is queryable — find all fields of type `Database`, find all classes that hold a reference to `GraphBackend`
-- `HAS_PROPERTY` edges connect CLASS → VARIABLE — structural queries work: "what data does class X own?"
-- `isStatic` is captured — static vs instance fields are distinguishable
-
-This directly serves the target environment: massive legacy JS/TS codebases where understanding class structure requires either reading every file or having a graph that answers these questions. The graph now answers them.
-
-The feature also handles untyped properties correctly. A field like `count = 0` (no TypeScript annotation, no modifier) still creates a VARIABLE node with `modifier: 'public'` and no `declaredType`. The graph is populated with what is actually there, not silently dropped because type information is absent. That is the right behavior for a tool aimed at loosely-typed codebases.
-
-### Architecture
-
-The implementation follows existing patterns precisely:
-
-- `computeSemanticIdV2('VARIABLE', ...)` — same ID strategy used throughout
-- `isClassProperty: true` flag — consistent with function-valued properties
-- `parentScopeId: currentClass.id` — same mechanism used in `ClassPrivateProperty` handler
-- `currentClass.properties.push(fieldId)` — same mechanism used in `ClassPrivateProperty` handler for HAS_PROPERTY edge generation
-- `typeNodeToString` from `TypeScriptVisitor` — reuses existing infrastructure, no new wheel
-
-The `ClassPrivateProperty` handler (lines 512-618) already had this pattern for private fields. REG-552 extends the same logic to the `ClassProperty` handler (public/protected/private fields with TypeScript accessibility modifiers). The symmetry is correct.
-
-### The `declaredType` Field Name
-
-The naming workaround — `declaredType` instead of `type` to avoid collision with `_parseNode`'s deserialization — is not ideal, but it is the right call given the constraint. The implementation report documents the RFDB pipeline behavior clearly. This is a known limitation of how RFDB flattens metadata, not a bug introduced here. The field name `declaredType` is semantically accurate and unambiguous. An AI agent querying for `declaredType` will not be confused.
-
-### One Asymmetry: ClassExpression Missing Decorator Handling
-
-The implementation report notes that the `ClassExpression > ClassProperty` handler has no decorator handling — this is a pre-existing asymmetry documented as out of scope. This is the correct decision. Patching decorator support into `ClassExpression` in the same PR would be scope creep and risk. It should be tracked as a separate issue.
-
-### Test Coverage
-
-Seven tests cover the meaningful surface:
-- All three access modifiers (private / public / protected)
-- TypeScript type annotation extraction
-- HAS_PROPERTY edge existence
-- Source position correctness
-- readonly modifier
-- Field with initializer (non-typed JS-style property)
-- Regression: function-valued properties still produce FUNCTION nodes
-
-Test 6 (field with initializer, `count = 0`) is the one that validates the untyped-codebase scenario. It passes. Coverage is sufficient for this change.
+---
 
 ### What Would Embarrass Us
 
-Nothing in this implementation would embarrass. The feature does what it says, the graph is richer, and the data is correct and queryable.
+Nothing. The refactoring made the code better and the result is cleaner than Round 1. Ship it.
