@@ -223,6 +223,8 @@ export class AssignmentBuilder implements DomainBuilder {
             computed,
             computedPropertyVar: computedPropertyVar ?? undefined,
             operator,
+            leftSourceName: leftSourceName ?? undefined,
+            rightSourceName: rightSourceName ?? undefined,
             // Destructuring support (REG-201)
             path,
             baseName,

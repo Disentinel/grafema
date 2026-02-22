@@ -36,6 +36,8 @@ interface ExpressionNodeOptions {
   computedPropertyVar?: string;
   // Binary/Logical
   operator?: string;
+  leftSourceName?: string | null;
+  rightSourceName?: string | null;
   // Tracking
   path?: string;
   baseName?: string;
@@ -104,7 +106,7 @@ export class ExpressionNode {
    * Naming conventions:
    * - MemberExpression: "object.property"
    * - BinaryExpression: "<BinaryExpression>"
-   * - LogicalExpression: "<LogicalExpression>"
+   * - LogicalExpression: "left || right" (readable, max 64 chars)
    * - ConditionalExpression: "<ternary>"
    * - TemplateLiteral: "<template>"
    * - Other: expressionType
@@ -118,8 +120,16 @@ export class ExpressionNode {
     }
     // Special naming for non-MemberExpression types
     switch (expressionType) {
+      case 'LogicalExpression': {
+        const left = options.leftSourceName ?? '…';
+        const right = options.rightSourceName ?? '…';
+        const op = options.operator ?? '||';
+        const raw = `${left} ${op} ${right}`;
+        // Truncate to keep node names readable in graph queries
+        const maxLen = 64;
+        return raw.length > maxLen ? raw.slice(0, maxLen - 3) + '…' : raw;
+      }
       case 'BinaryExpression':
-      case 'LogicalExpression':
         return `<${expressionType}>`;
       case 'ConditionalExpression':
         return '<ternary>';

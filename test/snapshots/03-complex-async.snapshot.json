@@ -8167,6 +8167,14 @@
     },
     {
       "exported": false,
+      "expressionType": "LogicalExpression",
+      "file": "middleware/auth.js",
+      "name": "… || …",
+      "operator": "||",
+      "type": "EXPRESSION"
+    },
+    {
+      "exported": false,
       "expressionType": "BinaryExpression",
       "file": "app.js",
       "name": "<BinaryExpression>",
@@ -8271,14 +8279,6 @@
       "name": "<complex>.profile",
       "object": "<complex>",
       "property": "profile",
-      "type": "EXPRESSION"
-    },
-    {
-      "exported": false,
-      "expressionType": "LogicalExpression",
-      "file": "middleware/auth.js",
-      "name": "<LogicalExpression>",
-      "operator": "||",
       "type": "EXPRESSION"
     },
     {
@@ -41980,16 +41980,6 @@
       "to": "VARIABLE:next"
     },
     {
-      "from": "PROPERTY_ACCESS:done",
-      "type": "READS_FROM",
-      "to": "VARIABLE:next"
-    },
-    {
-      "from": "PROPERTY_ACCESS:done",
-      "type": "READS_FROM",
-      "to": "VARIABLE:next"
-    },
-    {
       "from": "PROPERTY_ACCESS:email",
       "type": "READS_FROM",
       "to": "VARIABLE:user"
@@ -42198,16 +42188,6 @@
       "from": "PROPERTY_ACCESS:value",
       "type": "READS_FROM",
       "to": "CONSTANT:item"
-    },
-    {
-      "from": "PROPERTY_ACCESS:value",
-      "type": "READS_FROM",
-      "to": "VARIABLE:next"
-    },
-    {
-      "from": "PROPERTY_ACCESS:value",
-      "type": "READS_FROM",
-      "to": "VARIABLE:next"
     },
     {
       "from": "PROPERTY_ACCESS:value",
@@ -48043,6 +48023,11 @@
     {
       "from": "VARIABLE:userId",
       "type": "ASSIGNED_FROM",
+      "to": "EXPRESSION:… || …"
+    },
+    {
+      "from": "VARIABLE:userId",
+      "type": "ASSIGNED_FROM",
       "to": "EXPRESSION:<complex>._id"
     },
     {
@@ -48064,11 +48049,6 @@
       "from": "VARIABLE:userId",
       "type": "ASSIGNED_FROM",
       "to": "EXPRESSION:<complex>.id"
-    },
-    {
-      "from": "VARIABLE:userId",
-      "type": "ASSIGNED_FROM",
-      "to": "EXPRESSION:<LogicalExpression>"
     },
     {
       "from": "VARIABLE:userId",
