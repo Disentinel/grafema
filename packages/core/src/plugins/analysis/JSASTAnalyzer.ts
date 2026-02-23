@@ -1970,7 +1970,8 @@ export class JSASTAnalyzer extends Plugin {
         module,
         allCollections,
         this.analyzeFunctionBody.bind(this),
-        scopeTracker  // Pass ScopeTracker for semantic ID generation
+        scopeTracker,  // Pass ScopeTracker for semantic ID generation
+        this.trackVariableAssignment.bind(this) as TrackVariableAssignmentCallback  // REG-570
       );
       traverse(ast, classVisitor.getHandlers());
       this.profiler.end('traverse_classes');

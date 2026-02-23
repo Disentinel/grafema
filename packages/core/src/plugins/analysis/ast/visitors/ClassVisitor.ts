@@ -24,8 +24,9 @@ import type {
   Node
 } from '@babel/types';
 import type { NodePath } from '@babel/traverse';
-import { ASTVisitor, type VisitorModule, type VisitorCollections, type VisitorHandlers } from './ASTVisitor.js';
+import { ASTVisitor, type VisitorModule, type VisitorCollections, type VisitorHandlers, type CounterRef } from './ASTVisitor.js';
 import type { AnalyzeFunctionBodyCallback } from './FunctionVisitor.js';
+import type { TrackVariableAssignmentCallback } from './VariableVisitor.js';
 import type { DecoratorInfo, ParameterInfo, VariableDeclarationInfo, TypeParameterInfo } from '../types.js';
 import { extractTypeParameters, typeNodeToString } from './TypeScriptVisitor.js';
 import { ExpressionEvaluator } from '../ExpressionEvaluator.js';
@@ -89,22 +90,26 @@ interface ScopeInfo {
 export class ClassVisitor extends ASTVisitor {
   private analyzeFunctionBody: AnalyzeFunctionBodyCallback;
   private scopeTracker: ScopeTracker;
+  private trackVariableAssignment: TrackVariableAssignmentCallback;
 
   /**
    * @param module - Current module being analyzed
    * @param collections - Must contain arrays and counter refs
    * @param analyzeFunctionBody - Callback to analyze method internals
    * @param scopeTracker - REQUIRED for semantic ID generation
+   * @param trackVariableAssignment - Callback for data flow tracking (REG-570)
    */
   constructor(
     module: VisitorModule,
     collections: VisitorCollections,
     analyzeFunctionBody: AnalyzeFunctionBodyCallback,
-    scopeTracker: ScopeTracker  // REQUIRED, not optional
+    scopeTracker: ScopeTracker,  // REQUIRED, not optional
+    trackVariableAssignment: TrackVariableAssignmentCallback  // REG-570
   ) {
     super(module, collections);
     this.analyzeFunctionBody = analyzeFunctionBody;
     this.scopeTracker = scopeTracker;
+    this.trackVariableAssignment = trackVariableAssignment;
   }
 
   /**
@@ -198,6 +203,25 @@ export class ClassVisitor extends ASTVisitor {
       isReadonly: isReadonly || undefined,
       tsType,
     });
+
+    // REG-570: wire initializer to VARIABLE node via ASSIGNED_FROM edge
+    if (propNode.value) {
+      this.trackVariableAssignment(
+        propNode.value as unknown as Node,
+        fieldId,
+        propName,
+        module,
+        propLine,
+        (collections.literals ?? []) as unknown[],
+        (collections.variableAssignments ?? []) as unknown[],
+        (collections.literalCounterRef ?? { value: 0 }) as CounterRef,
+        (collections.objectLiterals ?? []) as unknown[],
+        (collections.objectProperties ?? []) as unknown[],
+        (collections.objectLiteralCounterRef ?? { value: 0 }) as CounterRef,
+        (collections.arrayLiterals ?? []) as unknown[],
+        (collections.arrayLiteralCounterRef ?? { value: 0 }) as CounterRef,
+      );
+    }
   }
 
   getHandlers(): VisitorHandlers {
@@ -611,6 +635,25 @@ export class ClassVisitor extends ASTVisitor {
                 parentScopeId: currentClass.id  // Use class ID as parent for HAS_PROPERTY edge
               });
 
+              // REG-570: wire initializer to VARIABLE node via ASSIGNED_FROM edge
+              if (propNode.value) {
+                this.trackVariableAssignment(
+                  propNode.value as unknown as Node,
+                  variableId,
+                  displayName,
+                  module,
+                  propLine,
+                  (collections.literals ?? []) as unknown[],
+                  (collections.variableAssignments ?? []) as unknown[],
+                  (collections.literalCounterRef ?? { value: 0 }) as CounterRef,
+                  (collections.objectLiterals ?? []) as unknown[],
+                  (collections.objectProperties ?? []) as unknown[],
+                  (collections.objectLiteralCounterRef ?? { value: 0 }) as CounterRef,
+                  (collections.arrayLiterals ?? []) as unknown[],
+                  (collections.arrayLiteralCounterRef ?? { value: 0 }) as CounterRef,
+                );
+              }
+
               // Extract decorators if present
               const propNodeWithDecorators = propNode as ClassPrivateProperty & { decorators?: Decorator[] };
               if (propNodeWithDecorators.decorators && propNodeWithDecorators.decorators.length > 0 && decorators) {
@@ -875,6 +918,134 @@ export class ClassVisitor extends ASTVisitor {
 
             analyzeFunctionBody(methodPath, methodBodyScopeId, module, collections);
             scopeTracker.exitScope();
+          },
+
+          // REG-570: Private property handler for ClassExpression
+          ClassPrivateProperty: (propPath: NodePath) => {
+            const propNode = propPath.node as ClassPrivateProperty;
+
+            // Skip if not direct child of current class
+            if (propPath.parent !== classNode.body) {
+              return;
+            }
+
+            // Extract name: PrivateName.id.name is WITHOUT # prefix
+            const privateName = (propNode.key as PrivateName).id.name;
+            const displayName = `#${privateName}`;
+
+            const propLine = getLine(propNode);
+            const propColumn = getColumn(propNode);
+
+            // Check if value is a function (arrow function or function expression)
+            if (propNode.value &&
+                (propNode.value.type === 'ArrowFunctionExpression' ||
+                 propNode.value.type === 'FunctionExpression')) {
+              // Handle as private method (function-valued property)
+              const funcNode = propNode.value as ArrowFunctionExpression | FunctionExpression;
+
+              const functionId = computeSemanticIdV2('FUNCTION', displayName, module.file, scopeTracker.getNamedParent());
+
+              // Add to class methods list for CONTAINS edges
+              currentClass.methods.push(functionId);
+
+              (functions as ClassFunctionInfo[]).push({
+                id: functionId,
+                type: 'FUNCTION',
+                name: displayName,
+                file: module.file,
+                line: propLine,
+                column: propColumn,
+                async: funcNode.async || false,
+                generator: funcNode.type === 'FunctionExpression' ? funcNode.generator || false : false,
+                arrowFunction: funcNode.type === 'ArrowFunctionExpression',
+                isClassProperty: true,
+                isPrivate: true,
+                isStatic: propNode.static || false,
+                className: className
+              });
+
+              // Enter method scope for tracking
+              scopeTracker.enterScope(displayName, 'FUNCTION');
+
+              // Create PARAMETER nodes if needed
+              if (parameters) {
+                createParameterNodes(funcNode.params, functionId, module.file, propLine, parameters as ParameterInfo[], scopeTracker);
+              }
+
+              // Create SCOPE for property function body
+              const propBodyScopeId = computeSemanticIdV2('SCOPE', 'body', module.file, scopeTracker.getNamedParent());
+              (scopes as ScopeInfo[]).push({
+                id: propBodyScopeId,
+                semanticId: propBodyScopeId,
+                type: 'SCOPE',
+                scopeType: 'property_body',
+                name: `${className}.${displayName}:body`,
+                conditional: false,
+                file: module.file,
+                line: propLine,
+                parentFunctionId: functionId
+              });
+
+              const funcPath = propPath.get('value') as NodePath<ArrowFunctionExpression | FunctionExpression>;
+              analyzeFunctionBody(funcPath, propBodyScopeId, module, collections);
+
+              // Exit method scope
+              scopeTracker.exitScope();
+            } else {
+              // Handle as private field (non-function property)
+              const variableId = computeSemanticIdV2('VARIABLE', displayName, module.file, scopeTracker.getNamedParent());
+
+              // Add to class properties list for HAS_PROPERTY edges
+              if (!currentClass.properties) {
+                currentClass.properties = [];
+              }
+              currentClass.properties.push(variableId);
+
+              // Add to variableDeclarations for VARIABLE node creation
+              (collections.variableDeclarations as VariableDeclarationInfo[]).push({
+                id: variableId,
+                semanticId: variableId,
+                type: 'VARIABLE',
+                name: displayName,
+                file: module.file,
+                line: propLine,
+                column: propColumn,
+                isPrivate: true,
+                isStatic: propNode.static || false,
+                isClassProperty: true,
+                parentScopeId: currentClass.id
+              });
+
+              // REG-570: wire initializer to VARIABLE node via ASSIGNED_FROM edge
+              if (propNode.value) {
+                this.trackVariableAssignment(
+                  propNode.value as unknown as Node,
+                  variableId,
+                  displayName,
+                  module,
+                  propLine,
+                  (collections.literals ?? []) as unknown[],
+                  (collections.variableAssignments ?? []) as unknown[],
+                  (collections.literalCounterRef ?? { value: 0 }) as CounterRef,
+                  (collections.objectLiterals ?? []) as unknown[],
+                  (collections.objectProperties ?? []) as unknown[],
+                  (collections.objectLiteralCounterRef ?? { value: 0 }) as CounterRef,
+                  (collections.arrayLiterals ?? []) as unknown[],
+                  (collections.arrayLiteralCounterRef ?? { value: 0 }) as CounterRef,
+                );
+              }
+
+              // Extract decorators if present
+              const propNodeWithDecorators = propNode as ClassPrivateProperty & { decorators?: Decorator[] };
+              if (propNodeWithDecorators.decorators && propNodeWithDecorators.decorators.length > 0 && decorators) {
+                for (const decorator of propNodeWithDecorators.decorators) {
+                  const decoratorInfo = this.extractDecoratorInfo(decorator, variableId, 'PROPERTY', module);
+                  if (decoratorInfo) {
+                    (decorators as DecoratorInfo[]).push(decoratorInfo);
+                  }
+                }
+              }
+            }
           },
         });
 
