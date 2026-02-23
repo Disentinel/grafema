@@ -205,11 +205,12 @@ export interface PropertyAccessNodeRecord extends BaseNodeRecord {
   computed?: boolean;
 }
 
-// Property assignment node (this.x = value inside class)
+// Property assignment node (this.prop = value, obj.prop = value)
 export interface PropertyAssignmentNodeRecord extends BaseNodeRecord {
   type: 'PROPERTY_ASSIGNMENT';
-  objectName: string;
-  className?: string;
+  objectName: string;      // 'this' or the object variable name
+  className?: string;      // enclosing class name when objectName === 'this'
+  computed?: boolean;      // true for obj[x] = value patterns
 }
 
 // Service node (project-level)

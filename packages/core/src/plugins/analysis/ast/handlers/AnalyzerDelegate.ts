@@ -78,6 +78,7 @@ export interface AnalyzerDelegate {
     objectMutations: ObjectMutationInfo[],
     scopeTracker?: ScopeTracker,
     propertyAssignments?: PropertyAssignmentInfo[],
+    propertyAssignmentCounterRef?: CounterRef,
   ): void;
 
   // --- Return / expression helpers ---

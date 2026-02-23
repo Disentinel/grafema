@@ -50,15 +50,15 @@ export class PropertyAssignmentBuilder implements DomainBuilder {
     variableDeclarations: VariableDeclarationInfo[],
     parameters: ParameterInfo[],
     classDeclarations: ClassDeclarationInfo[],
-    callSites: CallSiteInfo[],
-    methodCalls: MethodCallInfo[]
+    _callSites: CallSiteInfo[],
+    _methodCalls: MethodCallInfo[]
   ): void {
     for (const pa of propertyAssignments) {
       // Buffer PROPERTY_ASSIGNMENT node
       this.ctx.bufferNode({
         id: pa.id,
         type: 'PROPERTY_ASSIGNMENT',
-        name: pa.name,
+        name: pa.propertyName,
         objectName: pa.objectName,
         className: pa.enclosingClassName,
         file: pa.file,
@@ -82,7 +82,7 @@ export class PropertyAssignmentBuilder implements DomainBuilder {
       }
 
       // PROPERTY_ASSIGNMENT --ASSIGNED_FROM--> <rhs node>
-      const scopePath = pa.mutationScopePath ?? [];
+      const scopePath = pa.scopePath ?? [];
       let sourceNodeId: string | null = null;
 
       if (pa.valueType === 'VARIABLE' && pa.valueName) {
@@ -94,18 +94,8 @@ export class PropertyAssignmentBuilder implements DomainBuilder {
           ? this.ctx.resolveParameterInScope(pa.valueName, scopePath, pa.file, parameters)
           : null;
         sourceNodeId = sourceVar?.id ?? sourceParam?.id ?? null;
-      } else if (pa.valueType === 'CALL' && pa.callLine !== undefined && pa.callColumn !== undefined) {
-        const callSite = callSites.find(cs =>
-          cs.line === pa.callLine && cs.column === pa.callColumn && cs.file === pa.file
-        );
-        const methodCall = !callSite
-          ? methodCalls.find(mc =>
-              mc.line === pa.callLine && mc.column === pa.callColumn && mc.file === pa.file
-            )
-          : null;
-        sourceNodeId = callSite?.id ?? methodCall?.id ?? null;
       }
-      // LITERAL, EXPRESSION, OBJECT_LITERAL, ARRAY_LITERAL: no ASSIGNED_FROM edge
+      // CALL, LITERAL, EXPRESSION, OBJECT_LITERAL, ARRAY_LITERAL: no ASSIGNED_FROM edge
 
       if (sourceNodeId) {
         this.ctx.bufferEdge({
