@@ -31,7 +31,7 @@ function isAnalysisResult(value: unknown): value is AnalysisResult {
 
 import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 import { ExpressionEvaluator } from './ast/ExpressionEvaluator.js';
-import { GraphBuilder } from './ast/GraphBuilder.js';
+import { GraphBuilder, GraphDataError } from './ast/GraphBuilder.js';
 import {
   ImportExportVisitor,
   VariableVisitor,
@@ -2313,7 +2313,8 @@ export class JSASTAnalyzer extends Plugin {
       nodesCreated = result.nodes;
       edgesCreated = result.edges;
 
-    } catch {
+    } catch (err) {
+      if (err instanceof GraphDataError) throw err; // propagate data quality errors
       // Error analyzing module - silently skip, caller handles the result
     }
 

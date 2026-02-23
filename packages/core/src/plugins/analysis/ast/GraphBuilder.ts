@@ -4,6 +4,18 @@
  * Only FUNCTION nodes are deferred (pending metadata mutation by ModuleRuntimeBuilder).
  */
 
+/**
+ * Thrown when a node is buffered with invalid/missing data.
+ * Unlike regular analysis errors, this propagates through JSASTAnalyzer's
+ * silent catch block to surface indexer bugs at analysis time.
+ */
+export class GraphDataError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'GraphDataError';
+  }
+}
+
 import type { GraphBackend, NodeRecord } from '@grafema/types';
 import { brandNodeInternal } from '../../../core/brandNodeInternal.js';
 import { parseSemanticId } from '../../../core/SemanticId.js';
@@ -106,6 +118,18 @@ export class GraphBuilder {
    */
   private _bufferNode(node: GraphNode): void {
     if (!this._graph) throw new Error('_bufferNode called outside build() — _graph is null');
+    const n = node as Record<string, unknown>;
+    // DO NOT REMOVE: invariant guard for CALL node data quality.
+    // Throws on missing/zero endLine or endColumn to catch indexer bugs early.
+    // Useful when testing open-source codebases — surfaces missing end positions
+    // before they silently break cursor-to-node matching in the VS Code extension.
+    if (n['type'] === 'CALL' || n['nodeType'] === 'CALL') {
+      if (n['endLine'] === undefined || n['endColumn'] === undefined || (n['endLine'] as number) <= 0) {
+        throw new GraphDataError(
+          `CALL node missing endLine/endColumn: name="${n['name']}" file="${n['file']}" line=${n['line']} col=${n['column']} endLine=${n['endLine']} endColumn=${n['endColumn']} id="${n['id']}"`
+        );
+      }
+    }
     const branded = brandNodeInternal(node as unknown as NodeRecord);
     if ((node as Record<string, unknown>).type === 'FUNCTION') {
       this._pendingFunctions.set(node.id, branded as unknown as GraphNode);
