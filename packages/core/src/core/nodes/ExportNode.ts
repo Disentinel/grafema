@@ -19,6 +19,7 @@ type ExportType = 'default' | 'named' | 'all';
 interface ExportNodeRecord extends BaseNodeRecord {
   type: 'EXPORT';
   column: number;
+  endColumn?: number;          // specifier end column (exclusive, for cursor matching)
   exportKind: ExportKind;
   local: string;
   default: boolean;
@@ -32,6 +33,7 @@ interface ExportNodeOptions {
   default?: boolean;
   source?: string;
   exportType?: ExportType;
+  endColumn?: number;           // specifier end column (exclusive, for cursor matching)
 }
 
 /**
@@ -43,6 +45,7 @@ interface ExportContextOptions {
   default?: boolean;
   source?: string;
   exportType?: ExportType;
+  endColumn?: number;           // specifier end column (exclusive, for cursor matching)
 }
 
 export class ExportNode {
@@ -74,7 +77,8 @@ export class ExportNode {
       local: options.local || name,
       default: options.default || false,
       ...(options.source !== undefined && { source: options.source }),
-      ...(options.exportType !== undefined && { exportType: options.exportType })
+      ...(options.exportType !== undefined && { exportType: options.exportType }),
+      ...(options.endColumn !== undefined && { endColumn: options.endColumn })
     };
   }
 
@@ -116,7 +120,8 @@ export class ExportNode {
       local: options.local || name,
       default: options.default || false,
       ...(options.source !== undefined && { source: options.source }),
-      ...(options.exportType !== undefined && { exportType: options.exportType })
+      ...(options.exportType !== undefined && { exportType: options.exportType }),
+      ...(options.endColumn !== undefined && { endColumn: options.endColumn })
     };
   }
 

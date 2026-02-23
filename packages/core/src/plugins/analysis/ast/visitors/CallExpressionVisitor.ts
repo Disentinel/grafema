@@ -222,6 +222,8 @@ export class CallExpressionVisitor extends ASTVisitor {
             file: s.module.file,
             line: tagLine,
             column: tagColumn,
+            endLine: getEndLocation(tagNode as Node).line,
+            endColumn: getEndLocation(tagNode as Node).column,
             parentScopeId,
             targetFunctionName: tagName,
           };
@@ -265,6 +267,8 @@ export class CallExpressionVisitor extends ASTVisitor {
                 file: s.module.file,
                 line: tagLine,
                 column: tagColumn,
+                endLine: getEndLocation(tagNode as Node).line,
+                endColumn: getEndLocation(tagNode as Node).column,
                 parentScopeId,
               };
 

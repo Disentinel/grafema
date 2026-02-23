@@ -297,7 +297,7 @@ function parseModule(filePath: string, relativeFile: string, moduleId: string, m
           const exportNode = ExportNode.createWithContext(
             exportedName,
             scopeTracker.getContext(),
-            { line: getLine(node), column: 0 },
+            { line: getLine(node), column: getColumn(spec) },
             {
               local: (spec as ExportSpecifier).local.name,
               exportType: 'named'
