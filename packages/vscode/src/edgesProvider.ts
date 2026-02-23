@@ -429,11 +429,11 @@ export class EdgesProvider implements vscode.TreeDataProvider<GraphTreeItem> {
     for (const edge of rawEdges) {
       if (!edge.edgeType) continue;
       const targetId = direction === 'outgoing' ? edge.dst : edge.src;
-      const edgeKey = `${direction}:${edge.edgeType}:${targetId}`;
-      if (seenEdges.has(edgeKey)) continue;
-      seenEdges.add(edgeKey);
+      if (seenEdges.has(targetId)) continue;
+      seenEdges.add(targetId);
 
       if (this.hiddenEdgeTypes.has(edge.edgeType)) continue;
+      if (visitedNodeIds.has(targetId)) continue;
 
       const targetNode = await client.getNode(targetId);
       out.push({
