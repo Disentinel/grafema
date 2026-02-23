@@ -52,7 +52,7 @@ import { ConditionParser } from './ast/ConditionParser.js';
 import { getLine, getColumn, getEndLocation } from './ast/utils/location.js';
 import { Profiler } from '../../core/Profiler.js';
 import { ScopeTracker } from '../../core/ScopeTracker.js';
-import { computeSemanticId } from '../../core/SemanticId.js';
+import { computeSemanticId, computeSemanticIdV2 } from '../../core/SemanticId.js';
 import { IdGenerator } from './ast/IdGenerator.js';
 import { CollisionResolver } from './ast/CollisionResolver.js';
 import { ExpressionNode } from '../../core/nodes/ExpressionNode.js';
@@ -111,6 +111,7 @@ import type {
   RejectionPatternInfo,
   CatchesFromInfo,
   PropertyAccessInfo,
+  PropertyAssignmentInfo,
   TypeParameterInfo,
   CounterRef,
   ProcessedNodes,
@@ -203,6 +204,9 @@ interface Collections {
   // Property access tracking for PROPERTY_ACCESS nodes (REG-395)
   propertyAccesses: PropertyAccessInfo[];
   propertyAccessCounterRef: CounterRef;
+  // Property assignment tracking for PROPERTY_ASSIGNMENT nodes (REG-554)
+  propertyAssignments?: PropertyAssignmentInfo[];
+  propertyAssignmentCounterRef?: CounterRef;
   objectLiteralCounterRef: CounterRef;
   arrayLiteralCounterRef: CounterRef;
   ifScopeCounterRef: CounterRef;
@@ -1945,7 +1949,14 @@ export class JSASTAnalyzer extends Plugin {
           if (!allCollections.propertyAssignments) {
             allCollections.propertyAssignments = [];
           }
-          this.detectObjectPropertyAssignment(assignNode, module, objectMutations, scopeTracker, allCollections.propertyAssignments);
+          if (!allCollections.propertyAssignmentCounterRef) {
+            allCollections.propertyAssignmentCounterRef = { value: 0 };
+          }
+          this.detectObjectPropertyAssignment(
+            assignNode, module, objectMutations, scopeTracker,
+            allCollections.propertyAssignments,
+            allCollections.propertyAssignmentCounterRef
+          );
         }
       });
       this.profiler.end('traverse_assignments');
@@ -4205,7 +4216,8 @@ export class JSASTAnalyzer extends Plugin {
     module: VisitorModule,
     objectMutations: ObjectMutationInfo[],
     scopeTracker?: ScopeTracker,
-    propertyAssignments?: PropertyAssignmentInfo[]
+    propertyAssignments?: PropertyAssignmentInfo[],
+    propertyAssignmentCounterRef?: CounterRef
   ): void {
     // Check for property assignment: obj.prop = value or obj['prop'] = value
     if (assignNode.left.type !== 'MemberExpression') return;
@@ -4304,29 +4316,53 @@ export class JSASTAnalyzer extends Plugin {
       value: valueInfo
     });
 
-    // REG-554: Create PROPERTY_ASSIGNMENT node data for 'this.x = value' patterns
+    // REG-554: Also collect PROPERTY_ASSIGNMENT node info for 'this.prop = value'
+    // Only when inside a class context (enclosingClassName must be set).
+    // Non-'this' assignments are tracked by FLOWS_INTO edges only (MutationBuilder).
     if (propertyAssignments && objectName === 'this' && enclosingClassName) {
-      const paId = scopeTracker
-        ? computeSemanticId('PROPERTY_ASSIGNMENT', `this.${propertyName}`, scopeTracker.getContext(), {
-            discriminator: scopeTracker.getItemCounter(`PROPERTY_ASSIGNMENT:this.${propertyName}`)
-          })
-        : `PROPERTY_ASSIGNMENT#${propertyName}#${module.file}#${line}:${column}`;
+      let assignmentId: string;
+      const fullName = `${objectName}.${propertyName}`;
+      if (scopeTracker && propertyAssignmentCounterRef) {
+        // Build a qualified parent that includes both the class name and the enclosing
+        // method name so that:
+        //   - Same property in different classes → distinct IDs ("this.x[in:A.constructor]" vs "this.x[in:B.constructor]")
+        //   - Same property in different methods of the same class → distinct IDs ("this.x[in:Foo.constructor]" vs "this.x[in:Foo.reset]")
+        //   - Same property assigned multiple times in the same method → discriminator suffix ("this.x[in:Foo.constructor]#1")
+        const qualifiedParent = enclosingFunctionName
+          ? `${enclosingClassName}.${enclosingFunctionName}`
+          : enclosingClassName;
+        const discriminator = scopeTracker.getItemCounter(`PROPERTY_ASSIGNMENT:${qualifiedParent}.${fullName}`);
+        assignmentId = computeSemanticIdV2(
+          'PROPERTY_ASSIGNMENT',
+          fullName,
+          module.file,
+          qualifiedParent,
+          undefined,
+          discriminator
+        );
+      } else {
+        const cnt = propertyAssignmentCounterRef ? propertyAssignmentCounterRef.value++ : 0;
+        assignmentId = `PROPERTY_ASSIGNMENT#${fullName}#${module.file}#${line}:${column}:${cnt}`;
+      }
 
       propertyAssignments.push({
-        id: paId,
-        semanticId: paId,
+        id: assignmentId,
+        semanticId: assignmentId,
         type: 'PROPERTY_ASSIGNMENT',
-        name: propertyName,
-        objectName: 'this',
-        enclosingClassName,
+        objectName,
+        propertyName,
+        computed: mutationType === 'computed',
         file: module.file,
         line,
         column,
-        mutationScopePath: scopePath,
+        scopePath,
+        enclosingClassName,
         valueType: valueInfo.valueType as PropertyAssignmentInfo['valueType'],
         valueName: valueInfo.valueName,
-        callLine: valueInfo.callLine,
-        callColumn: valueInfo.callColumn,
+        memberObject: valueInfo.memberObject,
+        memberProperty: valueInfo.memberProperty,
+        memberLine: valueInfo.memberLine,
+        memberColumn: valueInfo.memberColumn,
       });
     }
   }
@@ -4584,21 +4620,41 @@ export class JSASTAnalyzer extends Plugin {
       valueType: 'EXPRESSION'  // Default
     };
 
-    const literalValue = ExpressionEvaluator.extractLiteralValue(value);
+    // REG-554: Unwrap TSNonNullExpression before evaluating the inner expression.
+    // Handles: this.graph = options.graph! (TSNonNullExpression wrapping a MemberExpression)
+    const effectiveValue: t.Expression =
+      value.type === 'TSNonNullExpression' ? value.expression : value;
+
+    const literalValue = ExpressionEvaluator.extractLiteralValue(effectiveValue);
     if (literalValue !== null) {
       valueInfo.valueType = 'LITERAL';
       valueInfo.literalValue = literalValue;
-    } else if (value.type === 'Identifier') {
+    } else if (effectiveValue.type === 'Identifier') {
       valueInfo.valueType = 'VARIABLE';
-      valueInfo.valueName = value.name;
-    } else if (value.type === 'ObjectExpression') {
+      valueInfo.valueName = effectiveValue.name;
+    } else if (effectiveValue.type === 'ObjectExpression') {
       valueInfo.valueType = 'OBJECT_LITERAL';
-    } else if (value.type === 'ArrayExpression') {
+    } else if (effectiveValue.type === 'ArrayExpression') {
       valueInfo.valueType = 'ARRAY_LITERAL';
-    } else if (value.type === 'CallExpression') {
+    } else if (effectiveValue.type === 'CallExpression') {
       valueInfo.valueType = 'CALL';
-      valueInfo.callLine = value.loc?.start.line;
-      valueInfo.callColumn = value.loc?.start.column;
+      valueInfo.callLine = effectiveValue.loc?.start.line;
+      valueInfo.callColumn = effectiveValue.loc?.start.column;
+    } else if (
+      effectiveValue.type === 'MemberExpression' &&
+      effectiveValue.object.type === 'Identifier' &&
+      !effectiveValue.computed &&
+      effectiveValue.property.type === 'Identifier'
+    ) {
+      // REG-554: Simple member expression: options.graph, config.timeout, etc.
+      // Use property location (not the full MemberExpression start) to match
+      // the line/column stored by PropertyAccessVisitor.extractChain(), which
+      // records current.property.loc.start for PROPERTY_ACCESS lookup.
+      valueInfo.valueType = 'MEMBER_EXPRESSION';
+      valueInfo.memberObject = effectiveValue.object.name;
+      valueInfo.memberProperty = effectiveValue.property.name;
+      valueInfo.memberLine = effectiveValue.property.loc?.start.line;
+      valueInfo.memberColumn = effectiveValue.property.loc?.start.column;
     }
 
     return valueInfo;

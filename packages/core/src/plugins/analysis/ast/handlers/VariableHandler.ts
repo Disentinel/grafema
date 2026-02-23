@@ -11,6 +11,7 @@ import type {
   ObjectMutationInfo,
   PropertyAssignmentInfo,
   VariableReassignmentInfo,
+  CounterRef,
 } from '../types.js';
 import { FunctionBodyHandler } from './FunctionBodyHandler.js';
 
@@ -88,14 +89,21 @@ export class VariableHandler extends FunctionBodyHandler {
         }
         const objectMutations = ctx.collections.objectMutations as ObjectMutationInfo[];
 
-        // Initialize property assignments collection if not exists (REG-554)
+        // REG-554: Initialize property assignments collection
         if (!ctx.collections.propertyAssignments) {
           ctx.collections.propertyAssignments = [];
         }
+        if (!ctx.collections.propertyAssignmentCounterRef) {
+          ctx.collections.propertyAssignmentCounterRef = { value: 0 };
+        }
         const propertyAssignments = ctx.collections.propertyAssignments as PropertyAssignmentInfo[];
+        const propertyAssignmentCounterRef = ctx.collections.propertyAssignmentCounterRef as CounterRef;
 
         // Check for object property assignment: obj.prop = value
-        analyzer.detectObjectPropertyAssignment(assignNode, ctx.module, objectMutations, ctx.scopeTracker, propertyAssignments);
+        analyzer.detectObjectPropertyAssignment(
+          assignNode, ctx.module, objectMutations, ctx.scopeTracker,
+          propertyAssignments, propertyAssignmentCounterRef
+        );
       },
     };
   }

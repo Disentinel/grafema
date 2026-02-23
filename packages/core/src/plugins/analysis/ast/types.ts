@@ -299,20 +299,28 @@ export interface PropertyAccessInfo {
 // === PROPERTY ASSIGNMENT INFO ===
 export interface PropertyAssignmentInfo {
   id: string;
-  semanticId?: string;
+  semanticId?: string;       // Stable ID: file->scope->PROPERTY_ASSIGNMENT->objectName.propertyName#N
   type: 'PROPERTY_ASSIGNMENT';
-  name: string;
-  objectName: string;
-  enclosingClassName?: string;
+  objectName: string;        // 'this' or object variable name
+  propertyName: string;      // 'graph', '<computed>', etc.
+  computed?: boolean;        // true for obj[x] = value
   file: string;
   line: number;
   column: number;
+  endLine?: number;
+  endColumn?: number;
   parentScopeId?: string;
-  mutationScopePath?: string[];
-  valueType: 'LITERAL' | 'VARIABLE' | 'CALL' | 'EXPRESSION' | 'OBJECT_LITERAL' | 'ARRAY_LITERAL';
-  valueName?: string;
-  callLine?: number;
-  callColumn?: number;
+  scopePath?: string[];
+  enclosingClassName?: string;     // class name when objectName === 'this'
+  // RHS value info (for ASSIGNED_FROM edge resolution)
+  valueType: 'LITERAL' | 'VARIABLE' | 'CALL' | 'EXPRESSION' | 'OBJECT_LITERAL' | 'ARRAY_LITERAL' | 'MEMBER_EXPRESSION';
+  valueName?: string;              // For VARIABLE type: the RHS variable name
+  // For MEMBER_EXPRESSION type: object and property of the RHS member expression
+  memberObject?: string;
+  memberProperty?: string;
+  // Source line/column of RHS member expression for PROPERTY_ACCESS node lookup
+  memberLine?: number;
+  memberColumn?: number;
 }
 
 // === CALL SITE INFO ===
@@ -749,7 +757,7 @@ export interface ObjectMutationInfo {
 }
 
 export interface ObjectMutationValue {
-  valueType: 'LITERAL' | 'VARIABLE' | 'CALL' | 'EXPRESSION' | 'OBJECT_LITERAL' | 'ARRAY_LITERAL';
+  valueType: 'LITERAL' | 'VARIABLE' | 'CALL' | 'EXPRESSION' | 'OBJECT_LITERAL' | 'ARRAY_LITERAL' | 'MEMBER_EXPRESSION';
   valueName?: string;            // For VARIABLE type - name of the variable
   valueNodeId?: string;          // For LITERAL, OBJECT_LITERAL, ARRAY_LITERAL - node ID
   literalValue?: unknown;        // For LITERAL type
@@ -757,6 +765,11 @@ export interface ObjectMutationValue {
   callColumn?: number;
   isSpread?: boolean;            // For Object.assign with spread: Object.assign(target, ...sources)
   argIndex?: number;             // For Object.assign - which source argument (0, 1, 2, ...)
+  // REG-554: For MEMBER_EXPRESSION type (e.g., options.graph in this.graph = options.graph)
+  memberObject?: string;         // Object name (e.g., 'options')
+  memberProperty?: string;       // Property name (e.g., 'graph')
+  memberLine?: number;           // Source location for PROPERTY_ACCESS node lookup
+  memberColumn?: number;
 }
 
 // === RETURN STATEMENT INFO ===
@@ -1235,6 +1248,10 @@ export interface ASTCollections {
   catchesFromInfos?: CatchesFromInfo[];
   // Property access tracking for PROPERTY_ACCESS nodes (REG-395)
   propertyAccesses?: PropertyAccessInfo[];
+  // Property assignment tracking for PROPERTY_ASSIGNMENT nodes (REG-554)
+  propertyAssignments?: PropertyAssignmentInfo[];
+  // Counter ref for property assignment tracking (REG-554)
+  propertyAssignmentCounterRef?: CounterRef;
   // REG-297: Top-level await tracking
   hasTopLevelAwait?: boolean;
   // TypeScript-specific collections
