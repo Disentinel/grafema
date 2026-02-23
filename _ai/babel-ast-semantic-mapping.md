@@ -6,7 +6,7 @@ This document maps ALL @babel/parser AST node types to their attributes and the 
 
 **Grafema Node Types**: `FUNCTION`, `CLASS`, `METHOD`, `VARIABLE`, `PARAMETER`, `MODULE`, `IMPORT`, `EXPORT`, `CALL`, `SCOPE`, `EXPRESSION`, `LITERAL`, `CONSTANT`, `INTERFACE`, `TYPE`, `ENUM`, `DECORATOR`
 
-**Grafema Edge Types**: `CONTAINS`, `DEPENDS_ON`, `CALLS`, `HAS_CALLBACK`, `PASSES_ARGUMENT`, `RECEIVES_ARGUMENT`, `RETURNS`, `EXTENDS`, `IMPLEMENTS`, `IMPORTS_FROM`, `EXPORTS_TO`, `DEFINES`, `USES`, `DECLARES`, `MODIFIES`, `CAPTURES`, `ASSIGNED_FROM`, `READS_FROM`, `WRITES_TO`, `DERIVES_FROM`, `FLOWS_INTO`, `HAS_PROPERTY`, `HAS_ELEMENT`, `THROWS`
+**Grafema Edge Types**: `CONTAINS`, `DEPENDS_ON`, `CALLS`, `HAS_CALLBACK`, `PASSES_ARGUMENT`, `RECEIVES_ARGUMENT`, `RETURNS`, `EXTENDS`, `IMPLEMENTS`, `IMPORTS_FROM`, `EXPORTS`, `DEFINES`, `USES`, `DECLARES`, `MODIFIES`, `CAPTURES`, `ASSIGNED_FROM`, `READS_FROM`, `WRITES_TO`, `DERIVES_FROM`, `FLOWS_INTO`, `HAS_PROPERTY`, `HAS_ELEMENT`, `THROWS`
 
 ---
 
@@ -742,8 +742,8 @@ No attributes.
 
 **Semantic Relations:**
 - Creates → `EXPORT` node
-- If declaration: `MODULE` -[EXPORTS_TO]→ declaration
-- If re-export: `MODULE` -[IMPORTS_FROM]→ source, then -[EXPORTS_TO]→
+- If declaration: `MODULE` -[EXPORTS]→ declaration
+- If re-export: `MODULE` -[IMPORTS_FROM]→ source, then -[EXPORTS]→
 
 ### ExportDefaultDeclaration
 | Attribute | Type | Description |
@@ -753,7 +753,7 @@ No attributes.
 
 **Semantic Relations:**
 - Creates → `EXPORT` node (default)
-- `MODULE` -[EXPORTS_TO]→ default binding
+- `MODULE` -[EXPORTS]→ default binding
 
 ### ExportAllDeclaration
 | Attribute | Type | Description |
@@ -765,7 +765,7 @@ No attributes.
 
 **Semantic Relations:**
 - `MODULE` -[IMPORTS_FROM]→ source
-- `MODULE` -[EXPORTS_TO]→ all source exports
+- `MODULE` -[EXPORTS]→ all source exports
 
 ### ExportSpecifier
 | Attribute | Type | Description |
@@ -1339,7 +1339,7 @@ No attributes.
 | ClassMethod | `METHOD` | RECEIVES_ARGUMENT, RETURNS, CONTAINS |
 | VariableDeclaration | `VARIABLE`/`CONSTANT` | DECLARES, ASSIGNED_FROM |
 | ImportDeclaration | `IMPORT` | IMPORTS_FROM |
-| ExportDeclaration | `EXPORT` | EXPORTS_TO |
+| ExportDeclaration | `EXPORT` | EXPORTS |
 | CallExpression | `CALL` | CALLS, PASSES_ARGUMENT, HAS_CALLBACK |
 | AssignmentExpression | - | ASSIGNED_FROM, MODIFIES, WRITES_TO |
 | MemberExpression | - | READS_FROM, WRITES_TO, ACCESSES |

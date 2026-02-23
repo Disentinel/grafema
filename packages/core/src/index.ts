@@ -284,6 +284,7 @@ export { InstanceOfResolver } from './plugins/enrichment/InstanceOfResolver.js';
 export { HTTPConnectionEnricher } from './plugins/enrichment/HTTPConnectionEnricher.js';
 export { SocketConnectionEnricher } from './plugins/enrichment/SocketConnectionEnricher.js';
 export { ImportExportLinker } from './plugins/enrichment/ImportExportLinker.js';
+export { ExportEntityLinker } from './plugins/enrichment/ExportEntityLinker.js';
 export { FunctionCallResolver } from './plugins/enrichment/FunctionCallResolver.js';
 export { RustFFIEnricher } from './plugins/enrichment/RustFFIEnricher.js';
 export { NodejsBuiltinsResolver } from './plugins/enrichment/NodejsBuiltinsResolver.js';

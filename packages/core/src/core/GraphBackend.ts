@@ -254,7 +254,6 @@ const EDGE_TYPE_TO_NUMBER: Record<string, number> = {
   'HAS_CALLBACK': 18,
   'MAKES_REQUEST': 19,
   'IMPORTS_FROM': 20,
-  'EXPORTS_TO': 21,
 };
 
 /**
