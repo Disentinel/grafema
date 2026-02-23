@@ -259,6 +259,10 @@ export interface VariableDeclarationInfo {
   isPrivate?: boolean;      // true for #privateField
   isStatic?: boolean;       // true for static #field
   isClassProperty?: boolean; // true for class properties (vs local variables)
+  // REG-552: TypeScript class property metadata
+  accessibility?: 'public' | 'private' | 'protected';  // undefined = implicit public
+  isReadonly?: boolean;                                   // true for readonly modifier
+  tsType?: string;                                        // TypeScript type annotation string
 }
 
 // === GRAFEMA-IGNORE ANNOTATION (REG-332) ===
@@ -305,6 +309,7 @@ export interface CallSiteInfo {
   endColumn?: number;
   parentScopeId?: string;
   targetFunctionName?: string;
+  isNew?: boolean;
   /** REG-332: Annotation to suppress strict mode errors */
   grafemaIgnore?: GrafemaIgnoreAnnotation;
   /** REG-311: true if wrapped in await expression */
@@ -332,6 +337,7 @@ export interface MethodCallInfo {
   endColumn?: number;
   parentScopeId?: string;
   arguments?: unknown[];
+  isNew?: boolean;
   /** REG-332: Annotation to suppress strict mode errors */
   grafemaIgnore?: GrafemaIgnoreAnnotation;
   /** REG-311: true if wrapped in await expression */

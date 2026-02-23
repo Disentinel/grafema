@@ -41,9 +41,12 @@ async function setupTest(backend, files) {
     })
   );
 
-  // Create test files
+  // Create test files (including subdirectory support)
   for (const [filename, content] of Object.entries(files)) {
-    writeFileSync(join(testDir, filename), content);
+    const filePath = join(testDir, filename);
+    const fileDir = filePath.substring(0, filePath.lastIndexOf('/'));
+    mkdirSync(fileDir, { recursive: true });
+    writeFileSync(filePath, content);
   }
 
   const orchestrator = createTestOrchestrator(backend);
@@ -514,6 +517,56 @@ class App {
       assert.strictEqual(methodFlow.dst, classNode.id, 'Method param should still flow to CLASS');
     });
 
+    it('should fix FLOWS_INTO to constructor FUNCTION for files in subdirectories (REG-557)', async () => {
+      // This test specifically catches the basename bug where `basename('src/App.js') = 'App.js'`
+      // which doesn't match `module.file = 'src/App.js'`
+      await setupTest(backend, {
+        'index.js': `import './src/App.js';`,
+        'src/App.js': `
+class App {
+  constructor(config) {
+    this.config = config;
+  }
+  setLogger(logger) {
+    this.logger = logger;
+  }
+}
+        `
+      });
+
+      const allNodes = await backend.getAllNodes();
+      const allEdges = await backend.getAllEdges();
+
+      const constructorFn = allNodes.find(n => n.type === 'FUNCTION' && n.name === 'constructor');
+      assert.ok(constructorFn, 'FUNCTION "constructor" not found');
+
+      const classNode = allNodes.find(n => n.type === 'CLASS' && n.name === 'App');
+      assert.ok(classNode, 'CLASS "App" not found');
+
+      const configParam = allNodes.find(n => n.type === 'PARAMETER' && n.name === 'config');
+      assert.ok(configParam, 'PARAMETER "config" not found');
+
+      const loggerParam = allNodes.find(n => n.type === 'PARAMETER' && n.name === 'logger');
+      assert.ok(loggerParam, 'PARAMETER "logger" not found');
+
+      // Constructor param must flow to constructor FUNCTION (not CLASS)
+      const constructorFlow = allEdges.find(e =>
+        e.type === 'FLOWS_INTO' && e.src === configParam.id
+      );
+      assert.ok(constructorFlow, 'Expected FLOWS_INTO edge from config param');
+      assert.strictEqual(
+        constructorFlow.dst, constructorFn.id,
+        `Constructor param should flow to FUNCTION "constructor", not CLASS. Got dst: ${constructorFlow.dst}, expected constructorFn.id: ${constructorFn.id}`
+      );
+
+      // Method param still flows to CLASS
+      const methodFlow = allEdges.find(e =>
+        e.type === 'FLOWS_INTO' && e.src === loggerParam.id
+      );
+      assert.ok(methodFlow, 'Expected FLOWS_INTO edge from logger param');
+      assert.strictEqual(methodFlow.dst, classNode.id, 'Method param should still flow to CLASS');
+    });
+
     it('should NOT create edge for this.prop outside class context', async () => {
       await setupTest(backend, {
         'index.js': `
@@ -539,6 +592,50 @@ const arrowFn = (y) => {
       assert.strictEqual(
         thisPropertyEdges.length, 0,
         `Should NOT create this_property edges outside class context. Found: ${JSON.stringify(thisPropertyEdges)}`
+      );
+    });
+  });
+
+  // ============================================================================
+  // this.prop read access (READS_FROM edges to CLASS)
+  // REG-557: basename bug fix for subdirectory files
+  // ============================================================================
+  describe('this.prop read access (READS_FROM)', () => {
+    it('should create READS_FROM edge to CLASS for this.prop in subdirectory file (REG-557)', async () => {
+      await setupTest(backend, {
+        'index.js': `import './src/App.js';`,
+        'src/App.js': `
+class App {
+  constructor(config) {
+    this.config = config;
+  }
+  getConfig() {
+    return this.config;
+  }
+}
+        `
+      });
+
+      const allNodes = await backend.getAllNodes();
+      const allEdges = await backend.getAllEdges();
+
+      const classNode = allNodes.find(n => n.type === 'CLASS' && n.name === 'App');
+      assert.ok(classNode, 'CLASS "App" not found');
+
+      // this.config in getConfig() should be a PROPERTY_ACCESS with name='config', objectName='this'
+      const propAccess = allNodes.find(n =>
+        n.type === 'PROPERTY_ACCESS' && n.name === 'config' && n.objectName === 'this'
+      );
+      assert.ok(propAccess, 'PROPERTY_ACCESS with name="config" and objectName="this" not found');
+
+      const readsFrom = allEdges.find(e =>
+        e.type === 'READS_FROM' &&
+        e.src === propAccess.id &&
+        e.dst === classNode.id
+      );
+      assert.ok(
+        readsFrom,
+        `Expected READS_FROM edge from this.config to CLASS "App". basename bug would cause this to fail for subdirectory files.`
       );
     });
   });

@@ -51,6 +51,9 @@ pub enum GraphError {
 
     #[error("Invalid database name: {0}")]
     InvalidDatabaseName(String),
+
+    #[error("Database already in use. Lock file: {0}. If this is stale, remove the LOCK file manually.")]
+    DatabaseLocked(String),
 }
 
 impl GraphError {
@@ -63,6 +66,7 @@ impl GraphError {
             GraphError::NoDatabaseSelected => "NO_DATABASE_SELECTED",
             GraphError::ReadOnlyMode => "READ_ONLY_MODE",
             GraphError::InvalidDatabaseName(_) => "INVALID_DATABASE_NAME",
+            GraphError::DatabaseLocked(_) => "DATABASE_LOCKED",
             _ => "INTERNAL_ERROR",
         }
     }

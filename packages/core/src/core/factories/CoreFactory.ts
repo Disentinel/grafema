@@ -224,6 +224,8 @@ interface ExpressionOptions {
   computedPropertyVar?: string;
   // Binary/Logical
   operator?: string;
+  leftSourceName?: string | null;
+  rightSourceName?: string | null;
   // Tracking
   path?: string;
   baseName?: string;

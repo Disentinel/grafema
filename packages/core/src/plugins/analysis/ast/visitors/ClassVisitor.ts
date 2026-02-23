@@ -27,7 +27,7 @@ import type { NodePath } from '@babel/traverse';
 import { ASTVisitor, type VisitorModule, type VisitorCollections, type VisitorHandlers } from './ASTVisitor.js';
 import type { AnalyzeFunctionBodyCallback } from './FunctionVisitor.js';
 import type { DecoratorInfo, ParameterInfo, VariableDeclarationInfo, TypeParameterInfo } from '../types.js';
-import { extractTypeParameters } from './TypeScriptVisitor.js';
+import { extractTypeParameters, typeNodeToString } from './TypeScriptVisitor.js';
 import { ExpressionEvaluator } from '../ExpressionEvaluator.js';
 import { createParameterNodes } from '../utils/createParameterNodes.js';
 import type { ScopeTracker } from '../../../../core/ScopeTracker.js';
@@ -155,6 +155,49 @@ export class ClassVisitor extends ASTVisitor {
       targetId,
       targetType
     };
+  }
+
+  /**
+   * Index a non-function class field declaration as a VARIABLE node (REG-552).
+   * Used by both ClassDeclaration and ClassExpression handlers.
+   */
+  private indexClassFieldDeclaration(
+    propNode: ClassProperty,
+    propName: string,
+    propLine: number,
+    propColumn: number,
+    module: VisitorModule,
+    currentClass: ClassInfo,
+    collections: VisitorCollections
+  ): void {
+    if (propNode.computed) return;
+    if ((propNode as any).declare) return;
+
+    const fieldId = computeSemanticIdV2('VARIABLE', propName, module.file, this.scopeTracker.getNamedParent());
+
+    if (!currentClass.properties) currentClass.properties = [];
+    currentClass.properties.push(fieldId);
+
+    const accessibility = propNode.accessibility ?? 'public';
+    const isReadonly = propNode.readonly || false;
+    const typeAnnotationNode = (propNode as any).typeAnnotation?.typeAnnotation;
+    const tsType = typeAnnotationNode ? typeNodeToString(typeAnnotationNode) : undefined;
+
+    (collections.variableDeclarations as VariableDeclarationInfo[]).push({
+      id: fieldId,
+      semanticId: fieldId,
+      type: 'VARIABLE',
+      name: propName,
+      file: module.file,
+      line: propLine,
+      column: propColumn,
+      isStatic: propNode.static || false,
+      isClassProperty: true,
+      parentScopeId: currentClass.id,
+      accessibility,
+      isReadonly: isReadonly || undefined,
+      tsType,
+    });
   }
 
   getHandlers(): VisitorHandlers {
@@ -331,6 +374,8 @@ export class ClassVisitor extends ASTVisitor {
 
               // Exit method scope
               scopeTracker.exitScope();
+            } else {
+              this.indexClassFieldDeclaration(propNode, propName, propLine, propColumn, module, currentClass, collections);
             }
           },
 
@@ -778,6 +823,8 @@ export class ClassVisitor extends ASTVisitor {
               const funcPath = propPath.get('value') as NodePath<ArrowFunctionExpression | FunctionExpression>;
               analyzeFunctionBody(funcPath, propBodyScopeId, module, collections);
               scopeTracker.exitScope();
+            } else {
+              this.indexClassFieldDeclaration(propNode, propName, propLine, propColumn, module, currentClass, collections);
             }
           },
 

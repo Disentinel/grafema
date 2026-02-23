@@ -8167,6 +8167,14 @@
     },
     {
       "exported": false,
+      "expressionType": "LogicalExpression",
+      "file": "middleware/auth.js",
+      "name": "… || …",
+      "operator": "||",
+      "type": "EXPRESSION"
+    },
+    {
+      "exported": false,
       "expressionType": "BinaryExpression",
       "file": "app.js",
       "name": "<BinaryExpression>",
@@ -8271,14 +8279,6 @@
       "name": "<complex>.profile",
       "object": "<complex>",
       "property": "profile",
-      "type": "EXPRESSION"
-    },
-    {
-      "exported": false,
-      "expressionType": "LogicalExpression",
-      "file": "middleware/auth.js",
-      "name": "<LogicalExpression>",
-      "operator": "||",
       "type": "EXPRESSION"
     },
     {
@@ -16043,6 +16043,14 @@
       "file": "app.js",
       "name": "",
       "type": "LITERAL",
+      "value": "All services connected",
+      "valueType": "string"
+    },
+    {
+      "exported": false,
+      "file": "app.js",
+      "name": "",
+      "type": "LITERAL",
       "value": "Cache error:",
       "valueType": "string"
     },
@@ -16123,6 +16131,14 @@
       "file": "app.js",
       "name": "",
       "type": "LITERAL",
+      "value": "Services already initialized",
+      "valueType": "string"
+    },
+    {
+      "exported": false,
+      "file": "app.js",
+      "name": "",
+      "type": "LITERAL",
       "value": "settings",
       "valueType": "string"
     },
@@ -16196,6 +16212,14 @@
       "name": "",
       "type": "LITERAL",
       "value": 1,
+      "valueType": "number"
+    },
+    {
+      "exported": false,
+      "file": "app.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": 10,
       "valueType": "number"
     },
     {
@@ -16725,6 +16749,14 @@
       "type": "LITERAL",
       "value": 10,
       "valueType": "number"
+    },
+    {
+      "exported": false,
+      "file": "models/User.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": false,
+      "valueType": "boolean"
     },
     {
       "exported": false,
@@ -17338,6 +17370,14 @@
       "file": "services/dataProcessor.js",
       "name": "",
       "type": "LITERAL",
+      "value": 0,
+      "valueType": "number"
+    },
+    {
+      "exported": false,
+      "file": "services/dataProcessor.js",
+      "name": "",
+      "type": "LITERAL",
       "value": 10,
       "valueType": "number"
     },
@@ -17348,6 +17388,14 @@
       "type": "LITERAL",
       "value": 3600,
       "valueType": "number"
+    },
+    {
+      "exported": false,
+      "file": "utils/asyncHelpers.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": "/api/save",
+      "valueType": "string"
     },
     {
       "exported": false,
@@ -17522,7 +17570,55 @@
       "file": "utils/asyncHelpers.js",
       "name": "",
       "type": "LITERAL",
+      "value": 100,
+      "valueType": "number"
+    },
+    {
+      "exported": false,
+      "file": "utils/asyncHelpers.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": 100,
+      "valueType": "number"
+    },
+    {
+      "exported": false,
+      "file": "utils/asyncHelpers.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": 100,
+      "valueType": "number"
+    },
+    {
+      "exported": false,
+      "file": "utils/asyncHelpers.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": 100,
+      "valueType": "number"
+    },
+    {
+      "exported": false,
+      "file": "utils/asyncHelpers.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": 100,
+      "valueType": "number"
+    },
+    {
+      "exported": false,
+      "file": "utils/asyncHelpers.js",
+      "name": "",
+      "type": "LITERAL",
       "value": 2,
+      "valueType": "number"
+    },
+    {
+      "exported": false,
+      "file": "utils/asyncHelpers.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": 50,
       "valueType": "number"
     },
     {
@@ -28252,6 +28348,22 @@
     },
     {
       "from": "CALL:bcrypt.hash",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:user",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:bcrypt.hash",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:user",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:bcrypt.hash",
       "type": "PASSES_ARGUMENT",
       "to": "FUNCTION:anonymous[0]",
       "metadata": {
@@ -28272,6 +28384,262 @@
       "to": "VARIABLE:salt",
       "metadata": {
         "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:bcrypt.hash",
+      "type": "PASSES_ARGUMENT",
+      "to": "VARIABLE:user",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:bcrypt.hash",
+      "type": "PASSES_ARGUMENT",
+      "to": "VARIABLE:user",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:callback",
+      "type": "DERIVES_FROM",
+      "to": "CALL:batches.flat",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:callback",
+      "type": "DERIVES_FROM",
+      "to": "CONSTANT:results",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:callback",
+      "type": "DERIVES_FROM",
+      "to": "CONSTANT:results",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:callback",
+      "type": "DERIVES_FROM",
+      "to": "CONSTRUCTOR_CALL:new Error()",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:callback",
+      "type": "DERIVES_FROM",
+      "to": "CONSTRUCTOR_CALL:new Error()",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:callback",
+      "type": "DERIVES_FROM",
+      "to": "CONSTRUCTOR_CALL:new Error()",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:callback",
+      "type": "DERIVES_FROM",
+      "to": "CONSTRUCTOR_CALL:new Error()",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:callback",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:callback",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:callback",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:callback",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:batch",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:callback",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:err",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:callback",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:err",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:callback",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:err",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:callback",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:err",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:callback",
+      "type": "PASSES_ARGUMENT",
+      "to": "CALL:batches.flat",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:callback",
+      "type": "PASSES_ARGUMENT",
+      "to": "CONSTANT:results",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:callback",
+      "type": "PASSES_ARGUMENT",
+      "to": "CONSTANT:results",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:callback",
+      "type": "PASSES_ARGUMENT",
+      "to": "CONSTRUCTOR_CALL:new Error()",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:callback",
+      "type": "PASSES_ARGUMENT",
+      "to": "CONSTRUCTOR_CALL:new Error()",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:callback",
+      "type": "PASSES_ARGUMENT",
+      "to": "CONSTRUCTOR_CALL:new Error()",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:callback",
+      "type": "PASSES_ARGUMENT",
+      "to": "CONSTRUCTOR_CALL:new Error()",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:callback",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:callback",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:callback",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:callback",
+      "type": "PASSES_ARGUMENT",
+      "to": "VARIABLE:batch",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:callback",
+      "type": "PASSES_ARGUMENT",
+      "to": "VARIABLE:err",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:callback",
+      "type": "PASSES_ARGUMENT",
+      "to": "VARIABLE:err",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:callback",
+      "type": "PASSES_ARGUMENT",
+      "to": "VARIABLE:err",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:callback",
+      "type": "PASSES_ARGUMENT",
+      "to": "VARIABLE:err",
+      "metadata": {
+        "argIndex": 0
       }
     },
     {
@@ -28401,6 +28769,54 @@
       "to": "FUNCTION:anonymous[0]"
     },
     {
+      "from": "CALL:clearTimeout",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:timeoutId",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:clearTimeout",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:timer",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:clearTimeout",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:timer",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:clearTimeout",
+      "type": "PASSES_ARGUMENT",
+      "to": "VARIABLE:timeoutId",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:clearTimeout",
+      "type": "PASSES_ARGUMENT",
+      "to": "VARIABLE:timer",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:clearTimeout",
+      "type": "PASSES_ARGUMENT",
+      "to": "VARIABLE:timer",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
       "from": "CALL:config.getPort",
       "type": "CALLS",
       "to": "FUNCTION:getPort"
@@ -28470,6 +28886,22 @@
       "from": "CALL:connectServices",
       "type": "CALLS",
       "to": "FUNCTION:connectServices"
+    },
+    {
+      "from": "CALL:connectServices",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:connectServices",
+      "type": "PASSES_ARGUMENT",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
     },
     {
       "from": "CALL:console.error",
@@ -29660,6 +30092,14 @@
     },
     {
       "from": "CALL:fetch",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:fetch",
       "type": "MAKES_REQUEST",
       "to": "http:request:GET /api/comments/${...}"
     },
@@ -29714,14 +30154,70 @@
       "to": "http:request:POST /api/save"
     },
     {
+      "from": "CALL:fetch",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
       "from": "CALL:fetchDataStream",
       "type": "CALLS",
       "to": "FUNCTION:fetchDataStream"
     },
     {
       "from": "CALL:fetchDataStream",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:fetchDataStream",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:user",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:fetchDataStream",
       "type": "MAKES_REQUEST",
       "to": "http:request:UNKNOWN dynamic"
+    },
+    {
+      "from": "CALL:fetchDataStream",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:fetchDataStream",
+      "type": "PASSES_ARGUMENT",
+      "to": "VARIABLE:user",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:fn",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:fn",
+      "type": "PASSES_ARGUMENT",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 1
+      }
     },
     {
       "from": "CALL:generator.next",
@@ -30249,10 +30745,26 @@
     },
     {
       "from": "CALL:mongoose.connect",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:config",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:mongoose.connect",
       "type": "PASSES_ARGUMENT",
       "to": "FUNCTION:anonymous[0]",
       "metadata": {
         "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:mongoose.connect",
+      "type": "PASSES_ARGUMENT",
+      "to": "VARIABLE:config",
+      "metadata": {
+        "argIndex": 0
       }
     },
     {
@@ -30989,6 +31501,22 @@
       "to": "FUNCTION:processBatch"
     },
     {
+      "from": "CALL:processBatch",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:processBatch",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
       "from": "CALL:processDataGenerator",
       "type": "CALLS",
       "to": "FUNCTION:processDataGenerator"
@@ -31027,6 +31555,22 @@
       "from": "CALL:processNext",
       "type": "CALLS",
       "to": "FUNCTION:processNext"
+    },
+    {
+      "from": "CALL:processor",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:item",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:processor",
+      "type": "PASSES_ARGUMENT",
+      "to": "VARIABLE:item",
+      "metadata": {
+        "argIndex": 0
+      }
     },
     {
       "from": "CALL:processor.initialize",
@@ -32101,7 +32645,31 @@
     {
       "from": "CALL:reject",
       "type": "DERIVES_FROM",
-      "to": "VARIABLE:err",
+      "to": "CONSTRUCTOR_CALL:new Error()",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:reject",
+      "type": "DERIVES_FROM",
+      "to": "CONSTRUCTOR_CALL:new Error()",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:reject",
+      "type": "DERIVES_FROM",
+      "to": "CONSTRUCTOR_CALL:new Error()",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:reject",
+      "type": "DERIVES_FROM",
+      "to": "CONSTRUCTOR_CALL:new Error()",
       "metadata": {
         "argIndex": 0
       }
@@ -32134,6 +32702,46 @@
       "from": "CALL:reject",
       "type": "DERIVES_FROM",
       "to": "VARIABLE:err",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:reject",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:err",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:reject",
+      "type": "PASSES_ARGUMENT",
+      "to": "CONSTRUCTOR_CALL:new Error()",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:reject",
+      "type": "PASSES_ARGUMENT",
+      "to": "CONSTRUCTOR_CALL:new Error()",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:reject",
+      "type": "PASSES_ARGUMENT",
+      "to": "CONSTRUCTOR_CALL:new Error()",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:reject",
+      "type": "PASSES_ARGUMENT",
+      "to": "CONSTRUCTOR_CALL:new Error()",
       "metadata": {
         "argIndex": 0
       }
@@ -33538,6 +34146,22 @@
     {
       "from": "CALL:results.push",
       "type": "DERIVES_FROM",
+      "to": "VARIABLE:next",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:results.push",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:next",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:results.push",
+      "type": "DERIVES_FROM",
       "to": "VARIABLE:processed",
       "metadata": {
         "argIndex": 0
@@ -33587,6 +34211,22 @@
       "from": "CALL:results.push",
       "type": "PASSES_ARGUMENT",
       "to": "VARIABLE:data",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:results.push",
+      "type": "PASSES_ARGUMENT",
+      "to": "VARIABLE:next",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:results.push",
+      "type": "PASSES_ARGUMENT",
+      "to": "VARIABLE:next",
       "metadata": {
         "argIndex": 0
       }
@@ -33709,8 +34349,24 @@
     },
     {
       "from": "CALL:retryWithBackoff",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:retryWithBackoff",
       "type": "HANDLED_BY",
       "to": "IMPORT:retryWithBackoff"
+    },
+    {
+      "from": "CALL:retryWithBackoff",
+      "type": "PASSES_ARGUMENT",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
     },
     {
       "from": "CALL:retryWithBackoff",
@@ -34045,6 +34701,14 @@
     },
     {
       "from": "CALL:server.on",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:config",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:server.on",
       "type": "PASSES_ARGUMENT",
       "to": "LITERAL:",
       "metadata": {
@@ -34053,13 +34717,325 @@
     },
     {
       "from": "CALL:server.on",
+      "type": "PASSES_ARGUMENT",
+      "to": "VARIABLE:config",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:server.on",
       "type": "USES",
       "to": "VARIABLE:server"
+    },
+    {
+      "from": "CALL:setImmediate",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:setImmediate",
+      "type": "PASSES_ARGUMENT",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:setTimeout",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:setTimeout",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:setTimeout",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:setTimeout",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:setTimeout",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:setTimeout",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:setTimeout",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:setTimeout",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:setTimeout",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:setTimeout",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:setTimeout",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:setTimeout",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:setTimeout",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:setTimeout",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:setTimeout",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:setTimeout",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:setTimeout",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:delay",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:setTimeout",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:delay",
+      "metadata": {
+        "argIndex": 1
+      }
     },
     {
       "from": "CALL:setTimeout",
       "type": "FLOWS_INTO",
       "to": "VARIABLE:timeoutId"
+    },
+    {
+      "from": "CALL:setTimeout",
+      "type": "PASSES_ARGUMENT",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:setTimeout",
+      "type": "PASSES_ARGUMENT",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:setTimeout",
+      "type": "PASSES_ARGUMENT",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:setTimeout",
+      "type": "PASSES_ARGUMENT",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:setTimeout",
+      "type": "PASSES_ARGUMENT",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:setTimeout",
+      "type": "PASSES_ARGUMENT",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:setTimeout",
+      "type": "PASSES_ARGUMENT",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:setTimeout",
+      "type": "PASSES_ARGUMENT",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:setTimeout",
+      "type": "PASSES_ARGUMENT",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:setTimeout",
+      "type": "PASSES_ARGUMENT",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:setTimeout",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:setTimeout",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:setTimeout",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:setTimeout",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:setTimeout",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:setTimeout",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:setTimeout",
+      "type": "PASSES_ARGUMENT",
+      "to": "VARIABLE:delay",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:setTimeout",
+      "type": "PASSES_ARGUMENT",
+      "to": "VARIABLE:delay",
+      "metadata": {
+        "argIndex": 1
+      }
     },
     {
       "from": "CALL:tasks.reduce",
@@ -34407,7 +35383,31 @@
     {
       "from": "CALL:User.findById",
       "type": "DERIVES_FROM",
-      "to": "VARIABLE:userId",
+      "to": "VARIABLE:decoded",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:User.findById",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:decoded",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:User.findById",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:decoded",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:User.findById",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:decoded",
       "metadata": {
         "argIndex": 0
       }
@@ -34446,10 +35446,10 @@
     },
     {
       "from": "CALL:User.findById",
-      "type": "PASSES_ARGUMENT",
-      "to": "FUNCTION:anonymous[0]",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:userId",
       "metadata": {
-        "argIndex": 1
+        "argIndex": 0
       }
     },
     {
@@ -34498,6 +35498,46 @@
       "to": "FUNCTION:anonymous[0]",
       "metadata": {
         "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:User.findById",
+      "type": "PASSES_ARGUMENT",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:User.findById",
+      "type": "PASSES_ARGUMENT",
+      "to": "VARIABLE:decoded",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:User.findById",
+      "type": "PASSES_ARGUMENT",
+      "to": "VARIABLE:decoded",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:User.findById",
+      "type": "PASSES_ARGUMENT",
+      "to": "VARIABLE:decoded",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:User.findById",
+      "type": "PASSES_ARGUMENT",
+      "to": "VARIABLE:decoded",
+      "metadata": {
+        "argIndex": 0
       }
     },
     {
@@ -34749,9 +35789,41 @@
       "to": "FUNCTION:verifyTokenAsync"
     },
     {
+      "from": "CALL:verifyTokenAsync",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:token",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:verifyTokenAsync",
+      "type": "PASSES_ARGUMENT",
+      "to": "VARIABLE:token",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
       "from": "CALL:verifyTokenPromise",
       "type": "CALLS",
       "to": "FUNCTION:verifyTokenPromise"
+    },
+    {
+      "from": "CALL:verifyTokenPromise",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:token",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:verifyTokenPromise",
+      "type": "PASSES_ARGUMENT",
+      "to": "VARIABLE:token",
+      "metadata": {
+        "argIndex": 0
+      }
     },
     {
       "from": "CATCH_BLOCK:",
@@ -41802,6 +42874,40 @@
       }
     },
     {
+      "from": "PARAMETER:callback",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "PARAMETER:callback",
+      "type": "RECEIVES_ARGUMENT",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0,
+        "callId": "app.js->startServer->anonymous[0]->CALL->connectServices#0"
+      }
+    },
+    {
+      "from": "PARAMETER:count",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "PARAMETER:count",
+      "type": "RECEIVES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 1,
+        "callId": "app.js->processUserRequest->try#0->CALL->fetchDataStream#0"
+      }
+    },
+    {
       "from": "PARAMETER:err",
       "type": "DERIVES_FROM",
       "to": "VARIABLE:error",
@@ -41816,6 +42922,23 @@
       "metadata": {
         "argIndex": 0,
         "callId": "app.js->processUserRequest->catch#0->CALL->config.handleError#0"
+      }
+    },
+    {
+      "from": "PARAMETER:fn",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "PARAMETER:fn",
+      "type": "RECEIVES_ARGUMENT",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0,
+        "callId": "app.js->anonymous[2]->anonymous[0]->CALL->retryWithBackoff#0"
       }
     },
     {
@@ -41845,11 +42968,62 @@
     },
     {
       "from": "PARAMETER:startId",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:user",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "PARAMETER:startId",
       "type": "RECEIVES_ARGUMENT",
       "to": "CONSTANT:userId",
       "metadata": {
         "argIndex": 0,
         "callId": "services/dataProcessor.js->DataProcessor->processWithNestedGenerators->for-of#0->CALL->this.fetchUsersStream#0"
+      }
+    },
+    {
+      "from": "PARAMETER:startId",
+      "type": "RECEIVES_ARGUMENT",
+      "to": "VARIABLE:user",
+      "metadata": {
+        "argIndex": 0,
+        "callId": "app.js->processUserRequest->try#0->CALL->fetchDataStream#0"
+      }
+    },
+    {
+      "from": "PARAMETER:token",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:token",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "PARAMETER:token",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:token",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "PARAMETER:token",
+      "type": "RECEIVES_ARGUMENT",
+      "to": "VARIABLE:token",
+      "metadata": {
+        "argIndex": 0,
+        "callId": "middleware/auth.js->authMiddleware->try#0->CALL->verifyTokenAsync#0"
+      }
+    },
+    {
+      "from": "PARAMETER:token",
+      "type": "RECEIVES_ARGUMENT",
+      "to": "VARIABLE:token",
+      "metadata": {
+        "argIndex": 0,
+        "callId": "middleware/auth.js->authMiddlewarePromise->CALL->verifyTokenPromise#0"
       }
     },
     {
@@ -41935,6 +43109,21 @@
       "to": "PARAMETER:urls"
     },
     {
+      "from": "PROPERTY_ACCESS:batchSize",
+      "type": "READS_FROM",
+      "to": "CLASS:DataProcessor"
+    },
+    {
+      "from": "PROPERTY_ACCESS:batchSize",
+      "type": "READS_FROM",
+      "to": "CLASS:DataProcessor"
+    },
+    {
+      "from": "PROPERTY_ACCESS:batchSize",
+      "type": "READS_FROM",
+      "to": "CLASS:DataProcessor"
+    },
+    {
       "from": "PROPERTY_ACCESS:body",
       "type": "READS_FROM",
       "to": "PARAMETER:req"
@@ -41943,6 +43132,21 @@
       "from": "PROPERTY_ACCESS:body",
       "type": "READS_FROM",
       "to": "PARAMETER:req"
+    },
+    {
+      "from": "PROPERTY_ACCESS:cache",
+      "type": "READS_FROM",
+      "to": "CLASS:DataProcessor"
+    },
+    {
+      "from": "PROPERTY_ACCESS:cache",
+      "type": "READS_FROM",
+      "to": "CLASS:DataProcessor"
+    },
+    {
+      "from": "PROPERTY_ACCESS:cache",
+      "type": "READS_FROM",
+      "to": "CLASS:DataProcessor"
     },
     {
       "from": "PROPERTY_ACCESS:dataId",
@@ -41968,16 +43172,6 @@
       "from": "PROPERTY_ACCESS:dbUrl",
       "type": "READS_FROM",
       "to": "VARIABLE:config"
-    },
-    {
-      "from": "PROPERTY_ACCESS:done",
-      "type": "READS_FROM",
-      "to": "VARIABLE:next"
-    },
-    {
-      "from": "PROPERTY_ACCESS:done",
-      "type": "READS_FROM",
-      "to": "VARIABLE:next"
     },
     {
       "from": "PROPERTY_ACCESS:done",
@@ -42033,6 +43227,11 @@
       "from": "PROPERTY_ACCESS:id",
       "type": "READS_FROM",
       "to": "VARIABLE:user"
+    },
+    {
+      "from": "PROPERTY_ACCESS:initialized",
+      "type": "READS_FROM",
+      "to": "CLASS:DataProcessor"
     },
     {
       "from": "PROPERTY_ACCESS:ip",
@@ -42198,16 +43397,6 @@
       "from": "PROPERTY_ACCESS:value",
       "type": "READS_FROM",
       "to": "CONSTANT:item"
-    },
-    {
-      "from": "PROPERTY_ACCESS:value",
-      "type": "READS_FROM",
-      "to": "VARIABLE:next"
-    },
-    {
-      "from": "PROPERTY_ACCESS:value",
-      "type": "READS_FROM",
-      "to": "VARIABLE:next"
     },
     {
       "from": "PROPERTY_ACCESS:value",
@@ -48043,6 +49232,11 @@
     {
       "from": "VARIABLE:userId",
       "type": "ASSIGNED_FROM",
+      "to": "EXPRESSION:… || …"
+    },
+    {
+      "from": "VARIABLE:userId",
+      "type": "ASSIGNED_FROM",
       "to": "EXPRESSION:<complex>._id"
     },
     {
@@ -48064,11 +49258,6 @@
       "from": "VARIABLE:userId",
       "type": "ASSIGNED_FROM",
       "to": "EXPRESSION:<complex>.id"
-    },
-    {
-      "from": "VARIABLE:userId",
-      "type": "ASSIGNED_FROM",
-      "to": "EXPRESSION:<LogicalExpression>"
     },
     {
       "from": "VARIABLE:userId",

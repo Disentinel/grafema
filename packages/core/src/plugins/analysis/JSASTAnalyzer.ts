@@ -31,7 +31,7 @@ function isAnalysisResult(value: unknown): value is AnalysisResult {
 
 import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 import { ExpressionEvaluator } from './ast/ExpressionEvaluator.js';
-import { GraphBuilder } from './ast/GraphBuilder.js';
+import { GraphBuilder, GraphDataError } from './ast/GraphBuilder.js';
 import {
   ImportExportVisitor,
   VariableVisitor,
@@ -2305,7 +2305,8 @@ export class JSASTAnalyzer extends Plugin {
       nodesCreated = result.nodes;
       edgesCreated = result.edges;
 
-    } catch {
+    } catch (err) {
+      if (err instanceof GraphDataError) throw err; // propagate data quality errors
       // Error analyzing module - silently skip, caller handles the result
     }
 
@@ -3433,6 +3434,11 @@ export class JSASTAnalyzer extends Plugin {
         // REG-298: Await-in-loop detection
         ...(isAwaited && isInsideLoop ? { isInsideLoop } : {})
       });
+
+      // REG-556: Extract arguments for direct function calls
+      if (callNode.arguments.length > 0) {
+        this.extractMethodCallArguments(callNode, callId, module, collections);
+      }
     }
     // Handle method calls (obj.method(), data.process())
     else if (callNode.callee.type === 'MemberExpression') {
@@ -3669,6 +3675,11 @@ export class JSASTAnalyzer extends Plugin {
         argInfo.functionColumn = getColumn(arg);
       } else if (t.isCallExpression(arg)) {
         argInfo.targetType = 'CALL';
+        argInfo.nestedCallLine = getLine(arg);
+        argInfo.nestedCallColumn = getColumn(arg);
+      // REG-556: NewExpression arguments (new Foo() passed as arg)
+      } else if (t.isNewExpression(arg)) {
+        argInfo.targetType = 'CONSTRUCTOR_CALL';
         argInfo.nestedCallLine = getLine(arg);
         argInfo.nestedCallColumn = getColumn(arg);
       // REG-402: MemberExpression arguments (this.handler, obj.method)

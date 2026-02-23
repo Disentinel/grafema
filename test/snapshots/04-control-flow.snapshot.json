@@ -1326,17 +1326,9 @@
     },
     {
       "exported": false,
-      "expressionType": "BinaryExpression",
-      "file": "src/conditionals.js",
-      "name": "<BinaryExpression>",
-      "operator": "*",
-      "type": "EXPRESSION"
-    },
-    {
-      "exported": false,
       "expressionType": "LogicalExpression",
       "file": "src/conditionals.js",
-      "name": "<LogicalExpression>",
+      "name": "… ?? …",
       "operator": "??",
       "type": "EXPRESSION"
     },
@@ -1344,7 +1336,7 @@
       "exported": false,
       "expressionType": "LogicalExpression",
       "file": "src/conditionals.js",
-      "name": "<LogicalExpression>",
+      "name": "… && …",
       "operator": "&&",
       "type": "EXPRESSION"
     },
@@ -1352,8 +1344,16 @@
       "exported": false,
       "expressionType": "LogicalExpression",
       "file": "src/conditionals.js",
-      "name": "<LogicalExpression>",
+      "name": "… || …",
       "operator": "||",
+      "type": "EXPRESSION"
+    },
+    {
+      "exported": false,
+      "expressionType": "BinaryExpression",
+      "file": "src/conditionals.js",
+      "name": "<BinaryExpression>",
+      "operator": "*",
       "type": "EXPRESSION"
     },
     {
@@ -5669,6 +5669,38 @@
     {
       "from": "CALL:console.error",
       "type": "DERIVES_FROM",
+      "to": "VARIABLE:error",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:error",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:error",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:error",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
       "to": "VARIABLE:parseError",
       "metadata": {
         "argIndex": 1
@@ -5744,6 +5776,38 @@
       "to": "LITERAL:",
       "metadata": {
         "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "PASSES_ARGUMENT",
+      "to": "VARIABLE:error",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "PASSES_ARGUMENT",
+      "to": "VARIABLE:error",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "PASSES_ARGUMENT",
+      "to": "VARIABLE:error",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "PASSES_ARGUMENT",
+      "to": "VARIABLE:error",
+      "metadata": {
+        "argIndex": 1
       }
     },
     {
@@ -5861,6 +5925,14 @@
     {
       "from": "CALL:console.log",
       "type": "DERIVES_FROM",
+      "to": "VARIABLE:error",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:console.log",
+      "type": "DERIVES_FROM",
       "to": "VARIABLE:result",
       "metadata": {
         "argIndex": 0
@@ -5920,6 +5992,14 @@
       "to": "VARIABLE:count",
       "metadata": {
         "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.log",
+      "type": "PASSES_ARGUMENT",
+      "to": "VARIABLE:error",
+      "metadata": {
+        "argIndex": 1
       }
     },
     {
@@ -6132,6 +6212,38 @@
       "from": "CALL:validateInput",
       "type": "CALLS",
       "to": "FUNCTION:validateInput"
+    },
+    {
+      "from": "CALL:validateInput",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:parsed",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:validateInput",
+      "type": "PASSES_ARGUMENT",
+      "to": "VARIABLE:parsed",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:validator",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:value",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:validator",
+      "type": "PASSES_ARGUMENT",
+      "to": "VARIABLE:value",
+      "metadata": {
+        "argIndex": 0
+      }
     },
     {
       "from": "CASE:",
@@ -6389,34 +6501,34 @@
       }
     },
     {
-      "from": "EXPRESSION:<LogicalExpression>",
-      "type": "DERIVES_FROM",
-      "to": "PARAMETER:defaultValue"
-    },
-    {
-      "from": "EXPRESSION:<LogicalExpression>",
-      "type": "DERIVES_FROM",
-      "to": "PARAMETER:input"
-    },
-    {
-      "from": "EXPRESSION:<LogicalExpression>",
-      "type": "DERIVES_FROM",
-      "to": "PARAMETER:obj"
-    },
-    {
-      "from": "EXPRESSION:<LogicalExpression>",
+      "from": "EXPRESSION:… ?? …",
       "type": "RETURNS",
       "to": "FUNCTION:getConfigValue"
     },
     {
-      "from": "EXPRESSION:<LogicalExpression>",
-      "type": "RETURNS",
-      "to": "FUNCTION:getValue"
+      "from": "EXPRESSION:… && …",
+      "type": "DERIVES_FROM",
+      "to": "PARAMETER:obj"
     },
     {
-      "from": "EXPRESSION:<LogicalExpression>",
+      "from": "EXPRESSION:… && …",
       "type": "RETURNS",
       "to": "FUNCTION:safeAccess"
+    },
+    {
+      "from": "EXPRESSION:… || …",
+      "type": "DERIVES_FROM",
+      "to": "PARAMETER:defaultValue"
+    },
+    {
+      "from": "EXPRESSION:… || …",
+      "type": "DERIVES_FROM",
+      "to": "PARAMETER:input"
+    },
+    {
+      "from": "EXPRESSION:… || …",
+      "type": "RETURNS",
+      "to": "FUNCTION:getValue"
     },
     {
       "from": "EXPRESSION:<template>",
@@ -7960,6 +8072,23 @@
       "from": "MODULE:src/loops.js",
       "type": "CONTAINS",
       "to": "FUNCTION:sumWithForOf"
+    },
+    {
+      "from": "PARAMETER:data",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:parsed",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "PARAMETER:data",
+      "type": "RECEIVES_ARGUMENT",
+      "to": "VARIABLE:parsed",
+      "metadata": {
+        "argIndex": 0,
+        "callId": "src/exceptions.js->complexOperation->try#0->try#0->CALL->validateInput#0"
+      }
     },
     {
       "from": "PARAMETER:data",
