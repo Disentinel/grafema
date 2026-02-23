@@ -111,7 +111,6 @@ import type {
   RejectionPatternInfo,
   CatchesFromInfo,
   PropertyAccessInfo,
-  PropertyAssignmentInfo,
   TypeParameterInfo,
   CounterRef,
   ProcessedNodes,
@@ -204,8 +203,6 @@ interface Collections {
   // Property access tracking for PROPERTY_ACCESS nodes (REG-395)
   propertyAccesses: PropertyAccessInfo[];
   propertyAccessCounterRef: CounterRef;
-  // Property assignment tracking for PROPERTY_ASSIGNMENT nodes (REG-554)
-  propertyAssignments?: PropertyAssignmentInfo[];
   propertyAssignmentCounterRef?: CounterRef;
   objectLiteralCounterRef: CounterRef;
   arrayLiteralCounterRef: CounterRef;

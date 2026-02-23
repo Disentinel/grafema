@@ -5,6 +5,7 @@
  * property accesses, callbacks, literals, object/array literals.
  */
 
+import { basename } from 'path';
 import type {
   ModuleNode,
   FunctionInfo,

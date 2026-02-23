@@ -1248,8 +1248,6 @@ export interface ASTCollections {
   catchesFromInfos?: CatchesFromInfo[];
   // Property access tracking for PROPERTY_ACCESS nodes (REG-395)
   propertyAccesses?: PropertyAccessInfo[];
-  // Property assignment tracking for PROPERTY_ASSIGNMENT nodes (REG-554)
-  propertyAssignments?: PropertyAssignmentInfo[];
   // Counter ref for property assignment tracking (REG-554)
   propertyAssignmentCounterRef?: CounterRef;
   // REG-297: Top-level await tracking
