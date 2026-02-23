@@ -179,11 +179,12 @@ export class ModuleRuntimeBuilder implements DomainBuilder {
               spec.exported,
               module.file,
               line,
-              0,
+              spec.column ?? 0,
               {
                 local: spec.local,
                 source: source,
-                exportType: 'named'
+                exportType: 'named',
+                endColumn: spec.endColumn
               }
             );
 

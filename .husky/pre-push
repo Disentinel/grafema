@@ -1,14 +1,3 @@
-echo "→ Building packages (required for snapshots)..."
-pnpm build || exit 1
-
-echo "→ Updating graph snapshots..."
-pnpm snapshots:update 2>/dev/null || true
-
-if ! git diff --quiet test/snapshots/; then
-  echo ""
-  echo "⚠️  Graph snapshots were updated. Commit them and push again:"
-  echo "   git add test/snapshots/ && git commit -m 'chore: update graph snapshots'"
-  exit 1
-fi
-
-echo "✓ Snapshots are up-to-date."
+#!/bin/sh
+# Snapshots are excluded from CI (test/unit/snapshots/) and updated manually via:
+#   pnpm snapshots:update
