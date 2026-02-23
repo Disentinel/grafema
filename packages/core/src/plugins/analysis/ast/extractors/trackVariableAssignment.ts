@@ -248,7 +248,7 @@ export function trackVariableAssignment(
     const column = getColumn(initExpression);
     const expressionId = ExpressionNode.generateId('BinaryExpression', module.file, line, column);
 
-    ctx.variableAssignments.push({
+    const assignment: VariableAssignmentInfo = {
       variableId,
       sourceType: 'EXPRESSION',
       sourceId: expressionId,
@@ -259,7 +259,29 @@ export function trackVariableAssignment(
       file: module.file,
       line: line,
       column: column
-    });
+    };
+
+    // REG-571: Literal operand metadata for DERIVES_FROM edges
+    if (initExpression.left.type !== 'Identifier') {
+      const leftLiteral = ExpressionEvaluator.extractLiteralValue(initExpression.left);
+      if (leftLiteral !== null) {
+        assignment.leftOperandLiteral = true;
+        assignment.leftOperandValue = leftLiteral;
+        assignment.leftOperandLine = initExpression.left.loc?.start.line ?? line;
+        assignment.leftOperandColumn = initExpression.left.loc?.start.column ?? 0;
+      }
+    }
+    if (initExpression.right.type !== 'Identifier') {
+      const rightLiteral = ExpressionEvaluator.extractLiteralValue(initExpression.right);
+      if (rightLiteral !== null) {
+        assignment.rightOperandLiteral = true;
+        assignment.rightOperandValue = rightLiteral;
+        assignment.rightOperandLine = initExpression.right.loc?.start.line ?? line;
+        assignment.rightOperandColumn = initExpression.right.loc?.start.column ?? 0;
+      }
+    }
+
+    ctx.variableAssignments.push(assignment);
     return;
   }
 
@@ -268,7 +290,7 @@ export function trackVariableAssignment(
     const column = getColumn(initExpression);
     const expressionId = ExpressionNode.generateId('ConditionalExpression', module.file, line, column);
 
-    ctx.variableAssignments.push({
+    const assignment: VariableAssignmentInfo = {
       variableId,
       sourceType: 'EXPRESSION',
       sourceId: expressionId,
@@ -278,7 +300,29 @@ export function trackVariableAssignment(
       file: module.file,
       line: line,
       column: column
-    });
+    };
+
+    // REG-571: Literal operand metadata for DERIVES_FROM edges
+    if (initExpression.consequent.type !== 'Identifier') {
+      const consequentLiteral = ExpressionEvaluator.extractLiteralValue(initExpression.consequent);
+      if (consequentLiteral !== null) {
+        assignment.consequentOperandLiteral = true;
+        assignment.consequentOperandValue = consequentLiteral;
+        assignment.consequentOperandLine = initExpression.consequent.loc?.start.line ?? line;
+        assignment.consequentOperandColumn = initExpression.consequent.loc?.start.column ?? 0;
+      }
+    }
+    if (initExpression.alternate.type !== 'Identifier') {
+      const alternateLiteral = ExpressionEvaluator.extractLiteralValue(initExpression.alternate);
+      if (alternateLiteral !== null) {
+        assignment.alternateOperandLiteral = true;
+        assignment.alternateOperandValue = alternateLiteral;
+        assignment.alternateOperandLine = initExpression.alternate.loc?.start.line ?? line;
+        assignment.alternateOperandColumn = initExpression.alternate.loc?.start.column ?? 0;
+      }
+    }
+
+    ctx.variableAssignments.push(assignment);
 
     trackVariableAssignment(initExpression.consequent, variableId, variableName, module, line, ctx);
     trackVariableAssignment(initExpression.alternate, variableId, variableName, module, line, ctx);
@@ -290,7 +334,7 @@ export function trackVariableAssignment(
     const column = getColumn(initExpression);
     const expressionId = ExpressionNode.generateId('LogicalExpression', module.file, line, column);
 
-    ctx.variableAssignments.push({
+    const assignment: VariableAssignmentInfo = {
       variableId,
       sourceType: 'EXPRESSION',
       sourceId: expressionId,
@@ -301,7 +345,29 @@ export function trackVariableAssignment(
       file: module.file,
       line: line,
       column: column
-    });
+    };
+
+    // REG-571: Literal operand metadata for DERIVES_FROM edges
+    if (initExpression.left.type !== 'Identifier') {
+      const leftLiteral = ExpressionEvaluator.extractLiteralValue(initExpression.left);
+      if (leftLiteral !== null) {
+        assignment.leftOperandLiteral = true;
+        assignment.leftOperandValue = leftLiteral;
+        assignment.leftOperandLine = initExpression.left.loc?.start.line ?? line;
+        assignment.leftOperandColumn = initExpression.left.loc?.start.column ?? 0;
+      }
+    }
+    if (initExpression.right.type !== 'Identifier') {
+      const rightLiteral = ExpressionEvaluator.extractLiteralValue(initExpression.right);
+      if (rightLiteral !== null) {
+        assignment.rightOperandLiteral = true;
+        assignment.rightOperandValue = rightLiteral;
+        assignment.rightOperandLine = initExpression.right.loc?.start.line ?? line;
+        assignment.rightOperandColumn = initExpression.right.loc?.start.column ?? 0;
+      }
+    }
+
+    ctx.variableAssignments.push(assignment);
 
     trackVariableAssignment(initExpression.left, variableId, variableName, module, line, ctx);
     trackVariableAssignment(initExpression.right, variableId, variableName, module, line, ctx);
@@ -342,7 +408,7 @@ export function trackVariableAssignment(
     const column = getColumn(initExpression);
     const expressionId = ExpressionNode.generateId('UnaryExpression', module.file, line, column);
 
-    ctx.variableAssignments.push({
+    const assignment: VariableAssignmentInfo = {
       variableId,
       sourceType: 'EXPRESSION',
       sourceId: expressionId,
@@ -352,7 +418,20 @@ export function trackVariableAssignment(
       file: module.file,
       line: line,
       column: column
-    });
+    };
+
+    // REG-571: Literal operand metadata for DERIVES_FROM edges
+    if (initExpression.argument.type !== 'Identifier') {
+      const argLiteral = ExpressionEvaluator.extractLiteralValue(initExpression.argument);
+      if (argLiteral !== null) {
+        assignment.unaryArgOperandLiteral = true;
+        assignment.unaryArgOperandValue = argLiteral;
+        assignment.unaryArgOperandLine = initExpression.argument.loc?.start.line ?? line;
+        assignment.unaryArgOperandColumn = initExpression.argument.loc?.start.column ?? 0;
+      }
+    }
+
+    ctx.variableAssignments.push(assignment);
     return;
   }
 

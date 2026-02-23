@@ -936,6 +936,29 @@ export interface VariableAssignmentInfo {
   expressionSourceNames?: string[];
   // UnaryExpression support (REG-534)
   unaryArgSourceName?: string | null;
+  // REG-569: Operand literal metadata for DERIVES_FROM edges to inline LITERAL nodes
+  // When an operand is not an Identifier, *SourceName is null. These fields carry
+  // the literal value so AssignmentBuilder can create LITERAL nodes + DERIVES_FROM edges.
+  leftOperandLiteral?: boolean;
+  leftOperandValue?: unknown;
+  leftOperandLine?: number;
+  leftOperandColumn?: number;
+  rightOperandLiteral?: boolean;
+  rightOperandValue?: unknown;
+  rightOperandLine?: number;
+  rightOperandColumn?: number;
+  consequentOperandLiteral?: boolean;
+  consequentOperandValue?: unknown;
+  consequentOperandLine?: number;
+  consequentOperandColumn?: number;
+  alternateOperandLiteral?: boolean;
+  alternateOperandValue?: unknown;
+  alternateOperandLine?: number;
+  alternateOperandColumn?: number;
+  unaryArgOperandLiteral?: boolean;
+  unaryArgOperandValue?: unknown;
+  unaryArgOperandLine?: number;
+  unaryArgOperandColumn?: number;
   file?: string;
   // Destructuring support (REG-201)
   path?: string;               // Full property path string, e.g., "req.headers.contentType"
