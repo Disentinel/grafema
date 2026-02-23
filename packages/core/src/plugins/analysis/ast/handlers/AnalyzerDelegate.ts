@@ -26,6 +26,7 @@ import type {
   UpdateExpressionInfo,
   ArrayMutationInfo,
   ObjectMutationInfo,
+  PropertyAssignmentInfo,
   VariableReassignmentInfo,
   ReturnStatementInfo,
   ExtractedVariable,
@@ -76,6 +77,7 @@ export interface AnalyzerDelegate {
     module: VisitorModule,
     objectMutations: ObjectMutationInfo[],
     scopeTracker?: ScopeTracker,
+    propertyAssignments?: PropertyAssignmentInfo[],
   ): void;
 
   // --- Return / expression helpers ---

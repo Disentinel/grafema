@@ -1824,6 +1824,24 @@
       "type": "PROPERTY_ACCESS"
     },
     {
+      "className": "Database",
+      "exported": false,
+      "file": "src/db.js",
+      "name": "connected",
+      "objectName": "this",
+      "semanticId": "src/db.js->Database->connect->PROPERTY_ASSIGNMENT->this.connected#0",
+      "type": "PROPERTY_ASSIGNMENT"
+    },
+    {
+      "className": "Database",
+      "exported": false,
+      "file": "src/db.js",
+      "name": "connected",
+      "objectName": "this",
+      "semanticId": "src/db.js->Database->constructor->PROPERTY_ASSIGNMENT->this.connected#0",
+      "type": "PROPERTY_ASSIGNMENT"
+    },
+    {
       "conditional": false,
       "exported": false,
       "file": "src/index.js",
@@ -2744,6 +2762,16 @@
       "from": "CLASS:Database",
       "type": "CONTAINS",
       "to": "FUNCTION:query"
+    },
+    {
+      "from": "CLASS:Database",
+      "type": "CONTAINS",
+      "to": "PROPERTY_ASSIGNMENT:connected"
+    },
+    {
+      "from": "CLASS:Database",
+      "type": "CONTAINS",
+      "to": "PROPERTY_ASSIGNMENT:connected"
     },
     {
       "from": "CONSTANT:PORT",
