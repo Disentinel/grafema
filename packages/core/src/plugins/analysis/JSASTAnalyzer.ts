@@ -270,7 +270,7 @@ export class JSASTAnalyzer extends Plugin {
         edges: [
           'CONTAINS', 'DECLARES', 'CALLS', 'HAS_SCOPE', 'CAPTURES', 'MODIFIES',
           'WRITES_TO', 'IMPORTS', 'INSTANCE_OF', 'HANDLED_BY', 'HAS_CALLBACK',
-          'PASSES_ARGUMENT', 'MAKES_REQUEST', 'IMPORTS_FROM', 'EXPORTS_TO', 'ASSIGNED_FROM',
+          'PASSES_ARGUMENT', 'MAKES_REQUEST', 'IMPORTS_FROM', 'ASSIGNED_FROM',
           // TypeScript-specific edges
           'IMPLEMENTS', 'EXTENDS', 'DECORATED_BY', 'HAS_TYPE_PARAMETER',
           // Promise data flow

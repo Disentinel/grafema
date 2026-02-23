@@ -444,7 +444,7 @@ function registerCommands(): vscode.Disposable[] {
 
   // Filter edge types in EXPLORER panel
   const COMMON_EDGE_TYPES = [
-    'CALLS', 'IMPORTS', 'IMPORTS_FROM', 'EXPORTS', 'EXPORTS_TO',
+    'CALLS', 'IMPORTS', 'IMPORTS_FROM', 'EXPORTS',
     'ASSIGNED_FROM', 'DERIVES_FROM', 'CONTAINS', 'DEFINES', 'USES',
     'PASSES_ARGUMENT', 'RETURNS', 'EXTENDS', 'IMPLEMENTS',
   ];

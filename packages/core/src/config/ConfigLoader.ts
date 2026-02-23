@@ -158,6 +158,7 @@ export const DEFAULT_CONFIG: GrafemaConfig = {
       'ExpressHandlerLinker',
       'PrefixEvaluator',
       'ImportExportLinker',
+      'ExportEntityLinker',
       'ConfigRoutingMapBuilder',
       'ServiceConnectionEnricher',
       'CallbackCallResolver',

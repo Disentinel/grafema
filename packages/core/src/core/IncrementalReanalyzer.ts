@@ -14,6 +14,7 @@ import { resolveNodeFile } from '../utils/resolveNodeFile.js';
 import { JSASTAnalyzer } from '../plugins/analysis/JSASTAnalyzer.js';
 import { InstanceOfResolver } from '../plugins/enrichment/InstanceOfResolver.js';
 import { ImportExportLinker } from '../plugins/enrichment/ImportExportLinker.js';
+import { ExportEntityLinker } from '../plugins/enrichment/ExportEntityLinker.js';
 import type { GraphBackend, PluginContext, BaseNodeRecord } from '@grafema/types';
 import { brandNodeInternal } from './brandNodeInternal.js';
 import type { StaleModule } from './GraphFreshnessChecker.js';
@@ -169,7 +170,7 @@ export class IncrementalReanalyzer {
       }
 
       if (options.onProgress) {
-        options.onProgress({ phase: 'enrichment', processedFiles: 1, totalFiles: 2 });
+        options.onProgress({ phase: 'enrichment', processedFiles: 1, totalFiles: 3 });
       }
 
       const importExportLinker = new ImportExportLinker();
@@ -182,7 +183,20 @@ export class IncrementalReanalyzer {
       }
 
       if (options.onProgress) {
-        options.onProgress({ phase: 'enrichment', processedFiles: 2, totalFiles: 2 });
+        options.onProgress({ phase: 'enrichment', processedFiles: 2, totalFiles: 3 });
+      }
+
+      const exportEntityLinker = new ExportEntityLinker();
+      try {
+        const result3 = await exportEntityLinker.execute(pluginContext);
+        edgesCreated += result3.created.edges;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`[IncrementalReanalyzer] ExportEntityLinker error:`, message);
+      }
+
+      if (options.onProgress) {
+        options.onProgress({ phase: 'enrichment', processedFiles: 3, totalFiles: 3 });
       }
     }
 
