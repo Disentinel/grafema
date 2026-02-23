@@ -198,12 +198,11 @@ const fn = x => x * 2;
   // Test 4: Regression anchor — class field arrow (REG-562)
   // ==========================================================================
   describe('Class field arrow (REG-562)', () => {
-    it('should produce exactly 2 FUNCTION nodes — documents pre-existing duplication', async () => {
-      // REG-562: pre-existing bug — ClassVisitor.ClassProperty creates a FUNCTION node
-      // named 'field', and FunctionVisitor also creates an anonymous FUNCTION node for
-      // the same arrow. The REG-559 guard (getFunctionParent check) does NOT skip class
-      // field arrows because they have no function parent.
-      // Result: 2 FUNCTION nodes for one arrow expression.
+    it('should produce exactly 1 FUNCTION node after dedup fix', async () => {
+      // REG-562 fix: FunctionVisitor now skips class field arrows, deferring to
+      // ClassVisitor which is authoritative. Before the fix, both ClassVisitor and
+      // FunctionVisitor created FUNCTION nodes, resulting in 2 nodes for one arrow.
+      // After fix: only ClassVisitor creates the FUNCTION node named 'field'.
       await setupTest(backend, {
         'index.js': `
 class A {
@@ -223,12 +222,11 @@ class A {
         `ClassVisitor should create exactly 1 FUNCTION node named 'field'`
       );
 
-      // FunctionVisitor creates an additional anonymous FUNCTION node
-      // Total = 2 FUNCTION nodes for a single class field arrow
+      // After REG-562 fix: only 1 FUNCTION node total (ClassVisitor's)
       assert.strictEqual(
         allFunctions.length,
-        2,
-        `Expected exactly 2 FUNCTION nodes for class field arrow (REG-562 pre-existing bug), ` +
+        1,
+        `Expected exactly 1 FUNCTION node for class field arrow (REG-562 fix applied), ` +
         `got ${allFunctions.length}: ${allFunctions.map(n => `${n.name}:${n.id}`).join(', ')}`
       );
     });

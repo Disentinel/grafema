@@ -96,7 +96,7 @@
       "exported": false,
       "file": "app.js",
       "name": "",
-      "semanticId": "app.js->anonymous[1]->anonymous[0]->anonymous[0]->anonymous[0]->BRANCH->if#8",
+      "semanticId": "app.js->anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]->BRANCH->if#8",
       "type": "BRANCH"
     },
     {
@@ -105,7 +105,7 @@
       "exported": false,
       "file": "app.js",
       "name": "",
-      "semanticId": "app.js->anonymous[1]->anonymous[0]->anonymous[0]->BRANCH->if#7",
+      "semanticId": "app.js->anonymous[0]->anonymous[0]->anonymous[0]->BRANCH->if#7",
       "type": "BRANCH"
     },
     {
@@ -114,7 +114,7 @@
       "exported": false,
       "file": "app.js",
       "name": "",
-      "semanticId": "app.js->anonymous[1]->anonymous[0]->BRANCH->if#5",
+      "semanticId": "app.js->anonymous[0]->anonymous[0]->BRANCH->if#5",
       "type": "BRANCH"
     },
     {
@@ -168,7 +168,7 @@
       "exported": false,
       "file": "app.js",
       "name": "",
-      "semanticId": "app.js->anonymous[1]->anonymous[0]->BRANCH->if#6",
+      "semanticId": "app.js->anonymous[0]->anonymous[0]->BRANCH->if#6",
       "type": "BRANCH"
     },
     {
@@ -7084,7 +7084,7 @@
       "file": "app.js",
       "name": "",
       "parameterName": "error",
-      "semanticId": "app.js->anonymous[3]->CATCH_BLOCK->catch#1",
+      "semanticId": "app.js->anonymous[2]->CATCH_BLOCK->catch#1",
       "type": "CATCH_BLOCK"
     },
     {
@@ -9739,13 +9739,15 @@
       "file": "app.js",
       "name": "anonymous[0]",
       "params": [
-        "err"
+        "req",
+        "res"
       ],
       "paramTypes": [
+        "any",
         "any"
       ],
       "returnType": "void",
-      "signature": "(err: any) => void",
+      "signature": "(req: any, res: any) => void",
       "type": "FUNCTION"
     },
     {
@@ -12720,6 +12722,24 @@
       "exported": false,
       "file": "app.js",
       "name": "anonymous[2]",
+      "type": "FUNCTION"
+    },
+    {
+      "arrowFunction": true,
+      "async": true,
+      "controlFlow": {
+        "canReject": false,
+        "cyclomaticComplexity": 1,
+        "hasAsyncThrow": false,
+        "hasBranches": false,
+        "hasEarlyReturn": false,
+        "hasLoops": false,
+        "hasThrow": false,
+        "hasTryCatch": true
+      },
+      "exported": false,
+      "file": "app.js",
+      "name": "anonymous[2]",
       "params": [
         "req",
         "res"
@@ -12729,25 +12749,7 @@
         "any"
       ],
       "returnType": "void",
-      "signature": "(req: any, res: any) => void",
-      "type": "FUNCTION"
-    },
-    {
-      "arrowFunction": true,
-      "async": false,
-      "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
-        "hasBranches": false,
-        "hasEarlyReturn": false,
-        "hasLoops": false,
-        "hasThrow": false,
-        "hasTryCatch": false
-      },
-      "exported": false,
-      "file": "app.js",
-      "name": "anonymous[2]",
+      "signature": "(req: any, res: any) => Promise<void>",
       "type": "FUNCTION"
     },
     {
@@ -13041,7 +13043,7 @@
     },
     {
       "arrowFunction": true,
-      "async": true,
+      "async": false,
       "controlFlow": {
         "canReject": false,
         "cyclomaticComplexity": 1,
@@ -13050,21 +13052,15 @@
         "hasEarlyReturn": false,
         "hasLoops": false,
         "hasThrow": false,
-        "hasTryCatch": true
+        "hasTryCatch": false
       },
       "exported": false,
       "file": "app.js",
       "name": "anonymous[3]",
-      "params": [
-        "req",
-        "res"
-      ],
-      "paramTypes": [
-        "any",
-        "any"
-      ],
+      "params": [],
+      "paramTypes": [],
       "returnType": "void",
-      "signature": "(req: any, res: any) => Promise<void>",
+      "signature": "() => void",
       "type": "FUNCTION"
     },
     {
@@ -13255,10 +13251,14 @@
       "exported": false,
       "file": "app.js",
       "name": "anonymous[4]",
-      "params": [],
-      "paramTypes": [],
+      "params": [
+        "err"
+      ],
+      "paramTypes": [
+        "any"
+      ],
       "returnType": "void",
-      "signature": "() => void",
+      "signature": "(err: any) => void",
       "type": "FUNCTION"
     },
     {
@@ -13323,32 +13323,6 @@
       "exported": false,
       "file": "utils/asyncHelpers.js",
       "name": "anonymous[4]",
-      "type": "FUNCTION"
-    },
-    {
-      "arrowFunction": true,
-      "async": false,
-      "controlFlow": {
-        "canReject": false,
-        "cyclomaticComplexity": 1,
-        "hasAsyncThrow": false,
-        "hasBranches": false,
-        "hasEarlyReturn": false,
-        "hasLoops": false,
-        "hasThrow": false,
-        "hasTryCatch": false
-      },
-      "exported": false,
-      "file": "app.js",
-      "name": "anonymous[5]",
-      "params": [
-        "err"
-      ],
-      "paramTypes": [
-        "any"
-      ],
-      "returnType": "void",
-      "signature": "(err: any) => void",
       "type": "FUNCTION"
     },
     {
@@ -18288,9 +18262,9 @@
       "file": "app.js",
       "index": 0,
       "name": "err",
-      "parentFunctionId": "app.js->FUNCTION->anonymous[5]",
+      "parentFunctionId": "app.js->FUNCTION->anonymous[4]",
       "scopePath": [
-        "anonymous[5]"
+        "anonymous[4]"
       ],
       "semanticId": "app.js->PARAMETER->err",
       "type": "PARAMETER"
@@ -18622,9 +18596,9 @@
       "file": "app.js",
       "index": 0,
       "name": "req",
-      "parentFunctionId": "app.js->FUNCTION->anonymous[3]",
+      "parentFunctionId": "app.js->FUNCTION->anonymous[2]",
       "scopePath": [
-        "anonymous[3]"
+        "anonymous[2]"
       ],
       "semanticId": "app.js->PARAMETER->req",
       "type": "PARAMETER"
@@ -18694,9 +18668,9 @@
       "file": "app.js",
       "index": 1,
       "name": "res",
-      "parentFunctionId": "app.js->FUNCTION->anonymous[3]",
+      "parentFunctionId": "app.js->FUNCTION->anonymous[2]",
       "scopePath": [
-        "anonymous[3]"
+        "anonymous[2]"
       ],
       "semanticId": "app.js->PARAMETER->res#1",
       "type": "PARAMETER"
@@ -20633,16 +20607,6 @@
       "file": "app.js",
       "name": "port",
       "objectName": "this",
-      "semanticId": "app.js->PROPERTY_ACCESS->this.port",
-      "type": "PROPERTY_ACCESS"
-    },
-    {
-      "endColumn": 51,
-      "endLine": 36,
-      "exported": false,
-      "file": "app.js",
-      "name": "port",
-      "objectName": "this",
       "semanticId": "app.js->PROPERTY_ACCESS->this.port[in:handleError]",
       "type": "PROPERTY_ACCESS"
     },
@@ -20944,7 +20908,7 @@
       "file": "app.js",
       "name": "",
       "scopeType": "catch-block",
-      "semanticId": "anonymous[3]:catch-block[0]",
+      "semanticId": "anonymous[2]:catch-block[0]",
       "type": "SCOPE"
     },
     {
@@ -20992,7 +20956,7 @@
       "file": "app.js",
       "name": "",
       "scopeType": "try-block",
-      "semanticId": "anonymous[3]:try-block[0]",
+      "semanticId": "anonymous[2]:try-block[0]",
       "type": "SCOPE"
     },
     {
@@ -21313,7 +21277,7 @@
       "file": "app.js",
       "name": "anonymous[0]:body",
       "scopeType": "arrow_body",
-      "semanticId": "anonymous[1]->anonymous[0]->anonymous[0]:arrow_body[0]",
+      "semanticId": "anonymous[0]->anonymous[0]->anonymous[0]:arrow_body[0]",
       "type": "SCOPE"
     },
     {
@@ -21322,7 +21286,16 @@
       "file": "app.js",
       "name": "anonymous[0]:body",
       "scopeType": "arrow_body",
-      "semanticId": "anonymous[1]->anonymous[0]:arrow_body[0]",
+      "semanticId": "anonymous[0]->anonymous[0]:arrow_body[0]",
+      "type": "SCOPE"
+    },
+    {
+      "conditional": false,
+      "exported": false,
+      "file": "app.js",
+      "name": "anonymous[0]:body",
+      "scopeType": "arrow_body",
+      "semanticId": "anonymous[0]:arrow_body[0]",
       "type": "SCOPE"
     },
     {
@@ -21340,7 +21313,7 @@
       "file": "app.js",
       "name": "anonymous[0]:body",
       "scopeType": "arrow_body",
-      "semanticId": "anonymous[2]:arrow_body[0]",
+      "semanticId": "anonymous[3]->anonymous[0]:arrow_body[0]",
       "type": "SCOPE"
     },
     {
@@ -21349,16 +21322,7 @@
       "file": "app.js",
       "name": "anonymous[0]:body",
       "scopeType": "arrow_body",
-      "semanticId": "anonymous[4]->anonymous[0]:arrow_body[0]",
-      "type": "SCOPE"
-    },
-    {
-      "conditional": false,
-      "exported": false,
-      "file": "app.js",
-      "name": "anonymous[0]:body",
-      "scopeType": "arrow_body",
-      "semanticId": "anonymous[4]:arrow_body[0]",
+      "semanticId": "anonymous[3]:arrow_body[0]",
       "type": "SCOPE"
     },
     {
@@ -22423,7 +22387,7 @@
       "file": "app.js",
       "name": "anonymous[1]:body",
       "scopeType": "arrow_body",
-      "semanticId": "anonymous[2]:arrow_body[1]",
+      "semanticId": "anonymous[1]:arrow_body[1]",
       "type": "SCOPE"
     },
     {
@@ -22682,7 +22646,7 @@
       "file": "app.js",
       "name": "anonymous[2]:body",
       "scopeType": "arrow_body",
-      "semanticId": "anonymous[2]:arrow_body[2]",
+      "semanticId": "anonymous[1]:arrow_body[2]",
       "type": "SCOPE"
     },
     {
@@ -22884,6 +22848,13 @@
       "type": "SCOPE"
     },
     {
+      "exported": false,
+      "file": "app.js",
+      "name": "anonymous[4]:body",
+      "scopeType": "function-body",
+      "type": "SCOPE"
+    },
+    {
       "conditional": false,
       "exported": false,
       "file": "routes/api.js",
@@ -22899,13 +22870,6 @@
       "name": "anonymous[4]:body",
       "scopeType": "arrow_body",
       "semanticId": "mixedParallelSequential:arrow_body[2]",
-      "type": "SCOPE"
-    },
-    {
-      "exported": false,
-      "file": "app.js",
-      "name": "anonymous[5]:body",
-      "scopeType": "function-body",
       "type": "SCOPE"
     },
     {
@@ -23831,7 +23795,7 @@
       "file": "app.js",
       "name": "if:171:4:6",
       "scopeType": "if_statement",
-      "semanticId": "anonymous[1]->anonymous[0]:if_statement[0]",
+      "semanticId": "anonymous[0]->anonymous[0]:if_statement[0]",
       "type": "SCOPE"
     },
     {
@@ -23848,7 +23812,7 @@
       "file": "app.js",
       "name": "if:173:4:7",
       "scopeType": "if_statement",
-      "semanticId": "anonymous[1]->anonymous[0]:if_statement[1]",
+      "semanticId": "anonymous[0]->anonymous[0]:if_statement[1]",
       "type": "SCOPE"
     },
     {
@@ -23909,7 +23873,7 @@
       "file": "app.js",
       "name": "if:182:6:8",
       "scopeType": "if_statement",
-      "semanticId": "anonymous[1]->anonymous[0]->anonymous[0]:if_statement[0]",
+      "semanticId": "anonymous[0]->anonymous[0]->anonymous[0]:if_statement[0]",
       "type": "SCOPE"
     },
     {
@@ -23943,7 +23907,7 @@
       "file": "app.js",
       "name": "if:185:8:9",
       "scopeType": "if_statement",
-      "semanticId": "anonymous[1]->anonymous[0]->anonymous[0]->anonymous[0]:if_statement[0]",
+      "semanticId": "anonymous[0]->anonymous[0]->anonymous[0]->anonymous[0]:if_statement[0]",
       "type": "SCOPE"
     },
     {
@@ -25391,7 +25355,7 @@
       "exported": false,
       "file": "app.js",
       "name": "",
-      "semanticId": "app.js->anonymous[3]->TRY_BLOCK->try#1",
+      "semanticId": "app.js->anonymous[2]->TRY_BLOCK->try#1",
       "type": "TRY_BLOCK"
     },
     {
@@ -28009,7 +27973,7 @@
     {
       "from": "CALL:app.get",
       "type": "DERIVES_FROM",
-      "to": "FUNCTION:anonymous[2]",
+      "to": "FUNCTION:anonymous[1]",
       "metadata": {
         "argIndex": 1
       }
@@ -28017,7 +27981,7 @@
     {
       "from": "CALL:app.get",
       "type": "DERIVES_FROM",
-      "to": "FUNCTION:anonymous[3]",
+      "to": "FUNCTION:anonymous[2]",
       "metadata": {
         "argIndex": 1
       }
@@ -28041,7 +28005,7 @@
     {
       "from": "CALL:app.get",
       "type": "PASSES_ARGUMENT",
-      "to": "FUNCTION:anonymous[2]",
+      "to": "FUNCTION:anonymous[1]",
       "metadata": {
         "argIndex": 1
       }
@@ -28049,7 +28013,7 @@
     {
       "from": "CALL:app.get",
       "type": "PASSES_ARGUMENT",
-      "to": "FUNCTION:anonymous[3]",
+      "to": "FUNCTION:anonymous[2]",
       "metadata": {
         "argIndex": 1
       }
@@ -28120,7 +28084,7 @@
     {
       "from": "CALL:app.post",
       "type": "DERIVES_FROM",
-      "to": "FUNCTION:anonymous[1]",
+      "to": "FUNCTION:anonymous[0]",
       "metadata": {
         "argIndex": 1
       }
@@ -28136,12 +28100,12 @@
     {
       "from": "CALL:app.post",
       "type": "HAS_CALLBACK",
-      "to": "FUNCTION:anonymous[1]"
+      "to": "FUNCTION:anonymous[0]"
     },
     {
       "from": "CALL:app.post",
       "type": "PASSES_ARGUMENT",
-      "to": "FUNCTION:anonymous[1]",
+      "to": "FUNCTION:anonymous[0]",
       "metadata": {
         "argIndex": 1
       }
@@ -37095,12 +37059,12 @@
     {
       "from": "event:listener:SIGINT",
       "type": "HANDLED_BY",
-      "to": "FUNCTION:anonymous[4]"
+      "to": "FUNCTION:anonymous[3]"
     },
     {
       "from": "event:listener:uncaughtException",
       "type": "HANDLED_BY",
-      "to": "FUNCTION:anonymous[5]"
+      "to": "FUNCTION:anonymous[4]"
     },
     {
       "from": "EXPRESSION:<BinaryExpression>",
@@ -37930,7 +37894,7 @@
     {
       "from": "FUNCTION:anonymous[0]",
       "type": "CONTAINS",
-      "to": "PROPERTY_ACCESS:connection"
+      "to": "PROPERTY_ACCESS:body"
     },
     {
       "from": "FUNCTION:anonymous[0]",
@@ -37991,6 +37955,21 @@
       "from": "FUNCTION:anonymous[0]",
       "type": "CONTAINS",
       "to": "PROPERTY_ACCESS:connection"
+    },
+    {
+      "from": "FUNCTION:anonymous[0]",
+      "type": "CONTAINS",
+      "to": "PROPERTY_ACCESS:connection"
+    },
+    {
+      "from": "FUNCTION:anonymous[0]",
+      "type": "CONTAINS",
+      "to": "PROPERTY_ACCESS:connection"
+    },
+    {
+      "from": "FUNCTION:anonymous[0]",
+      "type": "CONTAINS",
+      "to": "PROPERTY_ACCESS:db"
     },
     {
       "from": "FUNCTION:anonymous[0]",
@@ -38200,16 +38179,6 @@
     {
       "from": "FUNCTION:anonymous[0]",
       "type": "CONTAINS",
-      "to": "PROPERTY_ACCESS:port"
-    },
-    {
-      "from": "FUNCTION:anonymous[0]",
-      "type": "CONTAINS",
-      "to": "PROPERTY_ACCESS:port"
-    },
-    {
-      "from": "FUNCTION:anonymous[0]",
-      "type": "CONTAINS",
       "to": "PROPERTY_ACCESS:role"
     },
     {
@@ -38255,7 +38224,7 @@
     {
       "from": "FUNCTION:anonymous[0]",
       "type": "HAS_PARAMETER",
-      "to": "PARAMETER:err",
+      "to": "PARAMETER:req",
       "metadata": {
         "index": 0
       }
@@ -38266,6 +38235,14 @@
       "to": "PARAMETER:req",
       "metadata": {
         "index": 0
+      }
+    },
+    {
+      "from": "FUNCTION:anonymous[0]",
+      "type": "HAS_PARAMETER",
+      "to": "PARAMETER:res",
+      "metadata": {
+        "index": 1
       }
     },
     {
@@ -38889,7 +38866,7 @@
     {
       "from": "FUNCTION:anonymous[0]",
       "type": "HAS_SCOPE",
-      "to": "SCOPE:anonymous[5]:body"
+      "to": "SCOPE:anonymous[4]:body"
     },
     {
       "from": "FUNCTION:anonymous[0]",
@@ -38964,11 +38941,6 @@
     {
       "from": "FUNCTION:anonymous[1]",
       "type": "CONTAINS",
-      "to": "PROPERTY_ACCESS:body"
-    },
-    {
-      "from": "FUNCTION:anonymous[1]",
-      "type": "CONTAINS",
       "to": "PROPERTY_ACCESS:connection"
     },
     {
@@ -38980,16 +38952,6 @@
       "from": "FUNCTION:anonymous[1]",
       "type": "CONTAINS",
       "to": "PROPERTY_ACCESS:connection"
-    },
-    {
-      "from": "FUNCTION:anonymous[1]",
-      "type": "CONTAINS",
-      "to": "PROPERTY_ACCESS:connection"
-    },
-    {
-      "from": "FUNCTION:anonymous[1]",
-      "type": "CONTAINS",
-      "to": "PROPERTY_ACCESS:db"
     },
     {
       "from": "FUNCTION:anonymous[1]",
@@ -39029,7 +38991,17 @@
     {
       "from": "FUNCTION:anonymous[1]",
       "type": "CONTAINS",
+      "to": "PROPERTY_ACCESS:id"
+    },
+    {
+      "from": "FUNCTION:anonymous[1]",
+      "type": "CONTAINS",
       "to": "PROPERTY_ACCESS:message"
+    },
+    {
+      "from": "FUNCTION:anonymous[1]",
+      "type": "CONTAINS",
+      "to": "PROPERTY_ACCESS:params"
     },
     {
       "from": "FUNCTION:anonymous[1]",
@@ -39211,7 +39183,7 @@
     {
       "from": "FUNCTION:anonymous[1]",
       "type": "HAS_SCOPE",
-      "to": "SCOPE:anonymous[5]:body"
+      "to": "SCOPE:anonymous[4]:body"
     },
     {
       "from": "FUNCTION:anonymous[1]",
@@ -39321,6 +39293,11 @@
     {
       "from": "FUNCTION:anonymous[2]",
       "type": "CONTAINS",
+      "to": "PROPERTY_ACCESS:message"
+    },
+    {
+      "from": "FUNCTION:anonymous[2]",
+      "type": "CONTAINS",
       "to": "PROPERTY_ACCESS:params"
     },
     {
@@ -39463,7 +39440,7 @@
     {
       "from": "FUNCTION:anonymous[2]",
       "type": "HAS_SCOPE",
-      "to": "SCOPE:anonymous[5]:body"
+      "to": "SCOPE:anonymous[4]:body"
     },
     {
       "from": "FUNCTION:anonymous[2]",
@@ -39479,6 +39456,11 @@
       "from": "FUNCTION:anonymous[2]",
       "type": "MAKES_REQUEST",
       "to": "http:request:GET /api/settings/${...}"
+    },
+    {
+      "from": "FUNCTION:anonymous[2]",
+      "type": "MAKES_REQUEST",
+      "to": "http:request:GET dynamic"
     },
     {
       "from": "FUNCTION:anonymous[3]",
@@ -39498,6 +39480,11 @@
     {
       "from": "FUNCTION:anonymous[3]",
       "type": "CONTAINS",
+      "to": "PROPERTY_ACCESS:connection"
+    },
+    {
+      "from": "FUNCTION:anonymous[3]",
+      "type": "CONTAINS",
       "to": "PROPERTY_ACCESS:db"
     },
     {
@@ -39513,11 +39500,6 @@
     {
       "from": "FUNCTION:anonymous[3]",
       "type": "CONTAINS",
-      "to": "PROPERTY_ACCESS:id"
-    },
-    {
-      "from": "FUNCTION:anonymous[3]",
-      "type": "CONTAINS",
       "to": "PROPERTY_ACCESS:length"
     },
     {
@@ -39529,11 +39511,6 @@
       "from": "FUNCTION:anonymous[3]",
       "type": "CONTAINS",
       "to": "PROPERTY_ACCESS:length"
-    },
-    {
-      "from": "FUNCTION:anonymous[3]",
-      "type": "CONTAINS",
-      "to": "PROPERTY_ACCESS:message"
     },
     {
       "from": "FUNCTION:anonymous[3]",
@@ -39552,31 +39529,10 @@
     },
     {
       "from": "FUNCTION:anonymous[3]",
-      "type": "CONTAINS",
-      "to": "PROPERTY_ACCESS:params"
-    },
-    {
-      "from": "FUNCTION:anonymous[3]",
       "type": "HAS_PARAMETER",
       "to": "PARAMETER:req",
       "metadata": {
         "index": 0
-      }
-    },
-    {
-      "from": "FUNCTION:anonymous[3]",
-      "type": "HAS_PARAMETER",
-      "to": "PARAMETER:req",
-      "metadata": {
-        "index": 0
-      }
-    },
-    {
-      "from": "FUNCTION:anonymous[3]",
-      "type": "HAS_PARAMETER",
-      "to": "PARAMETER:res",
-      "metadata": {
-        "index": 1
       }
     },
     {
@@ -39630,17 +39586,12 @@
     {
       "from": "FUNCTION:anonymous[3]",
       "type": "HAS_SCOPE",
-      "to": "SCOPE:anonymous[5]:body"
+      "to": "SCOPE:anonymous[4]:body"
     },
     {
       "from": "FUNCTION:anonymous[3]",
       "type": "HAS_SCOPE",
       "to": "SCOPE:anonymous[5]:body"
-    },
-    {
-      "from": "FUNCTION:anonymous[3]",
-      "type": "MAKES_REQUEST",
-      "to": "http:request:GET dynamic"
     },
     {
       "from": "FUNCTION:anonymous[3]",
@@ -39660,11 +39611,6 @@
     {
       "from": "FUNCTION:anonymous[4]",
       "type": "CONTAINS",
-      "to": "PROPERTY_ACCESS:connection"
-    },
-    {
-      "from": "FUNCTION:anonymous[4]",
-      "type": "CONTAINS",
       "to": "PROPERTY_ACCESS:db"
     },
     {
@@ -39685,6 +39631,14 @@
     {
       "from": "FUNCTION:anonymous[4]",
       "type": "HAS_PARAMETER",
+      "to": "PARAMETER:err",
+      "metadata": {
+        "index": 0
+      }
+    },
+    {
+      "from": "FUNCTION:anonymous[4]",
+      "type": "HAS_PARAMETER",
       "to": "PARAMETER:req",
       "metadata": {
         "index": 0
@@ -39711,7 +39665,7 @@
     {
       "from": "FUNCTION:anonymous[4]",
       "type": "HAS_SCOPE",
-      "to": "SCOPE:anonymous[5]:body"
+      "to": "SCOPE:anonymous[4]:body"
     },
     {
       "from": "FUNCTION:anonymous[4]",
@@ -39731,14 +39685,6 @@
     {
       "from": "FUNCTION:anonymous[5]",
       "type": "HAS_PARAMETER",
-      "to": "PARAMETER:err",
-      "metadata": {
-        "index": 0
-      }
-    },
-    {
-      "from": "FUNCTION:anonymous[5]",
-      "type": "HAS_PARAMETER",
       "to": "PARAMETER:req",
       "metadata": {
         "index": 0
@@ -39751,11 +39697,6 @@
       "metadata": {
         "index": 1
       }
-    },
-    {
-      "from": "FUNCTION:anonymous[5]",
-      "type": "HAS_SCOPE",
-      "to": "SCOPE:anonymous[5]:body"
     },
     {
       "from": "FUNCTION:anonymous[5]",
@@ -41842,11 +41783,6 @@
     {
       "from": "MODULE:app.js",
       "type": "CONTAINS",
-      "to": "FUNCTION:anonymous[5]"
-    },
-    {
-      "from": "MODULE:app.js",
-      "type": "CONTAINS",
       "to": "FUNCTION:connectServices"
     },
     {
@@ -43042,7 +42978,7 @@
       "to": "FUNCTION:anonymous[0]",
       "metadata": {
         "argIndex": 0,
-        "callId": "app.js->anonymous[2]->anonymous[0]->CALL->retryWithBackoff#0"
+        "callId": "app.js->anonymous[1]->anonymous[0]->CALL->retryWithBackoff#0"
       }
     },
     {
@@ -46565,12 +46501,42 @@
     {
       "from": "SCOPE:anonymous[4]:body",
       "type": "CONTAINS",
+      "to": "CALL:config.handleError"
+    },
+    {
+      "from": "SCOPE:anonymous[4]:body",
+      "type": "CONTAINS",
       "to": "CALL:console.error"
     },
     {
       "from": "SCOPE:anonymous[4]:body",
       "type": "CONTAINS",
+      "to": "CALL:console.log"
+    },
+    {
+      "from": "SCOPE:anonymous[4]:body",
+      "type": "CONTAINS",
+      "to": "CALL:loadUserData"
+    },
+    {
+      "from": "SCOPE:anonymous[4]:body",
+      "type": "CONTAINS",
+      "to": "CALL:mongoose.connection.close"
+    },
+    {
+      "from": "SCOPE:anonymous[4]:body",
+      "type": "CONTAINS",
       "to": "CALL:mongoose.connection.db.collection"
+    },
+    {
+      "from": "SCOPE:anonymous[4]:body",
+      "type": "CONTAINS",
+      "to": "CALL:mongoose.connection.db.collection"
+    },
+    {
+      "from": "SCOPE:anonymous[4]:body",
+      "type": "CONTAINS",
+      "to": "CALL:process.exit"
     },
     {
       "from": "SCOPE:anonymous[4]:body",
@@ -46578,49 +46544,49 @@
       "to": "FUNCTION:anonymous[0]"
     },
     {
-      "from": "SCOPE:anonymous[5]:body",
+      "from": "SCOPE:anonymous[4]:body",
       "type": "CONTAINS",
-      "to": "CALL:config.handleError"
+      "to": "FUNCTION:anonymous[0]"
     },
     {
-      "from": "SCOPE:anonymous[5]:body",
+      "from": "SCOPE:anonymous[4]:body",
       "type": "CONTAINS",
-      "to": "CALL:console.error"
+      "to": "FUNCTION:anonymous[0]"
     },
     {
-      "from": "SCOPE:anonymous[5]:body",
+      "from": "SCOPE:anonymous[4]:body",
       "type": "CONTAINS",
-      "to": "CALL:console.log"
+      "to": "FUNCTION:anonymous[0]"
     },
     {
-      "from": "SCOPE:anonymous[5]:body",
+      "from": "SCOPE:anonymous[4]:body",
       "type": "CONTAINS",
-      "to": "CALL:loadUserData"
+      "to": "FUNCTION:anonymous[1]"
     },
     {
-      "from": "SCOPE:anonymous[5]:body",
+      "from": "SCOPE:anonymous[4]:body",
       "type": "CONTAINS",
-      "to": "CALL:mongoose.connection.close"
+      "to": "FUNCTION:anonymous[2]"
     },
     {
-      "from": "SCOPE:anonymous[5]:body",
+      "from": "SCOPE:anonymous[4]:body",
       "type": "CONTAINS",
-      "to": "CALL:mongoose.connection.db.collection"
+      "to": "TRY_BLOCK:"
     },
     {
-      "from": "SCOPE:anonymous[5]:body",
-      "type": "CONTAINS",
-      "to": "CALL:process.exit"
+      "from": "SCOPE:anonymous[4]:body",
+      "type": "DECLARES",
+      "to": "VARIABLE:email"
+    },
+    {
+      "from": "SCOPE:anonymous[4]:body",
+      "type": "DECLARES",
+      "to": "VARIABLE:password"
     },
     {
       "from": "SCOPE:anonymous[5]:body",
       "type": "CONTAINS",
       "to": "CALL:res.json"
-    },
-    {
-      "from": "SCOPE:anonymous[5]:body",
-      "type": "CONTAINS",
-      "to": "CALL:this.logError"
     },
     {
       "from": "SCOPE:anonymous[5]:body",
@@ -46675,32 +46641,7 @@
     {
       "from": "SCOPE:anonymous[5]:body",
       "type": "CONTAINS",
-      "to": "FUNCTION:anonymous[0]"
-    },
-    {
-      "from": "SCOPE:anonymous[5]:body",
-      "type": "CONTAINS",
-      "to": "FUNCTION:anonymous[0]"
-    },
-    {
-      "from": "SCOPE:anonymous[5]:body",
-      "type": "CONTAINS",
-      "to": "FUNCTION:anonymous[0]"
-    },
-    {
-      "from": "SCOPE:anonymous[5]:body",
-      "type": "CONTAINS",
       "to": "FUNCTION:anonymous[1]"
-    },
-    {
-      "from": "SCOPE:anonymous[5]:body",
-      "type": "CONTAINS",
-      "to": "FUNCTION:anonymous[1]"
-    },
-    {
-      "from": "SCOPE:anonymous[5]:body",
-      "type": "CONTAINS",
-      "to": "FUNCTION:anonymous[2]"
     },
     {
       "from": "SCOPE:anonymous[5]:body",
@@ -46734,16 +46675,6 @@
     },
     {
       "from": "SCOPE:anonymous[5]:body",
-      "type": "CONTAINS",
-      "to": "TRY_BLOCK:"
-    },
-    {
-      "from": "SCOPE:anonymous[5]:body",
-      "type": "DECLARES",
-      "to": "VARIABLE:email"
-    },
-    {
-      "from": "SCOPE:anonymous[5]:body",
       "type": "DECLARES",
       "to": "VARIABLE:email"
     },
@@ -46756,11 +46687,6 @@
       "from": "SCOPE:anonymous[5]:body",
       "type": "DECLARES",
       "to": "VARIABLE:lastName"
-    },
-    {
-      "from": "SCOPE:anonymous[5]:body",
-      "type": "DECLARES",
-      "to": "VARIABLE:password"
     },
     {
       "from": "SCOPE:anonymous[5]:body",
@@ -46796,6 +46722,21 @@
       "from": "SCOPE:anonymous[6]:body",
       "type": "CONTAINS",
       "to": "CALL:res.status"
+    },
+    {
+      "from": "SCOPE:AppConfig.handleError:body",
+      "type": "CONTAINS",
+      "to": "CALL:console.error"
+    },
+    {
+      "from": "SCOPE:AppConfig.handleError:body",
+      "type": "CONTAINS",
+      "to": "CALL:this.logError"
+    },
+    {
+      "from": "SCOPE:AppConfig.handleError:body",
+      "type": "CONTAINS",
+      "to": "PROPERTY_ACCESS:port"
     },
     {
       "from": "SCOPE:AppConfig.initDatabase:body",
