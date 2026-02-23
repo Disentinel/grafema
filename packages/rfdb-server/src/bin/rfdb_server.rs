@@ -2460,8 +2460,18 @@ async fn main() {
 
     // Create "default" database from legacy db_path for backwards compatibility
     eprintln!("[rfdb-server] Opening default database: {:?}", db_path);
-    manager.create_default_from_path(&db_path)
-        .expect("Failed to create default database");
+    match manager.create_default_from_path(&db_path) {
+        Ok(()) => {}
+        Err(rfdb::error::GraphError::DatabaseLocked(lock_path)) => {
+            eprintln!("[rfdb-server] ERROR: Database {:?} is already in use (lock held by another rfdb-server process).", db_path);
+            eprintln!("[rfdb-server] If you believe this is stale, remove: {}", lock_path);
+            std::process::exit(1);
+        }
+        Err(e) => {
+            eprintln!("[rfdb-server] Failed to create default database: {}", e);
+            std::process::exit(1);
+        }
+    }
 
     eprintln!("[rfdb-server] Data directory for multi-database: {:?}", data_dir);
 

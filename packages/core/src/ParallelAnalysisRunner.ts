@@ -139,13 +139,21 @@ export class ParallelAnalysisRunner {
     }
 
     this.logger.debug('Starting RFDB server', { binary: binaryPath, database: dbPath });
-    this.rfdbServerProcess = await startRfdbServer({
+    const proc = await startRfdbServer({
       dbPath,
       socketPath,
       binaryPath,
+      pidPath: join(dirname(dbPath), 'rfdb.pid'),
       waitTimeoutMs: 3000,
       logger: { debug: (m: string) => this.logger.debug(m) },
     });
+    if (proc === null) {
+      // Existing server detected via PID file
+      this.rfdbServerProcess = null;
+      this._serverWasExternal = true;
+      return;
+    }
+    this.rfdbServerProcess = proc;
     this._serverWasExternal = false;
 
     this.logger.debug('RFDB server started', { socketPath });

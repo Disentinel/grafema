@@ -7777,6 +7777,7 @@
     },
     {
       "default": false,
+      "endColumn": 12,
       "exported": false,
       "exportKind": "value",
       "exportType": "named",
@@ -7857,6 +7858,7 @@
     },
     {
       "default": false,
+      "endColumn": 20,
       "exported": false,
       "exportKind": "value",
       "exportType": "named",
@@ -7927,6 +7929,7 @@
     },
     {
       "default": false,
+      "endColumn": 72,
       "exported": false,
       "exportKind": "value",
       "exportType": "named",
@@ -7967,6 +7970,7 @@
     },
     {
       "default": false,
+      "endColumn": 55,
       "exported": false,
       "exportKind": "value",
       "exportType": "named",
@@ -8087,6 +8091,7 @@
     },
     {
       "default": false,
+      "endColumn": 15,
       "exported": false,
       "exportKind": "value",
       "exportType": "named",
@@ -8107,6 +8112,7 @@
     },
     {
       "default": false,
+      "endColumn": 33,
       "exported": false,
       "exportKind": "value",
       "exportType": "named",
@@ -20833,6 +20839,69 @@
       "objectName": "next",
       "semanticId": "services/dataProcessor.js->PROPERTY_ACCESS->next.value[in:processItem]",
       "type": "PROPERTY_ACCESS"
+    },
+    {
+      "className": "DataProcessor",
+      "exported": false,
+      "file": "services/dataProcessor.js",
+      "name": "batchSize",
+      "objectName": "this",
+      "semanticId": "services/dataProcessor.js->DataProcessor->constructor->PROPERTY_ASSIGNMENT->this.batchSize#0",
+      "type": "PROPERTY_ASSIGNMENT"
+    },
+    {
+      "className": "DataProcessor",
+      "exported": false,
+      "file": "services/dataProcessor.js",
+      "name": "cache",
+      "objectName": "this",
+      "semanticId": "services/dataProcessor.js->DataProcessor->constructor->PROPERTY_ASSIGNMENT->this.cache#0",
+      "type": "PROPERTY_ASSIGNMENT"
+    },
+    {
+      "className": "AppConfig",
+      "exported": false,
+      "file": "app.js",
+      "name": "dbUrl",
+      "objectName": "this",
+      "semanticId": "app.js->AppConfig->constructor->PROPERTY_ASSIGNMENT->this.dbUrl#0",
+      "type": "PROPERTY_ASSIGNMENT"
+    },
+    {
+      "className": "DataProcessor",
+      "exported": false,
+      "file": "services/dataProcessor.js",
+      "name": "initialized",
+      "objectName": "this",
+      "semanticId": "services/dataProcessor.js->DataProcessor->constructor->PROPERTY_ASSIGNMENT->this.initialized#0",
+      "type": "PROPERTY_ASSIGNMENT"
+    },
+    {
+      "className": "DataProcessor",
+      "exported": false,
+      "file": "services/dataProcessor.js",
+      "name": "initialized",
+      "objectName": "this",
+      "semanticId": "services/dataProcessor.js->DataProcessor->initialize->PROPERTY_ASSIGNMENT->this.initialized#0",
+      "type": "PROPERTY_ASSIGNMENT"
+    },
+    {
+      "className": "AppConfig",
+      "exported": false,
+      "file": "app.js",
+      "name": "port",
+      "objectName": "this",
+      "semanticId": "app.js->AppConfig->constructor->PROPERTY_ASSIGNMENT->this.port#0",
+      "type": "PROPERTY_ASSIGNMENT"
+    },
+    {
+      "className": "AppConfig",
+      "exported": false,
+      "file": "app.js",
+      "name": "retryAttempts",
+      "objectName": "this",
+      "semanticId": "app.js->AppConfig->constructor->PROPERTY_ASSIGNMENT->this.retryAttempts#0",
+      "type": "PROPERTY_ASSIGNMENT"
     },
     {
       "exported": false,
@@ -36270,6 +36339,21 @@
       "to": "FUNCTION:logError"
     },
     {
+      "from": "CLASS:AppConfig",
+      "type": "CONTAINS",
+      "to": "PROPERTY_ASSIGNMENT:dbUrl"
+    },
+    {
+      "from": "CLASS:AppConfig",
+      "type": "CONTAINS",
+      "to": "PROPERTY_ASSIGNMENT:port"
+    },
+    {
+      "from": "CLASS:AppConfig",
+      "type": "CONTAINS",
+      "to": "PROPERTY_ASSIGNMENT:retryAttempts"
+    },
+    {
       "from": "CLASS:DataProcessor",
       "type": "CONTAINS",
       "to": "FUNCTION:constructor"
@@ -36343,6 +36427,26 @@
       "from": "CLASS:DataProcessor",
       "type": "CONTAINS",
       "to": "FUNCTION:processWithPromises"
+    },
+    {
+      "from": "CLASS:DataProcessor",
+      "type": "CONTAINS",
+      "to": "PROPERTY_ASSIGNMENT:batchSize"
+    },
+    {
+      "from": "CLASS:DataProcessor",
+      "type": "CONTAINS",
+      "to": "PROPERTY_ASSIGNMENT:cache"
+    },
+    {
+      "from": "CLASS:DataProcessor",
+      "type": "CONTAINS",
+      "to": "PROPERTY_ASSIGNMENT:initialized"
+    },
+    {
+      "from": "CLASS:DataProcessor",
+      "type": "CONTAINS",
+      "to": "PROPERTY_ASSIGNMENT:initialized"
     },
     {
       "from": "CONSTANT:batch",

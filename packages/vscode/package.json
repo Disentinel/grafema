@@ -2,7 +2,7 @@
   "name": "grafema-explore",
   "displayName": "Grafema Explore",
   "description": "Interactive graph navigation for Grafema code analysis",
-  "version": "0.2.0",
+  "version": "0.2.12",
   "publisher": "grafema",
   "engines": {
     "vscode": "^1.74.0"

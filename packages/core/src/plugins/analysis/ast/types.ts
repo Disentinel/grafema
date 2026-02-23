@@ -259,6 +259,10 @@ export interface VariableDeclarationInfo {
   isPrivate?: boolean;      // true for #privateField
   isStatic?: boolean;       // true for static #field
   isClassProperty?: boolean; // true for class properties (vs local variables)
+  // REG-552: TypeScript class property metadata
+  accessibility?: 'public' | 'private' | 'protected';  // undefined = implicit public
+  isReadonly?: boolean;                                   // true for readonly modifier
+  tsType?: string;                                        // TypeScript type annotation string
 }
 
 // === GRAFEMA-IGNORE ANNOTATION (REG-332) ===
@@ -292,6 +296,25 @@ export interface PropertyAccessInfo {
   enclosingClassName?: string; // class name when objectName === 'this'
 }
 
+// === PROPERTY ASSIGNMENT INFO ===
+export interface PropertyAssignmentInfo {
+  id: string;
+  semanticId?: string;
+  type: 'PROPERTY_ASSIGNMENT';
+  name: string;
+  objectName: string;
+  enclosingClassName?: string;
+  file: string;
+  line: number;
+  column: number;
+  parentScopeId?: string;
+  mutationScopePath?: string[];
+  valueType: 'LITERAL' | 'VARIABLE' | 'CALL' | 'EXPRESSION' | 'OBJECT_LITERAL' | 'ARRAY_LITERAL';
+  valueName?: string;
+  callLine?: number;
+  callColumn?: number;
+}
+
 // === CALL SITE INFO ===
 export interface CallSiteInfo {
   id: string;
@@ -305,6 +328,7 @@ export interface CallSiteInfo {
   endColumn?: number;
   parentScopeId?: string;
   targetFunctionName?: string;
+  isNew?: boolean;
   /** REG-332: Annotation to suppress strict mode errors */
   grafemaIgnore?: GrafemaIgnoreAnnotation;
   /** REG-311: true if wrapped in await expression */
@@ -332,6 +356,7 @@ export interface MethodCallInfo {
   endColumn?: number;
   parentScopeId?: string;
   arguments?: unknown[];
+  isNew?: boolean;
   /** REG-332: Annotation to suppress strict mode errors */
   grafemaIgnore?: GrafemaIgnoreAnnotation;
   /** REG-311: true if wrapped in await expression */
@@ -567,6 +592,8 @@ export interface ExportInfo {
 export interface ExportSpecifier {
   local: string;
   exported: string;
+  column?: number;
+  endColumn?: number;
 }
 
 // === HTTP REQUEST INFO ===
@@ -1188,6 +1215,8 @@ export interface ASTCollections {
   arrayMutations?: ArrayMutationInfo[];
   // Object mutation tracking for FLOWS_INTO edges
   objectMutations?: ObjectMutationInfo[];
+  // Property assignment tracking for PROPERTY_ASSIGNMENT nodes (REG-554)
+  propertyAssignments?: PropertyAssignmentInfo[];
   // Variable reassignment tracking for FLOWS_INTO edges (REG-290)
   variableReassignments?: VariableReassignmentInfo[];
   // Return statement tracking for RETURNS edges

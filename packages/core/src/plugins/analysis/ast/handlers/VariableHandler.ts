@@ -9,6 +9,7 @@ import * as t from '@babel/types';
 import type {
   ArrayMutationInfo,
   ObjectMutationInfo,
+  PropertyAssignmentInfo,
   VariableReassignmentInfo,
 } from '../types.js';
 import { FunctionBodyHandler } from './FunctionBodyHandler.js';
@@ -87,8 +88,14 @@ export class VariableHandler extends FunctionBodyHandler {
         }
         const objectMutations = ctx.collections.objectMutations as ObjectMutationInfo[];
 
+        // Initialize property assignments collection if not exists (REG-554)
+        if (!ctx.collections.propertyAssignments) {
+          ctx.collections.propertyAssignments = [];
+        }
+        const propertyAssignments = ctx.collections.propertyAssignments as PropertyAssignmentInfo[];
+
         // Check for object property assignment: obj.prop = value
-        analyzer.detectObjectPropertyAssignment(assignNode, ctx.module, objectMutations, ctx.scopeTracker);
+        analyzer.detectObjectPropertyAssignment(assignNode, ctx.module, objectMutations, ctx.scopeTracker, propertyAssignments);
       },
     };
   }

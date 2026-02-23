@@ -186,6 +186,12 @@ serverCommand
       waitTimeoutMs: 10000,
     });
 
+    if (serverProcess === null) {
+      // Existing server detected via PID file
+      console.log('Server already running (detected via PID file)');
+      return;
+    }
+
     // Verify server is responsive
     const verifyStatus = await isServerRunning(socketPath);
     if (!verifyStatus.running) {
@@ -382,7 +388,7 @@ serverCommand
     if (verifyStatus.version) {
       console.log(`  Version: ${verifyStatus.version}`);
     }
-    if (serverProcess.pid) {
+    if (serverProcess?.pid) {
       console.log(`  PID: ${serverProcess.pid}`);
     }
   });

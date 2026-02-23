@@ -56,7 +56,14 @@ let sharedServerInstance = null;
 let sharedServerStarting = null;
 
 /**
- * Configuration for shared test server
+ * Configuration for shared test server.
+ *
+ * NOTE (RFD-43): These paths are intentionally fixed — the singleton pattern
+ * requires a stable path so multiple test files can reuse the same server.
+ * Each test creates a uniquely-named ephemeral database, so cross-run data
+ * contamination is avoided. However, if two parallel test runs share these
+ * paths, they will connect to the same server instance. This is acceptable
+ * because ephemeral databases provide isolation at the data level.
  */
 const SHARED_SERVER_CONFIG = {
   socketPath: '/tmp/rfdb-test-shared.sock',

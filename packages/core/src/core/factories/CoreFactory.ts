@@ -176,6 +176,7 @@ interface ExportOptions {
   default?: boolean;
   source?: string;
   exportType?: 'default' | 'named' | 'all';
+  endColumn?: number;
 }
 
 interface InterfaceOptions {

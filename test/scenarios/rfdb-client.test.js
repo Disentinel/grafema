@@ -7,10 +7,11 @@
 import { describe, it, before, after } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { spawn } from 'child_process';
-import { existsSync, rmSync, mkdirSync } from 'fs';
+import { existsSync, rmSync, mkdirSync, mkdtempSync } from 'fs';
 import { join } from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
+import { tmpdir } from 'os';
 import { setTimeout as sleep } from 'timers/promises';
 
 import { RFDBClient } from '@grafema/core';
@@ -18,8 +19,9 @@ import { RFDBClient } from '@grafema/core';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-const TEST_DB_PATH = '/tmp/rfdb-test-db';
-const TEST_SOCKET_PATH = '/tmp/rfdb-test.sock';
+const testDir = mkdtempSync(join(tmpdir(), 'rfdb-client-'));
+const TEST_DB_PATH = join(testDir, 'graph.rfdb');
+const TEST_SOCKET_PATH = join(testDir, 'rfdb.sock');
 const SERVER_BINARY = join(__dirname, '../../packages/rfdb-server/target/debug/rfdb-server');
 
 describe('RFDB Client-Server', () => {
@@ -27,14 +29,6 @@ describe('RFDB Client-Server', () => {
   let client = null;
 
   before(async () => {
-    // Clean up any previous test data
-    if (existsSync(TEST_DB_PATH)) {
-      rmSync(TEST_DB_PATH, { recursive: true });
-    }
-    if (existsSync(TEST_SOCKET_PATH)) {
-      rmSync(TEST_SOCKET_PATH);
-    }
-
     // Check if server binary exists
     if (!existsSync(SERVER_BINARY)) {
       console.log('Building rfdb-server...');
@@ -87,13 +81,8 @@ describe('RFDB Client-Server', () => {
       await sleep(500);
     }
 
-    // Clean up
-    if (existsSync(TEST_DB_PATH)) {
-      rmSync(TEST_DB_PATH, { recursive: true });
-    }
-    if (existsSync(TEST_SOCKET_PATH)) {
-      rmSync(TEST_SOCKET_PATH);
-    }
+    // Clean up temp directory
+    rmSync(testDir, { recursive: true, force: true });
   });
 
   it('should ping the server', async () => {

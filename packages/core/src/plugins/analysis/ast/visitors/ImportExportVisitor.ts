@@ -66,6 +66,8 @@ interface ImportInfo {
 interface ExportSpecifierInfo {
   exported: string;
   local: string;
+  column?: number;
+  endColumn?: number;
 }
 
 /**
@@ -282,17 +284,20 @@ export class ImportExportVisitor extends ASTVisitor {
 
         // export { foo, bar } from './module'
         if (node.source) {
-          const specifiers: ExportSpecifierInfo[] = node.specifiers.map((spec) => {
-            const exportSpec = spec as ExportSpecifier;
-            const exportedName = exportSpec.exported.type === 'Identifier'
-              ? exportSpec.exported.name
-              : exportSpec.exported.value;
-            const localName = exportSpec.local.type === 'Identifier'
-              ? exportSpec.local.name
+          const specifiers: ExportSpecifierInfo[] = (node.specifiers.filter(
+            (spec) => spec.type === 'ExportSpecifier'
+          ) as ExportSpecifier[]).map((spec) => {
+            const exportedName = spec.exported.type === 'Identifier'
+              ? spec.exported.name
+              : spec.exported.value;
+            const localName = spec.local.type === 'Identifier'
+              ? spec.local.name
               : exportedName;
             return {
               exported: exportedName,
-              local: localName
+              local: localName,
+              column: getColumn(spec),
+              endColumn: getEndLocation(spec).column,
             };
           });
 
@@ -305,14 +310,17 @@ export class ImportExportVisitor extends ASTVisitor {
         }
         // export { foo, bar }
         else if (node.specifiers.length > 0) {
-          const specifiers: ExportSpecifierInfo[] = node.specifiers.map((spec) => {
-            const exportSpec = spec as ExportSpecifier;
-            const exportedName = exportSpec.exported.type === 'Identifier'
-              ? exportSpec.exported.name
-              : exportSpec.exported.value;
+          const specifiers: ExportSpecifierInfo[] = (node.specifiers.filter(
+            (spec) => spec.type === 'ExportSpecifier'
+          ) as ExportSpecifier[]).map((spec) => {
+            const exportedName = spec.exported.type === 'Identifier'
+              ? spec.exported.name
+              : spec.exported.value;
             return {
               exported: exportedName,
-              local: exportSpec.local.name
+              local: spec.local.name,
+              column: getColumn(spec),
+              endColumn: getEndLocation(spec).column,
             };
           });
 
