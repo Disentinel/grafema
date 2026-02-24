@@ -5,6 +5,7 @@
  * property accesses, callbacks, literals, object/array literals.
  */
 
+import { basename } from 'path';
 import type {
   ModuleNode,
   FunctionInfo,
@@ -15,9 +16,11 @@ import type {
   MethodCallbackInfo,
   LiteralInfo,
   PropertyAccessInfo,
+  PropertyAssignmentInfo,
   ObjectLiteralInfo,
   ArrayLiteralInfo,
   ParameterInfo,
+  ClassDeclarationInfo,
   ASTCollections,
   GraphNode,
 } from '../types.js';
@@ -39,6 +42,8 @@ export class CoreBuilder implements DomainBuilder {
       objectLiterals = [],
       arrayLiterals = [],
       parameters = [],
+      classDeclarations = [],
+      propertyAssignments = [],
     } = data;
 
     this.bufferFunctionEdges(module, functions);
@@ -46,7 +51,8 @@ export class CoreBuilder implements DomainBuilder {
     this.bufferVariableEdges(variableDeclarations);
     this.bufferCallSiteEdges(callSites, functions);
     this.bufferMethodCalls(methodCalls, variableDeclarations, parameters);
-    this.bufferPropertyAccessNodes(module, propertyAccesses);
+    this.bufferPropertyAccessNodes(module, propertyAccesses, variableDeclarations, parameters, classDeclarations);
+    this.bufferPropertyAssignmentNodes(module, propertyAssignments, variableDeclarations, parameters, classDeclarations, propertyAccesses);
     this.bufferCallbackEdges(methodCallbacks, functions);
     this.bufferLiterals(literals);
     this.bufferObjectLiteralNodes(objectLiterals);
@@ -210,12 +216,19 @@ export class CoreBuilder implements DomainBuilder {
   }
 
   /**
-   * Buffer PROPERTY_ACCESS nodes and CONTAINS edges (REG-395).
+   * Buffer PROPERTY_ACCESS nodes, CONTAINS edges, and READS_FROM edges (REG-395, REG-555).
    *
-   * Creates nodes for property reads (obj.prop, a.b.c) and
-   * CONTAINS edges from the enclosing scope (function or module).
+   * Creates nodes for property reads (obj.prop, a.b.c),
+   * CONTAINS edges from the enclosing scope (function or module),
+   * and READS_FROM edges to the source variable, parameter, or class node.
    */
-  private bufferPropertyAccessNodes(module: ModuleNode, propertyAccesses: PropertyAccessInfo[]): void {
+  private bufferPropertyAccessNodes(
+    module: ModuleNode,
+    propertyAccesses: PropertyAccessInfo[],
+    variableDeclarations: VariableDeclarationInfo[],
+    parameters: ParameterInfo[],
+    classDeclarations: ClassDeclarationInfo[]
+  ): void {
     for (const propAccess of propertyAccesses) {
       // Buffer node with all relevant fields
       this.ctx.bufferNode({
@@ -240,7 +253,162 @@ export class CoreBuilder implements DomainBuilder {
         src: containsSrc,
         dst: propAccess.id
       });
+
+      // REG-555: PROPERTY_ACCESS -> READS_FROM -> source node
+      const { objectName } = propAccess;
+      const scopePath = propAccess.scopePath ?? [];
+
+      if (objectName === 'this') {
+        // Link to CLASS node for this.prop reads (REG-152 pattern, REG-557 fix)
+        if (propAccess.enclosingClassName) {
+          const classDecl = classDeclarations.find(c =>
+            c.name === propAccess.enclosingClassName && c.file === propAccess.file
+          );
+          if (classDecl) {
+            this.ctx.bufferEdge({
+              type: 'READS_FROM',
+              src: propAccess.id,
+              dst: classDecl.id
+            });
+          }
+        }
+      } else if (objectName === 'import.meta' || objectName.includes('.')) {
+        // Skip: import.meta has no variable node, chained objects (a.b) are
+        // handled transitively through the first link in the chain
+      } else {
+        // Resolve variable or parameter using scope chain
+        const variable = this.ctx.resolveVariableInScope(objectName, scopePath, propAccess.file, variableDeclarations);
+        if (variable) {
+          this.ctx.bufferEdge({
+            type: 'READS_FROM',
+            src: propAccess.id,
+            dst: variable.id
+          });
+        } else {
+          const param = this.ctx.resolveParameterInScope(objectName, scopePath, propAccess.file, parameters);
+          if (param) {
+            this.ctx.bufferEdge({
+              type: 'READS_FROM',
+              src: propAccess.id,
+              dst: param.id
+            });
+          }
+        }
+      }
     }
+  }
+
+  /**
+   * Buffer PROPERTY_ASSIGNMENT nodes, CLASS->CONTAINS edges, and ASSIGNED_FROM edges (REG-554).
+   *
+   * Creates nodes for property writes (this.prop = value),
+   * CONTAINS edges from the owning CLASS node (semantic parent),
+   * and ASSIGNED_FROM edges to the source node (variable, parameter, or PROPERTY_ACCESS).
+   *
+   * Only handles this.prop = value inside a class body. Non-this assignments
+   * are tracked via FLOWS_INTO edges in MutationBuilder.
+   */
+  private bufferPropertyAssignmentNodes(
+    module: ModuleNode,
+    propertyAssignments: PropertyAssignmentInfo[],
+    variableDeclarations: VariableDeclarationInfo[],
+    parameters: ParameterInfo[],
+    classDeclarations: ClassDeclarationInfo[],
+    propertyAccesses: PropertyAccessInfo[]
+  ): void {
+    for (const propAssign of propertyAssignments) {
+      // Buffer the PROPERTY_ASSIGNMENT node
+      this.ctx.bufferNode({
+        id: propAssign.id,
+        type: 'PROPERTY_ASSIGNMENT',
+        name: propAssign.propertyName,
+        objectName: propAssign.objectName,
+        className: propAssign.enclosingClassName,
+        file: propAssign.file,
+        line: propAssign.line,
+        column: propAssign.column,
+        endLine: propAssign.endLine,
+        endColumn: propAssign.endColumn,
+        semanticId: propAssign.semanticId,
+        computed: propAssign.computed,
+      } as GraphNode);
+
+      // CLASS --CONTAINS--> PROPERTY_ASSIGNMENT
+      if (propAssign.enclosingClassName) {
+        const fileBasename = basename(propAssign.file);
+        const classDecl = classDeclarations.find(c =>
+          c.name === propAssign.enclosingClassName && c.file === fileBasename
+        );
+        if (classDecl) {
+          this.ctx.bufferEdge({
+            type: 'CONTAINS',
+            src: classDecl.id,
+            dst: propAssign.id,
+          });
+        }
+      }
+
+      // PROPERTY_ASSIGNMENT --ASSIGNED_FROM--> RHS node
+      this.bufferAssignedFromEdge(propAssign, propertyAccesses, variableDeclarations, parameters);
+    }
+  }
+
+  /**
+   * Resolve and buffer ASSIGNED_FROM edge for a PROPERTY_ASSIGNMENT node (REG-554).
+   *
+   * Resolution by valueType:
+   *   VARIABLE  -> look up VARIABLE or PARAMETER node by name in scope chain
+   *   MEMBER_EXPRESSION -> look up PROPERTY_ACCESS node by objectName+propertyName+file+line+column
+   *   LITERAL, OBJECT_LITERAL, ARRAY_LITERAL, CALL, EXPRESSION -> no edge in V1
+   */
+  private bufferAssignedFromEdge(
+    propAssign: PropertyAssignmentInfo,
+    propertyAccesses: PropertyAccessInfo[],
+    variableDeclarations: VariableDeclarationInfo[],
+    parameters: ParameterInfo[]
+  ): void {
+    const scopePath = propAssign.scopePath ?? [];
+
+    if (propAssign.valueType === 'VARIABLE' && propAssign.valueName) {
+      const sourceVar = this.ctx.resolveVariableInScope(
+        propAssign.valueName, scopePath, propAssign.file, variableDeclarations
+      );
+      const sourceParam = !sourceVar
+        ? this.ctx.resolveParameterInScope(propAssign.valueName, scopePath, propAssign.file, parameters)
+        : null;
+      const sourceNodeId = sourceVar?.id ?? sourceParam?.id;
+
+      if (sourceNodeId) {
+        this.ctx.bufferEdge({
+          type: 'ASSIGNED_FROM',
+          src: propAssign.id,
+          dst: sourceNodeId,
+        });
+      }
+    } else if (
+      propAssign.valueType === 'MEMBER_EXPRESSION' &&
+      propAssign.memberObject !== undefined &&
+      propAssign.memberProperty !== undefined
+    ) {
+      const { memberObject, memberProperty, memberLine, memberColumn } = propAssign;
+
+      const propAccessNode = propertyAccesses.find(pa =>
+        pa.objectName === memberObject &&
+        pa.propertyName === memberProperty &&
+        pa.file === propAssign.file &&
+        (memberLine === undefined || pa.line === memberLine) &&
+        (memberColumn === undefined || pa.column === memberColumn)
+      );
+
+      if (propAccessNode) {
+        this.ctx.bufferEdge({
+          type: 'ASSIGNED_FROM',
+          src: propAssign.id,
+          dst: propAccessNode.id,
+        });
+      }
+    }
+    // LITERAL, OBJECT_LITERAL, ARRAY_LITERAL, CALL, EXPRESSION: no ASSIGNED_FROM edge in V1.
   }
 
   private bufferCallbackEdges(methodCallbacks: MethodCallbackInfo[], functions: FunctionInfo[]): void {

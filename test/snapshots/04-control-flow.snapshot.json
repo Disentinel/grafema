@@ -488,33 +488,6 @@
       "type": "CALL"
     },
     {
-      "endColumn": 41,
-      "endLine": 29,
-      "exported": false,
-      "file": "src/exceptions.js",
-      "isNew": true,
-      "name": "Error",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 44,
-      "endLine": 63,
-      "exported": false,
-      "file": "src/exceptions.js",
-      "isNew": true,
-      "name": "Error",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 45,
-      "endLine": 68,
-      "exported": false,
-      "file": "src/exceptions.js",
-      "isNew": true,
-      "name": "Error",
-      "type": "CALL"
-    },
-    {
       "computed": false,
       "computedPropertyVar": null,
       "endColumn": 26,
@@ -1073,6 +1046,7 @@
     },
     {
       "default": false,
+      "endColumn": 16,
       "exported": false,
       "exportKind": "value",
       "exportType": "named",
@@ -1083,6 +1057,7 @@
     },
     {
       "default": false,
+      "endColumn": 18,
       "exported": false,
       "exportKind": "value",
       "exportType": "named",
@@ -1093,6 +1068,7 @@
     },
     {
       "default": false,
+      "endColumn": 40,
       "exported": false,
       "exportKind": "value",
       "exportType": "named",
@@ -1103,6 +1079,7 @@
     },
     {
       "default": false,
+      "endColumn": 11,
       "exported": false,
       "exportKind": "value",
       "exportType": "named",
@@ -1113,6 +1090,7 @@
     },
     {
       "default": false,
+      "endColumn": 26,
       "exported": false,
       "exportKind": "value",
       "exportType": "named",
@@ -1123,6 +1101,7 @@
     },
     {
       "default": false,
+      "endColumn": 16,
       "exported": false,
       "exportKind": "value",
       "exportType": "named",
@@ -1133,6 +1112,7 @@
     },
     {
       "default": false,
+      "endColumn": 11,
       "exported": false,
       "exportKind": "value",
       "exportType": "named",
@@ -1143,6 +1123,7 @@
     },
     {
       "default": false,
+      "endColumn": 16,
       "exported": false,
       "exportKind": "value",
       "exportType": "named",
@@ -1153,6 +1134,7 @@
     },
     {
       "default": false,
+      "endColumn": 13,
       "exported": false,
       "exportKind": "value",
       "exportType": "named",
@@ -1163,6 +1145,7 @@
     },
     {
       "default": false,
+      "endColumn": 16,
       "exported": false,
       "exportKind": "value",
       "exportType": "named",
@@ -1173,6 +1156,7 @@
     },
     {
       "default": false,
+      "endColumn": 18,
       "exported": false,
       "exportKind": "value",
       "exportType": "named",
@@ -1183,6 +1167,7 @@
     },
     {
       "default": false,
+      "endColumn": 10,
       "exported": false,
       "exportKind": "value",
       "exportType": "named",
@@ -1193,6 +1178,7 @@
     },
     {
       "default": false,
+      "endColumn": 11,
       "exported": false,
       "exportKind": "value",
       "exportType": "named",
@@ -1203,6 +1189,7 @@
     },
     {
       "default": false,
+      "endColumn": 14,
       "exported": false,
       "exportKind": "value",
       "exportType": "named",
@@ -1213,6 +1200,7 @@
     },
     {
       "default": false,
+      "endColumn": 10,
       "exported": false,
       "exportKind": "value",
       "exportType": "named",
@@ -1223,6 +1211,7 @@
     },
     {
       "default": false,
+      "endColumn": 23,
       "exported": false,
       "exportKind": "value",
       "exportType": "named",
@@ -1233,6 +1222,7 @@
     },
     {
       "default": false,
+      "endColumn": 14,
       "exported": false,
       "exportKind": "value",
       "exportType": "named",
@@ -1243,6 +1233,7 @@
     },
     {
       "default": false,
+      "endColumn": 16,
       "exported": false,
       "exportKind": "value",
       "exportType": "named",
@@ -1253,6 +1244,7 @@
     },
     {
       "default": false,
+      "endColumn": 17,
       "exported": false,
       "exportKind": "value",
       "exportType": "named",
@@ -1263,6 +1255,7 @@
     },
     {
       "default": false,
+      "endColumn": 19,
       "exported": false,
       "exportKind": "value",
       "exportType": "named",
@@ -1273,6 +1266,7 @@
     },
     {
       "default": false,
+      "endColumn": 13,
       "exported": false,
       "exportKind": "value",
       "exportType": "named",
@@ -1283,6 +1277,7 @@
     },
     {
       "default": false,
+      "endColumn": 20,
       "exported": false,
       "exportKind": "value",
       "exportType": "named",
@@ -1293,6 +1288,7 @@
     },
     {
       "default": false,
+      "endColumn": 27,
       "exported": false,
       "exportKind": "value",
       "exportType": "named",
@@ -1303,6 +1299,7 @@
     },
     {
       "default": false,
+      "endColumn": 16,
       "exported": false,
       "exportKind": "value",
       "exportType": "named",
@@ -1313,6 +1310,7 @@
     },
     {
       "default": false,
+      "endColumn": 12,
       "exported": false,
       "exportKind": "value",
       "exportType": "named",
@@ -1323,6 +1321,7 @@
     },
     {
       "default": false,
+      "endColumn": 14,
       "exported": false,
       "exportKind": "value",
       "exportType": "named",
@@ -1333,6 +1332,7 @@
     },
     {
       "default": false,
+      "endColumn": 20,
       "exported": false,
       "exportKind": "value",
       "exportType": "named",
@@ -1343,6 +1343,7 @@
     },
     {
       "default": false,
+      "endColumn": 13,
       "exported": false,
       "exportKind": "value",
       "exportType": "named",
@@ -1353,17 +1354,9 @@
     },
     {
       "exported": false,
-      "expressionType": "BinaryExpression",
-      "file": "src/conditionals.js",
-      "name": "<BinaryExpression>",
-      "operator": "*",
-      "type": "EXPRESSION"
-    },
-    {
-      "exported": false,
       "expressionType": "LogicalExpression",
       "file": "src/conditionals.js",
-      "name": "<LogicalExpression>",
+      "name": "… ?? …",
       "operator": "??",
       "type": "EXPRESSION"
     },
@@ -1371,7 +1364,7 @@
       "exported": false,
       "expressionType": "LogicalExpression",
       "file": "src/conditionals.js",
-      "name": "<LogicalExpression>",
+      "name": "… && …",
       "operator": "&&",
       "type": "EXPRESSION"
     },
@@ -1379,8 +1372,16 @@
       "exported": false,
       "expressionType": "LogicalExpression",
       "file": "src/conditionals.js",
-      "name": "<LogicalExpression>",
+      "name": "… || …",
       "operator": "||",
+      "type": "EXPRESSION"
+    },
+    {
+      "exported": false,
+      "expressionType": "BinaryExpression",
+      "file": "src/conditionals.js",
+      "name": "<BinaryExpression>",
+      "operator": "*",
       "type": "EXPRESSION"
     },
     {
@@ -2860,7 +2861,6 @@
           "PASSES_ARGUMENT",
           "MAKES_REQUEST",
           "IMPORTS_FROM",
-          "EXPORTS_TO",
           "ASSIGNED_FROM",
           "IMPLEMENTS",
           "EXTENDS",
@@ -2906,7 +2906,6 @@
         "PASSES_ARGUMENT",
         "MAKES_REQUEST",
         "IMPORTS_FROM",
-        "EXPORTS_TO",
         "ASSIGNED_FROM",
         "IMPLEMENTS",
         "EXTENDS",
@@ -5577,6 +5576,11 @@
     {
       "from": "BRANCH:",
       "type": "HAS_CONSEQUENT",
+      "to": "EXPRESSION:user.name"
+    },
+    {
+      "from": "BRANCH:",
+      "type": "HAS_CONSEQUENT",
       "to": "SCOPE:if:14:4:0"
     },
     {
@@ -5691,6 +5695,38 @@
     {
       "from": "CALL:console.error",
       "type": "DERIVES_FROM",
+      "to": "VARIABLE:error",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:error",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:error",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:error",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "DERIVES_FROM",
       "to": "VARIABLE:parseError",
       "metadata": {
         "argIndex": 1
@@ -5766,6 +5802,38 @@
       "to": "LITERAL:",
       "metadata": {
         "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "PASSES_ARGUMENT",
+      "to": "VARIABLE:error",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "PASSES_ARGUMENT",
+      "to": "VARIABLE:error",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "PASSES_ARGUMENT",
+      "to": "VARIABLE:error",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:console.error",
+      "type": "PASSES_ARGUMENT",
+      "to": "VARIABLE:error",
+      "metadata": {
+        "argIndex": 1
       }
     },
     {
@@ -5883,6 +5951,14 @@
     {
       "from": "CALL:console.log",
       "type": "DERIVES_FROM",
+      "to": "VARIABLE:error",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:console.log",
+      "type": "DERIVES_FROM",
       "to": "VARIABLE:result",
       "metadata": {
         "argIndex": 0
@@ -5942,6 +6018,14 @@
       "to": "VARIABLE:count",
       "metadata": {
         "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:console.log",
+      "type": "PASSES_ARGUMENT",
+      "to": "VARIABLE:error",
+      "metadata": {
+        "argIndex": 1
       }
     },
     {
@@ -6154,6 +6238,38 @@
       "from": "CALL:validateInput",
       "type": "CALLS",
       "to": "FUNCTION:validateInput"
+    },
+    {
+      "from": "CALL:validateInput",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:parsed",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:validateInput",
+      "type": "PASSES_ARGUMENT",
+      "to": "VARIABLE:parsed",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:validator",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:value",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:validator",
+      "type": "PASSES_ARGUMENT",
+      "to": "VARIABLE:value",
+      "metadata": {
+        "argIndex": 0
+      }
     },
     {
       "from": "CASE:",
@@ -6411,34 +6527,34 @@
       }
     },
     {
-      "from": "EXPRESSION:<LogicalExpression>",
-      "type": "DERIVES_FROM",
-      "to": "PARAMETER:defaultValue"
-    },
-    {
-      "from": "EXPRESSION:<LogicalExpression>",
-      "type": "DERIVES_FROM",
-      "to": "PARAMETER:input"
-    },
-    {
-      "from": "EXPRESSION:<LogicalExpression>",
-      "type": "DERIVES_FROM",
-      "to": "PARAMETER:obj"
-    },
-    {
-      "from": "EXPRESSION:<LogicalExpression>",
+      "from": "EXPRESSION:… ?? …",
       "type": "RETURNS",
       "to": "FUNCTION:getConfigValue"
     },
     {
-      "from": "EXPRESSION:<LogicalExpression>",
-      "type": "RETURNS",
-      "to": "FUNCTION:getValue"
+      "from": "EXPRESSION:… && …",
+      "type": "DERIVES_FROM",
+      "to": "PARAMETER:obj"
     },
     {
-      "from": "EXPRESSION:<LogicalExpression>",
+      "from": "EXPRESSION:… && …",
       "type": "RETURNS",
       "to": "FUNCTION:safeAccess"
+    },
+    {
+      "from": "EXPRESSION:… || …",
+      "type": "DERIVES_FROM",
+      "to": "PARAMETER:defaultValue"
+    },
+    {
+      "from": "EXPRESSION:… || …",
+      "type": "DERIVES_FROM",
+      "to": "PARAMETER:input"
+    },
+    {
+      "from": "EXPRESSION:… || …",
+      "type": "RETURNS",
+      "to": "FUNCTION:getValue"
     },
     {
       "from": "EXPRESSION:<template>",
@@ -7985,8 +8101,120 @@
     },
     {
       "from": "PARAMETER:data",
+      "type": "DERIVES_FROM",
+      "to": "VARIABLE:parsed",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "PARAMETER:data",
+      "type": "RECEIVES_ARGUMENT",
+      "to": "VARIABLE:parsed",
+      "metadata": {
+        "argIndex": 0,
+        "callId": "src/exceptions.js->complexOperation->try#0->try#0->CALL->validateInput#0"
+      }
+    },
+    {
+      "from": "PARAMETER:data",
       "type": "RETURNS",
       "to": "FUNCTION:validateInput"
+    },
+    {
+      "from": "PROPERTY_ACCESS:<computed>",
+      "type": "READS_FROM",
+      "to": "PARAMETER:config"
+    },
+    {
+      "from": "PROPERTY_ACCESS:<computed>",
+      "type": "READS_FROM",
+      "to": "PARAMETER:items"
+    },
+    {
+      "from": "PROPERTY_ACCESS:<computed>",
+      "type": "READS_FROM",
+      "to": "PARAMETER:items"
+    },
+    {
+      "from": "PROPERTY_ACCESS:<computed>",
+      "type": "READS_FROM",
+      "to": "PARAMETER:items"
+    },
+    {
+      "from": "PROPERTY_ACCESS:<computed>",
+      "type": "READS_FROM",
+      "to": "PARAMETER:numbers"
+    },
+    {
+      "from": "PROPERTY_ACCESS:<computed>",
+      "type": "READS_FROM",
+      "to": "PARAMETER:obj"
+    },
+    {
+      "from": "PROPERTY_ACCESS:id",
+      "type": "READS_FROM",
+      "to": "PARAMETER:data"
+    },
+    {
+      "from": "PROPERTY_ACCESS:items",
+      "type": "READS_FROM",
+      "to": "PARAMETER:data"
+    },
+    {
+      "from": "PROPERTY_ACCESS:length",
+      "type": "READS_FROM",
+      "to": "PARAMETER:items"
+    },
+    {
+      "from": "PROPERTY_ACCESS:length",
+      "type": "READS_FROM",
+      "to": "PARAMETER:items"
+    },
+    {
+      "from": "PROPERTY_ACCESS:length",
+      "type": "READS_FROM",
+      "to": "PARAMETER:numbers"
+    },
+    {
+      "from": "PROPERTY_ACCESS:message",
+      "type": "READS_FROM",
+      "to": "VARIABLE:error"
+    },
+    {
+      "from": "PROPERTY_ACCESS:message",
+      "type": "READS_FROM",
+      "to": "VARIABLE:error"
+    },
+    {
+      "from": "PROPERTY_ACCESS:message",
+      "type": "READS_FROM",
+      "to": "VARIABLE:error"
+    },
+    {
+      "from": "PROPERTY_ACCESS:name",
+      "type": "READS_FROM",
+      "to": "PARAMETER:user"
+    },
+    {
+      "from": "PROPERTY_ACCESS:name",
+      "type": "READS_FROM",
+      "to": "PARAMETER:user"
+    },
+    {
+      "from": "PROPERTY_ACCESS:name",
+      "type": "READS_FROM",
+      "to": "VARIABLE:error"
+    },
+    {
+      "from": "PROPERTY_ACCESS:profile",
+      "type": "READS_FROM",
+      "to": "PARAMETER:user"
+    },
+    {
+      "from": "PROPERTY_ACCESS:property",
+      "type": "READS_FROM",
+      "to": "PARAMETER:obj"
     },
     {
       "from": "SCOPE:",
@@ -8426,27 +8654,12 @@
     {
       "from": "SCOPE:if:28:4:1",
       "type": "CONTAINS",
-      "to": "CALL:Error"
-    },
-    {
-      "from": "SCOPE:if:28:4:1",
-      "type": "CONTAINS",
       "to": "CONSTRUCTOR_CALL:new Error()"
     },
     {
       "from": "SCOPE:if:63:2:2",
       "type": "CONTAINS",
-      "to": "CALL:Error"
-    },
-    {
-      "from": "SCOPE:if:63:2:2",
-      "type": "CONTAINS",
       "to": "CONSTRUCTOR_CALL:new Error()"
-    },
-    {
-      "from": "SCOPE:if:68:2:3",
-      "type": "CONTAINS",
-      "to": "CALL:Error"
     },
     {
       "from": "SCOPE:if:68:2:3",

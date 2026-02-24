@@ -31,7 +31,7 @@ function isAnalysisResult(value: unknown): value is AnalysisResult {
 
 import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 import { ExpressionEvaluator } from './ast/ExpressionEvaluator.js';
-import { GraphBuilder } from './ast/GraphBuilder.js';
+import { GraphBuilder, GraphDataError } from './ast/GraphBuilder.js';
 import {
   ImportExportVisitor,
   VariableVisitor,
@@ -52,7 +52,7 @@ import { ConditionParser } from './ast/ConditionParser.js';
 import { getLine, getColumn, getEndLocation } from './ast/utils/location.js';
 import { Profiler } from '../../core/Profiler.js';
 import { ScopeTracker } from '../../core/ScopeTracker.js';
-import { computeSemanticId } from '../../core/SemanticId.js';
+import { computeSemanticId, computeSemanticIdV2 } from '../../core/SemanticId.js';
 import { IdGenerator } from './ast/IdGenerator.js';
 import { CollisionResolver } from './ast/CollisionResolver.js';
 import { ExpressionNode } from '../../core/nodes/ExpressionNode.js';
@@ -101,6 +101,7 @@ import type {
   ArrayMutationArgument,
   ObjectMutationInfo,
   ObjectMutationValue,
+  PropertyAssignmentInfo,
   VariableReassignmentInfo,
   ReturnStatementInfo,
   YieldExpressionInfo,
@@ -185,6 +186,8 @@ interface Collections {
   arrayMutations: ArrayMutationInfo[];
   // Object mutation tracking for FLOWS_INTO edges
   objectMutations: ObjectMutationInfo[];
+  // Property assignment tracking for PROPERTY_ASSIGNMENT nodes (REG-554)
+  propertyAssignments?: PropertyAssignmentInfo[];
   // Variable reassignment tracking for FLOWS_INTO edges (REG-290)
   variableReassignments: VariableReassignmentInfo[];
   // Return statement tracking for RETURNS edges
@@ -200,6 +203,7 @@ interface Collections {
   // Property access tracking for PROPERTY_ACCESS nodes (REG-395)
   propertyAccesses: PropertyAccessInfo[];
   propertyAccessCounterRef: CounterRef;
+  propertyAssignmentCounterRef?: CounterRef;
   objectLiteralCounterRef: CounterRef;
   arrayLiteralCounterRef: CounterRef;
   ifScopeCounterRef: CounterRef;
@@ -267,7 +271,7 @@ export class JSASTAnalyzer extends Plugin {
         edges: [
           'CONTAINS', 'DECLARES', 'CALLS', 'HAS_SCOPE', 'CAPTURES', 'MODIFIES',
           'WRITES_TO', 'IMPORTS', 'INSTANCE_OF', 'HANDLED_BY', 'HAS_CALLBACK',
-          'PASSES_ARGUMENT', 'MAKES_REQUEST', 'IMPORTS_FROM', 'EXPORTS_TO', 'ASSIGNED_FROM',
+          'PASSES_ARGUMENT', 'MAKES_REQUEST', 'IMPORTS_FROM', 'ASSIGNED_FROM',
           // TypeScript-specific edges
           'IMPLEMENTS', 'EXTENDS', 'DECORATED_BY', 'HAS_TYPE_PARAMETER',
           // Promise data flow
@@ -805,7 +809,7 @@ export class JSASTAnalyzer extends Plugin {
         ? initExpression.property.name
         : null;
 
-      const column = initExpression.start ?? 0;
+      const column = getColumn(initExpression);
       const expressionId = ExpressionNode.generateId('MemberExpression', module.file, line, column);
 
       variableAssignments.push({
@@ -827,7 +831,7 @@ export class JSASTAnalyzer extends Plugin {
 
     // 8. BinaryExpression
     if (initExpression.type === 'BinaryExpression') {
-      const column = initExpression.start ?? 0;
+      const column = getColumn(initExpression);
       const expressionId = ExpressionNode.generateId('BinaryExpression', module.file, line, column);
 
       variableAssignments.push({
@@ -847,7 +851,7 @@ export class JSASTAnalyzer extends Plugin {
 
     // 9. ConditionalExpression
     if (initExpression.type === 'ConditionalExpression') {
-      const column = initExpression.start ?? 0;
+      const column = getColumn(initExpression);
       const expressionId = ExpressionNode.generateId('ConditionalExpression', module.file, line, column);
 
       variableAssignments.push({
@@ -869,7 +873,7 @@ export class JSASTAnalyzer extends Plugin {
 
     // 10. LogicalExpression
     if (initExpression.type === 'LogicalExpression') {
-      const column = initExpression.start ?? 0;
+      const column = getColumn(initExpression);
       const expressionId = ExpressionNode.generateId('LogicalExpression', module.file, line, column);
 
       variableAssignments.push({
@@ -892,7 +896,7 @@ export class JSASTAnalyzer extends Plugin {
 
     // 11. TemplateLiteral
     if (initExpression.type === 'TemplateLiteral' && initExpression.expressions.length > 0) {
-      const column = initExpression.start ?? 0;
+      const column = getColumn(initExpression);
       const expressionId = ExpressionNode.generateId('TemplateLiteral', module.file, line, column);
 
       const expressionSourceNames = initExpression.expressions
@@ -921,7 +925,7 @@ export class JSASTAnalyzer extends Plugin {
 
     // 12. UnaryExpression (REG-534): !flag, -x, typeof x, void 0
     if (initExpression.type === 'UnaryExpression') {
-      const column = initExpression.start ?? 0;
+      const column = getColumn(initExpression);
       const expressionId = ExpressionNode.generateId('UnaryExpression', module.file, line, column);
 
       variableAssignments.push({
@@ -962,7 +966,7 @@ export class JSASTAnalyzer extends Plugin {
         });
       } else {
         // Fallback for complex tag expressions (e.g., tagged template with call expr as tag)
-        const column = initExpression.start ?? 0;
+        const column = getColumn(initExpression);
         const expressionId = ExpressionNode.generateId('TaggedTemplateExpression', module.file, line, column);
         variableAssignments.push({
           variableId,
@@ -994,7 +998,7 @@ export class JSASTAnalyzer extends Plugin {
     // Note: CallExpressionVisitor doesn't handle OptionalCallExpression, so there may be
     // no CALL node to match. Use EXPRESSION pattern to ensure the assignment edge is created.
     if (initExpression.type === 'OptionalCallExpression') {
-      const column = initExpression.start ?? 0;
+      const column = getColumn(initExpression);
       const expressionId = ExpressionNode.generateId('OptionalCallExpression', module.file, line, column);
 
       variableAssignments.push({
@@ -1022,7 +1026,7 @@ export class JSASTAnalyzer extends Plugin {
         ? initExpression.property.name
         : null;
 
-      const column = initExpression.start ?? 0;
+      const column = getColumn(initExpression);
       const expressionId = ExpressionNode.generateId('MemberExpression', module.file, line, column);
 
       variableAssignments.push({
@@ -1516,7 +1520,7 @@ export class JSASTAnalyzer extends Plugin {
       for (const varInfo of variables) {
         const variableId = varInfo.id;
         if (varInfo.isRest) {
-          const column = initNode.start ?? 0;
+          const column = getColumn(initNode);
           const expressionId = ExpressionNode.generateId('MemberExpression', module.file, varInfo.loc.start.line, column);
           variableAssignments.push({
             variableId,
@@ -1939,7 +1943,17 @@ export class JSASTAnalyzer extends Plugin {
           this.detectIndexedArrayAssignment(assignNode, module, arrayMutations, scopeTracker, allCollections);
 
           // Check for object property assignment at module level: obj.prop = value
-          this.detectObjectPropertyAssignment(assignNode, module, objectMutations, scopeTracker);
+          if (!allCollections.propertyAssignments) {
+            allCollections.propertyAssignments = [];
+          }
+          if (!allCollections.propertyAssignmentCounterRef) {
+            allCollections.propertyAssignmentCounterRef = { value: 0 };
+          }
+          this.detectObjectPropertyAssignment(
+            assignNode, module, objectMutations, scopeTracker,
+            allCollections.propertyAssignments,
+            allCollections.propertyAssignmentCounterRef
+          );
         }
       });
       this.profiler.end('traverse_assignments');
@@ -1964,7 +1978,8 @@ export class JSASTAnalyzer extends Plugin {
         module,
         allCollections,
         this.analyzeFunctionBody.bind(this),
-        scopeTracker  // Pass ScopeTracker for semantic ID generation
+        scopeTracker,  // Pass ScopeTracker for semantic ID generation
+        this.trackVariableAssignment.bind(this) as TrackVariableAssignmentCallback  // REG-570
       );
       traverse(ast, classVisitor.getHandlers());
       this.profiler.end('traverse_classes');
@@ -2297,6 +2312,8 @@ export class JSASTAnalyzer extends Plugin {
           : catchesFromInfos,
         // Property access tracking (REG-395)
         propertyAccesses: allCollections.propertyAccesses || propertyAccesses,
+        // Property assignment tracking (REG-554)
+        propertyAssignments: allCollections.propertyAssignments,
         // REG-297: Top-level await tracking
         hasTopLevelAwait
       });
@@ -2305,7 +2322,8 @@ export class JSASTAnalyzer extends Plugin {
       nodesCreated = result.nodes;
       edgesCreated = result.edges;
 
-    } catch {
+    } catch (err) {
+      if (err instanceof GraphDataError) throw err; // propagate data quality errors
       // Error analyzing module - silently skip, caller handles the result
     }
 
@@ -3433,6 +3451,11 @@ export class JSASTAnalyzer extends Plugin {
         // REG-298: Await-in-loop detection
         ...(isAwaited && isInsideLoop ? { isInsideLoop } : {})
       });
+
+      // REG-556: Extract arguments for direct function calls
+      if (callNode.arguments.length > 0) {
+        this.extractMethodCallArguments(callNode, callId, module, collections);
+      }
     }
     // Handle method calls (obj.method(), data.process())
     else if (callNode.callee.type === 'MemberExpression') {
@@ -3669,6 +3692,11 @@ export class JSASTAnalyzer extends Plugin {
         argInfo.functionColumn = getColumn(arg);
       } else if (t.isCallExpression(arg)) {
         argInfo.targetType = 'CALL';
+        argInfo.nestedCallLine = getLine(arg);
+        argInfo.nestedCallColumn = getColumn(arg);
+      // REG-556: NewExpression arguments (new Foo() passed as arg)
+      } else if (t.isNewExpression(arg)) {
+        argInfo.targetType = 'CONSTRUCTOR_CALL';
         argInfo.nestedCallLine = getLine(arg);
         argInfo.nestedCallColumn = getColumn(arg);
       // REG-402: MemberExpression arguments (this.handler, obj.method)
@@ -4185,7 +4213,9 @@ export class JSASTAnalyzer extends Plugin {
     assignNode: t.AssignmentExpression,
     module: VisitorModule,
     objectMutations: ObjectMutationInfo[],
-    scopeTracker?: ScopeTracker
+    scopeTracker?: ScopeTracker,
+    propertyAssignments?: PropertyAssignmentInfo[],
+    propertyAssignmentCounterRef?: CounterRef
   ): void {
     // Check for property assignment: obj.prop = value or obj['prop'] = value
     if (assignNode.left.type !== 'MemberExpression') return;
@@ -4215,6 +4245,12 @@ export class JSASTAnalyzer extends Plugin {
       // Complex expressions like obj.nested.prop = value
       // For now, skip these (documented limitation)
       return;
+    }
+
+    // REG-557: Capture enclosing function name to distinguish constructor from methods
+    let enclosingFunctionName: string | undefined;
+    if (objectName === 'this' && scopeTracker) {
+      enclosingFunctionName = scopeTracker.getEnclosingScope('FUNCTION');
     }
 
     // Get property name
@@ -4268,6 +4304,7 @@ export class JSASTAnalyzer extends Plugin {
       objectName,
       mutationScopePath: scopePath,
       enclosingClassName,  // REG-152: Class name for 'this' mutations
+      enclosingFunctionName,  // REG-557: Function name for constructor detection
       propertyName,
       mutationType,
       computedPropertyVar,
@@ -4276,6 +4313,56 @@ export class JSASTAnalyzer extends Plugin {
       column,
       value: valueInfo
     });
+
+    // REG-554: Also collect PROPERTY_ASSIGNMENT node info for 'this.prop = value'
+    // Only when inside a class context (enclosingClassName must be set).
+    // Non-'this' assignments are tracked by FLOWS_INTO edges only (MutationBuilder).
+    if (propertyAssignments && objectName === 'this' && enclosingClassName) {
+      let assignmentId: string;
+      const fullName = `${objectName}.${propertyName}`;
+      if (scopeTracker && propertyAssignmentCounterRef) {
+        // Build a qualified parent that includes both the class name and the enclosing
+        // method name so that:
+        //   - Same property in different classes → distinct IDs ("this.x[in:A.constructor]" vs "this.x[in:B.constructor]")
+        //   - Same property in different methods of the same class → distinct IDs ("this.x[in:Foo.constructor]" vs "this.x[in:Foo.reset]")
+        //   - Same property assigned multiple times in the same method → discriminator suffix ("this.x[in:Foo.constructor]#1")
+        const qualifiedParent = enclosingFunctionName
+          ? `${enclosingClassName}.${enclosingFunctionName}`
+          : enclosingClassName;
+        const discriminator = scopeTracker.getItemCounter(`PROPERTY_ASSIGNMENT:${qualifiedParent}.${fullName}`);
+        assignmentId = computeSemanticIdV2(
+          'PROPERTY_ASSIGNMENT',
+          fullName,
+          module.file,
+          qualifiedParent,
+          undefined,
+          discriminator
+        );
+      } else {
+        const cnt = propertyAssignmentCounterRef ? propertyAssignmentCounterRef.value++ : 0;
+        assignmentId = `PROPERTY_ASSIGNMENT#${fullName}#${module.file}#${line}:${column}:${cnt}`;
+      }
+
+      propertyAssignments.push({
+        id: assignmentId,
+        semanticId: assignmentId,
+        type: 'PROPERTY_ASSIGNMENT',
+        objectName,
+        propertyName,
+        computed: mutationType === 'computed',
+        file: module.file,
+        line,
+        column,
+        scopePath,
+        enclosingClassName,
+        valueType: valueInfo.valueType as PropertyAssignmentInfo['valueType'],
+        valueName: valueInfo.valueName,
+        memberObject: valueInfo.memberObject,
+        memberProperty: valueInfo.memberProperty,
+        memberLine: valueInfo.memberLine,
+        memberColumn: valueInfo.memberColumn,
+      });
+    }
   }
 
   /**
@@ -4342,6 +4429,12 @@ export class JSASTAnalyzer extends Plugin {
         return;
       }
 
+      // REG-557: Capture enclosing function name to distinguish constructor from methods
+      let enclosingFunctionName: string | undefined;
+      if (objectName === 'this' && scopeTracker) {
+        enclosingFunctionName = scopeTracker.getEnclosingScope('FUNCTION');
+      }
+
       // Extract property name (reuses detectObjectPropertyAssignment pattern)
       let propertyName: string;
       let mutationType: 'property' | 'computed';
@@ -4376,6 +4469,7 @@ export class JSASTAnalyzer extends Plugin {
         objectName,
         objectLine: getLine(memberExpr.object),
         enclosingClassName,
+        enclosingFunctionName,  // REG-557: Function name for constructor detection
         propertyName,
         mutationType,
         computedPropertyVar,
@@ -4524,21 +4618,41 @@ export class JSASTAnalyzer extends Plugin {
       valueType: 'EXPRESSION'  // Default
     };
 
-    const literalValue = ExpressionEvaluator.extractLiteralValue(value);
+    // REG-554: Unwrap TSNonNullExpression before evaluating the inner expression.
+    // Handles: this.graph = options.graph! (TSNonNullExpression wrapping a MemberExpression)
+    const effectiveValue: t.Expression =
+      value.type === 'TSNonNullExpression' ? value.expression : value;
+
+    const literalValue = ExpressionEvaluator.extractLiteralValue(effectiveValue);
     if (literalValue !== null) {
       valueInfo.valueType = 'LITERAL';
       valueInfo.literalValue = literalValue;
-    } else if (value.type === 'Identifier') {
+    } else if (effectiveValue.type === 'Identifier') {
       valueInfo.valueType = 'VARIABLE';
-      valueInfo.valueName = value.name;
-    } else if (value.type === 'ObjectExpression') {
+      valueInfo.valueName = effectiveValue.name;
+    } else if (effectiveValue.type === 'ObjectExpression') {
       valueInfo.valueType = 'OBJECT_LITERAL';
-    } else if (value.type === 'ArrayExpression') {
+    } else if (effectiveValue.type === 'ArrayExpression') {
       valueInfo.valueType = 'ARRAY_LITERAL';
-    } else if (value.type === 'CallExpression') {
+    } else if (effectiveValue.type === 'CallExpression') {
       valueInfo.valueType = 'CALL';
-      valueInfo.callLine = value.loc?.start.line;
-      valueInfo.callColumn = value.loc?.start.column;
+      valueInfo.callLine = effectiveValue.loc?.start.line;
+      valueInfo.callColumn = effectiveValue.loc?.start.column;
+    } else if (
+      effectiveValue.type === 'MemberExpression' &&
+      effectiveValue.object.type === 'Identifier' &&
+      !effectiveValue.computed &&
+      effectiveValue.property.type === 'Identifier'
+    ) {
+      // REG-554: Simple member expression: options.graph, config.timeout, etc.
+      // Use property location (not the full MemberExpression start) to match
+      // the line/column stored by PropertyAccessVisitor.extractChain(), which
+      // records current.property.loc.start for PROPERTY_ACCESS lookup.
+      valueInfo.valueType = 'MEMBER_EXPRESSION';
+      valueInfo.memberObject = effectiveValue.object.name;
+      valueInfo.memberProperty = effectiveValue.property.name;
+      valueInfo.memberLine = effectiveValue.property.loc?.start.line;
+      valueInfo.memberColumn = effectiveValue.property.loc?.start.column;
     }
 
     return valueInfo;

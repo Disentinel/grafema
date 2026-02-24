@@ -17,6 +17,9 @@ services:
   - name: "api"
     path: "packages/api"
     entryPoint: "src/index.ts"
+  - name: "vscode"
+    path: "packages/vscode"
+    entryPoint: "src/extension.ts"
 
 plugins:
   indexing:

@@ -46,7 +46,6 @@ export const EDGE_TYPE = {
   IMPORTS: 'IMPORTS',
   EXPORTS: 'EXPORTS',
   IMPORTS_FROM: 'IMPORTS_FROM',
-  EXPORTS_TO: 'EXPORTS_TO',
 
   // Variables/Data flow
   DEFINES: 'DEFINES',
@@ -146,9 +145,9 @@ export interface ImportsEdge extends EdgeRecord {
   isDefault?: boolean;
 }
 
+/** EXPORT node → entity it exports (FUNCTION, VARIABLE, CLASS, etc.) or re-export target */
 export interface ExportsEdge extends EdgeRecord {
   type: 'EXPORTS';
-  exportedName?: string;
 }
 
 export interface DataFlowEdge extends EdgeRecord {

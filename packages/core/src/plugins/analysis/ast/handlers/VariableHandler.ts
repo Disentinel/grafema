@@ -9,7 +9,9 @@ import * as t from '@babel/types';
 import type {
   ArrayMutationInfo,
   ObjectMutationInfo,
+  PropertyAssignmentInfo,
   VariableReassignmentInfo,
+  CounterRef,
 } from '../types.js';
 import { FunctionBodyHandler } from './FunctionBodyHandler.js';
 
@@ -87,8 +89,21 @@ export class VariableHandler extends FunctionBodyHandler {
         }
         const objectMutations = ctx.collections.objectMutations as ObjectMutationInfo[];
 
+        // REG-554: Initialize property assignments collection
+        if (!ctx.collections.propertyAssignments) {
+          ctx.collections.propertyAssignments = [];
+        }
+        if (!ctx.collections.propertyAssignmentCounterRef) {
+          ctx.collections.propertyAssignmentCounterRef = { value: 0 };
+        }
+        const propertyAssignments = ctx.collections.propertyAssignments as PropertyAssignmentInfo[];
+        const propertyAssignmentCounterRef = ctx.collections.propertyAssignmentCounterRef as CounterRef;
+
         // Check for object property assignment: obj.prop = value
-        analyzer.detectObjectPropertyAssignment(assignNode, ctx.module, objectMutations, ctx.scopeTracker);
+        analyzer.detectObjectPropertyAssignment(
+          assignNode, ctx.module, objectMutations, ctx.scopeTracker,
+          propertyAssignments, propertyAssignmentCounterRef
+        );
       },
     };
   }

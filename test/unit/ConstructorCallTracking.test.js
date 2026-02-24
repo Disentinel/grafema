@@ -796,4 +796,226 @@ const instance = new MyClass();
       );
     });
   });
+
+  // ============================================================================
+  // REG-547: No spurious CALL(isNew:true) duplicates
+  //
+  // The bug: `new X()` expressions produce TWO nodes — a correct
+  // CONSTRUCTOR_CALL and a spurious CALL with isNew:true.
+  // After the fix, only CONSTRUCTOR_CALL should exist for new expressions.
+  // ============================================================================
+  describe('No spurious CALL(isNew:true) duplicates (REG-547)', () => {
+    it('should NOT produce a CALL node with isNew:true for new Foo()', async () => {
+      await setupTest(backend, {
+        'index.js': `const x = new Foo();`
+      });
+
+      const allNodes = await backend.getAllNodes();
+
+      // The correct node: CONSTRUCTOR_CALL
+      const constructorCall = allNodes.find(n =>
+        n.type === 'CONSTRUCTOR_CALL' && n.className === 'Foo'
+      );
+      assert.ok(constructorCall, 'CONSTRUCTOR_CALL node for Foo should exist');
+
+      // The spurious node: CALL with isNew:true — must NOT exist
+      const spuriousCall = allNodes.find(n =>
+        n.type === 'CALL' && n.isNew === true
+      );
+      assert.strictEqual(
+        spuriousCall, undefined,
+        `No CALL node with isNew:true should exist. Found: ${JSON.stringify(spuriousCall)}`
+      );
+    });
+
+    it('should produce only CONSTRUCTOR_CALL for module-level new expression', async () => {
+      await setupTest(backend, {
+        'index.js': `const x = new Foo();`
+      });
+
+      const allNodes = await backend.getAllNodes();
+
+      // CONSTRUCTOR_CALL must exist at module level
+      const constructorCall = allNodes.find(n =>
+        n.type === 'CONSTRUCTOR_CALL' && n.className === 'Foo'
+      );
+      assert.ok(constructorCall, 'CONSTRUCTOR_CALL node for module-level new Foo() should exist');
+
+      // Verify it has correct attributes
+      assert.ok(constructorCall.file.endsWith('index.js'), `file should end with index.js, got ${constructorCall.file}`);
+      assert.ok(constructorCall.line >= 1, `line should be >= 1, got ${constructorCall.line}`);
+
+      // No CALL(isNew:true) duplicate
+      const spuriousCalls = allNodes.filter(n =>
+        n.type === 'CALL' && n.isNew === true
+      );
+      assert.strictEqual(
+        spuriousCalls.length, 0,
+        `Expected 0 CALL(isNew:true) nodes, got ${spuriousCalls.length}: ${JSON.stringify(spuriousCalls.map(n => ({ id: n.id, name: n.name, type: n.type })))}`
+      );
+    });
+
+    it('should produce exactly N CONSTRUCTOR_CALL nodes and 0 CALL(isNew:true) for N new expressions', async () => {
+      await setupTest(backend, {
+        'index.js': `
+const a = new Date();
+const b = new Map();
+const c = new Set();
+        `
+      });
+
+      const allNodes = await backend.getAllNodes();
+
+      // Exactly 3 CONSTRUCTOR_CALL nodes
+      const constructorCalls = allNodes.filter(n => n.type === 'CONSTRUCTOR_CALL');
+      assert.strictEqual(
+        constructorCalls.length, 3,
+        `Expected exactly 3 CONSTRUCTOR_CALL nodes, got ${constructorCalls.length}: ${JSON.stringify(constructorCalls.map(n => ({ id: n.id, className: n.className })))}`
+      );
+
+      // Exactly 0 CALL nodes with isNew:true
+      const spuriousCalls = allNodes.filter(n =>
+        n.type === 'CALL' && n.isNew === true
+      );
+      assert.strictEqual(
+        spuriousCalls.length, 0,
+        `Expected 0 CALL(isNew:true) nodes, got ${spuriousCalls.length}: ${JSON.stringify(spuriousCalls.map(n => ({ id: n.id, name: n.name })))}`
+      );
+    });
+
+    it('should produce CONSTRUCTOR_CALL with className for namespaced new ns.Foo()', async () => {
+      await setupTest(backend, {
+        'index.js': `
+const ns = { Foo: class {} };
+const x = new ns.Foo();
+        `
+      });
+
+      const allNodes = await backend.getAllNodes();
+
+      // CONSTRUCTOR_CALL should exist with className = 'Foo' (rightmost identifier)
+      const constructorCall = allNodes.find(n =>
+        n.type === 'CONSTRUCTOR_CALL' && n.className === 'Foo'
+      );
+      assert.ok(
+        constructorCall,
+        `CONSTRUCTOR_CALL with className='Foo' should exist for new ns.Foo(). ` +
+        `All CONSTRUCTOR_CALL nodes: ${JSON.stringify(allNodes.filter(n => n.type === 'CONSTRUCTOR_CALL'))}`
+      );
+
+      // No CALL(isNew:true) with name='ns.Foo' should exist
+      const spuriousCall = allNodes.find(n =>
+        n.type === 'CALL' && n.isNew === true
+      );
+      assert.strictEqual(
+        spuriousCall, undefined,
+        `No CALL(isNew:true) should exist for namespaced constructor. Found: ${JSON.stringify(spuriousCall)}`
+      );
+    });
+
+    it('should not produce CALL(isNew:true) duplicates inside functions', async () => {
+      await setupTest(backend, {
+        'index.js': `
+function createCache() {
+  const cache = new Map();
+  return cache;
+}
+        `
+      });
+
+      const allNodes = await backend.getAllNodes();
+
+      // CONSTRUCTOR_CALL inside function
+      const constructorCall = allNodes.find(n =>
+        n.type === 'CONSTRUCTOR_CALL' && n.className === 'Map'
+      );
+      assert.ok(constructorCall, 'CONSTRUCTOR_CALL for Map inside function should exist');
+
+      // No spurious CALL(isNew:true)
+      const spuriousCalls = allNodes.filter(n =>
+        n.type === 'CALL' && n.isNew === true
+      );
+      assert.strictEqual(
+        spuriousCalls.length, 0,
+        `Expected 0 CALL(isNew:true) inside function, got ${spuriousCalls.length}: ${JSON.stringify(spuriousCalls.map(n => ({ id: n.id, name: n.name })))}`
+      );
+    });
+
+    it('should not produce CALL(isNew:true) duplicates for thrown constructors', async () => {
+      await setupTest(backend, {
+        'index.js': `
+function fail() {
+  throw new Error('boom');
+}
+        `
+      });
+
+      const allNodes = await backend.getAllNodes();
+
+      // CONSTRUCTOR_CALL for thrown Error
+      const constructorCall = allNodes.find(n =>
+        n.type === 'CONSTRUCTOR_CALL' && n.className === 'Error'
+      );
+      assert.ok(constructorCall, 'CONSTRUCTOR_CALL for thrown Error should exist');
+
+      // No CALL(isNew:true)
+      const spuriousCalls = allNodes.filter(n =>
+        n.type === 'CALL' && n.isNew === true
+      );
+      assert.strictEqual(
+        spuriousCalls.length, 0,
+        `Expected 0 CALL(isNew:true) for thrown constructor, got ${spuriousCalls.length}`
+      );
+    });
+
+    it('should not produce CALL(isNew:true) duplicates for constructor in return', async () => {
+      await setupTest(backend, {
+        'index.js': `
+function create() {
+  return new Foo();
+}
+        `
+      });
+
+      const allNodes = await backend.getAllNodes();
+
+      const constructorCall = allNodes.find(n =>
+        n.type === 'CONSTRUCTOR_CALL' && n.className === 'Foo'
+      );
+      assert.ok(constructorCall, 'CONSTRUCTOR_CALL for returned Foo should exist');
+
+      const spuriousCalls = allNodes.filter(n =>
+        n.type === 'CALL' && n.isNew === true
+      );
+      assert.strictEqual(
+        spuriousCalls.length, 0,
+        `Expected 0 CALL(isNew:true) for returned constructor, got ${spuriousCalls.length}`
+      );
+    });
+
+    it('should not produce CALL(isNew:true) duplicates for constructor passed as argument', async () => {
+      await setupTest(backend, {
+        'index.js': `
+function f() {
+  console.log(new Foo());
+}
+        `
+      });
+
+      const allNodes = await backend.getAllNodes();
+
+      const constructorCall = allNodes.find(n =>
+        n.type === 'CONSTRUCTOR_CALL' && n.className === 'Foo'
+      );
+      assert.ok(constructorCall, 'CONSTRUCTOR_CALL for Foo passed as argument should exist');
+
+      const spuriousCalls = allNodes.filter(n =>
+        n.type === 'CALL' && n.isNew === true
+      );
+      assert.strictEqual(
+        spuriousCalls.length, 0,
+        `Expected 0 CALL(isNew:true) for constructor passed as argument, got ${spuriousCalls.length}`
+      );
+    });
+  });
 });

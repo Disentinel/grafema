@@ -4,11 +4,12 @@
  * Single authoritative function for spawning rfdb-server. All spawn sites
  * (RFDBServerBackend, CLI server command, ParallelAnalysisRunner) delegate here.
  *
- * Callers are responsible for checking if a server is already running before
- * calling this function. This function always spawns a new server process.
+ * If pidPath is provided, checks for an existing server via PID file before
+ * spawning. Returns null when an existing server is detected (caller should
+ * not kill it).
  */
 
-import { existsSync, unlinkSync, writeFileSync } from 'fs';
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'fs';
 import { dirname } from 'path';
 import { spawn, type ChildProcess } from 'child_process';
 import { setTimeout as sleep } from 'timers/promises';
@@ -19,7 +20,7 @@ export interface StartRfdbServerOptions {
   socketPath: string;
   /** Override binary path; if absent, findRfdbBinary() is called */
   binaryPath?: string;
-  /** If provided, PID file is written after spawn */
+  /** If provided, PID file is written after spawn and checked before spawn */
   pidPath?: string;
   /** Socket poll timeout in ms (default: 5000) */
   waitTimeoutMs?: number;
@@ -32,20 +33,71 @@ export interface StartRfdbServerOptions {
     existsSync?: (path: string) => boolean;
     unlinkSync?: (path: string) => void;
     writeFileSync?: (path: string, data: string) => void;
+    readFileSync?: (path: string, encoding: 'utf8') => string;
+    killProcess?: (pid: number, signal: number) => boolean;
   };
 }
 
 /**
- * Start an rfdb-server process.
+ * Check if an existing server is running based on PID file.
  *
+ * Returns:
+ * - 'alive' — PID file exists, process is alive, socket is present
+ * - 'stale' — PID file exists but process is dead or PID is invalid
+ * - 'none'  — no PID file
+ */
+export function checkExistingServer(
+  pidPath: string,
+  socketPath: string,
+  deps: {
+    existsSync: (path: string) => boolean;
+    readFileSync: (path: string, encoding: 'utf8') => string;
+    killProcess: (pid: number, signal: number) => boolean;
+  },
+): 'alive' | 'stale' | 'none' {
+  if (!deps.existsSync(pidPath)) return 'none';
+
+  let pidStr: string;
+  try {
+    pidStr = deps.readFileSync(pidPath, 'utf8').trim();
+  } catch {
+    return 'stale';
+  }
+
+  const pid = parseInt(pidStr, 10);
+  if (isNaN(pid) || pid <= 0) return 'stale';
+
+  try {
+    deps.killProcess(pid, 0);
+    // Process is alive — check socket too
+    if (deps.existsSync(socketPath)) {
+      return 'alive';
+    }
+    // PID alive but socket gone (server crashed partially)
+    return 'stale';
+  } catch (err: unknown) {
+    if (err && typeof err === 'object' && 'code' in err && (err as { code: string }).code === 'ESRCH') {
+      return 'stale';
+    }
+    // Unexpected error — re-throw rather than silently treating as stale
+    throw err;
+  }
+}
+
+/**
+ * Start an rfdb-server process (or detect existing one via PID file).
+ *
+ * 0. Check PID file for existing server (if pidPath provided)
  * 1. Resolve binary (explicit or via findRfdbBinary)
  * 2. Remove stale socket
  * 3. Spawn detached process
  * 4. Write PID file (if pidPath provided)
  * 5. Poll for socket file up to waitTimeoutMs
  * 6. Return ChildProcess (caller decides whether to kill later)
+ *
+ * Returns null if an existing server is already running (pidPath + alive PID).
  */
-export async function startRfdbServer(options: StartRfdbServerOptions): Promise<ChildProcess> {
+export async function startRfdbServer(options: StartRfdbServerOptions): Promise<ChildProcess | null> {
   const {
     dbPath,
     socketPath,
@@ -60,6 +112,25 @@ export async function startRfdbServer(options: StartRfdbServerOptions): Promise<
   const _existsSync = _deps?.existsSync ?? existsSync;
   const _unlinkSync = _deps?.unlinkSync ?? unlinkSync;
   const _writeFileSync = _deps?.writeFileSync ?? writeFileSync;
+  const _readFileSync = _deps?.readFileSync ?? readFileSync;
+  const _killProcess = _deps?.killProcess ?? ((pid: number, signal: number) => process.kill(pid, signal));
+
+  // 0. Check for existing server via PID file
+  if (pidPath) {
+    const status = checkExistingServer(pidPath, socketPath, {
+      existsSync: _existsSync,
+      readFileSync: _readFileSync,
+      killProcess: _killProcess,
+    });
+    if (status === 'alive') {
+      logger?.debug(`rfdb-server already running (PID file: ${pidPath}), reusing`);
+      return null;
+    }
+    if (status === 'stale') {
+      logger?.debug(`Stale PID file found at ${pidPath}, removing`);
+      try { _unlinkSync(pidPath); } catch { /* ignore */ }
+    }
+  }
 
   // 1. Resolve binary
   const binaryPath = options.binaryPath || _findRfdbBinary();

@@ -7,9 +7,10 @@
 import { describe, it, before, after } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { spawn } from 'child_process';
-import { existsSync, rmSync } from 'fs';
+import { existsSync, rmSync, mkdtempSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { tmpdir } from 'os';
 import { setTimeout as sleep } from 'timers/promises';
 import { createConnection } from 'net';
 import { createRequire } from 'module';
@@ -21,8 +22,9 @@ import { RFDBClient } from '@grafema/core';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-const TEST_DB_PATH = '/tmp/rfdb-test-reqid';
-const TEST_SOCKET_PATH = '/tmp/rfdb-test-reqid.sock';
+const testDir = mkdtempSync(join(tmpdir(), 'rfdb-reqid-'));
+const TEST_DB_PATH = join(testDir, 'graph.rfdb');
+const TEST_SOCKET_PATH = join(testDir, 'rfdb.sock');
 const SERVER_BINARY = join(__dirname, '../../packages/rfdb-server/target/debug/rfdb-server');
 
 describe('RFDB Request IDs (RFD-3)', () => {
@@ -30,9 +32,6 @@ describe('RFDB Request IDs (RFD-3)', () => {
   let client = null;
 
   before(async () => {
-    if (existsSync(TEST_DB_PATH)) rmSync(TEST_DB_PATH, { recursive: true });
-    if (existsSync(TEST_SOCKET_PATH)) rmSync(TEST_SOCKET_PATH);
-
     if (!existsSync(SERVER_BINARY)) {
       const { execSync } = await import('child_process');
       execSync('cargo build --bin rfdb-server', {
@@ -64,8 +63,7 @@ describe('RFDB Request IDs (RFD-3)', () => {
       serverProcess.kill('SIGTERM');
       await sleep(500);
     }
-    if (existsSync(TEST_DB_PATH)) rmSync(TEST_DB_PATH, { recursive: true });
-    if (existsSync(TEST_SOCKET_PATH)) rmSync(TEST_SOCKET_PATH);
+    rmSync(testDir, { recursive: true, force: true });
   });
 
   it('should echo requestId in response', async () => {

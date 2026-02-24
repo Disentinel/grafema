@@ -176,6 +176,7 @@ interface ExportOptions {
   default?: boolean;
   source?: string;
   exportType?: 'default' | 'named' | 'all';
+  endColumn?: number;
 }
 
 interface InterfaceOptions {
@@ -223,6 +224,8 @@ interface ExpressionOptions {
   computedPropertyVar?: string;
   // Binary/Logical
   operator?: string;
+  leftSourceName?: string | null;
+  rightSourceName?: string | null;
   // Tracking
   path?: string;
   baseName?: string;

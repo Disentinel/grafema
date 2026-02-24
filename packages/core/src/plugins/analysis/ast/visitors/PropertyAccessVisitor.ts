@@ -139,6 +139,8 @@ export class PropertyAccessVisitor extends ASTVisitor {
     // 4. Extract the chain and create PROPERTY_ACCESS info for each link
     const chain = PropertyAccessVisitor.extractChain(node, module, isCallCallee);
 
+    const currentScopePath = scopeTracker?.getContext().scopePath ?? [];
+
     for (const info of chain) {
       const fullName = `${info.objectName}.${info.propertyName}`;
 
@@ -165,7 +167,9 @@ export class PropertyAccessVisitor extends ASTVisitor {
         column: info.column,
         endLine: endLoc.line,
         endColumn: endLoc.column,
-        parentScopeId
+        parentScopeId,
+        scopePath: currentScopePath,
+        enclosingClassName: info.objectName === 'this' ? scopeTracker?.getEnclosingScope('CLASS') : undefined
       });
     }
   }
@@ -211,7 +215,8 @@ export class PropertyAccessVisitor extends ASTVisitor {
       column: node.loc?.start?.column ?? 0,
       endLine: endLoc.line,
       endColumn: endLoc.column,
-      parentScopeId
+      parentScopeId,
+      scopePath: scopeTracker?.getContext().scopePath ?? []
     });
   }
 

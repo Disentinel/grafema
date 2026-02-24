@@ -66,6 +66,8 @@ export class DataFlowValidator extends Plugin {
     const errors: ValidationError[] = [];
     const leafTypes = new Set([
       'LITERAL',
+      'ARRAY_LITERAL',   // REG-570
+      'OBJECT_LITERAL',  // REG-570
       'net:stdio',
       'db:query',
       'net:request',
@@ -94,6 +96,11 @@ export class DataFlowValidator extends Plugin {
       const assignment = outgoing[0];
 
       if (!assignment) {
+        // REG-570: Class fields with no initializer are legitimately uninitialized.
+        // isClassProperty + no value = TypeScript declaration-only field (e.g., `name: string;`)
+        if ((variable as Record<string, unknown>).isClassProperty) {
+          continue;
+        }
         errors.push(new ValidationError(
           `Variable "${variable.name}" (${variable.file}:${variable.line}) has no ASSIGNED_FROM or DERIVES_FROM edge`,
           'ERR_MISSING_ASSIGNMENT',

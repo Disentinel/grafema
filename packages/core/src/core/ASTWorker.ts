@@ -298,7 +298,7 @@ function parseModule(filePath: string, relativeFile: string, moduleId: string, m
           const exportNode = ExportNode.createWithContext(
             exportedName,
             scopeTracker.getContext(),
-            { line: getLine(node), column: 0 },
+            { line: getLine(node), column: getColumn(spec) },
             {
               local: (spec as ExportSpecifier).local.name,
               exportType: 'named'
@@ -349,7 +349,7 @@ function parseModule(filePath: string, relativeFile: string, moduleId: string, m
           const literalValue = ExpressionEvaluator.extractLiteralValue(decl.init);
           const isLiteral = literalValue !== null;
           const isNewExpr = decl.init?.type === 'NewExpression';
-          const shouldBeConstant = isConst && (isLiteral || isNewExpr);
+          const shouldBeConstant = isConst && isLiteral;
 
           // Generate semantic ID using ScopeTracker
           const nodeType = shouldBeConstant ? 'CONSTANT' : 'VARIABLE';

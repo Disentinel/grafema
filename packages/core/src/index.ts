@@ -132,7 +132,7 @@ export { findRfdbBinary, getBinaryNotFoundMessage, getPlatformDir } from './util
 export type { FindBinaryOptions } from './utils/findRfdbBinary.js';
 
 // RFDB server lifecycle (RFD-40)
-export { startRfdbServer } from './utils/startRfdbServer.js';
+export { startRfdbServer, checkExistingServer } from './utils/startRfdbServer.js';
 export type { StartRfdbServerOptions } from './utils/startRfdbServer.js';
 
 // Module resolution utilities (REG-320)
@@ -284,6 +284,7 @@ export { InstanceOfResolver } from './plugins/enrichment/InstanceOfResolver.js';
 export { HTTPConnectionEnricher } from './plugins/enrichment/HTTPConnectionEnricher.js';
 export { SocketConnectionEnricher } from './plugins/enrichment/SocketConnectionEnricher.js';
 export { ImportExportLinker } from './plugins/enrichment/ImportExportLinker.js';
+export { ExportEntityLinker } from './plugins/enrichment/ExportEntityLinker.js';
 export { FunctionCallResolver } from './plugins/enrichment/FunctionCallResolver.js';
 export { RustFFIEnricher } from './plugins/enrichment/RustFFIEnricher.js';
 export { NodejsBuiltinsResolver } from './plugins/enrichment/NodejsBuiltinsResolver.js';

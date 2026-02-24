@@ -1230,7 +1230,6 @@
           "PASSES_ARGUMENT",
           "MAKES_REQUEST",
           "IMPORTS_FROM",
-          "EXPORTS_TO",
           "ASSIGNED_FROM",
           "IMPLEMENTS",
           "EXTENDS",
@@ -1276,7 +1275,6 @@
         "PASSES_ARGUMENT",
         "MAKES_REQUEST",
         "IMPORTS_FROM",
-        "EXPORTS_TO",
         "ASSIGNED_FROM",
         "IMPLEMENTS",
         "EXTENDS",
@@ -1489,6 +1487,22 @@
       "name": "",
       "type": "LITERAL",
       "value": "slot:book",
+      "valueType": "string"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": "slot:booked",
+      "valueType": "string"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": "user:joined",
       "valueType": "string"
     },
     {
@@ -2408,6 +2422,38 @@
       }
     },
     {
+      "from": "CALL:setParticipants",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:setParticipants",
+      "type": "PASSES_ARGUMENT",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:setSlots",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:setSlots",
+      "type": "PASSES_ARGUMENT",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
       "from": "CALL:socket.broadcast.emit",
       "type": "DERIVES_FROM",
       "to": "LITERAL:",
@@ -2729,6 +2775,22 @@
       "to": "VARIABLE:socketService"
     },
     {
+      "from": "CALL:useEffect",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:useEffect",
+      "type": "PASSES_ARGUMENT",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
       "from": "CALL:useSocket",
       "type": "CALLS",
       "to": "FUNCTION:useSocket"
@@ -2737,6 +2799,70 @@
       "from": "CALL:useSocket",
       "type": "CALLS",
       "to": "FUNCTION:useSocket"
+    },
+    {
+      "from": "CALL:useSocket",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:useSocket",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[1]",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:useSocket",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:useSocket",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:useSocket",
+      "type": "PASSES_ARGUMENT",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:useSocket",
+      "type": "PASSES_ARGUMENT",
+      "to": "FUNCTION:anonymous[1]",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "CALL:useSocket",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:useSocket",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
     },
     {
       "from": "event:listener:connect",
@@ -3249,6 +3375,94 @@
       "metadata": {
         "propertyName": "status"
       }
+    },
+    {
+      "from": "PARAMETER:event",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "PARAMETER:event",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "PARAMETER:event",
+      "type": "RECEIVES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0,
+        "callId": "client.js->GigView->CALL->useSocket#0"
+      }
+    },
+    {
+      "from": "PARAMETER:event",
+      "type": "RECEIVES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0,
+        "callId": "client.js->GigView->CALL->useSocket#1"
+      }
+    },
+    {
+      "from": "PARAMETER:handler",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "PARAMETER:handler",
+      "type": "DERIVES_FROM",
+      "to": "FUNCTION:anonymous[1]",
+      "metadata": {
+        "argIndex": 1
+      }
+    },
+    {
+      "from": "PARAMETER:handler",
+      "type": "RECEIVES_ARGUMENT",
+      "to": "FUNCTION:anonymous[0]",
+      "metadata": {
+        "argIndex": 1,
+        "callId": "client.js->GigView->CALL->useSocket#0"
+      }
+    },
+    {
+      "from": "PARAMETER:handler",
+      "type": "RECEIVES_ARGUMENT",
+      "to": "FUNCTION:anonymous[1]",
+      "metadata": {
+        "argIndex": 1,
+        "callId": "client.js->GigView->CALL->useSocket#1"
+      }
+    },
+    {
+      "from": "PROPERTY_ACCESS:broadcast",
+      "type": "READS_FROM",
+      "to": "PARAMETER:socket"
+    },
+    {
+      "from": "PROPERTY_ACCESS:id",
+      "type": "READS_FROM",
+      "to": "PARAMETER:socket"
+    },
+    {
+      "from": "PROPERTY_ACCESS:userId",
+      "type": "READS_FROM",
+      "to": "PARAMETER:data"
+    },
+    {
+      "from": "PROPERTY_ACCESS:userId",
+      "type": "READS_FROM",
+      "to": "PARAMETER:socket"
     },
     {
       "from": "SCOPE:anonymous[0]:body",

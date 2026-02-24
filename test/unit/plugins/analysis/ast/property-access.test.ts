@@ -1004,4 +1004,221 @@ function getDir() {
       assert.ok(propAccess, 'Should have PROPERTY_ACCESS for import.meta.url inside function');
     });
   });
+
+  // ===========================================================================
+  // TEST: READS_FROM edges for PROPERTY_ACCESS (REG-555)
+  // ===========================================================================
+
+  describe('READS_FROM edges for PROPERTY_ACCESS (REG-555)', () => {
+
+    // -------------------------------------------------------------------------
+    // Test 1: Variable access — obj.prop → READS_FROM → VARIABLE "obj"
+    // -------------------------------------------------------------------------
+    it('should create READS_FROM edge from PROPERTY_ACCESS to VARIABLE', async () => {
+      // Use `let` to ensure a VARIABLE node is created (not CONSTANT).
+      // `const` with literal initializers creates CONSTANT nodes.
+      await setupTest(backend, {
+        'index.js': `
+let obj = { prop: 42 };
+const x = obj.prop;
+        `
+      });
+
+      const propAccessNode = await findPropertyAccessNode(backend, 'prop', 'obj');
+      assert.ok(propAccessNode, 'Should have PROPERTY_ACCESS node for obj.prop');
+
+      const variableNodes = await getNodesByType(backend, 'VARIABLE');
+      const objVar = variableNodes.find(n => n.name === 'obj');
+      assert.ok(objVar, 'Should have VARIABLE node for "obj"');
+
+      const readsFromEdges = await getEdgesByType(backend, 'READS_FROM');
+      const edge = readsFromEdges.find(e =>
+        e.src === propAccessNode!.id && e.dst === objVar!.id
+      );
+
+      assert.ok(
+        edge,
+        `PROPERTY_ACCESS "prop" should have READS_FROM edge to VARIABLE "obj". ` +
+        `Found READS_FROM edges: ${JSON.stringify(readsFromEdges.map(e => ({ src: e.src, dst: e.dst })))}`
+      );
+    });
+
+    // -------------------------------------------------------------------------
+    // Test 2: Parameter access — options.graph → READS_FROM → PARAMETER "options"
+    // -------------------------------------------------------------------------
+    it('should create READS_FROM edge from PROPERTY_ACCESS to PARAMETER', async () => {
+      await setupTest(backend, {
+        'index.js': `
+function f(options) {
+  return options.graph;
+}
+        `
+      });
+
+      const propAccessNode = await findPropertyAccessNode(backend, 'graph', 'options');
+      assert.ok(propAccessNode, 'Should have PROPERTY_ACCESS node for options.graph');
+
+      const parameterNodes = await getNodesByType(backend, 'PARAMETER');
+      const optionsParam = parameterNodes.find(n => n.name === 'options');
+      assert.ok(optionsParam, 'Should have PARAMETER node for "options"');
+
+      const readsFromEdges = await getEdgesByType(backend, 'READS_FROM');
+      const edge = readsFromEdges.find(e =>
+        e.src === propAccessNode!.id && e.dst === optionsParam!.id
+      );
+
+      assert.ok(
+        edge,
+        `PROPERTY_ACCESS "graph" should have READS_FROM edge to PARAMETER "options". ` +
+        `Found READS_FROM edges: ${JSON.stringify(readsFromEdges.map(e => ({ src: e.src, dst: e.dst })))}`
+      );
+    });
+
+    // -------------------------------------------------------------------------
+    // Test 3: this access in class — this.val → READS_FROM → CLASS "Config"
+    // -------------------------------------------------------------------------
+    it('should create READS_FROM edge from this.prop to CLASS node', async () => {
+      await setupTest(backend, {
+        'index.js': `
+class Config {
+  constructor(options) {
+    this.val = options.val;
+  }
+  getVal() {
+    return this.val;
+  }
+}
+        `
+      });
+
+      // Find the PROPERTY_ACCESS node for "val" with objectName "this" inside getVal (read context)
+      // Note: this.val on the LHS of assignment (constructor) is a write, not a read —
+      // no PROPERTY_ACCESS is created for writes. The read is in getVal().
+      const allPropAccess = await findAllPropertyAccessNodes(backend);
+      const thisValAccess = allPropAccess.find(n =>
+        n.name === 'val' &&
+        (n as unknown as { objectName?: string }).objectName === 'this'
+      );
+      assert.ok(thisValAccess, 'Should have PROPERTY_ACCESS node for this.val (read in getVal)');
+
+      const classNodes = await getNodesByType(backend, 'CLASS');
+      const configClass = classNodes.find(n => n.name === 'Config');
+      assert.ok(configClass, 'Should have CLASS node for "Config"');
+
+      const readsFromEdges = await getEdgesByType(backend, 'READS_FROM');
+      const edge = readsFromEdges.find(e =>
+        e.src === thisValAccess!.id && e.dst === configClass!.id
+      );
+
+      assert.ok(
+        edge,
+        `PROPERTY_ACCESS "val" (this.val) should have READS_FROM edge to CLASS "Config". ` +
+        `Found READS_FROM edges: ${JSON.stringify(readsFromEdges.map(e => ({ src: e.src, dst: e.dst })))}`
+      );
+    });
+
+    // -------------------------------------------------------------------------
+    // Test 4: Chained access a.b.c — base links, chained skips
+    // -------------------------------------------------------------------------
+    it('should create READS_FROM for base of chain but skip chained intermediate', async () => {
+      // Use `let` to ensure a VARIABLE node is created (not CONSTANT)
+      await setupTest(backend, {
+        'index.js': `
+let a = { b: { c: 42 } };
+const x = a.b.c;
+        `
+      });
+
+      // PA for "b" (objectName "a") should have READS_FROM → VARIABLE "a"
+      const propB = await findPropertyAccessNode(backend, 'b', 'a');
+      assert.ok(propB, 'Should have PROPERTY_ACCESS node for a.b');
+
+      const variableNodes = await getNodesByType(backend, 'VARIABLE');
+      const aVar = variableNodes.find(n => n.name === 'a');
+      assert.ok(aVar, 'Should have VARIABLE node for "a"');
+
+      const readsFromEdges = await getEdgesByType(backend, 'READS_FROM');
+      const edgeB = readsFromEdges.find(e =>
+        e.src === propB!.id && e.dst === aVar!.id
+      );
+
+      assert.ok(
+        edgeB,
+        `PROPERTY_ACCESS "b" (objectName "a") should have READS_FROM edge to VARIABLE "a". ` +
+        `Found READS_FROM edges: ${JSON.stringify(readsFromEdges.map(e => ({ src: e.src, dst: e.dst })))}`
+      );
+
+      // PA for "c" (objectName "a.b") should NOT have READS_FROM edge
+      // because "a.b" is a chained objectName (contains dot) — no variable node to link to
+      const propC = await findPropertyAccessNode(backend, 'c', 'a.b');
+      assert.ok(propC, 'Should have PROPERTY_ACCESS node for a.b.c');
+
+      const edgeC = readsFromEdges.find(e =>
+        e.src === propC!.id
+      );
+
+      assert.ok(
+        !edgeC,
+        `PROPERTY_ACCESS "c" (objectName "a.b") should NOT have READS_FROM edge (chained, skipped). ` +
+        `But found: ${JSON.stringify(edgeC)}`
+      );
+    });
+
+    // -------------------------------------------------------------------------
+    // Test 5: Unknown identifier — no crash, no READS_FROM edge
+    // -------------------------------------------------------------------------
+    it('should not crash and should not create READS_FROM for unknown identifiers', async () => {
+      await setupTest(backend, {
+        'index.js': `
+const x = unknownObj.prop;
+        `
+      });
+
+      const propAccessNode = await findPropertyAccessNode(backend, 'prop', 'unknownObj');
+      assert.ok(propAccessNode, 'Should have PROPERTY_ACCESS node for unknownObj.prop');
+
+      const readsFromEdges = await getEdgesByType(backend, 'READS_FROM');
+      const edge = readsFromEdges.find(e =>
+        e.src === propAccessNode!.id
+      );
+
+      assert.ok(
+        !edge,
+        `PROPERTY_ACCESS "prop" (unknownObj.prop) should NOT have READS_FROM edge ` +
+        `because "unknownObj" is not declared in scope. But found: ${JSON.stringify(edge)}`
+      );
+    });
+
+    // -------------------------------------------------------------------------
+    // Test 6: Module-level access — no function scope, scopeTracker may be undefined
+    // -------------------------------------------------------------------------
+    it('should create READS_FROM for module-level property access', async () => {
+      // Use `let` to ensure a VARIABLE node is created (not CONSTANT)
+      await setupTest(backend, {
+        'index.js': `
+let cfg = { timeout: 5000 };
+cfg.timeout;
+        `
+      });
+
+      const propAccessNode = await findPropertyAccessNode(backend, 'timeout', 'cfg');
+      assert.ok(propAccessNode, 'Should have PROPERTY_ACCESS node for cfg.timeout');
+
+      const variableNodes = await getNodesByType(backend, 'VARIABLE');
+      const cfgVar = variableNodes.find(n => n.name === 'cfg');
+      assert.ok(cfgVar, 'Should have VARIABLE node for "cfg"');
+
+      const readsFromEdges = await getEdgesByType(backend, 'READS_FROM');
+      const edge = readsFromEdges.find(e =>
+        e.src === propAccessNode!.id && e.dst === cfgVar!.id
+      );
+
+      assert.ok(
+        edge,
+        `Module-level PROPERTY_ACCESS "timeout" should have READS_FROM edge to VARIABLE "cfg". ` +
+        `This tests that scopePath=[] correctly resolves module-level variables. ` +
+        `Found READS_FROM edges: ${JSON.stringify(readsFromEdges.map(e => ({ src: e.src, dst: e.dst })))}`
+      );
+    });
+  });
 });

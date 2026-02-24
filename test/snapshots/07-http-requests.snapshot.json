@@ -155,15 +155,6 @@
       "type": "CALL"
     },
     {
-      "endColumn": 46,
-      "endLine": 64,
-      "exported": false,
-      "file": "client.js",
-      "isNew": true,
-      "name": "Headers",
-      "type": "CALL"
-    },
-    {
       "computed": false,
       "computedPropertyVar": null,
       "endColumn": 51,
@@ -911,7 +902,6 @@
           "PASSES_ARGUMENT",
           "MAKES_REQUEST",
           "IMPORTS_FROM",
-          "EXPORTS_TO",
           "ASSIGNED_FROM",
           "IMPLEMENTS",
           "EXTENDS",
@@ -957,7 +947,6 @@
         "PASSES_ARGUMENT",
         "MAKES_REQUEST",
         "IMPORTS_FROM",
-        "EXPORTS_TO",
         "ASSIGNED_FROM",
         "IMPLEMENTS",
         "EXTENDS",
@@ -1283,6 +1272,62 @@
       "sideEffect": true,
       "source": "./client.js",
       "type": "IMPORT"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": "/api/gigs",
+      "valueType": "string"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": "/api/gigs",
+      "valueType": "string"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": "/api/protected",
+      "valueType": "string"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": "/api/tracks",
+      "valueType": "string"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": "/api/users",
+      "valueType": "string"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": "/api/users",
+      "valueType": "string"
+    },
+    {
+      "exported": false,
+      "file": "client.js",
+      "name": "",
+      "type": "LITERAL",
+      "value": "/api/users",
+      "valueType": "string"
     },
     {
       "exported": false,
@@ -1695,8 +1740,24 @@
     },
     {
       "from": "CALL:authFetch",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:authFetch",
       "type": "MAKES_REQUEST",
       "to": "http:request:GET /api/protected"
+    },
+    {
+      "from": "CALL:authFetch",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
     },
     {
       "from": "CALL:axios.get",
@@ -1763,6 +1824,54 @@
     },
     {
       "from": "CALL:fetch",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:fetch",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:fetch",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:fetch",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:fetch",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:fetch",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:fetch",
       "type": "MAKES_REQUEST",
       "to": "http:request:GET /api/gigs"
     },
@@ -1805,6 +1914,54 @@
       "from": "CALL:fetch",
       "type": "MAKES_REQUEST",
       "to": "http:request:POST /api/users"
+    },
+    {
+      "from": "CALL:fetch",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:fetch",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:fetch",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:fetch",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:fetch",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "CALL:fetch",
+      "type": "PASSES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
     },
     {
       "from": "CALL:fetch",
@@ -2440,6 +2597,43 @@
       "to": "MODULE:client.js"
     },
     {
+      "from": "PARAMETER:url",
+      "type": "DERIVES_FROM",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0
+      }
+    },
+    {
+      "from": "PARAMETER:url",
+      "type": "RECEIVES_ARGUMENT",
+      "to": "LITERAL:",
+      "metadata": {
+        "argIndex": 0,
+        "callId": "client.js->fetchProtectedData->CALL->authFetch#0"
+      }
+    },
+    {
+      "from": "PROPERTY_ACCESS:data",
+      "type": "READS_FROM",
+      "to": "VARIABLE:response"
+    },
+    {
+      "from": "PROPERTY_ACCESS:data",
+      "type": "READS_FROM",
+      "to": "VARIABLE:response"
+    },
+    {
+      "from": "PROPERTY_ACCESS:data",
+      "type": "READS_FROM",
+      "to": "VARIABLE:response"
+    },
+    {
+      "from": "PROPERTY_ACCESS:headers",
+      "type": "READS_FROM",
+      "to": "PARAMETER:options"
+    },
+    {
       "from": "SCOPE:authFetch:body",
       "type": "CONTAINS",
       "to": "BRANCH:"
@@ -2448,11 +2642,6 @@
       "from": "SCOPE:authFetch:body",
       "type": "CONTAINS",
       "to": "CALL:fetch"
-    },
-    {
-      "from": "SCOPE:authFetch:body",
-      "type": "CONTAINS",
-      "to": "CALL:Headers"
     },
     {
       "from": "SCOPE:authFetch:body",

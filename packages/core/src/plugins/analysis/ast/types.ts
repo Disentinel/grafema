@@ -260,6 +260,10 @@ export interface VariableDeclarationInfo {
   isPrivate?: boolean;      // true for #privateField
   isStatic?: boolean;       // true for static #field
   isClassProperty?: boolean; // true for class properties (vs local variables)
+  // REG-552: TypeScript class property metadata
+  accessibility?: 'public' | 'private' | 'protected';  // undefined = implicit public
+  isReadonly?: boolean;                                   // true for readonly modifier
+  tsType?: string;                                        // TypeScript type annotation string
 }
 
 // === GRAFEMA-IGNORE ANNOTATION (REG-332) ===
@@ -289,6 +293,35 @@ export interface PropertyAccessInfo {
   endLine?: number;
   endColumn?: number;
   parentScopeId?: string;
+  scopePath?: string[];        // scope path for resolveVariable/resolveParam lookup
+  enclosingClassName?: string; // class name when objectName === 'this'
+}
+
+// === PROPERTY ASSIGNMENT INFO ===
+export interface PropertyAssignmentInfo {
+  id: string;
+  semanticId?: string;       // Stable ID: file->scope->PROPERTY_ASSIGNMENT->objectName.propertyName#N
+  type: 'PROPERTY_ASSIGNMENT';
+  objectName: string;        // 'this' or object variable name
+  propertyName: string;      // 'graph', '<computed>', etc.
+  computed?: boolean;        // true for obj[x] = value
+  file: string;
+  line: number;
+  column: number;
+  endLine?: number;
+  endColumn?: number;
+  parentScopeId?: string;
+  scopePath?: string[];
+  enclosingClassName?: string;     // class name when objectName === 'this'
+  // RHS value info (for ASSIGNED_FROM edge resolution)
+  valueType: 'LITERAL' | 'VARIABLE' | 'CALL' | 'EXPRESSION' | 'OBJECT_LITERAL' | 'ARRAY_LITERAL' | 'MEMBER_EXPRESSION';
+  valueName?: string;              // For VARIABLE type: the RHS variable name
+  // For MEMBER_EXPRESSION type: object and property of the RHS member expression
+  memberObject?: string;
+  memberProperty?: string;
+  // Source line/column of RHS member expression for PROPERTY_ACCESS node lookup
+  memberLine?: number;
+  memberColumn?: number;
 }
 
 // === CALL SITE INFO ===
@@ -568,6 +601,8 @@ export interface ExportInfo {
 export interface ExportSpecifier {
   local: string;
   exported: string;
+  column?: number;
+  endColumn?: number;
 }
 
 // === HTTP REQUEST INFO ===
@@ -712,6 +747,7 @@ export interface ObjectMutationInfo {
   objectLine?: number;           // Line where object is referenced (for scope resolution)
   mutationScopePath?: string[];  // Scope path where mutation happens (from ScopeTracker)
   enclosingClassName?: string;   // Class name when objectName === 'this' (REG-152)
+  enclosingFunctionName?: string;  // Function name when objectName === 'this' (REG-557)
   propertyName: string;          // Property name or '<computed>' for obj[x] or '<assign>' for Object.assign
   mutationType: 'property' | 'computed' | 'assign' | 'spread';
   computedPropertyVar?: string;  // Variable name in obj[key] = value (for computed mutation type)
@@ -722,7 +758,7 @@ export interface ObjectMutationInfo {
 }
 
 export interface ObjectMutationValue {
-  valueType: 'LITERAL' | 'VARIABLE' | 'CALL' | 'EXPRESSION' | 'OBJECT_LITERAL' | 'ARRAY_LITERAL';
+  valueType: 'LITERAL' | 'VARIABLE' | 'CALL' | 'EXPRESSION' | 'OBJECT_LITERAL' | 'ARRAY_LITERAL' | 'MEMBER_EXPRESSION';
   valueName?: string;            // For VARIABLE type - name of the variable
   valueNodeId?: string;          // For LITERAL, OBJECT_LITERAL, ARRAY_LITERAL - node ID
   literalValue?: unknown;        // For LITERAL type
@@ -730,6 +766,11 @@ export interface ObjectMutationValue {
   callColumn?: number;
   isSpread?: boolean;            // For Object.assign with spread: Object.assign(target, ...sources)
   argIndex?: number;             // For Object.assign - which source argument (0, 1, 2, ...)
+  // REG-554: For MEMBER_EXPRESSION type (e.g., options.graph in this.graph = options.graph)
+  memberObject?: string;         // Object name (e.g., 'options')
+  memberProperty?: string;       // Property name (e.g., 'graph')
+  memberLine?: number;           // Source location for PROPERTY_ACCESS node lookup
+  memberColumn?: number;
 }
 
 // === RETURN STATEMENT INFO ===
@@ -1008,6 +1049,7 @@ export interface UpdateExpressionInfo {
   objectName?: string;            // Object name ("obj" from obj.prop++, "this" from this.count++)
   objectLine?: number;            // Line where object is referenced (for scope resolution)
   enclosingClassName?: string;    // Class name when objectName === 'this' (follows REG-152 pattern)
+  enclosingFunctionName?: string; // Function name when objectName === 'this' (REG-557)
   propertyName?: string;          // Property name ("prop" from obj.prop++, "<computed>" for obj[key]++)
   mutationType?: 'property' | 'computed';  // 'property' for obj.prop++, 'computed' for obj[key]++
   computedPropertyVar?: string;   // Variable name for computed access: obj[i]++ -> "i"
@@ -1187,6 +1229,8 @@ export interface ASTCollections {
   arrayMutations?: ArrayMutationInfo[];
   // Object mutation tracking for FLOWS_INTO edges
   objectMutations?: ObjectMutationInfo[];
+  // Property assignment tracking for PROPERTY_ASSIGNMENT nodes (REG-554)
+  propertyAssignments?: PropertyAssignmentInfo[];
   // Variable reassignment tracking for FLOWS_INTO edges (REG-290)
   variableReassignments?: VariableReassignmentInfo[];
   // Return statement tracking for RETURNS edges
@@ -1205,6 +1249,8 @@ export interface ASTCollections {
   catchesFromInfos?: CatchesFromInfo[];
   // Property access tracking for PROPERTY_ACCESS nodes (REG-395)
   propertyAccesses?: PropertyAccessInfo[];
+  // Counter ref for property assignment tracking (REG-554)
+  propertyAssignmentCounterRef?: CounterRef;
   // REG-297: Top-level await tracking
   hasTopLevelAwait?: boolean;
   // TypeScript-specific collections

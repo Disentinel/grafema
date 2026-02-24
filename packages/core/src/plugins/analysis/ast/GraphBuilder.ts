@@ -4,6 +4,18 @@
  * Only FUNCTION nodes are deferred (pending metadata mutation by ModuleRuntimeBuilder).
  */
 
+/**
+ * Thrown when a node is buffered with invalid/missing data.
+ * Unlike regular analysis errors, this propagates through JSASTAnalyzer's
+ * silent catch block to surface indexer bugs at analysis time.
+ */
+export class GraphDataError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'GraphDataError';
+  }
+}
+
 import type { GraphBackend, NodeRecord } from '@grafema/types';
 import { brandNodeInternal } from '../../../core/brandNodeInternal.js';
 import { parseSemanticId } from '../../../core/SemanticId.js';
@@ -26,6 +38,7 @@ import {
   AssignmentBuilder,
   CallFlowBuilder,
   MutationBuilder,
+  PropertyAssignmentBuilder,
   UpdateExpressionBuilder,
   ReturnBuilder,
   YieldBuilder,
@@ -58,6 +71,7 @@ export class GraphBuilder {
   private readonly _assignmentBuilder: AssignmentBuilder;
   private readonly _callFlowBuilder: CallFlowBuilder;
   private readonly _mutationBuilder: MutationBuilder;
+  private readonly _propertyAssignmentBuilder: PropertyAssignmentBuilder;
   private readonly _updateExpressionBuilder: UpdateExpressionBuilder;
   private readonly _returnBuilder: ReturnBuilder;
   private readonly _yieldBuilder: YieldBuilder;
@@ -71,6 +85,7 @@ export class GraphBuilder {
     this._assignmentBuilder = new AssignmentBuilder(ctx);
     this._callFlowBuilder = new CallFlowBuilder(ctx);
     this._mutationBuilder = new MutationBuilder(ctx);
+    this._propertyAssignmentBuilder = new PropertyAssignmentBuilder(ctx);
     this._updateExpressionBuilder = new UpdateExpressionBuilder(ctx);
     this._returnBuilder = new ReturnBuilder(ctx);
     this._yieldBuilder = new YieldBuilder(ctx);
@@ -103,6 +118,18 @@ export class GraphBuilder {
    */
   private _bufferNode(node: GraphNode): void {
     if (!this._graph) throw new Error('_bufferNode called outside build() — _graph is null');
+    const n = node as Record<string, unknown>;
+    // DO NOT REMOVE: invariant guard for CALL node data quality.
+    // Throws on missing/zero endLine or endColumn to catch indexer bugs early.
+    // Useful when testing open-source codebases — surfaces missing end positions
+    // before they silently break cursor-to-node matching in the VS Code extension.
+    if (n['type'] === 'CALL' || n['nodeType'] === 'CALL') {
+      if (n['endLine'] === undefined || n['endColumn'] === undefined || (n['endLine'] as number) <= 0) {
+        throw new GraphDataError(
+          `CALL node missing endLine/endColumn: name="${n['name']}" file="${n['file']}" line=${n['line']} col=${n['column']} endLine=${n['endLine']} endColumn=${n['endColumn']} id="${n['id']}"`
+        );
+      }
+    }
     const branded = brandNodeInternal(node as unknown as NodeRecord);
     if ((node as Record<string, unknown>).type === 'FUNCTION') {
       this._pendingFunctions.set(node.id, branded as unknown as GraphNode);
@@ -273,8 +300,17 @@ export class GraphBuilder {
     }
 
     // 3. Buffer variables (keep parentScopeId on node for queries)
+    // REG-552: Move accessibility, isReadonly, and tsType into metadata for class property fields
     for (const varDecl of variableDeclarations) {
-      this._bufferNode(varDecl as unknown as GraphNode);
+      const { accessibility: _accessibility, isReadonly: _isReadonly, tsType: _tsType, ...varData } = varDecl;
+      const node = varData as unknown as GraphNode;
+      if (_accessibility !== undefined || _isReadonly || _tsType) {
+        if (!node.metadata) node.metadata = {};
+        if (_accessibility !== undefined) (node.metadata as Record<string, unknown>).accessibility = _accessibility;
+        if (_isReadonly) (node.metadata as Record<string, unknown>).readonly = true;
+        if (_tsType) (node.metadata as Record<string, unknown>).tsType = _tsType;
+      }
+      this._bufferNode(node);
     }
 
     // 3.5. Buffer PARAMETER nodes and HAS_PARAMETER edges
@@ -328,6 +364,7 @@ export class GraphBuilder {
     this._callFlowBuilder.buffer(module, data);
     this._assignmentBuilder.buffer(module, data);
     this._mutationBuilder.buffer(module, data);
+    this._propertyAssignmentBuilder.buffer(module, data);
     this._updateExpressionBuilder.buffer(module, data);
     this._returnBuilder.buffer(module, data);
     this._yieldBuilder.buffer(module, data);

@@ -545,6 +545,184 @@ const x = a && b;
         await cleanup(backend, testDir);
       }
     });
+
+    it('should use readable name format "a || b" for LogicalExpression', async () => {
+      const { backend, testDir } = await setupTest({
+        'index.js': `
+const a = 'first';
+const b = 'second';
+const x = a || b;
+`
+      });
+
+      try {
+        let expressionNode = null;
+        for await (const node of backend.queryNodes({ type: 'EXPRESSION' })) {
+          if (node.expressionType === 'LogicalExpression' && node.operator === '||') {
+            expressionNode = node;
+            break;
+          }
+        }
+
+        assert.ok(expressionNode, 'Should create EXPRESSION node for LogicalExpression');
+        assert.strictEqual(expressionNode.name, 'a || b', 'Name should be "a || b" not "<LogicalExpression>"');
+
+        console.log('LogicalExpression || name format is correct:', expressionNode.name);
+      } finally {
+        await cleanup(backend, testDir);
+      }
+    });
+
+    it('should create EXPRESSION node for ?? (nullish coalescing) with readable name', async () => {
+      const { backend, testDir } = await setupTest({
+        'index.js': `
+const a = 'first';
+const b = 'second';
+const x = a ?? b;
+`
+      });
+
+      try {
+        let expressionNode = null;
+        for await (const node of backend.queryNodes({ type: 'EXPRESSION' })) {
+          if (node.expressionType === 'LogicalExpression') {
+            expressionNode = node;
+            break;
+          }
+        }
+
+        assert.ok(expressionNode, 'Should create EXPRESSION node for ?? LogicalExpression');
+        assert.strictEqual(expressionNode.operator, '??', 'Should have ?? operator');
+        assert.strictEqual(expressionNode.name, 'a ?? b', 'Name should be "a ?? b"');
+
+        console.log('LogicalExpression ?? creates EXPRESSION node correctly:', expressionNode.name);
+      } finally {
+        await cleanup(backend, testDir);
+      }
+    });
+
+    it('should use readable name format "a && b" for LogicalExpression', async () => {
+      const { backend, testDir } = await setupTest({
+        'index.js': `
+const a = 'first';
+const b = 'second';
+const x = a && b;
+`
+      });
+
+      try {
+        let expressionNode = null;
+        for await (const node of backend.queryNodes({ type: 'EXPRESSION' })) {
+          if (node.expressionType === 'LogicalExpression' && node.operator === '&&') {
+            expressionNode = node;
+            break;
+          }
+        }
+
+        assert.ok(expressionNode, 'Should create EXPRESSION node for && LogicalExpression');
+        assert.strictEqual(expressionNode.name, 'a && b', 'Name should be "a && b"');
+
+        console.log('LogicalExpression && name format is correct:', expressionNode.name);
+      } finally {
+        await cleanup(backend, testDir);
+      }
+    });
+
+    it('should use fallback "…" for non-Identifier operands in LogicalExpression name', async () => {
+      const { backend, testDir } = await setupTest({
+        'index.js': `
+const obj = { timeout: 5000 };
+const x = obj.timeout || 10;
+`
+      });
+
+      try {
+        let expressionNode = null;
+        for await (const node of backend.queryNodes({ type: 'EXPRESSION' })) {
+          if (node.expressionType === 'LogicalExpression' && node.operator === '||') {
+            expressionNode = node;
+            break;
+          }
+        }
+
+        assert.ok(expressionNode, 'Should create EXPRESSION node for LogicalExpression with non-Identifier operands');
+        assert.ok(expressionNode.name.includes('||'), 'Name should contain the || operator');
+        assert.ok(expressionNode.name.includes('\u2026'), 'Name should contain "…" (U+2026) for non-Identifier operands');
+        assert.ok(!expressionNode.name.includes('<LogicalExpression>'), 'Name should NOT be generic "<LogicalExpression>"');
+
+        console.log('LogicalExpression fallback name format is correct:', expressionNode.name);
+      } finally {
+        await cleanup(backend, testDir);
+      }
+    });
+
+    it('should create EXPRESSION node with ASSIGNED_FROM and DERIVES_FROM for logical expression', async () => {
+      const { backend, testDir } = await setupTest({
+        'index.js': `
+const a = 'first';
+const b = 'second';
+const x = a || b;
+`
+      });
+
+      try {
+        // Find EXPRESSION node with readable name
+        let expressionNode = null;
+        for await (const node of backend.queryNodes({ type: 'EXPRESSION' })) {
+          if (node.expressionType === 'LogicalExpression' && node.operator === '||') {
+            expressionNode = node;
+            break;
+          }
+        }
+
+        assert.ok(expressionNode, 'Should create EXPRESSION node for LogicalExpression');
+        assert.strictEqual(expressionNode.name, 'a || b', 'EXPRESSION name should be "a || b"');
+
+        // Find x variable (could be VARIABLE or CONSTANT)
+        let xVar = null;
+        for await (const node of backend.queryNodes({ type: 'VARIABLE' })) {
+          if (node.name === 'x') {
+            xVar = node;
+            break;
+          }
+        }
+        if (!xVar) {
+          for await (const node of backend.queryNodes({ type: 'CONSTANT' })) {
+            if (node.name === 'x') {
+              xVar = node;
+              break;
+            }
+          }
+        }
+
+        assert.ok(xVar, 'Should find variable x');
+
+        // x should have ASSIGNED_FROM edge to the EXPRESSION node
+        const assignedFromEdges = await backend.getOutgoingEdges(xVar.id, ['ASSIGNED_FROM']);
+        const assignedFromExpression = assignedFromEdges.some(edge => edge.dst === expressionNode.id);
+        assert.ok(assignedFromExpression, 'x should have ASSIGNED_FROM edge pointing to EXPRESSION node');
+
+        // EXPRESSION should have DERIVES_FROM edges to a and b
+        const derivesFromEdges = await backend.getOutgoingEdges(expressionNode.id, ['DERIVES_FROM']);
+        assert.ok(derivesFromEdges.length >= 2, `EXPRESSION should have at least 2 DERIVES_FROM edges, got ${derivesFromEdges.length}`);
+
+        // Collect target node names to verify both a and b are referenced
+        const targetNames = [];
+        for (const edge of derivesFromEdges) {
+          const target = await backend.getNode(edge.dst);
+          if (target) {
+            targetNames.push(target.name);
+          }
+        }
+
+        assert.ok(targetNames.includes('a'), 'EXPRESSION should DERIVES_FROM variable a');
+        assert.ok(targetNames.includes('b'), 'EXPRESSION should DERIVES_FROM variable b');
+
+        console.log('Full LogicalExpression graph structure verified: EXPRESSION "a || b" with ASSIGNED_FROM and DERIVES_FROM');
+      } finally {
+        await cleanup(backend, testDir);
+      }
+    });
   });
 
   describe('TemplateLiteral', () => {

@@ -194,6 +194,12 @@ export class ArgumentExtractor {
         argInfo.nestedCallLine = actualArg.loc?.start.line;
         argInfo.nestedCallColumn = actualArg.loc?.start.column;
       }
+      // REG-556: NewExpression arguments (new Foo() passed as arg)
+      else if (actualArg.type === 'NewExpression') {
+        argInfo.targetType = 'CONSTRUCTOR_CALL';
+        argInfo.nestedCallLine = actualArg.loc?.start.line;
+        argInfo.nestedCallColumn = actualArg.loc?.start.column;
+      }
       // Member expression: obj.prop or obj[x]
       else if (actualArg.type === 'MemberExpression') {
         const memberExpr = actualArg as MemberExpression;

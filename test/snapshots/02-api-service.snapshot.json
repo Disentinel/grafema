@@ -223,15 +223,6 @@
       "type": "CALL"
     },
     {
-      "endColumn": 29,
-      "endLine": 22,
-      "exported": false,
-      "file": "src/db.js",
-      "isNew": true,
-      "name": "Database",
-      "type": "CALL"
-    },
-    {
       "computed": false,
       "computedPropertyVar": null,
       "endColumn": 20,
@@ -319,15 +310,6 @@
       "method": "query",
       "name": "db.query",
       "object": "db",
-      "type": "CALL"
-    },
-    {
-      "endColumn": 47,
-      "endLine": 14,
-      "exported": false,
-      "file": "src/db.js",
-      "isNew": true,
-      "name": "Error",
       "type": "CALL"
     },
     {
@@ -1212,7 +1194,6 @@
           "PASSES_ARGUMENT",
           "MAKES_REQUEST",
           "IMPORTS_FROM",
-          "EXPORTS_TO",
           "ASSIGNED_FROM",
           "IMPLEMENTS",
           "EXTENDS",
@@ -1258,7 +1239,6 @@
         "PASSES_ARGUMENT",
         "MAKES_REQUEST",
         "IMPORTS_FROM",
-        "EXPORTS_TO",
         "ASSIGNED_FROM",
         "IMPLEMENTS",
         "EXTENDS",
@@ -1840,6 +1820,24 @@
       "objectName": "req",
       "semanticId": "src/routes/users.js->PROPERTY_ACCESS->req.params[in:getUsersRoute]",
       "type": "PROPERTY_ACCESS"
+    },
+    {
+      "className": "Database",
+      "exported": false,
+      "file": "src/db.js",
+      "name": "connected",
+      "objectName": "this",
+      "semanticId": "src/db.js->Database->connect->PROPERTY_ASSIGNMENT->this.connected#0",
+      "type": "PROPERTY_ASSIGNMENT"
+    },
+    {
+      "className": "Database",
+      "exported": false,
+      "file": "src/db.js",
+      "name": "connected",
+      "objectName": "this",
+      "semanticId": "src/db.js->Database->constructor->PROPERTY_ASSIGNMENT->this.connected#0",
+      "type": "PROPERTY_ASSIGNMENT"
     },
     {
       "conditional": false,
@@ -2764,6 +2762,16 @@
       "to": "FUNCTION:query"
     },
     {
+      "from": "CLASS:Database",
+      "type": "CONTAINS",
+      "to": "PROPERTY_ASSIGNMENT:connected"
+    },
+    {
+      "from": "CLASS:Database",
+      "type": "CONTAINS",
+      "to": "PROPERTY_ASSIGNMENT:connected"
+    },
+    {
       "from": "CONSTANT:PORT",
       "type": "ASSIGNED_FROM",
       "to": "LITERAL:"
@@ -3019,11 +3027,6 @@
     {
       "from": "MODULE:src/db.js",
       "type": "CONTAINS",
-      "to": "CALL:Database"
-    },
-    {
-      "from": "MODULE:src/db.js",
-      "type": "CONTAINS",
       "to": "CONSTRUCTOR_CALL:new Database()"
     },
     {
@@ -3250,6 +3253,21 @@
       "from": "MODULE:src/routes/users.js",
       "type": "IMPORTS",
       "to": "MODULE:src/db.js"
+    },
+    {
+      "from": "PROPERTY_ACCESS:connected",
+      "type": "READS_FROM",
+      "to": "CLASS:Database"
+    },
+    {
+      "from": "PROPERTY_ACCESS:insertId",
+      "type": "READS_FROM",
+      "to": "VARIABLE:result"
+    },
+    {
+      "from": "PROPERTY_ACCESS:insertId",
+      "type": "READS_FROM",
+      "to": "VARIABLE:result"
     },
     {
       "from": "SCOPE:anonymous[0]:body",
@@ -3480,11 +3498,6 @@
       "from": "SCOPE:getUsersRoute:body",
       "type": "DECLARES",
       "to": "VARIABLE:router"
-    },
-    {
-      "from": "SCOPE:if:13:4:0",
-      "type": "CONTAINS",
-      "to": "CALL:Error"
     },
     {
       "from": "SCOPE:if:13:4:0",

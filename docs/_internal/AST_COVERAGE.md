@@ -21,7 +21,7 @@ This document tracks which JavaScript/TypeScript AST nodes are handled by Navi's
 | `ClassProperty` | Handled | FUNCTION (if arrow) | Arrow function properties |
 | `VariableDeclaration` | Handled | VARIABLE/CONSTANT | Tracks assignments, aliases |
 | `ImportDeclaration` | Handled | IMPORT node | IMPORTS_FROM edges |
-| `ExportNamedDeclaration` | Handled | EXPORT node | EXPORTS_TO edges |
+| `ExportNamedDeclaration` | Handled | EXPORT node | EXPORTS edges (via ExportEntityLinker) |
 | `ExportDefaultDeclaration` | Handled | EXPORT node | Default exports |
 
 ## Expressions
@@ -169,7 +169,7 @@ ThisExpression           TemplateLiteral (partial)
 | CALLS | CallExpression resolved to FUNCTION |
 | CONTAINS | CLASS -> METHOD, FUNCTION -> SCOPE |
 | IMPORTS_FROM | ImportDeclaration |
-| EXPORTS_TO | ExportDeclaration |
+| EXPORTS | ExportDeclaration (via ExportEntityLinker) |
 | ASSIGNED_FROM | AssignmentExpression |
 | MODIFIES | UpdateExpression (i++, --j) |
 | INSTANCE_OF | NewExpression -> CLASS |
