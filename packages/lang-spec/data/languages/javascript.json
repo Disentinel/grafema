@@ -1,0 +1,57 @@
+{
+  "name": "javascript",
+  "version": "ES2025",
+  "fileExtensions": [".js", ".mjs", ".cjs"],
+  "moduleTypes": ["esm", "cjs"],
+  "commentSyntax": {
+    "line": "//",
+    "blockStart": "/*",
+    "blockEnd": "*/"
+  },
+  "specReference": "https://tc39.es/ecma262/",
+  "categories": [
+    "declarations",
+    "expressions",
+    "statements",
+    "patterns",
+    "classes",
+    "async-generators",
+    "closures",
+    "prototypes",
+    "callbacks",
+    "error-handling",
+    "iterators",
+    "property-access",
+    "builtins",
+    "coercion-hoisting",
+    "modern-es",
+    "aliasing",
+    "modules-esm",
+    "modules-cjs",
+    "modules-reexport",
+    "modules-default-anon",
+    "modules-helpers"
+  ],
+  "pluginCategories": [
+    {
+      "name": "runtime-apis",
+      "plugin": "runtime",
+      "reason": "Node.js/browser APIs are environment-specific, not language-level"
+    },
+    {
+      "name": "jsdoc-types",
+      "plugin": "jsdoc",
+      "reason": "JSDoc type annotations are a documentation convention, not language syntax"
+    },
+    {
+      "name": "legacy-patterns",
+      "plugin": "legacy",
+      "reason": "AMD/UMD/polyfills are historical patterns, not current language features"
+    },
+    {
+      "name": "ts-specific",
+      "plugin": "typescript",
+      "reason": "TypeScript syntax requires separate parser and type system"
+    }
+  ]
+}

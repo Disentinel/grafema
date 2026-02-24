@@ -1,0 +1,48 @@
+{
+  "name": "@grafema/lang-spec",
+  "version": "0.1.0",
+  "description": "Language specification generator for Grafema graph vocabulary",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "data"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "generate": "tsx src/cli.ts generate",
+    "annotate": "tsx src/cli.ts annotate",
+    "parse": "tsx src/cli.ts parse",
+    "triage": "tsx src/cli.ts triage",
+    "vocabulary": "tsx src/cli.ts vocabulary"
+  },
+  "keywords": [
+    "grafema",
+    "language-specification",
+    "code-analysis",
+    "graph-vocabulary"
+  ],
+  "license": "Apache-2.0",
+  "author": "Vadim Reshetnikov",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Disentinel/grafema.git",
+    "directory": "packages/lang-spec"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "tsx": "^4.19.0"
+  }
+}

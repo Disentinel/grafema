@@ -102,6 +102,7 @@ interface ParameterNode {
   functionId: string;
   file: string;
   line: number;
+  column: number;
 }
 
 /**
@@ -416,7 +417,8 @@ function parseModule(filePath: string, relativeFile: string, moduleId: string, m
             index,
             functionId,
             file: filePath,
-            line: getLine(param)
+            line: getLine(param),
+            column: getColumn(param)
           });
         }
       });

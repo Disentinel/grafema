@@ -1,0 +1,2264 @@
+{
+  "language": "unknown",
+  "version": "",
+  "generatedAt": "2026-02-24T00:45:35.498Z",
+  "requirements": [
+    {
+      "edgeType": "CATCHES_FROM",
+      "needs": {
+        "astLocal": true,
+        "scopeStack": false,
+        "siblingNodes": false,
+        "crossFile": false,
+        "typeInfo": false
+      },
+      "phase": "walk",
+      "srcNodeTypes": [
+        "CATCH_BLOCK",
+        "CALL"
+      ],
+      "dstNodeTypes": [
+        "TRY_BLOCK",
+        "PARAMETER",
+        "CATCH_BLOCK",
+        "CALL"
+      ],
+      "corpusCount": 7,
+      "examples": [
+        "async-generators::async-await-try-catch",
+        "async-generators::async-await-try-catch",
+        "error-handling::error-wrap-rethrow",
+        "error-handling::error-async-catch-all",
+        "statements::try-nested"
+      ],
+      "rationale": "CATCHES_FROM connects catch blocks to their corresponding try blocks, which are always part of the same try-catch statement in the AST. Both the try block and catch block are direct children of the same try-catch construct, making this a local AST relationship that can be established during the initial walk phase without needing scope information, sibling nodes from other statements, or cross-file resolution."
+    },
+    {
+      "edgeType": "AWAITS",
+      "needs": {
+        "astLocal": true,
+        "scopeStack": false,
+        "siblingNodes": false,
+        "crossFile": false,
+        "typeInfo": false
+      },
+      "phase": "walk",
+      "srcNodeTypes": [
+        "FUNCTION",
+        "EXPRESSION",
+        "CALL",
+        "METHOD"
+      ],
+      "dstNodeTypes": [
+        "CALL",
+        "FUNCTION",
+        "PROPERTY",
+        "EXPRESSION"
+      ],
+      "corpusCount": 34,
+      "examples": [
+        "async-generators::async-await-basic",
+        "async-generators::async-await-basic",
+        "async-generators::async-arrow",
+        "async-generators::async-await-try-catch",
+        "async-generators::async-arrow"
+      ],
+      "rationale": "AWAITS edges connect await expressions to their operands within the same AST subtree. The await keyword and its operand (the expression being awaited) are syntactically adjacent in the AST - they form a parent-child or direct sibling relationship within a single statement. No scope analysis, cross-file resolution, or type inference is needed to identify this syntactic relationship."
+    },
+    {
+      "edgeType": "ACCESSES_PRIVATE",
+      "needs": {
+        "astLocal": true,
+        "scopeStack": true,
+        "siblingNodes": false,
+        "crossFile": false,
+        "typeInfo": false
+      },
+      "phase": "walk",
+      "srcNodeTypes": [
+        "PROPERTY_ACCESS"
+      ],
+      "dstNodeTypes": [
+        "PROPERTY",
+        "EXTERNAL"
+      ],
+      "corpusCount": 5,
+      "examples": [
+        "classes::class-private-cross-instance",
+        "builtins::builtin-json-stringify"
+      ],
+      "rationale": "ACCESSES_PRIVATE edges connect property access expressions to private properties. The property access (e.g., 'other.#x') and the private property declaration ('#x') are both visible during AST traversal of the same file. However, determining if a property is private and accessible requires knowing the current class scope context to validate access permissions, hence scopeStack is needed."
+    },
+    {
+      "edgeType": "BINDS_THIS_TO",
+      "needs": {
+        "astLocal": true,
+        "scopeStack": false,
+        "siblingNodes": false,
+        "crossFile": false,
+        "typeInfo": false
+      },
+      "phase": "walk",
+      "srcNodeTypes": [
+        "CALL",
+        "PROPERTY_ACCESS"
+      ],
+      "dstNodeTypes": [
+        "CLASS",
+        "PARAMETER",
+        "VARIABLE"
+      ],
+      "corpusCount": 6,
+      "examples": [
+        "callbacks::callback-thisarg-filter",
+        "callbacks::callback-thisarg-map",
+        "callbacks::callback-thisarg-foreach",
+        "closures::this-bind",
+        "closures::this-call-apply"
+      ],
+      "rationale": "BINDS_THIS_TO connects method calls (like filter/map/forEach) to their thisArg parameter within the same call expression. Both the call site and the thisArg are part of the same AST subtree - they appear together in a single method invocation. No scope analysis, cross-file resolution, or type inference is needed since this is purely about the syntactic relationship between a call and its explicit thisArg parameter."
+    },
+    {
+      "edgeType": "ALIASES",
+      "needs": {
+        "astLocal": false,
+        "scopeStack": true,
+        "siblingNodes": true,
+        "crossFile": true,
+        "typeInfo": true
+      },
+      "phase": "post-project",
+      "srcNodeTypes": [
+        "VARIABLE",
+        "PARAMETER",
+        "PROPERTY_ACCESS",
+        "EXTERNAL",
+        "EXPORT",
+        "TYPE_ALIAS"
+      ],
+      "dstNodeTypes": [
+        "PROPERTY_ACCESS",
+        "FUNCTION",
+        "EXTERNAL_MODULE",
+        "PARAMETER",
+        "EXPRESSION",
+        "EXTERNAL",
+        "VARIABLE",
+        "TYPE_REFERENCE",
+        "TYPE_ALIAS"
+      ],
+      "corpusCount": 25,
+      "examples": [
+        "aliasing::alias-destructured-method",
+        "aliasing::alias-callback-passed",
+        "aliasing::alias-import-dynamic-variable",
+        "aliasing::arguments-callee",
+        "aliasing::arguments-callee"
+      ],
+      "rationale": "ALIASES edges connect variables/identifiers to what they reference, which requires comprehensive resolution. Need scopeStack to resolve identifier bindings across scopes, siblingNodes to connect declarations to usage across statements, crossFile for import aliases and module references, and typeInfo to resolve what destructured properties, function parameters, and dynamic imports actually reference at runtime."
+    },
+    {
+      "edgeType": "CHAINS_FROM",
+      "needs": {
+        "astLocal": true,
+        "scopeStack": false,
+        "siblingNodes": false,
+        "crossFile": false,
+        "typeInfo": false
+      },
+      "phase": "walk",
+      "srcNodeTypes": [
+        "CALL",
+        "EXPRESSION",
+        "PROPERTY_ACCESS"
+      ],
+      "dstNodeTypes": [
+        "CALL",
+        "PROPERTY_ACCESS"
+      ],
+      "corpusCount": 27,
+      "examples": [
+        "async-generators::promise-chaining",
+        "async-generators::promise-chaining",
+        "classes::method-chaining-usage",
+        "error-handling::error-promise-catch",
+        "expressions::deep-optional-chain"
+      ],
+      "rationale": "CHAINS_FROM represents method/property chaining where one call/access is directly chained to another (e.g., obj.method1().method2()). Both the source and destination nodes are part of the same chained expression in the AST, making them locally accessible during AST traversal. The chaining relationship is syntactically explicit and doesn't require scope resolution, cross-file analysis, or type inference to identify."
+    },
+    {
+      "edgeType": "ASSIGNED_FROM",
+      "needs": {
+        "astLocal": false,
+        "scopeStack": true,
+        "siblingNodes": true,
+        "crossFile": false,
+        "typeInfo": false
+      },
+      "phase": "post-file",
+      "srcNodeTypes": [
+        "VARIABLE",
+        "PROPERTY_ACCESS",
+        "PARAMETER",
+        "PROPERTY",
+        "EXPRESSION",
+        "LITERAL",
+        "ENUM_MEMBER",
+        "TYPE_ALIAS",
+        "TYPE_REFERENCE"
+      ],
+      "dstNodeTypes": [
+        "PROPERTY_ACCESS",
+        "FUNCTION",
+        "CALL",
+        "LITERAL",
+        "EXPRESSION",
+        "IMPORT",
+        "PARAMETER",
+        "EXTERNAL",
+        "VARIABLE",
+        "CLASS",
+        "META_PROPERTY",
+        "METHOD",
+        "CONDITIONAL_TYPE",
+        "TYPE_ALIAS",
+        "TYPE_REFERENCE"
+      ],
+      "corpusCount": 866,
+      "examples": [
+        "aliasing::alias-method-extraction",
+        "aliasing::alias-reassign-function",
+        "aliasing::alias-destructured-method",
+        "aliasing::alias-bind-partial",
+        "aliasing::alias-computed-method"
+      ],
+      "rationale": "ASSIGNED_FROM edges connect variables to their assigned values, which often span across different statements in the same file. The assignment target (variable) and source (value expression) are typically in different AST subtrees. Scope information is needed to resolve variable references correctly. While some assignments might reference imported modules, the core assignment relationship itself is resolved within the file context using already-created nodes from other statements."
+    },
+    {
+      "edgeType": "CALLS",
+      "needs": {
+        "astLocal": false,
+        "scopeStack": true,
+        "siblingNodes": true,
+        "crossFile": true,
+        "typeInfo": true
+      },
+      "phase": "post-project",
+      "srcNodeTypes": [
+        "CALL",
+        "EXPRESSION",
+        "PROPERTY_ACCESS",
+        "DECORATOR",
+        "TYPE_REFERENCE"
+      ],
+      "dstNodeTypes": [
+        "VARIABLE",
+        "FUNCTION",
+        "PROPERTY_ACCESS",
+        "EXTERNAL",
+        "PARAMETER",
+        "EXPRESSION",
+        "CLASS",
+        "METHOD",
+        "META_PROPERTY",
+        "CALL",
+        "GETTER",
+        "TYPE_ALIAS"
+      ],
+      "corpusCount": 348,
+      "examples": [
+        "aliasing::alias-method-extraction",
+        "aliasing::alias-reassign-function",
+        "aliasing::alias-destructured-method",
+        "aliasing::alias-bind-partial",
+        "aliasing::alias-computed-method"
+      ],
+      "rationale": "CALLS edges require comprehensive analysis: scopeStack to resolve local function references, siblingNodes to handle aliasing and reassignment within the same file, crossFile to resolve imported functions and cross-module calls, and typeInfo to determine what function is actually being called through aliases, method references, and complex expressions. The examples show calls through aliases (log→console.log), reassigned variables (handler→different functions), and destructured methods (parse→JSON.parse), all requiring resolution beyond simple AST inspection."
+    },
+    {
+      "edgeType": "CAPTURES",
+      "needs": {
+        "astLocal": false,
+        "scopeStack": true,
+        "siblingNodes": true,
+        "crossFile": false,
+        "typeInfo": false
+      },
+      "phase": "post-file",
+      "srcNodeTypes": [
+        "FUNCTION",
+        "PROPERTY_ACCESS",
+        "METHOD",
+        "PARAMETER",
+        "EXTERNAL"
+      ],
+      "dstNodeTypes": [
+        "LITERAL",
+        "EXTERNAL",
+        "FUNCTION",
+        "VARIABLE",
+        "PARAMETER",
+        "CLASS",
+        "META_PROPERTY"
+      ],
+      "corpusCount": 52,
+      "examples": [
+        "aliasing::alias-bind-partial",
+        "aliasing::arguments-basic",
+        "aliasing::alias-bind-partial",
+        "aliasing::arguments-basic",
+        "aliasing::arrow-no-arguments"
+      ],
+      "rationale": "CAPTURES edges represent closures capturing variables from outer scopes (like `arguments` object access) or method binding scenarios. This requires: (1) scopeStack to identify which variables are from outer scopes vs local scope, and (2) siblingNodes because the captured variable may be declared in a different statement/function within the same file. The examples show functions accessing `arguments` from their containing scope and `bind` operations that capture context - both require understanding scope relationships and accessing nodes created from other parts of the same file."
+    },
+    {
+      "edgeType": "CALLS_ON",
+      "needs": {
+        "astLocal": false,
+        "scopeStack": false,
+        "siblingNodes": true,
+        "crossFile": false,
+        "typeInfo": true
+      },
+      "phase": "post-project",
+      "srcNodeTypes": [
+        "CALL",
+        "PROPERTY_ACCESS"
+      ],
+      "dstNodeTypes": [
+        "PARAMETER",
+        "LITERAL",
+        "VARIABLE",
+        "PROPERTY_ACCESS",
+        "PROPERTY",
+        "CALL",
+        "EXTERNAL",
+        "EXPRESSION"
+      ],
+      "corpusCount": 73,
+      "examples": [
+        "aliasing::alias-callback-passed",
+        "aliasing::alias-callback-returned",
+        "aliasing::alias-callback-returned",
+        "async-generators::async-await-try-catch",
+        "async-generators::async-await-try-catch"
+      ],
+      "rationale": "CALLS_ON represents indirect calls where the actual callable is determined through aliasing, variable assignment, or function returns. This requires type inference to resolve what a variable/expression actually refers to at call time (e.g., `cmp` resolving to the returned comparator function). While some cases might be resolvable within the same file through data flow analysis, the general pattern requires tracking values across statements and potentially through function returns, making this fundamentally a type inference problem that goes beyond simple AST relationships."
+    },
+    {
+      "edgeType": "DECORATED_BY",
+      "needs": {
+        "astLocal": true,
+        "scopeStack": false,
+        "siblingNodes": false,
+        "crossFile": false,
+        "typeInfo": false
+      },
+      "phase": "walk",
+      "srcNodeTypes": [
+        "DECORATOR",
+        "PARAMETER",
+        "CLASS",
+        "METHOD"
+      ],
+      "dstNodeTypes": [
+        "CLASS",
+        "METHOD",
+        "DECORATOR",
+        "FUNCTION"
+      ],
+      "corpusCount": 7,
+      "examples": [
+        "ts-specific::decorator-usage",
+        "ts-specific::ts-parameter-decorators",
+        "ts-specific::ts-decorator-metadata"
+      ],
+      "rationale": "DECORATED_BY edges connect decorators to their immediate targets (classes, methods, parameters) within the same AST subtree. The decorator and its target are syntactically adjacent in the AST - decorators appear directly before their target declarations. This relationship can be established during AST traversal without needing scope resolution, cross-file analysis, or type information."
+    },
+    {
+      "edgeType": "DEFAULTS_TO",
+      "needs": {
+        "astLocal": true,
+        "scopeStack": false,
+        "siblingNodes": false,
+        "crossFile": false,
+        "typeInfo": false
+      },
+      "phase": "walk",
+      "srcNodeTypes": [
+        "VARIABLE",
+        "PROPERTY",
+        "PARAMETER",
+        "PROPERTY_ACCESS",
+        "TYPE_PARAMETER"
+      ],
+      "dstNodeTypes": [
+        "LITERAL",
+        "CALL",
+        "PROPERTY_ACCESS",
+        "FUNCTION",
+        "EXPRESSION"
+      ],
+      "corpusCount": 27,
+      "examples": [
+        "async-generators::async-generator-destructure-default",
+        "async-generators::async-destructure-await-default",
+        "classes::class-static-block",
+        "classes::destructure-assign-to-this-defaults",
+        "classes::default-param-this-access"
+      ],
+      "rationale": "DEFAULTS_TO edges connect parameters, variables, or properties to their default value expressions within the same AST construct. In destructuring assignments, function parameters, and property declarations, both the parameter/variable and its default value are part of the same local AST subtree. Even complex default expressions like 'await getConfigValue()' are still syntactically local to the parameter declaration."
+    },
+    {
+      "edgeType": "DELETES",
+      "needs": {
+        "astLocal": true,
+        "scopeStack": false,
+        "siblingNodes": false,
+        "crossFile": false,
+        "typeInfo": false
+      },
+      "phase": "walk",
+      "srcNodeTypes": [
+        "EXPRESSION",
+        "SIDE_EFFECT"
+      ],
+      "dstNodeTypes": [
+        "PROPERTY_ACCESS"
+      ],
+      "corpusCount": 6,
+      "examples": [
+        "expressions::delete-op",
+        "property-access::prop-delete",
+        "property-access::optional-chaining-delete",
+        "property-access::delete-array-hole",
+        "property-access::delete-computed-property"
+      ],
+      "rationale": "DELETES edges connect delete expressions/side effects to their target property access within the same statement. Both the delete operator and its operand (property access) are part of the same AST subtree, making this a purely local AST relationship that can be established during the initial walk phase."
+    },
+    {
+      "edgeType": "CONSTRAINED_BY",
+      "needs": {
+        "astLocal": true,
+        "scopeStack": false,
+        "siblingNodes": false,
+        "crossFile": false,
+        "typeInfo": false
+      },
+      "phase": "walk",
+      "srcNodeTypes": [
+        "TYPE_PARAMETER",
+        "TYPE_REFERENCE",
+        "INFER_TYPE"
+      ],
+      "dstNodeTypes": [
+        "LITERAL_TYPE",
+        "TYPE_REFERENCE",
+        "TYPE_ALIAS",
+        "TYPE_PARAMETER"
+      ],
+      "corpusCount": 13,
+      "examples": [
+        "jsdoc-types::jsdoc-template-constraint",
+        "ts-specific::generic-constraint",
+        "ts-specific::mapped-type-readonly",
+        "ts-specific::ts-abstract-construct",
+        "ts-specific::ts-distributive-conditional"
+      ],
+      "rationale": "CONSTRAINED_BY edges connect type parameters to their constraint expressions within the same generic declaration. In all examples, both the type parameter (T) and its constraint ({ length: number }, object, etc.) are part of the same AST subtree - either within a function's generic parameter list or a type alias declaration. The constraint is syntactically declared alongside the type parameter, making this a purely local AST relationship that can be established during the initial walk phase."
+    },
+    {
+      "edgeType": "DELEGATES_TO",
+      "needs": {
+        "astLocal": true,
+        "scopeStack": false,
+        "siblingNodes": false,
+        "crossFile": false,
+        "typeInfo": false
+      },
+      "phase": "walk",
+      "srcNodeTypes": [
+        "FUNCTION",
+        "EXPRESSION",
+        "METHOD"
+      ],
+      "dstNodeTypes": [
+        "CALL",
+        "EXPRESSION",
+        "VARIABLE"
+      ],
+      "corpusCount": 6,
+      "examples": [
+        "async-generators::generator-delegation",
+        "async-generators::yield-star-return-value",
+        "classes::class-generator-method",
+        "async-generators::yield-star-return-value",
+        "declarations::generator-delegation"
+      ],
+      "rationale": "DELEGATES_TO edges connect generator functions/methods to their yield* expressions within the same AST subtree. The delegation relationship is syntactically explicit through the yield* operator and can be identified during AST traversal without requiring scope resolution, cross-file analysis, or type inference. Both the delegating function and the yield* expression are present in the local AST structure."
+    },
+    {
+      "edgeType": "CONTAINS",
+      "needs": {
+        "astLocal": true,
+        "scopeStack": false,
+        "siblingNodes": false,
+        "crossFile": false,
+        "typeInfo": false
+      },
+      "phase": "walk",
+      "srcNodeTypes": [
+        "FUNCTION",
+        "METHOD",
+        "EXPRESSION",
+        "LOOP",
+        "TRY_BLOCK",
+        "CATCH_BLOCK",
+        "FINALLY_BLOCK",
+        "CLASS",
+        "SCOPE",
+        "BRANCH",
+        "SETTER",
+        "TYPE_ALIAS",
+        "MODULE",
+        "LITERAL",
+        "GETTER",
+        "LABEL",
+        "CASE",
+        "INTERFACE",
+        "PROPERTY",
+        "ENUM",
+        "TYPE_REFERENCE",
+        "NAMESPACE"
+      ],
+      "dstNodeTypes": [
+        "PARAMETER",
+        "CALL",
+        "LITERAL",
+        "BRANCH",
+        "VARIABLE",
+        "LOOP",
+        "EXPRESSION",
+        "TRY_BLOCK",
+        "FINALLY_BLOCK",
+        "PROPERTY_ACCESS",
+        "PROPERTY",
+        "METHOD",
+        "EXPORT",
+        "FUNCTION",
+        "SCOPE",
+        "STATIC_BLOCK",
+        "GETTER",
+        "SETTER",
+        "CATCH_BLOCK",
+        "IMPORT",
+        "EXTERNAL",
+        "SIDE_EFFECT",
+        "LABEL",
+        "ENUM_MEMBER",
+        "TYPE_PARAMETER",
+        "LITERAL_TYPE",
+        "TYPE_REFERENCE",
+        "INTERFACE",
+        "TYPE_ALIAS",
+        "CLASS",
+        "INFER_TYPE"
+      ],
+      "corpusCount": 1601,
+      "examples": [
+        "aliasing::alias-bind-partial",
+        "aliasing::alias-computed-method",
+        "aliasing::alias-reassign-conditional",
+        "aliasing::alias-callback-returned",
+        "aliasing::alias-callback-returned"
+      ],
+      "rationale": "CONTAINS represents structural containment relationships in the AST where a parent node directly contains a child node. This is a pure syntactic relationship that can be determined during AST traversal - when visiting a node, its immediate children are known and the containment edges can be created immediately. No scope analysis, cross-file resolution, or type information is needed since this reflects the direct parent-child structure of the syntax tree."
+    },
+    {
+      "edgeType": "DECLARES",
+      "needs": {
+        "astLocal": true,
+        "scopeStack": true,
+        "siblingNodes": false,
+        "crossFile": false,
+        "typeInfo": false
+      },
+      "phase": "walk",
+      "srcNodeTypes": [
+        "FUNCTION",
+        "MODULE",
+        "METHOD",
+        "CALL",
+        "SCOPE",
+        "TRY_BLOCK",
+        "CATCH_BLOCK",
+        "BRANCH",
+        "EXPRESSION",
+        "LOOP",
+        "PARAMETER",
+        "TYPE_ALIAS",
+        "CASE"
+      ],
+      "dstNodeTypes": [
+        "VARIABLE",
+        "FUNCTION",
+        "CLASS",
+        "PARAMETER",
+        "TYPE_ALIAS",
+        "INTERFACE",
+        "ENUM",
+        "PROPERTY",
+        "NAMESPACE",
+        "METHOD",
+        "TYPE_REFERENCE"
+      ],
+      "corpusCount": 353,
+      "examples": [
+        "aliasing::arguments-param-aliasing",
+        "aliasing::arguments-param-aliasing",
+        "async-generators::async-arrow",
+        "async-generators::async-arrow",
+        "builtins::builtin-json-stringify"
+      ],
+      "rationale": "DECLARES edges connect a scope (function, module, block, etc.) to the entities it declares (variables, functions, classes, parameters). Both the declaring scope and the declared entity are present in the local AST subtree during traversal. The scope stack is needed to determine which scope is doing the declaring - for example, a parameter is declared by its containing function, a variable by its containing block or function scope. This is a fundamental scoping relationship that can be established during AST walk without needing sibling nodes, cross-file information, or type inference."
+    },
+    {
+      "edgeType": "DERIVES_FROM",
+      "needs": {
+        "astLocal": false,
+        "scopeStack": false,
+        "siblingNodes": true,
+        "crossFile": false,
+        "typeInfo": true
+      },
+      "phase": "post-project",
+      "srcNodeTypes": [
+        "FUNCTION",
+        "PARAMETER",
+        "TYPE_ALIAS",
+        "TYPE_REFERENCE",
+        "EXPRESSION"
+      ],
+      "dstNodeTypes": [
+        "FUNCTION",
+        "LITERAL",
+        "TYPE_REFERENCE",
+        "PROPERTY_ACCESS",
+        "TYPE_ALIAS",
+        "PARAMETER",
+        "TYPE_PARAMETER",
+        "EXPRESSION"
+      ],
+      "corpusCount": 21,
+      "examples": [
+        "aliasing::alias-bind-partial",
+        "aliasing::alias-bind-partial",
+        "legacy-patterns::amd-define-named",
+        "ts-specific::mapped-type-readonly",
+        "ts-specific::mapped-type-mutable"
+      ],
+      "rationale": "DERIVES_FROM represents derivation relationships like partial application (bind), aliasing, and type derivation. The example shows `doubleIt` deriving from `multiply` via `.bind()` - this requires connecting nodes from different statements (siblingNodes=true) and understanding the semantic meaning of operations like bind() to establish the derivation relationship (typeInfo=true). While some cases might be within the same file, the general pattern requires semantic analysis beyond simple AST structure."
+    },
+    {
+      "edgeType": "EXPORTS",
+      "needs": {
+        "astLocal": false,
+        "scopeStack": false,
+        "siblingNodes": true,
+        "crossFile": false,
+        "typeInfo": false
+      },
+      "phase": "post-file",
+      "srcNodeTypes": [
+        "EXPORT",
+        "EXTERNAL_MODULE",
+        "MODULE"
+      ],
+      "dstNodeTypes": [
+        "VARIABLE",
+        "PROPERTY_ACCESS",
+        "FUNCTION",
+        "CLASS",
+        "LITERAL",
+        "EXTERNAL",
+        "IMPORT",
+        "TYPE_REFERENCE",
+        "TYPE_ALIAS"
+      ],
+      "corpusCount": 222,
+      "examples": [
+        "cjs-patterns::cjs-exports-named-1",
+        "cjs-patterns::cjs-exports-named-2",
+        "cjs-patterns::cjs-exports-named",
+        "callbacks::export-named-list",
+        "cjs-patterns::with-statement"
+      ],
+      "rationale": "EXPORTS edges connect export statements to the entities being exported (variables, functions, classes). The export statement and the exported entity are typically in different AST subtrees within the same file - the export is one statement while the exported entity was declared in another statement. This requires access to sibling nodes that were created during the processing of other statements in the same file, but doesn't need cross-file resolution since both the export and the exported entity exist in the current module."
+    },
+    {
+      "edgeType": "HAS_CASE",
+      "needs": {
+        "astLocal": true,
+        "scopeStack": false,
+        "siblingNodes": false,
+        "crossFile": false,
+        "typeInfo": false
+      },
+      "phase": "walk",
+      "srcNodeTypes": [
+        "BRANCH"
+      ],
+      "dstNodeTypes": [
+        "CASE"
+      ],
+      "corpusCount": 13,
+      "examples": [
+        "statements::switch-break",
+        "statements::switch-return-fallthrough",
+        "statements::tdz-switch-fallthrough",
+        "statements::switch-true-pattern",
+        "ts-specific::ts-exhaustive-never"
+      ],
+      "rationale": "HAS_CASE connects a switch statement (BRANCH node) to its individual case clauses (CASE nodes). Both the switch statement and all its case clauses are part of the same AST subtree - the cases are direct children of the switch statement in the AST structure. This relationship can be established during AST traversal without needing scope information, sibling nodes from other statements, cross-file references, or type inference."
+    },
+    {
+      "edgeType": "EXTENDS_SCOPE_WITH",
+      "needs": {
+        "astLocal": true,
+        "scopeStack": false,
+        "siblingNodes": false,
+        "crossFile": false,
+        "typeInfo": false
+      },
+      "phase": "walk",
+      "srcNodeTypes": [
+        "SCOPE"
+      ],
+      "dstNodeTypes": [
+        "PARAMETER"
+      ],
+      "corpusCount": 4,
+      "examples": [
+        "cjs-patterns::with-statement",
+        "cjs-patterns::with-nested",
+        "cjs-patterns::with-property-fallback"
+      ],
+      "rationale": "EXTENDS_SCOPE_WITH connects a SCOPE node (the with statement's block scope) to a PARAMETER node (the object being extended with). Both nodes are part of the same AST subtree - the with statement contains both the parameter expression and the block scope it creates. This is a direct parent-child or sibling relationship within the with statement's AST structure, requiring only local AST traversal to establish."
+    },
+    {
+      "edgeType": "HAS_BODY",
+      "needs": {
+        "astLocal": true,
+        "scopeStack": false,
+        "siblingNodes": false,
+        "crossFile": false,
+        "typeInfo": false
+      },
+      "phase": "walk",
+      "srcNodeTypes": [
+        "FUNCTION",
+        "LOOP",
+        "METHOD",
+        "BRANCH",
+        "GETTER",
+        "TRY_BLOCK",
+        "FINALLY_BLOCK"
+      ],
+      "dstNodeTypes": [
+        "PARAMETER",
+        "EXPRESSION",
+        "BRANCH",
+        "TRY_BLOCK",
+        "CALL",
+        "VARIABLE",
+        "SCOPE",
+        "LOOP"
+      ],
+      "corpusCount": 158,
+      "examples": [
+        "aliasing::alias-callback-passed",
+        "aliasing::arguments-basic",
+        "aliasing::alias-bind-partial",
+        "aliasing::arguments-basic",
+        "async-generators::promise-construction"
+      ],
+      "rationale": "HAS_BODY edges connect control structures (functions, loops, branches, try blocks) to their body contents. Both the container node and its body elements are part of the same AST subtree - the body is literally a child of the container in the AST. This is a direct parent-child or parent-grandchild relationship that can be established during AST traversal without needing scope information, sibling nodes, cross-file references, or type inference."
+    },
+    {
+      "edgeType": "HAS_ALTERNATE",
+      "needs": {
+        "astLocal": false,
+        "scopeStack": true,
+        "siblingNodes": true,
+        "crossFile": false,
+        "typeInfo": false
+      },
+      "phase": "post-file",
+      "srcNodeTypes": [
+        "BRANCH",
+        "EXPRESSION",
+        "FUNCTION",
+        "CONDITIONAL_TYPE",
+        "TYPE_REFERENCE"
+      ],
+      "dstNodeTypes": [
+        "VARIABLE",
+        "FUNCTION",
+        "EXPRESSION",
+        "LITERAL",
+        "CALL",
+        "PARAMETER",
+        "CLASS",
+        "BRANCH",
+        "LITERAL_TYPE",
+        "TYPE_REFERENCE",
+        "TYPE_PARAMETER",
+        "TYPE_ALIAS",
+        "PROPERTY_ACCESS"
+      ],
+      "corpusCount": 48,
+      "examples": [
+        "aliasing::alias-reassign-conditional",
+        "aliasing::alias-callback-returned",
+        "aliasing::alias-callback-returned",
+        "aliasing::arguments-callee",
+        "aliasing::alias-import-dynamic-conditional"
+      ],
+      "rationale": "HAS_ALTERNATE edges connect variables/references to alternative values they can hold based on control flow (if/else branches, conditional returns). This requires: (1) scopeStack to understand which variable declarations are in scope, and (2) siblingNodes to connect assignments/returns from different branches of the same conditional structure. The alternatives are determined by analyzing different execution paths within the same file, not by type inference or cross-file analysis."
+    },
+    {
+      "edgeType": "HAS_CATCH",
+      "needs": {
+        "astLocal": true,
+        "scopeStack": false,
+        "siblingNodes": false,
+        "crossFile": false,
+        "typeInfo": false
+      },
+      "phase": "walk",
+      "srcNodeTypes": [
+        "FUNCTION",
+        "TRY_BLOCK"
+      ],
+      "dstNodeTypes": [
+        "CATCH_BLOCK"
+      ],
+      "corpusCount": 26,
+      "examples": [
+        "async-generators::async-await-try-catch",
+        "async-generators::async-await-try-catch",
+        "callbacks::callback-error-first",
+        "cjs-patterns::require-conditional",
+        "coercion-hoisting::hoist-function-expr-not"
+      ],
+      "rationale": "HAS_CATCH connects try-catch constructs where both the source (TRY_BLOCK or FUNCTION containing try) and destination (CATCH_BLOCK) are part of the same AST subtree. The catch block is syntactically bound to its try block in the same statement, making this a purely local AST relationship that can be established during the initial walk phase."
+    },
+    {
+      "edgeType": "EXTENDS",
+      "needs": {
+        "astLocal": false,
+        "scopeStack": false,
+        "siblingNodes": false,
+        "crossFile": true,
+        "typeInfo": false
+      },
+      "phase": "post-project",
+      "srcNodeTypes": [
+        "CLASS",
+        "VARIABLE",
+        "PROPERTY_ACCESS",
+        "EXPRESSION",
+        "INTERFACE",
+        "CONDITIONAL_TYPE",
+        "TYPE_REFERENCE",
+        "TYPE_PARAMETER"
+      ],
+      "dstNodeTypes": [
+        "CLASS",
+        "CALL",
+        "PARAMETER",
+        "EXTERNAL",
+        "VARIABLE",
+        "PROPERTY_ACCESS",
+        "EXPRESSION",
+        "TYPE_REFERENCE",
+        "TYPE_ALIAS"
+      ],
+      "corpusCount": 32,
+      "examples": [
+        "classes::class-extends-super",
+        "classes::class-new-target",
+        "classes::mixin-composition",
+        "classes::class-multi-level-inheritance",
+        "classes::mixin-class-expression"
+      ],
+      "rationale": "EXTENDS edges connect a class/interface to its superclass/superinterface. While the syntactic relationship is visible in the AST (class Dog extends Animal), the destination node (Animal) is typically defined elsewhere - either in another file (imported class) or in a different part of the same file. The edge requires resolving the identifier 'Animal' to its actual class definition node, which may be cross-file. Even when both classes are in the same file, they exist as sibling nodes in separate AST subtrees, not as parent-child relationships."
+    },
+    {
+      "edgeType": "HAS_CONDITION",
+      "needs": {
+        "astLocal": true,
+        "scopeStack": false,
+        "siblingNodes": false,
+        "crossFile": false,
+        "typeInfo": false
+      },
+      "phase": "walk",
+      "srcNodeTypes": [
+        "BRANCH",
+        "LOOP",
+        "EXPRESSION",
+        "FUNCTION",
+        "METHOD",
+        "CASE",
+        "CONDITIONAL_TYPE",
+        "TYPE_REFERENCE"
+      ],
+      "dstNodeTypes": [
+        "EXPRESSION",
+        "PARAMETER",
+        "LITERAL",
+        "PROPERTY_ACCESS",
+        "VARIABLE",
+        "CALL",
+        "BRANCH",
+        "TYPE_PARAMETER",
+        "TYPE_REFERENCE",
+        "TYPE_ALIAS"
+      ],
+      "corpusCount": 134,
+      "examples": [
+        "aliasing::alias-reassign-conditional",
+        "aliasing::alias-callback-returned",
+        "aliasing::alias-callback-returned",
+        "aliasing::arguments-basic",
+        "aliasing::arguments-callee"
+      ],
+      "rationale": "HAS_CONDITION edges connect control flow constructs (if, while, for, switch cases, conditional types) directly to their condition expressions. Both the control flow node and its condition expression are part of the same AST subtree - they have a direct parent-child or immediate sibling relationship within a single statement. No scope resolution, cross-file references, or type inference is needed to identify these structural relationships."
+    },
+    {
+      "edgeType": "FLOWS_INTO",
+      "needs": {
+        "astLocal": false,
+        "scopeStack": true,
+        "siblingNodes": true,
+        "crossFile": false,
+        "typeInfo": true
+      },
+      "phase": "post-project",
+      "srcNodeTypes": [
+        "SIDE_EFFECT",
+        "VARIABLE",
+        "LITERAL",
+        "GETTER",
+        "EXPRESSION",
+        "CALL",
+        "TRY_BLOCK",
+        "CASE"
+      ],
+      "dstNodeTypes": [
+        "LOOP",
+        "SIDE_EFFECT",
+        "LITERAL",
+        "VARIABLE",
+        "FINALLY_BLOCK",
+        "CASE",
+        "LABEL"
+      ],
+      "corpusCount": 11,
+      "examples": [
+        "async-generators::generator-break-triggers-finally",
+        "coercion-hoisting::object-as-map-key-tostring",
+        "property-access::getter-computed-destructuring",
+        "runtime-apis::runtime-promise-withresolvers-deferred",
+        "statements::try-finally"
+      ],
+      "rationale": "FLOWS_INTO represents data/control flow relationships that often span across statements and require understanding of execution semantics. The examples show: (1) implicit generator.return() calls triggering finally blocks - requires understanding control flow semantics beyond AST structure, (2) object coercion in property access creating implicit data flows - requires type coercion knowledge, (3) getter invocation through computed destructuring - requires understanding property access semantics and execution order. These flows connect nodes across different statements (siblingNodes), need scope context for variable resolution (scopeStack), and require semantic understanding of JavaScript's execution model including type coercion and implicit operations (typeInfo)."
+    },
+    {
+      "edgeType": "DEPENDS_ON",
+      "needs": {
+        "astLocal": false,
+        "scopeStack": true,
+        "siblingNodes": true,
+        "crossFile": true,
+        "typeInfo": true
+      },
+      "phase": "post-project",
+      "srcNodeTypes": [
+        "METHOD",
+        "META_PROPERTY",
+        "PROPERTY_ACCESS",
+        "FUNCTION",
+        "EXTERNAL",
+        "EXPORT",
+        "MODULE",
+        "TYPE_REFERENCE"
+      ],
+      "dstNodeTypes": [
+        "VARIABLE",
+        "MODULE",
+        "SIDE_EFFECT",
+        "EXTERNAL",
+        "FUNCTION",
+        "IMPORT",
+        "EXTERNAL_MODULE",
+        "TYPE_PARAMETER"
+      ],
+      "corpusCount": 20,
+      "examples": [
+        "classes::class-computed-methods",
+        "closures::this-module-level",
+        "coercion-hoisting::object-as-map-key-tostring",
+        "jsdoc-types::jsdoc-param-returns",
+        "jsdoc-types::jsdoc-deprecated"
+      ],
+      "rationale": "DEPENDS_ON edges represent semantic dependencies that frequently cross scope boundaries (requiring scopeStack), connect to variables/imports defined in other statements (siblingNodes), reference external modules (crossFile), and involve type resolution for complex dependency patterns (typeInfo). The diverse source/destination node types indicate this is a general dependency relationship that needs full context to resolve correctly."
+    },
+    {
+      "edgeType": "HAS_CONSEQUENT",
+      "needs": {
+        "astLocal": true,
+        "scopeStack": false,
+        "siblingNodes": false,
+        "crossFile": false,
+        "typeInfo": false
+      },
+      "phase": "walk",
+      "srcNodeTypes": [
+        "BRANCH",
+        "EXPRESSION",
+        "FUNCTION",
+        "CONDITIONAL_TYPE"
+      ],
+      "dstNodeTypes": [
+        "VARIABLE",
+        "FUNCTION",
+        "LITERAL",
+        "CALL",
+        "EXPRESSION",
+        "SIDE_EFFECT",
+        "PROPERTY_ACCESS",
+        "CLASS",
+        "PARAMETER",
+        "LITERAL_TYPE",
+        "TYPE_REFERENCE",
+        "TYPE_ALIAS",
+        "INFER_TYPE"
+      ],
+      "corpusCount": 79,
+      "examples": [
+        "aliasing::alias-reassign-conditional",
+        "aliasing::alias-callback-returned",
+        "aliasing::alias-callback-returned",
+        "aliasing::arguments-callee",
+        "aliasing::alias-import-dynamic-conditional"
+      ],
+      "rationale": "HAS_CONSEQUENT represents the 'then' branch relationship in conditional constructs (if-then-else, ternary operators, conditional types). Both the conditional node and its consequent are part of the same AST subtree - they are syntactically adjacent in the source code. This is a structural relationship that can be identified during AST traversal without needing scope information, cross-file context, or type inference."
+    },
+    {
+      "edgeType": "HAS_DEFAULT",
+      "needs": {
+        "astLocal": true,
+        "scopeStack": false,
+        "siblingNodes": false,
+        "crossFile": false,
+        "typeInfo": false
+      },
+      "phase": "walk",
+      "srcNodeTypes": [
+        "BRANCH"
+      ],
+      "dstNodeTypes": [
+        "CASE"
+      ],
+      "corpusCount": 4,
+      "examples": [
+        "statements::switch-break",
+        "statements::switch-return-fallthrough",
+        "statements::switch-true-pattern",
+        "ts-specific::ts-exhaustive-never"
+      ],
+      "rationale": "HAS_DEFAULT connects a switch statement (BRANCH) to its default case (CASE). Both nodes are part of the same AST subtree - the switch statement contains the default case as a direct child. This relationship can be established during AST traversal without needing scope information, sibling nodes from other statements, cross-file references, or type inference."
+    },
+    {
+      "edgeType": "HAS_FINALLY",
+      "needs": {
+        "astLocal": true,
+        "scopeStack": false,
+        "siblingNodes": false,
+        "crossFile": false,
+        "typeInfo": false
+      },
+      "phase": "walk",
+      "srcNodeTypes": [
+        "FUNCTION",
+        "TRY_BLOCK"
+      ],
+      "dstNodeTypes": [
+        "FINALLY_BLOCK"
+      ],
+      "corpusCount": 12,
+      "examples": [
+        "async-generators::generator-return-throw",
+        "async-generators::generator-finally-cleanup",
+        "async-generators::generator-finally-yield-trap",
+        "async-generators::generator-return-throw",
+        "async-generators::async-iterator-cancel-break"
+      ],
+      "rationale": "HAS_FINALLY connects a try-catch construct (TRY_BLOCK or containing FUNCTION) directly to its finally block. Both nodes are part of the same AST subtree - the finally block is a direct child of the try statement structure. This is a pure syntactic relationship that can be established during AST traversal without needing scope information, sibling nodes, cross-file references, or type inference."
+    },
+    {
+      "edgeType": "HAS_ELEMENT",
+      "needs": {
+        "astLocal": true,
+        "scopeStack": false,
+        "siblingNodes": false,
+        "crossFile": false,
+        "typeInfo": false
+      },
+      "phase": "walk",
+      "srcNodeTypes": [
+        "LITERAL",
+        "EXPRESSION",
+        "PARAMETER",
+        "TYPE_REFERENCE",
+        "TYPE_ALIAS"
+      ],
+      "dstNodeTypes": [
+        "LITERAL",
+        "CALL",
+        "CLASS",
+        "EXPRESSION",
+        "VARIABLE",
+        "PARAMETER",
+        "TYPE_PARAMETER",
+        "TYPE_REFERENCE"
+      ],
+      "corpusCount": 92,
+      "examples": [
+        "builtins::builtin-map-constructor",
+        "builtins::sparse-array",
+        "classes::mixin-composition",
+        "classes::class-multi-level-inheritance",
+        "classes::class-in-array"
+      ],
+      "rationale": "HAS_ELEMENT represents containment relationships within collection literals (arrays, maps) and composite type expressions. In all examples, both the container and its elements are present in the same AST subtree - array literals contain their element expressions, Map constructors contain their entry arrays, and mixin compositions contain their nested class expressions. This is purely structural information available during AST traversal without needing scope resolution, cross-file references, or type inference."
+    },
+    {
+      "edgeType": "HAS_INIT",
+      "needs": {
+        "astLocal": true,
+        "scopeStack": false,
+        "siblingNodes": false,
+        "crossFile": false,
+        "typeInfo": false
+      },
+      "phase": "walk",
+      "srcNodeTypes": [
+        "LOOP"
+      ],
+      "dstNodeTypes": [
+        "VARIABLE"
+      ],
+      "corpusCount": 12,
+      "examples": [
+        "async-generators::generator-basic",
+        "async-generators::generator-basic",
+        "async-generators::async-generator",
+        "async-generators::async-generator",
+        "iterators::iter-generator-iterable"
+      ],
+      "rationale": "HAS_INIT connects a LOOP node to its initialization VARIABLE (e.g., 'let i = start' in a for loop). Both the loop construct and its initialization variable declaration are part of the same AST subtree - the initialization is a direct child component of the for loop statement. This can be identified during AST traversal without needing scope context, sibling nodes, cross-file information, or type inference."
+    },
+    {
+      "edgeType": "HAS_OVERLOAD",
+      "needs": {
+        "astLocal": false,
+        "scopeStack": true,
+        "siblingNodes": true,
+        "crossFile": false,
+        "typeInfo": true
+      },
+      "phase": "post-project",
+      "srcNodeTypes": [
+        "METHOD"
+      ],
+      "dstNodeTypes": [
+        "METHOD"
+      ],
+      "corpusCount": 2,
+      "examples": [
+        "ts-specific::ts-class-method-overloads"
+      ],
+      "rationale": "HAS_OVERLOAD connects method overload signatures to their implementation within the same class. This requires: scopeStack to identify the containing class scope, siblingNodes to connect method declarations that appear as separate AST nodes within the class body, and typeInfo to match overload signatures by parameter types and determine which methods are overloads of each other rather than distinct methods."
+    },
+    {
+      "edgeType": "HAS_TYPE",
+      "needs": {
+        "astLocal": false,
+        "scopeStack": false,
+        "siblingNodes": false,
+        "crossFile": true,
+        "typeInfo": true
+      },
+      "phase": "post-project",
+      "srcNodeTypes": [
+        "VARIABLE",
+        "PARAMETER",
+        "EXTERNAL",
+        "FUNCTION",
+        "TYPE_REFERENCE",
+        "LITERAL",
+        "EXPRESSION",
+        "PROPERTY",
+        "TYPE_PARAMETER"
+      ],
+      "dstNodeTypes": [
+        "TYPE_REFERENCE",
+        "TYPE_ALIAS",
+        "PARAMETER",
+        "TYPE_PARAMETER",
+        "CALL",
+        "LITERAL",
+        "INFER_TYPE",
+        "LITERAL_TYPE",
+        "CLASS"
+      ],
+      "corpusCount": 113,
+      "examples": [
+        "jsdoc-types::jsdoc-type-variable",
+        "jsdoc-types::jsdoc-typedef",
+        "jsdoc-types::jsdoc-template-constraint",
+        "jsdoc-types::jsdoc-import-type",
+        "jsdoc-types::jsdoc-deprecated"
+      ],
+      "rationale": "HAS_TYPE edges connect variables/parameters/expressions to their type information, which requires resolving type references that may be defined in other files (like imported types, built-in types, or cross-module type definitions). Even JSDoc type annotations reference types that need to be resolved through the type system, and the destination types often require type inference or lookup beyond simple AST inspection."
+    },
+    {
+      "edgeType": "HAS_PROPERTY",
+      "needs": {
+        "astLocal": true,
+        "scopeStack": false,
+        "siblingNodes": false,
+        "crossFile": false,
+        "typeInfo": false
+      },
+      "phase": "walk",
+      "srcNodeTypes": [
+        "LITERAL",
+        "EXPRESSION",
+        "PARAMETER",
+        "CLASS",
+        "PROPERTY_ACCESS",
+        "TYPE_ALIAS",
+        "GETTER",
+        "VARIABLE",
+        "IMPORT",
+        "CALL",
+        "INTERFACE",
+        "TYPE_REFERENCE"
+      ],
+      "dstNodeTypes": [
+        "METHOD",
+        "PROPERTY",
+        "VARIABLE",
+        "LITERAL",
+        "EXPRESSION",
+        "PARAMETER",
+        "FUNCTION",
+        "PROPERTY_ACCESS",
+        "CALL",
+        "GETTER",
+        "SETTER",
+        "TYPE_REFERENCE"
+      ],
+      "corpusCount": 215,
+      "examples": [
+        "aliasing::alias-computed-method",
+        "async-generators::async-return-thenable",
+        "async-generators::promise-resolve-thenable",
+        "async-generators::async-destructure-await-default",
+        "async-generators::async-return-thenable"
+      ],
+      "rationale": "HAS_PROPERTY edges connect objects/classes to their properties/methods as they appear in object literals, class definitions, or interface declarations. Both the container (object/class) and the property are present in the same AST subtree during parsing. Examples show object literals with methods like `{ add(a, b) {...} }` and `{ then(resolve) {...} }` where the object and its properties are syntactically co-located. No scope resolution, cross-file lookup, or type inference is needed - just direct AST traversal of the property definition structure."
+    },
+    {
+      "edgeType": "HAS_TYPE_PARAMETER",
+      "needs": {
+        "astLocal": true,
+        "scopeStack": false,
+        "siblingNodes": false,
+        "crossFile": false,
+        "typeInfo": false
+      },
+      "phase": "walk",
+      "srcNodeTypes": [
+        "FUNCTION",
+        "TYPE_ALIAS",
+        "INTERFACE",
+        "TYPE_REFERENCE",
+        "CLASS",
+        "METHOD"
+      ],
+      "dstNodeTypes": [
+        "TYPE_PARAMETER"
+      ],
+      "corpusCount": 26,
+      "examples": [
+        "jsdoc-types::jsdoc-template-constraint",
+        "jsdoc-types::jsdoc-template",
+        "ts-specific::type-alias-tuple",
+        "ts-specific::type-alias-generic",
+        "ts-specific::generic-interface"
+      ],
+      "rationale": "HAS_TYPE_PARAMETER connects a generic construct (function, class, interface, type alias) directly to its declared type parameters. Both the source (generic construct) and destination (type parameter) nodes are part of the same AST subtree - the type parameters are syntactically declared as part of the construct's signature. This is a direct parent-child or sibling relationship within the same declaration, requiring only local AST traversal to establish."
+    },
+    {
+      "edgeType": "HAS_UPDATE",
+      "needs": {
+        "astLocal": true,
+        "scopeStack": false,
+        "siblingNodes": false,
+        "crossFile": false,
+        "typeInfo": false
+      },
+      "phase": "walk",
+      "srcNodeTypes": [
+        "LOOP"
+      ],
+      "dstNodeTypes": [
+        "EXPRESSION"
+      ],
+      "corpusCount": 21,
+      "examples": [
+        "aliasing::arguments-basic",
+        "aliasing::arguments-basic",
+        "async-generators::generator-basic",
+        "async-generators::generator-basic",
+        "async-generators::async-generator"
+      ],
+      "rationale": "HAS_UPDATE connects a LOOP node to its update EXPRESSION (like i++ in for loops). Both the loop construct and its update expression are part of the same AST subtree - the update expression is a direct child component of the for loop statement. This can be identified during AST traversal without needing scope information, sibling nodes, cross-file context, or type inference."
+    },
+    {
+      "edgeType": "HAS_SCOPE",
+      "needs": {
+        "astLocal": true,
+        "scopeStack": true,
+        "siblingNodes": false,
+        "crossFile": false,
+        "typeInfo": false
+      },
+      "phase": "walk",
+      "srcNodeTypes": [
+        "FUNCTION",
+        "BRANCH",
+        "CALL",
+        "LABEL"
+      ],
+      "dstNodeTypes": [
+        "SCOPE"
+      ],
+      "corpusCount": 7,
+      "examples": [
+        "cjs-patterns::with-statement",
+        "cjs-patterns::with-property-fallback",
+        "coercion-hoisting::shadow-block-scope",
+        "coercion-hoisting::eval-let-scope",
+        "statements::labeled-block"
+      ],
+      "rationale": "HAS_SCOPE edges connect constructs that create scopes (functions, blocks, with statements) to their corresponding SCOPE nodes. The source construct and its scope are part of the same AST subtree, making it astLocal. However, creating the correct scope requires understanding the scope nesting chain to properly handle shadowing and scope inheritance, requiring scopeStack. No cross-file resolution or sibling nodes are needed since scope creation happens during AST traversal."
+    },
+    {
+      "edgeType": "IMPLEMENTS",
+      "needs": {
+        "astLocal": false,
+        "scopeStack": false,
+        "siblingNodes": false,
+        "crossFile": true,
+        "typeInfo": true
+      },
+      "phase": "post-project",
+      "srcNodeTypes": [
+        "CLASS",
+        "METHOD"
+      ],
+      "dstNodeTypes": [
+        "INTERFACE",
+        "METHOD"
+      ],
+      "corpusCount": 5,
+      "examples": [
+        "jsdoc-types::jsdoc-implements",
+        "ts-specific::abstract-class",
+        "ts-specific::class-implements"
+      ],
+      "rationale": "IMPLEMENTS edges connect classes/methods to interfaces/abstract methods that they implement. The interface definitions are typically in different files (crossFile=true), and resolving what a class actually implements requires type system analysis to match method signatures and ensure contract compliance (typeInfo=true). Even when interfaces are in the same file, the semantic relationship requires type-level reasoning beyond simple AST inspection."
+    },
+    {
+      "edgeType": "IMPORTS",
+      "needs": {
+        "astLocal": false,
+        "scopeStack": false,
+        "siblingNodes": false,
+        "crossFile": true,
+        "typeInfo": false
+      },
+      "phase": "post-project",
+      "srcNodeTypes": [
+        "CALL",
+        "IMPORT"
+      ],
+      "dstNodeTypes": [
+        "EXTERNAL_MODULE",
+        "VARIABLE",
+        "TYPE_ALIAS"
+      ],
+      "corpusCount": 19,
+      "examples": [
+        "cjs-patterns::require-simple",
+        "cjs-patterns::require-path",
+        "index::import-named",
+        "index::import-default",
+        "index::import-aliased"
+      ],
+      "rationale": "IMPORTS edges connect local import statements/calls to external modules or their exports. The destination nodes (EXTERNAL_MODULE, exported VARIABLE, TYPE_ALIAS) exist in other files or are external dependencies. Even though the import syntax is locally visible in the AST, resolving what is actually being imported requires cross-file module resolution."
+    },
+    {
+      "edgeType": "IMPORTS_FROM",
+      "needs": {
+        "astLocal": false,
+        "scopeStack": false,
+        "siblingNodes": false,
+        "crossFile": true,
+        "typeInfo": false
+      },
+      "phase": "post-project",
+      "srcNodeTypes": [
+        "CALL",
+        "IMPORT",
+        "EXPORT",
+        "TYPE_REFERENCE",
+        "PARAMETER",
+        "MODULE"
+      ],
+      "dstNodeTypes": [
+        "EXTERNAL_MODULE",
+        "LITERAL",
+        "EXPRESSION",
+        "MODULE"
+      ],
+      "corpusCount": 42,
+      "examples": [
+        "aliasing::alias-import-dynamic-variable",
+        "aliasing::alias-import-dynamic-conditional",
+        "aliasing::alias-import-dynamic-variable",
+        "aliasing::alias-import-dynamic-template",
+        "aliasing::alias-import-dynamic-template"
+      ],
+      "rationale": "IMPORTS_FROM edges connect import statements or dynamic import calls to external modules. By definition, this requires resolving module paths to actual files/modules outside the current file. Even when the module path is a literal string in the same AST subtree, the destination (EXTERNAL_MODULE) represents a separate file that must exist in the project graph."
+    },
+    {
+      "edgeType": "IMPLEMENTS_OVERLOAD",
+      "needs": {
+        "astLocal": false,
+        "scopeStack": true,
+        "siblingNodes": true,
+        "crossFile": false,
+        "typeInfo": true
+      },
+      "phase": "post-project",
+      "srcNodeTypes": [
+        "FUNCTION",
+        "METHOD"
+      ],
+      "dstNodeTypes": [
+        "METHOD"
+      ],
+      "corpusCount": 5,
+      "examples": [
+        "ts-specific::function-overloads",
+        "ts-specific::ts-class-method-overloads",
+        "ts-specific::ts-constructor-overloads"
+      ],
+      "rationale": "IMPLEMENTS_OVERLOAD connects overload signatures to their implementation within the same scope. It requires scopeStack to identify the containing function/class context, siblingNodes to find all overload signatures and match them to the implementation (which are separate AST nodes in the same file), and typeInfo to determine which signatures correspond to the same overloaded function based on name and parameter type compatibility."
+    },
+    {
+      "edgeType": "INFERS",
+      "needs": {
+        "astLocal": true,
+        "scopeStack": false,
+        "siblingNodes": false,
+        "crossFile": false,
+        "typeInfo": false
+      },
+      "phase": "walk",
+      "srcNodeTypes": [
+        "INFER_TYPE",
+        "TYPE_REFERENCE",
+        "CONDITIONAL_TYPE",
+        "TYPE_ALIAS"
+      ],
+      "dstNodeTypes": [
+        "TYPE_PARAMETER",
+        "INFER_TYPE"
+      ],
+      "corpusCount": 11,
+      "examples": [
+        "ts-specific::conditional-type-infer",
+        "ts-specific::ts-template-literal-infer",
+        "ts-specific::ts-variadic-tuple",
+        "ts-specific::ts-infer-constrained"
+      ],
+      "rationale": "INFERS edges connect conditional type expressions to their inferred type parameters (e.g., `T extends Promise<infer U>` creates INFERS edge from the conditional type to U). Both the source (conditional type/template literal pattern) and destination (infer declaration) are part of the same AST subtree within a single type expression. This is purely syntactic analysis of the `infer` keyword usage within type patterns, requiring no scope resolution, cross-file references, or type inference."
+    },
+    {
+      "edgeType": "INTERSECTS_WITH",
+      "needs": {
+        "astLocal": true,
+        "scopeStack": false,
+        "siblingNodes": false,
+        "crossFile": false,
+        "typeInfo": false
+      },
+      "phase": "walk",
+      "srcNodeTypes": [
+        "TYPE_REFERENCE"
+      ],
+      "dstNodeTypes": [
+        "TYPE_PARAMETER",
+        "TYPE_ALIAS",
+        "TYPE_REFERENCE"
+      ],
+      "corpusCount": 10,
+      "examples": [
+        "ts-specific::generic-function-multi",
+        "ts-specific::union-intersection",
+        "ts-specific::ts-branded-type",
+        "ts-specific::ts-function-type-intersection"
+      ],
+      "rationale": "INTERSECTS_WITH edges connect type references within intersection type expressions (T & U). Both the source and destination nodes are part of the same AST subtree - they are operands of the intersection operator in a single type expression. This can be determined during AST traversal without needing scope information, sibling nodes, cross-file resolution, or type inference."
+    },
+    {
+      "edgeType": "ITERATES_OVER",
+      "needs": {
+        "astLocal": true,
+        "scopeStack": false,
+        "siblingNodes": false,
+        "crossFile": false,
+        "typeInfo": false
+      },
+      "phase": "walk",
+      "srcNodeTypes": [
+        "LOOP",
+        "TYPE_PARAMETER",
+        "TYPE_ALIAS"
+      ],
+      "dstNodeTypes": [
+        "PARAMETER",
+        "LITERAL",
+        "PROPERTY_ACCESS",
+        "VARIABLE",
+        "CALL",
+        "TYPE_REFERENCE",
+        "TYPE_PARAMETER"
+      ],
+      "corpusCount": 32,
+      "examples": [
+        "async-generators::for-await-of",
+        "async-generators::for-await-of",
+        "async-generators::generator-break-triggers-finally",
+        "async-generators::for-await-sync-iterable",
+        "async-generators::async-generator-destructure-default"
+      ],
+      "rationale": "ITERATES_OVER connects loop constructs directly to their iteration target expression within the same statement. In 'for (const item of asyncIterable)', the loop node and the iterable expression are both part of the same AST subtree. The edge represents a syntactic relationship that can be determined purely from local AST structure without needing scope resolution, cross-file context, or type information."
+    },
+    {
+      "edgeType": "MERGES_WITH",
+      "needs": {
+        "astLocal": false,
+        "scopeStack": true,
+        "siblingNodes": true,
+        "crossFile": true,
+        "typeInfo": true
+      },
+      "phase": "post-project",
+      "srcNodeTypes": [
+        "NAMESPACE",
+        "CLASS",
+        "INTERFACE"
+      ],
+      "dstNodeTypes": [
+        "INTERFACE",
+        "CLASS",
+        "ENUM"
+      ],
+      "corpusCount": 4,
+      "examples": [
+        "ts-specific::ts-module-augmentation",
+        "ts-specific::ts-declaration-merging",
+        "ts-specific::ts-enum-namespace-merge"
+      ],
+      "rationale": "MERGES_WITH represents TypeScript's declaration merging, which requires comprehensive analysis: scopeStack to understand namespace/module contexts, siblingNodes to find mergeable declarations in the same file, crossFile for module augmentation (merging with external modules like 'express'), and typeInfo to determine semantic compatibility of merged declarations (class+interface, enum+namespace combinations)."
+    },
+    {
+      "edgeType": "INVOKES",
+      "needs": {
+        "astLocal": false,
+        "scopeStack": false,
+        "siblingNodes": false,
+        "crossFile": false,
+        "typeInfo": true
+      },
+      "phase": "post-project",
+      "srcNodeTypes": [
+        "PROPERTY_ACCESS",
+        "EXPRESSION"
+      ],
+      "dstNodeTypes": [
+        "GETTER",
+        "SETTER"
+      ],
+      "corpusCount": 6,
+      "examples": [
+        "property-access::prop-getter-only-no-setter",
+        "property-access::prop-getter-side-effect",
+        "property-access::getter-throws-in-destructuring",
+        "property-access::getter-destructuring-side-effect"
+      ],
+      "rationale": "INVOKES edges connect property access expressions to getter/setter methods. While the property access is visible in the AST, determining which specific getter or setter method is invoked requires type inference to resolve the object's type and its property descriptors. The getter/setter definitions may be in the same object literal (local) or inherited from prototypes/classes potentially in other files, but the key requirement is type resolution to identify which accessor method is actually called."
+    },
+    {
+      "edgeType": "LISTENS_TO",
+      "needs": {
+        "astLocal": true,
+        "scopeStack": false,
+        "siblingNodes": false,
+        "crossFile": false,
+        "typeInfo": false
+      },
+      "phase": "walk",
+      "srcNodeTypes": [
+        "EXTERNAL"
+      ],
+      "dstNodeTypes": [
+        "FUNCTION"
+      ],
+      "corpusCount": 4,
+      "examples": [
+        "runtime-apis::runtime-global-error-handlers"
+      ],
+      "rationale": "LISTENS_TO edges connect EXTERNAL nodes (representing global objects like process, window) to FUNCTION nodes (event handlers) within event listener registration calls. Both the external object reference and the handler function are present in the same AST subtree of the listener registration statement (e.g., process.on('event', handler)). No scope traversal, cross-file resolution, or type inference is needed - just local AST analysis to identify the listener pattern and connect the external object to its handler function."
+    },
+    {
+      "edgeType": "OVERRIDES",
+      "needs": {
+        "astLocal": false,
+        "scopeStack": false,
+        "siblingNodes": false,
+        "crossFile": true,
+        "typeInfo": true
+      },
+      "phase": "post-project",
+      "srcNodeTypes": [
+        "METHOD"
+      ],
+      "dstNodeTypes": [
+        "METHOD"
+      ],
+      "corpusCount": 1,
+      "examples": [
+        "ts-specific::ts-override"
+      ],
+      "rationale": "OVERRIDES edges connect a method in a derived class to the method it overrides in a base class. This requires: 1) Cross-file resolution since the base class method may be defined in a different file, 2) Type information to resolve the inheritance hierarchy and determine which specific method is being overridden (considering method signatures, generics, and polymorphism). Even when both classes are in the same file, establishing the override relationship requires understanding the type system and inheritance chain."
+    },
+    {
+      "edgeType": "MODIFIES",
+      "needs": {
+        "astLocal": false,
+        "scopeStack": true,
+        "siblingNodes": true,
+        "crossFile": false,
+        "typeInfo": false
+      },
+      "phase": "post-file",
+      "srcNodeTypes": [
+        "EXPRESSION",
+        "PROPERTY_ACCESS",
+        "CALL",
+        "PARAMETER",
+        "FUNCTION",
+        "LOOP"
+      ],
+      "dstNodeTypes": [
+        "VARIABLE",
+        "PROPERTY",
+        "PROPERTY_ACCESS",
+        "PARAMETER"
+      ],
+      "corpusCount": 48,
+      "examples": [
+        "aliasing::arguments-basic",
+        "aliasing::arguments-basic",
+        "async-generators::generator-basic",
+        "async-generators::generator-basic",
+        "async-generators::async-generator"
+      ],
+      "rationale": "MODIFIES edges connect expressions that modify variables/properties to their targets. The modifier (e.g., assignment expression, increment operation) and the target variable may be in different AST subtrees within the same file. Requires scope stack to resolve variable references to their declarations, and sibling nodes since the variable declaration and modification often occur in separate statements. Does not require cross-file analysis as modifications are typically within the same module scope."
+    },
+    {
+      "edgeType": "PASSES_ARGUMENT",
+      "needs": {
+        "astLocal": true,
+        "scopeStack": false,
+        "siblingNodes": false,
+        "crossFile": false,
+        "typeInfo": false
+      },
+      "phase": "walk",
+      "srcNodeTypes": [
+        "CALL",
+        "TYPE_REFERENCE",
+        "DECORATOR"
+      ],
+      "dstNodeTypes": [
+        "LITERAL",
+        "PARAMETER",
+        "FUNCTION",
+        "VARIABLE",
+        "EXPRESSION",
+        "BRANCH",
+        "CALL",
+        "PROPERTY_ACCESS",
+        "CLASS",
+        "META_PROPERTY",
+        "EXTERNAL",
+        "TYPE_REFERENCE"
+      ],
+      "corpusCount": 600,
+      "examples": [
+        "aliasing::alias-method-extraction",
+        "aliasing::alias-destructured-method",
+        "aliasing::alias-bind-partial",
+        "aliasing::alias-computed-method",
+        "aliasing::alias-callback-passed"
+      ],
+      "rationale": "PASSES_ARGUMENT edges connect call sites to their argument expressions, which are always present in the same AST subtree. The call node and its argument nodes are direct parent-child relationships in the AST. While the destination might eventually resolve to entities defined elsewhere (like variables or functions), the edge itself connects the call to the immediate argument expression in the local syntax tree."
+    },
+    {
+      "edgeType": "RECEIVES_ARGUMENT",
+      "needs": {
+        "astLocal": true,
+        "scopeStack": false,
+        "siblingNodes": false,
+        "crossFile": false,
+        "typeInfo": false
+      },
+      "phase": "walk",
+      "srcNodeTypes": [
+        "METHOD",
+        "FUNCTION",
+        "CATCH_BLOCK"
+      ],
+      "dstNodeTypes": [
+        "PARAMETER",
+        "EXPRESSION"
+      ],
+      "corpusCount": 32,
+      "examples": [
+        "async-generators::promise-resolve-thenable",
+        "async-generators::promise-resolve-thenable",
+        "classes::class-basic",
+        "classes::mixin-composition",
+        "classes::mixin-class-expression"
+      ],
+      "rationale": "RECEIVES_ARGUMENT connects function/method/catch block nodes to their parameter nodes, which are direct children in the AST. The parameter list is part of the function declaration syntax and both endpoints exist within the same AST subtree during traversal. No scope resolution, cross-file lookup, or type inference is needed - just the structural parent-child relationship in the AST."
+    },
+    {
+      "edgeType": "RESOLVES_TO",
+      "needs": {
+        "astLocal": false,
+        "scopeStack": true,
+        "siblingNodes": true,
+        "crossFile": true,
+        "typeInfo": true
+      },
+      "phase": "post-project",
+      "srcNodeTypes": [
+        "PROPERTY_ACCESS",
+        "CALL",
+        "VARIABLE",
+        "EXPRESSION",
+        "TYPE_REFERENCE",
+        "FILE",
+        "TYPE_ALIAS"
+      ],
+      "dstNodeTypes": [
+        "METHOD",
+        "PROPERTY",
+        "PARAMETER",
+        "SCOPE",
+        "LITERAL",
+        "SIDE_EFFECT",
+        "TYPE_REFERENCE",
+        "TYPE_PARAMETER",
+        "TYPE_ALIAS",
+        "CONDITIONAL_TYPE"
+      ],
+      "corpusCount": 23,
+      "examples": [
+        "aliasing::alias-computed-method",
+        "callbacks::callback-thisarg-filter",
+        "callbacks::callback-thisarg-map",
+        "cjs-patterns::with-statement",
+        "cjs-patterns::with-nested"
+      ],
+      "rationale": "RESOLVES_TO edges connect references to their actual definitions, which requires comprehensive resolution capabilities. The examples show computed property access (mathObj[methodName] → add method), this binding in callbacks, and variable references across scopes. This requires scope chain traversal for variable lookup, access to sibling nodes for property resolution, cross-file resolution for imported symbols, and type inference to determine what computed expressions and dynamic references actually resolve to at runtime."
+    },
+    {
+      "edgeType": "RETURNS_TYPE",
+      "needs": {
+        "astLocal": true,
+        "scopeStack": false,
+        "siblingNodes": false,
+        "crossFile": false,
+        "typeInfo": false
+      },
+      "phase": "walk",
+      "srcNodeTypes": [
+        "FUNCTION",
+        "TYPE_ALIAS",
+        "METHOD",
+        "PARAMETER"
+      ],
+      "dstNodeTypes": [
+        "TYPE_REFERENCE",
+        "TYPE_PARAMETER",
+        "CLASS",
+        "INTERFACE"
+      ],
+      "corpusCount": 27,
+      "examples": [
+        "jsdoc-types::jsdoc-template-constraint",
+        "jsdoc-types::jsdoc-this",
+        "jsdoc-types::jsdoc-callback",
+        "jsdoc-types::jsdoc-overload",
+        "ts-specific::ts-typed-function"
+      ],
+      "rationale": "RETURNS_TYPE edges connect functions/methods to their declared return types found in JSDoc annotations or type declarations. Both the function node and the type reference are created from the same AST subtree during parsing - the function declaration and its associated JSDoc comment are processed together as a single unit. The type references (like 'T', 'string', 'boolean') are parsed directly from the annotation syntax without requiring scope resolution, sibling node lookup, or cross-file analysis."
+    },
+    {
+      "edgeType": "RETURNS",
+      "needs": {
+        "astLocal": true,
+        "scopeStack": false,
+        "siblingNodes": false,
+        "crossFile": false,
+        "typeInfo": false
+      },
+      "phase": "walk",
+      "srcNodeTypes": [
+        "FUNCTION",
+        "CALL",
+        "METHOD",
+        "TRY_BLOCK",
+        "CATCH_BLOCK",
+        "EXPRESSION",
+        "FINALLY_BLOCK",
+        "GETTER",
+        "BRANCH",
+        "CASE",
+        "TYPE_REFERENCE",
+        "DECORATOR",
+        "CONDITIONAL_TYPE"
+      ],
+      "dstNodeTypes": [
+        "LITERAL",
+        "EXPRESSION",
+        "FUNCTION",
+        "CALL",
+        "VARIABLE",
+        "PROPERTY_ACCESS",
+        "PARAMETER",
+        "CLASS",
+        "META_PROPERTY",
+        "TYPE_REFERENCE",
+        "TYPE_ALIAS",
+        "TYPE_PARAMETER",
+        "INFER_TYPE",
+        "LITERAL_TYPE",
+        "PROPERTY"
+      ],
+      "corpusCount": 604,
+      "examples": [
+        "aliasing::alias-reassign-function",
+        "aliasing::alias-bind-partial",
+        "aliasing::alias-computed-method",
+        "aliasing::alias-reassign-conditional",
+        "aliasing::alias-callback-passed"
+      ],
+      "rationale": "RETURNS edges connect a function/method/block to its return expression or value. Both the source (function/method/try block/etc.) and destination (the returned expression/value) are present in the same AST subtree during parsing. The return statement and its expression are syntactically local - when parsing 'return a + b;', both the function context and the return expression are immediately available in the current AST traversal."
+    },
+    {
+      "edgeType": "SPREADS_FROM",
+      "needs": {
+        "astLocal": true,
+        "scopeStack": false,
+        "siblingNodes": false,
+        "crossFile": false,
+        "typeInfo": false
+      },
+      "phase": "walk",
+      "srcNodeTypes": [
+        "EXPRESSION",
+        "PARAMETER",
+        "TYPE_ALIAS"
+      ],
+      "dstNodeTypes": [
+        "VARIABLE",
+        "CALL",
+        "PARAMETER",
+        "TYPE_REFERENCE",
+        "TYPE_PARAMETER"
+      ],
+      "corpusCount": 18,
+      "examples": [
+        "aliasing::arguments-array-conversion",
+        "aliasing::arguments-array-conversion",
+        "async-generators::async-generator-destructure-default",
+        "async-generators::async-generator-destructure-default",
+        "iterators::iter-usage-spread"
+      ],
+      "rationale": "SPREADS_FROM edges connect spread expressions (...expr) directly to their operand expressions within the same AST subtree. In examples like `[...arguments]` or `{ ...data, priority }`, both the spread operator and its operand are part of the same expression/statement structure. This is purely syntactic - the spread syntax and its target are always co-located in the AST, requiring only local AST traversal to identify the relationship."
+    },
+    {
+      "edgeType": "SHADOWS",
+      "needs": {
+        "astLocal": false,
+        "scopeStack": true,
+        "siblingNodes": false,
+        "crossFile": false,
+        "typeInfo": false
+      },
+      "phase": "walk",
+      "srcNodeTypes": [
+        "VARIABLE",
+        "PARAMETER",
+        "FUNCTION",
+        "PROPERTY"
+      ],
+      "dstNodeTypes": [
+        "PARAMETER",
+        "VARIABLE",
+        "PROPERTY"
+      ],
+      "corpusCount": 7,
+      "examples": [
+        "coercion-hoisting::shadow-param-scope",
+        "coercion-hoisting::shadow-catch-scope",
+        "coercion-hoisting::shadow-block-scope",
+        "coercion-hoisting::var-function-collision",
+        "declarations::param-default-scope-quirk"
+      ],
+      "rationale": "SHADOWS edges connect a variable declaration to another variable with the same name in an outer scope. This requires traversing the scope chain to find the shadowed identifier - the inner declaration (src) shadows the outer one (dst) that would otherwise be accessible. Both nodes are typically in the same file, but they're not in the same AST subtree since one is in an inner scope and the other in an outer scope. The scope stack is essential to determine which outer binding is being shadowed."
+    },
+    {
+      "edgeType": "USES",
+      "needs": {
+        "astLocal": false,
+        "scopeStack": true,
+        "siblingNodes": false,
+        "crossFile": false,
+        "typeInfo": false
+      },
+      "phase": "walk",
+      "srcNodeTypes": [
+        "PROPERTY",
+        "EXPRESSION",
+        "TYPE_REFERENCE",
+        "GETTER",
+        "CALL",
+        "PROPERTY_ACCESS"
+      ],
+      "dstNodeTypes": [
+        "VARIABLE",
+        "LITERAL",
+        "TYPE_PARAMETER",
+        "PROPERTY_ACCESS",
+        "PARAMETER"
+      ],
+      "corpusCount": 21,
+      "examples": [
+        "builtins::symbol-private-property",
+        "expressions::in-operator-array",
+        "jsdoc-types::jsdoc-template-constraint",
+        "modern-es::modern-symbol-species",
+        "modern-es::import-attributes-dynamic"
+      ],
+      "rationale": "USES edges connect references to their declarations within the same scope chain. The source (property access, expression, etc.) needs to resolve to a destination (variable, parameter, etc.) that was declared in the current or outer scopes. This requires scope stack traversal to find where identifiers were declared, but typically doesn't need sibling nodes, cross-file resolution, or type inference - just lexical scope lookup."
+    },
+    {
+      "edgeType": "UNION_MEMBER",
+      "needs": {
+        "astLocal": true,
+        "scopeStack": false,
+        "siblingNodes": false,
+        "crossFile": false,
+        "typeInfo": false
+      },
+      "phase": "walk",
+      "srcNodeTypes": [
+        "TYPE_ALIAS",
+        "TYPE_REFERENCE"
+      ],
+      "dstNodeTypes": [
+        "TYPE_REFERENCE",
+        "LITERAL_TYPE"
+      ],
+      "corpusCount": 17,
+      "examples": [
+        "ts-specific::type-alias-union",
+        "ts-specific::type-alias-generic",
+        "ts-specific::type-alias-function",
+        "ts-specific::template-literal-type",
+        "ts-specific::union-intersection"
+      ],
+      "rationale": "UNION_MEMBER edges connect union type nodes to their constituent member types within the same type expression. In all examples, both the union type and its members are part of the same AST subtree - they appear together in a single type alias declaration or type annotation. No scope resolution, cross-file references, or type inference is needed since these are direct syntactic relationships within the union type expression itself."
+    },
+    {
+      "edgeType": "THROWS",
+      "needs": {
+        "astLocal": false,
+        "scopeStack": true,
+        "siblingNodes": true,
+        "crossFile": false,
+        "typeInfo": false
+      },
+      "phase": "post-file",
+      "srcNodeTypes": [
+        "BRANCH",
+        "CALL",
+        "TRY_BLOCK",
+        "EXPRESSION",
+        "CATCH_BLOCK",
+        "FUNCTION",
+        "SIDE_EFFECT",
+        "FINALLY_BLOCK"
+      ],
+      "dstNodeTypes": [
+        "CALL",
+        "CATCH_BLOCK",
+        "PARAMETER",
+        "EXPRESSION",
+        "LITERAL"
+      ],
+      "corpusCount": 28,
+      "examples": [
+        "async-generators::async-await-try-catch",
+        "async-generators::async-await-try-catch",
+        "coercion-hoisting::tdz-let",
+        "coercion-hoisting::shadow-catch-scope",
+        "coercion-hoisting::typeof-tdz-trap"
+      ],
+      "rationale": "THROWS edges connect exception sources to their handlers or propagation points. This requires scope stack awareness to understand try-catch block nesting and exception propagation rules. It also needs sibling nodes since catch blocks and throw statements are typically in different AST subtrees within the same file. The edge doesn't require cross-file analysis or type inference - exception flow can be determined from local control flow analysis."
+    },
+    {
+      "edgeType": "WRITES_TO",
+      "needs": {
+        "astLocal": false,
+        "scopeStack": true,
+        "siblingNodes": true,
+        "crossFile": false,
+        "typeInfo": false
+      },
+      "phase": "post-file",
+      "srcNodeTypes": [
+        "FINALLY_BLOCK",
+        "EXPRESSION",
+        "EXPORT",
+        "METHOD",
+        "STATIC_BLOCK",
+        "SETTER",
+        "PROPERTY_ACCESS",
+        "FUNCTION",
+        "BRANCH",
+        "CALL",
+        "GETTER",
+        "CASE"
+      ],
+      "dstNodeTypes": [
+        "PROPERTY_ACCESS",
+        "VARIABLE",
+        "PROPERTY"
+      ],
+      "corpusCount": 125,
+      "examples": [
+        "async-generators::generator-finally-cleanup",
+        "async-generators::generator-two-way",
+        "async-generators::generator-two-way",
+        "async-generators::async-iter-manual",
+        "builtins::builtin-regex-exec"
+      ],
+      "rationale": "WRITES_TO edges connect assignment operations to their target variables/properties. The source (assignment expression) and destination (variable/property being written to) are typically in different AST subtrees within the same file. Requires scope stack to resolve variable references to their declarations, and sibling nodes since assignments and their targets span multiple statements or expressions within the same scope context."
+    },
+    {
+      "edgeType": "YIELDS",
+      "needs": {
+        "astLocal": true,
+        "scopeStack": false,
+        "siblingNodes": false,
+        "crossFile": false,
+        "typeInfo": false
+      },
+      "phase": "walk",
+      "srcNodeTypes": [
+        "FUNCTION",
+        "EXPRESSION",
+        "METHOD"
+      ],
+      "dstNodeTypes": [
+        "EXPRESSION",
+        "LITERAL",
+        "VARIABLE",
+        "CALL"
+      ],
+      "corpusCount": 42,
+      "examples": [
+        "async-generators::generator-basic",
+        "async-generators::generator-basic",
+        "async-generators::generator-delegation",
+        "async-generators::generator-infinite",
+        "async-generators::async-generator"
+      ],
+      "rationale": "YIELDS edges connect generator functions/methods to the expressions they yield. Both the yield statement and the yielded expression are part of the same AST subtree within the function body. This is a direct syntactic relationship that can be identified during AST traversal without requiring scope analysis, cross-file resolution, or type information."
+    },
+    {
+      "edgeType": "READS_FROM",
+      "needs": {
+        "astLocal": false,
+        "scopeStack": true,
+        "siblingNodes": true,
+        "crossFile": true,
+        "typeInfo": true
+      },
+      "phase": "post-project",
+      "srcNodeTypes": [
+        "PROPERTY_ACCESS",
+        "EXPRESSION",
+        "LITERAL",
+        "CALL",
+        "METHOD",
+        "FUNCTION",
+        "VARIABLE",
+        "GETTER",
+        "BRANCH",
+        "PROPERTY",
+        "TYPE_REFERENCE",
+        "TYPE_ALIAS"
+      ],
+      "dstNodeTypes": [
+        "PARAMETER",
+        "VARIABLE",
+        "LITERAL",
+        "PROPERTY_ACCESS",
+        "EXTERNAL",
+        "CALL",
+        "EXPRESSION",
+        "PROPERTY",
+        "FUNCTION",
+        "META_PROPERTY",
+        "CLASS",
+        "METHOD",
+        "TYPE_PARAMETER",
+        "TYPE_REFERENCE",
+        "LITERAL_TYPE",
+        "TYPE_ALIAS",
+        "INFER_TYPE",
+        "ENUM_MEMBER",
+        "ENUM",
+        "IMPORT"
+      ],
+      "corpusCount": 1041,
+      "examples": [
+        "aliasing::alias-method-extraction",
+        "aliasing::alias-bind-partial",
+        "aliasing::alias-computed-method",
+        "aliasing::alias-callback-passed",
+        "aliasing::alias-callback-returned"
+      ],
+      "rationale": "READS_FROM represents data flow relationships that often span across statements, files, and require type resolution. Variables can read from imports (crossFile), from values assigned in other statements (siblingNodes), and property/method access requires type information (typeInfo). Scope context is needed to resolve variable bindings (scopeStack)."
+    }
+  ],
+  "phaseDistribution": {
+    "walk": [
+      "CATCHES_FROM",
+      "AWAITS",
+      "ACCESSES_PRIVATE",
+      "BINDS_THIS_TO",
+      "CHAINS_FROM",
+      "DECORATED_BY",
+      "DEFAULTS_TO",
+      "DELETES",
+      "CONSTRAINED_BY",
+      "DELEGATES_TO",
+      "CONTAINS",
+      "DECLARES",
+      "HAS_CASE",
+      "EXTENDS_SCOPE_WITH",
+      "HAS_BODY",
+      "HAS_CATCH",
+      "HAS_CONDITION",
+      "HAS_CONSEQUENT",
+      "HAS_DEFAULT",
+      "HAS_FINALLY",
+      "HAS_ELEMENT",
+      "HAS_INIT",
+      "HAS_PROPERTY",
+      "HAS_TYPE_PARAMETER",
+      "HAS_UPDATE",
+      "HAS_SCOPE",
+      "INFERS",
+      "INTERSECTS_WITH",
+      "ITERATES_OVER",
+      "LISTENS_TO",
+      "PASSES_ARGUMENT",
+      "RECEIVES_ARGUMENT",
+      "RETURNS_TYPE",
+      "RETURNS",
+      "SPREADS_FROM",
+      "SHADOWS",
+      "USES",
+      "UNION_MEMBER",
+      "YIELDS"
+    ],
+    "post-file": [
+      "ASSIGNED_FROM",
+      "CAPTURES",
+      "EXPORTS",
+      "HAS_ALTERNATE",
+      "MODIFIES",
+      "THROWS",
+      "WRITES_TO"
+    ],
+    "post-project": [
+      "ALIASES",
+      "CALLS",
+      "CALLS_ON",
+      "DERIVES_FROM",
+      "EXTENDS",
+      "FLOWS_INTO",
+      "DEPENDS_ON",
+      "HAS_OVERLOAD",
+      "HAS_TYPE",
+      "IMPLEMENTS",
+      "IMPORTS",
+      "IMPORTS_FROM",
+      "IMPLEMENTS_OVERLOAD",
+      "MERGES_WITH",
+      "INVOKES",
+      "OVERRIDES",
+      "RESOLVES_TO",
+      "READS_FROM"
+    ]
+  }
+}

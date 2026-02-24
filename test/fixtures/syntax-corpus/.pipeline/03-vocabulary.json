@@ -1,0 +1,2520 @@
+{
+  "approved": {
+    "nodeTypes": {
+      "declarations": [
+        "CLASS",
+        "FUNCTION",
+        "METHOD",
+        "PARAMETER",
+        "VARIABLE",
+        "PROPERTY",
+        "GETTER",
+        "SETTER",
+        "INTERFACE",
+        "ENUM",
+        "ENUM_MEMBER",
+        "TYPE_ALIAS",
+        "NAMESPACE",
+        "DECORATOR"
+      ],
+      "callGraph": [
+        "CALL",
+        "PROPERTY_ACCESS"
+      ],
+      "values": [
+        "EXPRESSION",
+        "LITERAL"
+      ],
+      "typeSystem": [
+        "TYPE_PARAMETER",
+        "TYPE_REFERENCE",
+        "LITERAL_TYPE",
+        "CONDITIONAL_TYPE",
+        "INFER_TYPE"
+      ],
+      "controlFlow": [
+        "BRANCH",
+        "CASE",
+        "CATCH_BLOCK",
+        "FINALLY_BLOCK",
+        "LOOP",
+        "TRY_BLOCK",
+        "LABEL",
+        "STATIC_BLOCK"
+      ],
+      "external": [
+        "EXTERNAL",
+        "EXTERNAL_MODULE"
+      ],
+      "moduleSystem": [
+        "EXPORT",
+        "IMPORT"
+      ],
+      "structure": [
+        "FILE",
+        "MODULE",
+        "SCOPE",
+        "META_PROPERTY"
+      ],
+      "uncategorized": [
+        "SIDE_EFFECT"
+      ]
+    },
+    "edgeTypes": {
+      "declaration": [
+        "DECLARES",
+        "OVERRIDES",
+        "HAS_OVERLOAD",
+        "IMPLEMENTS_OVERLOAD",
+        "MERGES_WITH",
+        "DECORATED_BY"
+      ],
+      "dataFlow": [
+        "ASSIGNED_FROM",
+        "DERIVES_FROM",
+        "FLOWS_INTO",
+        "PASSES_ARGUMENT",
+        "READS_FROM",
+        "RECEIVES_ARGUMENT",
+        "WRITES_TO",
+        "DEFAULTS_TO",
+        "RESOLVES_TO",
+        "ALIASES",
+        "SHADOWS",
+        "SPREADS_FROM"
+      ],
+      "callGraph": [
+        "CALLS",
+        "CALLS_ON",
+        "CHAINS_FROM",
+        "DELEGATES_TO",
+        "RETURNS",
+        "YIELDS",
+        "AWAITS",
+        "INVOKES",
+        "BINDS_THIS_TO",
+        "LISTENS_TO"
+      ],
+      "objectStructure": [
+        "HAS_ELEMENT",
+        "HAS_PROPERTY",
+        "ACCESSES_PRIVATE"
+      ],
+      "containment": [
+        "CONTAINS",
+        "HAS_BODY",
+        "HAS_SCOPE",
+        "EXTENDS_SCOPE_WITH"
+      ],
+      "controlFlow": [
+        "HAS_ALTERNATE",
+        "HAS_CASE",
+        "HAS_CONDITION",
+        "HAS_CONSEQUENT",
+        "HAS_DEFAULT",
+        "HAS_INIT",
+        "HAS_UPDATE",
+        "ITERATES_OVER"
+      ],
+      "mutation": [
+        "CAPTURES",
+        "MODIFIES",
+        "DELETES"
+      ],
+      "moduleSystem": [
+        "DEPENDS_ON",
+        "EXPORTS",
+        "IMPORTS",
+        "IMPORTS_FROM"
+      ],
+      "errorHandling": [
+        "CATCHES_FROM",
+        "HAS_CATCH",
+        "HAS_FINALLY",
+        "THROWS"
+      ],
+      "typeSystem": [
+        "EXTENDS",
+        "IMPLEMENTS",
+        "HAS_TYPE",
+        "HAS_TYPE_PARAMETER",
+        "RETURNS_TYPE",
+        "UNION_MEMBER",
+        "CONSTRAINED_BY",
+        "INTERSECTS_WITH",
+        "INFERS"
+      ],
+      "uncategorized": [
+        "USES"
+      ]
+    }
+  },
+  "new": [
+    {
+      "type": "PROPERTY",
+      "count": 99,
+      "domain": "uncategorized",
+      "examples": [
+        "builtins::symbol-private-property",
+        "callbacks::callback-thisarg-filter",
+        "callbacks::callback-thisarg-map"
+      ]
+    },
+    {
+      "type": "TYPE_ALIAS",
+      "count": 66,
+      "domain": "uncategorized",
+      "examples": [
+        "ts-specific::type-alias-union",
+        "ts-specific::type-alias-tuple",
+        "ts-specific::type-alias-generic"
+      ]
+    },
+    {
+      "type": "TYPE_PARAMETER",
+      "count": 57,
+      "domain": "uncategorized",
+      "examples": [
+        "jsdoc-types::jsdoc-template",
+        "ts-specific::type-alias-tuple",
+        "ts-specific::type-alias-generic"
+      ]
+    },
+    {
+      "type": "HAS_TYPE",
+      "count": 47,
+      "domain": "uncategorized",
+      "examples": [
+        "jsdoc-types::jsdoc-overload",
+        "ts-specific::ts-typed-function",
+        "ts-specific::ts-typed-arrow"
+      ]
+    },
+    {
+      "type": "TYPE",
+      "count": 26,
+      "domain": "uncategorized",
+      "examples": [
+        "ts-specific::type-alias-union",
+        "ts-specific::type-alias-function",
+        "ts-specific::generic-interface"
+      ]
+    },
+    {
+      "type": "TYPE_REFERENCE",
+      "count": 26,
+      "domain": "uncategorized",
+      "examples": [
+        "ts-specific::interface-construct-signature",
+        "ts-specific::type-alias-generic",
+        "ts-specific::conditional-type-infer"
+      ]
+    },
+    {
+      "type": "DESTRUCTURES_FROM",
+      "count": 25,
+      "domain": "uncategorized",
+      "examples": [
+        "classes::destructure-assign-to-this-defaults",
+        "expressions::chained-destructuring-assignment",
+        "index::module-namespace-destructured"
+      ]
+    },
+    {
+      "type": "ENUM_MEMBER",
+      "count": 25,
+      "domain": "uncategorized",
+      "examples": [
+        "ts-specific::enum-numeric",
+        "ts-specific::enum-heterogeneous",
+        "ts-specific::enum-const"
+      ]
+    },
+    {
+      "type": "OBJECT",
+      "count": 24,
+      "domain": "uncategorized",
+      "examples": [
+        "coercion-hoisting::coerce-valueof-tostring",
+        "declarations::function-name-inference",
+        "expressions::tagged-template-returns-class"
+      ]
+    },
+    {
+      "type": "HAS_TYPE_PARAMETER",
+      "count": 22,
+      "domain": "uncategorized",
+      "examples": [
+        "jsdoc-types::jsdoc-template-constraint",
+        "jsdoc-types::jsdoc-template",
+        "ts-specific::generic-interface"
+      ]
+    },
+    {
+      "type": "LITERAL_TYPE",
+      "count": 21,
+      "domain": "uncategorized",
+      "examples": [
+        "ts-specific::type-alias-generic",
+        "ts-specific::conditional-type",
+        "ts-specific::template-literal-type"
+      ]
+    },
+    {
+      "type": "TYPE_ANNOTATION",
+      "count": 20,
+      "domain": "uncategorized",
+      "examples": [
+        "ts-specific::ts-typed-function",
+        "ts-specific::ts-typed-arrow",
+        "ts-specific::generic-function"
+      ]
+    },
+    {
+      "type": "INTERFACE",
+      "count": 17,
+      "domain": "uncategorized",
+      "examples": [
+        "ts-specific::interface-basic",
+        "ts-specific::interface-method",
+        "ts-specific::interface-extends"
+      ]
+    },
+    {
+      "type": "CALLS_ON",
+      "count": 16,
+      "domain": "uncategorized",
+      "examples": [
+        "callbacks::callback-thisarg-filter",
+        "callbacks::callback-thisarg-map",
+        "coercion-hoisting::primitive-autoboxing"
+      ]
+    },
+    {
+      "type": "RESOLVES_TO",
+      "count": 15,
+      "domain": "uncategorized",
+      "examples": [
+        "aliasing::alias-computed-method",
+        "callbacks::callback-thisarg-filter",
+        "callbacks::callback-thisarg-map"
+      ]
+    },
+    {
+      "type": "CHAINS_FROM",
+      "count": 15,
+      "domain": "uncategorized",
+      "examples": [
+        "classes::method-chaining-usage",
+        "expressions::deep-optional-chain"
+      ]
+    },
+    {
+      "type": "DEFAULTS_TO",
+      "count": 15,
+      "domain": "uncategorized",
+      "examples": [
+        "classes::destructure-assign-to-this-defaults",
+        "classes::default-param-this-access",
+        "declarations::func-decl-defaults"
+      ]
+    },
+    {
+      "type": "COMPOUND_ASSIGNED_FROM",
+      "count": 15,
+      "domain": "uncategorized",
+      "examples": [
+        "expressions::assignment-ops"
+      ]
+    },
+    {
+      "type": "DESTRUCTURES_TO",
+      "count": 14,
+      "domain": "uncategorized",
+      "examples": [
+        "declarations::param-default-from-destructured",
+        "patterns::array-destructuring-swap",
+        "patterns::param-destructuring-object"
+      ]
+    },
+    {
+      "type": "TUPLE_TYPE",
+      "count": 13,
+      "domain": "uncategorized",
+      "examples": [
+        "ts-specific::type-alias-tuple",
+        "ts-specific::tuple-types",
+        "ts-specific::ts-template-literal-infer"
+      ]
+    },
+    {
+      "type": "RETURNS_TYPE",
+      "count": 13,
+      "domain": "uncategorized",
+      "examples": [
+        "ts-specific::generic-function",
+        "ts-specific::generic-function-multi",
+        "ts-specific::generic-class"
+      ]
+    },
+    {
+      "type": "ASSIGNS_TO",
+      "count": 12,
+      "domain": "uncategorized",
+      "examples": [
+        "classes::destructure-assign-to-this-defaults",
+        "expressions::chained-destructuring-assignment",
+        "patterns::destructure-assign-to-properties"
+      ]
+    },
+    {
+      "type": "REFERENCES_TYPE",
+      "count": 12,
+      "domain": "uncategorized",
+      "examples": [
+        "jsdoc-types::jsdoc-template-constraint",
+        "ts-specific::generic-function",
+        "ts-specific::ts-recursive-type-tree"
+      ]
+    },
+    {
+      "type": "TEMPLATE_LITERAL",
+      "count": 11,
+      "domain": "uncategorized",
+      "examples": [
+        "coercion-hoisting::coerce-valueof-tostring",
+        "expressions::template-literal",
+        "expressions::tagged-template-rewriting"
+      ]
+    },
+    {
+      "type": "HAS_RETURN_TYPE",
+      "count": 11,
+      "domain": "uncategorized",
+      "examples": [
+        "jsdoc-types::jsdoc-template-constraint",
+        "jsdoc-types::jsdoc-overload",
+        "ts-specific::ts-typed-function"
+      ]
+    },
+    {
+      "type": "UNION_MEMBER",
+      "count": 11,
+      "domain": "uncategorized",
+      "examples": [
+        "ts-specific::type-alias-union",
+        "ts-specific::template-literal-type",
+        "ts-specific::union-intersection"
+      ]
+    },
+    {
+      "type": "CONDITIONAL_TYPE",
+      "count": 11,
+      "domain": "uncategorized",
+      "examples": [
+        "ts-specific::conditional-type",
+        "ts-specific::conditional-type-infer",
+        "ts-specific::conditional-type-exclude"
+      ]
+    },
+    {
+      "type": "INFERS",
+      "count": 11,
+      "domain": "uncategorized",
+      "examples": [
+        "ts-specific::conditional-type-infer",
+        "ts-specific::ts-template-literal-infer",
+        "ts-specific::ts-variadic-tuple"
+      ]
+    },
+    {
+      "type": "AWAITS",
+      "count": 10,
+      "domain": "uncategorized",
+      "examples": [
+        "async-generators::top-level-await",
+        "declarations::async-generator-decl",
+        "expressions::void-promise"
+      ]
+    },
+    {
+      "type": "CONSTRAINED_BY",
+      "count": 10,
+      "domain": "uncategorized",
+      "examples": [
+        "jsdoc-types::jsdoc-template-constraint",
+        "ts-specific::generic-constraint",
+        "ts-specific::mapped-type-readonly"
+      ]
+    },
+    {
+      "type": "UNION_TYPE",
+      "count": 10,
+      "domain": "uncategorized",
+      "examples": [
+        "ts-specific::type-alias-generic",
+        "ts-specific::union-intersection",
+        "ts-specific::discriminated-union"
+      ]
+    },
+    {
+      "type": "TYPED_AS",
+      "count": 9,
+      "domain": "uncategorized",
+      "examples": [
+        "jsdoc-types::jsdoc-typedef",
+        "jsdoc-types::jsdoc-callback",
+        "ts-specific::generic-interface"
+      ]
+    },
+    {
+      "type": "TYPE_CONSTRAINT",
+      "count": 9,
+      "domain": "uncategorized",
+      "examples": [
+        "ts-specific::generic-constraint",
+        "ts-specific::satisfies",
+        "ts-specific::conditional-type-infer"
+      ]
+    },
+    {
+      "type": "UTILITY_TYPE",
+      "count": 9,
+      "domain": "uncategorized",
+      "examples": [
+        "ts-specific::template-literal-type",
+        "ts-specific::utility-types",
+        "ts-specific::ts-mapped-type-as-clause"
+      ]
+    },
+    {
+      "type": "ALIASES",
+      "count": 8,
+      "domain": "uncategorized",
+      "examples": [
+        "aliasing::arguments-callee",
+        "aliasing::arguments-param-aliasing",
+        "ts-specific::ts-typeof-class"
+      ]
+    },
+    {
+      "type": "CHAINS_TO",
+      "count": 8,
+      "domain": "uncategorized",
+      "examples": [
+        "async-generators::promise-chaining"
+      ]
+    },
+    {
+      "type": "OBJECT_LITERAL",
+      "count": 8,
+      "domain": "uncategorized",
+      "examples": [
+        "async-generators::async-return-thenable",
+        "expressions::deep-optional-chain",
+        "patterns::spread-duplicate-key-override"
+      ]
+    },
+    {
+      "type": "GETTER",
+      "count": 8,
+      "domain": "uncategorized",
+      "examples": [
+        "classes::class-private-fields",
+        "expressions::getter-returns-function",
+        "property-access::prop-getter-side-effect"
+      ]
+    },
+    {
+      "type": "FIELD",
+      "count": 8,
+      "domain": "uncategorized",
+      "examples": [
+        "classes::class-field-no-initializer",
+        "classes::class-field-initializer-side-effects",
+        "classes::super-in-field-initializer"
+      ]
+    },
+    {
+      "type": "USES_KEY",
+      "count": 8,
+      "domain": "uncategorized",
+      "examples": [
+        "coercion-hoisting::object-as-map-key-tostring",
+        "property-access::prop-optional-chain-mixed",
+        "property-access::delete-array-hole"
+      ]
+    },
+    {
+      "type": "TEMPLATE_EXPRESSION",
+      "count": 8,
+      "domain": "uncategorized",
+      "examples": [
+        "expressions::template-literal",
+        "ts-specific::ts-typed-function"
+      ]
+    },
+    {
+      "type": "HAS_TYPE_ANNOTATION",
+      "count": 8,
+      "domain": "uncategorized",
+      "examples": [
+        "jsdoc-types::jsdoc-type-variable",
+        "jsdoc-types::jsdoc-template-constraint",
+        "ts-specific::ts-using-typed"
+      ]
+    },
+    {
+      "type": "COMPUTED_PROPERTY",
+      "count": 8,
+      "domain": "uncategorized",
+      "examples": [
+        "patterns::computed-properties",
+        "patterns::computed-key-side-effect",
+        "property-access::prop-symbol-key"
+      ]
+    },
+    {
+      "type": "DESTRUCTURE",
+      "count": 8,
+      "domain": "uncategorized",
+      "examples": [
+        "patterns::destructure-computed-key",
+        "patterns::destructure-empty",
+        "patterns::destructure-nested-rest"
+      ]
+    },
+    {
+      "type": "ENUM",
+      "count": 8,
+      "domain": "uncategorized",
+      "examples": [
+        "ts-specific::enum-numeric",
+        "ts-specific::enum-heterogeneous",
+        "ts-specific::enum-const"
+      ]
+    },
+    {
+      "type": "INTERSECTS_WITH",
+      "count": 8,
+      "domain": "uncategorized",
+      "examples": [
+        "ts-specific::generic-function-multi",
+        "ts-specific::ts-branded-type",
+        "ts-specific::ts-function-type-intersection"
+      ]
+    },
+    {
+      "type": "TYPE_ASSERTION",
+      "count": 8,
+      "domain": "uncategorized",
+      "examples": [
+        "ts-specific::type-assertion-as",
+        "ts-specific::as-const",
+        "ts-specific::ts-asserts-guard"
+      ]
+    },
+    {
+      "type": "TEMPLATE_LITERAL_TYPE",
+      "count": 8,
+      "domain": "uncategorized",
+      "examples": [
+        "ts-specific::template-literal-type",
+        "ts-specific::ts-template-literal-infer",
+        "ts-specific::ts-mapped-type-as-clause"
+      ]
+    },
+    {
+      "type": "INSTANTIATES",
+      "count": 7,
+      "domain": "uncategorized",
+      "examples": [
+        "classes::class-inline-extends",
+        "expressions::new-member-expression",
+        "ts-specific::generic-class"
+      ]
+    },
+    {
+      "type": "DESTRUCTURING_ASSIGNMENT",
+      "count": 7,
+      "domain": "uncategorized",
+      "examples": [
+        "classes::destructure-assign-to-this-defaults",
+        "expressions::chained-destructuring-assignment"
+      ]
+    },
+    {
+      "type": "JSDOC_TYPE",
+      "count": 7,
+      "domain": "uncategorized",
+      "examples": [
+        "jsdoc-types::jsdoc-this",
+        "jsdoc-types::jsdoc-overload"
+      ]
+    },
+    {
+      "type": "EXTRACTS",
+      "count": 7,
+      "domain": "uncategorized",
+      "examples": [
+        "patterns::obj-destructuring-nested",
+        "patterns::destructure-assign-nested-target",
+        "patterns::destructure-nested-defaults-combined"
+      ]
+    },
+    {
+      "type": "BINDS_TO",
+      "count": 7,
+      "domain": "uncategorized",
+      "examples": [
+        "patterns::array-destructuring-nested",
+        "patterns::destructure-computed-key",
+        "patterns::destructure-computed-default-rename"
+      ]
+    },
+    {
+      "type": "INFER_TYPE",
+      "count": 7,
+      "domain": "uncategorized",
+      "examples": [
+        "ts-specific::ts-template-literal-infer",
+        "ts-specific::ts-infer-constrained"
+      ]
+    },
+    {
+      "type": "YIELD",
+      "count": 6,
+      "domain": "uncategorized",
+      "examples": [
+        "async-generators::generator-two-way",
+        "async-generators::yield-yield-chained"
+      ]
+    },
+    {
+      "type": "DESTRUCTURED_FROM",
+      "count": 6,
+      "domain": "uncategorized",
+      "examples": [
+        "builtins::builtin-regex-named-groups"
+      ]
+    },
+    {
+      "type": "SYNTAX_ERROR",
+      "count": 6,
+      "domain": "uncategorized",
+      "examples": [
+        "expressions::optional-chaining-syntax-errors",
+        "expressions::nullish-logical-mixing-error"
+      ]
+    },
+    {
+      "type": "SPREADS",
+      "count": 6,
+      "domain": "uncategorized",
+      "examples": [
+        "iterators::iter-usage-spread",
+        "ts-specific::generic-function-multi",
+        "ts-specific::ts-template-literal-infer"
+      ]
+    },
+    {
+      "type": "SPREADS_FROM",
+      "count": 6,
+      "domain": "uncategorized",
+      "examples": [
+        "patterns::spread-objects",
+        "patterns::spread-arrays",
+        "patterns::spread-duplicate-key-override"
+      ]
+    },
+    {
+      "type": "CHECKS_TYPE",
+      "count": 6,
+      "domain": "uncategorized",
+      "examples": [
+        "ts-specific::conditional-type",
+        "ts-specific::conditional-type-infer",
+        "ts-specific::conditional-type-exclude"
+      ]
+    },
+    {
+      "type": "MAPPED_TYPE",
+      "count": 6,
+      "domain": "uncategorized",
+      "examples": [
+        "ts-specific::mapped-type-readonly",
+        "ts-specific::mapped-type-mutable",
+        "ts-specific::mapped-type-optional"
+      ]
+    },
+    {
+      "type": "PRIMITIVE_TYPE",
+      "count": 6,
+      "domain": "uncategorized",
+      "examples": [
+        "ts-specific::template-literal-type",
+        "ts-specific::ts-recursive-type",
+        "ts-specific::ts-distributive-conditional"
+      ]
+    },
+    {
+      "type": "OBJECT_TYPE",
+      "count": 6,
+      "domain": "uncategorized",
+      "examples": [
+        "ts-specific::union-intersection",
+        "ts-specific::discriminated-union",
+        "ts-specific::ts-recursive-type"
+      ]
+    },
+    {
+      "type": "PROPERTY_TYPE",
+      "count": 6,
+      "domain": "uncategorized",
+      "examples": [
+        "ts-specific::union-intersection",
+        "ts-specific::discriminated-union"
+      ]
+    },
+    {
+      "type": "PRIVATE_FIELD",
+      "count": 5,
+      "domain": "uncategorized",
+      "examples": [
+        "classes::class-private-fields",
+        "classes::class-private-cross-instance",
+        "classes::private-field-proxy-trap"
+      ]
+    },
+    {
+      "type": "COMPUTED_FROM",
+      "count": 5,
+      "domain": "uncategorized",
+      "examples": [
+        "classes::class-computed-methods",
+        "patterns::computed-properties"
+      ]
+    },
+    {
+      "type": "DESTRUCTURE_ASSIGNMENT",
+      "count": 5,
+      "domain": "uncategorized",
+      "examples": [
+        "classes::destructure-assign-to-this",
+        "patterns::destructure-assign-nested-target",
+        "patterns::destructure-assign-existing"
+      ]
+    },
+    {
+      "type": "KEYED_BY",
+      "count": 5,
+      "domain": "uncategorized",
+      "examples": [
+        "classes::computed-class-member-side-effect",
+        "modern-es::modern-symbol-tostringtag",
+        "modern-es::modern-symbol-species"
+      ]
+    },
+    {
+      "type": "OPTIONAL_CHAIN",
+      "count": 5,
+      "domain": "uncategorized",
+      "examples": [
+        "expressions::optional-chaining",
+        "expressions::deep-optional-chain"
+      ]
+    },
+    {
+      "type": "INDEXED_BY",
+      "count": 5,
+      "domain": "uncategorized",
+      "examples": [
+        "expressions::comma-in-array-subscript",
+        "ts-specific::mapped-type-readonly",
+        "ts-specific::mapped-type-optional"
+      ]
+    },
+    {
+      "type": "ACCESSES_PROPERTY_OF",
+      "count": 5,
+      "domain": "uncategorized",
+      "examples": [
+        "expressions::new-precedence-trap",
+        "expressions::logical-assign-property",
+        "property-access::delete-array-hole"
+      ]
+    },
+    {
+      "type": "DESTRUCTURING",
+      "count": 5,
+      "domain": "uncategorized",
+      "examples": [
+        "index::module-namespace-destructured",
+        "patterns::obj-destructuring-nested",
+        "property-access::getter-destructuring-side-effect"
+      ]
+    },
+    {
+      "type": "HAS_PROPERTY_VALUE",
+      "count": 5,
+      "domain": "uncategorized",
+      "examples": [
+        "jsdoc-types::jsdoc-typedef",
+        "patterns::computed-property-throws"
+      ]
+    },
+    {
+      "type": "TYPED_BY",
+      "count": 5,
+      "domain": "uncategorized",
+      "examples": [
+        "jsdoc-types::jsdoc-template"
+      ]
+    },
+    {
+      "type": "HAS_VALUE",
+      "count": 5,
+      "domain": "uncategorized",
+      "examples": [
+        "patterns::computed-key-side-effect",
+        "prototypes::proto-define-properties"
+      ]
+    },
+    {
+      "type": "COMPOUND_ASSIGNS_TO",
+      "count": 5,
+      "domain": "uncategorized",
+      "examples": [
+        "property-access::prop-compound-assign"
+      ]
+    },
+    {
+      "type": "DELETES",
+      "count": 5,
+      "domain": "uncategorized",
+      "examples": [
+        "property-access::prop-delete",
+        "property-access::optional-chaining-delete",
+        "property-access::delete-array-hole"
+      ]
+    },
+    {
+      "type": "LABEL",
+      "count": 5,
+      "domain": "uncategorized",
+      "examples": [
+        "statements::labeled-block",
+        "statements::labeled-function",
+        "statements::labeled-continue"
+      ]
+    },
+    {
+      "type": "EXTENDS_TYPE",
+      "count": 5,
+      "domain": "uncategorized",
+      "examples": [
+        "ts-specific::conditional-type",
+        "ts-specific::conditional-type-infer",
+        "ts-specific::ts-infer-constrained"
+      ]
+    },
+    {
+      "type": "TRANSFORMS",
+      "count": 5,
+      "domain": "uncategorized",
+      "examples": [
+        "ts-specific::template-literal-type",
+        "ts-specific::utility-types"
+      ]
+    },
+    {
+      "type": "ARRAY_TYPE",
+      "count": 5,
+      "domain": "uncategorized",
+      "examples": [
+        "ts-specific::tuple-types",
+        "ts-specific::ts-recursive-type",
+        "ts-specific::ts-recursive-type-tree"
+      ]
+    },
+    {
+      "type": "METHOD_OVERLOAD",
+      "count": 5,
+      "domain": "uncategorized",
+      "examples": [
+        "ts-specific::ts-class-method-overloads",
+        "ts-specific::ts-constructor-overloads"
+      ]
+    },
+    {
+      "type": "DESTRUCTURED_PROPERTY",
+      "count": 4,
+      "domain": "uncategorized",
+      "examples": [
+        "async-generators::async-destructure-await-default"
+      ]
+    },
+    {
+      "type": "DESTRUCTURES",
+      "count": 4,
+      "domain": "uncategorized",
+      "examples": [
+        "async-generators::async-destructure-await-default"
+      ]
+    },
+    {
+      "type": "DEFAULT_FROM",
+      "count": 4,
+      "domain": "uncategorized",
+      "examples": [
+        "async-generators::async-destructure-await-default"
+      ]
+    },
+    {
+      "type": "BINDS_THIS_TO",
+      "count": 4,
+      "domain": "uncategorized",
+      "examples": [
+        "callbacks::callback-thisarg-filter",
+        "callbacks::callback-thisarg-map",
+        "closures::this-call-apply"
+      ]
+    },
+    {
+      "type": "WITH_STATEMENT",
+      "count": 4,
+      "domain": "uncategorized",
+      "examples": [
+        "cjs-patterns::with-statement",
+        "cjs-patterns::with-nested",
+        "cjs-patterns::with-property-fallback"
+      ]
+    },
+    {
+      "type": "PRIVATE_FIELD_ACCESS",
+      "count": 4,
+      "domain": "uncategorized",
+      "examples": [
+        "classes::class-private-cross-instance"
+      ]
+    },
+    {
+      "type": "ACCESSES_PRIVATE",
+      "count": 4,
+      "domain": "uncategorized",
+      "examples": [
+        "classes::class-private-cross-instance"
+      ]
+    },
+    {
+      "type": "TAGGED_TEMPLATE",
+      "count": 4,
+      "domain": "uncategorized",
+      "examples": [
+        "expressions::tagged-template-raw",
+        "expressions::tagged-template-rewriting",
+        "expressions::tagged-template-returns-class"
+      ]
+    },
+    {
+      "type": "DOCUMENTS",
+      "count": 4,
+      "domain": "uncategorized",
+      "examples": [
+        "jsdoc-types::jsdoc-param-returns",
+        "jsdoc-types::jsdoc-deprecated"
+      ]
+    },
+    {
+      "type": "HAS_OVERLOAD",
+      "count": 4,
+      "domain": "uncategorized",
+      "examples": [
+        "jsdoc-types::jsdoc-overload",
+        "ts-specific::ts-class-method-overloads"
+      ]
+    },
+    {
+      "type": "OVERRIDES",
+      "count": 4,
+      "domain": "uncategorized",
+      "examples": [
+        "modules-reexport::star-reexport-collision",
+        "patterns::spread-duplicate-key-override",
+        "ts-specific::ts-override"
+      ]
+    },
+    {
+      "type": "DESTRUCTURING_PATTERN",
+      "count": 4,
+      "domain": "uncategorized",
+      "examples": [
+        "patterns::array-destructuring-nested",
+        "statements::for-in-destructuring"
+      ]
+    },
+    {
+      "type": "USES_COMPUTED_KEY",
+      "count": 4,
+      "domain": "uncategorized",
+      "examples": [
+        "patterns::destructure-computed-key",
+        "patterns::destructure-computed-default-rename",
+        "property-access::getter-computed-destructuring"
+      ]
+    },
+    {
+      "type": "PROPERTY_DESCRIPTOR",
+      "count": 4,
+      "domain": "uncategorized",
+      "examples": [
+        "prototypes::proto-define-getter-setter",
+        "prototypes::proto-define-properties"
+      ]
+    },
+    {
+      "type": "LABELS",
+      "count": 4,
+      "domain": "uncategorized",
+      "examples": [
+        "statements::labeled-function",
+        "statements::labeled-continue",
+        "statements::labeled-break"
+      ]
+    },
+    {
+      "type": "CREATES_PROPERTY",
+      "count": 4,
+      "domain": "uncategorized",
+      "examples": [
+        "ts-specific::parameter-properties"
+      ]
+    },
+    {
+      "type": "INFERRED_TYPE",
+      "count": 4,
+      "domain": "uncategorized",
+      "examples": [
+        "ts-specific::conditional-type-infer",
+        "ts-specific::ts-variadic-tuple"
+      ]
+    },
+    {
+      "type": "MAPS_TO",
+      "count": 4,
+      "domain": "uncategorized",
+      "examples": [
+        "ts-specific::mapped-type-readonly",
+        "ts-specific::mapped-type-mutable",
+        "ts-specific::mapped-type-optional"
+      ]
+    },
+    {
+      "type": "IMPLEMENTS_OVERLOAD",
+      "count": 4,
+      "domain": "uncategorized",
+      "examples": [
+        "ts-specific::function-overloads",
+        "ts-specific::ts-constructor-overloads"
+      ]
+    },
+    {
+      "type": "DEFINES_TYPE",
+      "count": 4,
+      "domain": "uncategorized",
+      "examples": [
+        "ts-specific::tuple-types"
+      ]
+    },
+    {
+      "type": "STATEMENT",
+      "count": 3,
+      "domain": "uncategorized",
+      "examples": [
+        "async-generators::generator-break-triggers-finally",
+        "statements::labeled-block"
+      ]
+    },
+    {
+      "type": "EXTENDS_SCOPE_WITH",
+      "count": 3,
+      "domain": "uncategorized",
+      "examples": [
+        "cjs-patterns::with-nested",
+        "cjs-patterns::with-property-fallback"
+      ]
+    },
+    {
+      "type": "STATIC_BLOCK",
+      "count": 3,
+      "domain": "uncategorized",
+      "examples": [
+        "classes::class-static-block",
+        "classes::static-block-interleaved"
+      ]
+    },
+    {
+      "type": "SUPER_CALL",
+      "count": 3,
+      "domain": "uncategorized",
+      "examples": [
+        "classes::super-in-nested-arrows",
+        "prototypes::super-in-object-literal",
+        "prototypes::method-vs-function-property-super"
+      ]
+    },
+    {
+      "type": "SHADOWS",
+      "count": 3,
+      "domain": "uncategorized",
+      "examples": [
+        "coercion-hoisting::shadow-catch-scope",
+        "coercion-hoisting::shadow-block-scope"
+      ]
+    },
+    {
+      "type": "TERNARY",
+      "count": 3,
+      "domain": "uncategorized",
+      "examples": [
+        "expressions::ternary"
+      ]
+    },
+    {
+      "type": "EVALUATES_FIRST",
+      "count": 3,
+      "domain": "uncategorized",
+      "examples": [
+        "expressions::comma-in-arrow-body",
+        "expressions::chained-destructuring-assignment"
+      ]
+    },
+    {
+      "type": "LOGICAL_ASSIGNMENT",
+      "count": 3,
+      "domain": "uncategorized",
+      "examples": [
+        "expressions::logical-assign-property"
+      ]
+    },
+    {
+      "type": "CONDITIONALLY_ASSIGNS",
+      "count": 3,
+      "domain": "uncategorized",
+      "examples": [
+        "expressions::logical-assign-property"
+      ]
+    },
+    {
+      "type": "CAUSES",
+      "count": 3,
+      "domain": "uncategorized",
+      "examples": [
+        "expressions::nullish-logical-mixing-error"
+      ]
+    },
+    {
+      "type": "INVOKES_GETTER",
+      "count": 3,
+      "domain": "uncategorized",
+      "examples": [
+        "expressions::getter-returns-function",
+        "property-access::getter-throws-in-destructuring",
+        "property-access::getter-computed-destructuring"
+      ]
+    },
+    {
+      "type": "DOCUMENTED_BY",
+      "count": 3,
+      "domain": "uncategorized",
+      "examples": [
+        "jsdoc-types::jsdoc-param-returns"
+      ]
+    },
+    {
+      "type": "JSDOC_TYPE_ANNOTATION",
+      "count": 3,
+      "domain": "uncategorized",
+      "examples": [
+        "jsdoc-types::jsdoc-type-variable"
+      ]
+    },
+    {
+      "type": "ANNOTATED_WITH",
+      "count": 3,
+      "domain": "uncategorized",
+      "examples": [
+        "jsdoc-types::jsdoc-this"
+      ]
+    },
+    {
+      "type": "DESCRIBES_TYPE",
+      "count": 3,
+      "domain": "uncategorized",
+      "examples": [
+        "jsdoc-types::jsdoc-this"
+      ]
+    },
+    {
+      "type": "REEXPORTS_FROM",
+      "count": 3,
+      "domain": "uncategorized",
+      "examples": [
+        "modern-es::reexport-namespace",
+        "modern-es::import-attributes-reexport",
+        "modules-reexport::reexport-aliased"
+      ]
+    },
+    {
+      "type": "RE_EXPORTS",
+      "count": 3,
+      "domain": "uncategorized",
+      "examples": [
+        "modules-reexport::star-reexport-collision"
+      ]
+    },
+    {
+      "type": "HAS_KEY",
+      "count": 3,
+      "domain": "uncategorized",
+      "examples": [
+        "patterns::computed-key-side-effect"
+      ]
+    },
+    {
+      "type": "BINDS",
+      "count": 3,
+      "domain": "uncategorized",
+      "examples": [
+        "patterns::destructure-nested-rest"
+      ]
+    },
+    {
+      "type": "HAS_COMPUTED_KEY",
+      "count": 3,
+      "domain": "uncategorized",
+      "examples": [
+        "patterns::computed-property-throws"
+      ]
+    },
+    {
+      "type": "INVOKES",
+      "count": 3,
+      "domain": "uncategorized",
+      "examples": [
+        "property-access::prop-getter-side-effect",
+        "property-access::prop-getter-only-no-setter"
+      ]
+    },
+    {
+      "type": "DELETE_OPERATION",
+      "count": 3,
+      "domain": "uncategorized",
+      "examples": [
+        "property-access::delete-array-hole",
+        "property-access::delete-computed-property"
+      ]
+    },
+    {
+      "type": "ACCESSES_OBJECT",
+      "count": 3,
+      "domain": "uncategorized",
+      "examples": [
+        "property-access::delete-computed-property"
+      ]
+    },
+    {
+      "type": "HAS_ENUMERABLE",
+      "count": 3,
+      "domain": "uncategorized",
+      "examples": [
+        "prototypes::proto-define-properties"
+      ]
+    },
+    {
+      "type": "CONTROL_FLOW",
+      "count": 3,
+      "domain": "uncategorized",
+      "examples": [
+        "statements::labeled-for-switch-interaction"
+      ]
+    },
+    {
+      "type": "MATCHES",
+      "count": 3,
+      "domain": "uncategorized",
+      "examples": [
+        "statements::labeled-for-switch-interaction"
+      ]
+    },
+    {
+      "type": "TARGETS",
+      "count": 3,
+      "domain": "uncategorized",
+      "examples": [
+        "statements::labeled-for-switch-interaction"
+      ]
+    },
+    {
+      "type": "REFERENCES",
+      "count": 3,
+      "domain": "uncategorized",
+      "examples": [
+        "ts-specific::type-alias-generic",
+        "ts-specific::conditional-type-infer"
+      ]
+    },
+    {
+      "type": "SATISFIES_TYPE",
+      "count": 3,
+      "domain": "uncategorized",
+      "examples": [
+        "ts-specific::satisfies",
+        "ts-specific::ts-satisfies-as-const"
+      ]
+    },
+    {
+      "type": "TYPE_LITERAL",
+      "count": 3,
+      "domain": "uncategorized",
+      "examples": [
+        "ts-specific::conditional-type-exclude"
+      ]
+    },
+    {
+      "type": "EXTENDS_CHECK",
+      "count": 3,
+      "domain": "uncategorized",
+      "examples": [
+        "ts-specific::conditional-type-exclude",
+        "ts-specific::ts-template-literal-infer"
+      ]
+    },
+    {
+      "type": "NAMESPACE",
+      "count": 3,
+      "domain": "uncategorized",
+      "examples": [
+        "ts-specific::namespace",
+        "ts-specific::ts-declare-namespace",
+        "ts-specific::ts-enum-namespace-merge"
+      ]
+    },
+    {
+      "type": "TUPLE_ELEMENT",
+      "count": 3,
+      "domain": "uncategorized",
+      "examples": [
+        "ts-specific::tuple-types",
+        "ts-specific::ts-distributive-conditional"
+      ]
+    },
+    {
+      "type": "ELEMENT_TYPE",
+      "count": 3,
+      "domain": "uncategorized",
+      "examples": [
+        "ts-specific::ts-recursive-type",
+        "ts-specific::ts-distributive-conditional"
+      ]
+    },
+    {
+      "type": "USES_INFERRED",
+      "count": 3,
+      "domain": "uncategorized",
+      "examples": [
+        "ts-specific::ts-template-literal-infer"
+      ]
+    },
+    {
+      "type": "MERGES_WITH",
+      "count": 3,
+      "domain": "uncategorized",
+      "examples": [
+        "ts-specific::ts-declaration-merging",
+        "ts-specific::ts-enum-namespace-merge"
+      ]
+    },
+    {
+      "type": "DECORATOR_APPLICATION",
+      "count": 3,
+      "domain": "uncategorized",
+      "examples": [
+        "ts-specific::ts-parameter-decorators",
+        "ts-specific::ts-decorator-metadata"
+      ]
+    },
+    {
+      "type": "DECORATED_BY",
+      "count": 3,
+      "domain": "uncategorized",
+      "examples": [
+        "ts-specific::ts-parameter-decorators",
+        "ts-specific::ts-decorator-metadata"
+      ]
+    },
+    {
+      "type": "FUNCTION_TYPE",
+      "count": 3,
+      "domain": "uncategorized",
+      "examples": [
+        "ts-specific::ts-mapped-type-as-clause",
+        "ts-specific::ts-function-type-intersection"
+      ]
+    },
+    {
+      "type": "TESTS",
+      "count": 3,
+      "domain": "uncategorized",
+      "examples": [
+        "ts-specific::ts-variadic-tuple"
+      ]
+    },
+    {
+      "type": "RETURNS_TRUE",
+      "count": 3,
+      "domain": "uncategorized",
+      "examples": [
+        "ts-specific::ts-variadic-tuple"
+      ]
+    },
+    {
+      "type": "RETURNS_FALSE",
+      "count": 3,
+      "domain": "uncategorized",
+      "examples": [
+        "ts-specific::ts-variadic-tuple"
+      ]
+    },
+    {
+      "type": "IMPORTS_TYPE",
+      "count": 3,
+      "domain": "uncategorized",
+      "examples": [
+        "ts-specific::ts-inline-type-modifier"
+      ]
+    }
+  ],
+  "synonymClusters": [
+    [
+      "CALL",
+      "READS_FROM",
+      "CALLS",
+      "CAPTURES",
+      "LOOP",
+      "ALIASES",
+      "YIELDS",
+      "YIELD",
+      "CLASS",
+      "USES",
+      "CALLS_ON",
+      "BOUND_TO",
+      "SCOPE",
+      "FIELD",
+      "KEYED_BY",
+      "CAUSES",
+      "TAGGED_BY",
+      "TYPEDEF",
+      "TYPED_AS",
+      "TYPED_BY",
+      "TYPES",
+      "FILE",
+      "BINDS_TO",
+      "SPREADS_FROM",
+      "BINDS",
+      "CASE",
+      "LABEL",
+      "LABELS",
+      "TYPE",
+      "TESTS"
+    ],
+    [
+      "LITERAL",
+      "EXTERNAL",
+      "EXTENDS"
+    ],
+    [
+      "DECLARES",
+      "DELETES",
+      "DECORATOR",
+      "DECORATES"
+    ],
+    [
+      "CONTAINS",
+      "CONSTRUCTS",
+      "CONTINUE",
+      "CONSTRAINS"
+    ],
+    [
+      "RESOLVES_TO",
+      "RESOLVED_IN",
+      "RESOLVED_BY"
+    ],
+    [
+      "DERIVES_FROM",
+      "DELETES_FROM"
+    ],
+    [
+      "MODIFIES",
+      "WRITES_TO"
+    ],
+    [
+      "HAS_BODY",
+      "USES_KEY",
+      "HAS_KEY",
+      "USES_AS_KEY"
+    ],
+    [
+      "IMPORTS_FROM",
+      "CHAINS_TO",
+      "EXITS_FROM",
+      "CHAINS_FROM",
+      "EXPORTS_FROM",
+      "REEXPORTS_FROM",
+      "MAPS_TO",
+      "CASTS_FROM",
+      "CASTS_TO"
+    ],
+    [
+      "IMPORT",
+      "EXPORT",
+      "EXPORTS",
+      "IMPORTS",
+      "EXPORTED_BY",
+      "EXPORTS_AS",
+      "EXPORTED_AS",
+      "REEXPORTS",
+      "RE_EXPORTS"
+    ],
+    [
+      "HAS_CATCH",
+      "USES_SCOPE",
+      "HAS_SCOPE",
+      "HAS_TYPE",
+      "HAS_VALUE",
+      "HAS_CASE",
+      "KEYOF_TYPE",
+      "KEY_TYPE",
+      "WRAPS_TYPE",
+      "USES_TYPE"
+    ],
+    [
+      "THROWS",
+      "SHADOWS"
+    ],
+    [
+      "DESTRUCTURES",
+      "DESTRUCTURED_FROM",
+      "DESTRUCTURES_FROM",
+      "DESTRUCTURES_TO",
+      "DESTRUCTURING",
+      "DESTRUCTURE",
+      "DESTRUCTURES_INTO"
+    ],
+    [
+      "HAS_ELEMENT",
+      "REST_ELEMENT"
+    ],
+    [
+      "PROPERTY",
+      "PROPERTY_OF"
+    ],
+    [
+      "GETTER",
+      "SETTER"
+    ],
+    [
+      "DESTRUCTURE_ASSIGNMENT",
+      "DESTRUCTURING_ASSIGNMENT"
+    ],
+    [
+      "ASSIGNS_TO",
+      "ASSERTS_TYPE_OF",
+      "ASSERTS_TYPE",
+      "ASSERTS_FROM",
+      "ASSERTS_TO"
+    ],
+    [
+      "SUPER_ACCESS",
+      "TYPE_ACCESS"
+    ],
+    [
+      "EVALUATES_FIRST",
+      "EVALUATES_LAST",
+      "EVALUATES_LEFT",
+      "EVALUATES_RIGHT"
+    ],
+    [
+      "ACCESSES_PROPERTY_OF",
+      "ACCESSES_PROPERTY"
+    ],
+    [
+      "SPREADS",
+      "SPREAD",
+      "PROXY",
+      "PROXIES",
+      "BREAK",
+      "ARRAY"
+    ],
+    [
+      "JSDOC_RETURNS",
+      "JSDOC_RETURN"
+    ],
+    [
+      "EXTRACTS",
+      "EXTRACTS_TO",
+      "EXTRACTS_FROM"
+    ],
+    [
+      "DESTRUCTURING_PATTERN",
+      "DESTRUCTURE_PATTERN"
+    ],
+    [
+      "USES_COMPUTED_KEY",
+      "HAS_COMPUTED_KEY"
+    ],
+    [
+      "UNION_TYPE",
+      "FUNCTION_TYPE"
+    ],
+    [
+      "RETURNS_TYPE",
+      "RETURNS_TRUE"
+    ],
+    [
+      "INFERRED_TYPE",
+      "INFER_TYPE"
+    ],
+    [
+      "INDEXED_ACCESS_TYPE",
+      "INDEX_ACCESS_TYPE"
+    ],
+    [
+      "INDEXED_ACCESS",
+      "INDEX_ACCESS"
+    ],
+    [
+      "EXPORTS_TYPE",
+      "IMPORTS_TYPE"
+    ],
+    [
+      "CONSTRUCTOR_TYPE",
+      "CONSTRUCTOR_TYPE_OF"
+    ]
+  ],
+  "unused": [
+    "AFFECTS",
+    "CALLS_API",
+    "CONSTANT",
+    "DEFINES",
+    "DEPLOYED_TO",
+    "EMITS_EVENT",
+    "EXPORTS_TO",
+    "EXPOSED_VIA",
+    "EXPOSES",
+    "GOVERNS",
+    "HANDLED_BY",
+    "HAS_CALLBACK",
+    "HTTP_RECEIVES",
+    "INSTANCE_OF",
+    "INTERACTS_WITH",
+    "INVOKES_FUNCTION",
+    "JOINS_ROOM",
+    "LISTENS_TO",
+    "LOGS_TO",
+    "MAKES_REQUEST",
+    "MEASURED_BY",
+    "MONITORED_BY",
+    "MOUNTS",
+    "PROJECT",
+    "PROVISIONED_BY",
+    "PUBLISHES_TO",
+    "REGISTERS_VIEW",
+    "REJECTS",
+    "RESPONDS_WITH",
+    "ROUTES_TO",
+    "SCHEDULED_BY",
+    "SERVICE",
+    "SUBSCRIBES_TO",
+    "UNKNOWN",
+    "USES_CONFIG",
+    "USES_SECRET",
+    "VIOLATES",
+    "db:connection",
+    "db:query",
+    "event:emit",
+    "event:listener",
+    "express:middleware",
+    "express:mount",
+    "express:router",
+    "fs:operation",
+    "fs:read",
+    "fs:write",
+    "grafema:plugin",
+    "http:request",
+    "http:route",
+    "net:request",
+    "net:stdio",
+    "net:tcp-connection",
+    "net:tcp-server",
+    "os:unix-server",
+    "os:unix-socket",
+    "socketio:emit",
+    "socketio:namespace",
+    "socketio:on"
+  ],
+  "pluginTerritory": [
+    "LISTENS_TO",
+    "event:listener",
+    "jsdoc:TYPE_ANNOTATION",
+    "jsdoc:TYPE_PARAMETER",
+    "jsdoc:import-type",
+    "jsdoc:type-annotation"
+  ],
+  "spurious": [
+    {
+      "type": "BIDIRECTIONAL_ALIAS",
+      "count": 2
+    },
+    {
+      "type": "HAS_IMPLICIT_BINDING",
+      "count": 2
+    },
+    {
+      "type": "EXITS_FROM",
+      "count": 2
+    },
+    {
+      "type": "CREATES_SCOPE",
+      "count": 2
+    },
+    {
+      "type": "INHERITS_FROM",
+      "count": 2
+    },
+    {
+      "type": "MAY_READ_FROM",
+      "count": 2
+    },
+    {
+      "type": "META_PROPERTY",
+      "count": 2
+    },
+    {
+      "type": "COERCES_VIA",
+      "count": 2
+    },
+    {
+      "type": "PROPERTY_OF",
+      "count": 2
+    },
+    {
+      "type": "COERCION",
+      "count": 2
+    },
+    {
+      "type": "COERCED_TO",
+      "count": 2
+    },
+    {
+      "type": "SHORT_CIRCUITS",
+      "count": 2
+    },
+    {
+      "type": "CONSTRUCTS",
+      "count": 2
+    },
+    {
+      "type": "INTERPOLATES",
+      "count": 2
+    },
+    {
+      "type": "EVALUATES_TO",
+      "count": 2
+    },
+    {
+      "type": "SPREADS_ARGUMENT",
+      "count": 2
+    },
+    {
+      "type": "RESOLVED_BY",
+      "count": 2
+    },
+    {
+      "type": "ELEMENT_ACCESS",
+      "count": 2
+    },
+    {
+      "type": "EXPORTS_FROM",
+      "count": 2
+    },
+    {
+      "type": "EVALUATES_SECOND",
+      "count": 2
+    },
+    {
+      "type": "RECEIVES_VALUE_FROM",
+      "count": 2
+    },
+    {
+      "type": "JSDOC_PARAM",
+      "count": 2
+    },
+    {
+      "type": "ACCESSES_PROPERTY",
+      "count": 2
+    },
+    {
+      "type": "JSDOC_OVERLOAD",
+      "count": 2
+    },
+    {
+      "type": "HAS_PARAM_TYPE",
+      "count": 2
+    },
+    {
+      "type": "EXPORTS_AS",
+      "count": 2
+    },
+    {
+      "type": "LIVE_BINDING_TO",
+      "count": 2
+    },
+    {
+      "type": "SPREAD",
+      "count": 2
+    },
+    {
+      "type": "CALLS_METHOD_ON",
+      "count": 2
+    },
+    {
+      "type": "SETTER",
+      "count": 2
+    },
+    {
+      "type": "TRIGGERS_GETTER",
+      "count": 2
+    },
+    {
+      "type": "MIXES_IN",
+      "count": 2
+    },
+    {
+      "type": "HAS_WRITABLE",
+      "count": 2
+    },
+    {
+      "type": "BREAKS_TO",
+      "count": 2
+    },
+    {
+      "type": "SWITCH",
+      "count": 2
+    },
+    {
+      "type": "INDEX_SIGNATURE",
+      "count": 2
+    },
+    {
+      "type": "ASSERTS_TYPE_OF",
+      "count": 2
+    },
+    {
+      "type": "ARRAY",
+      "count": 2
+    },
+    {
+      "type": "ASSERTS_TYPE",
+      "count": 2
+    },
+    {
+      "type": "DECORATOR",
+      "count": 2
+    },
+    {
+      "type": "DECORATES",
+      "count": 2
+    },
+    {
+      "type": "KEYOF_OPERATOR",
+      "count": 2
+    },
+    {
+      "type": "TEMPLATE_SUBSTITUTION",
+      "count": 2
+    },
+    {
+      "type": "INTERSECTION_TYPE",
+      "count": 2
+    },
+    {
+      "type": "INTERSECTION_MEMBER",
+      "count": 2
+    },
+    {
+      "type": "TYPE_PREDICATE",
+      "count": 2
+    },
+    {
+      "type": "HAS_TYPE_PREDICATE",
+      "count": 2
+    },
+    {
+      "type": "NARROWS_TYPE_OF",
+      "count": 2
+    },
+    {
+      "type": "HAS_VARIANT",
+      "count": 2
+    },
+    {
+      "type": "TYPE_OPERATOR",
+      "count": 2
+    },
+    {
+      "type": "OPERATES_ON",
+      "count": 2
+    },
+    {
+      "type": "INDEX_ACCESS_TYPE",
+      "count": 2
+    },
+    {
+      "type": "INDEXES_INTO",
+      "count": 2
+    },
+    {
+      "type": "FUNCTION_OVERLOAD",
+      "count": 2
+    },
+    {
+      "type": "EXPORTS_TYPE",
+      "count": 2
+    },
+    {
+      "type": "HAS_ELEMENT_TYPE",
+      "count": 2
+    },
+    {
+      "type": "SELECTS_PROPERTY",
+      "count": 2
+    },
+    {
+      "type": "TYPE_INTERSECTION",
+      "count": 2
+    },
+    {
+      "type": "TYPE_OBJECT",
+      "count": 2
+    },
+    {
+      "type": "TYPE_PROPERTY",
+      "count": 2
+    },
+    {
+      "type": "TYPE_UNIQUE_SYMBOL",
+      "count": 2
+    },
+    {
+      "type": "ASSERTS_FROM",
+      "count": 2
+    },
+    {
+      "type": "ASSERTS_TO",
+      "count": 2
+    },
+    {
+      "type": "CASTS_FROM",
+      "count": 2
+    },
+    {
+      "type": "APPLIES_DECORATOR",
+      "count": 2
+    },
+    {
+      "type": "TYPE_VARIABLE",
+      "count": 2
+    },
+    {
+      "type": "MAPS_KEY_TO",
+      "count": 2
+    },
+    {
+      "type": "MAPS_VALUE_TO",
+      "count": 2
+    },
+    {
+      "type": "TYPE_APPLICATION",
+      "count": 2
+    },
+    {
+      "type": "CONSTRAINS",
+      "count": 2
+    },
+    {
+      "type": "TYPE_ARGUMENT",
+      "count": 2
+    },
+    {
+      "type": "PARAMETER_TYPE",
+      "count": 2
+    },
+    {
+      "type": "SPREAD_ELEMENT",
+      "count": 2
+    },
+    {
+      "type": "INSTANCE_TYPE_OF",
+      "count": 2
+    },
+    {
+      "type": "CONSTRUCTOR_TYPE_OF",
+      "count": 2
+    },
+    {
+      "type": "BOUND_TO",
+      "count": 1
+    },
+    {
+      "type": "USES_SCOPE",
+      "count": 1
+    },
+    {
+      "type": "RESOLVES_THROUGH",
+      "count": 1
+    },
+    {
+      "type": "RESOLVED_IN",
+      "count": 1
+    },
+    {
+      "type": "FALLBACK_TO",
+      "count": 1
+    },
+    {
+      "type": "VARIABLE_REFERENCE",
+      "count": 1
+    },
+    {
+      "type": "PRIVATE_METHOD",
+      "count": 1
+    },
+    {
+      "type": "SUPER_ACCESS",
+      "count": 1
+    },
+    {
+      "type": "PRIVATE_ACCESS",
+      "count": 1
+    },
+    {
+      "type": "INJECTS_VARIABLE",
+      "count": 1
+    },
+    {
+      "type": "INJECTS_FUNCTION",
+      "count": 1
+    },
+    {
+      "type": "COLLIDES_WITH",
+      "count": 1
+    },
+    {
+      "type": "DELETES_FROM",
+      "count": 1
+    },
+    {
+      "type": "EVALUATES_LAST",
+      "count": 1
+    },
+    {
+      "type": "PASSES_TEMPLATE",
+      "count": 1
+    },
+    {
+      "type": "CONDITIONALLY_EXECUTES",
+      "count": 1
+    },
+    {
+      "type": "EVALUATES_LEFT",
+      "count": 1
+    },
+    {
+      "type": "EVALUATES_RIGHT",
+      "count": 1
+    },
+    {
+      "type": "TAGGED_BY",
+      "count": 1
+    },
+    {
+      "type": "APPLIES_TEMPLATE",
+      "count": 1
+    },
+    {
+      "type": "HASHBANG",
+      "count": 1
+    },
+    {
+      "type": "EXPORTED_BY",
+      "count": 1
+    },
+    {
+      "type": "EXTRACTS_PROPERTY",
+      "count": 1
+    },
+    {
+      "type": "SPREADS_INTO",
+      "count": 1
+    },
+    {
+      "type": "JSDOC_RETURNS",
+      "count": 1
+    },
+    {
+      "type": "TYPEDEF",
+      "count": 1
+    },
+    {
+      "type": "ANNOTATES",
+      "count": 1
+    },
+    {
+      "type": "SPECIFIES_TYPE",
+      "count": 1
+    },
+    {
+      "type": "JSDOC",
+      "count": 1
+    },
+    {
+      "type": "TYPES",
+      "count": 1
+    },
+    {
+      "type": "JSDOC_CALLBACK",
+      "count": 1
+    },
+    {
+      "type": "JSDOC_RETURN",
+      "count": 1
+    },
+    {
+      "type": "JSDOC_IMPLEMENTS",
+      "count": 1
+    },
+    {
+      "type": "CALLS_WITH",
+      "count": 1
+    },
+    {
+      "type": "SYMBOL_ACCESS",
+      "count": 1
+    },
+    {
+      "type": "ACCESSOR",
+      "count": 1
+    },
+    {
+      "type": "IMPORT_ATTRIBUTE",
+      "count": 1
+    },
+    {
+      "type": "HAS_ATTRIBUTE",
+      "count": 1
+    },
+    {
+      "type": "USES_ATTRIBUTES",
+      "count": 1
+    },
+    {
+      "type": "EXPORTED_AS",
+      "count": 1
+    },
+    {
+      "type": "REEXPORTS",
+      "count": 1
+    },
+    {
+      "type": "CONFLICTS_WITH",
+      "count": 1
+    },
+    {
+      "type": "HAS_SPREAD",
+      "count": 1
+    },
+    {
+      "type": "DELETE_EXPRESSION",
+      "count": 1
+    },
+    {
+      "type": "OPTIONAL_PROPERTY_ACCESS",
+      "count": 1
+    },
+    {
+      "type": "EXTRACTS_TO",
+      "count": 1
+    },
+    {
+      "type": "PROTOTYPE_SET_TO",
+      "count": 1
+    },
+    {
+      "type": "DEFINES_PROPERTY",
+      "count": 1
+    },
+    {
+      "type": "HAS_GETTER",
+      "count": 1
+    },
+    {
+      "type": "PROXY",
+      "count": 1
+    },
+    {
+      "type": "PROXIES",
+      "count": 1
+    },
+    {
+      "type": "HAS_HANDLER",
+      "count": 1
+    },
+    {
+      "type": "MONKEY_PATCHED_BY",
+      "count": 1
+    },
+    {
+      "type": "PROTOTYPE_ASSIGNMENT",
+      "count": 1
+    },
+    {
+      "type": "PROTOTYPE_LINKS_TO",
+      "count": 1
+    },
+    {
+      "type": "FALLS_THROUGH_TO",
+      "count": 1
+    },
+    {
+      "type": "CONTINUE",
+      "count": 1
+    },
+    {
+      "type": "TARGETS_LABEL",
+      "count": 1
+    },
+    {
+      "type": "BREAK",
+      "count": 1
+    },
+    {
+      "type": "DESTRUCTURE_PATTERN",
+      "count": 1
+    },
+    {
+      "type": "DESTRUCTURES_INTO",
+      "count": 1
+    },
+    {
+      "type": "CALL_SIGNATURE",
+      "count": 1
+    },
+    {
+      "type": "CONSTRUCT_SIGNATURE",
+      "count": 1
+    },
+    {
+      "type": "PARAMETERIZED_BY",
+      "count": 1
+    },
+    {
+      "type": "TS_NON_NULL_ASSERTION",
+      "count": 1
+    },
+    {
+      "type": "ASSERTS_NON_NULL",
+      "count": 1
+    },
+    {
+      "type": "PARAMETER_TYPED_AS",
+      "count": 1
+    },
+    {
+      "type": "RETURNS_GENERIC_TYPE",
+      "count": 1
+    },
+    {
+      "type": "GENERIC_TYPE",
+      "count": 1
+    },
+    {
+      "type": "HAS_TYPE_ARGUMENT",
+      "count": 1
+    },
+    {
+      "type": "TYPE_UNION",
+      "count": 1
+    },
+    {
+      "type": "KEYOF_TYPE",
+      "count": 1
+    },
+    {
+      "type": "INDEXED_ACCESS_TYPE",
+      "count": 1
+    },
+    {
+      "type": "INDEXED_ACCESS",
+      "count": 1
+    },
+    {
+      "type": "INDEX_ACCESS",
+      "count": 1
+    },
+    {
+      "type": "REST_ELEMENT",
+      "count": 1
+    },
+    {
+      "type": "HAS_REST_ELEMENT",
+      "count": 1
+    },
+    {
+      "type": "SPREADS_TYPE",
+      "count": 1
+    },
+    {
+      "type": "MODULE_DECLARATION",
+      "count": 1
+    },
+    {
+      "type": "DECLARATION",
+      "count": 1
+    },
+    {
+      "type": "EXCLUDES_PROPERTY",
+      "count": 1
+    },
+    {
+      "type": "EXTRACTS_FROM",
+      "count": 1
+    },
+    {
+      "type": "MATCHES_AGAINST",
+      "count": 1
+    },
+    {
+      "type": "EXCLUDES_FROM",
+      "count": 1
+    },
+    {
+      "type": "MODULE_AUGMENTATION",
+      "count": 1
+    },
+    {
+      "type": "AUGMENTS",
+      "count": 1
+    },
+    {
+      "type": "KEY_TYPE",
+      "count": 1
+    },
+    {
+      "type": "VALUE_TYPE",
+      "count": 1
+    },
+    {
+      "type": "SELF_REFERENCES",
+      "count": 1
+    },
+    {
+      "type": "ASSERTS_ABOUT",
+      "count": 1
+    },
+    {
+      "type": "NARROWS_TO",
+      "count": 1
+    },
+    {
+      "type": "INSTANTIATED_WITH",
+      "count": 1
+    },
+    {
+      "type": "TYPE_EXPRESSION",
+      "count": 1
+    },
+    {
+      "type": "TYPE_UTILITY",
+      "count": 1
+    },
+    {
+      "type": "WRAPS_TYPE",
+      "count": 1
+    },
+    {
+      "type": "USES_TYPE",
+      "count": 1
+    },
+    {
+      "type": "RECURSIVE_TYPE_CALL",
+      "count": 1
+    },
+    {
+      "type": "TYPE_PRIMITIVE",
+      "count": 1
+    },
+    {
+      "type": "CONSTRUCTOR_TYPE",
+      "count": 1
+    },
+    {
+      "type": "HAS_IMPLEMENTATION",
+      "count": 1
+    },
+    {
+      "type": "USES_AS_KEY",
+      "count": 1
+    },
+    {
+      "type": "USES_INDEX",
+      "count": 1
+    },
+    {
+      "type": "CONSTRAINT_TARGET",
+      "count": 1
+    },
+    {
+      "type": "TYPE_IMPORT",
+      "count": 1
+    },
+    {
+      "type": "TYPE_ACCESS",
+      "count": 1
+    },
+    {
+      "type": "IMPORTS_TYPE_FROM",
+      "count": 1
+    },
+    {
+      "type": "TYPEOF_TYPE",
+      "count": 1
+    },
+    {
+      "type": "CASTS_TO",
+      "count": 1
+    },
+    {
+      "type": "KEY_REMAPPING",
+      "count": 1
+    },
+    {
+      "type": "MAPS_OVER",
+      "count": 1
+    },
+    {
+      "type": "HAS_KEY_REMAPPING",
+      "count": 1
+    }
+  ]
+}
