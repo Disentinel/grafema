@@ -10,15 +10,17 @@
 import type { Visitor, NodePath } from '@babel/traverse';
 import * as t from '@babel/types';
 import { getLine, getColumn } from '../utils/location.js';
+import { countLogicalOperators } from '../utils/expression-helpers.js';
+import { generateSemanticId } from '../utils/semanticIdHelpers.js';
 import { computeSemanticId } from '../../../../core/SemanticId.js';
 import { ExpressionNode } from '../../../../core/nodes/ExpressionNode.js';
 import { ConditionParser } from '../ConditionParser.js';
+import { handleSwitchStatement, extractDiscriminantExpression } from '../extractors/index.js';
 import { FunctionBodyHandler } from './FunctionBodyHandler.js';
 
 export class BranchHandler extends FunctionBodyHandler {
   getHandlers(): Visitor {
     const ctx = this.ctx;
-    const analyzer = this.analyzer;
 
     return {
       IfStatement: this.createIfStatementVisitor(),
@@ -29,7 +31,7 @@ export class BranchHandler extends FunctionBodyHandler {
       BlockStatement: this.createBlockStatementVisitor(),
 
       SwitchStatement: (switchPath: NodePath<t.SwitchStatement>) => {
-        analyzer.handleSwitchStatement(
+        handleSwitchStatement(
           switchPath,
           ctx.getCurrentScopeId(),
           ctx.module,
@@ -49,7 +51,6 @@ export class BranchHandler extends FunctionBodyHandler {
     exit: (ifPath: NodePath<t.IfStatement>) => void;
   } {
     const ctx = this.ctx;
-    const analyzer = this.analyzer;
     const sourceCode = ctx.collections.code ?? '';
 
     return {
@@ -60,7 +61,7 @@ export class BranchHandler extends FunctionBodyHandler {
         // Phase 6 (REG-267): Increment branch count and count logical operators
         if (ctx.controlFlowState) {
           ctx.controlFlowState.branchCount++;
-          ctx.controlFlowState.logicalOpCount += analyzer.countLogicalOperators(ifNode.test);
+          ctx.controlFlowState.logicalOpCount += countLogicalOperators(ifNode.test);
         }
 
         // Check if this if-statement is an else-if (alternate of parent IfStatement)
@@ -94,7 +95,7 @@ export class BranchHandler extends FunctionBodyHandler {
           : legacyBranchId;
 
         // 2. Extract condition expression info for HAS_CONDITION edge
-        const conditionResult = analyzer.extractDiscriminantExpression(ifNode.test, ctx.module);
+        const conditionResult = extractDiscriminantExpression(ifNode.test, ctx.module);
 
         // For else-if, get the parent branch ID
         const isAlternateOfBranchId = isElseIf
@@ -135,7 +136,7 @@ export class BranchHandler extends FunctionBodyHandler {
 
         // Parse condition to extract constraints
         const constraints = ConditionParser.parse(ifNode.test);
-        const ifSemanticId = analyzer.generateSemanticId('if_statement', ctx.scopeTracker);
+        const ifSemanticId = generateSemanticId('if_statement', ctx.scopeTracker);
 
         ctx.scopes.push({
           id: ifScopeId,
@@ -169,7 +170,7 @@ export class BranchHandler extends FunctionBodyHandler {
           elseScopeId = `SCOPE#else#${ctx.module.file}#${getLine(ifNode.alternate)}:${getColumn(ifNode.alternate)}:${elseCounterId}`;
 
           const negatedConstraints = constraints.length > 0 ? ConditionParser.negate(constraints) : undefined;
-          const elseSemanticId = analyzer.generateSemanticId('else_statement', ctx.scopeTracker);
+          const elseSemanticId = generateSemanticId('else_statement', ctx.scopeTracker);
 
           ctx.scopes.push({
             id: elseScopeId,
@@ -212,7 +213,6 @@ export class BranchHandler extends FunctionBodyHandler {
 
   private createConditionalExpressionVisitor(): (condPath: NodePath<t.ConditionalExpression>) => void {
     const ctx = this.ctx;
-    const analyzer = this.analyzer;
 
     return (condPath: NodePath<t.ConditionalExpression>) => {
       const condNode = condPath.node;
@@ -221,7 +221,7 @@ export class BranchHandler extends FunctionBodyHandler {
       if (ctx.controlFlowState) {
         ctx.controlFlowState.branchCount++;
         // Count logical operators in the test condition (e.g., a && b ? x : y)
-        ctx.controlFlowState.logicalOpCount += analyzer.countLogicalOperators(condNode.test);
+        ctx.controlFlowState.logicalOpCount += countLogicalOperators(condNode.test);
       }
 
       // Determine parent scope from stack or fallback
@@ -237,7 +237,7 @@ export class BranchHandler extends FunctionBodyHandler {
         : legacyBranchId;
 
       // Extract condition expression info for HAS_CONDITION edge
-      const conditionResult = analyzer.extractDiscriminantExpression(condNode.test, ctx.module);
+      const conditionResult = extractDiscriminantExpression(condNode.test, ctx.module);
 
       // Generate expression IDs for consequent and alternate
       const consequentLine = getLine(condNode.consequent);
@@ -351,7 +351,6 @@ export class BranchHandler extends FunctionBodyHandler {
     exit: (casePath: NodePath<t.SwitchCase>) => void;
   } {
     const ctx = this.ctx;
-    const analyzer = this.analyzer;
 
     return {
       enter: (casePath: NodePath<t.SwitchCase>) => {
@@ -366,7 +365,7 @@ export class BranchHandler extends FunctionBodyHandler {
         // Generate SCOPE id in parent context BEFORE entering child scope — matches LoopHandler pattern
         const scopeType = caseNode.test === null ? 'default-case' : 'switch-case';
         const scopeId = `SCOPE#${scopeType}#${ctx.module.file}#${getLine(caseNode)}:${ctx.scopeCounterRef.value++}`;
-        const semanticId = analyzer.generateSemanticId(scopeType, ctx.scopeTracker);
+        const semanticId = generateSemanticId(scopeType, ctx.scopeTracker);
 
         // Buffer the SCOPE node with parentScopeId = caseId (CASE -> CONTAINS -> SCOPE)
         ctx.scopes.push({

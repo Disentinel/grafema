@@ -8,8 +8,10 @@
 import type { Visitor, NodePath } from '@babel/traverse';
 import * as t from '@babel/types';
 import { getLine, getColumn } from '../utils/location.js';
+import { generateSemanticId, generateAnonymousName } from '../utils/semanticIdHelpers.js';
 import { computeSemanticId } from '../../../../core/SemanticId.js';
 import type { ReturnStatementInfo } from '../types.js';
+import { extractReturnExpressionInfo } from '../extractors/ReturnExpressionExtractor.js';
 import { FunctionBodyHandler } from './FunctionBodyHandler.js';
 
 export class NestedFunctionHandler extends FunctionBodyHandler {
@@ -20,7 +22,7 @@ export class NestedFunctionHandler extends FunctionBodyHandler {
     return {
       FunctionDeclaration: (funcDeclPath: NodePath<t.FunctionDeclaration>) => {
         const node = funcDeclPath.node;
-        const funcName = node.id ? node.id.name : analyzer.generateAnonymousName(ctx.scopeTracker);
+        const funcName = node.id ? node.id.name : generateAnonymousName(ctx.scopeTracker);
         // Use semantic ID as primary ID when scopeTracker available
         const legacyId = `FUNCTION#${funcName}#${ctx.module.file}#${getLine(node)}:${getColumn(node)}:${ctx.functionCounterRef.value++}`;
         const functionId = ctx.scopeTracker
@@ -40,7 +42,7 @@ export class NestedFunctionHandler extends FunctionBodyHandler {
         });
 
         const nestedScopeId = `SCOPE#${funcName}:body#${ctx.module.file}#${getLine(node)}`;
-        const closureSemanticId = analyzer.generateSemanticId('closure', ctx.scopeTracker);
+        const closureSemanticId = generateSemanticId('closure', ctx.scopeTracker);
         ctx.scopes.push({
           id: nestedScopeId,
           type: 'SCOPE',
@@ -67,7 +69,7 @@ export class NestedFunctionHandler extends FunctionBodyHandler {
 
       FunctionExpression: (funcPath: NodePath<t.FunctionExpression>) => {
         const node = funcPath.node;
-        const funcName = node.id ? node.id.name : analyzer.generateAnonymousName(ctx.scopeTracker);
+        const funcName = node.id ? node.id.name : generateAnonymousName(ctx.scopeTracker);
         // Use semantic ID as primary ID when scopeTracker available
         const legacyId = `FUNCTION#${funcName}#${ctx.module.file}#${getLine(node)}:${getColumn(node)}:${ctx.functionCounterRef.value++}`;
         const functionId = ctx.scopeTracker
@@ -87,7 +89,7 @@ export class NestedFunctionHandler extends FunctionBodyHandler {
         });
 
         const nestedScopeId = `SCOPE#${funcName}:body#${ctx.module.file}#${getLine(node)}`;
-        const closureSemanticId = analyzer.generateSemanticId('closure', ctx.scopeTracker);
+        const closureSemanticId = generateSemanticId('closure', ctx.scopeTracker);
         ctx.scopes.push({
           id: nestedScopeId,
           type: 'SCOPE',
@@ -124,7 +126,7 @@ export class NestedFunctionHandler extends FunctionBodyHandler {
           funcName = parent.id.name;
         } else {
           // Use scope-level counter for stable semanticId
-          funcName = analyzer.generateAnonymousName(ctx.scopeTracker);
+          funcName = generateAnonymousName(ctx.scopeTracker);
         }
 
         // Use semantic ID as primary ID when scopeTracker available
@@ -147,7 +149,7 @@ export class NestedFunctionHandler extends FunctionBodyHandler {
 
         if (node.body.type === 'BlockStatement') {
           const nestedScopeId = `SCOPE#${funcName}:body#${ctx.module.file}#${line}`;
-          const arrowSemanticId = analyzer.generateSemanticId('arrow_body', ctx.scopeTracker);
+          const arrowSemanticId = generateSemanticId('arrow_body', ctx.scopeTracker);
           ctx.scopes.push({
             id: nestedScopeId,
             type: 'SCOPE',
@@ -177,7 +179,7 @@ export class NestedFunctionHandler extends FunctionBodyHandler {
           const bodyColumn = getColumn(bodyExpr);
 
           // Extract expression-specific info using shared method
-          const exprInfo = analyzer.extractReturnExpressionInfo(
+          const exprInfo = extractReturnExpressionInfo(
             bodyExpr, ctx.module, ctx.literals, ctx.literalCounterRef, line, column, 'implicit_return'
           );
 

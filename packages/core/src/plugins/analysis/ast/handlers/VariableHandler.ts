@@ -14,15 +14,20 @@ import type {
   CounterRef,
 } from '../types.js';
 import { FunctionBodyHandler } from './FunctionBodyHandler.js';
+import {
+  detectVariableReassignment,
+  detectIndexedArrayAssignment,
+  detectObjectPropertyAssignment,
+} from '../mutation-detection/index.js';
+import { handleVariableDeclaration } from '../extractors/index.js';
 
 export class VariableHandler extends FunctionBodyHandler {
   getHandlers(): Visitor {
     const ctx = this.ctx;
-    const analyzer = this.analyzer;
 
     return {
       VariableDeclaration: (varPath: NodePath<t.VariableDeclaration>) => {
-        analyzer.handleVariableDeclaration(
+        handleVariableDeclaration(
           varPath,
           ctx.getCurrentScopeId(),
           ctx.module,
@@ -70,7 +75,7 @@ export class VariableHandler extends FunctionBodyHandler {
           }
           const variableReassignments = ctx.collections.variableReassignments as VariableReassignmentInfo[];
 
-          analyzer.detectVariableReassignment(assignNode, ctx.module, variableReassignments, ctx.scopeTracker);
+          detectVariableReassignment(assignNode, ctx.module, variableReassignments, ctx.scopeTracker);
         }
         // === END VARIABLE REASSIGNMENT ===
 
@@ -81,7 +86,7 @@ export class VariableHandler extends FunctionBodyHandler {
         const arrayMutations = ctx.collections.arrayMutations as ArrayMutationInfo[];
 
         // Check for indexed array assignment: arr[i] = value
-        analyzer.detectIndexedArrayAssignment(assignNode, ctx.module, arrayMutations, ctx.scopeTracker, ctx.collections);
+        detectIndexedArrayAssignment(assignNode, ctx.module, arrayMutations, ctx.scopeTracker, ctx.collections);
 
         // Initialize object mutations collection if not exists
         if (!ctx.collections.objectMutations) {
@@ -100,7 +105,7 @@ export class VariableHandler extends FunctionBodyHandler {
         const propertyAssignmentCounterRef = ctx.collections.propertyAssignmentCounterRef as CounterRef;
 
         // Check for object property assignment: obj.prop = value
-        analyzer.detectObjectPropertyAssignment(
+        detectObjectPropertyAssignment(
           assignNode, ctx.module, objectMutations, ctx.scopeTracker,
           propertyAssignments, propertyAssignmentCounterRef
         );

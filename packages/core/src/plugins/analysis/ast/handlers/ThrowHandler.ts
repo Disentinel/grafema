@@ -7,12 +7,12 @@
 import type { Visitor, NodePath } from '@babel/traverse';
 import * as t from '@babel/types';
 import { getLine, getColumn } from '../utils/location.js';
+import { microTraceToErrorClass } from '../extractors/MicroTraceToErrorClass.js';
 import { FunctionBodyHandler } from './FunctionBodyHandler.js';
 
 export class ThrowHandler extends FunctionBodyHandler {
   getHandlers(): Visitor {
     const ctx = this.ctx;
-    const analyzer = this.analyzer;
 
     return {
       // Phase 6 (REG-267): Track throw statements for control flow metadata
@@ -75,7 +75,7 @@ export class ThrowHandler extends FunctionBodyHandler {
               });
             } else {
               // Try micro-trace
-              const { errorClassName, tracePath } = analyzer.microTraceToErrorClass(
+              const { errorClassName, tracePath } = microTraceToErrorClass(
                 varName,
                 ctx.functionPath,
                 ctx.variableDeclarations

@@ -4,12 +4,13 @@ import * as t from '@babel/types';
 import { getLine, getColumn } from '../utils/location.js';
 import { ExpressionEvaluator } from '../ExpressionEvaluator.js';
 import type { CallArgumentInfo } from '../types.js';
+import { microTraceToErrorClass } from '../extractors/MicroTraceToErrorClass.js';
+import { handleCallExpression } from '../extractors/CallExpressionExtractor.js';
 import { FunctionBodyHandler } from './FunctionBodyHandler.js';
 
 export class CallExpressionHandler extends FunctionBodyHandler {
   getHandlers(): Visitor {
     const ctx = this.ctx;
-    const analyzer = this.analyzer;
 
     return {
       // Function call expressions
@@ -24,7 +25,7 @@ export class CallExpressionHandler extends FunctionBodyHandler {
         // REG-298: Detect isInsideLoop (O(1) via depth counter)
         const isInsideLoop = ctx.controlFlowState.loopDepth > 0;
 
-        analyzer.handleCallExpression(
+        handleCallExpression(
           callPath.node,
           ctx.processedCallSites,
           ctx.processedMethodCalls,
@@ -235,7 +236,7 @@ export class CallExpressionHandler extends FunctionBodyHandler {
                   });
                 } else {
                   // Try micro-trace
-                  const { errorClassName, tracePath } = analyzer.microTraceToErrorClass(
+                  const { errorClassName, tracePath } = microTraceToErrorClass(
                     varName,
                     funcParent as NodePath<t.Function>,
                     ctx.variableDeclarations
@@ -320,7 +321,7 @@ export class CallExpressionHandler extends FunctionBodyHandler {
                   return;
                 }
 
-                const { errorClassName, tracePath } = analyzer.microTraceToErrorClass(
+                const { errorClassName, tracePath } = microTraceToErrorClass(
                   varName,
                   ctx.functionPath,
                   ctx.variableDeclarations

@@ -7,7 +7,9 @@
 import type { Visitor, NodePath } from '@babel/traverse';
 import * as t from '@babel/types';
 import { getLine, getColumn } from '../utils/location.js';
+import { generateSemanticId } from '../utils/semanticIdHelpers.js';
 import { computeSemanticId } from '../../../../core/SemanticId.js';
+import { extractNamesFromPattern } from '../utils/extractNamesFromPattern.js';
 import { FunctionBodyHandler } from './FunctionBodyHandler.js';
 
 export class TryCatchHandler extends FunctionBodyHandler {
@@ -23,7 +25,6 @@ export class TryCatchHandler extends FunctionBodyHandler {
     exit: (tryPath: NodePath<t.TryStatement>) => void;
   } {
     const ctx = this.ctx;
-    const analyzer = this.analyzer;
 
     return {
       enter: (tryPath: NodePath<t.TryStatement>) => {
@@ -61,7 +62,7 @@ export class TryCatchHandler extends FunctionBodyHandler {
         // 2. Create try-body SCOPE (backward compatibility)
         // Parent is now TRY_BLOCK, not original parentScopeId
         const tryScopeId = `SCOPE#try-block#${ctx.module.file}#${getLine(tryNode)}:${ctx.scopeCounterRef.value++}`;
-        const trySemanticId = analyzer.generateSemanticId('try-block', ctx.scopeTracker);
+        const trySemanticId = generateSemanticId('try-block', ctx.scopeTracker);
         ctx.scopes.push({
           id: tryScopeId,
           type: 'SCOPE',
@@ -103,7 +104,7 @@ export class TryCatchHandler extends FunctionBodyHandler {
 
           // Create catch-body SCOPE (backward compatibility)
           catchScopeId = `SCOPE#catch-block#${ctx.module.file}#${getLine(catchClause)}:${ctx.scopeCounterRef.value++}`;
-          const catchSemanticId = analyzer.generateSemanticId('catch-block', ctx.scopeTracker);
+          const catchSemanticId = generateSemanticId('catch-block', ctx.scopeTracker);
           ctx.scopes.push({
             id: catchScopeId,
             type: 'SCOPE',
@@ -138,7 +139,7 @@ export class TryCatchHandler extends FunctionBodyHandler {
 
           // Create finally-body SCOPE (backward compatibility)
           finallyScopeId = `SCOPE#finally-block#${ctx.module.file}#${getLine(tryNode.finalizer)}:${ctx.scopeCounterRef.value++}`;
-          const finallySemanticId = analyzer.generateSemanticId('finally-block', ctx.scopeTracker);
+          const finallySemanticId = generateSemanticId('finally-block', ctx.scopeTracker);
           ctx.scopes.push({
             id: finallyScopeId,
             type: 'SCOPE',
@@ -201,7 +202,6 @@ export class TryCatchHandler extends FunctionBodyHandler {
     enter: (catchPath: NodePath<t.CatchClause>) => void;
   } {
     const ctx = this.ctx;
-    const analyzer = this.analyzer;
 
     return {
       enter: (catchPath: NodePath<t.CatchClause>) => {
@@ -238,7 +238,7 @@ export class TryCatchHandler extends FunctionBodyHandler {
 
         // Handle catch parameter (e.g., catch (e) or catch ({ message }))
         if (catchNode.param) {
-          const errorVarInfo = analyzer.extractVariableNamesFromPattern(catchNode.param);
+          const errorVarInfo = extractNamesFromPattern(catchNode.param);
 
           errorVarInfo.forEach(varInfo => {
             const legacyId = `VARIABLE#${varInfo.name}#${ctx.module.file}#${varInfo.loc.start.line}:${varInfo.loc.start.column}:${ctx.varDeclCounterRef.value++}`;
