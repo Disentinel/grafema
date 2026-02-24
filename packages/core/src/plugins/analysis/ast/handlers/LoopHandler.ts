@@ -7,8 +7,11 @@
 import type { Visitor, NodePath } from '@babel/traverse';
 import * as t from '@babel/types';
 import { getLine, getColumn } from '../utils/location.js';
+import { memberExpressionToString } from '../utils/expression-helpers.js';
+import { generateSemanticId } from '../utils/semanticIdHelpers.js';
 import { computeSemanticId } from '../../../../core/SemanticId.js';
 import { ExpressionNode } from '../../../../core/nodes/ExpressionNode.js';
+import { extractDiscriminantExpression } from '../extractors/index.js';
 import { FunctionBodyHandler } from './FunctionBodyHandler.js';
 
 export class LoopHandler extends FunctionBodyHandler {
@@ -28,7 +31,6 @@ export class LoopHandler extends FunctionBodyHandler {
     loopType: 'for' | 'for-in' | 'for-of' | 'while' | 'do-while',
   ): { enter: (path: NodePath<t.Loop>) => void; exit: () => void } {
     const ctx = this.ctx;
-    const analyzer = this.analyzer;
 
     return {
       enter: (path: NodePath<t.Loop>) => {
@@ -60,7 +62,7 @@ export class LoopHandler extends FunctionBodyHandler {
             iteratesOverLine = getLine(loopNode.right);
             iteratesOverColumn = getColumn(loopNode.right);
           } else if (t.isMemberExpression(loopNode.right)) {
-            iteratesOverName = analyzer.memberExpressionToString(loopNode.right);
+            iteratesOverName = memberExpressionToString(loopNode.right);
             iteratesOverLine = getLine(loopNode.right);
             iteratesOverColumn = getColumn(loopNode.right);
           }
@@ -159,7 +161,7 @@ export class LoopHandler extends FunctionBodyHandler {
         if (loopType === 'while' || loopType === 'do-while') {
           const testNode = (node as t.WhileStatement | t.DoWhileStatement).test;
           if (testNode) {
-            const condResult = analyzer.extractDiscriminantExpression(testNode, ctx.module);
+            const condResult = extractDiscriminantExpression(testNode, ctx.module);
             conditionExpressionId = condResult.id;
             conditionExpressionType = condResult.expressionType;
             conditionLine = condResult.line;
@@ -182,7 +184,7 @@ export class LoopHandler extends FunctionBodyHandler {
           const forNode = node as t.ForStatement;
           // for loop test may be null (infinite loop: for(;;))
           if (forNode.test) {
-            const condResult = analyzer.extractDiscriminantExpression(forNode.test, ctx.module);
+            const condResult = extractDiscriminantExpression(forNode.test, ctx.module);
             conditionExpressionId = condResult.id;
             conditionExpressionType = condResult.expressionType;
             conditionLine = condResult.line;
@@ -209,7 +211,7 @@ export class LoopHandler extends FunctionBodyHandler {
         if (loopType === 'for') {
           const forNode = node as t.ForStatement;
           if (forNode.update) {
-            const updateResult = analyzer.extractDiscriminantExpression(forNode.update, ctx.module);
+            const updateResult = extractDiscriminantExpression(forNode.update, ctx.module);
             updateArgSourceName = updateResult.updateArgSourceName;
             updateOperator = updateResult.operator;
           }
@@ -264,7 +266,7 @@ export class LoopHandler extends FunctionBodyHandler {
 
         // 5. Create body SCOPE (backward compatibility)
         const scopeId = `SCOPE#${scopeType}#${ctx.module.file}#${getLine(node)}:${ctx.scopeCounterRef.value++}`;
-        const semanticId = analyzer.generateSemanticId(scopeType, ctx.scopeTracker);
+        const semanticId = generateSemanticId(scopeType, ctx.scopeTracker);
         ctx.scopes.push({
           id: scopeId,
           type: 'SCOPE',

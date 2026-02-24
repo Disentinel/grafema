@@ -11,18 +11,18 @@ import { getLine } from '../utils/location.js';
 import { PropertyAccessVisitor } from '../visitors/index.js';
 import type { PropertyAccessInfo, CounterRef } from '../types.js';
 import { FunctionBodyHandler } from './FunctionBodyHandler.js';
+import { collectUpdateExpression } from '../mutation-detection/index.js';
 
 export class PropertyAccessHandler extends FunctionBodyHandler {
   getHandlers(): Visitor {
     const ctx = this.ctx;
-    const analyzer = this.analyzer;
 
     return {
       UpdateExpression: (updatePath: NodePath<t.UpdateExpression>) => {
         const updateNode = updatePath.node;
 
         // REG-288/REG-312: Collect update expression info for graph building
-        analyzer.collectUpdateExpression(updateNode, ctx.module, ctx.updateExpressions, ctx.getCurrentScopeId(), ctx.scopeTracker);
+        collectUpdateExpression(updateNode, ctx.module, ctx.updateExpressions, ctx.getCurrentScopeId(), ctx.scopeTracker);
 
         // Legacy behavior: update scope.modifies for IDENTIFIER targets
         if (updateNode.argument.type === 'Identifier') {

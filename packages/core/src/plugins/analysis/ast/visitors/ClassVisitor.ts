@@ -26,7 +26,7 @@ import type {
 import type { NodePath } from '@babel/traverse';
 import { ASTVisitor, type VisitorModule, type VisitorCollections, type VisitorHandlers, type CounterRef } from './ASTVisitor.js';
 import type { AnalyzeFunctionBodyCallback } from './FunctionVisitor.js';
-import type { TrackVariableAssignmentCallback } from './VariableVisitor.js';
+import type { TrackVariableAssignmentCallback, TrackVariableAssignmentContext } from './VariableVisitor.js';
 import type { DecoratorInfo, ParameterInfo, VariableDeclarationInfo, TypeParameterInfo } from '../types.js';
 import { extractTypeParameters, typeNodeToString } from './TypeScriptVisitor.js';
 import { ExpressionEvaluator } from '../ExpressionEvaluator.js';
@@ -110,6 +110,19 @@ export class ClassVisitor extends ASTVisitor {
     this.analyzeFunctionBody = analyzeFunctionBody;
     this.scopeTracker = scopeTracker;
     this.trackVariableAssignment = trackVariableAssignment;
+  }
+
+  private static buildTrackingContext(collections: VisitorCollections): TrackVariableAssignmentContext {
+    return {
+      literals: (collections.literals ?? []) as unknown[],
+      variableAssignments: (collections.variableAssignments ?? []) as unknown[],
+      literalCounterRef: (collections.literalCounterRef ?? { value: 0 }) as CounterRef,
+      objectLiterals: (collections.objectLiterals ?? []) as unknown[],
+      objectProperties: (collections.objectProperties ?? []) as unknown[],
+      objectLiteralCounterRef: (collections.objectLiteralCounterRef ?? { value: 0 }) as CounterRef,
+      arrayLiterals: (collections.arrayLiterals ?? []) as unknown[],
+      arrayLiteralCounterRef: (collections.arrayLiteralCounterRef ?? { value: 0 }) as CounterRef,
+    };
   }
 
   /**
@@ -212,14 +225,7 @@ export class ClassVisitor extends ASTVisitor {
         propName,
         module,
         propLine,
-        (collections.literals ?? []) as unknown[],
-        (collections.variableAssignments ?? []) as unknown[],
-        (collections.literalCounterRef ?? { value: 0 }) as CounterRef,
-        (collections.objectLiterals ?? []) as unknown[],
-        (collections.objectProperties ?? []) as unknown[],
-        (collections.objectLiteralCounterRef ?? { value: 0 }) as CounterRef,
-        (collections.arrayLiterals ?? []) as unknown[],
-        (collections.arrayLiteralCounterRef ?? { value: 0 }) as CounterRef,
+        ClassVisitor.buildTrackingContext(collections),
       );
     }
   }
@@ -643,14 +649,7 @@ export class ClassVisitor extends ASTVisitor {
                   displayName,
                   module,
                   propLine,
-                  (collections.literals ?? []) as unknown[],
-                  (collections.variableAssignments ?? []) as unknown[],
-                  (collections.literalCounterRef ?? { value: 0 }) as CounterRef,
-                  (collections.objectLiterals ?? []) as unknown[],
-                  (collections.objectProperties ?? []) as unknown[],
-                  (collections.objectLiteralCounterRef ?? { value: 0 }) as CounterRef,
-                  (collections.arrayLiterals ?? []) as unknown[],
-                  (collections.arrayLiteralCounterRef ?? { value: 0 }) as CounterRef,
+                  ClassVisitor.buildTrackingContext(collections),
                 );
               }
 
@@ -1024,14 +1023,7 @@ export class ClassVisitor extends ASTVisitor {
                   displayName,
                   module,
                   propLine,
-                  (collections.literals ?? []) as unknown[],
-                  (collections.variableAssignments ?? []) as unknown[],
-                  (collections.literalCounterRef ?? { value: 0 }) as CounterRef,
-                  (collections.objectLiterals ?? []) as unknown[],
-                  (collections.objectProperties ?? []) as unknown[],
-                  (collections.objectLiteralCounterRef ?? { value: 0 }) as CounterRef,
-                  (collections.arrayLiterals ?? []) as unknown[],
-                  (collections.arrayLiteralCounterRef ?? { value: 0 }) as CounterRef,
+                  ClassVisitor.buildTrackingContext(collections),
                 );
               }
 

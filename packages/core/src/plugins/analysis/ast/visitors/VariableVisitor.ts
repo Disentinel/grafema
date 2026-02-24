@@ -37,6 +37,20 @@ export interface VariableInfo {
 export type ExtractVariableNamesCallback = (pattern: Node) => VariableInfo[];
 
 /**
+ * Assignment tracking context — groups shared collection arrays
+ */
+export interface TrackVariableAssignmentContext {
+  literals: unknown[];
+  variableAssignments: unknown[];
+  literalCounterRef: CounterRef;
+  objectLiterals: unknown[];
+  objectProperties: unknown[];
+  objectLiteralCounterRef: CounterRef;
+  arrayLiterals: unknown[];
+  arrayLiteralCounterRef: CounterRef;
+}
+
+/**
  * Callback type for tracking variable assignments
  */
 export type TrackVariableAssignmentCallback = (
@@ -45,14 +59,7 @@ export type TrackVariableAssignmentCallback = (
   variableName: string,
   module: VisitorModule,
   line: number,
-  literals: unknown[],
-  variableAssignments: unknown[],
-  literalCounterRef: CounterRef,
-  objectLiterals: unknown[],
-  objectProperties: unknown[],
-  objectLiteralCounterRef: CounterRef,
-  arrayLiterals: unknown[],
-  arrayLiteralCounterRef: CounterRef
+  ctx: TrackVariableAssignmentContext
 ) => void;
 
 /**
@@ -197,6 +204,17 @@ export class VariableVisitor extends ASTVisitor {
 
     const extractVariableNamesFromPattern = this.extractVariableNamesFromPattern;
     const trackVariableAssignment = this.trackVariableAssignment;
+
+    const trackingCtx: TrackVariableAssignmentContext = {
+      literals,
+      variableAssignments,
+      literalCounterRef,
+      objectLiterals,
+      objectProperties,
+      objectLiteralCounterRef,
+      arrayLiterals,
+      arrayLiteralCounterRef,
+    };
 
     // Track which loops we've already created scopes for
     const processedLoops = new Set<unknown>();
@@ -627,14 +645,7 @@ export class VariableVisitor extends ASTVisitor {
                     varInfo.name,
                     module,
                     varInfo.loc.start.line,
-                    literals,
-                    variableAssignments,
-                    literalCounterRef as CounterRef,
-                    objectLiterals,
-                    objectProperties,
-                    objectLiteralCounterRef,
-                    arrayLiterals,
-                    arrayLiteralCounterRef
+                    trackingCtx
                   );
                 }
               }

@@ -8,12 +8,12 @@ import type { Visitor, NodePath } from '@babel/traverse';
 import * as t from '@babel/types';
 import { getLine, getColumn } from '../utils/location.js';
 import type { ReturnStatementInfo, YieldExpressionInfo } from '../types.js';
+import { extractReturnExpressionInfo } from '../extractors/ReturnExpressionExtractor.js';
 import { FunctionBodyHandler } from './FunctionBodyHandler.js';
 
 export class ReturnYieldHandler extends FunctionBodyHandler {
   getHandlers(): Visitor {
     const ctx = this.ctx;
-    const analyzer = this.analyzer;
 
     return {
       // Handle return statements for RETURNS edges
@@ -70,7 +70,7 @@ export class ReturnYieldHandler extends FunctionBodyHandler {
         const arg = returnNode.argument;
 
         // Extract expression-specific info using shared method
-        const exprInfo = analyzer.extractReturnExpressionInfo(
+        const exprInfo = extractReturnExpressionInfo(
           arg, ctx.module, ctx.literals, ctx.literalCounterRef, returnLine, returnColumn, 'return'
         );
 
@@ -128,7 +128,7 @@ export class ReturnYieldHandler extends FunctionBodyHandler {
 
         // Extract expression-specific info using shared method
         // Note: We reuse extractReturnExpressionInfo since yield values have identical semantics
-        const exprInfo = analyzer.extractReturnExpressionInfo(
+        const exprInfo = extractReturnExpressionInfo(
           arg, ctx.module, ctx.literals, ctx.literalCounterRef, yieldLine, yieldColumn, 'yield'
         );
 
