@@ -109,29 +109,12 @@ describe('CLASS node ID format validation', () => {
       );
     });
 
-    it('ASTWorker should use ClassNode.create()', () => {
-      const file = 'packages/core/src/core/ASTWorker.ts';
-      const grepCommand = `grep -c "ClassNode.create" ${file} || echo "0"`;
-
-      let result;
-      try {
-        result = execSync(grepCommand, { encoding: 'utf-8', cwd: process.cwd() }).trim();
-      } catch (error) {
-        result = '0';
-      }
-
-      const count = parseInt(result, 10);
-
-      assert.ok(
-        count > 0,
-        `${file} should use ClassNode.create() at least once`
-      );
-    });
+    // REG-579: ASTWorker.ts no longer has class handling — it delegates to
+    // extractModuleCollections() → ClassVisitor. ClassVisitor check above covers this.
 
     it('key files should import ClassNode', () => {
       const files = [
         'packages/core/src/plugins/analysis/ast/visitors/ClassVisitor.ts',
-        'packages/core/src/core/ASTWorker.ts',
       ];
 
       for (const file of files) {
@@ -262,21 +245,7 @@ describe('CLASS node ID format validation', () => {
       );
     });
 
-    it('ASTWorker should use ClassNodeRecord type', () => {
-      const file = 'packages/core/src/core/ASTWorker.ts';
-      const grepCommand = `grep "ClassNodeRecord" ${file} || true`;
-
-      let result;
-      try {
-        result = execSync(grepCommand, { encoding: 'utf-8', cwd: process.cwd() }).trim();
-      } catch (error) {
-        result = '';
-      }
-
-      assert.ok(
-        result.length > 0,
-        `${file} should reference ClassNodeRecord type`
-      );
-    });
+    // REG-579: ASTWorker.ts no longer has class handling — delegates to
+    // extractModuleCollections() → ClassVisitor. ClassVisitor check above covers this.
   });
 });

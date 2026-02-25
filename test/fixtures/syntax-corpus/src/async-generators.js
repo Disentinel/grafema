@@ -680,10 +680,11 @@ function* chainedYield() {
 // @end-annotation
 async function getConfigValue(key) { return key; }
 
-const asyncDestructureHandler = async ({
-  timeout = await getConfigValue('timeout'),
-  retries = await getConfigValue('retries'),
-} = {}) => {
+// `await` in async function parameters is invalid syntax.
+// Moved defaults inside the body to remain parseable.
+const asyncDestructureHandler = async ({ timeout, retries } = {}) => {
+  timeout = timeout ?? await getConfigValue('timeout');
+  retries = retries ?? await getConfigValue('retries');
   return { timeout, retries };
 };
 

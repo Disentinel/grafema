@@ -52,6 +52,7 @@ export function toASTCollections(
     objectLiterals: allCollections.objectLiterals,
     objectProperties: allCollections.objectProperties,
     arrayLiterals: allCollections.arrayLiterals,
+    arrayElements: allCollections.arrayElements,
     arrayMutations: allCollections.arrayMutations,
     objectMutations: allCollections.objectMutations,
     propertyAssignments: allCollections.propertyAssignments,
@@ -67,6 +68,8 @@ export function toASTCollections(
       ? allCollections.catchesFromInfos as CatchesFromInfo[]
       : undefined,
     propertyAccesses: allCollections.propertyAccesses,
+    miscEdges: allCollections.miscEdges,
+    miscNodes: allCollections.miscNodes,
     hasTopLevelAwait,
   };
 }

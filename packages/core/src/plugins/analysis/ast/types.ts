@@ -376,6 +376,9 @@ export interface MethodCallInfo {
   isInsideLoop?: boolean;
   /** REG-311: true if this is a method call (for CALL node filtering) */
   isMethodCall?: boolean;
+  /** REG-579: Position of the object expression (for chain detection) */
+  objectLine?: number;
+  objectColumn?: number;
 }
 
 // === EVENT LISTENER INFO ===
@@ -1260,6 +1263,9 @@ export interface ASTCollections {
   decorators?: DecoratorInfo[];
   // Type parameter tracking for generics (REG-303)
   typeParameters?: TypeParameterInfo[];
+  // REG-579: Generic misc edges and nodes for lang-spec coverage
+  miscEdges?: MiscEdgeInfo[];
+  miscNodes?: MiscNodeInfo[];
   // Counter refs (used internally during collection)
   ifScopeCounterRef?: CounterRef;
   scopeCounterRef?: CounterRef;
@@ -1282,6 +1288,33 @@ export interface ASTCollections {
   processedNodes?: ProcessedNodes;
   // ScopeTracker for semantic ID generation
   scopeTracker?: ScopeTracker;
+}
+
+// === MISC EDGE INFO ===
+/**
+ * Generic edge info for edge types that don't need a dedicated collection.
+ * Used for: AWAITS, CHAINS_FROM, DEFAULTS_TO, SPREADS_FROM, DELETES,
+ * BINDS_THIS_TO, ACCESSES_PRIVATE, SHADOWS, CONSTRAINED_BY, UNION_MEMBER,
+ * INTERSECTS_WITH, INFERS, RETURNS_TYPE, HAS_TYPE, EXTENDS_SCOPE_WITH, LISTENS_TO
+ */
+export interface MiscEdgeInfo {
+  edgeType: string;
+  srcId: string;
+  dstId: string;
+  metadata?: Record<string, unknown>;
+}
+
+/**
+ * Generic node info for nodes needed by misc edges (e.g., TYPE nodes for annotations).
+ */
+export interface MiscNodeInfo {
+  id: string;
+  type: string;
+  name: string;
+  file: string;
+  line: number;
+  column?: number;
+  metadata?: Record<string, unknown>;
 }
 
 // === EXTRACTED VARIABLE ===
@@ -1328,6 +1361,8 @@ export interface GraphEdge {
   computedPropertyVar?: string;           // Variable name for obj[key] patterns
   resolvedPropertyNames?: string[];       // Resolved names after enrichment
   resolutionStatus?: ResolutionStatus;    // How resolution was determined
+  // For HAS_ELEMENT edges (array elements)
+  elementIndex?: number;
   metadata?: Record<string, unknown>;
 }
 

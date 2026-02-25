@@ -362,6 +362,11 @@ export class CallExpressionVisitor extends ASTVisitor {
       this.handleNestedMethodCall(path, callNode, s, parentScopeId,
         object as MemberExpression, property as Identifier, isComputed);
     }
+    // REG-579: Chain calls like fetch().then(), a().b() — object is a CallExpression
+    else if (object.type === 'CallExpression' && property.type === 'Identifier') {
+      this.handleChainMethodCall(path, callNode, s, parentScopeId, isAwaited,
+        object, property as Identifier, isComputed);
+    }
   }
 
   /** Handle simple method calls: obj.method() or obj.on('event', handler) */
@@ -428,6 +433,8 @@ export class CallExpressionVisitor extends ASTVisitor {
       parentScopeId,
       grafemaIgnore: grafemaIgnore ?? undefined,
       isAwaited: isAwaited || undefined,
+      objectLine: getLine(object) || undefined,
+      objectColumn: getColumn(object) ?? undefined,
     };
 
     if (this.sharedIdGenerator) {
@@ -561,6 +568,63 @@ export class CallExpressionVisitor extends ASTVisitor {
         s.methodCalls.push(methodCallInfo);
       }
     }
+  }
+
+  /** REG-579: Handle chain calls: fetch().then(), a().b() — object is a CallExpression */
+  private handleChainMethodCall(
+    path: NodePath, callNode: CallExpression, s: HandlerState,
+    parentScopeId: string, isAwaited: boolean,
+    innerCall: Node, property: Identifier, isComputed: boolean
+  ): void {
+    const methodName = isComputed ? '<computed>' : property.name;
+    // Use '<chain>' as object name since inner call has no simple identifier
+    const objectName = '<chain>';
+    const fullName = `${objectName}.${methodName}`;
+
+    const nodeKey = `${callNode.start}:${callNode.end}`;
+    if (s.processedNodes.methodCalls.has(nodeKey)) return;
+    s.processedNodes.methodCalls.add(nodeKey);
+
+    const methodLine = getLine(callNode);
+    const methodColumn = getColumn(callNode);
+
+    const grafemaIgnore = getGrafemaIgnore(path);
+
+    const methodCallInfo: MethodCallInfo = {
+      id: '',
+      type: 'CALL',
+      name: fullName,
+      object: objectName,
+      method: methodName,
+      file: s.module.file,
+      line: methodLine,
+      column: methodColumn,
+      endLine: getEndLocation(callNode).line,
+      endColumn: getEndLocation(callNode).column,
+      parentScopeId,
+      grafemaIgnore: grafemaIgnore ?? undefined,
+      isAwaited: isAwaited || undefined,
+      objectLine: getLine(innerCall) || undefined,
+      objectColumn: getColumn(innerCall) ?? undefined,
+    };
+
+    if (this.sharedIdGenerator) {
+      const contentHints: ContentHashHints = {
+        arity: callNode.arguments.length,
+        firstLiteralArg: extractFirstLiteralArg(callNode)
+      };
+      this.sharedIdGenerator.generateV2('CALL', fullName, s.module.file, contentHints, methodCallInfo);
+    } else {
+      const idGenerator = new IdGenerator(s.scopeTracker);
+      methodCallInfo.id = idGenerator.generate(
+        'CALL', fullName, s.module.file,
+        methodLine, methodColumn,
+        s.callSiteCounterRef,
+        { useDiscriminator: true, discriminatorKey: `CALL:${fullName}` }
+      );
+    }
+
+    s.methodCalls.push(methodCallInfo);
   }
 
 }

@@ -519,7 +519,9 @@ function emptyStatements() {
 // UNKNOWN <<module>> -> DECLARES -> FUNCTION <<labeledFn>>
 // FUNCTION <<labeledFn>> -> RETURNS -> LITERAL <<1>>
 // @end-annotation
-myLabel: function labeledFn() { return 1; }
+// Labeled function declarations are illegal in strict mode (ES modules).
+// Commented out — not parseable in module context.
+// myLabel: function labeledFn() { return 1; }
 
 // @construct PENDING finally-return-override
 function finallyReturnOverride() {
@@ -967,7 +969,7 @@ export {
   labeledBlock,
   debuggerStatement,
   emptyStatements,
-  labeledFn,
+  // labeledFn, // commented out — labeled function invalid in strict mode
   finallyReturnOverride,
   finallyThrowOverride,
   tdzSwitch,

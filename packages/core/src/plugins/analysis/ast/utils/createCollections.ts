@@ -51,6 +51,8 @@ import type {
   CounterRef,
   ProcessedNodes,
   PropertyAssignmentInfo,
+  MiscEdgeInfo,
+  MiscNodeInfo,
 } from '../types.js';
 
 /** All collection arrays and counter refs used during module analysis. */
@@ -96,6 +98,8 @@ export interface AnalysisCollections {
   catchesFromInfos: CatchesFromInfo[];
   propertyAccesses: PropertyAccessInfo[];
   propertyAssignments?: PropertyAssignmentInfo[];
+  miscEdges: MiscEdgeInfo[];
+  miscNodes: MiscNodeInfo[];
 
   ifScopeCounterRef: CounterRef;
   scopeCounterRef: CounterRef;
@@ -174,6 +178,8 @@ export function createCollections(
   const rejectionPatterns: RejectionPatternInfo[] = [];
   const catchesFromInfos: CatchesFromInfo[] = [];
   const propertyAccesses: PropertyAccessInfo[] = [];
+  const miscEdges: MiscEdgeInfo[] = [];
+  const miscNodes: MiscNodeInfo[] = [];
 
   const varDeclCounterRef: CounterRef = { value: 0 };
 
@@ -199,6 +205,8 @@ export function createCollections(
     rejectionPatterns,
     catchesFromInfos,
     propertyAccesses,
+    miscEdges,
+    miscNodes,
     propertyAccessCounterRef: { value: 0 },
     objectLiteralCounterRef: { value: 0 },
     arrayLiteralCounterRef: { value: 0 },

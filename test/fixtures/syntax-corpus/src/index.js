@@ -62,6 +62,7 @@ import './runtime-apis.js';
 import './jsdoc-types.js';
 import './modules-default-anon.js';
 import './hashbang-entry.js';
+import './ts-specific.ts';
 
 // @construct PENDING reexport-star
 // @annotation

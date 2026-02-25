@@ -10,6 +10,7 @@
  * - InstanceOfResolver (enrichment)
  * - FetchAnalyzer (enrichment)
  * - ImportExportLinker (enrichment)
+ * - ExportEntityLinker (enrichment) - creates EXPORTS edges for export declarations
  */
 
 import { Orchestrator } from '@grafema/core';
@@ -25,6 +26,7 @@ import { RejectionPropagationEnricher } from '@grafema/core';
 import { CallbackCallResolver } from '@grafema/core';
 import { FunctionCallResolver } from '@grafema/core';
 import { ExternalCallResolver } from '@grafema/core';
+import { ExportEntityLinker } from '@grafema/core';
 
 /**
  * Создать Orchestrator для тестов
@@ -65,6 +67,8 @@ export function createTestOrchestrator(backend, options = {}) {
     plugins.push(new FunctionCallResolver());
     // REG-226: External call resolution (depends on FunctionCallResolver)
     plugins.push(new ExternalCallResolver());
+    // REG-579: Export entity resolution
+    plugins.push(new ExportEntityLinker());
   }
 
   // Дополнительные плагины

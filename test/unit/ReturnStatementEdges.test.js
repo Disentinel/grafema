@@ -312,10 +312,9 @@ function formatDate(date) {
       assert.strictEqual(source.method, 'toLocaleDateString', 'Method name should be "toLocaleDateString"');
     });
 
-    // NOTE: Chained method calls (items.filter().map()) are a documented gap.
-    // The coordinate-based lookup can't reliably find the right call in a chain.
-    // Future work could traverse the chain to find resolvable calls.
-    it('should NOT create RETURNS edge for chained method call (documented gap)', async () => {
+    // REG-579: Chain call handling now creates CALL nodes for chained method calls,
+    // so RETURNS edges are properly created for patterns like items.filter().map().
+    it('should create RETURNS edge for chained method call (REG-579)', async () => {
       const projectPath = await setupTest({
         'index.js': `
 function processItems(items) {
@@ -333,11 +332,14 @@ function processItems(items) {
       const func = allNodes.find(n => n.name === 'processItems' && n.type === 'FUNCTION');
       assert.ok(func, 'Function "processItems" should exist');
 
-      // Chained method calls are a documented gap - no RETURNS edge created
+      // Chain call handling (REG-579) creates CALL nodes for .map() in a chain
       const returnsEdge = allEdges.find(e =>
         e.type === 'RETURNS' && e.dst === func.id
       );
-      assert.strictEqual(returnsEdge, undefined, 'No RETURNS edge for chained calls (documented gap)');
+      assert.ok(returnsEdge, 'RETURNS edge should exist for chained method call');
+      const source = allNodes.find(n => n.id === returnsEdge.src);
+      assert.ok(source, 'Source node should exist');
+      assert.strictEqual(source.type, 'CALL', `Expected CALL, got ${source.type}`);
     });
   });
 

@@ -192,12 +192,12 @@ function importMetaExtensions() {
 // FUNCTION <<window.error>> -> RECEIVES_ARGUMENT -> PARAMETER <<event2>>
 // @end-annotation
 // Node.js:
-// process.on('unhandledRejection', (reason, promise) => { ... });
-// process.on('uncaughtException', (error) => { process.exit(1); });
-//
+process.on('unhandledRejection', (reason, promise) => { });
+process.on('uncaughtException', (error) => { process.exit(1); });
+
 // Browser:
-// window.addEventListener('unhandledrejection', (event) => { ... });
-// window.addEventListener('error', (event) => { ... });
+window.addEventListener('unhandledrejection', (event1) => { });
+window.addEventListener('error', (event2) => { });
 
 // --- ES2025+ API Methods (Plugin: es-builtins) ---
 

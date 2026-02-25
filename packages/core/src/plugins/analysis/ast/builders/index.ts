@@ -9,4 +9,5 @@ export { ReturnBuilder } from './ReturnBuilder.js';
 export { YieldBuilder } from './YieldBuilder.js';
 export { TypeSystemBuilder } from './TypeSystemBuilder.js';
 export { ModuleRuntimeBuilder } from './ModuleRuntimeBuilder.js';
+export { MiscEdgeBuilder } from './MiscEdgeBuilder.js';
 export type { BuilderContext, DomainBuilder } from './types.js';

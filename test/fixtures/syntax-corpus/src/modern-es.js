@@ -558,9 +558,10 @@ function usingInFor(readers) {
 // (commented — would conflict with existing exports; syntax reference only)
 
 // @construct PENDING class-accessor-keyword
-class Reactive {
-  accessor count = 0;
-}
+// `accessor` requires decoratorAutoAccessors Babel plugin — commented for now.
+// class Reactive {
+//   accessor count = 0;
+// }
 
 // --- Import Attributes (ES2025) ---
 
@@ -688,7 +689,7 @@ export {
   usingDeclaration,
   usingAwaitDeclaration,
   usingInFor,
-  Reactive,
+  // Reactive, // commented out — accessor keyword needs decoratorAutoAccessors plugin
   workerUrl,
   loadOptional,
   createWeakCache,

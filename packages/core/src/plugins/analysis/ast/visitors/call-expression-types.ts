@@ -136,6 +136,9 @@ export interface MethodCallInfo {
   grafemaIgnore?: GrafemaIgnoreAnnotation;
   /** REG-297: true if wrapped in await expression */
   isAwaited?: boolean;
+  /** REG-579: Position of the object expression (for chain detection) */
+  objectLine?: number;
+  objectColumn?: number;
 }
 
 /**
