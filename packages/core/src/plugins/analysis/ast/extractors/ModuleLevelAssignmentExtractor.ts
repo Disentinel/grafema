@@ -44,9 +44,11 @@ export function createModuleLevelAssignmentVisitor(
       const functionParent = assignPath.getFunctionParent();
       if (functionParent) return;
 
+      // FunctionExpression is handled by FunctionVisitor (which also calls analyzeFunctionBody).
+      // Only handle ArrowFunctionExpression in assignments here — FunctionVisitor's
+      // ArrowFunctionExpression handler doesn't derive name from AssignmentExpression parent.
       if (assignNode.right &&
-          (assignNode.right.type === 'FunctionExpression' ||
-           assignNode.right.type === 'ArrowFunctionExpression')) {
+           assignNode.right.type === 'ArrowFunctionExpression') {
 
         let functionName = 'anonymous';
         if (assignNode.left.type === 'MemberExpression') {
@@ -67,10 +69,10 @@ export function createModuleLevelAssignmentVisitor(
           type: 'FUNCTION',
           name: functionName,
           file: ctx.module.file,
-          line: getLine(assignNode),
-          column: getColumn(assignNode),
+          line: getLine(funcNode),
+          column: getColumn(funcNode),
           async: funcNode.async || false,
-          generator: funcNode.type === 'FunctionExpression' ? funcNode.generator : false,
+          generator: false,
           isAssignment: true
         });
 

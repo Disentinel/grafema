@@ -112,9 +112,9 @@ export const outer = () => {
       );
       assert.ok(formatDateFunc, 'Nested function "formatDate" should exist');
 
-      // Find RETURNS edge to formatDate
+      // Find RETURNS edge from formatDate (function -[RETURNS]-> returnValue)
       const returnsEdge = allEdges.find(e =>
-        e.type === 'RETURNS' && e.dst === formatDateFunc.id
+        e.type === 'RETURNS' && e.src === formatDateFunc.id
       );
 
       // DEBUG: Print ALL function nodes
@@ -140,13 +140,13 @@ export const outer = () => {
         returnsEdges.forEach(e => console.log(`  ${e.src} -> ${e.dst}`));
       }
 
-      assert.ok(returnsEdge, 'RETURNS edge should exist from method call to formatDate');
+      assert.ok(returnsEdge, 'RETURNS edge should exist from formatDate to method call');
 
-      // Verify the source is the method call node
-      const source = allNodes.find(n => n.id === returnsEdge.src);
-      assert.ok(source, 'Source node should exist');
-      assert.strictEqual(source.type, 'CALL', `Expected CALL, got ${source.type}`);
-      assert.strictEqual(source.method, 'toLocaleDateString', 'Method name should be "toLocaleDateString"');
+      // Verify the destination is the method call node (function -[RETURNS]-> returnValue)
+      const target = allNodes.find(n => n.id === returnsEdge.dst);
+      assert.ok(target, 'Target node should exist');
+      assert.strictEqual(target.type, 'CALL', `Expected CALL, got ${target.type}`);
+      assert.strictEqual(target.method, 'toLocaleDateString', 'Method name should be "toLocaleDateString"');
     });
   });
 });

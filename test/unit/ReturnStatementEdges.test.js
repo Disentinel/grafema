@@ -3,22 +3,22 @@
  *
  * Tests for RETURNS edge creation from return statements to containing functions.
  *
- * Edge direction: returnExpression --RETURNS--> function
+ * Edge direction: function --RETURNS--> returnExpression
  *
  * This enables tracing data flow through function calls:
  * - Query: "What does formatDate return?"
  * - Answer: Follow RETURNS edges from function to see all possible return values
  *
  * Test cases:
- * 1. Return literal: `return 42;` - LITERAL --RETURNS--> FUNCTION
- * 2. Return variable: `return result;` - VARIABLE --RETURNS--> FUNCTION
- * 3. Return function call: `return foo();` - CALL --RETURNS--> FUNCTION
- * 4. Return method call: `return obj.method();` - CALL --RETURNS--> FUNCTION
+ * 1. Return literal: `return 42;` - FUNCTION --RETURNS--> LITERAL
+ * 2. Return variable: `return result;` - FUNCTION --RETURNS--> VARIABLE
+ * 3. Return function call: `return foo();` - FUNCTION --RETURNS--> CALL
+ * 4. Return method call: `return obj.method();` - FUNCTION --RETURNS--> CALL
  * 5. Multiple returns: Both branches create edges
  * 6. Arrow function block body: `() => { return 42; }`
  * 7. Arrow function implicit return: `x => x * 2`
  * 8. Bare return: `return;` - NO edge created
- * 9. Return parameter: `return x;` where x is parameter - PARAMETER --RETURNS--> FUNCTION
+ * 9. Return parameter: `return x;` where x is parameter - FUNCTION --RETURNS--> PARAMETER
  */
 
 import { describe, it, after, beforeEach } from 'node:test';
@@ -106,14 +106,14 @@ function getValue() {
       const func = allNodes.find(n => n.name === 'getValue' && n.type === 'FUNCTION');
       assert.ok(func, 'Function "getValue" should exist');
 
-      // Find RETURNS edge pointing to function
+      // Find RETURNS edge from function
       const returnsEdge = allEdges.find(e =>
-        e.type === 'RETURNS' && e.dst === func.id
+        e.type === 'RETURNS' && e.src === func.id
       );
       assert.ok(returnsEdge, 'RETURNS edge should exist for getValue()');
 
-      // Verify source is a LITERAL
-      const source = allNodes.find(n => n.id === returnsEdge.src);
+      // Verify destination is a LITERAL
+      const source = allNodes.find(n => n.id === returnsEdge.dst);
       assert.ok(source, 'Source node should exist');
       assert.strictEqual(source.type, 'LITERAL', `Expected LITERAL, got ${source.type}`);
       assert.strictEqual(source.value, 42, 'Literal value should be 42');
@@ -138,11 +138,11 @@ function getMessage() {
       assert.ok(func, 'Function "getMessage" should exist');
 
       const returnsEdge = allEdges.find(e =>
-        e.type === 'RETURNS' && e.dst === func.id
+        e.type === 'RETURNS' && e.src === func.id
       );
       assert.ok(returnsEdge, 'RETURNS edge should exist');
 
-      const source = allNodes.find(n => n.id === returnsEdge.src);
+      const source = allNodes.find(n => n.id === returnsEdge.dst);
       assert.ok(source, 'Source node should exist');
       assert.strictEqual(source.type, 'LITERAL', `Expected LITERAL, got ${source.type}`);
       assert.strictEqual(source.value, 'hello world', 'Literal value should be "hello world"');
@@ -170,12 +170,12 @@ function getValue() {
       assert.ok(func, 'Function "getValue" should exist');
 
       const returnsEdge = allEdges.find(e =>
-        e.type === 'RETURNS' && e.dst === func.id
+        e.type === 'RETURNS' && e.src === func.id
       );
       assert.ok(returnsEdge, 'RETURNS edge should exist');
 
       // Source should be the variable (VARIABLE or CONSTANT)
-      const source = allNodes.find(n => n.id === returnsEdge.src);
+      const source = allNodes.find(n => n.id === returnsEdge.dst);
       assert.ok(source, 'Source node should exist');
       assert.ok(
         ['VARIABLE', 'CONSTANT'].includes(source.type),
@@ -205,11 +205,11 @@ function compute() {
       assert.ok(func, 'Function "compute" should exist');
 
       const returnsEdge = allEdges.find(e =>
-        e.type === 'RETURNS' && e.dst === func.id
+        e.type === 'RETURNS' && e.src === func.id
       );
       assert.ok(returnsEdge, 'RETURNS edge should exist');
 
-      const source = allNodes.find(n => n.id === returnsEdge.src);
+      const source = allNodes.find(n => n.id === returnsEdge.dst);
       assert.ok(source, 'Source node should exist');
       assert.strictEqual(source.name, 'value', 'Variable name should be "value"');
     });
@@ -239,12 +239,12 @@ function getValue() {
       assert.ok(func, 'Function "getValue" should exist');
 
       const returnsEdge = allEdges.find(e =>
-        e.type === 'RETURNS' && e.dst === func.id
+        e.type === 'RETURNS' && e.src === func.id
       );
       assert.ok(returnsEdge, 'RETURNS edge should exist');
 
       // Source should be a CALL node
-      const source = allNodes.find(n => n.id === returnsEdge.src);
+      const source = allNodes.find(n => n.id === returnsEdge.dst);
       assert.ok(source, 'Source node should exist');
       assert.strictEqual(source.type, 'CALL', `Expected CALL, got ${source.type}`);
       assert.strictEqual(source.name, 'helper', 'Call name should be "helper"');
@@ -269,12 +269,12 @@ function processData(data) {
       assert.ok(func, 'Function "processData" should exist');
 
       const returnsEdge = allEdges.find(e =>
-        e.type === 'RETURNS' && e.dst === func.id
+        e.type === 'RETURNS' && e.src === func.id
       );
       assert.ok(returnsEdge, 'RETURNS edge should exist');
 
       // Source should be the outer CALL (transform)
-      const source = allNodes.find(n => n.id === returnsEdge.src);
+      const source = allNodes.find(n => n.id === returnsEdge.dst);
       assert.ok(source, 'Source node should exist');
       assert.strictEqual(source.type, 'CALL', `Expected CALL, got ${source.type}`);
       assert.strictEqual(source.name, 'transform', 'Call name should be "transform"');
@@ -301,11 +301,11 @@ function formatDate(date) {
       assert.ok(func, 'Function "formatDate" should exist');
 
       const returnsEdge = allEdges.find(e =>
-        e.type === 'RETURNS' && e.dst === func.id
+        e.type === 'RETURNS' && e.src === func.id
       );
       assert.ok(returnsEdge, 'RETURNS edge should exist');
 
-      const source = allNodes.find(n => n.id === returnsEdge.src);
+      const source = allNodes.find(n => n.id === returnsEdge.dst);
       assert.ok(source, 'Source node should exist');
       assert.strictEqual(source.type, 'CALL', `Expected CALL, got ${source.type}`);
       // Method call should have method property
@@ -334,10 +334,10 @@ function processItems(items) {
 
       // Chain call handling (REG-579) creates CALL nodes for .map() in a chain
       const returnsEdge = allEdges.find(e =>
-        e.type === 'RETURNS' && e.dst === func.id
+        e.type === 'RETURNS' && e.src === func.id
       );
       assert.ok(returnsEdge, 'RETURNS edge should exist for chained method call');
-      const source = allNodes.find(n => n.id === returnsEdge.src);
+      const source = allNodes.find(n => n.id === returnsEdge.dst);
       assert.ok(source, 'Source node should exist');
       assert.strictEqual(source.type, 'CALL', `Expected CALL, got ${source.type}`);
     });
@@ -366,7 +366,7 @@ function getValue(flag) {
       assert.ok(func, 'Function "getValue" should exist');
 
       const returnsEdges = allEdges.filter(e =>
-        e.type === 'RETURNS' && e.dst === func.id
+        e.type === 'RETURNS' && e.src === func.id
       );
 
       // Should have 2 RETURNS edges (one for each return statement)
@@ -375,17 +375,17 @@ function getValue(flag) {
         `Expected 2 RETURNS edges, got ${returnsEdges.length}`
       );
 
-      // Verify both sources are LITERAL nodes with correct values
-      const sourceValues = [];
+      // Verify both destinations are LITERAL nodes with correct values (function -[RETURNS]-> literal)
+      const returnValues = [];
       for (const edge of returnsEdges) {
-        const source = allNodes.find(n => n.id === edge.src);
-        assert.ok(source, 'Source node should exist');
-        assert.strictEqual(source.type, 'LITERAL', `Expected LITERAL, got ${source.type}`);
-        sourceValues.push(source.value);
+        const target = allNodes.find(n => n.id === edge.dst);
+        assert.ok(target, 'Target node should exist');
+        assert.strictEqual(target.type, 'LITERAL', `Expected LITERAL, got ${target.type}`);
+        returnValues.push(target.value);
       }
 
-      assert.ok(sourceValues.includes('yes'), 'Should have return value "yes"');
-      assert.ok(sourceValues.includes('no'), 'Should have return value "no"');
+      assert.ok(returnValues.includes('yes'), 'Should have return value "yes"');
+      assert.ok(returnValues.includes('no'), 'Should have return value "no"');
     });
 
     it('should create RETURNS edges for ternary returns', async () => {
@@ -413,7 +413,7 @@ function getBranch(condition) {
       assert.ok(func, 'Function "getBranch" should exist');
 
       const returnsEdges = allEdges.filter(e =>
-        e.type === 'RETURNS' && e.dst === func.id
+        e.type === 'RETURNS' && e.src === func.id
       );
 
       // Should have 3 RETURNS edges (one for each return statement)
@@ -445,11 +445,11 @@ const getValue = () => {
       assert.ok(func, 'Function "getValue" should exist');
 
       const returnsEdge = allEdges.find(e =>
-        e.type === 'RETURNS' && e.dst === func.id
+        e.type === 'RETURNS' && e.src === func.id
       );
       assert.ok(returnsEdge, 'RETURNS edge should exist for arrow function with block body');
 
-      const source = allNodes.find(n => n.id === returnsEdge.src);
+      const source = allNodes.find(n => n.id === returnsEdge.dst);
       assert.ok(source, 'Source node should exist');
       assert.strictEqual(source.type, 'LITERAL', `Expected LITERAL, got ${source.type}`);
       assert.strictEqual(source.value, 42, 'Literal value should be 42');
@@ -475,11 +475,11 @@ const compute = (x) => {
       assert.ok(func, 'Function "compute" should exist');
 
       const returnsEdge = allEdges.find(e =>
-        e.type === 'RETURNS' && e.dst === func.id
+        e.type === 'RETURNS' && e.src === func.id
       );
       assert.ok(returnsEdge, 'RETURNS edge should exist');
 
-      const source = allNodes.find(n => n.id === returnsEdge.src);
+      const source = allNodes.find(n => n.id === returnsEdge.dst);
       assert.ok(source, 'Source node should exist');
       assert.ok(
         ['VARIABLE', 'CONSTANT'].includes(source.type),
@@ -509,12 +509,12 @@ const double = x => x * 2;
 
       // REG-276: Expression returns now create RETURNS edges
       const returnsEdge = allEdges.find(e =>
-        e.type === 'RETURNS' && e.dst === func.id
+        e.type === 'RETURNS' && e.src === func.id
       );
       assert.ok(returnsEdge, 'RETURNS edge should exist for expression return (REG-276)');
 
       // Source should be an EXPRESSION node
-      const source = allNodes.find(n => n.id === returnsEdge.src);
+      const source = allNodes.find(n => n.id === returnsEdge.dst);
       assert.ok(source, 'Source node should exist');
       assert.strictEqual(source.type, 'EXPRESSION', `Expected EXPRESSION, got ${source.type}`);
       assert.strictEqual(source.expressionType, 'BinaryExpression', 'Should be BinaryExpression');
@@ -546,12 +546,12 @@ const identity = x => x;
       assert.ok(func, 'Function "identity" should exist');
 
       const returnsEdge = allEdges.find(e =>
-        e.type === 'RETURNS' && e.dst === func.id
+        e.type === 'RETURNS' && e.src === func.id
       );
       assert.ok(returnsEdge, 'RETURNS edge should exist for implicit return of identifier');
 
       // Source should be the parameter x
-      const source = allNodes.find(n => n.id === returnsEdge.src);
+      const source = allNodes.find(n => n.id === returnsEdge.dst);
       assert.ok(source, 'Source node should exist');
       assert.strictEqual(source.type, 'PARAMETER', `Expected PARAMETER, got ${source.type}`);
       assert.strictEqual(source.name, 'x', 'Parameter name should be "x"');
@@ -574,11 +574,11 @@ const getAnswer = () => 42;
       assert.ok(func, 'Function "getAnswer" should exist');
 
       const returnsEdge = allEdges.find(e =>
-        e.type === 'RETURNS' && e.dst === func.id
+        e.type === 'RETURNS' && e.src === func.id
       );
       assert.ok(returnsEdge, 'RETURNS edge should exist for implicit literal return');
 
-      const source = allNodes.find(n => n.id === returnsEdge.src);
+      const source = allNodes.find(n => n.id === returnsEdge.dst);
       assert.ok(source, 'Source node should exist');
       assert.strictEqual(source.type, 'LITERAL', `Expected LITERAL, got ${source.type}`);
       assert.strictEqual(source.value, 42, 'Literal value should be 42');
@@ -602,11 +602,11 @@ const process = arr => arr.map(x => x * 2);
       assert.ok(func, 'Function "process" should exist');
 
       const returnsEdge = allEdges.find(e =>
-        e.type === 'RETURNS' && e.dst === func.id
+        e.type === 'RETURNS' && e.src === func.id
       );
       assert.ok(returnsEdge, 'RETURNS edge should exist for implicit method call return');
 
-      const source = allNodes.find(n => n.id === returnsEdge.src);
+      const source = allNodes.find(n => n.id === returnsEdge.dst);
       assert.ok(source, 'Source node should exist');
       assert.strictEqual(source.type, 'CALL', `Expected CALL, got ${source.type}`);
       assert.strictEqual(source.method, 'map', 'Method name should be "map"');
@@ -634,7 +634,7 @@ function doSomething() {
       assert.ok(func, 'Function "doSomething" should exist');
 
       const returnsEdges = allEdges.filter(e =>
-        e.type === 'RETURNS' && e.dst === func.id
+        e.type === 'RETURNS' && e.src === func.id
       );
 
       // Should have NO RETURNS edges (bare return has no value)
@@ -667,7 +667,7 @@ function earlyExit(condition) {
       assert.ok(func, 'Function "earlyExit" should exist');
 
       const returnsEdges = allEdges.filter(e =>
-        e.type === 'RETURNS' && e.dst === func.id
+        e.type === 'RETURNS' && e.src === func.id
       );
 
       // Should have NO RETURNS edges (both returns are bare)
@@ -699,7 +699,7 @@ function mixedReturns(condition) {
       assert.ok(func, 'Function "mixedReturns" should exist');
 
       const returnsEdges = allEdges.filter(e =>
-        e.type === 'RETURNS' && e.dst === func.id
+        e.type === 'RETURNS' && e.src === func.id
       );
 
       // Should have exactly 1 RETURNS edge (only for return 42)
@@ -708,10 +708,10 @@ function mixedReturns(condition) {
         `Expected 1 RETURNS edge for mixed returns, got ${returnsEdges.length}`
       );
 
-      const source = allNodes.find(n => n.id === returnsEdges[0].src);
-      assert.ok(source, 'Source node should exist');
-      assert.strictEqual(source.type, 'LITERAL', `Expected LITERAL, got ${source.type}`);
-      assert.strictEqual(source.value, 42, 'Literal value should be 42');
+      const target = allNodes.find(n => n.id === returnsEdges[0].dst);
+      assert.ok(target, 'Target node should exist');
+      assert.strictEqual(target.type, 'LITERAL', `Expected LITERAL, got ${target.type}`);
+      assert.strictEqual(target.value, 42, 'Literal value should be 42');
     });
   });
 
@@ -735,12 +735,12 @@ function identity(x) {
       assert.ok(func, 'Function "identity" should exist');
 
       const returnsEdge = allEdges.find(e =>
-        e.type === 'RETURNS' && e.dst === func.id
+        e.type === 'RETURNS' && e.src === func.id
       );
       assert.ok(returnsEdge, 'RETURNS edge should exist');
 
       // Source should be the parameter
-      const source = allNodes.find(n => n.id === returnsEdge.src);
+      const source = allNodes.find(n => n.id === returnsEdge.dst);
       assert.ok(source, 'Source node should exist');
       assert.strictEqual(source.type, 'PARAMETER', `Expected PARAMETER, got ${source.type}`);
       assert.strictEqual(source.name, 'x', 'Parameter name should be "x"');
@@ -765,12 +765,12 @@ function getSecond(a, b) {
       assert.ok(func, 'Function "getSecond" should exist');
 
       const returnsEdge = allEdges.find(e =>
-        e.type === 'RETURNS' && e.dst === func.id
+        e.type === 'RETURNS' && e.src === func.id
       );
       assert.ok(returnsEdge, 'RETURNS edge should exist');
 
       // Source should be the parameter b
-      const source = allNodes.find(n => n.id === returnsEdge.src);
+      const source = allNodes.find(n => n.id === returnsEdge.dst);
       assert.ok(source, 'Source node should exist');
       assert.strictEqual(source.type, 'PARAMETER', `Expected PARAMETER, got ${source.type}`);
       assert.strictEqual(source.name, 'b', 'Parameter name should be "b"');
@@ -797,11 +797,11 @@ function getName({ name }) {
       assert.ok(func, 'Function "getName" should exist');
 
       const returnsEdge = allEdges.find(e =>
-        e.type === 'RETURNS' && e.dst === func.id
+        e.type === 'RETURNS' && e.src === func.id
       );
       assert.ok(returnsEdge, 'RETURNS edge should exist for destructured param');
 
-      const source = allNodes.find(n => n.id === returnsEdge.src);
+      const source = allNodes.find(n => n.id === returnsEdge.dst);
       assert.ok(source, 'Source node should exist');
       assert.strictEqual(source.name, 'name', 'Source should be destructured parameter "name"');
     });
@@ -832,17 +832,17 @@ function outer() {
       const outerFunc = allNodes.find(n => n.name === 'outer' && n.type === 'FUNCTION');
       assert.ok(outerFunc, 'Function "outer" should exist');
 
-      // Outer's return should create a RETURNS edge
+      // Outer's return should create a RETURNS edge (function -[RETURNS]-> returnValue)
       const outerReturnsEdge = allEdges.find(e =>
-        e.type === 'RETURNS' && e.dst === outerFunc.id
+        e.type === 'RETURNS' && e.src === outerFunc.id
       );
       assert.ok(outerReturnsEdge, 'RETURNS edge should exist for outer function');
 
-      // Source should be the call to inner()
-      const outerSource = allNodes.find(n => n.id === outerReturnsEdge.src);
-      assert.ok(outerSource, 'Source node for outer should exist');
-      assert.strictEqual(outerSource.type, 'CALL', `Expected CALL for outer, got ${outerSource.type}`);
-      assert.strictEqual(outerSource.name, 'inner', 'Outer return should be call to inner');
+      // Destination should be the call to inner()
+      const outerTarget = allNodes.find(n => n.id === outerReturnsEdge.dst);
+      assert.ok(outerTarget, 'Target node for outer should exist');
+      assert.strictEqual(outerTarget.type, 'CALL', `Expected CALL for outer, got ${outerTarget.type}`);
+      assert.strictEqual(outerTarget.name, 'inner', 'Outer return should be call to inner');
     });
   });
 
@@ -874,14 +874,14 @@ class Calculator {
       assert.ok(method, 'Method "compute" should exist');
 
       const returnsEdge = allEdges.find(e =>
-        e.type === 'RETURNS' && e.dst === method.id
+        e.type === 'RETURNS' && e.src === method.id
       );
       assert.ok(returnsEdge, 'RETURNS edge should exist for class method');
 
-      // Source should be the result variable
-      const source = allNodes.find(n => n.id === returnsEdge.src);
-      assert.ok(source, 'Source node should exist');
-      assert.strictEqual(source.name, 'result', 'Source should be "result" variable');
+      // Destination should be the result variable (function -[RETURNS]-> returnValue)
+      const target = allNodes.find(n => n.id === returnsEdge.dst);
+      assert.ok(target, 'Target node should exist');
+      assert.strictEqual(target.name, 'result', 'Target should be "result" variable');
     });
 
     it('should create RETURNS edge for getter return', async () => {
@@ -941,11 +941,11 @@ async function fetchData() {
       assert.ok(func, 'Function "fetchData" should exist');
 
       const returnsEdge = allEdges.find(e =>
-        e.type === 'RETURNS' && e.dst === func.id
+        e.type === 'RETURNS' && e.src === func.id
       );
       assert.ok(returnsEdge, 'RETURNS edge should exist for async function');
 
-      const source = allNodes.find(n => n.id === returnsEdge.src);
+      const source = allNodes.find(n => n.id === returnsEdge.dst);
       assert.ok(source, 'Source node should exist');
       assert.ok(
         ['VARIABLE', 'CONSTANT'].includes(source.type),
@@ -956,7 +956,7 @@ async function fetchData() {
   });
 
   describe('Edge direction verification', () => {
-    it('should create edge from return value TO function (src=value, dst=function)', async () => {
+    it('should create edge from function TO return value (src=function, dst=value)', async () => {
       const projectPath = await setupTest({
         'index.js': `
 function getValue() {
@@ -977,17 +977,17 @@ function getValue() {
       const returnsEdge = allEdges.find(e => e.type === 'RETURNS');
       assert.ok(returnsEdge, 'RETURNS edge should exist');
 
-      // Verify edge direction: src=value, dst=function
+      // Verify edge direction: src=function, dst=value
       assert.strictEqual(
-        returnsEdge.dst, func.id,
-        'RETURNS edge destination should be the function'
+        returnsEdge.src, func.id,
+        'RETURNS edge source should be the function'
       );
 
-      const source = allNodes.find(n => n.id === returnsEdge.src);
-      assert.ok(source, 'Source node should exist');
+      const target = allNodes.find(n => n.id === returnsEdge.dst);
+      assert.ok(target, 'Target node should exist');
       assert.notStrictEqual(
-        source.type, 'FUNCTION',
-        'RETURNS edge source should NOT be the function'
+        target.type, 'FUNCTION',
+        'RETURNS edge destination should NOT be the function'
       );
     });
   });
@@ -1059,12 +1059,12 @@ function add(a, b) {
 
       // RETURNS edge should exist
       const returnsEdge = allEdges.find(e =>
-        e.type === 'RETURNS' && e.dst === func.id
+        e.type === 'RETURNS' && e.src === func.id
       );
       assert.ok(returnsEdge, 'RETURNS edge should exist');
 
       // Source should be an EXPRESSION node
-      const source = allNodes.find(n => n.id === returnsEdge.src);
+      const source = allNodes.find(n => n.id === returnsEdge.dst);
       assert.ok(source, 'Source node should exist');
       assert.strictEqual(source.type, 'EXPRESSION', `Expected EXPRESSION, got ${source.type}`);
       assert.strictEqual(source.expressionType, 'BinaryExpression', 'Should be BinaryExpression');
@@ -1103,11 +1103,11 @@ function pick(condition, x, y) {
       assert.ok(func, 'Function "pick" should exist');
 
       const returnsEdge = allEdges.find(e =>
-        e.type === 'RETURNS' && e.dst === func.id
+        e.type === 'RETURNS' && e.src === func.id
       );
       assert.ok(returnsEdge, 'RETURNS edge should exist');
 
-      const source = allNodes.find(n => n.id === returnsEdge.src);
+      const source = allNodes.find(n => n.id === returnsEdge.dst);
       assert.strictEqual(source.type, 'EXPRESSION');
       assert.strictEqual(source.expressionType, 'ConditionalExpression');
 
@@ -1135,11 +1135,11 @@ function getProp(obj) {
 
       const func = allNodes.find(n => n.name === 'getProp' && n.type === 'FUNCTION');
       const returnsEdge = allEdges.find(e =>
-        e.type === 'RETURNS' && e.dst === func.id
+        e.type === 'RETURNS' && e.src === func.id
       );
       assert.ok(returnsEdge, 'RETURNS edge should exist');
 
-      const source = allNodes.find(n => n.id === returnsEdge.src);
+      const source = allNodes.find(n => n.id === returnsEdge.dst);
       assert.strictEqual(source.type, 'EXPRESSION');
       assert.strictEqual(source.expressionType, 'MemberExpression');
 
@@ -1170,11 +1170,11 @@ function getDefault(value, fallback) {
 
       const func = allNodes.find(n => n.name === 'getDefault' && n.type === 'FUNCTION');
       const returnsEdge = allEdges.find(e =>
-        e.type === 'RETURNS' && e.dst === func.id
+        e.type === 'RETURNS' && e.src === func.id
       );
       assert.ok(returnsEdge, 'RETURNS edge should exist');
 
-      const source = allNodes.find(n => n.id === returnsEdge.src);
+      const source = allNodes.find(n => n.id === returnsEdge.dst);
       assert.strictEqual(source.expressionType, 'LogicalExpression');
     });
 
@@ -1195,11 +1195,11 @@ function negate(flag) {
 
       const func = allNodes.find(n => n.name === 'negate' && n.type === 'FUNCTION');
       const returnsEdge = allEdges.find(e =>
-        e.type === 'RETURNS' && e.dst === func.id
+        e.type === 'RETURNS' && e.src === func.id
       );
       assert.ok(returnsEdge, 'RETURNS edge should exist');
 
-      const source = allNodes.find(n => n.id === returnsEdge.src);
+      const source = allNodes.find(n => n.id === returnsEdge.dst);
       assert.strictEqual(source.expressionType, 'UnaryExpression');
 
       // Should derive from flag parameter
@@ -1225,11 +1225,11 @@ const double = x => x * 2;
 
       const func = allNodes.find(n => n.name === 'double' && n.type === 'FUNCTION');
       const returnsEdge = allEdges.find(e =>
-        e.type === 'RETURNS' && e.dst === func.id
+        e.type === 'RETURNS' && e.src === func.id
       );
       assert.ok(returnsEdge, 'RETURNS edge should exist for implicit expression return');
 
-      const source = allNodes.find(n => n.id === returnsEdge.src);
+      const source = allNodes.find(n => n.id === returnsEdge.dst);
       assert.strictEqual(source.type, 'EXPRESSION');
       assert.strictEqual(source.expressionType, 'BinaryExpression');
 
@@ -1258,11 +1258,11 @@ function greet(name, title) {
 
       const func = allNodes.find(n => n.name === 'greet' && n.type === 'FUNCTION');
       const returnsEdge = allEdges.find(e =>
-        e.type === 'RETURNS' && e.dst === func.id
+        e.type === 'RETURNS' && e.src === func.id
       );
       assert.ok(returnsEdge, 'RETURNS edge should exist');
 
-      const source = allNodes.find(n => n.id === returnsEdge.src);
+      const source = allNodes.find(n => n.id === returnsEdge.dst);
       assert.strictEqual(source.expressionType, 'TemplateLiteral');
 
       // Should derive from both title and name
@@ -1292,13 +1292,13 @@ function mixedReturns(a, b, flag) {
 
       const func = allNodes.find(n => n.name === 'mixedReturns' && n.type === 'FUNCTION');
       const returnsEdges = allEdges.filter(e =>
-        e.type === 'RETURNS' && e.dst === func.id
+        e.type === 'RETURNS' && e.src === func.id
       );
       assert.strictEqual(returnsEdges.length, 2, 'Should have 2 RETURNS edges');
 
-      // One from EXPRESSION, one from PARAMETER
-      const sources = returnsEdges.map(e => allNodes.find(n => n.id === e.src));
-      const types = sources.map(s => s.type);
+      // One from EXPRESSION, one from PARAMETER (function -[RETURNS]-> returnValue)
+      const targets = returnsEdges.map(e => allNodes.find(n => n.id === e.dst));
+      const types = targets.map(s => s.type);
       assert.ok(types.includes('EXPRESSION'), 'Should have EXPRESSION source');
       assert.ok(types.includes('PARAMETER'), 'Should have PARAMETER source');
     });

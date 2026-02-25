@@ -1,5 +1,5 @@
 /**
- * FunctionCallResolver - creates CALLS and HANDLED_BY edges for imported function calls
+ * FunctionCallResolver - creates CALLS and HANDLED_BY edges for function calls
  *
  * This enrichment plugin runs AFTER ImportExportLinker (priority 80 vs 90) and:
  * 1. Finds CALL_SITE nodes without CALLS edges (excluding method calls)
@@ -7,9 +7,11 @@
  * 3. Follows IMPORTS_FROM -> EXPORT -> FUNCTION chain
  * 4. Creates CALLS edge to target FUNCTION
  * 5. Creates HANDLED_BY edge from CALL to IMPORT (REG-545)
+ * 6. FALLBACK: if no import, resolves intra-file calls to same-file FUNCTION or VARIABLE
  *
  * CREATES EDGES:
- * - CALL_SITE -> CALLS -> FUNCTION (for imported functions)
+ * - CALL_SITE -> CALLS -> FUNCTION (for imported or same-file functions)
+ * - CALL_SITE -> CALLS -> VARIABLE/CONSTANT (for calls through variable aliases)
  * - CALL_SITE -> HANDLED_BY -> IMPORT (links call to its import declaration)
  */
 
@@ -88,11 +90,15 @@ export class FunctionCallResolver extends Plugin {
     const exportIndex = await this.buildExportIndex(graph);
     logger.debug('Indexed exports', { files: exportIndex.size });
 
-    // Step 1.5: Build conservative shadowing index (REG-545)
+    // Step 1.5: Build variable index for intra-file call resolution
+    const variableIndex = await this.buildVariableIndex(graph);
+    logger.debug('Indexed variables', { count: variableIndex.size });
+
+    // Step 1.6: Build conservative shadowing index (REG-545)
     const shadowedImportKeys = await this.buildShadowIndex(graph);
     logger.debug('Indexed shadow keys', { count: shadowedImportKeys.size });
 
-    // Step 1.6: Build set of known files for path resolution
+    // Step 1.7: Build set of known files for path resolution
     const knownFiles = new Set<string>();
     for (const file of exportIndex.keys()) {
       knownFiles.add(file);
@@ -121,6 +127,7 @@ export class FunctionCallResolver extends Plugin {
     // Step 4: Resolution
     let edgesCreated = 0;
     let handledByEdgesCreated = 0;
+    let localResolved = 0; // Intra-file calls resolved without import
     const skipped = {
       alreadyResolved: 0,
       methodCalls: 0,
@@ -157,6 +164,19 @@ export class FunctionCallResolver extends Plugin {
       const imp = importIndex.get(importKey);
 
       if (!imp) {
+        // Fallback: resolve intra-file calls to same-file FUNCTION or VARIABLE
+        const localTarget = this.findLocalCallTarget(file, calledName, functionIndex, variableIndex);
+        if (localTarget) {
+          await factory!.link({
+            type: 'CALLS',
+            src: callSite.id,
+            dst: localTarget.id
+          });
+          edgesCreated++;
+          localResolved++;
+          continue;
+        }
+
         skipped.missingImport++;
         continue;
       }
@@ -302,6 +322,7 @@ export class FunctionCallResolver extends Plugin {
     logger.info('Complete', {
       edgesCreated,
       handledByEdgesCreated,
+      localResolved,
       skipped,
       time: `${totalTime}s`
     });
@@ -312,6 +333,7 @@ export class FunctionCallResolver extends Plugin {
         callSitesProcessed: callSitesToResolve.length,
         edgesCreated,
         handledByEdgesCreated,
+        localResolved,
         reExportsResolved,
         skipped,
         timeMs: Date.now() - startTime
@@ -356,6 +378,48 @@ export class FunctionCallResolver extends Plugin {
       functionIndex.get(func.file)!.set(func.name, func);
     }
     return functionIndex;
+  }
+
+  /**
+   * Build variable index mapping file:name -> VARIABLE/CONSTANT node.
+   * Used for intra-file call resolution when no import matches.
+   * Priority: first-seen wins (module-level variables indexed before nested).
+   */
+  private async buildVariableIndex(graph: PluginContext['graph']): Promise<Map<string, BaseNodeRecord>> {
+    const index = new Map<string, BaseNodeRecord>();
+    for (const nodeType of ['VARIABLE', 'CONSTANT'] as const) {
+      for await (const node of graph.queryNodes({ nodeType })) {
+        if (!node.file || !node.name) continue;
+        const key = `${node.file}:${node.name}`;
+        if (!index.has(key)) {
+          index.set(key, node);
+        }
+      }
+    }
+    return index;
+  }
+
+  /**
+   * Find local call target in same file: FUNCTION first, then VARIABLE/CONSTANT.
+   * Used as fallback when no import matches the called name.
+   */
+  private findLocalCallTarget(
+    file: string,
+    calledName: string,
+    functionIndex: Map<string, Map<string, FunctionNode>>,
+    variableIndex: Map<string, BaseNodeRecord>
+  ): BaseNodeRecord | null {
+    // Priority 1: Same-file function declaration
+    const fileFunctions = functionIndex.get(file);
+    const localFunction = fileFunctions?.get(calledName);
+    if (localFunction) return localFunction;
+
+    // Priority 2: Same-file variable/constant (alias calls like const log = console.log; log())
+    const variableKey = `${file}:${calledName}`;
+    const localVariable = variableIndex.get(variableKey);
+    if (localVariable) return localVariable;
+
+    return null;
   }
 
   /**
