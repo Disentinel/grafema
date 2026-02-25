@@ -10,8 +10,6 @@ import * as t from '@babel/types';
 import { getLine, getColumn } from '../utils/location.js';
 import { generateSemanticId, generateAnonymousName } from '../utils/semanticIdHelpers.js';
 import { computeSemanticId } from '../../../../core/SemanticId.js';
-import type { ReturnStatementInfo } from '../types.js';
-import { extractReturnExpressionInfo } from '../extractors/ReturnExpressionExtractor.js';
 import { FunctionBodyHandler } from './FunctionBodyHandler.js';
 
 export class NestedFunctionHandler extends FunctionBodyHandler {
@@ -147,53 +145,32 @@ export class NestedFunctionHandler extends FunctionBodyHandler {
           parentScopeId: ctx.parentScopeId
         });
 
-        if (node.body.type === 'BlockStatement') {
-          const nestedScopeId = `SCOPE#${funcName}:body#${ctx.module.file}#${line}`;
-          const arrowSemanticId = generateSemanticId('arrow_body', ctx.scopeTracker);
-          ctx.scopes.push({
-            id: nestedScopeId,
-            type: 'SCOPE',
-            scopeType: 'arrow_body',
-            name: `${funcName}:body`,
-            semanticId: arrowSemanticId,
-            conditional: false,
-            file: ctx.module.file,
-            line,
-            parentFunctionId: functionId,
-            capturesFrom: ctx.parentScopeId
-          });
+        const nestedScopeId = `SCOPE#${funcName}:body#${ctx.module.file}#${line}`;
+        const arrowSemanticId = generateSemanticId('arrow_body', ctx.scopeTracker);
+        ctx.scopes.push({
+          id: nestedScopeId,
+          type: 'SCOPE',
+          scopeType: 'arrow_body',
+          name: `${funcName}:body`,
+          semanticId: arrowSemanticId,
+          conditional: false,
+          file: ctx.module.file,
+          line,
+          parentFunctionId: functionId,
+          capturesFrom: ctx.parentScopeId
+        });
 
-          // Enter arrow function scope for semantic ID generation
-          if (ctx.scopeTracker) {
-            ctx.scopeTracker.enterScope(funcName, 'arrow');
-          }
-          analyzer.analyzeFunctionBody(arrowPath, nestedScopeId, ctx.module, ctx.collections);
-          if (ctx.scopeTracker) {
-            ctx.scopeTracker.exitScope();
-          }
-        } else {
-          // Arrow function with expression body (implicit return)
-          // e.g., x => x * 2, () => 42
-          const bodyExpr = node.body;
-          const bodyLine = getLine(bodyExpr);
-          const bodyColumn = getColumn(bodyExpr);
-
-          // Extract expression-specific info using shared method
-          const exprInfo = extractReturnExpressionInfo(
-            bodyExpr, ctx.module, ctx.literals, ctx.literalCounterRef, line, column, 'implicit_return'
-          );
-
-          const returnInfo: ReturnStatementInfo = {
-            parentFunctionId: functionId,
-            file: ctx.module.file,
-            line: bodyLine,
-            column: bodyColumn,
-            returnValueType: 'NONE',
-            isImplicitReturn: true,
-            ...exprInfo,
-          };
-
-          ctx.returnStatements.push(returnInfo);
+        // Enter arrow function scope for semantic ID generation
+        if (ctx.scopeTracker) {
+          ctx.scopeTracker.enterScope(funcName, 'arrow');
+        }
+        // analyzeFunctionBody handles both block and expression bodies:
+        // - Block body: traverses all statements, extracts calls/vars/returns
+        // - Expression body: extracts implicit return AND traverses inner expressions
+        //   (e.g., `x => setTimeout(x, 100)` — extracts the setTimeout CALL + LITERAL 100)
+        analyzer.analyzeFunctionBody(arrowPath, nestedScopeId, ctx.module, ctx.collections);
+        if (ctx.scopeTracker) {
+          ctx.scopeTracker.exitScope();
         }
 
         arrowPath.skip();

@@ -29,6 +29,7 @@ import {
   LoopHandler,
   TryCatchHandler,
   BranchHandler,
+  LiteralHandler,
 } from './handlers/index.js';
 
 /**
@@ -140,6 +141,7 @@ export function analyzeFunctionBody(
     new LoopHandler(ctx, delegate),
     new TryCatchHandler(ctx, delegate),
     new BranchHandler(ctx, delegate),
+    new LiteralHandler(ctx, delegate),
   ];
 
   const mergedVisitor: Visitor = {};

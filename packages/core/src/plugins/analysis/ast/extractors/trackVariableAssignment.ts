@@ -111,9 +111,10 @@ export function trackVariableAssignment(
     return;
   }
 
-  // 1. Literal
+  // 1. Literal (including NullLiteral — extractLiteralValue returns null for both
+  //    "not a literal" and "is a null literal", so check AST type separately)
   const literalValue = ExpressionEvaluator.extractLiteralValue(initExpression);
-  if (literalValue !== null) {
+  if (literalValue !== null || initExpression.type === 'NullLiteral') {
     const literalId = `LITERAL#${line}:${initExpression.start}#${module.file}`;
     ctx.literals.push({
       id: literalId,

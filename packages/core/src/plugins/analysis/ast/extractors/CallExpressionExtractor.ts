@@ -317,7 +317,7 @@ export function extractMethodCallArguments(
       argInfo.targetName = arg.name;
     } else if (t.isLiteral(arg) && !t.isTemplateLiteral(arg)) {
       const literalValue = ExpressionEvaluator.extractLiteralValue(arg as t.Literal);
-      if (literalValue !== null) {
+      if (literalValue !== null || arg.type === 'NullLiteral') {
         const argLine = getLine(arg);
         const argColumn = getColumn(arg);
         const literalId = `LITERAL#arg${argIndex}#${module.file}#${argLine}:${argColumn}:${literalCounterRef.value++}`;

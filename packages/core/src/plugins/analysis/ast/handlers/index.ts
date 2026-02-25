@@ -10,3 +10,4 @@ export { CallExpressionHandler } from './CallExpressionHandler.js';
 export { LoopHandler } from './LoopHandler.js';
 export { TryCatchHandler } from './TryCatchHandler.js';
 export { BranchHandler } from './BranchHandler.js';
+export { LiteralHandler } from './LiteralHandler.js';

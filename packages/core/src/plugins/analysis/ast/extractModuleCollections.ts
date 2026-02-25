@@ -44,6 +44,7 @@ import { createModuleLevelNewExpressionVisitor } from './extractors/ModuleLevelN
 import { createModuleLevelCallbackVisitor } from './extractors/ModuleLevelCallbackExtractor.js';
 import { createModuleLevelIfStatementVisitor } from './extractors/ModuleLevelIfStatementExtractor.js';
 import { createMiscEdgeHandlers } from './visitors/MiscEdgeCollector.js';
+import { createModuleLevelLiteralVisitor } from './handlers/LiteralHandler.js';
 import { analyzeFunctionBody } from './analyzeFunctionBody.js';
 import type { ASTCollections } from './types.js';
 
@@ -237,6 +238,15 @@ export function extractModuleCollections(
     variableIds: new Map(),
     callIds: new Map(),
   }) as unknown as TraverseOptions);
+
+  // Universal LITERAL visitor: creates LITERAL nodes for every literal
+  // in the AST that wasn't already captured by specific extractors.
+  // Must run AFTER all other visitors so position-based dedup works correctly.
+  traverse(ast, createModuleLevelLiteralVisitor(
+    module,
+    allCollections.literals,
+    allCollections.literalCounterRef
+  ) as TraverseOptions);
 
   // REG-464: Resolve v2 ID collisions after all visitors complete
   const pendingNodes = sharedIdGenerator.getPendingNodes();

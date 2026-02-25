@@ -592,12 +592,12 @@ export abstract class BaseRFDBClient extends EventEmitter implements IRFDBClient
     });
   }
 
-  async commitBatch(tags?: string[], deferIndex?: boolean, protectedTypes?: string[]): Promise<CommitDelta> {
+  async commitBatch(tags?: string[], deferIndex?: boolean, protectedTypes?: string[], overrideChangedFiles?: string[]): Promise<CommitDelta> {
     if (!this._batching) throw new Error('No batch in progress');
 
     const allNodes = this._batchNodes;
     const allEdges = this._batchEdges;
-    const changedFiles = [...this._batchFiles];
+    const changedFiles = overrideChangedFiles ?? [...this._batchFiles];
 
     this._batching = false;
     this._batchNodes = [];

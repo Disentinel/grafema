@@ -35,6 +35,14 @@ export class ExpressionEvaluator {
       case 'NullLiteral':
         return null;
 
+      case 'RegExpLiteral': {
+        const regex = node as { pattern: string; flags: string };
+        return `/${regex.pattern}/${regex.flags}`;
+      }
+
+      case 'BigIntLiteral':
+        return (node as { value: string }).value;
+
       case 'TemplateLiteral': {
         const templateNode = node as TemplateLiteral;
         // Only if template literal has no expressions (simple string)
