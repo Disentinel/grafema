@@ -75,7 +75,8 @@ describe('Strict Mode', () => {
         const result = await resolver.execute({ graph: backend, strictMode: false });
 
         assert.strictEqual(result.errors.length, 0, 'No errors in normal mode');
-        assert.strictEqual(result.metadata.unresolved, 1, 'Should track unresolved');
+        // REG-583: unknown object method calls now resolve to UNKNOWN_CALL_TARGET (not unresolved)
+        assert.strictEqual(result.metadata.unknownResolved, 1, 'Should track unknownResolved');
       } finally {
         await backend.close();
       }
@@ -698,7 +699,7 @@ describe('Strict Mode', () => {
 
         // All errors should be collected, not just the first one
         assert.strictEqual(result.errors.length, 3, 'Should collect all 3 errors');
-        assert.strictEqual(result.metadata.unresolved, 3, 'Should track all 3 unresolved');
+        assert.strictEqual(result.metadata.unknownResolved, 3, 'Should track all 3 unresolved');
 
         // Each error should have unique context
         const lines = result.errors.map(e => e.context.lineNumber);
@@ -857,7 +858,7 @@ describe('Strict Mode', () => {
         const result = await resolver.execute({ graph: backend });
 
         assert.strictEqual(result.errors.length, 0, 'No errors when strictMode undefined');
-        assert.strictEqual(result.metadata.unresolved, 1, 'Should track unresolved');
+        assert.strictEqual(result.metadata.unknownResolved, 1, 'Should track unresolved');
       } finally {
         await backend.close();
       }

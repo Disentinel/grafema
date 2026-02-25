@@ -28,8 +28,12 @@ describe('MethodCallResolver', () => {
     return { backend, testDir };
   }
 
-  describe('External method filtering', () => {
-    it('should skip external methods like console.log', async () => {
+  // ==========================================================================
+  // REG-583: Runtime-typed builtin resolution
+  // ==========================================================================
+
+  describe('Runtime-typed builtin resolution (REG-583)', () => {
+    it('should create CALLS edge to WEB_API:console for console.log()', async () => {
       const { backend } = await setupBackend();
 
       try {
@@ -51,23 +55,29 @@ describe('MethodCallResolver', () => {
         // Execute resolver
         const result = await resolver.execute({ graph: backend });
 
-        // Should not create any edges for external methods
+        // REG-583: Should create CALLS edge to WEB_API:console
         const edges = await backend.getOutgoingEdges('console-log-call', ['CALLS']);
-        assert.strictEqual(edges.length, 0, 'Should not create CALLS edge for console.log');
+        assert.strictEqual(edges.length, 1, 'Should create one CALLS edge for console.log');
+        assert.strictEqual(edges[0].dst, 'WEB_API:console',
+          'Should point to WEB_API:console');
 
-        console.log('External method filtering works correctly');
+        // Verify the WEB_API:console node was created
+        const targetNode = await backend.getNode('WEB_API:console');
+        assert.ok(targetNode, 'WEB_API:console node should exist');
+        assert.strictEqual(targetNode.type, 'WEB_API',
+          'Node type should be WEB_API');
       } finally {
         await backend.close();
       }
     });
 
-    it('should skip Math, JSON, Promise and other built-ins', async () => {
+    it('should create CALLS edges for Math, JSON, Promise built-ins', async () => {
       const { backend } = await setupBackend();
 
       try {
         const resolver = new MethodCallResolver();
 
-        // Add various external method calls
+        // Add various builtin method calls
         await backend.addNodes([
           {
             id: 'math-call',
@@ -99,10 +109,559 @@ describe('MethodCallResolver', () => {
 
         const result = await resolver.execute({ graph: backend });
 
-        // Should not create edges for any of these
-        assert.strictEqual(result.created.edges, 0, 'Should not create edges for built-ins');
+        // REG-583: Each should have a CALLS edge to its runtime-typed node
+        const mathEdges = await backend.getOutgoingEdges('math-call', ['CALLS']);
+        assert.strictEqual(mathEdges.length, 1, 'Math.random should have CALLS edge');
+        assert.strictEqual(mathEdges[0].dst, 'ECMASCRIPT_BUILTIN:Math');
 
-        console.log('Built-in method filtering works correctly');
+        const jsonEdges = await backend.getOutgoingEdges('json-call', ['CALLS']);
+        assert.strictEqual(jsonEdges.length, 1, 'JSON.parse should have CALLS edge');
+        assert.strictEqual(jsonEdges[0].dst, 'ECMASCRIPT_BUILTIN:JSON');
+
+        const promiseEdges = await backend.getOutgoingEdges('promise-call', ['CALLS']);
+        assert.strictEqual(promiseEdges.length, 1, 'Promise.resolve should have CALLS edge');
+        assert.strictEqual(promiseEdges[0].dst, 'ECMASCRIPT_BUILTIN:Promise');
+
+        // Verify node types
+        const mathNode = await backend.getNode('ECMASCRIPT_BUILTIN:Math');
+        assert.ok(mathNode, 'ECMASCRIPT_BUILTIN:Math node should exist');
+        assert.strictEqual(mathNode.type, 'ECMASCRIPT_BUILTIN');
+      } finally {
+        await backend.close();
+      }
+    });
+
+    it('should create CALLS edge to NODEJS_STDLIB:process for process.exit()', async () => {
+      const { backend } = await setupBackend();
+
+      try {
+        const resolver = new MethodCallResolver();
+
+        await backend.addNode({
+          id: 'process-exit-call',
+          type: 'CALL',
+          name: 'process.exit',
+          file: 'app.js',
+          line: 10,
+          object: 'process',
+          method: 'exit'
+        });
+
+        await backend.flush();
+        await resolver.execute({ graph: backend });
+
+        const edges = await backend.getOutgoingEdges('process-exit-call', ['CALLS']);
+        assert.strictEqual(edges.length, 1, 'process.exit() should have CALLS edge');
+        assert.strictEqual(edges[0].dst, 'NODEJS_STDLIB:process');
+
+        const targetNode = await backend.getNode('NODEJS_STDLIB:process');
+        assert.ok(targetNode, 'NODEJS_STDLIB:process node should exist');
+        assert.strictEqual(targetNode.type, 'NODEJS_STDLIB');
+      } finally {
+        await backend.close();
+      }
+    });
+
+    it('should create CALLS edge to ECMASCRIPT_BUILTIN:prototype for arr.map(fn)', async () => {
+      const { backend } = await setupBackend();
+
+      try {
+        const resolver = new MethodCallResolver();
+
+        // arr is a variable, map is a prototype method
+        await backend.addNode({
+          id: 'arr-map-call',
+          type: 'CALL',
+          name: 'arr.map',
+          file: 'app.js',
+          line: 5,
+          object: 'arr',
+          method: 'map'
+        });
+
+        await backend.flush();
+        await resolver.execute({ graph: backend });
+
+        const edges = await backend.getOutgoingEdges('arr-map-call', ['CALLS']);
+        assert.strictEqual(edges.length, 1,
+          'arr.map() should have CALLS edge to prototype');
+        assert.strictEqual(edges[0].dst, 'ECMASCRIPT_BUILTIN:prototype',
+          'Should point to ECMASCRIPT_BUILTIN:prototype');
+      } finally {
+        await backend.close();
+      }
+    });
+
+    it('should create CALLS edge to ECMASCRIPT_BUILTIN:prototype for str.split()', async () => {
+      const { backend } = await setupBackend();
+
+      try {
+        const resolver = new MethodCallResolver();
+
+        // str is a variable, split is a prototype method
+        await backend.addNode({
+          id: 'str-split-call',
+          type: 'CALL',
+          name: 'str.split',
+          file: 'app.js',
+          line: 5,
+          object: 'str',
+          method: 'split'
+        });
+
+        await backend.flush();
+        await resolver.execute({ graph: backend });
+
+        const edges = await backend.getOutgoingEdges('str-split-call', ['CALLS']);
+        assert.strictEqual(edges.length, 1, 'str.split() should have CALLS edge');
+        assert.strictEqual(edges[0].dst, 'ECMASCRIPT_BUILTIN:prototype');
+      } finally {
+        await backend.close();
+      }
+    });
+
+    it('should create CALLS edge to EXTERNAL_MODULE:axios for axios.get(url)', async () => {
+      const { backend } = await setupBackend();
+
+      try {
+        const resolver = new MethodCallResolver();
+
+        // axios is an npm package namespace — should get EXTERNAL_MODULE edge (not skip)
+        await backend.addNode({
+          id: 'axios-get-call',
+          type: 'CALL',
+          name: 'axios.get',
+          file: 'api.js',
+          line: 5,
+          object: 'axios',
+          method: 'get'
+        });
+
+        await backend.flush();
+        await resolver.execute({ graph: backend });
+
+        // DEFECT 1 fix: npm packages now get CALLS edge to EXTERNAL_MODULE:{obj}
+        const edges = await backend.getOutgoingEdges('axios-get-call', ['CALLS']);
+        assert.strictEqual(edges.length, 1,
+          'axios.get() should create CALLS edge to EXTERNAL_MODULE:axios');
+        assert.strictEqual(edges[0].dst, 'EXTERNAL_MODULE:axios');
+
+        // Verify EXTERNAL_MODULE:axios node exists
+        const targetNode = await backend.getNode('EXTERNAL_MODULE:axios');
+        assert.ok(targetNode, 'EXTERNAL_MODULE:axios node should exist');
+        assert.strictEqual(targetNode.type, 'EXTERNAL_MODULE');
+      } finally {
+        await backend.close();
+      }
+    });
+
+    it('should create CALLS edge to UNKNOWN_CALL_TARGET:res for res.json(data)', async () => {
+      const { backend } = await setupBackend();
+
+      try {
+        const resolver = new MethodCallResolver();
+
+        // res is an unknown application variable
+        await backend.addNode({
+          id: 'res-json-call',
+          type: 'CALL',
+          name: 'res.json',
+          file: 'handler.js',
+          line: 10,
+          object: 'res',
+          method: 'json'
+        });
+
+        await backend.flush();
+        await resolver.execute({ graph: backend });
+
+        const edges = await backend.getOutgoingEdges('res-json-call', ['CALLS']);
+        assert.strictEqual(edges.length, 1,
+          'res.json() should create CALLS edge');
+        assert.strictEqual(edges[0].dst, 'UNKNOWN_CALL_TARGET:res',
+          'Should point to UNKNOWN_CALL_TARGET:res');
+
+        const targetNode = await backend.getNode('UNKNOWN_CALL_TARGET:res');
+        assert.ok(targetNode, 'UNKNOWN_CALL_TARGET:res node should exist');
+        assert.strictEqual(targetNode.type, 'UNKNOWN_CALL_TARGET');
+      } finally {
+        await backend.close();
+      }
+    });
+
+    it('should create CALLS edge to EXTERNAL_MODULE:socket for socket.emit()', async () => {
+      const { backend } = await setupBackend();
+
+      try {
+        const resolver = new MethodCallResolver();
+
+        await backend.addNode({
+          id: 'socket-emit-call',
+          type: 'CALL',
+          name: 'socket.emit',
+          file: 'events.js',
+          line: 15,
+          object: 'socket',
+          method: 'emit'
+        });
+
+        await backend.flush();
+        await resolver.execute({ graph: backend });
+
+        const edges = await backend.getOutgoingEdges('socket-emit-call', ['CALLS']);
+        assert.strictEqual(edges.length, 1,
+          'socket.emit() should create CALLS edge');
+        assert.strictEqual(edges[0].dst, 'EXTERNAL_MODULE:socket');
+      } finally {
+        await backend.close();
+      }
+    });
+
+    it('should create only ONE WEB_API:console node when console.log() called twice', async () => {
+      const { backend } = await setupBackend();
+
+      try {
+        const resolver = new MethodCallResolver();
+
+        await backend.addNodes([
+          {
+            id: 'console-log-call-1',
+            type: 'CALL',
+            name: 'console.log',
+            file: 'app.js',
+            line: 5,
+            object: 'console',
+            method: 'log'
+          },
+          {
+            id: 'console-warn-call-2',
+            type: 'CALL',
+            name: 'console.warn',
+            file: 'app.js',
+            line: 10,
+            object: 'console',
+            method: 'warn'
+          }
+        ]);
+
+        await backend.flush();
+        await resolver.execute({ graph: backend });
+
+        // Both calls should have CALLS edges
+        const edges1 = await backend.getOutgoingEdges('console-log-call-1', ['CALLS']);
+        assert.strictEqual(edges1.length, 1);
+        assert.strictEqual(edges1[0].dst, 'WEB_API:console');
+
+        const edges2 = await backend.getOutgoingEdges('console-warn-call-2', ['CALLS']);
+        assert.strictEqual(edges2.length, 1);
+        assert.strictEqual(edges2[0].dst, 'WEB_API:console');
+
+        // Only ONE WEB_API:console node should exist (dedup)
+        const consoleNode = await backend.getNode('WEB_API:console');
+        assert.ok(consoleNode, 'WEB_API:console node should exist (created once)');
+      } finally {
+        await backend.close();
+      }
+    });
+
+    it('should skip when NodejsBuiltinsResolver already created CALLS edge (duplicate prevention)', async () => {
+      const { backend } = await setupBackend();
+
+      try {
+        const resolver = new MethodCallResolver();
+
+        // Simulate: NodejsBuiltinsResolver already ran and created precise edge
+        await backend.addNodes([
+          {
+            id: 'EXTERNAL_FUNCTION:fs.readFile',
+            type: 'EXTERNAL_FUNCTION',
+            name: 'readFile',
+            file: '',
+            line: 0
+          },
+          {
+            id: 'fs-readFile-call',
+            type: 'CALL',
+            name: 'fs.readFile',
+            file: 'app.js',
+            line: 5,
+            object: 'fs',
+            method: 'readFile'
+          }
+        ]);
+
+        // Pre-existing CALLS edge from NodejsBuiltinsResolver
+        await backend.addEdge({
+          src: 'fs-readFile-call',
+          dst: 'EXTERNAL_FUNCTION:fs.readFile',
+          type: 'CALLS'
+        });
+
+        await backend.flush();
+        await resolver.execute({ graph: backend });
+
+        // Should still have only the original edge — no second edge created
+        const edges = await backend.getOutgoingEdges('fs-readFile-call', ['CALLS']);
+        assert.strictEqual(edges.length, 1,
+          'Should have exactly one CALLS edge (from NodejsBuiltinsResolver)');
+        assert.strictEqual(edges[0].dst, 'EXTERNAL_FUNCTION:fs.readFile',
+          'Should keep the precise edge from NodejsBuiltinsResolver');
+      } finally {
+        await backend.close();
+      }
+    });
+
+    it('should resolve res.json() and res.send() to the same UNKNOWN_CALL_TARGET:res', async () => {
+      const { backend } = await setupBackend();
+
+      try {
+        const resolver = new MethodCallResolver();
+
+        await backend.addNodes([
+          {
+            id: 'res-json-call',
+            type: 'CALL',
+            name: 'res.json',
+            file: 'handler.js',
+            line: 10,
+            object: 'res',
+            method: 'json'
+          },
+          {
+            id: 'res-send-call',
+            type: 'CALL',
+            name: 'res.send',
+            file: 'handler.js',
+            line: 15,
+            object: 'res',
+            method: 'send'
+          }
+        ]);
+
+        await backend.flush();
+        await resolver.execute({ graph: backend });
+
+        const edgesJson = await backend.getOutgoingEdges('res-json-call', ['CALLS']);
+        assert.strictEqual(edgesJson.length, 1);
+        assert.strictEqual(edgesJson[0].dst, 'UNKNOWN_CALL_TARGET:res');
+
+        const edgesSend = await backend.getOutgoingEdges('res-send-call', ['CALLS']);
+        assert.strictEqual(edgesSend.length, 1);
+        assert.strictEqual(edgesSend[0].dst, 'UNKNOWN_CALL_TARGET:res',
+          'Both res.json() and res.send() should point to same UNKNOWN_CALL_TARGET:res');
+      } finally {
+        await backend.close();
+      }
+    });
+
+    it('should resolve document.querySelector() to BROWSER_API:document', async () => {
+      const { backend } = await setupBackend();
+
+      try {
+        const resolver = new MethodCallResolver();
+
+        await backend.addNode({
+          id: 'doc-qs-call',
+          type: 'CALL',
+          name: 'document.querySelector',
+          file: 'ui.js',
+          line: 3,
+          object: 'document',
+          method: 'querySelector'
+        });
+
+        await backend.flush();
+        await resolver.execute({ graph: backend });
+
+        const edges = await backend.getOutgoingEdges('doc-qs-call', ['CALLS']);
+        assert.strictEqual(edges.length, 1);
+        assert.strictEqual(edges[0].dst, 'BROWSER_API:document');
+
+        const targetNode = await backend.getNode('BROWSER_API:document');
+        assert.ok(targetNode, 'BROWSER_API:document node should exist');
+        assert.strictEqual(targetNode.type, 'BROWSER_API');
+      } finally {
+        await backend.close();
+      }
+    });
+
+    it('should resolve Buffer.from() to NODEJS_STDLIB:Buffer', async () => {
+      const { backend } = await setupBackend();
+
+      try {
+        const resolver = new MethodCallResolver();
+
+        await backend.addNode({
+          id: 'buffer-from-call',
+          type: 'CALL',
+          name: 'Buffer.from',
+          file: 'utils.js',
+          line: 7,
+          object: 'Buffer',
+          method: 'from'
+        });
+
+        await backend.flush();
+        await resolver.execute({ graph: backend });
+
+        const edges = await backend.getOutgoingEdges('buffer-from-call', ['CALLS']);
+        assert.strictEqual(edges.length, 1);
+        assert.strictEqual(edges[0].dst, 'NODEJS_STDLIB:Buffer');
+      } finally {
+        await backend.close();
+      }
+    });
+
+    it('should resolve localStorage.getItem() to BROWSER_API:localStorage', async () => {
+      const { backend } = await setupBackend();
+
+      try {
+        const resolver = new MethodCallResolver();
+
+        await backend.addNode({
+          id: 'ls-get-call',
+          type: 'CALL',
+          name: 'localStorage.getItem',
+          file: 'storage.js',
+          line: 3,
+          object: 'localStorage',
+          method: 'getItem'
+        });
+
+        await backend.flush();
+        await resolver.execute({ graph: backend });
+
+        const edges = await backend.getOutgoingEdges('ls-get-call', ['CALLS']);
+        assert.strictEqual(edges.length, 1);
+        assert.strictEqual(edges[0].dst, 'BROWSER_API:localStorage');
+      } finally {
+        await backend.close();
+      }
+    });
+
+    it('should resolve fs.readFile() to NODEJS_STDLIB:fs when no prior edge exists (GAP 3)', async () => {
+      const { backend } = await setupBackend();
+
+      try {
+        const resolver = new MethodCallResolver();
+
+        // fs is in NODEJS_STDLIB_OBJECTS after GAP 3 fix — no pre-existing edge
+        await backend.addNode({
+          id: 'fs-readFile-call-no-prior',
+          type: 'CALL',
+          name: 'fs.readFile',
+          file: 'app.js',
+          line: 5,
+          object: 'fs',
+          method: 'readFile'
+        });
+
+        await backend.flush();
+        await resolver.execute({ graph: backend });
+
+        // After GAP 3 fix, fs is in NODEJS_STDLIB_OBJECTS — resolved at Step 2
+        const edges = await backend.getOutgoingEdges('fs-readFile-call-no-prior', ['CALLS']);
+        assert.strictEqual(edges.length, 1,
+          'fs.readFile() should have CALLS edge when no prior edge from NodejsBuiltinsResolver');
+        assert.strictEqual(edges[0].dst, 'NODEJS_STDLIB:fs',
+          'Should point to NODEJS_STDLIB:fs (coarser but non-silent)');
+      } finally {
+        await backend.close();
+      }
+    });
+
+    it('should resolve WebSocket.send() to BROWSER_API:WebSocket (GAP 4)', async () => {
+      const { backend } = await setupBackend();
+
+      try {
+        const resolver = new MethodCallResolver();
+
+        await backend.addNode({
+          id: 'ws-send-call',
+          type: 'CALL',
+          name: 'WebSocket.send',
+          file: 'realtime.js',
+          line: 12,
+          object: 'WebSocket',
+          method: 'send'
+        });
+
+        await backend.flush();
+        await resolver.execute({ graph: backend });
+
+        const edges = await backend.getOutgoingEdges('ws-send-call', ['CALLS']);
+        assert.strictEqual(edges.length, 1);
+        assert.strictEqual(edges[0].dst, 'BROWSER_API:WebSocket');
+      } finally {
+        await backend.close();
+      }
+    });
+
+    it('should resolve user-defined class method named push/get/map over prototype heuristic', async () => {
+      const { backend } = await setupBackend();
+
+      try {
+        const resolver = new MethodCallResolver();
+
+        // User-defined class Queue with a push() method
+        await backend.addNode({
+          id: 'class-queue',
+          type: 'CLASS',
+          name: 'Queue',
+          file: 'queue.js',
+          line: 1
+        });
+
+        await backend.addNode({
+          id: 'method-queue-push',
+          type: 'METHOD',
+          name: 'push',
+          file: 'queue.js',
+          line: 5
+        });
+
+        await backend.addEdge({
+          src: 'class-queue',
+          dst: 'method-queue-push',
+          type: 'CONTAINS'
+        });
+
+        // Method call: queue.push(item) — "push" is in BUILTIN_PROTOTYPE_METHODS
+        await backend.addNode({
+          id: 'call-queue-push',
+          type: 'CALL',
+          name: 'queue.push',
+          file: 'main.js',
+          line: 10,
+          object: 'queue',
+          method: 'push'
+        });
+
+        // Variable "queue" is INSTANCE_OF Queue
+        await backend.addNode({
+          id: 'var-queue',
+          type: 'VARIABLE',
+          name: 'queue',
+          file: 'main.js',
+          line: 8
+        });
+
+        await backend.addEdge({
+          src: 'var-queue',
+          dst: 'class-queue',
+          type: 'INSTANCE_OF'
+        });
+
+        await backend.flush();
+        await resolver.execute({ graph: backend });
+
+        const edges = await backend.getOutgoingEdges('call-queue-push', ['CALLS']);
+        assert.strictEqual(edges.length, 1, 'Should have exactly one CALLS edge');
+        assert.strictEqual(
+          edges[0].dst,
+          'method-queue-push',
+          'Should resolve to user-defined Queue.push, NOT ECMASCRIPT_BUILTIN:prototype'
+        );
       } finally {
         await backend.close();
       }
@@ -385,13 +944,14 @@ describe('MethodCallResolver', () => {
       }
     });
 
-    it('should handle unresolvable method calls gracefully', async () => {
+    it('should create UNKNOWN_CALL_TARGET for unresolvable method calls (REG-583)', async () => {
       const { backend } = await setupBackend();
 
       try {
         const resolver = new MethodCallResolver();
 
-        // Method call to unknown object
+        // Method call to unknown object — not a builtin, not a prototype method,
+        // not an npm namespace. Falls through to Step 5: UNKNOWN_CALL_TARGET.
         await backend.addNode({
           id: 'unknown-call',
           type: 'CALL',
@@ -406,11 +966,15 @@ describe('MethodCallResolver', () => {
 
         const result = await resolver.execute({ graph: backend });
 
-        // Should not crash, should report as unresolved
-        assert.strictEqual(result.metadata.edgesCreated, 0, 'Should create no edges');
-        assert.strictEqual(result.metadata.unresolved, 1, 'Should report 1 unresolved');
+        // REG-583: Unknown objects now get CALLS edge to UNKNOWN_CALL_TARGET:{obj}
+        const edges = await backend.getOutgoingEdges('unknown-call', ['CALLS']);
+        assert.strictEqual(edges.length, 1,
+          'unknownObj.doSomething() should create CALLS edge to UNKNOWN_CALL_TARGET');
+        assert.strictEqual(edges[0].dst, 'UNKNOWN_CALL_TARGET:unknownObj');
 
-        console.log('Unresolvable method calls handled gracefully');
+        const targetNode = await backend.getNode('UNKNOWN_CALL_TARGET:unknownObj');
+        assert.ok(targetNode, 'UNKNOWN_CALL_TARGET:unknownObj node should exist');
+        assert.strictEqual(targetNode.type, 'UNKNOWN_CALL_TARGET');
       } finally {
         await backend.close();
       }
@@ -832,11 +1396,13 @@ describe('MethodCallResolver', () => {
 
         await resolver.execute({ graph: backend });
 
-        // unknownMethod is not in any interface, should NOT be resolved
+        // unknownMethod is not in any interface.
+        // REG-583: x is an unknown variable, unknownMethod is not a prototype method,
+        // so this falls through to UNKNOWN_CALL_TARGET:x
         const edges = await backend.getOutgoingEdges('x-unknown-call', ['CALLS']);
-        assert.strictEqual(edges.length, 0, 'Should NOT create CALLS edge for method not in any interface');
-
-        console.log('No false positive for method not in interface');
+        assert.strictEqual(edges.length, 1,
+          'Should create CALLS edge to UNKNOWN_CALL_TARGET:x for method not in any interface');
+        assert.strictEqual(edges[0].dst, 'UNKNOWN_CALL_TARGET:x');
       } finally {
         await backend.close();
       }
@@ -907,11 +1473,14 @@ describe('MethodCallResolver', () => {
 
         await resolver.execute({ graph: backend });
 
-        // method2 is in interface but Partial doesn't have it — no CALLS edge
+        // method2 is in interface but Partial doesn't have it.
+        // REG-583: x is an unknown variable, method2 is not a prototype method,
+        // so it falls to UNKNOWN_CALL_TARGET:x — not a false positive for class resolution,
+        // but properly captured as an unknown call target.
         const edges = await backend.getOutgoingEdges('x-method2-call', ['CALLS']);
-        assert.strictEqual(edges.length, 0, 'Should NOT create CALLS edge when class lacks the method');
-
-        console.log('No false positive for missing method on implementing class');
+        assert.strictEqual(edges.length, 1,
+          'Should create CALLS edge to UNKNOWN_CALL_TARGET:x when class lacks the method');
+        assert.strictEqual(edges[0].dst, 'UNKNOWN_CALL_TARGET:x');
       } finally {
         await backend.close();
       }

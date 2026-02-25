@@ -1,10 +1,11 @@
 /**
- * CallResolverValidator - validates function call resolution (REG-227)
+ * CallResolverValidator - validates function call resolution (REG-227, REG-583)
  *
  * Checks that all function calls are properly resolved:
  * - Internal calls: CALLS edge to FUNCTION node
- * - External calls: CALLS edge to EXTERNAL_MODULE node
- * - Builtin calls: recognized by name (no edge needed)
+ * - External calls: CALLS edge to EXTERNAL_MODULE, EXTERNAL_FUNCTION,
+ *   ECMASCRIPT_BUILTIN, WEB_API, BROWSER_API, NODEJS_STDLIB, or UNKNOWN_CALL_TARGET
+ * - Builtin calls: recognized by name (require — the only function without CALLS edge)
  * - Unresolved: no edge, not builtin -> WARNING
  *
  * This validator runs AFTER FunctionCallResolver and ExternalCallResolver
@@ -15,7 +16,7 @@ import { Plugin, createSuccessResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { BaseNodeRecord } from '@grafema/types';
 import { ValidationError } from '../../errors/GrafemaError.js';
-import { JS_GLOBAL_FUNCTIONS } from '../../data/builtins/index.js';
+import { REQUIRE_BUILTINS } from '../../data/builtins/index.js';
 
 /**
  * Resolution type for a CALL node
@@ -35,8 +36,8 @@ interface CallNode extends BaseNodeRecord {
 interface ValidationSummary {
   totalCalls: number;
   resolvedInternal: number;   // CALLS -> FUNCTION
-  resolvedExternal: number;   // CALLS -> EXTERNAL_MODULE
-  resolvedBuiltin: number;    // Name in JS_GLOBAL_FUNCTIONS
+  resolvedExternal: number;   // CALLS -> EXTERNAL_MODULE, EXTERNAL_FUNCTION, ECMASCRIPT_BUILTIN, WEB_API, BROWSER_API, NODEJS_STDLIB, or UNKNOWN_CALL_TARGET
+  resolvedBuiltin: number;    // Name in REQUIRE_BUILTINS (only 'require' now)
   methodCalls: number;        // Has 'object' attribute (not validated)
   unresolvedCalls: number;    // No edge, not builtin
   warnings: number;           // = unresolvedCalls
@@ -134,8 +135,9 @@ export class CallResolverValidator extends Plugin {
    * Resolution priority:
    * 1. Method call (has 'object' attribute) -> 'method'
    * 2. Has CALLS edge to FUNCTION -> 'internal'
-   * 3. Has CALLS edge to EXTERNAL_MODULE -> 'external'
-   * 4. Name in JS_GLOBAL_FUNCTIONS -> 'builtin'
+   * 3. Has CALLS edge to EXTERNAL_MODULE, EXTERNAL_FUNCTION, ECMASCRIPT_BUILTIN,
+   *    WEB_API, BROWSER_API, NODEJS_STDLIB, or UNKNOWN_CALL_TARGET -> 'external'
+   * 4. Name in REQUIRE_BUILTINS -> 'builtin' (only 'require')
    * 5. Otherwise -> 'unresolved'
    */
   private async determineResolutionType(
@@ -158,7 +160,15 @@ export class CallResolverValidator extends Plugin {
         if (dstNode.type === 'FUNCTION') {
           return 'internal';
         }
-        if (dstNode.type === 'EXTERNAL_MODULE') {
+        if (
+          dstNode.type === 'EXTERNAL_MODULE' ||
+          dstNode.type === 'EXTERNAL_FUNCTION' ||
+          dstNode.type === 'ECMASCRIPT_BUILTIN' ||
+          dstNode.type === 'WEB_API' ||
+          dstNode.type === 'BROWSER_API' ||
+          dstNode.type === 'NODEJS_STDLIB' ||
+          dstNode.type === 'UNKNOWN_CALL_TARGET'
+        ) {
           return 'external';
         }
       }
@@ -167,9 +177,9 @@ export class CallResolverValidator extends Plugin {
       return 'internal';
     }
 
-    // 3. Check if builtin
+    // 3. Check if require (the only builtin without CALLS edge)
     const calledName = callNode.name as string;
-    if (calledName && JS_GLOBAL_FUNCTIONS.has(calledName)) {
+    if (calledName && REQUIRE_BUILTINS.has(calledName)) {
       return 'builtin';
     }
 

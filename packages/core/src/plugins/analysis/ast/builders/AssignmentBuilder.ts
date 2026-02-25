@@ -314,6 +314,19 @@ export class AssignmentBuilder implements DomainBuilder {
                 dst: leftVar.id
               });
             }
+          } else if (assignment.leftOperandLiteral) {
+            const literalNode = NodeFactory.createLiteral(
+              assignment.leftOperandValue,
+              exprFile || '',
+              assignment.leftOperandLine || exprLine || 0,
+              assignment.leftOperandColumn || 0
+            );
+            this.ctx.bufferNode(literalNode);
+            this.ctx.bufferEdge({
+              type: 'DERIVES_FROM',
+              src: sourceId,
+              dst: literalNode.id
+            });
           }
           if (rightSourceName) {
             const rightVar = variableDeclarations.find(v =>
@@ -326,6 +339,19 @@ export class AssignmentBuilder implements DomainBuilder {
                 dst: rightVar.id
               });
             }
+          } else if (assignment.rightOperandLiteral) {
+            const literalNode = NodeFactory.createLiteral(
+              assignment.rightOperandValue,
+              exprFile || '',
+              assignment.rightOperandLine || exprLine || 0,
+              assignment.rightOperandColumn || 0
+            );
+            this.ctx.bufferNode(literalNode);
+            this.ctx.bufferEdge({
+              type: 'DERIVES_FROM',
+              src: sourceId,
+              dst: literalNode.id
+            });
           }
         }
 
@@ -341,6 +367,19 @@ export class AssignmentBuilder implements DomainBuilder {
                 dst: consequentVar.id
               });
             }
+          } else if (assignment.consequentOperandLiteral) {
+            const literalNode = NodeFactory.createLiteral(
+              assignment.consequentOperandValue,
+              exprFile || '',
+              assignment.consequentOperandLine || exprLine || 0,
+              assignment.consequentOperandColumn || 0
+            );
+            this.ctx.bufferNode(literalNode);
+            this.ctx.bufferEdge({
+              type: 'DERIVES_FROM',
+              src: sourceId,
+              dst: literalNode.id
+            });
           }
           if (alternateSourceName) {
             const alternateVar = variableDeclarations.find(v =>
@@ -353,6 +392,19 @@ export class AssignmentBuilder implements DomainBuilder {
                 dst: alternateVar.id
               });
             }
+          } else if (assignment.alternateOperandLiteral) {
+            const literalNode = NodeFactory.createLiteral(
+              assignment.alternateOperandValue,
+              exprFile || '',
+              assignment.alternateOperandLine || exprLine || 0,
+              assignment.alternateOperandColumn || 0
+            );
+            this.ctx.bufferNode(literalNode);
+            this.ctx.bufferEdge({
+              type: 'DERIVES_FROM',
+              src: sourceId,
+              dst: literalNode.id
+            });
           }
         }
 
@@ -400,6 +452,19 @@ export class AssignmentBuilder implements DomainBuilder {
                 });
               }
             }
+          } else if (assignment.unaryArgOperandLiteral) {
+            const literalNode = NodeFactory.createLiteral(
+              assignment.unaryArgOperandValue,
+              exprFile || '',
+              assignment.unaryArgOperandLine || exprLine || 0,
+              assignment.unaryArgOperandColumn || 0
+            );
+            this.ctx.bufferNode(literalNode);
+            this.ctx.bufferEdge({
+              type: 'DERIVES_FROM',
+              src: sourceId,
+              dst: literalNode.id
+            });
           }
         }
       }

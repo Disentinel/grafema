@@ -18,6 +18,38 @@ import { ConditionParser } from '../ConditionParser.js';
 import { handleSwitchStatement, extractDiscriminantExpression } from '../extractors/index.js';
 import { FunctionBodyHandler } from './FunctionBodyHandler.js';
 
+/**
+ * AST node types that produce EXPRESSION nodes in JSASTAnalyzer.trackVariableAssignment.
+ * Must be kept in sync with cases 7-12, 15-16 of trackVariableAssignment.
+ */
+const EXPRESSION_PRODUCING_TYPES = new Set([
+  'MemberExpression',       // case 7
+  'BinaryExpression',       // case 8
+  'ConditionalExpression',  // case 9
+  'LogicalExpression',      // case 10
+  'UnaryExpression',        // case 12
+  'OptionalCallExpression', // case 15
+  'OptionalMemberExpression', // case 16 (maps to MemberExpression ID)
+]);
+
+/**
+ * Determine whether an AST node will produce an EXPRESSION node
+ * in JSASTAnalyzer.trackVariableAssignment.
+ *
+ * Some types only conditionally produce EXPRESSION nodes:
+ * - TaggedTemplateExpression: only the fallback path (non-Identifier, non-MemberExpression tag)
+ * - TemplateLiteral: only when expressions.length > 0 (case 11); zero-expression = LITERAL (case 1)
+ */
+function producesExpressionNode(node: t.Expression): boolean {
+  if (node.type === 'TaggedTemplateExpression') {
+    return node.tag.type !== 'Identifier' && node.tag.type !== 'MemberExpression';
+  }
+  if (node.type === 'TemplateLiteral') {
+    return node.expressions.length > 0;
+  }
+  return EXPRESSION_PRODUCING_TYPES.has(node.type);
+}
+
 export class BranchHandler extends FunctionBodyHandler {
   getHandlers(): Visitor {
     const ctx = this.ctx;
@@ -239,24 +271,33 @@ export class BranchHandler extends FunctionBodyHandler {
       // Extract condition expression info for HAS_CONDITION edge
       const conditionResult = extractDiscriminantExpression(condNode.test, ctx.module);
 
-      // Generate expression IDs for consequent and alternate
-      const consequentLine = getLine(condNode.consequent);
-      const consequentColumn = getColumn(condNode.consequent);
-      const consequentExpressionId = ExpressionNode.generateId(
-        condNode.consequent.type,
-        ctx.module.file,
-        consequentLine,
-        consequentColumn
-      );
+      // Generate expression IDs only when the AST node produces an EXPRESSION node.
+      // OptionalMemberExpression uses 'MemberExpression' as expression type (case 16).
+      let consequentExpressionId: string | undefined;
+      if (producesExpressionNode(condNode.consequent)) {
+        const consequentExprType = condNode.consequent.type === 'OptionalMemberExpression'
+          ? 'MemberExpression'
+          : condNode.consequent.type;
+        consequentExpressionId = ExpressionNode.generateId(
+          consequentExprType,
+          ctx.module.file,
+          getLine(condNode.consequent),
+          getColumn(condNode.consequent)
+        );
+      }
 
-      const alternateLine = getLine(condNode.alternate);
-      const alternateColumn = getColumn(condNode.alternate);
-      const alternateExpressionId = ExpressionNode.generateId(
-        condNode.alternate.type,
-        ctx.module.file,
-        alternateLine,
-        alternateColumn
-      );
+      let alternateExpressionId: string | undefined;
+      if (producesExpressionNode(condNode.alternate)) {
+        const alternateExprType = condNode.alternate.type === 'OptionalMemberExpression'
+          ? 'MemberExpression'
+          : condNode.alternate.type;
+        alternateExpressionId = ExpressionNode.generateId(
+          alternateExprType,
+          ctx.module.file,
+          getLine(condNode.alternate),
+          getColumn(condNode.alternate)
+        );
+      }
 
       ctx.branches.push({
         id: branchId,
