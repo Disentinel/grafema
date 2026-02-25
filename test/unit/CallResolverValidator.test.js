@@ -395,19 +395,21 @@ const result = foo();
       }
     });
 
-    it('should handle eval as builtin but flag Function constructor', async () => {
+    it('should handle eval as external (with CALLS edge) but flag Function constructor', async () => {
       const { backend, testDir } = await setupTest({
         'index.js': `// Empty`
       });
 
       try {
         await backend.addNodes([
-          // eval is a builtin - should NOT be flagged
+          // eval gets a CALLS edge from ExternalCallResolver (REG-583)
+          { id: 'ECMASCRIPT_BUILTIN:eval', type: 'ECMASCRIPT_BUILTIN', name: 'eval', file: '' },
           { id: 'eval-call', type: 'CALL', name: 'eval', file: 'app.js' },
           // Function constructor is NOT a builtin - should be flagged
           { id: 'func-ctor', type: 'CALL', name: 'Function', file: 'app.js' }
         ]);
 
+        await backend.addEdge({ src: 'eval-call', dst: 'ECMASCRIPT_BUILTIN:eval', type: 'CALLS' });
         await backend.flush();
 
         const { CallResolverValidator } = await import('@grafema/core');
@@ -418,15 +420,15 @@ const result = foo();
           rootDir: testDir
         });
 
-        // Only Function should be flagged (eval is builtin)
+        // Only Function should be flagged (eval has CALLS edge to ECMASCRIPT_BUILTIN)
         assert.strictEqual(result.errors?.length ?? 0, 1, 'Only Function should be flagged');
         assert.ok(result.errors[0].message.includes('Function'), 'Should flag Function');
 
         const summary = result.metadata?.summary;
-        assert.strictEqual(summary.resolvedBuiltin, 1, 'eval should be builtin');
+        assert.strictEqual(summary.resolvedExternal, 1, 'eval should be resolvedExternal');
         assert.strictEqual(summary.unresolvedCalls, 1, 'Function should be unresolved');
 
-        console.log('eval recognized as builtin, Function flagged');
+        console.log('eval recognized as external, Function flagged');
       } finally {
         await backend.close();
       }
@@ -840,18 +842,27 @@ const result = foo();
   // ==========================================================================
 
   describe('REG-227: Resolution Type Categorization', () => {
-    it('should NOT flag JavaScript built-in function calls', async () => {
+    it('should NOT flag JavaScript built-in function calls (REG-583 update)', async () => {
       const { backend, testDir } = await setupTest({
         'index.js': `// Empty`
       });
 
       try {
-        // Add built-in function calls
+        // REG-583: parseInt and setTimeout now get CALLS edges to typed nodes
+        // from ExternalCallResolver. Only require remains as a pure builtin fallback.
         await backend.addNodes([
+          // parseInt has CALLS edge to ECMASCRIPT_BUILTIN:parseInt
+          { id: 'ECMASCRIPT_BUILTIN:parseInt', type: 'ECMASCRIPT_BUILTIN', name: 'parseInt', file: '' },
           { id: 'parseInt-call', type: 'CALL', name: 'parseInt', file: 'app.js' },
+          // setTimeout has CALLS edge to WEB_API:setTimeout
+          { id: 'WEB_API:setTimeout', type: 'WEB_API', name: 'setTimeout', file: '' },
           { id: 'setTimeout-call', type: 'CALL', name: 'setTimeout', file: 'app.js' },
+          // require has no CALLS edge — recognized by REQUIRE_BUILTINS fallback
           { id: 'require-call', type: 'CALL', name: 'require', file: 'app.js' }
         ]);
+
+        await backend.addEdge({ src: 'parseInt-call', dst: 'ECMASCRIPT_BUILTIN:parseInt', type: 'CALLS' });
+        await backend.addEdge({ src: 'setTimeout-call', dst: 'WEB_API:setTimeout', type: 'CALLS' });
 
         await backend.flush();
 
@@ -867,12 +878,15 @@ const result = foo();
         // Should have no warnings
         assert.strictEqual(result.errors?.length ?? 0, 0, 'Built-in calls should not be flagged');
 
-        // Summary should show built-ins resolved
+        // Summary:
+        // - parseInt and setTimeout have CALLS edges to typed nodes → resolvedExternal
+        // - require has no CALLS edge → resolvedBuiltin (REQUIRE_BUILTINS fallback)
         const summary = result.metadata?.summary;
-        assert.strictEqual(summary.resolvedBuiltin, 3, 'Should count 3 built-in calls');
+        assert.strictEqual(summary.resolvedExternal, 2,
+          'parseInt and setTimeout should count as resolvedExternal (CALLS to typed nodes)');
+        assert.strictEqual(summary.resolvedBuiltin, 1,
+          'require should count as resolvedBuiltin (REQUIRE_BUILTINS fallback)');
         assert.strictEqual(summary.unresolvedCalls, 0, 'Should have no unresolved calls');
-
-        console.log('Built-in function calls correctly recognized');
       } finally {
         await backend.close();
       }
@@ -954,7 +968,7 @@ const result = foo();
       }
     });
 
-    it('should correctly categorize mixed resolution types in summary', async () => {
+    it('should correctly categorize mixed resolution types in summary (REG-583)', async () => {
       const { backend, testDir } = await setupTest({
         'index.js': `// Empty`
       });
@@ -965,11 +979,12 @@ const result = foo();
           { id: 'fn-def', type: 'FUNCTION', name: 'helper', file: 'app.js' },
           { id: 'internal-call', type: 'CALL', name: 'helper', file: 'app.js' },
 
-          // External resolved
+          // External resolved (npm package)
           { id: 'lodash-module', type: 'EXTERNAL_MODULE', name: 'lodash', file: '' },
           { id: 'external-call', type: 'CALL', name: 'map', file: 'app.js' },
 
-          // Built-in
+          // REG-583: parseInt now has CALLS edge to ECMASCRIPT_BUILTIN:parseInt → resolvedExternal
+          { id: 'ECMASCRIPT_BUILTIN:parseInt', type: 'ECMASCRIPT_BUILTIN', name: 'parseInt', file: '' },
           { id: 'builtin-call', type: 'CALL', name: 'parseInt', file: 'app.js' },
 
           // Method call
@@ -981,6 +996,7 @@ const result = foo();
 
         await backend.addEdge({ src: 'internal-call', dst: 'fn-def', type: 'CALLS' });
         await backend.addEdge({ src: 'external-call', dst: 'lodash-module', type: 'CALLS' });
+        await backend.addEdge({ src: 'builtin-call', dst: 'ECMASCRIPT_BUILTIN:parseInt', type: 'CALLS' });
         await backend.flush();
 
         const { CallResolverValidator } = await import('@grafema/core');
@@ -994,12 +1010,266 @@ const result = foo();
         const summary = result.metadata?.summary;
         assert.strictEqual(summary.totalCalls, 5, 'Should count 5 total calls');
         assert.strictEqual(summary.resolvedInternal, 1, 'Should count 1 internal');
-        assert.strictEqual(summary.resolvedExternal, 1, 'Should count 1 external');
-        assert.strictEqual(summary.resolvedBuiltin, 1, 'Should count 1 builtin');
+        // REG-583: Both lodash and parseInt have CALLS edges to typed nodes → both are resolvedExternal
+        assert.strictEqual(summary.resolvedExternal, 2,
+          'Should count 2 external (lodash + ECMASCRIPT_BUILTIN:parseInt)');
+        assert.strictEqual(summary.resolvedBuiltin, 0,
+          'parseInt now has CALLS edge → no longer counted as builtin fallback');
         assert.strictEqual(summary.methodCalls, 1, 'Should count 1 method call');
         assert.strictEqual(summary.unresolvedCalls, 1, 'Should count 1 unresolved');
+      } finally {
+        await backend.close();
+      }
+    });
+  });
 
-        console.log('Mixed resolution types categorized correctly');
+  // ==========================================================================
+  // REG-583: Runtime-typed node recognition
+  // ==========================================================================
+
+  describe('REG-583: Runtime-typed node recognition', () => {
+    it('should count CALLS to ECMASCRIPT_BUILTIN as resolvedExternal', async () => {
+      const { backend, testDir } = await setupTest({
+        'index.js': `// Empty`
+      });
+
+      try {
+        // Use a bare function call (no object attribute) so the validator doesn't classify as 'method'
+        await backend.addNodes([
+          { id: 'ECMASCRIPT_BUILTIN:parseInt', type: 'ECMASCRIPT_BUILTIN', name: 'parseInt', file: '' },
+          { id: 'parseint-call', type: 'CALL', name: 'parseInt', file: 'app.js' }
+        ]);
+
+        await backend.addEdge({ src: 'parseint-call', dst: 'ECMASCRIPT_BUILTIN:parseInt', type: 'CALLS' });
+        await backend.flush();
+
+        const { CallResolverValidator } = await import('@grafema/core');
+        const validator = new CallResolverValidator();
+        const result = await validator.execute({
+          graph: backend,
+          config: {},
+          rootDir: testDir
+        });
+
+        assert.strictEqual(result.errors?.length ?? 0, 0,
+          'ECMASCRIPT_BUILTIN CALLS should not be flagged');
+
+        const summary = result.metadata?.summary;
+        assert.strictEqual(summary.resolvedExternal, 1,
+          'CALLS to ECMASCRIPT_BUILTIN should count as resolvedExternal');
+      } finally {
+        await backend.close();
+      }
+    });
+
+    it('should count CALLS to WEB_API as resolvedExternal', async () => {
+      const { backend, testDir } = await setupTest({
+        'index.js': `// Empty`
+      });
+
+      try {
+        // Bare function call: setTimeout()
+        await backend.addNodes([
+          { id: 'WEB_API:setTimeout', type: 'WEB_API', name: 'setTimeout', file: '' },
+          { id: 'settimeout-call', type: 'CALL', name: 'setTimeout', file: 'app.js' }
+        ]);
+
+        await backend.addEdge({ src: 'settimeout-call', dst: 'WEB_API:setTimeout', type: 'CALLS' });
+        await backend.flush();
+
+        const { CallResolverValidator } = await import('@grafema/core');
+        const validator = new CallResolverValidator();
+        const result = await validator.execute({
+          graph: backend,
+          config: {},
+          rootDir: testDir
+        });
+
+        assert.strictEqual(result.errors?.length ?? 0, 0,
+          'WEB_API CALLS should not be flagged');
+
+        const summary = result.metadata?.summary;
+        assert.strictEqual(summary.resolvedExternal, 1,
+          'CALLS to WEB_API should count as resolvedExternal');
+      } finally {
+        await backend.close();
+      }
+    });
+
+    it('should count CALLS to BROWSER_API as resolvedExternal', async () => {
+      const { backend, testDir } = await setupTest({
+        'index.js': `// Empty`
+      });
+
+      try {
+        // Bare function call: requestAnimationFrame()
+        await backend.addNodes([
+          { id: 'BROWSER_API:requestAnimationFrame', type: 'BROWSER_API', name: 'requestAnimationFrame', file: '' },
+          { id: 'raf-call', type: 'CALL', name: 'requestAnimationFrame', file: 'ui.js' }
+        ]);
+
+        await backend.addEdge({ src: 'raf-call', dst: 'BROWSER_API:requestAnimationFrame', type: 'CALLS' });
+        await backend.flush();
+
+        const { CallResolverValidator } = await import('@grafema/core');
+        const validator = new CallResolverValidator();
+        const result = await validator.execute({
+          graph: backend,
+          config: {},
+          rootDir: testDir
+        });
+
+        assert.strictEqual(result.errors?.length ?? 0, 0,
+          'BROWSER_API CALLS should not be flagged');
+
+        const summary = result.metadata?.summary;
+        assert.strictEqual(summary.resolvedExternal, 1,
+          'CALLS to BROWSER_API should count as resolvedExternal');
+      } finally {
+        await backend.close();
+      }
+    });
+
+    it('should count CALLS to NODEJS_STDLIB as resolvedExternal', async () => {
+      const { backend, testDir } = await setupTest({
+        'index.js': `// Empty`
+      });
+
+      try {
+        // Bare function call: setImmediate()
+        await backend.addNodes([
+          { id: 'NODEJS_STDLIB:setImmediate', type: 'NODEJS_STDLIB', name: 'setImmediate', file: '' },
+          { id: 'setimmediate-call', type: 'CALL', name: 'setImmediate', file: 'app.js' }
+        ]);
+
+        await backend.addEdge({ src: 'setimmediate-call', dst: 'NODEJS_STDLIB:setImmediate', type: 'CALLS' });
+        await backend.flush();
+
+        const { CallResolverValidator } = await import('@grafema/core');
+        const validator = new CallResolverValidator();
+        const result = await validator.execute({
+          graph: backend,
+          config: {},
+          rootDir: testDir
+        });
+
+        assert.strictEqual(result.errors?.length ?? 0, 0,
+          'NODEJS_STDLIB CALLS should not be flagged');
+
+        const summary = result.metadata?.summary;
+        assert.strictEqual(summary.resolvedExternal, 1,
+          'CALLS to NODEJS_STDLIB should count as resolvedExternal');
+      } finally {
+        await backend.close();
+      }
+    });
+
+    it('should count CALLS to UNKNOWN_CALL_TARGET as resolvedExternal', async () => {
+      const { backend, testDir } = await setupTest({
+        'index.js': `// Empty`
+      });
+
+      try {
+        // Bare function call pattern — UNKNOWN_CALL_TARGET is typically from method calls,
+        // but the validator should recognize it when present as a CALLS edge destination
+        await backend.addNodes([
+          { id: 'UNKNOWN_CALL_TARGET:someFunc', type: 'UNKNOWN_CALL_TARGET', name: 'someFunc', file: '' },
+          { id: 'somefunc-call', type: 'CALL', name: 'someFunc', file: 'handler.js' }
+        ]);
+
+        await backend.addEdge({ src: 'somefunc-call', dst: 'UNKNOWN_CALL_TARGET:someFunc', type: 'CALLS' });
+        await backend.flush();
+
+        const { CallResolverValidator } = await import('@grafema/core');
+        const validator = new CallResolverValidator();
+        const result = await validator.execute({
+          graph: backend,
+          config: {},
+          rootDir: testDir
+        });
+
+        assert.strictEqual(result.errors?.length ?? 0, 0,
+          'UNKNOWN_CALL_TARGET CALLS should not be flagged');
+
+        const summary = result.metadata?.summary;
+        assert.strictEqual(summary.resolvedExternal, 1,
+          'CALLS to UNKNOWN_CALL_TARGET should count as resolvedExternal');
+      } finally {
+        await backend.close();
+      }
+    });
+
+    it('should count require with no CALLS edge as resolvedBuiltin (REQUIRE_BUILTINS fallback)', async () => {
+      const { backend, testDir } = await setupTest({
+        'index.js': `// Empty`
+      });
+
+      try {
+        // require() has no CALLS edge — it is modeled via IMPORT/REQUIRES_MODULE nodes.
+        // The validator uses REQUIRE_BUILTINS fallback to count it as resolvedBuiltin.
+        await backend.addNode({
+          id: 'require-call',
+          type: 'CALL',
+          name: 'require',
+          file: 'app.js'
+        });
+
+        await backend.flush();
+
+        const { CallResolverValidator } = await import('@grafema/core');
+        const validator = new CallResolverValidator();
+        const result = await validator.execute({
+          graph: backend,
+          config: {},
+          rootDir: testDir
+        });
+
+        assert.strictEqual(result.errors?.length ?? 0, 0,
+          'require() should not be flagged');
+
+        const summary = result.metadata?.summary;
+        assert.strictEqual(summary.resolvedBuiltin, 1,
+          'require() with no CALLS edge should count as resolvedBuiltin');
+        assert.strictEqual(summary.unresolvedCalls, 0,
+          'require() should not count as unresolved');
+      } finally {
+        await backend.close();
+      }
+    });
+
+    it('should count parseInt WITH CALLS edge as resolvedExternal (not builtin fallback)', async () => {
+      const { backend, testDir } = await setupTest({
+        'index.js': `// Empty`
+      });
+
+      try {
+        // REG-583: parseInt now has a CALLS edge to ECMASCRIPT_BUILTIN:parseInt.
+        // It should be counted as resolvedExternal (via CALLS edge lookup),
+        // NOT as resolvedBuiltin (via the old JS_GLOBAL_FUNCTIONS fallback).
+        await backend.addNodes([
+          { id: 'ECMASCRIPT_BUILTIN:parseInt', type: 'ECMASCRIPT_BUILTIN', name: 'parseInt', file: '' },
+          { id: 'parseInt-call', type: 'CALL', name: 'parseInt', file: 'app.js' }
+        ]);
+
+        await backend.addEdge({ src: 'parseInt-call', dst: 'ECMASCRIPT_BUILTIN:parseInt', type: 'CALLS' });
+        await backend.flush();
+
+        const { CallResolverValidator } = await import('@grafema/core');
+        const validator = new CallResolverValidator();
+        const result = await validator.execute({
+          graph: backend,
+          config: {},
+          rootDir: testDir
+        });
+
+        assert.strictEqual(result.errors?.length ?? 0, 0,
+          'parseInt with CALLS edge should not be flagged');
+
+        const summary = result.metadata?.summary;
+        assert.strictEqual(summary.resolvedExternal, 1,
+          'parseInt with CALLS edge should count as resolvedExternal');
+        assert.strictEqual(summary.resolvedBuiltin, 0,
+          'parseInt should NOT use builtin fallback when CALLS edge exists');
       } finally {
         await backend.close();
       }

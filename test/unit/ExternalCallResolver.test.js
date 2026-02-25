@@ -400,7 +400,7 @@ describe('ExternalCallResolver', () => {
   // ============================================================================
 
   describe('JavaScript Built-ins', () => {
-    it('should recognize parseInt as JS builtin (no CALLS edge)', async () => {
+    it('should create CALLS edge to ECMASCRIPT_BUILTIN:parseInt for parseInt()', async () => {
       if (!ExternalCallResolver) {
         console.log('SKIP: ExternalCallResolver not implemented yet');
         return;
@@ -423,18 +423,22 @@ describe('ExternalCallResolver', () => {
         await backend.flush();
         const result = await resolver.execute({ graph: backend });
 
-        // Should NOT create CALLS edge (builtin recognized by name)
+        // REG-583: Should create CALLS edge to typed builtin node
         const edges = await backend.getOutgoingEdges('main-call-parseint', ['CALLS']);
-        assert.strictEqual(edges.length, 0, 'Should NOT create CALLS edge for JS builtin');
+        assert.strictEqual(edges.length, 1,
+          'parseInt() should have CALLS edge to ECMASCRIPT_BUILTIN:parseInt');
+        assert.strictEqual(edges[0].dst, 'ECMASCRIPT_BUILTIN:parseInt');
 
-        // Should be counted as builtin
-        assert.ok(result.metadata.builtinResolved >= 1, 'Should count as builtin resolved');
+        // Verify node was created
+        const targetNode = await backend.getNode('ECMASCRIPT_BUILTIN:parseInt');
+        assert.ok(targetNode, 'ECMASCRIPT_BUILTIN:parseInt node should exist');
+        assert.strictEqual(targetNode.type, 'ECMASCRIPT_BUILTIN');
       } finally {
         await backend.close();
       }
     });
 
-    it('should recognize setTimeout as JS builtin (no CALLS edge)', async () => {
+    it('should create CALLS edge to WEB_API:setTimeout for setTimeout()', async () => {
       if (!ExternalCallResolver) {
         console.log('SKIP: ExternalCallResolver not implemented yet');
         return;
@@ -457,15 +461,52 @@ describe('ExternalCallResolver', () => {
         await backend.flush();
         const result = await resolver.execute({ graph: backend });
 
+        // REG-583: setTimeout is WEB_API (HTML spec timers)
         const edges = await backend.getOutgoingEdges('main-call-settimeout', ['CALLS']);
-        assert.strictEqual(edges.length, 0, 'Should NOT create CALLS edge for setTimeout');
-        assert.ok(result.metadata.builtinResolved >= 1);
+        assert.strictEqual(edges.length, 1,
+          'setTimeout() should have CALLS edge to WEB_API:setTimeout');
+        assert.strictEqual(edges[0].dst, 'WEB_API:setTimeout');
+
+        const targetNode = await backend.getNode('WEB_API:setTimeout');
+        assert.ok(targetNode, 'WEB_API:setTimeout node should exist');
+        assert.strictEqual(targetNode.type, 'WEB_API');
       } finally {
         await backend.close();
       }
     });
 
-    it('should recognize require as JS builtin (CJS special case)', async () => {
+    it('should create CALLS edge to NODEJS_STDLIB:setImmediate for setImmediate()', async () => {
+      if (!ExternalCallResolver) {
+        console.log('SKIP: ExternalCallResolver not implemented yet');
+        return;
+      }
+
+      const { backend } = await setupBackend();
+
+      try {
+        const resolver = new ExternalCallResolver();
+
+        await backend.addNode({
+          id: 'main-call-setimmediate',
+          type: 'CALL',
+          name: 'setImmediate',
+          file: '/project/main.js',
+          line: 5
+        });
+
+        await backend.flush();
+        await resolver.execute({ graph: backend });
+
+        const edges = await backend.getOutgoingEdges('main-call-setimmediate', ['CALLS']);
+        assert.strictEqual(edges.length, 1,
+          'setImmediate() should have CALLS edge to NODEJS_STDLIB:setImmediate');
+        assert.strictEqual(edges[0].dst, 'NODEJS_STDLIB:setImmediate');
+      } finally {
+        await backend.close();
+      }
+    });
+
+    it('should NOT create CALLS edge for require() (modeled via IMPORT nodes)', async () => {
       if (!ExternalCallResolver) {
         console.log('SKIP: ExternalCallResolver not implemented yet');
         return;
@@ -488,15 +529,17 @@ describe('ExternalCallResolver', () => {
         await backend.flush();
         const result = await resolver.execute({ graph: backend });
 
+        // require() is deliberately NOT in any runtime category Set.
+        // It falls through to import-index lookup or remains unresolved.
+        // No CALLS edge is created — require is modeled via IMPORT/REQUIRES_MODULE nodes.
         const edges = await backend.getOutgoingEdges('main-call-require', ['CALLS']);
-        assert.strictEqual(edges.length, 0, 'Should NOT create CALLS edge for require');
-        assert.ok(result.metadata.builtinResolved >= 1);
+        assert.strictEqual(edges.length, 0, 'require() should NOT have CALLS edge');
       } finally {
         await backend.close();
       }
     });
 
-    it('should recognize all documented JS builtins', async () => {
+    it('should create typed CALLS edges for all documented JS builtins (REG-583)', async () => {
       if (!ExternalCallResolver) {
         console.log('SKIP: ExternalCallResolver not implemented yet');
         return;
@@ -507,43 +550,175 @@ describe('ExternalCallResolver', () => {
       try {
         const resolver = new ExternalCallResolver();
 
-        // All builtins from the spec (section 1.1):
-        // parseInt, parseFloat, isNaN, isFinite, eval
-        // encodeURI, decodeURI, encodeURIComponent, decodeURIComponent
-        // setTimeout, setInterval, setImmediate
-        // clearTimeout, clearInterval, clearImmediate
-        // require
-
-        const builtins = [
-          'parseInt', 'parseFloat', 'isNaN', 'isFinite', 'eval',
-          'encodeURI', 'decodeURI', 'encodeURIComponent', 'decodeURIComponent',
-          'setTimeout', 'setInterval', 'setImmediate',
-          'clearTimeout', 'clearInterval', 'clearImmediate',
-          'require'
+        // REG-583: Builtins are now categorized by runtime.
+        // Each gets a CALLS edge to a typed node, EXCEPT require.
+        const builtinsWithEdges = [
+          // ECMASCRIPT_BUILTIN functions
+          { name: 'parseInt', expectedTarget: 'ECMASCRIPT_BUILTIN:parseInt' },
+          { name: 'parseFloat', expectedTarget: 'ECMASCRIPT_BUILTIN:parseFloat' },
+          { name: 'isNaN', expectedTarget: 'ECMASCRIPT_BUILTIN:isNaN' },
+          { name: 'isFinite', expectedTarget: 'ECMASCRIPT_BUILTIN:isFinite' },
+          { name: 'eval', expectedTarget: 'ECMASCRIPT_BUILTIN:eval' },
+          { name: 'encodeURI', expectedTarget: 'ECMASCRIPT_BUILTIN:encodeURI' },
+          { name: 'decodeURI', expectedTarget: 'ECMASCRIPT_BUILTIN:decodeURI' },
+          { name: 'encodeURIComponent', expectedTarget: 'ECMASCRIPT_BUILTIN:encodeURIComponent' },
+          { name: 'decodeURIComponent', expectedTarget: 'ECMASCRIPT_BUILTIN:decodeURIComponent' },
+          // WEB_API functions (HTML spec timers)
+          { name: 'setTimeout', expectedTarget: 'WEB_API:setTimeout' },
+          { name: 'setInterval', expectedTarget: 'WEB_API:setInterval' },
+          { name: 'clearTimeout', expectedTarget: 'WEB_API:clearTimeout' },
+          { name: 'clearInterval', expectedTarget: 'WEB_API:clearInterval' },
+          // NODEJS_STDLIB functions
+          { name: 'setImmediate', expectedTarget: 'NODEJS_STDLIB:setImmediate' },
+          { name: 'clearImmediate', expectedTarget: 'NODEJS_STDLIB:clearImmediate' },
         ];
 
-        const nodes = builtins.map((name, i) => ({
-          id: `call-${name}`,
+        const nodes = builtinsWithEdges.map((b, i) => ({
+          id: `call-${b.name}`,
           type: 'CALL',
-          name: name,
+          name: b.name,
           file: '/project/main.js',
           line: i + 1
         }));
 
+        // Also add require — should NOT get edge
+        nodes.push({
+          id: 'call-require',
+          type: 'CALL',
+          name: 'require',
+          file: '/project/main.js',
+          line: 99
+        });
+
         await backend.addNodes(nodes);
         await backend.flush();
 
-        const result = await resolver.execute({ graph: backend });
+        await resolver.execute({ graph: backend });
 
-        // None should have CALLS edges
-        for (const name of builtins) {
-          const edges = await backend.getOutgoingEdges(`call-${name}`, ['CALLS']);
-          assert.strictEqual(edges.length, 0, `${name} should not have CALLS edge`);
+        // All categorized builtins should have CALLS edges
+        for (const b of builtinsWithEdges) {
+          const edges = await backend.getOutgoingEdges(`call-${b.name}`, ['CALLS']);
+          assert.strictEqual(edges.length, 1,
+            `${b.name} should have one CALLS edge`);
+          assert.strictEqual(edges[0].dst, b.expectedTarget,
+            `${b.name} should point to ${b.expectedTarget}`);
         }
 
-        // All should be counted as builtin
-        assert.strictEqual(result.metadata.builtinResolved, builtins.length,
-          `Should count all ${builtins.length} builtins`);
+        // require should NOT have CALLS edge
+        const requireEdges = await backend.getOutgoingEdges('call-require', ['CALLS']);
+        assert.strictEqual(requireEdges.length, 0,
+          'require should not have CALLS edge');
+      } finally {
+        await backend.close();
+      }
+    });
+
+    it('should create only ONE ECMASCRIPT_BUILTIN:parseInt node when called twice', async () => {
+      if (!ExternalCallResolver) {
+        console.log('SKIP: ExternalCallResolver not implemented yet');
+        return;
+      }
+
+      const { backend } = await setupBackend();
+
+      try {
+        const resolver = new ExternalCallResolver();
+
+        await backend.addNodes([
+          {
+            id: 'call-parseint-1',
+            type: 'CALL',
+            name: 'parseInt',
+            file: '/project/main.js',
+            line: 5
+          },
+          {
+            id: 'call-parseint-2',
+            type: 'CALL',
+            name: 'parseInt',
+            file: '/project/main.js',
+            line: 10
+          }
+        ]);
+
+        await backend.flush();
+        await resolver.execute({ graph: backend });
+
+        // Both should have edges to the same node
+        const edges1 = await backend.getOutgoingEdges('call-parseint-1', ['CALLS']);
+        assert.strictEqual(edges1.length, 1);
+        assert.strictEqual(edges1[0].dst, 'ECMASCRIPT_BUILTIN:parseInt');
+
+        const edges2 = await backend.getOutgoingEdges('call-parseint-2', ['CALLS']);
+        assert.strictEqual(edges2.length, 1);
+        assert.strictEqual(edges2[0].dst, 'ECMASCRIPT_BUILTIN:parseInt');
+
+        // Only one ECMASCRIPT_BUILTIN:parseInt node should exist
+        const node = await backend.getNode('ECMASCRIPT_BUILTIN:parseInt');
+        assert.ok(node, 'ECMASCRIPT_BUILTIN:parseInt node should exist (created once)');
+      } finally {
+        await backend.close();
+      }
+    });
+
+    it('should create CALLS edge to WEB_API:queueMicrotask for queueMicrotask()', async () => {
+      if (!ExternalCallResolver) {
+        console.log('SKIP: ExternalCallResolver not implemented yet');
+        return;
+      }
+
+      const { backend } = await setupBackend();
+
+      try {
+        const resolver = new ExternalCallResolver();
+
+        await backend.addNode({
+          id: 'main-call-queuemicrotask',
+          type: 'CALL',
+          name: 'queueMicrotask',
+          file: '/project/main.js',
+          line: 3
+        });
+
+        await backend.flush();
+        await resolver.execute({ graph: backend });
+
+        const edges = await backend.getOutgoingEdges('main-call-queuemicrotask', ['CALLS']);
+        assert.strictEqual(edges.length, 1,
+          'queueMicrotask() should have CALLS edge');
+        assert.strictEqual(edges[0].dst, 'WEB_API:queueMicrotask');
+      } finally {
+        await backend.close();
+      }
+    });
+
+    it('should create CALLS edge to BROWSER_API:requestAnimationFrame (GAP 5)', async () => {
+      if (!ExternalCallResolver) {
+        console.log('SKIP: ExternalCallResolver not implemented yet');
+        return;
+      }
+
+      const { backend } = await setupBackend();
+
+      try {
+        const resolver = new ExternalCallResolver();
+
+        await backend.addNode({
+          id: 'main-call-raf',
+          type: 'CALL',
+          name: 'requestAnimationFrame',
+          file: '/project/main.js',
+          line: 5
+        });
+
+        await backend.flush();
+        await resolver.execute({ graph: backend });
+
+        // GAP 5 fix: requestAnimationFrame is BROWSER_API
+        const edges = await backend.getOutgoingEdges('main-call-raf', ['CALLS']);
+        assert.strictEqual(edges.length, 1,
+          'requestAnimationFrame() should have CALLS edge');
+        assert.strictEqual(edges[0].dst, 'BROWSER_API:requestAnimationFrame');
       } finally {
         await backend.close();
       }
@@ -915,9 +1090,11 @@ describe('ExternalCallResolver', () => {
         assert.strictEqual(mapEdges.length, 1, 'External call should have CALLS edge');
         assert.strictEqual(mapEdges[0].dst, 'EXTERNAL_MODULE:lodash');
 
-        // 3. Builtin - should not create edge, but counted
+        // 3. Builtin - REG-583: now creates CALLS edge to typed node
         const parseIntEdges = await backend.getOutgoingEdges('main-call-parseint', ['CALLS']);
-        assert.strictEqual(parseIntEdges.length, 0, 'Builtin should not have CALLS edge');
+        assert.strictEqual(parseIntEdges.length, 1,
+          'Builtin should have CALLS edge to ECMASCRIPT_BUILTIN:parseInt');
+        assert.strictEqual(parseIntEdges[0].dst, 'ECMASCRIPT_BUILTIN:parseInt');
         assert.ok(result.metadata.builtinResolved >= 1, 'Builtin should be counted');
 
         // 4. Unknown - should not create edge, but counted as unresolved
@@ -926,8 +1103,10 @@ describe('ExternalCallResolver', () => {
         assert.ok(result.metadata.unresolvedByReason.unknown >= 1,
           'Unknown call should be counted');
 
-        // Overall counts (CALLS + HANDLED_BY = 2 edges for the external call)
-        assert.strictEqual(result.created.edges, 2, 'Should create 2 edges (CALLS + HANDLED_BY)');
+        // REG-583: Overall counts — external call creates CALLS + HANDLED_BY (2 edges),
+        // plus parseInt now creates a CALLS edge to ECMASCRIPT_BUILTIN:parseInt (1 more edge)
+        assert.ok(result.created.edges >= 3,
+          'Should create at least 3 edges (ext: CALLS + HANDLED_BY, builtin: CALLS)');
         assert.strictEqual(result.metadata.externalResolved, 1);
         assert.strictEqual(result.metadata.builtinResolved, 1);
         assert.ok(result.metadata.unresolvedByReason.unknown >= 1);
@@ -1098,7 +1277,7 @@ describe('ExternalCallResolver', () => {
       assert.strictEqual(metadata.name, 'ExternalCallResolver');
       assert.strictEqual(metadata.phase, 'ENRICHMENT');
       assert.deepStrictEqual(metadata.creates.edges, ['CALLS', 'HANDLED_BY']);
-      assert.deepStrictEqual(metadata.creates.nodes, ['EXTERNAL_MODULE']);
+      assert.deepStrictEqual(metadata.creates.nodes, ['EXTERNAL_MODULE', 'ECMASCRIPT_BUILTIN', 'WEB_API', 'NODEJS_STDLIB', 'BROWSER_API']);
       assert.ok(metadata.dependencies.includes('FunctionCallResolver'),
         'Should depend on FunctionCallResolver');
     });

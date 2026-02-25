@@ -204,6 +204,11 @@ export { ExportNode } from './core/nodes/ExportNode.js';
 export { VariableDeclarationNode } from './core/nodes/VariableDeclarationNode.js';
 export { ExternalModuleNode } from './core/nodes/ExternalModuleNode.js';
 export { ExternalFunctionNode, type ExternalFunctionNodeRecord, type ExternalFunctionOptions } from './core/nodes/ExternalFunctionNode.js';
+export { EcmascriptBuiltinNode, type EcmascriptBuiltinNodeRecord } from './core/nodes/EcmascriptBuiltinNode.js';
+export { WebApiNode, type WebApiNodeRecord } from './core/nodes/WebApiNode.js';
+export { BrowserApiNode, type BrowserApiNodeRecord } from './core/nodes/BrowserApiNode.js';
+export { NodejsStdlibNode, type NodejsStdlibNodeRecord } from './core/nodes/NodejsStdlibNode.js';
+export { UnknownCallTargetNode, type UnknownCallTargetNodeRecord } from './core/nodes/UnknownCallTargetNode.js';
 export { NetworkRequestNode } from './core/nodes/NetworkRequestNode.js';
 export { InterfaceNode, type InterfacePropertyRecord } from './core/nodes/InterfaceNode.js';
 export { TypeNode } from './core/nodes/TypeNode.js';
@@ -304,6 +309,24 @@ export { InfraResourceMapImpl, createInfraResourceMap } from './resources/InfraR
 // Builtin registry
 export { BuiltinRegistry } from './data/builtins/index.js';
 export type { BuiltinFunctionDef, BuiltinModuleDef, SecurityCategory } from './data/builtins/index.js';
+
+// Runtime categories (REG-583)
+export {
+  ECMASCRIPT_BUILTIN_OBJECTS,
+  WEB_API_OBJECTS,
+  WEB_API_FUNCTIONS,
+  BROWSER_API_OBJECTS,
+  BROWSER_API_FUNCTIONS,
+  NODEJS_STDLIB_OBJECTS,
+  NODEJS_STDLIB_FUNCTIONS,
+  ECMASCRIPT_BUILTIN_FUNCTIONS,
+  ALL_KNOWN_OBJECTS,
+  ALL_KNOWN_FUNCTIONS,
+  resolveBuiltinObjectId,
+  resolveBuiltinFunctionId,
+  getBuiltinNodeType,
+  REQUIRE_BUILTINS,
+} from './data/builtins/index.js';
 
 // Globals registry
 export { GlobalsRegistry, ALL_GLOBALS } from './data/globals/index.js';

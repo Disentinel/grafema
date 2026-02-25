@@ -146,7 +146,13 @@ function isSpecialFormat(id) {
     id.startsWith('MODULE:') ||
     id.startsWith('SERVICE#') ||
     id.startsWith('SERVICE:') ||
-    id.startsWith('grafema:')
+    id.startsWith('grafema:') ||
+    // REG-583: Runtime builtin and unknown call target nodes
+    id.startsWith('ECMASCRIPT_BUILTIN:') ||
+    id.startsWith('WEB_API:') ||
+    id.startsWith('BROWSER_API:') ||
+    id.startsWith('NODEJS_STDLIB:') ||
+    id.startsWith('UNKNOWN_CALL_TARGET:')
   );
 }
 
@@ -157,6 +163,7 @@ function isInfrastructureType(type) {
   const infraTypes = new Set([
     'SERVICE', 'MODULE', 'net:stdio', 'net:request',
     'grafema:plugin', 'EXTERNAL_MODULE', 'GRAPH_META',
+    'ECMASCRIPT_BUILTIN', 'WEB_API', 'BROWSER_API', 'NODEJS_STDLIB', 'UNKNOWN_CALL_TARGET',
   ]);
   return infraTypes.has(type);
 }

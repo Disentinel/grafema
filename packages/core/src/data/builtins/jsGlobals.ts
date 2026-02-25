@@ -1,28 +1,13 @@
 /**
- * JavaScript Global Functions (REG-227)
+ * JavaScript Global Functions (REG-583)
  *
- * These are functions intrinsic to the JS runtime that don't need CALLS edges.
- * They're available in all JS environments (browser, Node.js, etc.) and aren't
- * "callable definitions" in the code sense.
+ * DEPRECATED SET REMOVED. See runtimeCategories.ts for the authoritative
+ * source of truth about JS global function categorization.
  *
- * What is NOT included:
- * - Constructors (Array, Object, Error) - handled as constructor calls
- * - Objects with methods (Math, JSON) - method calls go through MethodCallResolver
- * - Environment globals (window, document) - not functions, they're objects
+ * This file now re-exports from runtimeCategories.ts for backward
+ * compatibility with CallResolverValidator's 'require' handling.
  *
- * Used by:
- * - ExternalCallResolver: skips these when resolving external calls
- * - CallResolverValidator: recognizes these as resolved (no violation)
+ * `require` is NOT in any of the runtime category sets because it is
+ * already modeled via IMPORT/REQUIRES_MODULE nodes. It has no CALLS edge.
  */
-export const JS_GLOBAL_FUNCTIONS = new Set([
-  // Global functions (truly called as standalone functions)
-  'parseInt', 'parseFloat', 'isNaN', 'isFinite', 'eval',
-  'encodeURI', 'decodeURI', 'encodeURIComponent', 'decodeURIComponent',
-
-  // Timers (global functions in browser & Node.js)
-  'setTimeout', 'setInterval', 'setImmediate',
-  'clearTimeout', 'clearInterval', 'clearImmediate',
-
-  // CommonJS (special case - global in CJS environments)
-  'require'
-]);
+export const REQUIRE_BUILTINS = new Set(['require']);

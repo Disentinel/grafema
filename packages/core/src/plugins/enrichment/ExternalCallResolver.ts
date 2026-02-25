@@ -1,17 +1,22 @@
 /**
- * ExternalCallResolver - creates CALLS edges for external package calls (REG-226)
+ * ExternalCallResolver - creates CALLS edges for external package calls (REG-226, REG-583)
  *
  * This enrichment plugin runs AFTER FunctionCallResolver (priority 70 vs 80) and:
  * 1. Finds CALL nodes without CALLS edges (excluding method calls)
- * 2. For each, looks for IMPORT with matching local name in same file
- * 3. If import source is non-relative (external package), creates CALLS edge to EXTERNAL_MODULE
- * 4. Recognizes JS built-in global functions (no edge needed, just counts them)
+ * 2. For each, checks if it is a known builtin global function → creates typed node + CALLS edge
+ * 3. Looks for IMPORT with matching local name in same file
+ * 4. If import source is non-relative (external package), creates CALLS edge to EXTERNAL_MODULE
  *
  * CREATES NODES:
  * - EXTERNAL_MODULE (for external packages like lodash, @tanstack/react-query)
+ * - ECMASCRIPT_BUILTIN (for parseInt, isNaN, etc.)
+ * - WEB_API (for setTimeout, setInterval, etc.)
+ * - NODEJS_STDLIB (for setImmediate, clearImmediate)
+ * - BROWSER_API (for requestAnimationFrame, alert, etc.)
  *
  * CREATES EDGES:
  * - CALL -> CALLS -> EXTERNAL_MODULE (for imported external functions)
+ * - CALL -> CALLS -> ECMASCRIPT_BUILTIN|WEB_API|NODEJS_STDLIB|BROWSER_API (for builtin globals)
  * - CALL -> HANDLED_BY -> IMPORT (links call to its import declaration)
  *
  * Architecture:
@@ -25,7 +30,7 @@
 import { Plugin, createSuccessResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { BaseNodeRecord } from '@grafema/types';
-import { JS_GLOBAL_FUNCTIONS } from '../../data/builtins/index.js';
+import { resolveBuiltinFunctionId, getBuiltinNodeType } from '../../data/builtins/runtimeCategories.js';
 import { NodeFactory } from '../../core/NodeFactory.js';
 
 // === INTERFACES ===
@@ -51,7 +56,7 @@ export class ExternalCallResolver extends Plugin {
       name: 'ExternalCallResolver',
       phase: 'ENRICHMENT',
       creates: {
-        nodes: ['EXTERNAL_MODULE'],
+        nodes: ['EXTERNAL_MODULE', 'ECMASCRIPT_BUILTIN', 'WEB_API', 'NODEJS_STDLIB', 'BROWSER_API'],
         edges: ['CALLS', 'HANDLED_BY']
       },
       dependencies: ['FunctionCallResolver'], // Requires relative imports to be resolved first
@@ -75,12 +80,24 @@ export class ExternalCallResolver extends Plugin {
     // Step 2: Collect unresolved CALL nodes
     const callsToProcess = await this.collectUnresolvedCalls(graph, logger);
 
-    // Step 3: Track created EXTERNAL_MODULE nodes to avoid duplicates
+    // Step 3: Track created nodes to avoid duplicates (GAP 6 — seed from all relevant types)
     const createdExternalModules = new Set<string>();
     for await (const node of graph.queryNodes({ nodeType: 'EXTERNAL_MODULE' })) {
       createdExternalModules.add(node.id as string);
     }
-    logger.debug('Existing EXTERNAL_MODULE nodes', { count: createdExternalModules.size });
+    for await (const node of graph.queryNodes({ nodeType: 'ECMASCRIPT_BUILTIN' })) {
+      createdExternalModules.add(node.id as string);
+    }
+    for await (const node of graph.queryNodes({ nodeType: 'WEB_API' })) {
+      createdExternalModules.add(node.id as string);
+    }
+    for await (const node of graph.queryNodes({ nodeType: 'BROWSER_API' })) {
+      createdExternalModules.add(node.id as string);
+    }
+    for await (const node of graph.queryNodes({ nodeType: 'NODEJS_STDLIB' })) {
+      createdExternalModules.add(node.id as string);
+    }
+    logger.debug('Existing external/builtin nodes', { count: createdExternalModules.size });
 
     // Step 4: Resolution
     let nodesCreated = 0;
@@ -119,6 +136,10 @@ export class ExternalCallResolver extends Plugin {
         externalResolved++;
       } else if (result.type === 'builtin') {
         builtinResolved++;
+        if (result.nodeCreated) {
+          nodesCreated++;
+          edgesCreated++;
+        }
       } else {
         unresolvedByReason[result.reason]++;
       }
@@ -200,6 +221,7 @@ export class ExternalCallResolver extends Plugin {
   /**
    * Resolve a single call node against the import index.
    * Creates CALLS edge to EXTERNAL_MODULE and HANDLED_BY edge to IMPORT node.
+   * For builtin global functions, creates typed builtin nodes + CALLS edges.
    */
   private async resolveCall(
     callNode: CallNode,
@@ -209,7 +231,7 @@ export class ExternalCallResolver extends Plugin {
     factory: PluginContext['factory'],
   ): Promise<
     | { type: 'external'; nodesCreated: number; handledByCreated: number }
-    | { type: 'builtin' }
+    | { type: 'builtin'; nodeCreated: boolean }
     | { type: 'unresolved'; reason: 'unknown' | 'dynamic' }
   > {
     const calledName = callNode.name as string;
@@ -219,10 +241,34 @@ export class ExternalCallResolver extends Plugin {
       return { type: 'unresolved', reason: 'unknown' };
     }
 
-    // Check if this is a JS builtin
-    if (JS_GLOBAL_FUNCTIONS.has(calledName)) {
-      return { type: 'builtin' };
+    // Check if this is a known builtin global function (REG-583)
+    const builtinTargetId = resolveBuiltinFunctionId(calledName);
+    if (builtinTargetId !== null) {
+      // Create typed builtin node lazily
+      if (!createdExternalModules.has(builtinTargetId)) {
+        const existingNode = await graph.getNode(builtinTargetId);
+        if (!existingNode) {
+          const type = getBuiltinNodeType(builtinTargetId);
+          const name = builtinTargetId.slice(builtinTargetId.indexOf(':') + 1);
+          if (type === 'ECMASCRIPT_BUILTIN') {
+            await factory!.store(NodeFactory.createEcmascriptBuiltin(name));
+          } else if (type === 'WEB_API') {
+            await factory!.store(NodeFactory.createWebApi(name));
+          } else if (type === 'NODEJS_STDLIB') {
+            await factory!.store(NodeFactory.createNodejsStdlib(name));
+          } else if (type === 'BROWSER_API') {
+            await factory!.store(NodeFactory.createBrowserApi(name));
+          }
+        }
+        createdExternalModules.add(builtinTargetId);
+      }
+      await factory!.link({ type: 'CALLS', src: callNode.id, dst: builtinTargetId });
+      return { type: 'builtin', nodeCreated: true };
     }
+
+    // 'require' is NOT in resolveBuiltinFunctionId results.
+    // require() calls fall through to import-index lookup → 'unresolved'.
+    // CallResolverValidator catches 'require' via REQUIRE_BUILTINS.
 
     // Check if this is a dynamic call
     if (callNode.isDynamic) {

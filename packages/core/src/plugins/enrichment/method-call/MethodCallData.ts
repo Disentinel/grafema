@@ -62,10 +62,16 @@ export const BUILTIN_PROTOTYPE_METHODS = new Set([
 ]);
 
 /**
- * Common library method patterns that should be treated as external.
- * These are methods from well-known npm packages.
+ * Common library method names — REFERENCE ONLY (REG-583).
+ *
+ * This set is NO LONGER used as a detection gate. It is kept for:
+ * - Coverage gap reporting (which unknown targets expose common library patterns)
+ * - Documentation of what methods previously triggered silent skips
+ *
+ * DO NOT use in isExternalMethod() or any resolver skip logic.
+ * Method calls whose names appear here now resolve to UNKNOWN_CALL_TARGET:{object}.
  */
-export const COMMON_LIBRARY_METHODS = new Set([
+export const COMMON_LIBRARY_METHODS: ReadonlySet<string> = new Set([
   // Express/HTTP response
   'json', 'status', 'send', 'redirect', 'render', 'sendFile', 'sendStatus',
   'type', 'format', 'attachment', 'download', 'end', 'cookie', 'clearCookie',
@@ -248,24 +254,15 @@ export interface ClassEntry {
 }
 
 /**
- * Known global objects (console, Math, etc.) and common npm package namespaces.
- * Used by isExternalMethod() to identify calls that should not be resolved.
+ * Known npm package namespaces (REG-583).
+ *
+ * Contains ONLY npm package names — all built-in/platform objects have been
+ * moved to runtimeCategories.ts and are resolved by MethodCallResolver
+ * to typed nodes (ECMASCRIPT_BUILTIN, WEB_API, BROWSER_API, NODEJS_STDLIB).
+ *
+ * Used by MethodCallResolver Step 4: creates EXTERNAL_MODULE:{obj} + CALLS edge.
  */
-export const EXTERNAL_OBJECTS = new Set([
-  'console', 'Math', 'JSON', 'Object', 'Array', 'String', 'Number',
-  'Boolean', 'Date', 'RegExp', 'Error', 'Promise', 'Set', 'Map',
-  'WeakSet', 'WeakMap', 'Symbol', 'Proxy', 'Reflect', 'Intl',
-  'process', 'global', 'window', 'document', 'Buffer',
-  'fs', 'path', 'http', 'https', 'crypto', 'os', 'url', 'util',
-  'localStorage', 'sessionStorage', 'navigator', 'location', 'history',
-  'performance', 'fetch', 'XMLHttpRequest', 'WebSocket',
-  'setTimeout', 'setInterval', 'clearTimeout', 'clearInterval',
-  'requestAnimationFrame', 'cancelAnimationFrame',
-  'Atomics', 'SharedArrayBuffer', 'DataView', 'ArrayBuffer',
-  'Int8Array', 'Uint8Array', 'Uint8ClampedArray', 'Int16Array',
-  'Uint16Array', 'Int32Array', 'Uint32Array', 'Float32Array',
-  'Float64Array', 'BigInt64Array', 'BigUint64Array',
-  // Common npm package namespaces
+export const NPM_NAMESPACE_OBJECTS: ReadonlySet<string> = new Set([
   'dotenv', 'express', 'axios', 'lodash', '_', 'moment', 'dayjs',
   'sqlite3', 'pg', 'mysql', 'mysql2', 'mongodb', 'mongoose', 'sequelize',
   'knex', 'typeorm', 'prisma', 'jwt', 'jsonwebtoken', 'bcrypt', 'bcryptjs',
@@ -276,24 +273,4 @@ export const EXTERNAL_OBJECTS = new Set([
   'socket', 'io', 'ws', 'Redis', 'redis', 'ioredis', 'amqp', 'amqplib',
   'aws', 'AWS', 's3', 'sqs', 'sns', 'lambda', 'dynamodb',
   'React', 'ReactDOM', 'Vue', 'vue', 'angular', 'Angular',
-]);
-
-/**
- * Built-in JavaScript global objects (not library namespaces).
- * Used to distinguish built-in objects from library calls for coverage reporting.
- */
-export const BUILTIN_OBJECTS = new Set([
-  'console', 'Math', 'JSON', 'Object', 'Array', 'String', 'Number',
-  'Boolean', 'Date', 'RegExp', 'Error', 'Promise', 'Set', 'Map',
-  'WeakSet', 'WeakMap', 'Symbol', 'Proxy', 'Reflect', 'Intl',
-  'process', 'global', 'window', 'document', 'Buffer',
-  'fs', 'path', 'http', 'https', 'crypto', 'os', 'url', 'util',
-  'localStorage', 'sessionStorage', 'navigator', 'location', 'history',
-  'performance', 'fetch', 'XMLHttpRequest', 'WebSocket',
-  'setTimeout', 'setInterval', 'clearTimeout', 'clearInterval',
-  'requestAnimationFrame', 'cancelAnimationFrame',
-  'Atomics', 'SharedArrayBuffer', 'DataView', 'ArrayBuffer',
-  'Int8Array', 'Uint8Array', 'Uint8ClampedArray', 'Int16Array',
-  'Uint16Array', 'Int32Array', 'Uint32Array', 'Float32Array',
-  'Float64Array', 'BigInt64Array', 'BigUint64Array',
 ]);

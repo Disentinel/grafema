@@ -33,6 +33,11 @@ import {
   ExportNode,
   ExternalModuleNode,
   ExternalFunctionNode,
+  EcmascriptBuiltinNode,
+  WebApiNode,
+  BrowserApiNode,
+  NodejsStdlibNode,
+  UnknownCallTargetNode,
   InterfaceNode,
   TypeNode,
   TypeParameterNode,
@@ -181,6 +186,11 @@ export class NodeFactory {
 
   static createExternalModule = ExternalFactory.createExternalModule.bind(ExternalFactory);
   static createExternalFunction = ExternalFactory.createExternalFunction.bind(ExternalFactory);
+  static createEcmascriptBuiltin = ExternalFactory.createEcmascriptBuiltin.bind(ExternalFactory);
+  static createWebApi = ExternalFactory.createWebApi.bind(ExternalFactory);
+  static createBrowserApi = ExternalFactory.createBrowserApi.bind(ExternalFactory);
+  static createNodejsStdlib = ExternalFactory.createNodejsStdlib.bind(ExternalFactory);
+  static createUnknownCallTarget = ExternalFactory.createUnknownCallTarget.bind(ExternalFactory);
 
   // ==========================================
   // System DB domain (delegate to SystemFactory)
@@ -230,6 +240,11 @@ export class NodeFactory {
       'EXPORT': ExportNode,
       'EXTERNAL_MODULE': ExternalModuleNode,
       'EXTERNAL_FUNCTION': ExternalFunctionNode,
+      'ECMASCRIPT_BUILTIN': EcmascriptBuiltinNode,
+      'WEB_API': WebApiNode,
+      'BROWSER_API': BrowserApiNode,
+      'NODEJS_STDLIB': NodejsStdlibNode,
+      'UNKNOWN_CALL_TARGET': UnknownCallTargetNode,
       'INTERFACE': InterfaceNode,
       'TYPE': TypeNode,
       'TYPE_PARAMETER': TypeParameterNode,

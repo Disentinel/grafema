@@ -30,6 +30,13 @@ export { ExportNode, type ExportNodeRecord, type ExportKind } from './ExportNode
 export { ExternalModuleNode, type ExternalModuleNodeRecord } from './ExternalModuleNode.js';
 export { ExternalFunctionNode, type ExternalFunctionNodeRecord, type ExternalFunctionOptions } from './ExternalFunctionNode.js';
 
+// Runtime-typed builtin nodes (REG-583)
+export { EcmascriptBuiltinNode, type EcmascriptBuiltinNodeRecord } from './EcmascriptBuiltinNode.js';
+export { WebApiNode, type WebApiNodeRecord } from './WebApiNode.js';
+export { BrowserApiNode, type BrowserApiNodeRecord } from './BrowserApiNode.js';
+export { NodejsStdlibNode, type NodejsStdlibNodeRecord } from './NodejsStdlibNode.js';
+export { UnknownCallTargetNode, type UnknownCallTargetNodeRecord } from './UnknownCallTargetNode.js';
+
 // TypeScript declaration nodes
 export { InterfaceNode, type InterfaceNodeRecord, type InterfacePropertyRecord } from './InterfaceNode.js';
 export { TypeNode, type TypeNodeRecord } from './TypeNode.js';
