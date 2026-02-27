@@ -133,15 +133,21 @@ export function visitCallExpression(
       const pc = prevCall as CallExpression;
       if (pc.callee.type === 'Identifier') {
         prevName = pc.callee.name;
-      } else if (pc.callee.type === 'MemberExpression' && pc.callee.property.type === 'Identifier') {
-        const po = pc.callee.object.type === 'Identifier'
-          ? pc.callee.object.name
-          : pc.callee.object.type === 'ThisExpression'
+      } else if ((pc.callee.type === 'MemberExpression' || pc.callee.type === 'OptionalMemberExpression') && pc.callee.property.type === 'Identifier') {
+        const calleeMember = pc.callee as MemberExpression;
+        const po = calleeMember.object.type === 'Identifier'
+          ? calleeMember.object.name
+          : calleeMember.object.type === 'ThisExpression'
             ? 'this'
-            : pc.callee.object.type === 'Super'
+            : calleeMember.object.type === 'Super'
               ? 'super'
-              : '?';
-        prevName = `${po}.${pc.callee.property.name}`;
+              : (calleeMember.object.type === 'MemberExpression' || calleeMember.object.type === 'OptionalMemberExpression')
+                ? ((calleeMember.object as MemberExpression).property.type === 'Identifier'
+                    ? ((calleeMember.object as MemberExpression).property as Identifier).name
+                    : '?')
+                : '?';
+        const optDot = (calleeMember as unknown as { optional?: boolean }).optional ? '?.' : '.';
+        prevName = `${po}${optDot}${(calleeMember.property as Identifier).name}`;
       } else {
         prevName = '<computed>';
       }
@@ -377,7 +383,13 @@ export function visitMemberExpression(
       ? 'this'
       : member.object.type === 'Super'
         ? 'super'
-        : '?';
+        : (member.object.type === 'MemberExpression' || member.object.type === 'OptionalMemberExpression')
+          ? ((member.object as MemberExpression).property.type === 'Identifier'
+              ? ((member.object as MemberExpression).property as Identifier).name
+              : (member.object as MemberExpression).property.type === 'PrivateName'
+                ? `#${((member.object as MemberExpression).property as PrivateName).id.name}`
+                : computedPropertyName((member.object as MemberExpression).property as Node))
+          : '?';
   const isOptional = (member as unknown as { optional?: boolean }).optional;
   const isBracket = propName.startsWith('[');
   const dot = isBracket ? (isOptional ? '?.' : '') : (isOptional ? '?.' : '.');
@@ -426,13 +438,22 @@ export function visitMemberExpression(
       ? inner.property.name
       : inner.property.type === 'PrivateName'
         ? `#${(inner.property as PrivateName).id.name}`
-        : '<computed>';
+        : computedPropertyName(inner.property as Node);
     const innerObj = inner.object.type === 'Identifier'
       ? inner.object.name
       : inner.object.type === 'ThisExpression' ? 'this'
       : inner.object.type === 'Super' ? 'super'
-      : '?';
-    const innerName = `${innerObj}.${innerProp}`;
+      : (inner.object.type === 'MemberExpression' || inner.object.type === 'OptionalMemberExpression')
+        ? ((inner.object as MemberExpression).property.type === 'Identifier'
+            ? ((inner.object as MemberExpression).property as Identifier).name
+            : (inner.object as MemberExpression).property.type === 'PrivateName'
+              ? `#${((inner.object as MemberExpression).property as PrivateName).id.name}`
+              : computedPropertyName((inner.object as MemberExpression).property as Node))
+        : '?';
+    const innerOptional = (inner as unknown as { optional?: boolean }).optional;
+    const innerBracket = innerProp.startsWith('[');
+    const innerDot = innerBracket ? (innerOptional ? '?.' : '') : (innerOptional ? '?.' : '.');
+    const innerName = `${innerObj}${innerDot}${innerProp}`;
     const innerLine = inner.loc?.start.line ?? line;
     result.edges.push({
       src: nodeId,

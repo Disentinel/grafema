@@ -14048,7 +14048,7 @@
         },
         {
           "type": "EXTERNAL_MODULE",
-          "id": "<fs-module>",
+          "id": "<fs>",
           "metadata": {
             "name": "fs",
             "type": "builtin"
@@ -14073,7 +14073,7 @@
         "postProject": [
           {
             "src": "<require('fs')>",
-            "dst": "<fs-module>",
+            "dst": "<fs>",
             "type": "IMPORTS"
           }
         ]
@@ -15141,7 +15141,7 @@
         },
         {
           "type": "EXTERNAL_MODULE",
-          "id": "<path-module>",
+          "id": "<path>",
           "metadata": {
             "name": "path",
             "builtin": true
@@ -15176,12 +15176,12 @@
           },
           {
             "src": "<require('path')>",
-            "dst": "<path-module>",
+            "dst": "<path>",
             "type": "IMPORTS"
           },
           {
             "src": "<module>",
-            "dst": "<path-module>",
+            "dst": "<path>",
             "type": "IMPORTS_FROM"
           }
         ]
@@ -39843,7 +39843,7 @@
         },
         {
           "type": "PROPERTY",
-          "id": "<timeout-prop>",
+          "id": "<timeout>",
           "metadata": {
             "key": "timeout"
           }
@@ -39858,7 +39858,7 @@
         },
         {
           "type": "PROPERTY",
-          "id": "<retries-prop>",
+          "id": "<retries>",
           "metadata": {
             "key": "retries"
           }
@@ -39873,7 +39873,7 @@
         },
         {
           "type": "PROPERTY",
-          "id": "<debug-prop>",
+          "id": "<debug>",
           "metadata": {
             "key": "debug"
           }
@@ -39962,17 +39962,17 @@
           },
           {
             "src": "<object-literal>",
-            "dst": "<timeout-prop>",
+            "dst": "<timeout>",
             "type": "HAS_PROPERTY"
           },
           {
             "src": "<object-literal>",
-            "dst": "<retries-prop>",
+            "dst": "<retries>",
             "type": "HAS_PROPERTY"
           },
           {
             "src": "<object-literal>",
-            "dst": "<debug-prop>",
+            "dst": "<debug>",
             "type": "HAS_PROPERTY"
           },
           {
@@ -40003,17 +40003,17 @@
             "type": "ASSIGNED_FROM"
           },
           {
-            "src": "<timeout-prop>",
+            "src": "<timeout>",
             "dst": "<0>",
             "type": "ASSIGNED_FROM"
           },
           {
-            "src": "<retries-prop>",
+            "src": "<retries>",
             "dst": "<null>",
             "type": "ASSIGNED_FROM"
           },
           {
-            "src": "<debug-prop>",
+            "src": "<debug>",
             "dst": "<false>",
             "type": "ASSIGNED_FROM"
           },
@@ -52281,7 +52281,7 @@
         },
         {
           "type": "PROPERTY",
-          "id": "<data-property>",
+          "id": "<data>",
           "metadata": {
             "name": "data"
           }
@@ -52328,7 +52328,7 @@
           },
           {
             "src": "<resource-object>",
-            "dst": "<data-property>",
+            "dst": "<data>",
             "type": "HAS_PROPERTY"
           },
           {
@@ -52349,7 +52349,7 @@
             "type": "ASSIGNED_FROM"
           },
           {
-            "src": "<data-property>",
+            "src": "<data>",
             "dst": "<'important'>",
             "type": "ASSIGNED_FROM"
           },

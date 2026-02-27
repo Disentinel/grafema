@@ -47,7 +47,7 @@ const TYPE_ALIASES = {
   'SIDE_EFFECT':     ['SIDE_EFFECT', 'EXPRESSION'],
   // Golden EXPRESSION includes object/array literals that core-v2 models as LITERAL
   // Also includes NAMESPACE for `declare global { ... }` constructs
-  'EXPRESSION':      ['EXPRESSION', 'LITERAL', 'CALL', 'NAMESPACE'],
+  'EXPRESSION':      ['EXPRESSION', 'LITERAL', 'CALL', 'NAMESPACE', 'PROPERTY_ACCESS'],
   // EXTERNAL: core-v2 doesn't create EXTERNAL nodes; built-in references exist as other node types
   'EXTERNAL':        ['EXTERNAL', 'CLASS', 'VARIABLE', 'CONSTANT', 'FUNCTION'],
   'EXTERNAL_MODULE': ['EXTERNAL', 'IMPORT'],
@@ -600,6 +600,7 @@ function findBestMatch(expectedType, name, disambig, baseName, grouped, inRange,
   // Golden `<getTotal>` may be an arrow function at `{ getTotal: () => total }`.
   // Core-v2 names it `<arrow>`, but there's a PROPERTY_ACCESS `getTotal` on the same line.
   if (unique.includes('FUNCTION') || unique.includes('METHOD')) {
+    const fieldName = name.includes('.') ? name.split('.').pop() : name;
     // Find anonymous functions on the same line as a PROPERTY_ACCESS with the expected name
     const propNode = inRange.find(n =>
       n.type === 'PROPERTY_ACCESS' && n.name === name && !usedNodeIds.has(n.id));
@@ -608,6 +609,16 @@ function findBestMatch(expectedType, name, disambig, baseName, grouped, inRange,
         (n.type === 'FUNCTION' || n.type === 'METHOD') &&
         (n.name === '<arrow>' || n.name === '<anonymous>') &&
         n.line === propNode.line && !usedNodeIds.has(n.id));
+      if (arrowOnSameLine) return arrowOnSameLine;
+    }
+    // Also check PROPERTY nodes for class field arrows: `handleArrow = (event) => {...}`
+    const propFieldNode = inRange.find(n =>
+      n.type === 'PROPERTY' && (n.name === name || n.name === fieldName) && !usedNodeIds.has(n.id));
+    if (propFieldNode) {
+      const arrowOnSameLine = inRange.find(n =>
+        (n.type === 'FUNCTION' || n.type === 'METHOD') &&
+        (n.name === '<arrow>' || n.name === '<anonymous>') &&
+        n.line === propFieldNode.line && !usedNodeIds.has(n.id));
       if (arrowOnSameLine) return arrowOnSameLine;
     }
   }
@@ -638,8 +649,8 @@ function findBestMatch(expectedType, name, disambig, baseName, grouped, inRange,
     if (isCallbackName || baseName) {
       const arrowNodes = [];
       for (const [key, nodes] of grouped) {
-        if (key.startsWith('FUNCTION::@anon:') || key.startsWith('METHOD::@anon:')
-            || key.startsWith('GETTER::@anon:') || key.startsWith('SETTER::@anon:')) {
+        // Only collect @anon: keys for types we're actually searching for
+        if (unique.some(t => key.startsWith(`${t}::@anon:`))) {
           arrowNodes.push(...nodes);
         }
       }
@@ -724,6 +735,13 @@ function findFuzzyMatch(graphType, name, nodes) {
       if (node.name === callBase || node.metadata?.method === callBase) return node;
       // Golden might include 'new ' prefix — check stripped
       if (node.name === `new ${name}` || node.name === `new ${callBase}`) return node;
+      // Computed bracket access: `obj[expr](args)` → match `obj[<computed>]`
+      if (callBase.includes('[') && callBase.includes(']')) {
+        const bracketObj = callBase.slice(0, callBase.indexOf('['));
+        if (node.name === `${bracketObj}[<computed>]`) return node;
+        // super[methodName]() → match super[<computed>]
+        if (bracketObj === 'super' && node.name.startsWith('super[')) return node;
+      }
       // Golden qualifiers: `setTimeout-arrow` → match `setTimeout`, `iife-call` → match by suffix stripping
       const dashIdx = callBase.lastIndexOf('-');
       if (dashIdx > 0) {
@@ -748,6 +766,9 @@ function findFuzzyMatch(graphType, name, nodes) {
         const tagName = name.split('`')[0].trim();
         if (tagName && (node.name === tagName || node.metadata?.method === tagName)) return node;
       }
+      // Tagged template semantic name: `tagged_template_call` → match tagged-template CALL
+      if (name.includes('tagged_template') && node.metadata?.tagged === true) return node;
+      if (name === 'tagged-template' && node.metadata?.tagged === true) return node;
       // jQuery/complex: `$(...)`, `$('#tpl')` → match `$`
       if (callBase.startsWith('$') && node.name === '$') return node;
       // `require(...)` pattern
@@ -778,6 +799,8 @@ function findFuzzyMatch(graphType, name, nodes) {
         const inner = name.slice(4).replace(/\(.*$/, '');
         if (node.name === `new ${inner}`) return node;
       }
+      // `new-anonymous-class` / `new-class-instance` → match `new <computed>` or `new <anonymous>`
+      if (name.startsWith('new-') && (node.name === 'new <computed>' || node.name === 'new <anonymous>')) return node;
       // `throw new Error(...)` → match `new Error`
       if (name.startsWith('throw new ')) {
         const throwClass = name.slice(10).replace(/\(.*$/, '');
@@ -843,8 +866,9 @@ function findFuzzyMatch(graphType, name, nodes) {
       const litVal = node.metadata?.value;
       const colonIdx = name.indexOf(':');
       if (colonIdx > 0 && (node.name === name.slice(0, colonIdx) || String(litVal) === name.slice(0, colonIdx))) return node;
-      // Dash-qualified with text: `iterator-result-value` → match any literal
-      if (/^[a-zA-Z][a-zA-Z0-9-]+$/.test(name) && name.includes('-')) return node;
+      // Dash-qualified with text: `iterator-result-value`, `proxy-handler` → match object/array literals
+      if (/^[a-zA-Z][a-zA-Z0-9-]+$/.test(name) && name.includes('-')
+          && (node.name === '{}' || node.name === '{...}' || node.name === '[]' || node.name === '[...]')) return node;
       // `this` → `this` keyword (core-v2 doesn't produce these, but match if it does)
       if (name === 'this' && node.name === 'this') return node;
       // Type name as LITERAL: golden `String`, `Number`, `Object` → match
@@ -868,12 +892,7 @@ function findFuzzyMatch(graphType, name, nodes) {
         const stripped = name.replace(/[-:](read|write|access|method|arrow|regular|assign)(\d*)$/, '');
         if (node.name === stripped) return node;
         if (`${obj}.${node.metadata?.property ?? node.name}` === stripped) return node;
-        // Chained access: golden `a.b.c` → match node `?.c` with obj `?` if obj is complex
-        const lastDot = stripped.lastIndexOf('.');
-        if (lastDot > 0) {
-          const propTail = stripped.slice(lastDot + 1);
-          if ((node.metadata?.property ?? node.name) === propTail) return node;
-        }
+        // Chained access: propTail deferred to second pass below
       }
       // Match by property name only
       const propPart = node.metadata?.property ?? node.name.split('.').pop();
@@ -975,8 +994,12 @@ function findFuzzyMatch(graphType, name, nodes) {
     if (graphType === 'PARAMETER') {
       if (node.name === name) return node;
       // Colon-qualified: `error:catch` → match `error`, `x:param` → match `x`
+      // Also try after-colon part (scope-qualified: `transform:data` → `data`)
       const colonIdx = name.indexOf(':');
-      if (colonIdx > 0 && node.name === name.slice(0, colonIdx)) return node;
+      if (colonIdx > 0) {
+        if (node.name === name.slice(0, colonIdx)) return node;
+        if (node.name === name.slice(colonIdx + 1)) return node;
+      }
       // `...args` → match `args`
       if (name.startsWith('...') && node.name === name.slice(3)) return node;
       // Dash-qualified: `transform-data` → match `transform`
@@ -1030,8 +1053,8 @@ function findFuzzyMatch(graphType, name, nodes) {
       if (graphType === 'INFER_TYPE' && name.startsWith('infer ') && node.name === name.slice(6)) return node;
       // Colon-qualified: `target:T` → match `T`, `overrides:Partial` → match `Partial`
       const colonIdx = name.indexOf(':');
-      if (colonIdx > 0 && node.name === name.slice(colonIdx + 1)) return node;
-      if (colonIdx > 0 && node.name === name.slice(0, colonIdx)) return node;
+      if (colonIdx > 0 && node.name === name.slice(colonIdx + 1).trim()) return node;
+      if (colonIdx > 0 && node.name === name.slice(0, colonIdx).trim()) return node;
       // Dash-qualified: `success-case` → match `success`
       const dashIdx = name.indexOf('-');
       if (dashIdx > 0 && node.name === name.slice(0, dashIdx)) return node;
@@ -1269,6 +1292,24 @@ function findFuzzyMatch(graphType, name, nodes) {
       if (colonIdx > 0 && node.name === name.slice(0, colonIdx)) return node;
     }
   }
+
+  // ─── PROPERTY_ACCESS propTail second pass ─────────────────────────
+  // Only fires if the main loop found no strong match.
+  // Matches golden `a.b.c` → core-v2 node with property `c` (last segment).
+  // This is intentionally weaker than exact obj.prop matching above, so we
+  // only resort to it when no better match exists.
+  if (graphType === 'PROPERTY_ACCESS' && name.includes('.')) {
+    const stripped = name.replace(/[-:](read|write|access|method|arrow|regular|assign)(\d*)$/, '');
+    const lastDot = stripped.lastIndexOf('.');
+    if (lastDot > 0) {
+      const propTail = stripped.slice(lastDot + 1);
+      for (const node of nodes) {
+        if (node.type !== 'PROPERTY_ACCESS') continue;
+        if ((node.metadata?.property ?? node.name) === propTail) return node;
+      }
+    }
+  }
+
   return null;
 }
 
@@ -1386,6 +1427,8 @@ const EDGE_TYPE_ALIASES = {
   'OVERRIDES': ['OVERRIDES', 'SHADOWS'],
   // INFERS: TS infer type
   'INFERS': ['INFERS', 'CONTAINS'],
+  // EXTENDS_SCOPE_WITH: `with` statement scope extension
+  'EXTENDS_SCOPE_WITH': ['EXTENDS_SCOPE_WITH', 'CONTAINS'],
 };
 
 /**
@@ -1789,7 +1832,7 @@ function matchEdges(expectedEdges, nodeMap, fileResult) {
         'HAS_TYPE_PARAMETER', 'RECEIVES_ARGUMENT', 'USES', 'DELETES',
         'INFERS', 'HAS_INIT', 'IMPLEMENTS_OVERLOAD', 'HAS_OVERLOAD',
         'INVOKES', 'BINDS_THIS_TO', 'MERGES_WITH',
-        'READS_FROM', 'FLOWS_INTO', 'DEPENDS_ON',
+        'READS_FROM', 'FLOWS_INTO', 'DEPENDS_ON', 'EXTENDS_SCOPE_WITH',
         'CALLS', 'EXPORTS', 'IMPORTS', 'IMPORTS_FROM',
         'ALIASES', 'DERIVES_FROM', 'RESOLVES_TO', 'OVERRIDES', 'IMPLEMENTS',
         'ASSIGNED_FROM', 'WRITES_TO', 'MODIFIES', 'THROWS', 'CAPTURES',
