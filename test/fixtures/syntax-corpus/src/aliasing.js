@@ -215,10 +215,10 @@ function sum() {
 // CALL <<[].slice.call(arguments)>> -> CALLS -> PROPERTY_ACCESS <<[].slice.call>>
 // CALL <<[].slice.call(arguments)>> -> PASSES_ARGUMENT -> VARIABLE <<arguments>>
 // PROPERTY_ACCESS <<[].slice>> -> READS_FROM -> LITERAL <<[]>>
-// FUNCTION <<toArray>> -> RETURNS -> EXPRESSION <<{ fromArrayFn, fromSpread, fromSlice }>>
-// EXPRESSION <<{ fromArrayFn, fromSpread, fromSlice }>> -> READS_FROM -> VARIABLE <<fromArrayFn>>
-// EXPRESSION <<{ fromArrayFn, fromSpread, fromSlice }>> -> READS_FROM -> VARIABLE <<fromSpread>>
-// EXPRESSION <<{ fromArrayFn, fromSpread, fromSlice }>> -> READS_FROM -> VARIABLE <<fromSlice>>
+// FUNCTION <<toArray>> -> RETURNS -> LITERAL <<{...}>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<fromArrayFn>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<fromSpread>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<fromSlice>>
 // @end-annotation
 function toArray() {
   const fromArrayFn = Array.from(arguments);
@@ -296,9 +296,9 @@ async function loadPlugin(name) {
 // PARAMETER <<a>> -> ASSIGNED_FROM -> LITERAL <<'changed'>>
 // FUNCTION <<argumentsAliasing>> -> DECLARES -> VARIABLE <<arg0AfterReassign>>
 // VARIABLE <<arg0AfterReassign>> -> ASSIGNED_FROM -> PROPERTY_ACCESS <<arguments[0]>>
-// FUNCTION <<argumentsAliasing>> -> RETURNS -> EXPRESSION <<{ aAfterMutation, arg0AfterReassign }>>
-// EXPRESSION <<{ aAfterMutation, arg0AfterReassign }>> -> READS_FROM -> VARIABLE <<aAfterMutation>>
-// EXPRESSION <<{ aAfterMutation, arg0AfterReassign }>> -> READS_FROM -> VARIABLE <<arg0AfterReassign>>
+// FUNCTION <<argumentsAliasing>> -> RETURNS -> LITERAL <<{...}>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<aAfterMutation>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<arg0AfterReassign>>
 // @end-annotation
 function argumentsAliasing(a, b) {
   arguments[0] = 99;
@@ -340,11 +340,11 @@ const arrowFromOuter = outerWithArguments(42);
 // PROPERTY_ACCESS <<arguments[0]>> -> READS_FROM -> EXTERNAL <<arguments>>
 // VARIABLE <<restFromArgs>> -> ASSIGNED_FROM -> PROPERTY_ACCESS <<arguments[1]>>
 // PROPERTY_ACCESS <<arguments[1]>> -> READS_FROM -> EXTERNAL <<arguments>>
-// FUNCTION <<argumentsWithRest>> -> RETURNS -> EXPRESSION <<return-object>>
-// EXPRESSION <<return-object>> -> READS_FROM -> VARIABLE <<allCount>>
-// EXPRESSION <<return-object>> -> READS_FROM -> VARIABLE <<firstFromArgs>>
-// EXPRESSION <<return-object>> -> READS_FROM -> VARIABLE <<restFromArgs>>
-// EXPRESSION <<return-object>> -> READS_FROM -> PARAMETER <<rest>>
+// FUNCTION <<argumentsWithRest>> -> RETURNS -> LITERAL <<{...}>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<allCount>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<firstFromArgs>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<restFromArgs>>
+// LITERAL <<{...}>> -> READS_FROM -> PARAMETER <<rest>>
 // @end-annotation
 function argumentsWithRest(first, ...rest) {
   const allCount = arguments.length;  // ALL args count (first + rest)

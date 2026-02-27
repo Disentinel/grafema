@@ -759,9 +759,9 @@ function forInNoDeclaration(obj) {
 // CALL <<console.log(a, b)>> -> CALLS -> PROPERTY_ACCESS <<console.log>>
 // CALL <<console.log(a, b)>> -> PASSES_ARGUMENT -> VARIABLE <<a>>
 // CALL <<console.log(a, b)>> -> PASSES_ARGUMENT -> VARIABLE <<b>>
-// FUNCTION <<forOfDestructureAssign>> -> RETURNS -> EXPRESSION <<{ a, b }>>
-// EXPRESSION <<{ a, b }>> -> READS_FROM -> VARIABLE <<a>>
-// EXPRESSION <<{ a, b }>> -> READS_FROM -> VARIABLE <<b>>
+// FUNCTION <<forOfDestructureAssign>> -> RETURNS -> LITERAL <<{...}>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<a>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<b>>
 // @end-annotation
 function forOfDestructureAssign(pairs) {
   let a, b;
@@ -867,9 +867,9 @@ function forInDestructuring() {
 // EXPRESSION <<i++>> -> MODIFIES -> VARIABLE <<i>>
 // LOOP <<for-side-effect>> -> HAS_UPDATE -> EXPRESSION <<processed++>>
 // EXPRESSION <<processed++>> -> MODIFIES -> VARIABLE <<processed>>
-// FUNCTION <<forCommaUpdate>> -> RETURNS -> EXPRESSION <<{ arr, processed }>>
-// EXPRESSION <<{ arr, processed }>> -> READS_FROM -> VARIABLE <<arr>>
-// EXPRESSION <<{ arr, processed }>> -> READS_FROM -> VARIABLE <<processed>>
+// FUNCTION <<forCommaUpdate>> -> RETURNS -> LITERAL <<{...}>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<arr>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<processed>>
 // @end-annotation
 function forCommaUpdate() {
   const arr = [1, 2, 3, 4, 5];

@@ -53,10 +53,10 @@ function clearCache() {
 // PARAMETER <<initial>> -> DEFAULTS_TO -> LITERAL <<0>>
 // FUNCTION <<createCounter>> -> CONTAINS -> VARIABLE <<count>>
 // VARIABLE <<count>> -> ASSIGNED_FROM -> PARAMETER <<initial>>
-// FUNCTION <<createCounter>> -> RETURNS -> EXPRESSION <<object-literal>>
-// EXPRESSION <<object-literal>> -> HAS_PROPERTY -> METHOD <<increment>>
-// EXPRESSION <<object-literal>> -> HAS_PROPERTY -> METHOD <<decrement>>
-// EXPRESSION <<object-literal>> -> HAS_PROPERTY -> METHOD <<value>>
+// FUNCTION <<createCounter>> -> RETURNS -> LITERAL <<{...}>>
+// LITERAL <<{...}>> -> HAS_PROPERTY -> METHOD <<increment>>
+// LITERAL <<{...}>> -> HAS_PROPERTY -> METHOD <<decrement>>
+// LITERAL <<{...}>> -> HAS_PROPERTY -> METHOD <<value>>
 // METHOD <<increment>> -> RETURNS -> EXPRESSION <<++count>>
 // EXPRESSION <<++count>> -> MODIFIES -> VARIABLE <<count>>
 // METHOD <<decrement>> -> RETURNS -> EXPRESSION <<--count>>
@@ -233,10 +233,10 @@ function outermost(a) {
 // EXPRESSION <<groupTotal += value>> -> READS_FROM -> PARAMETER <<value>>
 // EXPRESSION <<total += value>> -> WRITES_TO -> VARIABLE <<total>>
 // EXPRESSION <<total += value>> -> READS_FROM -> PARAMETER <<value>>
-// FUNCTION <<addItem>> -> RETURNS -> EXPRESSION <<{ groupName, groupTotal, total }>>
-// EXPRESSION <<{ groupName, groupTotal, total }>> -> READS_FROM -> PARAMETER <<groupName>>
-// EXPRESSION <<{ groupName, groupTotal, total }>> -> READS_FROM -> VARIABLE <<groupTotal>>
-// EXPRESSION <<{ groupName, groupTotal, total }>> -> READS_FROM -> VARIABLE <<total>>
+// FUNCTION <<addItem>> -> RETURNS -> LITERAL <<{...}>>
+// LITERAL <<{...}>> -> READS_FROM -> PARAMETER <<groupName>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<groupTotal>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<total>>
 // FUNCTION <<createTracker>> -> CONTAINS -> FUNCTION <<getTotal>>
 // FUNCTION <<getTotal>> -> READS_FROM -> VARIABLE <<total>>
 // FUNCTION <<createTracker>> -> RETURNS -> EXPRESSION <<{ addGroup, getTotal: () => total }>>

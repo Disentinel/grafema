@@ -25,10 +25,10 @@
 // FUNCTION <<createUser>> -> DEPENDS_ON -> EXTERNAL <<@returns>>
 // EXTERNAL <<@param-name>> -> ALIASES -> PARAMETER <<name>>
 // EXTERNAL <<@param-age>> -> ALIASES -> PARAMETER <<age>>
-// EXTERNAL <<@returns>> -> ALIASES -> EXPRESSION <<{ name, age }>>
-// FUNCTION <<createUser>> -> RETURNS -> EXPRESSION <<{ name, age }>>
-// EXPRESSION <<{ name, age }>> -> READS_FROM -> PARAMETER <<name>>
-// EXPRESSION <<{ name, age }>> -> READS_FROM -> PARAMETER <<age>>
+// EXTERNAL <<@returns>> -> ALIASES -> LITERAL <<{...}>>
+// FUNCTION <<createUser>> -> RETURNS -> LITERAL <<{...}>>
+// LITERAL <<{...}>> -> READS_FROM -> PARAMETER <<name>>
+// LITERAL <<{...}>> -> READS_FROM -> PARAMETER <<age>>
 // @end-annotation
 /**
  * @param {string} name
@@ -128,9 +128,9 @@ function getOrDefault(map, key, fallback) {
 // @annotation
 // FUNCTION <<applyDefaults>> -> CONTAINS -> PARAMETER <<target>>
 // FUNCTION <<applyDefaults>> -> CONTAINS -> PARAMETER <<overrides>>
-// FUNCTION <<applyDefaults>> -> RETURNS -> EXPRESSION <<{ ...target, ...overrides }>>
-// EXPRESSION <<{ ...target, ...overrides }>> -> READS_FROM -> PARAMETER <<target>>
-// EXPRESSION <<{ ...target, ...overrides }>> -> READS_FROM -> PARAMETER <<overrides>>
+// FUNCTION <<applyDefaults>> -> RETURNS -> LITERAL <<{...}>>
+// LITERAL <<{...}>> -> READS_FROM -> PARAMETER <<target>>
+// LITERAL <<{...}>> -> READS_FROM -> PARAMETER <<overrides>>
 // FUNCTION <<applyDefaults>> -> HAS_TYPE_PARAMETER -> TYPE_PARAMETER <<T>>
 // TYPE_PARAMETER <<T>> -> CONSTRAINED_BY -> LITERAL_TYPE <<object>>
 // PARAMETER <<target>> -> HAS_TYPE -> TYPE_REFERENCE <<target:T>>

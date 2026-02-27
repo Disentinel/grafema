@@ -298,9 +298,9 @@ function getLength<T extends { length: number }>(item: T): number {
 // EXPRESSION <<value as string>> -> HAS_TYPE -> PARAMETER <<value>>
 // VARIABLE <<angleBracket>> -> ASSIGNED_FROM -> EXPRESSION <<<number>value>>
 // EXPRESSION <<<number>value>> -> HAS_TYPE -> PARAMETER <<value>>
-// FUNCTION <<typeAssertions>> -> RETURNS -> EXPRESSION <<{ asString, angleBracket }>>
-// EXPRESSION <<{ asString, angleBracket }>> -> READS_FROM -> VARIABLE <<asString>>
-// EXPRESSION <<{ asString, angleBracket }>> -> READS_FROM -> VARIABLE <<angleBracket>>
+// FUNCTION <<typeAssertions>> -> RETURNS -> LITERAL <<{...}>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<asString>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<angleBracket>>
 // @end-annotation
 function createArray<T = string>(length: number, fill: T): T[] {
   return Array(length).fill(fill);

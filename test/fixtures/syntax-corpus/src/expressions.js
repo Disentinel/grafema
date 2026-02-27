@@ -49,11 +49,11 @@ function comparisonOperators(a, b) {
 // FUNCTION <<logicalOperators>> -> CONTAINS -> VARIABLE <<not>>
 // VARIABLE <<not>> -> ASSIGNED_FROM -> EXPRESSION <<!a>>
 // EXPRESSION <<!a>> -> READS_FROM -> PARAMETER <<a>>
-// FUNCTION <<logicalOperators>> -> RETURNS -> EXPRESSION <<{ and, or, nullish, not }>>
-// EXPRESSION <<{ and, or, nullish, not }>> -> READS_FROM -> VARIABLE <<and>>
-// EXPRESSION <<{ and, or, nullish, not }>> -> READS_FROM -> VARIABLE <<or>>
-// EXPRESSION <<{ and, or, nullish, not }>> -> READS_FROM -> VARIABLE <<nullish>>
-// EXPRESSION <<{ and, or, nullish, not }>> -> READS_FROM -> VARIABLE <<not>>
+// FUNCTION <<logicalOperators>> -> RETURNS -> LITERAL <<{...}>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<and>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<or>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<nullish>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<not>>
 // @end-annotation
 function logicalOperators(a, b) {
   const and = a && b;
@@ -98,13 +98,13 @@ function bitwiseOperators(a, b) {
 // FUNCTION <<unaryOperators>> -> CONTAINS -> VARIABLE <<voidX>>
 // VARIABLE <<voidX>> -> ASSIGNED_FROM -> EXPRESSION <<void x>>
 // EXPRESSION <<void x>> -> READS_FROM -> PARAMETER <<x>>
-// FUNCTION <<unaryOperators>> -> RETURNS -> EXPRESSION <<{ pos, neg, logNot, bitNot, typeOfX, voidX }>>
-// EXPRESSION <<{ pos, neg, logNot, bitNot, typeOfX, voidX }>> -> READS_FROM -> VARIABLE <<pos>>
-// EXPRESSION <<{ pos, neg, logNot, bitNot, typeOfX, voidX }>> -> READS_FROM -> VARIABLE <<neg>>
-// EXPRESSION <<{ pos, neg, logNot, bitNot, typeOfX, voidX }>> -> READS_FROM -> VARIABLE <<logNot>>
-// EXPRESSION <<{ pos, neg, logNot, bitNot, typeOfX, voidX }>> -> READS_FROM -> VARIABLE <<bitNot>>
-// EXPRESSION <<{ pos, neg, logNot, bitNot, typeOfX, voidX }>> -> READS_FROM -> VARIABLE <<typeOfX>>
-// EXPRESSION <<{ pos, neg, logNot, bitNot, typeOfX, voidX }>> -> READS_FROM -> VARIABLE <<voidX>>
+// FUNCTION <<unaryOperators>> -> RETURNS -> LITERAL <<{...}>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<pos>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<neg>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<logNot>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<bitNot>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<typeOfX>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<voidX>>
 // @end-annotation
 function unaryOperators(x) {
   const pos = +x;
@@ -203,9 +203,9 @@ function assignmentOperators() {
 // EXPRESSION <<value > 5 ? 'high' : 'low'>> -> HAS_ALTERNATE -> LITERAL <<'low'>>
 // EXPRESSION <<value > 5>> -> READS_FROM -> PARAMETER <<value>>
 // EXPRESSION <<value > 5>> -> READS_FROM -> LITERAL <<5>>
-// FUNCTION <<ternaryOperator>> -> RETURNS -> EXPRESSION <<{ simple, nested }>>
-// EXPRESSION <<{ simple, nested }>> -> HAS_PROPERTY -> VARIABLE <<simple>>
-// EXPRESSION <<{ simple, nested }>> -> HAS_PROPERTY -> VARIABLE <<nested>>
+// FUNCTION <<ternaryOperator>> -> RETURNS -> LITERAL <<{...}>>
+// LITERAL <<{...}>> -> HAS_PROPERTY -> VARIABLE <<simple>>
+// LITERAL <<{...}>> -> HAS_PROPERTY -> VARIABLE <<nested>>
 // @end-annotation
 function ternaryOperator(condition, value) {
   const simple = condition ? 'yes' : 'no';
@@ -226,10 +226,10 @@ function ternaryOperator(condition, value) {
 // VARIABLE <<computed>> -> ASSIGNED_FROM -> EXPRESSION <<obj?.items?.[0]>>
 // EXPRESSION <<obj?.items?.[0]>> -> READS_FROM -> PARAMETER <<obj>>
 // EXPRESSION <<obj?.items?.[0]>> -> READS_FROM -> LITERAL <<0>>
-// FUNCTION <<optionalChaining>> -> RETURNS -> EXPRESSION <<{ prop, method, computed }>>
-// EXPRESSION <<{ prop, method, computed }>> -> READS_FROM -> VARIABLE <<prop>>
-// EXPRESSION <<{ prop, method, computed }>> -> READS_FROM -> VARIABLE <<method>>
-// EXPRESSION <<{ prop, method, computed }>> -> READS_FROM -> VARIABLE <<computed>>
+// FUNCTION <<optionalChaining>> -> RETURNS -> LITERAL <<{...}>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<prop>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<method>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<computed>>
 // @end-annotation
 function optionalChaining(obj) {
   const prop = obj?.nested?.deep;
@@ -350,9 +350,9 @@ function commaOperator() {
 // EXPRESSION <<a + b * c>> -> READS_FROM -> EXPRESSION <<b * c>>
 // EXPRESSION <<b * c>> -> READS_FROM -> PARAMETER <<b>>
 // EXPRESSION <<b * c>> -> READS_FROM -> PARAMETER <<c>>
-// FUNCTION <<groupingOperator>> -> RETURNS -> EXPRESSION <<{ withGrouping, withoutGrouping }>>
-// EXPRESSION <<{ withGrouping, withoutGrouping }>> -> READS_FROM -> VARIABLE <<withGrouping>>
-// EXPRESSION <<{ withGrouping, withoutGrouping }>> -> READS_FROM -> VARIABLE <<withoutGrouping>>
+// FUNCTION <<groupingOperator>> -> RETURNS -> LITERAL <<{...}>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<withGrouping>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<withoutGrouping>>
 // @end-annotation
 function groupingOperator(a, b, c) {
   const withGrouping = (a + b) * c;
@@ -384,10 +384,10 @@ function proxyAndReflect() {
 // VARIABLE <<c>> -> ASSIGNED_FROM -> LITERAL <<42>>
 // VARIABLE <<b>> -> ASSIGNED_FROM -> VARIABLE <<c>>
 // VARIABLE <<a>> -> ASSIGNED_FROM -> VARIABLE <<b>>
-// FUNCTION <<chainedAssignment>> -> RETURNS -> EXPRESSION <<{ a, b, c }>>
-// EXPRESSION <<{ a, b, c }>> -> READS_FROM -> VARIABLE <<a>>
-// EXPRESSION <<{ a, b, c }>> -> READS_FROM -> VARIABLE <<b>>
-// EXPRESSION <<{ a, b, c }>> -> READS_FROM -> VARIABLE <<c>>
+// FUNCTION <<chainedAssignment>> -> RETURNS -> LITERAL <<{...}>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<a>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<b>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<c>>
 // @end-annotation
 function chainedAssignment() {
   let a, b, c;
@@ -608,9 +608,9 @@ const nonThisInstance = new NonThisConstructor(); // NOT instanceof NonThisConst
 // CALL <<new Date()>> -> CALLS -> EXTERNAL <<Date>>
 // VARIABLE <<noParens>> -> ASSIGNED_FROM -> CALL <<new Map>>
 // CALL <<new Map>> -> CALLS -> EXTERNAL <<Map>>
-// FUNCTION <<newPrecedence>> -> RETURNS -> EXPRESSION <<{ withParens, noParens }>>
-// EXPRESSION <<{ withParens, noParens }>> -> READS_FROM -> VARIABLE <<withParens>>
-// EXPRESSION <<{ withParens, noParens }>> -> READS_FROM -> VARIABLE <<noParens>>
+// FUNCTION <<newPrecedence>> -> RETURNS -> LITERAL <<{...}>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<withParens>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<noParens>>
 // @end-annotation
 function newPrecedence() {
   const withParens = new Date().getTime();       // (new Date()).getTime()
@@ -631,9 +631,9 @@ function newPrecedence() {
 // EXPRESSION <<new mod.sub.Factory()>> -> CALLS -> PROPERTY_ACCESS <<mod.sub.Factory>>
 // PROPERTY_ACCESS <<mod.sub.Factory>> -> READS_FROM -> PROPERTY_ACCESS <<mod.sub>>
 // PROPERTY_ACCESS <<mod.sub>> -> READS_FROM -> PARAMETER <<mod>>
-// FUNCTION <<newMemberExpression>> -> RETURNS -> EXPRESSION <<{ instance, nested }>>
-// EXPRESSION <<{ instance, nested }>> -> READS_FROM -> VARIABLE <<instance>>
-// EXPRESSION <<{ instance, nested }>> -> READS_FROM -> VARIABLE <<nested>>
+// FUNCTION <<newMemberExpression>> -> RETURNS -> LITERAL <<{...}>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<instance>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<nested>>
 // @end-annotation
 function newMemberExpression(mod) {
   const instance = new mod.MyClass();
@@ -718,10 +718,10 @@ function nullishChain(a, b, c, defaultValue) {
 // VARIABLE <<noIndex>> -> ASSIGNED_FROM -> EXPRESSION <<5 in [1, 2, 3]>>
 // EXPRESSION <<5 in [1, 2, 3]>> -> USES -> LITERAL <<5>>
 // EXPRESSION <<5 in [1, 2, 3]>> -> USES -> LITERAL <<[1, 2, 3]>>
-// FUNCTION <<inOperatorArray>> -> RETURNS -> EXPRESSION <<{ hasIndex, hasStr, noIndex }>>
-// EXPRESSION <<{ hasIndex, hasStr, noIndex }>> -> USES -> VARIABLE <<hasIndex>>
-// EXPRESSION <<{ hasIndex, hasStr, noIndex }>> -> USES -> VARIABLE <<hasStr>>
-// EXPRESSION <<{ hasIndex, hasStr, noIndex }>> -> USES -> VARIABLE <<noIndex>>
+// FUNCTION <<inOperatorArray>> -> RETURNS -> LITERAL <<{...}>>
+// LITERAL <<{...}>> -> USES -> VARIABLE <<hasIndex>>
+// LITERAL <<{...}>> -> USES -> VARIABLE <<hasStr>>
+// LITERAL <<{...}>> -> USES -> VARIABLE <<noIndex>>
 // @end-annotation
 function inOperatorArray() {
   const hasIndex = 0 in [1, 2, 3];     // true — checks INDEX, not value
@@ -747,9 +747,9 @@ function inOperatorArray() {
 // CALL <<Reflect.construct(ReflectBase, [], ReflectDerived)>> -> PASSES_ARGUMENT -> CLASS <<ReflectBase>>
 // CALL <<Reflect.construct(ReflectBase, [], ReflectDerived)>> -> PASSES_ARGUMENT -> LITERAL <<[]>>
 // CALL <<Reflect.construct(ReflectBase, [], ReflectDerived)>> -> PASSES_ARGUMENT -> CLASS <<ReflectDerived>>
-// FUNCTION <<reflectConstructDemo>> -> RETURNS -> EXPRESSION <<{ normal, spoofed }>>
-// EXPRESSION <<{ normal, spoofed }>> -> READS_FROM -> VARIABLE <<normal>>
-// EXPRESSION <<{ normal, spoofed }>> -> READS_FROM -> VARIABLE <<spoofed>>
+// FUNCTION <<reflectConstructDemo>> -> RETURNS -> LITERAL <<{...}>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<normal>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<spoofed>>
 // @end-annotation
 class ReflectBase {
   constructor() {
@@ -784,11 +784,11 @@ function createInstance(Cls, args) {
 // @annotation
 // FUNCTION <<sql>> -> HAS_BODY -> PARAMETER <<strings>>
 // FUNCTION <<sql>> -> HAS_BODY -> PARAMETER <<values>>
-// FUNCTION <<sql>> -> RETURNS -> EXPRESSION <<{ text: strings.join('?'), params: values }>>
-// EXPRESSION <<{ text: strings.join('?'), params: values }>> -> HAS_PROPERTY -> LITERAL <<'text'>>
-// EXPRESSION <<{ text: strings.join('?'), params: values }>> -> HAS_PROPERTY -> CALL <<strings.join('?')>>
-// EXPRESSION <<{ text: strings.join('?'), params: values }>> -> HAS_PROPERTY -> LITERAL <<'params'>>
-// EXPRESSION <<{ text: strings.join('?'), params: values }>> -> HAS_PROPERTY -> PARAMETER <<values>>
+// FUNCTION <<sql>> -> RETURNS -> LITERAL <<{...}>>
+// LITERAL <<{...}>> -> HAS_PROPERTY -> LITERAL <<'text'>>
+// LITERAL <<{...}>> -> HAS_PROPERTY -> CALL <<strings.join('?')>>
+// LITERAL <<{...}>> -> HAS_PROPERTY -> LITERAL <<'params'>>
+// LITERAL <<{...}>> -> HAS_PROPERTY -> PARAMETER <<values>>
 // CALL <<strings.join('?')>> -> CALLS_ON -> PARAMETER <<strings>>
 // CALL <<strings.join('?')>> -> PASSES_ARGUMENT -> LITERAL <<'?'>>
 // VARIABLE <<userId>> -> ASSIGNED_FROM -> LITERAL <<42>>
@@ -867,9 +867,9 @@ const chainedResult = chainTag`hello``world`;
 // FUNCTION <<instantiate>> -> RETURNS -> CALL <<new Cls(...ctorArgs)>>
 // CALL <<new Cls(...ctorArgs)>> -> CALLS -> PARAMETER <<Cls>>
 // CALL <<new Cls(...ctorArgs)>> -> READS_FROM -> PARAMETER <<ctorArgs>>
-// FUNCTION <<newWithSpread>> -> RETURNS -> EXPRESSION <<{ date, instantiate }>>
-// EXPRESSION <<{ date, instantiate }>> -> HAS_PROPERTY -> VARIABLE <<date>>
-// EXPRESSION <<{ date, instantiate }>> -> HAS_PROPERTY -> FUNCTION <<instantiate>>
+// FUNCTION <<newWithSpread>> -> RETURNS -> LITERAL <<{...}>>
+// LITERAL <<{...}>> -> HAS_PROPERTY -> VARIABLE <<date>>
+// LITERAL <<{...}>> -> HAS_PROPERTY -> FUNCTION <<instantiate>>
 // @end-annotation
 function newWithSpread() {
   const args = [2024, 0, 15];
@@ -954,9 +954,9 @@ function assignmentInIf(compute) {
 // PROPERTY_ACCESS <<['Content-Type']?.split>> -> CHAINS_FROM -> PROPERTY_ACCESS <<headers?.['Content-Type']>>
 // CALL <<split?.('/')>> -> CHAINS_FROM -> PROPERTY_ACCESS <<['Content-Type']?.split>>
 // CALL <<split?.('/')>> -> PASSES_ARGUMENT -> LITERAL <<'/'>>
-// FUNCTION <<deepOptionalChain>> -> RETURNS -> EXPRESSION <<{ value, nested }>>
-// EXPRESSION <<{ value, nested }>> -> READS_FROM -> VARIABLE <<value>>
-// EXPRESSION <<{ value, nested }>> -> READS_FROM -> VARIABLE <<nested>>
+// FUNCTION <<deepOptionalChain>> -> RETURNS -> LITERAL <<{...}>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<value>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<nested>>
 // @end-annotation
 function deepOptionalChain(response) {
   const value = response?.data?.items?.[0]?.getName?.();
@@ -1036,10 +1036,10 @@ async function awaitCommaExpression(sideEffect, fetchData) {
 // VARIABLE <<asyncArrowObject>> -> ASSIGNED_FROM -> FUNCTION <<asyncArrowObject:fn>>
 // FUNCTION <<asyncArrowObject:fn>> -> CONTAINS -> PARAMETER <<data>>
 // FUNCTION <<asyncArrowObject:fn>> -> CONTAINS -> PARAMETER <<processFn>>
-// FUNCTION <<asyncArrowObject:fn>> -> RETURNS -> EXPRESSION <<object-literal>>
-// EXPRESSION <<object-literal>> -> HAS_PROPERTY -> PROPERTY_ACCESS <<data.id>>
-// EXPRESSION <<object-literal>> -> HAS_PROPERTY -> EXPRESSION <<await processFn(data)>>
-// EXPRESSION <<object-literal>> -> HAS_PROPERTY -> CALL <<Date.now()>>
+// FUNCTION <<asyncArrowObject:fn>> -> RETURNS -> LITERAL <<{...}>>
+// LITERAL <<{...}>> -> HAS_PROPERTY -> PROPERTY_ACCESS <<data.id>>
+// LITERAL <<{...}>> -> HAS_PROPERTY -> EXPRESSION <<await processFn(data)>>
+// LITERAL <<{...}>> -> HAS_PROPERTY -> CALL <<Date.now()>>
 // PROPERTY_ACCESS <<data.id>> -> READS_FROM -> PARAMETER <<data>>
 // EXPRESSION <<await processFn(data)>> -> AWAITS -> CALL <<processFn(data)>>
 // CALL <<processFn(data)>> -> CALLS -> PARAMETER <<processFn>>
@@ -1060,10 +1060,10 @@ const asyncArrowObject = async (data, processFn) => ({
 // FUNCTION <<getFormatter>> -> RETURNS -> FUNCTION <<getFormatter:arrow>>
 // FUNCTION <<getFormatter:arrow>> -> RECEIVES_ARGUMENT -> PARAMETER <<strings>>
 // FUNCTION <<getFormatter:arrow>> -> RECEIVES_ARGUMENT -> PARAMETER <<...values>>
-// FUNCTION <<getFormatter:arrow>> -> RETURNS -> EXPRESSION <<{ type, parts: strings, values }>>
-// EXPRESSION <<{ type, parts: strings, values }>> -> READS_FROM -> PARAMETER <<type>>
-// EXPRESSION <<{ type, parts: strings, values }>> -> READS_FROM -> PARAMETER <<strings>>
-// EXPRESSION <<{ type, parts: strings, values }>> -> READS_FROM -> PARAMETER <<...values>>
+// FUNCTION <<getFormatter:arrow>> -> RETURNS -> LITERAL <<{...}>>
+// LITERAL <<{...}>> -> READS_FROM -> PARAMETER <<type>>
+// LITERAL <<{...}>> -> READS_FROM -> PARAMETER <<strings>>
+// LITERAL <<{...}>> -> READS_FROM -> PARAMETER <<...values>>
 // FUNCTION <<tagOnCallResult>> -> CONTAINS -> VARIABLE <<result>>
 // VARIABLE <<result>> -> ASSIGNED_FROM -> CALL <<tagged_template_call>>
 // CALL <<getFormatter('sql')>> -> CALLS -> FUNCTION <<getFormatter>>
@@ -1158,10 +1158,10 @@ function typeofComputedDispatch(val) {
 // EXPRESSION <<void 0 (ternary)>> -> READS_FROM -> LITERAL <<0 (ternary)>>
 // EXPRESSION <<val !== void 0 ? val : 'fallback'>> -> HAS_CONSEQUENT -> PARAMETER <<val>>
 // EXPRESSION <<val !== void 0 ? val : 'fallback'>> -> HAS_ALTERNATE -> LITERAL <<'fallback'>>
-// FUNCTION <<voidAsUndefined>> -> RETURNS -> EXPRESSION <<{ isUndef, sideEffectRan, result }>>
-// EXPRESSION <<{ isUndef, sideEffectRan, result }>> -> READS_FROM -> VARIABLE <<isUndef>>
-// EXPRESSION <<{ isUndef, sideEffectRan, result }>> -> READS_FROM -> VARIABLE <<sideEffectRan>>
-// EXPRESSION <<{ isUndef, sideEffectRan, result }>> -> READS_FROM -> VARIABLE <<result>>
+// FUNCTION <<voidAsUndefined>> -> RETURNS -> LITERAL <<{...}>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<isUndef>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<sideEffectRan>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<result>>
 // @end-annotation
 function voidAsUndefined(val) {
   // void 0 is shorter than undefined and immune to shadowing
@@ -1241,10 +1241,10 @@ function chainedDestructuringAssignment() {
 // EXPRESSION <<[first, second] = [second, first]>> -> READS_FROM -> EXPRESSION <<[second, first]>>
 // EXPRESSION <<[second, first]>> -> READS_FROM -> VARIABLE <<second>>
 // EXPRESSION <<[second, first]>> -> READS_FROM -> VARIABLE <<first>>
-// FUNCTION <<arrowReturnAssignment>> -> RETURNS -> EXPRESSION <<{ cache, setCache, swap }>>
-// EXPRESSION <<{ cache, setCache, swap }>> -> READS_FROM -> VARIABLE <<cache>>
-// EXPRESSION <<{ cache, setCache, swap }>> -> READS_FROM -> VARIABLE <<setCache>>
-// EXPRESSION <<{ cache, setCache, swap }>> -> READS_FROM -> VARIABLE <<swap>>
+// FUNCTION <<arrowReturnAssignment>> -> RETURNS -> LITERAL <<{...}>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<cache>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<setCache>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<swap>>
 // @end-annotation
 function arrowReturnAssignment() {
   let cache = null;

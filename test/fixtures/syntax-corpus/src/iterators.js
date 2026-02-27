@@ -142,13 +142,13 @@ function createCleanupIterator(items) {
 // @annotation
 // FUNCTION <<naturals>> -> CONTAINS -> VARIABLE <<n>>
 // VARIABLE <<n>> -> ASSIGNED_FROM -> LITERAL <<1>>
-// FUNCTION <<naturals>> -> RETURNS -> EXPRESSION <<object-literal>>
-// EXPRESSION <<object-literal>> -> HAS_PROPERTY -> METHOD <<[Symbol.iterator]>>
-// EXPRESSION <<object-literal>> -> HAS_PROPERTY -> METHOD <<next>>
-// METHOD <<[Symbol.iterator]>> -> RETURNS -> EXPRESSION <<object-literal>>
-// METHOD <<next>> -> RETURNS -> EXPRESSION <<return-object>>
-// EXPRESSION <<return-object>> -> HAS_PROPERTY -> EXPRESSION <<n++>>
-// EXPRESSION <<return-object>> -> HAS_PROPERTY -> LITERAL <<false>>
+// FUNCTION <<naturals>> -> RETURNS -> LITERAL <<{...}_1>>
+// LITERAL <<{...}_1>> -> HAS_PROPERTY -> METHOD <<[Symbol.iterator]>>
+// LITERAL <<{...}_1>> -> HAS_PROPERTY -> METHOD <<next>>
+// METHOD <<[Symbol.iterator]>> -> RETURNS -> LITERAL <<{...}_1>>
+// METHOD <<next>> -> RETURNS -> LITERAL <<{...}_2>>
+// LITERAL <<{...}_2>> -> HAS_PROPERTY -> EXPRESSION <<n++>>
+// LITERAL <<{...}_2>> -> HAS_PROPERTY -> LITERAL <<false>>
 // EXPRESSION <<n++>> -> READS_FROM -> VARIABLE <<n>>
 // EXPRESSION <<n++>> -> WRITES_TO -> VARIABLE <<n>>
 // @end-annotation

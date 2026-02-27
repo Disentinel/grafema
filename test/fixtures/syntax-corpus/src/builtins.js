@@ -300,10 +300,10 @@ function regexStringMethods(str) {
 // VARIABLE <<month>> -> ASSIGNED_FROM -> PROPERTY_ACCESS <<match.groups>>
 // VARIABLE <<day>> -> ASSIGNED_FROM -> PROPERTY_ACCESS <<match.groups>>
 // PROPERTY_ACCESS <<match.groups>> -> READS_FROM -> VARIABLE <<match>>
-// FUNCTION <<regexNamedGroups>> -> RETURNS -> EXPRESSION <<{ year, month, day }>>
-// EXPRESSION <<{ year, month, day }>> -> READS_FROM -> VARIABLE <<year>>
-// EXPRESSION <<{ year, month, day }>> -> READS_FROM -> VARIABLE <<month>>
-// EXPRESSION <<{ year, month, day }>> -> READS_FROM -> VARIABLE <<day>>
+// FUNCTION <<regexNamedGroups>> -> RETURNS -> LITERAL <<{...}>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<year>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<month>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<day>>
 // @end-annotation
 function regexNamedGroups(dateStr) {
   const pattern = /(?<year>\d{4})-(?<month>\d{2})-(?<day>\d{2})/;
@@ -437,9 +437,9 @@ function bigIntOperations() {
 // VARIABLE <<hasConsole>> -> ASSIGNED_FROM -> EXPRESSION <<'console' in globalThis>>
 // EXPRESSION <<'console' in globalThis>> -> READS_FROM -> LITERAL <<'console'>>
 // EXPRESSION <<'console' in globalThis>> -> READS_FROM -> EXTERNAL <<globalThis>>
-// FUNCTION <<globalThisAccess>> -> RETURNS -> EXPRESSION <<{ g, hasConsole }>>
-// EXPRESSION <<{ g, hasConsole }>> -> READS_FROM -> VARIABLE <<g>>
-// EXPRESSION <<{ g, hasConsole }>> -> READS_FROM -> VARIABLE <<hasConsole>>
+// FUNCTION <<globalThisAccess>> -> RETURNS -> LITERAL <<{...}>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<g>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<hasConsole>>
 // @end-annotation
 function globalThisAccess() {
   const g = globalThis;
@@ -525,10 +525,10 @@ const letter = /\p{Letter}/u;
 // FUNCTION <<map-callback>> -> RETURNS -> EXPRESSION <<x * 2>>
 // EXPRESSION <<x * 2>> -> READS_FROM -> PARAMETER <<x>>
 // EXPRESSION <<x * 2>> -> READS_FROM -> LITERAL <<2>>
-// FUNCTION <<sparseArrayOps>> -> RETURNS -> EXPRESSION <<return-object>>
-// EXPRESSION <<return-object>> -> HAS_PROPERTY -> VARIABLE <<length>>
-// EXPRESSION <<return-object>> -> HAS_PROPERTY -> VARIABLE <<hasIndex1>>
-// EXPRESSION <<return-object>> -> HAS_PROPERTY -> VARIABLE <<mapped>>
+// FUNCTION <<sparseArrayOps>> -> RETURNS -> LITERAL <<{...}>>
+// LITERAL <<{...}>> -> HAS_PROPERTY -> VARIABLE <<length>>
+// LITERAL <<{...}>> -> HAS_PROPERTY -> VARIABLE <<hasIndex1>>
+// LITERAL <<{...}>> -> HAS_PROPERTY -> VARIABLE <<mapped>>
 // @end-annotation
 const windowsPath = String.raw`C:\Users\name\file`;
 // windowsPath === 'C:\\Users\\name\\file' — no escape processing

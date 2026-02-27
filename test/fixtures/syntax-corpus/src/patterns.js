@@ -66,9 +66,9 @@ function arrayDestructuringNested() {
 // EXPRESSION <<[left, right]>> -> WRITES_TO -> VARIABLE <<right>>
 // EXPRESSION <<[right, left]>> -> READS_FROM -> VARIABLE <<right>>
 // EXPRESSION <<[right, left]>> -> READS_FROM -> VARIABLE <<left>>
-// FUNCTION <<arrayDestructuringSwap>> -> RETURNS -> EXPRESSION <<{ left, right }>>
-// EXPRESSION <<{ left, right }>> -> READS_FROM -> VARIABLE <<left>>
-// EXPRESSION <<{ left, right }>> -> READS_FROM -> VARIABLE <<right>>
+// FUNCTION <<arrayDestructuringSwap>> -> RETURNS -> LITERAL <<{...}>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<left>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<right>>
 // @end-annotation
 function arrayDestructuringSwap() {
   let left = 'left';
@@ -99,9 +99,9 @@ function withObjectParam({ name, age, role = 'guest' }) {
 // PARAMETER <<destructured-param>> -> ASSIGNED_FROM -> VARIABLE <<name>>
 // PARAMETER <<destructured-param>> -> ASSIGNED_FROM -> VARIABLE <<theme>>
 // VARIABLE <<theme>> -> DEFAULTS_TO -> LITERAL <<'light'>>
-// FUNCTION <<withNestedParam>> -> RETURNS -> EXPRESSION <<{ name, theme }>>
-// EXPRESSION <<{ name, theme }>> -> READS_FROM -> VARIABLE <<name>>
-// EXPRESSION <<{ name, theme }>> -> READS_FROM -> VARIABLE <<theme>>
+// FUNCTION <<withNestedParam>> -> RETURNS -> LITERAL <<{...}>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<name>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<theme>>
 // @end-annotation
 function withArrayParam([first, second, ...rest]) {
   return { first, second, rest };
@@ -355,9 +355,9 @@ function destructureComputedKey() {
 // UNKNOWN <<module>> -> DECLARES -> FUNCTION <<destructureEmpty>>
 // FUNCTION <<destructureEmpty>> -> CONTAINS -> PARAMETER <<obj>>
 // FUNCTION <<destructureEmpty>> -> CONTAINS -> PARAMETER <<iter>>
-// FUNCTION <<destructureEmpty>> -> CONTAINS -> EXPRESSION <<{} = obj>>
+// FUNCTION <<destructureEmpty>> -> CONTAINS -> LITERAL <<{...}>>
 // FUNCTION <<destructureEmpty>> -> CONTAINS -> EXPRESSION <<[] = iter>>
-// EXPRESSION <<{} = obj>> -> READS_FROM -> PARAMETER <<obj>>
+// LITERAL <<{...}>> -> READS_FROM -> PARAMETER <<obj>>
 // EXPRESSION <<[] = iter>> -> READS_FROM -> PARAMETER <<iter>>
 // @end-annotation
 function destructureEmpty(obj, iter) {
@@ -413,10 +413,10 @@ function destructureNestedDefaults() {
 // LITERAL <<[1, 2, 3, 4, 5]>> -> HAS_ELEMENT -> LITERAL <<3>>
 // LITERAL <<[1, 2, 3, 4, 5]>> -> HAS_ELEMENT -> LITERAL <<4>>
 // LITERAL <<[1, 2, 3, 4, 5]>> -> HAS_ELEMENT -> LITERAL <<5>>
-// FUNCTION <<destructureNestedRest>> -> RETURNS -> EXPRESSION <<{ first, second, deep }>>
-// EXPRESSION <<{ first, second, deep }>> -> READS_FROM -> VARIABLE <<first>>
-// EXPRESSION <<{ first, second, deep }>> -> READS_FROM -> VARIABLE <<second>>
-// EXPRESSION <<{ first, second, deep }>> -> READS_FROM -> VARIABLE <<deep>>
+// FUNCTION <<destructureNestedRest>> -> RETURNS -> LITERAL <<{...}>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<first>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<second>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<deep>>
 // @end-annotation
 function destructureNestedRest() {
   const [first, ...[second, ...deep]] = [1, 2, 3, 4, 5];
@@ -536,15 +536,15 @@ function asyncGeneratorObjectMethod() {
 // @annotation
 // FUNCTION <<spreadDuplicateKeyOverride>> -> CONTAINS -> PARAMETER <<overrides>>
 // FUNCTION <<spreadDuplicateKeyOverride>> -> CONTAINS -> VARIABLE <<config>>
-// VARIABLE <<config>> -> ASSIGNED_FROM -> EXPRESSION <<config-object>>
-// EXPRESSION <<config-object>> -> HAS_PROPERTY -> PROPERTY <<debug-1>>
+// VARIABLE <<config>> -> ASSIGNED_FROM -> LITERAL <<{...}>>
+// LITERAL <<{...}>> -> HAS_PROPERTY -> PROPERTY <<debug-1>>
 // PROPERTY <<debug-1>> -> ASSIGNED_FROM -> LITERAL <<false>>
-// EXPRESSION <<config-object>> -> HAS_ELEMENT -> EXPRESSION <<...overrides>>
+// LITERAL <<{...}>> -> HAS_ELEMENT -> EXPRESSION <<...overrides>>
 // EXPRESSION <<...overrides>> -> SPREADS_FROM -> PARAMETER <<overrides>>
-// EXPRESSION <<config-object>> -> HAS_PROPERTY -> PROPERTY <<debug-3>>
+// LITERAL <<{...}>> -> HAS_PROPERTY -> PROPERTY <<debug-3>>
 // PROPERTY <<debug-3>> -> ASSIGNED_FROM -> LITERAL <<true>>
 // PROPERTY <<debug-3>> -> SHADOWS -> PROPERTY <<debug-1>>
-// EXPRESSION <<config-object>> -> HAS_PROPERTY -> PROPERTY <<timestamp>>
+// LITERAL <<{...}>> -> HAS_PROPERTY -> PROPERTY <<timestamp>>
 // PROPERTY <<timestamp>> -> ASSIGNED_FROM -> CALL <<Date.now()>>
 // CALL <<Date.now()>> -> CALLS -> PROPERTY_ACCESS <<Date.now>>
 // FUNCTION <<spreadDuplicateKeyOverride>> -> RETURNS -> VARIABLE <<config>>

@@ -15,9 +15,9 @@
 // PROPERTY_ACCESS <<obj.nested>> -> READS_FROM -> PARAMETER <<obj>>
 // PROPERTY_ACCESS <<obj.nested.deep>> -> READS_FROM -> PROPERTY_ACCESS <<obj.nested>>
 // PROPERTY_ACCESS <<obj.nested.deep.value>> -> READS_FROM -> PROPERTY_ACCESS <<obj.nested.deep>>
-// FUNCTION <<dotAccess>> -> RETURNS -> EXPRESSION <<{ a, b }>>
-// EXPRESSION <<{ a, b }>> -> READS_FROM -> VARIABLE <<a>>
-// EXPRESSION <<{ a, b }>> -> READS_FROM -> VARIABLE <<b>>
+// FUNCTION <<dotAccess>> -> RETURNS -> LITERAL <<{...}>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<a>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<b>>
 // @end-annotation
 function dotAccess(obj) {
   const a = obj.name;
@@ -41,10 +41,10 @@ function dotAccess(obj) {
 // VARIABLE <<c>> -> ASSIGNED_FROM -> PROPERTY_ACCESS <<obj['complex-key']>>
 // PROPERTY_ACCESS <<obj['complex-key']>> -> READS_FROM -> PARAMETER <<obj>>
 // PROPERTY_ACCESS <<obj['complex-key']>> -> USES -> LITERAL <<'complex-key'>>
-// FUNCTION <<bracketAccess>> -> RETURNS -> EXPRESSION <<{ a, b, c }>>
-// EXPRESSION <<{ a, b, c }>> -> READS_FROM -> VARIABLE <<a>>
-// EXPRESSION <<{ a, b, c }>> -> READS_FROM -> VARIABLE <<b>>
-// EXPRESSION <<{ a, b, c }>> -> READS_FROM -> VARIABLE <<c>>
+// FUNCTION <<bracketAccess>> -> RETURNS -> LITERAL <<{...}>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<a>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<b>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<c>>
 // @end-annotation
 function bracketAccess(obj, key) {
   const a = obj['name'];
@@ -188,10 +188,10 @@ function compoundPropertyAssign(obj) {
 // VARIABLE <<entries>> -> ASSIGNED_FROM -> CALL <<Object.entries(obj)>>
 // CALL <<Object.entries(obj)>> -> CALLS -> PROPERTY_ACCESS <<Object.entries>>
 // CALL <<Object.entries(obj)>> -> PASSES_ARGUMENT -> PARAMETER <<obj>>
-// FUNCTION <<objectEnumeration>> -> RETURNS -> EXPRESSION <<{ keys, values, entries }>>
-// EXPRESSION <<{ keys, values, entries }>> -> READS_FROM -> VARIABLE <<keys>>
-// EXPRESSION <<{ keys, values, entries }>> -> READS_FROM -> VARIABLE <<values>>
-// EXPRESSION <<{ keys, values, entries }>> -> READS_FROM -> VARIABLE <<entries>>
+// FUNCTION <<objectEnumeration>> -> RETURNS -> LITERAL <<{...}>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<keys>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<values>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<entries>>
 // @end-annotation
 function objectEnumeration(obj) {
   const keys = Object.keys(obj);
@@ -344,9 +344,9 @@ function propertyChecks(obj) {
 // VARIABLE <<hasKey>> -> ASSIGNED_FROM -> EXPRESSION <<'key' in obj_2>>
 // EXPRESSION <<'key' in obj_2>> -> READS_FROM -> LITERAL <<'key'_2>>
 // EXPRESSION <<'key' in obj_2>> -> READS_FROM -> PARAMETER <<obj>>
-// FUNCTION <<propertyDeletion>> -> RETURNS -> EXPRESSION <<{ hadKey, hasKey }>>
-// EXPRESSION <<{ hadKey, hasKey }>> -> READS_FROM -> VARIABLE <<hadKey>>
-// EXPRESSION <<{ hadKey, hasKey }>> -> READS_FROM -> VARIABLE <<hasKey>>
+// FUNCTION <<propertyDeletion>> -> RETURNS -> LITERAL <<{...}>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<hadKey>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<hasKey>>
 // @end-annotation
 function propertyDeletion(obj) {
   const hadKey = 'key' in obj;
@@ -439,10 +439,10 @@ function defineAccessor() {
 // CALL <<Object.is(1, 1)>> -> CALLS -> PROPERTY_ACCESS <<Object.is>>
 // CALL <<Object.is(1, 1)>> -> PASSES_ARGUMENT -> LITERAL <<1>>
 // CALL <<Object.is(1, 1)>> -> PASSES_ARGUMENT -> LITERAL <<1>>
-// FUNCTION <<objectIsComparison>> -> RETURNS -> EXPRESSION <<{ a, b, c }>>
-// EXPRESSION <<{ a, b, c }>> -> READS_FROM -> VARIABLE <<a>>
-// EXPRESSION <<{ a, b, c }>> -> READS_FROM -> VARIABLE <<b>>
-// EXPRESSION <<{ a, b, c }>> -> READS_FROM -> VARIABLE <<c>>
+// FUNCTION <<objectIsComparison>> -> RETURNS -> LITERAL <<{...}>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<a>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<b>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<c>>
 // @end-annotation
 function objectIsComparison() {
   const a = Object.is(NaN, NaN);       // true (unlike ===)
@@ -488,9 +488,9 @@ function deepClone(obj) {
 // PROPERTY_ACCESS <<obj.value:write>> -> WRITES_TO -> VARIABLE <<obj>>
 // PROPERTY_ACCESS <<obj.value:write>> -> ASSIGNED_FROM -> LITERAL <<10>>
 // PROPERTY_ACCESS <<obj.value:write>> -> INVOKES -> SETTER <<obj.value:setter>>
-// FUNCTION <<getterSideEffect>> -> RETURNS -> EXPRESSION <<return-object>>
-// EXPRESSION <<return-object>> -> HAS_PROPERTY -> VARIABLE <<x>>
-// EXPRESSION <<return-object>> -> HAS_PROPERTY -> VARIABLE <<callCount>>
+// FUNCTION <<getterSideEffect>> -> RETURNS -> LITERAL <<{...}>>
+// LITERAL <<{...}>> -> HAS_PROPERTY -> VARIABLE <<x>>
+// LITERAL <<{...}>> -> HAS_PROPERTY -> VARIABLE <<callCount>>
 // @end-annotation
 function getterSideEffect() {
   let callCount = 0;
@@ -567,8 +567,8 @@ class TreeNode {
 // FUNCTION <<symbolKey>> -> CONTAINS -> VARIABLE <<obj>>
 // VARIABLE <<sym>> -> ASSIGNED_FROM -> CALL <<Symbol('myKey')>>
 // CALL <<Symbol('myKey')>> -> PASSES_ARGUMENT -> LITERAL <<'myKey'>>
-// VARIABLE <<obj>> -> ASSIGNED_FROM -> EXPRESSION <<{ [sym]: 'symbol value' }>>
-// EXPRESSION <<{ [sym]: 'symbol value' }>> -> HAS_PROPERTY -> PROPERTY <<[sym]>>
+// VARIABLE <<obj>> -> ASSIGNED_FROM -> LITERAL <<{...}>>
+// LITERAL <<{...}>> -> HAS_PROPERTY -> PROPERTY <<[sym]>>
 // PROPERTY <<[sym]>> -> READS_FROM -> VARIABLE <<sym>>
 // PROPERTY <<[sym]>> -> ASSIGNED_FROM -> LITERAL <<'symbol value'>>
 // FUNCTION <<symbolKey>> -> RETURNS -> PROPERTY_ACCESS <<obj[sym]>>
@@ -727,9 +727,9 @@ function optionalChainingDelete(obj) {
 // EXPRESSION <<callCount++>> -> MODIFIES -> VARIABLE <<callCount>>
 // EXPRESSION <<callCount++>> -> READS_FROM -> VARIABLE <<callCount>>
 // FUNCTION <<getterInDestructuring>> -> CONTAINS -> VARIABLE <<value>>
-// VARIABLE <<value>> -> ASSIGNED_FROM -> EXPRESSION <<{ value }>>
-// EXPRESSION <<{ value }>> -> READS_FROM -> VARIABLE <<sneaky>>
-// EXPRESSION <<{ value }>> -> INVOKES -> GETTER <<sneaky.value>>
+// VARIABLE <<value>> -> ASSIGNED_FROM -> LITERAL <<{...}>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<sneaky>>
+// LITERAL <<{...}>> -> INVOKES -> GETTER <<sneaky.value>>
 // FUNCTION <<getterInDestructuring>> -> CONTAINS -> VARIABLE <<copy>>
 // VARIABLE <<copy>> -> ASSIGNED_FROM -> EXPRESSION <<copy:obj>>
 // EXPRESSION <<copy:obj>> -> CONTAINS -> EXPRESSION <<...sneaky>>
@@ -768,10 +768,10 @@ function getterInDestructuring() {
 // PROPERTY_ACCESS <<obj[key]>> -> READS_FROM -> VARIABLE <<key>>
 // PROPERTY_ACCESS <<obj[key]>> -> CALLS -> GETTER <<obj.secret>>
 // VARIABLE <<extracted>> -> ASSIGNED_FROM -> PROPERTY_ACCESS <<obj[key]>>
-// EXPRESSION <<return-object>> -> HAS_PROPERTY -> VARIABLE <<extracted>>
-// EXPRESSION <<return-object>> -> HAS_PROPERTY -> VARIABLE <<fired>>
-// EXPRESSION <<return-expression>> -> RETURNS -> EXPRESSION <<return-object>>
-// FUNCTION <<getterComputedDestructuring>> -> RETURNS -> EXPRESSION <<return-expression>>
+// LITERAL <<{...}_1>> -> HAS_PROPERTY -> VARIABLE <<extracted>>
+// LITERAL <<{...}_1>> -> HAS_PROPERTY -> VARIABLE <<fired>>
+// LITERAL <<{...}_2>> -> RETURNS -> LITERAL <<{...}_1>>
+// FUNCTION <<getterComputedDestructuring>> -> RETURNS -> LITERAL <<{...}_2>>
 // @end-annotation
 function getterComputedDestructuring() {
   let fired = false;
@@ -794,10 +794,10 @@ function getterComputedDestructuring() {
 // CALL <<new Error('trap!')>> -> PASSES_ARGUMENT -> LITERAL <<'trap!'>>
 // PROPERTY <<safe:property>> -> ASSIGNED_FROM -> LITERAL <<1>>
 // FUNCTION <<getterThrowsInDestructuring>> -> CONTAINS -> TRY_BLOCK <<try-block>>
-// TRY_BLOCK <<try-block>> -> HAS_BODY -> EXPRESSION <<{ boom } = dangerous>>
-// EXPRESSION <<{ boom } = dangerous>> -> DECLARES -> VARIABLE <<boom>>
-// EXPRESSION <<{ boom } = dangerous>> -> READS_FROM -> VARIABLE <<dangerous>>
-// EXPRESSION <<{ boom } = dangerous>> -> INVOKES -> GETTER <<boom:getter>>
+// TRY_BLOCK <<try-block>> -> HAS_BODY -> LITERAL <<{...}>>
+// LITERAL <<{...}>> -> DECLARES -> VARIABLE <<boom>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<dangerous>>
+// LITERAL <<{...}>> -> INVOKES -> GETTER <<boom:getter>>
 // TRY_BLOCK <<try-block>> -> HAS_CATCH -> CATCH_BLOCK <<catch-block>>
 // CATCH_BLOCK <<catch-block>> -> CONTAINS -> PARAMETER <<e>>
 // FUNCTION <<getterThrowsInDestructuring>> -> RETURNS -> PROPERTY_ACCESS <<e.message>>

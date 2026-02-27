@@ -161,9 +161,9 @@ function transferOwnership(worker) {
 // VARIABLE <<localPath>> -> ASSIGNED_FROM -> CALL <<import.meta.resolve('./utils.js')>>
 // CALL <<import.meta.resolve('./utils.js')>> -> CALLS -> META_PROPERTY <<import.meta.resolve2>>
 // CALL <<import.meta.resolve('./utils.js')>> -> PASSES_ARGUMENT -> LITERAL <<'./utils.js'>>
-// FUNCTION <<importMetaExtensions>> -> RETURNS -> EXPRESSION <<{ depPath, localPath }>>
-// EXPRESSION <<{ depPath, localPath }>> -> READS_FROM -> VARIABLE <<depPath>>
-// EXPRESSION <<{ depPath, localPath }>> -> READS_FROM -> VARIABLE <<localPath>>
+// FUNCTION <<importMetaExtensions>> -> RETURNS -> LITERAL <<{...}>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<depPath>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<localPath>>
 // @end-annotation
 function importMetaExtensions() {
   const depPath = import.meta.resolve('lodash');

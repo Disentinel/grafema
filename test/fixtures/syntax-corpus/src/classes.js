@@ -647,8 +647,8 @@ const chainedArray = [3, 1, 4, 1, 5, 9]
 // @annotation
 // CLASS <<ParentProcessor>> -> CONTAINS -> METHOD <<ParentProcessor.transform>>
 // METHOD <<ParentProcessor.transform>> -> HAS_BODY -> PARAMETER <<item>>
-// METHOD <<ParentProcessor.transform>> -> RETURNS -> EXPRESSION <<{ ...item, processed: true }>>
-// EXPRESSION <<{ ...item, processed: true }>> -> READS_FROM -> PARAMETER <<item>>
+// METHOD <<ParentProcessor.transform>> -> RETURNS -> LITERAL <<{...}>>
+// LITERAL <<{...}>> -> READS_FROM -> PARAMETER <<item>>
 // CLASS <<ParentProcessor>> -> CONTAINS -> METHOD <<ParentProcessor.cleanup>>
 // METHOD <<ParentProcessor.cleanup>> -> RETURNS -> LITERAL <<'cleaned'>>
 // CLASS <<ChildProcessor>> -> EXTENDS -> CLASS <<ParentProcessor>>
@@ -809,9 +809,9 @@ class ConfigFromOpts {
 // EXPRESSION <<this.baseUrl + url>> -> READS_FROM -> PROPERTY_ACCESS <<this.baseUrl>>
 // EXPRESSION <<this.baseUrl + url>> -> READS_FROM -> PARAMETER <<url>>
 // PROPERTY_ACCESS <<this.baseUrl>> -> READS_FROM -> PROPERTY <<ServiceWithDefaults.baseUrl>>
-// EXPRESSION <<{ url: this.baseUrl + url, timeout }>> -> HAS_PROPERTY -> EXPRESSION <<this.baseUrl + url>>
-// EXPRESSION <<{ url: this.baseUrl + url, timeout }>> -> HAS_PROPERTY -> PARAMETER <<timeout>>
-// METHOD <<ServiceWithDefaults.fetch>> -> RETURNS -> EXPRESSION <<{ url: this.baseUrl + url, timeout }>>
+// LITERAL <<{...}>> -> HAS_PROPERTY -> EXPRESSION <<this.baseUrl + url>>
+// LITERAL <<{...}>> -> HAS_PROPERTY -> PARAMETER <<timeout>>
+// METHOD <<ServiceWithDefaults.fetch>> -> RETURNS -> LITERAL <<{...}>>
 // @end-annotation
 class ServiceWithDefaults {
   defaultTimeout = 5000;

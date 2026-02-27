@@ -359,8 +359,8 @@ async function manualAsyncIteration(asyncIterable) {
 
 // @construct PENDING async-return-thenable
 // @annotation
-// FUNCTION <<returnsThenable>> -> RETURNS -> EXPRESSION <<thenable-object>>
-// EXPRESSION <<thenable-object>> -> HAS_PROPERTY -> METHOD <<then>>
+// FUNCTION <<returnsThenable>> -> RETURNS -> LITERAL <<{...}>>
+// LITERAL <<{...}>> -> HAS_PROPERTY -> METHOD <<then>>
 // METHOD <<then>> -> HAS_BODY -> PARAMETER <<resolve>>
 // METHOD <<then>> -> HAS_BODY -> CALL <<resolve(42)>>
 // CALL <<resolve(42)>> -> CALLS -> PARAMETER <<resolve>>
@@ -612,9 +612,9 @@ async function forAwaitSyncIterable() {
 // LOOP <<for-await-of>> -> CONTAINS -> VARIABLE <<data>>
 // LOOP <<for-await-of>> -> CONTAINS -> VARIABLE <<priority>>
 // VARIABLE <<priority>> -> DEFAULTS_TO -> LITERAL <<'normal'>>
-// EXPRESSION <<{ ...data, priority }>> -> SPREADS_FROM -> VARIABLE <<data>>
-// EXPRESSION <<{ ...data, priority }>> -> READS_FROM -> VARIABLE <<priority>>
-// EXPRESSION <<yield { ...data, priority }>> -> YIELDS -> EXPRESSION <<{ ...data, priority }>>
+// LITERAL <<{...}>> -> SPREADS_FROM -> VARIABLE <<data>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<priority>>
+// EXPRESSION <<yield { ...data, priority }>> -> YIELDS -> LITERAL <<{...}>>
 // LOOP <<for-await-of>> -> CONTAINS -> EXPRESSION <<yield { ...data, priority }>>
 // @end-annotation
 async function* processStream(source) {
@@ -672,9 +672,9 @@ function* chainedYield() {
 // CALL <<getConfigValue('timeout')>> -> PASSES_ARGUMENT -> LITERAL <<'timeout'>>
 // CALL <<getConfigValue('retries')>> -> CALLS -> FUNCTION <<getConfigValue>>
 // CALL <<getConfigValue('retries')>> -> PASSES_ARGUMENT -> LITERAL <<'retries'>>
-// FUNCTION <<asyncDestructureHandler:fn>> -> RETURNS -> EXPRESSION <<{ timeout, retries }>>
-// EXPRESSION <<{ timeout, retries }>> -> READS_FROM -> PROPERTY <<timeout>>
-// EXPRESSION <<{ timeout, retries }>> -> READS_FROM -> PROPERTY <<retries>>
+// FUNCTION <<asyncDestructureHandler:fn>> -> RETURNS -> LITERAL <<{...}>>
+// LITERAL <<{...}>> -> READS_FROM -> PROPERTY <<timeout>>
+// LITERAL <<{...}>> -> READS_FROM -> PROPERTY <<retries>>
 // CALL <<getConfigValue('timeout')>> -> AWAITS -> PROPERTY <<timeout>>
 // CALL <<getConfigValue('retries')>> -> AWAITS -> PROPERTY <<retries>>
 // @end-annotation

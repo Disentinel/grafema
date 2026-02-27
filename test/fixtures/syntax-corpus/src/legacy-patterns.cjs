@@ -104,9 +104,9 @@ var MyApp2 = (function (ns) {
 // FUNCTION <<getSecret>> -> RETURNS -> VARIABLE <<secret>>
 // FUNCTION <<setSecret>> -> WRITES_TO -> VARIABLE <<secret>>
 // VARIABLE <<secret>> -> ASSIGNED_FROM -> PARAMETER <<s>>
-// FUNCTION <<IIFE>> -> RETURNS -> EXPRESSION <<{ get: getSecret, set: setSecret }>>
-// EXPRESSION <<{ get: getSecret, set: setSecret }>> -> HAS_PROPERTY -> FUNCTION <<getSecret>>
-// EXPRESSION <<{ get: getSecret, set: setSecret }>> -> HAS_PROPERTY -> FUNCTION <<setSecret>>
+// FUNCTION <<IIFE>> -> RETURNS -> LITERAL <<{...}>>
+// LITERAL <<{...}>> -> HAS_PROPERTY -> FUNCTION <<getSecret>>
+// LITERAL <<{...}>> -> HAS_PROPERTY -> FUNCTION <<setSecret>>
 // FUNCTION <<getSecret>> -> CAPTURES -> VARIABLE <<secret>>
 // FUNCTION <<setSecret>> -> CAPTURES -> VARIABLE <<secret>>
 // @end-annotation

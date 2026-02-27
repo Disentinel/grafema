@@ -19,10 +19,10 @@
 // VARIABLE <<second>> -> ASSIGNED_FROM -> CALL <<arr.at(1)>>
 // CALL <<arr.at(1)>> -> READS_FROM -> PARAMETER <<arr>>
 // CALL <<arr.at(1)>> -> PASSES_ARGUMENT -> LITERAL <<1>>
-// FUNCTION <<arrayAt>> -> RETURNS -> EXPRESSION <<{ first, last, second }>>
-// EXPRESSION <<{ first, last, second }>> -> READS_FROM -> VARIABLE <<first>>
-// EXPRESSION <<{ first, last, second }>> -> READS_FROM -> VARIABLE <<last>>
-// EXPRESSION <<{ first, last, second }>> -> READS_FROM -> VARIABLE <<second>>
+// FUNCTION <<arrayAt>> -> RETURNS -> LITERAL <<{...}>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<first>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<last>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<second>>
 // @end-annotation
 function arrayAt(arr) {
   const first = arr.at(0);
@@ -50,9 +50,9 @@ function arrayAt(arr) {
 // FUNCTION <<findLastIndex-callback>> -> RETURNS -> EXPRESSION <<x2 > 3>>
 // EXPRESSION <<x2 > 3>> -> READS_FROM -> PARAMETER <<x2>>
 // EXPRESSION <<x2 > 3>> -> READS_FROM -> LITERAL <<3-2>>
-// FUNCTION <<arrayFindLast>> -> RETURNS -> EXPRESSION <<{ last, lastIdx }>>
-// EXPRESSION <<{ last, lastIdx }>> -> READS_FROM -> VARIABLE <<last>>
-// EXPRESSION <<{ last, lastIdx }>> -> READS_FROM -> VARIABLE <<lastIdx>>
+// FUNCTION <<arrayFindLast>> -> RETURNS -> LITERAL <<{...}>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<last>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<lastIdx>>
 // @end-annotation
 function arrayFindLast(arr) {
   const last = arr.findLast(x => x > 3);
@@ -105,10 +105,10 @@ function mapGroupBy(items) {
 // VARIABLE <<promise>> -> ASSIGNED_FROM -> CALL <<Promise.withResolvers()>>
 // VARIABLE <<resolve>> -> ASSIGNED_FROM -> CALL <<Promise.withResolvers()>>
 // VARIABLE <<reject>> -> ASSIGNED_FROM -> CALL <<Promise.withResolvers()>>
-// FUNCTION <<createDeferred>> -> RETURNS -> EXPRESSION <<return-object>>
-// EXPRESSION <<return-object>> -> READS_FROM -> VARIABLE <<promise>>
-// EXPRESSION <<return-object>> -> READS_FROM -> VARIABLE <<resolve>>
-// EXPRESSION <<return-object>> -> READS_FROM -> VARIABLE <<reject>>
+// FUNCTION <<createDeferred>> -> RETURNS -> LITERAL <<{...}>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<promise>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<resolve>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<reject>>
 // @end-annotation
 function createDeferred() {
   const { promise, resolve, reject } = Promise.withResolvers();
@@ -127,8 +127,8 @@ function createDeferred() {
 // CATCH_BLOCK <<catch-block>> -> CONTAINS -> PARAMETER <<err>>
 // CATCH_BLOCK <<catch-block>> -> THROWS -> CALL <<new Error()>>
 // CALL <<new Error()>> -> PASSES_ARGUMENT -> LITERAL <<'Wrapper failed'>>
-// CALL <<new Error()>> -> PASSES_ARGUMENT -> EXPRESSION <<{ cause: err }>>
-// EXPRESSION <<{ cause: err }>> -> READS_FROM -> PARAMETER <<err>>
+// CALL <<new Error()>> -> PASSES_ARGUMENT -> LITERAL <<{...}>>
+// LITERAL <<{...}>> -> READS_FROM -> PARAMETER <<err>>
 // @end-annotation
 function wrapError(fn) {
   try {
@@ -188,11 +188,11 @@ function deepClone(obj) {
 // FUNCTION <<regexIndices>> -> CONTAINS -> VARIABLE <<indices>>
 // VARIABLE <<indices>> -> ASSIGNED_FROM -> PROPERTY_ACCESS <<match.indices>>
 // PROPERTY_ACCESS <<match.indices>> -> READS_FROM -> VARIABLE <<match>>
-// FUNCTION <<regexIndices>> -> RETURNS -> EXPRESSION <<return-object>>
-// EXPRESSION <<return-object>> -> HAS_PROPERTY -> PROPERTY_ACCESS <<match[0]>>
-// EXPRESSION <<return-object>> -> HAS_PROPERTY -> PROPERTY_ACCESS <<indices[0][0]>>
-// EXPRESSION <<return-object>> -> HAS_PROPERTY -> PROPERTY_ACCESS <<indices[0][1]>>
-// EXPRESSION <<return-object>> -> HAS_PROPERTY -> PROPERTY_ACCESS <<indices.groups>>
+// FUNCTION <<regexIndices>> -> RETURNS -> LITERAL <<{...}>>
+// LITERAL <<{...}>> -> HAS_PROPERTY -> PROPERTY_ACCESS <<match[0]>>
+// LITERAL <<{...}>> -> HAS_PROPERTY -> PROPERTY_ACCESS <<indices[0][0]>>
+// LITERAL <<{...}>> -> HAS_PROPERTY -> PROPERTY_ACCESS <<indices[0][1]>>
+// LITERAL <<{...}>> -> HAS_PROPERTY -> PROPERTY_ACCESS <<indices.groups>>
 // PROPERTY_ACCESS <<match[0]>> -> READS_FROM -> VARIABLE <<match>>
 // PROPERTY_ACCESS <<indices[0][0]>> -> READS_FROM -> VARIABLE <<indices>>
 // PROPERTY_ACCESS <<indices[0][1]>> -> READS_FROM -> VARIABLE <<indices>>
@@ -502,10 +502,10 @@ function usingDeclaration() {
 // @annotation
 // FUNCTION <<usingAwaitDeclaration>> -> CONTAINS -> FUNCTION <<openStream>>
 // FUNCTION <<openStream>> -> CONTAINS -> PARAMETER <<url>>
-// FUNCTION <<openStream>> -> RETURNS -> EXPRESSION <<object-literal>>
-// EXPRESSION <<object-literal>> -> HAS_PROPERTY -> PARAMETER <<url>>
-// EXPRESSION <<object-literal>> -> HAS_PROPERTY -> METHOD <<readAll>>
-// EXPRESSION <<object-literal>> -> HAS_PROPERTY -> METHOD <<Symbol.asyncDispose>>
+// FUNCTION <<openStream>> -> RETURNS -> LITERAL <<{...}>>
+// LITERAL <<{...}>> -> HAS_PROPERTY -> PARAMETER <<url>>
+// LITERAL <<{...}>> -> HAS_PROPERTY -> METHOD <<readAll>>
+// LITERAL <<{...}>> -> HAS_PROPERTY -> METHOD <<Symbol.asyncDispose>>
 // METHOD <<readAll>> -> RETURNS -> LITERAL <<'data'>>
 // METHOD <<Symbol.asyncDispose>> -> CONTAINS -> CALL <<console.log(template)>>
 // EXPRESSION <<template-literal>> -> HAS_ELEMENT -> LITERAL <<'closed '>>
