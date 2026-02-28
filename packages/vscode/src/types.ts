@@ -223,6 +223,24 @@ export type BlastRadiusItem =
   | { kind: 'status'; message: string }
   | { kind: 'loading' };
 
+// === NODES IN FILE PANEL TYPES ===
+
+/**
+ * A single node entry in the NODES IN FILE debug panel.
+ * Flat list (no children) — one item per graph node in the current file.
+ */
+export interface NodeInFileItem {
+  id: string;
+  label: string;
+  description: string;
+  nodeType: string;
+  file?: string;
+  line: number;
+  column: number;
+  endLine?: number;
+  endColumn?: number;
+}
+
 // === ISSUES PANEL TYPES ===
 
 /**

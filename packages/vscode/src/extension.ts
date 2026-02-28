@@ -22,6 +22,7 @@ import { CallersProvider } from './callersProvider';
 import { IssuesProvider } from './issuesProvider';
 import { BlastRadiusProvider } from './blastRadiusProvider';
 import { GrafemaCodeLensProvider } from './codeLensProvider';
+import { NodesInFileProvider } from './nodesInFileProvider';
 
 let clientManager: GrafemaClientManager | null = null;
 let edgesProvider: EdgesProvider | null = null;
@@ -35,6 +36,7 @@ let valueTraceProvider: ValueTraceProvider | null = null;
 let callersProvider: CallersProvider | null = null;
 let issuesProvider: IssuesProvider | null = null;
 let blastRadiusProvider: BlastRadiusProvider | null = null;
+let nodesInFileProvider: NodesInFileProvider | null = null;
 
 /**
  * Extension activation
@@ -119,6 +121,20 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   });
   blastRadiusProvider.setTreeView(blastRadiusView);
 
+  // Register NODES IN FILE panel provider (Pattern B: createTreeView for checkbox support)
+  nodesInFileProvider = new NodesInFileProvider(clientManager);
+  const nodesInFileView = vscode.window.createTreeView('grafemaNodesInFile', {
+    treeDataProvider: nodesInFileProvider,
+  });
+  const nodesInFileCheckboxListener = nodesInFileView.onDidChangeCheckboxState((e) => {
+    for (const [item, state] of e.items) {
+      nodesInFileProvider!.setItemChecked(
+        item.id,
+        state === vscode.TreeItemCheckboxState.Checked
+      );
+    }
+  });
+
   // Register CodeLens provider (JS/TS files only)
   const codeLensProvider = new GrafemaCodeLensProvider(clientManager);
   const codeLensDisposable = vscode.languages.registerCodeLensProvider(
@@ -174,6 +190,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     edgesProvider.setStatusMessage(message);
   }
 
+  // Initial load for already-open file
+  if (vscode.window.activeTextEditor?.document.uri.scheme === 'file') {
+    const absPath = vscode.window.activeTextEditor.document.uri.fsPath;
+    const relPath = workspaceRoot && absPath.startsWith(workspaceRoot)
+      ? absPath.slice(workspaceRoot.length + 1)
+      : absPath;
+    nodesInFileProvider.setFile(relPath);
+  }
+
   // Register all disposables
   context.subscriptions.push(
     statusTreeRegistration,
@@ -182,6 +207,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     callersRegistration,
     issuesView,
     blastRadiusView,
+    nodesInFileView,
+    nodesInFileProvider,
+    nodesInFileCheckboxListener,
     diagnosticCollection,
     codeLensDisposable,
     hoverDisposable,
@@ -511,6 +539,36 @@ function registerCommands(): vscode.Disposable[] {
   updateStatusBar(statusBarItem, clientManager, followCursor);
   statusBarItem.show();
   disposables.push(statusBarItem);
+
+  // Update Nodes in File panel when active editor changes
+  disposables.push(vscode.window.onDidChangeActiveTextEditor(async (editor) => {
+    if (!nodesInFileProvider) return;
+    if (editor?.document.uri.scheme === 'file') {
+      const absPath = editor.document.uri.fsPath;
+      const wsRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      const relPath = wsRoot && absPath.startsWith(wsRoot)
+        ? absPath.slice(wsRoot.length + 1)
+        : absPath;
+      await nodesInFileProvider.setFile(relPath);
+    } else {
+      await nodesInFileProvider.setFile(undefined);
+    }
+  }));
+
+  // Toolbar: Check All nodes in current file
+  disposables.push(vscode.commands.registerCommand('grafema.nodesInFile.checkAll', () => {
+    nodesInFileProvider?.checkAll();
+  }));
+
+  // Toolbar: Uncheck All nodes in current file
+  disposables.push(vscode.commands.registerCommand('grafema.nodesInFile.uncheckAll', () => {
+    nodesInFileProvider?.uncheckAll();
+  }));
+
+  // Toolbar: Refresh nodes for current file
+  disposables.push(vscode.commands.registerCommand('grafema.nodesInFile.refresh', () => {
+    nodesInFileProvider?.refresh();
+  }));
 
   // Follow cursor on selection change
   disposables.push(vscode.window.onDidChangeTextEditorSelection(

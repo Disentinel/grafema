@@ -16,7 +16,8 @@
     "onView:grafemaValueTrace",
     "onView:grafemaCallers",
     "onView:grafemaIssues",
-    "onView:grafemaBlastRadius"
+    "onView:grafemaBlastRadius",
+    "onView:grafemaNodesInFile"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -36,6 +37,7 @@
         { "id": "grafemaCallers", "name": "Callers", "visibility": "collapsed" },
         { "id": "grafemaBlastRadius", "name": "Blast Radius", "visibility": "collapsed" },
         { "id": "grafemaIssues", "name": "Issues", "visibility": "collapsed" },
+        { "id": "grafemaNodesInFile", "name": "Nodes in File", "visibility": "collapsed" },
         { "id": "grafemaExplore", "name": "Explorer", "visibility": "collapsed" },
         { "id": "grafemaDebug", "name": "Debug Log", "visibility": "collapsed" }
       ]
@@ -165,6 +167,21 @@
         "command": "grafema.clearBookmarks",
         "title": "Clear All Bookmarks",
         "icon": "$(clear-all)"
+      },
+      {
+        "command": "grafema.nodesInFile.checkAll",
+        "title": "Check All",
+        "icon": "$(check-all)"
+      },
+      {
+        "command": "grafema.nodesInFile.uncheckAll",
+        "title": "Uncheck All",
+        "icon": "$(close-all)"
+      },
+      {
+        "command": "grafema.nodesInFile.refresh",
+        "title": "Refresh",
+        "icon": "$(refresh)"
       }
     ],
     "menus": {
@@ -253,6 +270,21 @@
           "command": "grafema.refreshBlastRadius",
           "when": "view == grafemaBlastRadius",
           "group": "navigation@0"
+        },
+        {
+          "command": "grafema.nodesInFile.checkAll",
+          "when": "view == grafemaNodesInFile",
+          "group": "navigation@0"
+        },
+        {
+          "command": "grafema.nodesInFile.uncheckAll",
+          "when": "view == grafemaNodesInFile",
+          "group": "navigation@1"
+        },
+        {
+          "command": "grafema.nodesInFile.refresh",
+          "when": "view == grafemaNodesInFile",
+          "group": "navigation@2"
         }
       ],
       "view/item/context": [
