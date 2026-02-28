@@ -13,10 +13,11 @@ import { walkFile, resolveFileRefs, resolveProject, jsRegistry } from '@grafema/
 import type { FileResult, GraphNode, GraphEdge } from '@grafema/core-v2';
 import { loadBuiltinRegistry } from '@grafema/lang-defs';
 import type { LangDefs } from '@grafema/lang-defs';
-import { readFileSync } from 'fs';
+import { readFileSync, existsSync } from 'fs';
+import { join } from 'path';
 import { createRequire } from 'module';
 import { resolveNodeFile } from '../../utils/resolveNodeFile.js';
-import type { PluginContext, PluginResult, PluginMetadata, InputEdge, AnyBrandedNode } from '@grafema/types';
+import type { PluginContext, PluginResult, PluginMetadata, InputEdge, AnyBrandedNode, OrchestratorConfig, ServiceDefinition } from '@grafema/types';
 
 interface AnalysisManifest {
   projectPath: string;
@@ -115,8 +116,11 @@ export class CoreV2Analyzer extends Plugin {
       }
     }
 
+    // Build package map for monorepo cross-package resolution
+    const packageMap = this.buildPackageMap(context, projectPath);
+
     // Stage 3: cross-file resolution
-    const resolved = resolveProject(fileResults, builtins);
+    const resolved = resolveProject(fileResults, builtins, packageMap);
     if (resolved.edges.length > 0) {
       if (graph.beginBatch) graph.beginBatch();
       await graph.addEdges(this.mapEdges(resolved.edges) as InputEdge[]);
@@ -142,6 +146,42 @@ export class CoreV2Analyzer extends Plugin {
     });
 
     return createSuccessResult({ nodes: totalNodes, edges: totalEdges });
+  }
+
+  /**
+   * Build npm-name → entrypoint-file map from config services.
+   * Reads each service's package.json to get the npm package name,
+   * then maps it to the service's entrypoint file path.
+   */
+  private buildPackageMap(
+    context: PluginContext,
+    projectPath: string,
+  ): Record<string, string> | undefined {
+    const config = context.config as OrchestratorConfig | undefined;
+    const services = config?.services as ServiceDefinition[] | undefined;
+    if (!services || services.length === 0) return undefined;
+
+    const map: Record<string, string> = {};
+
+    for (const svc of services) {
+      if (!svc.path) continue;
+
+      const pkgJsonPath = join(projectPath, svc.path, 'package.json');
+      if (!existsSync(pkgJsonPath)) continue;
+
+      try {
+        const pkgJson = JSON.parse(readFileSync(pkgJsonPath, 'utf-8'));
+        const npmName = pkgJson.name as string | undefined;
+        if (!npmName) continue;
+
+        const entryPoint = svc.entryPoint ?? 'src/index.ts';
+        map[npmName] = `${svc.path}/${entryPoint}`;
+      } catch {
+        // Skip services with unreadable package.json
+      }
+    }
+
+    return Object.keys(map).length > 0 ? map : undefined;
   }
 
   /** Flatten metadata into top-level props and filter out MODULE nodes. */

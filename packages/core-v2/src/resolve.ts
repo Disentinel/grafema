@@ -197,12 +197,69 @@ export class ProjectIndex {
 // ─── Module Resolution ───────────────────────────────────────────────
 
 /**
+ * Resolve a bare package specifier to a file within the project.
+ *
+ * Handles:
+ *   - Exact: `@grafema/types` → looks up entrypoint in packageMap
+ *   - Subpath: `@grafema/types/edges` → strip package prefix, resolve relative to package src dir
+ */
+function resolvePackageImport(
+  source: string,
+  knownFiles: Set<string>,
+  packageMap: Record<string, string>,
+): string | null {
+  // Exact match: '@grafema/types' → 'packages/types/src/index.ts'
+  const exact = packageMap[source];
+  if (exact && knownFiles.has(exact)) return exact;
+
+  // Subpath: find longest matching package prefix
+  let bestPrefix = '';
+  let bestEntry = '';
+  for (const [pkg, entry] of Object.entries(packageMap)) {
+    if (source.startsWith(pkg + '/') && pkg.length > bestPrefix.length) {
+      bestPrefix = pkg;
+      bestEntry = entry;
+    }
+  }
+
+  if (!bestPrefix) return null;
+
+  // Strip package prefix, resolve relative to package's src directory
+  const subpath = source.slice(bestPrefix.length + 1); // e.g. 'edges' from '@grafema/types/edges'
+  const pkgDir = bestEntry.replace(/\/[^/]+$/, ''); // e.g. 'packages/types/src'
+  const resolved = `${pkgDir}/${subpath}`;
+
+  // Try exact
+  if (knownFiles.has(resolved)) return resolved;
+
+  // Try extensions
+  for (const ext of ['.js', '.ts', '.tsx', '.jsx', '.mjs', '.cjs']) {
+    if (knownFiles.has(resolved + ext)) return resolved + ext;
+  }
+
+  // Try index files
+  for (const ext of ['/index.js', '/index.ts', '/index.tsx']) {
+    if (knownFiles.has(resolved + ext)) return resolved + ext;
+  }
+
+  return null;
+}
+
+/**
  * Resolve a module specifier to a file path.
  * Simple: strip relative prefix, try common extensions.
  */
-function resolveModulePath(source: string, fromFile: string, knownFiles: Set<string>): string | null {
+function resolveModulePath(
+  source: string,
+  fromFile: string,
+  knownFiles: Set<string>,
+  packageMap?: Record<string, string>,
+): string | null {
   if (!source.startsWith('.')) {
-    // External module — not resolvable within project
+    if (packageMap) {
+      const resolved = resolvePackageImport(source, knownFiles, packageMap);
+      if (resolved) return resolved;
+    }
     return null;
   }
 
@@ -278,6 +335,7 @@ export interface ResolveResult {
 export function resolveProject(
   results: FileResult[],
   builtins?: BuiltinRegistry,
+  packageMap?: Record<string, string>,
 ): ResolveResult {
   const index = new ProjectIndex(results);
   const knownFiles = new Set(results.map(r => r.file));
@@ -310,7 +368,7 @@ export function resolveProject(
     for (const ref of result.unresolvedRefs) {
       switch (ref.kind) {
         case 'import_resolve': {
-          const resolved = resolveImport(ref, index, knownFiles);
+          const resolved = resolveImport(ref, index, knownFiles, packageMap);
           if (resolved.length > 0) {
             edges.push(...resolved);
             stats.importResolved++;
@@ -389,7 +447,7 @@ export function resolveProject(
 
   // Phase 2: Re-export chain resolution for remaining import_resolve refs
   for (const ref of unresolvedImports) {
-    const resolved = resolveImportViaReExportChain(ref, index, knownFiles);
+    const resolved = resolveImportViaReExportChain(ref, index, knownFiles, packageMap);
     if (resolved.length > 0) {
       edges.push(...resolved);
       stats.reExportResolved++;
@@ -428,10 +486,11 @@ function resolveImport(
   ref: DeferredRef,
   index: ProjectIndex,
   knownFiles: Set<string>,
+  packageMap?: Record<string, string>,
 ): GraphEdge[] {
   if (!ref.source) return [];
 
-  const targetFile = resolveModulePath(ref.source, ref.file, knownFiles);
+  const targetFile = resolveModulePath(ref.source, ref.file, knownFiles, packageMap);
   if (!targetFile) {
     // External module — link to EXTERNAL node created by walker
     const externalId = `${ref.file}->EXTERNAL->${ref.source}#0`;
@@ -650,13 +709,14 @@ function resolveImportViaReExportChain(
   ref: DeferredRef,
   index: ProjectIndex,
   knownFiles: Set<string>,
+  packageMap?: Record<string, string>,
 ): GraphEdge[] {
   if (!ref.source || ref.name === '*') return [];
 
-  const targetFile = resolveModulePath(ref.source, ref.file, knownFiles);
+  const targetFile = resolveModulePath(ref.source, ref.file, knownFiles, packageMap);
   if (!targetFile) return [];
 
-  const resolved = followReExportChain(ref.name, targetFile, index, knownFiles);
+  const resolved = followReExportChain(ref.name, targetFile, index, knownFiles, packageMap);
   if (!resolved) return [];
 
   const edges: GraphEdge[] = [
@@ -679,6 +739,7 @@ function followReExportChain(
   startFile: string,
   index: ProjectIndex,
   knownFiles: Set<string>,
+  packageMap?: Record<string, string>,
 ): GraphNode | null {
   const visited = new Set<string>();
   const queue: string[] = [startFile];
@@ -691,7 +752,7 @@ function followReExportChain(
     // Named re-export: export { X } from './sub'
     for (const ref of index.getImportResolveRefs(currentFile, name)) {
       if (!ref.source) continue;
-      const nextFile = resolveModulePath(ref.source, currentFile, knownFiles);
+      const nextFile = resolveModulePath(ref.source, currentFile, knownFiles, packageMap);
       if (!nextFile) continue;
       const exported = index.findExport(nextFile, name);
       if (exported) return exported;
@@ -701,7 +762,7 @@ function followReExportChain(
     // Star re-export: export * from './sub'
     for (const ref of index.getImportResolveRefs(currentFile, '*')) {
       if (!ref.source) continue;
-      const nextFile = resolveModulePath(ref.source, currentFile, knownFiles);
+      const nextFile = resolveModulePath(ref.source, currentFile, knownFiles, packageMap);
       if (!nextFile) continue;
       const exported = index.findExport(nextFile, name);
       if (exported) return exported;
