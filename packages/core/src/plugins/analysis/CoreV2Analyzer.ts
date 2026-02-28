@@ -11,7 +11,10 @@
 import { Plugin, createSuccessResult } from '../Plugin.js';
 import { walkFile, resolveFileRefs, resolveProject, jsRegistry } from '@grafema/core-v2';
 import type { FileResult, GraphNode, GraphEdge } from '@grafema/core-v2';
+import { loadBuiltinRegistry } from '@grafema/lang-defs';
+import type { LangDefs } from '@grafema/lang-defs';
 import { readFileSync } from 'fs';
+import { createRequire } from 'module';
 import { resolveNodeFile } from '../../utils/resolveNodeFile.js';
 import type { PluginContext, PluginResult, PluginMetadata, InputEdge, AnyBrandedNode } from '@grafema/types';
 
@@ -65,6 +68,11 @@ export class CoreV2Analyzer extends Plugin {
     const projectPath = manifest?.projectPath ?? '';
     const deferIndex = context.deferIndexing ?? false;
 
+    // Load builtin type definitions for method resolution
+    const require = createRequire(import.meta.url);
+    const esDefs = require('@grafema/lang-defs/defs/ecmascript/es2022.json') as LangDefs;
+    const builtins = loadBuiltinRegistry([esDefs]);
+
     const modules = await this.getModules(graph);
     logger.info('CoreV2Analyzer starting', { modules: modules.length });
 
@@ -108,7 +116,7 @@ export class CoreV2Analyzer extends Plugin {
     }
 
     // Stage 3: cross-file resolution
-    const resolved = resolveProject(fileResults);
+    const resolved = resolveProject(fileResults, builtins);
     if (resolved.edges.length > 0) {
       if (graph.beginBatch) graph.beginBatch();
       await graph.addEdges(this.mapEdges(resolved.edges) as InputEdge[]);

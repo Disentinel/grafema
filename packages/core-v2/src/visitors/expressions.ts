@@ -192,7 +192,8 @@ export function visitCallExpression(
       line,
       column,
     });
-  } else if (call.callee.type === 'MemberExpression' && call.callee.property.type === 'Identifier') {
+  } else if ((call.callee.type === 'MemberExpression' || call.callee.type === 'OptionalMemberExpression')
+    && call.callee.property.type === 'Identifier') {
     const methodName = call.callee.property.name;
 
     // obj.method() → CALLS_ON
@@ -209,6 +210,7 @@ export function visitCallExpression(
         column,
       });
     } else {
+      const classStack = (ctx as unknown as { _classStack?: string[] })._classStack;
       result.deferred.push({
         kind: 'call_resolve',
         name: methodName,
@@ -217,6 +219,8 @@ export function visitCallExpression(
         file: ctx.file,
         line,
         column,
+        receiver: (call.callee.object.type === 'ThisExpression' || call.callee.object.type === 'Super')
+          && classStack?.length ? classStack[classStack.length - 1] : undefined,
       });
     }
 
@@ -276,7 +280,7 @@ export function visitCallExpression(
 
     // arr.push(x), arr.unshift(x), etc. → FLOWS_INTO from call to arr
     const MUTATION_METHODS = new Set(['push', 'unshift', 'splice', 'fill', 'copyWithin', 'set', 'add']);
-    if (MUTATION_METHODS.has(methodName) && call.callee.type === 'MemberExpression'
+    if (MUTATION_METHODS.has(methodName) && (call.callee.type === 'MemberExpression' || call.callee.type === 'OptionalMemberExpression')
         && call.callee.object.type === 'Identifier') {
       result.deferred.push({
         kind: 'scope_lookup',
@@ -292,7 +296,7 @@ export function visitCallExpression(
 
     // fn.call(ctx, ...) / fn.apply(ctx, ...) → INVOKES
     if ((methodName === 'call' || methodName === 'apply')
-        && call.callee.type === 'MemberExpression'
+        && (call.callee.type === 'MemberExpression' || call.callee.type === 'OptionalMemberExpression')
         && call.callee.object.type === 'Identifier') {
       result.deferred.push({
         kind: 'scope_lookup',
@@ -948,6 +952,10 @@ export function visitIdentifier(
   if (pt === 'ClassProperty' && (parent as ClassProperty).key === node) return EMPTY_RESULT;
   if (pt === 'MemberExpression' && (parent as MemberExpression).property === node
       && !(parent as MemberExpression).computed) return EMPTY_RESULT;
+  if (pt === 'OptionalMemberExpression') {
+    const ome = parent as unknown as { property: Node; computed: boolean };
+    if (ome.property === node && !ome.computed) return EMPTY_RESULT;
+  }
 
   // Import/export specifiers — handled by their own visitors
   if (pt === 'ImportSpecifier' || pt === 'ImportDefaultSpecifier' || pt === 'ImportNamespaceSpecifier') return EMPTY_RESULT;
@@ -963,6 +971,7 @@ export function visitIdentifier(
   if (pt === 'TSInterfaceDeclaration' || pt === 'TSTypeAliasDeclaration' || pt === 'TSEnumDeclaration' || pt === 'TSModuleDeclaration') return EMPTY_RESULT;
   if (pt === 'TSEnumMember') return EMPTY_RESULT;
   if (pt === 'TSTypeReference') return EMPTY_RESULT;  // handled by TSTypeReference visitor
+  if (pt === 'TSQualifiedName') return EMPTY_RESULT;   // handled by TSTypeReference visitor
   if (pt === 'TSTypeParameter') return EMPTY_RESULT;
 
   // CatchClause param
@@ -970,6 +979,7 @@ export function visitIdentifier(
 
   // CallExpression callee — handled by CallExpression visitor
   if (pt === 'CallExpression' && (parent as CallExpression).callee === node) return EMPTY_RESULT;
+  if (pt === 'OptionalCallExpression' && (parent as unknown as { callee: Node }).callee === node) return EMPTY_RESULT;
   if (pt === 'NewExpression' && (parent as NewExpression).callee === node) return EMPTY_RESULT;
   // Decorator expression — CALLS deferred created by visitDecorator
   if (pt === 'Decorator') return EMPTY_RESULT;

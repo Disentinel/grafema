@@ -192,6 +192,20 @@ function typeToName(t: Node): string {
   }
 }
 
+/** Reconstruct a dotted name from TSQualifiedName: `a.b.c` */
+function qualifiedNameToString(node: TSQualifiedName): string {
+  const left = node.left.type === 'Identifier'
+    ? node.left.name
+    : qualifiedNameToString(node.left as TSQualifiedName);
+  return `${left}.${node.right.name}`;
+}
+
+/** Extract the leftmost identifier from TSQualifiedName for scope lookup */
+function qualifiedNameLeftmost(node: TSQualifiedName): string {
+  if (node.left.type === 'Identifier') return node.left.name;
+  return qualifiedNameLeftmost(node.left as TSQualifiedName);
+}
+
 // ─── Declarations that produce graph nodes ───────────────────────────
 
 export function visitTSInterfaceDeclaration(
@@ -364,10 +378,34 @@ export function visitTSTypeReference(
   node: Node, _parent: Node | null, ctx: WalkContext,
 ): VisitResult {
   const ref = node as TSTypeReference;
-  const name = ref.typeName.type === 'Identifier'
-    ? ref.typeName.name
-    : '<qualified>';
   const line = node.loc?.start.line ?? 0;
+  const column = node.loc?.start.column ?? 0;
+
+  // Extract name: simple identifier or dotted qualified name
+  let name: string;
+  let lookupName: string; // leftmost identifier for scope/type resolution
+  if (ref.typeName.type === 'Identifier') {
+    name = ref.typeName.name;
+    lookupName = name;
+  } else {
+    name = qualifiedNameToString(ref.typeName as TSQualifiedName);
+    lookupName = qualifiedNameLeftmost(ref.typeName as TSQualifiedName);
+  }
+
+  // `as const` assertion — Babel parses as TSTypeReference(Identifier('const'))
+  if (name === 'const') {
+    const nodeId = ctx.nodeId('TYPE_REFERENCE', 'const', line);
+    return {
+      nodes: [{
+        id: nodeId, type: 'TYPE_REFERENCE', name: 'const',
+        file: ctx.file, line, column,
+        metadata: { isConstAssertion: true },
+      }],
+      edges: [],
+      deferred: [],
+    };
+  }
+
   const nodeId = ctx.nodeId('TYPE_REFERENCE', name, line);
   return {
     nodes: [{
@@ -376,29 +414,29 @@ export function visitTSTypeReference(
       name,
       file: ctx.file,
       line,
-      column: node.loc?.start.column ?? 0,
+      column,
     }],
     edges: [],
     deferred: [
       {
         kind: 'type_resolve',
-        name,
+        name: lookupName,
         fromNodeId: nodeId,
         edgeType: 'HAS_TYPE',
         file: ctx.file,
         line,
-        column: node.loc?.start.column ?? 0,
+        column,
       },
       // RESOLVES_TO: try file-scope resolution first, falls back to project stage
       {
         kind: 'scope_lookup',
-        name,
+        name: lookupName,
         fromNodeId: nodeId,
         edgeType: 'RESOLVES_TO',
         scopeId: ctx.currentScope.id,
         file: ctx.file,
         line,
-        column: node.loc?.start.column ?? 0,
+        column,
       },
     ],
   };
@@ -980,7 +1018,9 @@ export function visitTSTypeQuery(
   const q = node as TSTypeQuery;
   const name = q.exprName.type === 'Identifier'
     ? q.exprName.name
-    : '<qualified>';
+    : q.exprName.type === 'TSQualifiedName'
+      ? qualifiedNameToString(q.exprName as TSQualifiedName)
+      : '?';
   const line = node.loc?.start.line ?? 0;
   return {
     nodes: [{

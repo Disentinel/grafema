@@ -15,6 +15,7 @@
  *   alias_resolve   → ALIASES, RESOLVES_TO, DERIVES_FROM, MERGES_WITH, OVERRIDES
  */
 import type { FileResult, GraphEdge, GraphNode, DeferredRef } from './types.js';
+import type { BuiltinRegistry } from '@grafema/lang-defs';
 
 // ─── Stage 2.5: File-level name resolution ──────────────────────────
 
@@ -96,6 +97,8 @@ export class ProjectIndex {
   private modules = new Map<string, GraphNode>();
   /** all nodes by ID for O(1) lookup */
   private byId = new Map<string, GraphNode>();
+  /** file → name → DeferredRef[] for re-export chain resolution */
+  private importResolveByFile = new Map<string, Map<string, DeferredRef[]>>();
 
   constructor(results: FileResult[]) {
     for (const result of results) {
@@ -145,6 +148,20 @@ export class ProjectIndex {
           }
         }
       }
+
+      // Index import_resolve refs for re-export chain resolution
+      for (const ref of result.unresolvedRefs) {
+        if (ref.kind === 'import_resolve' && ref.source) {
+          let fileRefs = this.importResolveByFile.get(result.file);
+          if (!fileRefs) {
+            fileRefs = new Map();
+            this.importResolveByFile.set(result.file, fileRefs);
+          }
+          const existing = fileRefs.get(ref.name);
+          if (existing) existing.push(ref);
+          else fileRefs.set(ref.name, [ref]);
+        }
+      }
     }
   }
 
@@ -168,6 +185,10 @@ export class ProjectIndex {
     return this.byId.get(id);
   }
 
+  getImportResolveRefs(file: string, name: string): DeferredRef[] {
+    return this.importResolveByFile.get(file)?.get(name) || [];
+  }
+
   get nodeCount(): number {
     return this.byId.size;
   }
@@ -187,12 +208,17 @@ function resolveModulePath(source: string, fromFile: string, knownFiles: Set<str
 
   // Resolve relative path
   const fromDir = fromFile.replace(/\/[^/]+$/, '');
-  let resolved = normalizePath(`${fromDir}/${source}`);
+  const resolved = normalizePath(`${fromDir}/${source}`);
 
   // Try exact match
   if (knownFiles.has(resolved)) return resolved;
 
-  // Try extensions
+  // TypeScript convention: import from './foo.js' but actual file is foo.ts
+  // Strip .js/.jsx/.mjs/.cjs and try .ts/.tsx equivalents
+  const tsRemapped = remapTsExtension(resolved);
+  if (tsRemapped && knownFiles.has(tsRemapped)) return tsRemapped;
+
+  // Try appending extensions (for extensionless imports)
   for (const ext of ['.js', '.ts', '.tsx', '.jsx', '.mjs', '.cjs']) {
     if (knownFiles.has(resolved + ext)) return resolved + ext;
   }
@@ -202,6 +228,15 @@ function resolveModulePath(source: string, fromFile: string, knownFiles: Set<str
     if (knownFiles.has(resolved + ext)) return resolved + ext;
   }
 
+  return null;
+}
+
+/** Remap TS-style .js imports to actual .ts files. */
+function remapTsExtension(path: string): string | null {
+  if (path.endsWith('.js')) return path.slice(0, -3) + '.ts';
+  if (path.endsWith('.jsx')) return path.slice(0, -4) + '.tsx';
+  if (path.endsWith('.mjs')) return path.slice(0, -4) + '.mts';
+  if (path.endsWith('.cjs')) return path.slice(0, -4) + '.cts';
   return null;
 }
 
@@ -216,6 +251,12 @@ function normalizePath(path: string): string {
 
 // ─── Resolvers ───────────────────────────────────────────────────────
 
+export class AmbiguousBuiltinError extends Error {
+  constructor(public method: string, public types: string[]) {
+    super(`Ambiguous builtin: ${method} exists on ${types.join(', ')}`);
+  }
+}
+
 export interface ResolveResult {
   edges: GraphEdge[];
   unresolved: DeferredRef[];
@@ -225,47 +266,91 @@ export interface ResolveResult {
     typeResolved: number;
     aliasResolved: number;
     unresolved: number;
+    ambiguousBuiltin: number;
+    builtinInferred: number;
+    derivesFrom: number;
+    instanceOf: number;
+    importsToModule: number;
+    reExportResolved: number;
   };
 }
 
-export function resolveProject(results: FileResult[]): ResolveResult {
+export function resolveProject(
+  results: FileResult[],
+  builtins?: BuiltinRegistry,
+): ResolveResult {
   const index = new ProjectIndex(results);
   const knownFiles = new Set(results.map(r => r.file));
 
   const edges: GraphEdge[] = [];
   const unresolved: DeferredRef[] = [];
+  const unresolvedImports: DeferredRef[] = [];
   const stats = {
     importResolved: 0,
     callResolved: 0,
     typeResolved: 0,
     aliasResolved: 0,
     unresolved: 0,
+    ambiguousBuiltin: 0,
+    builtinInferred: 0,
+    derivesFrom: 0,
+    instanceOf: 0,
+    importsToModule: 0,
+    reExportResolved: 0,
   };
 
-  // Collect all project-stage deferred refs
+  // Collect all per-file edges for receiver type inference
+  const fileEdges: GraphEdge[] = [];
+  for (const result of results) {
+    fileEdges.push(...result.edges);
+  }
+
+  // Phase 1: Resolve deferred refs (single-hop)
   for (const result of results) {
     for (const ref of result.unresolvedRefs) {
       switch (ref.kind) {
         case 'import_resolve': {
           const resolved = resolveImport(ref, index, knownFiles);
-          if (resolved) {
-            edges.push(resolved);
+          if (resolved.length > 0) {
+            edges.push(...resolved);
             stats.importResolved++;
+            for (const e of resolved) {
+              if (e.type === 'IMPORTS') stats.importsToModule++;
+            }
           } else {
-            unresolved.push(ref);
-            stats.unresolved++;
+            unresolvedImports.push(ref);
           }
           break;
         }
 
         case 'call_resolve': {
-          const resolved = resolveCall(ref, index);
-          if (resolved) {
-            edges.push(resolved);
-            stats.callResolved++;
-          } else {
-            unresolved.push(ref);
-            stats.unresolved++;
+          try {
+            const resolved = resolveCall(ref, index, builtins);
+            if (resolved) {
+              edges.push(resolved);
+              stats.callResolved++;
+            } else {
+              unresolved.push(ref);
+              stats.unresolved++;
+            }
+          } catch (e) {
+            if (e instanceof AmbiguousBuiltinError) {
+              const inferred = inferReceiverType(ref, index, fileEdges, e.types);
+              if (inferred) {
+                const targetId = `EXTERNAL#${inferred}`;
+                if (index.getNode(targetId)) {
+                  edges.push({ src: ref.fromNodeId, dst: targetId, type: ref.edgeType });
+                  stats.callResolved++;
+                  stats.builtinInferred++;
+                } else {
+                  unresolved.push(ref);
+                  stats.ambiguousBuiltin++;
+                }
+              } else {
+                unresolved.push(ref);
+                stats.ambiguousBuiltin++;
+              }
+            } else throw e;
           }
           break;
         }
@@ -302,6 +387,32 @@ export function resolveProject(results: FileResult[]): ResolveResult {
     }
   }
 
+  // Phase 2: Re-export chain resolution for remaining import_resolve refs
+  for (const ref of unresolvedImports) {
+    const resolved = resolveImportViaReExportChain(ref, index, knownFiles);
+    if (resolved.length > 0) {
+      edges.push(...resolved);
+      stats.reExportResolved++;
+      for (const e of resolved) {
+        if (e.type === 'IMPORTS') stats.importsToModule++;
+      }
+    } else {
+      unresolved.push(ref);
+      stats.unresolved++;
+    }
+  }
+
+  // Phase 3: Derived edges
+  const allEdges = collectAllEdges(results, edges);
+
+  const derivesFromEdges = deriveTransitiveExtends(allEdges);
+  edges.push(...derivesFromEdges);
+  stats.derivesFrom = derivesFromEdges.length;
+
+  const instanceOfEdges = deriveInstanceOf(results, allEdges, index);
+  edges.push(...instanceOfEdges);
+  stats.instanceOf = instanceOfEdges.length;
+
   return { edges, unresolved, stats };
 }
 
@@ -311,34 +422,105 @@ function resolveImport(
   ref: DeferredRef,
   index: ProjectIndex,
   knownFiles: Set<string>,
-): GraphEdge | null {
-  if (!ref.source) return null;
+): GraphEdge[] {
+  if (!ref.source) return [];
 
   const targetFile = resolveModulePath(ref.source, ref.file, knownFiles);
-  if (!targetFile) return null;  // External module
+  if (!targetFile) {
+    // External module — link to EXTERNAL node created by walker
+    const externalId = `${ref.file}->EXTERNAL->${ref.source}#0`;
+    const externalNode = index.getNode(externalId);
+    if (externalNode) {
+      return [{ src: ref.fromNodeId, dst: externalId, type: ref.edgeType }];
+    }
+    return [];
+  }
+
+  const moduleNode = index.getModule(targetFile);
 
   if (ref.name === '*') {
     // import * — link to module
-    const moduleNode = index.getModule(targetFile);
     if (moduleNode) {
-      return { src: ref.fromNodeId, dst: moduleNode.id, type: ref.edgeType };
+      return [{ src: ref.fromNodeId, dst: moduleNode.id, type: ref.edgeType }];
     }
-    return null;
+    return [];
   }
 
   if (ref.name === 'default') {
     // import default — find default export
     const exported = index.findExport(targetFile, 'default');
     if (exported) {
-      return { src: ref.fromNodeId, dst: exported.id, type: ref.edgeType };
+      const edges: GraphEdge[] = [
+        { src: ref.fromNodeId, dst: exported.id, type: ref.edgeType },
+      ];
+      if (moduleNode) {
+        edges.push({ src: ref.fromNodeId, dst: moduleNode.id, type: 'IMPORTS' });
+      }
+      return edges;
     }
-    return null;
+    return [];
   }
 
   // Named import
   const exported = index.findExport(targetFile, ref.name);
   if (exported) {
-    return { src: ref.fromNodeId, dst: exported.id, type: ref.edgeType };
+    const edges: GraphEdge[] = [
+      { src: ref.fromNodeId, dst: exported.id, type: ref.edgeType },
+    ];
+    if (moduleNode) {
+      edges.push({ src: ref.fromNodeId, dst: moduleNode.id, type: 'IMPORTS' });
+    }
+    return edges;
+  }
+
+  return [];
+}
+
+// ─── Receiver Type Inference ─────────────────────────────────────────
+
+function inferReceiverType(
+  ref: DeferredRef,
+  index: ProjectIndex,
+  allFileEdges: GraphEdge[],
+  ambiguousTypes: string[],
+): string | null {
+  // Strategy 1: this/super → check enclosing class EXTENDS edges
+  if (ref.receiver) {
+    const classNode = index.getNode(ref.receiver);
+    if (classNode) {
+      for (const edge of allFileEdges) {
+        if (edge.src === classNode.id && edge.type === 'EXTENDS') {
+          const parent = index.getNode(edge.dst);
+          if (parent && ambiguousTypes.includes(parent.name)) {
+            return parent.name;
+          }
+        }
+      }
+    }
+  }
+
+  // Strategy 2: CHAINS_FROM → infer from previous method's type
+  const callNode = index.getNode(ref.fromNodeId);
+  if (callNode) {
+    for (const edge of allFileEdges) {
+      if (edge.src === callNode.id && edge.type === 'CHAINS_FROM') {
+        const prevCall = index.getNode(edge.dst);
+        if (prevCall?.metadata?.method) {
+          const builtins = index.findByTypeName('EXTERNAL', prevCall.metadata.method as string);
+          if (builtins.length === 0) {
+            // Look up in the builtin registry via the CALLS_ON edges from prevCall
+            for (const callEdge of allFileEdges) {
+              if (callEdge.src === prevCall.id && callEdge.type === 'CALLS_ON') {
+                const target = index.getNode(callEdge.dst);
+                if (target?.type === 'EXTERNAL' && ambiguousTypes.includes(target.name)) {
+                  return target.name;
+                }
+              }
+            }
+          }
+        }
+      }
+    }
   }
 
   return null;
@@ -346,7 +528,11 @@ function resolveImport(
 
 // ─── Call Resolver ───────────────────────────────────────────────────
 
-function resolveCall(ref: DeferredRef, index: ProjectIndex): GraphEdge | null {
+function resolveCall(
+  ref: DeferredRef,
+  index: ProjectIndex,
+  builtins?: BuiltinRegistry,
+): GraphEdge | null {
   // Find FUNCTION or METHOD with matching name
   const functions = index.findByTypeName('FUNCTION', ref.name);
   if (functions.length === 1) {
@@ -373,6 +559,20 @@ function resolveCall(ref: DeferredRef, index: ProjectIndex): GraphEdge | null {
   const classes = index.findByTypeName('CLASS', ref.name);
   if (classes.length >= 1) {
     return { src: ref.fromNodeId, dst: classes[0].id, type: ref.edgeType };
+  }
+
+  // Builtin fallback: resolve method calls to EXTERNAL#Type nodes
+  if (builtins) {
+    const types = builtins.resolveMethod(ref.name);
+    if (types.length === 1) {
+      const targetId = `EXTERNAL#${types[0]}`;
+      if (index.getNode(targetId)) {
+        return { src: ref.fromNodeId, dst: targetId, type: ref.edgeType };
+      }
+    }
+    if (types.length > 1) {
+      throw new AmbiguousBuiltinError(ref.name, types);
+    }
   }
 
   return null;
@@ -405,6 +605,19 @@ function resolveType(ref: DeferredRef, index: ProjectIndex): GraphEdge | null {
     return { src: ref.fromNodeId, dst: enums[0].id, type: ref.edgeType };
   }
 
+  // Fallback: follow import chain to EXTERNAL node
+  // For external types like `NodePath` from '@babel/traverse',
+  // find the IMPORT node → derive EXTERNAL node from its source metadata
+  const imports = index.findByTypeName('IMPORT', ref.name);
+  const imp = imports.find(n => n.file === ref.file) || imports[0];
+  if (imp && imp.metadata?.source) {
+    const externalId = `${imp.file}->EXTERNAL->${imp.metadata.source}#0`;
+    const externalNode = index.getNode(externalId);
+    if (externalNode) {
+      return { src: ref.fromNodeId, dst: externalId, type: ref.edgeType };
+    }
+  }
+
   return null;
 }
 
@@ -419,4 +632,162 @@ function resolveAlias(ref: DeferredRef, index: ProjectIndex): GraphEdge | null {
     return { src: ref.fromNodeId, dst: (sameFile || nodes[0]).id, type: ref.edgeType };
   }
   return null;
+}
+
+// ─── Re-export Chain Resolver ────────────────────────────────────────
+
+/**
+ * Resolve an import by following re-export chains in barrel files.
+ * Handles both `export { X } from './sub'` and `export * from './sub'`.
+ */
+function resolveImportViaReExportChain(
+  ref: DeferredRef,
+  index: ProjectIndex,
+  knownFiles: Set<string>,
+): GraphEdge[] {
+  if (!ref.source || ref.name === '*') return [];
+
+  const targetFile = resolveModulePath(ref.source, ref.file, knownFiles);
+  if (!targetFile) return [];
+
+  const resolved = followReExportChain(ref.name, targetFile, index, knownFiles);
+  if (!resolved) return [];
+
+  const edges: GraphEdge[] = [
+    { src: ref.fromNodeId, dst: resolved.id, type: ref.edgeType },
+  ];
+  const moduleNode = index.getModule(targetFile);
+  if (moduleNode) {
+    edges.push({ src: ref.fromNodeId, dst: moduleNode.id, type: 'IMPORTS' });
+  }
+  return edges;
+}
+
+/**
+ * BFS through re-export chains to find the actual exported node.
+ * Follows both named re-exports (`export { X } from`) and
+ * star re-exports (`export * from`), up to a bounded depth.
+ */
+function followReExportChain(
+  name: string,
+  startFile: string,
+  index: ProjectIndex,
+  knownFiles: Set<string>,
+): GraphNode | null {
+  const visited = new Set<string>();
+  const queue: string[] = [startFile];
+
+  for (let i = 0; i < queue.length && i < 20; i++) {
+    const currentFile = queue[i];
+    if (visited.has(currentFile)) continue;
+    visited.add(currentFile);
+
+    // Named re-export: export { X } from './sub'
+    for (const ref of index.getImportResolveRefs(currentFile, name)) {
+      if (!ref.source) continue;
+      const nextFile = resolveModulePath(ref.source, currentFile, knownFiles);
+      if (!nextFile) continue;
+      const exported = index.findExport(nextFile, name);
+      if (exported) return exported;
+      queue.push(nextFile);
+    }
+
+    // Star re-export: export * from './sub'
+    for (const ref of index.getImportResolveRefs(currentFile, '*')) {
+      if (!ref.source) continue;
+      const nextFile = resolveModulePath(ref.source, currentFile, knownFiles);
+      if (!nextFile) continue;
+      const exported = index.findExport(nextFile, name);
+      if (exported) return exported;
+      queue.push(nextFile);
+    }
+  }
+
+  return null;
+}
+
+// ─── Derived Edges ───────────────────────────────────────────────────
+
+/** Collect all edges: per-file edges + newly resolved project-stage edges. */
+function collectAllEdges(results: FileResult[], resolvedEdges: GraphEdge[]): GraphEdge[] {
+  const all: GraphEdge[] = [...resolvedEdges];
+  for (const result of results) {
+    all.push(...result.edges);
+  }
+  return all;
+}
+
+/**
+ * DERIVES_FROM: transitive closure of EXTENDS.
+ * A extends B extends C → A -DERIVES_FROM-> B, A -DERIVES_FROM-> C.
+ */
+function deriveTransitiveExtends(allEdges: GraphEdge[]): GraphEdge[] {
+  // Build parent map from EXTENDS edges
+  const parentMap = new Map<string, string[]>();
+  for (const edge of allEdges) {
+    if (edge.type === 'EXTENDS') {
+      const parents = parentMap.get(edge.src);
+      if (parents) parents.push(edge.dst);
+      else parentMap.set(edge.src, [edge.dst]);
+    }
+  }
+
+  const derived: GraphEdge[] = [];
+
+  for (const [childId] of parentMap) {
+    const visited = new Set<string>();
+    const queue = [...(parentMap.get(childId) || [])];
+
+    for (let i = 0; i < queue.length; i++) {
+      const ancestorId = queue[i];
+      if (visited.has(ancestorId)) continue;
+      visited.add(ancestorId);
+
+      derived.push({ src: childId, dst: ancestorId, type: 'DERIVES_FROM' });
+
+      const grandparents = parentMap.get(ancestorId);
+      if (grandparents) {
+        for (const gp of grandparents) {
+          if (!visited.has(gp)) queue.push(gp);
+        }
+      }
+    }
+  }
+
+  return derived;
+}
+
+/**
+ * INSTANCE_OF: link CALL nodes with isNew metadata to the CLASS they instantiate.
+ * Looks at resolved CALLS edges from new-expression CALL nodes to CLASS nodes.
+ */
+function deriveInstanceOf(
+  results: FileResult[],
+  allEdges: GraphEdge[],
+  index: ProjectIndex,
+): GraphEdge[] {
+  // Collect all CALL node IDs with isNew metadata
+  const newCallIds = new Set<string>();
+  for (const result of results) {
+    for (const node of result.nodes) {
+      if (node.type === 'CALL' && node.metadata?.isNew) {
+        newCallIds.add(node.id);
+      }
+    }
+  }
+
+  const derived: GraphEdge[] = [];
+  const seen = new Set<string>(); // dedup: one INSTANCE_OF per call
+
+  for (const edge of allEdges) {
+    if (edge.type === 'CALLS' && newCallIds.has(edge.src) && !seen.has(edge.src)) {
+      const dst = index.getNode(edge.dst);
+      if (dst && dst.type === 'CLASS') {
+        derived.push({ src: edge.src, dst: edge.dst, type: 'INSTANCE_OF' });
+        seen.add(edge.src);
+      }
+    }
+  }
+
+  return derived;
 }

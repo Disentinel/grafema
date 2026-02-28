@@ -115,6 +115,9 @@ importers:
       '@grafema/core-v2':
         specifier: workspace:*
         version: link:../core-v2
+      '@grafema/lang-defs':
+        specifier: workspace:*
+        version: link:../lang-defs
       '@grafema/rfdb-client':
         specifier: workspace:*
         version: link:../rfdb
@@ -162,6 +165,9 @@ importers:
       '@babel/types':
         specifier: ^7.26.3
         version: 7.28.6
+      '@grafema/lang-defs':
+        specifier: workspace:*
+        version: link:../lang-defs
       '@grafema/types':
         specifier: workspace:*
         version: link:../types
@@ -169,6 +175,12 @@ importers:
       '@types/node':
         specifier: ^25.0.8
         version: 25.0.9
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+
+  packages/lang-defs:
+    devDependencies:
       typescript:
         specifier: ^5.9.3
         version: 5.9.3

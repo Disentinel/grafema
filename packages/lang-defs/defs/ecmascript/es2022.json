@@ -1,0 +1,208 @@
+{
+  "language": "ecmascript",
+  "version": "ES2022",
+  "types": {
+    "Array": {
+      "kind": "class",
+      "prototype": [
+        "push", "pop", "shift", "unshift", "splice",
+        "map", "filter", "find", "findIndex", "some", "every",
+        "reduce", "reduceRight", "forEach",
+        "sort", "reverse", "concat", "slice",
+        "indexOf", "lastIndexOf", "includes",
+        "join", "flat", "flatMap", "fill", "copyWithin",
+        "at", "entries", "keys", "values"
+      ],
+      "static": [
+        "from", "isArray", "of"
+      ]
+    },
+    "String": {
+      "kind": "class",
+      "prototype": [
+        "split", "trim", "trimStart", "trimEnd",
+        "replace", "replaceAll", "match", "matchAll", "search",
+        "padStart", "padEnd",
+        "toUpperCase", "toLowerCase", "toLocaleLowerCase", "toLocaleUpperCase",
+        "startsWith", "endsWith",
+        "charAt", "charCodeAt", "codePointAt",
+        "substring", "repeat", "concat", "slice",
+        "indexOf", "lastIndexOf", "includes",
+        "at", "normalize",
+        "localeCompare"
+      ],
+      "static": [
+        "fromCharCode", "fromCodePoint", "raw"
+      ]
+    },
+    "Number": {
+      "kind": "class",
+      "prototype": [
+        "toFixed", "toPrecision", "toExponential"
+      ],
+      "static": [
+        "isFinite", "isInteger", "isNaN", "isSafeInteger",
+        "parseFloat", "parseInt"
+      ]
+    },
+    "Boolean": {
+      "kind": "class",
+      "prototype": []
+    },
+    "Function": {
+      "kind": "class",
+      "prototype": [
+        "bind", "call", "apply"
+      ]
+    },
+    "RegExp": {
+      "kind": "class",
+      "prototype": [
+        "test", "exec"
+      ]
+    },
+    "Promise": {
+      "kind": "class",
+      "prototype": [
+        "then", "catch", "finally"
+      ],
+      "static": [
+        "all", "allSettled", "any", "race", "resolve", "reject"
+      ]
+    },
+    "Map": {
+      "kind": "class",
+      "prototype": [
+        "get", "set", "has", "delete", "clear",
+        "forEach", "entries", "keys", "values"
+      ]
+    },
+    "Set": {
+      "kind": "class",
+      "prototype": [
+        "add", "has", "delete", "clear",
+        "forEach", "entries", "keys", "values"
+      ]
+    },
+    "WeakMap": {
+      "kind": "class",
+      "prototype": [
+        "get", "set", "has", "delete"
+      ]
+    },
+    "WeakSet": {
+      "kind": "class",
+      "prototype": [
+        "add", "has", "delete"
+      ]
+    },
+    "Date": {
+      "kind": "class",
+      "prototype": [
+        "getTime", "getFullYear", "getMonth", "getDate", "getDay",
+        "getHours", "getMinutes", "getSeconds", "getMilliseconds",
+        "getTimezoneOffset",
+        "getUTCFullYear", "getUTCMonth", "getUTCDate", "getUTCDay",
+        "getUTCHours", "getUTCMinutes", "getUTCSeconds", "getUTCMilliseconds",
+        "setTime", "setFullYear", "setMonth", "setDate",
+        "setHours", "setMinutes", "setSeconds", "setMilliseconds",
+        "setUTCFullYear", "setUTCMonth", "setUTCDate",
+        "setUTCHours", "setUTCMinutes", "setUTCSeconds", "setUTCMilliseconds",
+        "toISOString", "toJSON", "toDateString", "toTimeString",
+        "toLocaleDateString", "toLocaleTimeString",
+        "toUTCString"
+      ],
+      "static": [
+        "now", "parse", "UTC"
+      ]
+    },
+    "Object": {
+      "kind": "class",
+      "prototype": [
+        "toString", "valueOf", "hasOwnProperty",
+        "isPrototypeOf", "propertyIsEnumerable",
+        "toLocaleString"
+      ],
+      "static": [
+        "assign", "create", "defineProperty", "defineProperties",
+        "entries", "freeze", "fromEntries",
+        "getOwnPropertyDescriptor", "getOwnPropertyDescriptors",
+        "getOwnPropertyNames", "getOwnPropertySymbols",
+        "getPrototypeOf", "setPrototypeOf",
+        "hasOwn", "is", "isExtensible", "isFrozen", "isSealed",
+        "keys", "values", "preventExtensions", "seal"
+      ]
+    },
+    "Error": {
+      "kind": "class",
+      "prototype": []
+    },
+    "ArrayBuffer": {
+      "kind": "class",
+      "prototype": [
+        "slice"
+      ],
+      "static": [
+        "isView"
+      ]
+    },
+    "DataView": {
+      "kind": "class",
+      "prototype": [
+        "getInt8", "getUint8", "getInt16", "getUint16",
+        "getInt32", "getUint32", "getFloat32", "getFloat64",
+        "getBigInt64", "getBigUint64",
+        "setInt8", "setUint8", "setInt16", "setUint16",
+        "setInt32", "setUint32", "setFloat32", "setFloat64",
+        "setBigInt64", "setBigUint64"
+      ]
+    },
+    "JSON": {
+      "kind": "namespace",
+      "static": [
+        "parse", "stringify"
+      ]
+    },
+    "Math": {
+      "kind": "namespace",
+      "static": [
+        "abs", "ceil", "floor", "round", "trunc",
+        "max", "min", "pow", "sqrt", "cbrt",
+        "log", "log2", "log10",
+        "sin", "cos", "tan", "asin", "acos", "atan", "atan2",
+        "random", "sign", "hypot", "clz32", "imul", "fround"
+      ]
+    },
+    "console": {
+      "kind": "namespace",
+      "static": [
+        "log", "warn", "error", "info", "debug",
+        "dir", "table", "trace", "assert",
+        "group", "groupCollapsed", "groupEnd",
+        "time", "timeEnd", "timeLog",
+        "count", "countReset", "clear"
+      ]
+    },
+    "Symbol": {
+      "kind": "class",
+      "prototype": [
+        "description"
+      ],
+      "static": [
+        "for", "keyFor"
+      ]
+    },
+    "WeakRef": {
+      "kind": "class",
+      "prototype": [
+        "deref"
+      ]
+    },
+    "FinalizationRegistry": {
+      "kind": "class",
+      "prototype": [
+        "register", "unregister"
+      ]
+    }
+  }
+}
