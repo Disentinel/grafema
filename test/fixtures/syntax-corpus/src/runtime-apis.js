@@ -161,9 +161,9 @@ function transferOwnership(worker) {
 // VARIABLE <<localPath>> -> ASSIGNED_FROM -> CALL <<import.meta.resolve('./utils.js')>>
 // CALL <<import.meta.resolve('./utils.js')>> -> CALLS -> META_PROPERTY <<import.meta.resolve2>>
 // CALL <<import.meta.resolve('./utils.js')>> -> PASSES_ARGUMENT -> LITERAL <<'./utils.js'>>
-// FUNCTION <<importMetaExtensions>> -> RETURNS -> EXPRESSION <<{ depPath, localPath }>>
-// EXPRESSION <<{ depPath, localPath }>> -> READS_FROM -> VARIABLE <<depPath>>
-// EXPRESSION <<{ depPath, localPath }>> -> READS_FROM -> VARIABLE <<localPath>>
+// FUNCTION <<importMetaExtensions>> -> RETURNS -> LITERAL <<{...}>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<depPath>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<localPath>>
 // @end-annotation
 function importMetaExtensions() {
   const depPath = import.meta.resolve('lodash');
@@ -192,12 +192,12 @@ function importMetaExtensions() {
 // FUNCTION <<window.error>> -> RECEIVES_ARGUMENT -> PARAMETER <<event2>>
 // @end-annotation
 // Node.js:
-// process.on('unhandledRejection', (reason, promise) => { ... });
-// process.on('uncaughtException', (error) => { process.exit(1); });
-//
+process.on('unhandledRejection', (reason, promise) => { });
+process.on('uncaughtException', (error) => { process.exit(1); });
+
 // Browser:
-// window.addEventListener('unhandledrejection', (event) => { ... });
-// window.addEventListener('error', (event) => { ... });
+window.addEventListener('unhandledrejection', (event1) => { });
+window.addEventListener('error', (event2) => { });
 
 // --- ES2025+ API Methods (Plugin: es-builtins) ---
 

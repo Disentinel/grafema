@@ -9,7 +9,7 @@ import { Worker } from 'worker_threads';
 import { EventEmitter } from 'events';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
-import type { ASTCollections } from './ASTWorker.js';
+import type { ASTCollections } from '../plugins/analysis/ast/types.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);

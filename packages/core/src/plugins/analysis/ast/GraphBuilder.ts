@@ -44,6 +44,7 @@ import {
   YieldBuilder,
   TypeSystemBuilder,
   ModuleRuntimeBuilder,
+  MiscEdgeBuilder,
 } from './builders/index.js';
 
 export class GraphBuilder {
@@ -77,6 +78,7 @@ export class GraphBuilder {
   private readonly _yieldBuilder: YieldBuilder;
   private readonly _typeSystemBuilder: TypeSystemBuilder;
   private readonly _moduleRuntimeBuilder: ModuleRuntimeBuilder;
+  private readonly _miscEdgeBuilder: MiscEdgeBuilder;
 
   constructor() {
     const ctx = this._createContext();
@@ -91,6 +93,7 @@ export class GraphBuilder {
     this._yieldBuilder = new YieldBuilder(ctx);
     this._typeSystemBuilder = new TypeSystemBuilder(ctx);
     this._moduleRuntimeBuilder = new ModuleRuntimeBuilder(ctx);
+    this._miscEdgeBuilder = new MiscEdgeBuilder(ctx);
   }
 
   private _createContext(): BuilderContext {
@@ -370,6 +373,7 @@ export class GraphBuilder {
     this._yieldBuilder.buffer(module, data);
     this._typeSystemBuilder.buffer(module, data);
     this._moduleRuntimeBuilder.buffer(module, data);
+    this._miscEdgeBuilder.buffer(module, data);
 
     // FLUSH: Write pending function nodes (after domain builders mutated metadata)
     const functionsCount = await this._flushPendingFunctions(graph);

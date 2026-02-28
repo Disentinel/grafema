@@ -1,19 +1,14 @@
 /**
  * JSASTAnalyzer - плагин для парсинга JavaScript AST
  * Создаёт ноды: FUNCTION, CLASS, METHOD и т.д.
+ *
+ * REG-579: File-level extraction logic moved to extractModuleCollections().
+ * Both sequential (analyzeModule) and parallel (ASTWorker) paths now share
+ * the same extraction function, ensuring identical output.
  */
 
 import { readFileSync } from 'fs';
 import { createHash } from 'crypto';
-import { parse } from '@babel/parser';
-import traverseModule from '@babel/traverse';
-import type { NodePath, TraverseOptions, Visitor } from '@babel/traverse';
-import * as t from '@babel/types';
-
-// Type for CJS/ESM interop - @babel/traverse exports a function but @types defines it as namespace
-type TraverseFn = (ast: t.Node, opts: TraverseOptions) => void;
-const rawModule = traverseModule as unknown as TraverseFn | { default: TraverseFn };
-const traverse: TraverseFn = typeof rawModule === 'function' ? rawModule : rawModule.default;
 
 // Type guard for analysis result
 interface AnalysisResult {
@@ -31,65 +26,17 @@ function isAnalysisResult(value: unknown): value is AnalysisResult {
 
 import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 import { GraphBuilder, GraphDataError } from './ast/GraphBuilder.js';
-import {
-  ImportExportVisitor,
-  VariableVisitor,
-  FunctionVisitor,
-  ClassVisitor,
-  CallExpressionVisitor,
-  TypeScriptVisitor,
-  PropertyAccessVisitor,
-  type VisitorModule,
-  type VisitorCollections,
-  type TrackVariableAssignmentCallback
-} from './ast/visitors/index.js';
 import { Task } from '../../core/Task.js';
 import { PriorityQueue } from '../../core/PriorityQueue.js';
 import { WorkerPool } from '../../core/WorkerPool.js';
 import { ASTWorkerPool, type ModuleInfo as ASTModuleInfo, type ParseResult } from '../../core/ASTWorkerPool.js';
-import { getLine, getColumn } from './ast/utils/location.js';
 import { Profiler } from '../../core/Profiler.js';
-import { ScopeTracker } from '../../core/ScopeTracker.js';
-import { IdGenerator } from './ast/IdGenerator.js';
-import { CollisionResolver } from './ast/CollisionResolver.js';
 import { resolveNodeFile } from '../../utils/resolveNodeFile.js';
+import { extractModuleCollections } from './ast/extractModuleCollections.js';
 import type { PluginContext, PluginResult, PluginMetadata, GraphBackend, NodeRecord } from '@grafema/types';
 import type {
   ModuleNode,
-  FunctionInfo,
-  ASTCollections,
 } from './ast/types.js';
-import { extractNamesFromPattern } from './ast/utils/extractNamesFromPattern.js';
-import {
-  collectUpdateExpression as collectUpdateExpressionFn,
-} from './ast/mutation-detection/index.js';
-import {
-  trackVariableAssignment as trackVariableAssignmentFn,
-} from './ast/extractors/index.js';
-import { extractReturnExpressionInfo as extractReturnExpressionInfoFn } from './ast/extractors/ReturnExpressionExtractor.js';
-import { createModuleLevelAssignmentVisitor } from './ast/extractors/ModuleLevelAssignmentExtractor.js';
-import { createModuleLevelNewExpressionVisitor } from './ast/extractors/ModuleLevelNewExpressionExtractor.js';
-import { createModuleLevelCallbackVisitor } from './ast/extractors/ModuleLevelCallbackExtractor.js';
-import { createModuleLevelIfStatementVisitor } from './ast/extractors/ModuleLevelIfStatementExtractor.js';
-import { collectCatchesFromInfo as collectCatchesFromInfoFn } from './ast/utils/CatchesFromCollector.js';
-import { createCollections } from './ast/utils/createCollections.js';
-import { toASTCollections } from './ast/utils/toASTCollections.js';
-import { createFunctionBodyContext } from './ast/FunctionBodyContext.js';
-import type { FunctionBodyContext } from './ast/FunctionBodyContext.js';
-import {
-  VariableHandler,
-  ReturnYieldHandler,
-  ThrowHandler,
-  NestedFunctionHandler,
-  PropertyAccessHandler,
-  NewExpressionHandler,
-  CallExpressionHandler,
-  LoopHandler,
-  TryCatchHandler,
-  BranchHandler,
-} from './ast/handlers/index.js';
-import type { AnalyzerDelegate } from './ast/handlers/index.js';
-import type { FunctionBodyHandler } from './ast/handlers/index.js';
 
 // === LOCAL TYPES ===
 
@@ -368,7 +315,8 @@ export class JSASTAnalyzer extends Plugin {
    * Execute parallel analysis using ASTWorkerPool (worker_threads).
    *
    * This method uses actual OS threads for true parallel CPU-intensive parsing.
-   * Workers generate semantic IDs using ScopeTracker, matching sequential behavior.
+   * Workers use the same extractModuleCollections() as the sequential path,
+   * ensuring identical output.
    *
    * @param modules - Modules to analyze
    * @param graph - Graph backend for writing results
@@ -419,14 +367,12 @@ export class JSASTAnalyzer extends Plugin {
           const module = modules.find(m => m.id === result.module.id);
           if (!module) continue;
 
-          // Pass collections directly to GraphBuilder - IDs already semantic
-          // Cast is safe because ASTWorker.ASTCollections is structurally compatible
-          // with ast/types.ASTCollections (METHOD extends FUNCTION semantically)
+          // REG-579: Both paths now use the same ASTCollections type — no cast needed
           const buildResult = await this.graphBuilder.build(
             module,
             graph,
             projectPath,
-            result.collections as unknown as ASTCollections
+            result.collections
           );
 
           if (typeof buildResult === 'object' && buildResult !== null) {
@@ -471,238 +417,26 @@ export class JSASTAnalyzer extends Plugin {
   }
 
   /**
-   * Анализировать один модуль
+   * Анализировать один модуль.
+   *
+   * REG-579: Delegates to extractModuleCollections() for AST extraction,
+   * then passes the result to GraphBuilder for graph creation.
    */
   async analyzeModule(module: ModuleNode, graph: GraphBackend, projectPath: string): Promise<{ nodes: number; edges: number }> {
     let nodesCreated = 0;
     let edgesCreated = 0;
 
     try {
-      this.profiler.start('file_read');
-      const code = readFileSync(resolveNodeFile(module.file, projectPath), 'utf-8');
-      this.profiler.end('file_read');
-
-      this.profiler.start('babel_parse');
-      const ast = parse(code, {
-        sourceType: 'module',
-        plugins: ['jsx', 'typescript', 'decorators-legacy']
-      });
-      this.profiler.end('babel_parse');
-
-      // Create ScopeTracker for semantic ID generation
-      // Use module.file (relative path from workspace root) for consistent file references
-      const scopeTracker = new ScopeTracker(module.file);
-
-      // REG-464: Shared IdGenerator for v2 collision resolution across visitors
-      const sharedIdGenerator = new IdGenerator(scopeTracker);
-
-      // Initialize all collection arrays and counter refs
-      const allCollections = createCollections(module, scopeTracker, code);
-
-      // Imports/Exports
-      this.profiler.start('traverse_imports');
-      const importExportVisitor = new ImportExportVisitor(
-        module,
-        { imports: allCollections.imports, exports: allCollections.exports },
-        extractNamesFromPattern
+      const collections = extractModuleCollections(
+        resolveNodeFile(module.file, projectPath),
+        module.file,
+        module.id,
+        module.name,
       );
-      traverse(ast, importExportVisitor.getImportHandlers());
-      traverse(ast, importExportVisitor.getExportHandlers());
-      this.profiler.end('traverse_imports');
 
-      // Variables
-      this.profiler.start('traverse_variables');
-      const variableVisitor = new VariableVisitor(
-        module,
-        {
-          variableDeclarations: allCollections.variableDeclarations,
-          classInstantiations: allCollections.classInstantiations,
-          literals: allCollections.literals,
-          variableAssignments: allCollections.variableAssignments,
-          varDeclCounterRef: allCollections.varDeclCounterRef,
-          literalCounterRef: allCollections.literalCounterRef,
-          scopes: allCollections.scopes,
-          scopeCounterRef: allCollections.scopeCounterRef,
-          objectLiterals: allCollections.objectLiterals,
-          objectProperties: allCollections.objectProperties,
-          objectLiteralCounterRef: allCollections.objectLiteralCounterRef,
-          arrayLiterals: allCollections.arrayLiterals,
-          arrayLiteralCounterRef: allCollections.arrayLiteralCounterRef,
-        },
-        extractNamesFromPattern,
-        trackVariableAssignmentFn as TrackVariableAssignmentCallback,
-        scopeTracker  // Pass ScopeTracker for semantic ID generation
-      );
-      traverse(ast, variableVisitor.getHandlers());
-      this.profiler.end('traverse_variables');
-
-      // Functions
-      this.profiler.start('traverse_functions');
-      const functionVisitor = new FunctionVisitor(
-        module,
-        allCollections,
-        this.analyzeFunctionBody.bind(this),
-        scopeTracker  // Pass ScopeTracker for semantic ID generation
-      );
-      traverse(ast, functionVisitor.getHandlers());
-      this.profiler.end('traverse_functions');
-
-      // AssignmentExpression (module-level function assignments)
-      this.profiler.start('traverse_assignments');
-      traverse(ast, createModuleLevelAssignmentVisitor({
-        module,
-        scopeTracker,
-        functions: allCollections.functions,
-        scopes: allCollections.scopes,
-        allCollections,
-        arrayMutations: allCollections.arrayMutations,
-        objectMutations: allCollections.objectMutations,
-        analyzeFunctionBody: this.analyzeFunctionBody.bind(this),
-      }));
-      this.profiler.end('traverse_assignments');
-
-      // Module-level UpdateExpression (obj.count++, arr[i]++, i++) - REG-288/REG-312
-      this.profiler.start('traverse_updates');
-      traverse(ast, {
-        UpdateExpression: (updatePath: NodePath<t.UpdateExpression>) => {
-          // Skip if inside a function - analyzeFunctionBody handles those
-          const functionParent = updatePath.getFunctionParent();
-          if (functionParent) return;
-
-          // Module-level update expression: no parentScopeId
-          collectUpdateExpressionFn(updatePath.node, module, allCollections.updateExpressions, undefined, scopeTracker);
-        }
-      });
-      this.profiler.end('traverse_updates');
-
-      // Classes
-      this.profiler.start('traverse_classes');
-      const classVisitor = new ClassVisitor(
-        module,
-        allCollections,
-        this.analyzeFunctionBody.bind(this),
-        scopeTracker,  // Pass ScopeTracker for semantic ID generation
-        trackVariableAssignmentFn as TrackVariableAssignmentCallback  // REG-570
-      );
-      traverse(ast, classVisitor.getHandlers());
-      this.profiler.end('traverse_classes');
-
-      // TypeScript-specific constructs (interfaces, type aliases, enums)
-      this.profiler.start('traverse_typescript');
-      const typescriptVisitor = new TypeScriptVisitor(module, allCollections, scopeTracker);
-      traverse(ast, typescriptVisitor.getHandlers());
-      this.profiler.end('traverse_typescript');
-
-      // Module-level callbacks
-      this.profiler.start('traverse_callbacks');
-      traverse(ast, createModuleLevelCallbackVisitor({
-        module,
-        scopeTracker,
-        functions: allCollections.functions,
-        scopes: allCollections.scopes,
-        allCollections,
-        analyzeFunctionBody: this.analyzeFunctionBody.bind(this),
-      }));
-      this.profiler.end('traverse_callbacks');
-
-      // Call expressions
-      this.profiler.start('traverse_calls');
-      const callExpressionVisitor = new CallExpressionVisitor(module, allCollections, scopeTracker, sharedIdGenerator);
-      traverse(ast, callExpressionVisitor.getHandlers());
-      this.profiler.end('traverse_calls');
-
-      // REG-297: Detect top-level await expressions
-      this.profiler.start('traverse_top_level_await');
-      let hasTopLevelAwait = false;
-      traverse(ast, {
-        AwaitExpression(awaitPath: NodePath<t.AwaitExpression>) {
-          if (!awaitPath.getFunctionParent()) {
-            hasTopLevelAwait = true;
-            awaitPath.stop();
-          }
-        },
-        // for-await-of uses ForOfStatement.await, not AwaitExpression
-        ForOfStatement(forOfPath: NodePath<t.ForOfStatement>) {
-          if (forOfPath.node.await && !forOfPath.getFunctionParent()) {
-            hasTopLevelAwait = true;
-            forOfPath.stop();
-          }
-        }
-      });
-      this.profiler.end('traverse_top_level_await');
-
-      // Property access expressions (REG-395)
-      this.profiler.start('traverse_property_access');
-      const propertyAccessVisitor = new PropertyAccessVisitor(module, allCollections, scopeTracker);
-      traverse(ast, propertyAccessVisitor.getHandlers());
-      this.profiler.end('traverse_property_access');
-
-      // Module-level NewExpression (constructor calls)
-      // This handles top-level code like `const x = new Date()` that's not inside a function
-      this.profiler.start('traverse_new');
-      traverse(ast, createModuleLevelNewExpressionVisitor({
-        module,
-        scopeTracker,
-        constructorCalls: allCollections.constructorCalls,
-        callArguments: allCollections.callArguments,
-        literals: allCollections.literals,
-        literalCounterRef: allCollections.literalCounterRef,
-        allCollections: allCollections as unknown as Record<string, unknown>,
-        promiseExecutorContexts: allCollections.promiseExecutorContexts,
-      }));
-      this.profiler.end('traverse_new');
-
-      // Module-level IfStatements
-      this.profiler.start('traverse_ifs');
-      traverse(ast, createModuleLevelIfStatementVisitor({
-        module,
-        scopeTracker,
-        scopes: allCollections.scopes,
-        ifScopeCounterRef: allCollections.ifScopeCounterRef,
-        code,
-      }));
-      this.profiler.end('traverse_ifs');
-
-      // REG-464: Resolve v2 ID collisions after all visitors complete
-      const pendingNodes = sharedIdGenerator.getPendingNodes();
-      if (pendingNodes.length > 0) {
-        // Capture pre-resolution IDs to update callArguments afterward
-        const preResolutionIds = new Map<{ id: string }, string>();
-        for (const pn of pendingNodes) {
-          preResolutionIds.set(pn.collectionRef, pn.collectionRef.id);
-        }
-
-        const collisionResolver = new CollisionResolver();
-        collisionResolver.resolve(pendingNodes);
-
-        // Update callArgument.callId references that became stale after resolution
-        const idRemapping = new Map<string, string>();
-        for (const pn of pendingNodes) {
-          const oldId = preResolutionIds.get(pn.collectionRef)!;
-          if (oldId !== pn.collectionRef.id) {
-            idRemapping.set(oldId, pn.collectionRef.id);
-          }
-        }
-        if (idRemapping.size > 0) {
-          const callArgs = allCollections.callArguments as Array<{ callId: string }> | undefined;
-          if (callArgs) {
-            for (const arg of callArgs) {
-              const resolved = idRemapping.get(arg.callId);
-              if (resolved) {
-                arg.callId = resolved;
-              }
-            }
-          }
-        }
-      }
-
-      // Build graph
-      this.profiler.start('graph_build');
       const result = await this.graphBuilder.build(
-        module, graph, projectPath,
-        toASTCollections(allCollections, hasTopLevelAwait)
+        module, graph, projectPath, collections
       );
-      this.profiler.end('graph_build');
 
       nodesCreated = result.nodes;
       edgesCreated = result.edges;
@@ -713,143 +447,6 @@ export class JSASTAnalyzer extends Plugin {
     }
 
     return { nodes: nodesCreated, edges: edgesCreated };
-  }
-
-  /**
-   * Анализирует тело функции и извлекает переменные, вызовы, условные блоки.
-   * Uses ScopeTracker from collections for semantic ID generation.
-   *
-   * REG-422: Delegates traversal to extracted handler classes.
-   * Local state is encapsulated in FunctionBodyContext; each handler
-   * contributes a Visitor fragment that is merged into a single traversal.
-   */
-  analyzeFunctionBody(
-    funcPath: NodePath<t.Function | t.StaticBlock>,
-    parentScopeId: string,
-    module: VisitorModule,
-    collections: VisitorCollections
-  ): void {
-    // 1. Create context (replaces ~260 lines of local var declarations)
-    const ctx = createFunctionBodyContext(
-      funcPath, parentScopeId, module, collections,
-      (collections.functions ?? []) as FunctionInfo[],
-      extractNamesFromPattern
-    );
-
-    // 2. Handle implicit return for THIS arrow function if it has an expression body
-    // e.g., `const double = x => x * 2;`
-    if (t.isArrowFunctionExpression(ctx.funcNode) && !t.isBlockStatement(ctx.funcNode.body) && ctx.currentFunctionId) {
-      const bodyExpr = ctx.funcNode.body;
-      const exprInfo = extractReturnExpressionInfoFn(
-        bodyExpr, module, ctx.literals, ctx.literalCounterRef, ctx.funcLine, ctx.funcColumn, 'implicit_return'
-      );
-      ctx.returnStatements.push({
-        parentFunctionId: ctx.currentFunctionId,
-        file: module.file,
-        line: getLine(bodyExpr),
-        column: getColumn(bodyExpr),
-        returnValueType: 'NONE',
-        isImplicitReturn: true,
-        ...exprInfo,
-      });
-    }
-
-    // 3. Create handlers and merge their visitors into a single traversal
-    // Cast to AnalyzerDelegate — the interface declares the same methods that exist
-    // on this class as private. The cast is safe because the shape matches exactly.
-    const delegate = this as unknown as AnalyzerDelegate;
-    const handlers: FunctionBodyHandler[] = [
-      new VariableHandler(ctx, delegate),
-      new ReturnYieldHandler(ctx, delegate),
-      new ThrowHandler(ctx, delegate),
-      new NestedFunctionHandler(ctx, delegate),
-      new PropertyAccessHandler(ctx, delegate),
-      new NewExpressionHandler(ctx, delegate),
-      new CallExpressionHandler(ctx, delegate),
-      new LoopHandler(ctx, delegate),
-      new TryCatchHandler(ctx, delegate),
-      new BranchHandler(ctx, delegate),
-    ];
-
-    const mergedVisitor: Visitor = {};
-    for (const handler of handlers) {
-      Object.assign(mergedVisitor, handler.getHandlers());
-    }
-
-    // 4. Single traversal over the function body
-    funcPath.traverse(mergedVisitor);
-
-    // 5. Post-traverse: collect CATCHES_FROM info for try/catch blocks
-    if (ctx.functionPath) {
-      collectCatchesFromInfoFn(
-        ctx.functionPath,
-        ctx.catchBlocks,
-        ctx.callSites,
-        ctx.methodCalls,
-        ctx.constructorCalls,
-        ctx.catchesFromInfos,
-        module
-      );
-    }
-
-    // 6. Post-traverse: Attach control flow metadata to the function node
-    this.attachControlFlowMetadata(ctx);
-  }
-
-  /**
-   * Attach control flow metadata (cyclomatic complexity, error tracking, HOF bindings)
-   * to the matching function node after traversal completes.
-   */
-  private attachControlFlowMetadata(ctx: FunctionBodyContext): void {
-    if (!ctx.matchingFunction) return;
-
-    const cyclomaticComplexity = 1 +
-      ctx.controlFlowState.branchCount +
-      ctx.controlFlowState.loopCount +
-      ctx.controlFlowState.caseCount +
-      ctx.controlFlowState.logicalOpCount;
-
-    // REG-311: Collect rejection info for this function
-    const functionRejectionPatterns = ctx.rejectionPatterns.filter(p => p.functionId === ctx.matchingFunction!.id);
-    const asyncPatterns = functionRejectionPatterns.filter(p => p.isAsync);
-    const syncPatterns = functionRejectionPatterns.filter(p => !p.isAsync);
-    const canReject = asyncPatterns.length > 0;
-    const hasAsyncThrow = asyncPatterns.some(p => p.rejectionType === 'async_throw');
-    const rejectedBuiltinErrors = [...new Set(
-      asyncPatterns
-        .filter(p => p.errorClassName !== null)
-        .map(p => p.errorClassName!)
-    )];
-    // REG-286: Sync throw error tracking
-    const thrownBuiltinErrors = [...new Set(
-      syncPatterns
-        .filter(p => p.errorClassName !== null)
-        .map(p => p.errorClassName!)
-    )];
-
-    ctx.matchingFunction.controlFlow = {
-      hasBranches: ctx.controlFlowState.branchCount > 0,
-      hasLoops: ctx.controlFlowState.loopCount > 0,
-      hasTryCatch: ctx.controlFlowState.hasTryCatch,
-      hasEarlyReturn: ctx.controlFlowState.hasEarlyReturn,
-      hasThrow: ctx.controlFlowState.hasThrow,
-      cyclomaticComplexity,
-      // REG-311: Async error tracking
-      canReject,
-      hasAsyncThrow,
-      rejectedBuiltinErrors: rejectedBuiltinErrors.length > 0 ? rejectedBuiltinErrors : undefined,
-      // REG-286: Sync throw tracking
-      thrownBuiltinErrors: thrownBuiltinErrors.length > 0 ? thrownBuiltinErrors : undefined
-    };
-
-    // REG-401: Store invoked parameter indexes for user-defined HOF detection
-    if (ctx.invokedParamIndexes.size > 0) {
-      ctx.matchingFunction.invokesParamIndexes = [...ctx.invokedParamIndexes];
-    }
-    // REG-417: Store property paths for destructured param bindings
-    if (ctx.invokesParamBindings.length > 0) {
-      ctx.matchingFunction.invokesParamBindings = ctx.invokesParamBindings;
-    }
   }
 
 }

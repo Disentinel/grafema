@@ -62,6 +62,7 @@ import './runtime-apis.js';
 import './jsdoc-types.js';
 import './modules-default-anon.js';
 import './hashbang-entry.js';
+import './ts-specific.ts';
 
 // @construct PENDING reexport-star
 // @annotation
@@ -107,9 +108,9 @@ const helperResult = useNamespaceAsValue(allHelpers, 'helperFunction');
 // @construct PENDING module-namespace-destructured
 // @annotation
 // UNKNOWN <<module>> -> DECLARES -> VARIABLE <<destructuredHelper>>
-// VARIABLE <<destructuredHelper>> -> ASSIGNED_FROM -> EXPRESSION <<{helperFunction: destructuredHelper}>>
-// EXPRESSION <<{helperFunction: destructuredHelper}>> -> READS_FROM -> UNKNOWN <<allHelpers>>
-// EXPRESSION <<{helperFunction: destructuredHelper}>> -> READS_FROM -> PROPERTY_ACCESS <<allHelpers.helperFunction>>
+// VARIABLE <<destructuredHelper>> -> ASSIGNED_FROM -> LITERAL <<{...}>>
+// LITERAL <<{...}>> -> READS_FROM -> UNKNOWN <<allHelpers>>
+// LITERAL <<{...}>> -> READS_FROM -> PROPERTY_ACCESS <<allHelpers.helperFunction>>
 // PROPERTY_ACCESS <<allHelpers.helperFunction>> -> READS_FROM -> UNKNOWN <<allHelpers>>
 // @end-annotation
 const { helperFunction: destructuredHelper } = allHelpers;

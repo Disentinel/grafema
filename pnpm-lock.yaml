@@ -112,6 +112,9 @@ importers:
       '@babel/types':
         specifier: ^7.26.3
         version: 7.28.6
+      '@grafema/core-v2':
+        specifier: workspace:*
+        version: link:../core-v2
       '@grafema/rfdb-client':
         specifier: workspace:*
         version: link:../rfdb
@@ -144,6 +147,25 @@ importers:
       '@types/babel__traverse':
         specifier: ^7.20.6
         version: 7.28.0
+      '@types/node':
+        specifier: ^25.0.8
+        version: 25.0.9
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+
+  packages/core-v2:
+    dependencies:
+      '@babel/parser':
+        specifier: ^7.26.3
+        version: 7.28.6
+      '@babel/types':
+        specifier: ^7.26.3
+        version: 7.28.6
+      '@grafema/types':
+        specifier: workspace:*
+        version: link:../types
+    devDependencies:
       '@types/node':
         specifier: ^25.0.8
         version: 25.0.9

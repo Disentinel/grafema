@@ -2187,8 +2187,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<{ fromArrayFn, fromSpread, fromSlice }>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "type": "object",
             "shorthandProperties": true
@@ -2229,7 +2229,7 @@
           },
           {
             "src": "<toArray>",
-            "dst": "<{ fromArrayFn, fromSpread, fromSlice }>",
+            "dst": "<{...}>",
             "type": "RETURNS"
           }
         ],
@@ -2267,17 +2267,17 @@
             "type": "READS_FROM"
           },
           {
-            "src": "<{ fromArrayFn, fromSpread, fromSlice }>",
+            "src": "<{...}>",
             "dst": "<fromArrayFn>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ fromArrayFn, fromSpread, fromSlice }>",
+            "src": "<{...}>",
             "dst": "<fromSpread>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ fromArrayFn, fromSpread, fromSlice }>",
+            "src": "<{...}>",
             "dst": "<fromSlice>",
             "type": "READS_FROM"
           }
@@ -2380,8 +2380,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<{ fromArrayFn, fromSpread, fromSlice }>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "type": "object",
             "shorthandProperties": true
@@ -2422,7 +2422,7 @@
           },
           {
             "src": "<toArray>",
-            "dst": "<{ fromArrayFn, fromSpread, fromSlice }>",
+            "dst": "<{...}>",
             "type": "RETURNS"
           }
         ],
@@ -2460,17 +2460,17 @@
             "type": "READS_FROM"
           },
           {
-            "src": "<{ fromArrayFn, fromSpread, fromSlice }>",
+            "src": "<{...}>",
             "dst": "<fromArrayFn>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ fromArrayFn, fromSpread, fromSlice }>",
+            "src": "<{...}>",
             "dst": "<fromSpread>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ fromArrayFn, fromSpread, fromSlice }>",
+            "src": "<{...}>",
             "dst": "<fromSlice>",
             "type": "READS_FROM"
           }
@@ -3425,8 +3425,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<{ aAfterMutation, arg0AfterReassign }>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "type": "object"
           }
@@ -3461,7 +3461,7 @@
           },
           {
             "src": "<argumentsAliasing>",
-            "dst": "<{ aAfterMutation, arg0AfterReassign }>",
+            "dst": "<{...}>",
             "type": "RETURNS"
           }
         ],
@@ -3504,12 +3504,12 @@
             "type": "ALIASES"
           },
           {
-            "src": "<{ aAfterMutation, arg0AfterReassign }>",
+            "src": "<{...}>",
             "dst": "<aAfterMutation>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ aAfterMutation, arg0AfterReassign }>",
+            "src": "<{...}>",
             "dst": "<arg0AfterReassign>",
             "type": "READS_FROM"
           }
@@ -3584,8 +3584,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<{ aAfterMutation, arg0AfterReassign }>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "type": "object"
           }
@@ -3620,7 +3620,7 @@
           },
           {
             "src": "<argumentsAliasing>",
-            "dst": "<{ aAfterMutation, arg0AfterReassign }>",
+            "dst": "<{...}>",
             "type": "RETURNS"
           }
         ],
@@ -3663,12 +3663,12 @@
             "type": "ALIASES"
           },
           {
-            "src": "<{ aAfterMutation, arg0AfterReassign }>",
+            "src": "<{...}>",
             "dst": "<aAfterMutation>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ aAfterMutation, arg0AfterReassign }>",
+            "src": "<{...}>",
             "dst": "<arg0AfterReassign>",
             "type": "READS_FROM"
           }
@@ -3745,8 +3745,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<return-object>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "type": "object-literal"
           }
@@ -3788,7 +3788,7 @@
           },
           {
             "src": "<argumentsWithRest>",
-            "dst": "<return-object>",
+            "dst": "<{...}>",
             "type": "RETURNS"
           }
         ],
@@ -3826,22 +3826,22 @@
             "type": "READS_FROM"
           },
           {
-            "src": "<return-object>",
+            "src": "<{...}>",
             "dst": "<allCount>",
             "type": "READS_FROM"
           },
           {
-            "src": "<return-object>",
+            "src": "<{...}>",
             "dst": "<firstFromArgs>",
             "type": "READS_FROM"
           },
           {
-            "src": "<return-object>",
+            "src": "<{...}>",
             "dst": "<restFromArgs>",
             "type": "READS_FROM"
           },
           {
-            "src": "<return-object>",
+            "src": "<{...}>",
             "dst": "<rest>",
             "type": "READS_FROM"
           }
@@ -4050,8 +4050,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<return-object>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "type": "object-literal"
           }
@@ -4093,7 +4093,7 @@
           },
           {
             "src": "<argumentsWithRest>",
-            "dst": "<return-object>",
+            "dst": "<{...}>",
             "type": "RETURNS"
           }
         ],
@@ -4131,22 +4131,22 @@
             "type": "READS_FROM"
           },
           {
-            "src": "<return-object>",
+            "src": "<{...}>",
             "dst": "<allCount>",
             "type": "READS_FROM"
           },
           {
-            "src": "<return-object>",
+            "src": "<{...}>",
             "dst": "<firstFromArgs>",
             "type": "READS_FROM"
           },
           {
-            "src": "<return-object>",
+            "src": "<{...}>",
             "dst": "<restFromArgs>",
             "type": "READS_FROM"
           },
           {
-            "src": "<return-object>",
+            "src": "<{...}>",
             "dst": "<rest>",
             "type": "READS_FROM"
           }
@@ -6588,8 +6588,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<thenable-object>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "thenable": true,
             "expressionType": "object_literal"
@@ -6626,11 +6626,11 @@
         "walk": [
           {
             "src": "<returnsThenable>",
-            "dst": "<thenable-object>",
+            "dst": "<{...}>",
             "type": "RETURNS"
           },
           {
-            "src": "<thenable-object>",
+            "src": "<{...}>",
             "dst": "<then>",
             "type": "HAS_PROPERTY"
           },
@@ -8903,8 +8903,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<{ ...data, priority }>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "type": "object-spread"
           }
@@ -8950,13 +8950,13 @@
             "type": "DEFAULTS_TO"
           },
           {
-            "src": "<{ ...data, priority }>",
+            "src": "<{...}>",
             "dst": "<data>",
             "type": "SPREADS_FROM"
           },
           {
             "src": "<yield { ...data, priority }>",
-            "dst": "<{ ...data, priority }>",
+            "dst": "<{...}>",
             "type": "YIELDS"
           },
           {
@@ -8968,7 +8968,7 @@
         "postFile": [],
         "postProject": [
           {
-            "src": "<{ ...data, priority }>",
+            "src": "<{...}>",
             "dst": "<priority>",
             "type": "READS_FROM"
           }
@@ -10346,8 +10346,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<{ timeout, retries }>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "type": "object-literal"
           }
@@ -10402,7 +10402,7 @@
           },
           {
             "src": "<asyncDestructureHandler:fn>",
-            "dst": "<{ timeout, retries }>",
+            "dst": "<{...}>",
             "type": "RETURNS"
           },
           {
@@ -10435,12 +10435,12 @@
             "type": "CALLS"
           },
           {
-            "src": "<{ timeout, retries }>",
+            "src": "<{...}>",
             "dst": "<timeout>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ timeout, retries }>",
+            "src": "<{...}>",
             "dst": "<retries>",
             "type": "READS_FROM"
           }
@@ -10906,8 +10906,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<{ g, hasConsole }>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "type": "object"
           }
@@ -10927,7 +10927,7 @@
           },
           {
             "src": "<globalThisAccess>",
-            "dst": "<{ g, hasConsole }>",
+            "dst": "<{...}>",
             "type": "RETURNS"
           }
         ],
@@ -10955,12 +10955,12 @@
             "type": "READS_FROM"
           },
           {
-            "src": "<{ g, hasConsole }>",
+            "src": "<{...}>",
             "dst": "<g>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ g, hasConsole }>",
+            "src": "<{...}>",
             "dst": "<hasConsole>",
             "type": "READS_FROM"
           }
@@ -10981,8 +10981,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<thenable-object>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "thenable": true,
             "expressionType": "object_literal"
@@ -11019,11 +11019,11 @@
         "walk": [
           {
             "src": "<returnsThenable>",
-            "dst": "<thenable-object>",
+            "dst": "<{...}>",
             "type": "RETURNS"
           },
           {
-            "src": "<thenable-object>",
+            "src": "<{...}>",
             "dst": "<then>",
             "type": "HAS_PROPERTY"
           },
@@ -11379,8 +11379,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<{ year, month, day }>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "type": "object-literal"
           }
@@ -11440,7 +11440,7 @@
           },
           {
             "src": "<regexNamedGroups>",
-            "dst": "<{ year, month, day }>",
+            "dst": "<{...}>",
             "type": "RETURNS"
           }
         ],
@@ -11483,17 +11483,17 @@
             "type": "READS_FROM"
           },
           {
-            "src": "<{ year, month, day }>",
+            "src": "<{...}>",
             "dst": "<year>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ year, month, day }>",
+            "src": "<{...}>",
             "dst": "<month>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ year, month, day }>",
+            "src": "<{...}>",
             "dst": "<day>",
             "type": "READS_FROM"
           }
@@ -13799,8 +13799,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<return-object>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "type": "object-literal"
           }
@@ -13860,21 +13860,21 @@
           },
           {
             "src": "<sparseArrayOps>",
-            "dst": "<return-object>",
+            "dst": "<{...}>",
             "type": "RETURNS"
           },
           {
-            "src": "<return-object>",
+            "src": "<{...}>",
             "dst": "<length>",
             "type": "HAS_PROPERTY"
           },
           {
-            "src": "<return-object>",
+            "src": "<{...}>",
             "dst": "<hasIndex1>",
             "type": "HAS_PROPERTY"
           },
           {
-            "src": "<return-object>",
+            "src": "<{...}>",
             "dst": "<mapped>",
             "type": "HAS_PROPERTY"
           }
@@ -14048,7 +14048,7 @@
         },
         {
           "type": "EXTERNAL_MODULE",
-          "id": "<fs-module>",
+          "id": "<fs>",
           "metadata": {
             "name": "fs",
             "type": "builtin"
@@ -14073,7 +14073,7 @@
         "postProject": [
           {
             "src": "<require('fs')>",
-            "dst": "<fs-module>",
+            "dst": "<fs>",
             "type": "IMPORTS"
           }
         ]
@@ -15141,7 +15141,7 @@
         },
         {
           "type": "EXTERNAL_MODULE",
-          "id": "<path-module>",
+          "id": "<path>",
           "metadata": {
             "name": "path",
             "builtin": true
@@ -15176,12 +15176,12 @@
           },
           {
             "src": "<require('path')>",
-            "dst": "<path-module>",
+            "dst": "<path>",
             "type": "IMPORTS"
           },
           {
             "src": "<module>",
-            "dst": "<path-module>",
+            "dst": "<path>",
             "type": "IMPORTS_FROM"
           }
         ]
@@ -21269,8 +21269,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<{ url: this.baseUrl + url, timeout }>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "type": "object"
           }
@@ -21309,18 +21309,18 @@
             "type": "DEFAULTS_TO"
           },
           {
-            "src": "<{ url: this.baseUrl + url, timeout }>",
+            "src": "<{...}>",
             "dst": "<this.baseUrl + url>",
             "type": "HAS_PROPERTY"
           },
           {
-            "src": "<{ url: this.baseUrl + url, timeout }>",
+            "src": "<{...}>",
             "dst": "<timeout>",
             "type": "HAS_PROPERTY"
           },
           {
             "src": "<ServiceWithDefaults.fetch>",
-            "dst": "<{ url: this.baseUrl + url, timeout }>",
+            "dst": "<{...}>",
             "type": "RETURNS"
           }
         ],
@@ -21381,8 +21381,8 @@
           "id": "<item>"
         },
         {
-          "type": "EXPRESSION",
-          "id": "<{ ...item, processed: true }>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "type": "object-spread"
           }
@@ -21493,7 +21493,7 @@
           },
           {
             "src": "<ParentProcessor.transform>",
-            "dst": "<{ ...item, processed: true }>",
+            "dst": "<{...}>",
             "type": "RETURNS"
           },
           {
@@ -21581,7 +21581,7 @@
         ],
         "postProject": [
           {
-            "src": "<{ ...item, processed: true }>",
+            "src": "<{...}>",
             "dst": "<item>",
             "type": "READS_FROM"
           },
@@ -22771,8 +22771,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<object-literal>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "type": "object"
           }
@@ -22834,21 +22834,21 @@
           },
           {
             "src": "<createCounter>",
-            "dst": "<object-literal>",
+            "dst": "<{...}>",
             "type": "RETURNS"
           },
           {
-            "src": "<object-literal>",
+            "src": "<{...}>",
             "dst": "<increment>",
             "type": "HAS_PROPERTY"
           },
           {
-            "src": "<object-literal>",
+            "src": "<{...}>",
             "dst": "<decrement>",
             "type": "HAS_PROPERTY"
           },
           {
-            "src": "<object-literal>",
+            "src": "<{...}>",
             "dst": "<value>",
             "type": "HAS_PROPERTY"
           },
@@ -23276,8 +23276,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<object-literal>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "type": "object"
           }
@@ -23348,21 +23348,21 @@
           },
           {
             "src": "<createAccumulator>",
-            "dst": "<object-literal>",
+            "dst": "<{...}>",
             "type": "RETURNS"
           },
           {
-            "src": "<object-literal>",
+            "src": "<{...}>",
             "dst": "<add>",
             "type": "HAS_PROPERTY"
           },
           {
-            "src": "<object-literal>",
+            "src": "<{...}>",
             "dst": "<getAll>",
             "type": "HAS_PROPERTY"
           },
           {
-            "src": "<object-literal>",
+            "src": "<{...}>",
             "dst": "<count>",
             "type": "HAS_PROPERTY"
           },
@@ -24024,8 +24024,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<{ ...data, priority }>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "type": "object-spread"
           }
@@ -24071,13 +24071,13 @@
             "type": "DEFAULTS_TO"
           },
           {
-            "src": "<{ ...data, priority }>",
+            "src": "<{...}>",
             "dst": "<data>",
             "type": "SPREADS_FROM"
           },
           {
             "src": "<yield { ...data, priority }>",
-            "dst": "<{ ...data, priority }>",
+            "dst": "<{...}>",
             "type": "YIELDS"
           },
           {
@@ -24089,7 +24089,7 @@
         "postFile": [],
         "postProject": [
           {
-            "src": "<{ ...data, priority }>",
+            "src": "<{...}>",
             "dst": "<priority>",
             "type": "READS_FROM"
           }
@@ -25397,8 +25397,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<{ groupName, groupTotal, total }>",
+          "type": "LITERAL",
+          "id": "<{...}_1>",
           "metadata": {
             "type": "object-literal"
           }
@@ -25411,8 +25411,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<{ addGroup, getTotal: () => total }>",
+          "type": "LITERAL",
+          "id": "<{...}_2>",
           "metadata": {
             "type": "object-literal"
           }
@@ -25467,7 +25467,7 @@
           },
           {
             "src": "<addItem>",
-            "dst": "<{ groupName, groupTotal, total }>",
+            "dst": "<{...}_1>",
             "type": "RETURNS"
           },
           {
@@ -25477,7 +25477,7 @@
           },
           {
             "src": "<createTracker>",
-            "dst": "<{ addGroup, getTotal: () => total }>",
+            "dst": "<{...}_2>",
             "type": "RETURNS"
           }
         ],
@@ -25535,17 +25535,17 @@
             "type": "READS_FROM"
           },
           {
-            "src": "<{ groupName, groupTotal, total }>",
+            "src": "<{...}_1>",
             "dst": "<groupName>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ groupName, groupTotal, total }>",
+            "src": "<{...}_1>",
             "dst": "<groupTotal>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ groupName, groupTotal, total }>",
+            "src": "<{...}_1>",
             "dst": "<total>",
             "type": "READS_FROM"
           },
@@ -25555,12 +25555,12 @@
             "type": "READS_FROM"
           },
           {
-            "src": "<{ addGroup, getTotal: () => total }>",
+            "src": "<{...}_2>",
             "dst": "<addGroup>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ addGroup, getTotal: () => total }>",
+            "src": "<{...}_2>",
             "dst": "<getTotal>",
             "type": "READS_FROM"
           }
@@ -28839,8 +28839,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<{ timeout, retries }>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "type": "object-literal"
           }
@@ -28895,7 +28895,7 @@
           },
           {
             "src": "<asyncDestructureHandler:fn>",
-            "dst": "<{ timeout, retries }>",
+            "dst": "<{...}>",
             "type": "RETURNS"
           },
           {
@@ -28928,12 +28928,12 @@
             "type": "CALLS"
           },
           {
-            "src": "<{ timeout, retries }>",
+            "src": "<{...}>",
             "dst": "<timeout>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ timeout, retries }>",
+            "src": "<{...}>",
             "dst": "<retries>",
             "type": "READS_FROM"
           }
@@ -29547,8 +29547,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<{ upper, lost, fixed }>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "type": "object"
           }
@@ -29598,7 +29598,7 @@
           },
           {
             "src": "<primitiveAutoboxing>",
-            "dst": "<{ upper, lost, fixed }>",
+            "dst": "<{...}>",
             "type": "RETURNS"
           }
         ],
@@ -29646,17 +29646,17 @@
             "type": "CALLS_ON"
           },
           {
-            "src": "<{ upper, lost, fixed }>",
+            "src": "<{...}>",
             "dst": "<upper>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ upper, lost, fixed }>",
+            "src": "<{...}>",
             "dst": "<lost>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ upper, lost, fixed }>",
+            "src": "<{...}>",
             "dst": "<fixed>",
             "type": "READS_FROM"
           }
@@ -29859,8 +29859,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<{ x, y }>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "type": "object",
             "shorthandProperties": true
@@ -29881,7 +29881,7 @@
           },
           {
             "src": "<varRedeclaresParameter>",
-            "dst": "<{ x, y }>",
+            "dst": "<{...}>",
             "type": "RETURNS"
           }
         ],
@@ -29904,12 +29904,12 @@
             "type": "READS_FROM"
           },
           {
-            "src": "<{ x, y }>",
+            "src": "<{...}>",
             "dst": "<x>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ x, y }>",
+            "src": "<{...}>",
             "dst": "<y>",
             "type": "READS_FROM"
           }
@@ -32796,8 +32796,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<{ a, b, c }>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "type": "object"
           }
@@ -32832,7 +32832,7 @@
           },
           {
             "src": "<paramDefaultChain>",
-            "dst": "<{ a, b, c }>",
+            "dst": "<{...}>",
             "type": "RETURNS"
           }
         ],
@@ -32859,17 +32859,17 @@
             "type": "READS_FROM"
           },
           {
-            "src": "<{ a, b, c }>",
+            "src": "<{...}>",
             "dst": "<a>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ a, b, c }>",
+            "src": "<{...}>",
             "dst": "<b>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ a, b, c }>",
+            "src": "<{...}>",
             "dst": "<c>",
             "type": "READS_FROM"
           }
@@ -34335,8 +34335,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<{ width, height, area }>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "type": "object-literal"
           }
@@ -34430,7 +34430,7 @@
           },
           {
             "src": "<paramDefaultFromDestructured>",
-            "dst": "<{ width, height, area }>",
+            "dst": "<{...}>",
             "type": "RETURNS"
           },
           {
@@ -34482,17 +34482,17 @@
             "type": "READS_FROM"
           },
           {
-            "src": "<{ width, height, area }>",
+            "src": "<{...}>",
             "dst": "<width>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ width, height, area }>",
+            "src": "<{...}>",
             "dst": "<height>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ width, height, area }>",
+            "src": "<{...}>",
             "dst": "<area>",
             "type": "READS_FROM"
           },
@@ -36232,8 +36232,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<{ and, or, nullish, not }>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "type": "object-literal"
           }
@@ -36273,7 +36273,7 @@
           },
           {
             "src": "<logicalOperators>",
-            "dst": "<{ and, or, nullish, not }>",
+            "dst": "<{...}>",
             "type": "RETURNS"
           }
         ],
@@ -36336,22 +36336,22 @@
             "type": "READS_FROM"
           },
           {
-            "src": "<{ and, or, nullish, not }>",
+            "src": "<{...}>",
             "dst": "<and>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ and, or, nullish, not }>",
+            "src": "<{...}>",
             "dst": "<or>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ and, or, nullish, not }>",
+            "src": "<{...}>",
             "dst": "<nullish>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ and, or, nullish, not }>",
+            "src": "<{...}>",
             "dst": "<not>",
             "type": "READS_FROM"
           }
@@ -36664,8 +36664,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<{ prop, method, computed }>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "type": "object",
             "shorthandProperties": true
@@ -36696,7 +36696,7 @@
           },
           {
             "src": "<optionalChaining>",
-            "dst": "<{ prop, method, computed }>",
+            "dst": "<{...}>",
             "type": "RETURNS"
           }
         ],
@@ -36739,17 +36739,17 @@
             "type": "READS_FROM"
           },
           {
-            "src": "<{ prop, method, computed }>",
+            "src": "<{...}>",
             "dst": "<prop>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ prop, method, computed }>",
+            "src": "<{...}>",
             "dst": "<method>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ prop, method, computed }>",
+            "src": "<{...}>",
             "dst": "<computed>",
             "type": "READS_FROM"
           }
@@ -36864,8 +36864,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<{ pos, neg, logNot, bitNot, typeOfX, voidX }>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "type": "object-literal"
           }
@@ -36910,7 +36910,7 @@
           },
           {
             "src": "<unaryOperators>",
-            "dst": "<{ pos, neg, logNot, bitNot, typeOfX, voidX }>",
+            "dst": "<{...}>",
             "type": "RETURNS"
           }
         ],
@@ -36978,32 +36978,32 @@
             "type": "READS_FROM"
           },
           {
-            "src": "<{ pos, neg, logNot, bitNot, typeOfX, voidX }>",
+            "src": "<{...}>",
             "dst": "<pos>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ pos, neg, logNot, bitNot, typeOfX, voidX }>",
+            "src": "<{...}>",
             "dst": "<neg>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ pos, neg, logNot, bitNot, typeOfX, voidX }>",
+            "src": "<{...}>",
             "dst": "<logNot>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ pos, neg, logNot, bitNot, typeOfX, voidX }>",
+            "src": "<{...}>",
             "dst": "<bitNot>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ pos, neg, logNot, bitNot, typeOfX, voidX }>",
+            "src": "<{...}>",
             "dst": "<typeOfX>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ pos, neg, logNot, bitNot, typeOfX, voidX }>",
+            "src": "<{...}>",
             "dst": "<voidX>",
             "type": "READS_FROM"
           }
@@ -37318,8 +37318,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<{ a, b, c }>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "type": "object-literal"
           }
@@ -37344,7 +37344,7 @@
           },
           {
             "src": "<chainedAssignment>",
-            "dst": "<{ a, b, c }>",
+            "dst": "<{...}>",
             "type": "RETURNS"
           }
         ],
@@ -37367,17 +37367,17 @@
         ],
         "postProject": [
           {
-            "src": "<{ a, b, c }>",
+            "src": "<{...}>",
             "dst": "<a>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ a, b, c }>",
+            "src": "<{...}>",
             "dst": "<b>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ a, b, c }>",
+            "src": "<{...}>",
             "dst": "<c>",
             "type": "READS_FROM"
           }
@@ -37496,8 +37496,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<{ simple, nested }>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "type": "object-literal"
           }
@@ -37557,16 +37557,16 @@
           },
           {
             "src": "<ternaryOperator>",
-            "dst": "<{ simple, nested }>",
+            "dst": "<{...}>",
             "type": "RETURNS"
           },
           {
-            "src": "<{ simple, nested }>",
+            "src": "<{...}>",
             "dst": "<simple>",
             "type": "HAS_PROPERTY"
           },
           {
-            "src": "<{ simple, nested }>",
+            "src": "<{...}>",
             "dst": "<nested>",
             "type": "HAS_PROPERTY"
           }
@@ -37681,8 +37681,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<{ withGrouping, withoutGrouping }>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "type": "object",
             "shorthandProperties": true
@@ -37718,7 +37718,7 @@
           },
           {
             "src": "<groupingOperator>",
-            "dst": "<{ withGrouping, withoutGrouping }>",
+            "dst": "<{...}>",
             "type": "RETURNS"
           }
         ],
@@ -37776,12 +37776,12 @@
             "type": "READS_FROM"
           },
           {
-            "src": "<{ withGrouping, withoutGrouping }>",
+            "src": "<{...}>",
             "dst": "<withGrouping>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ withGrouping, withoutGrouping }>",
+            "src": "<{...}>",
             "dst": "<withoutGrouping>",
             "type": "READS_FROM"
           }
@@ -38712,8 +38712,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<{ withParens, noParens }>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "type": "object",
             "shorthandProperties": true
@@ -38748,7 +38748,7 @@
           },
           {
             "src": "<newPrecedence>",
-            "dst": "<{ withParens, noParens }>",
+            "dst": "<{...}>",
             "type": "RETURNS"
           }
         ],
@@ -38786,12 +38786,12 @@
             "type": "CALLS"
           },
           {
-            "src": "<{ withParens, noParens }>",
+            "src": "<{...}>",
             "dst": "<withParens>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ withParens, noParens }>",
+            "src": "<{...}>",
             "dst": "<noParens>",
             "type": "READS_FROM"
           }
@@ -38977,8 +38977,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<{ instance, nested }>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "type": "object-literal"
           }
@@ -39003,7 +39003,7 @@
           },
           {
             "src": "<newMemberExpression>",
-            "dst": "<{ instance, nested }>",
+            "dst": "<{...}>",
             "type": "RETURNS"
           }
         ],
@@ -39046,12 +39046,12 @@
             "type": "READS_FROM"
           },
           {
-            "src": "<{ instance, nested }>",
+            "src": "<{...}>",
             "dst": "<instance>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ instance, nested }>",
+            "src": "<{...}>",
             "dst": "<nested>",
             "type": "READS_FROM"
           }
@@ -39718,8 +39718,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<{ normal, spoofed }>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "type": "object"
           }
@@ -39759,7 +39759,7 @@
           },
           {
             "src": "<reflectConstructDemo>",
-            "dst": "<{ normal, spoofed }>",
+            "dst": "<{...}>",
             "type": "RETURNS"
           }
         ],
@@ -39802,12 +39802,12 @@
             "type": "CALLS"
           },
           {
-            "src": "<{ normal, spoofed }>",
+            "src": "<{...}>",
             "dst": "<normal>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ normal, spoofed }>",
+            "src": "<{...}>",
             "dst": "<spoofed>",
             "type": "READS_FROM"
           }
@@ -39843,7 +39843,7 @@
         },
         {
           "type": "PROPERTY",
-          "id": "<timeout-prop>",
+          "id": "<timeout>",
           "metadata": {
             "key": "timeout"
           }
@@ -39858,7 +39858,7 @@
         },
         {
           "type": "PROPERTY",
-          "id": "<retries-prop>",
+          "id": "<retries>",
           "metadata": {
             "key": "retries"
           }
@@ -39873,7 +39873,7 @@
         },
         {
           "type": "PROPERTY",
-          "id": "<debug-prop>",
+          "id": "<debug>",
           "metadata": {
             "key": "debug"
           }
@@ -39962,17 +39962,17 @@
           },
           {
             "src": "<object-literal>",
-            "dst": "<timeout-prop>",
+            "dst": "<timeout>",
             "type": "HAS_PROPERTY"
           },
           {
             "src": "<object-literal>",
-            "dst": "<retries-prop>",
+            "dst": "<retries>",
             "type": "HAS_PROPERTY"
           },
           {
             "src": "<object-literal>",
-            "dst": "<debug-prop>",
+            "dst": "<debug>",
             "type": "HAS_PROPERTY"
           },
           {
@@ -40003,17 +40003,17 @@
             "type": "ASSIGNED_FROM"
           },
           {
-            "src": "<timeout-prop>",
+            "src": "<timeout>",
             "dst": "<0>",
             "type": "ASSIGNED_FROM"
           },
           {
-            "src": "<retries-prop>",
+            "src": "<retries>",
             "dst": "<null>",
             "type": "ASSIGNED_FROM"
           },
           {
-            "src": "<debug-prop>",
+            "src": "<debug>",
             "dst": "<false>",
             "type": "ASSIGNED_FROM"
           },
@@ -40520,8 +40520,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<{ text: strings.join('?'), params: values }>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "type": "object"
           }
@@ -40587,26 +40587,26 @@
           },
           {
             "src": "<sql>",
-            "dst": "<{ text: strings.join('?'), params: values }>",
+            "dst": "<{...}>",
             "type": "RETURNS"
           },
           {
-            "src": "<{ text: strings.join('?'), params: values }>",
+            "src": "<{...}>",
             "dst": "<'text'>",
             "type": "HAS_PROPERTY"
           },
           {
-            "src": "<{ text: strings.join('?'), params: values }>",
+            "src": "<{...}>",
             "dst": "<strings.join('?')>",
             "type": "HAS_PROPERTY"
           },
           {
-            "src": "<{ text: strings.join('?'), params: values }>",
+            "src": "<{...}>",
             "dst": "<'params'>",
             "type": "HAS_PROPERTY"
           },
           {
-            "src": "<{ text: strings.join('?'), params: values }>",
+            "src": "<{...}>",
             "dst": "<values>",
             "type": "HAS_PROPERTY"
           },
@@ -40889,8 +40889,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<{ hasIndex, hasStr, noIndex }>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "type": "object"
           }
@@ -40960,21 +40960,21 @@
           },
           {
             "src": "<inOperatorArray>",
-            "dst": "<{ hasIndex, hasStr, noIndex }>",
+            "dst": "<{...}>",
             "type": "RETURNS"
           },
           {
-            "src": "<{ hasIndex, hasStr, noIndex }>",
+            "src": "<{...}>",
             "dst": "<hasIndex>",
             "type": "USES"
           },
           {
-            "src": "<{ hasIndex, hasStr, noIndex }>",
+            "src": "<{...}>",
             "dst": "<hasStr>",
             "type": "USES"
           },
           {
-            "src": "<{ hasIndex, hasStr, noIndex }>",
+            "src": "<{...}>",
             "dst": "<noIndex>",
             "type": "USES"
           }
@@ -41215,8 +41215,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<{ date, instantiate }>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "expressionType": "object"
           }
@@ -41271,16 +41271,16 @@
           },
           {
             "src": "<newWithSpread>",
-            "dst": "<{ date, instantiate }>",
+            "dst": "<{...}>",
             "type": "RETURNS"
           },
           {
-            "src": "<{ date, instantiate }>",
+            "src": "<{...}>",
             "dst": "<date>",
             "type": "HAS_PROPERTY"
           },
           {
-            "src": "<{ date, instantiate }>",
+            "src": "<{...}>",
             "dst": "<instantiate>",
             "type": "HAS_PROPERTY"
           }
@@ -41798,8 +41798,8 @@
           "id": "<processFn>"
         },
         {
-          "type": "EXPRESSION",
-          "id": "<object-literal>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "type": "object"
           }
@@ -41848,21 +41848,21 @@
           },
           {
             "src": "<asyncArrowObject:fn>",
-            "dst": "<object-literal>",
+            "dst": "<{...}>",
             "type": "RETURNS"
           },
           {
-            "src": "<object-literal>",
+            "src": "<{...}>",
             "dst": "<data.id>",
             "type": "HAS_PROPERTY"
           },
           {
-            "src": "<object-literal>",
+            "src": "<{...}>",
             "dst": "<await processFn(data)>",
             "type": "HAS_PROPERTY"
           },
           {
-            "src": "<object-literal>",
+            "src": "<{...}>",
             "dst": "<Date.now()>",
             "type": "HAS_PROPERTY"
           },
@@ -41986,8 +41986,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<{ ran: true, args }>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "type": "object"
           }
@@ -42012,11 +42012,11 @@
           },
           {
             "src": "<hashbangMain>",
-            "dst": "<{ ran: true, args }>",
+            "dst": "<{...}>",
             "type": "RETURNS"
           },
           {
-            "src": "<{ ran: true, args }>",
+            "src": "<{...}>",
             "dst": "<true>",
             "type": "HAS_PROPERTY"
           }
@@ -42024,7 +42024,7 @@
         "postFile": [],
         "postProject": [
           {
-            "src": "<{ ran: true, args }>",
+            "src": "<{...}>",
             "dst": "<args>",
             "type": "READS_FROM"
           }
@@ -42653,8 +42653,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<{ type, parts: strings, values }>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "expressionType": "object"
           }
@@ -42734,7 +42734,7 @@
           },
           {
             "src": "<getFormatter:arrow>",
-            "dst": "<{ type, parts: strings, values }>",
+            "dst": "<{...}>",
             "type": "RETURNS"
           },
           {
@@ -42772,17 +42772,17 @@
         ],
         "postProject": [
           {
-            "src": "<{ type, parts: strings, values }>",
+            "src": "<{...}>",
             "dst": "<type>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ type, parts: strings, values }>",
+            "src": "<{...}>",
             "dst": "<strings>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ type, parts: strings, values }>",
+            "src": "<{...}>",
             "dst": "<...values>",
             "type": "READS_FROM"
           },
@@ -43115,8 +43115,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<{ value, nested }>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "type": "object_literal",
             "properties": 2
@@ -43197,7 +43197,7 @@
           },
           {
             "src": "<deepOptionalChain>",
-            "dst": "<{ value, nested }>",
+            "dst": "<{...}>",
             "type": "RETURNS"
           }
         ],
@@ -43225,12 +43225,12 @@
             "type": "READS_FROM"
           },
           {
-            "src": "<{ value, nested }>",
+            "src": "<{...}>",
             "dst": "<value>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ value, nested }>",
+            "src": "<{...}>",
             "dst": "<nested>",
             "type": "READS_FROM"
           }
@@ -43250,8 +43250,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<{helperFunction: destructuredHelper}>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "expressionType": "destructuring",
             "destructuringType": "object",
@@ -43278,18 +43278,18 @@
         "postFile": [
           {
             "src": "<destructuredHelper>",
-            "dst": "<{helperFunction: destructuredHelper}>",
+            "dst": "<{...}>",
             "type": "ASSIGNED_FROM"
           }
         ],
         "postProject": [
           {
-            "src": "<{helperFunction: destructuredHelper}>",
+            "src": "<{...}>",
             "dst": "<allHelpers>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{helperFunction: destructuredHelper}>",
+            "src": "<{...}>",
             "dst": "<allHelpers.helperFunction>",
             "type": "READS_FROM"
           },
@@ -43529,8 +43529,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<{ cache, setCache, swap }>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "objectLiteral": true,
             "shorthandProperties": true
@@ -43591,7 +43591,7 @@
           },
           {
             "src": "<arrowReturnAssignment>",
-            "dst": "<{ cache, setCache, swap }>",
+            "dst": "<{...}>",
             "type": "RETURNS"
           }
         ],
@@ -43654,17 +43654,17 @@
             "type": "READS_FROM"
           },
           {
-            "src": "<{ cache, setCache, swap }>",
+            "src": "<{...}>",
             "dst": "<cache>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ cache, setCache, swap }>",
+            "src": "<{...}>",
             "dst": "<setCache>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ cache, setCache, swap }>",
+            "src": "<{...}>",
             "dst": "<swap>",
             "type": "READS_FROM"
           }
@@ -43799,8 +43799,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<{ isUndef, sideEffectRan, result }>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "type": "object"
           }
@@ -43840,7 +43840,7 @@
           },
           {
             "src": "<voidAsUndefined>",
-            "dst": "<{ isUndef, sideEffectRan, result }>",
+            "dst": "<{...}>",
             "type": "RETURNS"
           }
         ],
@@ -43913,17 +43913,17 @@
             "type": "READS_FROM"
           },
           {
-            "src": "<{ isUndef, sideEffectRan, result }>",
+            "src": "<{...}>",
             "dst": "<isUndef>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ isUndef, sideEffectRan, result }>",
+            "src": "<{...}>",
             "dst": "<sideEffectRan>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ isUndef, sideEffectRan, result }>",
+            "src": "<{...}>",
             "dst": "<result>",
             "type": "READS_FROM"
           }
@@ -44220,8 +44220,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<{ first, second, rest }>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "type": "object-literal"
           }
@@ -44266,7 +44266,7 @@
           },
           {
             "src": "<destructureRange>",
-            "dst": "<{ first, second, rest }>",
+            "dst": "<{...}>",
             "type": "RETURNS"
           }
         ],
@@ -44289,17 +44289,17 @@
         ],
         "postProject": [
           {
-            "src": "<{ first, second, rest }>",
+            "src": "<{...}>",
             "dst": "<first>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ first, second, rest }>",
+            "src": "<{...}>",
             "dst": "<second>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ first, second, rest }>",
+            "src": "<{...}>",
             "dst": "<rest>",
             "type": "READS_FROM"
           }
@@ -44785,8 +44785,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<object-literal>",
+          "type": "LITERAL",
+          "id": "<{...}_1>",
           "metadata": {
             "type": "object"
           }
@@ -44807,8 +44807,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<return-object>",
+          "type": "LITERAL",
+          "id": "<{...}_2>",
           "metadata": {
             "type": "object"
           }
@@ -44839,36 +44839,36 @@
           },
           {
             "src": "<naturals>",
-            "dst": "<object-literal>",
+            "dst": "<{...}_1>",
             "type": "RETURNS"
           },
           {
-            "src": "<object-literal>",
+            "src": "<{...}_1>",
             "dst": "<[Symbol.iterator]>",
             "type": "HAS_PROPERTY"
           },
           {
-            "src": "<object-literal>",
+            "src": "<{...}_1>",
             "dst": "<next>",
             "type": "HAS_PROPERTY"
           },
           {
             "src": "<[Symbol.iterator]>",
-            "dst": "<object-literal>",
+            "dst": "<{...}_1>",
             "type": "RETURNS"
           },
           {
             "src": "<next>",
-            "dst": "<return-object>",
+            "dst": "<{...}_2>",
             "type": "RETURNS"
           },
           {
-            "src": "<return-object>",
+            "src": "<{...}_2>",
             "dst": "<n++>",
             "type": "HAS_PROPERTY"
           },
           {
-            "src": "<return-object>",
+            "src": "<{...}_2>",
             "dst": "<false>",
             "type": "HAS_PROPERTY"
           }
@@ -46088,8 +46088,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<{ name, age }>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "kind": "object-literal"
           }
@@ -46114,7 +46114,7 @@
           },
           {
             "src": "<createUser>",
-            "dst": "<{ name, age }>",
+            "dst": "<{...}>",
             "type": "RETURNS"
           }
         ],
@@ -46147,16 +46147,16 @@
           },
           {
             "src": "<@returns>",
-            "dst": "<{ name, age }>",
+            "dst": "<{...}>",
             "type": "ALIASES"
           },
           {
-            "src": "<{ name, age }>",
+            "src": "<{...}>",
             "dst": "<name>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ name, age }>",
+            "src": "<{...}>",
             "dst": "<age>",
             "type": "READS_FROM"
           }
@@ -46593,8 +46593,8 @@
           "id": "<overrides>"
         },
         {
-          "type": "EXPRESSION",
-          "id": "<{ ...target, ...overrides }>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "operator": "spread"
           }
@@ -46650,7 +46650,7 @@
           },
           {
             "src": "<applyDefaults>",
-            "dst": "<{ ...target, ...overrides }>",
+            "dst": "<{...}>",
             "type": "RETURNS"
           },
           {
@@ -46687,12 +46687,12 @@
         "postFile": [],
         "postProject": [
           {
-            "src": "<{ ...target, ...overrides }>",
+            "src": "<{...}>",
             "dst": "<target>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ ...target, ...overrides }>",
+            "src": "<{...}>",
             "dst": "<overrides>",
             "type": "READS_FROM"
           },
@@ -48760,8 +48760,8 @@
           "id": "<s>"
         },
         {
-          "type": "EXPRESSION",
-          "id": "<{ get: getSecret, set: setSecret }>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "type": "object-literal"
           }
@@ -48803,16 +48803,16 @@
           },
           {
             "src": "<IIFE>",
-            "dst": "<{ get: getSecret, set: setSecret }>",
+            "dst": "<{...}>",
             "type": "RETURNS"
           },
           {
-            "src": "<{ get: getSecret, set: setSecret }>",
+            "src": "<{...}>",
             "dst": "<getSecret>",
             "type": "HAS_PROPERTY"
           },
           {
-            "src": "<{ get: getSecret, set: setSecret }>",
+            "src": "<{...}>",
             "dst": "<setSecret>",
             "type": "HAS_PROPERTY"
           }
@@ -50443,8 +50443,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<{ first, last, second }>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "type": "object",
             "shorthandProperties": true
@@ -50490,7 +50490,7 @@
           },
           {
             "src": "<arrayAt>",
-            "dst": "<{ first, last, second }>",
+            "dst": "<{...}>",
             "type": "RETURNS"
           }
         ],
@@ -50528,17 +50528,17 @@
             "type": "READS_FROM"
           },
           {
-            "src": "<{ first, last, second }>",
+            "src": "<{...}>",
             "dst": "<first>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ first, last, second }>",
+            "src": "<{...}>",
             "dst": "<last>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ first, last, second }>",
+            "src": "<{...}>",
             "dst": "<second>",
             "type": "READS_FROM"
           }
@@ -51603,8 +51603,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<{ last, lastIdx }>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "type": "object-literal"
           }
@@ -51659,7 +51659,7 @@
           },
           {
             "src": "<arrayFindLast>",
-            "dst": "<{ last, lastIdx }>",
+            "dst": "<{...}>",
             "type": "RETURNS"
           }
         ],
@@ -51707,12 +51707,12 @@
             "type": "READS_FROM"
           },
           {
-            "src": "<{ last, lastIdx }>",
+            "src": "<{...}>",
             "dst": "<last>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ last, lastIdx }>",
+            "src": "<{...}>",
             "dst": "<lastIdx>",
             "type": "READS_FROM"
           }
@@ -51884,8 +51884,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<return-object>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "type": "object-literal"
           }
@@ -51923,7 +51923,7 @@
           },
           {
             "src": "<createDeferred>",
-            "dst": "<return-object>",
+            "dst": "<{...}>",
             "type": "RETURNS"
           }
         ],
@@ -51951,17 +51951,17 @@
             "type": "CALLS"
           },
           {
-            "src": "<return-object>",
+            "src": "<{...}>",
             "dst": "<promise>",
             "type": "READS_FROM"
           },
           {
-            "src": "<return-object>",
+            "src": "<{...}>",
             "dst": "<resolve>",
             "type": "READS_FROM"
           },
           {
-            "src": "<return-object>",
+            "src": "<{...}>",
             "dst": "<reject>",
             "type": "READS_FROM"
           }
@@ -52116,8 +52116,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<{ cause: err }>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "objectLiteral": true
           }
@@ -52157,7 +52157,7 @@
           },
           {
             "src": "<new Error()>",
-            "dst": "<{ cause: err }>",
+            "dst": "<{...}>",
             "type": "PASSES_ARGUMENT"
           }
         ],
@@ -52175,7 +52175,7 @@
             "type": "CALLS"
           },
           {
-            "src": "<{ cause: err }>",
+            "src": "<{...}>",
             "dst": "<err>",
             "type": "READS_FROM"
           }
@@ -52281,7 +52281,7 @@
         },
         {
           "type": "PROPERTY",
-          "id": "<data-property>",
+          "id": "<data>",
           "metadata": {
             "name": "data"
           }
@@ -52328,7 +52328,7 @@
           },
           {
             "src": "<resource-object>",
-            "dst": "<data-property>",
+            "dst": "<data>",
             "type": "HAS_PROPERTY"
           },
           {
@@ -52349,7 +52349,7 @@
             "type": "ASSIGNED_FROM"
           },
           {
-            "src": "<data-property>",
+            "src": "<data>",
             "dst": "<'important'>",
             "type": "ASSIGNED_FROM"
           },
@@ -53254,8 +53254,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<{ year, month, day }>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "type": "object-literal"
           }
@@ -53315,7 +53315,7 @@
           },
           {
             "src": "<regexNamedGroups>",
-            "dst": "<{ year, month, day }>",
+            "dst": "<{...}>",
             "type": "RETURNS"
           }
         ],
@@ -53358,17 +53358,17 @@
             "type": "READS_FROM"
           },
           {
-            "src": "<{ year, month, day }>",
+            "src": "<{...}>",
             "dst": "<year>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ year, month, day }>",
+            "src": "<{...}>",
             "dst": "<month>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ year, month, day }>",
+            "src": "<{...}>",
             "dst": "<day>",
             "type": "READS_FROM"
           }
@@ -53456,8 +53456,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<return-object>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "type": "object-literal"
           }
@@ -53535,26 +53535,26 @@
           },
           {
             "src": "<regexIndices>",
-            "dst": "<return-object>",
+            "dst": "<{...}>",
             "type": "RETURNS"
           },
           {
-            "src": "<return-object>",
+            "src": "<{...}>",
             "dst": "<match[0]>",
             "type": "HAS_PROPERTY"
           },
           {
-            "src": "<return-object>",
+            "src": "<{...}>",
             "dst": "<indices[0][0]>",
             "type": "HAS_PROPERTY"
           },
           {
-            "src": "<return-object>",
+            "src": "<{...}>",
             "dst": "<indices[0][1]>",
             "type": "HAS_PROPERTY"
           },
           {
-            "src": "<return-object>",
+            "src": "<{...}>",
             "dst": "<indices.groups>",
             "type": "HAS_PROPERTY"
           }
@@ -54529,8 +54529,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<object-literal>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "type": "object"
           }
@@ -54588,21 +54588,21 @@
           },
           {
             "src": "<openStream>",
-            "dst": "<object-literal>",
+            "dst": "<{...}>",
             "type": "RETURNS"
           },
           {
-            "src": "<object-literal>",
+            "src": "<{...}>",
             "dst": "<url>",
             "type": "HAS_PROPERTY"
           },
           {
-            "src": "<object-literal>",
+            "src": "<{...}>",
             "dst": "<readAll>",
             "type": "HAS_PROPERTY"
           },
           {
-            "src": "<object-literal>",
+            "src": "<{...}>",
             "dst": "<Symbol.asyncDispose>",
             "type": "HAS_PROPERTY"
           },
@@ -56322,8 +56322,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<{ left, right }>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "type": "object-literal",
             "shorthand": true
@@ -56344,7 +56344,7 @@
           },
           {
             "src": "<arrayDestructuringSwap>",
-            "dst": "<{ left, right }>",
+            "dst": "<{...}>",
             "type": "RETURNS"
           }
         ],
@@ -56387,12 +56387,12 @@
             "type": "READS_FROM"
           },
           {
-            "src": "<{ left, right }>",
+            "src": "<{...}>",
             "dst": "<left>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ left, right }>",
+            "src": "<{...}>",
             "dst": "<right>",
             "type": "READS_FROM"
           }
@@ -56616,8 +56616,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<{ first, second, rest }>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "type": "object",
             "shorthandProperties": true
@@ -56633,7 +56633,7 @@
           },
           {
             "src": "<withArrayParam>",
-            "dst": "<{ first, second, rest }>",
+            "dst": "<{...}>",
             "type": "RETURNS"
           }
         ],
@@ -56656,17 +56656,17 @@
         ],
         "postProject": [
           {
-            "src": "<{ first, second, rest }>",
+            "src": "<{...}>",
             "dst": "<first>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ first, second, rest }>",
+            "src": "<{...}>",
             "dst": "<second>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ first, second, rest }>",
+            "src": "<{...}>",
             "dst": "<rest>",
             "type": "READS_FROM"
           }
@@ -56885,8 +56885,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<{ name, theme }>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "type": "object",
             "shorthand": true
@@ -56907,7 +56907,7 @@
           },
           {
             "src": "<withNestedParam>",
-            "dst": "<{ name, theme }>",
+            "dst": "<{...}>",
             "type": "RETURNS"
           }
         ],
@@ -56925,12 +56925,12 @@
         ],
         "postProject": [
           {
-            "src": "<{ name, theme }>",
+            "src": "<{...}>",
             "dst": "<name>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ name, theme }>",
+            "src": "<{...}>",
             "dst": "<theme>",
             "type": "READS_FROM"
           }
@@ -57509,8 +57509,8 @@
           "id": "<iter>"
         },
         {
-          "type": "EXPRESSION",
-          "id": "<{} = obj>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "pattern": "object",
             "empty": true,
@@ -57546,7 +57546,7 @@
           },
           {
             "src": "<destructureEmpty>",
-            "dst": "<{} = obj>",
+            "dst": "<{...}>",
             "type": "CONTAINS"
           },
           {
@@ -57558,7 +57558,7 @@
         "postFile": [],
         "postProject": [
           {
-            "src": "<{} = obj>",
+            "src": "<{...}>",
             "dst": "<obj>",
             "type": "READS_FROM"
           },
@@ -58190,8 +58190,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<config-object>"
+          "type": "LITERAL",
+          "id": "<{...}>"
         },
         {
           "type": "PROPERTY",
@@ -58265,12 +58265,12 @@
             "type": "CONTAINS"
           },
           {
-            "src": "<config-object>",
+            "src": "<{...}>",
             "dst": "<debug-1>",
             "type": "HAS_PROPERTY"
           },
           {
-            "src": "<config-object>",
+            "src": "<{...}>",
             "dst": "<...overrides>",
             "type": "HAS_ELEMENT"
           },
@@ -58280,7 +58280,7 @@
             "type": "SPREADS_FROM"
           },
           {
-            "src": "<config-object>",
+            "src": "<{...}>",
             "dst": "<debug-3>",
             "type": "HAS_PROPERTY"
           },
@@ -58290,7 +58290,7 @@
             "type": "SHADOWS"
           },
           {
-            "src": "<config-object>",
+            "src": "<{...}>",
             "dst": "<timestamp>",
             "type": "HAS_PROPERTY"
           },
@@ -58303,7 +58303,7 @@
         "postFile": [
           {
             "src": "<config>",
-            "dst": "<config-object>",
+            "dst": "<{...}>",
             "type": "ASSIGNED_FROM"
           },
           {
@@ -58622,8 +58622,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<{ first, second, deep }>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "type": "object",
             "shorthand": true
@@ -58664,7 +58664,7 @@
           },
           {
             "src": "<destructureNestedRest>",
-            "dst": "<{ first, second, deep }>",
+            "dst": "<{...}>",
             "type": "RETURNS"
           }
         ],
@@ -58692,17 +58692,17 @@
         ],
         "postProject": [
           {
-            "src": "<{ first, second, deep }>",
+            "src": "<{...}>",
             "dst": "<first>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ first, second, deep }>",
+            "src": "<{...}>",
             "dst": "<second>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ first, second, deep }>",
+            "src": "<{...}>",
             "dst": "<deep>",
             "type": "READS_FROM"
           }
@@ -58769,8 +58769,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<{ a, b }>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "type": "object",
             "shorthand": true
@@ -58796,7 +58796,7 @@
           },
           {
             "src": "<dotAccess>",
-            "dst": "<{ a, b }>",
+            "dst": "<{...}>",
             "type": "RETURNS"
           }
         ],
@@ -58834,12 +58834,12 @@
             "type": "READS_FROM"
           },
           {
-            "src": "<{ a, b }>",
+            "src": "<{...}>",
             "dst": "<a>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ a, b }>",
+            "src": "<{...}>",
             "dst": "<b>",
             "type": "READS_FROM"
           }
@@ -59146,8 +59146,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<{ a, b, c }>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "type": "object",
             "shorthand": true
@@ -59198,7 +59198,7 @@
           },
           {
             "src": "<bracketAccess>",
-            "dst": "<{ a, b, c }>",
+            "dst": "<{...}>",
             "type": "RETURNS"
           }
         ],
@@ -59236,17 +59236,17 @@
             "type": "READS_FROM"
           },
           {
-            "src": "<{ a, b, c }>",
+            "src": "<{...}>",
             "dst": "<a>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ a, b, c }>",
+            "src": "<{...}>",
             "dst": "<b>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ a, b, c }>",
+            "src": "<{...}>",
             "dst": "<c>",
             "type": "READS_FROM"
           }
@@ -59849,8 +59849,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<{ keys, values, entries }>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "type": "object-literal"
           }
@@ -59895,7 +59895,7 @@
           },
           {
             "src": "<objectEnumeration>",
-            "dst": "<{ keys, values, entries }>",
+            "dst": "<{...}>",
             "type": "RETURNS"
           }
         ],
@@ -59933,17 +59933,17 @@
             "type": "CALLS"
           },
           {
-            "src": "<{ keys, values, entries }>",
+            "src": "<{...}>",
             "dst": "<keys>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ keys, values, entries }>",
+            "src": "<{...}>",
             "dst": "<values>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ keys, values, entries }>",
+            "src": "<{...}>",
             "dst": "<entries>",
             "type": "READS_FROM"
           }
@@ -60276,8 +60276,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<{ a, b, c, d }>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "type": "object",
             "shorthand": true
@@ -60323,7 +60323,7 @@
           },
           {
             "src": "<optionalChainMixed>",
-            "dst": "<{ a, b, c, d }>",
+            "dst": "<{...}>",
             "type": "RETURNS"
           }
         ],
@@ -60371,22 +60371,22 @@
             "type": "READS_FROM"
           },
           {
-            "src": "<{ a, b, c, d }>",
+            "src": "<{...}>",
             "dst": "<a>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ a, b, c, d }>",
+            "src": "<{...}>",
             "dst": "<b>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ a, b, c, d }>",
+            "src": "<{...}>",
             "dst": "<c>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ a, b, c, d }>",
+            "src": "<{...}>",
             "dst": "<d>",
             "type": "READS_FROM"
           }
@@ -60610,8 +60610,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<{ hadKey, hasKey }>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "type": "object-literal"
           }
@@ -60641,7 +60641,7 @@
           },
           {
             "src": "<propertyDeletion>",
-            "dst": "<{ hadKey, hasKey }>",
+            "dst": "<{...}>",
             "type": "RETURNS"
           }
         ],
@@ -60684,12 +60684,12 @@
             "type": "READS_FROM"
           },
           {
-            "src": "<{ hadKey, hasKey }>",
+            "src": "<{...}>",
             "dst": "<hadKey>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ hadKey, hasKey }>",
+            "src": "<{...}>",
             "dst": "<hasKey>",
             "type": "READS_FROM"
           }
@@ -61602,8 +61602,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<{ g, hasConsole }>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "type": "object"
           }
@@ -61623,7 +61623,7 @@
           },
           {
             "src": "<globalThisAccess>",
-            "dst": "<{ g, hasConsole }>",
+            "dst": "<{...}>",
             "type": "RETURNS"
           }
         ],
@@ -61651,12 +61651,12 @@
             "type": "READS_FROM"
           },
           {
-            "src": "<{ g, hasConsole }>",
+            "src": "<{...}>",
             "dst": "<g>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ g, hasConsole }>",
+            "src": "<{...}>",
             "dst": "<hasConsole>",
             "type": "READS_FROM"
           }
@@ -61916,8 +61916,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<{ [sym]: 'symbol value' }>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "expressionType": "object"
           }
@@ -61963,7 +61963,7 @@
             "type": "PASSES_ARGUMENT"
           },
           {
-            "src": "<{ [sym]: 'symbol value' }>",
+            "src": "<{...}>",
             "dst": "<[sym]>",
             "type": "HAS_PROPERTY"
           },
@@ -61981,7 +61981,7 @@
           },
           {
             "src": "<obj>",
-            "dst": "<{ [sym]: 'symbol value' }>",
+            "dst": "<{...}>",
             "type": "ASSIGNED_FROM"
           },
           {
@@ -62324,8 +62324,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<{ a, b, c }>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "type": "object",
             "shorthandProperties": true
@@ -62381,7 +62381,7 @@
           },
           {
             "src": "<objectIsComparison>",
-            "dst": "<{ a, b, c }>",
+            "dst": "<{...}>",
             "type": "RETURNS"
           }
         ],
@@ -62419,17 +62419,17 @@
             "type": "CALLS"
           },
           {
-            "src": "<{ a, b, c }>",
+            "src": "<{...}>",
             "dst": "<a>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ a, b, c }>",
+            "src": "<{...}>",
             "dst": "<b>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ a, b, c }>",
+            "src": "<{...}>",
             "dst": "<c>",
             "type": "READS_FROM"
           }
@@ -63163,8 +63163,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<return-object>"
+          "type": "LITERAL",
+          "id": "<{...}>"
         }
       ],
       "expectedEdges": {
@@ -63226,16 +63226,16 @@
           },
           {
             "src": "<getterSideEffect>",
-            "dst": "<return-object>",
+            "dst": "<{...}>",
             "type": "RETURNS"
           },
           {
-            "src": "<return-object>",
+            "src": "<{...}>",
             "dst": "<x>",
             "type": "HAS_PROPERTY"
           },
           {
-            "src": "<return-object>",
+            "src": "<{...}>",
             "dst": "<callCount>",
             "type": "HAS_PROPERTY"
           }
@@ -63822,8 +63822,8 @@
           "id": "<try-block>"
         },
         {
-          "type": "EXPRESSION",
-          "id": "<{ boom } = dangerous>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "pattern": "object"
           }
@@ -63885,11 +63885,11 @@
           },
           {
             "src": "<try-block>",
-            "dst": "<{ boom } = dangerous>",
+            "dst": "<{...}>",
             "type": "HAS_BODY"
           },
           {
-            "src": "<{ boom } = dangerous>",
+            "src": "<{...}>",
             "dst": "<boom>",
             "type": "DECLARES"
           },
@@ -63928,12 +63928,12 @@
         ],
         "postProject": [
           {
-            "src": "<{ boom } = dangerous>",
+            "src": "<{...}>",
             "dst": "<dangerous>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ boom } = dangerous>",
+            "src": "<{...}>",
             "dst": "<boom:getter>",
             "type": "INVOKES"
           },
@@ -64006,8 +64006,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<{ value }>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "destructuringType": "object"
           }
@@ -64116,7 +64116,7 @@
           },
           {
             "src": "<value>",
-            "dst": "<{ value }>",
+            "dst": "<{...}>",
             "type": "ASSIGNED_FROM"
           },
           {
@@ -64132,12 +64132,12 @@
             "type": "READS_FROM"
           },
           {
-            "src": "<{ value }>",
+            "src": "<{...}>",
             "dst": "<sneaky>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ value }>",
+            "src": "<{...}>",
             "dst": "<sneaky.value>",
             "type": "INVOKES"
           },
@@ -64571,12 +64571,12 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<return-object>"
+          "type": "LITERAL",
+          "id": "<{...}_1>"
         },
         {
-          "type": "EXPRESSION",
-          "id": "<return-expression>"
+          "type": "LITERAL",
+          "id": "<{...}_2>"
         }
       ],
       "expectedEdges": {
@@ -64612,23 +64612,23 @@
             "type": "CONTAINS"
           },
           {
-            "src": "<return-object>",
+            "src": "<{...}_1>",
             "dst": "<extracted>",
             "type": "HAS_PROPERTY"
           },
           {
-            "src": "<return-object>",
+            "src": "<{...}_1>",
             "dst": "<fired>",
             "type": "HAS_PROPERTY"
           },
           {
-            "src": "<return-expression>",
-            "dst": "<return-object>",
+            "src": "<{...}_2>",
+            "dst": "<{...}_1>",
             "type": "RETURNS"
           },
           {
             "src": "<getterComputedDestructuring>",
-            "dst": "<return-expression>",
+            "dst": "<{...}_2>",
             "type": "RETURNS"
           }
         ],
@@ -66288,8 +66288,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<{ proto, hasOwn, hasOwn2, inChain }>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "type": "object-literal"
           }
@@ -66344,7 +66344,7 @@
           },
           {
             "src": "<inspectPrototype>",
-            "dst": "<{ proto, hasOwn, hasOwn2, inChain }>",
+            "dst": "<{...}>",
             "type": "RETURNS"
           }
         ],
@@ -66397,22 +66397,22 @@
             "type": "READS_FROM"
           },
           {
-            "src": "<{ proto, hasOwn, hasOwn2, inChain }>",
+            "src": "<{...}>",
             "dst": "<proto>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ proto, hasOwn, hasOwn2, inChain }>",
+            "src": "<{...}>",
             "dst": "<hasOwn>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ proto, hasOwn, hasOwn2, inChain }>",
+            "src": "<{...}>",
             "dst": "<hasOwn2>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ proto, hasOwn, hasOwn2, inChain }>",
+            "src": "<{...}>",
             "dst": "<inChain>",
             "type": "READS_FROM"
           }
@@ -68606,8 +68606,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<{ depPath, localPath }>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "type": "object-literal"
           }
@@ -68637,7 +68637,7 @@
           },
           {
             "src": "<importMetaExtensions>",
-            "dst": "<{ depPath, localPath }>",
+            "dst": "<{...}>",
             "type": "RETURNS"
           }
         ],
@@ -68665,12 +68665,12 @@
             "type": "CALLS"
           },
           {
-            "src": "<{ depPath, localPath }>",
+            "src": "<{...}>",
             "dst": "<depPath>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ depPath, localPath }>",
+            "src": "<{...}>",
             "dst": "<localPath>",
             "type": "READS_FROM"
           }
@@ -70416,8 +70416,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<return-object>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "type": "object-literal"
           }
@@ -70462,7 +70462,7 @@
           },
           {
             "src": "<deferredPromise>",
-            "dst": "<return-object>",
+            "dst": "<{...}>",
             "type": "RETURNS"
           }
         ],
@@ -70490,17 +70490,17 @@
             "type": "FLOWS_INTO"
           },
           {
-            "src": "<return-object>",
+            "src": "<{...}>",
             "dst": "<promise>",
             "type": "READS_FROM"
           },
           {
-            "src": "<return-object>",
+            "src": "<{...}>",
             "dst": "<resolve>",
             "type": "READS_FROM"
           },
           {
-            "src": "<return-object>",
+            "src": "<{...}>",
             "dst": "<reject>",
             "type": "READS_FROM"
           }
@@ -73255,8 +73255,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<return-object>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "type": "object-literal"
           }
@@ -73316,21 +73316,21 @@
           },
           {
             "src": "<sparseArrayOps>",
-            "dst": "<return-object>",
+            "dst": "<{...}>",
             "type": "RETURNS"
           },
           {
-            "src": "<return-object>",
+            "src": "<{...}>",
             "dst": "<length>",
             "type": "HAS_PROPERTY"
           },
           {
-            "src": "<return-object>",
+            "src": "<{...}>",
             "dst": "<hasIndex1>",
             "type": "HAS_PROPERTY"
           },
           {
-            "src": "<return-object>",
+            "src": "<{...}>",
             "dst": "<mapped>",
             "type": "HAS_PROPERTY"
           }
@@ -73689,8 +73689,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<{ a, b }>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "type": "object",
             "shorthandProperties": true
@@ -73741,7 +73741,7 @@
           },
           {
             "src": "<forOfDestructureAssign>",
-            "dst": "<{ a, b }>",
+            "dst": "<{...}>",
             "type": "RETURNS"
           }
         ],
@@ -73764,12 +73764,12 @@
             "type": "CALLS"
           },
           {
-            "src": "<{ a, b }>",
+            "src": "<{...}>",
             "dst": "<a>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ a, b }>",
+            "src": "<{...}>",
             "dst": "<b>",
             "type": "READS_FROM"
           }
@@ -75475,8 +75475,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<{ arr, processed }>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "literalType": "object"
           }
@@ -75561,7 +75561,7 @@
           },
           {
             "src": "<forCommaUpdate>",
-            "dst": "<{ arr, processed }>",
+            "dst": "<{...}>",
             "type": "RETURNS"
           }
         ],
@@ -75654,12 +75654,12 @@
             "type": "READS_FROM"
           },
           {
-            "src": "<{ arr, processed }>",
+            "src": "<{...}>",
             "dst": "<arr>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ arr, processed }>",
+            "src": "<{...}>",
             "dst": "<processed>",
             "type": "READS_FROM"
           }
@@ -76346,8 +76346,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<{ ...obj1, ...obj2 }>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "kind": "object-spread"
           }
@@ -76397,11 +76397,11 @@
           },
           {
             "src": "<merge>",
-            "dst": "<{ ...obj1, ...obj2 }>",
+            "dst": "<{...}>",
             "type": "RETURNS"
           },
           {
-            "src": "<{ ...obj1, ...obj2 }>",
+            "src": "<{...}>",
             "dst": "<obj1>",
             "type": "SPREADS_FROM",
             "metadata": {
@@ -76409,7 +76409,7 @@
             }
           },
           {
-            "src": "<{ ...obj1, ...obj2 }>",
+            "src": "<{...}>",
             "dst": "<obj2>",
             "type": "SPREADS_FROM",
             "metadata": {
@@ -76949,8 +76949,8 @@
           }
         },
         {
-          "type": "EXPRESSION",
-          "id": "<{ asString, angleBracket }>",
+          "type": "LITERAL",
+          "id": "<{...}>",
           "metadata": {
             "expressionType": "object-literal"
           }
@@ -76980,7 +76980,7 @@
           },
           {
             "src": "<typeAssertions>",
-            "dst": "<{ asString, angleBracket }>",
+            "dst": "<{...}>",
             "type": "RETURNS"
           }
         ],
@@ -77014,12 +77014,12 @@
             }
           },
           {
-            "src": "<{ asString, angleBracket }>",
+            "src": "<{...}>",
             "dst": "<asString>",
             "type": "READS_FROM"
           },
           {
-            "src": "<{ asString, angleBracket }>",
+            "src": "<{...}>",
             "dst": "<angleBracket>",
             "type": "READS_FROM"
           }

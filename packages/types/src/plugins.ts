@@ -344,7 +344,7 @@ export interface GraphBackend {
 
   // Batch operations (RFD-16: CommitBatch protocol)
   beginBatch?(): void;
-  commitBatch?(tags?: string[], deferIndex?: boolean, protectedTypes?: string[]): Promise<CommitDelta>;
+  commitBatch?(tags?: string[], deferIndex?: boolean, protectedTypes?: string[], changedFiles?: string[]): Promise<CommitDelta>;
   abortBatch?(): void;
 
   // Deferred indexing (REG-487: bulk load optimization)

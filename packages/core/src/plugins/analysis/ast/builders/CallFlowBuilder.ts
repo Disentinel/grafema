@@ -15,6 +15,7 @@ import type {
   ConstructorCallInfo,
   ImportInfo,
   ObjectPropertyInfo,
+  ArrayElementInfo,
   ASTCollections,
   GraphEdge,
 } from '../types.js';
@@ -50,11 +51,13 @@ export class CallFlowBuilder implements DomainBuilder {
       constructorCalls = [],
       imports = [],
       objectProperties = [],
+      arrayElements = [],
       parameters = [],
     } = data;
 
     this.bufferArgumentEdges(callArguments, variableDeclarations, functions, callSites, methodCalls, constructorCalls, imports);
     this.bufferObjectPropertyEdges(objectProperties, variableDeclarations, parameters, functions);
+    this.bufferArrayElementEdges(arrayElements, variableDeclarations, parameters, functions);
   }
 
   private bufferArgumentEdges(
@@ -276,6 +279,51 @@ export class CallFlowBuilder implements DomainBuilder {
           src: prop.objectId,
           dst: prop.valueNodeId,
           propertyName: prop.propertyName
+        });
+      }
+    }
+  }
+
+  /**
+   * Buffer HAS_ELEMENT edges connecting ARRAY_LITERAL nodes to their element values.
+   * Follows the same pattern as bufferObjectPropertyEdges for scope-aware resolution.
+   */
+  private bufferArrayElementEdges(
+    arrayElements: ArrayElementInfo[],
+    variableDeclarations: VariableDeclarationInfo[],
+    parameters: ParameterInfo[],
+    functions: FunctionInfo[]
+  ): void {
+    for (const elem of arrayElements) {
+      if (elem.valueType === 'VARIABLE' && elem.valueName) {
+        const resolved = this.ctx.resolveVariableInScope(
+          elem.valueName, [], elem.file, variableDeclarations
+        );
+        const resolvedParam = !resolved
+          ? this.ctx.resolveParameterInScope(elem.valueName, [], elem.file, parameters)
+          : null;
+        const resolvedFunc = !resolved && !resolvedParam
+          ? functions.find(f => f.name === elem.valueName && f.file === elem.file)
+          : null;
+        const resolvedNodeId = resolved?.id ?? resolvedParam?.semanticId ?? resolvedParam?.id ?? resolvedFunc?.id;
+        if (resolvedNodeId) {
+          this.ctx.bufferEdge({
+            type: 'HAS_ELEMENT',
+            src: elem.arrayId,
+            dst: resolvedNodeId,
+            elementIndex: elem.index
+          });
+        }
+        continue;
+      }
+
+      const targetId = elem.valueNodeId ?? elem.nestedObjectId ?? elem.nestedArrayId;
+      if (targetId) {
+        this.ctx.bufferEdge({
+          type: 'HAS_ELEMENT',
+          src: elem.arrayId,
+          dst: targetId,
+          elementIndex: elem.index
         });
       }
     }

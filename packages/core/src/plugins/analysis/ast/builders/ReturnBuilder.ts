@@ -31,13 +31,13 @@ export class ReturnBuilder implements DomainBuilder {
   }
 
   /**
-   * Buffer RETURNS edges connecting return expressions to their containing functions.
+   * Buffer RETURNS edges connecting functions to their return expressions.
    *
-   * Edge direction: returnExpression --RETURNS--> function
+   * Edge direction: function --RETURNS--> returnExpression
    *
    * This enables tracing data flow through function calls:
    * - Query: "What does formatDate return?"
-   * - Answer: Follow RETURNS edges from function to see all possible return values
+   * - Answer: Follow outgoing RETURNS edges from function to see all possible return values
    */
   private bufferReturnEdges(
     returnStatements: ReturnStatementInfo[],
@@ -266,12 +266,12 @@ export class ReturnBuilder implements DomainBuilder {
         }
       }
 
-      // Create RETURNS edge if we found a source node
+      // Create RETURNS edge: function → return value
       if (sourceNodeId && parentFunctionId) {
         this.ctx.bufferEdge({
           type: 'RETURNS',
-          src: sourceNodeId,
-          dst: parentFunctionId
+          src: parentFunctionId,
+          dst: sourceNodeId
         });
       }
     }

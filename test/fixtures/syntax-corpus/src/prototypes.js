@@ -146,11 +146,11 @@ nullProto.key = 'value';
 // VARIABLE <<inChain>> -> ASSIGNED_FROM -> EXPRESSION <<'toString' in obj>>
 // EXPRESSION <<'toString' in obj>> -> READS_FROM -> LITERAL <<'toString'>>
 // EXPRESSION <<'toString' in obj>> -> READS_FROM -> PARAMETER <<obj>>
-// FUNCTION <<inspectPrototype>> -> RETURNS -> EXPRESSION <<{ proto, hasOwn, hasOwn2, inChain }>>
-// EXPRESSION <<{ proto, hasOwn, hasOwn2, inChain }>> -> READS_FROM -> VARIABLE <<proto>>
-// EXPRESSION <<{ proto, hasOwn, hasOwn2, inChain }>> -> READS_FROM -> VARIABLE <<hasOwn>>
-// EXPRESSION <<{ proto, hasOwn, hasOwn2, inChain }>> -> READS_FROM -> VARIABLE <<hasOwn2>>
-// EXPRESSION <<{ proto, hasOwn, hasOwn2, inChain }>> -> READS_FROM -> VARIABLE <<inChain>>
+// FUNCTION <<inspectPrototype>> -> RETURNS -> LITERAL <<{...}>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<proto>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<hasOwn>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<hasOwn2>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<inChain>>
 // @end-annotation
 function inspectPrototype(obj) {
   const proto = Object.getPrototypeOf(obj);

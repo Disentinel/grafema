@@ -123,7 +123,10 @@ export function handleCallExpression(
         isInsideTry,
         // REG-298: Await-in-loop detection
         ...(isAwaited && isInsideLoop ? { isInsideLoop } : {}),
-        isMethodCall: true
+        isMethodCall: true,
+        // REG-579: Object position for chain detection
+        objectLine: getLine(object) || undefined,
+        objectColumn: getColumn(object) ?? undefined,
       });
 
       // REG-400: Extract arguments for method calls (enables callback resolution)
@@ -240,6 +243,43 @@ export function handleCallExpression(
         }
       }
     }
+    // REG-579: Chain calls like fetch().then(), a().b() — object is a CallExpression
+    else if (object.type === 'CallExpression' && property.type === 'Identifier') {
+      const methodName = property.name;
+      const objectName = '<chain>';
+      const fullName = `${objectName}.${methodName}`;
+
+      const nodeKey = `${callNode.start}:${callNode.end}`;
+      if (!processedMethodCalls.has(nodeKey)) {
+        processedMethodCalls.add(nodeKey);
+
+        const legacyId = `CALL#${fullName}#${module.file}#${getLine(callNode)}:${getColumn(callNode)}:${callSiteCounterRef.value++}`;
+
+        let methodCallId = legacyId;
+        if (scopeTracker) {
+          const discriminator = scopeTracker.getItemCounter(`CALL:${fullName}`);
+          methodCallId = computeSemanticId('CALL', fullName, scopeTracker.getContext(), { discriminator });
+        }
+
+        methodCalls.push({
+          id: methodCallId,
+          type: 'CALL',
+          name: fullName,
+          object: objectName,
+          method: methodName,
+          file: module.file,
+          line: getLine(callNode),
+          column: getColumn(callNode),
+          endLine: getEndLocation(callNode).line,
+          endColumn: getEndLocation(callNode).column,
+          parentScopeId,
+          isMethodCall: true,
+          isAwaited,
+          objectLine: getLine(object) || undefined,
+          objectColumn: getColumn(object) ?? undefined,
+        });
+      }
+    }
   }
 }
 
@@ -277,7 +317,7 @@ export function extractMethodCallArguments(
       argInfo.targetName = arg.name;
     } else if (t.isLiteral(arg) && !t.isTemplateLiteral(arg)) {
       const literalValue = ExpressionEvaluator.extractLiteralValue(arg as t.Literal);
-      if (literalValue !== null) {
+      if (literalValue !== null || arg.type === 'NullLiteral') {
         const argLine = getLine(arg);
         const argColumn = getColumn(arg);
         const literalId = `LITERAL#arg${argIndex}#${module.file}#${argLine}:${argColumn}:${literalCounterRef.value++}`;

@@ -1,11 +1,13 @@
 /**
- * FunctionVisitor - handles function declarations and arrow functions
+ * FunctionVisitor - handles function declarations, function expressions, and arrow functions
  *
  * Handles:
  * - FunctionDeclaration
+ * - FunctionExpression (module-level, assigned to variables)
  * - ArrowFunctionExpression (module-level)
  */
 
+import * as t from '@babel/types';
 import type {
   Node,
   Function,
@@ -388,6 +390,101 @@ export class FunctionVisitor extends ASTVisitor {
         // Stop traversal - analyzeFunctionBody already processed contents
         // Without this, babel traverse continues into arrow body and finds
         // nested arrow functions, causing duplicate FUNCTION nodes
+        path.skip();
+      },
+
+      // Function expressions (module-level, assigned to variables)
+      // e.g., const handler = function first() { return 1; };
+      FunctionExpression: (path: NodePath) => {
+        // Skip function expressions nested inside other functions — those are handled
+        // by NestedFunctionHandler during analyzeFunctionBody traversal.
+        const functionParent = path.getFunctionParent();
+        if (functionParent) return;
+
+        // Skip class methods — ClassVisitor handles those
+        const parent = path.parent;
+        if (parent.type === 'ClassProperty' || parent.type === 'ClassPrivateProperty') return;
+        // Skip object method shorthand — already handled as FunctionDeclaration-like
+        if (parent.type === 'ObjectMethod') return;
+
+        const node = path.node as FunctionExpression;
+        const line = getLine(node);
+        const column = getColumn(node);
+        const isAsync = node.async || false;
+
+        // Determine function name: variable name > assignment target > internal name > anonymous
+        let functionName = generateAnonymousName();
+
+        if (parent.type === 'VariableDeclarator') {
+          const declarator = parent as VariableDeclarator;
+          if (declarator.id.type === 'Identifier') {
+            functionName = declarator.id.name;
+          }
+        } else if (parent.type === 'AssignmentExpression') {
+          const assign = parent as t.AssignmentExpression;
+          if (assign.left.type === 'Identifier') {
+            functionName = assign.left.name;
+          } else if (assign.left.type === 'MemberExpression' && t.isIdentifier(assign.left.property)) {
+            functionName = assign.left.property.name;
+          }
+        } else if (node.id && node.id.name) {
+          functionName = node.id.name;
+        }
+
+        // Generate ID using centralized IdGenerator
+        const idGenerator = new IdGenerator(scopeTracker);
+        const functionId = idGenerator.generateV2Simple('FUNCTION', functionName, module.file);
+
+        // Extract type info
+        const { names: paramNames, types: paramTypes } = extractParamInfo(node.params);
+        const returnType = extractReturnType(node);
+        const jsdocSummary = extractJsdocSummary(node);
+        const signature = buildSignature(paramNames, paramTypes, returnType, isAsync);
+
+        (functions as FunctionInfo[]).push({
+          id: functionId,
+          type: 'FUNCTION',
+          name: functionName,
+          file: module.file,
+          line,
+          column,
+          async: isAsync,
+          generator: node.generator || false,
+          params: paramNames,
+          paramTypes,
+          returnType,
+          signature,
+          jsdocSummary,
+          start: node.start ?? undefined
+        });
+
+        // Enter function scope BEFORE creating parameters
+        scopeTracker.enterScope(functionName, 'FUNCTION');
+
+        // Create PARAMETER nodes for function parameters
+        createParameterNodes(node.params, functionId, module.file, line, parameters as ParameterInfo[], scopeTracker);
+
+        // Create SCOPE for function body
+        const bodyScope = idGenerator.generateV2Simple('SCOPE', 'body', module.file);
+        (scopes as ScopeInfo[]).push({
+          id: bodyScope,
+          type: 'SCOPE',
+          name: `${functionName}:body`,
+          file: module.file,
+          line,
+          scopeType: 'function_body',
+          parentFunctionId: functionId
+        });
+
+        // REG-334: Detect Promise executor context BEFORE analyzing body
+        this.detectPromiseExecutorContext(path, node, module, collections);
+
+        analyzeFunctionBody(path as NodePath<FunctionExpression>, bodyScope, module, collections);
+
+        // Exit function scope
+        scopeTracker.exitScope();
+
+        // Stop traversal — analyzeFunctionBody already processed contents
         path.skip();
       }
     };

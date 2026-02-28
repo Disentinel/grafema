@@ -53,7 +53,7 @@ function getLogLevel(options: { quiet?: boolean; verbose?: boolean; logLevel?: s
   return 'silent';  // Default: silent logs, clean progress UI
 }
 
-export async function analyzeAction(path: string, options: { service?: string; entrypoint?: string; clear?: boolean; quiet?: boolean; verbose?: boolean; debug?: boolean; logLevel?: string; logFile?: string; strict?: boolean; autoStart?: boolean }): Promise<void> {
+export async function analyzeAction(path: string, options: { service?: string; entrypoint?: string; clear?: boolean; quiet?: boolean; verbose?: boolean; debug?: boolean; logLevel?: string; logFile?: string; strict?: boolean; autoStart?: boolean; engine?: string }): Promise<void> {
   const projectPath = resolve(path);
   const grafemaDir = join(projectPath, '.grafema');
   const dbPath = join(grafemaDir, 'graph.rfdb');
@@ -113,6 +113,14 @@ export async function analyzeAction(path: string, options: { service?: string; e
   }
 
   const config = loadConfig(projectPath, logger);
+
+  // Switch to core-v2 engine if requested
+  if (options.engine === 'v2') {
+    debug('Using core-v2 analysis engine');
+    config.plugins.analysis = ['CoreV2Analyzer'];
+    config.plugins.enrichment = [];
+    config.plugins.validation = [];
+  }
 
   // Extract services from config (REG-174)
   if (config.services.length > 0) {

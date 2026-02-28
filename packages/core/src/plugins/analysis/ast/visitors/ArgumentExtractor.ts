@@ -159,7 +159,7 @@ export class ArgumentExtractor {
       // Literal value (primitives only - objects/arrays handled above)
       else {
         const literalValue = ExpressionEvaluator.extractLiteralValue(actualArg);
-        if (literalValue !== null) {
+        if (literalValue !== null || actualArg.type === 'NullLiteral') {
           const literalId = `LITERAL#arg${index}#${module.file}#${argInfo.line}:${argInfo.column}:${literalCounterRef.value++}`;
           literals.push({
             id: literalId,

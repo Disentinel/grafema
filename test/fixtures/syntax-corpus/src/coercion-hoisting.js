@@ -424,10 +424,10 @@ function evalFunctionInjection() {
 // VARIABLE <<fixed>> -> ASSIGNED_FROM -> CALL <<num.toFixed(2)>>
 // CALL <<num.toFixed(2)>> -> CALLS_ON -> VARIABLE <<num>>
 // CALL <<num.toFixed(2)>> -> PASSES_ARGUMENT -> LITERAL <<2>>
-// FUNCTION <<primitiveAutoboxing>> -> RETURNS -> EXPRESSION <<{ upper, lost, fixed }>>
-// EXPRESSION <<{ upper, lost, fixed }>> -> READS_FROM -> VARIABLE <<upper>>
-// EXPRESSION <<{ upper, lost, fixed }>> -> READS_FROM -> VARIABLE <<lost>>
-// EXPRESSION <<{ upper, lost, fixed }>> -> READS_FROM -> VARIABLE <<fixed>>
+// FUNCTION <<primitiveAutoboxing>> -> RETURNS -> LITERAL <<{...}>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<upper>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<lost>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<fixed>>
 // @end-annotation
 function primitiveAutoboxing() {
   const str = 'hello';
@@ -629,9 +629,9 @@ function blockLabelAmbiguity() {
 // PARAMETER <<x>> -> ASSIGNED_FROM -> EXPRESSION <<x || 'default'>>
 // EXPRESSION <<x || 'default'>> -> READS_FROM -> PARAMETER <<x>>
 // EXPRESSION <<x || 'default'>> -> READS_FROM -> LITERAL <<'default'>>
-// FUNCTION <<varRedeclaresParameter>> -> RETURNS -> EXPRESSION <<{ x, y }>>
-// EXPRESSION <<{ x, y }>> -> READS_FROM -> PARAMETER <<x>>
-// EXPRESSION <<{ x, y }>> -> READS_FROM -> PARAMETER <<y>>
+// FUNCTION <<varRedeclaresParameter>> -> RETURNS -> LITERAL <<{...}>>
+// LITERAL <<{...}>> -> READS_FROM -> PARAMETER <<x>>
+// LITERAL <<{...}>> -> READS_FROM -> PARAMETER <<y>>
 // @end-annotation
 function varRedeclaresParameter(x, y) {
   var x = x || 'default'; // same binding as parameter x — NOT a new variable

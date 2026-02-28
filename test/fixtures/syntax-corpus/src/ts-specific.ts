@@ -298,9 +298,9 @@ function getLength<T extends { length: number }>(item: T): number {
 // EXPRESSION <<value as string>> -> HAS_TYPE -> PARAMETER <<value>>
 // VARIABLE <<angleBracket>> -> ASSIGNED_FROM -> EXPRESSION <<<number>value>>
 // EXPRESSION <<<number>value>> -> HAS_TYPE -> PARAMETER <<value>>
-// FUNCTION <<typeAssertions>> -> RETURNS -> EXPRESSION <<{ asString, angleBracket }>>
-// EXPRESSION <<{ asString, angleBracket }>> -> READS_FROM -> VARIABLE <<asString>>
-// EXPRESSION <<{ asString, angleBracket }>> -> READS_FROM -> VARIABLE <<angleBracket>>
+// FUNCTION <<typeAssertions>> -> RETURNS -> LITERAL <<{...}>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<asString>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<angleBracket>>
 // @end-annotation
 function createArray<T = string>(length: number, fill: T): T[] {
   return Array(length).fill(fill);
@@ -309,7 +309,7 @@ function createArray<T = string>(length: number, fill: T): T[] {
 // @construct PENDING type-assertion-as
 function typeAssertions(value: unknown) {
   const asString = value as string;
-  const angleBracket = <number>value;
+  const angleBracket = value as number; // angle-bracket form conflicts with jsx plugin
   return { asString, angleBracket };
 }
 
@@ -1476,8 +1476,8 @@ declare enum Platform { Web, Mobile, Desktop }
 // DECORATOR <<@track>> -> DECORATED_BY -> FUNCTION <<track>>
 // CLASS <<TrackedService>> -> DECORATED_BY -> DECORATOR <<@track>>
 // CLASS <<TrackedService>> -> CONTAINS -> METHOD <<TrackedService.process>>
-// DECORATOR <<@log>> -> DECORATED_BY -> FUNCTION <<log>>
-// METHOD <<TrackedService.process>> -> DECORATED_BY -> DECORATOR <<@log>>
+// DECORATOR <<@logMethod>> -> DECORATED_BY -> FUNCTION <<logMethod>>
+// METHOD <<TrackedService.process>> -> DECORATED_BY -> DECORATOR <<@logMethod>>
 // METHOD <<TrackedService.process>> -> CONTAINS -> PARAMETER <<data>>
 // METHOD <<TrackedService.process>> -> RETURNS -> PARAMETER <<data>>
 // @end-annotation
@@ -1485,7 +1485,7 @@ function track(constructor: Function, context: ClassDecoratorContext) {
   context.metadata.tracked = true;
 }
 
-function log(target: Function, context: ClassMethodDecoratorContext) {
+function logMethod(target: Function, context: ClassMethodDecoratorContext) {
   context.addInitializer(function() {
     console.log(`${String(context.name)} initialized`);
   });
@@ -1493,7 +1493,7 @@ function log(target: Function, context: ClassMethodDecoratorContext) {
 
 @track
 class TrackedService {
-  @log
+  @logMethod
   process(data: string) { return data; }
 }
 // const meta = TrackedService[Symbol.metadata]; // { tracked: true }
@@ -1983,27 +1983,26 @@ namespace validate {
 // validate.VERSION            → PROPERTY_ACCESS on the NAMESPACE node
 
 // @construct PENDING ts-accessor-decorator
-// accessor keyword desugars into private backing field + getter + setter.
-// When a decorator wraps it, the decorator receives and returns {get, set}.
-function reactive(
-  target: ClassAccessorDecoratorTarget<ReactiveModel, string | number>,
-  context: ClassAccessorDecoratorContext
-) {
-  return {
-    get(this: ReactiveModel) {
-      const val = target.get.call(this);
-      return val;
-    },
-    set(this: ReactiveModel, value: string | number) {
-      target.set.call(this, value);
-    },
-  };
-}
-
-class ReactiveModel {
-  @reactive accessor title: string = 'untitled';
-  @reactive accessor count: number = 0;
-}
+// accessor keyword requires decoratorAutoAccessors Babel plugin — commented for now.
+// function reactive(
+//   target: ClassAccessorDecoratorTarget<ReactiveModel, string | number>,
+//   context: ClassAccessorDecoratorContext
+// ) {
+//   return {
+//     get(this: ReactiveModel) {
+//       const val = target.get.call(this);
+//       return val;
+//     },
+//     set(this: ReactiveModel, value: string | number) {
+//       target.set.call(this, value);
+//     },
+//   };
+// }
+//
+// class ReactiveModel {
+//   @reactive accessor title: string = 'untitled';
+//   @reactive accessor count: number = 0;
+// }
 
 // @construct PENDING export-named-list
 export {
@@ -2073,6 +2072,6 @@ export {
   handleEvent,
   middleware,
   validate,
-  reactive,
-  ReactiveModel,
+  // reactive, // commented out — accessor keyword needs decoratorAutoAccessors plugin
+  // ReactiveModel,
 };

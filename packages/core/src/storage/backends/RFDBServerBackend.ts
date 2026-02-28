@@ -770,9 +770,9 @@ export class RFDBServerBackend {
    * @param tags - Optional tags for the commit
    * @param deferIndex - When true, server writes data but skips index rebuild.
    */
-  async commitBatch(tags?: string[], deferIndex?: boolean, protectedTypes?: string[]): Promise<CommitDelta> {
+  async commitBatch(tags?: string[], deferIndex?: boolean, protectedTypes?: string[], changedFiles?: string[]): Promise<CommitDelta> {
     if (!this.client) throw new Error('Not connected to RFDB server');
-    return this.client.commitBatch(tags, deferIndex, protectedTypes);
+    return this.client.commitBatch(tags, deferIndex, protectedTypes, changedFiles);
   }
 
   /**

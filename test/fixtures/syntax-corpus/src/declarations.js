@@ -331,10 +331,10 @@ const arrowIifeResult = (() => {
 // PARAMETER <<c>> -> DEFAULTS_TO -> EXPRESSION <<a + b>>
 // EXPRESSION <<a + b>> -> READS_FROM -> PARAMETER <<a>>
 // EXPRESSION <<a + b>> -> READS_FROM -> PARAMETER <<b>>
-// FUNCTION <<paramDefaultChain>> -> RETURNS -> EXPRESSION <<{ a, b, c }>>
-// EXPRESSION <<{ a, b, c }>> -> READS_FROM -> PARAMETER <<a>>
-// EXPRESSION <<{ a, b, c }>> -> READS_FROM -> PARAMETER <<b>>
-// EXPRESSION <<{ a, b, c }>> -> READS_FROM -> PARAMETER <<c>>
+// FUNCTION <<paramDefaultChain>> -> RETURNS -> LITERAL <<{...}>>
+// LITERAL <<{...}>> -> READS_FROM -> PARAMETER <<a>>
+// LITERAL <<{...}>> -> READS_FROM -> PARAMETER <<b>>
+// LITERAL <<{...}>> -> READS_FROM -> PARAMETER <<c>>
 // @end-annotation
 function paramDefaultChain(a, b = a * 2, c = a + b) {
   return { a, b, c };
@@ -430,10 +430,10 @@ function FlexibleConstructor(name) {
 // PARAMETER <<area>> -> DEFAULTS_TO -> EXPRESSION <<width * height>>
 // EXPRESSION <<width * height>> -> READS_FROM -> VARIABLE <<width>>
 // EXPRESSION <<width * height>> -> READS_FROM -> VARIABLE <<height>>
-// FUNCTION <<paramDefaultFromDestructured>> -> RETURNS -> EXPRESSION <<{ width, height, area }>>
-// EXPRESSION <<{ width, height, area }>> -> READS_FROM -> VARIABLE <<width>>
-// EXPRESSION <<{ width, height, area }>> -> READS_FROM -> VARIABLE <<height>>
-// EXPRESSION <<{ width, height, area }>> -> READS_FROM -> PARAMETER <<area>>
+// FUNCTION <<paramDefaultFromDestructured>> -> RETURNS -> LITERAL <<{...}>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<width>>
+// LITERAL <<{...}>> -> READS_FROM -> VARIABLE <<height>>
+// LITERAL <<{...}>> -> READS_FROM -> PARAMETER <<area>>
 // FUNCTION <<queryBuilder>> -> CONTAINS -> PARAMETER <<{table, schema = 'public'}>>
 // FUNCTION <<queryBuilder>> -> CONTAINS -> PARAMETER <<fullName>>
 // PARAMETER <<{table, schema = 'public'}>> -> HAS_ELEMENT -> VARIABLE <<table>>

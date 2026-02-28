@@ -137,7 +137,7 @@ export class CallExpressionHandler extends FunctionBodyHandler {
                     } else if (t.isLiteral(arg) && !t.isTemplateLiteral(arg)) {
                       // Create LITERAL node for the argument value
                       const literalValue = ExpressionEvaluator.extractLiteralValue(arg as t.Literal);
-                      if (literalValue !== null) {
+                      if (literalValue !== null || arg.type === 'NullLiteral') {
                         const argLine = getLine(arg);
                         const argColumn = getColumn(arg);
                         const literalId = `LITERAL#arg${argIndex}#${ctx.module.file}#${argLine}:${argColumn}:${ctx.literalCounterRef.value++}`;

@@ -262,6 +262,7 @@ export { RustModuleIndexer } from './plugins/indexing/RustModuleIndexer.js';
 
 // Analysis plugins
 export { JSASTAnalyzer } from './plugins/analysis/JSASTAnalyzer.js';
+export { CoreV2Analyzer } from './plugins/analysis/CoreV2Analyzer.js';
 export { ExpressRouteAnalyzer } from './plugins/analysis/ExpressRouteAnalyzer.js';
 export { ExpressResponseAnalyzer } from './plugins/analysis/ExpressResponseAnalyzer.js';
 export { NestJSRouteAnalyzer } from './plugins/analysis/NestJSRouteAnalyzer.js';

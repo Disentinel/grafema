@@ -95,8 +95,20 @@ export class PhaseRunner {
     try {
       const result = await plugin.execute(pluginContext);
       const deferIndex = pluginContext.deferIndexing ?? false;
-      const protectedTypes = phaseName === 'ANALYSIS' ? ['MODULE'] : undefined;
-      const delta = await graph.commitBatch(tags, deferIndex, protectedTypes);
+
+      // ADDITIVE COMMIT: pass empty changedFiles → server skips deletion phase.
+      // Only managesBatch plugins (JSASTAnalyzer) use destructive commits.
+      const delta = await graph.commitBatch(tags, deferIndex, undefined, []);
+
+      // Early-fail: additive commit must not delete existing data
+      if (delta.nodesRemoved > 0 || delta.edgesRemoved > 0) {
+        throw new Error(
+          `[PhaseRunner] Plugin "${plugin.metadata.name}" triggered unexpected deletion ` +
+          `(${delta.nodesRemoved} nodes, ${delta.edgesRemoved} edges removed) during additive commit. ` +
+          `If this plugin needs to replace data, set managesBatch: true in metadata.`
+        );
+      }
+
       return { result, delta };
     } catch (error) {
       graph.abortBatch();
@@ -253,6 +265,9 @@ export class PhaseRunner {
           `[${pluginName}] batch: +${delta.nodesAdded} nodes, +${delta.edgesAdded} edges, ` +
           `-${delta.nodesRemoved} nodes, -${delta.edgesRemoved} edges`
         );
+        if (delta.nodesRemoved > 0 && plugin.metadata.managesBatch) {
+          logger.debug(`[${pluginName}] destructive commit: replaced ${delta.nodesRemoved} nodes in ${delta.changedFiles?.join(', ')}`);
+        }
       }
 
       // Collect errors into diagnostics

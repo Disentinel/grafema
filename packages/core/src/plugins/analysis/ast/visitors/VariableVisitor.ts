@@ -268,7 +268,7 @@ export class VariableVisitor extends ASTVisitor {
 
             variables.forEach((varInfo: VariableInfo) => {
               const literalValue = ExpressionEvaluator.extractLiteralValue(declarator.init);
-              const isLiteral = literalValue !== null;
+              const isLiteral = literalValue !== null || (declarator.init?.type === 'NullLiteral');
               const isNewExpression = declarator.init && declarator.init.type === 'NewExpression';
 
               // Loop variables with const should be CONSTANT (they can't be reassigned in loop body)
