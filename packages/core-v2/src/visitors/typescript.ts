@@ -1312,6 +1312,14 @@ export function visitTSParameterProperty(
       },
     });
     result.edges.push({ src: paramId, dst: propId, type: 'DECLARES' });
+    // Connect PROPERTY to CLASS directly (matches regular ClassProperty behavior)
+    if (classStack?.length) {
+      result.edges.push({
+        src: classStack[classStack.length - 1],
+        dst: propId,
+        type: 'HAS_MEMBER',
+      });
+    }
   }
 
   return result;

@@ -163,6 +163,7 @@ export const EDGE_MAP: Record<string, EdgeMapping> = {
   // ─── Class body ────────────────────────────────────────────
   'ClassDeclaration.body':           { edgeType: 'HAS_BODY' },
   'ClassExpression.body':            { edgeType: 'HAS_BODY' },
+  'ClassBody.body':                  { edgeType: 'HAS_MEMBER', srcFrom: 'enclosingClass' },
 
   // ─── For loop declarations ────────────────────────────────
   'ForInStatement.left':             { edgeType: 'DECLARES' },

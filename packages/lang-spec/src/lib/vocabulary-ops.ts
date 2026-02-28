@@ -49,6 +49,7 @@ const EDGE_TYPE_DOMAINS: Record<string, string> = {
   CONTAINS: 'containment',
   HAS_SCOPE: 'containment',
   HAS_BODY: 'containment',
+  HAS_MEMBER: 'containment',
   // declaration
   DECLARES: 'declaration',
   DEFINES: 'declaration',

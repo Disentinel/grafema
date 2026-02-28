@@ -77,7 +77,6 @@ export function visitClassMethod(
         line: param.loc?.start.line ?? line,
         column: param.loc?.start.column ?? 0,
       });
-      result.edges.push({ src: nodeId, dst: paramId, type: 'HAS_BODY' });
       result.edges.push({ src: nodeId, dst: paramId, type: 'RECEIVES_ARGUMENT' });
       ctx.declare(param.name, 'param', paramId);
     }
@@ -149,7 +148,6 @@ export function visitClassPrivateMethod(
         line: param.loc?.start.line ?? line,
         column: param.loc?.start.column ?? 0,
       });
-      result.edges.push({ src: nodeId, dst: paramId, type: 'HAS_BODY' });
       result.edges.push({ src: nodeId, dst: paramId, type: 'RECEIVES_ARGUMENT' });
       ctx.declare(param.name, 'param', paramId);
     }

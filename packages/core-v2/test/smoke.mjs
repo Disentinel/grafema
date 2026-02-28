@@ -21,7 +21,7 @@ const files = readdirSync(corpusDir).filter(f => f.endsWith('.js') || f.endsWith
 
 const LANG_SPEC_EDGES = {
   // Structural (walk engine / edge-map)
-  CONTAINS: 0, HAS_BODY: 0, HAS_CONDITION: 0, HAS_CONSEQUENT: 0, HAS_ALTERNATE: 0,
+  CONTAINS: 0, HAS_BODY: 0, HAS_MEMBER: 0, HAS_CONDITION: 0, HAS_CONSEQUENT: 0, HAS_ALTERNATE: 0,
   HAS_INIT: 0, HAS_UPDATE: 0, HAS_CASE: 0, HAS_CATCH: 0, HAS_FINALLY: 0,
   HAS_PROPERTY: 0, HAS_ELEMENT: 0, HAS_DEFAULT: 0,
   // Scope / data flow

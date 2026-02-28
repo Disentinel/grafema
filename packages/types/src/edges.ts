@@ -37,6 +37,9 @@ export const EDGE_TYPE = {
   YIELDS: 'YIELDS',
   DELEGATES_TO: 'DELEGATES_TO',
 
+  // Class members
+  HAS_MEMBER: 'HAS_MEMBER',       // CLASS -> METHOD / PROPERTY / STATIC_BLOCK
+
   // Inheritance
   EXTENDS: 'EXTENDS',
   IMPLEMENTS: 'IMPLEMENTS',
