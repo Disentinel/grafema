@@ -86,6 +86,20 @@ export function visitForInStatement(
       column: node.loc?.start.column ?? 0,
     });
   }
+  // ITERATES_OVER: Identifier right-hand side needs explicit deferred
+  // (edge-map only fires when child visitor produces a graph node)
+  if (fi.right.type === 'Identifier') {
+    deferred.push({
+      kind: 'scope_lookup',
+      name: fi.right.name,
+      fromNodeId: nodeId,
+      edgeType: 'ITERATES_OVER',
+      scopeId: ctx.currentScope.id,
+      file: ctx.file,
+      line,
+      column: node.loc?.start.column ?? 0,
+    });
+  }
   return {
     nodes: [{
       id: nodeId,
@@ -118,6 +132,20 @@ export function visitForOfStatement(
       name: fo.left.name,
       fromNodeId: nodeId,
       edgeType: 'MODIFIES',
+      scopeId: ctx.currentScope.id,
+      file: ctx.file,
+      line,
+      column: node.loc?.start.column ?? 0,
+    });
+  }
+  // ITERATES_OVER: Identifier right-hand side needs explicit deferred
+  // (edge-map only fires when child visitor produces a graph node)
+  if (fo.right.type === 'Identifier') {
+    deferred.push({
+      kind: 'scope_lookup',
+      name: fo.right.name,
+      fromNodeId: nodeId,
+      edgeType: 'ITERATES_OVER',
       scopeId: ctx.currentScope.id,
       file: ctx.file,
       line,

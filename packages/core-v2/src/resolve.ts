@@ -413,6 +413,12 @@ export function resolveProject(
   edges.push(...instanceOfEdges);
   stats.instanceOf = instanceOfEdges.length;
 
+  const computedAccessEdges = deriveComputedAccessElementOf(results, [...allEdges, ...instanceOfEdges]);
+  edges.push(...computedAccessEdges);
+
+  const mapGetEdges = deriveMapGetElementOf(results, [...allEdges, ...instanceOfEdges], index);
+  edges.push(...mapGetEdges);
+
   return { edges, unresolved, stats };
 }
 
@@ -785,6 +791,168 @@ function deriveInstanceOf(
       if (dst && dst.type === 'CLASS') {
         derived.push({ src: edge.src, dst: edge.dst, type: 'INSTANCE_OF' });
         seen.add(edge.src);
+      }
+    }
+  }
+
+  return derived;
+}
+
+// ─── Derived: Computed Access ELEMENT_OF ─────────────────────────────
+
+/**
+ * For `arr[i]`, if `arr` is known to be array-like (assigned from array literal,
+ * iterated via for-of, target of .push()), create PROPERTY_ACCESS → ELEMENT_OF → VARIABLE.
+ */
+function deriveComputedAccessElementOf(
+  results: FileResult[],
+  allEdges: GraphEdge[],
+): GraphEdge[] {
+  // Build set of array-like variable IDs:
+  // 1. ASSIGNED_FROM array literal (metadata.valueType === 'array')
+  // 2. ITERATES_OVER target (iterable)
+  // 3. FLOWS_INTO target (push/unshift target)
+  const arrayLikeIds = new Set<string>();
+
+  // Signal 1: variable assigned from array literal
+  for (const result of results) {
+    for (const node of result.nodes) {
+      if (node.type === 'LITERAL' && node.metadata?.valueType === 'array') {
+        // Find ASSIGNED_FROM edges where dst is this LITERAL
+        for (const edge of result.edges) {
+          if (edge.type === 'ASSIGNED_FROM' && edge.dst === node.id) {
+            arrayLikeIds.add(edge.src);
+          }
+        }
+      }
+    }
+  }
+
+  // Signal 2: ITERATES_OVER target
+  for (const edge of allEdges) {
+    if (edge.type === 'ITERATES_OVER') {
+      arrayLikeIds.add(edge.dst);
+    }
+  }
+
+  // Signal 3: FLOWS_INTO target (push/unshift)
+  for (const edge of allEdges) {
+    if (edge.type === 'FLOWS_INTO') {
+      arrayLikeIds.add(edge.dst);
+    }
+  }
+
+  if (arrayLikeIds.size === 0) return [];
+
+  // Build variable name → ID map per file
+  const varByFileAndName = new Map<string, Map<string, string>>();
+  for (const result of results) {
+    const fileVars = new Map<string, string>();
+    for (const node of result.nodes) {
+      if ((node.type === 'VARIABLE' || node.type === 'CONSTANT' || node.type === 'PARAMETER') && arrayLikeIds.has(node.id)) {
+        fileVars.set(node.name, node.id);
+      }
+    }
+    if (fileVars.size > 0) varByFileAndName.set(result.file, fileVars);
+  }
+
+  // Find computed PROPERTY_ACCESS nodes and link to array variables
+  const derived: GraphEdge[] = [];
+  for (const result of results) {
+    const fileVars = varByFileAndName.get(result.file);
+    if (!fileVars) continue;
+
+    for (const node of result.nodes) {
+      if (node.type === 'PROPERTY_ACCESS' && node.metadata?.computed === true) {
+        const objName = node.metadata.object as string | undefined;
+        if (objName) {
+          const varId = fileVars.get(objName);
+          if (varId) {
+            derived.push({
+              src: node.id,
+              dst: varId,
+              type: 'ELEMENT_OF',
+              metadata: { via: 'computed-access' },
+            });
+          }
+        }
+      }
+    }
+  }
+
+  return derived;
+}
+
+// ─── Derived: Map.get() ELEMENT_OF ──────────────────────────────────
+
+/**
+ * For `map.get(key)`, if `map` is linked via INSTANCE_OF to Map/WeakMap,
+ * create CALL → ELEMENT_OF → VARIABLE.
+ */
+function deriveMapGetElementOf(
+  results: FileResult[],
+  allEdges: GraphEdge[],
+  index: ProjectIndex,
+): GraphEdge[] {
+  // Find variables that are instances of Map/WeakMap
+  // CALL(new Map) → INSTANCE_OF → CLASS(Map) chain:
+  // 1. Find INSTANCE_OF edges where dst is EXTERNAL#Map or EXTERNAL#WeakMap
+  // 2. Find ASSIGNED_FROM edges from variable to the new Map() CALL
+  const mapCallIds = new Set<string>();
+  for (const edge of allEdges) {
+    if (edge.type === 'INSTANCE_OF') {
+      const dst = index.getNode(edge.dst);
+      if (dst && (dst.name === 'Map' || dst.name === 'WeakMap')) {
+        mapCallIds.add(edge.src);
+      }
+    }
+  }
+
+  if (mapCallIds.size === 0) return [];
+
+  // Find variables assigned from new Map() calls
+  const mapVarIds = new Set<string>();
+  for (const edge of allEdges) {
+    if (edge.type === 'ASSIGNED_FROM' && mapCallIds.has(edge.dst)) {
+      mapVarIds.add(edge.src);
+    }
+  }
+
+  // Build name→id map for map variables
+  const mapVarByFile = new Map<string, Map<string, string>>();
+  for (const result of results) {
+    for (const node of result.nodes) {
+      if (mapVarIds.has(node.id)) {
+        let fileMap = mapVarByFile.get(node.file);
+        if (!fileMap) {
+          fileMap = new Map();
+          mapVarByFile.set(node.file, fileMap);
+        }
+        fileMap.set(node.name, node.id);
+      }
+    }
+  }
+
+  // Find CALL nodes with method='get' and receiver matching a Map variable
+  const derived: GraphEdge[] = [];
+  for (const result of results) {
+    const fileMap = mapVarByFile.get(result.file);
+    if (!fileMap) continue;
+
+    for (const node of result.nodes) {
+      if (node.type === 'CALL' && node.metadata?.method === 'get') {
+        const objName = node.metadata.object as string | undefined;
+        if (objName) {
+          const varId = fileMap.get(objName);
+          if (varId) {
+            derived.push({
+              src: node.id,
+              dst: varId,
+              type: 'ELEMENT_OF',
+              metadata: { via: 'method-return' },
+            });
+          }
+        }
       }
     }
   }

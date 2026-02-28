@@ -10,6 +10,7 @@ import type {
   ObjectPattern,
   RestElement,
   TemplateElement,
+  VariableDeclarator,
 } from '@babel/types';
 import type { DeferredRef, VisitResult, WalkContext } from '../types.js';
 import { EMPTY_RESULT } from '../types.js';
@@ -101,6 +102,9 @@ export function visitArrayPattern(
 
   const result: VisitResult = { nodes: [], edges: [], deferred: [] };
 
+  // Collect element node IDs for ELEMENT_OF derivation
+  const elemNodeIds: string[] = [];
+
   for (const elem of pattern.elements) {
     if (!elem) continue; // holes: [, , x]
     if (elem.type === 'Identifier') {
@@ -116,8 +120,29 @@ export function visitArrayPattern(
         column: elem.loc?.start.column ?? 0,
       });
       ctx.declare(name, isParam ? 'param' : 'let', nodeId);
+      elemNodeIds.push(nodeId);
     }
     // Nested patterns, RestElement, AssignmentPattern → walk engine visits as children
+  }
+
+  // ELEMENT_OF: `const [a, b] = arr` → a,b → ELEMENT_OF → arr
+  if (parent?.type === 'VariableDeclarator') {
+    const decl = parent as VariableDeclarator;
+    if (decl.init?.type === 'Identifier') {
+      const line = node.loc?.start.line ?? 0;
+      for (const elemId of elemNodeIds) {
+        result.deferred.push({
+          kind: 'scope_lookup',
+          name: decl.init.name,
+          fromNodeId: elemId,
+          edgeType: 'ELEMENT_OF',
+          scopeId: ctx.currentScope.id,
+          file: ctx.file,
+          line,
+          column: node.loc?.start.column ?? 0,
+        });
+      }
+    }
   }
 
   return result;

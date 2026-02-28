@@ -58,6 +58,8 @@ export const EDGE_TYPE = {
   WRITES_TO: 'WRITES_TO',
   DERIVES_FROM: 'DERIVES_FROM',
   FLOWS_INTO: 'FLOWS_INTO',
+  ELEMENT_OF: 'ELEMENT_OF',   // X is an element/value of collection Y (for-of, destructuring, array methods)
+  KEY_OF: 'KEY_OF',           // X is a key of collection Y (for-in)
 
   // Object/Array structure
   HAS_PROPERTY: 'HAS_PROPERTY',   // OBJECT_LITERAL -> property value
@@ -153,6 +155,30 @@ export interface ExportsEdge extends EdgeRecord {
 export interface DataFlowEdge extends EdgeRecord {
   type: 'ASSIGNED_FROM' | 'READS_FROM' | 'WRITES_TO' | 'PASSES_ARGUMENT' | 'DERIVES_FROM' | 'FLOWS_INTO';
   dataType?: string;
+}
+
+/**
+ * Edge representing an element/value relationship with a collection.
+ * Source: the element (VARIABLE, PARAMETER, CALL)
+ * Destination: the collection (VARIABLE, PARAMETER)
+ *
+ * Example: `for (const item of arr)` → item --ELEMENT_OF--> arr
+ */
+export interface ElementOfEdge extends EdgeRecord {
+  type: 'ELEMENT_OF';
+  metadata?: { via: 'for-of' | 'for-in' | 'destructuring' | 'method-callback' | 'method-return' | 'computed-access' | 'Object.values' | 'Object.entries' };
+}
+
+/**
+ * Edge representing a key relationship with a collection.
+ * Source: the key (VARIABLE, PARAMETER, CALL)
+ * Destination: the collection (VARIABLE, PARAMETER)
+ *
+ * Example: `for (const key in obj)` → key --KEY_OF--> obj
+ */
+export interface KeyOfEdge extends EdgeRecord {
+  type: 'KEY_OF';
+  metadata?: { via: 'for-in' | 'Object.keys' | 'Object.entries' };
 }
 
 /**

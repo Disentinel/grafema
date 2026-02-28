@@ -538,12 +538,70 @@ export async function walkFile(
     }
   }
 
+  // ─── Post-walk: derive ELEMENT_OF / KEY_OF from loops ──────────
+  const allEdgesSoFar = [...allEdges, ...resolvedEdges, ...ctx._declareEdges];
+  const loopElementEdges = deriveLoopElementEdges(allNodes, allEdgesSoFar);
+
   return {
     file,
     moduleId,
     nodes: allNodes,
-    edges: [...allEdges, ...resolvedEdges, ...ctx._declareEdges],
+    edges: [...allEdgesSoFar, ...loopElementEdges],
     unresolvedRefs,
     scopeTree: ctx._rootScope,
   };
+}
+
+// ─── Derived: Loop ELEMENT_OF / KEY_OF ──────────────────────────────
+
+/**
+ * For each LOOP node (for-of / for-in), find ITERATES_OVER (→ collection)
+ * and DECLARES (→ loop variable). Create:
+ *   variable → ELEMENT_OF → collection  (for-of)
+ *   variable → KEY_OF → collection      (for-in)
+ *
+ * Also handles pre-declared loop variables via MODIFIES edges from LOOP.
+ */
+function deriveLoopElementEdges(allNodes: GraphNode[], allEdges: GraphEdge[]): GraphEdge[] {
+  const derived: GraphEdge[] = [];
+
+  const loops = allNodes.filter(n => n.type === 'LOOP' && (n.metadata?.loopType === 'for-of' || n.metadata?.loopType === 'for-in'));
+
+  for (const loop of loops) {
+    const loopType = loop.metadata!.loopType as string;
+    const edgeType = loopType === 'for-of' ? 'ELEMENT_OF' : 'KEY_OF';
+    const via = loopType;
+
+    // Find collection: LOOP → ITERATES_OVER → collection
+    let collectionId: string | null = null;
+    for (const e of allEdges) {
+      if (e.src === loop.id && e.type === 'ITERATES_OVER') {
+        collectionId = e.dst;
+        break;
+      }
+    }
+    if (!collectionId) continue;
+
+    // Find loop variable(s): LOOP → DECLARES → variable(s)
+    // Also check MODIFIES (pre-declared variable: `for (item of arr)` without const)
+    const variableIds: string[] = [];
+    for (const e of allEdges) {
+      if (e.src === loop.id && (e.type === 'DECLARES' || e.type === 'MODIFIES')) {
+        variableIds.push(e.dst);
+      }
+    }
+
+    for (const varId of variableIds) {
+      // Don't create self-edge if variable IS the collection
+      if (varId === collectionId) continue;
+      derived.push({
+        src: varId,
+        dst: collectionId,
+        type: edgeType,
+        metadata: { via },
+      });
+    }
+  }
+
+  return derived;
 }

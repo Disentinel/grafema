@@ -294,6 +294,75 @@ export function visitCallExpression(
       });
     }
 
+    // arr.forEach(item => ...) → callback param ELEMENT_OF arr
+    const ELEMENT_CB_0 = new Set(['forEach', 'map', 'filter', 'find', 'findIndex', 'findLast', 'findLastIndex', 'some', 'every', 'flatMap']);
+    const ELEMENT_CB_1 = new Set(['reduce', 'reduceRight']);
+    const ELEMENT_CB_BOTH = new Set(['sort', 'toSorted']);
+    if ((call.callee.type === 'MemberExpression' || call.callee.type === 'OptionalMemberExpression')
+        && call.callee.object.type === 'Identifier' && call.arguments.length >= 1) {
+      const cbArg = call.arguments[0];
+      const isCb = cbArg.type === 'ArrowFunctionExpression' || cbArg.type === 'FunctionExpression';
+      if (isCb) {
+        const cb = cbArg as ArrowFunctionExpression;
+        const receiverName = (call.callee.object as Identifier).name;
+        if (ELEMENT_CB_0.has(methodName) && cb.params.length >= 1 && cb.params[0].type === 'Identifier') {
+          const paramName = cb.params[0].name;
+          const paramLine = cb.params[0].loc?.start.line ?? line;
+          result.deferred.push({
+            kind: 'scope_lookup',
+            name: receiverName,
+            fromNodeId: ctx.nodeId('PARAMETER', paramName, paramLine),
+            edgeType: 'ELEMENT_OF',
+            scopeId: ctx.currentScope.id,
+            file: ctx.file, line, column,
+          });
+        } else if (ELEMENT_CB_1.has(methodName) && cb.params.length >= 2 && cb.params[1].type === 'Identifier') {
+          // reduce((acc, cur) => ...) — cur (index 1) is the element
+          const paramName = cb.params[1].name;
+          const paramLine = cb.params[1].loc?.start.line ?? line;
+          result.deferred.push({
+            kind: 'scope_lookup',
+            name: receiverName,
+            fromNodeId: ctx.nodeId('PARAMETER', paramName, paramLine),
+            edgeType: 'ELEMENT_OF',
+            scopeId: ctx.currentScope.id,
+            file: ctx.file, line, column,
+          });
+        } else if (ELEMENT_CB_BOTH.has(methodName)) {
+          // sort((a, b) => ...) — both params are elements
+          for (let pi = 0; pi < Math.min(cb.params.length, 2); pi++) {
+            if (cb.params[pi].type === 'Identifier') {
+              const paramName = (cb.params[pi] as Identifier).name;
+              const paramLine = cb.params[pi].loc?.start.line ?? line;
+              result.deferred.push({
+                kind: 'scope_lookup',
+                name: receiverName,
+                fromNodeId: ctx.nodeId('PARAMETER', paramName, paramLine),
+                edgeType: 'ELEMENT_OF',
+                scopeId: ctx.currentScope.id,
+                file: ctx.file, line, column,
+              });
+            }
+          }
+        }
+      }
+    }
+
+    // arr.pop(), arr.shift(), arr.find(), arr.at() → CALL ELEMENT_OF arr
+    const ELEMENT_RETURN_METHODS = new Set(['pop', 'shift', 'find', 'findLast', 'at']);
+    if (ELEMENT_RETURN_METHODS.has(methodName)
+        && (call.callee.type === 'MemberExpression' || call.callee.type === 'OptionalMemberExpression')
+        && call.callee.object.type === 'Identifier') {
+      result.deferred.push({
+        kind: 'scope_lookup',
+        name: call.callee.object.name,
+        fromNodeId: nodeId,
+        edgeType: 'ELEMENT_OF',
+        scopeId: ctx.currentScope.id,
+        file: ctx.file, line, column,
+      });
+    }
+
     // fn.call(ctx, ...) / fn.apply(ctx, ...) → INVOKES
     if ((methodName === 'call' || methodName === 'apply')
         && (call.callee.type === 'MemberExpression' || call.callee.type === 'OptionalMemberExpression')
@@ -360,6 +429,37 @@ export function visitCallExpression(
           column,
         });
       }
+    }
+  }
+
+  // Object.keys(obj) → CALL KEY_OF obj
+  // Object.values(obj) → CALL ELEMENT_OF obj
+  // Object.entries(obj) → CALL ELEMENT_OF + KEY_OF obj
+  if (call.arguments.length >= 1 && call.arguments[0].type === 'Identifier') {
+    const argName = (call.arguments[0] as Identifier).name;
+    if (calleeName === 'Object.keys') {
+      result.deferred.push({
+        kind: 'scope_lookup', name: argName, fromNodeId: nodeId,
+        edgeType: 'KEY_OF', scopeId: ctx.currentScope.id,
+        file: ctx.file, line, column,
+      });
+    } else if (calleeName === 'Object.values') {
+      result.deferred.push({
+        kind: 'scope_lookup', name: argName, fromNodeId: nodeId,
+        edgeType: 'ELEMENT_OF', scopeId: ctx.currentScope.id,
+        file: ctx.file, line, column,
+      });
+    } else if (calleeName === 'Object.entries') {
+      result.deferred.push({
+        kind: 'scope_lookup', name: argName, fromNodeId: nodeId,
+        edgeType: 'ELEMENT_OF', scopeId: ctx.currentScope.id,
+        file: ctx.file, line, column,
+      });
+      result.deferred.push({
+        kind: 'scope_lookup', name: argName, fromNodeId: nodeId,
+        edgeType: 'KEY_OF', scopeId: ctx.currentScope.id,
+        file: ctx.file, line, column,
+      });
     }
   }
 
