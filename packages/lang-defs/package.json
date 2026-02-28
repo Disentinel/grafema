@@ -1,7 +1,7 @@
 {
-  "name": "@grafema/core-v2",
+  "name": "@grafema/lang-defs",
   "version": "0.1.0",
-  "description": "Grafema core v2: three-stage AST analysis pipeline",
+  "description": "Declarative builtin type definitions for language-aware resolution",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -10,14 +10,12 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
-    "./*": {
-      "types": "./dist/*.d.ts",
-      "import": "./dist/*.js"
-    }
+    "./defs/*": "./defs/*"
   },
   "files": [
     "dist",
-    "src"
+    "src",
+    "defs"
   ],
   "scripts": {
     "build": "tsc",
@@ -25,14 +23,7 @@
   },
   "license": "Apache-2.0",
   "author": "Vadim Reshetnikov",
-  "dependencies": {
-    "@babel/parser": "^7.26.3",
-    "@babel/types": "^7.26.3",
-    "@grafema/lang-defs": "workspace:*",
-    "@grafema/types": "workspace:*"
-  },
   "devDependencies": {
-    "@types/node": "^25.0.8",
     "typescript": "^5.9.3"
   }
 }

@@ -70,6 +70,8 @@ export interface DeferredRef {
   file: string;
   line: number;
   column: number;
+  /** Receiver context for call_resolve (class node ID if inside class with `this`) */
+  receiver?: string;
 }
 
 // ─── Scope Tree ──────────────────────────────────────────────────────

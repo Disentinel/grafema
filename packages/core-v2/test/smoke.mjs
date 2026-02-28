@@ -4,9 +4,15 @@
  */
 import { readFileSync, readdirSync } from 'fs';
 import { resolve } from 'path';
+import { createRequire } from 'module';
 import { walkFile } from '../dist/walk.js';
 import { jsRegistry } from '../dist/registry.js';
 import { resolveFileRefs, resolveProject } from '../dist/resolve.js';
+import { loadBuiltinRegistry } from '@grafema/lang-defs';
+
+const require = createRequire(import.meta.url);
+const esDefs = require('@grafema/lang-defs/defs/ecmascript/es2022.json');
+const builtins = loadBuiltinRegistry([esDefs]);
 
 const corpusDir = resolve(import.meta.dirname, '../../../test/fixtures/syntax-corpus/src');
 const files = readdirSync(corpusDir).filter(f => f.endsWith('.js') || f.endsWith('.ts') || f.endsWith('.cjs'));
@@ -96,7 +102,7 @@ for (const filename of files) {
 
 // ─── Stage 3: project-level resolution ───────────────────────────────
 
-const { edges: stage3Edges, unresolved, stats } = resolveProject(fileResults);
+const { edges: stage3Edges, unresolved, stats } = resolveProject(fileResults, builtins);
 
 // ─── Aggregate ───────────────────────────────────────────────────────
 
@@ -195,10 +201,16 @@ console.log(`  Resolved: ${stage25Resolved}  |  Passed to Stage 3: ${stage25Rema
 console.log(`\n${'─'.repeat(60)}`);
 console.log(`  STAGE 3 RESOLUTION`);
 console.log(`${'─'.repeat(60)}`);
-console.log(`  import_resolve: ${stats.importResolved}`);
-console.log(`  call_resolve:   ${stats.callResolved}`);
-console.log(`  type_resolve:   ${stats.typeResolved}`);
-console.log(`  alias_resolve:  ${stats.aliasResolved}`);
+console.log(`  import_resolve:    ${stats.importResolved}`);
+console.log(`  call_resolve:      ${stats.callResolved}`);
+console.log(`  type_resolve:      ${stats.typeResolved}`);
+console.log(`  alias_resolve:     ${stats.aliasResolved}`);
+console.log(`  re-export chain:   ${stats.reExportResolved}`);
+console.log(`  ambiguousBuiltin:  ${stats.ambiguousBuiltin}`);
+console.log(`  builtinInferred:   ${stats.builtinInferred}`);
+console.log(`  IMPORTS→MODULE:    ${stats.importsToModule}`);
+console.log(`  DERIVES_FROM:      ${stats.derivesFrom}`);
+console.log(`  INSTANCE_OF:       ${stats.instanceOf}`);
 
 if (unresolved.length > 0) {
   const byKind = {};
