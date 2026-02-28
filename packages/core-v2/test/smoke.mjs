@@ -6,7 +6,7 @@ import { readFileSync, readdirSync } from 'fs';
 import { resolve } from 'path';
 import { walkFile } from '../dist/walk.js';
 import { jsRegistry } from '../dist/registry.js';
-import { resolveProject } from '../dist/resolve.js';
+import { resolveFileRefs, resolveProject } from '../dist/resolve.js';
 
 const corpusDir = resolve(import.meta.dirname, '../../../test/fixtures/syntax-corpus/src');
 const files = readdirSync(corpusDir).filter(f => f.endsWith('.js') || f.endsWith('.ts') || f.endsWith('.cjs'));
@@ -72,6 +72,8 @@ const fileResults = [];
 let passed = 0;
 let failed = 0;
 const failures = [];
+let stage25Resolved = 0;
+let stage25Remaining = 0;
 
 for (const filename of files) {
   const filePath = resolve(corpusDir, filename);
@@ -79,7 +81,11 @@ for (const filename of files) {
   const relPath = `src/${filename}`;
 
   try {
-    const result = await walkFile(code, relPath, jsRegistry);
+    const walkResult = await walkFile(code, relPath, jsRegistry);
+    const unresolvedBefore = walkResult.unresolvedRefs.length;
+    const result = resolveFileRefs(walkResult);
+    stage25Resolved += unresolvedBefore - result.unresolvedRefs.length;
+    stage25Remaining += result.unresolvedRefs.length;
     fileResults.push(result);
     passed++;
   } catch (e) {
@@ -116,8 +122,8 @@ console.log(`\n${'═'.repeat(60)}`);
 console.log(`  CORE V2 PIPELINE — COVERAGE REPORT`);
 console.log(`${'═'.repeat(60)}`);
 console.log(`  Files: ${files.length} (${passed} ok, ${failed} fail)`);
-console.log(`  Nodes: ${totalNodes}  |  Edges: ${totalEdges} (S1+2: ${totalEdgesStage12}, S3: ${stage3Edges.length})`);
-console.log(`  Unresolved: ${unresolved.length} (call: ${stats.unresolved})`);
+console.log(`  Nodes: ${totalNodes}  |  Edges: ${totalEdges} (S1+2: ${totalEdgesStage12}, S2.5: ${stage25Resolved}, S3: ${stage3Edges.length})`);
+console.log(`  Unresolved: ${unresolved.length} (S2.5 passed: ${stage25Remaining}, S3 unresolved: ${stats.unresolved})`);
 
 // ─── Edge coverage ───────────────────────────────────────────────────
 
@@ -176,6 +182,13 @@ if (missingNodes.length > 0) {
 if (extraNodes.length > 0) {
   console.log(`\n  Extra (not in lang-spec): ${extraNodes.join(', ')}`);
 }
+
+// ─── Stage 2.5 detail ────────────────────────────────────────────────
+
+console.log(`\n${'─'.repeat(60)}`);
+console.log(`  STAGE 2.5 FILE-LEVEL RESOLUTION`);
+console.log(`${'─'.repeat(60)}`);
+console.log(`  Resolved: ${stage25Resolved}  |  Passed to Stage 3: ${stage25Remaining}`);
 
 // ─── Stage 3 detail ──────────────────────────────────────────────────
 

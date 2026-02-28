@@ -36,6 +36,55 @@ import {
 } from './scope.js';
 import { EDGE_MAP } from './edge-map.js';
 
+// Well-known JS globals that should be resolvable via scope_lookup
+const JS_GLOBALS: readonly string[] = [
+  // Fundamental objects
+  'Object', 'Function', 'Boolean', 'Symbol', 'BigInt',
+  // Error types
+  'Error', 'AggregateError', 'EvalError', 'RangeError',
+  'ReferenceError', 'SyntaxError', 'TypeError', 'URIError',
+  // Numbers and dates
+  'Number', 'Math', 'Date',
+  // Text processing
+  'String', 'RegExp',
+  // Indexed collections
+  'Array', 'Int8Array', 'Uint8Array', 'Uint8ClampedArray',
+  'Int16Array', 'Uint16Array', 'Int32Array', 'Uint32Array',
+  'Float32Array', 'Float64Array', 'BigInt64Array', 'BigUint64Array',
+  // Keyed collections
+  'Map', 'Set', 'WeakMap', 'WeakSet', 'WeakRef',
+  // Structured data
+  'ArrayBuffer', 'SharedArrayBuffer', 'DataView', 'Atomics', 'JSON',
+  // Control abstraction
+  'Promise', 'Generator', 'GeneratorFunction',
+  'AsyncFunction', 'AsyncGenerator', 'AsyncGeneratorFunction',
+  // Reflection
+  'Reflect', 'Proxy',
+  // Misc globals
+  'globalThis', 'console', 'Intl', 'FinalizationRegistry',
+  // Global values
+  'undefined', 'NaN', 'Infinity',
+  // Environment-specific (Node.js / browser)
+  'process', 'Buffer', 'require', 'module', 'exports',
+  '__dirname', '__filename', 'window', 'document',
+  // Global functions
+  'eval', 'isFinite', 'isNaN', 'parseFloat', 'parseInt',
+  'decodeURI', 'decodeURIComponent', 'encodeURI', 'encodeURIComponent',
+  'setTimeout', 'setInterval', 'clearTimeout', 'clearInterval',
+  'queueMicrotask', 'structuredClone', 'fetch',
+  'URL', 'URLSearchParams', 'AbortController', 'AbortSignal',
+  'TextEncoder', 'TextDecoder', 'Request', 'Response', 'Headers',
+  'FormData', 'EventTarget', 'Event', 'CustomEvent',
+  'ReadableStream', 'WritableStream', 'TransformStream',
+  'MessageChannel', 'MessagePort', 'BroadcastChannel',
+  'Iterator',
+  // TypeScript utility types
+  'Record', 'Partial', 'Required', 'Readonly', 'Pick', 'Omit',
+  'Exclude', 'Extract', 'NonNullable', 'ReturnType', 'InstanceType',
+  'Parameters', 'ConstructorParameters', 'ThisParameterType',
+  'OmitThisParameter', 'ThisType', 'Awaited', 'NoInfer',
+];
+
 // ─── Parse ───────────────────────────────────────────────────────────
 
 export function parseFile(code: string, file: string): File {
@@ -201,6 +250,21 @@ export async function walkFile(
     column: 0,
   });
   allEdges.push({ src: fileId, dst: moduleId, type: 'CONTAINS' });
+
+  // ─── Populate root scope with well-known JS globals ───────────────
+  // Uses scopeDeclare directly (not ctx.declare) to avoid DECLARES edges
+  for (const name of JS_GLOBALS) {
+    const globalId = `EXTERNAL#${name}`;
+    allNodes.push({
+      id: globalId,
+      type: 'EXTERNAL',
+      name,
+      file: '<builtin>',
+      line: 0,
+      column: 0,
+    });
+    scopeDeclare(ctx._rootScope, name, 'const', globalId);
+  }
 
   // ─── Recursive walk with auto scope-pop ──────────────────────────
 

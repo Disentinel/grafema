@@ -47,7 +47,7 @@ import type {
   TemplateLiteral,
 } from '@babel/types';
 import type { VisitResult, WalkContext } from '../types.js';
-import { EMPTY_RESULT } from '../types.js';
+import { EMPTY_RESULT, paramTypeRefInfo } from '../types.js';
 
 const passthrough = (_node: Node, _parent: Node | null, _ctx: WalkContext): VisitResult =>
   EMPTY_RESULT;
@@ -216,6 +216,9 @@ export function visitTSInterfaceDeclaration(
     deferred: [],
   };
 
+  // Push scope so type parameters are scoped to this interface
+  ctx.pushScope('block', `${nodeId}$scope`);
+
   // interface Foo extends Bar, Baz
   if (iface.extends) {
     for (const ext of iface.extends) {
@@ -258,6 +261,10 @@ export function visitTSTypeAliasDeclaration(
     edges: [],
     deferred: [],
   };
+
+  // Push scope so type parameters are scoped to this declaration
+  // (prevents T from leaking to module scope and being overwritten by later type aliases)
+  ctx.pushScope('block', `${nodeId}$scope`);
 
   // Type parameters: type Foo<T extends Bar>
   if (alias.typeParameters?.params) {
@@ -404,6 +411,9 @@ export function visitTSTypeParameter(
   const name = tp.name ?? '<unnamed>';
   const line = node.loc?.start.line ?? 0;
   const nodeId = ctx.nodeId('TYPE_PARAMETER', name, line);
+
+  // Declare type parameter in current scope so TSTypeReference scope_lookups resolve
+  ctx.declare(name, 'class', nodeId);
 
   const result: VisitResult = {
     nodes: [{
@@ -632,6 +642,10 @@ export function visitTSConstructSignatureDeclaration(
       });
       result.edges.push({ src: nodeId, dst: paramId, type: 'RECEIVES_ARGUMENT' });
       ctx.declare(paramName, 'param', paramId);
+      const typeRef = paramTypeRefInfo(param);
+      if (typeRef) {
+        result.edges.push({ src: paramId, dst: ctx.nodeId('TYPE_REFERENCE', typeRef.name, typeRef.line), type: 'HAS_TYPE' });
+      }
     }
   }
 
@@ -674,6 +688,10 @@ export function visitTSCallSignatureDeclaration(
       });
       result.edges.push({ src: nodeId, dst: paramId, type: 'RECEIVES_ARGUMENT' });
       ctx.declare(paramName, 'param', paramId);
+      const typeRef = paramTypeRefInfo(param);
+      if (typeRef) {
+        result.edges.push({ src: paramId, dst: ctx.nodeId('TYPE_REFERENCE', typeRef.name, typeRef.line), type: 'HAS_TYPE' });
+      }
     }
   }
 
@@ -746,6 +764,10 @@ export function visitTSMethodSignature(
       });
       result.edges.push({ src: nodeId, dst: paramId, type: 'RECEIVES_ARGUMENT' });
       ctx.declare(paramName, 'param', paramId);
+      const typeRef = paramTypeRefInfo(param);
+      if (typeRef) {
+        result.edges.push({ src: paramId, dst: ctx.nodeId('TYPE_REFERENCE', typeRef.name, typeRef.line), type: 'HAS_TYPE' });
+      }
     }
   }
 
@@ -1132,6 +1154,10 @@ export function visitTSDeclareFunction(
       });
       result.edges.push({ src: nodeId, dst: paramId, type: 'RECEIVES_ARGUMENT' });
       ctx.declare(paramName, 'param', paramId);
+      const typeRef = paramTypeRefInfo(param);
+      if (typeRef) {
+        result.edges.push({ src: paramId, dst: ctx.nodeId('TYPE_REFERENCE', typeRef.name, typeRef.line), type: 'HAS_TYPE' });
+      }
     }
   }
 
@@ -1175,6 +1201,10 @@ export function visitTSDeclareMethod(
         column: param.loc?.start.column ?? 0,
       });
       result.edges.push({ src: nodeId, dst: paramId, type: 'RECEIVES_ARGUMENT' });
+      const typeRef = paramTypeRefInfo(param);
+      if (typeRef) {
+        result.edges.push({ src: paramId, dst: ctx.nodeId('TYPE_REFERENCE', typeRef.name, typeRef.line), type: 'HAS_TYPE' });
+      }
     }
   }
 

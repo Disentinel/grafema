@@ -21,6 +21,7 @@ export const analyzeCommand = new Command('analyze')
   .option('--log-file <path>', 'Write all log output to a file')
   .option('--strict', 'Enable strict mode (fail on unresolved references)')
   .option('--auto-start', 'Auto-start RFDB server if not running')
+  .option('--engine <name>', 'Analysis engine: v1 (default) or v2 (core-v2 walker)')
   .addHelpText('after', `
 Examples:
   grafema analyze                Analyze current project

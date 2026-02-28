@@ -37,7 +37,7 @@ import type {
   YieldExpression,
 } from '@babel/types';
 import type { VisitResult, WalkContext } from '../types.js';
-import { EMPTY_RESULT } from '../types.js';
+import { EMPTY_RESULT, paramTypeRefInfo } from '../types.js';
 
 // ─── CallExpression ──────────────────────────────────────────────────
 
@@ -715,6 +715,10 @@ export function visitArrowFunctionExpression(
       result.edges.push({ src: nodeId, dst: paramId, type: 'HAS_BODY' });
       result.edges.push({ src: nodeId, dst: paramId, type: 'RECEIVES_ARGUMENT' });
       ctx.declare(param.name, 'param', paramId);
+      const typeRef = paramTypeRefInfo(param);
+      if (typeRef) {
+        result.edges.push({ src: paramId, dst: ctx.nodeId('TYPE_REFERENCE', typeRef.name, typeRef.line), type: 'HAS_TYPE' });
+      }
     }
   }
 
@@ -766,6 +770,10 @@ export function visitFunctionExpression(
       result.edges.push({ src: nodeId, dst: paramId, type: 'HAS_BODY' });
       result.edges.push({ src: nodeId, dst: paramId, type: 'RECEIVES_ARGUMENT' });
       ctx.declare(param.name, 'param', paramId);
+      const typeRef = paramTypeRefInfo(param);
+      if (typeRef) {
+        result.edges.push({ src: paramId, dst: ctx.nodeId('TYPE_REFERENCE', typeRef.name, typeRef.line), type: 'HAS_TYPE' });
+      }
     }
   }
 
@@ -925,10 +933,13 @@ export function visitIdentifier(
   // Write/declaration contexts — not a "read"
   if (pt === 'VariableDeclarator' && (parent as VariableDeclarator).id === node) return EMPTY_RESULT;
   if (pt === 'FunctionDeclaration' && (parent as FunctionDeclaration).id === node) return EMPTY_RESULT;
+  if (pt === 'FunctionExpression' && (parent as FunctionExpression).id === node) return EMPTY_RESULT;
   if (pt === 'ClassDeclaration' && (parent as ClassDeclaration).id === node) return EMPTY_RESULT;
+  if (pt === 'ClassExpression' && (parent as ClassExpression).id === node) return EMPTY_RESULT;
   if (pt === 'AssignmentExpression' && (parent as AssignmentExpression).left === node) return EMPTY_RESULT;
   if (pt === 'UpdateExpression') return EMPTY_RESULT;  // i++ is a modify, not a read
   if (pt === 'LabeledStatement' || pt === 'BreakStatement' || pt === 'ContinueStatement') return EMPTY_RESULT;
+  if (pt === 'PrivateName') return EMPTY_RESULT;  // #field → PrivateName → Identifier is not a read
 
   // Property key contexts — not a "read" of the identifier itself
   if (pt === 'ObjectProperty' && (parent as ObjectProperty).key === node) return EMPTY_RESULT;
@@ -1255,6 +1266,10 @@ export function visitObjectMethod(
       result.edges.push({ src: nodeId, dst: paramId, type: 'HAS_BODY' });
       result.edges.push({ src: nodeId, dst: paramId, type: 'RECEIVES_ARGUMENT' });
       ctx.declare(param.name, 'param', paramId);
+      const typeRef = paramTypeRefInfo(param);
+      if (typeRef) {
+        result.edges.push({ src: paramId, dst: ctx.nodeId('TYPE_REFERENCE', typeRef.name, typeRef.line), type: 'HAS_TYPE' });
+      }
     }
   }
 

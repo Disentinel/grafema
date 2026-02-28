@@ -144,6 +144,38 @@ export type VisitorFn = (node: Node, parent: Node | null, ctx: WalkContext) => V
  */
 export type VisitorRegistry = Record<string, VisitorFn>;
 
+// ─── Parameter Type Annotation Helper ─────────────────────────────────
+
+const TS_KEYWORD_MAP: Record<string, string> = {
+  TSStringKeyword: 'string', TSNumberKeyword: 'number', TSBooleanKeyword: 'boolean',
+  TSAnyKeyword: 'any', TSVoidKeyword: 'void', TSNullKeyword: 'null',
+  TSNeverKeyword: 'never', TSUnknownKeyword: 'unknown', TSUndefinedKeyword: 'undefined',
+  TSObjectKeyword: 'object', TSSymbolKeyword: 'symbol', TSBigIntKeyword: 'bigint',
+};
+
+/**
+ * Extract the type name and line from a parameter's type annotation.
+ * Returns null for complex types (unions, intersections, etc.) that need
+ * richer handling.
+ */
+export function paramTypeRefInfo(param: Node): { name: string; line: number } | null {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const p = param as any;
+  const typeAnno = p.typeAnnotation;
+  if (!typeAnno || typeAnno.type !== 'TSTypeAnnotation') return null;
+  const inner = typeAnno.typeAnnotation;
+  if (!inner) return null;
+
+  const line = inner.loc?.start.line ?? 0;
+
+  if (inner.type === 'TSTypeReference' && inner.typeName?.type === 'Identifier') {
+    return { name: inner.typeName.name, line };
+  }
+
+  const name = TS_KEYWORD_MAP[inner.type];
+  return name ? { name, line } : null;
+}
+
 // ─── File Result (output of Stage 1+2 per file) ─────────────────────
 
 export interface FileResult {

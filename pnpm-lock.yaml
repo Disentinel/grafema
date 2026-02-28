@@ -112,6 +112,9 @@ importers:
       '@babel/types':
         specifier: ^7.26.3
         version: 7.28.6
+      '@grafema/core-v2':
+        specifier: workspace:*
+        version: link:../core-v2
       '@grafema/rfdb-client':
         specifier: workspace:*
         version: link:../rfdb

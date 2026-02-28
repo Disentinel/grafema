@@ -1,7 +1,11 @@
 /**
+ * Stage 2.5: File-level name-based resolution.
  * Stage 3: Project-level resolution.
  *
- * Takes FileResult[] from Stage 1+2, builds in-memory indices,
+ * Stage 2.5 resolves unresolved refs against same-file declarations
+ * by name matching (forward refs, out-of-scope same-file decls).
+ *
+ * Stage 3 takes FileResult[] from Stage 1+2, builds in-memory indices,
  * resolves cross-file deferred refs into edges.
  *
  * 4 resolver types:
@@ -11,6 +15,73 @@
  *   alias_resolve   → ALIASES, RESOLVES_TO, DERIVES_FROM, MERGES_WITH, OVERRIDES
  */
 import type { FileResult, GraphEdge, GraphNode, DeferredRef } from './types.js';
+
+// ─── Stage 2.5: File-level name resolution ──────────────────────────
+
+/** Node types eligible for same-file name resolution */
+const DECLARABLE_TYPES = new Set([
+  'FUNCTION', 'VARIABLE', 'CONSTANT', 'CLASS', 'PARAMETER', 'METHOD',
+  'INTERFACE', 'TYPE_ALIAS', 'NAMESPACE', 'ENUM', 'TYPE_PARAMETER',
+  'PROPERTY', 'GETTER', 'SETTER', 'EXTERNAL',
+]);
+
+/**
+ * Stage 2.5: File-level name-based resolution.
+ *
+ * After scope_lookup/export_lookup in walkFile(),
+ * remaining unresolved refs are tried against declared nodes
+ * in the same file by name matching. Catches forward refs,
+ * out-of-scope same-file declarations.
+ *
+ * Returns a new FileResult — does not mutate the input.
+ */
+export function resolveFileRefs(result: FileResult): FileResult {
+  if (!result.unresolvedRefs || result.unresolvedRefs.length === 0) {
+    return result;
+  }
+
+  // Build name → nodes index for declarable types
+  const declared = new Map<string, GraphNode[]>();
+  for (const n of result.nodes) {
+    if (DECLARABLE_TYPES.has(n.type)) {
+      const arr = declared.get(n.name);
+      if (arr) arr.push(n);
+      else declared.set(n.name, [n]);
+    }
+  }
+
+  const newEdges: GraphEdge[] = [];
+  const stillUnresolved: DeferredRef[] = [];
+
+  for (const ref of result.unresolvedRefs) {
+    const targets = declared.get(ref.name);
+    if (targets && targets.length > 0) {
+      // Pick closest target by line proximity
+      const target = targets.length === 1 ? targets[0]
+        : targets.reduce((best, t) => {
+            const dist = Math.abs(t.line - ref.line);
+            const bestDist = Math.abs(best.line - ref.line);
+            return dist < bestDist ? t : best;
+          });
+      newEdges.push({
+        src: ref.fromNodeId,
+        dst: target.id,
+        type: ref.edgeType,
+      });
+    } else {
+      stillUnresolved.push(ref);
+    }
+  }
+
+  return {
+    file: result.file,
+    moduleId: result.moduleId,
+    nodes: result.nodes,
+    edges: [...result.edges, ...newEdges],
+    unresolvedRefs: stillUnresolved,
+    scopeTree: result.scopeTree,
+  };
+}
 
 // ─── Project Index ───────────────────────────────────────────────────
 

@@ -12,7 +12,7 @@ import type {
   VariableDeclarator,
 } from '@babel/types';
 import type { VisitResult, WalkContext } from '../types.js';
-import { EMPTY_RESULT } from '../types.js';
+import { EMPTY_RESULT, paramTypeRefInfo } from '../types.js';
 import { isLiteralNode } from './literals.js';
 
 // ─── VariableDeclaration ─────────────────────────────────────────────
@@ -175,6 +175,10 @@ export function visitFunctionDeclaration(
       result.edges.push({ src: nodeId, dst: paramId, type: 'HAS_BODY' });
       result.edges.push({ src: nodeId, dst: paramId, type: 'RECEIVES_ARGUMENT' });
       ctx.declare(param.name, 'param', paramId);
+      const typeRef = paramTypeRefInfo(param);
+      if (typeRef) {
+        result.edges.push({ src: paramId, dst: ctx.nodeId('TYPE_REFERENCE', typeRef.name, typeRef.line), type: 'HAS_TYPE' });
+      }
     }
   }
 
