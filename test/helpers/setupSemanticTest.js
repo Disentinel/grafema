@@ -26,7 +26,7 @@ let testCounter = 0;
  * @param {string} options.testLabel - Label for test directory naming (e.g., 'call-semantic', 'var-semantic')
  * @param {Array} options.extraPlugins - Additional plugins for orchestrator
  * @param {boolean} options.skipIndexer - Skip JSModuleIndexer
- * @param {boolean} options.skipAnalyzer - Skip JSASTAnalyzer
+ * @param {boolean} options.skipAnalyzer - Skip CoreV2Analyzer
  * @param {boolean} options.skipEnrichment - Skip enrichment plugins
  * @returns {Promise<{testDir: string}>}
  */

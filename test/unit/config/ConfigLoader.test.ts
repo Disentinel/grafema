@@ -71,9 +71,9 @@ describe('ConfigLoader', () => {
   indexing:
     - JSModuleIndexer
   analysis:
-    - JSASTAnalyzer
+    - CoreV2Analyzer
   enrichment:
-    - MethodCallResolver
+    - ExportEntityLinker
   validation:
     - EvalBanValidator
 `;
@@ -82,8 +82,8 @@ describe('ConfigLoader', () => {
       const config = loadConfig(testDir);
 
       assert.deepStrictEqual(config.plugins.indexing, ['JSModuleIndexer']);
-      assert.deepStrictEqual(config.plugins.analysis, ['JSASTAnalyzer']);
-      assert.deepStrictEqual(config.plugins.enrichment, ['MethodCallResolver']);
+      assert.deepStrictEqual(config.plugins.analysis, ['CoreV2Analyzer']);
+      assert.deepStrictEqual(config.plugins.enrichment, ['ExportEntityLinker']);
       assert.deepStrictEqual(config.plugins.validation, ['EvalBanValidator']);
     });
 
@@ -143,8 +143,8 @@ describe('ConfigLoader', () => {
       const json = {
         plugins: {
           indexing: ['JSModuleIndexer'],
-          analysis: ['JSASTAnalyzer'],
-          enrichment: ['MethodCallResolver'],
+          analysis: ['CoreV2Analyzer'],
+          enrichment: ['ExportEntityLinker'],
           validation: ['EvalBanValidator'],
         },
       };
@@ -335,7 +335,7 @@ plugins:
 
 
   analysis:
-    - JSASTAnalyzer
+    - CoreV2Analyzer
 
 `;
       writeFileSync(join(grafemaDir, 'config.yaml'), yaml);
@@ -343,20 +343,20 @@ plugins:
       const config = loadConfig(testDir);
 
       assert.deepStrictEqual(config.plugins.indexing, ['JSModuleIndexer']);
-      assert.deepStrictEqual(config.plugins.analysis, ['JSASTAnalyzer']);
+      assert.deepStrictEqual(config.plugins.analysis, ['CoreV2Analyzer']);
     });
 
     it('should handle YAML with inline array syntax', () => {
       const yaml = `plugins:
   indexing: [JSModuleIndexer]
-  analysis: [JSASTAnalyzer, ExpressRouteAnalyzer]
+  analysis: [CoreV2Analyzer, ExpressRouteAnalyzer]
 `;
       writeFileSync(join(grafemaDir, 'config.yaml'), yaml);
 
       const config = loadConfig(testDir);
 
       assert.deepStrictEqual(config.plugins.indexing, ['JSModuleIndexer']);
-      assert.deepStrictEqual(config.plugins.analysis, ['JSASTAnalyzer', 'ExpressRouteAnalyzer']);
+      assert.deepStrictEqual(config.plugins.analysis, ['CoreV2Analyzer', 'ExpressRouteAnalyzer']);
     });
 
     it('should handle YAML with mixed comments and config', () => {
@@ -367,14 +367,14 @@ plugins:
     - JSModuleIndexer
   # Analysis phase
   analysis:
-    - JSASTAnalyzer  # Main analyzer
+    - CoreV2Analyzer  # Main analyzer
 `;
       writeFileSync(join(grafemaDir, 'config.yaml'), yaml);
 
       const config = loadConfig(testDir);
 
       assert.deepStrictEqual(config.plugins.indexing, ['JSModuleIndexer']);
-      assert.deepStrictEqual(config.plugins.analysis, ['JSASTAnalyzer']);
+      assert.deepStrictEqual(config.plugins.analysis, ['CoreV2Analyzer']);
     });
 
     it('should handle null values in partial config', () => {
@@ -500,8 +500,8 @@ plugins:
     it('should include expected default plugins', () => {
       // Based on Joel's spec
       assert.ok(DEFAULT_CONFIG.plugins.indexing.includes('JSModuleIndexer'));
-      assert.ok(DEFAULT_CONFIG.plugins.analysis.includes('JSASTAnalyzer'));
-      assert.ok(DEFAULT_CONFIG.plugins.enrichment.includes('MethodCallResolver'));
+      assert.ok(DEFAULT_CONFIG.plugins.analysis.includes('CoreV2Analyzer'));
+      assert.ok(DEFAULT_CONFIG.plugins.enrichment.includes('ExportEntityLinker'));
       assert.ok(DEFAULT_CONFIG.plugins.validation.includes('EvalBanValidator'));
     });
   });
@@ -524,9 +524,9 @@ plugins:
   indexing:
     - JSModuleIndexer
   analysis:
-    - JSASTAnalyzer
+    - CoreV2Analyzer
   enrichment:
-    - MethodCallResolver
+    - ExportEntityLinker
   validation:
     - EvalBanValidator
 

@@ -29,7 +29,6 @@ import { createTestDatabase, cleanupAllTestDatabases } from '../helpers/TestRFDB
 // Cleanup all test databases after all tests complete
 after(cleanupAllTestDatabases);
 import { createTestOrchestrator } from '../helpers/createTestOrchestrator.js';
-import { ImportExportLinker } from '@grafema/core';
 
 let testCounter = 0;
 
@@ -56,12 +55,11 @@ function createTestDir() {
  * Create orchestrator with forceAnalysis to bypass caching
  * This is critical for testing clear-and-rebuild behavior
  *
- * IMPORTANT: Includes ImportExportLinker which creates IMPORTS_FROM edges
+ * CoreV2Analyzer handles IMPORTS_FROM edges directly.
  */
 function createForcedOrchestrator(backend) {
   return createTestOrchestrator(backend, {
     forceAnalysis: true,
-    extraPlugins: [new ImportExportLinker()]
   });
 }
 

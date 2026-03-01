@@ -29,13 +29,10 @@ import { TestBackend } from '../helpers/TestRFDB.js';
 import {
   Orchestrator,
   JSModuleIndexer,
-  JSASTAnalyzer,
+  CoreV2Analyzer,
   ExpressRouteAnalyzer,
   ExpressResponseAnalyzer,
   FetchAnalyzer,
-  MethodCallResolver,
-  ArgumentParameterLinker,
-  ImportExportLinker,
   HTTPConnectionEnricher,
   traceValues,
 } from '@grafema/core';
@@ -66,13 +63,10 @@ describe('Cross-service value tracing (REG-252)', () => {
       graph: testBackend,
       plugins: [
         new JSModuleIndexer(),
-        new JSASTAnalyzer(),
+        new CoreV2Analyzer(),
         new ExpressRouteAnalyzer(),
         new ExpressResponseAnalyzer(),
         new FetchAnalyzer(),
-        new MethodCallResolver(),
-        new ArgumentParameterLinker(),
-        new ImportExportLinker(),
         new HTTPConnectionEnricher(),
       ],
       // Multi-service configuration: both backend and frontend
