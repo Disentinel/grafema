@@ -1259,6 +1259,34 @@ mod eval_tests {
     }
 
     #[test]
+    fn test_eval_string_contains_success() {
+        let engine = setup_test_graph();
+        let evaluator = Evaluator::new(&engine);
+
+        let query = Atom::new("string_contains", vec![
+            Term::constant("packages/core/src/plugins/analysis.ts"),
+            Term::constant("plugins"),
+        ]);
+
+        let results = evaluator.eval_atom(&query);
+        assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn test_eval_string_contains_failure() {
+        let engine = setup_test_graph();
+        let evaluator = Evaluator::new(&engine);
+
+        let query = Atom::new("string_contains", vec![
+            Term::constant("packages/core/src/index.ts"),
+            Term::constant("plugins"),
+        ]);
+
+        let results = evaluator.eval_atom(&query);
+        assert_eq!(results.len(), 0);
+    }
+
+    #[test]
     fn test_eval_neq_in_rule() {
         // Test neq in a rule context
         let dir = tempdir().unwrap();

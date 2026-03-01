@@ -247,7 +247,7 @@ fn positive_can_place_and_provides(
             }
             (can_place, provides)
         }
-        "neq" | "starts_with" | "not_starts_with" => {
+        "neq" | "starts_with" | "not_starts_with" | "string_contains" => {
             // All Var args must be in bound
             let all_bound = args.iter().all(|t| match t {
                 Term::Var(v) => bound.contains(v),

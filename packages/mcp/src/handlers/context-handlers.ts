@@ -324,7 +324,7 @@ export async function handleGetFileOverview(
 
   try {
     const overview = new FileOverview(db);
-    const result = await overview.getOverview(absolutePath, {
+    const result = await overview.getOverview(relativePath, {
       includeEdges,
     });
 

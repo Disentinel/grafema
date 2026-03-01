@@ -186,6 +186,7 @@ impl<'a> Evaluator<'a> {
             "neq" => self.eval_neq(atom),
             "starts_with" => self.eval_starts_with(atom),
             "not_starts_with" => self.eval_not_starts_with(atom),
+            "string_contains" => self.eval_string_contains(atom),
             "parent_function" => self.eval_parent_function(atom),
             _ => self.eval_derived(atom),
         }
@@ -760,6 +761,30 @@ impl<'a> Evaluator<'a> {
         };
 
         if !value_str.starts_with(prefix_str) {
+            vec![Bindings::new()]
+        } else {
+            vec![]
+        }
+    }
+
+    /// Evaluate string_contains(Value, Substring) - substring check
+    fn eval_string_contains(&self, atom: &Atom) -> Vec<Bindings> {
+        let args = atom.args();
+        if args.len() < 2 {
+            return vec![];
+        }
+
+        let value_str = match &args[0] {
+            Term::Const(s) => s.as_str(),
+            _ => return vec![],
+        };
+
+        let substring_str = match &args[1] {
+            Term::Const(s) => s.as_str(),
+            _ => return vec![],
+        };
+
+        if value_str.contains(substring_str) {
             vec![Bindings::new()]
         } else {
             vec![]
