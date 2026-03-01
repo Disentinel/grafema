@@ -10,7 +10,7 @@
 
 import { Plugin, createSuccessResult } from '../Plugin.js';
 import { walkFile, resolveFileRefs, resolveProject, jsRegistry } from '@grafema/core-v2';
-import type { FileResult, GraphNode, GraphEdge } from '@grafema/core-v2';
+import type { FileResult, GraphNode, GraphEdge, DomainPlugin } from '@grafema/core-v2';
 import { loadBuiltinRegistry } from '@grafema/lang-defs';
 import type { LangDefs } from '@grafema/lang-defs';
 import { readFileSync, existsSync } from 'fs';
@@ -18,11 +18,21 @@ import { join } from 'path';
 import { createRequire } from 'module';
 import { resolveNodeFile } from '../../utils/resolveNodeFile.js';
 import type { PluginContext, PluginResult, PluginMetadata, InputEdge, AnyBrandedNode, OrchestratorConfig, ServiceDefinition } from '@grafema/types';
+import { ExpressPlugin } from '../domain/ExpressPlugin.js';
 
 interface AnalysisManifest {
   projectPath: string;
   [key: string]: unknown;
 }
+
+/**
+ * Static registry of available domain plugins.
+ * Add new domain plugin implementations here as they are created.
+ * Keys must match the string values accepted in orchestrator config: domains: ["express", ...]
+ */
+const DOMAIN_PLUGIN_REGISTRY: Readonly<Record<string, DomainPlugin>> = {
+  express: new ExpressPlugin(),
+};
 
 export class CoreV2Analyzer extends Plugin {
   get metadata(): PluginMetadata {
@@ -41,6 +51,8 @@ export class CoreV2Analyzer extends Plugin {
           'META_PROPERTY', 'LABEL', 'STATIC_BLOCK', 'DECORATOR',
           'ENUM_MEMBER', 'TYPE_REFERENCE', 'TYPE_PARAMETER', 'LITERAL_TYPE',
           'CONDITIONAL_TYPE', 'INFER_TYPE', 'EXTERNAL_MODULE',
+          // Domain plugin node types (present only when domains config is active)
+          'http:route', 'express:mount',
         ],
         edges: [
           'CONTAINS', 'DECLARES', 'CALLS', 'HAS_SCOPE', 'CAPTURES', 'ASSIGNED_FROM',
@@ -57,6 +69,8 @@ export class CoreV2Analyzer extends Plugin {
           'HAS_PROPERTY', 'HAS_ELEMENT', 'HAS_DEFAULT', 'DECORATED_BY',
           'OVERRIDES', 'ACCESSES_PRIVATE', 'LISTENS_TO', 'MERGES_WITH',
           'IMPLEMENTS_OVERLOAD', 'HAS_OVERLOAD', 'EXTENDS_SCOPE_WITH',
+          // Domain plugin edge types (present only when domains config is active)
+          'EXPOSES', 'MOUNTS',
         ],
       },
     };
@@ -68,6 +82,27 @@ export class CoreV2Analyzer extends Plugin {
     const manifest = context.manifest as AnalysisManifest | undefined;
     const projectPath = manifest?.projectPath ?? '';
     const deferIndex = context.deferIndexing ?? false;
+
+    // Resolve domain plugins from config.
+    // Config key: domains — array of plugin names (e.g., ["express", "socketio"]).
+    // Missing or empty domains array means no domain plugins (backward-compatible).
+    const config = context.config as (OrchestratorConfig & { domains?: string[] }) | undefined;
+    const requestedDomains = config?.domains ?? [];
+    const domainPlugins = requestedDomains
+      .filter(name => {
+        if (!(name in DOMAIN_PLUGIN_REGISTRY)) {
+          logger.warn('Unknown domain plugin requested, skipping', { domain: name });
+          return false;
+        }
+        return true;
+      })
+      .map(name => DOMAIN_PLUGIN_REGISTRY[name]);
+
+    if (domainPlugins.length > 0) {
+      logger.info('Domain plugins enabled', {
+        plugins: domainPlugins.map(p => p.name),
+      });
+    }
 
     // Load builtin type definitions for method resolution
     const require = createRequire(import.meta.url);
@@ -87,7 +122,7 @@ export class CoreV2Analyzer extends Plugin {
       try {
         const absPath = resolveNodeFile(filePath, projectPath);
         const code = readFileSync(absPath, 'utf-8');
-        const walkResult = await walkFile(code, filePath, jsRegistry);
+        const walkResult = await walkFile(code, filePath, jsRegistry, { domainPlugins });
         const result = resolveFileRefs(walkResult);
         fileResults.push(result);
 
