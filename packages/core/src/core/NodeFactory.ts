@@ -57,6 +57,7 @@ import {
   SocketIONode,
   SocketConnectionNode,
   DatabaseNode,
+  RedisNode,
   ServiceLayerNode,
 } from './nodes/index.js';
 
@@ -70,6 +71,7 @@ import { SocketFactory } from './factories/SocketFactory.js';
 import { DatabaseFactory } from './factories/DatabaseFactory.js';
 import { ServiceFactory } from './factories/ServiceFactory.js';
 import { ExternalFactory } from './factories/ExternalFactory.js';
+import { RedisFactory } from './factories/RedisFactory.js';
 import { SystemFactory } from './factories/SystemFactory.js';
 
 // Validator type for node classes
@@ -170,6 +172,12 @@ export class NodeFactory {
   static createDbQuery = DatabaseFactory.createDbQuery.bind(DatabaseFactory);
   static createSQLiteQuery = DatabaseFactory.createSQLiteQuery.bind(DatabaseFactory);
   static createDbTable = DatabaseFactory.createDbTable.bind(DatabaseFactory);
+
+  // ==========================================
+  // Redis domain (delegate to RedisFactory)
+  // ==========================================
+
+  static createRedisOperation = RedisFactory.createRedisOperation.bind(RedisFactory);
 
   // ==========================================
   // Service Layer (delegate to ServiceFactory)
@@ -288,6 +296,11 @@ export class NodeFactory {
     // Handle database domain types (db:*)
     if (DatabaseNode.isDatabaseType(node.type)) {
       return DatabaseNode.validate(node);
+    }
+
+    // Handle Redis domain types (redis:*)
+    if (RedisNode.isRedisType(node.type)) {
+      return RedisNode.validate(node);
     }
 
     // Handle service layer types (SERVICE_*)

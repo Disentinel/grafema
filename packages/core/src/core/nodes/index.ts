@@ -101,6 +101,12 @@ export {
   type DbTableNodeRecord,
 } from './DatabaseNode.js';
 
+// Redis domain nodes (redis:*)
+export {
+  RedisNode,
+  type RedisOperationNodeRecord,
+} from './RedisNode.js';
+
 // Service Layer domain nodes (SERVICE_*)
 export {
   ServiceLayerNode,

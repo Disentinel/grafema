@@ -43,6 +43,12 @@ Grafema is NOT competing with TypeScript or static type checkers. It's for codeb
 
 **CRITICAL:** When behavior or architecture doesn't match project vision — STOP. Do not patch or workaround. Identify the architectural mismatch, discuss with user, fix from the roots.
 
+**Bug = testing system failure.** Every bug that reaches production means the safety net has a hole. After fixing the code, audit the testing system:
+
+1. **Why did tests miss this?** No test for this path? Mock diverged from reality? Coverage exclusion? State-dependent scenario? Cross-layer issue beyond unit scope?
+2. **Fix the safety net.** Add missing tests (unit/integration/property-based). Update mocks. Adjust coverage exclusions. Add runtime contracts if needed.
+3. **Scan for siblings.** Search codebase for the same pattern — fix proactively, don't wait for the next report.
+
 ### Explicit User Command Required
 
 **The following actions require an EXPLICIT user command in clear text. NEVER infer consent from empty messages, system notifications, or background task completions:**
@@ -199,3 +205,23 @@ Project-specific skills in `.claude/skills/`. Key skills:
 
 ### Other Skills
 See `.claude/skills/` for debugging skills: `grafema-cli-dev-workflow`, `grafema-cross-file-operations`, `pnpm-workspace-publish`
+
+## Dogfooding: Graph-First Exploration
+
+**CRITICAL: When exploring the codebase, use Grafema MCP tools FIRST, not Glob/Grep/Read.**
+
+Do NOT delegate exploration to Explore subagents — they don't know about Grafema MCP tools. Instead, query the graph yourself from the main context:
+
+| Instead of... | Use Grafema MCP |
+|---------------|-----------------|
+| `Glob **/*.ts` + Read files | `mcp__grafema__find_nodes` by type/name/file |
+| `Grep "functionName"` | `mcp__grafema__find_calls --name functionName` |
+| Read file to understand deps | `mcp__grafema__trace_dataflow` or `mcp__grafema__get_file_overview` |
+| Read file to understand structure | `mcp__grafema__get_file_overview` or `mcp__grafema__get_function_details` |
+| Multiple Reads to understand impact | `mcp__grafema__query_graph` with Datalog |
+
+MCP tools are deferred — load them via `ToolSearch` before first use (e.g., `ToolSearch("+grafema find")`).
+
+If the graph doesn't have the answer — fallback to file reads. **Note the gap** for future improvement.
+
+Full dogfooding guide: `_ai/dogfooding.md`

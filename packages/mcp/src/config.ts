@@ -43,6 +43,7 @@ import {
   ServiceConnectionEnricher,
   RustFFIEnricher,
   RejectionPropagationEnricher,
+  RedisEnricher,
   // Validation
   CallResolverValidator,
   EvalBanValidator,
@@ -117,6 +118,7 @@ export const BUILTIN_PLUGINS: Record<string, PluginFactory> = {
   ServiceConnectionEnricher: () => new ServiceConnectionEnricher(),
   RustFFIEnricher: () => new RustFFIEnricher(),
   RejectionPropagationEnricher: () => new RejectionPropagationEnricher(),
+  RedisEnricher: () => new RedisEnricher(),
 
   // Validation
   CallResolverValidator: () => new CallResolverValidator(),

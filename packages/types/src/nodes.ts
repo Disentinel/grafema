@@ -70,6 +70,15 @@ export const NAMESPACED_TYPE = {
   DB_QUERY: 'db:query',
   DB_CONNECTION: 'db:connection',
 
+  // Redis
+  REDIS_READ: 'redis:read',
+  REDIS_WRITE: 'redis:write',
+  REDIS_DELETE: 'redis:delete',
+  REDIS_PUBLISH: 'redis:publish',
+  REDIS_SUBSCRIBE: 'redis:subscribe',
+  REDIS_TRANSACTION: 'redis:transaction',
+  REDIS_CONNECTION: 'redis:connection',
+
   // Filesystem
   FS_READ: 'fs:read',
   FS_WRITE: 'fs:write',
@@ -359,6 +368,16 @@ export interface NetTcpServerNodeRecord extends BaseNodeRecord {
   backlog?: number;
 }
 
+// Redis operation node
+export interface RedisOperationNodeRecord extends BaseNodeRecord {
+  type: 'redis:read' | 'redis:write' | 'redis:delete' | 'redis:publish' | 'redis:subscribe' | 'redis:transaction' | 'redis:connection';
+  method: string;
+  object?: string;
+  key?: string;
+  operation: string;
+  package: string;
+}
+
 // Union of all node types
 export type NodeRecord =
   | FunctionNodeRecord
@@ -388,6 +407,7 @@ export type NodeRecord =
   | OsUnixServerNodeRecord
   | NetTcpConnectionNodeRecord
   | NetTcpServerNodeRecord
+  | RedisOperationNodeRecord
   | BaseNodeRecord; // fallback for custom types
 
 // === HELPER FUNCTIONS ===
@@ -414,5 +434,5 @@ export function isEndpointType(nodeType: string): boolean {
 export function isSideEffectType(nodeType: string): boolean {
   if (nodeType === NODE_TYPE.SIDE_EFFECT) return true;
   const ns = getNamespace(nodeType);
-  return ns === 'db' || ns === 'fs' || ns === 'net' || ns === 'os';
+  return ns === 'db' || ns === 'fs' || ns === 'net' || ns === 'os' || ns === 'redis';
 }

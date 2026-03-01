@@ -201,6 +201,11 @@ export const LIBRARY_SEMANTIC_GROUPS: Record<string, { semantic: string; suggest
   db: { semantic: 'database', suggestedPlugin: 'DatabaseAnalyzer', description: 'Database queries not tracked' },
   pool: { semantic: 'database', suggestedPlugin: 'DatabaseAnalyzer', description: 'Database queries not tracked' },
 
+  // Redis/Cache
+  redis: { semantic: 'cache-layer', suggestedPlugin: 'RedisEnricher', description: 'Redis operations tracked by RedisEnricher' },
+  ioredis: { semantic: 'cache-layer', suggestedPlugin: 'RedisEnricher', description: 'Redis operations tracked by RedisEnricher' },
+  Redis: { semantic: 'cache-layer', suggestedPlugin: 'RedisEnricher', description: 'Redis operations tracked by RedisEnricher' },
+
   // Auth
   jwt: { semantic: 'auth', suggestedPlugin: 'AuthAnalyzer', description: 'Auth flow not visible' },
   jsonwebtoken: { semantic: 'auth', suggestedPlugin: 'AuthAnalyzer', description: 'Auth flow not visible' },

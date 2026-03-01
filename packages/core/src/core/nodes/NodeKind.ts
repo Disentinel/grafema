@@ -73,6 +73,15 @@ export const NAMESPACED_TYPE = {
   DB_QUERY: 'db:query',
   DB_CONNECTION: 'db:connection',
 
+  // Redis
+  REDIS_READ: 'redis:read',
+  REDIS_WRITE: 'redis:write',
+  REDIS_DELETE: 'redis:delete',
+  REDIS_PUBLISH: 'redis:publish',
+  REDIS_SUBSCRIBE: 'redis:subscribe',
+  REDIS_TRANSACTION: 'redis:transaction',
+  REDIS_CONNECTION: 'redis:connection',
+
   // Filesystem
   FS_READ: 'fs:read',
   FS_WRITE: 'fs:write',
@@ -143,7 +152,7 @@ export function isSideEffectType(nodeType: string): boolean {
   if (!nodeType) return false;
   if (nodeType === NODE_TYPE.SIDE_EFFECT) return true;
   const ns = getNamespace(nodeType);
-  return ns === 'db' || ns === 'fs' || ns === 'net';
+  return ns === 'db' || ns === 'fs' || ns === 'net' || ns === 'redis';
 }
 
 /**

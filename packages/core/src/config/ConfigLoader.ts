@@ -164,6 +164,7 @@ export const DEFAULT_CONFIG: GrafemaConfig = {
       'PrefixEvaluator',
       'ConfigRoutingMapBuilder',
       'ServiceConnectionEnricher',
+      'RedisEnricher',
     ],
     validation: [
       'GraphConnectivityValidator',

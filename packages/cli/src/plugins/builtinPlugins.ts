@@ -46,6 +46,7 @@ import {
   RustFFIEnricher,
   RejectionPropagationEnricher,
   CallbackCallResolver,
+  RedisEnricher,
   // Validation
   CallResolverValidator,
   EvalBanValidator,
@@ -98,6 +99,7 @@ export const BUILTIN_PLUGINS: Record<string, () => Plugin> = {
   RustFFIEnricher: () => new RustFFIEnricher() as Plugin,
   RejectionPropagationEnricher: () => new RejectionPropagationEnricher() as Plugin,
   CallbackCallResolver: () => new CallbackCallResolver() as Plugin,
+  RedisEnricher: () => new RedisEnricher() as Plugin,
   // Validation
   CallResolverValidator: () => new CallResolverValidator() as Plugin,
   EvalBanValidator: () => new EvalBanValidator() as Plugin,

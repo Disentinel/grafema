@@ -119,6 +119,9 @@ export const EDGE_TYPE = {
   // Abstract -> Concrete (tool provenance)
   PROVISIONED_BY: 'PROVISIONED_BY',
 
+  // Redis
+  PERFORMS_REDIS: 'PERFORMS_REDIS',
+
   // Unknown/fallback
   UNKNOWN: 'UNKNOWN',
 } as const;

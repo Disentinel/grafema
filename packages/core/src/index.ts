@@ -301,6 +301,11 @@ export { RejectionPropagationEnricher } from './plugins/enrichment/RejectionProp
 export { CallbackCallResolver } from './plugins/enrichment/CallbackCallResolver.js';
 export { ConfigRoutingMapBuilder } from './plugins/enrichment/ConfigRoutingMapBuilder.js';
 export { ServiceConnectionEnricher } from './plugins/enrichment/ServiceConnectionEnricher.js';
+export { RedisEnricher } from './plugins/enrichment/RedisEnricher.js';
+
+// Library registry
+export { LibraryRegistry } from './data/libraries/LibraryRegistry.js';
+export type { LibraryDef, LibraryFunctionDef, LibraryOperation } from './data/libraries/types.js';
 
 // Resource system (REG-256)
 export { ResourceRegistryImpl } from './core/ResourceRegistry.js';
