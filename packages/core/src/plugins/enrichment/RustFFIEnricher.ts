@@ -33,7 +33,7 @@ export class RustFFIEnricher extends Plugin {
         nodes: [],
         edges: ['FFI_CALLS']
       },
-      dependencies: ['RustAnalyzer', 'MethodCallResolver'],
+      dependencies: ['RustAnalyzer'],
       consumes: [],
       produces: ['FFI_CALLS']
     };

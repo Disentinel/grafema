@@ -59,7 +59,7 @@ export class EvalBanValidator extends Plugin {
     return {
       name: 'EvalBanValidator',
       phase: 'VALIDATION',
-      dependencies: ['JSASTAnalyzer'],
+      dependencies: ['CoreV2Analyzer'],
       creates: {
         nodes: [],
         edges: []

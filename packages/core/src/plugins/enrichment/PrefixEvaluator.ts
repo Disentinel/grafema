@@ -87,7 +87,7 @@ export class PrefixEvaluator extends Plugin {
         nodes: [],
         edges: []
       },
-      dependencies: ['JSModuleIndexer', 'JSASTAnalyzer', 'MountPointResolver'],
+      dependencies: ['JSModuleIndexer', 'CoreV2Analyzer', 'MountPointResolver'],
       consumes: ['DEFINES'],
       produces: []
     };

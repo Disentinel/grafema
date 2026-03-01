@@ -34,7 +34,7 @@ export class AwaitInLoopValidator extends Plugin {
     return {
       name: 'AwaitInLoopValidator',
       phase: 'VALIDATION',
-      dependencies: ['JSASTAnalyzer'],
+      dependencies: ['CoreV2Analyzer'],
       creates: {
         nodes: ['ISSUE'],
         edges: ['AFFECTS']

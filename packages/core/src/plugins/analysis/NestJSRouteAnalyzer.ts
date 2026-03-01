@@ -113,7 +113,7 @@ export class NestJSRouteAnalyzer extends Plugin {
         nodes: ['http:route'],
         edges: ['CONTAINS']
       },
-      dependencies: ['JSASTAnalyzer']
+      dependencies: ['CoreV2Analyzer']
     };
   }
 

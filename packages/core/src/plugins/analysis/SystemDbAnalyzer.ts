@@ -56,7 +56,7 @@ export class SystemDbAnalyzer extends Plugin {
         nodes: ['SYSTEM_DB_VIEW_REGISTRATION', 'SYSTEM_DB_SUBSCRIPTION'],
         edges: ['REGISTERS_VIEW', 'CHECKS_VIEWS']
       },
-      dependencies: ['JSASTAnalyzer']
+      dependencies: ['CoreV2Analyzer']
     };
   }
 

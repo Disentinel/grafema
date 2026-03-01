@@ -60,7 +60,7 @@ export class ShadowingDetector extends Plugin {
     return {
       name: 'ShadowingDetector',
       phase: 'VALIDATION',
-      dependencies: ['JSASTAnalyzer'],
+      dependencies: ['CoreV2Analyzer'],
       creates: {
         nodes: [],
         edges: []

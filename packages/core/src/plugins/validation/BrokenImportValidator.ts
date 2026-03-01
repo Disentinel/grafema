@@ -77,7 +77,7 @@ export class BrokenImportValidator extends Plugin {
     return {
       name: 'BrokenImportValidator',
       phase: 'VALIDATION',
-      dependencies: ['ImportExportLinker', 'FunctionCallResolver'],
+      dependencies: ['CoreV2Analyzer'],
       creates: {
         nodes: [],
         edges: []

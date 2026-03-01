@@ -51,7 +51,7 @@ export class RedisEnricher extends Plugin {
         nodes: ['redis:read', 'redis:write', 'redis:delete', 'redis:publish', 'redis:subscribe', 'redis:transaction', 'redis:connection'],
         edges: ['PERFORMS_REDIS'],
       },
-      dependencies: ['JSASTAnalyzer', 'ImportExportLinker', 'MethodCallResolver'],
+      dependencies: ['CoreV2Analyzer'],
       consumes: [],
       produces: ['PERFORMS_REDIS'],
       covers: ['ioredis', 'redis'],

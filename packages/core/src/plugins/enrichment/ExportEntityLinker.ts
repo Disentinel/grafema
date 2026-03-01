@@ -43,7 +43,7 @@ export class ExportEntityLinker extends Plugin {
         nodes: [],
         edges: ['EXPORTS']
       },
-      dependencies: ['JSASTAnalyzer'],
+      dependencies: ['CoreV2Analyzer'],
       consumes: [],
       produces: ['EXPORTS']
     };
