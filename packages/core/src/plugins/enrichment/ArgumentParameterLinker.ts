@@ -35,6 +35,7 @@ import { Plugin, createSuccessResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { BaseNodeRecord, EdgeRecord } from '@grafema/types';
 import { StrictModeError } from '../../errors/GrafemaError.js';
+import { resolveCallbackCalls } from './resolveCallbackCalls.js';
 
 /**
  * Extended call node type
@@ -75,8 +76,8 @@ export class ArgumentParameterLinker extends Plugin {
         edges: ['RECEIVES_ARGUMENT']
       },
       dependencies: ['JSASTAnalyzer', 'MethodCallResolver'], // Requires CALLS edges
-      consumes: ['PASSES_ARGUMENT', 'CALLS', 'HAS_PARAMETER', 'RECEIVES_ARGUMENT'],
-      produces: ['RECEIVES_ARGUMENT'] // DERIVES_FROM also created but not in produces to avoid cycle with MethodCallResolver
+      consumes: ['PASSES_ARGUMENT', 'CALLS', 'HAS_PARAMETER', 'RECEIVES_ARGUMENT', 'HAS_SCOPE', 'CONTAINS', 'ASSIGNED_FROM', 'IMPORTS_FROM'],
+      produces: ['RECEIVES_ARGUMENT'] // DERIVES_FROM and CALLS also created but not in produces to avoid cycles
     };
   }
 
@@ -124,6 +125,11 @@ export class ArgumentParameterLinker extends Plugin {
       receivesArgument: existingEdges.size,
       derivesFrom: existingDerivesEdges.size
     });
+
+    // Deduplication set for callback CALLS edges created by resolveCallbackCalls
+    // Key: `${innerCallId}:${resolvedFunctionId}`
+    const callbackCallsDedup = new Set<string>();
+    let callbackCallsTotal = 0;
 
     for (const callNode of callNodes) {
       callsProcessed++;
@@ -243,6 +249,24 @@ export class ArgumentParameterLinker extends Plugin {
           existingDerivesEdges.add(derivesKey);
           derivesEdgesCreated++;
         }
+
+        // Resolve callback calls: if the argument is callable (FUNCTION, IMPORT, VARIABLE),
+        // find inner CALL nodes that invoke this parameter and create transitive CALLS edges
+        try {
+          const callbackEdgesCreated = await resolveCallbackCalls(
+            graph,
+            paramNode,
+            { dst: passesEdge.dst, metadata: { argIndex, callId: callNode.id } },
+            callbackCallsDedup
+          );
+          callbackCallsTotal += callbackEdgesCreated;
+        } catch (err) {
+          logger.warn('Failed to resolve callback calls', {
+            paramId: paramNode.id,
+            paramName: paramNode.name ?? 'unknown',
+            error: err instanceof Error ? err.message : String(err)
+          });
+        }
       }
     }
 
@@ -251,17 +275,19 @@ export class ArgumentParameterLinker extends Plugin {
       callsProcessed,
       receivesEdgesCreated,
       derivesEdgesCreated,
+      callbackCallsTotal,
       unresolvedCalls,
       noParams,
       time: `${totalTime}s`
     });
 
     return createSuccessResult(
-      { nodes: 0, edges: receivesEdgesCreated + derivesEdgesCreated },
+      { nodes: 0, edges: receivesEdgesCreated + derivesEdgesCreated + callbackCallsTotal },
       {
         callsProcessed,
         receivesEdgesCreated,
         derivesEdgesCreated,
+        callbackCallsTotal,
         unresolvedCalls,
         noParams,
         timeMs: Date.now() - startTime
