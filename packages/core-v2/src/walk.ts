@@ -268,7 +268,7 @@ export async function walkFile(
 
   // ─── Recursive walk with auto scope-pop ──────────────────────────
 
-  function visit(node: Node, parent: Node | null, parentNodeId: string, edgeType: string = 'CONTAINS'): void {
+  function visit(node: Node, parent: Node | null, parentNodeId: string, edgeType: string = 'CONTAINS', edgeMetadata?: Record<string, unknown>): void {
     const visitor = registry[node.type];
     if (!visitor) {
       const loc = node.loc?.start;
@@ -298,6 +298,7 @@ export async function walkFile(
         src: parentNodeId,
         dst: result.nodes[0].id,
         type: edgeType,
+        ...(edgeMetadata ? { metadata: edgeMetadata } : {}),
       });
     }
 
@@ -374,9 +375,16 @@ export async function walkFile(
 
       const val = record[key];
       if (Array.isArray(val)) {
-        for (const item of val) {
+        for (let i = 0; i < val.length; i++) {
+          const item = val[i];
           if (item && typeof item === 'object' && 'type' in item) {
-            visit(item as Node, node, edgeSrc, childEdgeType);
+            let itemMetadata: Record<string, unknown> | undefined;
+            if (childEdgeType === 'PASSES_ARGUMENT') {
+              itemMetadata = { argIndex: i };
+            } else if (childEdgeType === 'RECEIVES_ARGUMENT') {
+              itemMetadata = { paramIndex: i };
+            }
+            visit(item as Node, node, edgeSrc, childEdgeType, itemMetadata);
           }
         }
       } else if (val && typeof val === 'object' && 'type' in val) {
@@ -494,6 +502,7 @@ export async function walkFile(
           src: ref.fromNodeId,
           dst: result.nodeId,
           type: ref.edgeType,
+          ...(ref.metadata ? { metadata: ref.metadata } : {}),
         });
         // CAPTURES: if lookup crossed a function boundary, the enclosing
         // function captures the outer variable (closure capture)
@@ -528,6 +537,7 @@ export async function walkFile(
           src: ref.fromNodeId,
           dst: result.nodeId,
           type: ref.edgeType,
+          ...(ref.metadata ? { metadata: ref.metadata } : {}),
         });
       } else {
         unresolvedRefs.push(ref);

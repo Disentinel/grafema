@@ -72,6 +72,8 @@ export interface DeferredRef {
   column: number;
   /** Receiver context for call_resolve (class node ID if inside class with `this`) */
   receiver?: string;
+  /** Optional metadata to forward to the resolved edge */
+  metadata?: Record<string, unknown>;
 }
 
 // ─── Scope Tree ──────────────────────────────────────────────────────

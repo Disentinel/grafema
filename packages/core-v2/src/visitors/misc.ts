@@ -63,6 +63,22 @@ export function visitObjectPattern(
 
   const result: VisitResult = { nodes: [], edges: [], deferred: [] };
 
+  // In param context, create a synthetic PARAMETER node for the destructured pattern
+  // so the walk engine creates FUNCTION → RECEIVES_ARGUMENT → synthetic_param
+  if (isParam) {
+    const line = node.loc?.start.line ?? 0;
+    const syntheticId = ctx.nodeId('PARAMETER', '{...}', line);
+    result.nodes.push({
+      id: syntheticId,
+      type: 'PARAMETER',
+      name: '{...}',
+      file: ctx.file,
+      line,
+      column: node.loc?.start.column ?? 0,
+      metadata: { destructured: true, kind: 'object' },
+    });
+  }
+
   for (const prop of pattern.properties) {
     if (prop.type === 'ObjectProperty') {
       // { a } or { a: b } — the binding name is in the value
@@ -79,6 +95,10 @@ export function visitObjectPattern(
           line,
           column: value.loc?.start.column ?? 0,
         });
+        // In param context, CONTAINS from synthetic param to individual bindings
+        if (isParam && result.nodes.length > 1) {
+          result.edges.push({ src: result.nodes[0].id, dst: nodeId, type: 'CONTAINS' });
+        }
         ctx.declare(name, isParam ? 'param' : 'let', nodeId);
       }
       // Nested patterns (value is ObjectPattern/ArrayPattern) → walk engine visits as children
@@ -102,6 +122,22 @@ export function visitArrayPattern(
 
   const result: VisitResult = { nodes: [], edges: [], deferred: [] };
 
+  // In param context, create a synthetic PARAMETER node for the destructured pattern
+  // so the walk engine creates FUNCTION → RECEIVES_ARGUMENT → synthetic_param
+  if (isParam) {
+    const line = node.loc?.start.line ?? 0;
+    const syntheticId = ctx.nodeId('PARAMETER', '[...]', line);
+    result.nodes.push({
+      id: syntheticId,
+      type: 'PARAMETER',
+      name: '[...]',
+      file: ctx.file,
+      line,
+      column: node.loc?.start.column ?? 0,
+      metadata: { destructured: true, kind: 'array' },
+    });
+  }
+
   // Collect element node IDs for ELEMENT_OF derivation
   const elemNodeIds: string[] = [];
 
@@ -119,6 +155,10 @@ export function visitArrayPattern(
         line,
         column: elem.loc?.start.column ?? 0,
       });
+      // In param context, CONTAINS from synthetic param to individual bindings
+      if (isParam && result.nodes.length > 1) {
+        result.edges.push({ src: result.nodes[0].id, dst: nodeId, type: 'CONTAINS' });
+      }
       ctx.declare(name, isParam ? 'param' : 'let', nodeId);
       elemNodeIds.push(nodeId);
     }
@@ -190,6 +230,52 @@ export function visitAssignmentPattern(
   node: Node, parent: Node | null, ctx: WalkContext,
 ): VisitResult {
   const ap = node as AssignmentPattern;
+
+  // Handle destructured patterns with defaults: function f({ a, b } = {})
+  if (ap.left.type === 'ObjectPattern') {
+    const isParam = isParameterContext(node, parent);
+    if (isParam) {
+      const line = node.loc?.start.line ?? 0;
+      const syntheticId = ctx.nodeId('PARAMETER', '{...}', line);
+      return {
+        nodes: [{
+          id: syntheticId,
+          type: 'PARAMETER',
+          name: '{...}',
+          file: ctx.file,
+          line,
+          column: node.loc?.start.column ?? 0,
+          metadata: { destructured: true, kind: 'object', hasDefault: true },
+        }],
+        edges: [],
+        deferred: [],
+      };
+    }
+    return EMPTY_RESULT;
+  }
+
+  if (ap.left.type === 'ArrayPattern') {
+    const isParam = isParameterContext(node, parent);
+    if (isParam) {
+      const line = node.loc?.start.line ?? 0;
+      const syntheticId = ctx.nodeId('PARAMETER', '[...]', line);
+      return {
+        nodes: [{
+          id: syntheticId,
+          type: 'PARAMETER',
+          name: '[...]',
+          file: ctx.file,
+          line,
+          column: node.loc?.start.column ?? 0,
+          metadata: { destructured: true, kind: 'array', hasDefault: true },
+        }],
+        edges: [],
+        deferred: [],
+      };
+    }
+    return EMPTY_RESULT;
+  }
+
   if (ap.left.type !== 'Identifier') return EMPTY_RESULT;
 
   const isParam = isParameterContext(node, parent);

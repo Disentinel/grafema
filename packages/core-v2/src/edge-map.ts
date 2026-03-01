@@ -195,4 +195,5 @@ export const EDGE_MAP: Record<string, EdgeMapping> = {
   'ArrowFunctionExpression.params':  { edgeType: 'RECEIVES_ARGUMENT' },
   'ClassMethod.params':              { edgeType: 'RECEIVES_ARGUMENT' },
   'ObjectMethod.params':             { edgeType: 'RECEIVES_ARGUMENT' },
+  'ClassPrivateMethod.params':       { edgeType: 'RECEIVES_ARGUMENT' },
 };

@@ -68,6 +68,7 @@ export function resolveFileRefs(result: FileResult): FileResult {
         src: ref.fromNodeId,
         dst: target.id,
         type: ref.edgeType,
+        ...(ref.metadata ? { metadata: ref.metadata } : {}),
       });
     } else {
       stillUnresolved.push(ref);
@@ -316,6 +317,7 @@ export class AmbiguousBuiltinError extends Error {
 
 export interface ResolveResult {
   edges: GraphEdge[];
+  nodes: GraphNode[];
   unresolved: DeferredRef[];
   stats: {
     importResolved: number;
@@ -329,6 +331,8 @@ export interface ResolveResult {
     instanceOf: number;
     importsToModule: number;
     reExportResolved: number;
+    argsLinked: number;
+    issuesCreated: number;
   };
 }
 
@@ -341,6 +345,7 @@ export function resolveProject(
   const knownFiles = new Set(results.map(r => r.file));
 
   const edges: GraphEdge[] = [];
+  const nodes: GraphNode[] = [];
   const unresolved: DeferredRef[] = [];
   const unresolvedImports: DeferredRef[] = [];
   const stats = {
@@ -355,6 +360,8 @@ export function resolveProject(
     instanceOf: 0,
     importsToModule: 0,
     reExportResolved: 0,
+    argsLinked: 0,
+    issuesCreated: 0,
   };
 
   // Collect all per-file edges for receiver type inference
@@ -477,7 +484,313 @@ export function resolveProject(
   const mapGetEdges = deriveMapGetElementOf(results, [...allEdges, ...instanceOfEdges], index);
   edges.push(...mapGetEdges);
 
-  return { edges, unresolved, stats };
+  // Phase 3 continued: link call arguments to function parameters
+  const allNodesForLinking: GraphNode[] = [];
+  for (const result of results) {
+    allNodesForLinking.push(...result.nodes);
+  }
+  const updatedAllEdges = collectAllEdges(results, edges);
+  const linkResult = linkArgumentsToParameters(allNodesForLinking, updatedAllEdges, index);
+  edges.push(...linkResult.edges);
+  nodes.push(...linkResult.nodes);
+  stats.argsLinked = linkResult.argsLinked;
+  stats.issuesCreated = linkResult.issuesCreated;
+
+  return { edges, nodes, unresolved, stats };
+}
+
+// ─── Argument-Parameter Linker ────────────────────────────────────────
+
+interface ArgInfo {
+  argIndex: number;
+  dst: string;
+}
+
+interface ParamInfo {
+  paramIndex: number;
+  paramId: string;
+  isRest: boolean;
+  isDestructured: boolean;
+}
+
+interface LinkResult {
+  edges: GraphEdge[];
+  nodes: GraphNode[];
+  argsLinked: number;
+  issuesCreated: number;
+}
+
+/**
+ * Link call arguments to function parameters by position.
+ * Emits PARAMETER → ARG_BINDING → argument_node edges with { argIndex, callId } metadata.
+ * Also emits ISSUE nodes for extra arguments and unresolved calls.
+ */
+function linkArgumentsToParameters(
+  allNodes: GraphNode[],
+  allEdges: GraphEdge[],
+  index: ProjectIndex,
+): LinkResult {
+  const edges: GraphEdge[] = [];
+  const nodes: GraphNode[] = [];
+  let argsLinked = 0;
+  let issuesCreated = 0;
+
+  // Build callToArgs map: for each PASSES_ARGUMENT edge, group by src (callId)
+  const callToArgs = new Map<string, ArgInfo[]>();
+  for (const edge of allEdges) {
+    if (edge.type === 'PASSES_ARGUMENT') {
+      const argIndex = (edge.metadata?.argIndex as number) ?? -1;
+      let args = callToArgs.get(edge.src);
+      if (!args) {
+        args = [];
+        callToArgs.set(edge.src, args);
+      }
+      args.push({ argIndex, dst: edge.dst });
+    }
+  }
+
+  // Build targetToParams map: for each RECEIVES_ARGUMENT edge, group by src (function/method)
+  const targetToParams = new Map<string, ParamInfo[]>();
+  for (const edge of allEdges) {
+    if (edge.type === 'RECEIVES_ARGUMENT') {
+      const paramIndex = (edge.metadata?.paramIndex as number) ?? -1;
+      const paramNode = index.getNode(edge.dst);
+      const isRest = paramNode?.metadata?.rest === true;
+      const isDestructured = paramNode?.metadata?.destructured === true;
+      let params = targetToParams.get(edge.src);
+      if (!params) {
+        params = [];
+        targetToParams.set(edge.src, params);
+      }
+      params.push({ paramIndex, paramId: edge.dst, isRest, isDestructured });
+    }
+  }
+
+  // Build sets for resolved calls: src of CALLS or CALLS_ON edges
+  const callsWithAnyEdge = new Set<string>();
+  const callToTargets = new Map<string, { dst: string; type: string }[]>();
+  for (const edge of allEdges) {
+    if (edge.type === 'CALLS' || edge.type === 'CALLS_ON') {
+      callsWithAnyEdge.add(edge.src);
+      let targets = callToTargets.get(edge.src);
+      if (!targets) {
+        targets = [];
+        callToTargets.set(edge.src, targets);
+      }
+      targets.push({ dst: edge.dst, type: edge.type });
+    }
+  }
+
+  // Build HAS_MEMBER index for constructor resolution (new Foo())
+  const classToConstructor = new Map<string, string>();
+  for (const edge of allEdges) {
+    if (edge.type === 'HAS_MEMBER') {
+      const memberNode = index.getNode(edge.dst);
+      if (memberNode && memberNode.type === 'METHOD' && memberNode.name === 'constructor') {
+        classToConstructor.set(edge.src, edge.dst);
+      }
+    }
+  }
+
+  // Build ASSIGNED_FROM index for variable→callable resolution (const fn = () => {})
+  const assignedFrom = new Map<string, string[]>();
+  // Build IMPORTS_FROM index for import→callable resolution (import { greet } from './a.js')
+  const importsFromMap = new Map<string, string[]>();
+  for (const edge of allEdges) {
+    if (edge.type === 'ASSIGNED_FROM') {
+      let targets = assignedFrom.get(edge.src);
+      if (!targets) {
+        targets = [];
+        assignedFrom.set(edge.src, targets);
+      }
+      targets.push(edge.dst);
+    } else if (edge.type === 'IMPORTS_FROM') {
+      let targets = importsFromMap.get(edge.src);
+      if (!targets) {
+        targets = [];
+        importsFromMap.set(edge.src, targets);
+      }
+      targets.push(edge.dst);
+    }
+  }
+
+  const CALLABLE_TYPES = new Set(['FUNCTION', 'METHOD', 'GETTER', 'SETTER']);
+
+  /**
+   * Resolve a CALLS target to its actual callable entity.
+   * Follows VARIABLE → ASSIGNED_FROM → FUNCTION chains and CLASS → constructor.
+   * Returns the node ID that has RECEIVES_ARGUMENT edges, or null.
+   */
+  function resolveCallableTarget(targetId: string): string | null {
+    const targetNode = index.getNode(targetId);
+    if (!targetNode) return null;
+
+    // Direct callable
+    if (CALLABLE_TYPES.has(targetNode.type)) return targetId;
+
+    // CLASS → constructor
+    if (targetNode.type === 'CLASS') {
+      const constructorId = classToConstructor.get(targetId);
+      return constructorId ?? null;
+    }
+
+    // VARIABLE/CONSTANT → follow ASSIGNED_FROM to find callable
+    if (targetNode.type === 'VARIABLE' || targetNode.type === 'CONSTANT') {
+      const assigned = assignedFrom.get(targetId);
+      if (assigned) {
+        for (const dstId of assigned) {
+          const dstNode = index.getNode(dstId);
+          if (dstNode && CALLABLE_TYPES.has(dstNode.type)) return dstId;
+          // Could be a CLASS assigned to a variable
+          if (dstNode && dstNode.type === 'CLASS') {
+            const constructorId = classToConstructor.get(dstId);
+            if (constructorId) return constructorId;
+          }
+        }
+      }
+      return null;
+    }
+
+    // IMPORT → follow IMPORTS_FROM to find the actual callable in source
+    if (targetNode.type === 'IMPORT') {
+      const imports = importsFromMap.get(targetId);
+      if (imports) {
+        for (const dstId of imports) {
+          const dstNode = index.getNode(dstId);
+          if (dstNode && CALLABLE_TYPES.has(dstNode.type)) return dstId;
+          if (dstNode && dstNode.type === 'CLASS') {
+            const constructorId = classToConstructor.get(dstId);
+            if (constructorId) return constructorId;
+          }
+        }
+      }
+      return null;
+    }
+
+    return null;
+  }
+
+  // For each eligible call → target edge, match args to params
+  for (const [callId, targets] of callToTargets) {
+    const args = callToArgs.get(callId);
+    if (!args || args.length === 0) continue;
+
+    for (const { dst: targetId, type: edgeType } of targets) {
+      const targetNode = index.getNode(targetId);
+      if (!targetNode) continue;
+
+      // For CALLS_ON edges: target must be METHOD/FUNCTION/GETTER/SETTER
+      if (edgeType === 'CALLS_ON') {
+        if (!CALLABLE_TYPES.has(targetNode.type)) continue;
+      }
+
+      // Resolve to actual callable
+      const paramsTarget = resolveCallableTarget(targetId);
+      if (!paramsTarget) continue;
+
+      const params = targetToParams.get(paramsTarget);
+      if (!params || params.length === 0) continue;
+
+      // Sort params by paramIndex
+      const sortedParams = [...params].sort((a, b) => a.paramIndex - b.paramIndex);
+
+      // Find rest param
+      const restParam = sortedParams.find(p => p.isRest);
+      const restParamIndex = restParam ? restParam.paramIndex : -1;
+
+      // Sort args by argIndex
+      const sortedArgs = [...args].sort((a, b) => a.argIndex - b.argIndex);
+
+      for (const arg of sortedArgs) {
+        if (arg.argIndex < 0) continue;
+
+        // Check if arg is a spread
+        const argNode = index.getNode(arg.dst);
+        const isSpread = argNode?.type === 'EXPRESSION' && argNode?.name === 'spread';
+
+        if (isSpread) {
+          // Spread arg at rest position → link to rest param, then stop
+          if (restParam && arg.argIndex >= restParamIndex) {
+            edges.push({
+              src: restParam.paramId,
+              dst: arg.dst,
+              type: 'ARG_BINDING',
+              metadata: { argIndex: arg.argIndex, callId },
+            });
+            argsLinked++;
+          }
+          continue;
+        }
+
+        if (restParamIndex >= 0 && arg.argIndex >= restParamIndex) {
+          // Link to rest param
+          edges.push({
+            src: restParam!.paramId,
+            dst: arg.dst,
+            type: 'ARG_BINDING',
+            metadata: { argIndex: arg.argIndex, callId },
+          });
+          argsLinked++;
+        } else if (arg.argIndex < sortedParams.length) {
+          // Normal positional match
+          const param = sortedParams[arg.argIndex];
+          if (param) {
+            edges.push({
+              src: param.paramId,
+              dst: arg.dst,
+              type: 'ARG_BINDING',
+              metadata: { argIndex: arg.argIndex, callId },
+            });
+            argsLinked++;
+          }
+        } else {
+          // Extra argument — no matching param and no rest param
+          const callNode = index.getNode(callId);
+          const issueId = `ISSUE#extra-argument:${callId}:${arg.argIndex}`;
+          nodes.push({
+            id: issueId,
+            type: 'ISSUE',
+            name: 'issue:extra-argument',
+            file: callNode?.file ?? '<unknown>',
+            line: callNode?.line ?? 0,
+            column: callNode?.column ?? 0,
+            metadata: {
+              issueKind: 'extra-argument',
+              callId,
+              argIndex: arg.argIndex,
+              targetId: paramsTarget,
+            },
+          });
+          issuesCreated++;
+        }
+      }
+    }
+  }
+
+  // Emit issue:unresolved-call for CALL nodes that have PASSES_ARGUMENT but NO CALLS AND NO CALLS_ON
+  for (const [callId] of callToArgs) {
+    if (callsWithAnyEdge.has(callId)) continue;
+    // Verify this is actually a CALL node
+    const callNode = index.getNode(callId);
+    if (!callNode || callNode.type !== 'CALL') continue;
+    const issueId = `ISSUE#unresolved-call:${callId}`;
+    nodes.push({
+      id: issueId,
+      type: 'ISSUE',
+      name: 'issue:unresolved-call',
+      file: callNode.file,
+      line: callNode.line,
+      column: callNode.column,
+      metadata: {
+        issueKind: 'unresolved-call',
+        callId,
+        calleeName: callNode.name,
+      },
+    });
+    issuesCreated++;
+  }
+
+  return { edges, nodes, argsLinked, issuesCreated };
 }
 
 // ─── Import Resolver ─────────────────────────────────────────────────

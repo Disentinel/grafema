@@ -161,7 +161,8 @@ export function visitFunctionDeclaration(
   ctx.pushScope('function', scopeId);
 
   // Parameters
-  for (const param of fn.params) {
+  for (let i = 0; i < fn.params.length; i++) {
+    const param = fn.params[i];
     if (param.type === 'Identifier') {
       const paramId = ctx.nodeId('PARAMETER', param.name, param.loc?.start.line ?? line);
       result.nodes.push({
@@ -173,7 +174,7 @@ export function visitFunctionDeclaration(
         column: param.loc?.start.column ?? 0,
       });
       result.edges.push({ src: nodeId, dst: paramId, type: 'HAS_BODY' });
-      result.edges.push({ src: nodeId, dst: paramId, type: 'RECEIVES_ARGUMENT' });
+      result.edges.push({ src: nodeId, dst: paramId, type: 'RECEIVES_ARGUMENT', metadata: { paramIndex: i } });
       ctx.declare(param.name, 'param', paramId);
       const typeRef = paramTypeRefInfo(param);
       if (typeRef) {
