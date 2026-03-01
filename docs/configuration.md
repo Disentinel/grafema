@@ -172,6 +172,7 @@ Analysis plugins parse AST and create semantic nodes.
 | **DatabaseAnalyzer** | Detects database queries (SQL, MongoDB, etc.). Creates `db:query` nodes. |
 | **FetchAnalyzer** | Detects HTTP client requests (fetch, axios, etc.). Creates `http:request` nodes. |
 | **ServiceLayerAnalyzer** | Detects service layer patterns (classes with @Service, repository patterns). |
+| **ReactAnalyzer** | Detects React components and hooks. Creates `react:component` and `react:hook` nodes. |
 
 ### Enrichment Phase
 

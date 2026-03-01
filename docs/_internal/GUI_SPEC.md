@@ -160,7 +160,7 @@ const clusters = detectCommunities(serviceGraph, CLUSTERING_WEIGHTS);
 ## Layout Persistence
 
 ```javascript
-const LAYOUT_STORAGE_KEY = 'navi:layout';
+const LAYOUT_STORAGE_KEY = 'grafema:layout';
 
 function saveLayout(viewState) {
   const layout = {
@@ -339,7 +339,7 @@ node.attrs = {
 };
 ```
 
-### Navi-specific Tags
+### Grafema-specific Tags
 
 | Tag | Description |
 |-----|-------------|

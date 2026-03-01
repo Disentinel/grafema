@@ -1,77 +1,92 @@
 # Testing Documentation
 
-Тестовый стенд для Navi: unit, integration, E2E и Rust benchmarks.
+Тестовый стенд для Grafema: unit, scenario, integration и Rust benchmarks.
 
 ## Структура тестов
 
 ```
 test/
-├── unit/                         # Unit тесты
-│   ├── DataFlowTracking.test.js  # Data flow tracking
-│   ├── PathValidator.test.js     # Path validation
-│   └── Levenshtein.test.js       # Typo detection for types
-├── scenarios/                    # Integration тесты
+├── unit/                         # Unit тесты (~167 файлов)
+│   ├── DataFlowTracking.test.js
+│   ├── GraphFactory.test.js
+│   ├── core/                     # Core-модуль (enrichers, diagnostics, etc.)
+│   ├── analysis/                 # Анализ (async, promises)
+│   ├── types/                    # Типы (control-flow, results)
+│   ├── cardinality/              # Cardinality тесты
+│   └── ...
+├── scenarios/                    # Scenario тесты (fixture-based integration)
 │   ├── 01-simple-script.test.js
 │   ├── 02-api-service.test.js
-│   ├── 02-advanced-features.test.js
-│   └── 03-complex-async.test.js
-├── e2e/                          # E2E тесты (Playwright)
-│   └── gui.spec.js
+│   └── ...
+├── integration/                  # Integration тесты (CLI, RFDB, cross-service)
+│   ├── cli-coverage.test.ts
+│   ├── cross-service-tracing.test.ts
+│   ├── rfdb/
+│   └── ...
 ├── fixtures/                     # Тестовые проекты
 │   ├── 01-simple-script/
 │   ├── 02-api-service/
-│   ├── 02-advanced-features/
-│   ├── 03-complex-async/
-│   ├── 03-frontend-app/
-│   ├── 03-advanced-routing/
-│   ├── 04-control-flow/
-│   ├── 05-modern-syntax/
-│   ├── 06-socketio/
-│   ├── 07-http-requests/
-│   └── 08-reexports/
+│   ├── galaxy-demo/
+│   ├── workspaces/
+│   └── ...
+├── snapshots/                    # Snapshot тесты
 └── helpers/                      # Test utilities
-    ├── TestRFDB.js
+    ├── TestRFDB.js               # Shared RFDB server + createTestDatabase()
     ├── GraphAsserter.js
     ├── SimpleServiceDiscovery.js
-    └── createTestOrchestrator.js
+    ├── createTestOrchestrator.js
+    └── setupSemanticTest.js
 
-rust-engine/
-├── benches/                      # Performance benchmarks
+packages/rfdb-server/
+├── benches/                      # Performance benchmarks (Criterion)
 │   ├── graph_operations.rs
-│   └── neo4j_comparison.rs
+│   ├── neo4j_comparison.rs
+│   ├── v1_v2_comparison.rs
+│   ├── compaction_bench.rs
+│   └── reanalysis_cost.rs
+├── tests/                        # Rust unit/integration тесты
 └── examples/                     # Executable examples
-    ├── basic_usage.rs
-    ├── test_persistence.rs
-    └── migrate_neo4j.rs
 ```
 
 ---
 
 ## Node.js тесты
 
-### Запуск всех тестов
+### Важно: сборка перед тестами
+
+Тесты импортируют из `dist/`, не из `src/`. **Всегда** собирайте перед запуском:
 
 ```bash
-npm test
+pnpm build
 ```
 
-Эта команда запускает:
-- `test/scenarios/*.test.js`
-- `test/unit/*.test.js`
-- `test-rfdb-simple.mjs`
-
-### E2E тесты (Playwright)
+### Запуск unit тестов
 
 ```bash
-# Установка браузеров (один раз)
-npx playwright install
-
-# Запуск E2E тестов
-npx playwright test
-
-# С UI для debugging
-npx playwright test --ui
+node --test --test-concurrency=1 'test/unit/*.test.js'
 ```
+
+### Запуск с покрытием
+
+```bash
+pnpm test:coverage
+# Эквивалент: c8 node --test --test-concurrency=1 'test/unit/*.test.js'
+```
+
+### Scenario тесты
+
+```bash
+pnpm test:scenarios
+# Эквивалент: node --test test/scenarios/
+```
+
+### Запуск одного теста
+
+```bash
+node --test test/unit/DataFlowTracking.test.js
+```
+
+> **Внимание:** `npm test` в package.json не работает напрямую — используйте команды выше.
 
 ---
 
@@ -80,62 +95,49 @@ npx playwright test --ui
 ### Unit тесты
 
 ```bash
-cd rust-engine
+cd packages/rfdb-server
 cargo test
 ```
 
 ### Benchmarks
 
 ```bash
-cd rust-engine
-cargo bench
+cd packages/rfdb-server
+cargo bench --bench graph_operations
 ```
 
-**Измеряемые операции:**
+Также доступны:
+- `cargo bench --bench v1_v2_comparison` — сравнение v1 vs v2
+- `cargo bench --bench compaction_bench` — тест компакции
+- `cargo bench --bench reanalysis_cost` — стоимость реанализа
+
+**Измеряемые операции (graph_operations):**
 - add_nodes (100, 1k, 10k)
 - find_by_type (1k, 10k, 100k)
 - bfs (100, 1k, 10k nodes)
 - neighbors (1k, 10k, 100k edges)
 
-Результаты в `target/criterion/report/index.html`
-
----
-
-## Test Fixtures
-
-Тестовые проекты в `test/fixtures/` покрывают:
-
-| Fixture | Описание |
-|---------|----------|
-| 01-simple-script | Базовый JS файл |
-| 02-api-service | Express API с роутами |
-| 02-advanced-features | Продвинутые JS паттерны |
-| 03-complex-async | Async/await, promises |
-| 03-frontend-app | Frontend с компонентами |
-| 03-advanced-routing | Сложный Express routing |
-| 04-control-flow | if/else, loops, switch |
-| 05-modern-syntax | ES6+ синтаксис |
-| 06-socketio | Socket.IO сервер/клиент |
-| 07-http-requests | HTTP клиент (fetch) |
-| 08-reexports | export * from, barrel files |
-
-**Текущий статус:** 152/152 tests pass ✅
+Результаты в `packages/rfdb-server/target/criterion/report/index.html`
 
 ---
 
 ## Test Helpers
 
-### TestRFDB
+### createTestDatabase()
 
-Создаёт временную ReginaFlowDB для тестов:
+Быстрое создание эфемерной базы через shared RFDB server (~10ms):
 
 ```javascript
-import { TestRFDB } from '../helpers/TestRFDB.js';
+import { createTestDatabase } from '../helpers/TestRFDB.js';
 
-const rfdb = new TestRFDB();
-// ... использовать rfdb ...
-rfdb.cleanup(); // Удалить временные файлы
+const db = await createTestDatabase();
+await db.backend.addNodes([...]);
+await db.cleanup(); // или автоматически при disconnect
 ```
+
+Shared server запускается один раз и живёт по пути `/tmp/rfdb-test-shared.sock`. Каждый тест создаёт уникальную эфемерную базу — изоляция на уровне данных.
+
+> **Внимание:** `createTestBackend()` — **deprecated**, выбрасывает ошибку. Используйте `createTestDatabase()`.
 
 ### createTestOrchestrator
 
@@ -161,9 +163,39 @@ asserter.hasNodeOfType('FUNCTION');
 asserter.hasEdge('CALLS', fromId, toId);
 ```
 
+### setupSemanticTest
+
+Помощник для semantic ID тестов — создаёт временный проект, записывает файлы, запускает анализ:
+
+```javascript
+import { setupSemanticTest } from '../helpers/setupSemanticTest.js';
+
+const result = await setupSemanticTest(backend, files, {
+  testLabel: 'my-semantic-test'
+});
+```
+
 ---
 
 ## Написание тестов
+
+### Unit тест
+
+```javascript
+import { test, describe } from 'node:test';
+import assert from 'node:assert';
+import { createTestDatabase } from '../helpers/TestRFDB.js';
+
+describe('My Feature', () => {
+  test('should do something', async () => {
+    const db = await createTestDatabase();
+
+    // ... тест ...
+
+    await db.cleanup();
+  });
+});
+```
 
 ### Scenario тест
 
@@ -172,8 +204,8 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert';
 import { createTestOrchestrator } from '../helpers/createTestOrchestrator.js';
 
-describe('My Feature', () => {
-  test('should analyze something', async () => {
+describe('My Scenario', () => {
+  test('should analyze fixture', async () => {
     const { orchestrator, graph } = await createTestOrchestrator({
       rootDir: './test/fixtures/my-fixture'
     });
@@ -186,48 +218,26 @@ describe('My Feature', () => {
 });
 ```
 
-### E2E тест (Playwright)
-
-```javascript
-import { test, expect } from '@playwright/test';
-
-test('should display graph', async ({ page }) => {
-  await page.goto('http://localhost:3000');
-
-  await page.fill('#project-path', './test/fixtures/01-simple-script');
-  await page.click('#analyze-btn');
-
-  await expect(page.locator('.node')).toHaveCount.greaterThan(0);
-});
-```
-
 ---
 
 ## CI Integration
 
-```yaml
-# .github/workflows/test.yml
-name: Tests
+CI использует pnpm и Node.js 22. Конфигурация: `.github/workflows/ci.yml`
 
-on: [push, pull_request]
+### Jobs
 
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-      - run: npm install
-      - run: npm test
+| Job | Описание |
+|-----|----------|
+| **test** | Сборка + unit тесты с покрытием, проверка `.only`/`.skip` |
+| **typecheck-lint** | TypeScript typecheck + ESLint |
+| **build** | Сборка всех пакетов, проверка артефактов |
+| **version-sync** | Синхронизация версий npm-пакетов и Cargo.toml |
 
-  rust:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-      - run: cd rust-engine && cargo test
-```
+### Benchmark CI
+
+Конфигурация: `.github/workflows/benchmark.yml`
+
+- Запускается на PR к main (с label `benchmark`) и push в main
+- Сравнивает производительность PR vs main через Criterion + critcmp
+- Порог регрессии: 20%
+- Результаты публикуются комментарием в PR

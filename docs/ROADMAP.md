@@ -4,19 +4,23 @@ Graph-Driven Development: from code graph to system guarantees.
 
 ---
 
-## Current State (v0.1.0)
+## Current State (v0.2.x)
 
 ### Core Infrastructure ✅
 
-- **RFDB Server** — Rust graph database, client-server via unix-socket
-- **Monorepo architecture** — `types`, `core`, `cli`, `mcp`, `gui`
+- **RFDB v2 Storage Engine** — columnar segments, manifest chain, compaction
+- **Monorepo architecture** — `types`, `core`, `cli`, `mcp`, `gui`, `api`, `lang-spec`
 - **Datalog engine** — declarative queries over the graph
 - **GuaranteeManager** — rule-based invariant checking
+- **Enrichment pipeline** — batch protocol for analysis passes
+- **Semantic IDs v2** — scope-aware, deterministic node identification
 
 ### Analysis ✅
 
 - **JS/TS AST Analysis** — functions, classes, modules, variables, parameters
+- **core-v2 Declarative AST Walker** — in development, ~65% AST coverage
 - **Data Flow** — AliasTracker, ValueDomainAnalyzer, path-sensitive CFG
+- **Cross-service Tracing** — frontend <-> backend value flow
 - **Framework Plugins** — Express, Socket.IO, Database, Fetch
 - **Cross-file Resolution** — imports, exports, re-exports, call resolution
 
@@ -28,11 +32,27 @@ Graph-Driven Development: from code graph to system guarantees.
 - `npx @grafema/cli types` — show available node types
 - `npx @grafema/cli show` — node details with edges
 
-### MCP Server ✅
+### MCP Server (24+ tools) ✅
 
-- `query_graph`, `find_calls`, `trace_alias`, `check_invariant`
-- `get_value_set`, `trace_data_flow`, `get_stats`
+- `query_graph`, `find_calls`, `find_nodes`, `find_guards`
+- `trace_alias`, `trace_dataflow`, `check_invariant`, `check_guarantees`
+- `get_file_overview`, `get_function_details`, `get_context`, `get_neighbors`
+- `get_stats`, `get_coverage`, `get_node`, `get_schema`
 - `analyze_project`, `discover_services`, `get_analysis_status`
+- `create_guarantee`, `delete_guarantee`, `list_guarantees`
+- `get_documentation`, `report_issue`, `read_project_structure`
+
+### VS Code Extension ✅
+
+- **Interactive graph navigation** — explore nodes and edges visually
+
+### GraphQL API (@grafema/api) ✅
+
+- **Programmatic graph access** — typed queries over the analysis graph
+
+### lang-spec Package ✅
+
+- **Automated language specification** — declarative AST node definitions
 
 ---
 
@@ -53,10 +73,10 @@ Bug fixes and improvements for current functionality.
 - [ ] Track `YieldExpression` (REG-299)
 - [ ] Track side-effect-only imports (REG-296)
 - [ ] Track `ImportExpression` with options (REG-295)
-- [ ] Track getter/setter distinction (REG-293)
-- [ ] Track `PrivateName` (#fields) (REG-292)
-- [ ] Track `StaticBlock` (REG-291)
-- [ ] Track `SequenceExpression` side effects (REG-289)
+- [x] Track getter/setter distinction (REG-293) — covered by core-v2
+- [x] Track `PrivateName` (#fields) (REG-292) — covered by core-v2
+- [x] Track `StaticBlock` (REG-291) — covered by core-v2
+- [~] Track `SequenceExpression` side effects (REG-289) — partially covered
 
 ---
 
@@ -66,19 +86,19 @@ Features needed for production use on real codebases.
 
 ### Data Flow
 
-- [ ] Async error patterns — `Promise.reject`, reject callback (REG-311)
+- [x] Async error patterns — `Promise.reject`, reject callback (REG-311) — done in 0.2.5
 - [ ] Cardinality tracking — complexity guarantees via Datalog (REG-314)
 - [ ] Server-side scope filtering for query command (REG-310)
-- [x] Cross-service value tracing — frontend ↔ backend (REG-252) 🔄
+- [x] Cross-service value tracing — frontend <-> backend (REG-252) — done in 0.2.0
 - [ ] Config-based cross-service routing rules (REG-256)
 
 ### Tech Debt
 
-- [ ] Extract shared expression handling in JSASTAnalyzer (REG-306)
+- [x] Extract shared expression handling in JSASTAnalyzer (REG-306) — done
 
 ### Package-Specific Analyzers
 
-- [ ] Architecture: plugin structure for npm/maven packages (REG-259)
+- [x] Architecture: plugin structure for npm/maven packages (REG-259) — done in 0.2.6
 - [ ] `npm/sqlite3` analyzer (REG-260)
 - [ ] DatabaseAnalyzer: sqlite3 API support (REG-258)
 
@@ -90,8 +110,8 @@ Making Grafema easy to adopt for new projects.
 
 ### AST Completeness
 
-- [ ] Track class static blocks and private fields (REG-271)
-- [ ] Track generator function yields — YIELDS edge (REG-270)
+- [x] Track class static blocks and private fields (REG-271) — done via core-v2
+- [x] Track generator function yields — YIELDS edge (REG-270) — done in 0.2.5
 
 ### Query Languages
 
@@ -170,11 +190,11 @@ Long-term vision features.
 
 ## Version Philosophy
 
-| Version | Focus | Timeline |
-|---------|-------|----------|
-| **v0.1.x** | Works correctly | Current |
-| **v0.2** | Works on real projects | Next |
-| **v0.3** | Easy to adopt | After v0.2 |
+| Version | Focus | Status |
+|---------|-------|--------|
+| **v0.1.x** | Works correctly | Done |
+| **v0.2** | Works on real projects + core-v2 | Current |
+| **v0.3** | Easy to adopt | Next |
 | **v0.5+** | Full GDD vision | Future |
 
 ⭐ = Planned for Grafema Pro (details TBA)
@@ -222,4 +242,4 @@ Most features should be: **enricher** (adds data) + **Datalog rules** (query it)
 
 ---
 
-*Last updated: 2026-02-02*
+*Last updated: 2026-03-01*

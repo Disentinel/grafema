@@ -138,9 +138,13 @@ Currently supported:
 | Package | Description |
 |---------|-------------|
 | [@grafema/cli](./packages/cli) | Command-line interface |
-| [@grafema/core](./packages/core) | Core analysis engine |
+| [@grafema/core](./packages/core) | Core analysis engine (v1 plugins) |
+| [@grafema/core-v2](./packages/core-v2) | Declarative AST walker engine |
 | [@grafema/mcp](./packages/mcp) | MCP server for AI assistants |
+| [@grafema/api](./packages/api) | GraphQL API server |
 | [@grafema/types](./packages/types) | Type definitions |
+| [@grafema/rfdb](./packages/rfdb) | RFDB graph database server |
+| [@grafema/lang-spec](./packages/lang-spec) | Language specification generator |
 | [grafema-explore](./packages/vscode) | VS Code extension |
 
 ## Programmatic Usage
@@ -172,9 +176,8 @@ const orchestrator = new Orchestrator({
 });
 ```
 
-Start RFDB server:
+Start the RFDB server (`@grafema/rfdb`):
 ```bash
-npm install @grafema/rfdb
 npx @grafema/rfdb ./rfdb-data --socket /tmp/rfdb.sock
 ```
 

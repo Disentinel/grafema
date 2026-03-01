@@ -84,7 +84,7 @@ A stage in the analysis pipeline. Phases run in order: DISCOVERY → INDEXING �
 A module that adds capabilities to Grafema. Each plugin runs in a specific phase and creates specific node/edge types.
 
 ### Priority
-A number determining plugin execution order within a phase. Higher priority = runs earlier.
+Plugin execution ordering within a phase. Determined by declared `dependencies` — plugins are topologically sorted so each plugin runs after its dependencies.
 
 ## R
 

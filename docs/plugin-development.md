@@ -2,6 +2,8 @@
 
 > **Want to teach Grafema about your framework?** Plugins let you detect patterns specific to your codebase — custom ORMs, internal APIs, or any library Grafema doesn't support yet. A simple plugin takes 15 minutes to write.
 
+> **Note:** This guide covers the v1 plugin API. Grafema is transitioning to core-v2, a declarative AST walker that replaces many analysis plugins. For new framework analyzers, consider using the v1 plugin system. For core language constructs, see [@grafema/core-v2](../packages/core-v2/README.md).
+
 ## Plugin Architecture
 
 ```
@@ -597,30 +599,29 @@ export default class ComplexCJSIntegration extends Plugin {
 // test/unit/FastifyRouteAnalyzer.test.js
 import { describe, it, beforeEach, after } from 'node:test';
 import assert from 'node:assert';
-import { createTestBackend } from '../helpers/TestRFDB.js';
+import { createTestDatabase } from '../helpers/TestRFDB.js';
 import { createTestOrchestrator } from '../helpers/createTestOrchestrator.js';
 
 const FIXTURE_PATH = 'test/fixtures/fastify-app';
 
 describe('FastifyRouteAnalyzer', () => {
-  let backend;
+  let client, cleanup;
 
   beforeEach(async () => {
-    backend = createTestBackend();
-    await backend.connect();
+    ({ client, cleanup } = await createTestDatabase());
   });
 
   after(async () => {
-    await backend.cleanup();
+    await cleanup();
   });
 
   it('should detect fastify routes', async () => {
-    const orchestrator = createTestOrchestrator(backend);
+    const orchestrator = createTestOrchestrator(client);
     await orchestrator.run(FIXTURE_PATH);
 
     // Verify routes were found
     const routes = [];
-    for await (const node of backend.queryNodes({ type: 'http:route' })) {
+    for await (const node of client.queryNodes({ type: 'http:route' })) {
       if (node.framework === 'fastify') {
         routes.push(node);
       }

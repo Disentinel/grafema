@@ -2,6 +2,58 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.13-beta] - 2026-03-01
+
+### Highlights
+
+- **core-v2 declarative AST walker** — New declarative analysis engine (REG-579) that replaces the imperative GraphBuilder. Uses edge-maps, typed visitors, and deferred scope lookups. Integrated into CLI/MCP via `--engine v2` flag. Coverage: 385/591 golden constructs (65%).
+- **lang-spec package** — Automated language specification pipeline with JS corpus output for systematic language coverage tracking.
+- **Redis domain support** — LibraryRegistry architecture for pluggable library-specific analysis, starting with Redis.
+- **RFDB flock locking** — Advisory file locks on database directories prevent concurrent corruption (RFD-43).
+
+### Features
+
+- **REG-579**: Integrate core-v2 declarative AST engine into CLI/MCP pipeline via `--engine v2` flag
+- **REG-579**: Universal LiteralHandler + NullLiteral fix + additive commit support
+- **REG-579**: Add FunctionExpression support, fix RETURNS edge direction, enable CALLS resolution
+- **REG-571, REG-583**: DERIVES_FROM edges for class inheritance + runtime-typed builtin nodes
+- **REG-569**: EXPORTS edges from EXPORT nodes to exported entities
+- **REG-554**: Index `this.property = value` as PROPERTY_ASSIGNMENT nodes
+- Add ELEMENT_OF and KEY_OF data flow edges (core-v2)
+- Add HAS_MEMBER edge type for class members (core-v2)
+- Resolve monorepo package imports via packageMap (core-v2)
+- Lang-defs builtin resolution + OptionalMemberExpression fix + receiver inference (core-v2)
+- Add lang-spec pipeline package and JS corpus output
+- Add Redis domain support with LibraryRegistry architecture
+- Add ExportEntityLinker to dogfooding enrichment pipeline
+- Add GraphDataError guard for CALL node end positions
+- Add PID file validation in startRfdbServer (RFD-43)
+- Add flock advisory lock on database directory (RFD-43)
+
+### Bug Fixes
+
+- **REG-579**: Batch 1 matching improvements — golden coverage 384 to 385/591
+- **REG-570**: Add ASSIGNED_FROM edges for class field initializers
+- **REG-567**: Remove isNewExpr from shouldBeConstant in ASTWorker parallel path
+- **REG-562**: Skip class field arrow functions in FunctionVisitor (deduplication fix)
+- **REG-550**: Store correct column in PARAMETER nodes
+- **REG-549**: EXPORT named specifiers store per-name column instead of column=0
+- Fix find_calls MCP handler ignoring name parameter + add agent instructions
+- Filter cycle and duplicate nodes from explorer tree
+- Add endLine/endColumn to TaggedTemplateExpression CALL nodes
+- Add Phase 1a same-line containment for IMPORT specifiers (VS Code)
+
+### Refactoring
+
+- **REG-579**: Unify parallel/sequential AST analysis paths
+- **REG-460**: Extract JSASTAnalyzer.ts from 4,739 to 855 lines
+
+### Infrastructure
+
+- Add Nodes in File debug panel + skills and scripts (VS Code)
+
+---
+
 ## [0.2.12-beta] - 2026-02-18
 
 ### Features
