@@ -12,8 +12,8 @@ import type { NodePath } from '@babel/traverse';
 import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { NodeRecord, AnyBrandedNode } from '@grafema/types';
-import { getLine, getColumn } from './ast/utils/location.js';
-import { getTraverseFunction } from './ast/utils/babelTraverse.js';
+import { getLine, getColumn } from './shared-utils/location.js';
+import { getTraverseFunction } from './shared-utils/babelTraverse.js';
 import { resolveNodeFile } from '../../utils/resolveNodeFile.js';
 import { NodeFactory } from '../../core/NodeFactory.js';
 
@@ -54,7 +54,7 @@ export class DatabaseAnalyzer extends Plugin {
         nodes: ['db:query', 'db:table', 'db:connection'],
         edges: ['MAKES_QUERY', 'TARGETS', 'READS_FROM', 'WRITES_TO']
       },
-      dependencies: ['JSASTAnalyzer'] // Требует MODULE и FUNCTION ноды
+      dependencies: ['CoreV2Analyzer'] // Требует MODULE и FUNCTION ноды
     };
   }
 

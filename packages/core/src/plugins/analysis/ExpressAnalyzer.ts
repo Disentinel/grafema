@@ -15,8 +15,8 @@ import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { NodeRecord } from '@grafema/types';
 import type { AnyBrandedNode } from '@grafema/types';
 import { NodeFactory } from '../../core/NodeFactory.js';
-import { getLine, getColumn } from './ast/utils/location.js';
-import { getTraverseFunction } from './ast/utils/babelTraverse.js';
+import { getLine, getColumn } from './shared-utils/location.js';
+import { getTraverseFunction } from './shared-utils/babelTraverse.js';
 import { resolveNodeFile } from '../../utils/resolveNodeFile.js';
 
 const traverse = getTraverseFunction(traverseModule);
@@ -75,7 +75,7 @@ export class ExpressAnalyzer extends Plugin {
         nodes: ['http:route', 'express:mount'],
         edges: ['EXPOSES', 'MOUNTS', 'DEFINES']
       },
-      dependencies: ['JSASTAnalyzer'] // Требует MODULE ноды
+      dependencies: ['CoreV2Analyzer'] // Требует MODULE ноды
     };
   }
 

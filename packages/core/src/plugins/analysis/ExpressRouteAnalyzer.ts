@@ -19,7 +19,7 @@ import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { NodeRecord } from '@grafema/types';
 import type { AnyBrandedNode } from '@grafema/types';
 import { NodeFactory } from '../../core/NodeFactory.js';
-import { getLine, getColumn } from './ast/utils/location.js';
+import { getLine, getColumn } from './shared-utils/location.js';
 import { resolveNodeFile } from '../../utils/resolveNodeFile.js';
 
 const traverse = (traverseModule as any).default || traverseModule;
@@ -73,7 +73,7 @@ export class ExpressRouteAnalyzer extends Plugin {
         nodes: ['http:route', 'express:middleware'],
         edges: ['CONTAINS', 'USES_MIDDLEWARE', 'HANDLED_BY']
       },
-      dependencies: ['JSModuleIndexer', 'JSASTAnalyzer']
+      dependencies: ['JSModuleIndexer', 'CoreV2Analyzer']
     };
   }
 

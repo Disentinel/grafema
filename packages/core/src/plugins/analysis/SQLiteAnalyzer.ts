@@ -17,7 +17,7 @@ import type { NodePath } from '@babel/traverse';
 import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { NodeRecord, AnyBrandedNode } from '@grafema/types';
-import { getLine, getColumn } from './ast/utils/location.js';
+import { getLine, getColumn } from './shared-utils/location.js';
 import { resolveNodeFile } from '../../utils/resolveNodeFile.js';
 import { NodeFactory } from '../../core/NodeFactory.js';
 
@@ -61,7 +61,7 @@ export class SQLiteAnalyzer extends Plugin {
         nodes: ['db:query'],
         edges: ['CONTAINS', 'EXECUTES_QUERY']
       },
-      dependencies: ['JSModuleIndexer', 'JSASTAnalyzer']
+      dependencies: ['JSModuleIndexer', 'CoreV2Analyzer']
     };
   }
 

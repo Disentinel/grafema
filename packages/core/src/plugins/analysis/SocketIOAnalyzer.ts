@@ -25,7 +25,7 @@ import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { NodeRecord, AnyBrandedNode } from '@grafema/types';
 import { NodeFactory } from '../../core/NodeFactory.js';
-import { getLine, getColumn } from './ast/utils/location.js';
+import { getLine, getColumn } from './shared-utils/location.js';
 import { resolveNodeFile } from '../../utils/resolveNodeFile.js';
 
  
@@ -94,7 +94,7 @@ export class SocketIOAnalyzer extends Plugin {
         nodes: ['socketio:emit', 'socketio:on', 'socketio:room', 'socketio:event'],
         edges: ['CONTAINS', 'EMITS_EVENT', 'LISTENS_TO', 'JOINS_ROOM', 'LISTENED_BY']
       },
-      dependencies: ['JSModuleIndexer', 'JSASTAnalyzer']
+      dependencies: ['JSModuleIndexer', 'CoreV2Analyzer']
     };
   }
 

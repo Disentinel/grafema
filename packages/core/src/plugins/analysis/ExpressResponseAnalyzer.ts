@@ -22,7 +22,7 @@ import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { NodeRecord, AnyBrandedNode } from '@grafema/types';
 import { NodeFactory } from '../../core/NodeFactory.js';
-import { getLine } from './ast/utils/location.js';
+import { getLine } from './shared-utils/location.js';
 import { resolveNodeFile } from '../../utils/resolveNodeFile.js';
 
 const traverse = (traverseModule as any).default || traverseModule;
@@ -53,7 +53,7 @@ export class ExpressResponseAnalyzer extends Plugin {
         nodes: [],
         edges: ['RESPONDS_WITH']
       },
-      dependencies: ['ExpressRouteAnalyzer', 'JSASTAnalyzer']
+      dependencies: ['ExpressRouteAnalyzer', 'CoreV2Analyzer']
     };
   }
 

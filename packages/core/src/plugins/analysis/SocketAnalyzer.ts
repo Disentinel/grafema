@@ -25,8 +25,8 @@ import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { NodeRecord, AnyBrandedNode } from '@grafema/types';
 import { NodeFactory } from '../../core/NodeFactory.js';
-import { getLine, getColumn } from './ast/utils/location.js';
-import { getTraverseFunction } from './ast/utils/babelTraverse.js';
+import { getLine, getColumn } from './shared-utils/location.js';
+import { getTraverseFunction } from './shared-utils/babelTraverse.js';
 import { resolveNodeFile } from '../../utils/resolveNodeFile.js';
 
 const traverse = getTraverseFunction(traverseModule);
@@ -74,7 +74,7 @@ export class SocketAnalyzer extends Plugin {
         nodes: ['os:unix-socket', 'os:unix-server', 'net:tcp-connection', 'net:tcp-server'],
         edges: ['CONTAINS', 'MAKES_REQUEST']
       },
-      dependencies: ['JSModuleIndexer', 'JSASTAnalyzer']
+      dependencies: ['JSModuleIndexer', 'CoreV2Analyzer']
     };
   }
 

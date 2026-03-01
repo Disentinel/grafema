@@ -25,7 +25,7 @@ import type { NodePath } from '@babel/traverse';
 import { Plugin, createSuccessResult, createErrorResult } from '../Plugin.js';
 import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { NodeRecord, AnyBrandedNode } from '@grafema/types';
-import { getLine } from './ast/utils/location.js';
+import { getLine } from './shared-utils/location.js';
 import { resolveNodeFile } from '../../utils/resolveNodeFile.js';
 import { NodeFactory } from '../../core/NodeFactory.js';
 
@@ -96,7 +96,7 @@ export class ServiceLayerAnalyzer extends Plugin {
         nodes: ['SERVICE_CLASS', 'SERVICE_INSTANCE', 'SERVICE_REGISTRATION', 'SERVICE_USAGE'],
         edges: ['CONTAINS', 'INSTANTIATES', 'REGISTERS', 'USES_SERVICE']
       },
-      dependencies: ['JSModuleIndexer', 'JSASTAnalyzer']
+      dependencies: ['JSModuleIndexer', 'CoreV2Analyzer']
     };
   }
 
