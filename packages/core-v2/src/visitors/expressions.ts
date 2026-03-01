@@ -31,6 +31,7 @@ import type {
   PrivateName,
   StringLiteral,
   TaggedTemplateExpression,
+  TemplateLiteral,
   UnaryExpression,
   UpdateExpression,
   VariableDeclarator,
@@ -103,6 +104,34 @@ export function visitCallExpression(
 
   const nodeId = ctx.nodeId('CALL', calleeName, line);
 
+  // Extract string literal values for domain plugin consumption.
+  // Position is preserved: argValues[i] corresponds to call.arguments[i].
+  // null means the argument at that position is not a static string.
+  //
+  // For TemplateLiteral with no expressions (e.g. `app.get(\`/users\`, h)`):
+  //   - quasis[0].value.cooked is used when available. It is typed string | null
+  //     in Babel's typedefs: it is null when the template contains an invalid escape
+  //     sequence (e.g. `\unicode`). In that case, .raw is used as fallback — raw
+  //     preserves the original backslash characters verbatim. For route paths this
+  //     distinction is irrelevant in practice since route paths do not contain
+  //     escape sequences.
+  const argValues: (string | null)[] = [];
+  for (const arg of call.arguments) {
+    if (arg.type === 'StringLiteral') {
+      argValues.push((arg as StringLiteral).value);
+    } else if (
+      arg.type === 'TemplateLiteral'
+      && (arg as TemplateLiteral).quasis.length === 1
+      && (arg as TemplateLiteral).expressions.length === 0
+    ) {
+      const tl = arg as TemplateLiteral;
+      // cooked can be null for invalid escape sequences; fall back to raw.
+      argValues.push(tl.quasis[0].value.cooked ?? tl.quasis[0].value.raw);
+    } else {
+      argValues.push(null);
+    }
+  }
+
   const result: VisitResult = {
     nodes: [{
       id: nodeId,
@@ -114,6 +143,7 @@ export function visitCallExpression(
       metadata: {
         arguments: call.arguments.length,
         chained: isChained,
+        argValues,
         ...((call.callee.type === 'MemberExpression' || call.callee.type === 'OptionalMemberExpression') && call.callee.property.type === 'Identifier'
           ? { method: call.callee.property.name, object: call.callee.object.type === 'Identifier' ? call.callee.object.name : call.callee.object.type === 'ThisExpression' ? 'this' : call.callee.object.type === 'Super' ? 'super' : undefined }
           : {}),
