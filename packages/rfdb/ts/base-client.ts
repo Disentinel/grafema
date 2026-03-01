@@ -322,6 +322,7 @@ export abstract class BaseRFDBClient extends EventEmitter implements IRFDBClient
     if (query.name) serverQuery.name = query.name;
     if (query.file) serverQuery.file = query.file;
     if (query.exported !== undefined) serverQuery.exported = query.exported;
+    if (query.substringMatch) serverQuery.substringMatch = query.substringMatch;
     return serverQuery;
   }
 
