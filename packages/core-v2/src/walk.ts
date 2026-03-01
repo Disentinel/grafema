@@ -26,6 +26,7 @@ import type {
   ScopeKind,
   DeclKind,
   FileResult,
+  DomainPlugin,
 } from './types.js';
 import {
   ScopeRegistry,
@@ -211,14 +212,29 @@ function findEnclosingFunctionScope(scope: ScopeNode): ScopeNode | null {
   return null;
 }
 
+// ─── Walk Options ────────────────────────────────────────────────────
+
+/**
+ * Optional parameters for walkFile. Replaces positional optional args.
+ * All fields are optional — defaults are applied inside walkFile.
+ */
+export interface WalkOptions {
+  /** Domain plugins to run after Stage 2. Default: [] */
+  domainPlugins?: readonly DomainPlugin[];
+  /** Strict mode for scope analysis. Default: true */
+  strict?: boolean;
+}
+
 // ─── Walk ────────────────────────────────────────────────────────────
 
 export async function walkFile(
   code: string,
   file: string,
   registry: VisitorRegistry,
-  strict = true,
+  options?: WalkOptions,
 ): Promise<FileResult> {
+  const strict = options?.strict ?? true;
+  const domainPlugins = options?.domainPlugins ?? [];
   await ensureVisitorKeys();
 
   const ast = parseFile(code, file);
@@ -542,7 +558,7 @@ export async function walkFile(
   const allEdgesSoFar = [...allEdges, ...resolvedEdges, ...ctx._declareEdges];
   const loopElementEdges = deriveLoopElementEdges(allNodes, allEdgesSoFar);
 
-  return {
+  let fileResult: FileResult = {
     file,
     moduleId,
     nodes: allNodes,
@@ -550,6 +566,70 @@ export async function walkFile(
     unresolvedRefs,
     scopeTree: ctx._rootScope,
   };
+
+  // ─── Domain plugins ────────────────────────────────────────────
+  // Plugins run after Stage 2 (file-scope resolution is complete).
+  // They see resolved CALLS_ON edges — helpful for verifying that
+  // `app` or `router` variables actually come from 'express'.
+  if (domainPlugins.length > 0) {
+    fileResult = runDomainPlugins(fileResult, ast, domainPlugins, file);
+  }
+
+  return fileResult;
+}
+
+// ─── Domain Plugin Execution ─────────────────────────────────────────
+
+/**
+ * Run domain plugins against a completed FileResult.
+ * Each plugin receives the current result and the AST.
+ * Results are merged sequentially — later plugins see earlier plugin output.
+ *
+ * Plugin errors are non-fatal: caught, logged, and skipped.
+ * Invalid plugin results (missing nodes/edges arrays) are also skipped.
+ */
+function runDomainPlugins(
+  result: FileResult,
+  ast: File,
+  plugins: readonly DomainPlugin[],
+  file: string,
+): FileResult {
+  let current = result;
+
+  for (const plugin of plugins) {
+    let pluginResult: ReturnType<DomainPlugin['analyzeFile']>;
+    try {
+      pluginResult = plugin.analyzeFile(current, ast);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[DomainPlugin:${plugin.name}] Error in analyzeFile for ${file}: ${msg}`);
+      continue;
+    }
+
+    if (
+      !pluginResult
+      || !Array.isArray(pluginResult.nodes)
+      || !Array.isArray(pluginResult.edges)
+    ) {
+      console.error(
+        `[DomainPlugin:${plugin.name}] analyzeFile returned invalid result for ${file}. ` +
+        `Expected { nodes: [], edges: [] }. Skipping.`,
+      );
+      continue;
+    }
+
+    current = {
+      ...current,
+      nodes: [...current.nodes, ...pluginResult.nodes],
+      edges: [...current.edges, ...pluginResult.edges],
+      unresolvedRefs: [
+        ...current.unresolvedRefs,
+        ...(pluginResult.deferred ?? []),
+      ],
+    };
+  }
+
+  return current;
 }
 
 // ─── Derived: Loop ELEMENT_OF / KEY_OF ──────────────────────────────
