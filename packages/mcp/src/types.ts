@@ -51,7 +51,7 @@ export interface QueryGraphArgs {
 }
 
 export interface FindCallsArgs {
-  target: string;
+  name: string;
   limit?: number;
   offset?: number;
   include_indirect?: boolean;

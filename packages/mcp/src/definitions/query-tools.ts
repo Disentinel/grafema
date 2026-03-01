@@ -56,8 +56,14 @@ EXAMPLES:
   },
   {
     name: 'find_calls',
-    description: `Find all calls to a specific function or method.
-Returns call sites with file locations and whether they're resolved.`,
+    description: `Find every place in the codebase that calls a specific function or method.
+
+Use this when you need to answer:
+- "Who calls getUserById?" → name="getUserById"
+- "Where is redis.get used?" → name="get", className="redis"
+- "Is this function dead code?" → if 0 calls found, likely unused
+
+Returns file, line, and whether the call target is resolved (linked to its definition in the graph).`,
     inputSchema: {
       type: 'object',
       properties: {

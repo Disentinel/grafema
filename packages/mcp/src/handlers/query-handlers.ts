@@ -153,7 +153,7 @@ export async function handleQueryGraph(args: QueryGraphArgs): Promise<ToolResult
 
 export async function handleFindCalls(args: FindCallsArgs): Promise<ToolResult> {
   const db = await ensureAnalyzed();
-  const { target: name, limit: requestedLimit, offset: requestedOffset, className } = args;
+  const { name, limit: requestedLimit, offset: requestedOffset, className } = args;
 
   const limit = normalizeLimit(requestedLimit);
   const offset = Math.max(0, requestedOffset || 0);

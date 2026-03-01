@@ -85,21 +85,20 @@ Structural edges (CONTAINS, HAS_SCOPE, etc.) are shown in compact form.`,
   },
   {
     name: 'get_file_overview',
-    description: `Get a structured overview of all entities in a file with their relationships.
+    description: `Understand what a file does without reading it — shows structure and relationships from the graph.
 
-Shows imports, exports, classes, functions, and variables with key edges
-(CALLS, EXTENDS, ASSIGNED_FROM). Use this for file-level understanding
-before diving into specific nodes with get_context.
+USE THIS FIRST when you need to understand a file. It replaces reading the file with
+a structured summary: imports, exports, classes, functions, variables, and how they
+connect to the rest of the codebase.
 
-Output includes:
-- Imports: module sources and imported names
-- Exports: named and default exports
+Returns:
+- Imports: what modules are pulled in and which names
+- Exports: what the file exposes to others
 - Classes: with methods and their call targets
-- Functions: with call targets
-- Variables: with assignment sources
+- Functions: with what they call
+- Variables: with their assignment sources
 
-This is the recommended first step when exploring a file.
-After using this, use get_context with specific node IDs for details.`,
+After this, use get_context with specific node IDs to deep-dive into relationships.`,
     inputSchema: {
       type: 'object',
       properties: {

@@ -120,6 +120,22 @@ const server = new Server(
       tools: {},
       prompts: {},
     },
+    instructions: `Grafema is a code graph — use it instead of reading files.
+
+START HERE: call get_stats to check if the graph is loaded (nodeCount > 0).
+If nodeCount is 0, call analyze_project first.
+
+EXPLORATION WORKFLOW:
+1. To understand a file → get_file_overview (shows imports, exports, functions, classes with relationships)
+2. To find functions/classes/modules → find_nodes (filter by type, name, or file pattern)
+3. To find who calls a function → find_calls (returns call sites with resolution status)
+4. To understand data flow → trace_dataflow (forward: where does this value go? backward: where does it come from?)
+5. To understand full context of a node → get_context (shows surrounding code, scope chain, relationships)
+6. For complex pattern queries → query_graph with Datalog (call get_documentation topic="queries" for syntax)
+
+KEY INSIGHT: find_nodes supports partial matching on name and file fields.
+Example: find_nodes(file="auth/") returns all nodes in files matching "auth/".
+Example: find_nodes(name="redis", type="CALL") finds all calls containing "redis".`,
   }
 );
 
