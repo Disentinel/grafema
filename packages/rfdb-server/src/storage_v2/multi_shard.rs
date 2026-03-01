@@ -581,6 +581,7 @@ impl MultiShardStore {
         name: Option<&str>,
         exported: Option<bool>,
         metadata_filters: &[(String, String)],
+        substring_match: bool,
     ) -> Vec<u128> {
         let mut seen: HashSet<u128> = HashSet::new();
         let mut results: Vec<u128> = Vec::new();
@@ -593,6 +594,7 @@ impl MultiShardStore {
                 name,
                 exported,
                 metadata_filters,
+                substring_match,
             ) {
                 if seen.insert(id) {
                     results.push(id);

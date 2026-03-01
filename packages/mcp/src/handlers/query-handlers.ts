@@ -280,19 +280,17 @@ export async function handleFindNodes(args: FindNodesArgs): Promise<ToolResult> 
   const limit = normalizeLimit(requestedLimit);
   const offset = Math.max(0, requestedOffset || 0);
 
-  // Send only type to server (exact match); name/file are substring-matched client-side
   const filter: Record<string, unknown> = {};
   if (type) filter.type = type;
+  if (name) filter.name = name;
+  if (file) filter.file = file;
+  filter.substringMatch = true;
 
   const nodes: GraphNode[] = [];
   let skipped = 0;
   let totalMatched = 0;
 
   for await (const node of db.queryNodes(filter)) {
-    // Client-side substring matching for name and file
-    if (name && !(node.name ?? '').includes(name)) continue;
-    if (file && !(node.file ?? '').includes(file)) continue;
-
     totalMatched++;
 
     if (skipped < offset) {

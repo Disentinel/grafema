@@ -931,6 +931,7 @@ impl Shard {
         name: Option<&str>,
         exported: Option<bool>,
         metadata_filters: &[(String, String)],
+        substring_match: bool,
     ) -> bool {
         if let Some(nt) = node_type {
             if node_type_value != nt {
@@ -943,12 +944,20 @@ impl Shard {
             }
         }
         if let Some(f) = file {
-            if file_value != f {
+            if substring_match {
+                if !f.is_empty() && !file_value.contains(f) {
+                    return false;
+                }
+            } else if file_value != f {
                 return false;
             }
         }
         if let Some(n) = name {
-            if name_value != n {
+            if substring_match {
+                if !n.is_empty() && !name_value.contains(n) {
+                    return false;
+                }
+            } else if name_value != n {
                 return false;
             }
         }
@@ -1236,9 +1245,14 @@ impl Shard {
         name: Option<&str>,
         exported: Option<bool>,
         metadata_filters: &[(String, String)],
+        substring_match: bool,
     ) -> Vec<u128> {
         let mut seen_ids: HashSet<u128> = HashSet::new();
         let mut results: Vec<u128> = Vec::new();
+
+        // When substring matching, file-based zone map pruning must be skipped
+        // because zone maps store exact file paths and can't evaluate substrings.
+        let prune_file = if substring_match { None } else { file };
 
         // Step 1: Scan write buffer (authoritative, scanned first)
         for node in self.write_buffer.iter_nodes() {
@@ -1261,6 +1275,7 @@ impl Shard {
                 name,
                 exported,
                 metadata_filters,
+                substring_match,
             ) {
                 results.push(node.id);
             }
@@ -1273,10 +1288,10 @@ impl Shard {
 
             // Descriptor-level zone map pruning.
             if let Some(nt) = node_type {
-                if !desc.may_contain(Some(nt), file, None) {
+                if !desc.may_contain(Some(nt), prune_file, None) {
                     continue;
                 }
-            } else if !desc.may_contain(None, file, None) {
+            } else if !desc.may_contain(None, prune_file, None) {
                 continue;
             }
             if let Some(prefix) = node_type_prefix {
@@ -1291,7 +1306,7 @@ impl Shard {
                     continue;
                 }
             }
-            if let Some(f) = file {
+            if let Some(f) = prune_file {
                 if !seg.contains_file(f) {
                     continue;
                 }
@@ -1321,6 +1336,7 @@ impl Shard {
                     name,
                     exported,
                     metadata_filters,
+                    substring_match,
                 ) {
                     continue;
                 }

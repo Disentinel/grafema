@@ -88,6 +88,7 @@ export interface NodeQuery {
   type?: NodeType;
   name?: string;
   file?: string;
+  substringMatch?: boolean;
 }
 
 /**
@@ -506,6 +507,7 @@ export class RFDBServerBackend {
     if (query.type) serverQuery.nodeType = query.type;
     if (query.name) serverQuery.name = query.name;
     if (query.file) serverQuery.file = query.file;
+    if (query.substringMatch) serverQuery.substringMatch = query.substringMatch;
 
     // Use findByType if only nodeType specified
     if (serverQuery.nodeType && Object.keys(serverQuery).length === 1) {

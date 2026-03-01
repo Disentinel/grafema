@@ -27,6 +27,8 @@ export interface AttrQuery {
   exported?: boolean;
   type?: string;
   name?: string;
+  /** When true, name and file filters use substring (contains) matching instead of exact match */
+  substringMatch?: boolean;
   [key: string]: unknown;
 }
 
