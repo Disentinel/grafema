@@ -41,20 +41,14 @@ import { EMPTY_RESULT, paramTypeRefInfo } from '../types.js';
 
 // ─── CallExpression ──────────────────────────────────────────────────
 
-export function visitCallExpression(
-  node: Node, _parent: Node | null, ctx: WalkContext,
-): VisitResult {
-  const call = node as CallExpression;
-  const line = node.loc?.start.line ?? 0;
-  const column = node.loc?.start.column ?? 0;
-
-  let calleeName: string;
-  let isChained = false;
-  if (call.callee.type === 'Identifier') {
-    calleeName = call.callee.name;
-  } else if ((call.callee.type === 'MemberExpression' || call.callee.type === 'OptionalMemberExpression')
-    && call.callee.property.type === 'Identifier') {
-    const member = call.callee as MemberExpression;
+function buildCalleeName(call: CallExpression): { calleeName: string; isChained: boolean } {
+  const callee = call.callee;
+  if (callee.type === 'Identifier') {
+    return { calleeName: callee.name, isChained: false };
+  }
+  if ((callee.type === 'MemberExpression' || callee.type === 'OptionalMemberExpression')
+    && callee.property.type === 'Identifier') {
+    const member = callee as MemberExpression;
     const isOptional = (member as unknown as { optional?: boolean }).optional;
     const obj = member.object.type === 'Identifier'
       ? member.object.name
@@ -64,19 +58,18 @@ export function visitCallExpression(
           ? 'super'
           : '?';
     const dot = isOptional ? '?.' : '.';
-    calleeName = `${obj}${dot}${(member.property as Identifier).name}`;
-    // a.b().c() — object is a call expression → method chaining
-    isChained = member.object.type === 'CallExpression'
+    const isChained = member.object.type === 'CallExpression'
       || member.object.type === 'OptionalCallExpression';
-  } else if ((call.callee.type === 'MemberExpression' || call.callee.type === 'OptionalMemberExpression')
-    && call.callee.computed) {
-    // Computed: obj[key](), this[method](), super[m]()
-    const obj = call.callee.object.type === 'Identifier'
-      ? call.callee.object.name
-      : call.callee.object.type === 'ThisExpression' ? 'this'
-      : call.callee.object.type === 'Super' ? 'super'
+    return { calleeName: `${obj}${dot}${(member.property as Identifier).name}`, isChained };
+  }
+  if ((callee.type === 'MemberExpression' || callee.type === 'OptionalMemberExpression')
+    && callee.computed) {
+    const obj = callee.object.type === 'Identifier'
+      ? callee.object.name
+      : callee.object.type === 'ThisExpression' ? 'this'
+      : callee.object.type === 'Super' ? 'super'
       : '?';
-    const rawProp = call.callee.property;
+    const rawProp = callee.property;
     const prop = rawProp.type === 'Identifier'
       ? rawProp.name
       : rawProp.type === 'MemberExpression'
@@ -88,18 +81,25 @@ export function visitCallExpression(
       : rawProp.type === 'NumericLiteral'
         ? String((rawProp as NumericLiteral).value)
       : '<computed>';
-    calleeName = `${obj}[${prop}]`;
-  } else if (call.callee.type === 'Super') {
-    calleeName = 'super';
-  } else if (call.callee.type === 'Import') {
-    calleeName = 'import';
-  } else if (call.callee.type === 'FunctionExpression') {
-    calleeName = (call.callee as FunctionExpression).id?.name ?? '<iife>';
-  } else if (call.callee.type === 'ArrowFunctionExpression') {
-    calleeName = '<iife>';
-  } else {
-    calleeName = '<computed>';
+    return { calleeName: `${obj}[${prop}]`, isChained: false };
   }
+  if (callee.type === 'Super') return { calleeName: 'super', isChained: false };
+  if (callee.type === 'Import') return { calleeName: 'import', isChained: false };
+  if (callee.type === 'FunctionExpression') {
+    return { calleeName: (callee as FunctionExpression).id?.name ?? '<iife>', isChained: false };
+  }
+  if (callee.type === 'ArrowFunctionExpression') return { calleeName: '<iife>', isChained: false };
+  return { calleeName: '<computed>', isChained: false };
+}
+
+export function visitCallExpression(
+  node: Node, _parent: Node | null, ctx: WalkContext,
+): VisitResult {
+  const call = node as CallExpression;
+  const line = node.loc?.start.line ?? 0;
+  const column = node.loc?.start.column ?? 0;
+
+  const { calleeName, isChained } = buildCalleeName(call);
 
   const nodeId = ctx.nodeId('CALL', calleeName, line);
 
@@ -164,7 +164,8 @@ export function visitCallExpression(
   // PASSES_ARGUMENT for Identifier arguments: scope_lookup resolves to the actual
   // VARIABLE/PARAMETER/FUNCTION node. For non-Identifier args (literals, calls, etc.),
   // EDGE_MAP (CallExpression.arguments → PASSES_ARGUMENT) creates structural edges.
-  for (const arg of call.arguments) {
+  for (let i = 0; i < call.arguments.length; i++) {
+    const arg = call.arguments[i];
     if (arg.type === 'Identifier') {
       result.deferred.push({
         kind: 'scope_lookup',
@@ -175,6 +176,7 @@ export function visitCallExpression(
         file: ctx.file,
         line: arg.loc?.start.line ?? line,
         column: arg.loc?.start.column ?? 0,
+        metadata: { argIndex: i },
       });
     }
   }
@@ -756,6 +758,26 @@ export function visitNewExpression(
     deferred: [],
   };
 
+  // PASSES_ARGUMENT for Identifier arguments: scope_lookup resolves to the actual
+  // VARIABLE/PARAMETER/FUNCTION node. For non-Identifier args (literals, calls, etc.),
+  // EDGE_MAP (NewExpression.arguments → PASSES_ARGUMENT) creates structural edges.
+  for (let i = 0; i < ne.arguments.length; i++) {
+    const arg = ne.arguments[i];
+    if (arg.type === 'Identifier') {
+      result.deferred.push({
+        kind: 'scope_lookup',
+        name: arg.name,
+        fromNodeId: nodeId,
+        edgeType: 'PASSES_ARGUMENT',
+        scopeId: ctx.currentScope.id,
+        file: ctx.file,
+        line: arg.loc?.start.line ?? line,
+        column: arg.loc?.start.column ?? 0,
+        metadata: { argIndex: i },
+      });
+    }
+  }
+
   if (ne.callee.type === 'Identifier') {
     result.deferred.push({
       kind: 'scope_lookup',
@@ -805,7 +827,8 @@ export function visitArrowFunctionExpression(
   ctx.pushScope('function', `${nodeId}$scope`);
 
   // Parameters
-  for (const param of arrow.params) {
+  for (let i = 0; i < arrow.params.length; i++) {
+    const param = arrow.params[i];
     if (param.type === 'Identifier') {
       const paramId = ctx.nodeId('PARAMETER', param.name, param.loc?.start.line ?? line);
       result.nodes.push({
@@ -817,7 +840,7 @@ export function visitArrowFunctionExpression(
         column: param.loc?.start.column ?? 0,
       });
       result.edges.push({ src: nodeId, dst: paramId, type: 'HAS_BODY' });
-      result.edges.push({ src: nodeId, dst: paramId, type: 'RECEIVES_ARGUMENT' });
+      result.edges.push({ src: nodeId, dst: paramId, type: 'RECEIVES_ARGUMENT', metadata: { paramIndex: i } });
       ctx.declare(param.name, 'param', paramId);
       const typeRef = paramTypeRefInfo(param);
       if (typeRef) {
@@ -860,7 +883,8 @@ export function visitFunctionExpression(
 
   ctx.pushScope('function', `${nodeId}$scope`);
 
-  for (const param of fn.params) {
+  for (let i = 0; i < fn.params.length; i++) {
+    const param = fn.params[i];
     if (param.type === 'Identifier') {
       const paramId = ctx.nodeId('PARAMETER', param.name, param.loc?.start.line ?? line);
       result.nodes.push({
@@ -872,7 +896,7 @@ export function visitFunctionExpression(
         column: param.loc?.start.column ?? 0,
       });
       result.edges.push({ src: nodeId, dst: paramId, type: 'HAS_BODY' });
-      result.edges.push({ src: nodeId, dst: paramId, type: 'RECEIVES_ARGUMENT' });
+      result.edges.push({ src: nodeId, dst: paramId, type: 'RECEIVES_ARGUMENT', metadata: { paramIndex: i } });
       ctx.declare(param.name, 'param', paramId);
       const typeRef = paramTypeRefInfo(param);
       if (typeRef) {
@@ -1362,7 +1386,8 @@ export function visitObjectMethod(
     deferred: [],
   };
 
-  for (const param of method.params) {
+  for (let i = 0; i < method.params.length; i++) {
+    const param = method.params[i];
     if (param.type === 'Identifier') {
       const paramId = ctx.nodeId('PARAMETER', param.name, param.loc?.start.line ?? line);
       result.nodes.push({
@@ -1374,7 +1399,7 @@ export function visitObjectMethod(
         column: param.loc?.start.column ?? 0,
       });
       result.edges.push({ src: nodeId, dst: paramId, type: 'HAS_BODY' });
-      result.edges.push({ src: nodeId, dst: paramId, type: 'RECEIVES_ARGUMENT' });
+      result.edges.push({ src: nodeId, dst: paramId, type: 'RECEIVES_ARGUMENT', metadata: { paramIndex: i } });
       ctx.declare(param.name, 'param', paramId);
       const typeRef = paramTypeRefInfo(param);
       if (typeRef) {

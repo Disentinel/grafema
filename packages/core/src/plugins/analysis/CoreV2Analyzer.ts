@@ -40,7 +40,7 @@ export class CoreV2Analyzer extends Plugin {
           'TRY_BLOCK', 'CATCH_BLOCK', 'CASE', 'FINALLY_BLOCK', 'SIDE_EFFECT',
           'META_PROPERTY', 'LABEL', 'STATIC_BLOCK', 'DECORATOR',
           'ENUM_MEMBER', 'TYPE_REFERENCE', 'TYPE_PARAMETER', 'LITERAL_TYPE',
-          'CONDITIONAL_TYPE', 'INFER_TYPE', 'EXTERNAL_MODULE',
+          'CONDITIONAL_TYPE', 'INFER_TYPE', 'EXTERNAL_MODULE', 'ISSUE',
         ],
         edges: [
           'CONTAINS', 'DECLARES', 'CALLS', 'HAS_SCOPE', 'CAPTURES', 'ASSIGNED_FROM',
@@ -57,6 +57,7 @@ export class CoreV2Analyzer extends Plugin {
           'HAS_PROPERTY', 'HAS_ELEMENT', 'HAS_DEFAULT', 'DECORATED_BY',
           'OVERRIDES', 'ACCESSES_PRIVATE', 'LISTENS_TO', 'MERGES_WITH',
           'IMPLEMENTS_OVERLOAD', 'HAS_OVERLOAD', 'EXTENDS_SCOPE_WITH',
+          'ARG_BINDING',
         ],
       },
     };
@@ -121,10 +122,16 @@ export class CoreV2Analyzer extends Plugin {
 
     // Stage 3: cross-file resolution
     const resolved = resolveProject(fileResults, builtins, packageMap);
-    if (resolved.edges.length > 0) {
+    if (resolved.edges.length > 0 || resolved.nodes.length > 0) {
       if (graph.beginBatch) graph.beginBatch();
-      await graph.addEdges(this.mapEdges(resolved.edges) as InputEdge[]);
-      totalEdges += resolved.edges.length;
+      if (resolved.nodes.length > 0) {
+        await graph.addNodes(this.mapNodes(resolved.nodes) as unknown as AnyBrandedNode[]);
+        totalNodes += resolved.nodes.length;
+      }
+      if (resolved.edges.length > 0) {
+        await graph.addEdges(this.mapEdges(resolved.edges) as InputEdge[]);
+        totalEdges += resolved.edges.length;
+      }
       if (graph.commitBatch) {
         await graph.commitBatch(
           ['CoreV2Analyzer', 'ANALYSIS', 'cross-file'],

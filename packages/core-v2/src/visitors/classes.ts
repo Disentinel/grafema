@@ -66,7 +66,8 @@ export function visitClassMethod(
     deferred: [],
   };
 
-  for (const param of method.params) {
+  for (let i = 0; i < method.params.length; i++) {
+    const param = method.params[i];
     if (param.type === 'Identifier') {
       const paramId = ctx.nodeId('PARAMETER', param.name, param.loc?.start.line ?? line);
       result.nodes.push({
@@ -77,7 +78,7 @@ export function visitClassMethod(
         line: param.loc?.start.line ?? line,
         column: param.loc?.start.column ?? 0,
       });
-      result.edges.push({ src: nodeId, dst: paramId, type: 'RECEIVES_ARGUMENT' });
+      result.edges.push({ src: nodeId, dst: paramId, type: 'RECEIVES_ARGUMENT', metadata: { paramIndex: i } });
       ctx.declare(param.name, 'param', paramId);
     }
   }
@@ -137,7 +138,8 @@ export function visitClassPrivateMethod(
     deferred: [],
   };
 
-  for (const param of method.params) {
+  for (let i = 0; i < method.params.length; i++) {
+    const param = method.params[i];
     if (param.type === 'Identifier') {
       const paramId = ctx.nodeId('PARAMETER', param.name, param.loc?.start.line ?? line);
       result.nodes.push({
@@ -148,7 +150,7 @@ export function visitClassPrivateMethod(
         line: param.loc?.start.line ?? line,
         column: param.loc?.start.column ?? 0,
       });
-      result.edges.push({ src: nodeId, dst: paramId, type: 'RECEIVES_ARGUMENT' });
+      result.edges.push({ src: nodeId, dst: paramId, type: 'RECEIVES_ARGUMENT', metadata: { paramIndex: i } });
       ctx.declare(param.name, 'param', paramId);
     }
   }
