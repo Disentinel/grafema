@@ -2666,12 +2666,14 @@
       "builtin": true,
       "creates": {
         "edges": [
-          "RECEIVES_ARGUMENT"
+          "RECEIVES_ARGUMENT",
+          "CALLS"
         ],
         "nodes": []
       },
       "createsEdges": [
-        "RECEIVES_ARGUMENT"
+        "RECEIVES_ARGUMENT",
+        "CALLS"
       ],
       "createsNodes": [],
       "dependencies": [

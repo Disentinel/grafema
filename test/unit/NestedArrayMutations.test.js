@@ -280,8 +280,8 @@ container.elements.push(...newItems);
       const allNodes = await backend.getAllNodes();
       const allEdges = await backend.getAllEdges();
 
-      const containerVar = allNodes.find(n => n.name === 'container');
-      const newItemsVar = allNodes.find(n => n.name === 'newItems');
+      const containerVar = allNodes.find(n => n.name === 'container' && (n.type === 'CONSTANT' || n.type === 'VARIABLE'));
+      const newItemsVar = allNodes.find(n => n.name === 'newItems' && (n.type === 'CONSTANT' || n.type === 'VARIABLE'));
 
       assert.ok(containerVar, 'Variable "container" not found');
       assert.ok(newItemsVar, 'Variable "newItems" not found');
@@ -294,7 +294,7 @@ container.elements.push(...newItems);
 
       assert.ok(
         flowsInto,
-        `Expected FLOWS_INTO edge from "newItems" to "container". ` +
+        `Expected FLOWS_INTO edge from "newItems" (${newItemsVar.id}) to "container" (${containerVar.id}). ` +
         `Found: ${JSON.stringify(allEdges.filter(e => e.type === 'FLOWS_INTO'))}`
       );
 
