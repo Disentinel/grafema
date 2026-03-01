@@ -17,10 +17,10 @@ import { GRAFEMA_VERSION, getSchemaVersion } from '../version.js';
  *   indexing:
  *     - JSModuleIndexer
  *   analysis:
- *     - JSASTAnalyzer
+ *     - CoreV2Analyzer
  *     - ExpressRouteAnalyzer
  *   enrichment:
- *     - MethodCallResolver
+ *     - ExportEntityLinker
  *   validation:
  *     - EvalBanValidator
  *
@@ -138,7 +138,7 @@ export const DEFAULT_CONFIG: GrafemaConfig = {
     discovery: [],
     indexing: ['JSModuleIndexer'],
     analysis: [
-      'JSASTAnalyzer',
+      'CoreV2Analyzer',
       'ExpressRouteAnalyzer',
       'ExpressResponseAnalyzer',
       'NestJSRouteAnalyzer',
@@ -148,15 +148,8 @@ export const DEFAULT_CONFIG: GrafemaConfig = {
       'ServiceLayerAnalyzer',
     ],
     enrichment: [
-      'ImportExportLinker',
       'ExportEntityLinker',
-      'FunctionCallResolver',
-      'ExternalCallResolver',
-      'MethodCallResolver',
       'CallbackCallResolver',
-      'AliasTracker',
-      'ArgumentParameterLinker',
-      'ClosureCaptureEnricher',
       'RejectionPropagationEnricher',
       'ValueDomainAnalyzer',
       'MountPointResolver',
