@@ -132,7 +132,7 @@ export interface WalkContext {
 
 // ─── Visitor Registry ────────────────────────────────────────────────
 
-import type { Node } from '@babel/types';
+import type { Node, File } from '@babel/types';
 
 /**
  * A visitor function. Pure: (node, parent, ctx) → VisitResult.
@@ -189,4 +189,70 @@ export interface FileResult {
   unresolvedRefs: DeferredRef[];
   /** Scope tree (for diagnostics / debugging) */
   scopeTree: ScopeNode;
+}
+
+// ─── Domain Plugin API ───────────────────────────────────────────────
+
+/**
+ * What a domain plugin returns for one file.
+ * All required arrays may be empty but must not be undefined.
+ * deferred is optional — omit if the plugin creates no cross-file refs.
+ */
+export interface DomainPluginResult {
+  /** Additional graph nodes to merge into FileResult. Must not duplicate existing node IDs. */
+  nodes: GraphNode[];
+  /** Additional graph edges to merge into FileResult. */
+  edges: GraphEdge[];
+  /**
+   * Optional deferred refs for cross-file resolution.
+   * Use kinds: import_resolve, call_resolve, type_resolve, alias_resolve.
+   * Do NOT emit scope_lookup or export_lookup — Stage 2 is already complete.
+   */
+  deferred?: DeferredRef[];
+}
+
+/**
+ * A domain plugin analyzes one file INSIDE walkFile(), after Stage 2 (file-scope resolution).
+ *
+ * Contracts (not enforced at runtime — violation is a plugin bug):
+ *   - Pure function: no I/O, no file reads, no side effects, no mutations.
+ *   - Must not mutate fileResult or ast.
+ *   - Must only CREATE new nodes/edges — never replicate or modify existing ones.
+ *   - Node IDs must be globally unique; use the file path as prefix.
+ *   - Return empty arrays for files that have no relevant patterns.
+ *
+ * When to implement DomainPlugin:
+ *   - Detecting framework patterns (Express routes, Socket.IO events, DB queries).
+ *   - Pattern is expressible as: scan CALL nodes where metadata.object/method match X/Y.
+ *   - Need string argument values from calls (paths, event names, SQL strings).
+ *
+ * When NOT to use DomainPlugin:
+ *   - Need to modify existing graph nodes (not supported by design).
+ *   - Need cross-file context at detection time (use Stage 3 instead).
+ *   - Analyzing a non-JS/TS language (needs a separate entry point).
+ *   - Plugin needs state across files (domain plugins are stateless per-file).
+ */
+export interface DomainPlugin {
+  /**
+   * Unique plugin name. Lowercase, no spaces.
+   * Used in log messages and error reporting.
+   * Examples: "express", "socketio", "fetch", "database".
+   */
+  readonly name: string;
+
+  /**
+   * Called once per file inside walkFile(), after Stage 2 (file-scope resolution).
+   *
+   * @param fileResult  The completed per-file analysis. Read-only by contract.
+   *                    Contains all CALL, IMPORT, MODULE, EXTERNAL nodes.
+   * @param ast         The parsed Babel File node from the SAME parse as walkFile used.
+   *                    Available as escape hatch for patterns that cannot be expressed
+   *                    via fileResult.nodes alone (e.g., nested route builders).
+   *                    Most plugins will not need this.
+   * @returns           Additional nodes and edges to merge. Empty arrays are valid.
+   */
+  analyzeFile(
+    fileResult: Readonly<FileResult>,
+    ast: File,
+  ): DomainPluginResult;
 }

@@ -1,4 +1,5 @@
 export { walkFile, parseFile } from './walk.js';
+export type { WalkOptions } from './walk.js';
 export { resolveFileRefs, resolveProject, ProjectIndex } from './resolve.js';
 export type { ResolveResult } from './resolve.js';
 export type { BuiltinRegistry } from '@grafema/lang-defs';
@@ -19,6 +20,8 @@ export type {
   VisitorFn,
   VisitorRegistry,
   FileResult,
+  DomainPlugin,
+  DomainPluginResult,
 } from './types.js';
 export { EMPTY_RESULT } from './types.js';
 export { EDGE_MAP } from './edge-map.js';
