@@ -5,7 +5,9 @@
  * ReturnStatement, ThrowStatement, SwitchStatement, etc.
  */
 import type {
+  BreakStatement,
   CatchClause,
+  ContinueStatement,
   ForInStatement,
   ForOfStatement,
   IfStatement,
@@ -486,10 +488,25 @@ export function visitDebuggerStatement(
 export function visitBreakStatement(
   node: Node, _parent: Node | null, ctx: WalkContext,
 ): VisitResult {
+  const brk = node as BreakStatement;
   const line = node.loc?.start.line ?? 0;
+  const nodeId = ctx.nodeId('EXPRESSION', 'break', line);
+  const deferred: DeferredRef[] = [];
+  if (brk.label) {
+    deferred.push({
+      kind: 'scope_lookup',
+      name: brk.label.name,
+      fromNodeId: nodeId,
+      edgeType: 'TARGETS',
+      scopeId: ctx.currentScope.id,
+      file: ctx.file,
+      line,
+      column: brk.label.loc?.start.column ?? 0,
+    });
+  }
   return {
     nodes: [{
-      id: ctx.nodeId('EXPRESSION', 'break', line),
+      id: nodeId,
       type: 'EXPRESSION',
       name: 'break',
       file: ctx.file,
@@ -497,17 +514,32 @@ export function visitBreakStatement(
       column: node.loc?.start.column ?? 0,
     }],
     edges: [],
-    deferred: [],
+    deferred,
   };
 }
 
 export function visitContinueStatement(
   node: Node, _parent: Node | null, ctx: WalkContext,
 ): VisitResult {
+  const cont = node as ContinueStatement;
   const line = node.loc?.start.line ?? 0;
+  const nodeId = ctx.nodeId('EXPRESSION', 'continue', line);
+  const deferred: DeferredRef[] = [];
+  if (cont.label) {
+    deferred.push({
+      kind: 'scope_lookup',
+      name: cont.label.name,
+      fromNodeId: nodeId,
+      edgeType: 'TARGETS',
+      scopeId: ctx.currentScope.id,
+      file: ctx.file,
+      line,
+      column: cont.label.loc?.start.column ?? 0,
+    });
+  }
   return {
     nodes: [{
-      id: ctx.nodeId('EXPRESSION', 'continue', line),
+      id: nodeId,
       type: 'EXPRESSION',
       name: 'continue',
       file: ctx.file,
@@ -515,7 +547,7 @@ export function visitContinueStatement(
       column: node.loc?.start.column ?? 0,
     }],
     edges: [],
-    deferred: [],
+    deferred,
   };
 }
 

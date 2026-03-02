@@ -102,6 +102,9 @@ export const EDGE_TYPE = {
   REJECTS: 'REJECTS',           // FUNCTION -> CLASS (error class it can reject)
   CATCHES_FROM: 'CATCHES_FROM', // CATCH_BLOCK -> error sources in TRY_BLOCK
 
+  // REG-601: break/continue label targeting
+  TARGETS: 'TARGETS',           // EXPRESSION(break/continue) -> LABEL it targets
+
   // Guarantees/Invariants
   GOVERNS: 'GOVERNS',
   VIOLATES: 'VIOLATES',

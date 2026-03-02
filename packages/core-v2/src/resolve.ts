@@ -23,7 +23,7 @@ import type { BuiltinRegistry } from '@grafema/lang-defs';
 const DECLARABLE_TYPES = new Set([
   'FUNCTION', 'VARIABLE', 'CONSTANT', 'CLASS', 'PARAMETER', 'METHOD',
   'INTERFACE', 'TYPE_ALIAS', 'NAMESPACE', 'ENUM', 'TYPE_PARAMETER',
-  'PROPERTY', 'GETTER', 'SETTER', 'EXTERNAL',
+  'PROPERTY', 'GETTER', 'SETTER', 'EXTERNAL', 'LABEL',
 ]);
 
 /**
