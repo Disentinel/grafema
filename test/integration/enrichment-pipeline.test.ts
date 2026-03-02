@@ -25,12 +25,6 @@ import {
   Orchestrator,
   GuaranteeManager,
   DiagnosticCollector,
-  JSModuleIndexer,
-  JSASTAnalyzer,
-  MethodCallResolver,
-  ImportExportLinker,
-  ArgumentParameterLinker,
-  NodejsBuiltinsResolver,
 } from '@grafema/core';
 import type { CommitDelta } from '@grafema/types';
 

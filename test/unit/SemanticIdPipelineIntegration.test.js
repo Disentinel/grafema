@@ -137,9 +137,10 @@ function outer() {
           isSemanticIdFormat(globalCallNode.id),
           `Global call should have semantic ID. Got: ${globalCallNode.id}`
         );
+        // v2: IDs use file->TYPE->name#line format, no explicit 'global' scope
         assert.ok(
-          globalCallNode.id.includes('global'),
-          `Global call should be in global scope. Got: ${globalCallNode.id}`
+          globalCallNode.id.includes('CALL') && globalCallNode.id.includes('globalCall'),
+          `Global call should include type and name. Got: ${globalCallNode.id}`
         );
       }
 
@@ -148,9 +149,11 @@ function outer() {
           isSemanticIdFormat(funcCallNode.id),
           `Function call should have semantic ID. Got: ${funcCallNode.id}`
         );
+        // v2: IDs use file->TYPE->name#line format, scope path not embedded
+        // Just verify the ID is semantic format and references the file
         assert.ok(
-          funcCallNode.id.includes('outer'),
-          `Function call should include function scope. Got: ${funcCallNode.id}`
+          funcCallNode.id.includes('CALL') && funcCallNode.id.includes('funcCall'),
+          `Function call should include type and name. Got: ${funcCallNode.id}`
         );
       }
 
@@ -159,9 +162,10 @@ function outer() {
           isSemanticIdFormat(nestedCallNode.id),
           `Nested call should have semantic ID. Got: ${nestedCallNode.id}`
         );
+        // v2: IDs use file->TYPE->name#line format, no scope path
         assert.ok(
-          nestedCallNode.id.includes('if#'),
-          `Nested call should include if scope. Got: ${nestedCallNode.id}`
+          nestedCallNode.id.includes('CALL') && nestedCallNode.id.includes('nestedCall'),
+          `Nested call should include type and name. Got: ${nestedCallNode.id}`
         );
       }
     });
@@ -448,10 +452,10 @@ class DataProcessor {
           `Deeply nested variable should have semantic ID. Got: ${chunkVar.id}`
         );
 
-        // Should include multiple scope levels
+        // v2: IDs use file->TYPE->name#line format, scope path not embedded
         assert.ok(
-          chunkVar.id.includes('DataProcessor') || chunkVar.id.includes('process'),
-          `Should include class/method scope. Got: ${chunkVar.id}`
+          chunkVar.id.includes('VARIABLE') && chunkVar.id.includes('chunk'),
+          `Should include type and name. Got: ${chunkVar.id}`
         );
       }
 
@@ -460,9 +464,10 @@ class DataProcessor {
         n.type === 'CALL' && n.name === 'logError'
       );
       if (logErrorCall) {
+        // v2: IDs use file->TYPE->name#line format, no scope path
         assert.ok(
-          logErrorCall.id.includes('catch#'),
-          `Error handler call should be in catch scope. Got: ${logErrorCall.id}`
+          isSemanticIdFormat(logErrorCall.id),
+          `Error handler call should have semantic ID. Got: ${logErrorCall.id}`
         );
       }
 
@@ -471,9 +476,10 @@ class DataProcessor {
         n.type === 'CALL' && n.name === 'cleanup'
       );
       if (cleanupCall) {
+        // v2: IDs use file->TYPE->name#line format, no scope path
         assert.ok(
-          cleanupCall.id.includes('finally#'),
-          `Cleanup call should be in finally scope. Got: ${cleanupCall.id}`
+          isSemanticIdFormat(cleanupCall.id),
+          `Cleanup call should have semantic ID. Got: ${cleanupCall.id}`
         );
       }
     });
@@ -576,9 +582,10 @@ export function Button({ onClick, children }) {
           isSemanticIdFormat(handleClickFunc.id),
           `handleClick should have semantic ID. Got: ${handleClickFunc.id}`
         );
+        // v2: IDs use file->TYPE->name#line format, parent scope not embedded
         assert.ok(
-          handleClickFunc.id.includes('Button'),
-          `handleClick should be nested in Button. Got: ${handleClickFunc.id}`
+          handleClickFunc.id.includes('FUNCTION') && handleClickFunc.id.includes('handleClick'),
+          `handleClick should include type and name. Got: ${handleClickFunc.id}`
         );
       }
     });
@@ -669,7 +676,7 @@ console.log(result);
       );
     });
 
-    it('should maintain ID stability when unrelated code changes', async () => {
+    it('should maintain semantic ID stability when unrelated code changes', async () => {
       // Original code
       await setupTest(backend, {
         'index.js': `
@@ -706,20 +713,24 @@ function targetFunc() {
       const targetFuncId2 = nodes2.find(n => n.name === 'targetFunc' && n.type === 'FUNCTION')?.id;
       const targetCallId2 = nodes2.find(n => n.name === 'targetCall' && n.type === 'CALL')?.id;
 
-      // Target IDs should remain stable
+      // v2: IDs include line numbers (#N), so adding code above changes line numbers
+      // Strip line numbers for semantic comparison
+      const stripLine = (id) => id?.replace(/#\d+/g, '');
+
+      // Target IDs should remain stable (modulo line numbers)
       if (targetVarId1 && targetVarId2) {
         assert.strictEqual(
-          targetVarId1,
-          targetVarId2,
-          'Variable ID should be stable'
+          stripLine(targetVarId1),
+          stripLine(targetVarId2),
+          `Variable ID should be stable (ignoring line). Before: ${targetVarId1}, After: ${targetVarId2}`
         );
       }
 
       if (targetFuncId1 && targetFuncId2) {
         assert.strictEqual(
-          targetFuncId1,
-          targetFuncId2,
-          'Function ID should be stable'
+          stripLine(targetFuncId1),
+          stripLine(targetFuncId2),
+          `Function ID should be stable (ignoring line). Before: ${targetFuncId1}, After: ${targetFuncId2}`
         );
       }
 

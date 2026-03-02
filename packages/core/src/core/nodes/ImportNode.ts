@@ -46,7 +46,7 @@ export class ImportNode {
    * @param name - The local binding name (what the import is called in this module)
    * @param file - Absolute file path
    * @param line - Line number (for debugging only, not part of ID)
-   * @param column - Column position (pass 0 if unavailable - JSASTAnalyzer limitation)
+   * @param column - Column position (pass 0 if unavailable)
    * @param source - Module source (e.g., 'react', './utils')
    * @param options - Optional fields
    * @returns ImportNodeRecord

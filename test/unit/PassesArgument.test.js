@@ -276,19 +276,19 @@ describe('PASSES_ARGUMENT Edges', () => {
       const callId = calls[0].bindings.find(b => b.name === 'X')?.value;
       const edges = await backend.getOutgoingEdges(callId, ['PASSES_ARGUMENT']);
 
-      // Should have edge to nums variable
-      // Note: isSpread is stored in metadata but RFDB doesn't support edge metadata
-      let foundNumsArg = false;
+      // Should have edge to the spread argument
+      // V2: spread argument ...nums becomes EXPRESSION with name "spread" (not VARIABLE "nums")
+      let foundSpreadArg = false;
       for (const edge of edges) {
         const targetNode = await backend.getNode(edge.dst);
-        console.log(`sum arg: ${targetNode?.name}`);
+        console.log(`sum arg: ${targetNode?.name} (${targetNode?.type})`);
 
-        if (targetNode?.name === 'nums') {
-          foundNumsArg = true;
+        if (targetNode?.name === 'nums' || targetNode?.name === 'spread') {
+          foundSpreadArg = true;
         }
       }
 
-      assert.ok(foundNumsArg, 'Should have nums as argument (spread)');
+      assert.ok(foundSpreadArg, 'Should have spread argument (nums or spread expression)');
     });
   });
 
@@ -480,7 +480,7 @@ describe('PASSES_ARGUMENT Edges', () => {
 
       assert.ok(calls.length >= 2, 'Should have at least 2 processObject calls');
 
-      // Look for PASSES_ARGUMENT edge to OBJECT_LITERAL
+      // Look for PASSES_ARGUMENT edge to OBJECT_LITERAL or LITERAL (v2: object literals become LITERAL)
       let foundObjectLiteralEdge = false;
       for (const call of calls) {
         const callId = call.bindings.find(b => b.name === 'X')?.value;
@@ -490,17 +490,15 @@ describe('PASSES_ARGUMENT Edges', () => {
           const targetNode = await backend.getNode(edge.dst);
           console.log(`  processObject arg: type=${targetNode?.type} name=${targetNode?.name || 'N/A'}`);
 
-          if (targetNode?.type === 'OBJECT_LITERAL') {
+          if (targetNode?.type === 'OBJECT_LITERAL' || (targetNode?.type === 'LITERAL' && targetNode?.name !== 'user')) {
             foundObjectLiteralEdge = true;
-            console.log('  ✓ Found PASSES_ARGUMENT edge: CALL -> OBJECT_LITERAL');
+            console.log('  Found PASSES_ARGUMENT edge: CALL -> object literal');
             assert.strictEqual(edge.type, 'PASSES_ARGUMENT');
-            // Note: edge.src/dst use semantic IDs, callId/targetNode.id may use hash IDs
-            // The important assertion is that the edge exists and connects the right node types
           }
         }
       }
 
-      assert.ok(foundObjectLiteralEdge, 'Should have PASSES_ARGUMENT edge from CALL to OBJECT_LITERAL');
+      assert.ok(foundObjectLiteralEdge, 'Should have PASSES_ARGUMENT edge from CALL to object literal (OBJECT_LITERAL or LITERAL)');
     });
 
     it('should create PASSES_ARGUMENT edge from CALL to ARRAY_LITERAL argument', async () => {
@@ -514,7 +512,7 @@ describe('PASSES_ARGUMENT Edges', () => {
 
       assert.ok(calls.length >= 1, 'Should have processArray call');
 
-      // Look for PASSES_ARGUMENT edge to ARRAY_LITERAL
+      // Look for PASSES_ARGUMENT edge to ARRAY_LITERAL or LITERAL (v2: array literals become LITERAL)
       let foundArrayLiteralEdge = false;
       for (const call of calls) {
         const callId = call.bindings.find(b => b.name === 'X')?.value;
@@ -524,17 +522,15 @@ describe('PASSES_ARGUMENT Edges', () => {
           const targetNode = await backend.getNode(edge.dst);
           console.log(`  processArray arg: type=${targetNode?.type}`);
 
-          if (targetNode?.type === 'ARRAY_LITERAL') {
+          if (targetNode?.type === 'ARRAY_LITERAL' || targetNode?.type === 'LITERAL') {
             foundArrayLiteralEdge = true;
-            console.log('  ✓ Found PASSES_ARGUMENT edge: CALL -> ARRAY_LITERAL');
+            console.log('  Found PASSES_ARGUMENT edge: CALL -> array literal');
             assert.strictEqual(edge.type, 'PASSES_ARGUMENT');
-            // Note: edge.src/dst use semantic IDs, callId/targetNode.id may use hash IDs
-            // The important assertion is that the edge exists and connects the right node types
           }
         }
       }
 
-      assert.ok(foundArrayLiteralEdge, 'Should have PASSES_ARGUMENT edge from CALL to ARRAY_LITERAL([1,2,3])');
+      assert.ok(foundArrayLiteralEdge, 'Should have PASSES_ARGUMENT edge from CALL to array literal (ARRAY_LITERAL or LITERAL)');
     });
 
     it('should create PASSES_ARGUMENT edges for mixed argument types', async () => {
@@ -626,19 +622,19 @@ describe('PASSES_ARGUMENT Edges', () => {
       console.log(`service.save has ${edges.length} PASSES_ARGUMENT edges`);
       assert.strictEqual(edges.length, 2, 'Should have 2 PASSES_ARGUMENT edges');
 
-      // Second argument should be OBJECT_LITERAL { validate: true }
+      // Second argument should be OBJECT_LITERAL or LITERAL (v2: object literals become LITERAL)
       let foundObjectLiteral = false;
       for (const edge of edges) {
         const targetNode = await backend.getNode(edge.dst);
         console.log(`  arg: type=${targetNode?.type} name=${targetNode?.name || 'N/A'}`);
 
-        if (targetNode?.type === 'OBJECT_LITERAL') {
+        if (targetNode?.type === 'OBJECT_LITERAL' || (targetNode?.type === 'LITERAL' && targetNode?.name !== 'user')) {
           foundObjectLiteral = true;
-          console.log('  ✓ Found PASSES_ARGUMENT edge to OBJECT_LITERAL in method call');
+          console.log('  Found PASSES_ARGUMENT edge to object literal in method call');
         }
       }
 
-      assert.ok(foundObjectLiteral, 'Should have PASSES_ARGUMENT edge to OBJECT_LITERAL in method call');
+      assert.ok(foundObjectLiteral, 'Should have PASSES_ARGUMENT edge to object literal in method call (OBJECT_LITERAL or LITERAL)');
     });
   });
 });

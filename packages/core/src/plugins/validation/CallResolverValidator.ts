@@ -48,7 +48,7 @@ export class CallResolverValidator extends Plugin {
     return {
       name: 'CallResolverValidator',
       phase: 'VALIDATION',
-      dependencies: ['FunctionCallResolver', 'ExternalCallResolver'],
+      dependencies: ['CoreV2Analyzer'],
       creates: {
         nodes: [],
         edges: []

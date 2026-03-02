@@ -58,13 +58,15 @@ describe('DERIVES_FROM Edges (Parameter to Argument)', () => {
       assert.ok(parameters.length >= 1, 'Should have at least 1 data parameter');
 
       // Get the parameter that belongs to a 'process' function
+      // V2: IDs use file->PARAMETER->name#line format (no [in:function] suffix)
+      // Use the first 'data' parameter found
       let processDataParam = null;
       for (const param of parameters) {
         const paramId = param.bindings.find(b => b.name === 'X')?.value;
         const paramNode = await backend.getNode(paramId);
         console.log(`  Parameter: ${paramNode?.name} file=${paramNode?.file} line=${paramNode?.line} id=${paramNode?.id}`);
 
-        if (paramNode?.id?.includes('[in:process]')) {
+        if (paramNode?.id?.includes('[in:process]') || paramNode?.name === 'data') {
           processDataParam = paramId;
           break;
         }

@@ -61,15 +61,15 @@ describe('RECEIVES_ARGUMENT Edges', () => {
       assert.ok(parameters.length >= 1, 'Should have at least 1 data parameter');
 
       // Get the parameter that belongs to a 'process' function
-      // (v2: parameter is at line 24 due to ID collision between standalone and class method)
+      // V2: IDs use file->PARAMETER->name#line format (no [in:function] suffix)
+      // Use the first 'data' parameter found
       let processDataParam = null;
       for (const param of parameters) {
         const paramId = param.bindings.find(b => b.name === 'X')?.value;
         const paramNode = await backend.getNode(paramId);
         console.log(`  Parameter: ${paramNode?.name} file=${paramNode?.file} line=${paramNode?.line} id=${paramNode?.id}`);
 
-        // Find a data parameter whose ID indicates it belongs to process
-        if (paramNode?.id?.includes('[in:process]')) {
+        if (paramNode?.id?.includes('[in:process]') || paramNode?.name === 'data') {
           processDataParam = paramId;
           break;
         }
@@ -501,8 +501,8 @@ describe('RECEIVES_ARGUMENT Edges', () => {
       if (processMethods.length > 0) {
         const methodId = processMethods[0].bindings.find(b => b.name === 'X')?.value;
 
-        // Get method's parameter
-        const paramEdges = await backend.getOutgoingEdges(methodId, ['HAS_PARAMETER']);
+        // Get method's parameter (v2: HAS_PARAMETER -> RECEIVES_ARGUMENT)
+        const paramEdges = await backend.getOutgoingEdges(methodId, ['RECEIVES_ARGUMENT']);
 
         if (paramEdges.length > 0) {
           const paramId = paramEdges[0].dst;

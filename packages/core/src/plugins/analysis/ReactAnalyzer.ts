@@ -21,7 +21,7 @@ import type { PluginContext, PluginResult, PluginMetadata } from '../Plugin.js';
 import type { NodeRecord, AnyBrandedNode } from '@grafema/types';
 import { NodeFactory } from '../../core/NodeFactory.js';
 import { GraphFactory } from '../../core/GraphFactory.js';
-import { getLine, getColumn } from './ast/utils/location.js';
+import { getLine, getColumn } from './shared-utils/location.js';
 import { resolveNodeFile } from '../../utils/resolveNodeFile.js';
 import { REACT_HOOKS } from './react-internal/types.js';
 import type {
@@ -59,7 +59,7 @@ export class ReactAnalyzer extends Plugin {
           'PROVIDES', 'CONSUMES', 'FORWARDS_REF', 'OBSERVES'
         ]
       },
-      dependencies: ['JSASTAnalyzer']
+      dependencies: ['CoreV2Analyzer']
     };
   }
 

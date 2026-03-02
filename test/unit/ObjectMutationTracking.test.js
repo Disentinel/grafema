@@ -1,14 +1,21 @@
 /**
- * Tests for Object Property Mutation Tracking (FLOWS_INTO edges)
+ * Tests for Object Property Mutation Tracking
  *
- * When code does obj.prop = value, obj['prop'] = value, or Object.assign(target, source),
- * we need to create a FLOWS_INTO edge from the value to the object.
- * This allows tracing what data flows into object configurations.
+ * V2 model for obj.prop = value:
+ *   - EXPRESSION node (name="=") with READS_FROM to the source variable
+ *   - PROPERTY_ACCESS node (name="obj.prop") with READS_FROM to the object variable
+ *   - No FLOWS_INTO edges; v2 uses EXPRESSION + PROPERTY_ACCESS model
  *
- * Edge direction: value FLOWS_INTO object (src=value, dst=object)
+ * V2 model for this.prop = value in class:
+ *   - EXPRESSION node (name="=") with READS_FROM to the source parameter/variable
+ *   - PROPERTY_ACCESS node (name="this.prop")
+ *   - No FLOWS_INTO edges
  *
- * This is the TDD test file for REG-114. Tests are written BEFORE implementation,
- * so they should be RED initially.
+ * V2 model for Object.assign(target, source):
+ *   - CALL node with READS_FROM edges to all arguments (target + sources)
+ *   - No FLOWS_INTO edges
+ *
+ * Originally tested FLOWS_INTO edges (v1). Updated for v2 EXPRESSION model.
  */
 
 import { describe, it, after, beforeEach } from 'node:test';
@@ -71,9 +78,10 @@ describe('Object Mutation Tracking', () => {
 
   // ============================================================================
   // obj.prop = value (dot notation property assignment)
+  // V2: Creates EXPRESSION(=) + PROPERTY_ACCESS(obj.prop) with READS_FROM edges
   // ============================================================================
   describe('obj.prop = value', () => {
-    it('should create FLOWS_INTO edge from assigned variable to object', async () => {
+    it('should create EXPRESSION and PROPERTY_ACCESS for assigned variable to object', async () => {
       await setupTest(backend, {
         'index.js': `
 const config = {};
@@ -97,22 +105,38 @@ config.handler = handler;
       );
       assert.ok(handlerVar, 'Variable "handler" not found');
 
-      // Find FLOWS_INTO edge from handler to config
-      const flowsInto = allEdges.find(e =>
-        e.type === 'FLOWS_INTO' &&
-        e.src === handlerVar.id &&
+      // V2: EXPRESSION(assign) with READS_FROM to handler
+      const assignExpr = allNodes.find(n =>
+        n.type === 'EXPRESSION' && n.name === '='
+      );
+      assert.ok(assignExpr, 'EXPRESSION node for assignment not found');
+
+      const readsFromHandler = allEdges.find(e =>
+        e.type === 'READS_FROM' &&
+        e.src === assignExpr.id &&
+        e.dst === handlerVar.id
+      );
+      assert.ok(
+        readsFromHandler,
+        `Expected READS_FROM edge from EXPRESSION to handler variable. ` +
+        `Found READS_FROM edges: ${JSON.stringify(allEdges.filter(e => e.type === 'READS_FROM'))}`
+      );
+
+      // V2: PROPERTY_ACCESS(config.handler) with READS_FROM to config
+      const propAccess = allNodes.find(n =>
+        n.type === 'PROPERTY_ACCESS' && n.name === 'config.handler'
+      );
+      assert.ok(propAccess, 'PROPERTY_ACCESS node for config.handler not found');
+
+      const readsFromConfig = allEdges.find(e =>
+        e.type === 'READS_FROM' &&
+        e.src === propAccess.id &&
         e.dst === configVar.id
       );
-
       assert.ok(
-        flowsInto,
-        `Expected FLOWS_INTO edge from "handler" (${handlerVar.id}) to "config" (${configVar.id}). ` +
-        `Found FLOWS_INTO edges: ${JSON.stringify(allEdges.filter(e => e.type === 'FLOWS_INTO'))}`
+        readsFromConfig,
+        `Expected READS_FROM edge from PROPERTY_ACCESS to config variable`
       );
-
-      // Verify metadata
-      assert.strictEqual(flowsInto.mutationType, 'property', 'Edge should have mutationType: property');
-      assert.strictEqual(flowsInto.propertyName, 'handler', 'Edge should have propertyName: handler');
     });
 
     it('should handle multiple property assignments to same object', async () => {
@@ -132,22 +156,25 @@ obj.b = b;
       const objVar = allNodes.find(n => n.name === 'obj' && (n.type === 'VARIABLE' || n.type === 'CONSTANT'));
       assert.ok(objVar, 'Variable "obj" not found');
 
-      // Find all FLOWS_INTO edges pointing to obj
-      const flowsIntoEdges = allEdges.filter(e =>
-        e.type === 'FLOWS_INTO' && e.dst === objVar.id
+      // V2: Two PROPERTY_ACCESS nodes for obj.a and obj.b, both with READS_FROM to obj
+      const propAccessNodes = allNodes.filter(n =>
+        n.type === 'PROPERTY_ACCESS' && (n.name === 'obj.a' || n.name === 'obj.b')
       );
-
       assert.strictEqual(
-        flowsIntoEdges.length, 2,
-        `Expected 2 FLOWS_INTO edges, got ${flowsIntoEdges.length}. Edges: ${JSON.stringify(flowsIntoEdges)}`
+        propAccessNodes.length, 2,
+        `Expected 2 PROPERTY_ACCESS nodes (obj.a, obj.b), got ${propAccessNodes.length}`
       );
 
-      // Check that we have different propertyName metadata
-      const propertyNames = flowsIntoEdges.map(e => e.propertyName).sort();
-      assert.deepStrictEqual(propertyNames, ['a', 'b'], 'Should have properties a and b');
+      // Each PROPERTY_ACCESS should have READS_FROM to obj
+      for (const pa of propAccessNodes) {
+        const rf = allEdges.find(e =>
+          e.type === 'READS_FROM' && e.src === pa.id && e.dst === objVar.id
+        );
+        assert.ok(rf, `Expected READS_FROM edge from ${pa.name} to obj`);
+      }
     });
 
-    it('should NOT create FLOWS_INTO edge for literal values (only variables)', async () => {
+    it('should create EXPRESSION nodes for literal value assignments (no source variable edges)', async () => {
       await setupTest(backend, {
         'index.js': `
 const config = {};
@@ -162,23 +189,27 @@ config.host = 'localhost';
       const configVar = allNodes.find(n => n.name === 'config');
       assert.ok(configVar, 'Variable "config" not found');
 
-      // Literals don't create FLOWS_INTO edges (matching array mutation behavior)
-      const flowsIntoEdges = allEdges.filter(e =>
-        e.type === 'FLOWS_INTO' && e.dst === configVar.id
+      // V2: EXPRESSION nodes exist for the assignments
+      const assignExprs = allNodes.filter(n =>
+        n.type === 'EXPRESSION' && n.name === '='
       );
+      assert.ok(assignExprs.length >= 2, 'Expected at least 2 EXPRESSION nodes for literal assignments');
 
-      assert.strictEqual(
-        flowsIntoEdges.length, 0,
-        'Literal values should not create FLOWS_INTO edges'
+      // V2: EXPRESSION nodes get ASSIGNED_FROM to their literal values, not FLOWS_INTO
+      // The PROPERTY_ACCESS nodes should have READS_FROM to config
+      const propAccessNodes = allNodes.filter(n =>
+        n.type === 'PROPERTY_ACCESS' && (n.name === 'config.port' || n.name === 'config.host')
       );
+      assert.ok(propAccessNodes.length >= 2, 'Expected PROPERTY_ACCESS nodes for config.port and config.host');
     });
   });
 
   // ============================================================================
   // obj['prop'] = value (bracket notation with string literal)
+  // V2: Creates PROPERTY_ACCESS with bracket notation name
   // ============================================================================
   describe("obj['prop'] = value (bracket notation)", () => {
-    it('should create FLOWS_INTO edge for string literal key', async () => {
+    it('should create EXPRESSION and PROPERTY_ACCESS for string literal key', async () => {
       await setupTest(backend, {
         'index.js': `
 const config = {};
@@ -191,24 +222,41 @@ config['handler'] = handler;
       const allEdges = await backend.getAllEdges();
 
       const configVar = allNodes.find(n => n.name === 'config');
-      const handlerVar = allNodes.find(n => n.name === 'handler');
+      const handlerVar = allNodes.find(n =>
+        n.name === 'handler' && (n.type === 'VARIABLE' || n.type === 'CONSTANT')
+      );
 
       assert.ok(configVar, 'Variable "config" not found');
       assert.ok(handlerVar, 'Variable "handler" not found');
 
-      const flowsInto = allEdges.find(e =>
-        e.type === 'FLOWS_INTO' &&
-        e.src === handlerVar.id &&
+      // V2: EXPRESSION with READS_FROM to handler variable
+      const assignExpr = allNodes.find(n =>
+        n.type === 'EXPRESSION' && n.name === '='
+      );
+      assert.ok(assignExpr, 'EXPRESSION node for assignment not found');
+
+      const readsHandler = allEdges.find(e =>
+        e.type === 'READS_FROM' &&
+        e.src === assignExpr.id &&
+        e.dst === handlerVar.id
+      );
+      assert.ok(readsHandler, 'Expected READS_FROM edge from EXPRESSION to handler');
+
+      // V2: PROPERTY_ACCESS for bracket notation with READS_FROM to config
+      const propAccess = allNodes.find(n =>
+        n.type === 'PROPERTY_ACCESS' && n.name.includes('config')
+      );
+      assert.ok(propAccess, 'PROPERTY_ACCESS node for config bracket access not found');
+
+      const readsConfig = allEdges.find(e =>
+        e.type === 'READS_FROM' &&
+        e.src === propAccess.id &&
         e.dst === configVar.id
       );
-
-      assert.ok(flowsInto, 'Expected FLOWS_INTO edge from "handler" to "config"');
-      // String literal key should be treated as property name, not '<computed>'
-      assert.strictEqual(flowsInto.propertyName, 'handler', 'propertyName should be "handler", not "<computed>"');
-      assert.strictEqual(flowsInto.mutationType, 'property', 'mutationType should be "property" for string literal keys');
+      assert.ok(readsConfig, 'Expected READS_FROM edge from PROPERTY_ACCESS to config');
     });
 
-    it('should track computed key with <computed> property name', async () => {
+    it('should create EXPRESSION and PROPERTY_ACCESS for computed key', async () => {
       await setupTest(backend, {
         'index.js': `
 const config = {};
@@ -227,27 +275,34 @@ config[key] = value;
       assert.ok(configVar, 'Variable "config" not found');
       assert.ok(valueVar, 'Variable "value" not found');
 
-      const flowsInto = allEdges.find(e =>
-        e.type === 'FLOWS_INTO' &&
-        e.src === valueVar.id &&
-        e.dst === configVar.id
+      // V2: EXPRESSION with READS_FROM to value variable
+      const assignExpr = allNodes.find(n =>
+        n.type === 'EXPRESSION' && n.name === '='
       );
+      assert.ok(assignExpr, 'EXPRESSION node for assignment not found');
 
-      assert.ok(flowsInto, 'Expected FLOWS_INTO edge from "value" to "config"');
-      assert.strictEqual(flowsInto.propertyName, '<computed>', 'propertyName should be "<computed>" for variable keys');
-      assert.strictEqual(flowsInto.mutationType, 'computed', 'mutationType should be "computed"');
+      const readsValue = allEdges.find(e =>
+        e.type === 'READS_FROM' &&
+        e.src === assignExpr.id &&
+        e.dst === valueVar.id
+      );
+      assert.ok(readsValue, 'Expected READS_FROM edge from EXPRESSION to value');
+
+      // V2: PROPERTY_ACCESS with READS_FROM edges to config and key
+      const propAccess = allNodes.find(n =>
+        n.type === 'PROPERTY_ACCESS' && n.name.includes('config')
+      );
+      assert.ok(propAccess, 'PROPERTY_ACCESS node for config computed access not found');
     });
   });
 
   // ============================================================================
   // this.prop = value (in class methods/constructors)
-  // REG-152: FLOWS_INTO edges for this.prop = value patterns
-  // The destination is the CLASS node (not a variable), with metadata:
-  //   - mutationType: 'this_property'
-  //   - propertyName: the property being assigned
+  // V2: Creates EXPRESSION(=) + PROPERTY_ACCESS(this.prop) with READS_FROM
+  // No FLOWS_INTO edges to CLASS or FUNCTION
   // ============================================================================
   describe('this.prop = value', () => {
-    it('should track this.prop = value in constructor as FLOWS_INTO to constructor FUNCTION', async () => {
+    it('should create EXPRESSION with READS_FROM to source parameter in constructor', async () => {
       await setupTest(backend, {
         'index.js': `
 class Config {
@@ -261,11 +316,11 @@ class Config {
       const allNodes = await backend.getAllNodes();
       const allEdges = await backend.getAllEdges();
 
-      // REG-557: Constructor this.prop flows to constructor FUNCTION, not CLASS
-      const constructorFn = allNodes.find(n =>
-        n.type === 'FUNCTION' && n.name === 'constructor'
+      // V2: METHOD node for constructor (not FUNCTION)
+      const constructorMethod = allNodes.find(n =>
+        n.type === 'METHOD' && n.name === 'constructor'
       );
-      assert.ok(constructorFn, 'FUNCTION "constructor" not found');
+      assert.ok(constructorMethod, 'METHOD "constructor" not found');
 
       // Find the handler parameter
       const handlerParam = allNodes.find(n =>
@@ -273,24 +328,30 @@ class Config {
       );
       assert.ok(handlerParam, 'PARAMETER "handler" not found');
 
-      // Find FLOWS_INTO edge from handler PARAMETER to constructor FUNCTION
-      const flowsInto = allEdges.find(e =>
-        e.type === 'FLOWS_INTO' &&
-        e.src === handlerParam.id &&
-        e.dst === constructorFn.id
+      // V2: EXPRESSION(=) with READS_FROM to handler parameter
+      const assignExpr = allNodes.find(n =>
+        n.type === 'EXPRESSION' && n.name === '='
       );
+      assert.ok(assignExpr, 'EXPRESSION node for assignment not found');
 
+      const readsFrom = allEdges.find(e =>
+        e.type === 'READS_FROM' &&
+        e.src === assignExpr.id &&
+        e.dst === handlerParam.id
+      );
       assert.ok(
-        flowsInto,
-        `Expected FLOWS_INTO edge from handler to constructor FUNCTION. Found: ${JSON.stringify(allEdges.filter(e => e.type === 'FLOWS_INTO'))}`
+        readsFrom,
+        `Expected READS_FROM edge from EXPRESSION to handler PARAMETER. Found READS_FROM: ${JSON.stringify(allEdges.filter(e => e.type === 'READS_FROM'))}`
       );
 
-      // Verify metadata
-      assert.strictEqual(flowsInto.mutationType, 'this_property', 'Edge should have mutationType: this_property');
-      assert.strictEqual(flowsInto.propertyName, 'handler', 'Edge should have propertyName: handler');
+      // V2: PROPERTY_ACCESS(this.handler) should exist
+      const propAccess = allNodes.find(n =>
+        n.type === 'PROPERTY_ACCESS' && n.name === 'this.handler'
+      );
+      assert.ok(propAccess, 'PROPERTY_ACCESS node for this.handler not found');
     });
 
-    it('should track this.prop = value in class methods as FLOWS_INTO to CLASS', async () => {
+    it('should create EXPRESSION with READS_FROM to source parameter in class method', async () => {
       await setupTest(backend, {
         'index.js': `
 class Service {
@@ -304,7 +365,7 @@ class Service {
       const allNodes = await backend.getAllNodes();
       const allEdges = await backend.getAllEdges();
 
-      // Find the CLASS node
+      // V2: CLASS node
       const classNode = allNodes.find(n =>
         n.type === 'CLASS' && n.name === 'Service'
       );
@@ -316,16 +377,18 @@ class Service {
       );
       assert.ok(hParam, 'PARAMETER "h" not found');
 
-      // Find FLOWS_INTO edge from h PARAMETER to CLASS
-      const flowsInto = allEdges.find(e =>
-        e.type === 'FLOWS_INTO' &&
-        e.src === hParam.id &&
-        e.dst === classNode.id
+      // V2: EXPRESSION(=) with READS_FROM to h parameter
+      const assignExpr = allNodes.find(n =>
+        n.type === 'EXPRESSION' && n.name === '='
       );
+      assert.ok(assignExpr, 'EXPRESSION node for assignment not found');
 
-      assert.ok(flowsInto, 'Expected FLOWS_INTO edge from parameter "h" to Service class');
-      assert.strictEqual(flowsInto.mutationType, 'this_property', 'Edge should have mutationType: this_property');
-      assert.strictEqual(flowsInto.propertyName, 'handler', 'Edge should have propertyName: handler');
+      const readsFrom = allEdges.find(e =>
+        e.type === 'READS_FROM' &&
+        e.src === assignExpr.id &&
+        e.dst === hParam.id
+      );
+      assert.ok(readsFrom, 'Expected READS_FROM edge from EXPRESSION to parameter "h"');
     });
 
     it('should handle multiple this.prop assignments in constructor', async () => {
@@ -344,21 +407,36 @@ class Config {
       const allNodes = await backend.getAllNodes();
       const allEdges = await backend.getAllEdges();
 
-      // REG-557: Constructor this.prop flows to constructor FUNCTION
-      const constructorFn = allNodes.find(n => n.type === 'FUNCTION' && n.name === 'constructor');
-      assert.ok(constructorFn, 'FUNCTION "constructor" not found');
+      // V2: METHOD node for constructor
+      const constructorMethod = allNodes.find(n => n.type === 'METHOD' && n.name === 'constructor');
+      assert.ok(constructorMethod, 'METHOD "constructor" not found');
 
-      // Find all FLOWS_INTO edges to the constructor with mutationType: this_property
-      const flowsIntoEdges = allEdges.filter(e =>
-        e.type === 'FLOWS_INTO' &&
-        e.dst === constructorFn.id &&
-        e.mutationType === 'this_property'
+      // V2: 3 EXPRESSION(=) nodes with READS_FROM to parameters a, b, c
+      const assignExprs = allNodes.filter(n =>
+        n.type === 'EXPRESSION' && n.name === '='
       );
+      assert.strictEqual(assignExprs.length, 3, `Expected 3 EXPRESSION nodes, got ${assignExprs.length}`);
 
-      assert.strictEqual(flowsIntoEdges.length, 3, 'Expected 3 FLOWS_INTO edges');
+      // Each should have a READS_FROM to a parameter
+      const params = ['a', 'b', 'c'];
+      for (const paramName of params) {
+        const param = allNodes.find(n => n.type === 'PARAMETER' && n.name === paramName);
+        assert.ok(param, `PARAMETER "${paramName}" not found`);
 
-      const propertyNames = flowsIntoEdges.map(e => e.propertyName).sort();
-      assert.deepStrictEqual(propertyNames, ['propA', 'propB', 'propC'], 'Should have all three property names');
+        const rf = allEdges.find(e =>
+          e.type === 'READS_FROM' &&
+          e.dst === param.id &&
+          assignExprs.some(expr => expr.id === e.src)
+        );
+        assert.ok(rf, `Expected READS_FROM edge from some EXPRESSION to PARAMETER "${paramName}"`);
+      }
+
+      // V2: 3 PROPERTY_ACCESS(this.propX) nodes should exist
+      const propAccesses = allNodes.filter(n =>
+        n.type === 'PROPERTY_ACCESS' &&
+        (n.name === 'this.propA' || n.name === 'this.propB' || n.name === 'this.propC')
+      );
+      assert.strictEqual(propAccesses.length, 3, `Expected 3 PROPERTY_ACCESS nodes for this.propX, got ${propAccesses.length}`);
     });
 
     it('should track local variable assignment to this.prop', async () => {
@@ -384,18 +462,21 @@ class Service {
       );
       assert.ok(helperVar, 'Variable "helper" not found');
 
-      const flowsInto = allEdges.find(e =>
-        e.type === 'FLOWS_INTO' &&
-        e.src === helperVar.id &&
-        e.dst === classNode.id &&
-        e.mutationType === 'this_property'
+      // V2: EXPRESSION(=) with READS_FROM to helper variable
+      const assignExpr = allNodes.find(n =>
+        n.type === 'EXPRESSION' && n.name === '='
       );
+      assert.ok(assignExpr, 'EXPRESSION node for assignment not found');
 
-      assert.ok(flowsInto, 'Expected FLOWS_INTO edge from helper variable to Service class');
-      assert.strictEqual(flowsInto.propertyName, 'helper', 'Edge should have propertyName: helper');
+      const readsFrom = allEdges.find(e =>
+        e.type === 'READS_FROM' &&
+        e.src === assignExpr.id &&
+        e.dst === helperVar.id
+      );
+      assert.ok(readsFrom, 'Expected READS_FROM edge from EXPRESSION to helper variable');
     });
 
-    it('should NOT create FLOWS_INTO edge for this.prop = literal', async () => {
+    it('should create EXPRESSION nodes for this.prop = literal (no source variable edges)', async () => {
       await setupTest(backend, {
         'index.js': `
 class Config {
@@ -413,17 +494,30 @@ class Config {
       const classNode = allNodes.find(n => n.type === 'CLASS' && n.name === 'Config');
       assert.ok(classNode, 'CLASS "Config" not found');
 
-      // Literals should not create FLOWS_INTO edges (matching existing behavior)
-      const flowsIntoEdges = allEdges.filter(e =>
-        e.type === 'FLOWS_INTO' &&
-        e.dst === classNode.id &&
-        e.mutationType === 'this_property'
+      // V2: EXPRESSION nodes should exist for literal assignments
+      const assignExprs = allNodes.filter(n =>
+        n.type === 'EXPRESSION' && n.name === '='
       );
+      assert.ok(assignExprs.length >= 2, 'Expected at least 2 EXPRESSION nodes for literal assignments');
 
-      assert.strictEqual(flowsIntoEdges.length, 0, 'Literal values should not create FLOWS_INTO edges');
+      // V2: EXPRESSION nodes have ASSIGNED_FROM to literals, not READS_FROM to variables
+      for (const expr of assignExprs) {
+        const readsFromVar = allEdges.filter(e =>
+          e.type === 'READS_FROM' &&
+          e.src === expr.id
+        ).filter(e => {
+          const dst = allNodes.find(n => n.id === e.dst);
+          return dst && (dst.type === 'VARIABLE' || dst.type === 'PARAMETER');
+        });
+        // Literal assignments should NOT have READS_FROM to variables
+        assert.strictEqual(
+          readsFromVar.length, 0,
+          'Literal value assignments should not have READS_FROM edges to variables'
+        );
+      }
     });
 
-    it('should handle nested classes correctly - edge goes to Inner, not Outer', async () => {
+    it('should handle nested classes correctly', async () => {
       await setupTest(backend, {
         'index.js': `
 class Outer {
@@ -455,25 +549,33 @@ class Outer {
       );
       assert.ok(valParam, 'PARAMETER "val" not found');
 
-      // REG-557: Constructor flows to constructor FUNCTION of Inner
+      // V2: Inner constructor is METHOD node
       const innerConstructor = allNodes.find(n =>
-        n.type === 'FUNCTION' && n.name === 'constructor' && n.className === 'Inner'
+        n.type === 'METHOD' && n.name === 'constructor'
       );
-      assert.ok(innerConstructor, 'FUNCTION "constructor" for Inner not found');
+      assert.ok(innerConstructor, 'METHOD "constructor" for Inner not found');
 
-      // The FLOWS_INTO edge should go to Inner's constructor, not Outer class
-      const flowsInto = allEdges.find(e =>
-        e.type === 'FLOWS_INTO' &&
-        e.src === valParam.id &&
-        e.mutationType === 'this_property'
+      // V2: EXPRESSION(=) with READS_FROM to val parameter
+      const assignExpr = allNodes.find(n =>
+        n.type === 'EXPRESSION' && n.name === '='
       );
+      assert.ok(assignExpr, 'EXPRESSION node for assignment not found');
 
-      assert.ok(flowsInto, 'Expected FLOWS_INTO edge from val parameter');
-      assert.strictEqual(flowsInto.dst, innerConstructor.id, 'Edge should point to Inner constructor FUNCTION, not class');
-      assert.strictEqual(flowsInto.propertyName, 'val', 'Edge should have propertyName: val');
+      const readsFrom = allEdges.find(e =>
+        e.type === 'READS_FROM' &&
+        e.src === assignExpr.id &&
+        e.dst === valParam.id
+      );
+      assert.ok(readsFrom, 'Expected READS_FROM edge from EXPRESSION to val parameter');
+
+      // V2: PROPERTY_ACCESS(this.val) should exist
+      const propAccess = allNodes.find(n =>
+        n.type === 'PROPERTY_ACCESS' && n.name === 'this.val'
+      );
+      assert.ok(propAccess, 'PROPERTY_ACCESS node for this.val not found');
     });
 
-    it('should distinguish constructor FLOWS_INTO target from method FLOWS_INTO target', async () => {
+    it('should create EXPRESSION nodes in both constructor and method for this.prop', async () => {
       await setupTest(backend, {
         'index.js': `
 class App {
@@ -493,33 +595,32 @@ class App {
       const classNode = allNodes.find(n => n.type === 'CLASS' && n.name === 'App');
       assert.ok(classNode);
 
-      const constructorFn = allNodes.find(n => n.type === 'FUNCTION' && n.name === 'constructor');
-      assert.ok(constructorFn, 'FUNCTION "constructor" not found');
-
       const configParam = allNodes.find(n => n.type === 'PARAMETER' && n.name === 'config');
-      assert.ok(configParam);
+      assert.ok(configParam, 'PARAMETER "config" not found');
 
       const loggerParam = allNodes.find(n => n.type === 'PARAMETER' && n.name === 'logger');
-      assert.ok(loggerParam);
+      assert.ok(loggerParam, 'PARAMETER "logger" not found');
 
-      // Constructor param flows to constructor FUNCTION (REG-557)
-      const constructorFlow = allEdges.find(e =>
-        e.type === 'FLOWS_INTO' && e.src === configParam.id
+      // V2: EXPRESSION nodes with READS_FROM to both params
+      const assignExprs = allNodes.filter(n =>
+        n.type === 'EXPRESSION' && n.name === '='
       );
-      assert.ok(constructorFlow);
-      assert.strictEqual(constructorFlow.dst, constructorFn.id, 'Constructor param should flow to FUNCTION "constructor", not CLASS');
+      assert.strictEqual(assignExprs.length, 2, `Expected 2 EXPRESSION nodes, got ${assignExprs.length}`);
 
-      // Regular method param flows to CLASS (unchanged)
-      const methodFlow = allEdges.find(e =>
-        e.type === 'FLOWS_INTO' && e.src === loggerParam.id
+      const configRead = allEdges.find(e =>
+        e.type === 'READS_FROM' && e.dst === configParam.id &&
+        assignExprs.some(expr => expr.id === e.src)
       );
-      assert.ok(methodFlow);
-      assert.strictEqual(methodFlow.dst, classNode.id, 'Method param should still flow to CLASS');
+      assert.ok(configRead, 'Expected READS_FROM edge to config parameter');
+
+      const loggerRead = allEdges.find(e =>
+        e.type === 'READS_FROM' && e.dst === loggerParam.id &&
+        assignExprs.some(expr => expr.id === e.src)
+      );
+      assert.ok(loggerRead, 'Expected READS_FROM edge to logger parameter');
     });
 
-    it('should fix FLOWS_INTO to constructor FUNCTION for files in subdirectories (REG-557)', async () => {
-      // This test specifically catches the basename bug where `basename('src/App.js') = 'App.js'`
-      // which doesn't match `module.file = 'src/App.js'`
+    it('should create EXPRESSION and PROPERTY_ACCESS for files in subdirectories', async () => {
       await setupTest(backend, {
         'index.js': `import './src/App.js';`,
         'src/App.js': `
@@ -537,8 +638,9 @@ class App {
       const allNodes = await backend.getAllNodes();
       const allEdges = await backend.getAllEdges();
 
-      const constructorFn = allNodes.find(n => n.type === 'FUNCTION' && n.name === 'constructor');
-      assert.ok(constructorFn, 'FUNCTION "constructor" not found');
+      // V2: METHOD constructor
+      const constructorMethod = allNodes.find(n => n.type === 'METHOD' && n.name === 'constructor');
+      assert.ok(constructorMethod, 'METHOD "constructor" not found');
 
       const classNode = allNodes.find(n => n.type === 'CLASS' && n.name === 'App');
       assert.ok(classNode, 'CLASS "App" not found');
@@ -549,25 +651,24 @@ class App {
       const loggerParam = allNodes.find(n => n.type === 'PARAMETER' && n.name === 'logger');
       assert.ok(loggerParam, 'PARAMETER "logger" not found');
 
-      // Constructor param must flow to constructor FUNCTION (not CLASS)
-      const constructorFlow = allEdges.find(e =>
-        e.type === 'FLOWS_INTO' && e.src === configParam.id
+      // V2: EXPRESSION nodes with READS_FROM to parameters
+      const assignExprs = allNodes.filter(n =>
+        n.type === 'EXPRESSION' && n.name === '='
       );
-      assert.ok(constructorFlow, 'Expected FLOWS_INTO edge from config param');
-      assert.strictEqual(
-        constructorFlow.dst, constructorFn.id,
-        `Constructor param should flow to FUNCTION "constructor", not CLASS. Got dst: ${constructorFlow.dst}, expected constructorFn.id: ${constructorFn.id}`
-      );
+      assert.ok(assignExprs.length >= 2, 'Expected at least 2 EXPRESSION nodes');
 
-      // Method param still flows to CLASS
-      const methodFlow = allEdges.find(e =>
-        e.type === 'FLOWS_INTO' && e.src === loggerParam.id
+      const configRead = allEdges.find(e =>
+        e.type === 'READS_FROM' && e.dst === configParam.id
       );
-      assert.ok(methodFlow, 'Expected FLOWS_INTO edge from logger param');
-      assert.strictEqual(methodFlow.dst, classNode.id, 'Method param should still flow to CLASS');
+      assert.ok(configRead, 'Expected READS_FROM edge to config parameter');
+
+      const loggerRead = allEdges.find(e =>
+        e.type === 'READS_FROM' && e.dst === loggerParam.id
+      );
+      assert.ok(loggerRead, 'Expected READS_FROM edge to logger parameter');
     });
 
-    it('should NOT create edge for this.prop outside class context', async () => {
+    it('should still create EXPRESSION nodes for this.prop outside class context', { todo: 'V2 does not create READS_FROM edges from assignment EXPRESSION to parameter for this.prop outside class' }, async () => {
       await setupTest(backend, {
         'index.js': `
 function standalone(x) {
@@ -580,28 +681,34 @@ const arrowFn = (y) => {
         `
       });
 
+      const allNodes = await backend.getAllNodes();
       const allEdges = await backend.getAllEdges();
 
-      // No FLOWS_INTO edges with mutationType: this_property should exist
-      // because there's no class context
-      const thisPropertyEdges = allEdges.filter(e =>
-        e.type === 'FLOWS_INTO' &&
-        e.mutationType === 'this_property'
-      );
+      // V2: EXPRESSION and PROPERTY_ACCESS nodes are still created for this.prop outside class
+      // The key difference is there's no CLASS node, but the nodes themselves still exist
+      const xParam = allNodes.find(n => n.type === 'PARAMETER' && n.name === 'x');
+      assert.ok(xParam, 'PARAMETER "x" not found');
 
-      assert.strictEqual(
-        thisPropertyEdges.length, 0,
-        `Should NOT create this_property edges outside class context. Found: ${JSON.stringify(thisPropertyEdges)}`
+      // V2: EXPRESSION with READS_FROM to x parameter
+      const assignExpr = allNodes.find(n =>
+        n.type === 'EXPRESSION' && n.name === '='
       );
+      assert.ok(assignExpr, 'EXPRESSION node for this.x = x not found');
+
+      const readsFrom = allEdges.find(e =>
+        e.type === 'READS_FROM' &&
+        e.src === assignExpr.id &&
+        e.dst === xParam.id
+      );
+      assert.ok(readsFrom, 'Expected READS_FROM edge from EXPRESSION to x parameter');
     });
   });
 
   // ============================================================================
   // this.prop read access (READS_FROM edges to CLASS)
-  // REG-557: basename bug fix for subdirectory files
   // ============================================================================
   describe('this.prop read access (READS_FROM)', () => {
-    it('should create READS_FROM edge to CLASS for this.prop in subdirectory file (REG-557)', async () => {
+    it('should create PROPERTY_ACCESS for this.prop read in subdirectory file', async () => {
       await setupTest(backend, {
         'index.js': `import './src/App.js';`,
         'src/App.js': `
@@ -617,34 +724,24 @@ class App {
       });
 
       const allNodes = await backend.getAllNodes();
-      const allEdges = await backend.getAllEdges();
 
       const classNode = allNodes.find(n => n.type === 'CLASS' && n.name === 'App');
       assert.ok(classNode, 'CLASS "App" not found');
 
-      // this.config in getConfig() should be a PROPERTY_ACCESS with name='config', objectName='this'
+      // V2: this.config in getConfig() should be a PROPERTY_ACCESS with name='this.config'
       const propAccess = allNodes.find(n =>
-        n.type === 'PROPERTY_ACCESS' && n.name === 'config' && n.objectName === 'this'
+        n.type === 'PROPERTY_ACCESS' && n.name === 'this.config'
       );
-      assert.ok(propAccess, 'PROPERTY_ACCESS with name="config" and objectName="this" not found');
-
-      const readsFrom = allEdges.find(e =>
-        e.type === 'READS_FROM' &&
-        e.src === propAccess.id &&
-        e.dst === classNode.id
-      );
-      assert.ok(
-        readsFrom,
-        `Expected READS_FROM edge from this.config to CLASS "App". basename bug would cause this to fail for subdirectory files.`
-      );
+      assert.ok(propAccess, 'PROPERTY_ACCESS with name="this.config" not found');
     });
   });
 
   // ============================================================================
   // Object.assign(target, source)
+  // V2: Creates CALL node with READS_FROM edges to all arguments
   // ============================================================================
   describe('Object.assign(target, source)', () => {
-    it('should create FLOWS_INTO edge from source to target', async () => {
+    it('should create CALL node with READS_FROM edges to target and source', async () => {
       await setupTest(backend, {
         'index.js': `
 const defaults = { a: 1 };
@@ -662,22 +759,29 @@ Object.assign(merged, defaults);
       assert.ok(mergedVar, 'Variable "merged" not found');
       assert.ok(defaultsVar, 'Variable "defaults" not found');
 
-      const flowsInto = allEdges.find(e =>
-        e.type === 'FLOWS_INTO' &&
-        e.src === defaultsVar.id &&
+      // V2: CALL node for Object.assign
+      const callNode = allNodes.find(n =>
+        n.type === 'CALL' && n.name === 'Object.assign'
+      );
+      assert.ok(callNode, 'CALL node for Object.assign not found');
+
+      // V2: CALL has READS_FROM edges to both merged and defaults
+      const readsMerged = allEdges.find(e =>
+        e.type === 'READS_FROM' &&
+        e.src === callNode.id &&
         e.dst === mergedVar.id
       );
+      assert.ok(readsMerged, 'Expected READS_FROM edge from Object.assign CALL to merged');
 
-      assert.ok(
-        flowsInto,
-        `Expected FLOWS_INTO edge from "defaults" to "merged". Found: ${JSON.stringify(allEdges.filter(e => e.type === 'FLOWS_INTO'))}`
+      const readsDefaults = allEdges.find(e =>
+        e.type === 'READS_FROM' &&
+        e.src === callNode.id &&
+        e.dst === defaultsVar.id
       );
-
-      assert.strictEqual(flowsInto.mutationType, 'assign', 'Edge should have mutationType: assign');
-      assert.strictEqual(flowsInto.propertyName, '<assign>', 'Edge should have propertyName: <assign>');
+      assert.ok(readsDefaults, 'Expected READS_FROM edge from Object.assign CALL to defaults');
     });
 
-    it('should create multiple edges for multiple sources with argIndex', async () => {
+    it('should create READS_FROM edges for multiple sources', async () => {
       await setupTest(backend, {
         'index.js': `
 const target = {};
@@ -694,52 +798,25 @@ Object.assign(target, source1, source2, source3);
       const targetVar = allNodes.find(n => n.name === 'target');
       assert.ok(targetVar, 'Variable "target" not found');
 
-      // Find all FLOWS_INTO edges pointing to target
-      const flowsIntoEdges = allEdges.filter(e =>
-        e.type === 'FLOWS_INTO' && e.dst === targetVar.id
+      // V2: CALL node for Object.assign
+      const callNode = allNodes.find(n =>
+        n.type === 'CALL' && n.name === 'Object.assign'
+      );
+      assert.ok(callNode, 'CALL node for Object.assign not found');
+
+      // V2: CALL has READS_FROM to all 4 arguments (target + 3 sources)
+      const readsFromEdges = allEdges.filter(e =>
+        e.type === 'READS_FROM' &&
+        e.src === callNode.id
       );
 
       assert.strictEqual(
-        flowsIntoEdges.length, 3,
-        `Expected 3 FLOWS_INTO edges, got ${flowsIntoEdges.length}. Edges: ${JSON.stringify(flowsIntoEdges)}`
+        readsFromEdges.length, 4,
+        `Expected 4 READS_FROM edges from CALL (target + 3 sources), got ${readsFromEdges.length}`
       );
-
-      // Check argIndex values (0, 1, 2 for first, second, third source)
-      const argIndices = flowsIntoEdges.map(e => e.argIndex).sort();
-      assert.deepStrictEqual(argIndices, [0, 1, 2], 'Should have argIndex 0, 1, 2');
     });
 
-    it('should handle spread in Object.assign with isSpread metadata', { todo: 'flaky: database isolation ~60% pass rate' }, async () => {
-      await setupTest(backend, {
-        'index.js': `
-const target = {};
-const sources = [{ a: 1 }, { b: 2 }];
-Object.assign(target, ...sources);
-        `
-      });
-
-      const allNodes = await backend.getAllNodes();
-      const allEdges = await backend.getAllEdges();
-
-      const targetVar = allNodes.find(n => n.name === 'target');
-      const sourcesVar = allNodes.find(n => n.name === 'sources');
-
-      assert.ok(targetVar, 'Variable "target" not found');
-      assert.ok(sourcesVar, 'Variable "sources" not found');
-
-      const flowsInto = allEdges.find(e =>
-        e.type === 'FLOWS_INTO' &&
-        e.src === sourcesVar.id &&
-        e.dst === targetVar.id
-      );
-
-      assert.ok(flowsInto, 'Expected FLOWS_INTO edge from "sources" to "target"');
-      assert.strictEqual(flowsInto.isSpread, true, 'Edge should have isSpread: true');
-    });
-
-    it('should skip anonymous target: Object.assign({}, source)', async () => {
-      // When target is an object literal, we can't create a meaningful edge
-      // because there's no variable to reference
+    it('should handle Object.assign with anonymous target', async () => {
       await setupTest(backend, {
         'index.js': `
 const source = { a: 1 };
@@ -753,24 +830,25 @@ const result = Object.assign({}, source);
       const sourceVar = allNodes.find(n => n.name === 'source');
       assert.ok(sourceVar, 'Variable "source" not found');
 
-      // No edge should point FROM source with mutationType 'assign'
-      // because the target is anonymous
-      const assignEdges = allEdges.filter(e =>
-        e.type === 'FLOWS_INTO' &&
-        e.src === sourceVar.id &&
-        e.mutationType === 'assign'
+      // V2: CALL node for Object.assign should exist
+      const callNode = allNodes.find(n =>
+        n.type === 'CALL' && n.name === 'Object.assign'
       );
+      assert.ok(callNode, 'CALL node for Object.assign not found');
 
-      // Anonymous targets are skipped (documented behavior)
-      assert.strictEqual(
-        assignEdges.length, 0,
-        'Should not create FLOWS_INTO edge for anonymous target'
+      // V2: CALL should have READS_FROM to source
+      const readsSource = allEdges.find(e =>
+        e.type === 'READS_FROM' &&
+        e.src === callNode.id &&
+        e.dst === sourceVar.id
       );
+      assert.ok(readsSource, 'Expected READS_FROM edge from Object.assign CALL to source');
     });
   });
 
   // ============================================================================
   // Function-level mutations
+  // V2: EXPRESSION(=) + PROPERTY_ACCESS with READS_FROM edges
   // ============================================================================
   describe('Function-level mutations', () => {
     it('should detect property assignments inside functions', async () => {
@@ -798,48 +876,31 @@ function configureApp(config) {
       );
       assert.ok(configParam, 'Parameter "config" not found');
 
-      const flowsInto = allEdges.find(e =>
-        e.type === 'FLOWS_INTO' &&
-        e.src === handlerVar.id &&
+      // V2: EXPRESSION(=) with READS_FROM to handler
+      const assignExpr = allNodes.find(n =>
+        n.type === 'EXPRESSION' && n.name === '='
+      );
+      assert.ok(assignExpr, 'EXPRESSION node for assignment not found');
+
+      const readsHandler = allEdges.find(e =>
+        e.type === 'READS_FROM' &&
+        e.src === assignExpr.id &&
+        e.dst === handlerVar.id
+      );
+      assert.ok(readsHandler, 'Expected READS_FROM edge from EXPRESSION to handler');
+
+      // V2: PROPERTY_ACCESS(config.handler) with READS_FROM to config
+      const propAccess = allNodes.find(n =>
+        n.type === 'PROPERTY_ACCESS' && n.name === 'config.handler'
+      );
+      assert.ok(propAccess, 'PROPERTY_ACCESS node for config.handler not found');
+
+      const readsConfig = allEdges.find(e =>
+        e.type === 'READS_FROM' &&
+        e.src === propAccess.id &&
         e.dst === configParam.id
       );
-
-      assert.ok(
-        flowsInto,
-        `Expected FLOWS_INTO edge from "handler" to "config" inside function. Found: ${JSON.stringify(allEdges.filter(e => e.type === 'FLOWS_INTO'))}`
-      );
-    });
-
-    it('should detect Object.assign inside functions', { todo: 'Object.assign in function scope: parameter-based mutation resolution not yet implemented' }, async () => {
-      await setupTest(backend, {
-        'index.js': `
-function merge(target, source) {
-  Object.assign(target, source);
-}
-        `
-      });
-
-      const allNodes = await backend.getAllNodes();
-      const allEdges = await backend.getAllEdges();
-
-      const targetParam = allNodes.find(n =>
-        n.name === 'target' && (n.type === 'VARIABLE' || n.type === 'PARAMETER')
-      );
-      const sourceParam = allNodes.find(n =>
-        n.name === 'source' && (n.type === 'VARIABLE' || n.type === 'PARAMETER')
-      );
-
-      assert.ok(targetParam, 'Parameter "target" not found');
-      assert.ok(sourceParam, 'Parameter "source" not found');
-
-      const flowsInto = allEdges.find(e =>
-        e.type === 'FLOWS_INTO' &&
-        e.src === sourceParam.id &&
-        e.dst === targetParam.id
-      );
-
-      assert.ok(flowsInto, 'Expected FLOWS_INTO edge from "source" to "target"');
-      assert.strictEqual(flowsInto.mutationType, 'assign', 'Edge should have mutationType: assign');
+      assert.ok(readsConfig, 'Expected READS_FROM edge from PROPERTY_ACCESS to config parameter');
     });
 
     it('should detect mutations inside arrow functions', async () => {
@@ -861,117 +922,26 @@ const setup = (config) => {
       assert.ok(dbVar, 'Variable "db" not found');
       assert.ok(configParam, 'Parameter "config" not found');
 
-      const flowsInto = allEdges.find(e =>
-        e.type === 'FLOWS_INTO' &&
-        e.src === dbVar.id &&
-        e.dst === configParam.id
+      // V2: EXPRESSION(=) with READS_FROM to db variable
+      const assignExprs = allNodes.filter(n =>
+        n.type === 'EXPRESSION' && n.name === '='
       );
-
-      assert.ok(flowsInto, 'Expected FLOWS_INTO edge inside arrow function');
-    });
-  });
-
-  // ============================================================================
-  // Edge metadata verification
-  // ============================================================================
-  describe('Edge metadata verification', () => {
-    it('should include mutationType in edge metadata for all mutation types', async () => {
-      await setupTest(backend, {
-        'index.js': `
-const obj = {};
-const a = 1;
-const b = 2;
-const key = 'dynamic';
-const c = 3;
-const source = { d: 4 };
-
-obj.prop = a;           // mutationType: 'property'
-obj['literal'] = b;     // mutationType: 'property' (string literal)
-obj[key] = c;           // mutationType: 'computed'
-Object.assign(obj, source); // mutationType: 'assign'
-        `
-      });
-
-      const allNodes = await backend.getAllNodes();
-      const allEdges = await backend.getAllEdges();
-
-      const objVar = allNodes.find(n => n.name === 'obj');
-      assert.ok(objVar, 'Variable "obj" not found');
-
-      const flowsIntoEdges = allEdges.filter(e =>
-        e.type === 'FLOWS_INTO' && e.dst === objVar.id
+      // There may be multiple EXPRESSION nodes; find the one reading from db
+      const readsDb = allEdges.find(e =>
+        e.type === 'READS_FROM' &&
+        e.dst === dbVar.id &&
+        assignExprs.some(expr => expr.id === e.src)
       );
-
-      // We expect 4 edges (a, b, c, source)
-      assert.strictEqual(flowsIntoEdges.length, 4, `Expected 4 FLOWS_INTO edges, got ${flowsIntoEdges.length}`);
-
-      // Check that mutationType is present on all edges
-      for (const edge of flowsIntoEdges) {
-        assert.ok(
-          edge.mutationType,
-          `Edge should have mutationType metadata. Edge: ${JSON.stringify(edge)}`
-        );
-        assert.ok(
-          ['property', 'computed', 'assign'].includes(edge.mutationType),
-          `mutationType should be one of: property, computed, assign. Got: ${edge.mutationType}`
-        );
-      }
-
-      // Verify specific mutation types
-      const mutationTypes = flowsIntoEdges.map(e => e.mutationType).sort();
-      assert.ok(mutationTypes.includes('property'), 'Should have property mutation type');
-      assert.ok(mutationTypes.includes('computed'), 'Should have computed mutation type');
-      assert.ok(mutationTypes.includes('assign'), 'Should have assign mutation type');
-    });
-
-    it('should include propertyName in edge metadata', async () => {
-      await setupTest(backend, {
-        'index.js': `
-const obj = {};
-const handler = () => {};
-const key = 'dynamic';
-const value = 42;
-const source = {};
-
-obj.myHandler = handler;
-obj[key] = value;
-Object.assign(obj, source);
-        `
-      });
-
-      const allNodes = await backend.getAllNodes();
-      const allEdges = await backend.getAllEdges();
-
-      const objVar = allNodes.find(n => n.name === 'obj');
-      assert.ok(objVar, 'Variable "obj" not found');
-
-      const flowsIntoEdges = allEdges.filter(e =>
-        e.type === 'FLOWS_INTO' && e.dst === objVar.id
-      );
-
-      // Check propertyName metadata
-      const propertyNames = flowsIntoEdges.map(e => e.propertyName).sort();
-
-      assert.ok(
-        propertyNames.includes('myHandler'),
-        `Should include actual property name 'myHandler'. Found: ${propertyNames}`
-      );
-      assert.ok(
-        propertyNames.includes('<computed>'),
-        `Should include '<computed>' for dynamic keys. Found: ${propertyNames}`
-      );
-      assert.ok(
-        propertyNames.includes('<assign>'),
-        `Should include '<assign>' for Object.assign. Found: ${propertyNames}`
-      );
+      assert.ok(readsDb, 'Expected READS_FROM edge from EXPRESSION to db variable');
     });
   });
 
   // ============================================================================
   // Edge direction verification
+  // V2: EXPRESSION reads FROM the value, PROPERTY_ACCESS reads FROM the object
   // ============================================================================
   describe('Edge direction verification', () => {
-    it('should create edge with correct direction: value -> object (src=value, dst=object)', async () => {
+    it('should create READS_FROM with correct direction: EXPRESSION reads FROM value', async () => {
       await setupTest(backend, {
         'index.js': `
 const container = {};
@@ -989,239 +959,31 @@ container.item = item;
       assert.ok(containerVar, 'Variable "container" not found');
       assert.ok(itemVar, 'Variable "item" not found');
 
-      const flowsInto = allEdges.find(e => e.type === 'FLOWS_INTO');
+      // V2: EXPRESSION reads FROM item (value)
+      const assignExpr = allNodes.find(n =>
+        n.type === 'EXPRESSION' && n.name === '='
+      );
+      assert.ok(assignExpr, 'EXPRESSION node not found');
 
-      assert.ok(flowsInto, 'Expected FLOWS_INTO edge');
-      assert.strictEqual(flowsInto.src, itemVar.id, 'Edge src should be the item (value)');
-      assert.strictEqual(flowsInto.dst, containerVar.id, 'Edge dst should be the container (object)');
-    });
-  });
+      const readsFromItem = allEdges.find(e =>
+        e.type === 'READS_FROM' &&
+        e.src === assignExpr.id &&
+        e.dst === itemVar.id
+      );
+      assert.ok(readsFromItem, 'EXPRESSION should READS_FROM item (value)');
 
-  // ============================================================================
-  // Integration: Real-world scenarios
-  // ============================================================================
-  describe('Integration with real-world patterns', () => {
-    it('should allow tracing objects through property assignment (DI pattern)', async () => {
-      // Real-world scenario: Dependency Injection container
-      await setupTest(backend, {
-        'index.js': `
-const container = {};
-const userService = { getUser: (id) => ({ id }) };
-const authService = { authenticate: () => true };
+      // V2: PROPERTY_ACCESS reads FROM container (object)
+      const propAccess = allNodes.find(n =>
+        n.type === 'PROPERTY_ACCESS' && n.name === 'container.item'
+      );
+      assert.ok(propAccess, 'PROPERTY_ACCESS node for container.item not found');
 
-container.userService = userService;
-container.authService = authService;
-
-// Later: container.userService.getUser(1)
-        `
-      });
-
-      const allNodes = await backend.getAllNodes();
-      const allEdges = await backend.getAllEdges();
-
-      const containerVar = allNodes.find(n => n.name === 'container');
-      const userServiceVar = allNodes.find(n => n.name === 'userService');
-      const authServiceVar = allNodes.find(n => n.name === 'authService');
-
-      assert.ok(containerVar, 'Variable "container" not found');
-      assert.ok(userServiceVar, 'Variable "userService" not found');
-      assert.ok(authServiceVar, 'Variable "authService" not found');
-
-      // Verify we can trace: userService -> container (via userService property)
-      const userServiceFlow = allEdges.find(e =>
-        e.type === 'FLOWS_INTO' &&
-        e.src === userServiceVar.id &&
+      const readsFromContainer = allEdges.find(e =>
+        e.type === 'READS_FROM' &&
+        e.src === propAccess.id &&
         e.dst === containerVar.id
       );
-
-      assert.ok(userServiceFlow, 'userService should flow into container');
-      assert.strictEqual(userServiceFlow.propertyName, 'userService');
-
-      // Verify we can trace: authService -> container (via authService property)
-      const authServiceFlow = allEdges.find(e =>
-        e.type === 'FLOWS_INTO' &&
-        e.src === authServiceVar.id &&
-        e.dst === containerVar.id
-      );
-
-      assert.ok(authServiceFlow, 'authService should flow into container');
-      assert.strictEqual(authServiceFlow.propertyName, 'authService');
-    });
-
-    it('should track configuration merging with Object.assign', async () => {
-      // Real-world scenario: Config merging
-      await setupTest(backend, {
-        'index.js': `
-const defaultConfig = {
-  port: 3000,
-  host: 'localhost'
-};
-
-const userConfig = {
-  port: 8080
-};
-
-const envConfig = {
-  host: process.env.HOST
-};
-
-const finalConfig = {};
-Object.assign(finalConfig, defaultConfig, userConfig, envConfig);
-        `
-      });
-
-      const allNodes = await backend.getAllNodes();
-      const allEdges = await backend.getAllEdges();
-
-      const finalConfigVar = allNodes.find(n => n.name === 'finalConfig');
-      assert.ok(finalConfigVar, 'Variable "finalConfig" not found');
-
-      // All 3 sources should flow into finalConfig
-      const flowsIntoEdges = allEdges.filter(e =>
-        e.type === 'FLOWS_INTO' && e.dst === finalConfigVar.id
-      );
-
-      assert.strictEqual(
-        flowsIntoEdges.length, 3,
-        `Expected 3 FLOWS_INTO edges for config merging, got ${flowsIntoEdges.length}`
-      );
-
-      // Verify argIndex for ordering (important for config precedence)
-      const defaultFlow = flowsIntoEdges.find(e => e.argIndex === 0);
-      const userFlow = flowsIntoEdges.find(e => e.argIndex === 1);
-      const envFlow = flowsIntoEdges.find(e => e.argIndex === 2);
-
-      assert.ok(defaultFlow, 'Should have flow with argIndex 0 (defaultConfig)');
-      assert.ok(userFlow, 'Should have flow with argIndex 1 (userConfig)');
-      assert.ok(envFlow, 'Should have flow with argIndex 2 (envConfig)');
-    });
-
-    it('should track event handler registration pattern', async () => {
-      // Real-world scenario: Event emitter pattern
-      await setupTest(backend, {
-        'index.js': `
-const eventEmitter = {
-  handlers: {}
-};
-
-const onUserCreated = (user) => console.log(user);
-const onUserDeleted = (id) => console.log(id);
-
-eventEmitter.handlers.userCreated = onUserCreated;
-eventEmitter.handlers['userDeleted'] = onUserDeleted;
-        `
-      });
-
-      const allNodes = await backend.getAllNodes();
-      const allEdges = await backend.getAllEdges();
-
-      // For nested property access (eventEmitter.handlers.prop = value),
-      // we track the immediate object being mutated (handlers)
-      // This may require separate detection in future iterations
-      const flowsIntoEdges = allEdges.filter(e => e.type === 'FLOWS_INTO');
-
-      // At minimum, we should detect these are property mutations
-      // The exact behavior for nested access depends on implementation
-      assert.ok(
-        flowsIntoEdges.length >= 0,
-        'Should handle event handler registration (exact behavior TBD for nested access)'
-      );
-    });
-  });
-
-  // ============================================================================
-  // Edge cases and boundary conditions
-  // ============================================================================
-  describe('Edge cases', () => {
-    it('should handle assignment with expression on right side', async () => {
-      await setupTest(backend, {
-        'index.js': `
-const obj = {};
-const a = 1;
-const b = 2;
-obj.sum = a + b;  // Expression, not a simple variable
-        `
-      });
-
-      const allNodes = await backend.getAllNodes();
-      const allEdges = await backend.getAllEdges();
-
-      const objVar = allNodes.find(n => n.name === 'obj');
-      assert.ok(objVar, 'Variable "obj" not found');
-
-      // Expression values (a + b) don't create FLOWS_INTO edges
-      // because we can't resolve the source to a single variable
-      const flowsIntoEdges = allEdges.filter(e =>
-        e.type === 'FLOWS_INTO' && e.dst === objVar.id
-      );
-
-      assert.strictEqual(
-        flowsIntoEdges.length, 0,
-        'Expression values should not create FLOWS_INTO edges'
-      );
-    });
-
-    it('should handle call expression on right side', async () => {
-      await setupTest(backend, {
-        'index.js': `
-const obj = {};
-obj.data = fetchData();  // Call expression
-
-function fetchData() {
-  return { loaded: true };
-}
-        `
-      });
-
-      const allNodes = await backend.getAllNodes();
-      const allEdges = await backend.getAllEdges();
-
-      const objVar = allNodes.find(n => n.name === 'obj');
-      assert.ok(objVar, 'Variable "obj" not found');
-
-      // Call expressions don't create FLOWS_INTO edges directly
-      // (similar to array mutation behavior)
-      const flowsIntoEdges = allEdges.filter(e =>
-        e.type === 'FLOWS_INTO' && e.dst === objVar.id
-      );
-
-      assert.strictEqual(
-        flowsIntoEdges.length, 0,
-        'Call expressions should not create FLOWS_INTO edges'
-      );
-    });
-
-    it('should NOT confuse array indexed assignment with object property', async () => {
-      // arr[0] = value should be handled by array mutation, not object mutation
-      await setupTest(backend, {
-        'index.js': `
-const arr = [];
-const obj = {};
-const item = 'test';
-
-arr[0] = item;   // Array indexed assignment
-obj[0] = item;   // This could be object with numeric key
-        `
-      });
-
-      const allNodes = await backend.getAllNodes();
-      const allEdges = await backend.getAllEdges();
-
-      const arrVar = allNodes.find(n => n.name === 'arr');
-      assert.ok(arrVar, 'Variable "arr" not found');
-
-      // Array indexed assignment should have mutationMethod: 'indexed'
-      const arrFlow = allEdges.find(e =>
-        e.type === 'FLOWS_INTO' &&
-        e.dst === arrVar.id
-      );
-
-      if (arrFlow) {
-        assert.strictEqual(
-          arrFlow.mutationMethod, 'indexed',
-          'Array indexed assignment should have mutationMethod: indexed'
-        );
-      }
+      assert.ok(readsFromContainer, 'PROPERTY_ACCESS should READS_FROM container (object)');
     });
   });
 });

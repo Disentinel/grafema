@@ -8,8 +8,8 @@
  */
 import type { NodePath } from '@babel/traverse';
 import type { CallExpression } from '@babel/types';
-import { getLine } from '../ast/utils/location.js';
-import { getMemberExpressionName } from '../ast/utils/getMemberExpressionName.js';
+import { getLine } from '../shared-utils/location.js';
+import { getMemberExpressionName } from '../shared-utils/getMemberExpressionName.js';
 import { BROWSER_APIS } from './types.js';
 import type { AnalysisResult } from './types.js';
 

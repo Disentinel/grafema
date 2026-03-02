@@ -1,9 +1,7 @@
 /**
- * CoreV2Analyzer — core-v2 three-stage pipeline as a drop-in analysis plugin.
+ * CoreV2Analyzer — three-stage analysis pipeline plugin.
  *
- * Replaces JSASTAnalyzer when `--engine v2` is passed. Depends on JSModuleIndexer
- * for file discovery (MODULE nodes). Skips enrichment/validation plugins since
- * core-v2 has its own resolution stages.
+ * Depends on JSModuleIndexer for file discovery (MODULE nodes).
  *
  * Pipeline: walkFile() → resolveFileRefs() per file, then resolveProject() cross-file.
  */

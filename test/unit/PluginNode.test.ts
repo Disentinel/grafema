@@ -29,7 +29,7 @@ describe('PluginNode', () => {
         builtin: true,
         createsNodes: ['http:request', 'EXTERNAL'],
         createsEdges: ['CONTAINS', 'MAKES_REQUEST', 'CALLS_API'],
-        dependencies: ['JSModuleIndexer', 'JSASTAnalyzer'],
+        dependencies: ['JSModuleIndexer', 'CoreV2Analyzer'],
       });
       assert.strictEqual(node.id, 'grafema:plugin#FetchAnalyzer');
       assert.strictEqual(node.phase, 'ANALYSIS');
@@ -37,7 +37,7 @@ describe('PluginNode', () => {
       assert.strictEqual(node.file, 'packages/core/src/plugins/analysis/FetchAnalyzer.ts');
       assert.deepStrictEqual(node.createsNodes, ['http:request', 'EXTERNAL']);
       assert.deepStrictEqual(node.createsEdges, ['CONTAINS', 'MAKES_REQUEST', 'CALLS_API']);
-      assert.deepStrictEqual(node.dependencies, ['JSModuleIndexer', 'JSASTAnalyzer']);
+      assert.deepStrictEqual(node.dependencies, ['JSModuleIndexer', 'CoreV2Analyzer']);
     });
 
     it('should store creates info in metadata for Datalog queries', () => {

@@ -102,7 +102,6 @@ export type {
 export { ScopeTracker } from './core/ScopeTracker.js';
 export type { ScopeEntry, CountedScopeResult } from './core/ScopeTracker.js';
 export { AnalysisQueue } from './core/AnalysisQueue.js';
-export { ASTWorkerPool, type ModuleInfo as ASTModuleInfo, type ParseResult, type ASTWorkerPoolStats } from './core/ASTWorkerPool.js';
 export { GuaranteeManager } from './core/GuaranteeManager.js';
 export type { GuaranteeGraph } from './core/GuaranteeManager.js';
 export { toposort, CycleError } from './core/toposort.js';
@@ -218,31 +217,6 @@ export { DecoratorNode, type DecoratorTargetType } from './core/nodes/DecoratorN
 export { ExpressionNode, type ExpressionNodeOptions } from './core/nodes/ExpressionNode.js';
 export { ArgumentExpressionNode, type ArgumentExpressionNodeRecord, type ArgumentExpressionNodeOptions } from './core/nodes/ArgumentExpressionNode.js';
 
-// AST CollisionResolver (v2 semantic ID disambiguation)
-export { CollisionResolver } from './plugins/analysis/ast/CollisionResolver.js';
-export type { PendingNode } from './plugins/analysis/ast/CollisionResolver.js';
-
-// AST Visitors (for advanced usage)
-export {
-  ASTVisitor,
-  ImportExportVisitor,
-  VariableVisitor,
-  FunctionVisitor,
-  ClassVisitor,
-  CallExpressionVisitor,
-  TypeScriptVisitor
-} from './plugins/analysis/ast/visitors/index.js';
-export type {
-  VisitorModule,
-  VisitorCollections,
-  VisitorHandlers,
-  VisitorHandler,
-  VariableInfo,
-  ExtractVariableNamesCallback,
-  TrackVariableAssignmentCallback,
-  AnalyzeFunctionBodyCallback
-} from './plugins/analysis/ast/visitors/index.js';
-
 // AST Location utilities (REG-122)
 export {
   getNodeLocation,
@@ -250,8 +224,8 @@ export {
   getColumn,
   getEndLocation,
   UNKNOWN_LOCATION
-} from './plugins/analysis/ast/utils/location.js';
-export type { NodeLocation } from './plugins/analysis/ast/utils/location.js';
+} from './plugins/analysis/shared-utils/location.js';
+export type { NodeLocation } from './plugins/analysis/shared-utils/location.js';
 
 // === PLUGINS ===
 
@@ -261,7 +235,6 @@ export { IncrementalModuleIndexer } from './plugins/indexing/IncrementalModuleIn
 export { RustModuleIndexer } from './plugins/indexing/RustModuleIndexer.js';
 
 // Analysis plugins
-export { JSASTAnalyzer } from './plugins/analysis/JSASTAnalyzer.js';
 export { CoreV2Analyzer } from './plugins/analysis/CoreV2Analyzer.js';
 export { ExpressRouteAnalyzer } from './plugins/analysis/ExpressRouteAnalyzer.js';
 export { ExpressResponseAnalyzer } from './plugins/analysis/ExpressResponseAnalyzer.js';
@@ -279,23 +252,14 @@ export { SystemDbAnalyzer } from './plugins/analysis/SystemDbAnalyzer.js';
 export { IncrementalAnalysisPlugin } from './plugins/analysis/IncrementalAnalysisPlugin.js';
 
 // Enrichment plugins
-export { MethodCallResolver, LIBRARY_SEMANTIC_GROUPS } from './plugins/enrichment/MethodCallResolver.js';
-export type { LibraryCallStats } from './plugins/enrichment/MethodCallResolver.js';
-export { ArgumentParameterLinker } from './plugins/enrichment/ArgumentParameterLinker.js';
-export { AliasTracker } from './plugins/enrichment/AliasTracker.js';
 export { ValueDomainAnalyzer } from './plugins/enrichment/ValueDomainAnalyzer.js';
 export { MountPointResolver } from './plugins/enrichment/MountPointResolver.js';
 export { PrefixEvaluator } from './plugins/enrichment/PrefixEvaluator.js';
-export { InstanceOfResolver } from './plugins/enrichment/InstanceOfResolver.js';
 export { HTTPConnectionEnricher } from './plugins/enrichment/HTTPConnectionEnricher.js';
 export { SocketConnectionEnricher } from './plugins/enrichment/SocketConnectionEnricher.js';
-export { ImportExportLinker } from './plugins/enrichment/ImportExportLinker.js';
 export { ExportEntityLinker } from './plugins/enrichment/ExportEntityLinker.js';
-export { FunctionCallResolver } from './plugins/enrichment/FunctionCallResolver.js';
 export { RustFFIEnricher } from './plugins/enrichment/RustFFIEnricher.js';
 export { NodejsBuiltinsResolver } from './plugins/enrichment/NodejsBuiltinsResolver.js';
-export { ExternalCallResolver } from './plugins/enrichment/ExternalCallResolver.js';
-export { ClosureCaptureEnricher } from './plugins/enrichment/ClosureCaptureEnricher.js';
 export { ExpressHandlerLinker } from './plugins/enrichment/ExpressHandlerLinker.js';
 export { RejectionPropagationEnricher } from './plugins/enrichment/RejectionPropagationEnricher.js';
 export { CallbackCallResolver } from './plugins/enrichment/CallbackCallResolver.js';

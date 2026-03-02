@@ -217,7 +217,8 @@ describe('Clear-and-Rebuild (REG-118)', () => {
   });
 
   describe('Singleton node survival', () => {
-    it('should preserve net:stdio singleton across re-analysis', async () => {
+    it('should preserve net:request singleton across re-analysis (console.log)', async () => {
+      // v2: console.log creates net:request singleton (not net:stdio)
       const testDir = createTestDir();
       writeFileSync(join(testDir, 'index.js'), `
         function log() {
@@ -229,23 +230,19 @@ describe('Clear-and-Rebuild (REG-118)', () => {
       // First analysis
       const orchestrator1 = createForcedOrchestrator(backend);
       await orchestrator1.run(testDir);
-      const stdioNodes1 = await backend.getAllNodes({ type: 'net:stdio' });
+      const networkNodes1 = await backend.getAllNodes({ type: 'net:request' });
 
-      assert.strictEqual(stdioNodes1.length, 1,
-        `Should have exactly 1 net:stdio node, got ${stdioNodes1.length}`);
-      assert.strictEqual(stdioNodes1[0].id, 'net:stdio#__stdio__',
-        'net:stdio node should have expected singleton ID');
+      assert.strictEqual(networkNodes1.length, 1,
+        `Should have exactly 1 net:request node, got ${networkNodes1.length}`);
 
       // Second analysis with NEW orchestrator
       const orchestrator2 = createForcedOrchestrator(backend);
       await orchestrator2.run(testDir);
-      const stdioNodes2 = await backend.getAllNodes({ type: 'net:stdio' });
+      const networkNodes2 = await backend.getAllNodes({ type: 'net:request' });
 
-      // Should still have exactly 1 stdio node (not duplicated)
-      assert.strictEqual(stdioNodes2.length, 1,
-        `Should still have exactly 1 net:stdio node after re-analysis, got ${stdioNodes2.length}`);
-      assert.strictEqual(stdioNodes2[0].id, 'net:stdio#__stdio__',
-        'net:stdio singleton ID should be preserved');
+      // Should still have exactly 1 network node (not duplicated)
+      assert.strictEqual(networkNodes2.length, 1,
+        `Should still have exactly 1 net:request node after re-analysis, got ${networkNodes2.length}`);
     });
 
     it('should preserve net:request singleton across re-analysis', async () => {

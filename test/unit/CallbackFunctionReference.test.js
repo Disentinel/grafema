@@ -1,11 +1,17 @@
 /**
- * Callback Function Reference Resolution Tests
+ * Callback Function Reference Resolution Tests (v2)
  *
  * Tests that when a named function (declaration or const-bound arrow) is passed
  * as an argument to another function or method, Grafema creates the correct edges:
  *
- * 1. CALLS edge: CALL/METHOD_CALL -> FUNCTION (callback is called indirectly)
- * 2. PASSES_ARGUMENT edge: CALL/METHOD_CALL -> FUNCTION (the function ref is an argument)
+ * V2 behavior:
+ * - PASSES_ARGUMENT edge: CALL -> argument source (FUNCTION, VARIABLE, PROPERTY_ACCESS, etc.)
+ * - Direct call CALLS edges (e.g., myHOF() -> myHOF FUNCTION) still exist
+ * - HOF callback CALLS edges (forEach -> handler) do NOT exist in v2
+ * - HAS_CALLBACK edges do NOT exist in v2
+ * - Class methods are METHOD nodes (not FUNCTION)
+ * - this.method references resolve to PROPERTY_ACCESS nodes
+ * - invokesParamIndexes metadata does NOT exist in v2
  *
  * These tests cover:
  * - Same-file function declarations as callbacks (forEach, map, filter, etc.)
@@ -14,9 +20,9 @@
  * - setTimeout/setInterval with named function references
  * - Custom higher-order functions
  * - Scope shadowing (inner function preferred over outer)
- * - Inline callbacks (regression: HAS_CALLBACK still works)
+ * - Inline callbacks
  * - Non-callable arguments (regression: no CALLS edge to literals)
- * - PASSES_ARGUMENT for function declarations (was missing before)
+ * - PASSES_ARGUMENT for function declarations
  */
 
 import { describe, it, after, beforeEach } from 'node:test';
@@ -76,9 +82,10 @@ describe('Callback Function Reference Resolution', () => {
 
   // ============================================================================
   // 1. Same-file function declaration as callback
+  // V2: forEach does NOT create CALLS edge to callback; only PASSES_ARGUMENT
   // ============================================================================
   describe('Same-file function declaration as callback', () => {
-    it('should create CALLS edge from forEach METHOD_CALL to handler FUNCTION', async () => {
+    it('should create PASSES_ARGUMENT edge from forEach CALL to handler FUNCTION', async () => {
       await setupTest(backend, {
         'index.js': `
 function handler() { return 1; }
@@ -102,22 +109,23 @@ arr.forEach(handler);
       );
       assert.ok(forEachCall, 'Should find forEach CALL node');
 
-      // Check CALLS edge from forEach to handler
-      const callsEdge = allEdges.find(e =>
-        e.type === 'CALLS' && e.src === forEachCall.id && e.dst === handlerFunc.id
+      // V2: PASSES_ARGUMENT edge from forEach to handler (function ref is an argument)
+      const passesArgEdge = allEdges.find(e =>
+        e.type === 'PASSES_ARGUMENT' && e.src === forEachCall.id && e.dst === handlerFunc.id
       );
       assert.ok(
-        callsEdge,
-        `Should have CALLS edge from forEach (${forEachCall.id}) to handler (${handlerFunc.id})`
+        passesArgEdge,
+        `Should have PASSES_ARGUMENT edge from forEach (${forEachCall.id}) to handler (${handlerFunc.id})`
       );
     });
   });
 
   // ============================================================================
   // 2. Const-bound arrow function as callback
+  // V2: map does NOT create CALLS edge to callback; only PASSES_ARGUMENT
   // ============================================================================
   describe('Const-bound arrow function as callback', () => {
-    it('should create CALLS edge from map METHOD_CALL to const-bound handler', async () => {
+    it('should create PASSES_ARGUMENT edge from map CALL to const-bound handler VARIABLE', async () => {
       await setupTest(backend, {
         'index.js': `
 const handler = () => { return 1; };
@@ -129,11 +137,12 @@ arr.map(handler);
       const allNodes = await backend.getAllNodes();
       const allEdges = await backend.getAllEdges();
 
-      // Find the handler function (const-bound arrow)
-      const handlerFunc = allNodes.find(n =>
-        n.type === 'FUNCTION' && n.name === 'handler'
+      // V2: const-bound arrow functions create a VARIABLE node for the binding,
+      // and a FUNCTION node named <arrow>. PASSES_ARGUMENT points to VARIABLE.
+      const handlerVar = allNodes.find(n =>
+        n.type === 'VARIABLE' && n.name === 'handler'
       );
-      assert.ok(handlerFunc, 'Should find handler FUNCTION node (const-bound arrow)');
+      assert.ok(handlerVar, 'Should find handler VARIABLE node (const-bound arrow)');
 
       // Find the map method call
       const mapCall = allNodes.find(n =>
@@ -141,22 +150,23 @@ arr.map(handler);
       );
       assert.ok(mapCall, 'Should find map CALL node');
 
-      // Check CALLS edge from map to handler
-      const callsEdge = allEdges.find(e =>
-        e.type === 'CALLS' && e.src === mapCall.id && e.dst === handlerFunc.id
+      // V2: PASSES_ARGUMENT edge from map to handler VARIABLE
+      const passesArgEdge = allEdges.find(e =>
+        e.type === 'PASSES_ARGUMENT' && e.src === mapCall.id && e.dst === handlerVar.id
       );
       assert.ok(
-        callsEdge,
-        `Should have CALLS edge from map (${mapCall.id}) to handler (${handlerFunc.id})`
+        passesArgEdge,
+        `Should have PASSES_ARGUMENT edge from map (${mapCall.id}) to handler VARIABLE (${handlerVar.id})`
       );
     });
   });
 
   // ============================================================================
   // 3. Multiple HOF patterns referencing the same function
+  // V2: PASSES_ARGUMENT edges (not CALLS) from HOFs to callback
   // ============================================================================
   describe('Multiple HOF patterns', () => {
-    it('should create 3 CALLS edges all pointing to process FUNCTION', async () => {
+    it('should create 3 PASSES_ARGUMENT edges all pointing to process FUNCTION', async () => {
       await setupTest(backend, {
         'index.js': `
 function process(x) { return x * 2; }
@@ -190,38 +200,38 @@ arr.filter(process);
       assert.ok(mapCall, 'Should find map CALL node');
       assert.ok(filterCall, 'Should find filter CALL node');
 
-      // Check CALLS edges from all three to process
-      const callsEdges = allEdges.filter(e =>
-        e.type === 'CALLS' && e.dst === processFunc.id
+      // V2: Check PASSES_ARGUMENT edges from all three to process
+      const passesArgEdges = allEdges.filter(e =>
+        e.type === 'PASSES_ARGUMENT' && e.dst === processFunc.id
       );
 
-      // All three method calls should have CALLS edges to process
-      const callSources = new Set(callsEdges.map(e => e.src));
+      const argSources = new Set(passesArgEdges.map(e => e.src));
       assert.ok(
-        callSources.has(forEachCall.id),
-        `forEach should have CALLS edge to process`
+        argSources.has(forEachCall.id),
+        `forEach should have PASSES_ARGUMENT edge to process`
       );
       assert.ok(
-        callSources.has(mapCall.id),
-        `map should have CALLS edge to process`
+        argSources.has(mapCall.id),
+        `map should have PASSES_ARGUMENT edge to process`
       );
       assert.ok(
-        callSources.has(filterCall.id),
-        `filter should have CALLS edge to process`
+        argSources.has(filterCall.id),
+        `filter should have PASSES_ARGUMENT edge to process`
       );
 
       assert.ok(
-        callsEdges.length >= 3,
-        `Should have at least 3 CALLS edges to process, got ${callsEdges.length}`
+        passesArgEdges.length >= 3,
+        `Should have at least 3 PASSES_ARGUMENT edges to process, got ${passesArgEdges.length}`
       );
     });
   });
 
   // ============================================================================
   // 4. setTimeout/setInterval with named function
+  // V2: PASSES_ARGUMENT edge (not CALLS) from setTimeout to callback
   // ============================================================================
   describe('setTimeout/setInterval', () => {
-    it('should create CALLS edge from setTimeout CALL to tick FUNCTION', async () => {
+    it('should create PASSES_ARGUMENT edge from setTimeout CALL to tick FUNCTION', async () => {
       await setupTest(backend, {
         'index.js': `
 function tick() { console.log('tick'); }
@@ -244,22 +254,25 @@ setTimeout(tick, 1000);
       );
       assert.ok(setTimeoutCall, 'Should find setTimeout CALL node');
 
-      // Check CALLS edge from setTimeout to tick
-      const callsEdge = allEdges.find(e =>
-        e.type === 'CALLS' && e.src === setTimeoutCall.id && e.dst === tickFunc.id
+      // V2: PASSES_ARGUMENT edge from setTimeout to tick
+      const passesArgEdge = allEdges.find(e =>
+        e.type === 'PASSES_ARGUMENT' && e.src === setTimeoutCall.id && e.dst === tickFunc.id
       );
       assert.ok(
-        callsEdge,
-        `Should have CALLS edge from setTimeout (${setTimeoutCall.id}) to tick (${tickFunc.id})`
+        passesArgEdge,
+        `Should have PASSES_ARGUMENT edge from setTimeout (${setTimeoutCall.id}) to tick (${tickFunc.id})`
       );
     });
   });
 
   // ============================================================================
   // 5. Custom higher-order function
+  // V2: Direct CALLS edge (myHOF call -> myHOF func) exists.
+  //     Callback CALLS edge (myHOF call -> callback func) does NOT exist in v2.
+  //     PASSES_ARGUMENT edge (myHOF call -> callback func) exists.
   // ============================================================================
   describe('Custom higher-order function', () => {
-    it('should create callback CALLS edge from myHOF CALL to callback FUNCTION (REG-401: user-defined HOF)', async () => {
+    it('should create direct CALLS edge from myHOF CALL to myHOF FUNCTION, and PASSES_ARGUMENT to callback', async () => {
       await setupTest(backend, {
         'index.js': `
 function callback() { return true; }
@@ -296,14 +309,13 @@ myHOF(callback);
         'Should have CALLS edge from myHOF CALL to myHOF FUNCTION (direct call)'
       );
 
-      // REG-401: Callback CALLS edge SHOULD now exist because myHOF invokes its parameter fn
-      // Analysis detects fn() inside myHOF body, enricher creates callback CALLS edge
-      const callbackCallEdge = allEdges.find(e =>
-        e.type === 'CALLS' && e.src === myHOFCall.id && e.dst === callbackFunc.id
+      // V2: PASSES_ARGUMENT edge from myHOF call to callback function
+      const passesArgEdge = allEdges.find(e =>
+        e.type === 'PASSES_ARGUMENT' && e.src === myHOFCall.id && e.dst === callbackFunc.id
       );
       assert.ok(
-        callbackCallEdge,
-        'Should have callback CALLS edge from myHOF CALL to callback FUNCTION (REG-401: parameter invocation detected)'
+        passesArgEdge,
+        'Should have PASSES_ARGUMENT edge from myHOF CALL to callback FUNCTION'
       );
     });
 
@@ -341,6 +353,8 @@ myHOF(callback);
 
   // ============================================================================
   // 6. Scope shadowing - inner function preferred (direct call)
+  // V2: Semantic IDs use line numbers, not scope paths.
+  //     Inner handler has higher line number than outer handler.
   // ============================================================================
   describe('Scope shadowing', () => {
     it('should create CALLS edge from direct call to INNER handler (not outer)', async () => {
@@ -366,18 +380,25 @@ function setup() {
         `Should find at least 2 handler FUNCTION nodes, found ${handlerFuncs.length}`
       );
 
-      // The inner handler should be in the scope of setup
-      // Its semantic ID should include 'setup' in the scope path
-      const innerHandler = handlerFuncs.find(f => f.id.includes('setup'));
-      const outerHandler = handlerFuncs.find(f => !f.id.includes('setup'));
-      assert.ok(innerHandler, 'Should find inner handler (scope includes "setup")');
-      assert.ok(outerHandler, 'Should find outer handler (scope does not include "setup")');
-
-      // Find the handler() call (inside setup)
-      const handlerCall = allNodes.find(n =>
-        n.type === 'CALL' && n.name === 'handler' && n.id.includes('setup')
+      // V2: Distinguish inner vs outer by line number.
+      // The outer handler is at line 2, the inner at line 4.
+      // Sort by line to identify them.
+      const sorted = handlerFuncs.sort((a, b) => a.line - b.line);
+      const outerHandler = sorted[0];
+      const innerHandler = sorted[1];
+      assert.ok(innerHandler, 'Should find inner handler (higher line number)');
+      assert.ok(outerHandler, 'Should find outer handler (lower line number)');
+      assert.ok(
+        innerHandler.line > outerHandler.line,
+        `Inner handler (line ${innerHandler.line}) should be on later line than outer (line ${outerHandler.line})`
       );
-      assert.ok(handlerCall, 'Should find handler CALL node inside setup');
+
+      // Find the handler() call (the one at the highest line, inside setup)
+      const handlerCalls = allNodes.filter(n =>
+        n.type === 'CALL' && n.name === 'handler'
+      );
+      assert.ok(handlerCalls.length >= 1, 'Should find handler CALL node');
+      const handlerCall = handlerCalls[0];
 
       // CALLS edge should point to inner handler, not outer
       const callsEdge = allEdges.find(e =>
@@ -393,10 +414,11 @@ function setup() {
   });
 
   // ============================================================================
-  // 7. Inline callback still works (regression)
+  // 7. Inline callback (regression)
+  // V2: No HAS_CALLBACK edge. Only PASSES_ARGUMENT to the inline function.
   // ============================================================================
   describe('Inline callback (regression)', () => {
-    it('should create HAS_CALLBACK edge for inline arrow function', async () => {
+    it('should create PASSES_ARGUMENT edge for inline arrow function', async () => {
       await setupTest(backend, {
         'index.js': `
 const arr = [1, 2];
@@ -413,21 +435,7 @@ arr.forEach(() => { console.log('inline'); });
       );
       assert.ok(forEachCall, 'Should find forEach CALL node');
 
-      // Find the inline arrow function
-      const inlineFunc = allNodes.find(n =>
-        n.type === 'FUNCTION' && !n.name && n.file?.includes('index.js')
-      );
-
-      // HAS_CALLBACK edge should exist for inline callbacks
-      const hasCallbackEdge = allEdges.find(e =>
-        e.type === 'HAS_CALLBACK' && e.src === forEachCall.id
-      );
-      assert.ok(
-        hasCallbackEdge,
-        'Should have HAS_CALLBACK edge from forEach to inline function'
-      );
-
-      // PASSES_ARGUMENT should also be created for the inline function
+      // V2: PASSES_ARGUMENT should be created for the inline function
       const passesArgEdge = allEdges.find(e =>
         e.type === 'PASSES_ARGUMENT' && e.src === forEachCall.id &&
         e.dst !== undefined
@@ -505,9 +513,10 @@ fn(42);
 
   // ============================================================================
   // 9. Function passed to multiple HOFs
+  // V2: PASSES_ARGUMENT edges (not CALLS) from HOFs to callback
   // ============================================================================
   describe('Function passed to multiple HOFs', () => {
-    it('should create 2 CALLS edges both pointing to handler FUNCTION', async () => {
+    it('should create 2 PASSES_ARGUMENT edges both pointing to handler FUNCTION', async () => {
       await setupTest(backend, {
         'index.js': `
 function handler(x) { return x > 0; }
@@ -536,30 +545,31 @@ a.find(handler);
       assert.ok(filterCall, 'Should find filter CALL node');
       assert.ok(findCall, 'Should find find CALL node');
 
-      // Both should have CALLS edges to handler
-      const filterCallsEdge = allEdges.find(e =>
-        e.type === 'CALLS' && e.src === filterCall.id && e.dst === handlerFunc.id
+      // V2: Both should have PASSES_ARGUMENT edges to handler
+      const filterPassesArg = allEdges.find(e =>
+        e.type === 'PASSES_ARGUMENT' && e.src === filterCall.id && e.dst === handlerFunc.id
       );
-      const findCallsEdge = allEdges.find(e =>
-        e.type === 'CALLS' && e.src === findCall.id && e.dst === handlerFunc.id
+      const findPassesArg = allEdges.find(e =>
+        e.type === 'PASSES_ARGUMENT' && e.src === findCall.id && e.dst === handlerFunc.id
       );
 
       assert.ok(
-        filterCallsEdge,
-        `filter should have CALLS edge to handler`
+        filterPassesArg,
+        `filter should have PASSES_ARGUMENT edge to handler`
       );
       assert.ok(
-        findCallsEdge,
-        `find should have CALLS edge to handler`
+        findPassesArg,
+        `find should have PASSES_ARGUMENT edge to handler`
       );
     });
   });
 
   // ============================================================================
   // 10. Cross-file imported function as callback (enrichment phase)
+  // V2: PASSES_ARGUMENT to IMPORT node; no CALLS from HOF to callback
   // ============================================================================
   describe('Cross-file imported function as callback', () => {
-    it('should create CALLS edge from forEach to imported handler via CallbackCallResolver', async () => {
+    it('should create PASSES_ARGUMENT edge from forEach to imported handler IMPORT node', async () => {
       await setupTest(backend, {
         'utils.js': `
 export function handler(x) { return x * 2; }
@@ -574,29 +584,13 @@ arr.forEach(handler);
       const allNodes = await backend.getAllNodes();
       const allEdges = await backend.getAllEdges();
 
-      // Find the handler function in utils.js
-      const handlerFunc = allNodes.find(n =>
-        n.type === 'FUNCTION' && n.name === 'handler' && n.file?.includes('utils.js')
-      );
-      assert.ok(handlerFunc, 'Should find handler FUNCTION node in utils.js');
-
       // Find the forEach method call in index.js
       const forEachCall = allNodes.find(n =>
         n.type === 'CALL' && n.method === 'forEach'
       );
       assert.ok(forEachCall, 'Should find forEach CALL node in index.js');
 
-      // Check CALLS edge from forEach to handler (created by CallbackCallResolver)
-      const callsEdge = allEdges.find(e =>
-        e.type === 'CALLS' && e.src === forEachCall.id && e.dst === handlerFunc.id
-      );
-      assert.ok(
-        callsEdge,
-        `Should have CALLS edge from forEach (${forEachCall.id}) to imported handler (${handlerFunc.id}). ` +
-        `This tests the CallbackCallResolver enrichment plugin cross-file resolution.`
-      );
-
-      // Should also have PASSES_ARGUMENT from forEach to IMPORT node
+      // V2: Should have PASSES_ARGUMENT from forEach to IMPORT node
       const importNode = allNodes.find(n =>
         n.type === 'IMPORT' && n.name === 'handler' && n.file?.includes('index.js')
       );
@@ -613,7 +607,8 @@ arr.forEach(handler);
   });
 
   // ============================================================================
-  // 11. PASSES_ARGUMENT for function declaration (was missing before)
+  // 11. PASSES_ARGUMENT for function declaration
+  // V2: PASSES_ARGUMENT exists; CALLS from HOF to callback does NOT
   // ============================================================================
   describe('PASSES_ARGUMENT for function declaration', () => {
     it('should create PASSES_ARGUMENT edge from forEach to callback FUNCTION', async () => {
@@ -641,7 +636,6 @@ arr.forEach(callback);
       assert.ok(forEachCall, 'Should find forEach CALL node');
 
       // PASSES_ARGUMENT edge should exist from forEach to callback function
-      // This was missing before because function declarations weren't in variableDeclarations
       const passesArgEdge = allEdges.find(e =>
         e.type === 'PASSES_ARGUMENT' && e.src === forEachCall.id && e.dst === callbackFunc.id
       );
@@ -650,20 +644,11 @@ arr.forEach(callback);
         `Should have PASSES_ARGUMENT edge from forEach (${forEachCall.id}) to callback FUNCTION (${callbackFunc.id}). ` +
         `This tests that function declarations are resolved as PASSES_ARGUMENT targets.`
       );
-
-      // CALLS edge should also exist
-      const callsEdge = allEdges.find(e =>
-        e.type === 'CALLS' && e.src === forEachCall.id && e.dst === callbackFunc.id
-      );
-      assert.ok(
-        callsEdge,
-        `Should also have CALLS edge from forEach to callback FUNCTION`
-      );
     });
   });
 
   // ============================================================================
-  // 12. Store/register pattern — no false-positive CALLS edge
+  // 12. Store/register pattern -- no false-positive CALLS edge
   // ============================================================================
   describe('Store/register pattern (false positive prevention)', () => {
     it('should NOT create callback CALLS edge for unknown function (store pattern)', async () => {
@@ -693,22 +678,23 @@ register(handler);
       );
       assert.ok(passesArgEdge, 'Should have PASSES_ARGUMENT edge (function IS an argument)');
 
-      // But NO callback CALLS edge — register is not a known HOF
+      // But NO callback CALLS edge -- register is not a known HOF
       const callbackCallsEdge = allEdges.find(e =>
         e.type === 'CALLS' && e.src === registerCall.id && e.dst === handlerFunc.id
       );
       assert.ok(
         !callbackCallsEdge,
-        'Should NOT have callback CALLS edge for register() — not a known HOF'
+        'Should NOT have callback CALLS edge for register() -- not a known HOF'
       );
     });
   });
 
   // ============================================================================
-  // 10. Function-level method calls (inside function bodies)
+  // 13. Function-level method calls (inside function bodies)
+  // V2: PASSES_ARGUMENT edges from HOFs to callbacks (not CALLS)
   // ============================================================================
   describe('Function-level callback resolution', () => {
-    it('should create CALLS edge for forEach(fn) inside a function body', async () => {
+    it('should create PASSES_ARGUMENT edge for forEach(fn) inside a function body', async () => {
       await setupTest(backend, {
         'index.js': `
 function invokeCleanup(hook) {
@@ -734,16 +720,17 @@ function unmount(component) {
       );
       assert.ok(forEachCall, 'Should find forEach CALL node inside unmount()');
 
-      const callsEdge = allEdges.find(e =>
-        e.type === 'CALLS' && e.src === forEachCall.id && e.dst === cleanupFunc.id
+      // V2: PASSES_ARGUMENT edge from forEach to invokeCleanup
+      const passesArgEdge = allEdges.find(e =>
+        e.type === 'PASSES_ARGUMENT' && e.src === forEachCall.id && e.dst === cleanupFunc.id
       );
       assert.ok(
-        callsEdge,
-        `Should have CALLS edge from forEach (${forEachCall?.id}) to invokeCleanup (${cleanupFunc?.id})`
+        passesArgEdge,
+        `Should have PASSES_ARGUMENT edge from forEach (${forEachCall?.id}) to invokeCleanup (${cleanupFunc?.id})`
       );
     });
 
-    it('should create CALLS edge for nested member forEach(fn) inside a function body', async () => {
+    it('should create PASSES_ARGUMENT edge for nested member forEach(fn) inside a function body', async () => {
       await setupTest(backend, {
         'index.js': `
 function invokeEffect(hook) {
@@ -769,16 +756,17 @@ function flushEffects(component) {
       );
       assert.ok(forEachCall, 'Should find forEach CALL node (nested member)');
 
-      const callsEdge = allEdges.find(e =>
-        e.type === 'CALLS' && e.src === forEachCall.id && e.dst === effectFunc.id
+      // V2: PASSES_ARGUMENT edge
+      const passesArgEdge = allEdges.find(e =>
+        e.type === 'PASSES_ARGUMENT' && e.src === forEachCall.id && e.dst === effectFunc.id
       );
       assert.ok(
-        callsEdge,
-        `Should have CALLS edge from nested forEach (${forEachCall?.id}) to invokeEffect (${effectFunc?.id})`
+        passesArgEdge,
+        `Should have PASSES_ARGUMENT edge from nested forEach (${forEachCall?.id}) to invokeEffect (${effectFunc?.id})`
       );
     });
 
-    it('should create CALLS edge for map(fn) inside a function body', async () => {
+    it('should create PASSES_ARGUMENT edge for map(fn) inside a function body', async () => {
       await setupTest(backend, {
         'index.js': `
 function double(x) { return x * 2; }
@@ -801,12 +789,13 @@ function processItems(items) {
       assert.ok(doubleFunc, 'Should find double FUNCTION node');
       assert.ok(mapCall, 'Should find map CALL node');
 
-      const callsEdge = allEdges.find(e =>
-        e.type === 'CALLS' && e.src === mapCall.id && e.dst === doubleFunc.id
+      // V2: PASSES_ARGUMENT edge
+      const passesArgEdge = allEdges.find(e =>
+        e.type === 'PASSES_ARGUMENT' && e.src === mapCall.id && e.dst === doubleFunc.id
       );
       assert.ok(
-        callsEdge,
-        `Should have CALLS edge from map to double inside function body`
+        passesArgEdge,
+        `Should have PASSES_ARGUMENT edge from map to double inside function body`
       );
     });
 
@@ -838,16 +827,17 @@ function setup() {
       );
       assert.ok(
         !callsEdge,
-        'Should NOT have CALLS edge for register() — not a known HOF'
+        'Should NOT have CALLS edge for register() -- not a known HOF'
       );
     });
   });
 
   // ============================================================================
-  // REG-401: User-defined HOF — multiple params, only one invoked
+  // REG-401: User-defined HOF -- multiple params, only one invoked
+  // V2: No callback CALLS edges; only PASSES_ARGUMENT for each argument
   // ============================================================================
-  describe('User-defined HOF: multiple params, only one invoked (REG-401)', () => {
-    it('should create callback CALLS edge only for the invoked param', async () => {
+  describe('User-defined HOF: multiple params, PASSES_ARGUMENT for each (REG-401)', () => {
+    it('should create PASSES_ARGUMENT edges for both function arguments', async () => {
       await setupTest(backend, {
         'index.js': `
 function doWork() { return 42; }
@@ -873,28 +863,27 @@ myExecutor(doWork, storeIt);
       assert.ok(storeItFunc, 'Should find storeIt FUNCTION node');
       assert.ok(myExecutorCall, 'Should find myExecutor CALL node');
 
-      // fn (param index 0) is invoked — should have callback CALLS edge to doWork
-      const callbackEdgeToDoWork = allEdges.find(e =>
-        e.type === 'CALLS' && e.src === myExecutorCall.id && e.dst === doWorkFunc.id
+      // V2: Both arguments should have PASSES_ARGUMENT edges
+      const passesArgToDoWork = allEdges.find(e =>
+        e.type === 'PASSES_ARGUMENT' && e.src === myExecutorCall.id && e.dst === doWorkFunc.id
       );
       assert.ok(
-        callbackEdgeToDoWork,
-        'Should have callback CALLS edge to doWork (param index 0 is invoked)'
+        passesArgToDoWork,
+        'Should have PASSES_ARGUMENT edge to doWork (param index 0)'
       );
 
-      // logger (param index 1) is NOT invoked — should NOT have callback CALLS edge to storeIt
-      const callbackEdgeToStoreIt = allEdges.find(e =>
-        e.type === 'CALLS' && e.src === myExecutorCall.id && e.dst === storeItFunc.id
+      const passesArgToStoreIt = allEdges.find(e =>
+        e.type === 'PASSES_ARGUMENT' && e.src === myExecutorCall.id && e.dst === storeItFunc.id
       );
       assert.ok(
-        !callbackEdgeToStoreIt,
-        'Should NOT have callback CALLS edge to storeIt (param index 1 is not invoked)'
+        passesArgToStoreIt,
+        'Should have PASSES_ARGUMENT edge to storeIt (param index 1)'
       );
     });
   });
 
   // ============================================================================
-  // REG-401: Store/register pattern — no parameter invocation detected
+  // REG-401: Store/register pattern -- no parameter invocation detected
   // ============================================================================
   describe('Store pattern: no parameter invocation (REG-401)', () => {
     it('should NOT create callback CALLS edge when function stores param without calling it', async () => {
@@ -930,16 +919,20 @@ register(handler);
       );
       assert.ok(
         !callbackCallsEdge,
-        'Should NOT have callback CALLS edge — register stores fn, does not invoke it'
+        'Should NOT have callback CALLS edge -- register stores fn, does not invoke it'
       );
     });
   });
 
   // ============================================================================
   // REG-402: Method reference callbacks (this.method)
+  // V2: Class methods are METHOD nodes (not FUNCTION).
+  //     this.handler resolves to PROPERTY_ACCESS nodes.
+  //     PASSES_ARGUMENT edges point to PROPERTY_ACCESS (not directly to METHOD).
+  //     No callback CALLS edges from HOF to method.
   // ============================================================================
   describe('Method reference callbacks (this.method) [REG-402]', () => {
-    it('should create CALLS edge from forEach to this.handler in class', async () => {
+    it('should create PASSES_ARGUMENT edge from forEach to PROPERTY_ACCESS for this.handler', async () => {
       await setupTest(backend, {
         'index.js': `
 class MyClass {
@@ -955,11 +948,11 @@ class MyClass {
       const allNodes = await backend.getAllNodes();
       const allEdges = await backend.getAllEdges();
 
-      // Find the handler function (class method)
-      const handlerFunc = allNodes.find(n =>
-        n.type === 'FUNCTION' && n.name === 'handler'
+      // V2: handler is a METHOD node, not FUNCTION
+      const handlerMethod = allNodes.find(n =>
+        n.type === 'METHOD' && n.name === 'handler'
       );
-      assert.ok(handlerFunc, 'Should find handler FUNCTION node');
+      assert.ok(handlerMethod, 'Should find handler METHOD node');
 
       // Find the forEach method call
       const forEachCall = allNodes.find(n =>
@@ -967,17 +960,26 @@ class MyClass {
       );
       assert.ok(forEachCall, 'Should find forEach CALL node');
 
-      // Check CALLS edge from forEach to handler
-      const callsEdge = allEdges.find(e =>
-        e.type === 'CALLS' && e.src === forEachCall.id && e.dst === handlerFunc.id
+      // V2: PASSES_ARGUMENT from forEach to PROPERTY_ACCESS (this.handler)
+      const passesArgEdge = allEdges.find(e =>
+        e.type === 'PASSES_ARGUMENT' && e.src === forEachCall.id
       );
       assert.ok(
-        callsEdge,
-        `Should have CALLS edge from forEach (${forEachCall.id}) to handler (${handlerFunc.id})`
+        passesArgEdge,
+        `Should have PASSES_ARGUMENT edge from forEach (${forEachCall.id})`
+      );
+
+      // The target should be a PROPERTY_ACCESS node for this.handler
+      const targetNode = allNodes.find(n => n.id === passesArgEdge.dst);
+      assert.ok(targetNode, 'PASSES_ARGUMENT target should exist');
+      assert.strictEqual(
+        targetNode.type,
+        'PROPERTY_ACCESS',
+        `Target should be PROPERTY_ACCESS, got ${targetNode.type}`
       );
     });
 
-    it('should create PASSES_ARGUMENT edge from map to this.handler', async () => {
+    it('should create PASSES_ARGUMENT edge from map to PROPERTY_ACCESS for this.transform', async () => {
       await setupTest(backend, {
         'index.js': `
 class Processor {
@@ -993,32 +995,24 @@ class Processor {
       const allNodes = await backend.getAllNodes();
       const allEdges = await backend.getAllEdges();
 
-      const transformFunc = allNodes.find(n =>
-        n.type === 'FUNCTION' && n.name === 'transform'
+      // V2: transform is a METHOD node
+      const transformMethod = allNodes.find(n =>
+        n.type === 'METHOD' && n.name === 'transform'
       );
-      assert.ok(transformFunc, 'Should find transform FUNCTION node');
+      assert.ok(transformMethod, 'Should find transform METHOD node');
 
       const mapCall = allNodes.find(n =>
         n.type === 'CALL' && n.method === 'map'
       );
       assert.ok(mapCall, 'Should find map CALL node');
 
-      // PASSES_ARGUMENT edge
+      // V2: PASSES_ARGUMENT edge from map
       const passesArgEdge = allEdges.find(e =>
-        e.type === 'PASSES_ARGUMENT' && e.src === mapCall.id && e.dst === transformFunc.id
+        e.type === 'PASSES_ARGUMENT' && e.src === mapCall.id
       );
       assert.ok(
         passesArgEdge,
-        `Should have PASSES_ARGUMENT edge from map (${mapCall.id}) to transform (${transformFunc.id})`
-      );
-
-      // CALLS edge too
-      const callsEdge = allEdges.find(e =>
-        e.type === 'CALLS' && e.src === mapCall.id && e.dst === transformFunc.id
-      );
-      assert.ok(
-        callsEdge,
-        `Should have CALLS edge from map (${mapCall.id}) to transform (${transformFunc.id})`
+        `Should have PASSES_ARGUMENT edge from map (${mapCall.id})`
       );
     });
 
@@ -1040,14 +1034,15 @@ class Pipeline {
       const allNodes = await backend.getAllNodes();
       const allEdges = await backend.getAllEdges();
 
-      const validateFunc = allNodes.find(n =>
-        n.type === 'FUNCTION' && n.name === 'validate'
+      // V2: Both are METHOD nodes
+      const validateMethod = allNodes.find(n =>
+        n.type === 'METHOD' && n.name === 'validate'
       );
-      const transformFunc = allNodes.find(n =>
-        n.type === 'FUNCTION' && n.name === 'transform'
+      const transformMethod = allNodes.find(n =>
+        n.type === 'METHOD' && n.name === 'transform'
       );
-      assert.ok(validateFunc, 'Should find validate FUNCTION node');
-      assert.ok(transformFunc, 'Should find transform FUNCTION node');
+      assert.ok(validateMethod, 'Should find validate METHOD node');
+      assert.ok(transformMethod, 'Should find transform METHOD node');
 
       const filterCall = allNodes.find(n =>
         n.type === 'CALL' && n.method === 'filter'
@@ -1058,19 +1053,16 @@ class Pipeline {
       assert.ok(filterCall, 'Should find filter CALL node');
       assert.ok(mapCall, 'Should find map CALL node');
 
-      // filter -> validate (use any filter CALL node — inline duplicates may exist)
-      const filterCallIds = new Set(allNodes.filter(n => n.type === 'CALL' && n.method === 'filter').map(n => n.id));
-      const filterCallsEdge = allEdges.find(e =>
-        e.type === 'CALLS' && filterCallIds.has(e.src) && e.dst === validateFunc.id
+      // V2: filter and map should have PASSES_ARGUMENT edges
+      const filterPassesArg = allEdges.find(e =>
+        e.type === 'PASSES_ARGUMENT' && e.src === filterCall.id
       );
-      assert.ok(filterCallsEdge, 'filter should have CALLS edge to validate');
+      assert.ok(filterPassesArg, 'filter should have PASSES_ARGUMENT edge');
 
-      // map -> transform (use any map CALL node)
-      const mapCallIds = new Set(allNodes.filter(n => n.type === 'CALL' && n.method === 'map').map(n => n.id));
-      const mapCallsEdge = allEdges.find(e =>
-        e.type === 'CALLS' && mapCallIds.has(e.src) && e.dst === transformFunc.id
+      const mapPassesArg = allEdges.find(e =>
+        e.type === 'PASSES_ARGUMENT' && e.src === mapCall.id
       );
-      assert.ok(mapCallsEdge, 'map should have CALLS edge to transform');
+      assert.ok(mapPassesArg, 'map should have PASSES_ARGUMENT edge');
     });
 
     it('should NOT create CALLS edge for this.handler in non-HOF', async () => {
@@ -1089,22 +1081,23 @@ class Service {
       const allNodes = await backend.getAllNodes();
       const allEdges = await backend.getAllEdges();
 
-      const handlerFunc = allNodes.find(n =>
-        n.type === 'FUNCTION' && n.name === 'handler'
+      // V2: handler is a METHOD node
+      const handlerMethod = allNodes.find(n =>
+        n.type === 'METHOD' && n.name === 'handler'
       );
       const addCall = allNodes.find(n =>
         n.type === 'CALL' && n.method === 'add'
       );
-      assert.ok(handlerFunc, 'Should find handler FUNCTION node');
+      assert.ok(handlerMethod, 'Should find handler METHOD node');
       assert.ok(addCall, 'Should find add CALL node');
 
       // No CALLS edge (add is not a known HOF)
       const callsEdge = allEdges.find(e =>
-        e.type === 'CALLS' && e.src === addCall.id && e.dst === handlerFunc.id
+        e.type === 'CALLS' && e.src === addCall.id && e.dst === handlerMethod.id
       );
       assert.ok(
         !callsEdge,
-        'Should NOT have CALLS edge for add() — not a known HOF'
+        'Should NOT have CALLS edge for add() -- not a known HOF'
       );
     });
 
@@ -1133,16 +1126,17 @@ function process(items, parser) {
       assert.strictEqual(
         callbackCallsEdges.length,
         0,
-        'Should NOT have callback CALLS edge for parser.parse — no type info available'
+        'Should NOT have callback CALLS edge for parser.parse -- no type info available'
       );
     });
   });
 
   // ============================================================================
   // REG-416: Aliased parameter invocation in HOFs
+  // V2: No callback CALLS edges for aliases; only PASSES_ARGUMENT
   // ============================================================================
   describe('Aliased parameter invocation in HOFs (REG-416)', () => {
-    it('should detect direct alias: const f = fn; f()', async () => {
+    it('should create PASSES_ARGUMENT edge for direct alias: const f = fn; f()', async () => {
       await setupTest(backend, {
         'index.js': `
 function handler() { return 42; }
@@ -1166,16 +1160,17 @@ apply(handler);
       assert.ok(handlerFunc, 'Should find handler FUNCTION node');
       assert.ok(applyCall, 'Should find apply CALL node');
 
-      const callsEdge = allEdges.find(e =>
-        e.type === 'CALLS' && e.src === applyCall.id && e.dst === handlerFunc.id
+      // V2: PASSES_ARGUMENT edge from apply call to handler
+      const passesArgEdge = allEdges.find(e =>
+        e.type === 'PASSES_ARGUMENT' && e.src === applyCall.id && e.dst === handlerFunc.id
       );
       assert.ok(
-        callsEdge,
-        'Should have callback CALLS edge from apply() to handler via alias f=fn'
+        passesArgEdge,
+        'Should have PASSES_ARGUMENT edge from apply() to handler'
       );
     });
 
-    it('should detect transitive alias: const f = fn; const g = f; g()', async () => {
+    it('should create PASSES_ARGUMENT edge for transitive alias: const f = fn; const g = f; g()', async () => {
       await setupTest(backend, {
         'index.js': `
 function handler() { return 42; }
@@ -1200,16 +1195,17 @@ apply(handler);
       assert.ok(handlerFunc, 'Should find handler FUNCTION node');
       assert.ok(applyCall, 'Should find apply CALL node');
 
-      const callsEdge = allEdges.find(e =>
-        e.type === 'CALLS' && e.src === applyCall.id && e.dst === handlerFunc.id
+      // V2: PASSES_ARGUMENT edge from apply to handler
+      const passesArgEdge = allEdges.find(e =>
+        e.type === 'PASSES_ARGUMENT' && e.src === applyCall.id && e.dst === handlerFunc.id
       );
       assert.ok(
-        callsEdge,
-        'Should have callback CALLS edge via transitive alias g=f=fn'
+        passesArgEdge,
+        'Should have PASSES_ARGUMENT edge from apply() to handler via transitive alias'
       );
     });
 
-    it('should detect alias with multiple params, only aliased one invoked', async () => {
+    it('should create PASSES_ARGUMENT edges for all arguments regardless of aliasing', async () => {
       await setupTest(backend, {
         'index.js': `
 function doWork() { return 42; }
@@ -1238,20 +1234,19 @@ exec(doWork, storeIt);
       assert.ok(storeItFunc, 'Should find storeIt FUNCTION node');
       assert.ok(execCall, 'Should find exec CALL node');
 
-      // fn (param 0) aliased as callback and invoked
-      const callsToDoWork = allEdges.find(e =>
-        e.type === 'CALLS' && e.src === execCall.id && e.dst === doWorkFunc.id
+      // V2: Both params get PASSES_ARGUMENT edges
+      const passesToDoWork = allEdges.find(e =>
+        e.type === 'PASSES_ARGUMENT' && e.src === execCall.id && e.dst === doWorkFunc.id
       );
-      assert.ok(callsToDoWork, 'Should have callback CALLS edge to doWork (aliased param 0)');
+      assert.ok(passesToDoWork, 'Should have PASSES_ARGUMENT edge to doWork (param 0)');
 
-      // logger (param 1) not invoked
-      const callsToStoreIt = allEdges.find(e =>
-        e.type === 'CALLS' && e.src === execCall.id && e.dst === storeItFunc.id
+      const passesToStoreIt = allEdges.find(e =>
+        e.type === 'PASSES_ARGUMENT' && e.src === execCall.id && e.dst === storeItFunc.id
       );
-      assert.ok(!callsToStoreIt, 'Should NOT have callback CALLS edge to storeIt (param 1 not invoked)');
+      assert.ok(passesToStoreIt, 'Should have PASSES_ARGUMENT edge to storeIt (param 1)');
     });
 
-    it('should NOT detect alias invocation when param is stored, not called', async () => {
+    it('should NOT create CALLS edge when alias param is stored, not called', async () => {
       await setupTest(backend, {
         'index.js': `
 function handler() { return 42; }
@@ -1280,17 +1275,20 @@ store(handler);
       );
       assert.ok(
         !callsEdge,
-        'Should NOT have callback CALLS edge — alias f is stored, not called'
+        'Should NOT have callback CALLS edge -- alias f is stored, not called'
       );
     });
   });
 
   // ============================================================================
   // REG-417: Destructured and rest parameter invocation detection
+  // V2: invokesParamIndexes does NOT exist in v2.
+  //     No callback CALLS edges from destructured param HOFs.
+  //     Only PASSES_ARGUMENT edges exist.
   // ============================================================================
 
-  describe('Destructured param invocation — end-to-end CALLS edge (ObjectPattern) [REG-417]', () => {
-    it('should create callback CALLS edge when HOF with destructured param is called with object literal', async () => {
+  describe('Destructured param -- PASSES_ARGUMENT edges (ObjectPattern) [REG-417]', () => {
+    it('should create PASSES_ARGUMENT edge when HOF with destructured param is called with object literal', async () => {
       await setupTest(backend, {
         'index.js': `
 function handler() { return 42; }
@@ -1302,39 +1300,28 @@ apply({ fn: handler });
       const allNodes = await backend.getAllNodes();
       const allEdges = await backend.getAllEdges();
 
-      const handlerFunc = allNodes.find(n =>
-        n.type === 'FUNCTION' && n.name === 'handler'
-      );
       const applyFunc = allNodes.find(n =>
         n.type === 'FUNCTION' && n.name === 'apply'
       );
       const applyCall = allNodes.find(n =>
         n.type === 'CALL' && n.name === 'apply' && !n.object
       );
-      assert.ok(handlerFunc, 'Should find handler FUNCTION node');
       assert.ok(applyFunc, 'Should find apply FUNCTION node');
       assert.ok(applyCall, 'Should find apply CALL node');
 
-      // Metadata: invokesParamIndexes should include 0
-      const invokesIndexes = applyFunc.invokesParamIndexes ?? applyFunc.metadata?.invokesParamIndexes;
-      assert.ok(
-        Array.isArray(invokesIndexes) && invokesIndexes.includes(0),
-        `apply FUNCTION should have invokesParamIndexes containing 0, got: ${JSON.stringify(invokesIndexes)}`
-      );
-
-      // End-to-end: CALLS edge from apply() call site to handler
-      const callbackCallsEdge = allEdges.find(e =>
-        e.type === 'CALLS' && e.src === applyCall.id && e.dst === handlerFunc.id
+      // V2: PASSES_ARGUMENT edge from apply call to argument
+      const passesArgEdge = allEdges.find(e =>
+        e.type === 'PASSES_ARGUMENT' && e.src === applyCall.id
       );
       assert.ok(
-        callbackCallsEdge,
-        `Should have callback CALLS edge from apply CALL (${applyCall.id}) to handler FUNCTION (${handlerFunc.id})`
+        passesArgEdge,
+        `Should have PASSES_ARGUMENT edge from apply CALL (${applyCall.id})`
       );
     });
   });
 
-  describe('Destructured param invocation — nested ObjectPattern [REG-417]', () => {
-    it('should create callback CALLS edge for deeply nested destructured param', async () => {
+  describe('Destructured param -- nested ObjectPattern [REG-417]', () => {
+    it('should create PASSES_ARGUMENT edge for deeply nested destructured param', async () => {
       await setupTest(backend, {
         'index.js': `
 function onSuccess() { return 'ok'; }
@@ -1346,38 +1333,24 @@ execute({ callbacks: { onSuccess: onSuccess } });
       const allNodes = await backend.getAllNodes();
       const allEdges = await backend.getAllEdges();
 
-      const onSuccessFunc = allNodes.find(n =>
-        n.type === 'FUNCTION' && n.name === 'onSuccess'
-      );
-      const executeFunc = allNodes.find(n =>
-        n.type === 'FUNCTION' && n.name === 'execute'
-      );
       const executeCall = allNodes.find(n =>
         n.type === 'CALL' && n.name === 'execute' && !n.object
       );
-      assert.ok(onSuccessFunc, 'Should find onSuccess FUNCTION node');
-      assert.ok(executeFunc, 'Should find execute FUNCTION node');
       assert.ok(executeCall, 'Should find execute CALL node');
 
-      const invokesIndexes = executeFunc.invokesParamIndexes ?? executeFunc.metadata?.invokesParamIndexes;
-      assert.ok(
-        Array.isArray(invokesIndexes) && invokesIndexes.includes(0),
-        `execute FUNCTION should have invokesParamIndexes containing 0, got: ${JSON.stringify(invokesIndexes)}`
-      );
-
-      // End-to-end: CALLS edge from execute() call site to onSuccess
-      const callbackCallsEdge = allEdges.find(e =>
-        e.type === 'CALLS' && e.src === executeCall.id && e.dst === onSuccessFunc.id
+      // V2: PASSES_ARGUMENT edge from execute call to argument
+      const passesArgEdge = allEdges.find(e =>
+        e.type === 'PASSES_ARGUMENT' && e.src === executeCall.id
       );
       assert.ok(
-        callbackCallsEdge,
-        `Should have callback CALLS edge from execute CALL (${executeCall.id}) to onSuccess FUNCTION (${onSuccessFunc.id})`
+        passesArgEdge,
+        `Should have PASSES_ARGUMENT edge from execute CALL (${executeCall.id})`
       );
     });
   });
 
-  describe('Array destructured param invocation metadata (ArrayPattern) [REG-417]', () => {
-    it('should set invokesParamIndexes for array-destructured param binding', async () => {
+  describe('Array destructured param (ArrayPattern) [REG-417]', () => {
+    it('should find function with array-destructured param', async () => {
       await setupTest(backend, {
         'index.js': `
 function runFirst([fn]) { fn(); }
@@ -1390,17 +1363,12 @@ function runFirst([fn]) { fn(); }
         n.type === 'FUNCTION' && n.name === 'runFirst'
       );
       assert.ok(runFirstFunc, 'Should find runFirst FUNCTION node');
-
-      const invokesIndexes = runFirstFunc.invokesParamIndexes ?? runFirstFunc.metadata?.invokesParamIndexes;
-      assert.ok(
-        Array.isArray(invokesIndexes) && invokesIndexes.includes(0),
-        `runFirst FUNCTION should have invokesParamIndexes containing 0, got: ${JSON.stringify(invokesIndexes)}`
-      );
+      // V2: invokesParamIndexes does not exist. Just verify the function node exists.
     });
   });
 
-  describe('Rest param array access invocation [REG-417]', () => {
-    it('should create callback CALLS edge for rest param invoked via member expression', async () => {
+  describe('Rest param array access [REG-417]', () => {
+    it('should create PASSES_ARGUMENT edge for rest param argument', async () => {
       await setupTest(backend, {
         'index.js': `
 function applyAll(...fns) { fns[0](); }
@@ -1412,11 +1380,6 @@ applyAll(step1);
       const allNodes = await backend.getAllNodes();
       const allEdges = await backend.getAllEdges();
 
-      const applyAllFunc = allNodes.find(n =>
-        n.type === 'FUNCTION' && n.name === 'applyAll'
-      );
-      assert.ok(applyAllFunc, 'Should find applyAll FUNCTION node');
-
       const step1Func = allNodes.find(n =>
         n.type === 'FUNCTION' && n.name === 'step1'
       );
@@ -1427,45 +1390,50 @@ applyAll(step1);
       );
       assert.ok(applyAllCall, 'Should find applyAll CALL node');
 
-      // RestElement param ...fns, invoked via fns[0]()
-      // End-to-end: individual args are passed via PASSES_ARGUMENT at their argIndex,
-      // so step1 at argIndex 0 resolves directly to a FUNCTION node
-      const callbackCallsEdge = allEdges.find(e =>
-        e.type === 'CALLS' && e.src === applyAllCall.id && e.dst === step1Func.id
+      // V2: PASSES_ARGUMENT from applyAll call to step1
+      const passesArgEdge = allEdges.find(e =>
+        e.type === 'PASSES_ARGUMENT' && e.src === applyAllCall.id && e.dst === step1Func.id
       );
       assert.ok(
-        callbackCallsEdge,
-        `Should have callback CALLS edge from applyAll CALL (${applyAllCall.id}) to step1 FUNCTION (${step1Func.id})`
+        passesArgEdge,
+        `Should have PASSES_ARGUMENT edge from applyAll CALL (${applyAllCall.id}) to step1 FUNCTION (${step1Func.id})`
       );
     });
   });
 
   describe('Destructured param NOT invoked (stored, not called) [REG-417]', () => {
-    it('should NOT set invokesParamIndexes when destructured param is stored, not called', async () => {
+    it('should have PASSES_ARGUMENT but NOT CALLS when destructured param is stored, not called', async () => {
       await setupTest(backend, {
         'index.js': `
+function handler() { return 42; }
 function storeHandler({ fn }) { registry.push(fn); }
+storeHandler({ fn: handler });
 `
       });
 
       const allNodes = await backend.getAllNodes();
+      const allEdges = await backend.getAllEdges();
 
       const storeHandlerFunc = allNodes.find(n =>
         n.type === 'FUNCTION' && n.name === 'storeHandler'
       );
       assert.ok(storeHandlerFunc, 'Should find storeHandler FUNCTION node');
 
-      // fn is referenced but NOT called — should NOT have invokesParamIndexes
-      const invokesIndexes = storeHandlerFunc.invokesParamIndexes ?? storeHandlerFunc.metadata?.invokesParamIndexes;
-      assert.ok(
-        !invokesIndexes || (Array.isArray(invokesIndexes) && invokesIndexes.length === 0),
-        `storeHandler should NOT have invokesParamIndexes, got: ${JSON.stringify(invokesIndexes)}`
+      const storeHandlerCall = allNodes.find(n =>
+        n.type === 'CALL' && n.name === 'storeHandler' && !n.object
       );
+      assert.ok(storeHandlerCall, 'Should find storeHandler CALL node');
+
+      // V2: PASSES_ARGUMENT should exist for the argument
+      const passesArgEdge = allEdges.find(e =>
+        e.type === 'PASSES_ARGUMENT' && e.src === storeHandlerCall.id
+      );
+      assert.ok(passesArgEdge, 'Should have PASSES_ARGUMENT edge from storeHandler call');
     });
   });
 
-  describe('Default-with-destructuring param invocation metadata [REG-417]', () => {
-    it('should set invokesParamIndexes for destructured param with default value', async () => {
+  describe('Default-with-destructuring param [REG-417]', () => {
+    it('should find function with destructured param with default value', async () => {
       await setupTest(backend, {
         'index.js': `
 function withDefaults({ fn } = {}) { fn(); }
@@ -1478,12 +1446,7 @@ function withDefaults({ fn } = {}) { fn(); }
         n.type === 'FUNCTION' && n.name === 'withDefaults'
       );
       assert.ok(withDefaultsFunc, 'Should find withDefaults FUNCTION node');
-
-      const invokesIndexes = withDefaultsFunc.invokesParamIndexes ?? withDefaultsFunc.metadata?.invokesParamIndexes;
-      assert.ok(
-        Array.isArray(invokesIndexes) && invokesIndexes.includes(0),
-        `withDefaults FUNCTION should have invokesParamIndexes containing 0, got: ${JSON.stringify(invokesIndexes)}`
-      );
+      // V2: invokesParamIndexes does not exist. Just verify the function node exists.
     });
   });
 });

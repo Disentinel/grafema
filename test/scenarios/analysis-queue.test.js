@@ -96,7 +96,7 @@ describe('AnalysisQueue', () => {
     queue = new AnalysisQueue({
       socketPath: TEST_SOCKET_PATH,
       maxWorkers: 2,
-      plugins: ['JSASTAnalyzer'],
+      plugins: ['CoreV2Analyzer'],
     });
 
     await queue.start();
@@ -114,7 +114,7 @@ describe('AnalysisQueue', () => {
         file: join(FIXTURE_PATH, f),
         moduleId: `MODULE#queue_test${i}`,
         moduleName: f.replace('.js', ''),
-        plugins: ['JSASTAnalyzer'],
+        plugins: ['CoreV2Analyzer'],
       }));
 
     console.log(`Adding ${files.length} tasks to queue...`);
@@ -157,7 +157,7 @@ describe('AnalysisQueue', () => {
       file: testFile,
       moduleId: 'MODULE#multi_plugin_test',
       moduleName: 'multi_plugin_test',
-      plugins: ['JSASTAnalyzer', 'ExpressRouteAnalyzer', 'FetchAnalyzer'],
+      plugins: ['CoreV2Analyzer', 'ExpressRouteAnalyzer', 'FetchAnalyzer'],
     });
 
     const stats = await withTimeout(
@@ -167,7 +167,7 @@ describe('AnalysisQueue', () => {
     );
 
     assert.strictEqual(stats.tasksCompleted, 1, `Expected 1 completed, got ${stats.tasksCompleted}. Errors: ${JSON.stringify(stats.errors)}`);
-    assert.ok(stats.nodesCreated > 0, 'Should create nodes from JSASTAnalyzer');
+    assert.ok(stats.nodesCreated > 0, 'Should create nodes from CoreV2Analyzer');
   });
 
   it('should handle errors gracefully', async () => {
@@ -188,7 +188,7 @@ describe('AnalysisQueue', () => {
       file: '/nonexistent/file.js',
       moduleId: 'MODULE#error_test',
       moduleName: 'error_test',
-      plugins: ['JSASTAnalyzer'],
+      plugins: ['CoreV2Analyzer'],
     });
 
     const stats = await withTimeout(
@@ -209,7 +209,7 @@ describe('AnalysisQueue', () => {
     queue = new AnalysisQueue({
       socketPath: TEST_SOCKET_PATH,
       maxWorkers: 4,
-      plugins: ['JSASTAnalyzer'],
+      plugins: ['CoreV2Analyzer'],
     });
 
     await queue.start();
@@ -225,7 +225,7 @@ describe('AnalysisQueue', () => {
           file: join(FIXTURE_PATH, f),
           moduleId: `MODULE#stats_test_${batch}_${f}`,
           moduleName: `stats_test_${batch}_${f}`,
-          plugins: ['JSASTAnalyzer'],
+          plugins: ['CoreV2Analyzer'],
         });
       }
     }

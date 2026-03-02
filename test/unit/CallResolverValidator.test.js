@@ -40,12 +40,12 @@ describe('CallResolverValidator', () => {
     const orchestrator = createTestOrchestrator(backend);
     await orchestrator.run(testDir);
 
-    return { backend, db, testDir };
+    return { backend, db, testDir, cleanup: () => db.cleanup() };
   }
 
   describe('Datalog attr predicate', () => {
     it('should access node attributes via attr()', async () => {
-      const { backend } = await setupTest({
+      const { backend, db } = await setupTest({
         'index.js': `
 function foo() { return 42; }
 const result = foo();
@@ -79,14 +79,14 @@ const result = foo();
         });
         assert.ok(found, 'Should find the method call node');
       } finally {
-        await backend.close();
+        await db.cleanup();
       }
     });
   });
 
   describe('Unresolved function calls', () => {
     it('should detect call to undefined function using Datalog', async () => {
-      const { backend } = await setupTest({
+      const { backend, db } = await setupTest({
         'index.js': `
 // Empty file - we add nodes manually
         `
@@ -113,12 +113,12 @@ const result = foo();
 
         console.log('Datalog correctly detected unresolved function call');
       } finally {
-        await backend.close();
+        await db.cleanup();
       }
     });
 
     it('should NOT flag resolved function calls', async () => {
-      const { backend } = await setupTest({
+      const { backend, db } = await setupTest({
         'index.js': `
 function foo() { return 42; }
 const result = foo();
@@ -144,12 +144,12 @@ const result = foo();
           }
         }
       } finally {
-        await backend.close();
+        await db.cleanup();
       }
     });
 
     it('should NOT flag method calls (external)', async () => {
-      const { backend } = await setupTest({
+      const { backend, db } = await setupTest({
         'index.js': `
 // Empty - we add manually
         `
@@ -176,14 +176,14 @@ const result = foo();
 
         console.log('Datalog correctly ignored external method call');
       } finally {
-        await backend.close();
+        await db.cleanup();
       }
     });
   });
 
   describe('Combined guarantee checking', () => {
     it('should validate both CALL_SITE and METHOD_CALL correctly', async () => {
-      const { backend } = await setupTest({
+      const { backend, db } = await setupTest({
         'index.js': `// Empty`
       });
 
@@ -246,7 +246,7 @@ const result = foo();
 
         console.log('Combined guarantee check passed correctly');
       } finally {
-        await backend.close();
+        await db.cleanup();
       }
     });
   });
@@ -257,7 +257,7 @@ const result = foo();
 
   describe('Edge Cases - Shadowing and Aliasing', () => {
     it('should handle local variable shadowing a class name', async () => {
-      const { backend } = await setupTest({
+      const { backend, db } = await setupTest({
         'index.js': `// Empty`
       });
 
@@ -283,12 +283,12 @@ const result = foo();
         assert.strictEqual(violations.length, 0, 'Shadowed method call should not be flagged as CALL_SITE');
         console.log('Shadowing edge case handled correctly');
       } finally {
-        await backend.close();
+        await db.cleanup();
       }
     });
 
     it('should detect aliased function that becomes unresolvable', async () => {
-      const { backend } = await setupTest({
+      const { backend, db } = await setupTest({
         'index.js': `// Empty`
       });
 
@@ -312,14 +312,14 @@ const result = foo();
         assert.strictEqual(violations.length, 1, 'Aliased method call should be flagged');
         console.log('Aliased function detection works');
       } finally {
-        await backend.close();
+        await db.cleanup();
       }
     });
   });
 
   describe('Edge Cases - Chained and Nested Calls', () => {
     it('should handle chained method calls', async () => {
-      const { backend } = await setupTest({
+      const { backend, db } = await setupTest({
         'index.js': `// Empty`
       });
 
@@ -341,12 +341,12 @@ const result = foo();
         assert.strictEqual(violations.length, 0, 'Chained calls should not be flagged');
         console.log('Chained calls handled correctly');
       } finally {
-        await backend.close();
+        await db.cleanup();
       }
     });
 
     it('should handle nested object method calls', async () => {
-      const { backend } = await setupTest({
+      const { backend, db } = await setupTest({
         'index.js': `// Empty`
       });
 
@@ -365,14 +365,14 @@ const result = foo();
         assert.strictEqual(violations.length, 0, 'Nested object calls should not be flagged');
         console.log('Nested object calls handled correctly');
       } finally {
-        await backend.close();
+        await db.cleanup();
       }
     });
   });
 
   describe('Edge Cases - Dynamic and Computed Calls', () => {
     it('should handle dynamic method access (computed property)', async () => {
-      const { backend } = await setupTest({
+      const { backend, db } = await setupTest({
         'index.js': `// Empty`
       });
 
@@ -391,12 +391,12 @@ const result = foo();
         assert.strictEqual(violations.length, 0, 'Dynamic method calls should not be flagged as CALL_SITE');
         console.log('Dynamic method calls handled correctly');
       } finally {
-        await backend.close();
+        await db.cleanup();
       }
     });
 
     it('should handle eval as external (with CALLS edge) but flag Function constructor', async () => {
-      const { backend, testDir } = await setupTest({
+      const { backend, db, testDir } = await setupTest({
         'index.js': `// Empty`
       });
 
@@ -430,14 +430,14 @@ const result = foo();
 
         console.log('eval recognized as external, Function flagged');
       } finally {
-        await backend.close();
+        await db.cleanup();
       }
     });
   });
 
   describe('Edge Cases - Prototype and bind/call/apply', () => {
     it('should handle prototype method calls', async () => {
-      const { backend } = await setupTest({
+      const { backend, db } = await setupTest({
         'index.js': `// Empty`
       });
 
@@ -456,12 +456,12 @@ const result = foo();
         assert.strictEqual(violations.length, 0, 'Prototype method calls should not be flagged');
         console.log('Prototype method calls handled correctly');
       } finally {
-        await backend.close();
+        await db.cleanup();
       }
     });
 
     it('should handle bind/call/apply patterns', async () => {
-      const { backend } = await setupTest({
+      const { backend, db } = await setupTest({
         'index.js': `// Empty`
       });
 
@@ -484,14 +484,14 @@ const result = foo();
         assert.strictEqual(violations.length, 0, 'bind/call/apply should not be flagged');
         console.log('bind/call/apply patterns handled correctly');
       } finally {
-        await backend.close();
+        await db.cleanup();
       }
     });
   });
 
   describe('Edge Cases - False Positive Prevention', () => {
     it('should NOT flag imported function calls', async () => {
-      const { backend } = await setupTest({
+      const { backend, db } = await setupTest({
         'index.js': `// Empty`
       });
 
@@ -514,12 +514,12 @@ const result = foo();
         assert.strictEqual(violations.length, 0, 'Imported function calls should not be flagged');
         console.log('Imported function calls not flagged (false positive prevented)');
       } finally {
-        await backend.close();
+        await db.cleanup();
       }
     });
 
     it('should NOT flag IIFE (Immediately Invoked Function Expression)', async () => {
-      const { backend } = await setupTest({
+      const { backend, db } = await setupTest({
         'index.js': `// Empty`
       });
 
@@ -541,12 +541,12 @@ const result = foo();
         assert.strictEqual(violations.length, 0, 'IIFE should not be flagged');
         console.log('IIFE not flagged (false positive prevented)');
       } finally {
-        await backend.close();
+        await db.cleanup();
       }
     });
 
     it('should NOT flag callback functions passed to higher-order functions', async () => {
-      const { backend } = await setupTest({
+      const { backend, db } = await setupTest({
         'index.js': `// Empty`
       });
 
@@ -568,14 +568,14 @@ const result = foo();
         assert.strictEqual(violations.length, 0, 'Callback patterns should not be flagged');
         console.log('Callback patterns handled correctly');
       } finally {
-        await backend.close();
+        await db.cleanup();
       }
     });
   });
 
   describe('Edge Cases - False Negative Prevention', () => {
     it('should flag typo in function name', async () => {
-      const { backend } = await setupTest({
+      const { backend, db } = await setupTest({
         'index.js': `// Empty`
       });
 
@@ -600,12 +600,12 @@ const result = foo();
 
         console.log('Typo in function name detected');
       } finally {
-        await backend.close();
+        await db.cleanup();
       }
     });
 
     it('should flag call to function from wrong module', async () => {
-      const { backend } = await setupTest({
+      const { backend, db } = await setupTest({
         'index.js': `// Empty`
       });
 
@@ -627,12 +627,12 @@ const result = foo();
         assert.strictEqual(violations.length, 1, 'Call to unimported function should be flagged');
         console.log('Unimported function call detected');
       } finally {
-        await backend.close();
+        await db.cleanup();
       }
     });
 
     it('should flag call to deleted/removed function', async () => {
-      const { backend } = await setupTest({
+      const { backend, db } = await setupTest({
         'index.js': `// Empty`
       });
 
@@ -652,14 +652,14 @@ const result = foo();
         assert.strictEqual(violations.length, 1, 'Call to removed function should be flagged');
         console.log('Stale function call detected');
       } finally {
-        await backend.close();
+        await db.cleanup();
       }
     });
   });
 
   describe('Edge Cases - Unusual Names', () => {
     it('should handle functions with special characters in names', async () => {
-      const { backend } = await setupTest({
+      const { backend, db } = await setupTest({
         'index.js': `// Empty`
       });
 
@@ -684,12 +684,12 @@ const result = foo();
         assert.strictEqual(violations.length, 0, 'Special character function names should work');
         console.log('Special character names handled correctly');
       } finally {
-        await backend.close();
+        await db.cleanup();
       }
     });
 
     it('should handle unicode function names', async () => {
-      const { backend } = await setupTest({
+      const { backend, db } = await setupTest({
         'index.js': `// Empty`
       });
 
@@ -710,14 +710,14 @@ const result = foo();
         assert.strictEqual(violations.length, 0, 'Unicode function names should work');
         console.log('Unicode names handled correctly');
       } finally {
-        await backend.close();
+        await db.cleanup();
       }
     });
   });
 
   describe('Edge Cases - Multiple Calls', () => {
     it('should resolve multiple calls to same function', async () => {
-      const { backend } = await setupTest({
+      const { backend, db } = await setupTest({
         'index.js': `// Empty`
       });
 
@@ -742,12 +742,12 @@ const result = foo();
         assert.strictEqual(violations.length, 0, 'All calls to same function should resolve');
         console.log('Multiple calls to same function handled correctly');
       } finally {
-        await backend.close();
+        await db.cleanup();
       }
     });
 
     it('should flag only unresolved calls among multiple', async () => {
-      const { backend } = await setupTest({
+      const { backend, db } = await setupTest({
         'index.js': `// Empty`
       });
 
@@ -776,14 +776,14 @@ const result = foo();
 
         console.log('Mixed resolved/unresolved calls handled correctly');
       } finally {
-        await backend.close();
+        await db.cleanup();
       }
     });
   });
 
   describe('Stress Tests', () => {
     it('should handle large number of calls', async () => {
-      const { backend } = await setupTest({
+      const { backend, db } = await setupTest({
         'index.js': `// Empty`
       });
 
@@ -832,7 +832,7 @@ const result = foo();
         assert.strictEqual(violations.length, 5, 'Should find exactly 5 unresolved calls');
         console.log('Large number of calls handled correctly');
       } finally {
-        await backend.close();
+        await db.cleanup();
       }
     });
   });
@@ -843,7 +843,7 @@ const result = foo();
 
   describe('REG-227: Resolution Type Categorization', () => {
     it('should NOT flag JavaScript built-in function calls (REG-583 update)', async () => {
-      const { backend, testDir } = await setupTest({
+      const { backend, db, testDir } = await setupTest({
         'index.js': `// Empty`
       });
 
@@ -888,12 +888,12 @@ const result = foo();
           'require should count as resolvedBuiltin (REQUIRE_BUILTINS fallback)');
         assert.strictEqual(summary.unresolvedCalls, 0, 'Should have no unresolved calls');
       } finally {
-        await backend.close();
+        await db.cleanup();
       }
     });
 
     it('should NOT flag external package calls with CALLS edges', async () => {
-      const { backend, testDir } = await setupTest({
+      const { backend, db, testDir } = await setupTest({
         'index.js': `// Empty`
       });
 
@@ -926,12 +926,12 @@ const result = foo();
 
         console.log('External package calls correctly recognized');
       } finally {
-        await backend.close();
+        await db.cleanup();
       }
     });
 
     it('should flag truly unresolved calls as warnings (not errors)', async () => {
-      const { backend, testDir } = await setupTest({
+      const { backend, db, testDir } = await setupTest({
         'index.js': `// Empty`
       });
 
@@ -964,12 +964,12 @@ const result = foo();
 
         console.log('Unresolved calls correctly reported as warnings');
       } finally {
-        await backend.close();
+        await db.cleanup();
       }
     });
 
     it('should correctly categorize mixed resolution types in summary (REG-583)', async () => {
-      const { backend, testDir } = await setupTest({
+      const { backend, db, testDir } = await setupTest({
         'index.js': `// Empty`
       });
 
@@ -1018,7 +1018,7 @@ const result = foo();
         assert.strictEqual(summary.methodCalls, 1, 'Should count 1 method call');
         assert.strictEqual(summary.unresolvedCalls, 1, 'Should count 1 unresolved');
       } finally {
-        await backend.close();
+        await db.cleanup();
       }
     });
   });
@@ -1029,7 +1029,7 @@ const result = foo();
 
   describe('REG-583: Runtime-typed node recognition', () => {
     it('should count CALLS to ECMASCRIPT_BUILTIN as resolvedExternal', async () => {
-      const { backend, testDir } = await setupTest({
+      const { backend, db, testDir } = await setupTest({
         'index.js': `// Empty`
       });
 
@@ -1058,12 +1058,12 @@ const result = foo();
         assert.strictEqual(summary.resolvedExternal, 1,
           'CALLS to ECMASCRIPT_BUILTIN should count as resolvedExternal');
       } finally {
-        await backend.close();
+        await db.cleanup();
       }
     });
 
     it('should count CALLS to WEB_API as resolvedExternal', async () => {
-      const { backend, testDir } = await setupTest({
+      const { backend, db, testDir } = await setupTest({
         'index.js': `// Empty`
       });
 
@@ -1092,12 +1092,12 @@ const result = foo();
         assert.strictEqual(summary.resolvedExternal, 1,
           'CALLS to WEB_API should count as resolvedExternal');
       } finally {
-        await backend.close();
+        await db.cleanup();
       }
     });
 
     it('should count CALLS to BROWSER_API as resolvedExternal', async () => {
-      const { backend, testDir } = await setupTest({
+      const { backend, db, testDir } = await setupTest({
         'index.js': `// Empty`
       });
 
@@ -1126,12 +1126,12 @@ const result = foo();
         assert.strictEqual(summary.resolvedExternal, 1,
           'CALLS to BROWSER_API should count as resolvedExternal');
       } finally {
-        await backend.close();
+        await db.cleanup();
       }
     });
 
     it('should count CALLS to NODEJS_STDLIB as resolvedExternal', async () => {
-      const { backend, testDir } = await setupTest({
+      const { backend, db, testDir } = await setupTest({
         'index.js': `// Empty`
       });
 
@@ -1160,12 +1160,12 @@ const result = foo();
         assert.strictEqual(summary.resolvedExternal, 1,
           'CALLS to NODEJS_STDLIB should count as resolvedExternal');
       } finally {
-        await backend.close();
+        await db.cleanup();
       }
     });
 
     it('should count CALLS to UNKNOWN_CALL_TARGET as resolvedExternal', async () => {
-      const { backend, testDir } = await setupTest({
+      const { backend, db, testDir } = await setupTest({
         'index.js': `// Empty`
       });
 
@@ -1195,12 +1195,12 @@ const result = foo();
         assert.strictEqual(summary.resolvedExternal, 1,
           'CALLS to UNKNOWN_CALL_TARGET should count as resolvedExternal');
       } finally {
-        await backend.close();
+        await db.cleanup();
       }
     });
 
     it('should count require with no CALLS edge as resolvedBuiltin (REQUIRE_BUILTINS fallback)', async () => {
-      const { backend, testDir } = await setupTest({
+      const { backend, db, testDir } = await setupTest({
         'index.js': `// Empty`
       });
 
@@ -1233,12 +1233,12 @@ const result = foo();
         assert.strictEqual(summary.unresolvedCalls, 0,
           'require() should not count as unresolved');
       } finally {
-        await backend.close();
+        await db.cleanup();
       }
     });
 
     it('should count parseInt WITH CALLS edge as resolvedExternal (not builtin fallback)', async () => {
-      const { backend, testDir } = await setupTest({
+      const { backend, db, testDir } = await setupTest({
         'index.js': `// Empty`
       });
 
@@ -1271,7 +1271,7 @@ const result = foo();
         assert.strictEqual(summary.resolvedBuiltin, 0,
           'parseInt should NOT use builtin fallback when CALLS edge exists');
       } finally {
-        await backend.close();
+        await db.cleanup();
       }
     });
   });

@@ -59,7 +59,7 @@ export class NodejsBuiltinsResolver extends Plugin {
         nodes: ['EXTERNAL_FUNCTION', 'EXTERNAL_MODULE'],
         edges: ['CALLS', 'IMPORTS_FROM']
       },
-      dependencies: ['JSASTAnalyzer', 'ImportExportLinker'],
+      dependencies: ['CoreV2Analyzer'],
       consumes: ['IMPORTS_FROM'],
       produces: ['CALLS', 'IMPORTS_FROM']
     };

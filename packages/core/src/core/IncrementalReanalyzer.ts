@@ -4,16 +4,14 @@
  * HOW IT WORKS:
  * 1. Clear all nodes for stale files (using clearFileNodesIfNeeded)
  * 2. Re-create MODULE nodes with updated contentHash
- * 3. Run JSASTAnalyzer.analyzeModule() for each stale module
- * 4. Re-run enrichment plugins to rebuild cross-file edges
+ * 3. Run CoreV2Analyzer.execute() for full analysis
+ * 4. Re-run ExportEntityLinker to rebuild cross-file edges
  */
 
 import { relative } from 'path';
 import { clearFileNodesIfNeeded } from './FileNodeManager.js';
 import { resolveNodeFile } from '../utils/resolveNodeFile.js';
-import { JSASTAnalyzer } from '../plugins/analysis/JSASTAnalyzer.js';
-import { InstanceOfResolver } from '../plugins/enrichment/InstanceOfResolver.js';
-import { ImportExportLinker } from '../plugins/enrichment/ImportExportLinker.js';
+import { CoreV2Analyzer } from '../plugins/analysis/CoreV2Analyzer.js';
 import { ExportEntityLinker } from '../plugins/enrichment/ExportEntityLinker.js';
 import type { GraphBackend, PluginContext, BaseNodeRecord } from '@grafema/types';
 import { brandNodeInternal } from './brandNodeInternal.js';
@@ -119,39 +117,46 @@ export class IncrementalReanalyzer {
       modulesToAnalyze.push(moduleNode);
     }
 
-    // STEP 3: Run JSASTAnalyzer for each module
-    const analyzer = new JSASTAnalyzer();
+    // STEP 3: Run CoreV2Analyzer for stale modules
+    if (modulesToAnalyze.length > 0) {
+      if (options.onProgress) {
+        options.onProgress({
+          phase: 'analysis',
+          processedFiles: 0,
+          totalFiles: modulesToAnalyze.length,
+        });
+      }
 
-    for (let i = 0; i < modulesToAnalyze.length; i++) {
-      const module = modulesToAnalyze[i];
+      const analyzer = new CoreV2Analyzer();
+
+      const pluginContext: PluginContext = {
+        graph: this.graph,
+        manifest: { projectPath: this.projectPath },
+        config: { projectPath: this.projectPath }
+      };
+
+      try {
+        const result = await analyzer.execute(pluginContext);
+        nodesCreated += result.created.nodes;
+        edgesCreated += result.created.edges;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`[IncrementalReanalyzer] CoreV2Analyzer error:`, message);
+      }
 
       if (options.onProgress) {
         options.onProgress({
           phase: 'analysis',
-          processedFiles: i + 1,
+          processedFiles: modulesToAnalyze.length,
           totalFiles: modulesToAnalyze.length,
-          currentService: module.file
         });
-      }
-
-      try {
-        const result = await analyzer.analyzeModule(
-          module as Parameters<typeof analyzer.analyzeModule>[0],
-          this.graph,
-          this.projectPath
-        );
-        nodesCreated += result.nodes;
-        edgesCreated += result.edges;
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        console.error(`[IncrementalReanalyzer] Failed to analyze ${module.file}:`, message);
       }
     }
 
-    // STEP 4: Re-run enrichment plugins
+    // STEP 4: Re-run enrichment (ExportEntityLinker only)
     if (!options.skipEnrichment && modulesToAnalyze.length > 0) {
       if (options.onProgress) {
-        options.onProgress({ phase: 'enrichment', processedFiles: 0, totalFiles: 2 });
+        options.onProgress({ phase: 'enrichment', processedFiles: 0, totalFiles: 1 });
       }
 
       const pluginContext: PluginContext = {
@@ -160,43 +165,17 @@ export class IncrementalReanalyzer {
         config: { projectPath: this.projectPath }
       };
 
-      const instanceOfResolver = new InstanceOfResolver();
-      try {
-        const result1 = await instanceOfResolver.execute(pluginContext);
-        edgesCreated += result1.created.edges;
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        console.error(`[IncrementalReanalyzer] InstanceOfResolver error:`, message);
-      }
-
-      if (options.onProgress) {
-        options.onProgress({ phase: 'enrichment', processedFiles: 1, totalFiles: 3 });
-      }
-
-      const importExportLinker = new ImportExportLinker();
-      try {
-        const result2 = await importExportLinker.execute(pluginContext);
-        edgesCreated += result2.created.edges;
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        console.error(`[IncrementalReanalyzer] ImportExportLinker error:`, message);
-      }
-
-      if (options.onProgress) {
-        options.onProgress({ phase: 'enrichment', processedFiles: 2, totalFiles: 3 });
-      }
-
       const exportEntityLinker = new ExportEntityLinker();
       try {
-        const result3 = await exportEntityLinker.execute(pluginContext);
-        edgesCreated += result3.created.edges;
+        const result = await exportEntityLinker.execute(pluginContext);
+        edgesCreated += result.created.edges;
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         console.error(`[IncrementalReanalyzer] ExportEntityLinker error:`, message);
       }
 
       if (options.onProgress) {
-        options.onProgress({ phase: 'enrichment', processedFiles: 3, totalFiles: 3 });
+        options.onProgress({ phase: 'enrichment', processedFiles: 1, totalFiles: 1 });
       }
     }
 

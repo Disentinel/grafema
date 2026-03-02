@@ -214,10 +214,10 @@ const helper = new Helper();
 
         const source = allNodes.find(n => n.id === assignment.dst);
         assert.ok(source, 'Source node not found');
-        // NewExpression creates a CONSTRUCTOR_CALL node that may later resolve to CLASS
+        // V2: NewExpression creates a CALL node with isNew=true (v1 used CONSTRUCTOR_CALL)
         assert.ok(
-          source.type === 'CLASS' || source.type === 'EXTERNAL_MODULE' || source.type === 'CONSTRUCTOR_CALL',
-          `Expected CLASS, EXTERNAL_MODULE, or CONSTRUCTOR_CALL, got ${source.type}`
+          source.type === 'CLASS' || source.type === 'EXTERNAL_MODULE' || source.type === 'CONSTRUCTOR_CALL' || source.type === 'CALL',
+          `Expected CLASS, EXTERNAL_MODULE, CONSTRUCTOR_CALL, or CALL, got ${source.type}`
         );
       } finally {
         await backend.close();
@@ -315,17 +315,26 @@ const myFoo = new Foo();
           `"const myFoo = new Foo()" should create VARIABLE node, got ${myFoo.type}`
         );
 
-        // Verify INSTANCE_OF edge still exists (myFoo -[INSTANCE_OF]-> Foo class)
+        // Verify INSTANCE_OF edge still exists
+        // V2: INSTANCE_OF goes from CALL(new Foo) to CLASS(Foo), not from VARIABLE to CLASS
         const fooClass = allNodes.find(n => n.name === 'Foo' && n.type === 'CLASS');
         assert.ok(fooClass, 'CLASS node "Foo" not found');
 
+        // Find the CALL node that myFoo is assigned from
+        const assignedEdge = edges.find(e => e.type === 'ASSIGNED_FROM' && e.src === myFoo.id);
+        assert.ok(assignedEdge, 'myFoo should have ASSIGNED_FROM edge');
+        const callNode = allNodes.find(n => n.id === assignedEdge.dst);
+
         const instanceOfEdge = edges.find(e =>
-          e.type === 'INSTANCE_OF' && e.src === myFoo.id && e.dst === fooClass.id
+          e.type === 'INSTANCE_OF' &&
+          (e.src === myFoo.id || e.src === callNode?.id) &&
+          e.dst === fooClass.id
         );
         assert.ok(
           instanceOfEdge,
-          `Expected INSTANCE_OF edge from "myFoo" to CLASS "Foo". ` +
-          `Edges from myFoo: ${jsonStringify(edges.filter(e => e.src === myFoo.id))}`
+          `Expected INSTANCE_OF edge to CLASS "Foo". ` +
+          `Edges from myFoo: ${jsonStringify(edges.filter(e => e.src === myFoo.id))}. ` +
+          `Edges from call: ${callNode ? jsonStringify(edges.filter(e => e.src === callNode.id)) : 'N/A'}`
         );
 
         // Also verify ASSIGNED_FROM edge exists (myFoo -[ASSIGNED_FROM]-> CONSTRUCTOR_CALL)

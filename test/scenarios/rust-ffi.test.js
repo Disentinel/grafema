@@ -15,7 +15,6 @@ import { createTestOrchestrator } from '../helpers/createTestOrchestrator.js';
 import { RustModuleIndexer } from '@grafema/core';
 import { RustAnalyzer } from '@grafema/core';
 import { RustFFIEnricher } from '@grafema/core';
-import { MethodCallResolver } from '@grafema/core';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -34,7 +33,6 @@ describe('Rust FFI Analysis', () => {
       extraPlugins: [
         new RustModuleIndexer(),
         new RustAnalyzer(),
-        new MethodCallResolver(),
         new RustFFIEnricher(),
       ]
     });

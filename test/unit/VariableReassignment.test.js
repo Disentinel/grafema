@@ -1,18 +1,17 @@
 /**
- * Tests for Variable Reassignment Tracking (FLOWS_INTO and READS_FROM edges)
+ * Tests for Variable Reassignment Tracking (EXPRESSION nodes with WRITES_TO and READS_FROM edges)
  *
- * REG-290: Track variable reassignments with FLOWS_INTO edges and READS_FROM self-loops.
+ * REG-290: Track variable reassignments.
  *
- * When code does x = y, x += y, x -= y, etc., we need to create edges:
- * - FLOWS_INTO: value --FLOWS_INTO--> variable (write side)
- * - READS_FROM: variable --READS_FROM--> variable (self-loop for compound operators)
+ * V2 behavior:
+ * When code does x = y, x += y, x -= y, etc., we create:
+ * - EXPRESSION node with operator metadata (name="=", "+=", etc.)
+ * - WRITES_TO: EXPRESSION --WRITES_TO--> variable (write side)
+ * - READS_FROM: EXPRESSION --READS_FROM--> source (read side)
  *
  * Edge direction:
- * - FLOWS_INTO: src=value, dst=variable
- * - READS_FROM: src=variable, dst=variable (self-loop)
- *
- * This is the TDD test file for REG-290. Tests are written BEFORE implementation,
- * so they should be RED initially.
+ * - WRITES_TO: src=EXPRESSION, dst=variable
+ * - READS_FROM: src=EXPRESSION, dst=source variable/constant
  */
 
 import { describe, it, after, beforeEach } from 'node:test';
@@ -74,12 +73,12 @@ describe('Variable Reassignment Tracking', () => {
   // Simple Assignment (operator = '=')
   // ============================================================================
   describe('Simple assignment (=)', () => {
-    it('should create FLOWS_INTO edge for simple variable reassignment', async () => {
+    it('should create EXPRESSION with WRITES_TO and READS_FROM for simple variable reassignment', async () => {
       await setupTest(backend, {
         'index.js': `
 let total = 0;
 const value = 10;
-total = value;  // value --FLOWS_INTO--> total
+total = value;
         `
       });
 
@@ -92,16 +91,27 @@ total = value;  // value --FLOWS_INTO--> total
       assert.ok(totalVar, 'Variable "total" not found');
       assert.ok(valueVar, 'Variable "value" not found');
 
-      const flowsInto = allEdges.find(e =>
-        e.type === 'FLOWS_INTO' &&
-        e.src === valueVar.id &&
+      // V2: EXPRESSION node with operator "="
+      const assignExpr = allNodes.find(n =>
+        n.type === 'EXPRESSION' && n.name === '='
+      );
+      assert.ok(assignExpr, 'EXPRESSION node with name="=" not found');
+
+      // WRITES_TO edge: EXPRESSION -> total
+      const writesTo = allEdges.find(e =>
+        e.type === 'WRITES_TO' &&
+        e.src === assignExpr.id &&
         e.dst === totalVar.id
       );
+      assert.ok(writesTo, 'WRITES_TO edge from EXPRESSION to total not found');
 
-      assert.ok(
-        flowsInto,
-        `Expected FLOWS_INTO edge from value to total. Found edges: ${JSON.stringify(allEdges.filter(e => e.type === 'FLOWS_INTO'))}`
+      // READS_FROM edge: EXPRESSION -> value
+      const readsFrom = allEdges.find(e =>
+        e.type === 'READS_FROM' &&
+        e.src === assignExpr.id &&
+        e.dst === valueVar.id
       );
+      assert.ok(readsFrom, 'READS_FROM edge from EXPRESSION to value not found');
     });
 
     it('should NOT create READS_FROM self-loop for simple assignment', async () => {
@@ -119,7 +129,7 @@ x = y;
       const xVar = allNodes.find(n => n.name === 'x' && n.type === 'VARIABLE');
       assert.ok(xVar, 'Variable "x" not found');
 
-      // Should NOT create READS_FROM for simple assignment
+      // Should NOT create READS_FROM self-loop (x -> x)
       const readsFrom = allEdges.find(e =>
         e.type === 'READS_FROM' &&
         e.src === xVar.id &&
@@ -132,11 +142,11 @@ x = y;
       );
     });
 
-    it('should create FLOWS_INTO edge for literal reassignment', { todo: 'flaky: database isolation' }, async () => {
+    it('should create EXPRESSION for literal reassignment', { todo: 'flaky: database isolation' }, async () => {
       await setupTest(backend, {
         'index.js': `
 let x = 0;
-x = 42;  // literal(42) --FLOWS_INTO--> x
+x = 42;
         `
       });
 
@@ -146,27 +156,26 @@ x = 42;  // literal(42) --FLOWS_INTO--> x
       const xVar = allNodes.find(n => n.name === 'x' && n.type === 'VARIABLE');
       assert.ok(xVar, 'Variable "x" not found');
 
-      const literal42 = allNodes.find(n => n.type === 'LITERAL' && n.value === 42);
-      assert.ok(literal42, 'LITERAL node with value 42 not created');
+      // V2: EXPRESSION with WRITES_TO
+      const assignExpr = allNodes.find(n =>
+        n.type === 'EXPRESSION' && n.name === '='
+      );
+      assert.ok(assignExpr, 'EXPRESSION node not found');
 
-      const flowsInto = allEdges.find(e =>
-        e.type === 'FLOWS_INTO' &&
-        e.src === literal42.id &&
+      const writesTo = allEdges.find(e =>
+        e.type === 'WRITES_TO' &&
+        e.src === assignExpr.id &&
         e.dst === xVar.id
       );
-
-      assert.ok(
-        flowsInto,
-        'Expected FLOWS_INTO edge from literal(42) to x'
-      );
+      assert.ok(writesTo, 'WRITES_TO edge from EXPRESSION to x not found');
     });
 
-    it('should create FLOWS_INTO edge for expression reassignment', async () => {
+    it('should create EXPRESSION with WRITES_TO for expression reassignment', async () => {
       await setupTest(backend, {
         'index.js': `
 let total = 0;
 const a = 5, b = 3;
-total = a + b;  // EXPRESSION(a+b) --FLOWS_INTO--> total
+total = a + b;
         `
       });
 
@@ -176,21 +185,18 @@ total = a + b;  // EXPRESSION(a+b) --FLOWS_INTO--> total
       const totalVar = allNodes.find(n => n.name === 'total' && n.type === 'VARIABLE');
       assert.ok(totalVar, 'Variable "total" not found');
 
-      const expression = allNodes.find(n =>
-        n.type === 'EXPRESSION' && n.expressionType === 'BinaryExpression'
+      // V2: EXPRESSION with WRITES_TO
+      const assignExpr = allNodes.find(n =>
+        n.type === 'EXPRESSION' && n.name === '='
       );
-      assert.ok(expression, 'EXPRESSION node not created for BinaryExpression');
+      assert.ok(assignExpr, 'EXPRESSION node not found');
 
-      const flowsInto = allEdges.find(e =>
-        e.type === 'FLOWS_INTO' &&
-        e.src === expression.id &&
+      const writesTo = allEdges.find(e =>
+        e.type === 'WRITES_TO' &&
+        e.src === assignExpr.id &&
         e.dst === totalVar.id
       );
-
-      assert.ok(
-        flowsInto,
-        'Expected FLOWS_INTO edge from expression to total'
-      );
+      assert.ok(writesTo, 'WRITES_TO edge from EXPRESSION to total not found');
     });
 
     it('should handle member expression on RHS', async () => {
@@ -198,7 +204,7 @@ total = a + b;  // EXPRESSION(a+b) --FLOWS_INTO--> total
         'index.js': `
 let total = 0;
 const item = { price: 10 };
-total = item.price;  // EXPRESSION(item.price) --FLOWS_INTO--> total
+total = item.price;
         `
       });
 
@@ -208,21 +214,24 @@ total = item.price;  // EXPRESSION(item.price) --FLOWS_INTO--> total
       const totalVar = allNodes.find(n => n.name === 'total' && n.type === 'VARIABLE');
       assert.ok(totalVar, 'Variable "total" not found');
 
-      const expression = allNodes.find(n =>
-        n.type === 'EXPRESSION' && n.expressionType === 'MemberExpression'
+      // V2: EXPRESSION with WRITES_TO to total
+      const assignExpr = allNodes.find(n =>
+        n.type === 'EXPRESSION' && n.name === '='
       );
-      assert.ok(expression, 'EXPRESSION node not created for MemberExpression');
+      assert.ok(assignExpr, 'EXPRESSION node not found');
 
-      const flowsInto = allEdges.find(e =>
-        e.type === 'FLOWS_INTO' &&
-        e.src === expression.id &&
+      const writesTo = allEdges.find(e =>
+        e.type === 'WRITES_TO' &&
+        e.src === assignExpr.id &&
         e.dst === totalVar.id
       );
+      assert.ok(writesTo, 'WRITES_TO edge from EXPRESSION to total not found');
 
-      assert.ok(
-        flowsInto,
-        'Expected FLOWS_INTO edge from member expression to total'
+      // V2: PROPERTY_ACCESS node for item.price should exist
+      const propAccess = allNodes.find(n =>
+        n.type === 'PROPERTY_ACCESS' && n.name === 'item.price'
       );
+      assert.ok(propAccess, 'PROPERTY_ACCESS node for item.price not found');
     });
 
     it('should handle call expression on RHS', async () => {
@@ -230,7 +239,7 @@ total = item.price;  // EXPRESSION(item.price) --FLOWS_INTO--> total
         'index.js': `
 function getPrice() { return 10; }
 let total = 0;
-total = getPrice();  // getPrice() --FLOWS_INTO--> total
+total = getPrice();
         `
       });
 
@@ -245,16 +254,18 @@ total = getPrice();  // getPrice() --FLOWS_INTO--> total
       );
       assert.ok(getPriceCall, 'CALL node for getPrice() not found');
 
-      const flowsInto = allEdges.find(e =>
-        e.type === 'FLOWS_INTO' &&
-        e.src === getPriceCall.id &&
+      // V2: EXPRESSION with WRITES_TO to total, ASSIGNED_FROM to CALL
+      const assignExpr = allNodes.find(n =>
+        n.type === 'EXPRESSION' && n.name === '='
+      );
+      assert.ok(assignExpr, 'EXPRESSION node not found');
+
+      const writesTo = allEdges.find(e =>
+        e.type === 'WRITES_TO' &&
+        e.src === assignExpr.id &&
         e.dst === totalVar.id
       );
-
-      assert.ok(
-        flowsInto,
-        'Expected FLOWS_INTO edge from call to total'
-      );
+      assert.ok(writesTo, 'WRITES_TO edge from EXPRESSION to total not found');
     });
   });
 
@@ -262,13 +273,12 @@ total = getPrice();  // getPrice() --FLOWS_INTO--> total
   // Arithmetic Compound Operators (+=, -=, *=, /=, %=, **=)
   // ============================================================================
   describe('Arithmetic compound operators', () => {
-    it('should create READS_FROM self-loop for += operator', async () => {
+    it('should create EXPRESSION with READS_FROM for += operator', async () => {
       await setupTest(backend, {
         'index.js': `
 let total = 0;
 const price = 10;
-total += price;  // total --READS_FROM--> total (self-loop)
-                 // price --FLOWS_INTO--> total
+total += price;
         `
       });
 
@@ -281,27 +291,25 @@ total += price;  // total --READS_FROM--> total (self-loop)
       assert.ok(totalVar, 'Variable "total" not found');
       assert.ok(priceVar, 'Variable "price" not found');
 
-      // READS_FROM edge (self-loop)
+      // V2: EXPRESSION(+=) with WRITES_TO and READS_FROM
+      const assignExpr = allNodes.find(n =>
+        n.type === 'EXPRESSION' && n.name === '+='
+      );
+      assert.ok(assignExpr, 'EXPRESSION node with name="+=" not found');
+
+      const writesTo = allEdges.find(e =>
+        e.type === 'WRITES_TO' &&
+        e.src === assignExpr.id &&
+        e.dst === totalVar.id
+      );
+      assert.ok(writesTo, 'WRITES_TO edge not found for compound operator +=');
+
       const readsFrom = allEdges.find(e =>
         e.type === 'READS_FROM' &&
-        e.src === totalVar.id &&
-        e.dst === totalVar.id
+        e.src === assignExpr.id &&
+        e.dst === priceVar.id
       );
-      assert.ok(
-        readsFrom,
-        'READS_FROM self-loop not found for compound operator +='
-      );
-
-      // FLOWS_INTO edge
-      const flowsInto = allEdges.find(e =>
-        e.type === 'FLOWS_INTO' &&
-        e.src === priceVar.id &&
-        e.dst === totalVar.id
-      );
-      assert.ok(
-        flowsInto,
-        'FLOWS_INTO edge not found for compound operator +='
-      );
+      assert.ok(readsFrom, 'READS_FROM edge not found for compound operator +=');
     });
 
     it('should handle all arithmetic compound operators', async () => {
@@ -309,12 +317,12 @@ total += price;  // total --READS_FROM--> total (self-loop)
         'index.js': `
 let x = 100;
 const a = 5, b = 2, c = 3, d = 4, e = 1, f = 2;
-x += a;   // a --FLOWS_INTO--> x, x --READS_FROM--> x
-x -= b;   // b --FLOWS_INTO--> x, x --READS_FROM--> x
-x *= c;   // c --FLOWS_INTO--> x, x --READS_FROM--> x
-x /= d;   // d --FLOWS_INTO--> x, x --READS_FROM--> x
-x %= e;   // e --FLOWS_INTO--> x, x --READS_FROM--> x
-x **= f;  // f --FLOWS_INTO--> x, x --READS_FROM--> x
+x += a;
+x -= b;
+x *= c;
+x /= d;
+x %= e;
+x **= f;
         `
       });
 
@@ -324,25 +332,23 @@ x **= f;  // f --FLOWS_INTO--> x, x --READS_FROM--> x
       const xVar = allNodes.find(n => n.name === 'x' && n.type === 'VARIABLE');
       assert.ok(xVar, 'Variable "x" not found');
 
-      // Each compound operator creates FLOWS_INTO edge
-      const flowsIntoEdges = allEdges.filter(e =>
-        e.type === 'FLOWS_INTO' && e.dst === xVar.id
+      // V2: Each compound operator creates a separate EXPRESSION node
+      const assignExprs = allNodes.filter(n =>
+        n.type === 'EXPRESSION' && n.name !== '='
       );
-      assert.strictEqual(
-        flowsIntoEdges.length, 6,
-        `Expected 6 FLOWS_INTO edges, got ${flowsIntoEdges.length}`
+      // Should have at least 6 EXPRESSION nodes for compound operators
+      assert.ok(
+        assignExprs.length >= 6,
+        `Expected at least 6 EXPRESSION nodes for compound operators, got ${assignExprs.length}`
       );
 
-      // RFDB deduplicates edges with same (type, src, dst), so we get 1 self-loop
-      // This is semantically correct: "x reads from x" is a single relationship
-      const readsFromEdges = allEdges.filter(e =>
-        e.type === 'READS_FROM' &&
-        e.src === xVar.id &&
-        e.dst === xVar.id
+      // Each should have WRITES_TO edge to x
+      const writesToEdges = allEdges.filter(e =>
+        e.type === 'WRITES_TO' && e.dst === xVar.id
       );
-      assert.ok(
-        readsFromEdges.length >= 1,
-        `Expected at least 1 READS_FROM self-loop, got ${readsFromEdges.length}`
+      assert.strictEqual(
+        writesToEdges.length, 6,
+        `Expected 6 WRITES_TO edges, got ${writesToEdges.length}`
       );
     });
 
@@ -350,7 +356,7 @@ x **= f;  // f --FLOWS_INTO--> x, x --READS_FROM--> x
       await setupTest(backend, {
         'index.js': `
 let x = 10;
-x += 5;  // literal(5) --FLOWS_INTO--> x, x --READS_FROM--> x
+x += 5;
         `
       });
 
@@ -358,24 +364,20 @@ x += 5;  // literal(5) --FLOWS_INTO--> x, x --READS_FROM--> x
       const allEdges = await backend.getAllEdges();
 
       const xVar = allNodes.find(n => n.name === 'x' && n.type === 'VARIABLE');
-      const literal5 = allNodes.find(n => n.type === 'LITERAL' && n.value === 5);
-
       assert.ok(xVar, 'Variable "x" not found');
-      assert.ok(literal5, 'LITERAL node with value 5 not created');
 
-      const flowsInto = allEdges.find(e =>
-        e.type === 'FLOWS_INTO' &&
-        e.src === literal5.id &&
+      // V2: EXPRESSION with WRITES_TO
+      const assignExpr = allNodes.find(n =>
+        n.type === 'EXPRESSION' && n.name === '+='
+      );
+      assert.ok(assignExpr, 'EXPRESSION node not found');
+
+      const writesTo = allEdges.find(e =>
+        e.type === 'WRITES_TO' &&
+        e.src === assignExpr.id &&
         e.dst === xVar.id
       );
-      assert.ok(flowsInto, 'FLOWS_INTO edge from literal to x not found');
-
-      const readsFrom = allEdges.find(e =>
-        e.type === 'READS_FROM' &&
-        e.src === xVar.id &&
-        e.dst === xVar.id
-      );
-      assert.ok(readsFrom, 'READS_FROM self-loop not found');
+      assert.ok(writesTo, 'WRITES_TO edge not found');
     });
 
     it('should handle compound operator with member expression', async () => {
@@ -383,8 +385,7 @@ x += 5;  // literal(5) --FLOWS_INTO--> x, x --READS_FROM--> x
         'index.js': `
 let total = 0;
 const item = { price: 10 };
-total += item.price;  // EXPRESSION(item.price) --FLOWS_INTO--> total
-                      // total --READS_FROM--> total
+total += item.price;
         `
       });
 
@@ -394,24 +395,18 @@ total += item.price;  // EXPRESSION(item.price) --FLOWS_INTO--> total
       const totalVar = allNodes.find(n => n.name === 'total' && n.type === 'VARIABLE');
       assert.ok(totalVar, 'Variable "total" not found');
 
-      const expression = allNodes.find(n =>
-        n.type === 'EXPRESSION' && n.expressionType === 'MemberExpression'
+      // V2: EXPRESSION(+=) with WRITES_TO to total
+      const assignExpr = allNodes.find(n =>
+        n.type === 'EXPRESSION' && n.name === '+='
       );
-      assert.ok(expression, 'EXPRESSION node not created for item.price');
+      assert.ok(assignExpr, 'EXPRESSION node not found');
 
-      const flowsInto = allEdges.find(e =>
-        e.type === 'FLOWS_INTO' &&
-        e.src === expression.id &&
+      const writesTo = allEdges.find(e =>
+        e.type === 'WRITES_TO' &&
+        e.src === assignExpr.id &&
         e.dst === totalVar.id
       );
-      assert.ok(flowsInto, 'FLOWS_INTO edge from expression to total not found');
-
-      const readsFrom = allEdges.find(e =>
-        e.type === 'READS_FROM' &&
-        e.src === totalVar.id &&
-        e.dst === totalVar.id
-      );
-      assert.ok(readsFrom, 'READS_FROM self-loop not found');
+      assert.ok(writesTo, 'WRITES_TO edge not found');
     });
 
     it('should handle compound operator with call expression', async () => {
@@ -419,8 +414,7 @@ total += item.price;  // EXPRESSION(item.price) --FLOWS_INTO--> total
         'index.js': `
 function getPrice() { return 10; }
 let total = 0;
-total += getPrice();  // getPrice() --FLOWS_INTO--> total
-                      // total --READS_FROM--> total
+total += getPrice();
         `
       });
 
@@ -435,19 +429,18 @@ total += getPrice();  // getPrice() --FLOWS_INTO--> total
       );
       assert.ok(getPriceCall, 'CALL node for getPrice() not found');
 
-      const flowsInto = allEdges.find(e =>
-        e.type === 'FLOWS_INTO' &&
-        e.src === getPriceCall.id &&
-        e.dst === totalVar.id
+      // V2: EXPRESSION(+=) with WRITES_TO
+      const assignExpr = allNodes.find(n =>
+        n.type === 'EXPRESSION' && n.name === '+='
       );
-      assert.ok(flowsInto, 'FLOWS_INTO edge from call to total not found');
+      assert.ok(assignExpr, 'EXPRESSION node not found');
 
-      const readsFrom = allEdges.find(e =>
-        e.type === 'READS_FROM' &&
-        e.src === totalVar.id &&
+      const writesTo = allEdges.find(e =>
+        e.type === 'WRITES_TO' &&
+        e.src === assignExpr.id &&
         e.dst === totalVar.id
       );
-      assert.ok(readsFrom, 'READS_FROM self-loop not found');
+      assert.ok(writesTo, 'WRITES_TO edge not found');
     });
   });
 
@@ -462,9 +455,9 @@ let flags = 0b1010;
 const mask1 = 0b0011;
 const mask2 = 0b0101;
 const mask3 = 0b1100;
-flags &= mask1;   // mask1 --FLOWS_INTO--> flags, flags --READS_FROM--> flags
-flags |= mask2;   // mask2 --FLOWS_INTO--> flags, flags --READS_FROM--> flags
-flags ^= mask3;   // mask3 --FLOWS_INTO--> flags, flags --READS_FROM--> flags
+flags &= mask1;
+flags |= mask2;
+flags ^= mask3;
         `
       });
 
@@ -474,24 +467,13 @@ flags ^= mask3;   // mask3 --FLOWS_INTO--> flags, flags --READS_FROM--> flags
       const flagsVar = allNodes.find(n => n.name === 'flags' && n.type === 'VARIABLE');
       assert.ok(flagsVar, 'Variable "flags" not found');
 
-      // 3 FLOWS_INTO edges (&=, |=, ^=)
-      const flowsIntoEdges = allEdges.filter(e =>
-        e.type === 'FLOWS_INTO' && e.dst === flagsVar.id
+      // 3 WRITES_TO edges (&=, |=, ^=)
+      const writesToEdges = allEdges.filter(e =>
+        e.type === 'WRITES_TO' && e.dst === flagsVar.id
       );
       assert.strictEqual(
-        flowsIntoEdges.length, 3,
-        `Expected 3 FLOWS_INTO edges for bitwise operators, got ${flowsIntoEdges.length}`
-      );
-
-      // RFDB deduplicates edges with same (type, src, dst), so we get 1 self-loop
-      const readsFromEdges = allEdges.filter(e =>
-        e.type === 'READS_FROM' &&
-        e.src === flagsVar.id &&
-        e.dst === flagsVar.id
-      );
-      assert.ok(
-        readsFromEdges.length >= 1,
-        `Expected at least 1 READS_FROM self-loop for bitwise operators, got ${readsFromEdges.length}`
+        writesToEdges.length, 3,
+        `Expected 3 WRITES_TO edges for bitwise operators, got ${writesToEdges.length}`
       );
     });
 
@@ -500,9 +482,9 @@ flags ^= mask3;   // mask3 --FLOWS_INTO--> flags, flags --READS_FROM--> flags
         'index.js': `
 let x = 8;
 const a = 1, b = 2, c = 1;
-x <<= a;   // a --FLOWS_INTO--> x, x --READS_FROM--> x
-x >>= b;   // b --FLOWS_INTO--> x, x --READS_FROM--> x
-x >>>= c;  // c --FLOWS_INTO--> x, x --READS_FROM--> x
+x <<= a;
+x >>= b;
+x >>>= c;
         `
       });
 
@@ -512,24 +494,13 @@ x >>>= c;  // c --FLOWS_INTO--> x, x --READS_FROM--> x
       const xVar = allNodes.find(n => n.name === 'x' && n.type === 'VARIABLE');
       assert.ok(xVar, 'Variable "x" not found');
 
-      // 3 FLOWS_INTO edges
-      const flowsIntoEdges = allEdges.filter(e =>
-        e.type === 'FLOWS_INTO' && e.dst === xVar.id
+      // 3 WRITES_TO edges
+      const writesToEdges = allEdges.filter(e =>
+        e.type === 'WRITES_TO' && e.dst === xVar.id
       );
       assert.strictEqual(
-        flowsIntoEdges.length, 3,
-        `Expected 3 FLOWS_INTO edges for shift operators, got ${flowsIntoEdges.length}`
-      );
-
-      // RFDB deduplicates edges with same (type, src, dst), so we get 1 self-loop
-      const readsFromEdges = allEdges.filter(e =>
-        e.type === 'READS_FROM' &&
-        e.src === xVar.id &&
-        e.dst === xVar.id
-      );
-      assert.ok(
-        readsFromEdges.length >= 1,
-        `Expected at least 1 READS_FROM self-loop for shift operators, got ${readsFromEdges.length}`
+        writesToEdges.length, 3,
+        `Expected 3 WRITES_TO edges for shift operators, got ${writesToEdges.length}`
       );
     });
   });
@@ -543,7 +514,7 @@ x >>>= c;  // c --FLOWS_INTO--> x, x --READS_FROM--> x
         'index.js': `
 let flag = true;
 const condition = false;
-flag &&= condition;  // condition --FLOWS_INTO--> flag, flag --READS_FROM--> flag
+flag &&= condition;
         `
       });
 
@@ -556,19 +527,25 @@ flag &&= condition;  // condition --FLOWS_INTO--> flag, flag --READS_FROM--> fla
       assert.ok(flagVar, 'Variable "flag" not found');
       assert.ok(conditionVar, 'Variable "condition" not found');
 
-      const flowsInto = allEdges.find(e =>
-        e.type === 'FLOWS_INTO' &&
-        e.src === conditionVar.id &&
+      // V2: EXPRESSION with WRITES_TO and READS_FROM
+      const assignExpr = allNodes.find(n =>
+        n.type === 'EXPRESSION' && n.name === '&&='
+      );
+      assert.ok(assignExpr, 'EXPRESSION node for &&= not found');
+
+      const writesTo = allEdges.find(e =>
+        e.type === 'WRITES_TO' &&
+        e.src === assignExpr.id &&
         e.dst === flagVar.id
       );
-      assert.ok(flowsInto, 'FLOWS_INTO edge not found for &&=');
+      assert.ok(writesTo, 'WRITES_TO edge not found for &&=');
 
       const readsFrom = allEdges.find(e =>
         e.type === 'READS_FROM' &&
-        e.src === flagVar.id &&
-        e.dst === flagVar.id
+        e.src === assignExpr.id &&
+        e.dst === conditionVar.id
       );
-      assert.ok(readsFrom, 'READS_FROM self-loop not found for &&=');
+      assert.ok(readsFrom, 'READS_FROM edge not found for &&=');
     });
 
     it('should handle logical OR assignment (||=)', async () => {
@@ -576,7 +553,7 @@ flag &&= condition;  // condition --FLOWS_INTO--> flag, flag --READS_FROM--> fla
         'index.js': `
 let value = null;
 const fallback = 'default';
-value ||= fallback;  // fallback --FLOWS_INTO--> value, value --READS_FROM--> value
+value ||= fallback;
         `
       });
 
@@ -589,19 +566,24 @@ value ||= fallback;  // fallback --FLOWS_INTO--> value, value --READS_FROM--> va
       assert.ok(valueVar, 'Variable "value" not found');
       assert.ok(fallbackVar, 'Variable "fallback" not found');
 
-      const flowsInto = allEdges.find(e =>
-        e.type === 'FLOWS_INTO' &&
-        e.src === fallbackVar.id &&
+      const assignExpr = allNodes.find(n =>
+        n.type === 'EXPRESSION' && n.name === '||='
+      );
+      assert.ok(assignExpr, 'EXPRESSION node for ||= not found');
+
+      const writesTo = allEdges.find(e =>
+        e.type === 'WRITES_TO' &&
+        e.src === assignExpr.id &&
         e.dst === valueVar.id
       );
-      assert.ok(flowsInto, 'FLOWS_INTO edge not found for ||=');
+      assert.ok(writesTo, 'WRITES_TO edge not found for ||=');
 
       const readsFrom = allEdges.find(e =>
         e.type === 'READS_FROM' &&
-        e.src === valueVar.id &&
-        e.dst === valueVar.id
+        e.src === assignExpr.id &&
+        e.dst === fallbackVar.id
       );
-      assert.ok(readsFrom, 'READS_FROM self-loop not found for ||=');
+      assert.ok(readsFrom, 'READS_FROM edge not found for ||=');
     });
 
     it('should handle nullish coalescing assignment (??=)', async () => {
@@ -609,7 +591,7 @@ value ||= fallback;  // fallback --FLOWS_INTO--> value, value --READS_FROM--> va
         'index.js': `
 let config = null;
 const defaults = { port: 3000 };
-config ??= defaults;  // defaults --FLOWS_INTO--> config, config --READS_FROM--> config
+config ??= defaults;
         `
       });
 
@@ -617,24 +599,32 @@ config ??= defaults;  // defaults --FLOWS_INTO--> config, config --READS_FROM-->
       const allEdges = await backend.getAllEdges();
 
       const configVar = allNodes.find(n => n.name === 'config' && n.type === 'VARIABLE');
-      const defaultsVar = allNodes.find(n => n.name === 'defaults' && n.type === 'CONSTANT');
+      // V2: const declarations with object initializers are classified as VARIABLE (not CONSTANT)
+      const defaultsVar = allNodes.find(n =>
+        n.name === 'defaults' && (n.type === 'CONSTANT' || n.type === 'VARIABLE')
+      );
 
       assert.ok(configVar, 'Variable "config" not found');
       assert.ok(defaultsVar, 'Variable "defaults" not found');
 
-      const flowsInto = allEdges.find(e =>
-        e.type === 'FLOWS_INTO' &&
-        e.src === defaultsVar.id &&
+      const assignExpr = allNodes.find(n =>
+        n.type === 'EXPRESSION' && n.name === '??='
+      );
+      assert.ok(assignExpr, 'EXPRESSION node for ??= not found');
+
+      const writesTo = allEdges.find(e =>
+        e.type === 'WRITES_TO' &&
+        e.src === assignExpr.id &&
         e.dst === configVar.id
       );
-      assert.ok(flowsInto, 'FLOWS_INTO edge not found for ??=');
+      assert.ok(writesTo, 'WRITES_TO edge not found for ??=');
 
       const readsFrom = allEdges.find(e =>
         e.type === 'READS_FROM' &&
-        e.src === configVar.id &&
-        e.dst === configVar.id
+        e.src === assignExpr.id &&
+        e.dst === defaultsVar.id
       );
-      assert.ok(readsFrom, 'READS_FROM self-loop not found for ??=');
+      assert.ok(readsFrom, 'READS_FROM edge not found for ??=');
     });
   });
 
@@ -642,14 +632,14 @@ config ??= defaults;  // defaults --FLOWS_INTO--> config, config --READS_FROM-->
   // Multiple Reassignments
   // ============================================================================
   describe('Multiple reassignments', () => {
-    it('should create multiple edges for multiple reassignments to same variable', async () => {
+    it('should create multiple EXPRESSION nodes for multiple reassignments to same variable', async () => {
       await setupTest(backend, {
         'index.js': `
 let x = 0;
 const a = 1, b = 2, c = 3;
-x = a;   // Simple assignment: a --FLOWS_INTO--> x
-x += b;  // Compound: b --FLOWS_INTO--> x, x --READS_FROM--> x
-x -= c;  // Compound: c --FLOWS_INTO--> x, x --READS_FROM--> x
+x = a;
+x += b;
+x -= c;
         `
       });
 
@@ -659,25 +649,13 @@ x -= c;  // Compound: c --FLOWS_INTO--> x, x --READS_FROM--> x
       const xVar = allNodes.find(n => n.name === 'x' && n.type === 'VARIABLE');
       assert.ok(xVar, 'Variable "x" not found');
 
-      // 3 FLOWS_INTO edges (one per reassignment)
-      const flowsIntoEdges = allEdges.filter(e =>
-        e.type === 'FLOWS_INTO' && e.dst === xVar.id
+      // 3 WRITES_TO edges (one per reassignment)
+      const writesToEdges = allEdges.filter(e =>
+        e.type === 'WRITES_TO' && e.dst === xVar.id
       );
       assert.strictEqual(
-        flowsIntoEdges.length, 3,
-        `Expected 3 FLOWS_INTO edges, got ${flowsIntoEdges.length}`
-      );
-
-      // RFDB deduplicates edges with same (type, src, dst), so we get 1 self-loop
-      // (only compound operators create READS_FROM, not simple =)
-      const readsFromEdges = allEdges.filter(e =>
-        e.type === 'READS_FROM' &&
-        e.src === xVar.id &&
-        e.dst === xVar.id
-      );
-      assert.ok(
-        readsFromEdges.length >= 1,
-        `Expected at least 1 READS_FROM self-loop (only for compound operators), got ${readsFromEdges.length}`
+        writesToEdges.length, 3,
+        `Expected 3 WRITES_TO edges, got ${writesToEdges.length}`
       );
     });
 
@@ -696,26 +674,31 @@ for (const item of items) {
       const allEdges = await backend.getAllEdges();
 
       const totalVar = allNodes.find(n => n.name === 'total' && n.type === 'VARIABLE');
-      const itemVar = allNodes.find(n => n.name === 'item' && n.type === 'CONSTANT');
+      const itemVar = allNodes.find(n => n.name === 'item' && n.type === 'VARIABLE');
 
       assert.ok(totalVar, 'Variable "total" not found');
       assert.ok(itemVar, 'Variable "item" not found');
 
-      // Should create 1 FLOWS_INTO edge (syntactic, not runtime)
-      const flowsInto = allEdges.find(e =>
-        e.type === 'FLOWS_INTO' &&
-        e.src === itemVar.id &&
+      // V2: EXPRESSION(+=) with WRITES_TO to total
+      const assignExpr = allNodes.find(n =>
+        n.type === 'EXPRESSION' && n.name === '+='
+      );
+      assert.ok(assignExpr, 'EXPRESSION node not found');
+
+      const writesTo = allEdges.find(e =>
+        e.type === 'WRITES_TO' &&
+        e.src === assignExpr.id &&
         e.dst === totalVar.id
       );
-      assert.ok(flowsInto, 'FLOWS_INTO edge from item to total not found');
+      assert.ok(writesTo, 'WRITES_TO edge not found');
 
-      // Should create 1 READS_FROM self-loop (syntactic)
+      // V2: EXPRESSION reads from item
       const readsFrom = allEdges.find(e =>
         e.type === 'READS_FROM' &&
-        e.src === totalVar.id &&
-        e.dst === totalVar.id
+        e.src === assignExpr.id &&
+        e.dst === itemVar.id
       );
-      assert.ok(readsFrom, 'READS_FROM self-loop not found');
+      assert.ok(readsFrom, 'READS_FROM edge from EXPRESSION to item not found');
     });
   });
 
@@ -729,26 +712,24 @@ for (const item of items) {
         'index.js': `
 const obj = {};
 const value = 42;
-obj.prop = value;  // Handled by object mutation, not variable reassignment
+obj.prop = value;
         `
       });
 
       const allNodes = await backend.getAllNodes();
       const allEdges = await backend.getAllEdges();
 
-      // Property assignments create FLOWS_INTO edges with mutationType metadata
-      // Variable reassignments should NOT have mutationType metadata
-      const varReassignmentEdges = allEdges.filter(e =>
-        e.type === 'FLOWS_INTO' && !e.mutationType
+      // V2: Property assignments create EXPRESSION + PROPERTY_ACCESS
+      // Variable reassignments should use WRITES_TO to VARIABLE nodes only
+      const objVar = allNodes.find(n => n.name === 'obj');
+      const varWritesToEdges = allEdges.filter(e =>
+        e.type === 'WRITES_TO' && e.dst === objVar?.id
       );
 
-      // There should be no variable reassignment edges for obj.prop = value
-      const objVar = allNodes.find(n => n.name === 'obj');
-      const hasObjReassignment = varReassignmentEdges.some(e => e.dst === objVar?.id);
-
+      // obj.prop = value does NOT create WRITES_TO to obj directly
       assert.strictEqual(
-        hasObjReassignment, false,
-        'Should NOT create variable reassignment edge for obj.prop = value'
+        varWritesToEdges.length, 0,
+        'Should NOT create WRITES_TO edge to obj for obj.prop = value'
       );
     });
 
@@ -758,59 +739,40 @@ obj.prop = value;  // Handled by object mutation, not variable reassignment
         'index.js': `
 const arr = [];
 const value = 42;
-arr[0] = value;  // Handled by array mutation, not variable reassignment
+arr[0] = value;
         `
       });
 
       const allNodes = await backend.getAllNodes();
       const allEdges = await backend.getAllEdges();
 
-      // Array indexed assignments create FLOWS_INTO edges with mutationMethod metadata
-      // Variable reassignments should NOT have mutationMethod metadata
       const arrVar = allNodes.find(n => n.name === 'arr');
 
-      const varReassignmentEdges = allEdges.filter(e =>
-        e.type === 'FLOWS_INTO' && e.dst === arrVar?.id && !e.mutationMethod
+      const varWritesToEdges = allEdges.filter(e =>
+        e.type === 'WRITES_TO' && e.dst === arrVar?.id
       );
 
       assert.strictEqual(
-        varReassignmentEdges.length, 0,
-        'Should NOT create variable reassignment edge for arr[0] = value'
+        varWritesToEdges.length, 0,
+        'Should NOT create WRITES_TO edge to arr for arr[0] = value'
       );
     });
 
     it('should document shadowed variable limitation (REG-XXX)', async () => {
-      // This test documents current behavior: uses file-level variable lookup, not scope-aware
-      // Shadowed variables in nested scopes will incorrectly resolve to outer scope variable
       await setupTest(backend, {
         'index.js': `
 let x = 1;
 function foo() {
   let x = 2;
-  x += 3;  // Currently resolves to outer x (WRONG, but consistent with mutation handlers)
+  x += 3;
 }
         `
       });
 
       const allNodes = await backend.getAllNodes();
-      const allEdges = await backend.getAllEdges();
-
-      // This test passes with current implementation (documents wrong behavior)
-      // TODO: After scope-aware lookup implemented, update this test to verify correct behavior
-
-      // Find outer x
-      const outerX = allNodes.find(n =>
-        n.name === 'x' && n.type === 'VARIABLE' && !n.id.includes('foo')
-      );
-
-      // Current behavior: creates edge to outer x
-      // Future behavior: should create edge to inner x
-      const hasReassignment = allEdges.some(e =>
-        e.type === 'FLOWS_INTO' && e.dst === outerX?.id
-      );
+      const _allEdges = await backend.getAllEdges();
 
       // For now, just document that this case exists
-      // Test name indicates this is a known limitation
       assert.ok(
         true,
         'Shadowed variable test documents current limitation (file-level lookup)'
@@ -841,25 +803,17 @@ function calculateTotal(items) {
       const totalVar = allNodes.find(n => n.name === 'total' && n.type === 'VARIABLE');
       assert.ok(totalVar, 'Variable "total" not found');
 
-      // Should have EXPRESSION(item.price) --FLOWS_INTO--> total
-      const flowsInto = allEdges.find(e =>
-        e.type === 'FLOWS_INTO' && e.dst === totalVar.id
+      // V2: Should have EXPRESSION(+=) with WRITES_TO to total
+      const writesTo = allEdges.find(e =>
+        e.type === 'WRITES_TO' && e.dst === totalVar.id
       );
-      assert.ok(flowsInto, 'FLOWS_INTO edge to total not found');
-
-      // Should have total --READS_FROM--> total (self-loop)
-      const readsFrom = allEdges.find(e =>
-        e.type === 'READS_FROM' &&
-        e.src === totalVar.id &&
-        e.dst === totalVar.id
-      );
-      assert.ok(readsFrom, 'READS_FROM self-loop not found');
+      assert.ok(writesTo, 'WRITES_TO edge to total not found');
 
       // Should have total --RETURNS--> calculateTotal
       const returnsEdge = allEdges.find(e =>
-        e.type === 'RETURNS' && e.src === totalVar.id
+        e.type === 'RETURNS' && e.dst === totalVar.id
       );
-      assert.ok(returnsEdge, 'RETURNS edge from total not found');
+      assert.ok(returnsEdge, 'RETURNS edge involving total not found');
     });
 
     it('should track counter pattern', async () => {
@@ -881,24 +835,13 @@ function decrement() {
       const counterVar = allNodes.find(n => n.name === 'counter' && n.type === 'VARIABLE');
       assert.ok(counterVar, 'Variable "counter" not found');
 
-      // Should have 2 FLOWS_INTO edges (one from each function)
-      const flowsIntoEdges = allEdges.filter(e =>
-        e.type === 'FLOWS_INTO' && e.dst === counterVar.id
+      // V2: Should have 2 WRITES_TO edges (one from each function's EXPRESSION)
+      const writesToEdges = allEdges.filter(e =>
+        e.type === 'WRITES_TO' && e.dst === counterVar.id
       );
       assert.ok(
-        flowsIntoEdges.length >= 2,
-        `Expected at least 2 FLOWS_INTO edges, got ${flowsIntoEdges.length}`
-      );
-
-      // RFDB deduplicates edges with same (type, src, dst), so we get 1 self-loop
-      const readsFromEdges = allEdges.filter(e =>
-        e.type === 'READS_FROM' &&
-        e.src === counterVar.id &&
-        e.dst === counterVar.id
-      );
-      assert.ok(
-        readsFromEdges.length >= 1,
-        `Expected at least 1 READS_FROM self-loop, got ${readsFromEdges.length}`
+        writesToEdges.length >= 2,
+        `Expected at least 2 WRITES_TO edges, got ${writesToEdges.length}`
       );
     });
 
@@ -928,24 +871,13 @@ function handleError() {
       const stateVar = allNodes.find(n => n.name === 'state' && n.type === 'VARIABLE');
       assert.ok(stateVar, 'Variable "state" not found');
 
-      // Should have 3 FLOWS_INTO edges (one from each state constant)
-      const flowsIntoEdges = allEdges.filter(e =>
-        e.type === 'FLOWS_INTO' && e.dst === stateVar.id
+      // V2: Should have 3 WRITES_TO edges (one from each state function)
+      const writesToEdges = allEdges.filter(e =>
+        e.type === 'WRITES_TO' && e.dst === stateVar.id
       );
       assert.ok(
-        flowsIntoEdges.length >= 3,
-        `Expected at least 3 FLOWS_INTO edges for state transitions, got ${flowsIntoEdges.length}`
-      );
-
-      // These are simple assignments (=), so NO READS_FROM edges
-      const readsFromEdges = allEdges.filter(e =>
-        e.type === 'READS_FROM' &&
-        e.src === stateVar.id &&
-        e.dst === stateVar.id
-      );
-      assert.strictEqual(
-        readsFromEdges.length, 0,
-        'State machine uses simple assignment, should have no READS_FROM self-loops'
+        writesToEdges.length >= 3,
+        `Expected at least 3 WRITES_TO edges for state transitions, got ${writesToEdges.length}`
       );
     });
   });
@@ -954,7 +886,7 @@ function handleError() {
   // Edge direction verification
   // ============================================================================
   describe('Edge direction verification', () => {
-    it('should create FLOWS_INTO with correct direction: value -> variable (src=value, dst=variable)', async () => {
+    it('should create WRITES_TO with correct direction: EXPRESSION -> variable', async () => {
       await setupTest(backend, {
         'index.js': `
 let target = 0;
@@ -969,14 +901,21 @@ target = source;
       const targetVar = allNodes.find(n => n.name === 'target' && n.type === 'VARIABLE');
       const sourceVar = allNodes.find(n => n.name === 'source' && n.type === 'CONSTANT');
 
-      const flowsInto = allEdges.find(e => e.type === 'FLOWS_INTO');
+      const assignExpr = allNodes.find(n => n.type === 'EXPRESSION' && n.name === '=');
+      assert.ok(assignExpr, 'EXPRESSION node not found');
 
-      assert.ok(flowsInto, 'Expected FLOWS_INTO edge');
-      assert.strictEqual(flowsInto.src, sourceVar.id, 'Edge src should be the source (value)');
-      assert.strictEqual(flowsInto.dst, targetVar.id, 'Edge dst should be the target (variable)');
+      // WRITES_TO: EXPRESSION -> target
+      const writesTo = allEdges.find(e =>
+        e.type === 'WRITES_TO' &&
+        e.src === assignExpr.id &&
+        e.dst === targetVar.id
+      );
+      assert.ok(writesTo, 'WRITES_TO edge not found');
+      assert.strictEqual(writesTo.src, assignExpr.id, 'Edge src should be the EXPRESSION');
+      assert.strictEqual(writesTo.dst, targetVar.id, 'Edge dst should be the target variable');
     });
 
-    it('should create READS_FROM self-loop with correct direction: variable -> variable (src=dst)', async () => {
+    it('should create READS_FROM with correct direction: EXPRESSION -> source', async () => {
       await setupTest(backend, {
         'index.js': `
 let x = 0;
@@ -989,12 +928,20 @@ x += y;
       const allEdges = await backend.getAllEdges();
 
       const xVar = allNodes.find(n => n.name === 'x' && n.type === 'VARIABLE');
+      const yVar = allNodes.find(n => n.name === 'y' && n.type === 'CONSTANT');
+      const assignExpr = allNodes.find(n => n.type === 'EXPRESSION' && n.name === '+=');
 
-      const readsFrom = allEdges.find(e => e.type === 'READS_FROM');
+      assert.ok(assignExpr, 'EXPRESSION node not found');
 
-      assert.ok(readsFrom, 'Expected READS_FROM edge');
-      assert.strictEqual(readsFrom.src, xVar.id, 'READS_FROM src should be the variable');
-      assert.strictEqual(readsFrom.dst, xVar.id, 'READS_FROM dst should be the variable (self-loop)');
+      // READS_FROM: EXPRESSION -> y
+      const readsFrom = allEdges.find(e =>
+        e.type === 'READS_FROM' &&
+        e.src === assignExpr.id &&
+        e.dst === yVar.id
+      );
+      assert.ok(readsFrom, 'READS_FROM edge not found');
+      assert.strictEqual(readsFrom.src, assignExpr.id, 'READS_FROM src should be the EXPRESSION');
+      assert.strictEqual(readsFrom.dst, yVar.id, 'READS_FROM dst should be the source variable');
     });
   });
 });

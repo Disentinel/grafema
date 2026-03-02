@@ -247,8 +247,8 @@ export function computeDiscriminator(
  * @param name - Node name
  * @param file - Source file path
  * @param namedParent - Nearest named ancestor (undefined for top-level)
- * @param contentHash - 4-hex content hash (set by CollisionResolver)
- * @param counter - Counter for hash collisions (set by CollisionResolver)
+ * @param contentHash - 4-hex content hash for disambiguation
+ * @param counter - Counter for hash collisions
  */
 export function computeSemanticIdV2(
   type: string,

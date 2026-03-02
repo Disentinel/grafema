@@ -378,18 +378,11 @@ describe('Enricher metadata validation', () => {
   // stays accurate as plugins are added or removed.
   async function getEnrichmentPlugins() {
     const {
-      ImportExportLinker,
-      FunctionCallResolver,
-      MethodCallResolver,
-      AliasTracker,
+      ExportEntityLinker,
       ValueDomainAnalyzer,
-      ExternalCallResolver,
       CallbackCallResolver,
-      ArgumentParameterLinker,
       MountPointResolver,
       PrefixEvaluator,
-      InstanceOfResolver,
-      ClosureCaptureEnricher,
       HTTPConnectionEnricher,
       NodejsBuiltinsResolver,
       RustFFIEnricher,
@@ -398,18 +391,11 @@ describe('Enricher metadata validation', () => {
     } = await import('@grafema/core');
 
     return [
-      new ImportExportLinker(),
-      new FunctionCallResolver(),
-      new MethodCallResolver(),
-      new AliasTracker(),
+      new ExportEntityLinker(),
       new ValueDomainAnalyzer(),
-      new ExternalCallResolver(),
       new CallbackCallResolver(),
-      new ArgumentParameterLinker(),
       new MountPointResolver(),
       new PrefixEvaluator(),
-      new InstanceOfResolver(),
-      new ClosureCaptureEnricher(),
       new HTTPConnectionEnricher(),
       new NodejsBuiltinsResolver(),
       new RustFFIEnricher(),

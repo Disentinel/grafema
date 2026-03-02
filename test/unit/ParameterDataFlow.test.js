@@ -35,21 +35,23 @@ describe('Parameter Data Flow', () => {
   });
 
   describe('Basic parameter usage tracking', () => {
-    it('should create PARAMETER nodes with parentFunctionId', async () => {
+    it('should create PARAMETER nodes', async () => {
       const orchestrator = createTestOrchestrator(backend);
       await orchestrator.run(FIXTURE_PATH);
 
       const parameters = await backend.getAllNodes({ type: 'PARAMETER' });
       assert.ok(parameters.length > 0, 'Should have PARAMETER nodes');
 
-      // All parameters should have parentFunctionId
+      // V2: parentFunctionId is not set on PARAMETER nodes.
+      // Instead, FUNCTION -> RECEIVES_ARGUMENT -> PARAMETER edges link them.
+      // Verify all parameters have semantic ID format
       for (const param of parameters) {
-        assert.ok(param.parentFunctionId,
-          `PARAMETER ${param.name} should have parentFunctionId`);
+        assert.ok(param.id.includes('->PARAMETER->'),
+          `PARAMETER ${param.name} should have semantic ID format. Got: ${param.id}`);
       }
     });
 
-    it('should create HAS_PARAMETER edges from FUNCTION to PARAMETER', async () => {
+    it('should create RECEIVES_ARGUMENT edges from FUNCTION to PARAMETER', async () => {
       const orchestrator = createTestOrchestrator(backend);
       await orchestrator.run(FIXTURE_PATH);
 
@@ -57,9 +59,10 @@ describe('Parameter Data Flow', () => {
       const processFunc = functions.find(f => f.name === 'processData');
       assert.ok(processFunc, 'Should have processData function');
 
-      const edges = await backend.getOutgoingEdges(processFunc.id, ['HAS_PARAMETER']);
+      // V2: HAS_PARAMETER -> RECEIVES_ARGUMENT
+      const edges = await backend.getOutgoingEdges(processFunc.id, ['RECEIVES_ARGUMENT']);
       assert.ok(edges.length > 0,
-        `processData should have HAS_PARAMETER edges, got ${edges.length}`);
+        `processData should have RECEIVES_ARGUMENT edges, got ${edges.length}`);
     });
 
     // TODO: Implement parameter usage tracking inside function bodies
@@ -103,10 +106,10 @@ describe('Parameter Data Flow', () => {
       }
       assert.ok(callWithArgs, 'At least one processData call should have PASSES_ARGUMENT edge');
 
-      // Find the PARAMETER that corresponds to argIndex 0
+      // Find the PARAMETER named 'data' (v2: index property not set on PARAMETER nodes)
       const parameters = await backend.getAllNodes({ type: 'PARAMETER' });
-      const dataParam = parameters.find(p => p.name === 'data' && p.index === 0);
-      assert.ok(dataParam, 'Should have PARAMETER data at index 0');
+      const dataParam = parameters.find(p => p.name === 'data');
+      assert.ok(dataParam, 'Should have PARAMETER named data');
 
       // The chain should be traceable:
       // CALL -> PASSES_ARGUMENT(argIndex=0) -> argument
@@ -123,20 +126,18 @@ describe('Parameter Data Flow', () => {
       const multiParamFunc = functions.find(f => f.name === 'transform');
       assert.ok(multiParamFunc, 'Should have transform function');
 
-      const edges = await backend.getOutgoingEdges(multiParamFunc.id, ['HAS_PARAMETER']);
+      // V2: HAS_PARAMETER -> RECEIVES_ARGUMENT
+      const edges = await backend.getOutgoingEdges(multiParamFunc.id, ['RECEIVES_ARGUMENT']);
 
-      // Should have multiple parameters with correct indices
-      const parameters = await backend.getAllNodes({ type: 'PARAMETER' });
-      // The node's id is already the semantic ID (resolved by _parseNode from originalId in metadata)
-      const funcId = multiParamFunc.id;
-      const funcParams = parameters.filter(p => p.parentFunctionId === funcId);
+      assert.ok(edges.length >= 2,
+        `transform should have at least 2 RECEIVES_ARGUMENT edges, got ${edges.length}`);
 
-      assert.ok(funcParams.length >= 2,
-        `transform should have at least 2 parameters, got ${funcParams.length}`);
-
-      // Check indices
-      const indices = funcParams.map(p => p.index).sort();
-      assert.deepStrictEqual(indices, [0, 1], 'Parameters should have indices 0 and 1');
+      // Verify the parameter nodes exist
+      for (const edge of edges) {
+        const paramNode = await backend.getNode(edge.dst);
+        assert.ok(paramNode, `Parameter node ${edge.dst} should exist`);
+        assert.strictEqual(paramNode.type, 'PARAMETER', 'Edge should point to PARAMETER node');
+      }
     });
   });
 

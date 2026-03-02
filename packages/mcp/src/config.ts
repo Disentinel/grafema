@@ -14,7 +14,7 @@ import {
   JSModuleIndexer,
   RustModuleIndexer,
   // Analysis
-  JSASTAnalyzer,
+  CoreV2Analyzer,
   ExpressRouteAnalyzer,
   ExpressResponseAnalyzer,
   NestJSRouteAnalyzer,
@@ -26,16 +26,11 @@ import {
   ReactAnalyzer,
   RustAnalyzer,
   // Enrichment
-  MethodCallResolver,
-  ArgumentParameterLinker,
-  AliasTracker,
-  ClosureCaptureEnricher,
   ValueDomainAnalyzer,
   MountPointResolver,
   ExpressHandlerLinker,
   PrefixEvaluator,
-  ImportExportLinker,
-  InstanceOfResolver,
+  ExportEntityLinker,
   HTTPConnectionEnricher,
   CallbackCallResolver,
   SocketConnectionEnricher,
@@ -44,6 +39,7 @@ import {
   RustFFIEnricher,
   RejectionPropagationEnricher,
   RedisEnricher,
+  NodejsBuiltinsResolver,
   // Validation
   CallResolverValidator,
   EvalBanValidator,
@@ -88,7 +84,7 @@ export const BUILTIN_PLUGINS: Record<string, PluginFactory> = {
   RustModuleIndexer: () => new RustModuleIndexer(),
 
   // Analysis
-  JSASTAnalyzer: () => new JSASTAnalyzer(),
+  CoreV2Analyzer: () => new CoreV2Analyzer(),
   ExpressRouteAnalyzer: () => new ExpressRouteAnalyzer(),
   ExpressResponseAnalyzer: () => new ExpressResponseAnalyzer(),
   NestJSRouteAnalyzer: () => new NestJSRouteAnalyzer(),
@@ -101,16 +97,11 @@ export const BUILTIN_PLUGINS: Record<string, PluginFactory> = {
   RustAnalyzer: () => new RustAnalyzer(),
 
   // Enrichment
-  MethodCallResolver: () => new MethodCallResolver(),
-  ArgumentParameterLinker: () => new ArgumentParameterLinker(),
-  AliasTracker: () => new AliasTracker(),
-  ClosureCaptureEnricher: () => new ClosureCaptureEnricher(),
   ValueDomainAnalyzer: () => new ValueDomainAnalyzer(),
   MountPointResolver: () => new MountPointResolver(),
   ExpressHandlerLinker: () => new ExpressHandlerLinker(),
   PrefixEvaluator: () => new PrefixEvaluator(),
-  ImportExportLinker: () => new ImportExportLinker(),
-  InstanceOfResolver: () => new InstanceOfResolver(),
+  ExportEntityLinker: () => new ExportEntityLinker(),
   HTTPConnectionEnricher: () => new HTTPConnectionEnricher(),
   CallbackCallResolver: () => new CallbackCallResolver(),
   SocketConnectionEnricher: () => new SocketConnectionEnricher(),
@@ -119,6 +110,7 @@ export const BUILTIN_PLUGINS: Record<string, PluginFactory> = {
   RustFFIEnricher: () => new RustFFIEnricher(),
   RejectionPropagationEnricher: () => new RejectionPropagationEnricher(),
   RedisEnricher: () => new RedisEnricher(),
+  NodejsBuiltinsResolver: () => new NodejsBuiltinsResolver(),
 
   // Validation
   CallResolverValidator: () => new CallResolverValidator(),

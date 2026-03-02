@@ -458,8 +458,8 @@ describe('Plugin applicability filter — skip logic (REG-482)', () => {
   it('plugin WITHOUT covers field — always runs (backward compat)', async () => {
     const graph = createMockGraph();
 
-    // JSASTAnalyzer has no covers — should always run
-    const basePlugin = createAnalysisPlugin('JSASTAnalyzer');
+    // CoreV2Analyzer has no covers — should always run
+    const basePlugin = createAnalysisPlugin('CoreV2Analyzer');
 
     const context = buildContextWithDeps(graph, {
       dependencies: { express: '4.18.0' },
@@ -528,18 +528,18 @@ describe('Plugin applicability filter — skip logic (REG-482)', () => {
     const graph = createMockGraph();
     const executionOrder: string[] = [];
 
-    // JSASTAnalyzer: no covers (always runs)
-    const jsAst = createAnalysisPlugin('JSASTAnalyzer');
+    // CoreV2Analyzer: no covers (always runs)
+    const jsAst = createAnalysisPlugin('CoreV2Analyzer');
     const originalJsAstExecute = jsAst.execute;
     jsAst.execute = async (ctx: any) => {
-      executionOrder.push('JSASTAnalyzer');
+      executionOrder.push('CoreV2Analyzer');
       return originalJsAstExecute(ctx);
     };
 
     // ExpressAnalyzer: covers express (should run)
     const express = createAnalysisPlugin('ExpressAnalyzer', {
       covers: ['express'],
-      dependencies: ['JSASTAnalyzer'],
+      dependencies: ['CoreV2Analyzer'],
     });
     const originalExpressExecute = express.execute;
     express.execute = async (ctx: any) => {
@@ -550,7 +550,7 @@ describe('Plugin applicability filter — skip logic (REG-482)', () => {
     // ReactAnalyzer: covers react (should skip — no react in deps)
     const react = createAnalysisPlugin('ReactAnalyzer', {
       covers: ['react'],
-      dependencies: ['JSASTAnalyzer'],
+      dependencies: ['CoreV2Analyzer'],
     });
     const originalReactExecute = react.execute;
     react.execute = async (ctx: any) => {
@@ -561,7 +561,7 @@ describe('Plugin applicability filter — skip logic (REG-482)', () => {
     // SocketIOAnalyzer: covers socket.io (should skip)
     const socketio = createAnalysisPlugin('SocketIOAnalyzer', {
       covers: ['socket.io'],
-      dependencies: ['JSASTAnalyzer'],
+      dependencies: ['CoreV2Analyzer'],
     });
     const originalSocketExecute = socketio.execute;
     socketio.execute = async (ctx: any) => {
@@ -582,8 +582,8 @@ describe('Plugin applicability filter — skip logic (REG-482)', () => {
 
     await orchestrator.runPhase('ANALYSIS', context as any);
 
-    assert.ok(executionOrder.includes('JSASTAnalyzer'),
-      'JSASTAnalyzer (no covers) should run');
+    assert.ok(executionOrder.includes('CoreV2Analyzer'),
+      'CoreV2Analyzer (no covers) should run');
     assert.ok(executionOrder.includes('ExpressAnalyzer'),
       'ExpressAnalyzer (express in deps) should run');
     assert.ok(!executionOrder.includes('ReactAnalyzer'),
@@ -592,7 +592,7 @@ describe('Plugin applicability filter — skip logic (REG-482)', () => {
       'SocketIOAnalyzer (socket.io NOT in deps) should be skipped');
 
     assert.strictEqual(executionOrder.length, 2,
-      'Only 2 of 4 plugins should execute (JSASTAnalyzer + ExpressAnalyzer)');
+      'Only 2 of 4 plugins should execute (CoreV2Analyzer + ExpressAnalyzer)');
   });
 
   it('skip is logged with plugin name and covered packages', async () => {

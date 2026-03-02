@@ -21,7 +21,7 @@ import type { FactoryLike } from '../../core/GraphFactory.js';
 import type { NodeRecord } from '@grafema/types';
 import type { AnyBrandedNode } from '@grafema/types';
 import { NodeFactory } from '../../core/NodeFactory.js';
-import { getLine, getColumn } from './ast/utils/location.js';
+import { getLine, getColumn } from './shared-utils/location.js';
 import { resolveNodeFile } from '../../utils/resolveNodeFile.js';
 
 const traverse = (traverseModule as any).default || traverseModule;
@@ -75,7 +75,7 @@ export class FetchAnalyzer extends Plugin {
         nodes: ['http:request', 'EXTERNAL'],
         edges: ['CONTAINS', 'MAKES_REQUEST', 'CALLS_API']
       },
-      dependencies: ['JSModuleIndexer', 'JSASTAnalyzer']
+      dependencies: ['JSModuleIndexer', 'CoreV2Analyzer']
     };
   }
 
