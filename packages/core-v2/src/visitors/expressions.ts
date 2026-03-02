@@ -799,15 +799,16 @@ export function visitUnaryExpression(
     deferred: [],
   };
 
-  // delete obj.prop → DELETES edge
-  if (unary.operator === 'delete' && unary.argument.type === 'MemberExpression') {
-    const prop = unary.argument.property;
-    if (prop.type === 'Identifier') {
+  // delete obj.prop → WRITES_TO root variable (same pattern as PROPERTY_ASSIGNMENT)
+  if (unary.operator === 'delete'
+      && (unary.argument.type === 'MemberExpression' || unary.argument.type === 'OptionalMemberExpression')) {
+    const rootVar = extractRootIdentifier((unary.argument as MemberExpression).object);
+    if (rootVar) {
       result.deferred.push({
         kind: 'scope_lookup',
-        name: prop.name,
+        name: rootVar,
         fromNodeId: nodeId,
-        edgeType: 'DELETES',
+        edgeType: 'WRITES_TO',
         scopeId: ctx.currentScope.id,
         file: ctx.file,
         line,
@@ -851,6 +852,23 @@ export function visitUpdateExpression(
       line,
       column: node.loc?.start.column ?? 0,
     });
+  }
+
+  // obj.prop++ → WRITES_TO root variable (same pattern as PROPERTY_ASSIGNMENT)
+  if (update.argument.type === 'MemberExpression' || update.argument.type === 'OptionalMemberExpression') {
+    const rootVar = extractRootIdentifier((update.argument as MemberExpression).object);
+    if (rootVar) {
+      result.deferred.push({
+        kind: 'scope_lookup',
+        name: rootVar,
+        fromNodeId: nodeId,
+        edgeType: 'WRITES_TO',
+        scopeId: ctx.currentScope.id,
+        file: ctx.file,
+        line,
+        column: node.loc?.start.column ?? 0,
+      });
+    }
   }
 
   return result;
