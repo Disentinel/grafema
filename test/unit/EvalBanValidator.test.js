@@ -58,9 +58,10 @@ describe('EvalBanValidator', () => {
       const orchestrator = createTestOrchestrator(backend);
       await orchestrator.run(FIXTURE_PATH);
 
+      // v2: no CONSTRUCTOR_CALL type — new Function() is CALL with name "new Function"
       const functionViolations = await backend.checkGuarantee(`
         violation(X) :- node(X, "CALL"), attr(X, "name", "Function").
-        violation(X) :- node(X, "CONSTRUCTOR_CALL"), attr(X, "className", "Function").
+        violation(X) :- node(X, "CALL"), attr(X, "name", "new Function").
       `);
 
       // Detects both Function() and new Function():

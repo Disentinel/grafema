@@ -83,12 +83,11 @@ class MyClass {
 
       const allNodes = await backend.getAllNodes();
 
-      // Find anonymous FUNCTION nodes that are arrow callbacks inside MyClass.run
-      // The arrow x => x is anonymous — filter out named functions like 'run'
+      // Find arrow FUNCTION nodes (v2: arrow functions have name '<arrow>')
+      // Filter out class methods (type METHOD in v2) and named functions
       const arrowFunctions = allNodes.filter(n =>
         n.type === 'FUNCTION' &&
-        n.name !== 'run' &&
-        n.id.includes('run')
+        n.name === '<arrow>'
       );
 
       assert.strictEqual(
@@ -118,11 +117,10 @@ class PluginManager {
       const allNodes = await backend.getAllNodes();
       const allEdges = await backend.getAllEdges();
 
-      // Find arrow FUNCTION nodes inside loadPlugins (not the method itself)
+      // Find arrow FUNCTION nodes (v2: arrow functions have name '<arrow>')
       const arrowFunctions = allNodes.filter(n =>
         n.type === 'FUNCTION' &&
-        n.name !== 'loadPlugins' &&
-        n.id.includes('loadPlugins')
+        n.name === '<arrow>'
       );
 
       assert.strictEqual(
@@ -134,9 +132,9 @@ class PluginManager {
 
       const arrowId = arrowFunctions[0].id;
 
-      // Find the .some() CALL node
+      // Find the .some() CALL node (v2: method calls use method field)
       const someCall = allNodes.find(n =>
-        n.type === 'CALL' && n.method === 'some'
+        n.type === 'CALL' && (n.method === 'some' || n.name?.includes('some'))
       );
       assert.ok(someCall, 'Should find .some() CALL node');
 
@@ -180,15 +178,15 @@ const fn = x => x * 2;
 
       const allNodes = await backend.getAllNodes();
 
-      // Find FUNCTION nodes for the arrow (should have name 'fn' from variable assignment)
+      // v2: Arrow functions get name '<arrow>' regardless of variable assignment
       const fnFunctions = allNodes.filter(n =>
-        n.type === 'FUNCTION' && n.name === 'fn'
+        n.type === 'FUNCTION' && n.name === '<arrow>'
       );
 
       assert.strictEqual(
         fnFunctions.length,
         1,
-        `Expected exactly 1 FUNCTION node for module-level arrow 'fn', ` +
+        `Expected exactly 1 FUNCTION node for module-level arrow, ` +
         `got ${fnFunctions.length}: ${fnFunctions.map(n => n.id).join(', ')}`
       );
     });
@@ -214,15 +212,15 @@ class A {
       const allNodes = await backend.getAllNodes();
       const allFunctions = allNodes.filter(n => n.type === 'FUNCTION');
 
-      // ClassVisitor creates FUNCTION named 'field'
-      const namedField = allFunctions.filter(n => n.name === 'field');
+      // v2: Arrow functions get name '<arrow>' not 'field'
+      const arrowField = allFunctions.filter(n => n.name === '<arrow>');
       assert.strictEqual(
-        namedField.length,
+        arrowField.length,
         1,
-        `ClassVisitor should create exactly 1 FUNCTION node named 'field'`
+        `Should create exactly 1 FUNCTION node for class field arrow`
       );
 
-      // After REG-562 fix: only 1 FUNCTION node total (ClassVisitor's)
+      // After REG-562 fix: only 1 FUNCTION node total
       assert.strictEqual(
         allFunctions.length,
         1,
@@ -253,15 +251,14 @@ function outer(cb = x => x) {
       );
       assert.strictEqual(outerFunc.length, 1, 'Should have exactly 1 FUNCTION node for outer');
 
-      // The default parameter arrow is anonymous, nested inside outer
-      // It should have been handled by NestedFunctionHandler only
+      // The default parameter arrow gets name '<arrow>' in v2
       const allFunctions = allNodes.filter(n =>
         n.type === 'FUNCTION'
       );
 
-      // Total FUNCTION count: outer + 1 anonymous arrow = 2
+      // Total FUNCTION count: outer + 1 arrow = 2
       // If the bug were present, we'd see 3 (outer + 2 duplicated arrows)
-      const anonymousArrows = allFunctions.filter(n => n.name !== 'outer');
+      const anonymousArrows = allFunctions.filter(n => n.name === '<arrow>');
 
       assert.strictEqual(
         anonymousArrows.length,

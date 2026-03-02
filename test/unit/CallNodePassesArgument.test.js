@@ -52,11 +52,13 @@ async function setupTest(backend, files) {
 }
 
 /**
- * Helper: find all CALL or CONSTRUCTOR_CALL nodes with a given name attribute.
+ * Helper: find all CALL nodes with a given name attribute.
+ * V2: CONSTRUCTOR_CALL no longer exists; constructor calls are CALL with isNew:true
+ * and name="new ClassName".
  */
 function findCallNodes(allNodes, name) {
   return allNodes.filter(n =>
-    (n.type === 'CALL' || n.type === 'CONSTRUCTOR_CALL') && n.name === name
+    n.type === 'CALL' && (n.name === name || n.name === `new ${name}`)
   );
 }
 
@@ -182,14 +184,14 @@ const logger = new Logger(opts);
       const allNodes = await backend.getAllNodes();
       const allEdges = await backend.getAllEdges();
 
-      // Find the CONSTRUCTOR_CALL node for 'Logger'
+      // Find the constructor call node for 'Logger' (V2: CALL with isNew:true)
       const loggerCalls = allNodes.filter(n =>
-        n.type === 'CONSTRUCTOR_CALL' && n.className === 'Logger'
+        n.type === 'CALL' && n.isNew === true && n.name === 'new Logger'
       );
       assert.ok(
         loggerCalls.length >= 1,
-        `Should have CONSTRUCTOR_CALL node for Logger. ` +
-        `All constructor calls: ${JSON.stringify(allNodes.filter(n => n.type === 'CONSTRUCTOR_CALL'))}`
+        `Should have CALL(isNew:true) node for Logger. ` +
+        `All constructor calls: ${JSON.stringify(allNodes.filter(n => n.type === 'CALL' && n.isNew === true))}`
       );
 
       const loggerCallId = loggerCalls[0].id;
@@ -228,14 +230,14 @@ function setup() {
       const allNodes = await backend.getAllNodes();
       const allEdges = await backend.getAllEdges();
 
-      // Find the CONSTRUCTOR_CALL node for 'Plugin'
+      // Find the constructor call node for 'Plugin' (V2: CALL with isNew:true)
       const pluginCalls = allNodes.filter(n =>
-        n.type === 'CONSTRUCTOR_CALL' && n.className === 'Plugin'
+        n.type === 'CALL' && n.isNew === true && n.name === 'new Plugin'
       );
       assert.ok(
         pluginCalls.length >= 1,
-        `Should have CONSTRUCTOR_CALL node for Plugin. ` +
-        `All constructor calls: ${JSON.stringify(allNodes.filter(n => n.type === 'CONSTRUCTOR_CALL'))}`
+        `Should have CALL(isNew:true) node for Plugin. ` +
+        `All constructor calls: ${JSON.stringify(allNodes.filter(n => n.type === 'CALL' && n.isNew === true))}`
       );
 
       const pluginCallId = pluginCalls[0].id;

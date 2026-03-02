@@ -115,6 +115,14 @@ function stripDirPrefix(id, testDir) {
 }
 
 /**
+ * Strip line numbers (#N) from an ID for stability comparison.
+ * v2 IDs include line numbers that change when code is added/removed above.
+ */
+function stripLineNumbers(id) {
+  return id.replace(/#\d+/g, '');
+}
+
+/**
  * Check if an ID is in v1 semantic format (file->scope->...->TYPE->name).
  * v1 has 4+ arrow-separated parts (file, scope path, type, name).
  */
@@ -248,21 +256,23 @@ function fetchData() {
       const dirAfter = resultAfter.testDir;
       resultAfter.cleanup();
 
-      // THE KEY ASSERTION: IDs must be identical (modulo the temp dir prefix)
+      // THE KEY ASSERTION: IDs must be identical (modulo the temp dir prefix and line numbers)
       // Strip the temp directory prefix since each run uses a different temp dir.
+      // v2: IDs include line numbers (#N) which change when code is added above,
+      // so we strip them for semantic stability comparison.
       assert.strictEqual(
-        stripDirPrefix(fetchDataBefore.id, dirBefore),
-        stripDirPrefix(fetchDataAfter.id, dirAfter),
+        stripLineNumbers(stripDirPrefix(fetchDataBefore.id, dirBefore)),
+        stripLineNumbers(stripDirPrefix(fetchDataAfter.id, dirAfter)),
         `fetchData ID should be stable. Before: ${fetchDataBefore.id}, After: ${fetchDataAfter.id}`
       );
       assert.strictEqual(
-        stripDirPrefix(urlBefore.id, dirBefore),
-        stripDirPrefix(urlAfter.id, dirAfter),
+        stripLineNumbers(stripDirPrefix(urlBefore.id, dirBefore)),
+        stripLineNumbers(stripDirPrefix(urlAfter.id, dirAfter)),
         `url ID should be stable. Before: ${urlBefore.id}, After: ${urlAfter.id}`
       );
       assert.strictEqual(
-        stripDirPrefix(timeoutBefore.id, dirBefore),
-        stripDirPrefix(timeoutAfter.id, dirAfter),
+        stripLineNumbers(stripDirPrefix(timeoutBefore.id, dirBefore)),
+        stripLineNumbers(stripDirPrefix(timeoutAfter.id, dirAfter)),
         `timeout ID should be stable. Before: ${timeoutBefore.id}, After: ${timeoutAfter.id}`
       );
 
@@ -314,14 +324,15 @@ function processOrder(order) {
       const dirAfter = resultAfter.testDir;
       resultAfter.cleanup();
 
+      // v2: strip line numbers for semantic stability comparison
       assert.strictEqual(
-        stripDirPrefix(processOrderBefore.id, dirBefore),
-        stripDirPrefix(processOrderAfter.id, dirAfter),
+        stripLineNumbers(stripDirPrefix(processOrderBefore.id, dirBefore)),
+        stripLineNumbers(stripDirPrefix(processOrderAfter.id, dirAfter)),
         `processOrder ID should be stable. Before: ${processOrderBefore.id}, After: ${processOrderAfter.id}`
       );
       assert.strictEqual(
-        stripDirPrefix(totalBefore.id, dirBefore),
-        stripDirPrefix(totalAfter.id, dirAfter),
+        stripLineNumbers(stripDirPrefix(totalBefore.id, dirBefore)),
+        stripLineNumbers(stripDirPrefix(totalAfter.id, dirAfter)),
         `total ID should be stable. Before: ${totalBefore.id}, After: ${totalAfter.id}`
       );
     });

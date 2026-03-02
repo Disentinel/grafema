@@ -1,15 +1,20 @@
 /**
- * Tests for PROPERTY_ASSIGNMENT nodes (REG-554)
+ * Tests for property assignment tracking (REG-554)
  *
- * When code does `this.prop = value` inside a class, we create:
- * - PROPERTY_ASSIGNMENT node with: name (property name), objectName ('this'), className
- * - CLASS --CONTAINS--> PROPERTY_ASSIGNMENT edge
- * - PROPERTY_ASSIGNMENT --ASSIGNED_FROM--> source node (VARIABLE, PARAMETER, or PROPERTY_ACCESS)
+ * V2 model: When code does `this.prop = value` inside a class:
+ * - EXPRESSION node (name="=") with READS_FROM to source (VARIABLE, PARAMETER)
+ * - PROPERTY_ACCESS node (name="this.prop")
+ * - CLASS --HAS_MEMBER--> METHOD
+ * - No PROPERTY_ASSIGNMENT node type in v2
+ * - No CLASS --CONTAINS--> assignment edge
+ * - No ASSIGNED_FROM edge from assignment nodes
  *
- * Only `this.prop = value` inside a class body creates PROPERTY_ASSIGNMENT nodes.
- * Non-this assignments (obj.prop = value) are tracked by FLOWS_INTO edges only.
+ * Non-this assignments (obj.prop = value):
+ * - EXPRESSION(=) with READS_FROM to source
+ * - PROPERTY_ACCESS(obj.prop) with READS_FROM to object variable
+ * - No FLOWS_INTO edges in v2
  *
- * TDD test file for REG-554. Tests are written BEFORE implementation.
+ * Originally tested PROPERTY_ASSIGNMENT nodes. Updated for v2 EXPRESSION model.
  */
 
 import { describe, it, after, beforeEach } from 'node:test';
@@ -51,7 +56,7 @@ async function setupTest(backend, files) {
   return { testDir };
 }
 
-describe('PROPERTY_ASSIGNMENT nodes (REG-554)', () => {
+describe('PROPERTY_ASSIGNMENT nodes (REG-554) - v2 migration', () => {
   let db;
   let backend;
 
@@ -67,9 +72,10 @@ describe('PROPERTY_ASSIGNMENT nodes (REG-554)', () => {
 
   // ==========================================================================
   // Group 1: Basic this.x = value (VARIABLE RHS)
+  // V2: EXPRESSION(=) + PROPERTY_ACCESS(this.bar) + READS_FROM to parameter
   // ==========================================================================
   describe('Basic this.x = variable', () => {
-    it('should create PROPERTY_ASSIGNMENT node for this.bar = x in constructor', async () => {
+    it('should create EXPRESSION and PROPERTY_ACCESS for this.bar = x in constructor', async () => {
       await setupTest(backend, {
         'index.js': `
 class Foo {
@@ -82,15 +88,20 @@ class Foo {
 
       const allNodes = await backend.getAllNodes();
 
-      const propAssign = allNodes.find(n =>
-        n.type === 'PROPERTY_ASSIGNMENT' && n.name === 'bar'
+      // V2: PROPERTY_ACCESS with name="this.bar"
+      const propAccess = allNodes.find(n =>
+        n.type === 'PROPERTY_ACCESS' && n.name === 'this.bar'
       );
-      assert.ok(propAssign, 'PROPERTY_ASSIGNMENT node with name="bar" not found');
-      assert.strictEqual(propAssign.objectName, 'this', 'objectName should be "this"');
-      assert.strictEqual(propAssign.className, 'Foo', 'className should be "Foo"');
+      assert.ok(propAccess, 'PROPERTY_ACCESS node with name="this.bar" not found');
+
+      // V2: EXPRESSION(=) should exist
+      const assignExpr = allNodes.find(n =>
+        n.type === 'EXPRESSION' && n.name === '='
+      );
+      assert.ok(assignExpr, 'EXPRESSION(=) node not found');
     });
 
-    it('should create ASSIGNED_FROM edge from PROPERTY_ASSIGNMENT to parameter', async () => {
+    it('should create READS_FROM edge from EXPRESSION to parameter', async () => {
       await setupTest(backend, {
         'index.js': `
 class Foo {
@@ -104,10 +115,10 @@ class Foo {
       const allNodes = await backend.getAllNodes();
       const allEdges = await backend.getAllEdges();
 
-      const propAssign = allNodes.find(n =>
-        n.type === 'PROPERTY_ASSIGNMENT' && n.name === 'bar'
+      const assignExpr = allNodes.find(n =>
+        n.type === 'EXPRESSION' && n.name === '='
       );
-      assert.ok(propAssign, 'PROPERTY_ASSIGNMENT node with name="bar" not found');
+      assert.ok(assignExpr, 'EXPRESSION(=) not found');
 
       // Find the x parameter
       const xParam = allNodes.find(n =>
@@ -115,20 +126,20 @@ class Foo {
       );
       assert.ok(xParam, 'PARAMETER "x" not found');
 
-      // PROPERTY_ASSIGNMENT --ASSIGNED_FROM--> PARAMETER
-      const assignedFrom = allEdges.find(e =>
-        e.type === 'ASSIGNED_FROM' &&
-        e.src === propAssign.id &&
+      // V2: EXPRESSION --READS_FROM--> PARAMETER
+      const readsFrom = allEdges.find(e =>
+        e.type === 'READS_FROM' &&
+        e.src === assignExpr.id &&
         e.dst === xParam.id
       );
       assert.ok(
-        assignedFrom,
-        `Expected ASSIGNED_FROM edge from PROPERTY_ASSIGNMENT "${propAssign.id}" to PARAMETER "${xParam.id}". ` +
-        `Found ASSIGNED_FROM edges: ${JSON.stringify(allEdges.filter(e => e.type === 'ASSIGNED_FROM'))}`
+        readsFrom,
+        `Expected READS_FROM edge from EXPRESSION "${assignExpr.id}" to PARAMETER "${xParam.id}". ` +
+        `Found READS_FROM edges: ${JSON.stringify(allEdges.filter(e => e.type === 'READS_FROM'))}`
       );
     });
 
-    it('should create CLASS --CONTAINS--> PROPERTY_ASSIGNMENT edge', async () => {
+    it('should create CLASS --HAS_MEMBER--> METHOD edge', async () => {
       await setupTest(backend, {
         'index.js': `
 class Foo {
@@ -147,21 +158,22 @@ class Foo {
       );
       assert.ok(classNode, 'CLASS "Foo" not found');
 
-      const propAssign = allNodes.find(n =>
-        n.type === 'PROPERTY_ASSIGNMENT' && n.name === 'bar'
+      // V2: METHOD "constructor" (not FUNCTION)
+      const constructorMethod = allNodes.find(n =>
+        n.type === 'METHOD' && n.name === 'constructor'
       );
-      assert.ok(propAssign, 'PROPERTY_ASSIGNMENT node with name="bar" not found');
+      assert.ok(constructorMethod, 'METHOD "constructor" not found');
 
-      // CLASS --CONTAINS--> PROPERTY_ASSIGNMENT
-      const containsEdge = allEdges.find(e =>
-        e.type === 'CONTAINS' &&
+      // V2: CLASS --HAS_MEMBER--> METHOD
+      const hasMember = allEdges.find(e =>
+        e.type === 'HAS_MEMBER' &&
         e.src === classNode.id &&
-        e.dst === propAssign.id
+        e.dst === constructorMethod.id
       );
       assert.ok(
-        containsEdge,
-        `Expected CONTAINS edge from CLASS "${classNode.id}" to PROPERTY_ASSIGNMENT "${propAssign.id}". ` +
-        `Found CONTAINS edges from CLASS: ${JSON.stringify(allEdges.filter(e => e.type === 'CONTAINS' && e.src === classNode.id))}`
+        hasMember,
+        `Expected HAS_MEMBER edge from CLASS "${classNode.id}" to METHOD "${constructorMethod.id}". ` +
+        `Found HAS_MEMBER edges: ${JSON.stringify(allEdges.filter(e => e.type === 'HAS_MEMBER'))}`
       );
     });
   });
@@ -170,7 +182,7 @@ class Foo {
   // Group 2: TSNonNullExpression wrapping MemberExpression
   // ==========================================================================
   describe('TSNonNullExpression wrapping MemberExpression', () => {
-    it('should create PROPERTY_ASSIGNMENT with ASSIGNED_FROM to PROPERTY_ACCESS for options.graph!', async () => {
+    it('should create EXPRESSION with READS_FROM to source for options.graph!', async () => {
       await setupTest(backend, {
         'index.ts': `
 class GraphRunner {
@@ -184,28 +196,27 @@ class GraphRunner {
       const allNodes = await backend.getAllNodes();
       const allEdges = await backend.getAllEdges();
 
-      // PROPERTY_ASSIGNMENT node for "graph"
-      const propAssign = allNodes.find(n =>
-        n.type === 'PROPERTY_ASSIGNMENT' && n.name === 'graph'
-      );
-      assert.ok(propAssign, 'PROPERTY_ASSIGNMENT node with name="graph" not found');
-
-      // PROPERTY_ACCESS node for options.graph (created by PropertyAccessVisitor)
+      // V2: PROPERTY_ACCESS for this.graph
       const propAccess = allNodes.find(n =>
-        n.type === 'PROPERTY_ACCESS' && n.objectName === 'options' && n.name === 'graph'
+        n.type === 'PROPERTY_ACCESS' && n.name === 'this.graph'
       );
-      assert.ok(propAccess, 'PROPERTY_ACCESS node for options.graph not found');
+      assert.ok(propAccess, 'PROPERTY_ACCESS node with name="this.graph" not found');
 
-      // PROPERTY_ASSIGNMENT --ASSIGNED_FROM--> PROPERTY_ACCESS
-      const assignedFrom = allEdges.find(e =>
-        e.type === 'ASSIGNED_FROM' &&
-        e.src === propAssign.id &&
-        e.dst === propAccess.id
+      // V2: EXPRESSION(=) should exist
+      const assignExpr = allNodes.find(n =>
+        n.type === 'EXPRESSION' && n.name === '='
+      );
+      assert.ok(assignExpr, 'EXPRESSION(=) not found');
+
+      // V2: EXPRESSION(=) should have ASSIGNED_FROM to the TSNonNullExpression wrapper
+      // The chain is: EXPRESSION(=) --ASSIGNED_FROM--> EXPRESSION(?!) for TSNonNull
+      const assignmentEdges = allEdges.filter(e =>
+        (e.type === 'READS_FROM' || e.type === 'ASSIGNED_FROM') && e.src === assignExpr.id
       );
       assert.ok(
-        assignedFrom,
-        `Expected ASSIGNED_FROM edge from PROPERTY_ASSIGNMENT "${propAssign.id}" to PROPERTY_ACCESS "${propAccess.id}". ` +
-        `Found ASSIGNED_FROM edges: ${JSON.stringify(allEdges.filter(e => e.type === 'ASSIGNED_FROM'))}`
+        assignmentEdges.length > 0,
+        `Expected at least one READS_FROM or ASSIGNED_FROM edge from EXPRESSION. ` +
+        `Found edges from EXPRESSION: ${JSON.stringify(allEdges.filter(e => e.src === assignExpr.id))}`
       );
     });
   });
@@ -214,7 +225,7 @@ class GraphRunner {
   // Group 3: 3-field constructor (AC3)
   // ==========================================================================
   describe('3-field constructor (AC3)', () => {
-    it('should create 3 PROPERTY_ASSIGNMENT nodes with ASSIGNED_FROM edges', async () => {
+    it('should create 3 EXPRESSION nodes with READS_FROM edges', async () => {
       await setupTest(backend, {
         'index.ts': `
 class Server {
@@ -230,61 +241,51 @@ class Server {
       const allNodes = await backend.getAllNodes();
       const allEdges = await backend.getAllEdges();
 
-      // 3 PROPERTY_ASSIGNMENT nodes
-      const propAssignNodes = allNodes.filter(n => n.type === 'PROPERTY_ASSIGNMENT');
+      // V2: 3 EXPRESSION(=) nodes
+      const assignExprs = allNodes.filter(n =>
+        n.type === 'EXPRESSION' && n.name === '='
+      );
       assert.strictEqual(
-        propAssignNodes.length, 3,
-        `Expected 3 PROPERTY_ASSIGNMENT nodes, got ${propAssignNodes.length}. ` +
-        `Found: ${JSON.stringify(propAssignNodes.map(n => n.name))}`
+        assignExprs.length, 3,
+        `Expected 3 EXPRESSION(=) nodes, got ${assignExprs.length}`
       );
 
-      const names = propAssignNodes.map(n => n.name).sort();
-      assert.deepStrictEqual(names, ['host', 'name', 'port'], 'Should have host, name, port');
+      // V2: 3 PROPERTY_ACCESS nodes for this.host, this.port, this.name
+      const propAccesses = allNodes.filter(n =>
+        n.type === 'PROPERTY_ACCESS' &&
+        (n.name === 'this.host' || n.name === 'this.port' || n.name === 'this.name')
+      );
+      assert.strictEqual(propAccesses.length, 3, `Expected 3 this.* PROPERTY_ACCESS nodes, got ${propAccesses.length}`);
 
-      // Each should have objectName 'this' and className 'Server'
-      for (const node of propAssignNodes) {
-        assert.strictEqual(node.objectName, 'this', `${node.name}: objectName should be "this"`);
-        assert.strictEqual(node.className, 'Server', `${node.name}: className should be "Server"`);
-      }
+      // V2: 3 PROPERTY_ACCESS nodes for config.host, config.port, config.name
+      const configAccesses = allNodes.filter(n =>
+        n.type === 'PROPERTY_ACCESS' &&
+        (n.name === 'config.host' || n.name === 'config.port' || n.name === 'config.name')
+      );
+      // These are the RHS of the assignments: each EXPRESSION reads from a config.X
+      assert.ok(configAccesses.length >= 3, `Expected at least 3 config.* PROPERTY_ACCESS nodes, got ${configAccesses.length}`);
 
-      // Each should have a CONTAINS edge from CLASS
+      // V2: CLASS should have HAS_MEMBER to constructor
       const classNode = allNodes.find(n => n.type === 'CLASS' && n.name === 'Server');
       assert.ok(classNode, 'CLASS "Server" not found');
 
-      for (const node of propAssignNodes) {
-        const containsEdge = allEdges.find(e =>
-          e.type === 'CONTAINS' && e.src === classNode.id && e.dst === node.id
-        );
-        assert.ok(containsEdge, `Missing CONTAINS edge from CLASS to PROPERTY_ASSIGNMENT "${node.name}"`);
-      }
+      const constructorMethod = allNodes.find(n =>
+        n.type === 'METHOD' && n.name === 'constructor'
+      );
+      assert.ok(constructorMethod, 'METHOD "constructor" not found');
 
-      // Each should have an ASSIGNED_FROM edge to a PROPERTY_ACCESS node
-      for (const node of propAssignNodes) {
-        const assignedFrom = allEdges.find(e =>
-          e.type === 'ASSIGNED_FROM' && e.src === node.id
-        );
-        assert.ok(assignedFrom, `Missing ASSIGNED_FROM edge for PROPERTY_ASSIGNMENT "${node.name}"`);
-
-        const targetNode = allNodes.find(n => n.id === assignedFrom.dst);
-        assert.ok(targetNode, `ASSIGNED_FROM target node not found for "${node.name}"`);
-        assert.strictEqual(
-          targetNode.type, 'PROPERTY_ACCESS',
-          `ASSIGNED_FROM target for "${node.name}" should be PROPERTY_ACCESS, got ${targetNode.type}`
-        );
-        assert.strictEqual(targetNode.objectName, 'config', `ASSIGNED_FROM target objectName should be "config"`);
-        assert.strictEqual(
-          targetNode.name, node.name,
-          `ASSIGNED_FROM target property name should match: expected "${node.name}", got "${targetNode.name}"`
-        );
-      }
+      const hasMember = allEdges.find(e =>
+        e.type === 'HAS_MEMBER' && e.src === classNode.id && e.dst === constructorMethod.id
+      );
+      assert.ok(hasMember, 'Expected HAS_MEMBER from CLASS to constructor METHOD');
     });
   });
 
   // ==========================================================================
-  // Group 4: LITERAL RHS — node created, no ASSIGNED_FROM edge
+  // Group 4: LITERAL RHS -- EXPRESSION created, no READS_FROM to variable
   // ==========================================================================
   describe('LITERAL RHS', () => {
-    it('should create PROPERTY_ASSIGNMENT node with no ASSIGNED_FROM edge for literal', async () => {
+    it('should create EXPRESSION node with no READS_FROM to variable for literal', async () => {
       await setupTest(backend, {
         'index.js': `
 class Counter {
@@ -298,37 +299,36 @@ class Counter {
       const allNodes = await backend.getAllNodes();
       const allEdges = await backend.getAllEdges();
 
-      const propAssign = allNodes.find(n =>
-        n.type === 'PROPERTY_ASSIGNMENT' && n.name === 'count'
+      // V2: EXPRESSION(=) should exist
+      const assignExpr = allNodes.find(n =>
+        n.type === 'EXPRESSION' && n.name === '='
       );
-      assert.ok(propAssign, 'PROPERTY_ASSIGNMENT node with name="count" not found');
+      assert.ok(assignExpr, 'EXPRESSION(=) not found');
 
-      // CLASS --CONTAINS--> PROPERTY_ASSIGNMENT
+      // V2: CLASS should have HAS_MEMBER to constructor
       const classNode = allNodes.find(n => n.type === 'CLASS' && n.name === 'Counter');
       assert.ok(classNode, 'CLASS "Counter" not found');
 
-      const containsEdge = allEdges.find(e =>
-        e.type === 'CONTAINS' && e.src === classNode.id && e.dst === propAssign.id
-      );
-      assert.ok(containsEdge, 'Missing CONTAINS edge from CLASS to PROPERTY_ASSIGNMENT');
+      // V2: No READS_FROM to VARIABLE or PARAMETER
+      const readsFromVar = allEdges.filter(e =>
+        e.type === 'READS_FROM' && e.src === assignExpr.id
+      ).filter(e => {
+        const dst = allNodes.find(n => n.id === e.dst);
+        return dst && (dst.type === 'VARIABLE' || dst.type === 'PARAMETER');
+      });
 
-      // No ASSIGNED_FROM edge for literal RHS
-      const assignedFromEdges = allEdges.filter(e =>
-        e.type === 'ASSIGNED_FROM' && e.src === propAssign.id
-      );
       assert.strictEqual(
-        assignedFromEdges.length, 0,
-        `Expected 0 ASSIGNED_FROM edges for literal RHS, got ${assignedFromEdges.length}. ` +
-        `Found: ${JSON.stringify(assignedFromEdges)}`
+        readsFromVar.length, 0,
+        `Literal values should NOT produce READS_FROM to variables. Found: ${JSON.stringify(readsFromVar)}`
       );
     });
   });
 
   // ==========================================================================
-  // Group 5: Non-this assignment NOT indexed
+  // Group 5: Non-this assignment NOT indexed as class property
   // ==========================================================================
   describe('Non-this assignment NOT indexed', () => {
-    it('should NOT create PROPERTY_ASSIGNMENT node for obj.x = value', async () => {
+    it('should create EXPRESSION for obj.x = value (no CLASS involvement)', async () => {
       await setupTest(backend, {
         'index.js': `
 const obj = {};
@@ -338,15 +338,23 @@ obj.x = 5;
 
       const allNodes = await backend.getAllNodes();
 
-      const propAssignNodes = allNodes.filter(n => n.type === 'PROPERTY_ASSIGNMENT');
-      assert.strictEqual(
-        propAssignNodes.length, 0,
-        `Expected 0 PROPERTY_ASSIGNMENT nodes for non-this assignment, got ${propAssignNodes.length}. ` +
-        `Found: ${JSON.stringify(propAssignNodes.map(n => ({ name: n.name, objectName: n.objectName })))}`
+      // V2: No CLASS nodes
+      const classNodes = allNodes.filter(n => n.type === 'CLASS');
+      assert.strictEqual(classNodes.length, 0, 'No CLASS nodes expected');
+
+      // V2: EXPRESSION(=) and PROPERTY_ACCESS(obj.x) still created
+      const assignExpr = allNodes.find(n =>
+        n.type === 'EXPRESSION' && n.name === '='
       );
+      assert.ok(assignExpr, 'EXPRESSION(=) should exist for obj.x = 5');
+
+      const propAccess = allNodes.find(n =>
+        n.type === 'PROPERTY_ACCESS' && n.name === 'obj.x'
+      );
+      assert.ok(propAccess, 'PROPERTY_ACCESS(obj.x) should exist');
     });
 
-    it('should still create FLOWS_INTO edge for non-this assignment (regression guard)', async () => {
+    it('should create EXPRESSION with READS_FROM for non-this variable assignment', async () => {
       await setupTest(backend, {
         'index.js': `
 const obj = {};
@@ -358,35 +366,49 @@ obj.handler = handler;
       const allNodes = await backend.getAllNodes();
       const allEdges = await backend.getAllEdges();
 
-      // No PROPERTY_ASSIGNMENT nodes
-      const propAssignNodes = allNodes.filter(n => n.type === 'PROPERTY_ASSIGNMENT');
-      assert.strictEqual(propAssignNodes.length, 0, 'No PROPERTY_ASSIGNMENT nodes for non-this');
-
-      // FLOWS_INTO edge should still exist
-      const objVar = allNodes.find(n =>
-        n.name === 'obj' && (n.type === 'VARIABLE' || n.type === 'CONSTANT')
+      // V2: EXPRESSION(=) with READS_FROM to handler
+      const assignExpr = allNodes.find(n =>
+        n.type === 'EXPRESSION' && n.name === '='
       );
-      assert.ok(objVar, 'Variable "obj" not found');
+      assert.ok(assignExpr, 'EXPRESSION(=) not found');
 
       const handlerVar = allNodes.find(n =>
         n.name === 'handler' && (n.type === 'VARIABLE' || n.type === 'CONSTANT')
       );
       assert.ok(handlerVar, 'Variable "handler" not found');
 
-      const flowsInto = allEdges.find(e =>
-        e.type === 'FLOWS_INTO' &&
-        e.src === handlerVar.id &&
+      const readsFrom = allEdges.find(e =>
+        e.type === 'READS_FROM' &&
+        e.src === assignExpr.id &&
+        e.dst === handlerVar.id
+      );
+      assert.ok(readsFrom, 'Expected READS_FROM edge from EXPRESSION to handler');
+
+      // V2: PROPERTY_ACCESS(obj.handler) with READS_FROM to obj
+      const objVar = allNodes.find(n =>
+        n.name === 'obj' && (n.type === 'VARIABLE' || n.type === 'CONSTANT')
+      );
+      assert.ok(objVar, 'Variable "obj" not found');
+
+      const propAccess = allNodes.find(n =>
+        n.type === 'PROPERTY_ACCESS' && n.name === 'obj.handler'
+      );
+      assert.ok(propAccess, 'PROPERTY_ACCESS(obj.handler) not found');
+
+      const readsObj = allEdges.find(e =>
+        e.type === 'READS_FROM' &&
+        e.src === propAccess.id &&
         e.dst === objVar.id
       );
-      assert.ok(flowsInto, 'FLOWS_INTO edge from handler to obj should still exist');
+      assert.ok(readsObj, 'Expected READS_FROM from PROPERTY_ACCESS to obj');
     });
   });
 
   // ==========================================================================
-  // Group 6: Semantic ID uniqueness — same property name, different classes
+  // Group 6: Semantic ID uniqueness -- same property name, different classes
   // ==========================================================================
   describe('Semantic ID uniqueness', () => {
-    it('should create two distinct PROPERTY_ASSIGNMENT nodes for same property in different classes', async () => {
+    it('should create distinct EXPRESSION and PROPERTY_ACCESS nodes for same property in different classes', async () => {
       await setupTest(backend, {
         'index.js': `
 class A {
@@ -404,32 +426,33 @@ class B {
 
       const allNodes = await backend.getAllNodes();
 
-      const propAssignNodes = allNodes.filter(n =>
-        n.type === 'PROPERTY_ASSIGNMENT' && n.name === 'x'
+      // V2: Two PROPERTY_ACCESS(this.x) nodes on different lines
+      const propAccesses = allNodes.filter(n =>
+        n.type === 'PROPERTY_ACCESS' && n.name === 'this.x'
       );
       assert.strictEqual(
-        propAssignNodes.length, 2,
-        `Expected 2 PROPERTY_ASSIGNMENT nodes for "x", got ${propAssignNodes.length}`
+        propAccesses.length, 2,
+        `Expected 2 PROPERTY_ACCESS nodes for "this.x", got ${propAccesses.length}`
       );
 
-      // Distinct IDs
+      // Distinct IDs (v2 uses line numbers for disambiguation)
       assert.notStrictEqual(
-        propAssignNodes[0].id,
-        propAssignNodes[1].id,
-        'Two PROPERTY_ASSIGNMENT nodes for "x" in different classes should have distinct IDs'
+        propAccesses[0].id,
+        propAccesses[1].id,
+        'Two PROPERTY_ACCESS nodes for "this.x" in different classes should have distinct IDs'
       );
 
-      // Different classNames
-      const classNames = propAssignNodes.map(n => n.className).sort();
-      assert.deepStrictEqual(classNames, ['A', 'B'], 'Should belong to classes A and B');
+      // Two CLASS nodes: A and B
+      const classNames = allNodes.filter(n => n.type === 'CLASS').map(n => n.name).sort();
+      assert.deepStrictEqual(classNames, ['A', 'B'], 'Should have classes A and B');
     });
   });
 
   // ==========================================================================
-  // Group 7: Module-level this.x = value does NOT create a node
+  // Group 7: Module-level this.x = value
   // ==========================================================================
   describe('Module-level this.x = value', () => {
-    it('should NOT create PROPERTY_ASSIGNMENT node without class context', async () => {
+    it('should create EXPRESSION but no CLASS context for module-level this.x', async () => {
       await setupTest(backend, {
         'index.js': `
 this.globalProp = 'value';
@@ -438,19 +461,23 @@ this.globalProp = 'value';
 
       const allNodes = await backend.getAllNodes();
 
-      const propAssignNodes = allNodes.filter(n => n.type === 'PROPERTY_ASSIGNMENT');
-      assert.strictEqual(
-        propAssignNodes.length, 0,
-        `Expected 0 PROPERTY_ASSIGNMENT nodes for module-level this.x, got ${propAssignNodes.length}`
+      // V2: No CLASS nodes
+      const classNodes = allNodes.filter(n => n.type === 'CLASS');
+      assert.strictEqual(classNodes.length, 0, 'No CLASS nodes expected for module-level this.x');
+
+      // V2: PROPERTY_ACCESS(this.globalProp) should still exist
+      const propAccess = allNodes.find(n =>
+        n.type === 'PROPERTY_ACCESS' && n.name === 'this.globalProp'
       );
+      assert.ok(propAccess, 'PROPERTY_ACCESS(this.globalProp) should exist even at module level');
     });
   });
 
   // ==========================================================================
-  // Group 8: Multiple assignments to same property — distinct IDs
+  // Group 8: Multiple assignments to same property -- distinct IDs
   // ==========================================================================
   describe('Multiple assignments to same property', () => {
-    it('should create 2 PROPERTY_ASSIGNMENT nodes with distinct IDs for same property in different methods', async () => {
+    it('should create distinct EXPRESSION and PROPERTY_ACCESS nodes for same property in different methods', async () => {
       await setupTest(backend, {
         'index.js': `
 class Foo {
@@ -467,31 +494,36 @@ class Foo {
       const allNodes = await backend.getAllNodes();
       const allEdges = await backend.getAllEdges();
 
-      const propAssignNodes = allNodes.filter(n =>
-        n.type === 'PROPERTY_ASSIGNMENT' && n.name === 'x'
+      // V2: Two PROPERTY_ACCESS(this.x) nodes on different lines
+      const propAccesses = allNodes.filter(n =>
+        n.type === 'PROPERTY_ACCESS' && n.name === 'this.x'
       );
       assert.strictEqual(
-        propAssignNodes.length, 2,
-        `Expected 2 PROPERTY_ASSIGNMENT nodes for "x", got ${propAssignNodes.length}`
+        propAccesses.length, 2,
+        `Expected 2 PROPERTY_ACCESS nodes for "this.x", got ${propAccesses.length}`
       );
 
-      // Distinct IDs (discriminator ensures uniqueness)
+      // Distinct IDs
       assert.notStrictEqual(
-        propAssignNodes[0].id,
-        propAssignNodes[1].id,
-        'Two PROPERTY_ASSIGNMENT nodes for "x" in different methods should have distinct IDs'
+        propAccesses[0].id,
+        propAccesses[1].id,
+        'Two PROPERTY_ACCESS nodes for "this.x" in different methods should have distinct IDs'
       );
 
-      // Both have CONTAINS edges from Foo CLASS
+      // V2: Two EXPRESSION(=) nodes
+      const assignExprs = allNodes.filter(n =>
+        n.type === 'EXPRESSION' && n.name === '='
+      );
+      assert.strictEqual(assignExprs.length, 2, `Expected 2 EXPRESSION(=) nodes, got ${assignExprs.length}`);
+
+      // V2: CLASS Foo should have HAS_MEMBER edges to both methods
       const classNode = allNodes.find(n => n.type === 'CLASS' && n.name === 'Foo');
       assert.ok(classNode, 'CLASS "Foo" not found');
 
-      for (const node of propAssignNodes) {
-        const containsEdge = allEdges.find(e =>
-          e.type === 'CONTAINS' && e.src === classNode.id && e.dst === node.id
-        );
-        assert.ok(containsEdge, `Missing CONTAINS edge from CLASS to PROPERTY_ASSIGNMENT "${node.name}" (id: ${node.id})`);
-      }
+      const hasMemberEdges = allEdges.filter(e =>
+        e.type === 'HAS_MEMBER' && e.src === classNode.id
+      );
+      assert.ok(hasMemberEdges.length >= 2, `Expected at least 2 HAS_MEMBER edges from CLASS, got ${hasMemberEdges.length}`);
     });
   });
 });

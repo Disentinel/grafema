@@ -399,15 +399,15 @@ class Repository {
 
       assert.ok(classNode, 'CLASS node "Repository" should be extracted');
 
-      // Check that FUNCTION nodes exist for the methods
+      // V2: Class methods may be FUNCTION or METHOD type
       const methodNodes = allNodes.filter(n =>
-        n.type === 'FUNCTION' && n.file && n.file.endsWith('index.ts')
+        (n.type === 'FUNCTION' || n.type === 'METHOD') && n.file && n.file.endsWith('index.ts')
       );
       const methodNames = methodNodes.map(n => n.name);
 
-      assert.ok(methodNames.includes('add'), 'Public method "add" should be extracted');
-      assert.ok(methodNames.includes('validate'), 'Protected method "validate" should be extracted');
-      assert.ok(methodNames.includes('log'), 'Private method "log" should be extracted');
+      assert.ok(methodNames.includes('add'), `Public method "add" should be extracted. Found: ${JSON.stringify(methodNames)}`);
+      assert.ok(methodNames.includes('validate'), `Protected method "validate" should be extracted. Found: ${JSON.stringify(methodNames)}`);
+      assert.ok(methodNames.includes('log'), `Private method "log" should be extracted. Found: ${JSON.stringify(methodNames)}`);
     });
   });
 

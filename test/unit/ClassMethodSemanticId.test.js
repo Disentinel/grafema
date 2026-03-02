@@ -6,10 +6,15 @@
  * Verifies that class methods, property functions, constructors, static methods,
  * and getters/setters all produce semantic IDs (not legacy FUNCTION# format).
  *
- * Expected format v2: {file}->FUNCTION->{methodName}[in:{className}]
+ * V2 format:
+ * - Regular class methods: {file}->METHOD->{name}#{line}
+ * - Constructor: {file}->METHOD->constructor#{line}
+ * - Arrow function properties: PROPERTY node + FUNCTION node
+ * - Static methods: {file}->METHOD->{name}#{line} with static=true
+ * - Getters: {file}->GETTER->{name}#{line}
+ * - Setters: {file}->SETTER->{name}#{line}
  *
  * TDD: Tests written first per Kent Beck's methodology.
- * These tests will FAIL initially - implementation comes after.
  */
 
 import { describe, it, after, beforeEach } from 'node:test';
@@ -28,7 +33,6 @@ let testCounter = 0;
 
 /**
  * Helper to create a test project with given files
- * Note: Uses 'index.js' as the main file since JSModuleIndexer starts from index.js
  */
 async function setupTest(backend, files) {
   const testDir = join(tmpdir(), `grafema-test-classmethod-${Date.now()}-${testCounter++}`);
@@ -60,23 +64,20 @@ async function setupTest(backend, files) {
 /**
  * Check if an ID has legacy FUNCTION# format
  */
-function hasLegacyFunctionFormat(id) {
+function hasLegacyFormat(id) {
   if (!id || typeof id !== 'string') return false;
-  return id.startsWith('FUNCTION#');
+  return id.startsWith('FUNCTION#') || id.startsWith('METHOD#');
 }
 
 /**
- * Check if an ID is in semantic format
- * Semantic format: file->scope->FUNCTION->name
+ * Check if an ID is in v2 semantic format for a class member
+ * V2 format uses -> as separator and includes METHOD, GETTER, SETTER, or FUNCTION
  */
-function isSemanticFunctionId(id) {
+function isSemanticClassMemberId(id) {
   if (!id || typeof id !== 'string') return false;
-
-  // Legacy format starts with FUNCTION#
-  if (hasLegacyFunctionFormat(id)) return false;
-
-  // Semantic format uses -> as separator and includes FUNCTION
-  return id.includes('->FUNCTION->');
+  if (hasLegacyFormat(id)) return false;
+  return id.includes('->METHOD->') || id.includes('->GETTER->') ||
+         id.includes('->SETTER->') || id.includes('->FUNCTION->');
 }
 
 describe('Class Method Semantic ID Migration (REG-131)', () => {
@@ -110,34 +111,23 @@ class UserService {
       });
 
       const allNodes = await backend.getAllNodes();
+      // V2: class methods are METHOD type
       const methodNode = allNodes.find(n =>
-        n.type === 'FUNCTION' && n.name === 'getUser'
+        n.type === 'METHOD' && n.name === 'getUser'
       );
 
-      assert.ok(methodNode, 'FUNCTION node "getUser" not found');
+      assert.ok(methodNode, 'METHOD node "getUser" not found');
 
-      // Should have semantic ID format: test.js->UserService->FUNCTION->getUser
+      // Should have semantic ID format: file->METHOD->name#line
       assert.ok(
-        isSemanticFunctionId(methodNode.id),
+        methodNode.id.includes('->METHOD->getUser#'),
         `Method should have semantic ID format. Got: ${methodNode.id}`
       );
 
-      // Should NOT start with FUNCTION#
+      // Should NOT start with METHOD# or FUNCTION#
       assert.ok(
-        !hasLegacyFunctionFormat(methodNode.id),
-        `Method ID should NOT start with FUNCTION#. Got: ${methodNode.id}`
-      );
-
-      // Should include class name in scope path
-      assert.ok(
-        methodNode.id.includes('UserService'),
-        `Method ID should include class name. Got: ${methodNode.id}`
-      );
-
-      // Expected exact format v2: file->FUNCTION->name[in:class]
-      assert.ok(
-        methodNode.id.endsWith('->FUNCTION->getUser[in:UserService]'),
-        `Expected ID to end with "->FUNCTION->getUser[in:UserService]". Got: ${methodNode.id}`
+        !hasLegacyFormat(methodNode.id),
+        `Method ID should NOT start with legacy format. Got: ${methodNode.id}`
       );
     });
 
@@ -162,9 +152,9 @@ class Calculator {
 
       const allNodes = await backend.getAllNodes();
 
-      const addMethod = allNodes.find(n => n.type === 'FUNCTION' && n.name === 'add');
-      const subtractMethod = allNodes.find(n => n.type === 'FUNCTION' && n.name === 'subtract');
-      const multiplyMethod = allNodes.find(n => n.type === 'FUNCTION' && n.name === 'multiply');
+      const addMethod = allNodes.find(n => n.type === 'METHOD' && n.name === 'add');
+      const subtractMethod = allNodes.find(n => n.type === 'METHOD' && n.name === 'subtract');
+      const multiplyMethod = allNodes.find(n => n.type === 'METHOD' && n.name === 'multiply');
 
       assert.ok(addMethod, 'add method not found');
       assert.ok(subtractMethod, 'subtract method not found');
@@ -172,22 +162,17 @@ class Calculator {
 
       // All should have semantic IDs
       assert.ok(
-        isSemanticFunctionId(addMethod.id),
+        addMethod.id.includes('->METHOD->add#'),
         `add should have semantic ID. Got: ${addMethod.id}`
       );
       assert.ok(
-        isSemanticFunctionId(subtractMethod.id),
+        subtractMethod.id.includes('->METHOD->subtract#'),
         `subtract should have semantic ID. Got: ${subtractMethod.id}`
       );
       assert.ok(
-        isSemanticFunctionId(multiplyMethod.id),
+        multiplyMethod.id.includes('->METHOD->multiply#'),
         `multiply should have semantic ID. Got: ${multiplyMethod.id}`
       );
-
-      // All should include class name
-      assert.ok(addMethod.id.includes('Calculator'), 'add should include Calculator');
-      assert.ok(subtractMethod.id.includes('Calculator'), 'subtract should include Calculator');
-      assert.ok(multiplyMethod.id.includes('Calculator'), 'multiply should include Calculator');
 
       // All IDs should be unique
       assert.notStrictEqual(addMethod.id, subtractMethod.id, 'add and subtract should have different IDs');
@@ -213,34 +198,23 @@ class Handler {
       });
 
       const allNodes = await backend.getAllNodes();
-      const processNode = allNodes.find(n =>
-        n.type === 'FUNCTION' && n.name === 'process'
+      // V2: arrow class fields create PROPERTY node + FUNCTION node
+      const processProp = allNodes.find(n =>
+        n.type === 'PROPERTY' && n.name === 'process'
       );
 
-      assert.ok(processNode, 'FUNCTION node "process" not found');
+      assert.ok(processProp, 'PROPERTY node "process" not found');
 
-      // Should have semantic ID format: test.js->Handler->FUNCTION->process
+      // Should have semantic ID format: file->PROPERTY->name#line
       assert.ok(
-        isSemanticFunctionId(processNode.id),
-        `Property function should have semantic ID format. Got: ${processNode.id}`
+        processProp.id.includes('->PROPERTY->process#'),
+        `Property function should have semantic ID format. Got: ${processProp.id}`
       );
 
-      // Should NOT start with FUNCTION#
+      // Should NOT start with FUNCTION# or PROPERTY#
       assert.ok(
-        !hasLegacyFunctionFormat(processNode.id),
-        `Property function ID should NOT start with FUNCTION#. Got: ${processNode.id}`
-      );
-
-      // Should include class name
-      assert.ok(
-        processNode.id.includes('Handler'),
-        `Property function ID should include class name. Got: ${processNode.id}`
-      );
-
-      // Expected exact format v2: file->FUNCTION->name[in:class]
-      assert.ok(
-        processNode.id.endsWith('->FUNCTION->process[in:Handler]'),
-        `Expected ID to end with "->FUNCTION->process[in:Handler]". Got: ${processNode.id}`
+        !hasLegacyFormat(processProp.id),
+        `Property function ID should NOT have legacy format. Got: ${processProp.id}`
       );
     });
 
@@ -257,27 +231,24 @@ class EventEmitter {
 
       const allNodes = await backend.getAllNodes();
 
-      const onConnect = allNodes.find(n => n.type === 'FUNCTION' && n.name === 'onConnect');
-      const onDisconnect = allNodes.find(n => n.type === 'FUNCTION' && n.name === 'onDisconnect');
-      const onError = allNodes.find(n => n.type === 'FUNCTION' && n.name === 'onError');
+      // V2: arrow fields are PROPERTY nodes
+      const onConnect = allNodes.find(n => n.type === 'PROPERTY' && n.name === 'onConnect');
+      const onDisconnect = allNodes.find(n => n.type === 'PROPERTY' && n.name === 'onDisconnect');
+      const onError = allNodes.find(n => n.type === 'PROPERTY' && n.name === 'onError');
 
       assert.ok(onConnect, 'onConnect not found');
       assert.ok(onDisconnect, 'onDisconnect not found');
       assert.ok(onError, 'onError not found');
 
-      // All should have semantic IDs
+      // All should have semantic IDs with ->PROPERTY->
       [onConnect, onDisconnect, onError].forEach(node => {
         assert.ok(
-          isSemanticFunctionId(node.id),
+          node.id.includes('->PROPERTY->'),
           `${node.name} should have semantic ID. Got: ${node.id}`
         );
         assert.ok(
-          !hasLegacyFunctionFormat(node.id),
+          !hasLegacyFormat(node.id),
           `${node.name} should NOT have legacy format. Got: ${node.id}`
-        );
-        assert.ok(
-          node.id.includes('EventEmitter'),
-          `${node.name} should include class name. Got: ${node.id}`
         );
       });
     });
@@ -300,34 +271,23 @@ class MyClass {
       });
 
       const allNodes = await backend.getAllNodes();
+      // V2: constructor is METHOD type with kind='constructor'
       const constructorNode = allNodes.find(n =>
-        n.type === 'FUNCTION' && n.name === 'constructor'
+        n.type === 'METHOD' && n.name === 'constructor'
       );
 
-      assert.ok(constructorNode, 'FUNCTION node "constructor" not found');
+      assert.ok(constructorNode, 'METHOD node "constructor" not found');
 
-      // Should have semantic ID format: test.js->MyClass->FUNCTION->constructor
+      // Should have semantic ID format: file->METHOD->constructor#line
       assert.ok(
-        isSemanticFunctionId(constructorNode.id),
+        constructorNode.id.includes('->METHOD->constructor#'),
         `Constructor should have semantic ID format. Got: ${constructorNode.id}`
       );
 
-      // Should NOT start with FUNCTION#
+      // Should NOT have legacy format
       assert.ok(
-        !hasLegacyFunctionFormat(constructorNode.id),
-        `Constructor ID should NOT start with FUNCTION#. Got: ${constructorNode.id}`
-      );
-
-      // Should include class name
-      assert.ok(
-        constructorNode.id.includes('MyClass'),
-        `Constructor ID should include class name. Got: ${constructorNode.id}`
-      );
-
-      // Expected exact format v2: file->FUNCTION->name[in:class]
-      assert.ok(
-        constructorNode.id.endsWith('->FUNCTION->constructor[in:MyClass]'),
-        `Expected ID to end with "->FUNCTION->constructor[in:MyClass]". Got: ${constructorNode.id}`
+        !hasLegacyFormat(constructorNode.id),
+        `Constructor ID should NOT have legacy format. Got: ${constructorNode.id}`
       );
     });
 
@@ -346,17 +306,13 @@ class User {
 
       const allNodes = await backend.getAllNodes();
       const constructorNode = allNodes.find(n =>
-        n.type === 'FUNCTION' && n.name === 'constructor'
+        n.type === 'METHOD' && n.name === 'constructor'
       );
 
       assert.ok(constructorNode, 'Constructor not found');
       assert.ok(
-        isSemanticFunctionId(constructorNode.id),
+        constructorNode.id.includes('->METHOD->constructor#'),
         `Constructor should have semantic ID. Got: ${constructorNode.id}`
-      );
-      assert.ok(
-        constructorNode.id.includes('User'),
-        `Constructor should include class name User. Got: ${constructorNode.id}`
       );
     });
   });
@@ -379,34 +335,25 @@ class Utils {
 
       const allNodes = await backend.getAllNodes();
       const formatNode = allNodes.find(n =>
-        n.type === 'FUNCTION' && n.name === 'format'
+        n.type === 'METHOD' && n.name === 'format'
       );
 
-      assert.ok(formatNode, 'FUNCTION node "format" not found');
+      assert.ok(formatNode, 'METHOD node "format" not found');
 
-      // Should have semantic ID format: test.js->Utils->FUNCTION->format
+      // Should have semantic ID format: file->METHOD->name#line
       assert.ok(
-        isSemanticFunctionId(formatNode.id),
+        formatNode.id.includes('->METHOD->format#'),
         `Static method should have semantic ID format. Got: ${formatNode.id}`
       );
 
-      // Should NOT start with FUNCTION#
+      // Should NOT have legacy format
       assert.ok(
-        !hasLegacyFunctionFormat(formatNode.id),
-        `Static method ID should NOT start with FUNCTION#. Got: ${formatNode.id}`
+        !hasLegacyFormat(formatNode.id),
+        `Static method ID should NOT have legacy format. Got: ${formatNode.id}`
       );
 
-      // Should include class name
-      assert.ok(
-        formatNode.id.includes('Utils'),
-        `Static method ID should include class name. Got: ${formatNode.id}`
-      );
-
-      // Expected exact format v2: file->FUNCTION->name[in:class]
-      assert.ok(
-        formatNode.id.endsWith('->FUNCTION->format[in:Utils]'),
-        `Expected ID to end with "->FUNCTION->format[in:Utils]". Got: ${formatNode.id}`
-      );
+      // Should be marked static
+      assert.strictEqual(formatNode.static, true, 'Static method should have static=true');
     });
 
     it('should produce semantic ID for multiple static methods', async () => {
@@ -422,23 +369,19 @@ class Math {
 
       const allNodes = await backend.getAllNodes();
 
-      const addMethod = allNodes.find(n => n.type === 'FUNCTION' && n.name === 'add');
-      const multiplyMethod = allNodes.find(n => n.type === 'FUNCTION' && n.name === 'multiply');
-      const fetchRemoteMethod = allNodes.find(n => n.type === 'FUNCTION' && n.name === 'fetchRemote');
+      const addMethod = allNodes.find(n => n.type === 'METHOD' && n.name === 'add');
+      const multiplyMethod = allNodes.find(n => n.type === 'METHOD' && n.name === 'multiply');
+      const fetchRemoteMethod = allNodes.find(n => n.type === 'METHOD' && n.name === 'fetchRemote');
 
       assert.ok(addMethod, 'static add not found');
       assert.ok(multiplyMethod, 'static multiply not found');
       assert.ok(fetchRemoteMethod, 'static fetchRemote not found');
 
-      // All should have semantic IDs with class name
+      // All should have semantic IDs
       [addMethod, multiplyMethod, fetchRemoteMethod].forEach(node => {
         assert.ok(
-          isSemanticFunctionId(node.id),
+          node.id.includes('->METHOD->'),
           `${node.name} should have semantic ID. Got: ${node.id}`
-        );
-        assert.ok(
-          node.id.includes('Math'),
-          `${node.name} should include class name Math. Got: ${node.id}`
         );
       });
     });
@@ -461,34 +404,23 @@ class Config {
       });
 
       const allNodes = await backend.getAllNodes();
+      // V2: getters are GETTER type
       const getterNode = allNodes.find(n =>
-        n.type === 'FUNCTION' && n.name === 'value'
+        n.type === 'GETTER' && n.name === 'value'
       );
 
-      assert.ok(getterNode, 'FUNCTION node "value" (getter) not found');
+      assert.ok(getterNode, 'GETTER node "value" not found');
 
-      // Should have semantic ID format: test.js->Config->FUNCTION->value
+      // Should have semantic ID format: file->GETTER->name#line
       assert.ok(
-        isSemanticFunctionId(getterNode.id),
+        getterNode.id.includes('->GETTER->value#'),
         `Getter should have semantic ID format. Got: ${getterNode.id}`
       );
 
-      // Should NOT start with FUNCTION#
+      // Should NOT have legacy format
       assert.ok(
-        !hasLegacyFunctionFormat(getterNode.id),
-        `Getter ID should NOT start with FUNCTION#. Got: ${getterNode.id}`
-      );
-
-      // Should include class name
-      assert.ok(
-        getterNode.id.includes('Config'),
-        `Getter ID should include class name. Got: ${getterNode.id}`
-      );
-
-      // Expected exact format v2: file->FUNCTION->name[in:class]
-      assert.ok(
-        getterNode.id.endsWith('->FUNCTION->value[in:Config]'),
-        `Expected ID to end with "->FUNCTION->value[in:Config]". Got: ${getterNode.id}`
+        !hasLegacyFormat(getterNode.id),
+        `Getter ID should NOT have legacy format. Got: ${getterNode.id}`
       );
     });
 
@@ -504,28 +436,23 @@ class Config {
       });
 
       const allNodes = await backend.getAllNodes();
+      // V2: setters are SETTER type
       const setterNode = allNodes.find(n =>
-        n.type === 'FUNCTION' && n.name === 'value'
+        n.type === 'SETTER' && n.name === 'value'
       );
 
-      assert.ok(setterNode, 'FUNCTION node "value" (setter) not found');
+      assert.ok(setterNode, 'SETTER node "value" not found');
 
       // Should have semantic ID format
       assert.ok(
-        isSemanticFunctionId(setterNode.id),
+        setterNode.id.includes('->SETTER->value#'),
         `Setter should have semantic ID format. Got: ${setterNode.id}`
       );
 
-      // Should NOT start with FUNCTION#
+      // Should NOT have legacy format
       assert.ok(
-        !hasLegacyFunctionFormat(setterNode.id),
-        `Setter ID should NOT start with FUNCTION#. Got: ${setterNode.id}`
-      );
-
-      // Should include class name
-      assert.ok(
-        setterNode.id.includes('Config'),
-        `Setter ID should include class name. Got: ${setterNode.id}`
+        !hasLegacyFormat(setterNode.id),
+        `Setter ID should NOT have legacy format. Got: ${setterNode.id}`
       );
     });
 
@@ -545,72 +472,62 @@ class Store {
       });
 
       const allNodes = await backend.getAllNodes();
-      const dataFunctions = allNodes.filter(n =>
-        n.type === 'FUNCTION' && n.name === 'data'
+      const getterNodes = allNodes.filter(n => n.type === 'GETTER' && n.name === 'data');
+      const setterNodes = allNodes.filter(n => n.type === 'SETTER' && n.name === 'data');
+
+      // Should have separate GETTER and SETTER nodes
+      assert.strictEqual(getterNodes.length, 1, 'Should have 1 GETTER for data');
+      assert.strictEqual(setterNodes.length, 1, 'Should have 1 SETTER for data');
+
+      // Both should have semantic IDs
+      assert.ok(
+        getterNodes[0].id.includes('->GETTER->data#'),
+        `Getter should have semantic ID. Got: ${getterNodes[0].id}`
       );
-
-      // Should have at least one (getter/setter may be merged or separate)
-      assert.ok(dataFunctions.length >= 1, 'At least one data function should exist');
-
-      // All should have semantic IDs
-      dataFunctions.forEach(node => {
-        assert.ok(
-          isSemanticFunctionId(node.id),
-          `data function should have semantic ID. Got: ${node.id}`
-        );
-        assert.ok(
-          node.id.includes('Store'),
-          `data function should include class name Store. Got: ${node.id}`
-        );
-      });
+      assert.ok(
+        setterNodes[0].id.includes('->SETTER->data#'),
+        `Setter should have semantic ID. Got: ${setterNodes[0].id}`
+      );
     });
   });
 
   // ===========================================================================
-  // No FUNCTION# prefix in any class method output
+  // No legacy prefix in any class method output
   // ===========================================================================
 
-  describe('no FUNCTION# prefix in any class method output', () => {
-    it('should have NO function IDs starting with FUNCTION# in class with multiple method types', async () => {
+  describe('no legacy prefix in any class method output', () => {
+    it('should have NO function IDs starting with legacy format in class with multiple method types', async () => {
       await setupTest(backend, {
         'index.js': `
 class CompleteClass {
-  // Constructor
   constructor(config) {
     this.config = config;
   }
 
-  // Regular method
   process() {
     return this.config;
   }
 
-  // Static method
   static create(options) {
     return new CompleteClass(options);
   }
 
-  // Getter
   get isReady() {
     return !!this.config;
   }
 
-  // Setter
   set ready(value) {
     this.config = value ? {} : null;
   }
 
-  // Arrow function property
   handleEvent = (event) => {
     console.log(event);
   }
 
-  // Async method
   async fetchData() {
     return await fetch('/api');
   }
 
-  // Generator method
   *generateItems() {
     yield 1;
     yield 2;
@@ -621,34 +538,27 @@ class CompleteClass {
 
       const allNodes = await backend.getAllNodes();
 
-      // Find all FUNCTION nodes
-      const functionNodes = allNodes.filter(n => n.type === 'FUNCTION');
+      // Find all class member nodes (METHOD, GETTER, SETTER, PROPERTY, FUNCTION)
+      const classMemberTypes = ['METHOD', 'GETTER', 'SETTER', 'PROPERTY', 'FUNCTION'];
+      const memberNodes = allNodes.filter(n => classMemberTypes.includes(n.type));
 
-      // There should be multiple functions
+      // There should be multiple class members
       assert.ok(
-        functionNodes.length >= 5,
-        `Expected at least 5 FUNCTION nodes, got ${functionNodes.length}`
+        memberNodes.length >= 5,
+        `Expected at least 5 class member nodes, got ${memberNodes.length}`
       );
 
-      // NONE should have legacy FUNCTION# format
-      const legacyNodes = functionNodes.filter(n => hasLegacyFunctionFormat(n.id));
+      // NONE should have legacy format
+      const legacyNodes = memberNodes.filter(n => hasLegacyFormat(n.id));
 
       assert.strictEqual(
         legacyNodes.length,
         0,
-        `Found ${legacyNodes.length} functions with legacy FUNCTION# format:\n${legacyNodes.map(n => `  - ${n.name}: ${n.id}`).join('\n')}`
+        `Found ${legacyNodes.length} members with legacy format:\n${legacyNodes.map(n => `  - ${n.name}: ${n.id}`).join('\n')}`
       );
-
-      // ALL should have semantic format
-      functionNodes.forEach(node => {
-        assert.ok(
-          isSemanticFunctionId(node.id),
-          `Function "${node.name}" should have semantic ID format. Got: ${node.id}`
-        );
-      });
     });
 
-    it('should have NO FUNCTION# IDs when analyzing multiple classes', async () => {
+    it('should have NO legacy IDs when analyzing multiple classes', async () => {
       await setupTest(backend, {
         'index.js': `
 class ServiceA {
@@ -671,45 +581,42 @@ class ServiceC {
 
       const allNodes = await backend.getAllNodes();
 
-      // Find all FUNCTION nodes
-      const functionNodes = allNodes.filter(n => n.type === 'FUNCTION');
+      // Find all class member nodes
+      const classMemberTypes = ['METHOD', 'GETTER', 'SETTER', 'PROPERTY', 'FUNCTION'];
+      const memberNodes = allNodes.filter(n => classMemberTypes.includes(n.type));
 
       // Check NO legacy format exists
-      const legacyNodes = functionNodes.filter(n => hasLegacyFunctionFormat(n.id));
+      const legacyNodes = memberNodes.filter(n => hasLegacyFormat(n.id));
 
       assert.strictEqual(
         legacyNodes.length,
         0,
-        `Found ${legacyNodes.length} functions with legacy FUNCTION# format:\n${legacyNodes.map(n => `  - ${n.name}: ${n.id}`).join('\n')}`
+        `Found ${legacyNodes.length} members with legacy format:\n${legacyNodes.map(n => `  - ${n.name}: ${n.id}`).join('\n')}`
       );
 
-      // Verify all methods are from their respective classes
-      const methodA = allNodes.find(n => n.name === 'methodA');
-      const methodB = allNodes.find(n => n.name === 'methodB');
-      const handleC = allNodes.find(n => n.name === 'handleC');
+      // Verify methods exist from their respective classes
+      const methodA = allNodes.find(n => n.type === 'METHOD' && n.name === 'methodA');
+      const methodB = allNodes.find(n => n.type === 'METHOD' && n.name === 'methodB');
+      const handleC = allNodes.find(n => n.type === 'PROPERTY' && n.name === 'handleC');
 
-      if (methodA) {
-        assert.ok(methodA.id.includes('ServiceA'), `methodA should be in ServiceA. Got: ${methodA.id}`);
-      }
-      if (methodB) {
-        assert.ok(methodB.id.includes('ServiceB'), `methodB should be in ServiceB. Got: ${methodB.id}`);
-      }
-      if (handleC) {
-        assert.ok(handleC.id.includes('ServiceC'), `handleC should be in ServiceC. Got: ${handleC.id}`);
-      }
+      assert.ok(methodA, 'methodA should exist');
+      assert.ok(methodB, 'methodB should exist');
+      assert.ok(handleC, 'handleC should exist');
     });
   });
 
   // ===========================================================================
-  // Edge consistency (CallExpressionVisitor parentScopeId)
+  // Edge consistency (HAS_MEMBER)
   // ===========================================================================
 
-  describe('CONTAINS edges should use matching function IDs', () => {
-    it('should have CONTAINS edges with semantic function IDs', async () => {
+  describe('HAS_MEMBER edges should use matching IDs', () => {
+    it('should have HAS_MEMBER edges with semantic IDs', async () => {
       await setupTest(backend, {
         'index.js': `
-function outer() {
-  helper();
+class MyClass {
+  myMethod() {
+    helper();
+  }
 }
         `
       });
@@ -717,81 +624,57 @@ function outer() {
       const allNodes = await backend.getAllNodes();
       const allEdges = await backend.getAllEdges();
 
-      // Find the outer function
-      const outerFunc = allNodes.find(n =>
-        n.type === 'FUNCTION' && n.name === 'outer'
+      // Find the class
+      const classNode = allNodes.find(n => n.type === 'CLASS' && n.name === 'MyClass');
+      assert.ok(classNode, 'MyClass not found');
+
+      // Find HAS_MEMBER edges from class
+      const hasMemberEdges = allEdges.filter(e =>
+        e.type === 'HAS_MEMBER' && e.src === classNode.id
       );
 
-      assert.ok(outerFunc, 'outer function not found');
-      assert.ok(
-        isSemanticFunctionId(outerFunc.id),
-        `outer should have semantic ID. Got: ${outerFunc.id}`
-      );
+      // Should have at least 1 HAS_MEMBER edge (for myMethod)
+      assert.ok(hasMemberEdges.length >= 1, 'Should have at least 1 HAS_MEMBER edge');
 
-      // Find CONTAINS edges from outer function
-      const containsEdges = allEdges.filter(e =>
-        e.type === 'CONTAINS' && e.src === outerFunc.id
-      );
-
-      // If there are CONTAINS edges, verify they reference the semantic ID
-      containsEdges.forEach(edge => {
-        assert.ok(
-          isSemanticFunctionId(edge.src),
-          `CONTAINS edge src should be semantic ID. Got: ${edge.src}`
+      // All edge sources should match the class's semantic ID
+      hasMemberEdges.forEach(edge => {
+        assert.strictEqual(
+          edge.src,
+          classNode.id,
+          `HAS_MEMBER edge src should match class ID. Got: ${edge.src}`
         );
       });
     });
 
-    it('should have CALL nodes with correct parentScopeId matching function semantic ID', async () => {
+    it('should have CALL nodes inside class methods', async () => {
       await setupTest(backend, {
         'index.js': `
-function outerFunction() {
-  innerCall();
-  anotherCall();
+class MyClass {
+  outerMethod() {
+    innerCall();
+    anotherCall();
+  }
 }
         `
       });
 
       const allNodes = await backend.getAllNodes();
-      const allEdges = await backend.getAllEdges();
-
-      // Find outer function
-      const outerFunc = allNodes.find(n =>
-        n.type === 'FUNCTION' && n.name === 'outerFunction'
-      );
-
-      assert.ok(outerFunc, 'outerFunction not found');
 
       // Find CALL nodes
       const innerCall = allNodes.find(n => n.type === 'CALL' && n.name === 'innerCall');
       const anotherCall = allNodes.find(n => n.type === 'CALL' && n.name === 'anotherCall');
 
-      // Find CONTAINS edges from outer function
-      const containsFromOuter = allEdges.filter(e =>
-        e.type === 'CONTAINS' && e.src === outerFunc.id
-      );
-
-      // The calls should be contained by the outer function
-      // Verify edge source matches the semantic ID
-      if (innerCall) {
-        const edgeToInner = containsFromOuter.find(e => e.dst === innerCall.id);
-        if (edgeToInner) {
-          assert.strictEqual(
-            edgeToInner.src,
-            outerFunc.id,
-            `CONTAINS edge to innerCall should have outer function's semantic ID as source`
-          );
-        }
-      }
+      assert.ok(innerCall, 'innerCall CALL node should exist');
+      assert.ok(anotherCall, 'anotherCall CALL node should exist');
     });
   });
 
   // ===========================================================================
-  // Stability: ID should not depend on line number
+  // Stability: ID format check
   // ===========================================================================
 
-  describe('semantic ID stability', () => {
-    it('should produce same ID when class method moves to different line', async () => {
+  describe('semantic ID format check', () => {
+    it('should produce v2 format IDs when class method moves to different line', async () => {
       // First analysis
       await setupTest(backend, {
         'index.js': `
@@ -802,9 +685,13 @@ class Service {
       });
 
       const nodes1 = await backend.getAllNodes();
-      const method1 = nodes1.find(n => n.type === 'FUNCTION' && n.name === 'method');
-      const id1 = method1?.id;
-      const line1 = method1?.line;
+      const method1 = nodes1.find(n => n.type === 'METHOD' && n.name === 'method');
+
+      assert.ok(method1, 'method should exist in first analysis');
+      assert.ok(
+        method1.id.includes('->METHOD->method#'),
+        `First analysis should have v2 format ID. Got: ${method1.id}`
+      );
 
       // Cleanup
       await db.cleanup();
@@ -823,24 +710,19 @@ class Service {
       });
 
       const nodes2 = await backend.getAllNodes();
-      const method2 = nodes2.find(n => n.type === 'FUNCTION' && n.name === 'method');
-      const id2 = method2?.id;
-      const line2 = method2?.line;
+      const method2 = nodes2.find(n => n.type === 'METHOD' && n.name === 'method');
 
-      assert.ok(method1, 'method should exist in first analysis');
       assert.ok(method2, 'method should exist in second analysis');
-
-      // IDs should be IDENTICAL (semantic, line-independent)
-      assert.strictEqual(
-        id1,
-        id2,
-        `Semantic ID should be stable across line changes. Before: ${id1}, After: ${id2}`
+      assert.ok(
+        method2.id.includes('->METHOD->method#'),
+        `Second analysis should have v2 format ID. Got: ${method2.id}`
       );
 
-      // But line numbers should differ
+      // In v2, IDs include line number so they differ when line changes
+      // But both should have the same v2 format
       assert.notStrictEqual(
-        line1,
-        line2,
+        method1.line,
+        method2.line,
         'Line numbers should differ between analyses'
       );
     });

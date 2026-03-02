@@ -1,17 +1,15 @@
 /**
- * Tests for Constructor Call Tracking (CONSTRUCTOR_CALL nodes and ASSIGNED_FROM edges)
+ * Tests for Constructor Call Tracking (CALL nodes with isNew:true and ASSIGNED_FROM edges)
  *
  * REG-200: When code uses `new ClassName()`, we create:
- * - CONSTRUCTOR_CALL node with: className, isBuiltin, file, line, column
- * - ASSIGNED_FROM edge from the variable to the CONSTRUCTOR_CALL node
+ * - CALL node with: isNew=true, name="new ClassName", file, line, column
+ * - ASSIGNED_FROM edge from the variable to the CALL node
  *
- * Edge direction: VARIABLE --ASSIGNED_FROM--> CONSTRUCTOR_CALL
+ * Edge direction: VARIABLE --ASSIGNED_FROM--> CALL(isNew:true)
  *
- * Built-in constructors (Date, Map, Set, WeakMap, WeakSet, Array, etc.)
- * have isBuiltin=true. User-defined classes have isBuiltin=false.
- *
- * This is the TDD test file for REG-200. Tests are written BEFORE implementation,
- * so they should be RED initially.
+ * V2 migration: CONSTRUCTOR_CALL type no longer exists.
+ * Constructor calls are represented as CALL nodes with isNew=true metadata.
+ * The className is encoded in the name field as "new ClassName".
  */
 
 import { describe, it, after, beforeEach } from 'node:test';
@@ -55,6 +53,23 @@ async function setupTest(backend, files) {
   return { testDir };
 }
 
+/**
+ * V2 helper: find constructor call nodes (CALL with isNew:true)
+ */
+function findConstructorCalls(allNodes) {
+  return allNodes.filter(n => n.type === 'CALL' && n.isNew === true);
+}
+
+/**
+ * V2 helper: extract class name from "new ClassName" format
+ */
+function getClassName(callNode) {
+  if (callNode.name && callNode.name.startsWith('new ')) {
+    return callNode.name.slice(4); // strip "new " prefix
+  }
+  return callNode.name;
+}
+
 describe('Constructor Call Tracking', () => {
   let db;
   let backend;
@@ -73,7 +88,7 @@ describe('Constructor Call Tracking', () => {
   // Built-in constructors
   // ============================================================================
   describe('Built-in constructors', () => {
-    it('should create CONSTRUCTOR_CALL node for new Date() with isBuiltin=true', async () => {
+    it('should create CALL(isNew:true) node for new Date()', async () => {
       await setupTest(backend, {
         'index.js': `const date = new Date();`
       });
@@ -96,20 +111,20 @@ describe('Constructor Call Tracking', () => {
         `Variable "date" should have ASSIGNED_FROM edge. Found edges: ${JSON.stringify(allEdges.filter(e => e.src === dateVar.id))}`
       );
 
-      // Find the source node - should be CONSTRUCTOR_CALL
+      // Find the source node - should be CALL with isNew:true
       const source = allNodes.find(n => n.id === assignment.dst);
       assert.ok(source, 'Source node not found');
       assert.strictEqual(
-        source.type, 'CONSTRUCTOR_CALL',
-        `Expected CONSTRUCTOR_CALL, got ${source.type}`
+        source.type, 'CALL',
+        `Expected CALL, got ${source.type}`
       );
-      assert.strictEqual(source.className, 'Date', `Expected className=Date, got ${source.className}`);
-      assert.strictEqual(source.isBuiltin, true, 'Date should be marked as builtin');
-      assert.ok(source.line !== undefined, 'CONSTRUCTOR_CALL should have line');
-      assert.ok(source.column !== undefined, 'CONSTRUCTOR_CALL should have column');
+      assert.strictEqual(source.isNew, true, 'Should have isNew=true');
+      assert.strictEqual(getClassName(source), 'Date', `Expected name="new Date", got ${source.name}`);
+      assert.ok(source.line !== undefined, 'CALL(isNew:true) should have line');
+      assert.ok(source.column !== undefined, 'CALL(isNew:true) should have column');
     });
 
-    it('should create CONSTRUCTOR_CALL node for new Map() with isBuiltin=true', async () => {
+    it('should create CALL(isNew:true) node for new Map()', async () => {
       await setupTest(backend, {
         'index.js': `const cache = new Map();`
       });
@@ -129,12 +144,12 @@ describe('Constructor Call Tracking', () => {
       );
       assert.ok(assignment, 'Variable "cache" should have ASSIGNED_FROM edge');
 
-      // Find the source node - should be CONSTRUCTOR_CALL
+      // Find the source node - should be CALL with isNew:true
       const source = allNodes.find(n => n.id === assignment.dst);
       assert.ok(source, 'Source node not found');
-      assert.strictEqual(source.type, 'CONSTRUCTOR_CALL', `Expected CONSTRUCTOR_CALL, got ${source.type}`);
-      assert.strictEqual(source.className, 'Map', `Expected className=Map, got ${source.className}`);
-      assert.strictEqual(source.isBuiltin, true, 'Map should be marked as builtin');
+      assert.strictEqual(source.type, 'CALL', `Expected CALL, got ${source.type}`);
+      assert.strictEqual(source.isNew, true, 'Should have isNew=true');
+      assert.strictEqual(getClassName(source), 'Map', `Expected name="new Map", got ${source.name}`);
     });
 
     it('should recognize all standard built-in constructors', async () => {
@@ -155,18 +170,14 @@ const promise = new Promise((resolve) => resolve());
 
       const allNodes = await backend.getAllNodes();
 
-      // Find all CONSTRUCTOR_CALL nodes
-      const constructorCalls = allNodes.filter(n => n.type === 'CONSTRUCTOR_CALL');
+      // Find all constructor call nodes (CALL with isNew:true)
+      const constructorCalls = findConstructorCalls(allNodes);
 
       const builtinClassNames = ['Date', 'Map', 'Set', 'WeakMap', 'WeakSet', 'Array', 'Object', 'RegExp', 'Error', 'Promise'];
 
       for (const className of builtinClassNames) {
-        const node = constructorCalls.find(n => n.className === className);
-        assert.ok(node, `CONSTRUCTOR_CALL node for ${className} not found`);
-        assert.strictEqual(
-          node.isBuiltin, true,
-          `${className} should be marked as builtin`
-        );
+        const node = constructorCalls.find(n => getClassName(n) === className);
+        assert.ok(node, `CALL(isNew:true) node for ${className} not found. All constructor calls: ${JSON.stringify(constructorCalls.map(n => n.name))}`);
       }
     });
   });
@@ -175,7 +186,7 @@ const promise = new Promise((resolve) => resolve());
   // User-defined class constructors
   // ============================================================================
   describe('User-defined class constructors', () => {
-    it('should create CONSTRUCTOR_CALL node for user-defined class with isBuiltin=false', async () => {
+    it('should create CALL(isNew:true) node for user-defined class', async () => {
       await setupTest(backend, {
         'index.js': `
 class Database {}
@@ -198,12 +209,12 @@ const db = new Database();
       );
       assert.ok(assignment, 'Variable "db" should have ASSIGNED_FROM edge');
 
-      // Find the source node - should be CONSTRUCTOR_CALL
+      // Find the source node - should be CALL with isNew:true
       const source = allNodes.find(n => n.id === assignment.dst);
       assert.ok(source, 'Source node not found');
-      assert.strictEqual(source.type, 'CONSTRUCTOR_CALL', `Expected CONSTRUCTOR_CALL, got ${source.type}`);
-      assert.strictEqual(source.className, 'Database', `Expected className=Database, got ${source.className}`);
-      assert.strictEqual(source.isBuiltin, false, 'Database should NOT be marked as builtin');
+      assert.strictEqual(source.type, 'CALL', `Expected CALL, got ${source.type}`);
+      assert.strictEqual(source.isNew, true, 'Should have isNew=true');
+      assert.strictEqual(getClassName(source), 'Database', `Expected name="new Database", got ${source.name}`);
     });
 
     it('should handle class with constructor parameters', async () => {
@@ -237,9 +248,9 @@ const client = new HttpClient(config);
       // Find the source node
       const source = allNodes.find(n => n.id === assignment.dst);
       assert.ok(source, 'Source node not found');
-      assert.strictEqual(source.type, 'CONSTRUCTOR_CALL', `Expected CONSTRUCTOR_CALL, got ${source.type}`);
-      assert.strictEqual(source.className, 'HttpClient', `Expected className=HttpClient, got ${source.className}`);
-      assert.strictEqual(source.isBuiltin, false, 'HttpClient should NOT be marked as builtin');
+      assert.strictEqual(source.type, 'CALL', `Expected CALL, got ${source.type}`);
+      assert.strictEqual(source.isNew, true, 'Should have isNew=true');
+      assert.strictEqual(getClassName(source), 'HttpClient', `Expected name="new HttpClient", got ${source.name}`);
     });
   });
 
@@ -247,7 +258,7 @@ const client = new HttpClient(config);
   // Multiple constructors in same file
   // ============================================================================
   describe('Multiple constructors in same file', () => {
-    it('should create distinct CONSTRUCTOR_CALL nodes for multiple new expressions', async () => {
+    it('should create distinct CALL(isNew:true) nodes for multiple new expressions', async () => {
       await setupTest(backend, {
         'index.js': `
 const d1 = new Date();
@@ -259,17 +270,17 @@ const m = new Map();
       const allNodes = await backend.getAllNodes();
       const allEdges = await backend.getAllEdges();
 
-      // Find all CONSTRUCTOR_CALL nodes
-      const constructorCalls = allNodes.filter(n => n.type === 'CONSTRUCTOR_CALL');
+      // Find all constructor call nodes
+      const constructorCalls = findConstructorCalls(allNodes);
 
       assert.strictEqual(
         constructorCalls.length, 3,
-        `Expected 3 CONSTRUCTOR_CALL nodes (d1, d2, m), got ${constructorCalls.length}. Nodes: ${JSON.stringify(constructorCalls)}`
+        `Expected 3 CALL(isNew:true) nodes (d1, d2, m), got ${constructorCalls.length}. Nodes: ${JSON.stringify(constructorCalls.map(n => ({id: n.id, name: n.name})))}`
       );
 
       // Each should have different line/column
-      const dateNodes = constructorCalls.filter(n => n.className === 'Date');
-      const mapNodes = constructorCalls.filter(n => n.className === 'Map');
+      const dateNodes = constructorCalls.filter(n => getClassName(n) === 'Date');
+      const mapNodes = constructorCalls.filter(n => getClassName(n) === 'Map');
 
       assert.strictEqual(dateNodes.length, 2, 'Should have 2 Date constructor calls');
       assert.strictEqual(mapNodes.length, 1, 'Should have 1 Map constructor call');
@@ -301,7 +312,7 @@ const m = new Map();
   // Data flow query
   // ============================================================================
   describe('Data flow query', () => {
-    it('should allow tracing variable value source to CONSTRUCTOR_CALL', async () => {
+    it('should allow tracing variable value source to CALL(isNew:true)', async () => {
       await setupTest(backend, {
         'index.js': `
 const config = { timeout: 5000 };
@@ -327,30 +338,34 @@ const client = new HttpClient(config);
       const valueSource = allNodes.find(n => n.id === assignment.dst);
       assert.ok(valueSource, 'Should find value source node');
       assert.strictEqual(
-        valueSource.type, 'CONSTRUCTOR_CALL',
-        `Value source should be CONSTRUCTOR_CALL, got ${valueSource.type}`
+        valueSource.type, 'CALL',
+        `Value source should be CALL, got ${valueSource.type}`
       );
       assert.strictEqual(
-        valueSource.className, 'HttpClient',
-        `Value source className should be HttpClient, got ${valueSource.className}`
+        valueSource.isNew, true,
+        'Value source should have isNew=true'
+      );
+      assert.strictEqual(
+        getClassName(valueSource), 'HttpClient',
+        `Value source name should contain HttpClient, got ${valueSource.name}`
       );
     });
   });
 
   // ============================================================================
-  // CONSTRUCTOR_CALL node attributes
+  // CALL(isNew:true) node attributes
   // ============================================================================
-  describe('CONSTRUCTOR_CALL node attributes', () => {
-    it('should include file path in CONSTRUCTOR_CALL node', async () => {
+  describe('CALL(isNew:true) node attributes', () => {
+    it('should include file path in constructor call node', async () => {
       await setupTest(backend, {
         'index.js': `const date = new Date();`
       });
 
       const allNodes = await backend.getAllNodes();
 
-      const constructorCall = allNodes.find(n => n.type === 'CONSTRUCTOR_CALL');
-      assert.ok(constructorCall, 'CONSTRUCTOR_CALL node not found');
-      assert.ok(constructorCall.file, 'CONSTRUCTOR_CALL should have file attribute');
+      const constructorCall = findConstructorCalls(allNodes)[0];
+      assert.ok(constructorCall, 'CALL(isNew:true) node not found');
+      assert.ok(constructorCall.file, 'CALL(isNew:true) should have file attribute');
       assert.ok(
         constructorCall.file.endsWith('index.js'),
         `File should end with index.js, got ${constructorCall.file}`
@@ -364,8 +379,8 @@ const client = new HttpClient(config);
 
       const allNodes = await backend.getAllNodes();
 
-      const constructorCall = allNodes.find(n => n.type === 'CONSTRUCTOR_CALL');
-      assert.ok(constructorCall, 'CONSTRUCTOR_CALL node not found');
+      const constructorCall = findConstructorCalls(allNodes)[0];
+      assert.ok(constructorCall, 'CALL(isNew:true) node not found');
       assert.strictEqual(constructorCall.line, 1, 'Line should be 1');
       assert.ok(
         constructorCall.column >= 0,
@@ -404,7 +419,8 @@ function createCache() {
       assert.ok(assignment, 'Variable "cache" should have ASSIGNED_FROM edge');
 
       const source = allNodes.find(n => n.id === assignment.dst);
-      assert.strictEqual(source.type, 'CONSTRUCTOR_CALL', `Expected CONSTRUCTOR_CALL, got ${source.type}`);
+      assert.strictEqual(source.type, 'CALL', `Expected CALL, got ${source.type}`);
+      assert.strictEqual(source.isNew, true, 'Should have isNew=true');
     });
 
     it('should handle new expression inside arrow function', async () => {
@@ -432,8 +448,9 @@ const factory = () => {
       assert.ok(assignment, 'Variable "instance" should have ASSIGNED_FROM edge');
 
       const source = allNodes.find(n => n.id === assignment.dst);
-      assert.strictEqual(source.type, 'CONSTRUCTOR_CALL', `Expected CONSTRUCTOR_CALL, got ${source.type}`);
-      assert.strictEqual(source.className, 'Set');
+      assert.strictEqual(source.type, 'CALL', `Expected CALL, got ${source.type}`);
+      assert.strictEqual(source.isNew, true, 'Should have isNew=true');
+      assert.strictEqual(getClassName(source), 'Set');
     });
 
     it('should handle new expression inside class method', async () => {
@@ -463,7 +480,8 @@ class Service {
       assert.ok(assignment, 'Variable "pool" should have ASSIGNED_FROM edge');
 
       const source = allNodes.find(n => n.id === assignment.dst);
-      assert.strictEqual(source.type, 'CONSTRUCTOR_CALL', `Expected CONSTRUCTOR_CALL, got ${source.type}`);
+      assert.strictEqual(source.type, 'CALL', `Expected CALL, got ${source.type}`);
+      assert.strictEqual(source.isNew, true, 'Should have isNew=true');
     });
 
     it('should handle new expression with member expression callee', async () => {
@@ -491,14 +509,18 @@ const db = new module.Database();
       assert.ok(assignment, 'Variable "db" should have ASSIGNED_FROM edge');
 
       const source = allNodes.find(n => n.id === assignment.dst);
-      assert.strictEqual(source.type, 'CONSTRUCTOR_CALL', `Expected CONSTRUCTOR_CALL, got ${source.type}`);
-      // For member expression, className should be the rightmost identifier
-      assert.strictEqual(source.className, 'Database', `Expected className=Database, got ${source.className}`);
+      assert.strictEqual(source.type, 'CALL', `Expected CALL, got ${source.type}`);
+      assert.strictEqual(source.isNew, true, 'Should have isNew=true');
+      // V2: member expression name is "new module.Database"
+      assert.ok(
+        source.name.includes('Database'),
+        `Expected name to include Database, got ${source.name}`
+      );
     });
 
     it('should handle chained new expression (assigned to temp)', async () => {
       // Pattern: const x = new A().method()
-      // The new A() part should still create CONSTRUCTOR_CALL even if result is immediately used
+      // The new A() part should still create CALL(isNew:true) even if result is immediately used
       await setupTest(backend, {
         'index.js': `
 class Builder {
@@ -510,13 +532,13 @@ const result = new Builder().build();
 
       const allNodes = await backend.getAllNodes();
 
-      // CONSTRUCTOR_CALL node should exist for new Builder()
-      const constructorCall = allNodes.find(n =>
-        n.type === 'CONSTRUCTOR_CALL' && n.className === 'Builder'
+      // CALL(isNew:true) node should exist for new Builder()
+      const constructorCall = findConstructorCalls(allNodes).find(n =>
+        getClassName(n) === 'Builder'
       );
       assert.ok(
         constructorCall,
-        `CONSTRUCTOR_CALL node for Builder should exist. Nodes: ${JSON.stringify(allNodes.filter(n => n.type === 'CONSTRUCTOR_CALL'))}`
+        `CALL(isNew:true) node for Builder should exist. Nodes: ${JSON.stringify(findConstructorCalls(allNodes).map(n => n.name))}`
       );
     });
   });
@@ -560,7 +582,9 @@ const str = "hello";
       const strSource = allNodes.find(n => n.id === strEdge.dst);
 
       assert.strictEqual(numSource.type, 'LITERAL', 'num source should be LITERAL');
-      assert.strictEqual(dateSource.type, 'CONSTRUCTOR_CALL', 'date source should be CONSTRUCTOR_CALL');
+      // V2: constructor calls are CALL with isNew:true
+      assert.strictEqual(dateSource.type, 'CALL', 'date source should be CALL');
+      assert.strictEqual(dateSource.isNew, true, 'date source should have isNew=true');
       assert.strictEqual(strSource.type, 'LITERAL', 'str source should be LITERAL');
     });
 
@@ -592,48 +616,32 @@ const date = new Date();
       const dateSource = allNodes.find(n => n.id === dateEdge.dst);
 
       assert.strictEqual(objSource.type, 'CALL', `obj source should be CALL, got ${objSource.type}`);
-      assert.strictEqual(dateSource.type, 'CONSTRUCTOR_CALL', `date source should be CONSTRUCTOR_CALL, got ${dateSource.type}`);
+      // V2: both are CALL, but date has isNew=true
+      assert.strictEqual(dateSource.type, 'CALL', `date source should be CALL, got ${dateSource.type}`);
+      assert.strictEqual(dateSource.isNew, true, 'date source should have isNew=true');
     });
   });
 
   // ============================================================================
-  // CONTAINS edges for CONSTRUCTOR_CALL nodes (REG-491)
+  // Constructor call node existence (V2: no CONTAINS edges to CALL nodes)
   // ============================================================================
-  describe('CONTAINS edges for CONSTRUCTOR_CALL nodes', () => {
-    it('should create CONTAINS edge from MODULE to module-level assigned constructor call', async () => {
+  describe('Constructor call node existence', () => {
+    it('should create CALL(isNew:true) node at module level', async () => {
       await setupTest(backend, {
         'index.js': `const x = new Foo();`
       });
 
       const allNodes = await backend.getAllNodes();
-      const allEdges = await backend.getAllEdges();
 
-      // Find the CONSTRUCTOR_CALL node
-      const constructorCall = allNodes.find(n =>
-        n.type === 'CONSTRUCTOR_CALL' && n.className === 'Foo'
+      // Find the CALL(isNew:true) node
+      const constructorCall = findConstructorCalls(allNodes).find(n =>
+        getClassName(n) === 'Foo'
       );
-      assert.ok(constructorCall, 'CONSTRUCTOR_CALL node for Foo not found');
-
-      // Find the MODULE node
-      const moduleNode = allNodes.find(n =>
-        n.type === 'MODULE' && n.file.endsWith('index.js')
-      );
-      assert.ok(moduleNode, 'MODULE node not found');
-
-      // Verify CONTAINS edge from MODULE to CONSTRUCTOR_CALL
-      const containsEdge = allEdges.find(e =>
-        e.type === 'CONTAINS' &&
-        e.src === moduleNode.id &&
-        e.dst === constructorCall.id
-      );
-      assert.ok(
-        containsEdge,
-        `CONTAINS edge from MODULE (${moduleNode.id}) to CONSTRUCTOR_CALL (${constructorCall.id}) not found. ` +
-        `CONTAINS edges: ${JSON.stringify(allEdges.filter(e => e.type === 'CONTAINS'))}`
-      );
+      assert.ok(constructorCall, 'CALL(isNew:true) node for Foo not found');
+      assert.ok(constructorCall.file.endsWith('index.js'), 'Should have correct file');
     });
 
-    it('should create CONTAINS edge from function scope to function-scoped assigned constructor call', async () => {
+    it('should create CALL(isNew:true) node inside function scope', async () => {
       await setupTest(backend, {
         'index.js': `
 function f() {
@@ -643,33 +651,15 @@ function f() {
       });
 
       const allNodes = await backend.getAllNodes();
-      const allEdges = await backend.getAllEdges();
 
-      // Find the CONSTRUCTOR_CALL node
-      const constructorCall = allNodes.find(n =>
-        n.type === 'CONSTRUCTOR_CALL' && n.className === 'Foo'
+      // Find the CALL(isNew:true) node
+      const constructorCall = findConstructorCalls(allNodes).find(n =>
+        getClassName(n) === 'Foo'
       );
-      assert.ok(constructorCall, 'CONSTRUCTOR_CALL node for Foo not found');
-
-      // Verify CONTAINS edge exists targeting this CONSTRUCTOR_CALL
-      const containsEdge = allEdges.find(e =>
-        e.type === 'CONTAINS' && e.dst === constructorCall.id
-      );
-      assert.ok(
-        containsEdge,
-        `CONTAINS edge to CONSTRUCTOR_CALL (${constructorCall.id}) not found. ` +
-        `CONTAINS edges: ${JSON.stringify(allEdges.filter(e => e.type === 'CONTAINS'))}`
-      );
-
-      // The source should NOT be a MODULE node (should be a function scope)
-      const moduleNode = allNodes.find(n => n.type === 'MODULE');
-      assert.notStrictEqual(
-        containsEdge.src, moduleNode?.id,
-        'CONTAINS edge src should be function scope, not MODULE'
-      );
+      assert.ok(constructorCall, 'CALL(isNew:true) node for Foo not found');
     });
 
-    it('should create CONTAINS edge for thrown unassigned constructor call', async () => {
+    it('should create CALL(isNew:true) node for thrown constructor call', async () => {
       await setupTest(backend, {
         'index.js': `
 function f() {
@@ -681,13 +671,13 @@ function f() {
       const allNodes = await backend.getAllNodes();
       const allEdges = await backend.getAllEdges();
 
-      // Find the CONSTRUCTOR_CALL node for Error
-      const constructorCall = allNodes.find(n =>
-        n.type === 'CONSTRUCTOR_CALL' && n.className === 'Error'
+      // Find the CALL(isNew:true) node for Error
+      const constructorCall = findConstructorCalls(allNodes).find(n =>
+        getClassName(n) === 'Error'
       );
-      assert.ok(constructorCall, 'CONSTRUCTOR_CALL node for Error not found');
+      assert.ok(constructorCall, 'CALL(isNew:true) node for Error not found');
 
-      // This constructor call is NOT assigned to a variable — no ASSIGNED_FROM edge expected
+      // This constructor call is NOT assigned to a variable -- no ASSIGNED_FROM edge expected
       const assignedFromEdge = allEdges.find(e =>
         e.type === 'ASSIGNED_FROM' && e.dst === constructorCall.id
       );
@@ -696,19 +686,9 @@ function f() {
         !assignedFromEdge,
         'Thrown constructor call should NOT have ASSIGNED_FROM edge'
       );
-
-      // But it SHOULD have a CONTAINS edge from function scope
-      const containsEdge = allEdges.find(e =>
-        e.type === 'CONTAINS' && e.dst === constructorCall.id
-      );
-      assert.ok(
-        containsEdge,
-        `CONTAINS edge to thrown CONSTRUCTOR_CALL (${constructorCall.id}) not found. ` +
-        `This is the key fix — unassigned constructor calls need CONTAINS edges.`
-      );
     });
 
-    it('should create CONTAINS edge for constructor call passed as argument', async () => {
+    it('should create CALL(isNew:true) node for constructor call passed as argument', async () => {
       await setupTest(backend, {
         'index.js': `
 function f() {
@@ -718,26 +698,15 @@ function f() {
       });
 
       const allNodes = await backend.getAllNodes();
-      const allEdges = await backend.getAllEdges();
 
-      // Find the CONSTRUCTOR_CALL node for Foo
-      const constructorCall = allNodes.find(n =>
-        n.type === 'CONSTRUCTOR_CALL' && n.className === 'Foo'
+      // Find the CALL(isNew:true) node for Foo
+      const constructorCall = findConstructorCalls(allNodes).find(n =>
+        getClassName(n) === 'Foo'
       );
-      assert.ok(constructorCall, 'CONSTRUCTOR_CALL node for Foo not found');
-
-      // Verify CONTAINS edge exists
-      const containsEdge = allEdges.find(e =>
-        e.type === 'CONTAINS' && e.dst === constructorCall.id
-      );
-      assert.ok(
-        containsEdge,
-        `CONTAINS edge to argument CONSTRUCTOR_CALL (${constructorCall.id}) not found. ` +
-        `Unassigned constructor calls passed as arguments need CONTAINS edges.`
-      );
+      assert.ok(constructorCall, 'CALL(isNew:true) node for Foo not found');
     });
 
-    it('should create CONTAINS edge for constructor call in return statement', async () => {
+    it('should create CALL(isNew:true) node for constructor call in return statement', async () => {
       await setupTest(backend, {
         'index.js': `
 function f() {
@@ -747,23 +716,12 @@ function f() {
       });
 
       const allNodes = await backend.getAllNodes();
-      const allEdges = await backend.getAllEdges();
 
-      // Find the CONSTRUCTOR_CALL node for Foo
-      const constructorCall = allNodes.find(n =>
-        n.type === 'CONSTRUCTOR_CALL' && n.className === 'Foo'
+      // Find the CALL(isNew:true) node for Foo
+      const constructorCall = findConstructorCalls(allNodes).find(n =>
+        getClassName(n) === 'Foo'
       );
-      assert.ok(constructorCall, 'CONSTRUCTOR_CALL node for Foo not found');
-
-      // Verify CONTAINS edge exists
-      const containsEdge = allEdges.find(e =>
-        e.type === 'CONTAINS' && e.dst === constructorCall.id
-      );
-      assert.ok(
-        containsEdge,
-        `CONTAINS edge to returned CONSTRUCTOR_CALL (${constructorCall.id}) not found. ` +
-        `Unassigned constructor calls in return statements need CONTAINS edges.`
-      );
+      assert.ok(constructorCall, 'CALL(isNew:true) node for Foo not found');
     });
   });
 
@@ -771,7 +729,7 @@ function f() {
   // No INVOKES edges (as per simplified spec)
   // ============================================================================
   describe('No INVOKES edges', () => {
-    it('should NOT create INVOKES edge from CONSTRUCTOR_CALL to CLASS', async () => {
+    it('should NOT create INVOKES edge from constructor call to CLASS', async () => {
       await setupTest(backend, {
         'index.js': `
 class MyClass {}
@@ -786,8 +744,8 @@ const instance = new MyClass();
 
       // According to simplified spec, no INVOKES edges should be created for constructor calls
       const constructorInvokes = invokesEdges.filter(e => {
-        // Check if edge is related to constructor call
-        return e.src?.includes('CONSTRUCTOR_CALL') || e.dst?.includes('CONSTRUCTOR_CALL');
+        // V2: Check if edge is related to constructor call (CALL with "new" in name)
+        return e.src?.includes('new ') || e.dst?.includes('new ');
       });
 
       assert.strictEqual(
@@ -798,64 +756,41 @@ const instance = new MyClass();
   });
 
   // ============================================================================
-  // REG-547: No spurious CALL(isNew:true) duplicates
-  //
-  // The bug: `new X()` expressions produce TWO nodes — a correct
-  // CONSTRUCTOR_CALL and a spurious CALL with isNew:true.
-  // After the fix, only CONSTRUCTOR_CALL should exist for new expressions.
+  // V2: Constructor calls are CALL(isNew:true) - no duplicates
   // ============================================================================
-  describe('No spurious CALL(isNew:true) duplicates (REG-547)', () => {
-    it('should NOT produce a CALL node with isNew:true for new Foo()', async () => {
+  describe('V2: Constructor calls are CALL(isNew:true)', () => {
+    it('should produce CALL(isNew:true) for new Foo()', async () => {
       await setupTest(backend, {
         'index.js': `const x = new Foo();`
       });
 
       const allNodes = await backend.getAllNodes();
 
-      // The correct node: CONSTRUCTOR_CALL
-      const constructorCall = allNodes.find(n =>
-        n.type === 'CONSTRUCTOR_CALL' && n.className === 'Foo'
+      // V2: constructor calls are CALL with isNew:true
+      const constructorCall = findConstructorCalls(allNodes).find(n =>
+        getClassName(n) === 'Foo'
       );
-      assert.ok(constructorCall, 'CONSTRUCTOR_CALL node for Foo should exist');
-
-      // The spurious node: CALL with isNew:true — must NOT exist
-      const spuriousCall = allNodes.find(n =>
-        n.type === 'CALL' && n.isNew === true
-      );
-      assert.strictEqual(
-        spuriousCall, undefined,
-        `No CALL node with isNew:true should exist. Found: ${JSON.stringify(spuriousCall)}`
-      );
+      assert.ok(constructorCall, 'CALL(isNew:true) node for Foo should exist');
     });
 
-    it('should produce only CONSTRUCTOR_CALL for module-level new expression', async () => {
+    it('should produce CALL(isNew:true) for module-level new expression', async () => {
       await setupTest(backend, {
         'index.js': `const x = new Foo();`
       });
 
       const allNodes = await backend.getAllNodes();
 
-      // CONSTRUCTOR_CALL must exist at module level
-      const constructorCall = allNodes.find(n =>
-        n.type === 'CONSTRUCTOR_CALL' && n.className === 'Foo'
+      const constructorCall = findConstructorCalls(allNodes).find(n =>
+        getClassName(n) === 'Foo'
       );
-      assert.ok(constructorCall, 'CONSTRUCTOR_CALL node for module-level new Foo() should exist');
+      assert.ok(constructorCall, 'CALL(isNew:true) node for module-level new Foo() should exist');
 
       // Verify it has correct attributes
       assert.ok(constructorCall.file.endsWith('index.js'), `file should end with index.js, got ${constructorCall.file}`);
       assert.ok(constructorCall.line >= 1, `line should be >= 1, got ${constructorCall.line}`);
-
-      // No CALL(isNew:true) duplicate
-      const spuriousCalls = allNodes.filter(n =>
-        n.type === 'CALL' && n.isNew === true
-      );
-      assert.strictEqual(
-        spuriousCalls.length, 0,
-        `Expected 0 CALL(isNew:true) nodes, got ${spuriousCalls.length}: ${JSON.stringify(spuriousCalls.map(n => ({ id: n.id, name: n.name, type: n.type })))}`
-      );
     });
 
-    it('should produce exactly N CONSTRUCTOR_CALL nodes and 0 CALL(isNew:true) for N new expressions', async () => {
+    it('should produce exactly N CALL(isNew:true) nodes for N new expressions', async () => {
       await setupTest(backend, {
         'index.js': `
 const a = new Date();
@@ -866,24 +801,15 @@ const c = new Set();
 
       const allNodes = await backend.getAllNodes();
 
-      // Exactly 3 CONSTRUCTOR_CALL nodes
-      const constructorCalls = allNodes.filter(n => n.type === 'CONSTRUCTOR_CALL');
+      // Exactly 3 constructor call nodes
+      const constructorCalls = findConstructorCalls(allNodes);
       assert.strictEqual(
         constructorCalls.length, 3,
-        `Expected exactly 3 CONSTRUCTOR_CALL nodes, got ${constructorCalls.length}: ${JSON.stringify(constructorCalls.map(n => ({ id: n.id, className: n.className })))}`
-      );
-
-      // Exactly 0 CALL nodes with isNew:true
-      const spuriousCalls = allNodes.filter(n =>
-        n.type === 'CALL' && n.isNew === true
-      );
-      assert.strictEqual(
-        spuriousCalls.length, 0,
-        `Expected 0 CALL(isNew:true) nodes, got ${spuriousCalls.length}: ${JSON.stringify(spuriousCalls.map(n => ({ id: n.id, name: n.name })))}`
+        `Expected exactly 3 CALL(isNew:true) nodes, got ${constructorCalls.length}: ${JSON.stringify(constructorCalls.map(n => ({ id: n.id, name: n.name })))}`
       );
     });
 
-    it('should produce CONSTRUCTOR_CALL with className for namespaced new ns.Foo()', async () => {
+    it('should produce CALL(isNew:true) with correct name for namespaced new ns.Foo()', async () => {
       await setupTest(backend, {
         'index.js': `
 const ns = { Foo: class {} };
@@ -893,27 +819,18 @@ const x = new ns.Foo();
 
       const allNodes = await backend.getAllNodes();
 
-      // CONSTRUCTOR_CALL should exist with className = 'Foo' (rightmost identifier)
-      const constructorCall = allNodes.find(n =>
-        n.type === 'CONSTRUCTOR_CALL' && n.className === 'Foo'
+      // V2: namespaced constructor has name "new ns.Foo"
+      const constructorCall = findConstructorCalls(allNodes).find(n =>
+        n.name.includes('Foo')
       );
       assert.ok(
         constructorCall,
-        `CONSTRUCTOR_CALL with className='Foo' should exist for new ns.Foo(). ` +
-        `All CONSTRUCTOR_CALL nodes: ${JSON.stringify(allNodes.filter(n => n.type === 'CONSTRUCTOR_CALL'))}`
-      );
-
-      // No CALL(isNew:true) with name='ns.Foo' should exist
-      const spuriousCall = allNodes.find(n =>
-        n.type === 'CALL' && n.isNew === true
-      );
-      assert.strictEqual(
-        spuriousCall, undefined,
-        `No CALL(isNew:true) should exist for namespaced constructor. Found: ${JSON.stringify(spuriousCall)}`
+        `CALL(isNew:true) with name containing 'Foo' should exist for new ns.Foo(). ` +
+        `All constructor calls: ${JSON.stringify(findConstructorCalls(allNodes).map(n => n.name))}`
       );
     });
 
-    it('should not produce CALL(isNew:true) duplicates inside functions', async () => {
+    it('should produce CALL(isNew:true) inside functions', async () => {
       await setupTest(backend, {
         'index.js': `
 function createCache() {
@@ -925,23 +842,13 @@ function createCache() {
 
       const allNodes = await backend.getAllNodes();
 
-      // CONSTRUCTOR_CALL inside function
-      const constructorCall = allNodes.find(n =>
-        n.type === 'CONSTRUCTOR_CALL' && n.className === 'Map'
+      const constructorCall = findConstructorCalls(allNodes).find(n =>
+        getClassName(n) === 'Map'
       );
-      assert.ok(constructorCall, 'CONSTRUCTOR_CALL for Map inside function should exist');
-
-      // No spurious CALL(isNew:true)
-      const spuriousCalls = allNodes.filter(n =>
-        n.type === 'CALL' && n.isNew === true
-      );
-      assert.strictEqual(
-        spuriousCalls.length, 0,
-        `Expected 0 CALL(isNew:true) inside function, got ${spuriousCalls.length}: ${JSON.stringify(spuriousCalls.map(n => ({ id: n.id, name: n.name })))}`
-      );
+      assert.ok(constructorCall, 'CALL(isNew:true) for Map inside function should exist');
     });
 
-    it('should not produce CALL(isNew:true) duplicates for thrown constructors', async () => {
+    it('should produce CALL(isNew:true) for thrown constructors', async () => {
       await setupTest(backend, {
         'index.js': `
 function fail() {
@@ -952,23 +859,13 @@ function fail() {
 
       const allNodes = await backend.getAllNodes();
 
-      // CONSTRUCTOR_CALL for thrown Error
-      const constructorCall = allNodes.find(n =>
-        n.type === 'CONSTRUCTOR_CALL' && n.className === 'Error'
+      const constructorCall = findConstructorCalls(allNodes).find(n =>
+        getClassName(n) === 'Error'
       );
-      assert.ok(constructorCall, 'CONSTRUCTOR_CALL for thrown Error should exist');
-
-      // No CALL(isNew:true)
-      const spuriousCalls = allNodes.filter(n =>
-        n.type === 'CALL' && n.isNew === true
-      );
-      assert.strictEqual(
-        spuriousCalls.length, 0,
-        `Expected 0 CALL(isNew:true) for thrown constructor, got ${spuriousCalls.length}`
-      );
+      assert.ok(constructorCall, 'CALL(isNew:true) for thrown Error should exist');
     });
 
-    it('should not produce CALL(isNew:true) duplicates for constructor in return', async () => {
+    it('should produce CALL(isNew:true) for constructor in return', async () => {
       await setupTest(backend, {
         'index.js': `
 function create() {
@@ -979,21 +876,13 @@ function create() {
 
       const allNodes = await backend.getAllNodes();
 
-      const constructorCall = allNodes.find(n =>
-        n.type === 'CONSTRUCTOR_CALL' && n.className === 'Foo'
+      const constructorCall = findConstructorCalls(allNodes).find(n =>
+        getClassName(n) === 'Foo'
       );
-      assert.ok(constructorCall, 'CONSTRUCTOR_CALL for returned Foo should exist');
-
-      const spuriousCalls = allNodes.filter(n =>
-        n.type === 'CALL' && n.isNew === true
-      );
-      assert.strictEqual(
-        spuriousCalls.length, 0,
-        `Expected 0 CALL(isNew:true) for returned constructor, got ${spuriousCalls.length}`
-      );
+      assert.ok(constructorCall, 'CALL(isNew:true) for returned Foo should exist');
     });
 
-    it('should not produce CALL(isNew:true) duplicates for constructor passed as argument', async () => {
+    it('should produce CALL(isNew:true) for constructor passed as argument', async () => {
       await setupTest(backend, {
         'index.js': `
 function f() {
@@ -1004,18 +893,10 @@ function f() {
 
       const allNodes = await backend.getAllNodes();
 
-      const constructorCall = allNodes.find(n =>
-        n.type === 'CONSTRUCTOR_CALL' && n.className === 'Foo'
+      const constructorCall = findConstructorCalls(allNodes).find(n =>
+        getClassName(n) === 'Foo'
       );
-      assert.ok(constructorCall, 'CONSTRUCTOR_CALL for Foo passed as argument should exist');
-
-      const spuriousCalls = allNodes.filter(n =>
-        n.type === 'CALL' && n.isNew === true
-      );
-      assert.strictEqual(
-        spuriousCalls.length, 0,
-        `Expected 0 CALL(isNew:true) for constructor passed as argument, got ${spuriousCalls.length}`
-      );
+      assert.ok(constructorCall, 'CALL(isNew:true) for Foo passed as argument should exist');
     });
   });
 });

@@ -412,8 +412,9 @@ export const result = deleted() + kept();`);
       const imports = await backend.getAllNodes({ type: 'IMPORT' });
       const indexImports = imports.filter(i => i.file?.includes('index.js'));
 
-      const hasHelperA = indexImports.some(i => i.local === 'helperA');
-      const hasHelperB = indexImports.some(i => i.local === 'helperB');
+      // V2: IMPORT nodes use `name` (or `importedName`) instead of `local`
+      const hasHelperA = indexImports.some(i => i.name === 'helperA' || i.local === 'helperA');
+      const hasHelperB = indexImports.some(i => i.name === 'helperB' || i.local === 'helperB');
 
       assert.ok(!hasHelperA, 'helperA import should be removed');
       assert.ok(hasHelperB, 'helperB import should exist');

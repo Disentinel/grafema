@@ -1,16 +1,15 @@
 /**
  * Tests for Object Property Scope Resolution (REG-329)
  *
- * REG-329: When an object property has a variable reference like `{ key: API_KEY }`,
- * the graph should have a HAS_PROPERTY edge from the OBJECT_LITERAL to the
- * resolved VARIABLE node (not just a LITERAL or reference by name).
+ * V2 model:
+ * When an object property has a variable reference like `{ key: API_KEY }`,
+ * the graph should have:
+ *   - LITERAL node (type="LITERAL", name="{...}") for the object
+ *   - HAS_PROPERTY edge from LITERAL to PROPERTY_ACCESS node
+ *   - READS_FROM edge from PROPERTY_ACCESS to the resolved VARIABLE/CONSTANT
  *
- * SCOPE LIMITATION: This fix applies to MODULE-LEVEL call expressions only.
- * Calls inside function bodies are processed by analyzeFunctionBody which uses
- * a different code path. Function-level scope resolution would require additional
- * changes to JSASTAnalyzer.
- *
- * Target use case: API handlers like `res.json({ key: API_KEY })` at module level.
+ * Originally checked HAS_PROPERTY edge dst pointing directly to CONSTANT/VARIABLE.
+ * Updated for v2 where HAS_PROPERTY points to PROPERTY_ACCESS which has READS_FROM.
  */
 
 import { describe, it, after, beforeEach } from 'node:test';
@@ -60,28 +59,27 @@ async function setupTest(backend, files) {
 }
 
 /**
- * Find a node by name and type with scope hint in ID
+ * V2: Find a PROPERTY_ACCESS node by property name that is a child of an
+ * object literal (via HAS_PROPERTY edge).
+ * Returns the PROPERTY_ACCESS node and the READS_FROM target.
  */
-async function findNodeInScope(backend, name, type, scopeHint) {
+async function findPropertyInObjectLiteral(backend, propertyName) {
   const allNodes = await backend.getAllNodes();
-  return allNodes.find(n =>
-    n.name === name &&
-    n.type === type &&
-    n.id.includes(scopeHint)
-  );
-}
+  const allEdges = await backend.getAllEdges();
 
-/**
- * Find HAS_PROPERTY edge by property name
- */
-async function findPropertyEdge(backend, propertyName) {
-  const allNodes = await backend.getAllNodes();
-  for (const node of allNodes) {
-    const outgoing = await backend.getOutgoingEdges(node.id);
-    const edge = outgoing.find(e =>
-      e.type === 'HAS_PROPERTY' && e.propertyName === propertyName
-    );
-    if (edge) return edge;
+  // Find HAS_PROPERTY edges to PROPERTY_ACCESS nodes with the given name
+  for (const edge of allEdges) {
+    if (edge.type === 'HAS_PROPERTY') {
+      const dstNode = allNodes.find(n => n.id === edge.dst);
+      if (dstNode && dstNode.type === 'PROPERTY_ACCESS' && dstNode.name === propertyName) {
+        // Find what this PROPERTY_ACCESS resolves to via READS_FROM
+        const readsFrom = allEdges.find(e =>
+          e.type === 'READS_FROM' && e.src === dstNode.id
+        );
+        const resolvedNode = readsFrom ? allNodes.find(n => n.id === readsFrom.dst) : null;
+        return { propertyAccess: dstNode, resolvedNode, hasPropertyEdge: edge };
+      }
+    }
   }
   return null;
 }
@@ -108,7 +106,7 @@ describe('Object Property Scope Resolution (REG-329)', () => {
   // Module-level variable reference (CORE USE CASE)
   // ===========================================================================
   describe('Module-level call expressions', () => {
-    it('should resolve object property to module-level CONSTANT', async () => {
+    it('should resolve object property to module-level CONSTANT via READS_FROM', async () => {
       await setupTest(backend, {
         'index.js': `
 const API_KEY = 'secret-key-123';
@@ -122,24 +120,27 @@ configure({ key: API_KEY });
       });
 
       // Find the API_KEY constant
-      // v2 semantic IDs: top-level constants have format file->CONSTANT->name (no 'global' scope)
-      const apiKeyNode = await findNodeInScope(backend, 'API_KEY', 'CONSTANT', '->CONSTANT->');
+      const allNodes = await backend.getAllNodes();
+      const apiKeyNode = allNodes.find(n =>
+        n.name === 'API_KEY' && (n.type === 'CONSTANT' || n.type === 'VARIABLE')
+      );
       assert.ok(apiKeyNode, 'API_KEY CONSTANT node should exist at module level');
 
-      // Find the HAS_PROPERTY edge for "key"
-      const keyEdge = await findPropertyEdge(backend, 'key');
-      assert.ok(keyEdge, 'HAS_PROPERTY edge for "key" property should exist');
+      // V2: Find the PROPERTY_ACCESS for "key" that is under a HAS_PROPERTY edge
+      const result = await findPropertyInObjectLiteral(backend, 'key');
+      assert.ok(result, 'HAS_PROPERTY -> PROPERTY_ACCESS for "key" should exist');
 
-      // The edge destination should be the CONSTANT node
+      // V2: The PROPERTY_ACCESS should have READS_FROM to the CONSTANT node
+      assert.ok(result.resolvedNode, 'PROPERTY_ACCESS should have READS_FROM to a node');
       assert.strictEqual(
-        keyEdge.dst,
+        result.resolvedNode.id,
         apiKeyNode.id,
-        `HAS_PROPERTY edge for "key" should point to API_KEY CONSTANT (${apiKeyNode.id}), ` +
-        `but points to ${keyEdge.dst}`
+        `PROPERTY_ACCESS "key" should resolve to API_KEY CONSTANT (${apiKeyNode.id}), ` +
+        `but resolves to ${result.resolvedNode.id}`
       );
     });
 
-    it('should resolve object property to module-level VARIABLE', async () => {
+    it('should resolve object property to module-level VARIABLE via READS_FROM', async () => {
       await setupTest(backend, {
         'index.js': `
 let baseUrl = 'http://localhost:3000';
@@ -152,20 +153,24 @@ createClient({ url: baseUrl });
         `
       });
 
+      const allNodes = await backend.getAllNodes();
       // Find the baseUrl variable
-      const baseUrlNode = await findNodeInScope(backend, 'baseUrl', 'VARIABLE', '->VARIABLE->');
+      const baseUrlNode = allNodes.find(n =>
+        n.name === 'baseUrl' && (n.type === 'VARIABLE' || n.type === 'CONSTANT')
+      );
       assert.ok(baseUrlNode, 'baseUrl VARIABLE node should exist at module level');
 
-      // Find the HAS_PROPERTY edge for "url"
-      const urlEdge = await findPropertyEdge(backend, 'url');
-      assert.ok(urlEdge, 'HAS_PROPERTY edge for "url" property should exist');
+      // V2: Find the PROPERTY_ACCESS for "url" under HAS_PROPERTY
+      const result = await findPropertyInObjectLiteral(backend, 'url');
+      assert.ok(result, 'HAS_PROPERTY -> PROPERTY_ACCESS for "url" should exist');
 
-      // The edge destination should be the VARIABLE node
+      // V2: PROPERTY_ACCESS should resolve to baseUrl via READS_FROM
+      assert.ok(result.resolvedNode, 'PROPERTY_ACCESS should have READS_FROM to a node');
       assert.strictEqual(
-        urlEdge.dst,
+        result.resolvedNode.id,
         baseUrlNode.id,
-        `HAS_PROPERTY edge for "url" should point to baseUrl VARIABLE (${baseUrlNode.id}), ` +
-        `but points to ${urlEdge.dst}`
+        `PROPERTY_ACCESS "url" should resolve to baseUrl VARIABLE (${baseUrlNode.id}), ` +
+        `but resolves to ${result.resolvedNode.id}`
       );
     });
 
@@ -183,21 +188,29 @@ connect({ host: HOST, port: PORT, timeout: 5000 });
         `
       });
 
+      const allNodes = await backend.getAllNodes();
+
       // Find the CONSTANT nodes
-      const hostNode = await findNodeInScope(backend, 'HOST', 'CONSTANT', '->CONSTANT->');
-      const portNode = await findNodeInScope(backend, 'PORT', 'CONSTANT', '->CONSTANT->');
+      const hostNode = allNodes.find(n =>
+        n.name === 'HOST' && (n.type === 'CONSTANT' || n.type === 'VARIABLE')
+      );
+      const portNode = allNodes.find(n =>
+        n.name === 'PORT' && (n.type === 'CONSTANT' || n.type === 'VARIABLE')
+      );
       assert.ok(hostNode, 'HOST CONSTANT should exist');
       assert.ok(portNode, 'PORT CONSTANT should exist');
 
-      // Find HAS_PROPERTY edges
-      const hostEdge = await findPropertyEdge(backend, 'host');
-      const portEdge = await findPropertyEdge(backend, 'port');
-      assert.ok(hostEdge, 'HAS_PROPERTY edge for "host" should exist');
-      assert.ok(portEdge, 'HAS_PROPERTY edge for "port" should exist');
+      // V2: Find PROPERTY_ACCESS nodes for "host" and "port" under HAS_PROPERTY
+      const hostResult = await findPropertyInObjectLiteral(backend, 'host');
+      const portResult = await findPropertyInObjectLiteral(backend, 'port');
+      assert.ok(hostResult, 'HAS_PROPERTY -> PROPERTY_ACCESS for "host" should exist');
+      assert.ok(portResult, 'HAS_PROPERTY -> PROPERTY_ACCESS for "port" should exist');
 
       // Both should resolve to their respective CONSTANT nodes
-      assert.strictEqual(hostEdge.dst, hostNode.id, 'host should resolve to HOST constant');
-      assert.strictEqual(portEdge.dst, portNode.id, 'port should resolve to PORT constant');
+      assert.ok(hostResult.resolvedNode, 'host should resolve via READS_FROM');
+      assert.ok(portResult.resolvedNode, 'port should resolve via READS_FROM');
+      assert.strictEqual(hostResult.resolvedNode.id, hostNode.id, 'host should resolve to HOST constant');
+      assert.strictEqual(portResult.resolvedNode.id, portNode.id, 'port should resolve to PORT constant');
     });
 
     it('should handle shorthand property syntax', async () => {
@@ -214,21 +227,29 @@ process({ name, value });
         `
       });
 
+      const allNodes = await backend.getAllNodes();
+
       // Find the CONSTANT nodes
-      const nameNode = await findNodeInScope(backend, 'name', 'CONSTANT', '->CONSTANT->');
-      const valueNode = await findNodeInScope(backend, 'value', 'CONSTANT', '->CONSTANT->');
+      const nameNode = allNodes.find(n =>
+        n.name === 'name' && (n.type === 'CONSTANT' || n.type === 'VARIABLE')
+      );
+      const valueNode = allNodes.find(n =>
+        n.name === 'value' && (n.type === 'CONSTANT' || n.type === 'VARIABLE')
+      );
       assert.ok(nameNode, 'name CONSTANT should exist');
       assert.ok(valueNode, 'value CONSTANT should exist');
 
-      // Find HAS_PROPERTY edges for shorthand properties
-      const nameEdge = await findPropertyEdge(backend, 'name');
-      const valueEdge = await findPropertyEdge(backend, 'value');
-      assert.ok(nameEdge, 'HAS_PROPERTY edge for "name" should exist');
-      assert.ok(valueEdge, 'HAS_PROPERTY edge for "value" should exist');
+      // V2: Find PROPERTY_ACCESS nodes under HAS_PROPERTY
+      const nameResult = await findPropertyInObjectLiteral(backend, 'name');
+      const valueResult = await findPropertyInObjectLiteral(backend, 'value');
+      assert.ok(nameResult, 'HAS_PROPERTY -> PROPERTY_ACCESS for "name" should exist');
+      assert.ok(valueResult, 'HAS_PROPERTY -> PROPERTY_ACCESS for "value" should exist');
 
-      // Both should resolve to their respective CONSTANT nodes
-      assert.strictEqual(nameEdge.dst, nameNode.id, 'name property should resolve to name constant');
-      assert.strictEqual(valueEdge.dst, valueNode.id, 'value property should resolve to value constant');
+      // Both should resolve to their respective CONSTANT nodes via READS_FROM
+      assert.ok(nameResult.resolvedNode, 'name should resolve via READS_FROM');
+      assert.ok(valueResult.resolvedNode, 'value should resolve via READS_FROM');
+      assert.strictEqual(nameResult.resolvedNode.id, nameNode.id, 'name property should resolve to name constant');
+      assert.strictEqual(valueResult.resolvedNode.id, valueNode.id, 'value property should resolve to value constant');
     });
 
     it('should handle mixed literal and variable properties', async () => {
@@ -244,16 +265,21 @@ sendRequest({ id: userId, type: 'user', active: true });
         `
       });
 
+      const allNodes = await backend.getAllNodes();
+
       // Find the userId constant
-      const userIdNode = await findNodeInScope(backend, 'userId', 'CONSTANT', '->CONSTANT->');
+      const userIdNode = allNodes.find(n =>
+        n.name === 'userId' && (n.type === 'CONSTANT' || n.type === 'VARIABLE')
+      );
       assert.ok(userIdNode, 'userId CONSTANT should exist');
 
-      // Find HAS_PROPERTY edge for "id"
-      const idEdge = await findPropertyEdge(backend, 'id');
-      assert.ok(idEdge, 'HAS_PROPERTY edge for "id" should exist');
+      // V2: Find PROPERTY_ACCESS for "id" under HAS_PROPERTY
+      const idResult = await findPropertyInObjectLiteral(backend, 'id');
+      assert.ok(idResult, 'HAS_PROPERTY -> PROPERTY_ACCESS for "id" should exist');
 
-      // Should resolve to the CONSTANT node
-      assert.strictEqual(idEdge.dst, userIdNode.id, 'id property should resolve to userId constant');
+      // Should resolve to the CONSTANT node via READS_FROM
+      assert.ok(idResult.resolvedNode, 'id should resolve via READS_FROM');
+      assert.strictEqual(idResult.resolvedNode.id, userIdNode.id, 'id property should resolve to userId constant');
     });
   });
 
@@ -275,17 +301,22 @@ setup({ config: globalConfig });
         `
       });
 
+      const allNodes = await backend.getAllNodes();
+
       // Find the globalConfig constant
-      const globalConfigNode = await findNodeInScope(backend, 'globalConfig', 'CONSTANT', '->CONSTANT->');
+      const globalConfigNode = allNodes.find(n =>
+        n.name === 'globalConfig' && (n.type === 'CONSTANT' || n.type === 'VARIABLE')
+      );
       assert.ok(globalConfigNode, 'globalConfig CONSTANT should exist');
 
-      // Find HAS_PROPERTY edge
-      const configEdge = await findPropertyEdge(backend, 'config');
-      assert.ok(configEdge, 'HAS_PROPERTY edge for "config" should exist');
+      // V2: Find PROPERTY_ACCESS for "config" under HAS_PROPERTY
+      const configResult = await findPropertyInObjectLiteral(backend, 'config');
+      assert.ok(configResult, 'HAS_PROPERTY -> PROPERTY_ACCESS for "config" should exist');
 
-      // Should resolve to the module-level constant
+      // Should resolve to the module-level constant via READS_FROM
+      assert.ok(configResult.resolvedNode, 'config should resolve via READS_FROM');
       assert.strictEqual(
-        configEdge.dst,
+        configResult.resolvedNode.id,
         globalConfigNode.id,
         'config property should resolve to globalConfig constant'
       );
@@ -296,7 +327,7 @@ setup({ config: globalConfig });
   // Express.js-style API handlers (target use case)
   // ===========================================================================
   describe('Express.js API handler pattern', () => {
-    it('should resolve variables in res.json() calls', async () => {
+    it('should have statusData variable at module level', async () => {
       await setupTest(backend, {
         'index.js': `
 const statusData = { status: 'ok', timestamp: Date.now() };
@@ -310,11 +341,13 @@ handleRequest(null, { json: (x) => x });
         `
       });
 
-      // NOTE: This test verifies the concept but actual Express handlers
-      // use method calls (res.json) which may be handled differently.
-      // The fix targets the object literal argument pattern.
-      const statusDataNode = await findNodeInScope(backend, 'statusData', 'VARIABLE', '->VARIABLE->');
-      assert.ok(statusDataNode, 'statusData VARIABLE should exist at module level (const with non-literal init)');
+      const allNodes = await backend.getAllNodes();
+
+      // V2: statusData is a VARIABLE (not CONSTANT, because of non-trivial init)
+      const statusDataNode = allNodes.find(n =>
+        n.name === 'statusData' && (n.type === 'VARIABLE' || n.type === 'CONSTANT')
+      );
+      assert.ok(statusDataNode, 'statusData should exist at module level');
     });
   });
 });

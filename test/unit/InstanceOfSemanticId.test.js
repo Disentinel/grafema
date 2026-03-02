@@ -84,9 +84,9 @@ describe('REG-205: INSTANCE_OF semantic ID format', () => {
   });
 
   describe('GraphBuilder source code verification', () => {
-    it('should NOT have legacy :CLASS: format in graph builders (REG-205 fix)', () => {
-      // REG-423: bufferClassNodes extracted to TypeSystemBuilder
-      const dir = 'packages/core/src/plugins/analysis/ast/builders';
+    it('should NOT have legacy :CLASS: format in v2 source (REG-205 fix)', () => {
+      // v2: classes handled in core-v2/src/visitors/classes.ts
+      const dir = 'packages/core-v2/src';
 
       const grepCommand = `grep -rn ":CLASS:" ${dir} --include="*.ts" || true`;
 
@@ -105,40 +105,36 @@ describe('REG-205: INSTANCE_OF semantic ID format', () => {
         .filter(line => !line.includes('*'))
         .filter(line => line.includes(':CLASS:'));
 
-      // AFTER FIX: There should be NO :CLASS: in builder code
-      // (only computeSemanticId should be used)
+      // v2 should NOT have legacy :CLASS: format
       assert.strictEqual(
         codeLines.length,
         0,
-        `Builders should NOT have legacy :CLASS: format.\n` +
-        `Found ${codeLines.length} occurrences:\n${codeLines.join('\n')}\n` +
-        `Should use computeSemanticId('CLASS', ...) instead.`
+        `v2 source should NOT have legacy :CLASS: format.\n` +
+        `Found ${codeLines.length} occurrences:\n${codeLines.join('\n')}`
       );
     });
 
-    it('should use computeSemanticId for CLASS edge destinations (REG-205 fix)', () => {
-      // REG-423: bufferClassNodes extracted to TypeSystemBuilder
-      const file = 'packages/core/src/plugins/analysis/ast/builders/TypeSystemBuilder.ts';
+    it('should handle CLASS nodes via v2 visitors (REG-205 fix)', () => {
+      // v2: ClassDeclaration handled in visitors/declarations.ts
+      const file = 'packages/core-v2/src/visitors/declarations.ts';
 
-      // Check if computeSemanticId is imported
-      const importCheck = `grep "computeSemanticId" ${file} || true`;
+      const grepCommand = `grep "CLASS\\|ClassDeclaration" ${file} || true`;
 
-      let importResult;
+      let result;
       try {
-        importResult = execSync(importCheck, { encoding: 'utf-8', cwd: process.cwd() }).trim();
+        result = execSync(grepCommand, { encoding: 'utf-8', cwd: process.cwd() }).trim();
       } catch (error) {
-        importResult = '';
+        result = '';
       }
 
-      // AFTER FIX: computeSemanticId should be imported
-      const hasImport = importResult
+      const hasClassHandling = result
         .split('\n')
-        .some(line => line.includes('import') && line.includes('computeSemanticId'));
+        .some(line => line.includes('CLASS') || line.includes('ClassDeclaration'));
 
       assert.ok(
-        hasImport,
-        `TypeSystemBuilder should import computeSemanticId from SemanticId.js\n` +
-        `Current imports containing 'computeSemanticId': ${importResult || '(none)'}`
+        hasClassHandling,
+        `v2 declarations.ts should handle CLASS nodes.\n` +
+        `Found: ${result || '(none)'}`
       );
     });
   });

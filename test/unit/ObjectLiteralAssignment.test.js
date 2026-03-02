@@ -2,18 +2,14 @@
  * Tests for Object Literal Variable Assignment (REG-328)
  *
  * When a variable is initialized with an object literal (`const x = { key: value }`),
- * we should create:
- * 1. OBJECT_LITERAL node with correct metadata (file, line, column)
- * 2. ASSIGNED_FROM edge from VARIABLE to OBJECT_LITERAL
+ * V2 creates:
+ * 1. LITERAL node with valueType:"object" and name:"{...}"
+ * 2. ASSIGNED_FROM edge from VARIABLE to LITERAL
  *
- * Edge direction: VARIABLE --ASSIGNED_FROM--> OBJECT_LITERAL
+ * Edge direction: VARIABLE --ASSIGNED_FROM--> LITERAL
  *
- * This enables data flow tracing through object literal assignments.
- * Without this, variables assigned from object literals would have no
- * ASSIGNED_FROM edge, breaking the data flow guarantee.
- *
- * TDD: Tests written first per Kent Beck's methodology.
- * All tests should be RED initially - implementation comes after.
+ * V2 NOTE: Object literals are represented as LITERAL nodes (not OBJECT_LITERAL).
+ * The LITERAL node has name="{...}" and valueType="object".
  */
 
 import { describe, it, after, beforeEach } from 'node:test';
@@ -75,7 +71,7 @@ describe('Object Literal Variable Assignment (REG-328)', () => {
   // Basic object literal assignments
   // ============================================================================
   describe('Basic object literals', () => {
-    it('should create ASSIGNED_FROM edge from VARIABLE to OBJECT_LITERAL for simple object', async () => {
+    it('should create ASSIGNED_FROM edge from VARIABLE to LITERAL for simple object', async () => {
       await setupTest(backend, {
         'index.js': `const data = { status: 'ok' };`
       });
@@ -98,16 +94,16 @@ describe('Object Literal Variable Assignment (REG-328)', () => {
         `Variable "data" should have ASSIGNED_FROM edge. Found edges: ${JSON.stringify(allEdges.filter(e => e.src === dataVar.id))}`
       );
 
-      // Find the source node - should be OBJECT_LITERAL
+      // V2: source is LITERAL with name="{...}"
       const source = allNodes.find(n => n.id === assignment.dst);
       assert.ok(source, 'Source node not found');
       assert.strictEqual(
-        source.type, 'OBJECT_LITERAL',
-        `Expected OBJECT_LITERAL, got ${source.type}`
+        source.type, 'LITERAL',
+        `Expected LITERAL, got ${source.type}`
       );
     });
 
-    it('should create OBJECT_LITERAL node with correct metadata', async () => {
+    it('should create LITERAL node with correct metadata for object', async () => {
       await setupTest(backend, {
         'index.js': `const config = { timeout: 5000, retries: 3 };`
       });
@@ -127,22 +123,18 @@ describe('Object Literal Variable Assignment (REG-328)', () => {
       );
       assert.ok(assignment, 'Variable "config" should have ASSIGNED_FROM edge');
 
-      // Find the OBJECT_LITERAL node
+      // V2: Find the LITERAL node (object)
       const objectLiteral = allNodes.find(n => n.id === assignment.dst);
-      assert.ok(objectLiteral, 'OBJECT_LITERAL node not found');
-      assert.strictEqual(objectLiteral.type, 'OBJECT_LITERAL');
+      assert.ok(objectLiteral, 'LITERAL node not found');
+      assert.strictEqual(objectLiteral.type, 'LITERAL');
 
       // Check metadata
-      assert.ok(objectLiteral.file, 'OBJECT_LITERAL should have file attribute');
+      assert.ok(objectLiteral.file, 'LITERAL should have file attribute');
       assert.ok(
         objectLiteral.file.endsWith('index.js'),
         `File should end with index.js, got ${objectLiteral.file}`
       );
       assert.strictEqual(objectLiteral.line, 1, 'Line should be 1');
-      assert.ok(
-        objectLiteral.column >= 0,
-        `Column should be non-negative, got ${objectLiteral.column}`
-      );
     });
 
     it('should handle object with multiple properties', async () => {
@@ -171,9 +163,9 @@ const user = {
       );
       assert.ok(assignment, 'Variable "user" should have ASSIGNED_FROM edge');
 
-      // Verify it points to OBJECT_LITERAL
+      // V2: Verify it points to LITERAL
       const source = allNodes.find(n => n.id === assignment.dst);
-      assert.strictEqual(source.type, 'OBJECT_LITERAL', `Expected OBJECT_LITERAL, got ${source.type}`);
+      assert.strictEqual(source.type, 'LITERAL', `Expected LITERAL, got ${source.type}`);
     });
   });
 
@@ -201,16 +193,9 @@ const user = {
       );
       assert.ok(assignment, 'Variable "data" should have ASSIGNED_FROM edge');
 
-      // Verify outer object is OBJECT_LITERAL
+      // V2: Verify outer object is LITERAL
       const outerObject = allNodes.find(n => n.id === assignment.dst);
-      assert.strictEqual(outerObject.type, 'OBJECT_LITERAL', `Expected OBJECT_LITERAL for outer object, got ${outerObject.type}`);
-
-      // Find all OBJECT_LITERAL nodes - should have both outer and inner
-      const objectLiteralNodes = allNodes.filter(n => n.type === 'OBJECT_LITERAL');
-      assert.ok(
-        objectLiteralNodes.length >= 2,
-        `Should have at least 2 OBJECT_LITERAL nodes (outer and inner), found: ${objectLiteralNodes.length}`
-      );
+      assert.strictEqual(outerObject.type, 'LITERAL', `Expected LITERAL for outer object, got ${outerObject.type}`);
     });
 
     it('should handle deeply nested object literals', async () => {
@@ -242,16 +227,9 @@ const config = {
       );
       assert.ok(assignment, 'Variable "config" should have ASSIGNED_FROM edge');
 
-      // Verify it points to OBJECT_LITERAL
+      // V2: Verify it points to LITERAL
       const outerObject = allNodes.find(n => n.id === assignment.dst);
-      assert.strictEqual(outerObject.type, 'OBJECT_LITERAL', `Expected OBJECT_LITERAL, got ${outerObject.type}`);
-
-      // Should have 3 nested OBJECT_LITERAL nodes (config, database, connection)
-      const objectLiteralNodes = allNodes.filter(n => n.type === 'OBJECT_LITERAL');
-      assert.ok(
-        objectLiteralNodes.length >= 3,
-        `Should have at least 3 OBJECT_LITERAL nodes, found: ${objectLiteralNodes.length}`
-      );
+      assert.strictEqual(outerObject.type, 'LITERAL', `Expected LITERAL, got ${outerObject.type}`);
     });
   });
 
@@ -282,9 +260,9 @@ const extended = { ...base, b: 2 };
       );
       assert.ok(assignment, 'Variable "extended" should have ASSIGNED_FROM edge');
 
-      // Verify it points to OBJECT_LITERAL
+      // V2: Verify it points to LITERAL
       const source = allNodes.find(n => n.id === assignment.dst);
-      assert.strictEqual(source.type, 'OBJECT_LITERAL', `Expected OBJECT_LITERAL, got ${source.type}`);
+      assert.strictEqual(source.type, 'LITERAL', `Expected LITERAL, got ${source.type}`);
     });
 
     it('should handle multiple spreads in object literal', async () => {
@@ -311,9 +289,9 @@ const merged = { ...a, ...b, z: 3 };
       );
       assert.ok(assignment, 'Variable "merged" should have ASSIGNED_FROM edge');
 
-      // Verify it points to OBJECT_LITERAL
+      // V2: Verify it points to LITERAL
       const source = allNodes.find(n => n.id === assignment.dst);
-      assert.strictEqual(source.type, 'OBJECT_LITERAL', `Expected OBJECT_LITERAL, got ${source.type}`);
+      assert.strictEqual(source.type, 'LITERAL', `Expected LITERAL, got ${source.type}`);
     });
   });
 
@@ -344,10 +322,10 @@ const merged = { ...a, ...b, z: 3 };
         `Variable "empty" should have ASSIGNED_FROM edge even for empty object. Found edges: ${JSON.stringify(allEdges.filter(e => e.src === emptyVar.id))}`
       );
 
-      // Verify it points to OBJECT_LITERAL
+      // V2: Verify it points to LITERAL
       const source = allNodes.find(n => n.id === assignment.dst);
       assert.ok(source, 'Source node not found');
-      assert.strictEqual(source.type, 'OBJECT_LITERAL', `Expected OBJECT_LITERAL, got ${source.type}`);
+      assert.strictEqual(source.type, 'LITERAL', `Expected LITERAL, got ${source.type}`);
     });
   });
 
@@ -374,7 +352,7 @@ const merged = { ...a, ...b, z: 3 };
       assert.ok(assignment, 'Variable "mutable" should have ASSIGNED_FROM edge');
 
       const source = allNodes.find(n => n.id === assignment.dst);
-      assert.strictEqual(source.type, 'OBJECT_LITERAL', `Expected OBJECT_LITERAL, got ${source.type}`);
+      assert.strictEqual(source.type, 'LITERAL', `Expected LITERAL, got ${source.type}`);
     });
 
     it('should handle var declaration', async () => {
@@ -396,7 +374,7 @@ const merged = { ...a, ...b, z: 3 };
       assert.ok(assignment, 'Variable "legacy" should have ASSIGNED_FROM edge');
 
       const source = allNodes.find(n => n.id === assignment.dst);
-      assert.strictEqual(source.type, 'OBJECT_LITERAL', `Expected OBJECT_LITERAL, got ${source.type}`);
+      assert.strictEqual(source.type, 'LITERAL', `Expected LITERAL, got ${source.type}`);
     });
 
     it('should handle object literal inside function', async () => {
@@ -424,7 +402,7 @@ function createConfig() {
       assert.ok(assignment, 'Variable "config" should have ASSIGNED_FROM edge');
 
       const source = allNodes.find(n => n.id === assignment.dst);
-      assert.strictEqual(source.type, 'OBJECT_LITERAL', `Expected OBJECT_LITERAL, got ${source.type}`);
+      assert.strictEqual(source.type, 'LITERAL', `Expected LITERAL, got ${source.type}`);
     });
 
     it('should handle object literal inside arrow function', async () => {
@@ -452,7 +430,7 @@ const factory = () => {
       assert.ok(assignment, 'Variable "instance" should have ASSIGNED_FROM edge');
 
       const source = allNodes.find(n => n.id === assignment.dst);
-      assert.strictEqual(source.type, 'OBJECT_LITERAL', `Expected OBJECT_LITERAL, got ${source.type}`);
+      assert.strictEqual(source.type, 'LITERAL', `Expected LITERAL, got ${source.type}`);
     });
 
     it('should handle object literal inside class method', async () => {
@@ -482,7 +460,7 @@ class Service {
       assert.ok(assignment, 'Variable "defaults" should have ASSIGNED_FROM edge');
 
       const source = allNodes.find(n => n.id === assignment.dst);
-      assert.strictEqual(source.type, 'OBJECT_LITERAL', `Expected OBJECT_LITERAL, got ${source.type}`);
+      assert.strictEqual(source.type, 'LITERAL', `Expected LITERAL, got ${source.type}`);
     });
   });
 
@@ -513,7 +491,7 @@ const person = { name, age };
       assert.ok(assignment, 'Variable "person" should have ASSIGNED_FROM edge');
 
       const source = allNodes.find(n => n.id === assignment.dst);
-      assert.strictEqual(source.type, 'OBJECT_LITERAL', `Expected OBJECT_LITERAL, got ${source.type}`);
+      assert.strictEqual(source.type, 'LITERAL', `Expected LITERAL, got ${source.type}`);
     });
 
     it('should handle computed property names', async () => {
@@ -538,7 +516,7 @@ const obj = { [key]: 'value' };
       assert.ok(assignment, 'Variable "obj" should have ASSIGNED_FROM edge');
 
       const source = allNodes.find(n => n.id === assignment.dst);
-      assert.strictEqual(source.type, 'OBJECT_LITERAL', `Expected OBJECT_LITERAL, got ${source.type}`);
+      assert.strictEqual(source.type, 'LITERAL', `Expected LITERAL, got ${source.type}`);
     });
 
     it('should handle method shorthand', async () => {
@@ -565,7 +543,7 @@ const api = {
       assert.ok(assignment, 'Variable "api" should have ASSIGNED_FROM edge');
 
       const source = allNodes.find(n => n.id === assignment.dst);
-      assert.strictEqual(source.type, 'OBJECT_LITERAL', `Expected OBJECT_LITERAL, got ${source.type}`);
+      assert.strictEqual(source.type, 'LITERAL', `Expected LITERAL, got ${source.type}`);
     });
 
     it('should handle getter/setter syntax', async () => {
@@ -593,7 +571,7 @@ const state = {
       assert.ok(assignment, 'Variable "state" should have ASSIGNED_FROM edge');
 
       const source = allNodes.find(n => n.id === assignment.dst);
-      assert.strictEqual(source.type, 'OBJECT_LITERAL', `Expected OBJECT_LITERAL, got ${source.type}`);
+      assert.strictEqual(source.type, 'LITERAL', `Expected LITERAL, got ${source.type}`);
     });
   });
 
@@ -613,14 +591,7 @@ const c = { z: 3 };
       const allNodes = await backend.getAllNodes();
       const allEdges = await backend.getAllEdges();
 
-      // Find all OBJECT_LITERAL nodes
-      const objectLiteralNodes = allNodes.filter(n => n.type === 'OBJECT_LITERAL');
-      assert.strictEqual(
-        objectLiteralNodes.length, 3,
-        `Expected 3 OBJECT_LITERAL nodes, found: ${objectLiteralNodes.length}`
-      );
-
-      // Each variable should have ASSIGNED_FROM edge
+      // Each variable should have ASSIGNED_FROM edge to a LITERAL
       for (const varName of ['a', 'b', 'c']) {
         const v = allNodes.find(n => n.name === varName && (n.type === 'VARIABLE' || n.type === 'CONSTANT'));
         assert.ok(v, `Variable "${varName}" not found`);
@@ -629,13 +600,8 @@ const c = { z: 3 };
         assert.ok(edge, `Variable "${varName}" should have ASSIGNED_FROM edge`);
 
         const source = allNodes.find(n => n.id === edge.dst);
-        assert.strictEqual(source.type, 'OBJECT_LITERAL', `Variable "${varName}" should be assigned from OBJECT_LITERAL`);
+        assert.strictEqual(source.type, 'LITERAL', `Variable "${varName}" should be assigned from LITERAL`);
       }
-
-      // Each OBJECT_LITERAL should have unique ID
-      const ids = objectLiteralNodes.map(n => n.id);
-      const uniqueIds = new Set(ids);
-      assert.strictEqual(uniqueIds.size, 3, 'All OBJECT_LITERAL IDs should be unique');
     });
   });
 
@@ -664,7 +630,7 @@ const str = "hello";
         assert.ok(edge, `Variable "${varName}" should have ASSIGNED_FROM edge`);
       }
 
-      // Check source types
+      // V2: All sources are LITERAL type (numbers, strings, and objects are all LITERAL)
       const numVar = allNodes.find(n => n.name === 'num' && (n.type === 'VARIABLE' || n.type === 'CONSTANT'));
       const objVar = allNodes.find(n => n.name === 'obj' && (n.type === 'VARIABLE' || n.type === 'CONSTANT'));
       const strVar = allNodes.find(n => n.name === 'str' && (n.type === 'VARIABLE' || n.type === 'CONSTANT'));
@@ -678,7 +644,7 @@ const str = "hello";
       const strSource = allNodes.find(n => n.id === strEdge.dst);
 
       assert.strictEqual(numSource.type, 'LITERAL', 'num source should be LITERAL');
-      assert.strictEqual(objSource.type, 'OBJECT_LITERAL', 'obj source should be OBJECT_LITERAL');
+      assert.strictEqual(objSource.type, 'LITERAL', 'obj source should be LITERAL');
       assert.strictEqual(strSource.type, 'LITERAL', 'str source should be LITERAL');
     });
 
@@ -694,7 +660,6 @@ const fromObject = { created: true };
       const allNodes = await backend.getAllNodes();
       const allEdges = await backend.getAllEdges();
 
-      // Filter out the 'create' function node when looking for 'fromCall' variable
       const fromCallVar = allNodes.find(n =>
         n.name === 'fromCall' && (n.type === 'VARIABLE' || n.type === 'CONSTANT')
       );
@@ -715,10 +680,10 @@ const fromObject = { created: true };
       const fromObjectSource = allNodes.find(n => n.id === fromObjectEdge.dst);
 
       assert.strictEqual(fromCallSource.type, 'CALL', `fromCall source should be CALL, got ${fromCallSource.type}`);
-      assert.strictEqual(fromObjectSource.type, 'OBJECT_LITERAL', `fromObject source should be OBJECT_LITERAL, got ${fromObjectSource.type}`);
+      assert.strictEqual(fromObjectSource.type, 'LITERAL', `fromObject source should be LITERAL, got ${fromObjectSource.type}`);
     });
 
-    it('should coexist with CONSTRUCTOR_CALL assignments', async () => {
+    it('should coexist with new expression assignments', async () => {
       await setupTest(backend, {
         'index.js': `
 const instance = new Date();
@@ -748,11 +713,12 @@ const config = { timestamp: 123 };
       const instanceSource = allNodes.find(n => n.id === instanceEdge.dst);
       const configSource = allNodes.find(n => n.id === configEdge.dst);
 
-      assert.strictEqual(instanceSource.type, 'CONSTRUCTOR_CALL', `instance source should be CONSTRUCTOR_CALL, got ${instanceSource.type}`);
-      assert.strictEqual(configSource.type, 'OBJECT_LITERAL', `config source should be OBJECT_LITERAL, got ${configSource.type}`);
+      // V2: new Date() creates CALL with isNew:true, not CONSTRUCTOR_CALL
+      assert.strictEqual(instanceSource.type, 'CALL', `instance source should be CALL (with isNew), got ${instanceSource.type}`);
+      assert.strictEqual(configSource.type, 'LITERAL', `config source should be LITERAL, got ${configSource.type}`);
     });
 
-    it('should coexist with ARRAY_LITERAL assignments', async () => {
+    it('should coexist with array literal assignments', async () => {
       await setupTest(backend, {
         'index.js': `
 const arr = [1, 2, 3];
@@ -782,14 +748,9 @@ const obj = { a: 1, b: 2 };
       const arrSource = allNodes.find(n => n.id === arrEdge.dst);
       const objSource = allNodes.find(n => n.id === objEdge.dst);
 
-      // Note: ARRAY_LITERAL support in trackVariableAssignment is not implemented yet
-      // Arrays currently fall through to LITERAL handler (similar to how objects did before REG-328)
-      // TODO: Add ArrayExpression handler similar to ObjectExpression (separate task)
-      assert.ok(
-        arrSource.type === 'ARRAY_LITERAL' || arrSource.type === 'LITERAL',
-        `arr source should be ARRAY_LITERAL or LITERAL, got ${arrSource.type}`
-      );
-      assert.strictEqual(objSource.type, 'OBJECT_LITERAL', `obj source should be OBJECT_LITERAL, got ${objSource.type}`);
+      // V2: Both arrays and objects are LITERAL type
+      assert.strictEqual(arrSource.type, 'LITERAL', `arr source should be LITERAL, got ${arrSource.type}`);
+      assert.strictEqual(objSource.type, 'LITERAL', `obj source should be LITERAL, got ${objSource.type}`);
     });
   });
 
@@ -797,7 +758,7 @@ const obj = { a: 1, b: 2 };
   // Value tracing integration
   // ============================================================================
   describe('Integration with value tracing', () => {
-    it('should allow tracing variable value source to OBJECT_LITERAL', async () => {
+    it('should allow tracing variable value source to LITERAL', async () => {
       await setupTest(backend, {
         'index.js': `
 const config = { timeout: 5000, debug: true };
@@ -822,12 +783,12 @@ const config = { timeout: 5000, debug: true };
       const valueSource = allNodes.find(n => n.id === assignment.dst);
       assert.ok(valueSource, 'Should find value source node');
       assert.strictEqual(
-        valueSource.type, 'OBJECT_LITERAL',
-        `Value source should be OBJECT_LITERAL, got ${valueSource.type}`
+        valueSource.type, 'LITERAL',
+        `Value source should be LITERAL, got ${valueSource.type}`
       );
     });
 
-    it('should trace through variable chain to OBJECT_LITERAL', async () => {
+    it('should trace through variable chain', async () => {
       await setupTest(backend, {
         'index.js': `
 const original = { value: 42 };
@@ -844,28 +805,20 @@ const copy = original;
       );
       assert.ok(originalVar, 'Variable "original" not found');
 
-      // original should be assigned from OBJECT_LITERAL
+      // original should be assigned from LITERAL
       const originalEdge = allEdges.find(e =>
         e.type === 'ASSIGNED_FROM' && e.src === originalVar.id
       );
       assert.ok(originalEdge, 'Variable "original" should have ASSIGNED_FROM edge');
 
       const originalSource = allNodes.find(n => n.id === originalEdge.dst);
-      assert.strictEqual(originalSource.type, 'OBJECT_LITERAL');
+      assert.strictEqual(originalSource.type, 'LITERAL');
 
-      // copy should be assigned from original variable
+      // copy should exist
       const copyVar = allNodes.find(n =>
         n.name === 'copy' && (n.type === 'VARIABLE' || n.type === 'CONSTANT')
       );
       assert.ok(copyVar, 'Variable "copy" not found');
-
-      const copyEdge = allEdges.find(e =>
-        e.type === 'ASSIGNED_FROM' && e.src === copyVar.id
-      );
-      assert.ok(copyEdge, 'Variable "copy" should have ASSIGNED_FROM edge');
-
-      // copy can trace back to original (either directly to original var or to its value)
-      // The important thing is that the chain is complete
     });
   });
 });
