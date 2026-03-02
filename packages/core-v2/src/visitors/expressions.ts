@@ -40,6 +40,50 @@ import type {
 import type { VisitResult, WalkContext } from '../types.js';
 import { EMPTY_RESULT, paramTypeRefInfo } from '../types.js';
 
+// ─── Awaited-position detection ─────────────────────────────────────
+
+/**
+ * Expression types whose value flows transparently to their parent.
+ * If a call is inside one of these AND the chain ultimately reaches
+ * AwaitExpression or `for await`, the call's result may be awaited.
+ */
+const AWAIT_TRANSPARENT = new Set([
+  'ConditionalExpression',
+  'LogicalExpression',
+  'SequenceExpression',
+  'TSNonNullExpression',
+  'TSAsExpression',
+  'TSSatisfiesExpression',
+]);
+
+/**
+ * Check whether a CALL node sits in an "awaited position" by walking
+ * up the ancestor stack through transparent expressions. Stops at the
+ * first non-transparent ancestor.
+ *
+ * Correctly handles:
+ * - `await foo()`                        → true  (direct)
+ * - `await (cond ? foo() : bar())`       → true  (through ternary)
+ * - `await (a() || b())`                 → true  (through logical)
+ * - `for await (const x of gen())`       → true  (for-await)
+ * - `await a().then(b)` inner a()        → false (MemberExpression blocks)
+ * - `foo()`                              → false
+ */
+function isInAwaitedPosition(ctx: WalkContext): boolean {
+  const stack = (ctx as unknown as { _ancestorStack?: Node[] })._ancestorStack;
+  if (!stack) return false;
+
+  // stack[last] is the current node (CallExpression/NewExpression itself).
+  // Walk up from stack[last-1] (the parent) through transparent ancestors.
+  for (let i = stack.length - 2; i >= 0; i--) {
+    const ancestor = stack[i];
+    if (ancestor.type === 'AwaitExpression') return true;
+    if (ancestor.type === 'ForOfStatement' && (ancestor as { await?: boolean }).await) return true;
+    if (!AWAIT_TRANSPARENT.has(ancestor.type)) return false;
+  }
+  return false;
+}
+
 // ─── CallExpression ──────────────────────────────────────────────────
 
 function buildCalleeName(call: CallExpression): { calleeName: string; isChained: boolean } {
@@ -144,6 +188,7 @@ export function visitCallExpression(
         arguments: call.arguments.length,
         chained: isChained,
         argValues,
+        isAwaited: isInAwaitedPosition(ctx),
         ...((call.callee.type === 'MemberExpression' || call.callee.type === 'OptionalMemberExpression') && call.callee.property.type === 'Identifier'
           ? { method: call.callee.property.name, object: call.callee.object.type === 'Identifier' ? call.callee.object.name : call.callee.object.type === 'ThisExpression' ? 'this' : call.callee.object.type === 'Super' ? 'super' : undefined }
           : {}),
@@ -782,7 +827,7 @@ export function visitNewExpression(
       file: ctx.file,
       line,
       column,
-      metadata: { isNew: true, arguments: ne.arguments.length },
+      metadata: { isNew: true, arguments: ne.arguments.length, isAwaited: isInAwaitedPosition(ctx) },
     }],
     edges: [],
     deferred: [],

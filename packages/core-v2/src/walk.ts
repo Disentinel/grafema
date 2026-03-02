@@ -127,6 +127,9 @@ interface InternalWalkContext extends WalkContext {
   _conditionalTypeStack: string[];
   /** Collected DECLARES edges (scope owner → declared node) */
   _declareEdges: GraphEdge[];
+  /** AST ancestor stack — pushed on visit(), popped on exit. Used by visitors
+   *  that need to look beyond the direct parent (e.g., isAwaited through ternary). */
+  _ancestorStack: Node[];
 }
 
 function createWalkContext(file: string, moduleId: string, strict: boolean): InternalWalkContext {
@@ -144,6 +147,7 @@ function createWalkContext(file: string, moduleId: string, strict: boolean): Int
     _classStack: [],
     _conditionalTypeStack: [],
     _declareEdges: [],
+    _ancestorStack: [],
 
     get currentScope(): ScopeNode {
       return scopeStack[scopeStack.length - 1];
@@ -294,6 +298,9 @@ export async function walkFile(
       );
     }
 
+    // Push onto ancestor stack so children (and the visitor itself) can see ancestors
+    ctx._ancestorStack.push(node);
+
     // Snapshot scope depth BEFORE visitor runs
     const scopeDepthBefore = ctx._scopeStack.length;
 
@@ -417,6 +424,9 @@ export async function walkFile(
     while (ctx._scopeStack.length > scopeDepthBefore) {
       ctx.popScope();
     }
+
+    // Pop ancestor stack
+    ctx._ancestorStack.pop();
   }
 
   // Start from Program body
