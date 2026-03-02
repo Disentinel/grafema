@@ -92,9 +92,11 @@ export function visitClassProperty(
   const prop = node as ClassProperty;
   const name = prop.computed ? computedKeyName(prop.key as Node) : (prop.key.type === 'Identifier' ? prop.key.name : '<computed>');
   const line = node.loc?.start.line ?? 0;
-  return {
+  const nodeId = ctx.nodeId('PROPERTY', name, line);
+
+  const result: VisitResult = {
     nodes: [{
-      id: ctx.nodeId('PROPERTY', name, line),
+      id: nodeId,
       type: 'PROPERTY',
       name,
       file: ctx.file,
@@ -105,6 +107,23 @@ export function visitClassProperty(
     edges: [],
     deferred: [],
   };
+
+  // ASSIGNED_FROM for Identifier initializers: deferred scope_lookup
+  // (non-Identifier initializers handled by edge-map + child visitor)
+  if (prop.value?.type === 'Identifier') {
+    result.deferred.push({
+      kind: 'scope_lookup',
+      name: prop.value.name,
+      fromNodeId: nodeId,
+      edgeType: 'ASSIGNED_FROM',
+      scopeId: ctx.currentScope.id,
+      file: ctx.file,
+      line,
+      column: node.loc?.start.column ?? 0,
+    });
+  }
+
+  return result;
 }
 
 export function visitClassPrivateMethod(
@@ -169,7 +188,7 @@ export function visitClassPrivateProperty(
   // Declare private field in class scope so ACCESSES_PRIVATE can resolve
   ctx.declare(name, 'const', nodeId);
 
-  return {
+  const result: VisitResult = {
     nodes: [{
       id: nodeId,
       type: 'PROPERTY',
@@ -182,6 +201,22 @@ export function visitClassPrivateProperty(
     edges: [],
     deferred: [],
   };
+
+  // ASSIGNED_FROM for Identifier initializers: deferred scope_lookup
+  if (prop.value?.type === 'Identifier') {
+    result.deferred.push({
+      kind: 'scope_lookup',
+      name: prop.value.name,
+      fromNodeId: nodeId,
+      edgeType: 'ASSIGNED_FROM',
+      scopeId: ctx.currentScope.id,
+      file: ctx.file,
+      line,
+      column: node.loc?.start.column ?? 0,
+    });
+  }
+
+  return result;
 }
 
 export function visitStaticBlock(

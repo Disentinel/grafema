@@ -103,6 +103,14 @@ export const EDGE_MAP: Record<string, EdgeMapping> = {
   // ─── Variable initializer ─────────────────────────────────
   'VariableDeclarator.init':         { edgeType: 'ASSIGNED_FROM' },
 
+  // ─── Class property initializer ─────────────────────────────
+  'ClassProperty.value':             { edgeType: 'ASSIGNED_FROM' },
+  'ClassPrivateProperty.value':      { edgeType: 'ASSIGNED_FROM' },
+  'ClassAccessorProperty.value':     { edgeType: 'ASSIGNED_FROM' },
+
+  // ─── Enum member initializer ─────────────────────────────────
+  'TSEnumMember.initializer':        { edgeType: 'ASSIGNED_FROM' },
+
   // ─── Assignment ──────────────────────────────────────────
   'AssignmentExpression.right':      { edgeType: 'ASSIGNED_FROM' },
 

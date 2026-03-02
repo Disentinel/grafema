@@ -329,9 +329,11 @@ export function visitTSEnumMember(
   const member = node as TSEnumMember;
   const name = member.id.type === 'Identifier' ? member.id.name : '<computed>';
   const line = node.loc?.start.line ?? 0;
-  return {
+  const nodeId = ctx.nodeId('ENUM_MEMBER', name, line);
+
+  const result: VisitResult = {
     nodes: [{
-      id: ctx.nodeId('ENUM_MEMBER', name, line),
+      id: nodeId,
       type: 'ENUM_MEMBER',
       name,
       file: ctx.file,
@@ -341,6 +343,22 @@ export function visitTSEnumMember(
     edges: [],
     deferred: [],
   };
+
+  // ASSIGNED_FROM for Identifier initializers: deferred scope_lookup
+  if (member.initializer?.type === 'Identifier') {
+    result.deferred.push({
+      kind: 'scope_lookup',
+      name: member.initializer.name,
+      fromNodeId: nodeId,
+      edgeType: 'ASSIGNED_FROM',
+      scopeId: ctx.currentScope.id,
+      file: ctx.file,
+      line,
+      column: node.loc?.start.column ?? 0,
+    });
+  }
+
+  return result;
 }
 
 export function visitTSModuleDeclaration(
