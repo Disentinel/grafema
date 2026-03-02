@@ -87,6 +87,7 @@ export interface ValueSource {
 export type UnknownReason =
   | 'parameter'           // Function parameter (runtime input)
   | 'call_result'         // Return value from function call
+  | 'implicit_return'     // Function has no return statement (void/undefined)
   | 'constructor_call'    // Constructor call without traceable data (REG-334)
   | 'nondeterministic'    // process.env, req.body, etc.
   | 'max_depth'           // Hit depth limit during traversal
@@ -118,6 +119,8 @@ export interface TraceValuesOptions {
   followDerivesFrom?: boolean;
   /** Detect nondeterministic patterns like process.env (default: true) */
   detectNondeterministic?: boolean;
+  /** Follow CALL_RETURNS edges to trace through function calls (default: true) */
+  followCallReturns?: boolean;
 }
 
 /**

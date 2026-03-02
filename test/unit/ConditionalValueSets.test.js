@@ -101,7 +101,9 @@ describe('Conditional Value Sets — Integration (REG-574)', () => {
   // Logical Expressions
   // ==========================================================================
 
-  it('logical OR default: const x = getValue() || "default" → unknown + "default"', async () => {
+  it('logical OR default: const x = getValue() || "default" → null + "default"', async () => {
+    // REG-576: traceValues now follows through function calls via CALL_RETURNS edges.
+    // getValue() returns null (concrete value), so no unknown — both branches are resolved.
     await setupTest(backend, {
       'index.js': `
 function getValue() { return null; }
@@ -119,9 +121,10 @@ const x = getValue() || 'default';
       agg.values.includes('default'),
       `Should include 'default'. Got values: ${JSON.stringify(agg.values)}, traced: ${JSON.stringify(traced.map(t => ({ value: t.value, reason: t.reason, source: t.source.id })))}`
     );
-    assert.ok(
-      agg.hasUnknown,
-      `Should have unknown (from call). Got traced: ${JSON.stringify(traced.map(t => ({ value: t.value, reason: t.reason })))}`
+    // null is a concrete LITERAL value (filtered by aggregateValues), not unknown
+    assert.strictEqual(
+      agg.hasUnknown, false,
+      `Should NOT have unknown — getValue() return is now traced via CALL_RETURNS. Got traced: ${JSON.stringify(traced.map(t => ({ value: t.value, reason: t.reason })))}`
     );
   });
 

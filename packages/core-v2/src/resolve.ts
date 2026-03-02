@@ -496,6 +496,11 @@ export function resolveProject(
   stats.argsLinked = linkResult.argsLinked;
   stats.issuesCreated = linkResult.issuesCreated;
 
+  // Phase 3 continued: derive CALL_RETURNS edges (REG-576)
+  const allEdgesForCallReturns = collectAllEdges(results, edges);
+  const callReturnsEdges = deriveCallReturns(results, allEdgesForCallReturns, index);
+  edges.push(...callReturnsEdges);
+
   return { edges, nodes, unresolved, stats };
 }
 
@@ -1167,6 +1172,71 @@ function deriveInstanceOf(
         seen.add(edge.src);
       }
     }
+  }
+
+  return derived;
+}
+
+// ─── Derived: CALL_RETURNS (REG-576) ─────────────────────────────────
+
+/**
+ * CALL_RETURNS: link CALL/METHOD_CALL nodes to the FUNCTION/METHOD they invoke.
+ * Enables traceValues to follow through function calls to return values.
+ *
+ * For IMPORT targets, follows IMPORTS_FROM chain to find the actual function.
+ * Skips CLASS targets (handled by INSTANCE_OF) and EXTERNAL targets.
+ */
+function deriveCallReturns(
+  _results: FileResult[],
+  allEdges: GraphEdge[],
+  index: ProjectIndex,
+): GraphEdge[] {
+  // Build importsFromMap: IMPORT node → [target node IDs]
+  const importsFromMap = new Map<string, string[]>();
+  for (const edge of allEdges) {
+    if (edge.type === 'IMPORTS_FROM') {
+      let targets = importsFromMap.get(edge.src);
+      if (!targets) {
+        targets = [];
+        importsFromMap.set(edge.src, targets);
+      }
+      targets.push(edge.dst);
+    }
+  }
+
+  const FUNCTION_TYPES = new Set(['FUNCTION', 'METHOD']);
+  const derived: GraphEdge[] = [];
+  const seen = new Set<string>(); // dedup: one CALL_RETURNS per (src, dst) pair
+
+  for (const edge of allEdges) {
+    if (edge.type !== 'CALLS' && edge.type !== 'CALLS_ON') continue;
+
+    const target = index.getNode(edge.dst);
+    if (!target) continue;
+
+    if (FUNCTION_TYPES.has(target.type)) {
+      const key = `${edge.src}:${edge.dst}`;
+      if (!seen.has(key)) {
+        derived.push({ src: edge.src, dst: edge.dst, type: 'CALL_RETURNS' });
+        seen.add(key);
+      }
+    } else if (target.type === 'IMPORT') {
+      // Follow import chain to find the actual function
+      const importTargets = importsFromMap.get(edge.dst);
+      if (importTargets) {
+        for (const dstId of importTargets) {
+          const dstNode = index.getNode(dstId);
+          if (dstNode && FUNCTION_TYPES.has(dstNode.type)) {
+            const key = `${edge.src}:${dstId}`;
+            if (!seen.has(key)) {
+              derived.push({ src: edge.src, dst: dstId, type: 'CALL_RETURNS' });
+              seen.add(key);
+            }
+          }
+        }
+      }
+    }
+    // Skip CLASS (handled by INSTANCE_OF), EXTERNAL (no return values to trace)
   }
 
   return derived;

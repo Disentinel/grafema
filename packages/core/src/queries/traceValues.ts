@@ -108,6 +108,7 @@ export async function traceValues(
   const maxDepth = options?.maxDepth ?? 10;
   const followDerivesFrom = options?.followDerivesFrom ?? true;
   const detectNondeterministic = options?.detectNondeterministic ?? true;
+  const followCallReturns = options?.followCallReturns ?? true;
 
   await traceRecursive(
     backend,
@@ -117,6 +118,7 @@ export async function traceValues(
     maxDepth,
     followDerivesFrom,
     detectNondeterministic,
+    followCallReturns,
     results
   );
 
@@ -134,6 +136,7 @@ async function traceRecursive(
   maxDepth: number,
   followDerivesFrom: boolean,
   detectNondeterministic: boolean,
+  followCallReturns: boolean,
   results: TracedValue[]
 ): Promise<void> {
   // Cycle protection
@@ -190,6 +193,7 @@ async function traceRecursive(
             maxDepth,
             followDerivesFrom,
             detectNondeterministic,
+            followCallReturns,
             results
           );
         }
@@ -209,6 +213,42 @@ async function traceRecursive(
 
   // Terminal: CALL / METHOD_CALL - function return value
   if (nodeType === 'CALL' || nodeType === 'METHOD_CALL') {
+    // REG-576: Follow CALL_RETURNS to called function's return values
+    if (followCallReturns) {
+      const callReturnsEdges = await backend.getOutgoingEdges(nodeId, ['CALL_RETURNS']);
+      if (callReturnsEdges.length > 0) {
+        for (const crEdge of callReturnsEdges) {
+          // Get RETURNS edges from the target function
+          const returnsEdges = await backend.getOutgoingEdges(crEdge.dst, ['RETURNS']);
+          if (returnsEdges.length > 0) {
+            for (const retEdge of returnsEdges) {
+              await traceRecursive(
+                backend,
+                retEdge.dst,
+                visited,
+                depth + 1,
+                maxDepth,
+                followDerivesFrom,
+                detectNondeterministic,
+                followCallReturns,
+                results
+              );
+            }
+          } else {
+            // Function has no RETURNS edges → implicit undefined
+            const fnNode = await backend.getNode(crEdge.dst);
+            results.push({
+              value: undefined,
+              source: { id: crEdge.dst, file: fnNode?.file || '', line: fnNode?.line || 0 },
+              isUnknown: true,
+              reason: 'implicit_return',
+            });
+          }
+        }
+        return;
+      }
+    }
+
     // Check for HTTP_RECEIVES edges (cross-service data flow)
     const httpEdges = await backend.getOutgoingEdges(nodeId, ['HTTP_RECEIVES']);
 
@@ -223,13 +263,14 @@ async function traceRecursive(
           maxDepth,
           followDerivesFrom,
           detectNondeterministic,
+          followCallReturns,
           results
         );
       }
       return; // Traced through HTTP boundary, don't mark as unknown
     }
 
-    // Original behavior - mark as unknown
+    // No CALL_RETURNS or HTTP_RECEIVES → mark as unknown
     results.push({
       value: undefined,
       source,
@@ -266,6 +307,7 @@ async function traceRecursive(
           maxDepth,
           followDerivesFrom,
           detectNondeterministic,
+          followCallReturns,
           results
         );
       }
@@ -287,6 +329,7 @@ async function traceRecursive(
           maxDepth,
           followDerivesFrom,
           detectNondeterministic,
+          followCallReturns,
           results
         );
       }
@@ -335,6 +378,7 @@ async function traceRecursive(
                 maxDepth,
                 followDerivesFrom,
                 detectNondeterministic,
+                followCallReturns,
                 results
               );
             }
@@ -386,6 +430,7 @@ async function traceRecursive(
       maxDepth,
       followDerivesFrom,
       detectNondeterministic,
+      followCallReturns,
       results
     );
   }
@@ -401,6 +446,7 @@ async function traceRecursive(
       maxDepth,
       followDerivesFrom,
       detectNondeterministic,
+      followCallReturns,
       results
     );
   }
