@@ -208,6 +208,7 @@ import {
   visitArgumentPlaceholder,
   visitDecorator,
   visitImport,
+  visitImportExpression,
   visitExportNamespaceSpecifier,
   visitExportDefaultSpecifier,
 } from './visitors/misc.js';
@@ -389,6 +390,7 @@ export const jsRegistry: VisitorRegistry = {
   ArgumentPlaceholder: visitArgumentPlaceholder,
   Decorator: visitDecorator,
   Import: visitImport,
+  ImportExpression: visitImportExpression,
 
   // JSX
   JSXElement: visitJSXElement,

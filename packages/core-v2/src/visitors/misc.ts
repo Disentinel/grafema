@@ -5,10 +5,12 @@ import type {
   ArrayPattern,
   AssignmentPattern,
   Decorator,
+  ImportExpression,
   MetaProperty,
   Node,
   ObjectPattern,
   RestElement,
+  StringLiteral,
   TemplateElement,
   VariableDeclarator,
 } from '@babel/types';
@@ -436,10 +438,78 @@ export const visitPipelineBareFunction = passthrough;
 export const visitPipelinePrimaryTopicReference = passthrough;
 
 // ─── Import expression (dynamic) ─────────────────────────────────────
+
+/**
+ * `Import` — the bare `import` keyword inside a CallExpression callee
+ * (older Babel AST representation of dynamic import).
+ * Passthrough: the enclosing CallExpression visitor handles graph creation.
+ */
 export function visitImport(
   _node: Node, _parent: Node | null, _ctx: WalkContext,
 ): VisitResult {
   return EMPTY_RESULT;
+}
+
+/**
+ * `ImportExpression` — newer Babel AST representation of `import('./module.js')`.
+ * VISITOR_KEYS: { source, options }.
+ *
+ * Creates:
+ *   - CALL node (name: 'import') — matches CallExpression behavior
+ *   - EXTERNAL_MODULE node + IMPORTS_FROM edge (when source is StringLiteral)
+ *   - For non-literal sources: CALL node only, no EXTERNAL_MODULE
+ */
+export function visitImportExpression(
+  node: Node, _parent: Node | null, ctx: WalkContext,
+): VisitResult {
+  const expr = node as ImportExpression;
+  const line = node.loc?.start.line ?? 0;
+  const column = node.loc?.start.column ?? 0;
+  const nodeId = ctx.nodeId('CALL', 'import', line);
+
+  const result: VisitResult = {
+    nodes: [{
+      id: nodeId,
+      type: 'CALL',
+      name: 'import',
+      file: ctx.file,
+      line,
+      column,
+      metadata: { arguments: 1, isDynamicImport: true },
+    }],
+    edges: [],
+    deferred: [],
+  };
+
+  // StringLiteral source → create EXTERNAL_MODULE + IMPORTS_FROM
+  if (expr.source.type === 'StringLiteral') {
+    const moduleName = (expr.source as StringLiteral).value;
+    const extId = ctx.nodeId('EXTERNAL_MODULE', moduleName, line);
+    result.nodes.push({
+      id: extId,
+      type: 'EXTERNAL_MODULE',
+      name: moduleName,
+      file: ctx.file,
+      line,
+      column,
+    });
+    result.edges.push({ src: nodeId, dst: extId, type: 'IMPORTS_FROM' });
+  } else if (expr.source.type === 'Identifier') {
+    // Dynamic path via variable — create deferred scope lookup
+    result.deferred.push({
+      kind: 'scope_lookup',
+      name: expr.source.name,
+      fromNodeId: nodeId,
+      edgeType: 'PASSES_ARGUMENT',
+      scopeId: ctx.currentScope.id,
+      file: ctx.file,
+      line,
+      column,
+      metadata: { argIndex: 0 },
+    });
+  }
+
+  return result;
 }
 
 // ─── Placeholder for export default from ─────────────────────────────

@@ -91,6 +91,7 @@ const JS_GLOBALS: readonly string[] = [
 export function parseFile(code: string, file: string): File {
   return parse(code, {
     sourceType: 'unambiguous',
+    createImportExpressions: true,
     plugins: [
       'typescript',
       'jsx',

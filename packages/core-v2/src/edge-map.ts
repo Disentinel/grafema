@@ -99,6 +99,7 @@ export const EDGE_MAP: Record<string, EdgeMapping> = {
   'CallExpression.arguments':        { edgeType: 'PASSES_ARGUMENT' },
   'NewExpression.arguments':         { edgeType: 'PASSES_ARGUMENT' },
   'OptionalCallExpression.arguments': { edgeType: 'PASSES_ARGUMENT' },
+  'ImportExpression.source':         { edgeType: 'PASSES_ARGUMENT' },
 
   // ─── Variable initializer ─────────────────────────────────
   'VariableDeclarator.init':         { edgeType: 'ASSIGNED_FROM' },
