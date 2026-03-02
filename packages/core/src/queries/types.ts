@@ -155,6 +155,7 @@ export interface TraceValuesNode {
   object?: string;
   property?: string;
   className?: string;
+  name?: string;
 }
 
 /**

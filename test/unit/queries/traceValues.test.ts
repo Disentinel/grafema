@@ -58,6 +58,12 @@ class MockGraphBackend implements TraceValuesGraphBackend {
       (e) => e.src === nodeId && (edgeTypes === null || edgeTypes.includes(e.type))
     );
   }
+
+  async getIncomingEdges(nodeId: string, edgeTypes: string[] | null): Promise<MockEdge[]> {
+    return this.edges.filter(
+      (e) => e.dst === nodeId && (edgeTypes === null || edgeTypes.includes(e.type))
+    );
+  }
 }
 
 interface MockNode {
@@ -1424,5 +1430,319 @@ describe('traceValues with HTTP_RECEIVES edges', () => {
       results.some((r) => r.source.id === 'obj-response'),
       'Should reach OBJECT_LITERAL through HTTP_RECEIVES'
     );
+  });
+});
+
+// =============================================================================
+// TESTS: Conditional Value Sets (REG-574)
+// =============================================================================
+
+describe('traceValues with conditional value sets (REG-574)', () => {
+  let backend: MockGraphBackend;
+
+  beforeEach(() => {
+    backend = new MockGraphBackend();
+  });
+
+  // ===========================================================================
+  // Ternary Expressions
+  // ===========================================================================
+
+  describe('ternary expressions', () => {
+    /**
+     * WHY: `const x = true ? 'yes' : 'no'` should trace to both 'yes' and 'no'.
+     * EXPRESSION(ternary) has HAS_CONSEQUENT + HAS_ALTERNATE edges.
+     */
+    it('should follow HAS_CONSEQUENT and HAS_ALTERNATE for ternary', async () => {
+      // Graph: VAR(x) -ASSIGNED_FROM-> EXPRESSION(ternary)
+      //        EXPRESSION(ternary) -HAS_CONSEQUENT-> LITERAL('yes')
+      //        EXPRESSION(ternary) -HAS_ALTERNATE-> LITERAL('no')
+      await backend.addNode({ id: 'var-x', type: 'VARIABLE', name: 'x', file: 'file.js', line: 1 });
+      await backend.addNode({ id: 'expr-ternary', type: 'EXPRESSION', name: 'ternary', file: 'file.js', line: 1 });
+      await backend.addNode({ id: 'lit-yes', type: 'LITERAL', value: 'yes', file: 'file.js', line: 1 });
+      await backend.addNode({ id: 'lit-no', type: 'LITERAL', value: 'no', file: 'file.js', line: 1 });
+
+      await backend.addEdge({ src: 'var-x', dst: 'expr-ternary', type: 'ASSIGNED_FROM' });
+      await backend.addEdge({ src: 'expr-ternary', dst: 'lit-yes', type: 'HAS_CONSEQUENT' });
+      await backend.addEdge({ src: 'expr-ternary', dst: 'lit-no', type: 'HAS_ALTERNATE' });
+
+      const results = await traceValues(backend, 'var-x');
+      const agg = aggregateValues(results);
+
+      assert.strictEqual(agg.values.length, 2, `Expected 2 values, got: ${JSON.stringify(agg.values)}`);
+      assert.ok(agg.values.includes('yes'), 'Should include consequent value');
+      assert.ok(agg.values.includes('no'), 'Should include alternate value');
+      assert.strictEqual(agg.hasUnknown, false);
+    });
+
+    /**
+     * WHY: Nested ternary `a ? (b ? c : d) : e` should yield 3 values.
+     */
+    it('should handle nested ternary (3 values)', async () => {
+      await backend.addNode({ id: 'var-x', type: 'VARIABLE', name: 'x', file: 'file.js', line: 1 });
+      await backend.addNode({ id: 'expr-outer', type: 'EXPRESSION', name: 'ternary', file: 'file.js', line: 1 });
+      await backend.addNode({ id: 'expr-inner', type: 'EXPRESSION', name: 'ternary', file: 'file.js', line: 1 });
+      await backend.addNode({ id: 'lit-c', type: 'LITERAL', value: 'c', file: 'file.js', line: 1 });
+      await backend.addNode({ id: 'lit-d', type: 'LITERAL', value: 'd', file: 'file.js', line: 1 });
+      await backend.addNode({ id: 'lit-e', type: 'LITERAL', value: 'e', file: 'file.js', line: 1 });
+
+      await backend.addEdge({ src: 'var-x', dst: 'expr-outer', type: 'ASSIGNED_FROM' });
+      await backend.addEdge({ src: 'expr-outer', dst: 'expr-inner', type: 'HAS_CONSEQUENT' });
+      await backend.addEdge({ src: 'expr-outer', dst: 'lit-e', type: 'HAS_ALTERNATE' });
+      await backend.addEdge({ src: 'expr-inner', dst: 'lit-c', type: 'HAS_CONSEQUENT' });
+      await backend.addEdge({ src: 'expr-inner', dst: 'lit-d', type: 'HAS_ALTERNATE' });
+
+      const results = await traceValues(backend, 'var-x');
+      const agg = aggregateValues(results);
+
+      assert.strictEqual(agg.values.length, 3, `Expected 3 values, got: ${JSON.stringify(agg.values)}`);
+      assert.ok(agg.values.includes('c'));
+      assert.ok(agg.values.includes('d'));
+      assert.ok(agg.values.includes('e'));
+    });
+
+    /**
+     * WHY: Should NOT follow HAS_CONDITION — the condition is not a possible value.
+     */
+    it('should NOT follow HAS_CONDITION edge', async () => {
+      await backend.addNode({ id: 'var-x', type: 'VARIABLE', name: 'x', file: 'file.js', line: 1 });
+      await backend.addNode({ id: 'expr-ternary', type: 'EXPRESSION', name: 'ternary', file: 'file.js', line: 1 });
+      await backend.addNode({ id: 'lit-cond', type: 'LITERAL', value: 'condition', file: 'file.js', line: 1 });
+      await backend.addNode({ id: 'lit-yes', type: 'LITERAL', value: 'yes', file: 'file.js', line: 1 });
+      await backend.addNode({ id: 'lit-no', type: 'LITERAL', value: 'no', file: 'file.js', line: 1 });
+
+      await backend.addEdge({ src: 'var-x', dst: 'expr-ternary', type: 'ASSIGNED_FROM' });
+      await backend.addEdge({ src: 'expr-ternary', dst: 'lit-cond', type: 'HAS_CONDITION' });
+      await backend.addEdge({ src: 'expr-ternary', dst: 'lit-yes', type: 'HAS_CONSEQUENT' });
+      await backend.addEdge({ src: 'expr-ternary', dst: 'lit-no', type: 'HAS_ALTERNATE' });
+
+      const results = await traceValues(backend, 'var-x');
+      const agg = aggregateValues(results);
+
+      assert.strictEqual(agg.values.length, 2);
+      assert.ok(!agg.values.includes('condition'), 'Should NOT include condition value');
+      assert.ok(agg.values.includes('yes'));
+      assert.ok(agg.values.includes('no'));
+    });
+  });
+
+  // ===========================================================================
+  // Logical Expressions
+  // ===========================================================================
+
+  describe('logical expressions', () => {
+    /**
+     * WHY: `const x = getValue() || 'default'` should yield unknown + 'default'.
+     */
+    it('should follow USES edges for logical OR', async () => {
+      await backend.addNode({ id: 'var-x', type: 'VARIABLE', name: 'x', file: 'file.js', line: 1 });
+      await backend.addNode({ id: 'expr-or', type: 'EXPRESSION', name: '||', file: 'file.js', line: 1 });
+      await backend.addNode({ id: 'call-getValue', type: 'CALL', name: 'getValue', file: 'file.js', line: 1 });
+      await backend.addNode({ id: 'lit-default', type: 'LITERAL', value: 'default', file: 'file.js', line: 1 });
+
+      await backend.addEdge({ src: 'var-x', dst: 'expr-or', type: 'ASSIGNED_FROM' });
+      await backend.addEdge({ src: 'expr-or', dst: 'call-getValue', type: 'USES' });
+      await backend.addEdge({ src: 'expr-or', dst: 'lit-default', type: 'USES' });
+
+      const results = await traceValues(backend, 'var-x');
+      const agg = aggregateValues(results);
+
+      assert.ok(agg.values.includes('default'), 'Should include default literal');
+      assert.strictEqual(agg.hasUnknown, true, 'Should have unknown from call');
+    });
+
+    /**
+     * WHY: `const x = val ?? 'fallback'` should follow USES edges for nullish coalescing.
+     */
+    it('should follow USES edges for nullish coalescing (??)', async () => {
+      await backend.addNode({ id: 'var-x', type: 'VARIABLE', name: 'x', file: 'file.js', line: 1 });
+      await backend.addNode({ id: 'expr-nc', type: 'EXPRESSION', name: '??', file: 'file.js', line: 1 });
+      await backend.addNode({ id: 'var-val', type: 'VARIABLE', name: 'val', file: 'file.js', line: 1 });
+      await backend.addNode({ id: 'lit-fallback', type: 'LITERAL', value: 'fallback', file: 'file.js', line: 1 });
+      await backend.addNode({ id: 'param-val', type: 'PARAMETER', name: 'val', file: 'file.js', line: 1 });
+
+      await backend.addEdge({ src: 'var-x', dst: 'expr-nc', type: 'ASSIGNED_FROM' });
+      await backend.addEdge({ src: 'expr-nc', dst: 'var-val', type: 'USES' });
+      await backend.addEdge({ src: 'expr-nc', dst: 'lit-fallback', type: 'USES' });
+      await backend.addEdge({ src: 'var-val', dst: 'param-val', type: 'ASSIGNED_FROM' });
+
+      const results = await traceValues(backend, 'var-x');
+      const agg = aggregateValues(results);
+
+      assert.ok(agg.values.includes('fallback'), 'Should include fallback literal');
+      assert.strictEqual(agg.hasUnknown, true, 'Should have unknown from parameter');
+    });
+
+    /**
+     * WHY: `const x = a && b` — logical AND should also follow USES.
+     */
+    it('should follow USES edges for logical AND (&&)', async () => {
+      await backend.addNode({ id: 'var-x', type: 'VARIABLE', name: 'x', file: 'file.js', line: 1 });
+      await backend.addNode({ id: 'expr-and', type: 'EXPRESSION', name: '&&', file: 'file.js', line: 1 });
+      await backend.addNode({ id: 'lit-a', type: 'LITERAL', value: 'a', file: 'file.js', line: 1 });
+      await backend.addNode({ id: 'lit-b', type: 'LITERAL', value: 'b', file: 'file.js', line: 1 });
+
+      await backend.addEdge({ src: 'var-x', dst: 'expr-and', type: 'ASSIGNED_FROM' });
+      await backend.addEdge({ src: 'expr-and', dst: 'lit-a', type: 'USES' });
+      await backend.addEdge({ src: 'expr-and', dst: 'lit-b', type: 'USES' });
+
+      const results = await traceValues(backend, 'var-x');
+      const agg = aggregateValues(results);
+
+      assert.strictEqual(agg.values.length, 2);
+      assert.ok(agg.values.includes('a'));
+      assert.ok(agg.values.includes('b'));
+    });
+
+    /**
+     * WHY: USES on non-logical operators (+, -, etc.) should NOT be followed.
+     * Binary expressions are arithmetic, not alternative values.
+     */
+    it('should NOT follow USES edges for arithmetic expressions', async () => {
+      await backend.addNode({ id: 'var-x', type: 'VARIABLE', name: 'x', file: 'file.js', line: 1 });
+      await backend.addNode({ id: 'expr-plus', type: 'EXPRESSION', name: '+', file: 'file.js', line: 1 });
+      await backend.addNode({ id: 'lit-1', type: 'LITERAL', value: 1, file: 'file.js', line: 1 });
+      await backend.addNode({ id: 'lit-2', type: 'LITERAL', value: 2, file: 'file.js', line: 1 });
+
+      await backend.addEdge({ src: 'var-x', dst: 'expr-plus', type: 'ASSIGNED_FROM' });
+      await backend.addEdge({ src: 'expr-plus', dst: 'lit-1', type: 'USES' });
+      await backend.addEdge({ src: 'expr-plus', dst: 'lit-2', type: 'USES' });
+
+      const results = await traceValues(backend, 'var-x');
+
+      // Should NOT follow USES for '+' — report no_sources instead
+      assert.strictEqual(results.length, 1);
+      assert.strictEqual(results[0].isUnknown, true);
+      assert.strictEqual(results[0].reason, 'no_sources');
+    });
+  });
+
+  // ===========================================================================
+  // WRITES_TO (if/else reassignment)
+  // ===========================================================================
+
+  describe('WRITES_TO edges (if/else reassignment)', () => {
+    /**
+     * WHY: `let x; if(c) x='a'; else x='b';` should yield both 'a' and 'b'.
+     * Variable has no init (no ASSIGNED_FROM), but has incoming WRITES_TO edges.
+     */
+    it('should follow incoming WRITES_TO edges for uninitialized variable', async () => {
+      // Graph: VAR(x) has no ASSIGNED_FROM
+      //        EXPRESSION(=) -WRITES_TO-> VAR(x), and EXPRESSION(=) -ASSIGNED_FROM-> LITERAL('a')
+      //        EXPRESSION(=) -WRITES_TO-> VAR(x), and EXPRESSION(=) -ASSIGNED_FROM-> LITERAL('b')
+      await backend.addNode({ id: 'var-x', type: 'VARIABLE', name: 'x', file: 'file.js', line: 1 });
+      await backend.addNode({ id: 'expr-assign-a', type: 'EXPRESSION', name: '=', file: 'file.js', line: 2 });
+      await backend.addNode({ id: 'lit-a', type: 'LITERAL', value: 'a', file: 'file.js', line: 2 });
+      await backend.addNode({ id: 'expr-assign-b', type: 'EXPRESSION', name: '=', file: 'file.js', line: 3 });
+      await backend.addNode({ id: 'lit-b', type: 'LITERAL', value: 'b', file: 'file.js', line: 3 });
+
+      await backend.addEdge({ src: 'expr-assign-a', dst: 'var-x', type: 'WRITES_TO' });
+      await backend.addEdge({ src: 'expr-assign-a', dst: 'lit-a', type: 'ASSIGNED_FROM' });
+      await backend.addEdge({ src: 'expr-assign-b', dst: 'var-x', type: 'WRITES_TO' });
+      await backend.addEdge({ src: 'expr-assign-b', dst: 'lit-b', type: 'ASSIGNED_FROM' });
+
+      const results = await traceValues(backend, 'var-x');
+      const agg = aggregateValues(results);
+
+      assert.strictEqual(agg.values.length, 2, `Expected 2 values, got: ${JSON.stringify(agg.values)}`);
+      assert.ok(agg.values.includes('a'));
+      assert.ok(agg.values.includes('b'));
+    });
+
+    /**
+     * WHY: `let x = 'init'; if(c) x = 'changed';` should yield both 'init' and 'changed'.
+     * Variable has initial ASSIGNED_FROM AND incoming WRITES_TO edges.
+     */
+    it('should combine ASSIGNED_FROM and WRITES_TO for init + reassignment', async () => {
+      await backend.addNode({ id: 'var-x', type: 'VARIABLE', name: 'x', file: 'file.js', line: 1 });
+      await backend.addNode({ id: 'lit-init', type: 'LITERAL', value: 'init', file: 'file.js', line: 1 });
+      await backend.addNode({ id: 'expr-assign', type: 'EXPRESSION', name: '=', file: 'file.js', line: 2 });
+      await backend.addNode({ id: 'lit-changed', type: 'LITERAL', value: 'changed', file: 'file.js', line: 2 });
+
+      await backend.addEdge({ src: 'var-x', dst: 'lit-init', type: 'ASSIGNED_FROM' });
+      await backend.addEdge({ src: 'expr-assign', dst: 'var-x', type: 'WRITES_TO' });
+      await backend.addEdge({ src: 'expr-assign', dst: 'lit-changed', type: 'ASSIGNED_FROM' });
+
+      const results = await traceValues(backend, 'var-x');
+      const agg = aggregateValues(results);
+
+      assert.strictEqual(agg.values.length, 2, `Expected 2 values, got: ${JSON.stringify(agg.values)}`);
+      assert.ok(agg.values.includes('init'));
+      assert.ok(agg.values.includes('changed'));
+    });
+
+    /**
+     * WHY: `let x; if(c) x = x;` should not loop forever (visited set protection).
+     */
+    it('should handle self-referential WRITES_TO cycle', async () => {
+      await backend.addNode({ id: 'var-x', type: 'VARIABLE', name: 'x', file: 'file.js', line: 1 });
+      await backend.addNode({ id: 'expr-assign', type: 'EXPRESSION', name: '=', file: 'file.js', line: 2 });
+
+      // WRITES_TO: expr -> var-x
+      // ASSIGNED_FROM: expr -> var-x (reading x to assign to x)
+      await backend.addEdge({ src: 'expr-assign', dst: 'var-x', type: 'WRITES_TO' });
+      await backend.addEdge({ src: 'expr-assign', dst: 'var-x', type: 'ASSIGNED_FROM' });
+
+      const results = await traceValues(backend, 'var-x');
+      // Should complete without hanging — visited set prevents cycle
+      assert.ok(Array.isArray(results), 'Should return array without hanging');
+    });
+  });
+
+  // ===========================================================================
+  // Mixed conditional patterns
+  // ===========================================================================
+
+  describe('mixed conditional patterns', () => {
+    /**
+     * WHY: `const x = cond ? (a || b) : c` — ternary + logical combined.
+     */
+    it('should handle ternary with logical operand', async () => {
+      await backend.addNode({ id: 'var-x', type: 'VARIABLE', name: 'x', file: 'file.js', line: 1 });
+      await backend.addNode({ id: 'expr-ternary', type: 'EXPRESSION', name: 'ternary', file: 'file.js', line: 1 });
+      await backend.addNode({ id: 'expr-or', type: 'EXPRESSION', name: '||', file: 'file.js', line: 1 });
+      await backend.addNode({ id: 'lit-a', type: 'LITERAL', value: 'a', file: 'file.js', line: 1 });
+      await backend.addNode({ id: 'lit-b', type: 'LITERAL', value: 'b', file: 'file.js', line: 1 });
+      await backend.addNode({ id: 'lit-c', type: 'LITERAL', value: 'c', file: 'file.js', line: 1 });
+
+      await backend.addEdge({ src: 'var-x', dst: 'expr-ternary', type: 'ASSIGNED_FROM' });
+      await backend.addEdge({ src: 'expr-ternary', dst: 'expr-or', type: 'HAS_CONSEQUENT' });
+      await backend.addEdge({ src: 'expr-ternary', dst: 'lit-c', type: 'HAS_ALTERNATE' });
+      await backend.addEdge({ src: 'expr-or', dst: 'lit-a', type: 'USES' });
+      await backend.addEdge({ src: 'expr-or', dst: 'lit-b', type: 'USES' });
+
+      const results = await traceValues(backend, 'var-x');
+      const agg = aggregateValues(results);
+
+      assert.strictEqual(agg.values.length, 3, `Expected 3 values, got: ${JSON.stringify(agg.values)}`);
+      assert.ok(agg.values.includes('a'));
+      assert.ok(agg.values.includes('b'));
+      assert.ok(agg.values.includes('c'));
+    });
+
+    /**
+     * WHY: Depth limit should be respected through conditional edges.
+     */
+    it('should respect maxDepth through conditional edges', async () => {
+      await backend.addNode({ id: 'var-x', type: 'VARIABLE', name: 'x', file: 'file.js', line: 1 });
+      await backend.addNode({ id: 'expr-ternary', type: 'EXPRESSION', name: 'ternary', file: 'file.js', line: 1 });
+      // Deep chain after ternary
+      await backend.addNode({ id: 'var-deep1', type: 'VARIABLE', name: 'deep1', file: 'file.js', line: 1 });
+      await backend.addNode({ id: 'var-deep2', type: 'VARIABLE', name: 'deep2', file: 'file.js', line: 1 });
+      await backend.addNode({ id: 'lit-deep', type: 'LITERAL', value: 'deep', file: 'file.js', line: 1 });
+      await backend.addNode({ id: 'lit-alt', type: 'LITERAL', value: 'alt', file: 'file.js', line: 1 });
+
+      await backend.addEdge({ src: 'var-x', dst: 'expr-ternary', type: 'ASSIGNED_FROM' });
+      await backend.addEdge({ src: 'expr-ternary', dst: 'var-deep1', type: 'HAS_CONSEQUENT' });
+      await backend.addEdge({ src: 'expr-ternary', dst: 'lit-alt', type: 'HAS_ALTERNATE' });
+      await backend.addEdge({ src: 'var-deep1', dst: 'var-deep2', type: 'ASSIGNED_FROM' });
+      await backend.addEdge({ src: 'var-deep2', dst: 'lit-deep', type: 'ASSIGNED_FROM' });
+
+      // maxDepth=2 should not reach lit-deep (needs depth 4)
+      const results = await traceValues(backend, 'var-x', { maxDepth: 2 });
+
+      const hasMaxDepth = results.some((r) => r.reason === 'max_depth');
+      assert.ok(hasMaxDepth, 'Should hit max_depth through ternary branch');
+    });
   });
 });
