@@ -170,6 +170,11 @@ export const EDGE_MAP: Record<string, EdgeMapping> = {
   'ForInStatement.left':             { edgeType: 'DECLARES' },
   'ForOfStatement.left':             { edgeType: 'DECLARES' },
 
+  // ─── Class field type annotations ────────────────────────
+  'ClassProperty.typeAnnotation':        { edgeType: 'HAS_TYPE' },
+  'ClassPrivateProperty.typeAnnotation': { edgeType: 'HAS_TYPE' },
+  'ClassAccessorProperty.typeAnnotation': { edgeType: 'HAS_TYPE' },
+
   // ─── TS as / satisfies ────────────────────────────────────
   'TSAsExpression.typeAnnotation':   { edgeType: 'HAS_TYPE' },
   'TSSatisfiesExpression.typeAnnotation': { edgeType: 'HAS_TYPE' },
