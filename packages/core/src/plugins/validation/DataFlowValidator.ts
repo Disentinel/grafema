@@ -101,6 +101,29 @@ export class DataFlowValidator extends Plugin {
         if ((variable as Record<string, unknown>).isClassProperty) {
           continue;
         }
+        // REG-574: Check incoming WRITES_TO edges (if/else reassignment)
+        const writesToEdges = await graph.getIncomingEdges(variable.id, ['WRITES_TO']);
+        if (writesToEdges.length > 0) {
+          // Variable gets values via conditional reassignment — valid, trace to leaf
+          const path = await this.findPathToLeaf(variable, graph, leafTypes);
+          if (!path.found) {
+            errors.push(new ValidationError(
+              `Variable "${variable.name}" (${variable.file}:${variable.line}) does not trace to a leaf node. Chain: ${path.chain.join(' -> ')}`,
+              'ERR_NO_LEAF_NODE',
+              {
+                filePath: variable.file,
+                lineNumber: variable.line as number | undefined,
+                phase: 'VALIDATION',
+                plugin: 'DataFlowValidator',
+                variable: variable.name as string,
+                chain: path.chain,
+              },
+              undefined,
+              'warning'
+            ));
+          }
+          continue;
+        }
         errors.push(new ValidationError(
           `Variable "${variable.name}" (${variable.file}:${variable.line}) has no ASSIGNED_FROM or DERIVES_FROM edge`,
           'ERR_MISSING_ASSIGNMENT',
@@ -216,10 +239,44 @@ export class DataFlowValidator extends Plugin {
       return { found: true, chain: [...chain, `(used by ${callName})`] };
     }
 
+    // REG-574: If current node is a conditional EXPRESSION, follow branch edges
+    if (startNode.type === 'EXPRESSION') {
+      const name = (startNode as Record<string, unknown>).name as string | undefined;
+      if (name === 'ternary') {
+        const branches = await graph.getOutgoingEdges(startNode.id, ['HAS_CONSEQUENT', 'HAS_ALTERNATE']);
+        for (const branch of branches) {
+          const branchNode = await graph.getNode(branch.dst);
+          if (branchNode) {
+            const branchResult = await this.findPathToLeaf(branchNode, graph, leafTypes, visited, [...chain]);
+            if (branchResult.found) return branchResult;
+          }
+        }
+      }
+      if (name === '||' || name === '&&' || name === '??') {
+        const operands = await graph.getOutgoingEdges(startNode.id, ['USES']);
+        for (const operand of operands) {
+          const operandNode = await graph.getNode(operand.dst);
+          if (operandNode) {
+            const operandResult = await this.findPathToLeaf(operandNode, graph, leafTypes, visited, [...chain]);
+            if (operandResult.found) return operandResult;
+          }
+        }
+      }
+    }
+
     const outgoing = await graph.getOutgoingEdges(startNode.id, ['ASSIGNED_FROM', 'DERIVES_FROM']);
     const assignment = outgoing[0];
 
     if (!assignment) {
+      // REG-574: Check incoming WRITES_TO edges before giving up
+      const writesToEdges = await graph.getIncomingEdges(startNode.id, ['WRITES_TO']);
+      for (const wt of writesToEdges) {
+        const wtNode = await graph.getNode(wt.src);
+        if (wtNode) {
+          const wtResult = await this.findPathToLeaf(wtNode, graph, leafTypes, visited, [...chain]);
+          if (wtResult.found) return wtResult;
+        }
+      }
       return { found: false, chain: [...chain, '(no assignment)'] };
     }
 

@@ -252,6 +252,48 @@ async function traceRecursive(
     }
   }
 
+  // REG-574: Conditional value sets — ternary expressions
+  // EXPRESSION(ternary) → follow HAS_CONSEQUENT + HAS_ALTERNATE (skip HAS_CONDITION)
+  if (nodeType === 'EXPRESSION' && node.name === 'ternary') {
+    const branches = await backend.getOutgoingEdges(nodeId, ['HAS_CONSEQUENT', 'HAS_ALTERNATE']);
+    if (branches.length > 0) {
+      for (const edge of branches) {
+        await traceRecursive(
+          backend,
+          edge.dst,
+          visited,
+          depth + 1,
+          maxDepth,
+          followDerivesFrom,
+          detectNondeterministic,
+          results
+        );
+      }
+      return;
+    }
+  }
+
+  // REG-574: Conditional value sets — logical expressions (||, &&, ??)
+  // These represent alternative values, follow USES edges
+  if (nodeType === 'EXPRESSION' && isLogicalOperator(node.name)) {
+    const operands = await backend.getOutgoingEdges(nodeId, ['USES']);
+    if (operands.length > 0) {
+      for (const edge of operands) {
+        await traceRecursive(
+          backend,
+          edge.dst,
+          visited,
+          depth + 1,
+          maxDepth,
+          followDerivesFrom,
+          detectNondeterministic,
+          results
+        );
+      }
+      return;
+    }
+  }
+
   // Terminal: OBJECT_LITERAL - a valid structured value
   // OBJECT_LITERAL without edges is valid (e.g., {} or {key: value})
   if (nodeType === 'OBJECT_LITERAL') {
@@ -320,8 +362,11 @@ async function traceRecursive(
 
   const edges = await backend.getOutgoingEdges(nodeId, edgeTypes);
 
+  // REG-574: Also check incoming WRITES_TO edges (if/else reassignment)
+  const writesToEdges = await backend.getIncomingEdges(nodeId, ['WRITES_TO']);
+
   // No edges case - unknown
-  if (edges.length === 0) {
+  if (edges.length === 0 && writesToEdges.length === 0) {
     results.push({
       value: undefined,
       source,
@@ -331,11 +376,26 @@ async function traceRecursive(
     return;
   }
 
-  // Recurse through sources
+  // Recurse through ASSIGNED_FROM/DERIVES_FROM targets
   for (const edge of edges) {
     await traceRecursive(
       backend,
       edge.dst,
+      visited,
+      depth + 1,
+      maxDepth,
+      followDerivesFrom,
+      detectNondeterministic,
+      results
+    );
+  }
+
+  // REG-574: Recurse through WRITES_TO sources (the EXPRESSION(=) node,
+  // which will naturally follow its ASSIGNED_FROM to the value)
+  for (const edge of writesToEdges) {
+    await traceRecursive(
+      backend,
+      edge.src,
       visited,
       depth + 1,
       maxDepth,
@@ -349,6 +409,14 @@ async function traceRecursive(
 // =============================================================================
 // HELPERS
 // =============================================================================
+
+/**
+ * Check if an expression name is a logical operator (alternative values).
+ * Used to distinguish logical OR/AND/nullish from arithmetic operators.
+ */
+function isLogicalOperator(name: string | undefined): boolean {
+  return name === '||' || name === '&&' || name === '??';
+}
 
 /**
  * Check if an EXPRESSION node represents a nondeterministic pattern.
