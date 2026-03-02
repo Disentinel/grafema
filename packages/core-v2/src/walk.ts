@@ -180,6 +180,12 @@ function createWalkContext(file: string, moduleId: string, strict: boolean): Int
     nodeId(type: string, name: string, line: number): string {
       return `${file}->${type}->${name}#${line}`;
     },
+
+    get enclosingClassId(): string | undefined {
+      return this._classStack.length > 0
+        ? this._classStack[this._classStack.length - 1]
+        : undefined;
+    },
   };
 }
 
@@ -489,6 +495,44 @@ export async function walkFile(
         const parentMethodId = parentMethods.get(methodName);
         if (parentMethodId) {
           allEdges.push({ src: childMethodId, dst: parentMethodId, type: 'OVERRIDES' });
+        }
+      }
+    }
+  }
+
+  // ─── Post-walk: resolve ASSIGNS_TO for this.prop = value ────────
+  // PROPERTY_ASSIGNMENT nodes with metadata.objectName === 'this' and metadata.classId
+  // get ASSIGNS_TO edge to matching class PROPERTY node (via HAS_MEMBER).
+  {
+    const propAssignments = allNodes.filter(
+      n => n.type === 'PROPERTY_ASSIGNMENT' && n.metadata?.objectName === 'this' && n.metadata?.classId,
+    );
+    if (propAssignments.length > 0) {
+      // Build class → member PROPERTY map
+      const classMembers = new Map<string, Map<string, string>>();
+      for (const edge of allEdges) {
+        if (edge.type === 'HAS_MEMBER') {
+          const memberNode = allNodes.find(n => n.id === edge.dst && n.type === 'PROPERTY');
+          if (memberNode) {
+            let members = classMembers.get(edge.src);
+            if (!members) {
+              members = new Map();
+              classMembers.set(edge.src, members);
+            }
+            members.set(memberNode.name, memberNode.id);
+          }
+        }
+      }
+
+      for (const pa of propAssignments) {
+        const classId = pa.metadata!.classId as string;
+        const propName = pa.metadata!.property as string;
+        const members = classMembers.get(classId);
+        if (members) {
+          const targetId = members.get(propName);
+          if (targetId) {
+            allEdges.push({ src: pa.id, dst: targetId, type: 'ASSIGNS_TO' });
+          }
         }
       }
     }

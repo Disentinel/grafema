@@ -1,21 +1,22 @@
 /**
  * Tests for Object Property Mutation Tracking
  *
- * V2 model for obj.prop = value:
- *   - EXPRESSION node (name="=") with READS_FROM to the source variable
- *   - PROPERTY_ACCESS node (name="obj.prop") with READS_FROM to the object variable
- *   - No FLOWS_INTO edges; v2 uses EXPRESSION + PROPERTY_ACCESS model
- *
- * V2 model for this.prop = value in class:
- *   - EXPRESSION node (name="=") with READS_FROM to the source parameter/variable
- *   - PROPERTY_ACCESS node (name="this.prop")
+ * V3 model for obj.prop = value:
+ *   - PROPERTY_ASSIGNMENT node (name="obj.prop") with READS_FROM to the source variable
+ *   - PROPERTY_ACCESS node (name="obj.prop") as child of the PROPERTY_ASSIGNMENT
  *   - No FLOWS_INTO edges
  *
- * V2 model for Object.assign(target, source):
+ * V3 model for this.prop = value in class:
+ *   - PROPERTY_ASSIGNMENT node (name="this.prop") with READS_FROM to the source parameter/variable
+ *   - PROPERTY_ACCESS node (name="this.prop") as child of the PROPERTY_ASSIGNMENT
+ *   - No FLOWS_INTO edges
+ *
+ * V3 model for Object.assign(target, source):
  *   - CALL node with READS_FROM edges to all arguments (target + sources)
  *   - No FLOWS_INTO edges
  *
  * Originally tested FLOWS_INTO edges (v1). Updated for v2 EXPRESSION model.
+ * Updated for v3 PROPERTY_ASSIGNMENT model (replaces EXPRESSION name="=").
  */
 
 import { describe, it, after, beforeEach } from 'node:test';
@@ -78,10 +79,10 @@ describe('Object Mutation Tracking', () => {
 
   // ============================================================================
   // obj.prop = value (dot notation property assignment)
-  // V2: Creates EXPRESSION(=) + PROPERTY_ACCESS(obj.prop) with READS_FROM edges
+  // V3: Creates PROPERTY_ASSIGNMENT(obj.prop) + PROPERTY_ACCESS(obj.prop) with READS_FROM edges
   // ============================================================================
   describe('obj.prop = value', () => {
-    it('should create EXPRESSION and PROPERTY_ACCESS for assigned variable to object', async () => {
+    it('should create PROPERTY_ASSIGNMENT and PROPERTY_ACCESS for assigned variable to object', async () => {
       await setupTest(backend, {
         'index.js': `
 const config = {};
@@ -105,24 +106,24 @@ config.handler = handler;
       );
       assert.ok(handlerVar, 'Variable "handler" not found');
 
-      // V2: EXPRESSION(assign) with READS_FROM to handler
-      const assignExpr = allNodes.find(n =>
-        n.type === 'EXPRESSION' && n.name === '='
+      // V3: PROPERTY_ASSIGNMENT(config.handler) with READS_FROM to handler
+      const propAssign = allNodes.find(n =>
+        n.type === 'PROPERTY_ASSIGNMENT' && n.name === 'config.handler'
       );
-      assert.ok(assignExpr, 'EXPRESSION node for assignment not found');
+      assert.ok(propAssign, 'PROPERTY_ASSIGNMENT node for config.handler not found');
 
       const readsFromHandler = allEdges.find(e =>
         e.type === 'READS_FROM' &&
-        e.src === assignExpr.id &&
+        e.src === propAssign.id &&
         e.dst === handlerVar.id
       );
       assert.ok(
         readsFromHandler,
-        `Expected READS_FROM edge from EXPRESSION to handler variable. ` +
+        `Expected READS_FROM edge from PROPERTY_ASSIGNMENT to handler variable. ` +
         `Found READS_FROM edges: ${JSON.stringify(allEdges.filter(e => e.type === 'READS_FROM'))}`
       );
 
-      // V2: PROPERTY_ACCESS(config.handler) with READS_FROM to config
+      // V3: PROPERTY_ACCESS(config.handler) still exists as child of PROPERTY_ASSIGNMENT
       const propAccess = allNodes.find(n =>
         n.type === 'PROPERTY_ACCESS' && n.name === 'config.handler'
       );
@@ -156,7 +157,7 @@ obj.b = b;
       const objVar = allNodes.find(n => n.name === 'obj' && (n.type === 'VARIABLE' || n.type === 'CONSTANT'));
       assert.ok(objVar, 'Variable "obj" not found');
 
-      // V2: Two PROPERTY_ACCESS nodes for obj.a and obj.b, both with READS_FROM to obj
+      // V3: Two PROPERTY_ACCESS nodes for obj.a and obj.b still exist, both with READS_FROM to obj
       const propAccessNodes = allNodes.filter(n =>
         n.type === 'PROPERTY_ACCESS' && (n.name === 'obj.a' || n.name === 'obj.b')
       );
@@ -174,7 +175,7 @@ obj.b = b;
       }
     });
 
-    it('should create EXPRESSION nodes for literal value assignments (no source variable edges)', async () => {
+    it('should create PROPERTY_ASSIGNMENT nodes for literal value assignments (no source variable edges)', async () => {
       await setupTest(backend, {
         'index.js': `
 const config = {};
@@ -189,14 +190,13 @@ config.host = 'localhost';
       const configVar = allNodes.find(n => n.name === 'config');
       assert.ok(configVar, 'Variable "config" not found');
 
-      // V2: EXPRESSION nodes exist for the assignments
-      const assignExprs = allNodes.filter(n =>
-        n.type === 'EXPRESSION' && n.name === '='
+      // V3: PROPERTY_ASSIGNMENT nodes exist for the assignments
+      const propAssigns = allNodes.filter(n =>
+        n.type === 'PROPERTY_ASSIGNMENT' && (n.name === 'config.port' || n.name === 'config.host')
       );
-      assert.ok(assignExprs.length >= 2, 'Expected at least 2 EXPRESSION nodes for literal assignments');
+      assert.ok(propAssigns.length >= 2, 'Expected at least 2 PROPERTY_ASSIGNMENT nodes for literal assignments');
 
-      // V2: EXPRESSION nodes get ASSIGNED_FROM to their literal values, not FLOWS_INTO
-      // The PROPERTY_ACCESS nodes should have READS_FROM to config
+      // V3: The PROPERTY_ACCESS nodes should still exist as children
       const propAccessNodes = allNodes.filter(n =>
         n.type === 'PROPERTY_ACCESS' && (n.name === 'config.port' || n.name === 'config.host')
       );
@@ -206,10 +206,10 @@ config.host = 'localhost';
 
   // ============================================================================
   // obj['prop'] = value (bracket notation with string literal)
-  // V2: Creates PROPERTY_ACCESS with bracket notation name
+  // V3: Creates PROPERTY_ASSIGNMENT with bracket notation name + PROPERTY_ACCESS child
   // ============================================================================
   describe("obj['prop'] = value (bracket notation)", () => {
-    it('should create EXPRESSION and PROPERTY_ACCESS for string literal key', async () => {
+    it('should create PROPERTY_ASSIGNMENT and PROPERTY_ACCESS for string literal key', async () => {
       await setupTest(backend, {
         'index.js': `
 const config = {};
@@ -229,20 +229,20 @@ config['handler'] = handler;
       assert.ok(configVar, 'Variable "config" not found');
       assert.ok(handlerVar, 'Variable "handler" not found');
 
-      // V2: EXPRESSION with READS_FROM to handler variable
-      const assignExpr = allNodes.find(n =>
-        n.type === 'EXPRESSION' && n.name === '='
+      // V3: PROPERTY_ASSIGNMENT with READS_FROM to handler variable
+      const propAssign = allNodes.find(n =>
+        n.type === 'PROPERTY_ASSIGNMENT' && n.name.includes('config')
       );
-      assert.ok(assignExpr, 'EXPRESSION node for assignment not found');
+      assert.ok(propAssign, 'PROPERTY_ASSIGNMENT node for config bracket assignment not found');
 
       const readsHandler = allEdges.find(e =>
         e.type === 'READS_FROM' &&
-        e.src === assignExpr.id &&
+        e.src === propAssign.id &&
         e.dst === handlerVar.id
       );
-      assert.ok(readsHandler, 'Expected READS_FROM edge from EXPRESSION to handler');
+      assert.ok(readsHandler, 'Expected READS_FROM edge from PROPERTY_ASSIGNMENT to handler');
 
-      // V2: PROPERTY_ACCESS for bracket notation with READS_FROM to config
+      // V3: PROPERTY_ACCESS for bracket notation still exists as child
       const propAccess = allNodes.find(n =>
         n.type === 'PROPERTY_ACCESS' && n.name.includes('config')
       );
@@ -256,7 +256,7 @@ config['handler'] = handler;
       assert.ok(readsConfig, 'Expected READS_FROM edge from PROPERTY_ACCESS to config');
     });
 
-    it('should create EXPRESSION and PROPERTY_ACCESS for computed key', async () => {
+    it('should create PROPERTY_ASSIGNMENT and PROPERTY_ACCESS for computed key', async () => {
       await setupTest(backend, {
         'index.js': `
 const config = {};
@@ -275,20 +275,20 @@ config[key] = value;
       assert.ok(configVar, 'Variable "config" not found');
       assert.ok(valueVar, 'Variable "value" not found');
 
-      // V2: EXPRESSION with READS_FROM to value variable
-      const assignExpr = allNodes.find(n =>
-        n.type === 'EXPRESSION' && n.name === '='
+      // V3: PROPERTY_ASSIGNMENT with READS_FROM to value variable
+      const propAssign = allNodes.find(n =>
+        n.type === 'PROPERTY_ASSIGNMENT' && n.name.includes('config')
       );
-      assert.ok(assignExpr, 'EXPRESSION node for assignment not found');
+      assert.ok(propAssign, 'PROPERTY_ASSIGNMENT node for config computed assignment not found');
 
       const readsValue = allEdges.find(e =>
         e.type === 'READS_FROM' &&
-        e.src === assignExpr.id &&
+        e.src === propAssign.id &&
         e.dst === valueVar.id
       );
-      assert.ok(readsValue, 'Expected READS_FROM edge from EXPRESSION to value');
+      assert.ok(readsValue, 'Expected READS_FROM edge from PROPERTY_ASSIGNMENT to value');
 
-      // V2: PROPERTY_ACCESS with READS_FROM edges to config and key
+      // V3: PROPERTY_ACCESS still exists as child
       const propAccess = allNodes.find(n =>
         n.type === 'PROPERTY_ACCESS' && n.name.includes('config')
       );
@@ -298,11 +298,11 @@ config[key] = value;
 
   // ============================================================================
   // this.prop = value (in class methods/constructors)
-  // V2: Creates EXPRESSION(=) + PROPERTY_ACCESS(this.prop) with READS_FROM
+  // V3: Creates PROPERTY_ASSIGNMENT(this.prop) + PROPERTY_ACCESS(this.prop) with READS_FROM
   // No FLOWS_INTO edges to CLASS or FUNCTION
   // ============================================================================
   describe('this.prop = value', () => {
-    it('should create EXPRESSION with READS_FROM to source parameter in constructor', async () => {
+    it('should create PROPERTY_ASSIGNMENT with READS_FROM to source parameter in constructor', async () => {
       await setupTest(backend, {
         'index.js': `
 class Config {
@@ -328,30 +328,30 @@ class Config {
       );
       assert.ok(handlerParam, 'PARAMETER "handler" not found');
 
-      // V2: EXPRESSION(=) with READS_FROM to handler parameter
-      const assignExpr = allNodes.find(n =>
-        n.type === 'EXPRESSION' && n.name === '='
+      // V3: PROPERTY_ASSIGNMENT(this.handler) with READS_FROM to handler parameter
+      const propAssign = allNodes.find(n =>
+        n.type === 'PROPERTY_ASSIGNMENT' && n.name === 'this.handler'
       );
-      assert.ok(assignExpr, 'EXPRESSION node for assignment not found');
+      assert.ok(propAssign, 'PROPERTY_ASSIGNMENT node for this.handler not found');
 
       const readsFrom = allEdges.find(e =>
         e.type === 'READS_FROM' &&
-        e.src === assignExpr.id &&
+        e.src === propAssign.id &&
         e.dst === handlerParam.id
       );
       assert.ok(
         readsFrom,
-        `Expected READS_FROM edge from EXPRESSION to handler PARAMETER. Found READS_FROM: ${JSON.stringify(allEdges.filter(e => e.type === 'READS_FROM'))}`
+        `Expected READS_FROM edge from PROPERTY_ASSIGNMENT to handler PARAMETER. Found READS_FROM: ${JSON.stringify(allEdges.filter(e => e.type === 'READS_FROM'))}`
       );
 
-      // V2: PROPERTY_ACCESS(this.handler) should exist
+      // V3: PROPERTY_ACCESS(this.handler) still exists as child of PROPERTY_ASSIGNMENT
       const propAccess = allNodes.find(n =>
         n.type === 'PROPERTY_ACCESS' && n.name === 'this.handler'
       );
       assert.ok(propAccess, 'PROPERTY_ACCESS node for this.handler not found');
     });
 
-    it('should create EXPRESSION with READS_FROM to source parameter in class method', async () => {
+    it('should create PROPERTY_ASSIGNMENT with READS_FROM to source parameter in class method', async () => {
       await setupTest(backend, {
         'index.js': `
 class Service {
@@ -377,18 +377,18 @@ class Service {
       );
       assert.ok(hParam, 'PARAMETER "h" not found');
 
-      // V2: EXPRESSION(=) with READS_FROM to h parameter
-      const assignExpr = allNodes.find(n =>
-        n.type === 'EXPRESSION' && n.name === '='
+      // V3: PROPERTY_ASSIGNMENT(this.handler) with READS_FROM to h parameter
+      const propAssign = allNodes.find(n =>
+        n.type === 'PROPERTY_ASSIGNMENT' && n.name === 'this.handler'
       );
-      assert.ok(assignExpr, 'EXPRESSION node for assignment not found');
+      assert.ok(propAssign, 'PROPERTY_ASSIGNMENT node for this.handler not found');
 
       const readsFrom = allEdges.find(e =>
         e.type === 'READS_FROM' &&
-        e.src === assignExpr.id &&
+        e.src === propAssign.id &&
         e.dst === hParam.id
       );
-      assert.ok(readsFrom, 'Expected READS_FROM edge from EXPRESSION to parameter "h"');
+      assert.ok(readsFrom, 'Expected READS_FROM edge from PROPERTY_ASSIGNMENT to parameter "h"');
     });
 
     it('should handle multiple this.prop assignments in constructor', async () => {
@@ -411,11 +411,12 @@ class Config {
       const constructorMethod = allNodes.find(n => n.type === 'METHOD' && n.name === 'constructor');
       assert.ok(constructorMethod, 'METHOD "constructor" not found');
 
-      // V2: 3 EXPRESSION(=) nodes with READS_FROM to parameters a, b, c
-      const assignExprs = allNodes.filter(n =>
-        n.type === 'EXPRESSION' && n.name === '='
+      // V3: 3 PROPERTY_ASSIGNMENT(this.propX) nodes with READS_FROM to parameters a, b, c
+      const propAssigns = allNodes.filter(n =>
+        n.type === 'PROPERTY_ASSIGNMENT' &&
+        (n.name === 'this.propA' || n.name === 'this.propB' || n.name === 'this.propC')
       );
-      assert.strictEqual(assignExprs.length, 3, `Expected 3 EXPRESSION nodes, got ${assignExprs.length}`);
+      assert.strictEqual(propAssigns.length, 3, `Expected 3 PROPERTY_ASSIGNMENT nodes, got ${propAssigns.length}`);
 
       // Each should have a READS_FROM to a parameter
       const params = ['a', 'b', 'c'];
@@ -426,12 +427,12 @@ class Config {
         const rf = allEdges.find(e =>
           e.type === 'READS_FROM' &&
           e.dst === param.id &&
-          assignExprs.some(expr => expr.id === e.src)
+          propAssigns.some(pa => pa.id === e.src)
         );
-        assert.ok(rf, `Expected READS_FROM edge from some EXPRESSION to PARAMETER "${paramName}"`);
+        assert.ok(rf, `Expected READS_FROM edge from some PROPERTY_ASSIGNMENT to PARAMETER "${paramName}"`);
       }
 
-      // V2: 3 PROPERTY_ACCESS(this.propX) nodes should exist
+      // V3: 3 PROPERTY_ACCESS(this.propX) nodes still exist as children
       const propAccesses = allNodes.filter(n =>
         n.type === 'PROPERTY_ACCESS' &&
         (n.name === 'this.propA' || n.name === 'this.propB' || n.name === 'this.propC')
@@ -462,21 +463,21 @@ class Service {
       );
       assert.ok(helperVar, 'Variable "helper" not found');
 
-      // V2: EXPRESSION(=) with READS_FROM to helper variable
-      const assignExpr = allNodes.find(n =>
-        n.type === 'EXPRESSION' && n.name === '='
+      // V3: PROPERTY_ASSIGNMENT(this.helper) with READS_FROM to helper variable
+      const propAssign = allNodes.find(n =>
+        n.type === 'PROPERTY_ASSIGNMENT' && n.name === 'this.helper'
       );
-      assert.ok(assignExpr, 'EXPRESSION node for assignment not found');
+      assert.ok(propAssign, 'PROPERTY_ASSIGNMENT node for this.helper not found');
 
       const readsFrom = allEdges.find(e =>
         e.type === 'READS_FROM' &&
-        e.src === assignExpr.id &&
+        e.src === propAssign.id &&
         e.dst === helperVar.id
       );
-      assert.ok(readsFrom, 'Expected READS_FROM edge from EXPRESSION to helper variable');
+      assert.ok(readsFrom, 'Expected READS_FROM edge from PROPERTY_ASSIGNMENT to helper variable');
     });
 
-    it('should create EXPRESSION nodes for this.prop = literal (no source variable edges)', async () => {
+    it('should create PROPERTY_ASSIGNMENT nodes for this.prop = literal (no source variable edges)', async () => {
       await setupTest(backend, {
         'index.js': `
 class Config {
@@ -494,17 +495,17 @@ class Config {
       const classNode = allNodes.find(n => n.type === 'CLASS' && n.name === 'Config');
       assert.ok(classNode, 'CLASS "Config" not found');
 
-      // V2: EXPRESSION nodes should exist for literal assignments
-      const assignExprs = allNodes.filter(n =>
-        n.type === 'EXPRESSION' && n.name === '='
+      // V3: PROPERTY_ASSIGNMENT nodes should exist for literal assignments
+      const propAssigns = allNodes.filter(n =>
+        n.type === 'PROPERTY_ASSIGNMENT' && (n.name === 'this.port' || n.name === 'this.host')
       );
-      assert.ok(assignExprs.length >= 2, 'Expected at least 2 EXPRESSION nodes for literal assignments');
+      assert.ok(propAssigns.length >= 2, 'Expected at least 2 PROPERTY_ASSIGNMENT nodes for literal assignments');
 
-      // V2: EXPRESSION nodes have ASSIGNED_FROM to literals, not READS_FROM to variables
-      for (const expr of assignExprs) {
+      // V3: PROPERTY_ASSIGNMENT nodes for literals should NOT have READS_FROM to variables
+      for (const pa of propAssigns) {
         const readsFromVar = allEdges.filter(e =>
           e.type === 'READS_FROM' &&
-          e.src === expr.id
+          e.src === pa.id
         ).filter(e => {
           const dst = allNodes.find(n => n.id === e.dst);
           return dst && (dst.type === 'VARIABLE' || dst.type === 'PARAMETER');
@@ -555,27 +556,27 @@ class Outer {
       );
       assert.ok(innerConstructor, 'METHOD "constructor" for Inner not found');
 
-      // V2: EXPRESSION(=) with READS_FROM to val parameter
-      const assignExpr = allNodes.find(n =>
-        n.type === 'EXPRESSION' && n.name === '='
+      // V3: PROPERTY_ASSIGNMENT(this.val) with READS_FROM to val parameter
+      const propAssign = allNodes.find(n =>
+        n.type === 'PROPERTY_ASSIGNMENT' && n.name === 'this.val'
       );
-      assert.ok(assignExpr, 'EXPRESSION node for assignment not found');
+      assert.ok(propAssign, 'PROPERTY_ASSIGNMENT node for this.val not found');
 
       const readsFrom = allEdges.find(e =>
         e.type === 'READS_FROM' &&
-        e.src === assignExpr.id &&
+        e.src === propAssign.id &&
         e.dst === valParam.id
       );
-      assert.ok(readsFrom, 'Expected READS_FROM edge from EXPRESSION to val parameter');
+      assert.ok(readsFrom, 'Expected READS_FROM edge from PROPERTY_ASSIGNMENT to val parameter');
 
-      // V2: PROPERTY_ACCESS(this.val) should exist
+      // V3: PROPERTY_ACCESS(this.val) still exists as child
       const propAccess = allNodes.find(n =>
         n.type === 'PROPERTY_ACCESS' && n.name === 'this.val'
       );
       assert.ok(propAccess, 'PROPERTY_ACCESS node for this.val not found');
     });
 
-    it('should create EXPRESSION nodes in both constructor and method for this.prop', async () => {
+    it('should create PROPERTY_ASSIGNMENT nodes in both constructor and method for this.prop', async () => {
       await setupTest(backend, {
         'index.js': `
 class App {
@@ -601,26 +602,26 @@ class App {
       const loggerParam = allNodes.find(n => n.type === 'PARAMETER' && n.name === 'logger');
       assert.ok(loggerParam, 'PARAMETER "logger" not found');
 
-      // V2: EXPRESSION nodes with READS_FROM to both params
-      const assignExprs = allNodes.filter(n =>
-        n.type === 'EXPRESSION' && n.name === '='
+      // V3: PROPERTY_ASSIGNMENT nodes with READS_FROM to both params
+      const propAssigns = allNodes.filter(n =>
+        n.type === 'PROPERTY_ASSIGNMENT' && (n.name === 'this.config' || n.name === 'this.logger')
       );
-      assert.strictEqual(assignExprs.length, 2, `Expected 2 EXPRESSION nodes, got ${assignExprs.length}`);
+      assert.strictEqual(propAssigns.length, 2, `Expected 2 PROPERTY_ASSIGNMENT nodes, got ${propAssigns.length}`);
 
       const configRead = allEdges.find(e =>
         e.type === 'READS_FROM' && e.dst === configParam.id &&
-        assignExprs.some(expr => expr.id === e.src)
+        propAssigns.some(pa => pa.id === e.src)
       );
       assert.ok(configRead, 'Expected READS_FROM edge to config parameter');
 
       const loggerRead = allEdges.find(e =>
         e.type === 'READS_FROM' && e.dst === loggerParam.id &&
-        assignExprs.some(expr => expr.id === e.src)
+        propAssigns.some(pa => pa.id === e.src)
       );
       assert.ok(loggerRead, 'Expected READS_FROM edge to logger parameter');
     });
 
-    it('should create EXPRESSION and PROPERTY_ACCESS for files in subdirectories', async () => {
+    it('should create PROPERTY_ASSIGNMENT and PROPERTY_ACCESS for files in subdirectories', async () => {
       await setupTest(backend, {
         'index.js': `import './src/App.js';`,
         'src/App.js': `
@@ -651,11 +652,11 @@ class App {
       const loggerParam = allNodes.find(n => n.type === 'PARAMETER' && n.name === 'logger');
       assert.ok(loggerParam, 'PARAMETER "logger" not found');
 
-      // V2: EXPRESSION nodes with READS_FROM to parameters
-      const assignExprs = allNodes.filter(n =>
-        n.type === 'EXPRESSION' && n.name === '='
+      // V3: PROPERTY_ASSIGNMENT nodes with READS_FROM to parameters
+      const propAssigns = allNodes.filter(n =>
+        n.type === 'PROPERTY_ASSIGNMENT' && (n.name === 'this.config' || n.name === 'this.logger')
       );
-      assert.ok(assignExprs.length >= 2, 'Expected at least 2 EXPRESSION nodes');
+      assert.ok(propAssigns.length >= 2, 'Expected at least 2 PROPERTY_ASSIGNMENT nodes');
 
       const configRead = allEdges.find(e =>
         e.type === 'READS_FROM' && e.dst === configParam.id
@@ -848,7 +849,7 @@ const result = Object.assign({}, source);
 
   // ============================================================================
   // Function-level mutations
-  // V2: EXPRESSION(=) + PROPERTY_ACCESS with READS_FROM edges
+  // V3: PROPERTY_ASSIGNMENT + PROPERTY_ACCESS with READS_FROM edges
   // ============================================================================
   describe('Function-level mutations', () => {
     it('should detect property assignments inside functions', async () => {
@@ -876,20 +877,20 @@ function configureApp(config) {
       );
       assert.ok(configParam, 'Parameter "config" not found');
 
-      // V2: EXPRESSION(=) with READS_FROM to handler
-      const assignExpr = allNodes.find(n =>
-        n.type === 'EXPRESSION' && n.name === '='
+      // V3: PROPERTY_ASSIGNMENT(config.handler) with READS_FROM to handler
+      const propAssign = allNodes.find(n =>
+        n.type === 'PROPERTY_ASSIGNMENT' && n.name === 'config.handler'
       );
-      assert.ok(assignExpr, 'EXPRESSION node for assignment not found');
+      assert.ok(propAssign, 'PROPERTY_ASSIGNMENT node for config.handler not found');
 
       const readsHandler = allEdges.find(e =>
         e.type === 'READS_FROM' &&
-        e.src === assignExpr.id &&
+        e.src === propAssign.id &&
         e.dst === handlerVar.id
       );
-      assert.ok(readsHandler, 'Expected READS_FROM edge from EXPRESSION to handler');
+      assert.ok(readsHandler, 'Expected READS_FROM edge from PROPERTY_ASSIGNMENT to handler');
 
-      // V2: PROPERTY_ACCESS(config.handler) with READS_FROM to config
+      // V3: PROPERTY_ACCESS(config.handler) still exists as child with READS_FROM to config
       const propAccess = allNodes.find(n =>
         n.type === 'PROPERTY_ACCESS' && n.name === 'config.handler'
       );
@@ -922,26 +923,27 @@ const setup = (config) => {
       assert.ok(dbVar, 'Variable "db" not found');
       assert.ok(configParam, 'Parameter "config" not found');
 
-      // V2: EXPRESSION(=) with READS_FROM to db variable
-      const assignExprs = allNodes.filter(n =>
-        n.type === 'EXPRESSION' && n.name === '='
+      // V3: PROPERTY_ASSIGNMENT(config.database) with READS_FROM to db variable
+      const propAssign = allNodes.find(n =>
+        n.type === 'PROPERTY_ASSIGNMENT' && n.name === 'config.database'
       );
-      // There may be multiple EXPRESSION nodes; find the one reading from db
+      assert.ok(propAssign, 'PROPERTY_ASSIGNMENT node for config.database not found');
+
       const readsDb = allEdges.find(e =>
         e.type === 'READS_FROM' &&
-        e.dst === dbVar.id &&
-        assignExprs.some(expr => expr.id === e.src)
+        e.src === propAssign.id &&
+        e.dst === dbVar.id
       );
-      assert.ok(readsDb, 'Expected READS_FROM edge from EXPRESSION to db variable');
+      assert.ok(readsDb, 'Expected READS_FROM edge from PROPERTY_ASSIGNMENT to db variable');
     });
   });
 
   // ============================================================================
   // Edge direction verification
-  // V2: EXPRESSION reads FROM the value, PROPERTY_ACCESS reads FROM the object
+  // V3: PROPERTY_ASSIGNMENT reads FROM the value, PROPERTY_ACCESS reads FROM the object
   // ============================================================================
   describe('Edge direction verification', () => {
-    it('should create READS_FROM with correct direction: EXPRESSION reads FROM value', async () => {
+    it('should create READS_FROM with correct direction: PROPERTY_ASSIGNMENT reads FROM value', async () => {
       await setupTest(backend, {
         'index.js': `
 const container = {};
@@ -959,20 +961,20 @@ container.item = item;
       assert.ok(containerVar, 'Variable "container" not found');
       assert.ok(itemVar, 'Variable "item" not found');
 
-      // V2: EXPRESSION reads FROM item (value)
-      const assignExpr = allNodes.find(n =>
-        n.type === 'EXPRESSION' && n.name === '='
+      // V3: PROPERTY_ASSIGNMENT reads FROM item (value)
+      const propAssign = allNodes.find(n =>
+        n.type === 'PROPERTY_ASSIGNMENT' && n.name === 'container.item'
       );
-      assert.ok(assignExpr, 'EXPRESSION node not found');
+      assert.ok(propAssign, 'PROPERTY_ASSIGNMENT node for container.item not found');
 
       const readsFromItem = allEdges.find(e =>
         e.type === 'READS_FROM' &&
-        e.src === assignExpr.id &&
+        e.src === propAssign.id &&
         e.dst === itemVar.id
       );
-      assert.ok(readsFromItem, 'EXPRESSION should READS_FROM item (value)');
+      assert.ok(readsFromItem, 'PROPERTY_ASSIGNMENT should READS_FROM item (value)');
 
-      // V2: PROPERTY_ACCESS reads FROM container (object)
+      // V3: PROPERTY_ACCESS reads FROM container (object)
       const propAccess = allNodes.find(n =>
         n.type === 'PROPERTY_ACCESS' && n.name === 'container.item'
       );

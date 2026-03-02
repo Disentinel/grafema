@@ -706,8 +706,8 @@ for (const item of items) {
   // Edge Cases and Limitations
   // ============================================================================
   describe('Edge cases and limitations', () => {
-    it('should NOT create edges for property assignment (obj.prop = value)', async () => {
-      // This should be handled by object mutation tracking, not variable reassignment
+    it('should create WRITES_TO for property assignment (obj.prop = value) to root variable', async () => {
+      // REG-573: PROPERTY_ASSIGNMENT creates WRITES_TO to root variable
       await setupTest(backend, {
         'index.js': `
 const obj = {};
@@ -719,22 +719,22 @@ obj.prop = value;
       const allNodes = await backend.getAllNodes();
       const allEdges = await backend.getAllEdges();
 
-      // V2: Property assignments create EXPRESSION + PROPERTY_ACCESS
-      // Variable reassignments should use WRITES_TO to VARIABLE nodes only
       const objVar = allNodes.find(n => n.name === 'obj');
+      assert.ok(objVar, 'Variable "obj" not found');
+
       const varWritesToEdges = allEdges.filter(e =>
-        e.type === 'WRITES_TO' && e.dst === objVar?.id
+        e.type === 'WRITES_TO' && e.dst === objVar.id
       );
 
-      // obj.prop = value does NOT create WRITES_TO to obj directly
+      // obj.prop = value creates WRITES_TO to obj (the root variable being modified)
       assert.strictEqual(
-        varWritesToEdges.length, 0,
-        'Should NOT create WRITES_TO edge to obj for obj.prop = value'
+        varWritesToEdges.length, 1,
+        'Should create WRITES_TO edge to obj for obj.prop = value'
       );
     });
 
-    it('should NOT create edges for array indexed assignment (arr[i] = value)', async () => {
-      // This should be handled by array mutation tracking, not variable reassignment
+    it('should create WRITES_TO for array indexed assignment (arr[i] = value) to root variable', async () => {
+      // REG-573: PROPERTY_ASSIGNMENT creates WRITES_TO to root variable
       await setupTest(backend, {
         'index.js': `
 const arr = [];
@@ -747,14 +747,16 @@ arr[0] = value;
       const allEdges = await backend.getAllEdges();
 
       const arrVar = allNodes.find(n => n.name === 'arr');
+      assert.ok(arrVar, 'Variable "arr" not found');
 
       const varWritesToEdges = allEdges.filter(e =>
-        e.type === 'WRITES_TO' && e.dst === arrVar?.id
+        e.type === 'WRITES_TO' && e.dst === arrVar.id
       );
 
+      // arr[0] = value creates WRITES_TO to arr (the root variable being modified)
       assert.strictEqual(
-        varWritesToEdges.length, 0,
-        'Should NOT create WRITES_TO edge to arr for arr[0] = value'
+        varWritesToEdges.length, 1,
+        'Should create WRITES_TO edge to arr for arr[0] = value'
       );
     });
 

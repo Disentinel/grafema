@@ -130,6 +130,8 @@ export interface WalkContext {
   declare(name: string, kind: DeclKind, nodeId: string): string | null;
   /** Generate a unique node ID */
   nodeId(type: string, name: string, line: number): string;
+  /** ID of the nearest enclosing class node (if inside a class body) */
+  readonly enclosingClassId: string | undefined;
 }
 
 // ─── Visitor Registry ────────────────────────────────────────────────

@@ -618,6 +618,63 @@ export function visitAssignmentExpression(
   const line = node.loc?.start.line ?? 0;
   const column = node.loc?.start.column ?? 0;
 
+  // MemberExpression LHS: create PROPERTY_ASSIGNMENT instead of EXPRESSION
+  if (assign.left.type === 'MemberExpression' || assign.left.type === 'OptionalMemberExpression') {
+    const member = assign.left as MemberExpression;
+    const propName = member.property.type === 'Identifier'
+      ? (member.property as Identifier).name
+      : member.property.type === 'PrivateName'
+        ? `#${(member.property as PrivateName).id.name}`
+        : computedPropertyName(member.property as Node);
+    const objName = extractMemberPath(member.object);
+    const fullName = `${objName}.${propName}`;
+    const nodeId = ctx.nodeId('PROPERTY_ASSIGNMENT', fullName, line);
+
+    const metadata: Record<string, unknown> = {
+      operator: assign.operator,
+      objectName: objName,
+      property: propName,
+      computed: member.computed,
+    };
+
+    // For this.X patterns, store classId for post-walk ASSIGNS_TO resolution
+    if (objName === 'this' && ctx.enclosingClassId) {
+      metadata.classId = ctx.enclosingClassId;
+    }
+
+    // WRITES_TO: link to the root variable being modified (a in a.b.c).
+    // Skip for this/super (not variables — ASSIGNS_TO handles class members).
+    const deferred: VisitResult['deferred'] = [];
+    const rootVar = extractRootIdentifier(member.object);
+    if (rootVar) {
+      deferred.push({
+        kind: 'scope_lookup',
+        name: rootVar,
+        fromNodeId: nodeId,
+        edgeType: 'WRITES_TO',
+        scopeId: ctx.currentScope.id,
+        file: ctx.file,
+        line,
+        column,
+      });
+    }
+
+    return {
+      nodes: [{
+        id: nodeId,
+        type: 'PROPERTY_ASSIGNMENT',
+        name: fullName,
+        file: ctx.file,
+        line,
+        column,
+        metadata,
+      }],
+      edges: [],
+      deferred,
+    };
+  }
+
+  // Identifier LHS (simple variable assignment): keep EXPRESSION
   const nodeId = ctx.nodeId('EXPRESSION', `assign`, line);
 
   const result: VisitResult = {
@@ -634,7 +691,6 @@ export function visitAssignmentExpression(
     deferred: [],
   };
 
-  // Deferred: lhs writes to a variable
   if (assign.left.type === 'Identifier') {
     result.deferred.push({
       kind: 'scope_lookup',
@@ -1055,10 +1111,30 @@ export function visitYieldExpression(
 export function visitSpreadElement(
   node: Node, _parent: Node | null, ctx: WalkContext,
 ): VisitResult {
+  const spread = node as { argument: Node } & Node;
   const line = node.loc?.start.line ?? 0;
+  const nodeId = ctx.nodeId('EXPRESSION', 'spread', line);
+
+  const deferred: VisitResult['deferred'] = [];
+
+  // For Identifier arguments (...obj), visitIdentifier returns EMPTY_RESULT
+  // so edge-map SPREADS_FROM won't fire. Emit scope_lookup manually.
+  if (spread.argument.type === 'Identifier') {
+    deferred.push({
+      kind: 'scope_lookup',
+      name: (spread.argument as Identifier).name,
+      fromNodeId: nodeId,
+      edgeType: 'SPREADS_FROM',
+      scopeId: ctx.currentScope.id,
+      file: ctx.file,
+      line: spread.argument.loc?.start.line ?? line,
+      column: spread.argument.loc?.start.column ?? 0,
+    });
+  }
+
   return {
     nodes: [{
-      id: ctx.nodeId('EXPRESSION', 'spread', line),
+      id: nodeId,
       type: 'EXPRESSION',
       name: 'spread',
       file: ctx.file,
@@ -1066,7 +1142,7 @@ export function visitSpreadElement(
       column: node.loc?.start.column ?? 0,
     }],
     edges: [],
-    deferred: [],
+    deferred,
   };
 }
 
@@ -1351,18 +1427,58 @@ export function visitObjectProperty(
     : prop.key.type === 'NumericLiteral' ? String((prop.key as NumericLiteral).value)
     : prop.computed ? computedKeyName(prop.key as Node) : '<computed>';
   const line = node.loc?.start.line ?? 0;
-  return {
-    nodes: [{
-      id: ctx.nodeId('PROPERTY_ACCESS', name, line),
-      type: 'PROPERTY_ACCESS',
-      name,
-      file: ctx.file,
-      line,
-      column: node.loc?.start.column ?? 0,
-    }],
-    edges: [],
+  const column = node.loc?.start.column ?? 0;
+  const nodeId = ctx.nodeId('PROPERTY_ASSIGNMENT', name, line);
+
+  // Create LITERAL node for the key name
+  const keyLine = prop.key.loc?.start.line ?? line;
+  const keyId = ctx.nodeId('LITERAL', name, keyLine);
+  const keyNode = {
+    id: keyId,
+    type: 'LITERAL',
+    name,
+    file: ctx.file,
+    line: keyLine,
+    column: prop.key.loc?.start.column ?? column,
+    metadata: { valueType: 'string' },
+  };
+
+  const result: VisitResult = {
+    nodes: [
+      {
+        id: nodeId,
+        type: 'PROPERTY_ASSIGNMENT',
+        name,
+        file: ctx.file,
+        line,
+        column,
+        metadata: { computed: prop.computed },
+      },
+      keyNode,
+    ],
+    edges: [
+      { src: nodeId, dst: keyId, type: 'PROPERTY_KEY' },
+    ],
     deferred: [],
   };
+
+  // Shorthand properties: { x } → READS_FROM to variable x
+  // The value Identifier won't produce a graph node (visitIdentifier returns EMPTY_RESULT
+  // because key === value for shorthand), so we emit scope_lookup manually.
+  if (prop.shorthand && prop.key.type === 'Identifier') {
+    result.deferred.push({
+      kind: 'scope_lookup',
+      name: prop.key.name,
+      fromNodeId: nodeId,
+      edgeType: 'READS_FROM',
+      scopeId: ctx.currentScope.id,
+      file: ctx.file,
+      line,
+      column,
+    });
+  }
+
+  return result;
 }
 
 /** Extract a human-readable name from a computed member expression property (e.g., arr[0] → [0]) */
@@ -1371,6 +1487,48 @@ function computedPropertyName(prop: Node): string {
   if (prop.type === 'StringLiteral') return `['${(prop as StringLiteral).value}']`;
   if (prop.type === 'Identifier') return `[${(prop as Identifier).name}]`;
   return '<computed>';
+}
+
+/**
+ * Recursively extract the full dotted path from a (possibly nested) MemberExpression.
+ * E.g., `a.b.c` → 'a.b.c', `this.foo` → 'this.foo'.
+ * Throws CRITICAL_ERROR if nesting depth exceeds 10 (likely malformed AST or adversarial input).
+ */
+function extractMemberPath(expr: Node, depth: number = 0): string {
+  if (depth > 10) {
+    throw new Error('CRITICAL_ERROR: MemberExpression nesting depth exceeded 10');
+  }
+  if (expr.type === 'Identifier') return (expr as Identifier).name;
+  if (expr.type === 'ThisExpression') return 'this';
+  if (expr.type === 'Super') return 'super';
+  if (expr.type === 'MemberExpression' || expr.type === 'OptionalMemberExpression') {
+    const member = expr as MemberExpression;
+    const objPath = extractMemberPath(member.object, depth + 1);
+    const propName = member.property.type === 'Identifier'
+      ? (member.property as Identifier).name
+      : member.property.type === 'PrivateName'
+        ? `#${(member.property as PrivateName).id.name}`
+        : computedPropertyName(member.property as Node);
+    return `${objPath}.${propName}`;
+  }
+  // CallExpression, etc. — can't extract a static path
+  return '?';
+}
+
+/**
+ * Extract the root Identifier name from a (possibly nested) MemberExpression.
+ * Returns null for non-variable roots (ThisExpression, Super, CallExpression, etc.).
+ * E.g., `a.b.c` → 'a', `this.foo` → null, `fn().bar` → null.
+ */
+function extractRootIdentifier(expr: Node, depth: number = 0): string | null {
+  if (depth > 10) {
+    throw new Error('CRITICAL_ERROR: MemberExpression nesting depth exceeded 10');
+  }
+  if (expr.type === 'Identifier') return (expr as Identifier).name;
+  if (expr.type === 'MemberExpression' || expr.type === 'OptionalMemberExpression') {
+    return extractRootIdentifier((expr as MemberExpression).object, depth + 1);
+  }
+  return null;
 }
 
 function computedKeyName(key: Node): string {

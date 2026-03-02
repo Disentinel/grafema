@@ -821,4 +821,288 @@ const copy = original;
       assert.ok(copyVar, 'Variable "copy" not found');
     });
   });
+
+  // ============================================================================
+  // PROPERTY_ASSIGNMENT nodes for object properties (REG-573)
+  // ============================================================================
+  describe('PROPERTY_ASSIGNMENT nodes for object properties (REG-573)', () => {
+    it('should create PROPERTY_ASSIGNMENT nodes with PROPERTY_KEY edges', async () => {
+      await setupTest(backend, {
+        'index.js': `const data = { status: 'ok', code: 200 };`
+      });
+
+      const allNodes = await backend.getAllNodes();
+      const allEdges = await backend.getAllEdges();
+
+      // PROPERTY_ASSIGNMENT nodes for each property
+      const statusPA = allNodes.find(n =>
+        n.type === 'PROPERTY_ASSIGNMENT' && n.name === 'status'
+      );
+      assert.ok(statusPA, 'PROPERTY_ASSIGNMENT "status" not found');
+
+      const codePA = allNodes.find(n =>
+        n.type === 'PROPERTY_ASSIGNMENT' && n.name === 'code'
+      );
+      assert.ok(codePA, 'PROPERTY_ASSIGNMENT "code" not found');
+
+      // PROPERTY_KEY edges to LITERAL key nodes
+      const statusKeyEdge = allEdges.find(e =>
+        e.type === 'PROPERTY_KEY' && e.src === statusPA.id
+      );
+      assert.ok(statusKeyEdge, 'PROPERTY_KEY edge for "status" not found');
+
+      const keyNode = allNodes.find(n => n.id === statusKeyEdge.dst);
+      assert.ok(keyNode, 'Key LITERAL node not found');
+      assert.strictEqual(keyNode.type, 'LITERAL', `Key should be LITERAL, got ${keyNode.type}`);
+      assert.strictEqual(keyNode.name, 'status', `Key name should be "status", got ${keyNode.name}`);
+    });
+
+    it('should create PROPERTY_VALUE edges to value expressions', async () => {
+      await setupTest(backend, {
+        'index.js': `const data = { msg: 'hello' };`
+      });
+
+      const allNodes = await backend.getAllNodes();
+      const allEdges = await backend.getAllEdges();
+
+      const msgPA = allNodes.find(n =>
+        n.type === 'PROPERTY_ASSIGNMENT' && n.name === 'msg'
+      );
+      assert.ok(msgPA, 'PROPERTY_ASSIGNMENT "msg" not found');
+
+      // PROPERTY_VALUE edge to the string LITERAL
+      const valueEdge = allEdges.find(e =>
+        e.type === 'PROPERTY_VALUE' && e.src === msgPA.id
+      );
+      assert.ok(valueEdge, 'PROPERTY_VALUE edge not found');
+
+      const valueNode = allNodes.find(n => n.id === valueEdge.dst);
+      assert.ok(valueNode, 'Value node not found');
+      assert.strictEqual(valueNode.type, 'LITERAL', `Value should be LITERAL, got ${valueNode.type}`);
+    });
+
+    it('should handle shorthand properties with READS_FROM', async () => {
+      await setupTest(backend, {
+        'index.js': `
+const x = 10;
+const obj = { x };
+        `
+      });
+
+      const allNodes = await backend.getAllNodes();
+      const allEdges = await backend.getAllEdges();
+
+      const xPA = allNodes.find(n =>
+        n.type === 'PROPERTY_ASSIGNMENT' && n.name === 'x'
+      );
+      assert.ok(xPA, 'PROPERTY_ASSIGNMENT "x" not found for shorthand');
+
+      // PROPERTY_KEY edge exists
+      const keyEdge = allEdges.find(e =>
+        e.type === 'PROPERTY_KEY' && e.src === xPA.id
+      );
+      assert.ok(keyEdge, 'PROPERTY_KEY edge not found for shorthand');
+
+      // READS_FROM edge to the variable x
+      const xVar = allNodes.find(n =>
+        n.name === 'x' && (n.type === 'VARIABLE' || n.type === 'CONSTANT')
+      );
+      assert.ok(xVar, 'Variable "x" not found');
+
+      const readsFrom = allEdges.find(e =>
+        e.type === 'READS_FROM' &&
+        e.src === xPA.id &&
+        e.dst === xVar.id
+      );
+      assert.ok(readsFrom, 'Expected READS_FROM edge from shorthand PROPERTY_ASSIGNMENT to variable');
+    });
+
+    it('should handle computed property keys', async () => {
+      await setupTest(backend, {
+        'index.js': `
+const key = 'dynamic';
+const obj = { [key]: 'value' };
+        `
+      });
+
+      const allNodes = await backend.getAllNodes();
+
+      // Metadata is flattened to top-level by RFDB
+      const pa = allNodes.find(n =>
+        n.type === 'PROPERTY_ASSIGNMENT' && n.computed === true
+      );
+      assert.ok(pa, 'PROPERTY_ASSIGNMENT with computed:true not found');
+    });
+
+    it('should handle string literal keys', async () => {
+      await setupTest(backend, {
+        'index.js': `const obj = { "my-key": 42 };`
+      });
+
+      const allNodes = await backend.getAllNodes();
+      const allEdges = await backend.getAllEdges();
+
+      const pa = allNodes.find(n =>
+        n.type === 'PROPERTY_ASSIGNMENT' && n.name === 'my-key'
+      );
+      assert.ok(pa, 'PROPERTY_ASSIGNMENT "my-key" not found');
+
+      const keyEdge = allEdges.find(e =>
+        e.type === 'PROPERTY_KEY' && e.src === pa.id
+      );
+      assert.ok(keyEdge, 'PROPERTY_KEY edge for string key not found');
+    });
+
+    it('should handle numeric keys', async () => {
+      await setupTest(backend, {
+        'index.js': `const obj = { 0: 'first', 1: 'second' };`
+      });
+
+      const allNodes = await backend.getAllNodes();
+
+      const pa0 = allNodes.find(n =>
+        n.type === 'PROPERTY_ASSIGNMENT' && n.name === '0'
+      );
+      assert.ok(pa0, 'PROPERTY_ASSIGNMENT "0" not found');
+
+      const pa1 = allNodes.find(n =>
+        n.type === 'PROPERTY_ASSIGNMENT' && n.name === '1'
+      );
+      assert.ok(pa1, 'PROPERTY_ASSIGNMENT "1" not found');
+    });
+
+    it('should handle nested object with PROPERTY_VALUE to nested LITERAL', async () => {
+      await setupTest(backend, {
+        'index.js': `const obj = { a: { b: 1 } };`
+      });
+
+      const allNodes = await backend.getAllNodes();
+      const allEdges = await backend.getAllEdges();
+
+      const aPA = allNodes.find(n =>
+        n.type === 'PROPERTY_ASSIGNMENT' && n.name === 'a'
+      );
+      assert.ok(aPA, 'PROPERTY_ASSIGNMENT "a" not found');
+
+      // PROPERTY_VALUE should point to a nested LITERAL (object)
+      const valueEdge = allEdges.find(e =>
+        e.type === 'PROPERTY_VALUE' && e.src === aPA.id
+      );
+      assert.ok(valueEdge, 'PROPERTY_VALUE edge for nested object not found');
+
+      const nestedLit = allNodes.find(n => n.id === valueEdge.dst);
+      assert.ok(nestedLit, 'Nested LITERAL not found');
+      assert.strictEqual(nestedLit.type, 'LITERAL', `Nested value should be LITERAL, got ${nestedLit.type}`);
+    });
+
+    it('should NOT create PROPERTY_ASSIGNMENT for empty object', async () => {
+      await setupTest(backend, {
+        'index.js': `const empty = {};`
+      });
+
+      const allNodes = await backend.getAllNodes();
+
+      const paNodes = allNodes.filter(n => n.type === 'PROPERTY_ASSIGNMENT');
+      assert.strictEqual(paNodes.length, 0, 'Empty object should not have PROPERTY_ASSIGNMENT nodes');
+    });
+
+    it('should connect HAS_PROPERTY from LITERAL(object) to PROPERTY_ASSIGNMENT', async () => {
+      await setupTest(backend, {
+        'index.js': `const data = { key: 'val' };`
+      });
+
+      const allNodes = await backend.getAllNodes();
+      const allEdges = await backend.getAllEdges();
+
+      // Find the object LITERAL
+      const objLit = allNodes.find(n =>
+        n.type === 'LITERAL' && n.name === '{...}'
+      );
+      assert.ok(objLit, 'Object LITERAL not found');
+
+      // Find HAS_PROPERTY edge
+      const hasProp = allEdges.find(e =>
+        e.type === 'HAS_PROPERTY' && e.src === objLit.id
+      );
+      assert.ok(hasProp, 'HAS_PROPERTY edge from LITERAL not found');
+
+      // Destination should be PROPERTY_ASSIGNMENT
+      const dst = allNodes.find(n => n.id === hasProp.dst);
+      assert.ok(dst, 'HAS_PROPERTY destination not found');
+      assert.strictEqual(
+        dst.type, 'PROPERTY_ASSIGNMENT',
+        `HAS_PROPERTY should point to PROPERTY_ASSIGNMENT, got ${dst.type}`
+      );
+    });
+  });
+
+  // ============================================================================
+  // SPREADS_FROM edges for object spread (REG-573)
+  // ============================================================================
+  describe('SPREADS_FROM edges for object spread', () => {
+    it('should create SPREADS_FROM edge for ...obj in object literal', async () => {
+      await setupTest(backend, {
+        'index.js': `
+const base = { x: 1, y: 2 };
+const extended = { ...base, z: 3 };
+`
+      });
+
+      const allNodes = await backend.getAllNodes();
+      const allEdges = await backend.getAllEdges();
+
+      // Find the spread EXPRESSION node
+      const spreadNode = allNodes.find(n =>
+        n.type === 'EXPRESSION' && n.name === 'spread'
+      );
+      assert.ok(spreadNode, 'EXPRESSION(spread) node not found');
+
+      // Find SPREADS_FROM edge from spread to base variable
+      const baseVar = allNodes.find(n =>
+        n.name === 'base' && (n.type === 'VARIABLE' || n.type === 'CONSTANT')
+      );
+      assert.ok(baseVar, 'Variable "base" not found');
+
+      const spreadsFrom = allEdges.find(e =>
+        e.type === 'SPREADS_FROM' && e.src === spreadNode.id && e.dst === baseVar.id
+      );
+      assert.ok(
+        spreadsFrom,
+        `SPREADS_FROM edge from spread to "base" not found. ` +
+        `Edges from spread: ${JSON.stringify(allEdges.filter(e => e.src === spreadNode.id))}`
+      );
+    });
+
+    it('should create SPREADS_FROM edge for ...fn() (non-Identifier argument)', async () => {
+      await setupTest(backend, {
+        'index.js': `
+function getDefaults() { return { a: 1 }; }
+const obj = { ...getDefaults(), b: 2 };
+`
+      });
+
+      const allNodes = await backend.getAllNodes();
+      const allEdges = await backend.getAllEdges();
+
+      const spreadNode = allNodes.find(n =>
+        n.type === 'EXPRESSION' && n.name === 'spread'
+      );
+      assert.ok(spreadNode, 'EXPRESSION(spread) node not found');
+
+      // For function call argument, SPREADS_FROM goes from spread to CALL node
+      const callNode = allNodes.find(n =>
+        n.type === 'CALL' && n.name === 'getDefaults'
+      );
+      assert.ok(callNode, 'CALL(getDefaults) node not found');
+
+      const spreadsFrom = allEdges.find(e =>
+        e.type === 'SPREADS_FROM' && e.src === spreadNode.id && e.dst === callNode.id
+      );
+      assert.ok(
+        spreadsFrom,
+        `SPREADS_FROM edge from spread to CALL(getDefaults) not found. ` +
+        `Edges from spread: ${JSON.stringify(allEdges.filter(e => e.src === spreadNode.id))}`
+      );
+    });
+  });
 });

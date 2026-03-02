@@ -2,11 +2,11 @@
  * Tests for Computed Property Value Resolution (REG-135)
  *
  * When code does obj[key] = value where key is a variable,
- * V2 creates EXPRESSION(=) -> CONTAINS -> PROPERTY_ACCESS(computed=true).
+ * V2 creates PROPERTY_ASSIGNMENT -> CONTAINS -> PROPERTY_ACCESS(computed=true).
  *
  * V2 Migration Notes:
  * - V1 created FLOWS_INTO edges with mutationType='computed' and computedPropertyVar
- * - V2 creates EXPRESSION(=) with CONTAINS -> PROPERTY_ACCESS(computed=true) and
+ * - V2 creates PROPERTY_ASSIGNMENT with CONTAINS -> PROPERTY_ACCESS(computed=true) and
  *   READS_FROM -> source variable
  * - V2 does NOT create FLOWS_INTO edges for property mutations
  * - V2 does NOT resolve computed property names (no resolutionStatus, resolvedPropertyNames)
@@ -57,14 +57,14 @@ async function setupTest(files) {
 }
 
 /**
- * V2 helper: Find EXPRESSION(=) nodes that CONTAIN a computed PROPERTY_ACCESS
+ * V2 helper: Find PROPERTY_ASSIGNMENT nodes that CONTAIN a computed PROPERTY_ACCESS
  */
 async function findComputedAssignments(backend) {
   const allNodes = await backend.getAllNodes();
   const allEdges = await backend.getAllEdges();
 
   const results = [];
-  for (const n of allNodes.filter(n => n.type === 'EXPRESSION' && n.name === '=')) {
+  for (const n of allNodes.filter(n => n.type === 'PROPERTY_ASSIGNMENT')) {
     const containsEdges = allEdges.filter(e => e.src === n.id && e.type === 'CONTAINS');
     for (const ce of containsEdges) {
       const target = allNodes.find(nn => nn.id === ce.dst);
@@ -77,14 +77,14 @@ async function findComputedAssignments(backend) {
 }
 
 /**
- * V2 helper: Find EXPRESSION(=) nodes for non-computed property mutations
+ * V2 helper: Find PROPERTY_ASSIGNMENT nodes for non-computed property mutations
  */
 async function findStaticAssignments(backend) {
   const allNodes = await backend.getAllNodes();
   const allEdges = await backend.getAllEdges();
 
   const results = [];
-  for (const n of allNodes.filter(n => n.type === 'EXPRESSION' && n.name === '=')) {
+  for (const n of allNodes.filter(n => n.type === 'PROPERTY_ASSIGNMENT')) {
     const containsEdges = allEdges.filter(e => e.src === n.id && e.type === 'CONTAINS');
     for (const ce of containsEdges) {
       const target = allNodes.find(nn => nn.id === ce.dst);
@@ -170,13 +170,13 @@ obj[key] = value;
       const computed = await findComputedAssignments(backend);
       assert.ok(computed.length >= 1, 'Should have computed assignment');
 
-      // V2: EXPRESSION(=) should READS_FROM the value
+      // V2: PROPERTY_ASSIGNMENT should READS_FROM the value
       const allEdges = await backend.getAllEdges();
       const readsFrom = allEdges.filter(e =>
         e.src === computed[0].expression.id && e.type === 'READS_FROM'
       );
       assert.ok(readsFrom.length >= 1,
-        'Assignment EXPRESSION should have READS_FROM edge to value');
+        'PROPERTY_ASSIGNMENT should have READS_FROM edge to value');
     });
 
     it('should create computed assignment for obj[k] when k = numeric literal', async () => {

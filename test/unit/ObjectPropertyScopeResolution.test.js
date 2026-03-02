@@ -5,11 +5,17 @@
  * When an object property has a variable reference like `{ key: API_KEY }`,
  * the graph should have:
  *   - LITERAL node (type="LITERAL", name="{...}") for the object
- *   - HAS_PROPERTY edge from LITERAL to PROPERTY_ACCESS node
- *   - READS_FROM edge from PROPERTY_ACCESS to the resolved VARIABLE/CONSTANT
+ *   - HAS_PROPERTY edge from LITERAL to PROPERTY_ASSIGNMENT node
+ *   - PROPERTY_ASSIGNMENT has PROPERTY_KEY edge to the key and PROPERTY_VALUE edge to the value
+ *   - READS_FROM edge from PROPERTY_ASSIGNMENT to the resolved VARIABLE/CONSTANT
+ *
+ * For shorthand properties `{ x }`, PROPERTY_ASSIGNMENT gets a READS_FROM deferred
+ * to the variable x.
+ * For non-shorthand `{ key: value }`, the value Identifier creates a READS_FROM
+ * from the PROPERTY_ASSIGNMENT node to the target VARIABLE/CONSTANT.
  *
  * Originally checked HAS_PROPERTY edge dst pointing directly to CONSTANT/VARIABLE.
- * Updated for v2 where HAS_PROPERTY points to PROPERTY_ACCESS which has READS_FROM.
+ * Updated for v2 where HAS_PROPERTY points to PROPERTY_ASSIGNMENT which has READS_FROM.
  */
 
 import { describe, it, after, beforeEach } from 'node:test';
@@ -59,25 +65,25 @@ async function setupTest(backend, files) {
 }
 
 /**
- * V2: Find a PROPERTY_ACCESS node by property name that is a child of an
+ * V2: Find a PROPERTY_ASSIGNMENT node by property name that is a child of an
  * object literal (via HAS_PROPERTY edge).
- * Returns the PROPERTY_ACCESS node and the READS_FROM target.
+ * Returns the PROPERTY_ASSIGNMENT node and the READS_FROM target.
  */
 async function findPropertyInObjectLiteral(backend, propertyName) {
   const allNodes = await backend.getAllNodes();
   const allEdges = await backend.getAllEdges();
 
-  // Find HAS_PROPERTY edges to PROPERTY_ACCESS nodes with the given name
+  // Find HAS_PROPERTY edges to PROPERTY_ASSIGNMENT nodes with the given name
   for (const edge of allEdges) {
     if (edge.type === 'HAS_PROPERTY') {
       const dstNode = allNodes.find(n => n.id === edge.dst);
-      if (dstNode && dstNode.type === 'PROPERTY_ACCESS' && dstNode.name === propertyName) {
-        // Find what this PROPERTY_ACCESS resolves to via READS_FROM
+      if (dstNode && dstNode.type === 'PROPERTY_ASSIGNMENT' && dstNode.name === propertyName) {
+        // Find what this PROPERTY_ASSIGNMENT resolves to via READS_FROM
         const readsFrom = allEdges.find(e =>
           e.type === 'READS_FROM' && e.src === dstNode.id
         );
         const resolvedNode = readsFrom ? allNodes.find(n => n.id === readsFrom.dst) : null;
-        return { propertyAccess: dstNode, resolvedNode, hasPropertyEdge: edge };
+        return { propertyAssignment: dstNode, resolvedNode, hasPropertyEdge: edge };
       }
     }
   }
@@ -126,16 +132,16 @@ configure({ key: API_KEY });
       );
       assert.ok(apiKeyNode, 'API_KEY CONSTANT node should exist at module level');
 
-      // V2: Find the PROPERTY_ACCESS for "key" that is under a HAS_PROPERTY edge
+      // V2: Find the PROPERTY_ASSIGNMENT for "key" that is under a HAS_PROPERTY edge
       const result = await findPropertyInObjectLiteral(backend, 'key');
-      assert.ok(result, 'HAS_PROPERTY -> PROPERTY_ACCESS for "key" should exist');
+      assert.ok(result, 'HAS_PROPERTY -> PROPERTY_ASSIGNMENT for "key" should exist');
 
-      // V2: The PROPERTY_ACCESS should have READS_FROM to the CONSTANT node
-      assert.ok(result.resolvedNode, 'PROPERTY_ACCESS should have READS_FROM to a node');
+      // V2: The PROPERTY_ASSIGNMENT should have READS_FROM to the CONSTANT node
+      assert.ok(result.resolvedNode, 'PROPERTY_ASSIGNMENT should have READS_FROM to a node');
       assert.strictEqual(
         result.resolvedNode.id,
         apiKeyNode.id,
-        `PROPERTY_ACCESS "key" should resolve to API_KEY CONSTANT (${apiKeyNode.id}), ` +
+        `PROPERTY_ASSIGNMENT "key" should resolve to API_KEY CONSTANT (${apiKeyNode.id}), ` +
         `but resolves to ${result.resolvedNode.id}`
       );
     });
@@ -160,16 +166,16 @@ createClient({ url: baseUrl });
       );
       assert.ok(baseUrlNode, 'baseUrl VARIABLE node should exist at module level');
 
-      // V2: Find the PROPERTY_ACCESS for "url" under HAS_PROPERTY
+      // V2: Find the PROPERTY_ASSIGNMENT for "url" under HAS_PROPERTY
       const result = await findPropertyInObjectLiteral(backend, 'url');
-      assert.ok(result, 'HAS_PROPERTY -> PROPERTY_ACCESS for "url" should exist');
+      assert.ok(result, 'HAS_PROPERTY -> PROPERTY_ASSIGNMENT for "url" should exist');
 
-      // V2: PROPERTY_ACCESS should resolve to baseUrl via READS_FROM
-      assert.ok(result.resolvedNode, 'PROPERTY_ACCESS should have READS_FROM to a node');
+      // V2: PROPERTY_ASSIGNMENT should resolve to baseUrl via READS_FROM
+      assert.ok(result.resolvedNode, 'PROPERTY_ASSIGNMENT should have READS_FROM to a node');
       assert.strictEqual(
         result.resolvedNode.id,
         baseUrlNode.id,
-        `PROPERTY_ACCESS "url" should resolve to baseUrl VARIABLE (${baseUrlNode.id}), ` +
+        `PROPERTY_ASSIGNMENT "url" should resolve to baseUrl VARIABLE (${baseUrlNode.id}), ` +
         `but resolves to ${result.resolvedNode.id}`
       );
     });
@@ -200,11 +206,11 @@ connect({ host: HOST, port: PORT, timeout: 5000 });
       assert.ok(hostNode, 'HOST CONSTANT should exist');
       assert.ok(portNode, 'PORT CONSTANT should exist');
 
-      // V2: Find PROPERTY_ACCESS nodes for "host" and "port" under HAS_PROPERTY
+      // V2: Find PROPERTY_ASSIGNMENT nodes for "host" and "port" under HAS_PROPERTY
       const hostResult = await findPropertyInObjectLiteral(backend, 'host');
       const portResult = await findPropertyInObjectLiteral(backend, 'port');
-      assert.ok(hostResult, 'HAS_PROPERTY -> PROPERTY_ACCESS for "host" should exist');
-      assert.ok(portResult, 'HAS_PROPERTY -> PROPERTY_ACCESS for "port" should exist');
+      assert.ok(hostResult, 'HAS_PROPERTY -> PROPERTY_ASSIGNMENT for "host" should exist');
+      assert.ok(portResult, 'HAS_PROPERTY -> PROPERTY_ASSIGNMENT for "port" should exist');
 
       // Both should resolve to their respective CONSTANT nodes
       assert.ok(hostResult.resolvedNode, 'host should resolve via READS_FROM');
@@ -239,11 +245,11 @@ process({ name, value });
       assert.ok(nameNode, 'name CONSTANT should exist');
       assert.ok(valueNode, 'value CONSTANT should exist');
 
-      // V2: Find PROPERTY_ACCESS nodes under HAS_PROPERTY
+      // V2: Find PROPERTY_ASSIGNMENT nodes under HAS_PROPERTY
       const nameResult = await findPropertyInObjectLiteral(backend, 'name');
       const valueResult = await findPropertyInObjectLiteral(backend, 'value');
-      assert.ok(nameResult, 'HAS_PROPERTY -> PROPERTY_ACCESS for "name" should exist');
-      assert.ok(valueResult, 'HAS_PROPERTY -> PROPERTY_ACCESS for "value" should exist');
+      assert.ok(nameResult, 'HAS_PROPERTY -> PROPERTY_ASSIGNMENT for "name" should exist');
+      assert.ok(valueResult, 'HAS_PROPERTY -> PROPERTY_ASSIGNMENT for "value" should exist');
 
       // Both should resolve to their respective CONSTANT nodes via READS_FROM
       assert.ok(nameResult.resolvedNode, 'name should resolve via READS_FROM');
@@ -273,9 +279,9 @@ sendRequest({ id: userId, type: 'user', active: true });
       );
       assert.ok(userIdNode, 'userId CONSTANT should exist');
 
-      // V2: Find PROPERTY_ACCESS for "id" under HAS_PROPERTY
+      // V2: Find PROPERTY_ASSIGNMENT for "id" under HAS_PROPERTY
       const idResult = await findPropertyInObjectLiteral(backend, 'id');
-      assert.ok(idResult, 'HAS_PROPERTY -> PROPERTY_ACCESS for "id" should exist');
+      assert.ok(idResult, 'HAS_PROPERTY -> PROPERTY_ASSIGNMENT for "id" should exist');
 
       // Should resolve to the CONSTANT node via READS_FROM
       assert.ok(idResult.resolvedNode, 'id should resolve via READS_FROM');
@@ -309,9 +315,9 @@ setup({ config: globalConfig });
       );
       assert.ok(globalConfigNode, 'globalConfig CONSTANT should exist');
 
-      // V2: Find PROPERTY_ACCESS for "config" under HAS_PROPERTY
+      // V2: Find PROPERTY_ASSIGNMENT for "config" under HAS_PROPERTY
       const configResult = await findPropertyInObjectLiteral(backend, 'config');
-      assert.ok(configResult, 'HAS_PROPERTY -> PROPERTY_ACCESS for "config" should exist');
+      assert.ok(configResult, 'HAS_PROPERTY -> PROPERTY_ASSIGNMENT for "config" should exist');
 
       // Should resolve to the module-level constant via READS_FROM
       assert.ok(configResult.resolvedNode, 'config should resolve via READS_FROM');

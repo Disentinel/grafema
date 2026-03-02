@@ -61,12 +61,18 @@ export const EDGE_TYPE = {
   WRITES_TO: 'WRITES_TO',
   DERIVES_FROM: 'DERIVES_FROM',
   FLOWS_INTO: 'FLOWS_INTO',
+  SPREADS_FROM: 'SPREADS_FROM', // SpreadElement → source being spread
   ELEMENT_OF: 'ELEMENT_OF',   // X is an element/value of collection Y (for-of, destructuring, array methods)
   KEY_OF: 'KEY_OF',           // X is a key of collection Y (for-in)
 
   // Object/Array structure
   HAS_PROPERTY: 'HAS_PROPERTY',   // OBJECT_LITERAL -> property value
   HAS_ELEMENT: 'HAS_ELEMENT',     // ARRAY_LITERAL -> element
+
+  // Property assignment structure
+  PROPERTY_KEY: 'PROPERTY_KEY',       // PROPERTY_ASSIGNMENT -> key literal
+  PROPERTY_VALUE: 'PROPERTY_VALUE',   // PROPERTY_ASSIGNMENT -> value expression
+  ASSIGNS_TO: 'ASSIGNS_TO',          // PROPERTY_ASSIGNMENT -> target PROPERTY/VARIABLE
 
   // HTTP/Routing
   ROUTES_TO: 'ROUTES_TO',

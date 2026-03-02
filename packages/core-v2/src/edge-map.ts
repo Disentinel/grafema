@@ -76,6 +76,7 @@ export const EDGE_MAP: Record<string, EdgeMapping> = {
 
   // ─── Object / Array ──────────────────────────────────────
   'ObjectExpression.properties':     { edgeType: 'HAS_PROPERTY' },
+  'ObjectProperty.value':            { edgeType: 'PROPERTY_VALUE' },
   'ArrayExpression.elements':        { edgeType: 'HAS_ELEMENT' },
 
   // ─── Spread ──────────────────────────────────────────────
