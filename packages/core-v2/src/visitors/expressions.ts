@@ -1395,28 +1395,90 @@ export function visitTaggedTemplateExpression(
 }
 
 export function visitClassExpression(
-  node: Node, parent: Node | null, ctx: WalkContext,
+  node: Node, _parent: Node | null, ctx: WalkContext,
 ): VisitResult {
-  // Reuse ClassDeclaration logic
   const cls = node as ClassExpression;
   const name = cls.id?.name ?? '<anonymous>';
   const line = node.loc?.start.line ?? 0;
+  const column = node.loc?.start.column ?? 0;
   const nodeId = ctx.nodeId('CLASS', name, line);
 
-  ctx.pushScope('class', `${nodeId}$scope`);
-
-  return {
+  const result: VisitResult = {
     nodes: [{
       id: nodeId,
       type: 'CLASS',
       name,
       file: ctx.file,
       line,
-      column: node.loc?.start.column ?? 0,
+      column,
+      exported: false,
+      metadata: cls.superClass?.type === 'Identifier'
+        ? { superClass: cls.superClass.name }
+        : undefined,
     }],
     edges: [],
     deferred: [],
   };
+
+  // Push class scope BEFORE declare — expression names are scoped to the class body
+  ctx.pushScope('class', `${nodeId}$scope`);
+
+  // Declare named class expression in class scope (not enclosing scope)
+  if (cls.id) {
+    const shadowedId = ctx.declare(cls.id.name, 'class', nodeId);
+    if (shadowedId) {
+      result.edges.push({ src: nodeId, dst: shadowedId, type: 'SHADOWS' });
+    }
+  }
+
+  // EXTENDS — deferred if superclass is identifier
+  if (cls.superClass?.type === 'Identifier') {
+    result.deferred.push({
+      kind: 'type_resolve',
+      name: cls.superClass.name,
+      fromNodeId: nodeId,
+      edgeType: 'EXTENDS',
+      file: ctx.file,
+      line,
+      column,
+    });
+  }
+
+  // IMPLEMENTS — class expression implements Bar, Baz
+  if (cls.implements) {
+    for (const impl of cls.implements) {
+      if (impl.type === 'TSExpressionWithTypeArguments' && impl.expression.type === 'Identifier') {
+        const implName = impl.expression.name;
+        const implLine = impl.loc?.start.line ?? line;
+        const implId = ctx.nodeId('INTERFACE', implName, implLine);
+        result.nodes.push({
+          id: implId,
+          type: 'INTERFACE',
+          name: implName,
+          file: ctx.file,
+          line: implLine,
+          column: impl.loc?.start.column ?? 0,
+          metadata: { stub: true },
+        });
+        result.edges.push({
+          src: nodeId,
+          dst: implId,
+          type: 'IMPLEMENTS',
+        });
+        result.deferred.push({
+          kind: 'type_resolve',
+          name: implName,
+          fromNodeId: nodeId,
+          edgeType: 'IMPLEMENTS',
+          file: ctx.file,
+          line,
+          column,
+        });
+      }
+    }
+  }
+
+  return result;
 }
 
 export function visitObjectExpression(
