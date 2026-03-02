@@ -7,6 +7,22 @@
  *
  * For most parent-child relationships, CONTAINS is correct.
  * This map overrides specific relationships with semantic edge types.
+ *
+ * ## Dual-mechanism entries (`pairedWith`)
+ *
+ * Some AST child keys are handled by two mechanisms simultaneously:
+ *
+ * 1. **Visitor deferred** — the parent visitor (e.g. visitUpdateExpression)
+ *    creates a deferred scope_lookup for Identifier children. Since
+ *    visitIdentifier returns EMPTY_RESULT for these, the walk engine
+ *    never creates a structural edge — the deferred handles the semantic link.
+ *
+ * 2. **Edge-map structural** — for non-Identifier children (e.g.
+ *    MemberExpression), the child visitor produces graph nodes, so the walk
+ *    engine creates a structural edge using the edge-map entry.
+ *
+ * Entries with `pairedWith` document this coupling explicitly so it can be
+ * validated by tests and discovered via grep.
  */
 
 export interface EdgeMapping {
@@ -20,6 +36,21 @@ export interface EdgeMapping {
    *   (e.g., ObjectExpression → ObjectProperty → value: grandparent = ObjectExpression node)
    */
   srcFrom?: 'parent' | 'enclosingFunction' | 'enclosingClass' | 'grandparent';
+  /**
+   * Documents that this edge-map entry coexists with a visitor handler for the
+   * same AST child key. The visitor handles certain child types (e.g. Identifier)
+   * via deferred refs (returning EMPTY_RESULT, so edge-map doesn't fire),
+   * while edge-map handles others (e.g. MemberExpression).
+   *
+   * - `visitor`: name of the visitor function that handles the other case
+   * - `visitorHandles`: human-readable description of what the visitor handles
+   * - `edgeMapHandles`: human-readable description of what the edge-map handles
+   */
+  pairedWith?: {
+    visitor: string;
+    visitorHandles: string;
+    edgeMapHandles: string;
+  };
 }
 
 /**
@@ -113,6 +144,14 @@ export const EDGE_MAP: Record<string, EdgeMapping> = {
 
   // ─── Assignment ──────────────────────────────────────────
   'AssignmentExpression.right':      { edgeType: 'ASSIGNED_FROM' },
+  'AssignmentExpression.left':  {
+    edgeType: 'ASSIGNS_TO',
+    pairedWith: {
+      visitor: 'visitAssignmentExpression',
+      visitorHandles: 'Identifier → deferred WRITES_TO via scope_lookup',
+      edgeMapHandles: 'MemberExpression → ASSIGNS_TO structural edge',
+    },
+  },
 
   // ─── Binary / logical operands ───────────────────────────
   'BinaryExpression.left':           { edgeType: 'USES' },
@@ -120,6 +159,14 @@ export const EDGE_MAP: Record<string, EdgeMapping> = {
   'LogicalExpression.left':          { edgeType: 'USES' },
   'LogicalExpression.right':         { edgeType: 'USES' },
   'UnaryExpression.argument':        { edgeType: 'USES' },
+  'UpdateExpression.argument':  {
+    edgeType: 'MODIFIES',
+    pairedWith: {
+      visitor: 'visitUpdateExpression',
+      visitorHandles: 'Identifier → deferred MODIFIES via scope_lookup',
+      edgeMapHandles: 'MemberExpression → MODIFIES structural edge',
+    },
+  },
 
   // ─── Type parameters ──────────────────────────────────────
   'FunctionDeclaration.typeParameters':    { edgeType: 'HAS_TYPE_PARAMETER' },

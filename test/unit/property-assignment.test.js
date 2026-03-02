@@ -3,14 +3,14 @@
  *
  * When code does `this.prop = value` inside a class:
  * - PROPERTY_ASSIGNMENT node (name="this.prop") with ASSIGNED_FROM to source
- * - PROPERTY_ACCESS node (name="this.prop") as child via CONTAINS
+ * - PROPERTY_ACCESS node (name="this.prop") as child via ASSIGNS_TO (edge-map, REG-612)
  * - CLASS --HAS_MEMBER--> METHOD
  * - ASSIGNS_TO edge from PROPERTY_ASSIGNMENT to class PROPERTY (if declared)
  *
  * Non-this assignments (obj.prop = value):
  * - PROPERTY_ASSIGNMENT(obj.prop) with ASSIGNED_FROM to source
- * - PROPERTY_ACCESS(obj.prop) as child via CONTAINS
- * - No ASSIGNS_TO edge (no class context for non-this)
+ * - PROPERTY_ACCESS(obj.prop) as child via ASSIGNS_TO (edge-map, REG-612)
+ * - No ASSIGNS_TO to class PROPERTY (no class context for non-this)
  *
  * Object literal properties:
  * - PROPERTY_ASSIGNMENT node for each property
@@ -574,13 +574,16 @@ class Foo {
       );
       assert.ok(propAssign, 'PROPERTY_ASSIGNMENT(this.bar) not found');
 
-      // No ASSIGNS_TO edge (no class field declaration)
-      const assignsTo = allEdges.find(e =>
-        e.type === 'ASSIGNS_TO' && e.src === propAssign.id
+      // No ASSIGNS_TO edge to a class PROPERTY (no class field declaration).
+      // Note: structural ASSIGNS_TO to PROPERTY_ACCESS child is expected (from edge-map),
+      // but semantic ASSIGNS_TO to a class PROPERTY should not exist without a declaration.
+      const assignsToProperty = allEdges.find(e =>
+        e.type === 'ASSIGNS_TO' && e.src === propAssign.id &&
+        allNodes.find(n => n.id === e.dst)?.type === 'PROPERTY'
       );
       assert.ok(
-        !assignsTo,
-        `ASSIGNS_TO should NOT exist when class field is not declared. Found: ${JSON.stringify(assignsTo)}`
+        !assignsToProperty,
+        `ASSIGNS_TO to class PROPERTY should NOT exist when class field is not declared. Found: ${JSON.stringify(assignsToProperty)}`
       );
     });
 
@@ -600,10 +603,13 @@ obj.x = 5;
       );
       assert.ok(propAssign, 'PROPERTY_ASSIGNMENT(obj.x) not found');
 
-      const assignsTo = allEdges.find(e =>
-        e.type === 'ASSIGNS_TO' && e.src === propAssign.id
+      // No ASSIGNS_TO to a class PROPERTY (non-this assignments have no class context).
+      // Note: structural ASSIGNS_TO to PROPERTY_ACCESS child is expected (from edge-map).
+      const assignsToProperty = allEdges.find(e =>
+        e.type === 'ASSIGNS_TO' && e.src === propAssign.id &&
+        allNodes.find(n => n.id === e.dst)?.type === 'PROPERTY'
       );
-      assert.ok(!assignsTo, 'ASSIGNS_TO should NOT exist for non-this assignments');
+      assert.ok(!assignsToProperty, 'ASSIGNS_TO to class PROPERTY should NOT exist for non-this assignments');
     });
   });
 
