@@ -258,6 +258,7 @@ impl GraphEngine {
             file_id: query.file_id,
             exported: query.exported,
             name: query.name,
+            ..Default::default()
         };
 
         self.engine.read().unwrap().find_by_attr(&rust_query)
@@ -592,6 +593,7 @@ impl GraphEngine {
             file_id: query.file_id,
             exported: query.exported,
             name: query.name,
+            ..Default::default()
         };
 
         let engine_guard = self.engine.read().unwrap();

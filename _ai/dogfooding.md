@@ -23,7 +23,7 @@ MCP server configured in `.mcp.json` — provides 25 tools for graph queries. Re
 
 ## Workflow Integration (Hybrid Mode)
 
-**Don (exploration phase) — MUST try graph first:**
+**Exploration phase — MUST try graph first:**
 
 | Instead of... | Try Grafema MCP first |
 |---------------|----------------------|
@@ -35,12 +35,12 @@ MCP server configured in `.mcp.json` — provides 25 tools for graph queries. Re
 
 If graph doesn't have the answer → fallback to direct file reads. **Note the gap.**
 
-**Kent/Rob (implementation) — direct file reads OK:**
+**Implementation (coding agents) — direct file reads OK:**
 - Implementation needs exact code, not summaries
 - Graph useful for: finding call sites, checking impact, understanding dependencies
 - But writing code requires reading the actual files
 
-**4-Review — use graph for verification:**
+**3-Review — use graph for verification:**
 - `get_stats` to check graph health after changes
 - `check_guarantees` if guarantees are defined
 

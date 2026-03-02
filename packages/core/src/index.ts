@@ -263,6 +263,7 @@ export { NodejsBuiltinsResolver } from './plugins/enrichment/NodejsBuiltinsResol
 export { ExpressHandlerLinker } from './plugins/enrichment/ExpressHandlerLinker.js';
 export { RejectionPropagationEnricher } from './plugins/enrichment/RejectionPropagationEnricher.js';
 export { CallbackCallResolver } from './plugins/enrichment/CallbackCallResolver.js';
+export { resolveCallbackCalls } from './plugins/enrichment/resolveCallbackCalls.js';
 export { ConfigRoutingMapBuilder } from './plugins/enrichment/ConfigRoutingMapBuilder.js';
 export { ServiceConnectionEnricher } from './plugins/enrichment/ServiceConnectionEnricher.js';
 export { RedisEnricher } from './plugins/enrichment/RedisEnricher.js';

@@ -275,7 +275,7 @@ describe('buildDependencyGraph', () => {
       {
         metadata: {
           name: 'ArgumentParameterLinker',
-          consumes: ['PASSES_ARGUMENT', 'CALLS', 'HAS_PARAMETER', 'RECEIVES_ARGUMENT'] as EdgeType[],
+          consumes: ['PASSES_ARGUMENT', 'CALLS', 'HAS_PARAMETER', 'RECEIVES_ARGUMENT', 'HAS_SCOPE', 'CONTAINS', 'ASSIGNED_FROM', 'IMPORTS_FROM'] as EdgeType[],
           produces: ['RECEIVES_ARGUMENT'] as EdgeType[],
           dependencies: ['JSASTAnalyzer', 'MethodCallResolver'],
         },

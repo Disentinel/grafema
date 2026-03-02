@@ -100,6 +100,10 @@ pub struct AttrQuery {
     /// All filters must match (AND semantics).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub metadata_filters: Vec<(String, String)>,
+    /// When true, name and file filters use substring matching (.contains())
+    /// instead of exact equality. Default: false (exact match).
+    #[serde(default)]
+    pub substring_match: bool,
 }
 
 impl AttrQuery {

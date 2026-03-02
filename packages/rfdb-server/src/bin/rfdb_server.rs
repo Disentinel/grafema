@@ -618,6 +618,8 @@ pub struct WireAttrQuery {
     pub name: Option<String>,
     pub file: Option<String>,
     pub exported: Option<bool>,
+    #[serde(default)]
+    pub substring_match: bool,
     /// Extra fields are matched against node metadata JSON.
     #[serde(flatten)]
     pub extra: std::collections::HashMap<String, serde_json::Value>,
@@ -779,6 +781,36 @@ fn resolve_edge_semantic_ids(edges: &mut [WireEdge], engine: &dyn GraphStore) {
                 }
             }
         }
+    }
+}
+
+/// Convert a `WireAttrQuery` (wire format) into an `AttrQuery` (engine format).
+///
+/// Handles:
+/// - mapping known fields (node_type, file, exported, name, substring_match)
+/// - converting extra key-value pairs (String/Bool/Number JSON values) into
+///   string-based metadata filters that the engine understands
+fn wire_to_attr_query(query: WireAttrQuery) -> AttrQuery {
+    let metadata_filters: Vec<(String, String)> = query.extra.into_iter()
+        .filter_map(|(k, v)| {
+            match v {
+                serde_json::Value::String(s) => Some((k, s)),
+                serde_json::Value::Bool(b) => Some((k, b.to_string())),
+                serde_json::Value::Number(n) => Some((k, n.to_string())),
+                _ => None,
+            }
+        })
+        .collect();
+
+    AttrQuery {
+        version: None,
+        node_type: query.node_type,
+        file_id: None,
+        file: query.file,
+        exported: query.exported,
+        name: query.name,
+        metadata_filters,
+        substring_match: query.substring_match,
     }
 }
 
@@ -1005,28 +1037,7 @@ fn handle_request(
 
         Request::FindByAttr { query } => {
             with_engine_read(session, |engine| {
-                // Convert extra wire fields to metadata filters
-                let metadata_filters: Vec<(String, String)> = query.extra.into_iter()
-                    .filter_map(|(k, v)| {
-                        // Convert JSON values to string for matching
-                        match v {
-                            serde_json::Value::String(s) => Some((k, s)),
-                            serde_json::Value::Bool(b) => Some((k, b.to_string())),
-                            serde_json::Value::Number(n) => Some((k, n.to_string())),
-                            _ => None, // Skip null, arrays, objects
-                        }
-                    })
-                    .collect();
-
-                let attr_query = AttrQuery {
-                    version: None,
-                    node_type: query.node_type,
-                    file_id: None,
-                    file: query.file,
-                    exported: query.exported,
-                    name: query.name,
-                    metadata_filters,
-                };
+                let attr_query = wire_to_attr_query(query);
                 let ids: Vec<String> = engine.find_by_attr(&attr_query)
                     .into_iter()
                     .map(id_to_string)
@@ -1192,26 +1203,7 @@ fn handle_request(
 
         Request::QueryNodes { query } => {
             with_engine_read(session, |engine| {
-                let metadata_filters: Vec<(String, String)> = query.extra.into_iter()
-                    .filter_map(|(k, v)| {
-                        match v {
-                            serde_json::Value::String(s) => Some((k, s)),
-                            serde_json::Value::Bool(b) => Some((k, b.to_string())),
-                            serde_json::Value::Number(n) => Some((k, n.to_string())),
-                            _ => None,
-                        }
-                    })
-                    .collect();
-
-                let attr_query = AttrQuery {
-                    version: None,
-                    node_type: query.node_type,
-                    file_id: None,
-                    file: query.file,
-                    exported: query.exported,
-                    name: query.name,
-                    metadata_filters,
-                };
+                let attr_query = wire_to_attr_query(query);
                 let ids = engine.find_by_attr(&attr_query);
                 let nodes: Vec<WireNode> = ids.into_iter()
                     .filter_map(|id| engine.get_node(id))
@@ -1597,6 +1589,7 @@ fn handle_commit_batch(
             exported: None,
             name: None,
             metadata_filters: vec![],
+            substring_match: false,
         };
         let old_ids = engine.find_by_attr(&attr_query);
 
@@ -1979,27 +1972,7 @@ fn handle_query_nodes_streaming(
 
     let engine = db.engine.read().unwrap();
 
-    // Build AttrQuery from wire format (same as non-streaming path)
-    let metadata_filters: Vec<(String, String)> = query.extra.into_iter()
-        .filter_map(|(k, v)| {
-            match v {
-                serde_json::Value::String(s) => Some((k, s)),
-                serde_json::Value::Bool(b) => Some((k, b.to_string())),
-                serde_json::Value::Number(n) => Some((k, n.to_string())),
-                _ => None,
-            }
-        })
-        .collect();
-
-    let attr_query = AttrQuery {
-        version: None,
-        node_type: query.node_type,
-        file_id: None,
-        file: query.file,
-        exported: query.exported,
-        name: query.name,
-        metadata_filters,
-    };
+    let attr_query = wire_to_attr_query(query);
 
     let ids = engine.find_by_attr(&attr_query);
     let total = ids.len();
@@ -3196,6 +3169,7 @@ mod protocol_tests {
                 name: None,
                 file: None,
                 exported: None,
+                substring_match: false,
                 extra,
             },
         }, &None);
@@ -3218,6 +3192,7 @@ mod protocol_tests {
                 name: None,
                 file: None,
                 exported: None,
+                substring_match: false,
                 extra,
             },
         }, &None);
@@ -3236,6 +3211,7 @@ mod protocol_tests {
                 name: None,
                 file: None,
                 exported: None,
+                substring_match: false,
                 extra: std::collections::HashMap::new(),
             },
         }, &None);
@@ -3243,6 +3219,375 @@ mod protocol_tests {
         match response {
             Response::Ids { ids } => {
                 assert_eq!(ids.len(), 3, "Without metadata filter, all 3 CALL nodes");
+            }
+            _ => panic!("Expected Ids response"),
+        }
+    }
+
+    // ============================================================================
+    // FindByAttr with substring_match
+    // ============================================================================
+
+    #[test]
+    fn test_find_by_attr_name_substring() {
+        let (_dir, manager) = setup_test_manager();
+        let mut session = ClientSession::new(1);
+
+        // Create and open ephemeral database
+        handle_request(&manager, &mut session, Request::CreateDatabase {
+            name: "testdb".to_string(),
+            ephemeral: true,
+        }, &None);
+        handle_request(&manager, &mut session, Request::OpenDatabase {
+            name: "testdb".to_string(),
+            mode: "rw".to_string(),
+        }, &None);
+
+        // Add a node with name "handleFooBar"
+        handle_request(&manager, &mut session, Request::AddNodes {
+            nodes: vec![
+                WireNode {
+                    id: "1".to_string(),
+                    node_type: Some("FUNCTION".to_string()),
+                    name: Some("handleFooBar".to_string()),
+                    file: Some("app.js".to_string()),
+                    exported: false,
+                    metadata: None,
+                    semantic_id: None,
+                },
+            ],
+        }, &None);
+
+        // Query with substring_match: true, partial name "Foo"
+        let response = handle_request(&manager, &mut session, Request::FindByAttr {
+            query: WireAttrQuery {
+                node_type: None,
+                name: Some("Foo".to_string()),
+                file: None,
+                exported: None,
+                substring_match: true,
+                extra: std::collections::HashMap::new(),
+            },
+        }, &None);
+
+        match response {
+            Response::Ids { ids } => {
+                assert_eq!(ids.len(), 1, "Substring 'Foo' should match 'handleFooBar'");
+            }
+            _ => panic!("Expected Ids response"),
+        }
+    }
+
+    #[test]
+    fn test_find_by_attr_file_substring() {
+        let (_dir, manager) = setup_test_manager();
+        let mut session = ClientSession::new(1);
+
+        handle_request(&manager, &mut session, Request::CreateDatabase {
+            name: "testdb".to_string(),
+            ephemeral: true,
+        }, &None);
+        handle_request(&manager, &mut session, Request::OpenDatabase {
+            name: "testdb".to_string(),
+            mode: "rw".to_string(),
+        }, &None);
+
+        // Add a node with a deep file path
+        handle_request(&manager, &mut session, Request::AddNodes {
+            nodes: vec![
+                WireNode {
+                    id: "1".to_string(),
+                    node_type: Some("FUNCTION".to_string()),
+                    name: Some("getUser".to_string()),
+                    file: Some("src/controllers/userController.ts".to_string()),
+                    exported: false,
+                    metadata: None,
+                    semantic_id: None,
+                },
+            ],
+        }, &None);
+
+        // Query with substring_match: true, partial file path
+        let response = handle_request(&manager, &mut session, Request::FindByAttr {
+            query: WireAttrQuery {
+                node_type: None,
+                name: None,
+                file: Some("controllers/user".to_string()),
+                exported: None,
+                substring_match: true,
+                extra: std::collections::HashMap::new(),
+            },
+        }, &None);
+
+        match response {
+            Response::Ids { ids } => {
+                assert_eq!(ids.len(), 1, "Substring 'controllers/user' should match file path");
+            }
+            _ => panic!("Expected Ids response"),
+        }
+    }
+
+    #[test]
+    fn test_find_by_attr_exact_default() {
+        let (_dir, manager) = setup_test_manager();
+        let mut session = ClientSession::new(1);
+
+        handle_request(&manager, &mut session, Request::CreateDatabase {
+            name: "testdb".to_string(),
+            ephemeral: true,
+        }, &None);
+        handle_request(&manager, &mut session, Request::OpenDatabase {
+            name: "testdb".to_string(),
+            mode: "rw".to_string(),
+        }, &None);
+
+        handle_request(&manager, &mut session, Request::AddNodes {
+            nodes: vec![
+                WireNode {
+                    id: "1".to_string(),
+                    node_type: Some("FUNCTION".to_string()),
+                    name: Some("handleFooBar".to_string()),
+                    file: Some("app.js".to_string()),
+                    exported: false,
+                    metadata: None,
+                    semantic_id: None,
+                },
+            ],
+        }, &None);
+
+        // substring_match defaults to false — partial name must NOT match
+        let response = handle_request(&manager, &mut session, Request::FindByAttr {
+            query: WireAttrQuery {
+                node_type: None,
+                name: Some("Foo".to_string()),
+                file: None,
+                exported: None,
+                substring_match: false,
+                extra: std::collections::HashMap::new(),
+            },
+        }, &None);
+
+        match response {
+            Response::Ids { ids } => {
+                assert_eq!(ids.len(), 0, "Exact match for 'Foo' should NOT match 'handleFooBar'");
+            }
+            _ => panic!("Expected Ids response"),
+        }
+
+        // Exact match with full name SHOULD match
+        let response = handle_request(&manager, &mut session, Request::FindByAttr {
+            query: WireAttrQuery {
+                node_type: None,
+                name: Some("handleFooBar".to_string()),
+                file: None,
+                exported: None,
+                substring_match: false,
+                extra: std::collections::HashMap::new(),
+            },
+        }, &None);
+
+        match response {
+            Response::Ids { ids } => {
+                assert_eq!(ids.len(), 1, "Exact match for 'handleFooBar' should find the node");
+            }
+            _ => panic!("Expected Ids response"),
+        }
+    }
+
+    #[test]
+    fn test_find_by_attr_empty_query_no_match_all() {
+        let (_dir, manager) = setup_test_manager();
+        let mut session = ClientSession::new(1);
+
+        handle_request(&manager, &mut session, Request::CreateDatabase {
+            name: "testdb".to_string(),
+            ephemeral: true,
+        }, &None);
+        handle_request(&manager, &mut session, Request::OpenDatabase {
+            name: "testdb".to_string(),
+            mode: "rw".to_string(),
+        }, &None);
+
+        // Add multiple nodes
+        handle_request(&manager, &mut session, Request::AddNodes {
+            nodes: vec![
+                WireNode {
+                    id: "1".to_string(),
+                    node_type: Some("FUNCTION".to_string()),
+                    name: Some("alpha".to_string()),
+                    file: Some("a.js".to_string()),
+                    exported: false,
+                    metadata: None,
+                    semantic_id: None,
+                },
+                WireNode {
+                    id: "2".to_string(),
+                    node_type: Some("FUNCTION".to_string()),
+                    name: Some("beta".to_string()),
+                    file: Some("b.js".to_string()),
+                    exported: false,
+                    metadata: None,
+                    semantic_id: None,
+                },
+                WireNode {
+                    id: "3".to_string(),
+                    node_type: Some("VARIABLE".to_string()),
+                    name: Some("gamma".to_string()),
+                    file: Some("c.js".to_string()),
+                    exported: false,
+                    metadata: None,
+                    semantic_id: None,
+                },
+            ],
+        }, &None);
+
+        // Empty name with substring_match: true — empty string = no filter
+        // Should return all FUNCTION nodes (name filter is skipped)
+        let response = handle_request(&manager, &mut session, Request::FindByAttr {
+            query: WireAttrQuery {
+                node_type: Some("FUNCTION".to_string()),
+                name: Some("".to_string()),
+                file: None,
+                exported: None,
+                substring_match: true,
+                extra: std::collections::HashMap::new(),
+            },
+        }, &None);
+
+        match response {
+            Response::Ids { ids } => {
+                assert_eq!(ids.len(), 2, "Empty name + substring_match should skip name filter, returning all FUNCTION nodes");
+            }
+            _ => panic!("Expected Ids response"),
+        }
+    }
+
+    #[test]
+    fn test_find_by_attr_substring_no_false_positives() {
+        let (_dir, manager) = setup_test_manager();
+        let mut session = ClientSession::new(1);
+
+        handle_request(&manager, &mut session, Request::CreateDatabase {
+            name: "testdb".to_string(),
+            ephemeral: true,
+        }, &None);
+        handle_request(&manager, &mut session, Request::OpenDatabase {
+            name: "testdb".to_string(),
+            mode: "rw".to_string(),
+        }, &None);
+
+        // Add two nodes with distinct names
+        handle_request(&manager, &mut session, Request::AddNodes {
+            nodes: vec![
+                WireNode {
+                    id: "1".to_string(),
+                    node_type: Some("FUNCTION".to_string()),
+                    name: Some("fooBar".to_string()),
+                    file: Some("a.js".to_string()),
+                    exported: false,
+                    metadata: None,
+                    semantic_id: None,
+                },
+                WireNode {
+                    id: "2".to_string(),
+                    node_type: Some("FUNCTION".to_string()),
+                    name: Some("bazQux".to_string()),
+                    file: Some("b.js".to_string()),
+                    exported: false,
+                    metadata: None,
+                    semantic_id: None,
+                },
+            ],
+        }, &None);
+
+        // Substring "foo" should match only "fooBar", not "bazQux"
+        let response = handle_request(&manager, &mut session, Request::FindByAttr {
+            query: WireAttrQuery {
+                node_type: None,
+                name: Some("foo".to_string()),
+                file: None,
+                exported: None,
+                substring_match: true,
+                extra: std::collections::HashMap::new(),
+            },
+        }, &None);
+
+        match response {
+            Response::Ids { ids } => {
+                assert_eq!(ids.len(), 1, "Substring 'foo' should match only 'fooBar'");
+                assert_eq!(ids[0], "1", "Should match node id '1' (fooBar)");
+            }
+            _ => panic!("Expected Ids response"),
+        }
+    }
+
+    #[test]
+    fn test_find_by_attr_substring_after_flush() {
+        let (_dir, manager) = setup_test_manager();
+        let mut session = ClientSession::new(1);
+
+        handle_request(&manager, &mut session, Request::CreateDatabase {
+            name: "testdb".to_string(),
+            ephemeral: true,
+        }, &None);
+        handle_request(&manager, &mut session, Request::OpenDatabase {
+            name: "testdb".to_string(),
+            mode: "rw".to_string(),
+        }, &None);
+
+        // Add a node
+        handle_request(&manager, &mut session, Request::AddNodes {
+            nodes: vec![
+                WireNode {
+                    id: "1".to_string(),
+                    node_type: Some("FUNCTION".to_string()),
+                    name: Some("processUserData".to_string()),
+                    file: Some("src/services/userService.ts".to_string()),
+                    exported: false,
+                    metadata: None,
+                    semantic_id: None,
+                },
+            ],
+        }, &None);
+
+        // Flush to segment — data moves from write buffer to on-disk segment
+        // This tests that zone map bypass works correctly for flushed segments
+        handle_request(&manager, &mut session, Request::Flush, &None);
+
+        // Substring match on name after flush
+        let response = handle_request(&manager, &mut session, Request::FindByAttr {
+            query: WireAttrQuery {
+                node_type: None,
+                name: Some("User".to_string()),
+                file: None,
+                exported: None,
+                substring_match: true,
+                extra: std::collections::HashMap::new(),
+            },
+        }, &None);
+
+        match response {
+            Response::Ids { ids } => {
+                assert_eq!(ids.len(), 1, "Substring 'User' should match 'processUserData' after flush");
+            }
+            _ => panic!("Expected Ids response"),
+        }
+
+        // Substring match on file after flush
+        let response = handle_request(&manager, &mut session, Request::FindByAttr {
+            query: WireAttrQuery {
+                node_type: None,
+                name: None,
+                file: Some("services/user".to_string()),
+                exported: None,
+                substring_match: true,
+                extra: std::collections::HashMap::new(),
+            },
+        }, &None);
+
+        match response {
+            Response::Ids { ids } => {
+                assert_eq!(ids.len(), 1, "Substring 'services/user' should match file path after flush");
             }
             _ => panic!("Expected Ids response"),
         }
@@ -3316,6 +3661,7 @@ mod protocol_tests {
                 name: None,
                 file: None,
                 exported: None,
+                substring_match: false,
                 extra,
             },
         }, &None);
@@ -4329,6 +4675,7 @@ mod protocol_tests {
             name: None,
             file: None,
             exported: None,
+            substring_match: false,
             extra: HashMap::new(),
         };
 
@@ -4382,6 +4729,7 @@ mod protocol_tests {
             name: None,
             file: None,
             exported: None,
+            substring_match: false,
             extra: HashMap::new(),
         };
 
@@ -4451,6 +4799,7 @@ mod protocol_tests {
             name: None,
             file: None,
             exported: None,
+            substring_match: false,
             extra: HashMap::new(),
         };
 
@@ -4497,6 +4846,7 @@ mod protocol_tests {
             name: None,
             file: None,
             exported: None,
+            substring_match: false,
             extra: HashMap::new(),
         };
 
@@ -4532,6 +4882,7 @@ mod protocol_tests {
                 name: None,
                 file: None,
                 exported: None,
+                substring_match: false,
                 extra: HashMap::new(),
             },
         }, &None);
@@ -4561,6 +4912,7 @@ mod protocol_tests {
             name: None,
             file: None,
             exported: None,
+            substring_match: false,
             extra: HashMap::new(),
         };
 

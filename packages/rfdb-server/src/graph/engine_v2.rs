@@ -341,6 +341,7 @@ impl GraphStore for GraphEngineV2 {
             query.name.as_deref(),
             query.exported,
             &query.metadata_filters,
+            query.substring_match,
         );
 
         if self.pending_tombstone_nodes.is_empty() {
@@ -360,6 +361,7 @@ impl GraphStore for GraphEngineV2 {
                 None,
                 None,
                 &[],
+                false,
             )
         } else {
             self.store.find_node_ids_by_type(node_type)

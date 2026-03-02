@@ -85,35 +85,34 @@ Before proposing a new subsystem, check if existing Grafema infrastructure can b
 **When user provides a task identifier** (e.g., `REG-25`, `RFD-1`, or a Linear URL):
 
 1. **Fetch task from Linear** — use `mcp__linear__get_issue` with the identifier
-2. **Read MLA workflow** — `_ai/mla-workflow.md` for process steps, team roster, model assignment
-3. **Select MLA configuration** using the Lens Selection decision tree:
-   - Well-understood, single file, <50 LOC → **Single Agent**
-   - Medium complexity, local scope → **Mini-MLA** (most common)
-   - Core architecture change, multi-system, ambiguous → **Full MLA**
-4. **Read persona instructions** — `_ai/agent-personas.md` for the specific agents you'll spawn
-5. **Execute the workflow** — follow STEP 1 through STEP 4 from `_ai/mla-workflow.md`
+2. **Read workflow** — `_ai/workflow.md` for pipeline, model assignment, review protocol
+3. **Read persona instructions** — `_ai/agent-personas.md` for review agents
+4. **Execute the workflow** — plan → verify → implement → 3-review → user
 
 If user provides just a task ID without further context, the Linear issue description IS the task request.
 
-## MLA Workflow (Summary)
+## Workflow
 
-**Full details:** `_ai/mla-workflow.md` (team roster, model table, steps, metrics template)
-**Persona prompts:** `_ai/agent-personas.md` (pass relevant section to each subagent)
+**Full details:** `_ai/workflow.md` (pipeline, model table, review protocol, metrics)
+**Persona prompts:** `_ai/agent-personas.md` (review and consulting personas)
 **Dogfooding guide:** `_ai/dogfooding.md` (graph-first exploration, gap tracking)
 
-**CRITICAL: NO CODING AT TOP LEVEL!** All implementation happens through subagents.
+**CRITICAL: NO CODING AT TOP LEVEL!** All implementation happens through coding subagents. Each subagent receives one minimal atomic change (tests + code, max 2-3 files).
 
-**Pipeline:** STEP 1 (save request) → STEP 2 (plan + verify) → STEP 2.5 (prepare/refactor) → STEP 3 (implement + 3-review) → STEP 4 (finalize + metrics)
+**Pipeline:** Plan mode (iterative) → Dijkstra verification → Implementation (coding agents) → 3-Review → User
 
-**3-Review:** Steve ∥ Вадим auto ∥ Uncle Bob (single parallel batch). ANY REJECT → fix + re-run ALL 3. ALL approve → present to user.
+**3-Review:** Steve ∥ Вадим auto ∥ Uncle Bob (single parallel batch, all Opus). ANY REJECT → fix + re-run ALL 3. ALL approve → present to user.
 
-**Configurations:**
+## Plan Mode (Mandatory)
 
-| Config | Team | When to Use |
-|--------|------|-------------|
-| **Single Agent** | Rob → 3-Review → Vadim | Trivial, single file <50 LOC |
-| **Mini-MLA** | Don → Dijkstra → Uncle Bob → Kent ∥ Rob → 3-Review → Vadim | Medium complexity |
-| **Full MLA** | Don → Joel → Dijkstra → Uncle Bob → Kent ∥ Rob → 3-Review → Vadim | Architecture changes |
+**Mandatory for all non-trivial tasks.** Trivial tasks (typo, single-line fix) may skip.
+
+- **Iterative** — multiple rounds, not just "here's a plan, ok?"
+- Claude MUST enumerate found edge cases and alternatives
+- User makes design decisions via AskUserQuestion
+- Cover maximum edge cases BEFORE implementation
+- **Grafema invariants:** plan MUST specify graph invariants (guarantees) that describe the task. These invariants are included in tests as acceptance criteria
+- Tривиальные задачи (typo, однострочник) — можно без plan mode
 
 ## Forbidden Patterns
 
@@ -126,7 +125,7 @@ If user provides just a task ID without further context, the Linear issue descri
 ### Never Do
 - Changes outside scope without discussing first
 - "Improvements" nobody asked for
-- Refactoring OUTSIDE of STEP 2.5
+- Refactoring outside agreed plan
 - Quick fixes or workarounds
 - Guessing when you can ask
 
@@ -171,7 +170,7 @@ Source of truth for current sprint. Linear remains backlog/planning tool.
 
 **Summary:** Fixed worker slots (`grafema-worker-1` through `grafema-worker-8`), each runs persistent Claude Code instance. Never work in main repo — only in worker slots.
 
-**New task:** `git fetch && git checkout main && git pull && git checkout -b task/REG-XXX` → update Linear → In Progress → save request → start MLA.
+**New task:** `git fetch && git checkout main && git pull && git checkout -b task/REG-XXX` → update Linear → In Progress → save request → start workflow.
 
 **Finishing:** 3-Review → user confirms → create PR → Linear → In Review → CI green → merge → Done.
 
@@ -180,7 +179,7 @@ Source of truth for current sprint. Linear remains backlog/planning tool.
 Agent Teams — экспериментальная фича Claude Code для координации нескольких инстансов с shared task list.
 
 **Use for:** parallel research, code review с разных ракурсов, independent modules, debugging competing hypotheses.
-**NOT for:** MLA workflow (use worktrees), sequential dependencies, edits to same files.
+**NOT for:** main workflow (use worktrees), sequential dependencies, edits to same files.
 
 After each use — record: реальная польза vs subagents? токены? проблемы?
 
