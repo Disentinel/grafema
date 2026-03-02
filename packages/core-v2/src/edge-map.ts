@@ -178,9 +178,14 @@ export const EDGE_MAP: Record<string, EdgeMapping> = {
   'ForInStatement.left':             { edgeType: 'DECLARES' },
   'ForOfStatement.left':             { edgeType: 'DECLARES' },
 
-  // ─── TS as / satisfies ────────────────────────────────────
-  'TSAsExpression.typeAnnotation':   { edgeType: 'HAS_TYPE' },
+  // ─── TS as / satisfies / type assertion / non-null ────────
+  'TSAsExpression.typeAnnotation':        { edgeType: 'HAS_TYPE' },
+  'TSAsExpression.expression':            { edgeType: 'ASSIGNED_FROM' },
   'TSSatisfiesExpression.typeAnnotation': { edgeType: 'HAS_TYPE' },
+  'TSSatisfiesExpression.expression':     { edgeType: 'ASSIGNED_FROM' },
+  'TSTypeAssertion.typeAnnotation':       { edgeType: 'HAS_TYPE' },
+  'TSTypeAssertion.expression':           { edgeType: 'ASSIGNED_FROM' },
+  'TSNonNullExpression.expression':       { edgeType: 'ASSIGNED_FROM' },
 
   // ─── TS type alias initializer ──────────────────────────────
   'TSTypeAliasDeclaration.typeAnnotation': { edgeType: 'ASSIGNED_FROM' },
