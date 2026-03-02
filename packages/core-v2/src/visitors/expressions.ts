@@ -1222,6 +1222,8 @@ export function visitIdentifier(
 
   // Property key contexts — not a "read" of the identifier itself
   if (pt === 'ObjectProperty' && (parent as ObjectProperty).key === node) return EMPTY_RESULT;
+  // Non-shorthand ObjectProperty value: { key: someVar } — handled by visitObjectProperty scope_lookup
+  if (pt === 'ObjectProperty' && (parent as ObjectProperty).value === node && !(parent as ObjectProperty).shorthand) return EMPTY_RESULT;
   if (pt === 'ObjectMethod' && (parent as ObjectMethod).key === node) return EMPTY_RESULT;
   if (pt === 'ClassMethod' && (parent as ClassMethod).key === node) return EMPTY_RESULT;
   if (pt === 'ClassProperty' && (parent as ClassProperty).key === node) return EMPTY_RESULT;
@@ -1582,6 +1584,23 @@ export function visitObjectProperty(
       file: ctx.file,
       line,
       column,
+    });
+  }
+
+  // Non-shorthand with Identifier value: { key: someVar }
+  // visitIdentifier returns no graph nodes (only READS_FROM deferred),
+  // so edge-map PROPERTY_VALUE won't fire. Emit scope_lookup manually.
+  if (!prop.shorthand && prop.value?.type === 'Identifier') {
+    const valId = prop.value as Identifier;
+    result.deferred.push({
+      kind: 'scope_lookup',
+      name: valId.name,
+      fromNodeId: nodeId,
+      edgeType: 'PROPERTY_VALUE',
+      scopeId: ctx.currentScope.id,
+      file: ctx.file,
+      line: prop.value.loc?.start.line ?? line,
+      column: prop.value.loc?.start.column ?? column,
     });
   }
 

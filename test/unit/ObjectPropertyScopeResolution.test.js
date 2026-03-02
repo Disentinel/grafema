@@ -7,15 +7,17 @@
  *   - LITERAL node (type="LITERAL", name="{...}") for the object
  *   - HAS_PROPERTY edge from LITERAL to PROPERTY_ASSIGNMENT node
  *   - PROPERTY_ASSIGNMENT has PROPERTY_KEY edge to the key and PROPERTY_VALUE edge to the value
- *   - READS_FROM edge from PROPERTY_ASSIGNMENT to the resolved VARIABLE/CONSTANT
+ *   - PROPERTY_VALUE edge from PROPERTY_ASSIGNMENT to the resolved VARIABLE/CONSTANT (non-shorthand)
+ *   - READS_FROM edge from PROPERTY_ASSIGNMENT to the resolved VARIABLE/CONSTANT (shorthand)
  *
  * For shorthand properties `{ x }`, PROPERTY_ASSIGNMENT gets a READS_FROM deferred
  * to the variable x.
- * For non-shorthand `{ key: value }`, the value Identifier creates a READS_FROM
- * from the PROPERTY_ASSIGNMENT node to the target VARIABLE/CONSTANT.
+ * For non-shorthand `{ key: value }`, PROPERTY_ASSIGNMENT gets a PROPERTY_VALUE edge
+ * to the target VARIABLE/CONSTANT (REG-598).
  *
  * Originally checked HAS_PROPERTY edge dst pointing directly to CONSTANT/VARIABLE.
- * Updated for v2 where HAS_PROPERTY points to PROPERTY_ASSIGNMENT which has READS_FROM.
+ * Updated for v2 where HAS_PROPERTY points to PROPERTY_ASSIGNMENT which has
+ * READS_FROM (shorthand) or PROPERTY_VALUE (non-shorthand) to the variable.
  */
 
 import { describe, it, after, beforeEach } from 'node:test';
@@ -67,7 +69,9 @@ async function setupTest(backend, files) {
 /**
  * V2: Find a PROPERTY_ASSIGNMENT node by property name that is a child of an
  * object literal (via HAS_PROPERTY edge).
- * Returns the PROPERTY_ASSIGNMENT node and the READS_FROM target.
+ * Returns the PROPERTY_ASSIGNMENT node and the resolved target variable.
+ * Non-shorthand `{ key: var }` uses PROPERTY_VALUE edge (REG-598).
+ * Shorthand `{ x }` uses READS_FROM edge.
  */
 async function findPropertyInObjectLiteral(backend, propertyName) {
   const allNodes = await backend.getAllNodes();
@@ -78,11 +82,11 @@ async function findPropertyInObjectLiteral(backend, propertyName) {
     if (edge.type === 'HAS_PROPERTY') {
       const dstNode = allNodes.find(n => n.id === edge.dst);
       if (dstNode && dstNode.type === 'PROPERTY_ASSIGNMENT' && dstNode.name === propertyName) {
-        // Find what this PROPERTY_ASSIGNMENT resolves to via READS_FROM
-        const readsFrom = allEdges.find(e =>
-          e.type === 'READS_FROM' && e.src === dstNode.id
+        // Find what this PROPERTY_ASSIGNMENT resolves to via PROPERTY_VALUE or READS_FROM
+        const valueEdge = allEdges.find(e =>
+          (e.type === 'PROPERTY_VALUE' || e.type === 'READS_FROM') && e.src === dstNode.id
         );
-        const resolvedNode = readsFrom ? allNodes.find(n => n.id === readsFrom.dst) : null;
+        const resolvedNode = valueEdge ? allNodes.find(n => n.id === valueEdge.dst) : null;
         return { propertyAssignment: dstNode, resolvedNode, hasPropertyEdge: edge };
       }
     }

@@ -776,4 +776,133 @@ class Foo {
       );
     });
   });
+
+  // ==========================================================================
+  // Group 11: Object literal PROPERTY_VALUE with Identifier value (REG-598)
+  // ==========================================================================
+  describe('Object literal PROPERTY_VALUE with Identifier value (REG-598)', () => {
+    it('should create PROPERTY_VALUE edge for { name: userName }', async () => {
+      await setupTest(backend, {
+        'index.js': `
+const userName = 'Alice';
+const obj = { name: userName };
+        `
+      });
+
+      const allNodes = await backend.getAllNodes();
+      const allEdges = await backend.getAllEdges();
+
+      const propAssign = allNodes.find(n =>
+        n.type === 'PROPERTY_ASSIGNMENT' && n.name === 'name'
+      );
+      assert.ok(propAssign, 'PROPERTY_ASSIGNMENT(name) not found');
+
+      const userNameVar = allNodes.find(n =>
+        n.name === 'userName' && (n.type === 'VARIABLE' || n.type === 'CONSTANT')
+      );
+      assert.ok(userNameVar, 'Variable "userName" not found');
+
+      const propValue = allEdges.find(e =>
+        e.type === 'PROPERTY_VALUE' &&
+        e.src === propAssign.id &&
+        e.dst === userNameVar.id
+      );
+      assert.ok(
+        propValue,
+        `Expected PROPERTY_VALUE edge from PROPERTY_ASSIGNMENT(name) to VARIABLE(userName). ` +
+        `Found edges from PA: ${JSON.stringify(allEdges.filter(e => e.src === propAssign.id).map(e => ({ type: e.type, dst: e.dst })))}`
+      );
+    });
+
+    it('should NOT create READS_FROM for non-shorthand Identifier value', async () => {
+      await setupTest(backend, {
+        'index.js': `
+const userName = 'Alice';
+const obj = { name: userName };
+        `
+      });
+
+      const allNodes = await backend.getAllNodes();
+      const allEdges = await backend.getAllEdges();
+
+      const propAssign = allNodes.find(n =>
+        n.type === 'PROPERTY_ASSIGNMENT' && n.name === 'name'
+      );
+      assert.ok(propAssign, 'PROPERTY_ASSIGNMENT(name) not found');
+
+      const readsFrom = allEdges.find(e =>
+        e.type === 'READS_FROM' && e.src === propAssign.id
+      );
+      assert.ok(
+        !readsFrom,
+        `Non-shorthand { name: userName } should produce PROPERTY_VALUE, not READS_FROM. ` +
+        `Found: ${JSON.stringify(readsFrom)}`
+      );
+    });
+
+    it('should still produce READS_FROM for shorthand { x } (regression)', async () => {
+      await setupTest(backend, {
+        'index.js': `
+const x = 42;
+const obj = { x };
+        `
+      });
+
+      const allNodes = await backend.getAllNodes();
+      const allEdges = await backend.getAllEdges();
+
+      const propAssign = allNodes.find(n =>
+        n.type === 'PROPERTY_ASSIGNMENT' && n.name === 'x'
+      );
+      assert.ok(propAssign, 'PROPERTY_ASSIGNMENT(x) not found');
+
+      const xVar = allNodes.find(n =>
+        n.name === 'x' && (n.type === 'VARIABLE' || n.type === 'CONSTANT')
+      );
+      assert.ok(xVar, 'Variable "x" not found');
+
+      const readsFrom = allEdges.find(e =>
+        e.type === 'READS_FROM' &&
+        e.src === propAssign.id &&
+        e.dst === xVar.id
+      );
+      assert.ok(
+        readsFrom,
+        `Shorthand { x } should produce READS_FROM, not PROPERTY_VALUE. ` +
+        `Found edges from PA: ${JSON.stringify(allEdges.filter(e => e.src === propAssign.id).map(e => ({ type: e.type, dst: e.dst })))}`
+      );
+    });
+
+    it('should still produce PROPERTY_VALUE for literal values via edge-map', async () => {
+      await setupTest(backend, {
+        'index.js': `
+const obj = { key: "literal" };
+        `
+      });
+
+      const allNodes = await backend.getAllNodes();
+      const allEdges = await backend.getAllEdges();
+
+      const propAssign = allNodes.find(n =>
+        n.type === 'PROPERTY_ASSIGNMENT' && n.name === 'key'
+      );
+      assert.ok(propAssign, 'PROPERTY_ASSIGNMENT(key) not found');
+
+      const literalNode = allNodes.find(n =>
+        n.type === 'LITERAL' && n.name === 'literal'
+      );
+      assert.ok(literalNode, 'LITERAL("literal") not found');
+
+      const propValue = allEdges.find(e =>
+        e.type === 'PROPERTY_VALUE' &&
+        e.src === propAssign.id &&
+        e.dst === literalNode.id
+      );
+      assert.ok(
+        propValue,
+        `Expected PROPERTY_VALUE edge from PROPERTY_ASSIGNMENT(key) to LITERAL. ` +
+        `Found edges from PA: ${JSON.stringify(allEdges.filter(e => e.src === propAssign.id).map(e => ({ type: e.type, dst: e.dst })))}`
+      );
+    });
+  });
 });
