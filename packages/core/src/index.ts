@@ -236,6 +236,7 @@ export { RustModuleIndexer } from './plugins/indexing/RustModuleIndexer.js';
 
 // Analysis plugins
 export { CoreV2Analyzer } from './plugins/analysis/CoreV2Analyzer.js';
+export { CoreV3Analyzer } from './plugins/analysis/CoreV3Analyzer.js';
 export { ExpressRouteAnalyzer } from './plugins/analysis/ExpressRouteAnalyzer.js';
 export { ExpressResponseAnalyzer } from './plugins/analysis/ExpressResponseAnalyzer.js';
 export { NestJSRouteAnalyzer } from './plugins/analysis/NestJSRouteAnalyzer.js';

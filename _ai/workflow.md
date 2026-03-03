@@ -13,12 +13,10 @@ All implementation happens through coding subagents. Top-level agent only plans 
 ## Pipeline
 
 ```
-1. Plan Mode (mandatory, iterative)
+1. Plan Mode (mandatory, exhaustive)
    → Top-level Claude explores code, builds plan
-   → Explicitly surfaces open questions and edge cases for user decisions
-   → Multiple iterations until all edge cases are covered
-   → Grafema invariants (graph guarantees) defined as acceptance criteria
-   → User approves final plan
+   → Plan must be exhaustive on first presentation (see Exhaustive Planning below)
+   → User approves or gives feedback
 
 2. Dijkstra Verification (for non-trivial tasks)
    → Edge case verification of approved plan (Opus subagent)
@@ -37,25 +35,98 @@ All implementation happens through coding subagents. Top-level agent only plans 
 5. Вадим (human) → final confirmation
 ```
 
-## Plan Mode Protocol
+## Plan Mode Protocol — Exhaustive Planning
 
 Plan mode is **mandatory** for all non-trivial tasks. Trivial tasks (typo, single-line fix) may skip.
 
-**Requirements:**
-- NOT just "here's a plan, ok?" — multiple rounds of iteration
-- Claude MUST enumerate found edge cases and alternatives
-- User makes design decisions via AskUserQuestion
-- Cover maximum edge cases BEFORE implementation
-- **Grafema invariants:** plan MUST specify graph invariants (guarantees) that describe the task. These invariants are included in tests as acceptance criteria
-- Each iteration narrows open questions until none remain
+**The plan presented to the user must already be exhaustive.** No back-and-forth "anything missing?" iterations — think deeply during exploration, search the graph thoroughly, and present a complete plan that already accounts for everything below. When the user sees the plan, the answer to "anything missing? siblings? out of scope?" should already be "I thought about it, here's what I found and decided."
 
-**Plan content must include:**
-1. Problem analysis and approach
+### What "exhaustive" means concretely
+
+**Completeness — search, don't assume:**
+- Search the graph for ALL callers/usages of functions/types being changed — not just the ones in the task description
+- Check error handling paths (null, undefined, empty, wrong type)
+- Check async/timing paths (races, ordering, cleanup on failure)
+- If touching a public API — check all consumers, not just the obvious ones
+- Use `find_nodes`, `find_calls`, `query_graph`, `trace_dataflow` — real search, not "I think there are no other callers"
+
+**Siblings — same pattern, same fix, same plan:**
+- If fixing a bug in one visitor/handler/resolver — search for the same anti-pattern in ALL siblings (every visitor, every handler, every resolver)
+- If fixing a type/interface — find ALL implementations
+- If fixing a resolution path — find ALL resolution paths with shared logic
+- **Include siblings in the plan.** One task that fixes everything > N tasks with N planning overheads
+
+**Scope bias — include by default:**
+- Default is INCLUDE, not exclude
+- Exclude only if: genuinely different root cause, fundamentally different approach needed, or risk of destabilizing unrelated subsystem
+- "Different file" is NOT a reason to exclude
+- Any exclusion must be listed explicitly with reasoning
+
+**Coverage — specific, not vague:**
+- For each change — name the specific test scenarios (not "we'll add tests")
+- Search for existing tests that will break
+- If task involves resolution — trace the FULL chain (nested, re-exported, aliased cases)
+- Graph invariants must actually catch the bug — would a regression pass them?
+
+### Plan content
+
+1. Problem analysis and approach (with alternatives considered and why rejected)
 2. Files to modify and nature of changes
-3. Edge cases found (with proposed handling)
-4. Open questions requiring user decision
-5. Grafema graph invariants for the task
-6. Test strategy
+3. Edge cases found — with proposed handling for each
+4. Sibling occurrences found — included or excluded with reasoning
+5. Intentional exclusions — what's related but out of scope, and why
+6. Grafema invariants → live guarantees (see "Invariants → Live Guarantees" section)
+7. Test strategy — specific scenarios, not placeholders; note which tests are replaced by guarantees
+8. Design decisions made autonomously — and which ones need user input
+
+### Decision authority
+
+Claude makes decisions autonomously in favor of:
+- **More complete resolving** over partial
+- **Broader coverage** over narrow
+- **Larger cohesive scope** over fragmented tasks
+- **Real graph search results** over assumptions
+
+Only escalate to user via AskUserQuestion when:
+- Genuine architectural trade-off with no clear winner
+- Scope expansion would more than double the implementation effort
+- Multiple valid approaches with meaningfully different trade-offs
+
+## Invariants → Live Guarantees
+
+**Plan invariants are NOT documentation. They become live Datalog guarantees that catch regressions automatically.**
+
+### Pipeline
+
+1. **Plan** formulates invariant in human terms (e.g., "every CALL with a resolved target must have a CALLS edge")
+2. **Implementation** includes `create_guarantee` with the Datalog rule:
+   ```
+   violation(X) :- node(X, "CALL"), attr(X, "resolvedName", _), not edge(X, _, "CALLS").
+   ```
+3. **Guarantee exported** to `.grafema/guarantees.yaml`, committed with the code
+4. **`grafema check`** validates on every run — `process.exit(1)` on violation
+5. **Regressions caught automatically** — Datalog query over the entire graph, not one fixture
+
+### What guarantees replace
+
+Guarantees replace **graph-structural unit tests** — tests asserting "node X has edge Y" on a specific fixture. The guarantee checks the same invariant across ALL analyzed code.
+
+**Still need unit tests for:**
+- Logic/behavior (functions return correct values, error handling)
+- Edge cases in implementation (null inputs, empty arrays, async)
+- Integration tests (pipeline end-to-end with real files)
+
+**Replace with guarantees:**
+- "Nodes of type X always have property Y" → `violation(X) :- node(X, "TYPE"), not attr(X, "prop", _).`
+- "Every A→B edge has valid target" → `violation(X) :- edge(X, Y, "A_TO_B"), not node(Y, _).`
+- "No orphan nodes of type X" → `violation(X) :- node(X, "TYPE"), not edge(_, X, _), not edge(X, _, _).`
+
+### In the plan — each invariant MUST include
+
+1. Human description of what it guarantees
+2. The Datalog rule (or sketch if exact syntax depends on implementation)
+3. Severity: `error` (blocks CI) / `warning` / `info`
+4. What unit test(s) it replaces or makes redundant (if any)
 
 ## Implementation Protocol
 

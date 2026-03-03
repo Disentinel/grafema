@@ -179,6 +179,15 @@ importers:
         specifier: ^5.9.3
         version: 5.9.3
 
+  packages/core-v3:
+    dependencies:
+      '@oxc-project/types':
+        specifier: ^0.96.0
+        version: 0.96.0
+      oxc-parser:
+        specifier: ^0.96.0
+        version: 0.96.0
+
   packages/lang-defs:
     devDependencies:
       typescript:

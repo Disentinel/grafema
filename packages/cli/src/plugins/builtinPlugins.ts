@@ -17,6 +17,7 @@ import {
   RustModuleIndexer,
   // Analysis
   CoreV2Analyzer,
+  CoreV3Analyzer,
   ExpressRouteAnalyzer,
   ExpressResponseAnalyzer,
   NestJSRouteAnalyzer,
@@ -64,6 +65,7 @@ export const BUILTIN_PLUGINS: Record<string, () => Plugin> = {
   RustModuleIndexer: () => new RustModuleIndexer() as Plugin,
   // Analysis
   CoreV2Analyzer: () => new CoreV2Analyzer() as Plugin,
+  CoreV3Analyzer: () => new CoreV3Analyzer() as Plugin,
   ExpressRouteAnalyzer: () => new ExpressRouteAnalyzer() as Plugin,
   ExpressResponseAnalyzer: () => new ExpressResponseAnalyzer() as Plugin,
   NestJSRouteAnalyzer: () => new NestJSRouteAnalyzer() as Plugin,

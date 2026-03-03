@@ -99,7 +99,7 @@ If user provides just a task ID without further context, the Linear issue descri
 
 **CRITICAL: NO CODING AT TOP LEVEL!** All implementation happens through coding subagents. Each subagent receives one minimal atomic change (tests + code, max 2-3 files).
 
-**Pipeline:** Plan mode (iterative) → Dijkstra verification → Implementation (coding agents) → 3-Review → User
+**Pipeline:** Plan mode (exhaustive) → Dijkstra verification → Implementation (coding agents) → 3-Review → User
 
 **3-Review:** Steve ∥ Вадим auto ∥ Uncle Bob (single parallel batch, all Opus). ANY REJECT → fix + re-run ALL 3. ALL approve → present to user.
 
@@ -107,12 +107,16 @@ If user provides just a task ID without further context, the Linear issue descri
 
 **Mandatory for all non-trivial tasks.** Trivial tasks (typo, single-line fix) may skip.
 
-- **Iterative** — multiple rounds, not just "here's a plan, ok?"
-- Claude MUST enumerate found edge cases and alternatives
-- User makes design decisions via AskUserQuestion
-- Cover maximum edge cases BEFORE implementation
-- **Grafema invariants:** plan MUST specify graph invariants (guarantees) that describe the task. These invariants are included in tests as acceptance criteria
-- Tривиальные задачи (typo, однострочник) — можно без plan mode
+**Plan must be exhaustive on first presentation.** No iterative "anything missing?" — think deeply during exploration, search the graph, present a plan that already answers: "What's missing? Siblings? Out of scope? Coverage gaps?"
+
+- **Completeness** — search graph for ALL callers/usages, not just obvious ones. Real search, not assumptions.
+- **Siblings** — same bug pattern in other visitors/handlers/resolvers? Include in plan, don't split into N tasks.
+- **Scope bias: include > exclude.** Exclude only with explicit reasoning. "Different file" is not a reason.
+- **Coverage** — specific test scenarios per change, not "we'll add tests". Full resolution chains.
+- **Grafema invariants → live guarantees** — each invariant becomes a Datalog rule via `create_guarantee`, exported to `.grafema/guarantees.yaml`, validated by `grafema check`. Replaces graph-structural unit tests. Details in `_ai/workflow.md`.
+- **Autonomous decisions** in favor of: broader coverage, fuller resolving, larger cohesive scope. Escalate to user only for genuine architectural trade-offs.
+- Details in `_ai/workflow.md`
+- Тривиальные задачи (typo, однострочник) — можно без plan mode
 
 ## Forbidden Patterns
 
