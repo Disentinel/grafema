@@ -1,0 +1,76 @@
+cabal-version:   3.0
+name:            rust-analyzer
+version:         0.1.0.0
+synopsis:        Rust per-file AST analyzer for Grafema (receives syn AST JSON from orchestrator)
+license:         MIT
+build-type:      Simple
+
+executable grafema-rust-analyzer
+  main-is:          Main.hs
+  hs-source-dirs:   src
+  default-language: Haskell2010
+  ghc-options:      -Wall -Wno-name-shadowing -O2
+
+  other-modules:
+    RustAST
+    Analysis.Types
+    Analysis.Context
+    Analysis.Walker
+    Rules.Declarations
+    Rules.DataTypes
+    Rules.Traits
+    Rules.Imports
+    Rules.Exports
+    Rules.Expressions
+    Rules.Patterns
+    Rules.Ownership
+    Rules.ErrorFlow
+    Rules.Unsafe
+    Rules.Closures
+    Rules.TypeLevel
+    Rules.Attributes
+
+  build-depends:
+    base           >= 4.17  && < 5,
+    aeson          >= 2.1   && < 2.3,
+    bytestring     >= 0.11  && < 0.13,
+    text           >= 2.0   && < 2.2,
+    mtl            >= 2.3   && < 2.4,
+    containers     >= 0.6   && < 0.8,
+    grafema-common
+
+test-suite spec
+  type:             exitcode-stdio-1.0
+  main-is:          Spec.hs
+  hs-source-dirs:   test, src
+  default-language: Haskell2010
+  ghc-options:      -Wall -Wno-name-shadowing
+
+  other-modules:
+    RustAST
+    Analysis.Types
+    Analysis.Context
+    Analysis.Walker
+    Rules.Declarations
+    Rules.DataTypes
+    Rules.Traits
+    Rules.Imports
+    Rules.Exports
+    Rules.Expressions
+    Rules.Patterns
+    Rules.Ownership
+    Rules.ErrorFlow
+    Rules.Unsafe
+    Rules.Closures
+    Rules.TypeLevel
+    Rules.Attributes
+
+  build-depends:
+    base           >= 4.17  && < 5,
+    aeson          >= 2.1   && < 2.3,
+    bytestring     >= 0.11  && < 0.13,
+    text           >= 2.0   && < 2.2,
+    mtl            >= 2.3   && < 2.4,
+    containers     >= 0.6   && < 0.8,
+    grafema-common,
+    hspec          >= 2.10  && < 2.12
