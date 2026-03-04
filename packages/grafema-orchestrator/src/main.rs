@@ -52,7 +52,7 @@ async fn main() -> Result<()> {
             jobs,
             force,
         } => {
-            let cfg = config::load(&config_path)?;
+            let cfg = config::load(&config_path)?.with_defaults();
 
             // Resolve RFDB socket path: CLI flag > config > default
             let socket_path = socket
@@ -167,29 +167,115 @@ async fn main() -> Result<()> {
             // 7. Update mtime tracker for next incremental run
             gc::update_mtimes(&mut gen_tracker, &changed_files)?;
 
-            // 8. Run plugins via DAG (with resolve daemon pool)
-            if !cfg.plugins.is_empty() {
-                tracing::info!(count = cfg.plugins.len(), "Running plugins");
+            // 8. Run resolution plugins with in-memory node data (bypasses RFDB round-trip)
+            let resolve_nodes = analyzer::collect_resolve_nodes(&results);
+            if !resolve_nodes.is_empty() {
+                tracing::info!(
+                    nodes = resolve_nodes.len(),
+                    "Running built-in resolution with in-memory nodes"
+                );
 
-                // Create resolve pool (size=1: plugins run sequentially per DAG level)
+                let resolve_pool_config = process_pool::PoolConfig {
+                    command: "grafema-resolve".to_string(),
+                    args: vec!["--daemon".to_string()],
+                    ..process_pool::PoolConfig::default()
+                };
+
+                match process_pool::ProcessPool::new(resolve_pool_config, 1) {
+                    Ok(resolve_pool) => {
+                        // Step 1: Import resolution
+                        let mut import_output = plugin::run_resolve_with_nodes(
+                            "imports",
+                            &resolve_nodes,
+                            &resolve_pool,
+                        )
+                        .await
+                        .context("Import resolution failed")?;
+                        plugin::validate_plugin_output(&import_output)?;
+                        plugin::stamp_metadata(&mut import_output, "js-import-resolution", generation);
+
+                        let import_files: Vec<String> = import_output
+                            .nodes
+                            .iter()
+                            .filter_map(|n| n.file.clone())
+                            .collect::<std::collections::HashSet<_>>()
+                            .into_iter()
+                            .collect();
+                        rfdb.commit_batch(&import_files, &import_output.nodes, &import_output.edges, false)
+                            .await
+                            .context("Failed to commit import resolution output")?;
+
+                        tracing::info!(
+                            nodes = import_output.nodes.len(),
+                            edges = import_output.edges.len(),
+                            "Import resolution complete"
+                        );
+
+                        // Step 2: Runtime globals (uses updated graph)
+                        let mut globals_output = plugin::run_resolve_with_nodes(
+                            "runtime-globals",
+                            &resolve_nodes,
+                            &resolve_pool,
+                        )
+                        .await
+                        .context("Runtime globals resolution failed")?;
+                        plugin::validate_plugin_output(&globals_output)?;
+                        plugin::stamp_metadata(&mut globals_output, "runtime-globals", generation);
+
+                        let globals_files: Vec<String> = globals_output
+                            .nodes
+                            .iter()
+                            .filter_map(|n| n.file.clone())
+                            .collect::<std::collections::HashSet<_>>()
+                            .into_iter()
+                            .collect();
+                        rfdb.commit_batch(&globals_files, &globals_output.nodes, &globals_output.edges, false)
+                            .await
+                            .context("Failed to commit runtime globals output")?;
+
+                        tracing::info!(
+                            nodes = globals_output.nodes.len(),
+                            edges = globals_output.edges.len(),
+                            "Runtime globals resolution complete"
+                        );
+
+                        resolve_pool.shutdown().await;
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "Failed to create resolve pool, skipping built-in resolution: {e}"
+                        );
+                    }
+                }
+            }
+
+            // 8b. Run user-defined plugins via DAG (if any non-default plugins configured)
+            let user_plugins: Vec<_> = cfg
+                .plugins
+                .iter()
+                .filter(|p| {
+                    p.name != "js-import-resolution" && p.name != "runtime-globals"
+                })
+                .cloned()
+                .collect();
+            if !user_plugins.is_empty() {
+                tracing::info!(count = user_plugins.len(), "Running user-defined plugins");
+
                 let resolve_pool_config = process_pool::PoolConfig {
                     command: "grafema-resolve".to_string(),
                     args: vec!["--daemon".to_string()],
                     ..process_pool::PoolConfig::default()
                 };
                 let resolve_pool = match process_pool::ProcessPool::new(resolve_pool_config, 1) {
-                    Ok(pool) => {
-                        tracing::info!("Created resolve daemon pool");
-                        Some(pool)
-                    }
+                    Ok(pool) => Some(pool),
                     Err(e) => {
-                        tracing::warn!("Failed to create resolve pool, falling back to spawn-per-plugin: {e}");
+                        tracing::warn!("Failed to create resolve pool for user plugins: {e}");
                         None
                     }
                 };
 
                 let plugin_results = plugin::run_plugins_dag(
-                    &cfg.plugins,
+                    &user_plugins,
                     &mut rfdb,
                     &socket_path,
                     db_name,
@@ -198,7 +284,6 @@ async fn main() -> Result<()> {
                 )
                 .await?;
 
-                // Shutdown resolve pool
                 if let Some(pool) = resolve_pool {
                     pool.shutdown().await;
                 }
@@ -208,15 +293,6 @@ async fn main() -> Result<()> {
                         tracing::error!(plugin = %pr.plugin_name, "{err}");
                     }
                 }
-
-                let plugin_nodes: usize = plugin_results.iter().map(|r| r.nodes_emitted).sum();
-                let plugin_edges: usize = plugin_results.iter().map(|r| r.edges_emitted).sum();
-                tracing::info!(
-                    plugins = plugin_results.len(),
-                    nodes = plugin_nodes,
-                    edges = plugin_edges,
-                    "Plugins complete"
-                );
             }
 
             // 9. Summary

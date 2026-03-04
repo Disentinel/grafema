@@ -615,6 +615,76 @@ pub async fn run_streaming_plugin_pooled(
 }
 
 // ---------------------------------------------------------------------------
+// Direct resolution with in-memory nodes (bypasses RFDB Datalog round-trip)
+// ---------------------------------------------------------------------------
+
+/// Run a resolution command with pre-collected nodes, bypassing RFDB.
+///
+/// Instead of querying RFDB via Datalog and losing field names/types in the
+/// round-trip, this sends the original `GraphNode` JSON values directly to
+/// the resolve daemon pool.
+///
+/// # Arguments
+/// * `cmd` - Resolution subcommand (e.g., "imports", "runtime-globals")
+/// * `nodes` - Pre-collected `serde_json::Value` nodes from analysis results
+/// * `resolve_pool` - Persistent resolve daemon process pool
+pub async fn run_resolve_with_nodes(
+    cmd: &str,
+    nodes: &[serde_json::Value],
+    resolve_pool: &ProcessPool,
+) -> Result<PluginOutput> {
+    let request = ResolveRequest {
+        cmd: cmd.to_string(),
+        nodes: nodes.to_vec(),
+    };
+
+    let payload = rmp_serde::to_vec_named(&request)
+        .context("Failed to encode resolve request")?;
+
+    let response_bytes = resolve_pool
+        .request(&payload)
+        .await
+        .context(format!("Pool request failed for resolve cmd '{cmd}'"))?;
+
+    let response: ResolveResponse = rmp_serde::from_slice(&response_bytes)
+        .context(format!("Failed to decode resolve response for cmd '{cmd}'"))?;
+
+    if response.status != "ok" {
+        let msg = response.error.unwrap_or_else(|| "unknown error".to_string());
+        bail!("Resolve daemon error for cmd '{cmd}': {msg}");
+    }
+
+    let mut output = PluginOutput::default();
+    if let Some(commands) = response.commands {
+        for command in commands {
+            match command {
+                ResolveCommand::EmitNode(n) => {
+                    output.nodes.push(WireNode {
+                        id: n.id,
+                        semantic_id: n.semantic_id,
+                        node_type: n.node_type,
+                        name: n.name,
+                        file: n.file,
+                        exported: n.exported,
+                        metadata: n.metadata,
+                    });
+                }
+                ResolveCommand::EmitEdge(e) => {
+                    output.edges.push(WireEdge {
+                        src: e.src,
+                        dst: e.dst,
+                        edge_type: e.edge_type,
+                        metadata: e.metadata,
+                    });
+                }
+            }
+        }
+    }
+
+    Ok(output)
+}
+
+// ---------------------------------------------------------------------------
 // Full DAG execution
 // ---------------------------------------------------------------------------
 

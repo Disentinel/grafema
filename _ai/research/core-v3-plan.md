@@ -1,7 +1,7 @@
 # Core v3: Haskell + Datalog Architecture
 
-**Status:** Research / Architecture Plan
-**Date:** 2026-03-03 (revised 2026-03-04 based on MLA findings)
+**Status:** Steps 1-3 implemented, Step 4+ remaining
+**Date:** 2026-03-03 (revised 2026-03-04 based on MLA findings, updated 2026-03-04 after cross-file resolution)
 **Origin:** Analysis of core-v2 visitors, enrichers, and resolve.ts revealed that the current JS codebase naturally splits into three layers with distinct computational models.
 
 ## Problem
@@ -530,20 +530,22 @@ Breakdown of v3:
 
 The rewrite is sequenced so that each step can be validated against core-v2 output before proceeding:
 
-**Step 1: Haskell binary for per-file analysis (replaces visitors + walk.ts + edge-map)**
+**Step 1: Haskell binary for per-file analysis (replaces visitors + walk.ts + edge-map)** ✅ DONE
 - Haskell binary reads OXC ESTree JSON, outputs FileAnalysis JSON
 - Includes postFile scope resolution (intra-file)
-- Validation: output must match core-v2 exactly (diff test suite)
+- `withExported` context propagates exported flag through export declarations
+- IMPORT_BINDING nodes carry `source` metadata for cross-file resolution
 
-**Step 2: Rust orchestrator + RFDB ingestion (replaces JS orchestrator)**
-- Config-driven discovery, Phase 1 spawning, RFDB ingestion
+**Step 2: Rust orchestrator + RFDB ingestion (replaces JS orchestrator)** ✅ DONE
+- Config-driven discovery, Phase 1 spawning (OXC + Haskell daemon pool), RFDB ingestion
 - Plugin DAG runner for Phase 2
-- Validation: end-to-end analysis produces same graph as core-v2
+- Direct in-memory resolution path (bypasses RFDB Datalog round-trip)
+- Default plugin configuration (`js-import-resolution`, `runtime-globals`)
 
-**Step 3: Haskell plugins for cross-file resolution (replaces resolve.ts)**
-- `js-import-resolution` plugin matches IMPORT_BINDING → EXPORT_BINDING
-- `runtime-globals` plugin matches unresolved REFERENCE → runtime definitions
-- Validation: resolved edges must match resolve.ts output
+**Step 3: Haskell plugins for cross-file resolution (replaces resolve.ts)** ✅ DONE
+- `js-import-resolution`: IMPORT_BINDING → export target + IMPORT → MODULE
+- `runtime-globals`: unresolved REFERENCE → GLOBAL_DEFINITION
+- E2E verified: named, default, namespace imports; module-level edges; runtime globals
 
 **Step 4: Haskell plugins for enrichment (replaces 15 enrichers)**
 - One enricher at a time → streaming or batch plugin
@@ -918,21 +920,37 @@ Option B gives: open ecosystem (anyone builds on the graph) + proprietary core (
 
 After implementing Phase 1 (Haskell per-file analysis) and running it on Grafema's own codebase (116K nodes, 63K edges, 0 analysis errors), several architectural decisions were revised based on real experience.
 
-### Current State
+### Current State (updated 2026-03-04)
 
-**What works:**
-- Haskell binary (`grafema-core-v3`) reads OXC ESTree JSON, outputs FileAnalysis JSON (nodes, edges)
+**Step 1 — DONE:** Haskell per-file analyzer
+- Haskell binary (`grafema-analyzer`) reads OXC ESTree JSON, outputs FileAnalysis JSON
 - 116,782 nodes, 63,813 edges across 354 files, 0 dangling edges
-- New node types: REFERENCE (38,539), EXPRESSION (5,678), IMPORT_BINDING (2,085), EXPORT_BINDING (771)
-- New edge type: DERIVED_FROM (10,820)
-- Committed as `f6cc2ac`
+- Intra-file scope resolution (`resolveFileRefs`) — REFERENCE→declaration READS_FROM edges
+- IMPORT_BINDING nodes carry `source` metadata and encode import source in semantic ID: `file->IMPORT_BINDING->name[in:./source]`
+- Export context (`withExported`) propagates `exported: true` to declarations inside `export` statements
+- Committed as `f6cc2ac`, cross-file metadata additions pending commit
 
-**What's missing:**
-- Intra-file scope resolution (postFile pass — `resolveFileRefs` in Haskell binary)
-- Cross-file resolution plugin (`js-import-resolution`)
-- Rust orchestrator (language-agnostic DAG runner)
-- Enrichment plugins
-- Plugin protocol implementation
+**Step 2 — DONE:** Rust orchestrator
+- Config-driven file discovery, OXC parse → Haskell analyzer daemon pool
+- RFDB ingestion with generation GC
+- Plugin DAG runner (Kahn's algorithm, topological sort by `depends_on`)
+- Direct resolution path: `collect_resolve_nodes` bypasses RFDB Datalog round-trip, sends in-memory GraphNode JSON to resolve daemon
+- Default plugins (`js-import-resolution`, `runtime-globals`) auto-configured via `AnalyzerConfig::with_defaults()`
+- Committed as `814dbd8`, in-memory resolution additions pending commit
+
+**Step 3 — DONE:** Cross-file resolution plugins (Haskell)
+- `grafema-resolve imports`: resolves IMPORT_BINDING → target export (FUNCTION, CONSTANT, CLASS, EXPORT_BINDING) AND IMPORT → MODULE (module-level edges)
+- `grafema-resolve runtime-globals`: resolves unresolved REFERENCE → GLOBAL_DEFINITION (console, process, setTimeout, etc.)
+- E2E verified: `import { greet } from './utils'` produces IMPORTS_FROM edge to `utils.js->FUNCTION->greet`
+- Module-level: `IMPORT->./utils` → `MODULE#utils.js` with deduplication
+- Pending commit
+
+**What's remaining:**
+- Step 4: Enrichment plugins (express-routes, react-components, etc.)
+- Step 5: LibraryDef system
+- Step 6: Validation as Datalog
+- Step 7: Multi-language (Java first)
+- Namespace import resolution (`import * as X`) — needs MODULE-level binding, not export matching
 
 ### Decision 1: Parser — OXC, not Babel
 

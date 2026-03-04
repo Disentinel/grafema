@@ -33,7 +33,7 @@ pub struct FileAnalysis {
     pub exports: Vec<ExportInfo>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
 pub struct GraphNode {
     pub id: String,
     #[serde(rename = "type")]
@@ -47,7 +47,7 @@ pub struct GraphNode {
     pub metadata: HashMap<String, serde_json::Value>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
 pub struct GraphEdge {
     pub src: String,
     pub dst: String,
@@ -381,6 +381,36 @@ pub fn to_wire_edges(analysis: &FileAnalysis) -> Vec<WireEdge> {
                 metadata,
             }
         })
+        .collect()
+}
+
+// ---------------------------------------------------------------------------
+// Resolution node collection
+// ---------------------------------------------------------------------------
+
+/// Node types that the resolution plugin needs.
+const RESOLVE_NODE_TYPES: &[&str] = &[
+    "IMPORT_BINDING",
+    "EXPORT_BINDING",
+    "EXPORT",
+    "FUNCTION",
+    "VARIABLE",
+    "CONSTANT",
+    "CLASS",
+];
+
+/// Collect nodes relevant for cross-file resolution from analysis results.
+///
+/// Filters `GraphNode`s from successful analysis results, keeping only types
+/// that the resolve daemon needs (imports, exports, declarations). Serializes
+/// each node to `serde_json::Value` — the format grafema-resolve expects.
+pub fn collect_resolve_nodes(results: &[AnalysisResult]) -> Vec<serde_json::Value> {
+    results
+        .iter()
+        .filter_map(|r| r.analysis.as_ref())
+        .flat_map(|a| &a.nodes)
+        .filter(|n| RESOLVE_NODE_TYPES.contains(&n.node_type.as_str()))
+        .filter_map(|n| serde_json::to_value(n).ok())
         .collect()
 }
 
@@ -730,5 +760,127 @@ mod tests {
             response.error.as_deref(),
             Some("Parse error: unexpected token")
         );
+    }
+
+    #[test]
+    fn collect_resolve_nodes_filters_by_type() {
+        let results = vec![AnalysisResult {
+            file: PathBuf::from("test.js"),
+            analysis: Some(FileAnalysis {
+                file: "test.js".to_string(),
+                module_id: "test.js".to_string(),
+                nodes: vec![
+                    GraphNode {
+                        id: "test.js->IMPORT_BINDING->foo".to_string(),
+                        node_type: "IMPORT_BINDING".to_string(),
+                        name: "foo".to_string(),
+                        file: "test.js".to_string(),
+                        line: 1,
+                        column: 0,
+                        exported: false,
+                        metadata: HashMap::new(),
+                    },
+                    GraphNode {
+                        id: "test.js->FUNCTION->bar".to_string(),
+                        node_type: "FUNCTION".to_string(),
+                        name: "bar".to_string(),
+                        file: "test.js".to_string(),
+                        line: 5,
+                        column: 0,
+                        exported: true,
+                        metadata: HashMap::new(),
+                    },
+                    GraphNode {
+                        id: "test.js->REFERENCE->baz".to_string(),
+                        node_type: "REFERENCE".to_string(),
+                        name: "baz".to_string(),
+                        file: "test.js".to_string(),
+                        line: 10,
+                        column: 0,
+                        exported: false,
+                        metadata: HashMap::new(),
+                    },
+                    GraphNode {
+                        id: "test.js->CALL->qux".to_string(),
+                        node_type: "CALL".to_string(),
+                        name: "qux".to_string(),
+                        file: "test.js".to_string(),
+                        line: 12,
+                        column: 0,
+                        exported: false,
+                        metadata: HashMap::new(),
+                    },
+                ],
+                edges: vec![],
+                exports: vec![],
+            }),
+            errors: vec![],
+        }];
+
+        let nodes = collect_resolve_nodes(&results);
+        // Should include IMPORT_BINDING and FUNCTION, skip REFERENCE and CALL
+        assert_eq!(nodes.len(), 2);
+        assert_eq!(nodes[0]["type"], "IMPORT_BINDING");
+        assert_eq!(nodes[1]["type"], "FUNCTION");
+    }
+
+    #[test]
+    fn collect_resolve_nodes_skips_failed_analyses() {
+        let results = vec![
+            AnalysisResult {
+                file: PathBuf::from("ok.js"),
+                analysis: Some(FileAnalysis {
+                    file: "ok.js".to_string(),
+                    module_id: "ok.js".to_string(),
+                    nodes: vec![GraphNode {
+                        id: "ok.js->VARIABLE->x".to_string(),
+                        node_type: "VARIABLE".to_string(),
+                        name: "x".to_string(),
+                        file: "ok.js".to_string(),
+                        line: 1,
+                        column: 0,
+                        exported: false,
+                        metadata: HashMap::new(),
+                    }],
+                    edges: vec![],
+                    exports: vec![],
+                }),
+                errors: vec![],
+            },
+            AnalysisResult {
+                file: PathBuf::from("fail.js"),
+                analysis: None,
+                errors: vec!["parse failed".to_string()],
+            },
+        ];
+
+        let nodes = collect_resolve_nodes(&results);
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0]["name"], "x");
+    }
+
+    #[test]
+    fn collect_resolve_nodes_empty_results() {
+        let results: Vec<AnalysisResult> = vec![];
+        let nodes = collect_resolve_nodes(&results);
+        assert!(nodes.is_empty());
+    }
+
+    #[test]
+    fn graph_node_serializes_with_type_field() {
+        let node = GraphNode {
+            id: "test.js->FUNCTION->foo".to_string(),
+            node_type: "FUNCTION".to_string(),
+            name: "foo".to_string(),
+            file: "test.js".to_string(),
+            line: 1,
+            column: 0,
+            exported: false,
+            metadata: HashMap::new(),
+        };
+        let value = serde_json::to_value(&node).unwrap();
+        // Should serialize node_type as "type" due to #[serde(rename = "type")]
+        assert_eq!(value["type"], "FUNCTION");
+        assert!(value.get("node_type").is_none());
     }
 }

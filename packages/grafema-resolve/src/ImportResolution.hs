@@ -15,6 +15,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Map.Strict as Map
 import Data.Map.Strict (Map)
+import Data.List (foldl')
 import Data.Maybe (fromMaybe)
 import qualified Data.Set as Set
 import Data.Set (Set)
@@ -27,9 +28,10 @@ import System.IO (hPutStrLn, stderr)
 -- | An entry in the export index: exported name, node ID, whether it's a
 --   re-export (and if so, the source module specifier).
 data ExportEntry = ExportEntry
-  { eeName     :: !Text    -- ^ exported name (e.g., "foo", "default", "*")
-  , eeNodeId   :: !Text    -- ^ ID of the node that defines this export
-  , eeReExport :: !(Maybe Text)
+  { eeName      :: !Text    -- ^ exported name (e.g., "foo", "default", "*")
+  , eeLocalName :: !Text    -- ^ local/original name to look up in source module for re-exports
+  , eeNodeId    :: !Text    -- ^ ID of the node that defines this export
+  , eeReExport  :: !(Maybe Text)
     -- ^ If this is a re-export, the source module specifier to follow
   } deriving (Show, Eq)
 
@@ -69,27 +71,29 @@ buildExportIndex nodes =
 -- | Extract export entries from a single node, returning (filePath, [entries]).
 nodeToExportEntries :: GraphNode -> [(Text, [ExportEntry])]
 nodeToExportEntries node
-  -- EXPORT_BINDING: explicit export specifier (export { foo } or export { foo as bar })
+  -- EXPORT_BINDING: explicit export specifier (export { foo } or export { foo as bar } from './src')
   | gnType node == "EXPORT_BINDING" =
       let exportedName = lookupMetaText "exportedName" (gnMetadata node)
           name = fromMaybe (gnName node) exportedName
-      in [(gnFile node, [ExportEntry name (gnId node) Nothing])]
+          localName = gnName node  -- original name to look up in source module
+          reExportSource = lookupMetaText "source" (gnMetadata node)
+      in [(gnFile node, [ExportEntry name localName (gnId node) reExportSource])]
 
   -- EXPORT node with name "default": default export
   | gnType node == "EXPORT" && gnName node == "default" =
-      [(gnFile node, [ExportEntry "default" (gnId node) Nothing])]
+      [(gnFile node, [ExportEntry "default" "default" (gnId node) Nothing])]
 
   -- EXPORT node with name "*:source": star re-export
   | gnType node == "EXPORT" && "*:" `T.isPrefixOf` gnName node =
       let source = T.drop 2 (gnName node)
-      in [(gnFile node, [ExportEntry "*" (gnId node) (Just source)])]
+      in [(gnFile node, [ExportEntry "*" "*" (gnId node) (Just source)])]
 
   -- EXPORT node with name "named": skip (container node, children carry info)
   | gnType node == "EXPORT" = []
 
   -- Directly exported declarations (FUNCTION, VARIABLE, CONSTANT, CLASS)
   | gnExported node && gnType node `elem` ["FUNCTION", "VARIABLE", "CONSTANT", "CLASS"] =
-      [(gnFile node, [ExportEntry (gnName node) (gnId node) Nothing])]
+      [(gnFile node, [ExportEntry (gnName node) (gnName node) (gnId node) Nothing])]
 
   | otherwise = []
 
@@ -236,8 +240,13 @@ resolveImportWithSource exportIndex visited depth node source importedName = do
                ++ T.unpack source ++ "' from " ++ T.unpack importerFile
         else return ()  -- bare specifier, silently skip
       return []
-    Just resolvedFile ->
-      resolveFromFile exportIndex visited depth node resolvedFile importedName
+    Just resolvedFile
+      -- Namespace import (import * as X): resolve to MODULE node
+      | importedName == "*" ->
+          let moduleId = "MODULE#" <> resolvedFile
+          in return [emitImportsFrom (gnId node) moduleId]
+      | otherwise ->
+          resolveFromFile exportIndex visited depth node resolvedFile importedName
 
 -- | Resolve an import from a specific resolved file.
 resolveFromFile
@@ -285,7 +294,7 @@ handleExportEntry exportIndex visited depth node entry =
       -- Direct export: emit the IMPORTS_FROM edge
       return [emitImportsFrom (gnId node) (eeNodeId entry)]
     Just reExportSource ->
-      -- Re-export: follow the chain
+      -- Re-export: follow the chain using the LOCAL name (e.g., "default" not "Calc")
       let importerFile = gnFile node
           mResolvedFile = resolveModulePath importerFile reExportSource exportIndex
       in case mResolvedFile of
@@ -294,7 +303,7 @@ handleExportEntry exportIndex visited depth node entry =
             ++ T.unpack reExportSource ++ "'"
           return []
         Just resolvedFile ->
-          resolveFromFile exportIndex visited (depth + 1) node resolvedFile (eeName entry)
+          resolveFromFile exportIndex visited (depth + 1) node resolvedFile (eeLocalName entry)
 
 -- | Try resolving through star re-exports.
 tryStarReExports
@@ -362,11 +371,63 @@ firstJust f (x:xs) = case f x of
 -- ---------------------------------------------------------------------------
 
 -- | Core import resolution logic, operating on a list of nodes.
+--
+-- Two phases:
+-- 1. Per-binding: IMPORT_BINDING → target export (FUNCTION, CONSTANT, etc.)
+-- 2. Module-level: IMPORT → MODULE (resolves module specifier to target module)
 resolveAll :: [GraphNode] -> IO [PluginCommand]
 resolveAll nodes = do
   let exportIndex = buildExportIndex nodes
       importBindings = filter (\n -> gnType n == "IMPORT_BINDING") nodes
-  concat <$> mapM (resolveImport exportIndex Set.empty 0) importBindings
+  bindingEdges <- concat <$> mapM (resolveImport exportIndex Set.empty 0) importBindings
+  let moduleEdges = resolveModuleImports nodes exportIndex
+  return (bindingEdges ++ moduleEdges)
+
+-- ---------------------------------------------------------------------------
+-- Module-level import resolution (IMPORT → MODULE)
+-- ---------------------------------------------------------------------------
+
+-- | Build a module index: file path → MODULE node ID.
+type ModuleIndex = Map Text Text
+
+buildModuleIndex :: [GraphNode] -> ModuleIndex
+buildModuleIndex = foldl' addModule Map.empty
+  where
+    addModule acc n
+      | gnType n == "MODULE" = Map.insert (gnFile n) (gnId n) acc
+      | otherwise = acc
+
+-- | Resolve IMPORT nodes to their target MODULE nodes.
+--
+-- For each unique IMPORT node, resolve its source specifier to a file path,
+-- look up the MODULE node for that file, and emit an IMPORTS_FROM edge.
+resolveModuleImports :: [GraphNode] -> ExportIndex -> [PluginCommand]
+resolveModuleImports nodes exportIndex =
+  let moduleIndex = buildModuleIndex nodes
+      importNodes = filter (\n -> gnType n == "IMPORT") nodes
+      -- Deduplicate by node ID (multiple import statements with same source
+      -- produce IMPORT nodes with the same semantic ID)
+      uniqueImports = Map.elems $ Map.fromList
+        [ (gnId n, n) | n <- importNodes ]
+  in concatMap (resolveModuleImport moduleIndex exportIndex) uniqueImports
+
+resolveModuleImport :: ModuleIndex -> ExportIndex -> GraphNode -> [PluginCommand]
+resolveModuleImport moduleIndex exportIndex node =
+  let source = gnName node  -- IMPORT node name is the source specifier
+      importerFile = gnFile node
+      mResolvedFile = resolveModulePath importerFile source exportIndex
+  in case mResolvedFile of
+    Nothing -> []
+    Just resolvedFile ->
+      case Map.lookup resolvedFile moduleIndex of
+        Just moduleId ->
+          [EmitEdge GraphEdge
+            { geSource = gnId node
+            , geTarget = moduleId
+            , geType   = "IMPORTS_FROM"
+            , geMetadata = Map.singleton "resolvedPath" (MetaText resolvedFile)
+            }]
+        Nothing -> []
 
 -- | Run the import resolution plugin.
 --

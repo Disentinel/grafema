@@ -20,6 +20,8 @@ module Analysis.Context
   , withEnclosingFn
   , withEnclosingClass
   , withNamedParent
+  , withExported
+  , askExported
   ) where
 
 import Control.Monad.Reader (ReaderT, runReaderT, asks, local)
@@ -37,6 +39,7 @@ data Ctx = Ctx
   , ctxEnclosingClass :: !(Maybe Text)    -- node ID
   , ctxNamedParent    :: !(Maybe Text)    -- nearest named ancestor name
   , ctxAncestors      :: ![ASTNode]       -- parent chain (head = immediate parent)
+  , ctxExported       :: !Bool            -- inside an export declaration?
   }
 
 -- | The analysis monad: read context, write graph output.
@@ -58,6 +61,7 @@ runAnalyzer file moduleId action =
         , ctxEnclosingClass = Nothing
         , ctxNamedParent    = Nothing
         , ctxAncestors      = []
+        , ctxExported       = False
         }
       (_, result) = runWriter (runReaderT action ctx)
       -- Patch file/moduleId into the result
@@ -116,3 +120,9 @@ withEnclosingClass clsId = local (\ctx -> ctx { ctxEnclosingClass = Just clsId }
 
 withNamedParent :: Text -> Analyzer a -> Analyzer a
 withNamedParent name = local (\ctx -> ctx { ctxNamedParent = Just name })
+
+withExported :: Analyzer a -> Analyzer a
+withExported = local (\ctx -> ctx { ctxExported = True })
+
+askExported :: Analyzer Bool
+askExported = asks ctxExported

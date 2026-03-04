@@ -29,6 +29,7 @@ import Analysis.Scope (withScope, declareInScope)
 import Analysis.SemanticId (semanticId)
 import AST.Types
 import AST.Span (Span(..))
+import Data.Maybe (fromMaybe)
 
 -- ── Variable Declaration ────────────────────────────────────────────────
 
@@ -74,6 +75,7 @@ ruleVariableDeclarator node parentDecl = do
       let name = getTextFieldOr "name" "<anonymous>" idNode
           idSp = astNodeSpan idNode
       parent <- askNamedParent
+      isExported <- askExported
       let nodeId = semanticId file nodeType name parent Nothing
       emitNode GraphNode
         { gnId       = nodeId
@@ -82,7 +84,7 @@ ruleVariableDeclarator node parentDecl = do
         , gnFile     = file
         , gnLine     = spanStart idSp  -- byte offset for now, orchestrator converts
         , gnColumn   = 0
-        , gnExported = False
+        , gnExported = isExported
         , gnMetadata = Map.singleton "kind" (MetaText kind)
         }
       emitEdge GraphEdge
@@ -119,6 +121,7 @@ ruleFunctionDeclaration node = do
       isGen   = getBoolFieldOr "generator" False node
 
   parent <- askNamedParent
+  isExported <- askExported
   let nodeId = semanticId file "FUNCTION" name parent Nothing
 
   emitNode GraphNode
@@ -128,7 +131,7 @@ ruleFunctionDeclaration node = do
     , gnFile     = file
     , gnLine     = spanStart (astNodeSpan node)
     , gnColumn   = 0
-    , gnExported = False
+    , gnExported = isExported
     , gnMetadata = Map.fromList
         [ ("async", MetaBool isAsync)
         , ("generator", MetaBool isGen)
@@ -174,12 +177,13 @@ ruleClassDeclaration node = do
                Nothing     -> "<anonymous>"
 
   parent <- askNamedParent
+  isExported <- askExported
   let nodeId = semanticId file "CLASS" name parent Nothing
 
   emitNode GraphNode
     { gnId = nodeId, gnType = "CLASS", gnName = name
     , gnFile = file, gnLine = spanStart (astNodeSpan node), gnColumn = 0
-    , gnExported = False, gnMetadata = Map.empty
+    , gnExported = isExported, gnMetadata = Map.empty
     }
   emitEdge GraphEdge
     { geSource = moduleId, geTarget = nodeId
@@ -316,7 +320,7 @@ ruleImportDeclaration node = do
 
   -- Walk specifiers for individual import bindings
   let specs = getChildren "specifiers" node
-  mapM_ (\s -> withAncestor node (walkNode s)) specs
+  mapM_ (\s -> withNamedParent source $ withAncestor node (walkNode s)) specs
 
   return (Just nodeId)
 
@@ -340,7 +344,10 @@ ruleImportSpecifier node = do
     { gnId = nodeId, gnType = "IMPORT_BINDING", gnName = localName
     , gnFile = file, gnLine = spanStart sp, gnColumn = 0
     , gnExported = False
-    , gnMetadata = Map.singleton "importedName" (MetaText importedName)
+    , gnMetadata = Map.fromList
+        [ ("importedName", MetaText importedName)
+        , ("source", MetaText (fromMaybe "" parent))
+        ]
     }
   emitEdge GraphEdge
     { geSource = curScopeId, geTarget = nodeId
@@ -364,7 +371,10 @@ ruleImportDefaultSpecifier node = do
     { gnId = nodeId, gnType = "IMPORT_BINDING", gnName = localName
     , gnFile = file, gnLine = spanStart sp, gnColumn = 0
     , gnExported = False
-    , gnMetadata = Map.singleton "importedName" (MetaText "default")
+    , gnMetadata = Map.fromList
+        [ ("importedName", MetaText "default")
+        , ("source", MetaText (fromMaybe "" parent))
+        ]
     }
   emitEdge GraphEdge
     { geSource = curScopeId, geTarget = nodeId
@@ -388,7 +398,10 @@ ruleImportNamespaceSpecifier node = do
     { gnId = nodeId, gnType = "IMPORT_BINDING", gnName = localName
     , gnFile = file, gnLine = spanStart sp, gnColumn = 0
     , gnExported = False
-    , gnMetadata = Map.singleton "importedName" (MetaText "*")
+    , gnMetadata = Map.fromList
+        [ ("importedName", MetaText "*")
+        , ("source", MetaText (fromMaybe "" parent))
+        ]
     }
   emitEdge GraphEdge
     { geSource = curScopeId, geTarget = nodeId
@@ -411,10 +424,10 @@ ruleExportNamedDeclaration node = do
     , gnExported = True, gnMetadata = Map.empty
     }
 
-  -- Walk the declaration if present
+  -- Walk the declaration if present (withExported so child nodes get exported=True)
   case getChildrenMaybe "declaration" node of
     Just decl -> do
-      mChildId <- withAncestor node (walkNode decl)
+      mChildId <- withExported $ withAncestor node (walkNode decl)
       forM_ mChildId $ \childId -> do
         emitEdge GraphEdge
           { geSource = nodeId, geTarget = childId
@@ -426,9 +439,15 @@ ruleExportNamedDeclaration node = do
           , eiKind = NamedExport, eiSource = Nothing }
     Nothing -> return ()
 
-  -- Walk specifiers
+  -- Walk specifiers (pass source if present, for re-export: export { foo } from './bar')
   let specs = getChildren "specifiers" node
-  mapM_ (\s -> withAncestor node (walkNode s)) specs
+      reExportSource = case getChildrenMaybe "source" node of
+        Just srcNode -> let s = getTextFieldOr "value" "" srcNode
+                        in if T.null s then Nothing else Just s
+        Nothing      -> Nothing
+  case reExportSource of
+    Just src -> mapM_ (\s -> withNamedParent src $ withAncestor node (walkNode s)) specs
+    Nothing  -> mapM_ (\s -> withAncestor node (walkNode s)) specs
 
   return (Just nodeId)
 
@@ -446,7 +465,7 @@ ruleExportDefaultDeclaration node = do
 
   case getChildrenMaybe "declaration" node of
     Just decl -> do
-      mChildId <- withAncestor node (walkNode decl)
+      mChildId <- withExported $ withAncestor node (walkNode decl)
       forM_ mChildId $ \childId -> do
         emitEdge GraphEdge
           { geSource = nodeId, geTarget = childId
@@ -509,12 +528,17 @@ ruleExportSpecifier node = do
     { gnId = nodeId, gnType = "EXPORT_BINDING", gnName = localName
     , gnFile = file, gnLine = spanStart sp, gnColumn = 0
     , gnExported = True
-    , gnMetadata = Map.singleton "exportedName" (MetaText exportedName)
+    , gnMetadata = case parent of
+        Just src -> Map.fromList
+          [ ("exportedName", MetaText exportedName)
+          , ("source", MetaText src)
+          ]
+        Nothing -> Map.singleton "exportedName" (MetaText exportedName)
     }
 
   emitExport ExportInfo
     { eiName = exportedName, eiNodeId = nodeId
-    , eiKind = NamedExport, eiSource = Nothing }
+    , eiKind = NamedExport, eiSource = parent }
 
   return (Just nodeId)
 

@@ -29,7 +29,7 @@ pub struct AnalyzerConfig {
 }
 
 /// Plugin configuration.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct PluginConfig {
     /// Plugin name (unique identifier)
     pub name: String,
@@ -54,14 +54,46 @@ pub struct PluginConfig {
 }
 
 impl PluginConfig {
+    /// Create a new plugin config with sensible defaults.
+    pub fn new(name: &str, command: &str) -> Self {
+        Self {
+            name: name.to_string(),
+            command: command.to_string(),
+            query: None,
+            depends_on: vec![],
+            mode: PluginMode::default(),
+            timeout_secs: None,
+        }
+    }
+
     /// Returns the timeout as a `Duration`, if configured.
     pub fn timeout(&self) -> Option<Duration> {
         self.timeout_secs.map(Duration::from_secs)
     }
 }
 
+impl AnalyzerConfig {
+    /// Apply default plugins if none are configured.
+    ///
+    /// Default plugins:
+    /// 1. `js-import-resolution`: resolves import bindings to their targets
+    /// 2. `runtime-globals`: detects global variable usage (depends on import resolution)
+    pub fn with_defaults(mut self) -> Self {
+        if self.plugins.is_empty() {
+            self.plugins = vec![
+                PluginConfig::new("js-import-resolution", "grafema-resolve imports"),
+                PluginConfig {
+                    depends_on: vec!["js-import-resolution".to_string()],
+                    ..PluginConfig::new("runtime-globals", "grafema-resolve runtime-globals")
+                },
+            ];
+        }
+        self
+    }
+}
+
 /// Plugin execution mode.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Clone, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum PluginMode {
     /// Orchestrator queries RFDB, pipes nodes to plugin stdin
@@ -336,6 +368,61 @@ plugins:
             err.to_string().contains("Failed to parse config"),
             "unexpected error: {err}"
         );
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn plugin_config_new_defaults() {
+        let p = PluginConfig::new("test-plugin", "echo hello");
+        assert_eq!(p.name, "test-plugin");
+        assert_eq!(p.command, "echo hello");
+        assert!(p.query.is_none());
+        assert!(p.depends_on.is_empty());
+        assert!(matches!(p.mode, PluginMode::Streaming));
+        assert!(p.timeout_secs.is_none());
+    }
+
+    #[test]
+    fn with_defaults_adds_plugins_when_empty() {
+        let dir = test_dir();
+        let config_path = write_config(
+            &dir,
+            &format!(
+                "root: \"{}\"\ninclude:\n  - \"**/*.js\"\n",
+                dir.display()
+            ),
+        );
+
+        let cfg = load(&config_path).unwrap().with_defaults();
+        assert_eq!(cfg.plugins.len(), 2);
+        assert_eq!(cfg.plugins[0].name, "js-import-resolution");
+        assert_eq!(cfg.plugins[0].command, "grafema-resolve imports");
+        assert!(cfg.plugins[0].depends_on.is_empty());
+        assert_eq!(cfg.plugins[1].name, "runtime-globals");
+        assert_eq!(cfg.plugins[1].command, "grafema-resolve runtime-globals");
+        assert_eq!(cfg.plugins[1].depends_on, vec!["js-import-resolution"]);
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn with_defaults_preserves_existing_plugins() {
+        let dir = test_dir();
+        let yaml = format!(
+            r#"
+root: "{}"
+include:
+  - "**/*.js"
+plugins:
+  - name: custom-plugin
+    command: "my-plugin"
+"#,
+            dir.display()
+        );
+        let config_path = write_config(&dir, &yaml);
+
+        let cfg = load(&config_path).unwrap().with_defaults();
+        assert_eq!(cfg.plugins.len(), 1);
+        assert_eq!(cfg.plugins[0].name, "custom-plugin");
         cleanup(&dir);
     }
 }

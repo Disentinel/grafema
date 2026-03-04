@@ -71,6 +71,8 @@ main = hspec $ do
     exportTests
   describe "Edge Cases"
     edgeCaseTests
+  describe "Import Resolution Data"
+    importResolutionTests
 
 
 scopeResolutionTests :: Spec
@@ -281,3 +283,61 @@ edgeCaseTests = do
     let paramId = gnId paramNode
         refNodesList = findNodes "REFERENCE" "e" fa
     any (\ref -> hasEdge "READS_FROM" (gnId ref) paramId fa) refNodesList `shouldBe` True
+
+
+importResolutionTests :: Spec
+importResolutionTests = do
+
+  -- Named import: import { foo } from './utils'
+  it "propagates source metadata to named import binding" $ do
+    let fa = analyzeAST $ BL.concat
+          [ "{\"type\":\"Program\",\"start\":0,\"end\":35,\"body\":["
+          , "{\"type\":\"ImportDeclaration\",\"start\":0,\"end\":35,"
+          , "\"specifiers\":["
+          , "{\"type\":\"ImportSpecifier\",\"start\":9,\"end\":12,"
+          , "\"local\":{\"type\":\"Identifier\",\"start\":9,\"end\":12,\"name\":\"foo\"},"
+          , "\"imported\":{\"type\":\"Identifier\",\"start\":9,\"end\":12,\"name\":\"foo\"}}"
+          , "],"
+          , "\"source\":{\"type\":\"Literal\",\"start\":20,\"end\":29,\"value\":\"./utils\",\"raw\":\"'./utils'\"}}"
+          , "]}"
+          ]
+    -- IMPORT_BINDING node should exist with correct metadata
+    ibNode <- requireNode "IMPORT_BINDING" "foo" fa
+    Map.lookup "source" (gnMetadata ibNode) `shouldBe` Just (MetaText "./utils")
+    Map.lookup "importedName" (gnMetadata ibNode) `shouldBe` Just (MetaText "foo")
+    -- Semantic ID should include source as parent
+    gnId ibNode `shouldBe` "test.js->IMPORT_BINDING->foo[in:./utils]"
+
+  -- Default import: import bar from './mod'
+  it "propagates source metadata to default import binding" $ do
+    let fa = analyzeAST $ BL.concat
+          [ "{\"type\":\"Program\",\"start\":0,\"end\":30,\"body\":["
+          , "{\"type\":\"ImportDeclaration\",\"start\":0,\"end\":30,"
+          , "\"specifiers\":["
+          , "{\"type\":\"ImportDefaultSpecifier\",\"start\":7,\"end\":10,"
+          , "\"local\":{\"type\":\"Identifier\",\"start\":7,\"end\":10,\"name\":\"bar\"}}"
+          , "],"
+          , "\"source\":{\"type\":\"Literal\",\"start\":18,\"end\":25,\"value\":\"./mod\",\"raw\":\"'./mod'\"}}"
+          , "]}"
+          ]
+    ibNode <- requireNode "IMPORT_BINDING" "bar" fa
+    Map.lookup "source" (gnMetadata ibNode) `shouldBe` Just (MetaText "./mod")
+    Map.lookup "importedName" (gnMetadata ibNode) `shouldBe` Just (MetaText "default")
+    gnId ibNode `shouldBe` "test.js->IMPORT_BINDING->bar[in:./mod]"
+
+  -- Namespace import: import * as ns from './all'
+  it "propagates source metadata to namespace import binding" $ do
+    let fa = analyzeAST $ BL.concat
+          [ "{\"type\":\"Program\",\"start\":0,\"end\":30,\"body\":["
+          , "{\"type\":\"ImportDeclaration\",\"start\":0,\"end\":30,"
+          , "\"specifiers\":["
+          , "{\"type\":\"ImportNamespaceSpecifier\",\"start\":7,\"end\":14,"
+          , "\"local\":{\"type\":\"Identifier\",\"start\":12,\"end\":14,\"name\":\"ns\"}}"
+          , "],"
+          , "\"source\":{\"type\":\"Literal\",\"start\":22,\"end\":28,\"value\":\"./all\",\"raw\":\"'./all'\"}}"
+          , "]}"
+          ]
+    ibNode <- requireNode "IMPORT_BINDING" "ns" fa
+    Map.lookup "source" (gnMetadata ibNode) `shouldBe` Just (MetaText "./all")
+    Map.lookup "importedName" (gnMetadata ibNode) `shouldBe` Just (MetaText "*")
+    gnId ibNode `shouldBe` "test.js->IMPORT_BINDING->ns[in:./all]"
