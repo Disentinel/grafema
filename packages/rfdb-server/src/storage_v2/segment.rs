@@ -107,12 +107,40 @@ fn compute_edge_column_offsets(record_count: usize) -> (usize, usize, usize, usi
     (src_offset, dst_offset, edge_type_offset, metadata_offset)
 }
 
+// ── SegmentData ────────────────────────────────────────────────────
+
+/// Owns segment data either as a memory-mapped file (zero-copy open path)
+/// or as an owned Vec (from_bytes / test path).
+enum SegmentData {
+    Mapped(Mmap),
+    Owned(Vec<u8>),
+}
+
+impl std::ops::Deref for SegmentData {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        match self {
+            SegmentData::Mapped(m) => m,
+            SegmentData::Owned(v) => v,
+        }
+    }
+}
+
+impl std::fmt::Debug for SegmentData {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SegmentData::Mapped(m) => write!(f, "Mapped({} bytes)", m.len()),
+            SegmentData::Owned(v) => write!(f, "Owned({} bytes)", v.len()),
+        }
+    }
+}
+
 // ── NodeSegmentV2 ──────────────────────────────────────────────────
 
 /// Immutable node segment reader (memory-mapped or from bytes).
 #[derive(Debug)]
 pub struct NodeSegmentV2 {
-    data: Vec<u8>,
+    data: SegmentData,
     header: SegmentHeaderV2,
     bloom: BloomFilter,
     zone_map: ZoneMap,
@@ -129,24 +157,29 @@ pub struct NodeSegmentV2 {
 }
 
 impl NodeSegmentV2 {
-    /// Open a node segment from a file path (memory-mapped).
+    /// Open a node segment from a file path (memory-mapped, zero-copy).
     pub fn open(path: &Path) -> Result<Self> {
         let file = File::open(path).map_err(GraphError::Io)?;
         let mmap = unsafe { Mmap::map(&file) }.map_err(GraphError::Io)?;
-        Self::from_bytes(&mmap)
+        Self::from_mapped(SegmentData::Mapped(mmap))
     }
 
     /// Open a node segment from a byte slice (for testing / embedding).
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
+        Self::from_mapped(SegmentData::Owned(bytes.to_vec()))
+    }
+
+    /// Shared construction from either mmap or owned bytes.
+    fn from_mapped(data: SegmentData) -> Result<Self> {
         // 1. Minimum size check
-        if bytes.len() < HEADER_SIZE + FOOTER_INDEX_SIZE {
+        if data.len() < HEADER_SIZE + FOOTER_INDEX_SIZE {
             return Err(GraphError::InvalidFormat(
                 "File too small for v2 segment".into(),
             ));
         }
 
         // 2. Read and validate header
-        let header = SegmentHeaderV2::from_bytes(&bytes[..HEADER_SIZE])?;
+        let header = SegmentHeaderV2::from_bytes(&data[..HEADER_SIZE])?;
         if header.segment_type != SegmentType::Nodes {
             return Err(GraphError::InvalidFormat(
                 "Expected node segment, got edge".into(),
@@ -154,11 +187,11 @@ impl NodeSegmentV2 {
         }
 
         // 3. Read footer index (last FOOTER_INDEX_SIZE bytes)
-        let fi_start = bytes.len() - FOOTER_INDEX_SIZE;
-        let footer_index = FooterIndex::from_bytes(&bytes[fi_start..])?;
+        let fi_start = data.len() - FOOTER_INDEX_SIZE;
+        let footer_index = FooterIndex::from_bytes(&data[fi_start..])?;
 
         // 4. Validate footer_offset
-        if header.footer_offset as usize >= bytes.len() {
+        if header.footer_offset as usize >= data.len() {
             return Err(GraphError::InvalidFormat(
                 "footer_offset points past end of file".into(),
             ));
@@ -176,16 +209,16 @@ impl NodeSegmentV2 {
 
         // 6. Load footer components
         let bloom = BloomFilter::from_bytes(
-            &bytes[footer_index.bloom_offset as usize..footer_index.zone_maps_offset as usize],
+            &data[footer_index.bloom_offset as usize..footer_index.zone_maps_offset as usize],
         )?;
 
         let zone_map = ZoneMap::from_bytes(
-            &bytes
+            &data
                 [footer_index.zone_maps_offset as usize..footer_index.string_table_offset as usize],
         )?;
 
         let string_table = StringTableV2::from_bytes(
-            &bytes[footer_index.string_table_offset as usize..header.footer_offset as usize],
+            &data[footer_index.string_table_offset as usize..header.footer_offset as usize],
         )?;
 
         // 7. Compute column offsets
@@ -200,7 +233,7 @@ impl NodeSegmentV2 {
         ) = compute_node_column_offsets(n);
 
         Ok(Self {
-            data: bytes.to_vec(),
+            data,
             header,
             bloom,
             zone_map,
@@ -330,7 +363,7 @@ impl NodeSegmentV2 {
 /// Immutable edge segment reader (memory-mapped or from bytes).
 #[derive(Debug)]
 pub struct EdgeSegmentV2 {
-    data: Vec<u8>,
+    data: SegmentData,
     header: SegmentHeaderV2,
     src_bloom: BloomFilter,
     dst_bloom: BloomFilter,
@@ -344,24 +377,29 @@ pub struct EdgeSegmentV2 {
 }
 
 impl EdgeSegmentV2 {
-    /// Open an edge segment from a file path (memory-mapped).
+    /// Open an edge segment from a file path (memory-mapped, zero-copy).
     pub fn open(path: &Path) -> Result<Self> {
         let file = File::open(path).map_err(GraphError::Io)?;
         let mmap = unsafe { Mmap::map(&file) }.map_err(GraphError::Io)?;
-        Self::from_bytes(&mmap)
+        Self::from_mapped(SegmentData::Mapped(mmap))
     }
 
     /// Open an edge segment from a byte slice (for testing / embedding).
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
+        Self::from_mapped(SegmentData::Owned(bytes.to_vec()))
+    }
+
+    /// Shared construction from either mmap or owned bytes.
+    fn from_mapped(data: SegmentData) -> Result<Self> {
         // 1. Minimum size check
-        if bytes.len() < HEADER_SIZE + FOOTER_INDEX_SIZE {
+        if data.len() < HEADER_SIZE + FOOTER_INDEX_SIZE {
             return Err(GraphError::InvalidFormat(
                 "File too small for v2 segment".into(),
             ));
         }
 
         // 2. Read and validate header
-        let header = SegmentHeaderV2::from_bytes(&bytes[..HEADER_SIZE])?;
+        let header = SegmentHeaderV2::from_bytes(&data[..HEADER_SIZE])?;
         if header.segment_type != SegmentType::Edges {
             return Err(GraphError::InvalidFormat(
                 "Expected edge segment, got node".into(),
@@ -369,11 +407,11 @@ impl EdgeSegmentV2 {
         }
 
         // 3. Read footer index (last FOOTER_INDEX_SIZE bytes)
-        let fi_start = bytes.len() - FOOTER_INDEX_SIZE;
-        let footer_index = FooterIndex::from_bytes(&bytes[fi_start..])?;
+        let fi_start = data.len() - FOOTER_INDEX_SIZE;
+        let footer_index = FooterIndex::from_bytes(&data[fi_start..])?;
 
         // 4. Validate footer_offset
-        if header.footer_offset as usize >= bytes.len() {
+        if header.footer_offset as usize >= data.len() {
             return Err(GraphError::InvalidFormat(
                 "footer_offset points past end of file".into(),
             ));
@@ -391,20 +429,20 @@ impl EdgeSegmentV2 {
 
         // 6. Load footer components (TWO bloom filters)
         let src_bloom = BloomFilter::from_bytes(
-            &bytes[footer_index.bloom_offset as usize..footer_index.dst_bloom_offset as usize],
+            &data[footer_index.bloom_offset as usize..footer_index.dst_bloom_offset as usize],
         )?;
 
         let dst_bloom = BloomFilter::from_bytes(
-            &bytes[footer_index.dst_bloom_offset as usize..footer_index.zone_maps_offset as usize],
+            &data[footer_index.dst_bloom_offset as usize..footer_index.zone_maps_offset as usize],
         )?;
 
         let zone_map = ZoneMap::from_bytes(
-            &bytes
+            &data
                 [footer_index.zone_maps_offset as usize..footer_index.string_table_offset as usize],
         )?;
 
         let string_table = StringTableV2::from_bytes(
-            &bytes[footer_index.string_table_offset as usize..header.footer_offset as usize],
+            &data[footer_index.string_table_offset as usize..header.footer_offset as usize],
         )?;
 
         // 7. Compute column offsets
@@ -412,7 +450,7 @@ impl EdgeSegmentV2 {
             compute_edge_column_offsets(n);
 
         Ok(Self {
-            data: bytes.to_vec(),
+            data,
             header,
             src_bloom,
             dst_bloom,
