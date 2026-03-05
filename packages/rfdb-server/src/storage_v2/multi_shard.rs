@@ -666,6 +666,16 @@ impl MultiShardStore {
         }
         results
     }
+
+    /// Iterate all edges across all shards.
+    /// Each shard handles its own dedup and tombstone filtering.
+    pub fn iter_all_edges(&self) -> Vec<EdgeRecordV2> {
+        let mut results = Vec::new();
+        for shard in &self.shards {
+            results.extend(shard.iter_all_edges());
+        }
+        results
+    }
 }
 
 // ── Edge Key Discovery ─────────────────────────────────────────────

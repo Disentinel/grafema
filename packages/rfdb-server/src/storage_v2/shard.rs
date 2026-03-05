@@ -1568,6 +1568,66 @@ impl Shard {
 
         results
     }
+
+    /// Iterate all edges across write buffer + L0 segments + L1 segment.
+    /// Deduplicates by (src, dst, edge_type) key — newest version wins.
+    /// Skips tombstoned edges.
+    pub fn iter_all_edges(&self) -> Vec<EdgeRecordV2> {
+        let mut seen_edge_keys: HashSet<(u128, u128, String)> = HashSet::new();
+        let mut results: Vec<EdgeRecordV2> = Vec::new();
+
+        // Step 1: Write buffer (authoritative, newest)
+        for edge in self.write_buffer.iter_edges() {
+            let key = (edge.src, edge.dst, edge.edge_type.clone());
+            seen_edge_keys.insert(key);
+            if self.tombstones.contains_edge(edge.src, edge.dst, &edge.edge_type) {
+                continue;
+            }
+            results.push(edge.clone());
+        }
+
+        // Step 2: L0 edge segments (newest-to-oldest for proper dedup)
+        for seg in self.edge_segments.iter().rev() {
+            for j in 0..seg.record_count() {
+                let src = seg.get_src(j);
+                let dst = seg.get_dst(j);
+                let edge_type = seg.get_edge_type(j);
+                let key = (src, dst, edge_type.to_string());
+
+                if seen_edge_keys.contains(&key) {
+                    continue;
+                }
+                seen_edge_keys.insert(key);
+
+                if self.tombstones.contains_edge(src, dst, edge_type) {
+                    continue;
+                }
+                results.push(seg.get_record(j));
+            }
+        }
+
+        // Step 3: L1 edge segment (oldest, compacted)
+        if let Some(l1_seg) = &self.l1_edge_segment {
+            for j in 0..l1_seg.record_count() {
+                let src = l1_seg.get_src(j);
+                let dst = l1_seg.get_dst(j);
+                let edge_type = l1_seg.get_edge_type(j);
+                let key = (src, dst, edge_type.to_string());
+
+                if seen_edge_keys.contains(&key) {
+                    continue;
+                }
+                seen_edge_keys.insert(key);
+
+                if self.tombstones.contains_edge(src, dst, edge_type) {
+                    continue;
+                }
+                results.push(l1_seg.get_record(j));
+            }
+        }
+
+        results
+    }
 }
 
 // -- Stats --------------------------------------------------------------------

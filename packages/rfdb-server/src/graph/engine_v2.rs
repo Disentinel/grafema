@@ -437,25 +437,11 @@ impl GraphStore for GraphEngineV2 {
     }
 
     fn get_all_edges(&self) -> Vec<EdgeRecord> {
-        // Collect all node IDs, then gather outgoing edges for each
-        let all_nodes = self.store.find_nodes(None, None);
-        let mut seen_keys: HashSet<(u128, u128, String)> = HashSet::new();
-        let mut result: Vec<EdgeRecord> = Vec::new();
-
-        for node in &all_nodes {
-            if self.is_node_tombstoned(node.id) {
-                continue;
-            }
-            let edges = self.store.get_outgoing_edges(node.id, None);
-            for edge in self.filter_edges(edges) {
-                let key = (edge.src, edge.dst, edge.edge_type.clone());
-                if seen_keys.insert(key) {
-                    result.push(edge_v2_to_v1(&edge));
-                }
-            }
-        }
-
-        result
+        self.store.iter_all_edges()
+            .iter()
+            .filter(|e| !self.is_edge_tombstoned(e.src, e.dst, &e.edge_type))
+            .map(edge_v2_to_v1)
+            .collect()
     }
 
     fn count_nodes_by_type(&self, types: Option<&[String]>) -> HashMap<String, usize> {
