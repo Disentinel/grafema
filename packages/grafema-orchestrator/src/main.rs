@@ -214,7 +214,7 @@ async fn main() -> Result<()> {
             gc::update_mtimes(&mut gen_tracker, &changed_files)?;
 
             // 8. Run resolution plugins with in-memory node data (bypasses RFDB round-trip)
-            let resolve_nodes = analyzer::collect_resolve_nodes(&results);
+            let resolve_nodes = analyzer::collect_resolve_nodes_for_lang(&results, config::Language::JavaScript);
             if !resolve_nodes.is_empty() {
                 tracing::info!(
                     nodes = resolve_nodes.len(),
@@ -353,7 +353,7 @@ async fn main() -> Result<()> {
 
             // 8a. Run Haskell import resolution (if Haskell files were analyzed)
             if !hs_files.is_empty() {
-                let hs_resolve_nodes = analyzer::collect_resolve_nodes(&results);
+                let hs_resolve_nodes = analyzer::collect_resolve_nodes_for_lang(&results, config::Language::Haskell);
                 if !hs_resolve_nodes.is_empty() {
                     tracing::info!(
                         nodes = hs_resolve_nodes.len(),
@@ -408,7 +408,7 @@ async fn main() -> Result<()> {
 
             // 8b. Run Rust import resolution (if Rust files were analyzed)
             if !rs_files.is_empty() {
-                let rs_resolve_nodes = analyzer::collect_resolve_nodes(&results);
+                let rs_resolve_nodes = analyzer::collect_resolve_nodes_for_lang(&results, config::Language::Rust);
                 if !rs_resolve_nodes.is_empty() {
                     tracing::info!(
                         nodes = rs_resolve_nodes.len(),

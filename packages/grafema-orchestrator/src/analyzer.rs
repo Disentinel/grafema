@@ -1021,6 +1021,25 @@ pub fn collect_resolve_nodes(results: &[AnalysisResult]) -> Vec<serde_json::Valu
         .collect()
 }
 
+/// Like `collect_resolve_nodes`, but only includes nodes from files matching
+/// the given language. Prevents cross-language contamination where a Haskell
+/// resolver would see JS MODULE nodes (or vice versa).
+pub fn collect_resolve_nodes_for_lang(
+    results: &[AnalysisResult],
+    lang: crate::config::Language,
+) -> Vec<serde_json::Value> {
+    results
+        .iter()
+        .filter_map(|r| r.analysis.as_ref())
+        .filter(|a| {
+            crate::config::detect_language(std::path::Path::new(&a.file)) == Some(lang)
+        })
+        .flat_map(|a| &a.nodes)
+        .filter(|n| RESOLVE_NODE_TYPES.contains(&n.node_type.as_str()))
+        .filter_map(|n| serde_json::to_value(n).ok())
+        .collect()
+}
+
 // ---------------------------------------------------------------------------
 // Parallel multi-file analysis
 // ---------------------------------------------------------------------------
@@ -1719,6 +1738,141 @@ mod tests {
         assert!(types.contains(&"TYPE_SYNONYM"));
         assert!(types.contains(&"TYPE_FAMILY"));
         assert!(!types.contains(&"EXPRESSION"));
+    }
+
+    #[test]
+    fn collect_resolve_nodes_for_lang_filters_by_language() {
+        let results = vec![
+            AnalysisResult {
+                file: PathBuf::from("src/index.ts"),
+                analysis: Some(FileAnalysis {
+                    file: "src/index.ts".to_string(),
+                    module_id: "src/index.ts".to_string(),
+                    nodes: vec![
+                        GraphNode {
+                            id: "src/index.ts->MODULE->index".to_string(),
+                            node_type: "MODULE".to_string(),
+                            name: "index".to_string(),
+                            file: "src/index.ts".to_string(),
+                            line: 1, column: 0, end_line: 50, end_column: 0,
+                            exported: false,
+                            metadata: HashMap::new(),
+                        },
+                        GraphNode {
+                            id: "src/index.ts->FUNCTION->main".to_string(),
+                            node_type: "FUNCTION".to_string(),
+                            name: "main".to_string(),
+                            file: "src/index.ts".to_string(),
+                            line: 5, column: 0, end_line: 10, end_column: 1,
+                            exported: true,
+                            metadata: HashMap::new(),
+                        },
+                    ],
+                    edges: vec![],
+                    exports: vec![],
+                }),
+                errors: vec![],
+            },
+            AnalysisResult {
+                file: PathBuf::from("src/Main.hs"),
+                analysis: Some(FileAnalysis {
+                    file: "src/Main.hs".to_string(),
+                    module_id: "src/Main.hs".to_string(),
+                    nodes: vec![
+                        GraphNode {
+                            id: "src/Main.hs->MODULE->Main".to_string(),
+                            node_type: "MODULE".to_string(),
+                            name: "Main".to_string(),
+                            file: "src/Main.hs".to_string(),
+                            line: 1, column: 0, end_line: 30, end_column: 0,
+                            exported: false,
+                            metadata: HashMap::new(),
+                        },
+                        GraphNode {
+                            id: "src/Main.hs->DATA_TYPE->Config".to_string(),
+                            node_type: "DATA_TYPE".to_string(),
+                            name: "Config".to_string(),
+                            file: "src/Main.hs".to_string(),
+                            line: 10, column: 0, end_line: 15, end_column: 0,
+                            exported: true,
+                            metadata: HashMap::new(),
+                        },
+                    ],
+                    edges: vec![],
+                    exports: vec![],
+                }),
+                errors: vec![],
+            },
+        ];
+
+        // JS filter: only src/index.ts nodes
+        let js_nodes = collect_resolve_nodes_for_lang(
+            &results, crate::config::Language::JavaScript,
+        );
+        assert_eq!(js_nodes.len(), 2);
+        assert!(js_nodes.iter().all(|n| n["file"].as_str().unwrap().ends_with(".ts")));
+
+        // Haskell filter: only src/Main.hs nodes
+        let hs_nodes = collect_resolve_nodes_for_lang(
+            &results, crate::config::Language::Haskell,
+        );
+        assert_eq!(hs_nodes.len(), 2);
+        assert!(hs_nodes.iter().all(|n| n["file"].as_str().unwrap().ends_with(".hs")));
+
+        // Rust filter: no Rust files → empty
+        let rs_nodes = collect_resolve_nodes_for_lang(
+            &results, crate::config::Language::Rust,
+        );
+        assert!(rs_nodes.is_empty());
+    }
+
+    #[test]
+    fn collect_resolve_nodes_for_lang_empty_results() {
+        let nodes = collect_resolve_nodes_for_lang(
+            &[], crate::config::Language::JavaScript,
+        );
+        assert!(nodes.is_empty());
+    }
+
+    #[test]
+    fn collect_resolve_nodes_for_lang_skips_non_resolve_types() {
+        let results = vec![AnalysisResult {
+            file: PathBuf::from("src/app.ts"),
+            analysis: Some(FileAnalysis {
+                file: "src/app.ts".to_string(),
+                module_id: "src/app.ts".to_string(),
+                nodes: vec![
+                    GraphNode {
+                        id: "src/app.ts->FUNCTION->foo".to_string(),
+                        node_type: "FUNCTION".to_string(),
+                        name: "foo".to_string(),
+                        file: "src/app.ts".to_string(),
+                        line: 1, column: 0, end_line: 5, end_column: 1,
+                        exported: false,
+                        metadata: HashMap::new(),
+                    },
+                    GraphNode {
+                        id: "src/app.ts->EXPRESSION->bar".to_string(),
+                        node_type: "EXPRESSION".to_string(),
+                        name: "bar".to_string(),
+                        file: "src/app.ts".to_string(),
+                        line: 3, column: 0, end_line: 3, end_column: 10,
+                        exported: false,
+                        metadata: HashMap::new(),
+                    },
+                ],
+                edges: vec![],
+                exports: vec![],
+            }),
+            errors: vec![],
+        }];
+
+        let nodes = collect_resolve_nodes_for_lang(
+            &results, crate::config::Language::JavaScript,
+        );
+        // FUNCTION is in RESOLVE_NODE_TYPES, EXPRESSION is not
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0]["type"].as_str().unwrap(), "FUNCTION");
     }
 
     #[test]
