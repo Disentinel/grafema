@@ -364,3 +364,36 @@ export interface TraverseGraphArgs {
   maxDepth?: number;
   direction?: 'outgoing' | 'incoming';
 }
+
+// === KNOWLEDGE ARGS (REG-626) ===
+
+export interface AddKnowledgeArgs {
+  type: string;
+  content: string;
+  slug?: string;
+  relates_to?: string[];
+  projections?: string[];
+  status?: string;
+  confidence?: string;
+  effective_from?: string;
+  applies_to?: string[];
+  task_id?: string;
+}
+
+export interface QueryKnowledgeArgs {
+  type?: string;
+  projection?: string;
+  relates_to?: string;
+  text?: string;
+}
+
+export interface QueryDecisionsArgs {
+  module?: string;
+  status?: string;
+}
+
+export interface SupersedeFactArgs {
+  old_id: string;
+  new_content: string;
+  new_slug?: string;
+}

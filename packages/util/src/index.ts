@@ -180,6 +180,21 @@ export type {
   GraphExtractOptions,
 } from './schema/index.js';
 
+// Knowledge Base
+export { KnowledgeBase, parseFrontmatter, parseKBNode, serializeKBNode, parseEdgesFile, appendEdge } from './knowledge/index.js';
+export type {
+  KBNodeType,
+  KBLifecycle,
+  KBNodeBase,
+  KBDecision,
+  KBFact,
+  KBSession,
+  KBNode,
+  KBEdge,
+  KBStats,
+  KBQueryFilter,
+} from './knowledge/index.js';
+
 // Graph Query Utilities
 export { findCallsInFunction, findContainingFunction, traceValues, aggregateValues, NONDETERMINISTIC_PATTERNS, NONDETERMINISTIC_OBJECTS } from './queries/index.js';
 export { buildNodeContext, getNodeDisplayName, formatEdgeMetadata, STRUCTURAL_EDGE_TYPES } from './queries/index.js';

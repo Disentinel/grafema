@@ -64,6 +64,11 @@ import {
   handleGetNode,
   handleGetNeighbors,
   handleTraverseGraph,
+  handleAddKnowledge,
+  handleQueryKnowledge,
+  handleQueryDecisions,
+  handleSupersedeFact,
+  handleGetKnowledgeStats,
 } from './handlers/index.js';
 import type {
   ToolResult,
@@ -90,6 +95,10 @@ import type {
   GetNodeArgs,
   GetNeighborsArgs,
   TraverseGraphArgs,
+  AddKnowledgeArgs,
+  QueryKnowledgeArgs,
+  QueryDecisionsArgs,
+  SupersedeFactArgs,
 } from './types.js';
 
 /**
@@ -132,6 +141,7 @@ EXPLORATION WORKFLOW:
 4. To understand data flow → trace_dataflow (forward: where does this value go? backward: where does it come from?)
 5. To understand full context of a node → get_context (shows surrounding code, scope chain, relationships)
 6. For complex pattern queries → query_graph with Datalog (call get_documentation topic="queries" for syntax)
+7. To query architectural decisions and facts → query_knowledge, query_decisions, get_knowledge_stats
 
 KEY INSIGHT: find_nodes supports partial matching on name and file fields.
 Example: find_nodes(file="auth/") returns all nodes in files matching "auth/".
@@ -274,6 +284,26 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
 
       case 'traverse_graph':
         result = await handleTraverseGraph(asArgs<TraverseGraphArgs>(args));
+        break;
+
+      case 'add_knowledge':
+        result = await handleAddKnowledge(asArgs<AddKnowledgeArgs>(args));
+        break;
+
+      case 'query_knowledge':
+        result = await handleQueryKnowledge(asArgs<QueryKnowledgeArgs>(args));
+        break;
+
+      case 'query_decisions':
+        result = await handleQueryDecisions(asArgs<QueryDecisionsArgs>(args));
+        break;
+
+      case 'supersede_fact':
+        result = await handleSupersedeFact(asArgs<SupersedeFactArgs>(args));
+        break;
+
+      case 'get_knowledge_stats':
+        result = await handleGetKnowledgeStats();
         break;
 
       default:

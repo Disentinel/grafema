@@ -4,7 +4,7 @@
 
 import { join } from 'path';
 import { existsSync, mkdirSync } from 'fs';
-import { RFDBServerBackend, GuaranteeManager, GuaranteeAPI } from '@grafema/util';
+import { RFDBServerBackend, GuaranteeManager, GuaranteeAPI, KnowledgeBase } from '@grafema/util';
 import type { GuaranteeGraphBackend, GuaranteeGraph } from '@grafema/util';
 import { loadConfig } from './config.js';
 import { log, initLogger } from './utils.js';
@@ -20,6 +20,9 @@ let backgroundPid: number | null = null;
 // Guarantee managers
 let guaranteeManager: GuaranteeManager | null = null;
 let guaranteeAPI: GuaranteeAPI | null = null;
+
+// Knowledge base
+let knowledgeBase: KnowledgeBase | null = null;
 
 let analysisStatus: AnalysisStatus = {
   running: false,
@@ -110,6 +113,10 @@ export function getGuaranteeManager(): GuaranteeManager | null {
 
 export function getGuaranteeAPI(): GuaranteeAPI | null {
   return guaranteeAPI;
+}
+
+export function getKnowledgeBase(): KnowledgeBase | null {
+  return knowledgeBase;
 }
 
 // === SETTERS ===
@@ -290,6 +297,22 @@ export function setupLogging(): void {
     mkdirSync(grafemaDir, { recursive: true });
   }
   initLogger(grafemaDir);
+}
+
+// === KNOWLEDGE BASE ===
+/**
+ * Get or create the KnowledgeBase singleton.
+ * Lazy-initializes from knowledge/ directory on first access.
+ */
+export async function getOrCreateKnowledgeBase(): Promise<KnowledgeBase> {
+  if (knowledgeBase) return knowledgeBase;
+
+  const kbDir = join(projectPath, 'knowledge');
+  knowledgeBase = new KnowledgeBase(kbDir);
+  await knowledgeBase.load();
+  log(`[Grafema MCP] KnowledgeBase loaded from ${kbDir}`);
+
+  return knowledgeBase;
 }
 
 // === INITIALIZATION ===
