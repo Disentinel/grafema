@@ -162,6 +162,12 @@ fn build_graph(all_ids: &[u128], all_types: &[&str]) -> GraphEngineV2 {
         engine.add_edges(edges, true);
     }
 
+    // Flush write buffers to L0 segments, then compact L0 → L1.
+    // This builds secondary indexes (by_name, by_type, by_file) needed
+    // for efficient attribute lookups.
+    engine.flush().expect("flush failed");
+    engine.compact().expect("compact failed");
+
     engine
 }
 

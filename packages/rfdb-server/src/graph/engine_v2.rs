@@ -352,6 +352,51 @@ impl GraphStore for GraphEngineV2 {
         ids
     }
 
+    fn find_by_attr_chunked(
+        &self,
+        query: &AttrQuery,
+        chunk_size: usize,
+        callback: &mut dyn FnMut(&[u128]) -> bool,
+    ) {
+        let node_type_filter = query.node_type.as_deref();
+        let (exact_type, wildcard_prefix) = match node_type_filter {
+            Some(t) if t.ends_with('*') => (None, Some(t.trim_end_matches('*'))),
+            other => (other, None),
+        };
+
+        if self.pending_tombstone_nodes.is_empty() {
+            self.store.find_node_ids_by_attr_chunked(
+                exact_type,
+                wildcard_prefix,
+                query.file.as_deref(),
+                query.name.as_deref(),
+                query.exported,
+                &query.metadata_filters,
+                query.substring_match,
+                chunk_size,
+                callback,
+            );
+        } else {
+            self.store.find_node_ids_by_attr_chunked(
+                exact_type,
+                wildcard_prefix,
+                query.file.as_deref(),
+                query.name.as_deref(),
+                query.exported,
+                &query.metadata_filters,
+                query.substring_match,
+                chunk_size,
+                &mut |ids| {
+                    let filtered: Vec<u128> = ids.iter()
+                        .filter(|&&id| !self.is_node_tombstoned(id))
+                        .copied()
+                        .collect();
+                    if filtered.is_empty() { true } else { callback(&filtered) }
+                },
+            );
+        }
+    }
+
     fn find_by_type(&self, node_type: &str) -> Vec<u128> {
         let mut ids = if node_type.ends_with('*') {
             self.store.find_node_ids_by_attr(
