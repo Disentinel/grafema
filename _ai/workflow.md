@@ -33,6 +33,11 @@ All implementation happens through coding subagents. Top-level agent only plans 
    → ALL approve → present to user
 
 5. Вадим (human) → final confirmation
+
+6. Knowledge Extraction (mandatory for non-trivial tasks)
+   → Run /extract-knowledge skill
+   → SESSION + DECISIONs + FACTs + edges
+   → Invalidation check on affected code refs
 ```
 
 ## Plan Mode Protocol — Exhaustive Planning

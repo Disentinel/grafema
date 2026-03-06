@@ -110,3 +110,63 @@
 - type: SUPERSEDES_APPROACH
   from: kb:decision:kb-file-based-storage
   to: kb:fact:rejected-shared-rfdb-server
+
+# Session 2026-03-07: Knowledge Extraction Runbooks (REG-630)
+- type: PRODUCED
+  from: kb:session:2026-03-07-knowledge-extraction-runbooks
+  to: kb:decision:kb-extraction-via-skill-and-workflow
+
+- type: PRODUCED
+  from: kb:session:2026-03-07-knowledge-extraction-runbooks
+  to: kb:decision:kb-first-exploration-priority
+
+- type: PRODUCED
+  from: kb:session:2026-03-07-knowledge-extraction-runbooks
+  to: kb:decision:runbook-three-pass-template
+
+- type: PRODUCED
+  from: kb:session:2026-03-07-knowledge-extraction-runbooks
+  to: kb:fact:kb-mcp-tools-require-rebuild
+
+- type: PRODUCED
+  from: kb:session:2026-03-07-knowledge-extraction-runbooks
+  to: kb:fact:no-vector-search-in-kb
+
+- type: PRODUCED
+  from: kb:session:2026-03-07-knowledge-extraction-runbooks
+  to: kb:fact:claude-hooks-are-shell-only
+
+# REG-630 implements decisions
+- type: IMPLEMENTS
+  from: kb:ticket:REG-630
+  to: kb:decision:runbook-three-pass-template
+
+- type: IMPLEMENTS
+  from: kb:ticket:REG-630
+  to: kb:decision:kb-extraction-via-skill-and-workflow
+
+# Decision informed by fact
+- type: INFORMED_BY
+  from: kb:decision:kb-extraction-via-skill-and-workflow
+  to: kb:fact:claude-hooks-are-shell-only
+  evidence: "hooks can't do LLM reasoning, so extraction must be a skill not a hook"
+
+- type: RELATES_TO
+  from: kb:decision:kb-extraction-via-skill-and-workflow
+  to: .claude/skills/extract-knowledge/SKILL.md
+
+- type: RELATES_TO
+  from: kb:decision:kb-extraction-via-skill-and-workflow
+  to: _ai/workflow.md
+
+- type: RELATES_TO
+  from: kb:decision:kb-first-exploration-priority
+  to: CLAUDE.md
+
+- type: RELATES_TO
+  from: kb:decision:runbook-three-pass-template
+  to: _ai/runbooks/README.md
+
+- type: RELATES_TO
+  from: kb:fact:kb-mcp-tools-require-rebuild
+  to: packages/mcp/src/definitions/knowledge-tools.ts

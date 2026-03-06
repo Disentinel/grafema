@@ -128,6 +128,22 @@ If user provides just a task ID without further context, the Linear issue descri
 - Details in `_ai/workflow.md`
 - Тривиальные задачи (typo, однострочник) — можно без plan mode
 
+## Knowledge Extraction (MANDATORY)
+
+**After completing any non-trivial task, extract knowledge into the KB.** This is step 6 of the workflow pipeline.
+
+Run `/extract-knowledge` (skill) which follows `_ai/runbooks/02-claude-sessions.md`:
+- Create SESSION node linked to task_id
+- Extract DECISIONs (with rejected alternatives) and FACTs (explicit + side-effect + preferences)
+- Capture created artifacts (tickets, commits)
+- Add edges to `edges.yaml`
+- Validate: IDs, collisions, edge targets, code ref resolution
+- Check for newly dangling refs in existing KB
+
+**Skip conditions:** trivial sessions (typo, single-line fix, no decisions), sessions that only read code.
+
+**Runbooks for other sources:** `_ai/runbooks/` — git history, existing docs.
+
 ## Forbidden Patterns
 
 ### Never in Production Code
@@ -227,17 +243,25 @@ Do NOT delegate exploration to Explore subagents — they don't know about Grafe
 
 MCP tools are deferred — load them via `ToolSearch` before first use (e.g., `ToolSearch("+grafema find")`).
 
-| Instead of... | Use Grafema MCP |
-|---------------|-----------------|
-| `Glob **/*.ts` + Read files | `mcp__grafema__find_nodes` by type/name/file |
-| `Grep "functionName"` | `mcp__grafema__find_calls --name functionName` |
-| Read file to understand deps | `mcp__grafema__trace_dataflow` or `mcp__grafema__get_file_overview` |
-| Read file to understand structure | `mcp__grafema__get_file_overview` or `mcp__grafema__get_function_details` |
-| Multiple Reads to understand impact | `mcp__grafema__query_graph` with Datalog |
-| Find cross-package imports | `query_graph` with `attr(X, "source", "@grafema/util")` |
+### Exploration priority: KB → Graph → Files
+
+1. **Knowledge Base first** — `query_knowledge(text="<area>")`, `query_decisions(module="<module>")`. Existing decisions, facts, and session notes may already answer your question.
+2. **Code graph second** — `find_nodes`, `find_calls`, `get_file_overview`, `query_graph`. Structural understanding of current code.
+3. **File reads last** — only when KB and graph don't have what you need.
+
+| Instead of... | Try KB first | Then Graph |
+|---------------|-------------|------------|
+| Understanding a module's purpose | `query_knowledge(text="<module>")` | `get_file_overview` |
+| Why code is structured this way | `query_decisions(module="<semantic-addr>")` | `get_context` |
+| Known issues / gotchas | `query_knowledge(type="FACT", text="<area>")` | `find_nodes` |
+| `Glob **/*.ts` + Read files | — | `find_nodes` by type/name/file |
+| `Grep "functionName"` | — | `find_calls --name functionName` |
+| Read file to understand deps | — | `trace_dataflow` or `get_file_overview` |
+| Multiple Reads to understand impact | — | `query_graph` with Datalog |
+| Find cross-package imports | — | `query_graph` with `attr(X, "source", "@grafema/util")` |
 
 **Fallback to file reads ONLY when:**
-1. Graph returned 0 results AND you verified the query was correct
+1. KB and graph returned 0 results AND you verified the queries were correct
 2. You need exact source code for implementation (not exploration)
 3. `get_stats` shows nodeCount=0 (graph not loaded)
 
