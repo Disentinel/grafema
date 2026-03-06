@@ -371,6 +371,8 @@ export interface AddKnowledgeArgs {
   type: string;
   content: string;
   slug?: string;
+  subtype?: string;
+  scope?: string;
   relates_to?: string[];
   projections?: string[];
   status?: string;
@@ -397,4 +399,24 @@ export interface SupersedeFactArgs {
   old_id: string;
   new_content: string;
   new_slug?: string;
+}
+
+// === GIT QUERY ARGS (REG-628) ===
+
+export interface GitChurnArgs {
+  limit?: number;
+  since?: string;
+}
+
+export interface GitCoChangeArgs {
+  file: string;
+  min_support?: number;
+}
+
+export interface GitOwnershipArgs {
+  file: string;
+}
+
+export interface GitArchaeologyArgs {
+  file: string;
 }

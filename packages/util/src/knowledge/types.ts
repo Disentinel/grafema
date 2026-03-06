@@ -11,12 +11,19 @@ export type KBNodeType = 'DECISION' | 'FACT' | 'SESSION' | 'COMMIT' | 'FILE_CHAN
 /** Lifecycle derived from directory path */
 export type KBLifecycle = 'declared' | 'derived' | 'synced';
 
+/** Scope of a knowledge node */
+export type KBScope = 'global' | 'project' | 'module';
+
 /** Base fields shared by all KB nodes */
 export interface KBNodeBase {
   /** Semantic ID in format kb:<type>:<slug> */
   id: string;
   /** Node type */
   type: KBNodeType;
+  /** Subtype within the node type (e.g., FACT: domain|error|preference, DECISION: adr|runbook) */
+  subtype?: string;
+  /** Scope of applicability */
+  scope?: KBScope;
   /** Projections this node belongs to (e.g., 'epistemic', 'temporal') */
   projections: string[];
   /** Source node that produced this (e.g., session ID) */

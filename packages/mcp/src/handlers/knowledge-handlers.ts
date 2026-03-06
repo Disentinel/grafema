@@ -10,8 +10,13 @@ import type {
   QueryKnowledgeArgs,
   QueryDecisionsArgs,
   SupersedeFactArgs,
+  GitChurnArgs,
+  GitCoChangeArgs,
+  GitOwnershipArgs,
+  GitArchaeologyArgs,
 } from '../types.js';
 import type { KBDecision, KBNodeType } from '@grafema/util';
+import { getChurn, getCoChanges, getOwnership, getArchaeology } from '@grafema/util';
 
 /**
  * Add a new knowledge node.
@@ -24,6 +29,8 @@ export async function handleAddKnowledge(args: AddKnowledgeArgs): Promise<ToolRe
       type: args.type as KBNodeType,
       content: args.content,
       slug: args.slug,
+      subtype: args.subtype,
+      scope: args.scope as 'global' | 'project' | 'module' | undefined,
       projections: args.projections,
       relates_to: args.relates_to,
       status: args.status as KBDecision['status'],
@@ -223,5 +230,103 @@ export async function handleGetKnowledgeStats(): Promise<ToolResult> {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return errorResult(`Failed to get knowledge stats: ${message}`);
+  }
+}
+
+/**
+ * Get churn analysis — files ranked by change frequency.
+ */
+export async function handleGitChurn(args: GitChurnArgs): Promise<ToolResult> {
+  try {
+    const kb = await getOrCreateKnowledgeBase();
+    const entries = await getChurn(kb, { limit: args.limit, since: args.since });
+
+    if (entries.length === 0) {
+      return textResult('No churn data found. Run `grafema git-ingest` first to ingest git history.');
+    }
+
+    const lines: string[] = [`## File Churn (${entries.length} files)\n`];
+    for (const entry of entries) {
+      lines.push(`${entry.changeCount} changes | +${entry.totalAdded} -${entry.totalRemoved} | ${entry.path}`);
+    }
+
+    return textResult(lines.join('\n'));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return errorResult(`Failed to get churn data: ${message}`);
+  }
+}
+
+/**
+ * Get co-change analysis — files that change together.
+ */
+export async function handleGitCoChange(args: GitCoChangeArgs): Promise<ToolResult> {
+  try {
+    const kb = await getOrCreateKnowledgeBase();
+    const entries = await getCoChanges(kb, args.file, { minSupport: args.min_support });
+
+    if (entries.length === 0) {
+      return textResult(`No co-change data found for "${args.file}". The file may not appear in git history, or run \`grafema git-ingest\` first.`);
+    }
+
+    const lines: string[] = [`## Co-changes with ${args.file} (${entries.length} files)\n`];
+    for (const entry of entries) {
+      const pct = (entry.support * 100).toFixed(0);
+      lines.push(`${entry.coChangeCount} co-changes (${pct}%) | ${entry.path}`);
+    }
+
+    return textResult(lines.join('\n'));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return errorResult(`Failed to get co-change data: ${message}`);
+  }
+}
+
+/**
+ * Get ownership analysis — authors ranked by contribution.
+ */
+export async function handleGitOwnership(args: GitOwnershipArgs): Promise<ToolResult> {
+  try {
+    const kb = await getOrCreateKnowledgeBase();
+    const entries = await getOwnership(kb, args.file);
+
+    if (entries.length === 0) {
+      return textResult(`No ownership data found for "${args.file}". Run \`grafema git-ingest\` first.`);
+    }
+
+    const lines: string[] = [`## Ownership of ${args.file} (${entries.length} authors)\n`];
+    for (const entry of entries) {
+      lines.push(`${entry.commits} commits | +${entry.linesAdded} -${entry.linesRemoved} | ${entry.authorName} (${entry.authorId})`);
+    }
+
+    return textResult(lines.join('\n'));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return errorResult(`Failed to get ownership data: ${message}`);
+  }
+}
+
+/**
+ * Get archaeology — temporal context for a file.
+ */
+export async function handleGitArchaeology(args: GitArchaeologyArgs): Promise<ToolResult> {
+  try {
+    const kb = await getOrCreateKnowledgeBase();
+    const entry = await getArchaeology(kb, args.file);
+
+    if (!entry.lastCommitHash) {
+      return textResult(`No history found for "${args.file}". Run \`grafema git-ingest\` first.`);
+    }
+
+    const lines: string[] = [
+      `## Archaeology: ${args.file}\n`,
+      `First commit: ${entry.firstCommitDate} by ${entry.firstAuthor}`,
+      `Last commit:  ${entry.lastCommitDate} by ${entry.lastAuthor} (${entry.lastCommitHash.slice(0, 8)})`,
+    ];
+
+    return textResult(lines.join('\n'));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return errorResult(`Failed to get archaeology data: ${message}`);
   }
 }

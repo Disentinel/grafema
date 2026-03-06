@@ -784,4 +784,243 @@ No resolver set.
       }
     });
   });
+
+  // --- subtype & scope (REG-629) ---
+
+  describe('subtype and scope (REG-629)', () => {
+    it('should create FACT with subtype=domain and scope=module via addNode', async () => {
+      const dir = createTestDir();
+      try {
+        const kb = new KnowledgeBase(dir);
+        await kb.load();
+
+        const node = await kb.addNode({
+          type: 'FACT',
+          content: 'Redis is used as the session store.',
+          slug: 'redis-session-store',
+          subtype: 'domain',
+          scope: 'module',
+          confidence: 'high',
+          projections: ['epistemic'],
+        });
+
+        assert.strictEqual(node.id, 'kb:fact:redis-session-store');
+        assert.strictEqual(node.subtype, 'domain');
+        assert.strictEqual(node.scope, 'module');
+        assert.strictEqual(node.type, 'FACT');
+
+        // Verify file on disk has correct frontmatter
+        const content = readFileSync(node.filePath, 'utf-8');
+        assert.ok(content.includes('subtype: domain'), 'File should contain subtype');
+        assert.ok(content.includes('scope: module'), 'File should contain scope');
+        assert.ok(content.includes('confidence: high'));
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('should create FACT with subtype=error and verify', async () => {
+      const dir = createTestDir();
+      try {
+        const kb = new KnowledgeBase(dir);
+        await kb.load();
+
+        const node = await kb.addNode({
+          type: 'FACT',
+          content: 'ECONNREFUSED errors occur when Redis is down.',
+          slug: 'redis-econnrefused',
+          subtype: 'error',
+          scope: 'project',
+        });
+
+        assert.strictEqual(node.subtype, 'error');
+        assert.strictEqual(node.scope, 'project');
+
+        const content = readFileSync(node.filePath, 'utf-8');
+        assert.ok(content.includes('subtype: error'));
+        assert.ok(content.includes('scope: project'));
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('should create DECISION with subtype=adr and verify', async () => {
+      const dir = createTestDir();
+      try {
+        const kb = new KnowledgeBase(dir);
+        await kb.load();
+
+        const node = await kb.addNode({
+          type: 'DECISION',
+          content: 'Use file-based storage for knowledge base.',
+          slug: 'kb-file-storage',
+          subtype: 'adr',
+          scope: 'global',
+          status: 'active',
+        });
+
+        assert.strictEqual(node.type, 'DECISION');
+        assert.strictEqual(node.subtype, 'adr');
+        assert.strictEqual(node.scope, 'global');
+
+        const content = readFileSync(node.filePath, 'utf-8');
+        assert.ok(content.includes('subtype: adr'));
+        assert.ok(content.includes('scope: global'));
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('should reload KB from disk and preserve subtype/scope', async () => {
+      const dir = createTestDir();
+      try {
+        const kb1 = new KnowledgeBase(dir);
+        await kb1.load();
+
+        await kb1.addNode({
+          type: 'FACT',
+          content: 'Reload test fact.',
+          slug: 'reload-test',
+          subtype: 'domain',
+          scope: 'module',
+          projections: ['epistemic'],
+        });
+
+        // Create a fresh KnowledgeBase and reload from disk
+        const kb2 = new KnowledgeBase(dir);
+        await kb2.load();
+
+        const node = kb2.getNode('kb:fact:reload-test');
+        assert.ok(node, 'Node should exist after reload');
+        assert.strictEqual(node.subtype, 'domain');
+        assert.strictEqual(node.scope, 'module');
+        assert.strictEqual(node.content, 'Reload test fact.');
+        assert.deepStrictEqual(node.projections, ['epistemic']);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('should parse subtype/scope from frontmatter on load', async () => {
+      const dir = createTestDir();
+      try {
+        writeKBFile(dir, 'declared', 'facts', 'with-subtype.md',
+`---
+id: kb:fact:with-subtype
+type: FACT
+subtype: preference
+scope: project
+projections: [epistemic]
+created: 2026-03-06
+---
+
+Fact with subtype and scope from file.
+`);
+        const kb = new KnowledgeBase(dir);
+        await kb.load();
+
+        const node = kb.getNode('kb:fact:with-subtype');
+        assert.ok(node);
+        assert.strictEqual(node.subtype, 'preference');
+        assert.strictEqual(node.scope, 'project');
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('should omit subtype/scope when not set', async () => {
+      const dir = createTestDir();
+      try {
+        const kb = new KnowledgeBase(dir);
+        await kb.load();
+
+        const node = await kb.addNode({
+          type: 'FACT',
+          content: 'No subtype or scope.',
+          slug: 'no-subtype-scope',
+        });
+
+        assert.strictEqual(node.subtype, undefined);
+        assert.strictEqual(node.scope, undefined);
+
+        const content = readFileSync(node.filePath, 'utf-8');
+        assert.ok(!content.includes('subtype:'), 'File should not contain subtype');
+        assert.ok(!content.includes('scope:'), 'File should not contain scope');
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('should supersede a fact with subtype and preserve old superseded_by', async () => {
+      const dir = createTestDir();
+      try {
+        const kb = new KnowledgeBase(dir);
+        await kb.load();
+
+        await kb.addNode({
+          type: 'FACT',
+          content: 'Original domain fact.',
+          slug: 'original-domain',
+          subtype: 'domain',
+          scope: 'module',
+        });
+
+        const { old: oldFact, new: newFact } = await kb.supersedeFact(
+          'kb:fact:original-domain',
+          'Updated domain fact.',
+          'updated-domain',
+        );
+
+        assert.strictEqual(oldFact.superseded_by, 'kb:fact:updated-domain');
+        assert.strictEqual(newFact.id, 'kb:fact:updated-domain');
+
+        // Old file should have superseded_by on disk
+        const oldContent = readFileSync(oldFact.filePath, 'utf-8');
+        assert.ok(oldContent.includes('superseded_by'));
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('should query by type and text after reload', async () => {
+      const dir = createTestDir();
+      try {
+        const kb = new KnowledgeBase(dir);
+        await kb.load();
+
+        await kb.addNode({
+          type: 'FACT',
+          content: 'Auth uses bcrypt.',
+          slug: 'auth-bcrypt',
+          subtype: 'domain',
+          scope: 'project',
+        });
+        await kb.addNode({
+          type: 'DECISION',
+          content: 'Migrate to argon2.',
+          slug: 'migrate-argon2',
+          subtype: 'adr',
+          scope: 'global',
+          status: 'active',
+        });
+
+        // Reload
+        const kb2 = new KnowledgeBase(dir);
+        await kb2.load();
+
+        const facts = await kb2.queryNodes({ type: 'FACT' });
+        assert.strictEqual(facts.length, 1);
+        assert.strictEqual(facts[0].subtype, 'domain');
+
+        const byText = await kb2.queryNodes({ text: 'argon2' });
+        assert.strictEqual(byText.length, 1);
+        assert.strictEqual(byText[0].subtype, 'adr');
+
+        const byProjection = await kb2.queryNodes({ projection: 'epistemic' });
+        assert.strictEqual(byProjection.length, 0);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+  });
 });

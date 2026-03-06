@@ -7,7 +7,7 @@
 
 import { join } from 'path';
 import { readdirSync, statSync, readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs';
-import { parseFrontmatter, parseKBNode, serializeKBNode, parseEdgesFile, appendEdge as appendEdgeToFile } from './parser.js';
+import { parseFrontmatter, parseKBNode, serializeKBNode, parseEdgesFile, appendEdge as appendEdgeToFile, parseYamlArrayFile } from './parser.js';
 import type { KBNode, KBNodeType, KBDecision, KBFact, KBEdge, KBStats, KBQueryFilter, KBLifecycle, ResolvedAddress, DanglingCodeRef } from './types.js';
 import { SemanticAddressResolver } from './SemanticAddressResolver.js';
 import type { ResolverBackend } from './SemanticAddressResolver.js';
@@ -135,6 +135,27 @@ export class KnowledgeBase {
       }
     }
 
+    // Scan for .yaml array files (derived data like commits, authors)
+    const yamlFiles = this.scanFiles(this.knowledgeDir, '.yaml');
+    for (const filePath of yamlFiles) {
+      // Skip edges.yaml and meta.yaml — they have special formats
+      const fileName = filePath.split('/').pop() || '';
+      if (fileName === 'edges.yaml' || fileName === 'meta.yaml') continue;
+
+      try {
+        const nodes = parseYamlArrayFile(filePath);
+        for (const node of nodes) {
+          if (this.nodes.has(node.id)) {
+            // For derived data, silently skip duplicates (can happen with incremental ingest)
+            continue;
+          }
+          this.nodes.set(node.id, node);
+        }
+      } catch (error) {
+        console.warn(`[KnowledgeBase] Skipping malformed YAML file ${filePath}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+
     // Load edges
     const edgesPath = join(this.knowledgeDir, 'edges.yaml');
     try {
@@ -217,6 +238,8 @@ export class KnowledgeBase {
     type: KBNodeType;
     content: string;
     slug?: string;
+    subtype?: string;
+    scope?: 'global' | 'project' | 'module';
     projections?: string[];
     source?: string;
     relates_to?: string[];
@@ -264,6 +287,8 @@ export class KnowledgeBase {
       type: params.type,
       created,
     };
+    if (params.subtype) frontmatter.subtype = params.subtype;
+    if (params.scope) frontmatter.scope = params.scope;
     if (params.projections?.length) frontmatter.projections = params.projections;
     if (params.source) frontmatter.source = params.source;
     if (params.relates_to?.length) frontmatter.relates_to = params.relates_to;

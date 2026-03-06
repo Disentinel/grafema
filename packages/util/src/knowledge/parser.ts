@@ -8,7 +8,7 @@
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import { readFileSync, appendFileSync, mkdirSync, existsSync } from 'fs';
 import { dirname } from 'path';
-import type { KBNode, KBNodeType, KBEdge, KBLifecycle, KBDecision, KBFact, KBSession } from './types.js';
+import type { KBNode, KBNodeType, KBEdge, KBLifecycle, KBDecision, KBFact, KBSession, KBScope } from './types.js';
 
 const VALID_TYPES: KBNodeType[] = ['DECISION', 'FACT', 'SESSION', 'COMMIT', 'FILE_CHANGE', 'AUTHOR', 'TICKET', 'INCIDENT'];
 const ID_PATTERN = /^kb:[a-z_]+:[a-z0-9_-]+$/;
@@ -85,6 +85,8 @@ export function parseKBNode(frontmatter: Record<string, unknown>, body: string, 
   };
 
   // Optional base fields
+  if (frontmatter.subtype) base.subtype = String(frontmatter.subtype);
+  if (frontmatter.scope) base.scope = frontmatter.scope as KBScope;
   if (frontmatter.source) base.source = String(frontmatter.source);
   if (Array.isArray(frontmatter.relates_to)) base.relates_to = frontmatter.relates_to as string[];
 
@@ -153,6 +155,8 @@ export function serializeKBNode(node: KBNode): string {
   }
 
   // Common optional fields
+  if (node.subtype) fm.subtype = node.subtype;
+  if (node.scope) fm.scope = node.scope;
   if (node.projections.length > 0) fm.projections = node.projections;
   if (node.source) fm.source = node.source;
   if (node.relates_to?.length) fm.relates_to = node.relates_to;
@@ -193,6 +197,71 @@ export function parseEdgesFile(filePath: string): KBEdge[] {
     };
     if (e.evidence) edge.evidence = String(e.evidence);
     return edge;
+  });
+}
+
+/**
+ * Parse a YAML file containing an array of node objects (e.g., commits/2026-03.yaml, authors.yaml).
+ * Each entry must have at least a `type` field. ID is generated based on type:
+ * - COMMIT → kb:commit:<short-hash>
+ * - AUTHOR → kb:author:<slug>
+ * - Others → kb:<type>:<index>
+ */
+export function parseYamlArrayFile(filePath: string): KBNode[] {
+  const content = readFileSync(filePath, 'utf-8');
+  const parsed = parseYaml(content);
+
+  if (!Array.isArray(parsed)) {
+    throw new Error(`YAML array file must contain an array, got ${typeof parsed} in ${filePath}`);
+  }
+
+  return parsed.map((entry: unknown, index: number) => {
+    if (!entry || typeof entry !== 'object') {
+      throw new Error(`Entry at index ${index} is not an object in ${filePath}`);
+    }
+    const e = entry as Record<string, unknown>;
+
+    const type = e.type;
+    if (typeof type !== 'string' || !VALID_TYPES.includes(type as KBNodeType)) {
+      throw new Error(`Invalid or missing type "${type}" at index ${index} in ${filePath}. Must be one of: ${VALID_TYPES.join(', ')}`);
+    }
+
+    // Generate ID based on type
+    let id: string;
+    switch (type) {
+      case 'COMMIT':
+        id = `kb:commit:${String(e.hash ?? '').slice(0, 8)}`;
+        break;
+      case 'AUTHOR': {
+        if (typeof e.id === 'string' && e.id.startsWith('kb:author:')) {
+          id = e.id;
+        } else if (typeof e.id === 'string') {
+          id = `kb:author:${e.id}`;
+        } else {
+          const name = String(e.name ?? '');
+          id = `kb:author:${name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}`;
+        }
+        break;
+      }
+      default:
+        id = `kb:${type.toLowerCase()}:${index}`;
+        break;
+    }
+
+    const base: KBNode = {
+      id,
+      type: type as KBNodeType,
+      projections: Array.isArray(e.projections) ? e.projections as string[] : [],
+      created: type === 'COMMIT' ? (String(e.date ?? '').split('T')[0]) : '',
+      content: '',
+      filePath,
+      lifecycle: 'derived' as KBLifecycle,
+    };
+
+    // Spread all entry fields onto the node, preserving base fields
+    const node: KBNode = { ...e, ...base } as KBNode;
+
+    return node;
   });
 }
 
