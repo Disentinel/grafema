@@ -3,7 +3,7 @@
  */
 
 import { ensureAnalyzed } from '../analysis.js';
-import { getAnalysisStatus, getOrCreateBackend, isAnalysisRunning } from '../state.js';
+import { getAnalysisStatus, isAnalysisRunning } from '../state.js';
 import {
   textResult,
   errorResult,
@@ -62,7 +62,7 @@ export async function handleGetAnalysisStatus(): Promise<ToolResult> {
 }
 
 export async function handleGetStats(): Promise<ToolResult> {
-  const db = await getOrCreateBackend();
+  const db = await ensureAnalyzed();
 
   const nodeCount = await db.nodeCount();
   const edgeCount = await db.edgeCount();
@@ -79,7 +79,7 @@ export async function handleGetStats(): Promise<ToolResult> {
 }
 
 export async function handleGetSchema(args: GetSchemaArgs): Promise<ToolResult> {
-  const db = await getOrCreateBackend();
+  const db = await ensureAnalyzed();
   const { type = 'all' } = args;
 
   const nodesByType = await db.countNodesByType();

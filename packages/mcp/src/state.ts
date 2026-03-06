@@ -214,8 +214,23 @@ export async function waitForAnalysis(): Promise<void> {
 }
 
 // === BACKEND ===
+export function resetBackend(): void {
+  backend = null;
+  isAnalyzed = false;
+}
+
 export async function getOrCreateBackend(): Promise<GraphBackend> {
-  if (backend) return backend;
+  // Check if existing backend is still connected
+  if (backend) {
+    const rfdb = backend as unknown as RFDBServerBackend;
+    if (rfdb.connected) return backend;
+    // Connection died — reset and recreate
+    log('[Grafema MCP] Backend disconnected, reconnecting...');
+    backend = null;
+    isAnalyzed = false;
+    guaranteeManager = null;
+    guaranteeAPI = null;
+  }
 
   const grafemaDir = join(projectPath, '.grafema');
   const dbPath = join(grafemaDir, 'graph.rfdb');
