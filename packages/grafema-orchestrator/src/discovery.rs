@@ -230,6 +230,7 @@ mod tests {
             plugins: vec![],
             rfdb_socket: None,
             analyzers: Default::default(),
+            services: vec![],
         };
 
         let files = discover(&config).unwrap();

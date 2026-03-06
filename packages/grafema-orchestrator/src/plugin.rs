@@ -495,11 +495,21 @@ pub async fn run_plugin(
 // Pooled streaming plugin execution (daemon mode)
 // ---------------------------------------------------------------------------
 
+/// Workspace package info sent to the resolve daemon.
+#[derive(Debug, Clone, Serialize)]
+pub struct WorkspacePackageWire {
+    pub name: String,
+    pub entry_point: String,
+    pub package_dir: String,
+}
+
 /// Request sent to grafema-resolve in --daemon mode.
 #[derive(Serialize)]
 struct ResolveRequest {
     cmd: String,
     nodes: Vec<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    workspace_packages: Vec<WorkspacePackageWire>,
 }
 
 /// Response from grafema-resolve in --daemon mode.
@@ -557,7 +567,7 @@ pub async fn run_streaming_plugin_pooled(
         .map(|r| serde_json::to_value(&r.bindings).unwrap_or_default())
         .collect();
 
-    let request = ResolveRequest { cmd, nodes };
+    let request = ResolveRequest { cmd, nodes, workspace_packages: vec![] };
     let payload = rmp_serde::to_vec_named(&request).context(format!(
         "Failed to encode resolve request for plugin '{}'",
         plugin.name
@@ -628,15 +638,18 @@ pub async fn run_streaming_plugin_pooled(
 /// # Arguments
 /// * `cmd` - Resolution subcommand (e.g., "imports", "runtime-globals")
 /// * `nodes` - Pre-collected `serde_json::Value` nodes from analysis results
+/// * `workspace_packages` - Workspace package mapping for cross-package resolution
 /// * `resolve_pool` - Persistent resolve daemon process pool
 pub async fn run_resolve_with_nodes(
     cmd: &str,
     nodes: &[serde_json::Value],
+    workspace_packages: &[WorkspacePackageWire],
     resolve_pool: &ProcessPool,
 ) -> Result<PluginOutput> {
     let request = ResolveRequest {
         cmd: cmd.to_string(),
         nodes: nodes.to_vec(),
+        workspace_packages: workspace_packages.to_vec(),
     };
 
     let payload = rmp_serde::to_vec_named(&request)

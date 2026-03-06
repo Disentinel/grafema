@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Main where
 
-import Data.Aeson (FromJSON(..), ToJSON(..), withObject, (.:), object, (.=))
+import Data.Aeson (FromJSON(..), ToJSON(..), withObject, (.:), (.:?), (.!=), object, (.=))
 import qualified Data.Text as T
 import Data.Text (Text)
 import System.Environment (getArgs)
@@ -14,16 +14,31 @@ import qualified CrossFileCalls
 import Grafema.Types (GraphNode)
 import Grafema.Protocol (PluginCommand(..), readFrame, writeFrame, encodeMsgpack, decodeMsgpack)
 
+-- | A workspace package mapping: npm name → entry point file path.
+data WorkspacePackage = WorkspacePackage
+  { wpName       :: !Text  -- ^ npm package name (e.g., "@grafema/util")
+  , wpEntryPoint :: !Text  -- ^ entry point relative to project root (e.g., "packages/util/src/index.ts")
+  , wpPackageDir :: !Text  -- ^ package directory relative to project root (e.g., "packages/util")
+  } deriving (Show, Eq)
+
+instance FromJSON WorkspacePackage where
+  parseJSON = withObject "WorkspacePackage" $ \v -> WorkspacePackage
+    <$> v .: "name"
+    <*> v .: "entry_point"
+    <*> v .: "package_dir"
+
 -- | Request from orchestrator in daemon mode.
 data DaemonRequest = DaemonRequest
-  { drCmd   :: Text        -- "imports" | "runtime-globals" | "builtins" | "cross-file-calls"
-  , drNodes :: [GraphNode]
+  { drCmd               :: Text              -- "imports" | "runtime-globals" | "builtins" | "cross-file-calls"
+  , drNodes             :: [GraphNode]
+  , drWorkspacePackages :: [WorkspacePackage] -- workspace packages for cross-package resolution
   }
 
 instance FromJSON DaemonRequest where
   parseJSON = withObject "DaemonRequest" $ \v -> DaemonRequest
     <$> v .: "cmd"
     <*> v .: "nodes"
+    <*> v .:? "workspace_packages" .!= []
 
 -- | Response to orchestrator.
 data DaemonResponse
@@ -51,17 +66,19 @@ daemonLoop = do
         Left err -> do
           writeFrame stdout (encodeMsgpack (ResError ("decode error: " ++ err)))
         Right req -> do
-          result <- dispatch (drCmd req) (drNodes req)
+          result <- dispatch (drCmd req) (drNodes req) (drWorkspacePackages req)
           writeFrame stdout (encodeMsgpack result)
       daemonLoop
 
 -- | Dispatch a request to the appropriate resolver.
-dispatch :: Text -> [GraphNode] -> IO DaemonResponse
-dispatch "imports" nodes = ResOk <$> ImportResolution.resolveAll nodes
-dispatch "runtime-globals" nodes = return $ ResOk (RuntimeGlobals.resolveAll nodes)
-dispatch "builtins" nodes = return $ ResOk (Builtins.resolveAll nodes)
-dispatch "cross-file-calls" nodes = return $ ResOk (CrossFileCalls.resolveAll nodes)
-dispatch cmd _ = return $ ResError ("unknown command: " ++ T.unpack cmd)
+dispatch :: Text -> [GraphNode] -> [WorkspacePackage] -> IO DaemonResponse
+dispatch "imports" nodes wsPackages =
+  let wsList = map (\wp -> (wpName wp, wpEntryPoint wp, wpPackageDir wp)) wsPackages
+  in ResOk <$> ImportResolution.resolveAllWithWorkspace nodes wsList
+dispatch "runtime-globals" nodes _ = return $ ResOk (RuntimeGlobals.resolveAll nodes)
+dispatch "builtins" nodes _ = return $ ResOk (Builtins.resolveAll nodes)
+dispatch "cross-file-calls" nodes _ = return $ ResOk (CrossFileCalls.resolveAll nodes)
+dispatch cmd _ _ = return $ ResError ("unknown command: " ++ T.unpack cmd)
 
 -- | Original CLI subcommand parser.
 data Command = CmdImports | CmdRuntimeGlobals | CmdBuiltins | CmdCrossFileCalls

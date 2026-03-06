@@ -5,6 +5,89 @@ use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+/// A workspace service (sub-project within the monorepo).
+#[derive(Debug, Clone, Deserialize)]
+pub struct ServiceConfig {
+    /// Service name (human label, e.g., "util")
+    pub name: String,
+
+    /// Relative path from project root to the service directory (e.g., "packages/util")
+    pub path: String,
+
+    /// Entry point relative to the service directory (e.g., "src/index.ts")
+    #[serde(default = "default_entry_point", alias = "entryPoint")]
+    pub entry_point: String,
+}
+
+fn default_entry_point() -> String {
+    "src/index.ts".to_string()
+}
+
+/// A discovered workspace package: npm name → entry point file.
+#[derive(Debug, Clone)]
+pub struct WorkspacePackage {
+    /// npm package name (e.g., "@grafema/util")
+    pub name: String,
+    /// Entry point relative to project root (e.g., "packages/util/src/index.ts")
+    pub entry_point: String,
+    /// Package directory relative to project root (e.g., "packages/util")
+    pub package_dir: String,
+}
+
+/// Discover workspace packages by reading package.json from each service.
+///
+/// For each service in the config, reads `{root}/{service.path}/package.json`,
+/// extracts the npm `"name"` field, and combines it with the entry point path.
+/// Services with missing or unreadable package.json are skipped with a warning.
+pub fn discover_workspace_packages(root: &Path, services: &[ServiceConfig]) -> Vec<WorkspacePackage> {
+    let mut packages = Vec::new();
+    for service in services {
+        let pkg_json_path = root.join(&service.path).join("package.json");
+        match std::fs::read_to_string(&pkg_json_path) {
+            Ok(content) => {
+                match serde_json::from_str::<serde_json::Value>(&content) {
+                    Ok(json) => {
+                        if let Some(npm_name) = json.get("name").and_then(|v| v.as_str()) {
+                            let entry_point = format!("{}/{}", service.path, service.entry_point);
+                            packages.push(WorkspacePackage {
+                                name: npm_name.to_string(),
+                                entry_point,
+                                package_dir: service.path.clone(),
+                            });
+                            tracing::info!(
+                                npm_name = npm_name,
+                                entry_point = %packages.last().unwrap().entry_point,
+                                "Discovered workspace package"
+                            );
+                        } else {
+                            tracing::warn!(
+                                path = %pkg_json_path.display(),
+                                "package.json has no 'name' field, skipping service '{}'",
+                                service.name
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            path = %pkg_json_path.display(),
+                            "Failed to parse package.json for service '{}': {e}",
+                            service.name
+                        );
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    path = %pkg_json_path.display(),
+                    "Cannot read package.json for service '{}': {e}",
+                    service.name
+                );
+            }
+        }
+    }
+    packages
+}
+
 /// Top-level analyzer configuration.
 #[derive(Debug, Deserialize)]
 pub struct AnalyzerConfig {
@@ -30,6 +113,10 @@ pub struct AnalyzerConfig {
     /// Analyzer binary path overrides
     #[serde(default)]
     pub analyzers: AnalyzerBinaries,
+
+    /// Workspace services (sub-projects) for cross-package resolution
+    #[serde(default)]
+    pub services: Vec<ServiceConfig>,
 }
 
 /// Optional overrides for analyzer binary paths.
@@ -771,5 +858,109 @@ analyzers:
         assert_eq!(bins.js_resolve_path(), "/abs/grafema-resolve");
         assert_eq!(bins.haskell_resolve_path(), "/abs/haskell-resolve");
         assert_eq!(bins.rust_resolve_path(), "/abs/grafema-rust-resolve");
+    }
+
+    #[test]
+    fn config_with_services_deserializes() {
+        let dir = test_dir();
+        let yaml = format!(
+            r#"
+root: "{}"
+include:
+  - "**/*.ts"
+services:
+  - name: util
+    path: packages/util
+    entry_point: src/index.ts
+  - name: cli
+    path: packages/cli
+"#,
+            dir.display()
+        );
+        let config_path = write_config(&dir, &yaml);
+        let cfg = load(&config_path).unwrap();
+        assert_eq!(cfg.services.len(), 2);
+        assert_eq!(cfg.services[0].name, "util");
+        assert_eq!(cfg.services[0].path, "packages/util");
+        assert_eq!(cfg.services[0].entry_point, "src/index.ts");
+        assert_eq!(cfg.services[1].name, "cli");
+        assert_eq!(cfg.services[1].entry_point, "src/index.ts"); // default
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn config_without_services_defaults_to_empty() {
+        let dir = test_dir();
+        let config_path = write_config(
+            &dir,
+            &format!(
+                "root: \"{}\"\ninclude:\n  - \"**/*.js\"\n",
+                dir.display()
+            ),
+        );
+        let cfg = load(&config_path).unwrap();
+        assert!(cfg.services.is_empty());
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn discover_workspace_packages_reads_package_json() {
+        let dir = test_dir();
+        let pkg_dir = dir.join("packages").join("util");
+        fs::create_dir_all(&pkg_dir).unwrap();
+        fs::write(
+            pkg_dir.join("package.json"),
+            r#"{"name": "@grafema/util", "version": "0.1.0"}"#,
+        )
+        .unwrap();
+
+        let services = vec![ServiceConfig {
+            name: "util".to_string(),
+            path: "packages/util".to_string(),
+            entry_point: "src/index.ts".to_string(),
+        }];
+
+        let packages = discover_workspace_packages(&dir, &services);
+        assert_eq!(packages.len(), 1);
+        assert_eq!(packages[0].name, "@grafema/util");
+        assert_eq!(packages[0].entry_point, "packages/util/src/index.ts");
+        assert_eq!(packages[0].package_dir, "packages/util");
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn discover_workspace_packages_skips_missing_package_json() {
+        let dir = test_dir();
+        let services = vec![ServiceConfig {
+            name: "missing".to_string(),
+            path: "packages/missing".to_string(),
+            entry_point: "src/index.ts".to_string(),
+        }];
+
+        let packages = discover_workspace_packages(&dir, &services);
+        assert!(packages.is_empty());
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn discover_workspace_packages_skips_no_name_field() {
+        let dir = test_dir();
+        let pkg_dir = dir.join("packages").join("noname");
+        fs::create_dir_all(&pkg_dir).unwrap();
+        fs::write(
+            pkg_dir.join("package.json"),
+            r#"{"version": "0.1.0"}"#,
+        )
+        .unwrap();
+
+        let services = vec![ServiceConfig {
+            name: "noname".to_string(),
+            path: "packages/noname".to_string(),
+            entry_point: "src/index.ts".to_string(),
+        }];
+
+        let packages = discover_workspace_packages(&dir, &services);
+        assert!(packages.is_empty());
+        cleanup(&dir);
     }
 }

@@ -7,10 +7,12 @@
 -- The orchestrator pipes all relevant nodes: IMPORT, IMPORT_BINDING,
 -- EXPORT, EXPORT_BINDING, and exported declarations (FUNCTION, VARIABLE, etc.).
 module ImportResolution
-  ( run, resolveAll
+  ( run, resolveAll, resolveAllWithWorkspace
   -- * Shared helpers for other resolvers
   , ExportIndex, ExportEntry(..)
+  , WorkspaceMap
   , buildExportIndex
+  , buildWorkspaceMap
   , resolveModulePath
   , isRelativeSpecifier
   , findMatchingExport
@@ -42,12 +44,37 @@ data ExportEntry = ExportEntry
   { eeName      :: !Text    -- ^ exported name (e.g., "foo", "default", "*")
   , eeLocalName :: !Text    -- ^ local/original name to look up in source module for re-exports
   , eeNodeId    :: !Text    -- ^ ID of the node that defines this export
+  , eeFile      :: !Text    -- ^ file that contains this export (needed for re-export chain resolution)
   , eeReExport  :: !(Maybe Text)
     -- ^ If this is a re-export, the source module specifier to follow
   } deriving (Show, Eq)
 
 -- | Export index: file path -> list of export entries for that file.
 type ExportIndex = Map Text [ExportEntry]
+
+-- | Workspace package map: npm name → (entry point file path, package directory).
+-- Used for resolving bare specifiers like "@grafema/util" to workspace packages.
+type WorkspaceMap = Map Text (Text, Text)
+
+-- | Build a workspace map from a list of (name, entryPoint, packageDir) tuples.
+buildWorkspaceMap :: [(Text, Text, Text)] -> WorkspaceMap
+buildWorkspaceMap = Map.fromList . map (\(n, ep, pd) -> (n, (ep, pd)))
+
+-- | Find the longest workspace package name that is a prefix of a specifier.
+-- Ensures the match is at a "/" boundary or exact match.
+-- Example: "@grafema/util" matches "@grafema/util/foo" but not "@grafema/utility"
+findWorkspacePrefix :: Text -> WorkspaceMap -> Maybe (Text, (Text, Text))
+findWorkspacePrefix specifier wsMap =
+  let candidates = Map.toList wsMap
+      matches = filter (isValidPrefix specifier . fst) candidates
+      -- Pick the longest matching prefix (most specific)
+  in case matches of
+    [] -> Nothing
+    _  -> Just $ foldl1 (\a b -> if T.length (fst a) >= T.length (fst b) then a else b) matches
+  where
+    isValidPrefix spec pkgName =
+      spec == pkgName ||  -- exact match
+      (pkgName `T.isPrefixOf` spec && T.index spec (T.length pkgName) == '/')  -- sub-path match
 
 -- | Maximum depth for re-export chain following.
 maxReExportDepth :: Int
@@ -88,23 +115,23 @@ nodeToExportEntries node
           name = fromMaybe (gnName node) exportedName
           localName = gnName node  -- original name to look up in source module
           reExportSource = lookupMetaText "source" (gnMetadata node)
-      in [(gnFile node, [ExportEntry name localName (gnId node) reExportSource])]
+      in [(gnFile node, [ExportEntry name localName (gnId node) (gnFile node) reExportSource])]
 
   -- EXPORT node with name "default": default export
   | gnType node == "EXPORT" && gnName node == "default" =
-      [(gnFile node, [ExportEntry "default" "default" (gnId node) Nothing])]
+      [(gnFile node, [ExportEntry "default" "default" (gnId node) (gnFile node) Nothing])]
 
   -- EXPORT node with name "*:source": star re-export
   | gnType node == "EXPORT" && "*:" `T.isPrefixOf` gnName node =
       let source = T.drop 2 (gnName node)
-      in [(gnFile node, [ExportEntry "*" "*" (gnId node) (Just source)])]
+      in [(gnFile node, [ExportEntry "*" "*" (gnId node) (gnFile node) (Just source)])]
 
   -- EXPORT node with name "named": skip (container node, children carry info)
   | gnType node == "EXPORT" = []
 
   -- Directly exported declarations (FUNCTION, VARIABLE, CONSTANT, CLASS)
   | gnExported node && gnType node `elem` ["FUNCTION", "VARIABLE", "CONSTANT", "CLASS"] =
-      [(gnFile node, [ExportEntry (gnName node) (gnName node) (gnId node) Nothing])]
+      [(gnFile node, [ExportEntry (gnName node) (gnName node) (gnId node) (gnFile node) Nothing])]
 
   | otherwise = []
 
@@ -150,22 +177,31 @@ extractImportedName node = lookupMetaText "importedName" (gnMetadata node)
 
 -- | Try to resolve a module specifier to a file path present in the export index.
 --
--- For relative imports (starting with "." or ".."):
---   1. Resolve relative to the importing file's directory
---   2. Try the exact path (if already has extension)
---   3. Try with extensions: .js, .ts, .tsx, .jsx
---   4. Try as directory with index: /index.js, /index.ts, /index.tsx, /index.jsx
---
--- For bare specifiers (e.g., "lodash", "react"): skip (future enhancement).
-resolveModulePath :: Text -> Text -> ExportIndex -> Maybe Text
-resolveModulePath importerFile specifier exportIndex
-  -- Skip bare specifiers (no ./  or ../)
-  | not (isRelativeSpecifier specifier) = Nothing
-  | otherwise =
+-- Resolution order:
+--   1. Workspace package: exact match (e.g., "@grafema/util" → entry point)
+--   2. Workspace package: sub-path match (e.g., "@grafema/util/storage/foo")
+--   3. Relative specifier ("./" or "../"): resolve relative to importer directory
+--   4. External bare specifier: skip
+resolveModulePath :: Text -> Text -> ExportIndex -> WorkspaceMap -> Maybe Text
+resolveModulePath importerFile specifier exportIndex wsMap
+  -- 1. Workspace package: exact match
+  | Just (entryPoint, _) <- Map.lookup specifier wsMap
+  , Map.member entryPoint exportIndex = Just entryPoint
+  -- 2. Workspace package: sub-path (e.g., "@grafema/util/storage/foo")
+  | Just (pkgName, (entryPt, _pkgDir)) <- findWorkspacePrefix specifier wsMap =
+      let srcRoot = textDirname entryPt
+          subPath = T.drop (T.length pkgName + 1) specifier
+          resolved = if T.null srcRoot then subPath else srcRoot <> "/" <> subPath
+          candidates = makeCandidates resolved
+      in firstJust (\c -> if Map.member c exportIndex then Just c else Nothing) candidates
+  -- 3. Relative specifier: existing logic
+  | isRelativeSpecifier specifier =
       let dir = textDirname importerFile
           resolved = resolveRelative dir specifier
           candidates = makeCandidates resolved
       in firstJust (\c -> if Map.member c exportIndex then Just c else Nothing) candidates
+  -- 4. External bare specifier: skip
+  | otherwise = Nothing
 
 -- | Check if a module specifier is relative (starts with "./" or "../").
 isRelativeSpecifier :: Text -> Bool
@@ -234,8 +270,8 @@ hasKnownExtension p = any (`T.isSuffixOf` p)
 
 -- | Resolve a single IMPORT_BINDING node to its target export.
 -- Returns a list of PluginCommands (0 or 1 edges).
-resolveImport :: ExportIndex -> Set (Text, Text) -> Int -> GraphNode -> IO [PluginCommand]
-resolveImport exportIndex visited depth node
+resolveImport :: ExportIndex -> WorkspaceMap -> Set (Text, Text) -> Int -> GraphNode -> IO [PluginCommand]
+resolveImport exportIndex wsMap visited depth node
   | depth > maxReExportDepth = do
       hPutStrLn stderr $ "Warning: re-export chain depth exceeded for "
         ++ T.unpack (gnId node)
@@ -253,22 +289,22 @@ resolveImport exportIndex visited depth node
             ++ T.unpack (gnId node)
           return []
         (Just source, Just importedName) ->
-          resolveImportWithSource exportIndex visited depth node source importedName
+          resolveImportWithSource exportIndex wsMap visited depth node source importedName
 
 -- | Resolve an import once we have the source and imported name.
 resolveImportWithSource
-  :: ExportIndex -> Set (Text, Text) -> Int
+  :: ExportIndex -> WorkspaceMap -> Set (Text, Text) -> Int
   -> GraphNode -> Text -> Text -> IO [PluginCommand]
-resolveImportWithSource exportIndex visited depth node source importedName = do
+resolveImportWithSource exportIndex wsMap visited depth node source importedName = do
   let importerFile = gnFile node
-      mResolvedFile = resolveModulePath importerFile source exportIndex
+      mResolvedFile = resolveModulePath importerFile source exportIndex wsMap
   case mResolvedFile of
     Nothing -> do
       -- Could be a bare specifier or unresolvable path
-      if isRelativeSpecifier source
+      if isRelativeSpecifier source || Map.member source wsMap || findWorkspacePrefix source wsMap /= Nothing
         then hPutStrLn stderr $ "Warning: cannot resolve module '"
                ++ T.unpack source ++ "' from " ++ T.unpack importerFile
-        else return ()  -- bare specifier, silently skip
+        else return ()  -- external bare specifier, silently skip
       return []
     Just resolvedFile
       -- Namespace import (import * as X): resolve to MODULE node
@@ -276,13 +312,13 @@ resolveImportWithSource exportIndex visited depth node source importedName = do
           let moduleId = "MODULE#" <> resolvedFile
           in return [emitImportsFrom (gnId node) moduleId]
       | otherwise ->
-          resolveFromFile exportIndex visited depth node resolvedFile importedName
+          resolveFromFile exportIndex wsMap visited depth node resolvedFile importedName
 
 -- | Resolve an import from a specific resolved file.
 resolveFromFile
-  :: ExportIndex -> Set (Text, Text) -> Int
+  :: ExportIndex -> WorkspaceMap -> Set (Text, Text) -> Int
   -> GraphNode -> Text -> Text -> IO [PluginCommand]
-resolveFromFile exportIndex visited depth node resolvedFile importedName = do
+resolveFromFile exportIndex wsMap visited depth node resolvedFile importedName = do
   let key = (resolvedFile, importedName)
   if Set.member key visited
     then do
@@ -293,7 +329,7 @@ resolveFromFile exportIndex visited depth node resolvedFile importedName = do
       let visited' = Set.insert key visited
           exports = fromMaybe [] (Map.lookup resolvedFile exportIndex)
       case findMatchingExport importedName exports of
-        Just entry -> handleExportEntry exportIndex visited' depth node entry
+        Just entry -> handleExportEntry exportIndex wsMap visited' depth node entry
         Nothing ->
           -- Try star re-exports: look for "*" exports that re-export from another module
           case findStarReExports exports of
@@ -301,7 +337,7 @@ resolveFromFile exportIndex visited depth node resolvedFile importedName = do
               hPutStrLn stderr $ "Warning: no matching export '"
                 ++ T.unpack importedName ++ "' in " ++ T.unpack resolvedFile
               return []
-            reExports -> tryStarReExports exportIndex visited' depth node importedName reExports
+            reExports -> tryStarReExports exportIndex wsMap visited' depth node importedName reExports
 
 -- | Find a matching export entry by name.
 findMatchingExport :: Text -> [ExportEntry] -> Maybe ExportEntry
@@ -316,43 +352,46 @@ findStarReExports = filter (\e -> eeName e == "*" && eeReExport e /= Nothing)
 
 -- | Handle a matched export entry, possibly following re-export chains.
 handleExportEntry
-  :: ExportIndex -> Set (Text, Text) -> Int
+  :: ExportIndex -> WorkspaceMap -> Set (Text, Text) -> Int
   -> GraphNode -> ExportEntry -> IO [PluginCommand]
-handleExportEntry exportIndex visited depth node entry =
+handleExportEntry exportIndex wsMap visited depth node entry =
   case eeReExport entry of
     Nothing ->
       -- Direct export: emit the IMPORTS_FROM edge
       return [emitImportsFrom (gnId node) (eeNodeId entry)]
     Just reExportSource ->
       -- Re-export: follow the chain using the LOCAL name (e.g., "default" not "Calc")
-      let importerFile = gnFile node
-          mResolvedFile = resolveModulePath importerFile reExportSource exportIndex
+      -- IMPORTANT: resolve relative to the file that CONTAINS the re-export,
+      -- not the original importer file. Otherwise relative paths resolve wrong.
+      let exportFile = eeFile entry
+          mResolvedFile = resolveModulePath exportFile reExportSource exportIndex wsMap
       in case mResolvedFile of
         Nothing -> do
           hPutStrLn stderr $ "Warning: cannot resolve re-export source '"
             ++ T.unpack reExportSource ++ "'"
           return []
         Just resolvedFile ->
-          resolveFromFile exportIndex visited (depth + 1) node resolvedFile (eeLocalName entry)
+          resolveFromFile exportIndex wsMap visited (depth + 1) node resolvedFile (eeLocalName entry)
 
 -- | Try resolving through star re-exports.
 tryStarReExports
-  :: ExportIndex -> Set (Text, Text) -> Int
+  :: ExportIndex -> WorkspaceMap -> Set (Text, Text) -> Int
   -> GraphNode -> Text -> [ExportEntry] -> IO [PluginCommand]
-tryStarReExports _ _ _ _ _ [] = return []
-tryStarReExports exportIndex visited depth node importedName (entry:rest) =
+tryStarReExports _ _ _ _ _ _ [] = return []
+tryStarReExports exportIndex wsMap visited depth node importedName (entry:rest) =
   case eeReExport entry of
-    Nothing -> tryStarReExports exportIndex visited depth node importedName rest
+    Nothing -> tryStarReExports exportIndex wsMap visited depth node importedName rest
     Just reExportSource -> do
-      let importerFile = gnFile node
-          mResolvedFile = resolveModulePath importerFile reExportSource exportIndex
+      -- Resolve relative to the file containing the star re-export, not the original importer
+      let exportFile = eeFile entry
+          mResolvedFile = resolveModulePath exportFile reExportSource exportIndex wsMap
       case mResolvedFile of
         Nothing ->
-          tryStarReExports exportIndex visited depth node importedName rest
+          tryStarReExports exportIndex wsMap visited depth node importedName rest
         Just resolvedFile -> do
-          result <- resolveFromFile exportIndex visited (depth + 1) node resolvedFile importedName
+          result <- resolveFromFile exportIndex wsMap visited (depth + 1) node resolvedFile importedName
           case result of
-            [] -> tryStarReExports exportIndex visited depth node importedName rest
+            [] -> tryStarReExports exportIndex wsMap visited depth node importedName rest
             cmds -> return cmds
 
 -- ---------------------------------------------------------------------------
@@ -406,11 +445,19 @@ firstJust f (x:xs) = case f x of
 -- 1. Per-binding: IMPORT_BINDING → target export (FUNCTION, CONSTANT, etc.)
 -- 2. Module-level: IMPORT → MODULE (resolves module specifier to target module)
 resolveAll :: [GraphNode] -> IO [PluginCommand]
-resolveAll nodes = do
+resolveAll nodes = resolveAllWithWorkspace nodes []
+
+-- | Core import resolution with workspace package support.
+--
+-- Same as 'resolveAll' but accepts workspace package mappings for resolving
+-- bare specifiers like "@grafema/util" to workspace entry points.
+resolveAllWithWorkspace :: [GraphNode] -> [(Text, Text, Text)] -> IO [PluginCommand]
+resolveAllWithWorkspace nodes wsPackages = do
   let exportIndex = buildExportIndex nodes
+      wsMap = buildWorkspaceMap wsPackages
       importBindings = filter (\n -> gnType n == "IMPORT_BINDING") nodes
-  bindingEdges <- concat <$> mapM (resolveImport exportIndex Set.empty 0) importBindings
-  let moduleEdges = resolveModuleImports nodes exportIndex
+  bindingEdges <- concat <$> mapM (resolveImport exportIndex wsMap Set.empty 0) importBindings
+  let moduleEdges = resolveModuleImports nodes exportIndex wsMap
   return (bindingEdges ++ moduleEdges)
 
 -- ---------------------------------------------------------------------------
@@ -431,21 +478,21 @@ buildModuleIndex = foldl' addModule Map.empty
 --
 -- For each unique IMPORT node, resolve its source specifier to a file path,
 -- look up the MODULE node for that file, and emit an IMPORTS_FROM edge.
-resolveModuleImports :: [GraphNode] -> ExportIndex -> [PluginCommand]
-resolveModuleImports nodes exportIndex =
+resolveModuleImports :: [GraphNode] -> ExportIndex -> WorkspaceMap -> [PluginCommand]
+resolveModuleImports nodes exportIndex wsMap =
   let moduleIndex = buildModuleIndex nodes
       importNodes = filter (\n -> gnType n == "IMPORT") nodes
       -- Deduplicate by node ID (multiple import statements with same source
       -- produce IMPORT nodes with the same semantic ID)
       uniqueImports = Map.elems $ Map.fromList
         [ (gnId n, n) | n <- importNodes ]
-  in concatMap (resolveModuleImport moduleIndex exportIndex) uniqueImports
+  in concatMap (resolveModuleImport moduleIndex exportIndex wsMap) uniqueImports
 
-resolveModuleImport :: ModuleIndex -> ExportIndex -> GraphNode -> [PluginCommand]
-resolveModuleImport moduleIndex exportIndex node =
+resolveModuleImport :: ModuleIndex -> ExportIndex -> WorkspaceMap -> GraphNode -> [PluginCommand]
+resolveModuleImport moduleIndex exportIndex wsMap node =
   let source = gnName node  -- IMPORT node name is the source specifier
       importerFile = gnFile node
-      mResolvedFile = resolveModulePath importerFile source exportIndex
+      mResolvedFile = resolveModulePath importerFile source exportIndex wsMap
   in case mResolvedFile of
     Nothing -> []
     Just resolvedFile ->

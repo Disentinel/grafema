@@ -110,7 +110,7 @@ resolveCallee importBindingIndex exportIndex file callee =
 -- Returns the node ID of the target export entry.
 resolveInModule :: ExportIndex -> Text -> Text -> Text -> Maybe Text
 resolveInModule exportIndex importerFile source importedName =
-  case resolveModulePath importerFile source exportIndex of
+  case resolveModulePath importerFile source exportIndex Map.empty of
     Nothing -> Nothing
     Just resolvedFile ->
       case Map.lookup resolvedFile exportIndex of

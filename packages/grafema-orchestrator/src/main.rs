@@ -59,6 +59,23 @@ async fn main() -> Result<()> {
                 .or(cfg.rfdb_socket.clone())
                 .unwrap_or_else(|| PathBuf::from("/tmp/rfdb.sock"));
 
+            // Discover workspace packages from services config
+            let ws_packages_raw = config::discover_workspace_packages(&cfg.root, &cfg.services);
+            let ws_packages: Vec<plugin::WorkspacePackageWire> = ws_packages_raw
+                .iter()
+                .map(|p| plugin::WorkspacePackageWire {
+                    name: p.name.clone(),
+                    entry_point: p.entry_point.clone(),
+                    package_dir: p.package_dir.clone(),
+                })
+                .collect();
+            if !ws_packages.is_empty() {
+                tracing::info!(
+                    count = ws_packages.len(),
+                    "Discovered workspace packages for cross-package resolution"
+                );
+            }
+
             tracing::info!(
                 config = %config_path.display(),
                 socket = %socket_path.display(),
@@ -230,10 +247,11 @@ async fn main() -> Result<()> {
 
                 match process_pool::ProcessPool::new(resolve_pool_config, 1) {
                     Ok(resolve_pool) => {
-                        // Step 1: Import resolution
+                        // Step 1: Import resolution (with workspace packages for cross-package imports)
                         let mut import_output = plugin::run_resolve_with_nodes(
                             "imports",
                             &resolve_nodes,
+                            &ws_packages,
                             &resolve_pool,
                         )
                         .await
@@ -262,6 +280,7 @@ async fn main() -> Result<()> {
                         let mut globals_output = plugin::run_resolve_with_nodes(
                             "runtime-globals",
                             &resolve_nodes,
+                            &[],
                             &resolve_pool,
                         )
                         .await
@@ -290,6 +309,7 @@ async fn main() -> Result<()> {
                         let mut builtins_output = plugin::run_resolve_with_nodes(
                             "builtins",
                             &resolve_nodes,
+                            &[],
                             &resolve_pool,
                         )
                         .await
@@ -318,6 +338,7 @@ async fn main() -> Result<()> {
                         let mut cross_file_output = plugin::run_resolve_with_nodes(
                             "cross-file-calls",
                             &resolve_nodes,
+                            &[],
                             &resolve_pool,
                         )
                         .await
@@ -372,6 +393,7 @@ async fn main() -> Result<()> {
                             let mut hs_import_output = plugin::run_resolve_with_nodes(
                                 "haskell-imports",
                                 &hs_resolve_nodes,
+                                &[],
                                 &hs_resolve_pool,
                             )
                             .await
@@ -427,6 +449,7 @@ async fn main() -> Result<()> {
                             let mut rs_import_output = plugin::run_resolve_with_nodes(
                                 "rust-imports",
                                 &rs_resolve_nodes,
+                                &[],
                                 &rs_resolve_pool,
                             )
                             .await
