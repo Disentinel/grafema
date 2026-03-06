@@ -181,6 +181,9 @@ pub struct Shard {
     /// Inverted index: file -> IndexEntry list (built during compaction).
     l1_by_file_index: Option<InvertedIndex>,
 
+    /// Inverted index: name -> IndexEntry list (built during compaction).
+    l1_by_name_index: Option<InvertedIndex>,
+
     /// Lazy edge-type index: edge_type → [(src, dst)].
     /// Built on first `get_edges_by_type()` call, invalidated on mutation.
     edge_type_index: Mutex<Option<HashMap<String, Vec<(u128, u128)>>>>,
@@ -209,6 +212,7 @@ impl Shard {
             l1_edge_descriptor: None,
             l1_by_type_index: None,
             l1_by_file_index: None,
+            l1_by_name_index: None,
             edge_type_index: Mutex::new(None),
         })
     }
@@ -256,6 +260,7 @@ impl Shard {
             l1_edge_descriptor: None,
             l1_by_type_index: None,
             l1_by_file_index: None,
+            l1_by_name_index: None,
             edge_type_index: Mutex::new(None),
         })
     }
@@ -278,6 +283,7 @@ impl Shard {
             l1_edge_descriptor: None,
             l1_by_type_index: None,
             l1_by_file_index: None,
+            l1_by_name_index: None,
             edge_type_index: Mutex::new(None),
         }
     }
@@ -303,6 +309,7 @@ impl Shard {
             l1_edge_descriptor: None,
             l1_by_type_index: None,
             l1_by_file_index: None,
+            l1_by_name_index: None,
             edge_type_index: Mutex::new(None),
         })
     }
@@ -351,6 +358,7 @@ impl Shard {
             l1_edge_descriptor: None,
             l1_by_type_index: None,
             l1_by_file_index: None,
+            l1_by_name_index: None,
             edge_type_index: Mutex::new(None),
         })
     }
@@ -650,9 +658,11 @@ impl Shard {
         &mut self,
         by_type_index: Option<InvertedIndex>,
         by_file_index: Option<InvertedIndex>,
+        by_name_index: Option<InvertedIndex>,
     ) {
         self.l1_by_type_index = by_type_index;
         self.l1_by_file_index = by_file_index;
+        self.l1_by_name_index = by_name_index;
     }
 
     /// Get reference to L1 by_type inverted index (for query optimization).
@@ -663,6 +673,11 @@ impl Shard {
     /// Get reference to L1 by_file inverted index (for query optimization).
     pub fn l1_by_file_index(&self) -> Option<&InvertedIndex> {
         self.l1_by_file_index.as_ref()
+    }
+
+    /// Get reference to L1 by_name inverted index (for query optimization).
+    pub fn l1_by_name_index(&self) -> Option<&InvertedIndex> {
+        self.l1_by_name_index.as_ref()
     }
 
     /// Clear L0 segments after compaction (they've been merged into L1).
@@ -983,8 +998,8 @@ impl Shard {
         Self::metadata_matches(metadata_value, metadata_filters)
     }
 
-    /// Find nodes matching optional node_type and/or file filters.
-    /// Both None = return all nodes (use with caution).
+    /// Find nodes matching optional node_type, file, and/or name filters.
+    /// All None = return all nodes (use with caution).
     ///
     /// Uses zone map pruning at descriptor level, then segment-level
     /// zone map, then columnar scan. Deduplicates by node id
@@ -993,6 +1008,7 @@ impl Shard {
         &self,
         node_type: Option<&str>,
         file: Option<&str>,
+        name: Option<&str>,
     ) -> Vec<NodeRecordV2> {
         let mut seen_ids: HashSet<u128> = HashSet::new();
         let mut results: Vec<NodeRecordV2> = Vec::new();
@@ -1015,6 +1031,11 @@ impl Shard {
             }
             if let Some(f) = file {
                 if node.file != f {
+                    continue;
+                }
+            }
+            if let Some(n) = name {
+                if node.name != n {
                     continue;
                 }
             }
@@ -1069,6 +1090,11 @@ impl Shard {
                         continue;
                     }
                 }
+                if let Some(n) = name {
+                    if seg.get_name(j) != n {
+                        continue;
+                    }
+                }
 
                 seen_ids.insert(id);
                 results.push(seg.get_record(j));
@@ -1081,12 +1107,13 @@ impl Shard {
         {
             // Zone map pruning at descriptor level
             if l1_desc.may_contain(node_type, file, None) {
-                // Try inverted index path: use by_type or by_file index
+                // Try inverted index path: use by_type, by_file, or by_name index
                 // to avoid full L1 scan when a filter is specified.
                 let used_index = self.find_nodes_via_l1_index(
                     l1_seg,
                     node_type,
                     file,
+                    name,
                     &mut seen_ids,
                     &mut results,
                 );
@@ -1120,6 +1147,11 @@ impl Shard {
                                     continue;
                                 }
                             }
+                            if let Some(n) = name {
+                                if l1_seg.get_name(j) != n {
+                                    continue;
+                                }
+                            }
 
                             seen_ids.insert(id);
                             results.push(l1_seg.get_record(j));
@@ -1137,15 +1169,17 @@ impl Shard {
     /// Returns true if an index was used (caller should skip full L1 scan).
     /// Returns false if no applicable index exists (caller falls back to scan).
     ///
-    /// Strategy:
+    /// Strategy (priority: type > file > name, type is most selective):
     /// - If node_type filter is set and by_type index exists, use it
     /// - If file filter is set and by_file index exists, use it
-    /// - Both filters: use the more selective one (by_type), then post-filter
+    /// - If name filter is set and by_name index exists, use it
+    /// - Other filters are applied as post-filters on index results
     fn find_nodes_via_l1_index(
         &self,
         l1_seg: &NodeSegmentV2,
         node_type: Option<&str>,
         file: Option<&str>,
+        name: Option<&str>,
         seen_ids: &mut HashSet<u128>,
         results: &mut Vec<NodeRecordV2>,
     ) -> bool {
@@ -1160,10 +1194,14 @@ impl Shard {
                     seen_ids.insert(entry.node_id);
                     continue;
                 }
-                // Post-filter by file if needed
                 let record = l1_seg.get_record(entry.offset as usize);
                 if let Some(f) = file {
                     if record.file != f {
+                        continue;
+                    }
+                }
+                if let Some(n) = name {
+                    if record.name != n {
                         continue;
                     }
                 }
@@ -1173,9 +1211,32 @@ impl Shard {
             return true;
         }
 
-        // Fall back to by_file index when only file filter is specified
+        // Fall back to by_file index when file filter is specified
         if let (Some(f), Some(by_file_idx)) = (file, &self.l1_by_file_index) {
             let index_entries = by_file_idx.lookup(f);
+            for entry in index_entries {
+                if seen_ids.contains(&entry.node_id) {
+                    continue;
+                }
+                if self.tombstones.contains_node(entry.node_id) {
+                    seen_ids.insert(entry.node_id);
+                    continue;
+                }
+                let record = l1_seg.get_record(entry.offset as usize);
+                if let Some(n) = name {
+                    if record.name != n {
+                        continue;
+                    }
+                }
+                seen_ids.insert(record.id);
+                results.push(record);
+            }
+            return true;
+        }
+
+        // Fall back to by_name index when only name filter is specified
+        if let (Some(n), Some(by_name_idx)) = (name, &self.l1_by_name_index) {
+            let index_entries = by_name_idx.lookup(n);
             for entry in index_entries {
                 if seen_ids.contains(&entry.node_id) {
                     continue;
@@ -1356,6 +1417,103 @@ impl Shard {
 
                 seen_ids.insert(id);
                 results.push(id);
+            }
+        }
+
+        // Step 3: Scan L1 node segment (oldest, compacted)
+        if let (Some(l1_desc), Some(l1_seg)) =
+            (&self.l1_node_descriptor, &self.l1_node_segment)
+        {
+            // Descriptor-level zone map pruning.
+            if let Some(nt) = node_type {
+                if !l1_desc.may_contain(Some(nt), prune_file, None) {
+                    return results;
+                }
+            } else if !l1_desc.may_contain(None, prune_file, None) {
+                return results;
+            }
+            if let Some(prefix) = node_type_prefix {
+                if !l1_desc.node_types.is_empty() && !l1_desc.node_types.iter().any(|t| t.starts_with(prefix)) {
+                    return results;
+                }
+            }
+
+            // Try L1 by_name index when name filter is set (avoids full L1 scan).
+            let mut used_index = false;
+            if let (Some(n), Some(by_name_idx)) = (name, &self.l1_by_name_index) {
+                if !substring_match {
+                    let index_entries = by_name_idx.lookup(n);
+                    for entry in index_entries {
+                        if seen_ids.contains(&entry.node_id) {
+                            continue;
+                        }
+                        if self.tombstones.contains_node(entry.node_id) {
+                            seen_ids.insert(entry.node_id);
+                            continue;
+                        }
+                        // Post-filter by other attr filters
+                        if !Self::matches_attr_filters(
+                            l1_seg.get_node_type(entry.offset as usize),
+                            l1_seg.get_file(entry.offset as usize),
+                            l1_seg.get_name(entry.offset as usize),
+                            l1_seg.get_metadata(entry.offset as usize),
+                            node_type,
+                            node_type_prefix,
+                            file,
+                            name,
+                            exported,
+                            metadata_filters,
+                            substring_match,
+                        ) {
+                            continue;
+                        }
+                        seen_ids.insert(entry.node_id);
+                        results.push(entry.node_id);
+                    }
+                    used_index = true;
+                }
+            }
+
+            if !used_index {
+                // Segment-level zone map pruning.
+                if let Some(nt) = node_type {
+                    if !l1_seg.contains_node_type(nt) {
+                        return results;
+                    }
+                }
+                if let Some(f) = prune_file {
+                    if !l1_seg.contains_file(f) {
+                        return results;
+                    }
+                }
+
+                for j in 0..l1_seg.record_count() {
+                    let id = l1_seg.get_id(j);
+                    if seen_ids.contains(&id) {
+                        continue;
+                    }
+                    if self.tombstones.contains_node(id) {
+                        seen_ids.insert(id);
+                        continue;
+                    }
+                    if !Self::matches_attr_filters(
+                        l1_seg.get_node_type(j),
+                        l1_seg.get_file(j),
+                        l1_seg.get_name(j),
+                        l1_seg.get_metadata(j),
+                        node_type,
+                        node_type_prefix,
+                        file,
+                        name,
+                        exported,
+                        metadata_filters,
+                        substring_match,
+                    ) {
+                        continue;
+                    }
+                    seen_ids.insert(id);
+                    results.push(id);
+                }
             }
         }
 
@@ -2168,7 +2326,7 @@ mod tests {
             make_node("id3", "FUNCTION", "fn2", "file.rs"),
         ]);
 
-        let fns = shard.find_nodes(Some("FUNCTION"), None);
+        let fns = shard.find_nodes(Some("FUNCTION"), None, None);
         assert_eq!(fns.len(), 2);
         assert!(fns.iter().all(|n| n.node_type == "FUNCTION"));
     }
@@ -2183,11 +2341,11 @@ mod tests {
         ]);
         shard.flush_with_ids(Some(1), None).unwrap();
 
-        let fns = shard.find_nodes(Some("FUNCTION"), None);
+        let fns = shard.find_nodes(Some("FUNCTION"), None, None);
         assert_eq!(fns.len(), 2);
         assert!(fns.iter().all(|n| n.node_type == "FUNCTION"));
 
-        let classes = shard.find_nodes(Some("CLASS"), None);
+        let classes = shard.find_nodes(Some("CLASS"), None, None);
         assert_eq!(classes.len(), 1);
     }
 
@@ -2209,16 +2367,16 @@ mod tests {
         shard.flush_with_ids(Some(2), None).unwrap();
 
         // Query by file: should only find nodes from the relevant segments
-        let main_nodes = shard.find_nodes(None, Some("src/main.rs"));
+        let main_nodes = shard.find_nodes(None, Some("src/main.rs"), None);
         assert_eq!(main_nodes.len(), 2);
         assert!(main_nodes.iter().all(|n| n.file == "src/main.rs"));
 
-        let lib_nodes = shard.find_nodes(None, Some("src/lib.rs"));
+        let lib_nodes = shard.find_nodes(None, Some("src/lib.rs"), None);
         assert_eq!(lib_nodes.len(), 1);
         assert_eq!(lib_nodes[0].file, "src/lib.rs");
 
         // Query for non-existent file
-        let other = shard.find_nodes(None, Some("src/other.rs"));
+        let other = shard.find_nodes(None, Some("src/other.rs"), None);
         assert!(other.is_empty());
     }
 
@@ -2238,16 +2396,16 @@ mod tests {
         ]);
 
         // find_nodes should return only one copy (buffer wins)
-        let all = shard.find_nodes(None, None);
+        let all = shard.find_nodes(None, None, None);
         assert_eq!(all.len(), 1);
         assert_eq!(all[0].node_type, "METHOD");
 
         // Searching by old type should return nothing (buffer version has METHOD)
-        let fns = shard.find_nodes(Some("FUNCTION"), None);
+        let fns = shard.find_nodes(Some("FUNCTION"), None, None);
         assert!(fns.is_empty());
 
         // Searching by new type should return the buffer version
-        let methods = shard.find_nodes(Some("METHOD"), None);
+        let methods = shard.find_nodes(Some("METHOD"), None, None);
         assert_eq!(methods.len(), 1);
     }
 
@@ -2395,7 +2553,7 @@ mod tests {
         shard.add_nodes(all_nodes);
         shard.flush_with_ids(Some(1), None).unwrap();
 
-        let shard_functions = shard.find_nodes(Some("FUNCTION"), None);
+        let shard_functions = shard.find_nodes(Some("FUNCTION"), None, None);
         assert_eq!(shard_functions.len(), reference_functions.len());
 
         let shard_ids: HashSet<u128> = shard_functions.iter().map(|n| n.id).collect();
@@ -2415,7 +2573,7 @@ mod tests {
 
         // Step 2: Query from buffer
         assert_eq!(shard.get_node(n1.id).unwrap(), n1);
-        assert_eq!(shard.find_nodes(Some("FUNCTION"), None).len(), 2);
+        assert_eq!(shard.find_nodes(Some("FUNCTION"), None, None).len(), 2);
 
         // Step 3: Add edges
         let e1 = make_edge("app::main", "app::helper", "CALLS");
@@ -2441,7 +2599,7 @@ mod tests {
 
         // Step 7: Query across all segments
         assert_eq!(shard.get_node(n4.id).unwrap(), n4);
-        let all_nodes = shard.find_nodes(None, None);
+        let all_nodes = shard.find_nodes(None, None, None);
         assert_eq!(all_nodes.len(), 4);
 
         let outgoing_all = shard.get_outgoing_edges(n1.id, None);
@@ -2470,7 +2628,7 @@ mod tests {
         assert_eq!(shard.segment_count(), (3, 0));
 
         // All nodes from all segments should be queryable
-        let all = shard.find_nodes(None, None);
+        let all = shard.find_nodes(None, None, None);
         assert_eq!(all.len(), 30);
 
         // Point lookup from each batch
@@ -2497,7 +2655,7 @@ mod tests {
         ]);
 
         // Both flushed and unflushed should be visible
-        let all = shard.find_nodes(None, None);
+        let all = shard.find_nodes(None, None, None);
         assert_eq!(all.len(), 3);
 
         assert!(shard.node_exists(node_id("flushed1")));
@@ -2678,14 +2836,14 @@ mod tests {
         shard.flush_with_ids(Some(1), None).unwrap();
 
         // Before tombstone: 3 nodes
-        assert_eq!(shard.find_nodes(None, None).len(), 3);
+        assert_eq!(shard.find_nodes(None, None, None).len(), 3);
 
         // Tombstone node B
         let mut ts = TombstoneSet::new();
         ts.add_nodes(vec![id_b]);
         shard.set_tombstones(ts);
 
-        let result = shard.find_nodes(None, None);
+        let result = shard.find_nodes(None, None, None);
         assert_eq!(result.len(), 2);
         assert!(result.iter().all(|n| n.id != id_b));
     }
@@ -2786,7 +2944,7 @@ mod tests {
         assert!(shard.get_node(n2.id).is_some());
         assert!(shard.node_exists(n1.id));
         assert!(shard.node_exists(n2.id));
-        assert_eq!(shard.find_nodes(None, None).len(), 2);
+        assert_eq!(shard.find_nodes(None, None, None).len(), 2);
         assert_eq!(shard.get_outgoing_edges(n1.id, None).len(), 1);
         assert_eq!(shard.get_incoming_edges(n2.id, None).len(), 1);
         assert_eq!(shard.all_node_ids().len(), 2);

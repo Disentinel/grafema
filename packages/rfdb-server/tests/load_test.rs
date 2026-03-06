@@ -312,6 +312,28 @@ fn scenario_datalog_guarantee(engine: &dyn GraphStore) -> (usize, Duration) {
     timed(|| evaluator.query(&goal).len())
 }
 
+/// 15. Name lookup via find_by_attr: find_by_attr(name="item_42") x1000
+fn scenario_find_by_name(engine: &dyn GraphStore) -> (usize, Duration) {
+    timed(|| {
+        let mut total = 0usize;
+        for i in (0..NODE_COUNT).step_by(NODE_COUNT / 1000) {
+            let name = format!("item_{}", i);
+            let query = rfdb::AttrQuery {
+                version: None,
+                node_type: None,
+                file_id: None,
+                file: None,
+                exported: None,
+                name: Some(name),
+                metadata_filters: Vec::new(),
+                substring_match: false,
+            };
+            total += engine.find_by_attr(&query).len();
+        }
+        total
+    })
+}
+
 /// 14. 2-hop pattern: functions that call DB queries
 fn scenario_datalog_2hop(engine: &dyn GraphStore) -> (usize, Duration) {
     let mut evaluator = Evaluator::new(engine);
@@ -374,6 +396,8 @@ fn load_test_400k_nodes_800k_edges() {
     run!("7. BFS d=3 multi-type (100x)",    scenario_bfs_multi_type(&engine, &all_ids));
     run!("8. get_all_edges (full scan)",     scenario_get_all_edges(&engine));
 
+    run!("15. Find by name (1000x)",          scenario_find_by_name(&engine));
+
     // Datalog-level
     run!("9.  Datalog: bound src edge",        scenario_datalog_bound_src(&engine, sample_id));
     run!("10. Datalog: all CALLS (index)",     scenario_datalog_all_calls(&engine));
@@ -410,9 +434,9 @@ fn load_test_400k_nodes_800k_edges() {
 
     // Scenario 10 (Datalog all CALLS) count should match scenario 4 (storage CALLS)
     assert_eq!(
-        rows[3].count, rows[9].count,
+        rows[3].count, rows[10].count,
         "Datalog edge(X,Y,\"CALLS\") count ({}) must match get_edges_by_type(\"CALLS\") count ({})",
-        rows[9].count, rows[3].count
+        rows[10].count, rows[3].count
     );
 
     // Scenario 5: FUNCTION nodes should be ~15% of total
@@ -424,12 +448,15 @@ fn load_test_400k_nodes_800k_edges() {
     println!("BFS single-type found {} reachable nodes (100 starts)", rows[5].count);
     println!("BFS multi-type found {} reachable nodes (100 starts)", rows[6].count);
 
+    // Scenario 15: name lookups should find results
+    assert!(rows[8].count > 0, "Scenario 15 (find by name) should produce results");
+
     // -- Hash join performance assertions --
     // Scenarios 12-14 use multi-literal joins that should benefit from hash join.
     // Before hash join: 130-200s. After: should be <10s.
-    let scenario_12_ms = rows[11].dur.as_secs_f64() * 1000.0;
-    let scenario_13_ms = rows[12].dur.as_secs_f64() * 1000.0;
-    let scenario_14_ms = rows[13].dur.as_secs_f64() * 1000.0;
+    let scenario_12_ms = rows[12].dur.as_secs_f64() * 1000.0;
+    let scenario_13_ms = rows[13].dur.as_secs_f64() * 1000.0;
+    let scenario_14_ms = rows[14].dur.as_secs_f64() * 1000.0;
 
     println!("\nHash join performance:");
     println!("  12. join F->C->name:   {:.1}ms (target: <10000ms)", scenario_12_ms);
@@ -453,8 +480,8 @@ fn load_test_400k_nodes_800k_edges() {
     );
 
     // Result counts should not change (correctness invariant)
-    assert!(rows[11].count > 0, "Scenario 12 should produce results");
-    assert!(rows[12].count > 0, "Scenario 13 should produce results");
+    assert!(rows[12].count > 0, "Scenario 12 should produce results");
+    assert!(rows[13].count > 0, "Scenario 13 should produce results");
 
     println!("\n=== Load test passed ===\n");
 }

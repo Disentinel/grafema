@@ -566,7 +566,7 @@ impl MultiShardStore {
         let mut results: Vec<NodeRecordV2> = Vec::new();
 
         for shard in &self.shards {
-            for node in shard.find_nodes(node_type, file) {
+            for node in shard.find_nodes(node_type, file, None) {
                 if seen.insert(node.id) {
                     results.push(node);
                 }
@@ -1175,6 +1175,7 @@ impl MultiShardStore {
             let mut l1_node_desc: Option<SegmentDescriptor> = None;
             let mut by_type_idx: Option<InvertedIndex> = None;
             let mut by_file_idx: Option<InvertedIndex> = None;
+            let mut by_name_idx: Option<InvertedIndex> = None;
 
             if let (Some(bytes), Some(meta)) = (&result.node_segment_bytes, &result.node_meta) {
                 let seg_id = manifest_store.next_segment_id();
@@ -1196,6 +1197,7 @@ impl MultiShardStore {
                 let built = build_inverted_indexes(&records, shard_id, seg_id)?;
                 by_type_idx = Some(InvertedIndex::from_bytes(&built.by_type)?);
                 by_file_idx = Some(InvertedIndex::from_bytes(&built.by_file)?);
+                by_name_idx = Some(InvertedIndex::from_bytes(&built.by_name)?);
 
                 // Collect entries for global index
                 for (offset, record) in records.iter().enumerate() {
@@ -1239,7 +1241,7 @@ impl MultiShardStore {
                 l1_node_seg, l1_node_desc,
                 l1_edge_seg, l1_edge_desc,
             );
-            self.shards[shard_idx].set_l1_indexes(by_type_idx, by_file_idx);
+            self.shards[shard_idx].set_l1_indexes(by_type_idx, by_file_idx, by_name_idx);
 
             total_tombstones_removed += result.tombstones_removed;
             compacted_shard_ids.insert(shard_id);
@@ -1893,7 +1895,7 @@ mod tests {
         assert_eq!(single.edge_count(), multi.edge_count());
 
         // find_nodes results must match
-        let single_fns = single.find_nodes(Some("FUNCTION"), None);
+        let single_fns = single.find_nodes(Some("FUNCTION"), None, None);
         let multi_fns = multi.find_nodes(Some("FUNCTION"), None);
         assert_eq!(single_fns.len(), multi_fns.len());
 
