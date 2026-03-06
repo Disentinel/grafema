@@ -115,7 +115,7 @@ Second.
       try {
         const kb = new KnowledgeBase(dir);
         await kb.load();
-        assert.strictEqual(kb.getStats().totalNodes, 0);
+        assert.strictEqual((await kb.getStats()).totalNodes, 0);
       } finally {
         rmSync(dir, { recursive: true, force: true });
       }
@@ -125,7 +125,7 @@ Second.
       const dir = join(tmpdir(), `grafema-kb-nonexistent-${Date.now()}`);
       const kb = new KnowledgeBase(dir);
       await kb.load();
-      assert.strictEqual(kb.getStats().totalNodes, 0);
+      assert.strictEqual((await kb.getStats()).totalNodes, 0);
     });
   });
 
@@ -205,41 +205,41 @@ Fact about auth and security.
       if (dir) rmSync(dir, { recursive: true, force: true });
     });
 
-    it('should filter by type', () => {
-      const decisions = kb.queryNodes({ type: 'DECISION' });
+    it('should filter by type', async () => {
+      const decisions = await kb.queryNodes({ type: 'DECISION' });
       assert.strictEqual(decisions.length, 2);
 
-      const facts = kb.queryNodes({ type: 'FACT' });
+      const facts = await kb.queryNodes({ type: 'FACT' });
       assert.strictEqual(facts.length, 1);
     });
 
-    it('should filter by projection', () => {
-      const epistemic = kb.queryNodes({ projection: 'epistemic' });
+    it('should filter by projection', async () => {
+      const epistemic = await kb.queryNodes({ projection: 'epistemic' });
       assert.strictEqual(epistemic.length, 2); // d1 + f1
 
-      const temporal = kb.queryNodes({ projection: 'temporal' });
+      const temporal = await kb.queryNodes({ projection: 'temporal' });
       assert.strictEqual(temporal.length, 1); // d2
     });
 
-    it('should filter by text (case-insensitive)', () => {
-      const auth = kb.queryNodes({ text: 'AUTH' });
+    it('should filter by text (case-insensitive)', async () => {
+      const auth = await kb.queryNodes({ text: 'AUTH' });
       assert.strictEqual(auth.length, 2); // d1 + f1
     });
 
-    it('should filter by status', () => {
-      const active = kb.queryNodes({ status: 'active' });
+    it('should filter by status', async () => {
+      const active = await kb.queryNodes({ status: 'active' });
       assert.strictEqual(active.length, 1);
       assert.strictEqual(active[0].id, 'kb:decision:query-d1');
     });
 
-    it('should combine filters', () => {
-      const result = kb.queryNodes({ type: 'DECISION', status: 'active', text: 'auth' });
+    it('should combine filters', async () => {
+      const result = await kb.queryNodes({ type: 'DECISION', status: 'active', text: 'auth' });
       assert.strictEqual(result.length, 1);
       assert.strictEqual(result[0].id, 'kb:decision:query-d1');
     });
 
-    it('should filter by relates_to', () => {
-      const related = kb.queryNodes({ relates_to: 'kb:decision:query-d1' });
+    it('should filter by relates_to', async () => {
+      const related = await kb.queryNodes({ relates_to: 'kb:decision:query-d1' });
       assert.strictEqual(related.length, 1);
       assert.strictEqual(related[0].id, 'kb:fact:query-f1');
     });
@@ -267,10 +267,10 @@ CLI-specific decision.
         const kb = new KnowledgeBase(dir);
         await kb.load();
 
-        const cliDecisions = kb.activeDecisionsFor('packages/cli:CLI:MODULE');
+        const cliDecisions = await kb.activeDecisionsFor('packages/cli:CLI:MODULE');
         assert.strictEqual(cliDecisions.length, 1);
 
-        const noMatch = kb.activeDecisionsFor('nonexistent');
+        const noMatch = await kb.activeDecisionsFor('nonexistent');
         assert.strictEqual(noMatch.length, 0);
       } finally {
         rmSync(dir, { recursive: true, force: true });
@@ -518,7 +518,7 @@ Commit.
         const kb = new KnowledgeBase(dir);
         await kb.load();
 
-        const stats = kb.getStats();
+        const stats = await kb.getStats();
         assert.strictEqual(stats.totalNodes, 3);
         assert.strictEqual(stats.byType.DECISION, 1);
         assert.strictEqual(stats.byType.FACT, 1);
@@ -529,6 +529,256 @@ Commit.
         assert.strictEqual(stats.edgesByType.PRODUCED, 1);
         // kb:session:nonexistent is a dangling ref
         assert.ok(stats.danglingRefs.includes('kb:session:nonexistent'));
+        // No resolver set, so danglingCodeRefs should be empty
+        assert.deepStrictEqual(stats.danglingCodeRefs, []);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+  });
+
+  // --- Resolver integration (REG-627) ---
+
+  describe('SemanticAddressResolver integration (REG-627)', () => {
+    function createMockBackend(nodes = []) {
+      let callCount = 0;
+      return {
+        getCallCount() { return callCount; },
+        async getAllNodes(filter) {
+          callCount++;
+          return nodes.filter(n => {
+            if (filter?.file && n.file !== filter.file) return false;
+            if (filter?.name && n.name !== filter.name) return false;
+            if (filter?.nodeType && n.nodeType !== filter.nodeType) return false;
+            return true;
+          });
+        },
+      };
+    }
+
+    it('should resolve code addresses in relates_to', async () => {
+      const dir = createTestDir();
+      try {
+        writeKBFile(dir, 'declared', 'facts', 'resolver-test.md',
+`---
+id: kb:fact:resolver-test
+type: FACT
+relates_to:
+  - "src/auth.js:hashPassword:FUNCTION"
+  - "kb:decision:some-decision"
+created: 2026-03-06
+---
+
+Fact with code reference.
+`);
+        const kb = new KnowledgeBase(dir);
+        await kb.load();
+
+        const backend = createMockBackend([
+          { id: 'node-1', file: 'src/auth.js', name: 'hashPassword', nodeType: 'FUNCTION' },
+        ]);
+        kb.setBackend(backend);
+
+        const fact = kb.getNode('kb:fact:resolver-test');
+        const resolved = await kb.resolveReferences(fact);
+        assert.strictEqual(resolved.length, 1); // only code addr, not kb:
+        assert.strictEqual(resolved[0].status, 'resolved');
+        assert.strictEqual(resolved[0].codeNodeId, 'node-1');
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('should resolve applies_to on decisions', async () => {
+      const dir = createTestDir();
+      try {
+        writeKBFile(dir, 'declared', 'decisions', 'resolver-decision.md',
+`---
+id: kb:decision:resolver-decision
+type: DECISION
+status: active
+applies_to:
+  - "src/auth.js:AuthService:CLASS"
+created: 2026-03-06
+---
+
+Decision with applies_to code reference.
+`);
+        const kb = new KnowledgeBase(dir);
+        await kb.load();
+
+        const backend = createMockBackend([
+          { id: 'class-1', file: 'src/auth.js', name: 'AuthService', nodeType: 'CLASS' },
+        ]);
+        kb.setBackend(backend);
+
+        const decision = kb.getNode('kb:decision:resolver-decision');
+        const resolved = await kb.resolveReferences(decision);
+        assert.strictEqual(resolved.length, 1);
+        assert.strictEqual(resolved[0].status, 'resolved');
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('should return dangling refs for missing code', async () => {
+      const dir = createTestDir();
+      try {
+        writeKBFile(dir, 'declared', 'facts', 'orphan.md',
+`---
+id: kb:fact:orphan
+type: FACT
+relates_to:
+  - "src/deleted.js:gone:FUNCTION"
+created: 2026-03-06
+---
+
+References deleted code.
+`);
+        const kb = new KnowledgeBase(dir);
+        await kb.load();
+
+        const backend = createMockBackend([]); // empty graph
+        kb.setBackend(backend);
+
+        const dangling = await kb.getDanglingCodeRefs();
+        assert.strictEqual(dangling.length, 1);
+        assert.strictEqual(dangling[0].nodeId, 'kb:fact:orphan');
+        assert.strictEqual(dangling[0].address, 'src/deleted.js:gone:FUNCTION');
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('should invalidate cache and re-resolve', async () => {
+      const dir = createTestDir();
+      try {
+        writeKBFile(dir, 'declared', 'facts', 'cache-test.md',
+`---
+id: kb:fact:cache-test
+type: FACT
+relates_to:
+  - "src/auth.js:hashPassword:FUNCTION"
+created: 2026-03-06
+---
+
+Cache test.
+`);
+        const kb = new KnowledgeBase(dir);
+        await kb.load();
+
+        const backend = createMockBackend([
+          { id: 'node-1', file: 'src/auth.js', name: 'hashPassword', nodeType: 'FUNCTION' },
+        ]);
+        kb.setBackend(backend);
+
+        const fact = kb.getNode('kb:fact:cache-test');
+
+        await kb.resolveReferences(fact);
+        assert.strictEqual(backend.getCallCount(), 1);
+
+        // Cached — no new query
+        await kb.resolveReferences(fact);
+        assert.strictEqual(backend.getCallCount(), 1);
+
+        // Invalidate
+        kb.invalidateResolutionCache();
+        await kb.resolveReferences(fact);
+        assert.strictEqual(backend.getCallCount(), 2);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('should include danglingCodeRefs in getStats', async () => {
+      const dir = createTestDir();
+      try {
+        writeKBFile(dir, 'declared', 'facts', 'stats-orphan.md',
+`---
+id: kb:fact:stats-orphan
+type: FACT
+relates_to:
+  - "src/gone.js:missing:FUNCTION"
+created: 2026-03-06
+---
+
+Orphan for stats.
+`);
+        const kb = new KnowledgeBase(dir);
+        await kb.load();
+
+        const backend = createMockBackend([]); // nothing resolves
+        kb.setBackend(backend);
+
+        const stats = await kb.getStats();
+        assert.ok(stats.danglingCodeRefs.length >= 1);
+        assert.ok(stats.danglingCodeRefs.some(r => r.address === 'src/gone.js:missing:FUNCTION'));
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('should filter by include_dangling_only in queryNodes', async () => {
+      const dir = createTestDir();
+      try {
+        writeKBFile(dir, 'declared', 'facts', 'ok-fact.md',
+`---
+id: kb:fact:ok-fact
+type: FACT
+relates_to:
+  - "src/auth.js:hashPassword:FUNCTION"
+created: 2026-03-06
+---
+
+Resolvable fact.
+`);
+        writeKBFile(dir, 'declared', 'facts', 'bad-fact.md',
+`---
+id: kb:fact:bad-fact
+type: FACT
+relates_to:
+  - "src/gone.js:deleted:FUNCTION"
+created: 2026-03-06
+---
+
+Dangling fact.
+`);
+        const kb = new KnowledgeBase(dir);
+        await kb.load();
+
+        const backend = createMockBackend([
+          { id: 'node-1', file: 'src/auth.js', name: 'hashPassword', nodeType: 'FUNCTION' },
+        ]);
+        kb.setBackend(backend);
+
+        const danglingOnly = await kb.queryNodes({ include_dangling_only: true });
+        assert.strictEqual(danglingOnly.length, 1);
+        assert.strictEqual(danglingOnly[0].id, 'kb:fact:bad-fact');
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('should return empty for include_dangling_only without resolver', async () => {
+      const dir = createTestDir();
+      try {
+        writeKBFile(dir, 'declared', 'facts', 'no-resolver.md',
+`---
+id: kb:fact:no-resolver
+type: FACT
+relates_to:
+  - "src/auth.js:hashPassword:FUNCTION"
+created: 2026-03-06
+---
+
+No resolver set.
+`);
+        const kb = new KnowledgeBase(dir);
+        await kb.load();
+        // No setBackend call
+
+        const result = await kb.queryNodes({ include_dangling_only: true });
+        assert.strictEqual(result.length, 0);
       } finally {
         rmSync(dir, { recursive: true, force: true });
       }

@@ -8,7 +8,9 @@
 import { join } from 'path';
 import { readdirSync, statSync, readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs';
 import { parseFrontmatter, parseKBNode, serializeKBNode, parseEdgesFile, appendEdge as appendEdgeToFile } from './parser.js';
-import type { KBNode, KBNodeType, KBDecision, KBFact, KBEdge, KBStats, KBQueryFilter, KBLifecycle } from './types.js';
+import type { KBNode, KBNodeType, KBDecision, KBFact, KBEdge, KBStats, KBQueryFilter, KBLifecycle, ResolvedAddress, DanglingCodeRef } from './types.js';
+import { SemanticAddressResolver } from './SemanticAddressResolver.js';
+import type { ResolverBackend } from './SemanticAddressResolver.js';
 
 /** Pluralized directory names for each node type */
 const TYPE_DIR: Record<string, string> = {
@@ -27,9 +29,70 @@ export class KnowledgeBase {
   private nodes: Map<string, KBNode> = new Map();
   private edges: KBEdge[] = [];
   private loaded = false;
+  private resolver: SemanticAddressResolver | null = null;
 
   constructor(knowledgeDir: string) {
     this.knowledgeDir = knowledgeDir;
+  }
+
+  /**
+   * Wire up a code graph backend for resolving semantic addresses.
+   * Creates a SemanticAddressResolver that lazily resolves `relates_to`
+   * and `applies_to` addresses to current code node IDs.
+   */
+  setBackend(backend: ResolverBackend): void {
+    this.resolver = new SemanticAddressResolver(backend);
+  }
+
+  /**
+   * Bump the resolver's generation counter, marking all cached resolutions stale.
+   * Call after re-analysis so next resolve() re-queries the code graph.
+   */
+  invalidateResolutionCache(): void {
+    this.resolver?.bumpGeneration();
+  }
+
+  /**
+   * Resolve all code addresses in a node's relates_to (and applies_to for decisions).
+   * KB-internal addresses (kb:...) pass through without backend query.
+   * Returns empty array if no resolver is set.
+   */
+  async resolveReferences(node: KBNode): Promise<ResolvedAddress[]> {
+    if (!this.resolver) return [];
+
+    const addresses: string[] = [];
+    if (node.relates_to) addresses.push(...node.relates_to);
+    if (node.type === 'DECISION') {
+      const d = node as KBDecision;
+      if (d.applies_to) addresses.push(...d.applies_to);
+    }
+
+    // Filter to code addresses only (not kb: internal refs)
+    const codeAddresses = addresses.filter(a => !a.startsWith('kb:'));
+    if (codeAddresses.length === 0) return [];
+
+    return this.resolver.resolveAll(codeAddresses);
+  }
+
+  /**
+   * Find all KB nodes with code addresses that don't resolve to graph nodes.
+   * Returns pairs of (KB node ID, dangling address).
+   */
+  async getDanglingCodeRefs(): Promise<DanglingCodeRef[]> {
+    if (!this.resolver) return [];
+
+    const results: DanglingCodeRef[] = [];
+
+    for (const node of this.nodes.values()) {
+      const resolved = await this.resolveReferences(node);
+      for (const r of resolved) {
+        if (r.status === 'dangling') {
+          results.push({ nodeId: node.id, address: r.address });
+        }
+      }
+    }
+
+    return results;
   }
 
   /**
@@ -92,8 +155,10 @@ export class KnowledgeBase {
 
   /**
    * Query nodes with filters. All filters are AND-combined.
+   * When include_dangling_only is true, only returns nodes with dangling code refs.
+   * Note: include_dangling_only requires a resolver backend; without one it returns empty.
    */
-  queryNodes(filter: KBQueryFilter): KBNode[] {
+  async queryNodes(filter: KBQueryFilter): Promise<KBNode[]> {
     let results = Array.from(this.nodes.values());
 
     if (filter.type) {
@@ -115,6 +180,17 @@ export class KnowledgeBase {
     if (filter.relates_to) {
       results = results.filter(n => n.relates_to?.includes(filter.relates_to!));
     }
+    if (filter.include_dangling_only) {
+      if (!this.resolver) return [];
+      const danglingNodeIds = new Set<string>();
+      for (const node of results) {
+        const resolved = await this.resolveReferences(node);
+        if (resolved.some(r => r.status === 'dangling')) {
+          danglingNodeIds.add(node.id);
+        }
+      }
+      results = results.filter(n => danglingNodeIds.has(n.id));
+    }
 
     return results;
   }
@@ -123,8 +199,8 @@ export class KnowledgeBase {
    * Find active decisions that apply to a given module/semantic address.
    * Uses string includes matching on applies_to entries.
    */
-  activeDecisionsFor(module: string): KBDecision[] {
-    const decisions = this.queryNodes({ type: 'DECISION', status: 'active' }) as KBDecision[];
+  async activeDecisionsFor(module: string): Promise<KBDecision[]> {
+    const decisions = await this.queryNodes({ type: 'DECISION', status: 'active' }) as KBDecision[];
     return decisions.filter(d =>
       d.applies_to?.some(addr => addr.includes(module) || module.includes(addr))
     );
@@ -296,8 +372,9 @@ export class KnowledgeBase {
 
   /**
    * Get statistics about the knowledge base.
+   * Includes dangling code references if a resolver backend is available.
    */
-  getStats(): KBStats {
+  async getStats(): Promise<KBStats> {
     const byType: Partial<Record<KBNodeType, number>> = {};
     const byLifecycle: Partial<Record<KBLifecycle, number>> = {};
 
@@ -311,7 +388,7 @@ export class KnowledgeBase {
       edgesByType[edge.type] = (edgesByType[edge.type] || 0) + 1;
     }
 
-    // Find dangling refs
+    // Find dangling KB-internal refs
     const nodeIds = new Set(this.nodes.keys());
     const danglingRefs: string[] = [];
     for (const edge of this.edges) {
@@ -323,6 +400,9 @@ export class KnowledgeBase {
       }
     }
 
+    // Find dangling code references
+    const danglingCodeRefs = await this.getDanglingCodeRefs();
+
     return {
       totalNodes: this.nodes.size,
       byType,
@@ -330,6 +410,7 @@ export class KnowledgeBase {
       totalEdges: this.edges.length,
       edgesByType,
       danglingRefs,
+      danglingCodeRefs,
     };
   }
 

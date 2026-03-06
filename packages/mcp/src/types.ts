@@ -385,6 +385,7 @@ export interface QueryKnowledgeArgs {
   projection?: string;
   relates_to?: string;
   text?: string;
+  include_dangling_only?: boolean;
 }
 
 export interface QueryDecisionsArgs {

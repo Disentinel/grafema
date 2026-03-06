@@ -97,6 +97,8 @@ export interface KBStats {
   edgesByType: Record<string, number>;
   /** Dangling edge references (from/to IDs that don't exist as nodes) */
   danglingRefs: string[];
+  /** KB nodes referencing code addresses that don't resolve to graph nodes */
+  danglingCodeRefs: DanglingCodeRef[];
 }
 
 /** Filter for querying KB nodes */
@@ -111,4 +113,27 @@ export interface KBQueryFilter {
   status?: string;
   /** Filter by relates_to containing this ID */
   relates_to?: string;
+  /** When true, return only nodes with dangling code references */
+  include_dangling_only?: boolean;
+}
+
+/** Parsed semantic address: file:name:TYPE or file:scope1:...:scopeN:name:TYPE */
+export interface ParsedSemanticAddress {
+  file: string;
+  name: string;
+  type: string;
+  scopePath: string[];
+}
+
+/** Result of resolving a semantic address to a code graph node */
+export interface ResolvedAddress {
+  address: string;
+  codeNodeId: string | null;
+  status: 'resolved' | 'dangling';
+}
+
+/** A dangling code reference from a KB node */
+export interface DanglingCodeRef {
+  nodeId: string;
+  address: string;
 }

@@ -19,6 +19,7 @@ import {
   setAnalysisStatus,
   isAnalysisRunning,
   acquireAnalysisLock,
+  getKnowledgeBase,
 } from './state.js';
 import { loadConfig } from './config.js';
 import { log } from './utils.js';
@@ -270,6 +271,13 @@ export async function ensureAnalyzed(
     }
 
     setIsAnalyzed(true);
+
+    // Bump KB resolver generation so cached resolutions are re-evaluated
+    const kb = getKnowledgeBase();
+    if (kb) {
+      kb.invalidateResolutionCache();
+      log('[Grafema MCP] KnowledgeBase resolution cache invalidated after analysis');
+    }
 
     const totalTime = ((Date.now() - startTime) / 1000).toFixed(2);
     setAnalysisStatus({

@@ -181,7 +181,8 @@ export type {
 } from './schema/index.js';
 
 // Knowledge Base
-export { KnowledgeBase, parseFrontmatter, parseKBNode, serializeKBNode, parseEdgesFile, appendEdge } from './knowledge/index.js';
+export { KnowledgeBase, SemanticAddressResolver, parseSemanticAddress, parseFrontmatter, parseKBNode, serializeKBNode, parseEdgesFile, appendEdge } from './knowledge/index.js';
+export type { ResolverBackend } from './knowledge/index.js';
 export type {
   KBNodeType,
   KBLifecycle,
@@ -193,6 +194,9 @@ export type {
   KBEdge,
   KBStats,
   KBQueryFilter,
+  ParsedSemanticAddress,
+  ResolvedAddress,
+  DanglingCodeRef,
 } from './knowledge/index.js';
 
 // Graph Query Utilities

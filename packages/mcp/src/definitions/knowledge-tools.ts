@@ -86,8 +86,10 @@ Use this to:
 - Find nodes in a projection: query_knowledge(projection="epistemic")
 - Find related nodes: query_knowledge(relates_to="kb:session:2026-03-06-design")
 - Combine filters: query_knowledge(type="FACT", text="auth")
+- Find facts about code that no longer exists: query_knowledge(include_dangling_only=true)
 
-Returns matching nodes with their full content and metadata.`,
+Returns matching nodes with their full content, metadata, and code reference resolution status.
+Code references (relates_to, applies_to) are resolved against the current code graph — each ref shows [OK] or [DANGLING] status.`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -107,6 +109,10 @@ Returns matching nodes with their full content and metadata.`,
         text: {
           type: 'string',
           description: 'Case-insensitive text search in body content',
+        },
+        include_dangling_only: {
+          type: 'boolean',
+          description: 'When true, return only nodes with code references that no longer resolve (dangling). Requires code graph to be analyzed.',
         },
       },
     },
@@ -178,8 +184,10 @@ Use this to:
 - See counts by node type (DECISION, FACT, SESSION, etc.)
 - See counts by lifecycle (declared, derived, synced)
 - Identify dangling references in edges
+- See dangling code references (KB nodes pointing at code that no longer exists in the graph)
 
-Returns: total nodes, by-type counts, by-lifecycle counts, edge counts, dangling refs.`,
+Returns: total nodes, by-type counts, by-lifecycle counts, edge counts, dangling KB refs, dangling code refs.
+Code reference resolution requires the code graph to be analyzed — without it, danglingCodeRefs will be empty.`,
     inputSchema: {
       type: 'object',
       properties: {},

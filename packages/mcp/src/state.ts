@@ -5,7 +5,7 @@
 import { join } from 'path';
 import { existsSync, mkdirSync } from 'fs';
 import { RFDBServerBackend, GuaranteeManager, GuaranteeAPI, KnowledgeBase } from '@grafema/util';
-import type { GuaranteeGraphBackend, GuaranteeGraph } from '@grafema/util';
+import type { GuaranteeGraphBackend, GuaranteeGraph, ResolverBackend } from '@grafema/util';
 import { loadConfig } from './config.js';
 import { log, initLogger } from './utils.js';
 import type { AnalysisStatus } from './types.js';
@@ -303,6 +303,7 @@ export function setupLogging(): void {
 /**
  * Get or create the KnowledgeBase singleton.
  * Lazy-initializes from knowledge/ directory on first access.
+ * If a backend is available, wires up the SemanticAddressResolver.
  */
 export async function getOrCreateKnowledgeBase(): Promise<KnowledgeBase> {
   if (knowledgeBase) return knowledgeBase;
@@ -311,6 +312,12 @@ export async function getOrCreateKnowledgeBase(): Promise<KnowledgeBase> {
   knowledgeBase = new KnowledgeBase(kbDir);
   await knowledgeBase.load();
   log(`[Grafema MCP] KnowledgeBase loaded from ${kbDir}`);
+
+  // Wire up resolver with backend if available (cast to ResolverBackend — RFDBServerBackend has getAllNodes)
+  if (backend) {
+    knowledgeBase.setBackend(backend as unknown as ResolverBackend);
+    log(`[Grafema MCP] KnowledgeBase resolver wired to backend`);
+  }
 
   return knowledgeBase;
 }

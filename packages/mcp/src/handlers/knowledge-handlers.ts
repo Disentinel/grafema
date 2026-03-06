@@ -54,11 +54,12 @@ export async function handleQueryKnowledge(args: QueryKnowledgeArgs): Promise<To
   try {
     const kb = await getOrCreateKnowledgeBase();
 
-    const nodes = kb.queryNodes({
+    const nodes = await kb.queryNodes({
       type: args.type as KBNodeType | undefined,
       projection: args.projection,
       relates_to: args.relates_to,
       text: args.text,
+      include_dangling_only: args.include_dangling_only,
     });
 
     if (nodes.length === 0) {
@@ -75,6 +76,17 @@ export async function handleQueryKnowledge(args: QueryKnowledgeArgs): Promise<To
         lines.push(`Status: ${d.status}`);
         if (d.applies_to?.length) lines.push(`Applies to: ${d.applies_to.join(', ')}`);
       }
+
+      // Include resolution status for code references
+      const resolved = await kb.resolveReferences(node);
+      if (resolved.length > 0) {
+        lines.push('Code refs:');
+        for (const r of resolved) {
+          const icon = r.status === 'resolved' ? 'OK' : 'DANGLING';
+          lines.push(`  [${icon}] ${r.address}${r.codeNodeId ? ` → ${r.codeNodeId}` : ''}`);
+        }
+      }
+
       lines.push('');
       lines.push(node.content.length > 500 ? node.content.slice(0, 500) + '...' : node.content);
       lines.push('');
@@ -97,12 +109,12 @@ export async function handleQueryDecisions(args: QueryDecisionsArgs): Promise<To
     let decisions: KBDecision[];
 
     if (args.module) {
-      decisions = kb.activeDecisionsFor(args.module);
+      decisions = await kb.activeDecisionsFor(args.module);
       if (args.status) {
         decisions = decisions.filter(d => d.status === args.status);
       }
     } else {
-      const nodes = kb.queryNodes({
+      const nodes = await kb.queryNodes({
         type: 'DECISION',
         status: args.status,
       });
@@ -158,7 +170,7 @@ export async function handleSupersedeFact(args: SupersedeFactArgs): Promise<Tool
 export async function handleGetKnowledgeStats(): Promise<ToolResult> {
   try {
     const kb = await getOrCreateKnowledgeBase();
-    const stats = kb.getStats();
+    const stats = await kb.getStats();
 
     const lines: string[] = [
       `## Knowledge Base Stats\n`,
@@ -188,12 +200,22 @@ export async function handleGetKnowledgeStats(): Promise<ToolResult> {
     }
 
     if (stats.danglingRefs.length > 0) {
-      lines.push(`\n### Dangling References (${stats.danglingRefs.length})`);
+      lines.push(`\n### Dangling KB References (${stats.danglingRefs.length})`);
       for (const ref of stats.danglingRefs.slice(0, 10)) {
         lines.push(`- ${ref}`);
       }
       if (stats.danglingRefs.length > 10) {
         lines.push(`... and ${stats.danglingRefs.length - 10} more`);
+      }
+    }
+
+    if (stats.danglingCodeRefs.length > 0) {
+      lines.push(`\n### Dangling Code References (${stats.danglingCodeRefs.length})`);
+      for (const ref of stats.danglingCodeRefs.slice(0, 10)) {
+        lines.push(`- ${ref.nodeId} → ${ref.address}`);
+      }
+      if (stats.danglingCodeRefs.length > 10) {
+        lines.push(`... and ${stats.danglingCodeRefs.length - 10} more`);
       }
     }
 

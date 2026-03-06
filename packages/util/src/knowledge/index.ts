@@ -3,6 +3,8 @@
  */
 
 export { KnowledgeBase } from './KnowledgeBase.js';
+export { SemanticAddressResolver, parseSemanticAddress } from './SemanticAddressResolver.js';
+export type { ResolverBackend } from './SemanticAddressResolver.js';
 export { parseFrontmatter, parseKBNode, serializeKBNode, parseEdgesFile, appendEdge } from './parser.js';
 export type {
   KBNodeType,
@@ -15,4 +17,7 @@ export type {
   KBEdge,
   KBStats,
   KBQueryFilter,
+  ParsedSemanticAddress,
+  ResolvedAddress,
+  DanglingCodeRef,
 } from './types.js';

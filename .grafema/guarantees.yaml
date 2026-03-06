@@ -1,0 +1,12 @@
+# Grafema Guarantees
+# Datalog-based guarantees are checked via `grafema check`.
+# Integration-test guarantees are verified by their corresponding test files.
+
+guarantees:
+  - name: semantic-id-stability
+    description: >
+      Semantic IDs must be stable across re-analysis of unchanged code.
+      Same source code analyzed twice must produce identical node IDs.
+    check: integration-test
+    test: test/integration/semantic-id-stability.test.js
+    severity: error
