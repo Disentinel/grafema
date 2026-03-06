@@ -1,8 +1,9 @@
 //! Inverted index builder -- creates indexes during compaction.
 //!
-//! Two inverted indexes for nodes:
+//! Three inverted indexes for nodes:
 //! - **by_type**: node_type -> list of IndexEntry
 //! - **by_file**: file -> list of IndexEntry
+//! - **by_name**: name -> list of IndexEntry
 //!
 //! Called after merge with the final sorted records and their positions.
 
@@ -21,6 +22,8 @@ pub struct BuiltIndexes {
     pub by_type: Vec<u8>,
     /// by_file index: maps file -> sorted IndexEntry list
     pub by_file: Vec<u8>,
+    /// by_name index: maps name -> sorted IndexEntry list
+    pub by_name: Vec<u8>,
 }
 
 /// Build inverted indexes from sorted, compacted node records.
@@ -36,6 +39,7 @@ pub fn build_inverted_indexes(
 ) -> Result<BuiltIndexes> {
     let mut by_type: HashMap<String, Vec<IndexEntry>> = HashMap::new();
     let mut by_file: HashMap<String, Vec<IndexEntry>> = HashMap::new();
+    let mut by_name: HashMap<String, Vec<IndexEntry>> = HashMap::new();
 
     for (offset, record) in records.iter().enumerate() {
         let entry = IndexEntry {
@@ -53,14 +57,22 @@ pub fn build_inverted_indexes(
             .entry(record.file.clone())
             .or_default()
             .push(entry);
+        if !record.name.is_empty() {
+            by_name
+                .entry(record.name.clone())
+                .or_default()
+                .push(entry);
+        }
     }
 
     let by_type_bytes = serialize_index(&by_type)?;
     let by_file_bytes = serialize_index(&by_file)?;
+    let by_name_bytes = serialize_index(&by_name)?;
 
     Ok(BuiltIndexes {
         by_type: by_type_bytes,
         by_file: by_file_bytes,
+        by_name: by_name_bytes,
     })
 }
 
@@ -186,6 +198,22 @@ mod tests {
 
         let main_entries = by_file.lookup("src/main.rs");
         assert_eq!(main_entries.len(), 1);
+
+        // Verify by_name index
+        let by_name = InvertedIndex::from_bytes(&built.by_name).unwrap();
+        assert_eq!(by_name.entry_count(), 3);
+
+        let a_entries = by_name.lookup("a");
+        assert_eq!(a_entries.len(), 1);
+        assert_eq!(a_entries[0].node_id, records[0].id);
+
+        let b_entries = by_name.lookup("b");
+        assert_eq!(b_entries.len(), 1);
+
+        let c_entries = by_name.lookup("c");
+        assert_eq!(c_entries.len(), 1);
+
+        assert!(by_name.lookup("nonexistent").is_empty());
     }
 
     #[test]

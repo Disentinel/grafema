@@ -15,7 +15,6 @@ This replaces the manual merge-to-main workflow.
 ## Prerequisites
 
 - Must be on a task branch (e.g., `task/REG-XXX`), NOT on `main`
-- All changes must be committed (no uncommitted changes)
 - Steve Jobs review should have been completed before calling this
 
 ## Steps
@@ -31,21 +30,27 @@ if [ "$BRANCH" = "main" ]; then
   echo "ERROR: Cannot approve from main branch"
   exit 1
 fi
-
-# Must have clean working tree
-if [ -n "$(git status --porcelain)" ]; then
-  echo "ERROR: Uncommitted changes exist. Commit first."
-  exit 1
-fi
 ```
 
-### 2. Push Branch
+### 2. Commit Uncommitted Changes (if any)
+
+If there are uncommitted changes (staged or unstaged), commit them all:
+
+1. Run `git status` and `git diff` to see what's pending
+2. Run `git log --oneline -5` to match commit message style
+3. Stage all changed files: `git add` specific files (avoid secrets/.env)
+4. Create a commit with a descriptive message summarizing the changes
+5. End the commit message with `Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>`
+
+If working tree is clean, skip to next step.
+
+### 3. Push Branch
 
 ```bash
 git push -u origin "$BRANCH"
 ```
 
-### 3. Create PR
+### 4. Create PR
 
 Create PR with title and body derived from the task:
 
@@ -62,7 +67,7 @@ gh pr create --title "..." --body "..."
 
 If PR already exists, skip creation and use existing PR.
 
-### 4. Enable Auto-Merge
+### 5. Enable Auto-Merge
 
 ```bash
 # Get PR number
@@ -74,13 +79,13 @@ gh pr merge --auto --merge
 
 This tells GitHub: "merge this PR automatically when all required status checks pass."
 
-### 5. Update Linear
+### 6. Update Linear
 
 Extract issue ID from branch name (e.g., `task/REG-123` → `REG-123`).
 
 Update Linear issue status to **In Review** using `mcp__linear__update_issue`.
 
-### 6. Report
+### 7. Report
 
 Print summary:
 - PR URL
