@@ -3751,6 +3751,188 @@ mod attr_reverse_lookup_tests {
 }
 
 // ============================================================================
+// RFD-48: attr() predicate — first-class fields (exported, version, semantic_id, id)
+// ============================================================================
+
+mod attr_first_class_field_tests {
+    use super::*;
+    use crate::graph::{GraphEngineV2, GraphStore};
+    use crate::storage::NodeRecord;
+    use crate::datalog::eval::Evaluator;
+    use crate::datalog::eval_explain::EvaluatorExplain;
+
+    fn setup_attr_field_graph() -> GraphEngineV2 {
+        let mut engine = GraphEngineV2::create_ephemeral();
+
+        engine.add_nodes(vec![
+            NodeRecord {
+                id: 10,
+                node_type: Some("FUNCTION".to_string()),
+                name: Some("exportedFn".to_string()),
+                file: Some("lib.js".to_string()),
+                file_id: 0, name_offset: 0,
+                version: "main".into(),
+                exported: true, replaces: None, deleted: false,
+                metadata: Some(r#"{"source":"./utils"}"#.to_string()),
+                semantic_id: Some("lib.js->FUNCTION->exportedFn".to_string()),
+            },
+            NodeRecord {
+                id: 20,
+                node_type: Some("IMPORT".to_string()),
+                name: Some("React".to_string()),
+                file: Some("app.js".to_string()),
+                file_id: 0, name_offset: 0,
+                version: "main".into(),
+                exported: false, replaces: None, deleted: false,
+                metadata: Some(r#"{"source":"react"}"#.to_string()),
+                semantic_id: Some("app.js->IMPORT->React".to_string()),
+            },
+        ]);
+
+        engine
+    }
+
+    // Forward lookup: attr(id, "exported", X) returns "true"/"false"
+    #[test]
+    fn test_eval_attr_exported_forward() {
+        let engine = setup_attr_field_graph();
+        let evaluator = Evaluator::new(&engine);
+
+        let query = Atom::new("attr", vec![
+            Term::constant("10"),
+            Term::constant("exported"),
+            Term::var("X"),
+        ]);
+        let results = evaluator.query_atom(&query).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].get("X"), Some(&Value::Str("true".to_string())));
+
+        // Non-exported node
+        let query2 = Atom::new("attr", vec![
+            Term::constant("20"),
+            Term::constant("exported"),
+            Term::var("X"),
+        ]);
+        let results2 = evaluator.query_atom(&query2).unwrap();
+        assert_eq!(results2.len(), 1);
+        assert_eq!(results2[0].get("X"), Some(&Value::Str("false".to_string())));
+    }
+
+    // Forward lookup: attr(id, "version", X)
+    #[test]
+    fn test_eval_attr_version_forward() {
+        let engine = setup_attr_field_graph();
+        let evaluator = Evaluator::new(&engine);
+
+        let query = Atom::new("attr", vec![
+            Term::constant("10"),
+            Term::constant("version"),
+            Term::var("X"),
+        ]);
+        let results = evaluator.query_atom(&query).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].get("X"), Some(&Value::Str("main".to_string())));
+    }
+
+    // Forward lookup: attr(id, "semantic_id", X)
+    #[test]
+    fn test_eval_attr_semantic_id_forward() {
+        let engine = setup_attr_field_graph();
+        let evaluator = Evaluator::new(&engine);
+
+        let query = Atom::new("attr", vec![
+            Term::constant("10"),
+            Term::constant("semantic_id"),
+            Term::var("X"),
+        ]);
+        let results = evaluator.query_atom(&query).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].get("X"), Some(&Value::Str("lib.js->FUNCTION->exportedFn".to_string())));
+    }
+
+    // Forward lookup: attr(id, "id", X)
+    #[test]
+    fn test_eval_attr_id_forward() {
+        let engine = setup_attr_field_graph();
+        let evaluator = Evaluator::new(&engine);
+
+        let query = Atom::new("attr", vec![
+            Term::constant("10"),
+            Term::constant("id"),
+            Term::var("X"),
+        ]);
+        let results = evaluator.query_atom(&query).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].get("X"), Some(&Value::Str("10".to_string())));
+    }
+
+    // Forward lookup: attr(X, "source", S) for IMPORT node with source in metadata
+    #[test]
+    fn test_eval_attr_source_from_metadata() {
+        let engine = setup_attr_field_graph();
+        let evaluator = Evaluator::new(&engine);
+
+        let query = Atom::new("attr", vec![
+            Term::constant("20"),
+            Term::constant("source"),
+            Term::var("S"),
+        ]);
+        let results = evaluator.query_atom(&query).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].get("S"), Some(&Value::Str("react".to_string())));
+    }
+
+    // Full rule: violation(S) :- node(X, "IMPORT"), attr(X, "source", S).
+    #[test]
+    fn test_eval_rule_import_source() {
+        let engine = setup_attr_field_graph();
+        let evaluator = Evaluator::new(&engine);
+
+        let literals = parse_query(
+            r#"node(X, "IMPORT"), attr(X, "source", S)"#
+        ).unwrap();
+
+        let results = evaluator.eval_query(&literals).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].get("S"), Some(&Value::Str("react".to_string())));
+    }
+
+    // Reverse lookup: attr(X, "exported", "true") finds exported nodes
+    #[test]
+    fn test_eval_attr_reverse_exported() {
+        let engine = setup_attr_field_graph();
+        let evaluator = Evaluator::new(&engine);
+
+        let query = Atom::new("attr", vec![
+            Term::var("X"),
+            Term::constant("exported"),
+            Term::constant("true"),
+        ]);
+        let results = evaluator.query_atom(&query).unwrap();
+        let ids: Vec<u128> = results.iter()
+            .filter_map(|b| b.get("X").and_then(|v| v.as_id()))
+            .collect();
+        assert!(ids.contains(&10), "Expected exported node 10 in results: {:?}", ids);
+        assert!(!ids.contains(&20), "Node 20 is not exported, should not be in results");
+    }
+
+    // EvaluatorExplain mirror — verify same behavior
+    #[test]
+    fn test_eval_attr_exported_explain() {
+        let engine = setup_attr_field_graph();
+        let mut evaluator = EvaluatorExplain::new(&engine, false);
+
+        let literals = parse_query(
+            r#"node(X, "FUNCTION"), attr(X, "exported", "true")"#
+        ).unwrap();
+
+        let result = evaluator.eval_query(&literals).unwrap();
+        assert_eq!(result.bindings.len(), 1);
+        assert_eq!(result.bindings[0].get("X"), Some(&"10".to_string()));
+    }
+}
+
+// ============================================================================
 // Phase 8: Edge-type index tests (RFD-44)
 // ============================================================================
 

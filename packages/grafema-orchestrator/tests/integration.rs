@@ -276,6 +276,7 @@ mod wire_conversion {
                 end_column: 0,
                 exported: true,
                 metadata: HashMap::new(),
+                extra: HashMap::new(),
             }],
             edges: vec![grafema_orchestrator::analyzer::GraphEdge {
                 src: "src/test.js->FUNCTION->foo".to_string(),
@@ -323,6 +324,7 @@ mod wire_conversion {
                     m.insert("kind".to_string(), serde_json::json!("const"));
                     m
                 },
+                extra: HashMap::new(),
             }],
             edges: vec![],
             exports: vec![],

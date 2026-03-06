@@ -1177,6 +1177,10 @@ impl<'a> Evaluator<'a> {
             "name" => node.name.clone(),
             "file" => node.file.clone(),
             "type" => node.node_type.clone(),
+            "exported" => Some(node.exported.to_string()),
+            "version" => Some(node.version.clone()),
+            "semantic_id" => node.semantic_id.clone(),
+            "id" => Some(node.id.to_string()),
             // Check metadata JSON for other attributes (supports nested paths like "config.port")
             _ => {
                 if let Some(ref metadata_str) = node.metadata {
@@ -1224,6 +1228,7 @@ impl<'a> Evaluator<'a> {
             "name" => query.name = Some(value.to_string()),
             "file" => query.file = Some(value.to_string()),
             "type" => query.node_type = Some(value.to_string()),
+            "exported" => query.exported = Some(value == "true"),
             _ => query.metadata_filters = vec![(attr_name.to_string(), value.to_string())],
         }
         query
