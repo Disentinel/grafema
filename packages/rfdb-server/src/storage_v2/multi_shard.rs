@@ -695,6 +695,15 @@ impl MultiShardStore {
         }
         results
     }
+
+    /// Get edges by type across all shards, using per-shard edge-type index.
+    pub fn get_edges_by_type(&self, edge_type: &str) -> Vec<EdgeRecordV2> {
+        let mut results = Vec::new();
+        for shard in &self.shards {
+            results.extend(shard.get_edges_by_type(edge_type));
+        }
+        results
+    }
 }
 
 // ── Edge Key Discovery ─────────────────────────────────────────────

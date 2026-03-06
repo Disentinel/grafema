@@ -444,6 +444,14 @@ impl GraphStore for GraphEngineV2 {
             .collect()
     }
 
+    fn get_edges_by_type(&self, edge_type: &str) -> Vec<EdgeRecord> {
+        self.store.get_edges_by_type(edge_type)
+            .iter()
+            .filter(|e| !self.is_edge_tombstoned(e.src, e.dst, &e.edge_type))
+            .map(edge_v2_to_v1)
+            .collect()
+    }
+
     fn count_nodes_by_type(&self, types: Option<&[String]>) -> HashMap<String, usize> {
         let mut counts: HashMap<String, usize> = HashMap::new();
 

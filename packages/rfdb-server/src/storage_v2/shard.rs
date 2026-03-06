@@ -12,6 +12,7 @@
 //! concern (T3.x). Shard receives segment descriptors and returns flush
 //! results; the caller updates the manifest.
 
+use std::sync::Mutex;
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{BufWriter, Cursor};
@@ -179,6 +180,10 @@ pub struct Shard {
 
     /// Inverted index: file -> IndexEntry list (built during compaction).
     l1_by_file_index: Option<InvertedIndex>,
+
+    /// Lazy edge-type index: edge_type → [(src, dst)].
+    /// Built on first `get_edges_by_type()` call, invalidated on mutation.
+    edge_type_index: Mutex<Option<HashMap<String, Vec<(u128, u128)>>>>,
 }
 
 // -- Constructors -------------------------------------------------------------
@@ -204,6 +209,7 @@ impl Shard {
             l1_edge_descriptor: None,
             l1_by_type_index: None,
             l1_by_file_index: None,
+            edge_type_index: Mutex::new(None),
         })
     }
 
@@ -250,6 +256,7 @@ impl Shard {
             l1_edge_descriptor: None,
             l1_by_type_index: None,
             l1_by_file_index: None,
+            edge_type_index: Mutex::new(None),
         })
     }
 
@@ -271,6 +278,7 @@ impl Shard {
             l1_edge_descriptor: None,
             l1_by_type_index: None,
             l1_by_file_index: None,
+            edge_type_index: Mutex::new(None),
         }
     }
 
@@ -295,6 +303,7 @@ impl Shard {
             l1_edge_descriptor: None,
             l1_by_type_index: None,
             l1_by_file_index: None,
+            edge_type_index: Mutex::new(None),
         })
     }
 
@@ -342,6 +351,7 @@ impl Shard {
             l1_edge_descriptor: None,
             l1_by_type_index: None,
             l1_by_file_index: None,
+            edge_type_index: Mutex::new(None),
         })
     }
 }
@@ -358,6 +368,7 @@ impl Shard {
     /// Dedup via edge_keys in WriteBuffer.
     pub fn upsert_edges(&mut self, records: Vec<EdgeRecordV2>) {
         self.write_buffer.upsert_edges(records);
+        *self.edge_type_index.lock().unwrap() = None;
     }
 }
 
@@ -688,6 +699,8 @@ impl Shard {
         if self.write_buffer.is_empty() {
             return Ok(None);
         }
+
+        *self.edge_type_index.lock().unwrap() = None;
 
         let mut result = FlushResult {
             node_meta: None,
@@ -1627,6 +1640,98 @@ impl Shard {
         }
 
         results
+    }
+
+    /// Get edges filtered by edge type, using the lazy edge-type index.
+    ///
+    /// On first call, builds an in-memory index from all edges (write buffer +
+    /// L0 segments + L1 segment), grouped by edge type. Subsequent calls reuse
+    /// the cached index until invalidated by `upsert_edges()` or `flush_with_ids()`.
+    pub fn get_edges_by_type(&self, edge_type: &str) -> Vec<EdgeRecordV2> {
+        let mut guard = self.edge_type_index.lock().unwrap();
+        if guard.is_none() {
+            *guard = Some(self.build_edge_type_index());
+        }
+        match guard.as_ref().unwrap().get(edge_type) {
+            Some(pairs) => pairs
+                .iter()
+                .map(|(src, dst)| EdgeRecordV2 {
+                    src: *src,
+                    dst: *dst,
+                    edge_type: edge_type.to_string(),
+                    metadata: String::new(),
+                })
+                .collect(),
+            None => Vec::new(),
+        }
+    }
+
+    /// Build the edge-type index by scanning all edge sources.
+    /// Same dedup/tombstone logic as `iter_all_edges()` but groups by type.
+    fn build_edge_type_index(&self) -> HashMap<String, Vec<(u128, u128)>> {
+        let mut seen_edge_keys: HashSet<(u128, u128, String)> = HashSet::new();
+        let mut index: HashMap<String, Vec<(u128, u128)>> = HashMap::new();
+
+        // Step 1: Write buffer (authoritative, newest)
+        for edge in self.write_buffer.iter_edges() {
+            let key = (edge.src, edge.dst, edge.edge_type.clone());
+            seen_edge_keys.insert(key);
+            if self.tombstones.contains_edge(edge.src, edge.dst, &edge.edge_type) {
+                continue;
+            }
+            index
+                .entry(edge.edge_type.clone())
+                .or_default()
+                .push((edge.src, edge.dst));
+        }
+
+        // Step 2: L0 edge segments (newest-to-oldest for proper dedup)
+        for seg in self.edge_segments.iter().rev() {
+            for j in 0..seg.record_count() {
+                let src = seg.get_src(j);
+                let dst = seg.get_dst(j);
+                let et = seg.get_edge_type(j);
+                let key = (src, dst, et.to_string());
+
+                if seen_edge_keys.contains(&key) {
+                    continue;
+                }
+                seen_edge_keys.insert(key);
+
+                if self.tombstones.contains_edge(src, dst, et) {
+                    continue;
+                }
+                index
+                    .entry(et.to_string())
+                    .or_default()
+                    .push((src, dst));
+            }
+        }
+
+        // Step 3: L1 edge segment (oldest, compacted)
+        if let Some(l1_seg) = &self.l1_edge_segment {
+            for j in 0..l1_seg.record_count() {
+                let src = l1_seg.get_src(j);
+                let dst = l1_seg.get_dst(j);
+                let et = l1_seg.get_edge_type(j);
+                let key = (src, dst, et.to_string());
+
+                if seen_edge_keys.contains(&key) {
+                    continue;
+                }
+                seen_edge_keys.insert(key);
+
+                if self.tombstones.contains_edge(src, dst, et) {
+                    continue;
+                }
+                index
+                    .entry(et.to_string())
+                    .or_default()
+                    .push((src, dst));
+            }
+        }
+
+        index
     }
 }
 
@@ -2839,5 +2944,74 @@ mod tests {
         assert!(keys.contains(&(e5.src, e5.dst, e5.edge_type.clone())));
         // e4 (src_c) should NOT be included
         assert!(!keys.contains(&(e4.src, e4.dst, e4.edge_type.clone())));
+    }
+
+    // =========================================================================
+    // Edge-type index tests (RFD-44)
+    // =========================================================================
+
+    #[test]
+    fn test_get_edges_by_type_from_buffer() {
+        let mut shard = Shard::ephemeral();
+        shard.upsert_edges(vec![
+            make_edge("a", "b", "CALLS"),
+            make_edge("c", "d", "IMPORTS"),
+            make_edge("e", "f", "CALLS"),
+        ]);
+
+        let calls = shard.get_edges_by_type("CALLS");
+        assert_eq!(calls.len(), 2);
+        assert!(calls.iter().all(|e| e.edge_type == "CALLS"));
+
+        let imports = shard.get_edges_by_type("IMPORTS");
+        assert_eq!(imports.len(), 1);
+        assert_eq!(imports[0].edge_type, "IMPORTS");
+    }
+
+    #[test]
+    fn test_get_edges_by_type_from_segment() {
+        let mut shard = Shard::ephemeral();
+        shard.upsert_edges(vec![
+            make_edge("a", "b", "CALLS"),
+            make_edge("c", "d", "CONTAINS"),
+        ]);
+        shard.flush_with_ids(None, Some(1)).unwrap();
+
+        let calls = shard.get_edges_by_type("CALLS");
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].src, node_id("a"));
+        assert_eq!(calls[0].dst, node_id("b"));
+
+        let contains = shard.get_edges_by_type("CONTAINS");
+        assert_eq!(contains.len(), 1);
+    }
+
+    #[test]
+    fn test_get_edges_by_type_tombstone_filtered() {
+        let mut shard = Shard::ephemeral();
+        let edge = make_edge("a", "b", "CALLS");
+        shard.upsert_edges(vec![
+            edge.clone(),
+            make_edge("c", "d", "CALLS"),
+        ]);
+
+        // Tombstone the first edge
+        shard.set_tombstones(TombstoneSet::from_manifest(
+            vec![],
+            vec![(edge.src, edge.dst, "CALLS".to_string())],
+        ));
+
+        let calls = shard.get_edges_by_type("CALLS");
+        assert_eq!(calls.len(), 1);
+        // Only the non-tombstoned edge should remain
+        assert_eq!(calls[0].src, node_id("c"));
+        assert_eq!(calls[0].dst, node_id("d"));
+    }
+
+    #[test]
+    fn test_get_edges_by_type_empty() {
+        let shard = Shard::ephemeral();
+        let result = shard.get_edges_by_type("NONEXISTENT");
+        assert!(result.is_empty());
     }
 }

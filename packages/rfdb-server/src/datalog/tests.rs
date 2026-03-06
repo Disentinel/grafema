@@ -3579,3 +3579,411 @@ mod attr_reverse_lookup_tests {
         assert!(!result.explain_steps.is_empty());
     }
 }
+
+// ============================================================================
+// Phase 8: Edge-type index tests (RFD-44)
+// ============================================================================
+
+mod edge_type_index_tests {
+    use super::*;
+    use crate::graph::{GraphEngineV2, GraphStore};
+    use crate::storage::{NodeRecord, EdgeRecord};
+    use crate::datalog::eval::Evaluator;
+    use crate::datalog::eval_explain::EvaluatorExplain;
+
+    fn setup_edge_type_graph() -> GraphEngineV2 {
+        let mut engine = GraphEngineV2::create_ephemeral();
+
+        engine.add_nodes(vec![
+            NodeRecord {
+                id: 1,
+                node_type: Some("FUNCTION".to_string()),
+                name: Some("caller".to_string()),
+                file: Some("a.js".to_string()),
+                file_id: 0, name_offset: 0,
+                version: "main".into(),
+                exported: false, replaces: None, deleted: false,
+                metadata: None, semantic_id: None,
+            },
+            NodeRecord {
+                id: 2,
+                node_type: Some("FUNCTION".to_string()),
+                name: Some("callee".to_string()),
+                file: Some("b.js".to_string()),
+                file_id: 0, name_offset: 0,
+                version: "main".into(),
+                exported: false, replaces: None, deleted: false,
+                metadata: None, semantic_id: None,
+            },
+            NodeRecord {
+                id: 3,
+                node_type: Some("MODULE".to_string()),
+                name: Some("mod_a".to_string()),
+                file: Some("a.js".to_string()),
+                file_id: 0, name_offset: 0,
+                version: "main".into(),
+                exported: false, replaces: None, deleted: false,
+                metadata: None, semantic_id: None,
+            },
+        ]);
+
+        engine.add_edges(vec![
+            EdgeRecord {
+                src: 1, dst: 2,
+                edge_type: Some("CALLS".to_string()),
+                version: "main".into(), metadata: None, deleted: false,
+            },
+            EdgeRecord {
+                src: 3, dst: 1,
+                edge_type: Some("CONTAINS".to_string()),
+                version: "main".into(), metadata: None, deleted: false,
+            },
+        ], false);
+
+        engine
+    }
+
+    #[test]
+    fn test_edge_unbound_src_const_type_uses_edges_by_type() {
+        let engine = setup_edge_type_graph();
+        let mut evaluator = EvaluatorExplain::new(&engine, false);
+
+        // edge(X, Y, "CALLS") — src unbound, type constant → should use index
+        let literals = parse_query(r#"edge(X, Y, "CALLS")"#).unwrap();
+        let result = evaluator.eval_query(&literals).unwrap();
+
+        assert_eq!(result.bindings.len(), 1);
+        assert_eq!(result.bindings[0].get("X"), Some(&"1".to_string()));
+        assert_eq!(result.bindings[0].get("Y"), Some(&"2".to_string()));
+
+        assert!(
+            result.stats.edges_by_type_calls > 0,
+            "expected edges_by_type_calls > 0, got {}",
+            result.stats.edges_by_type_calls
+        );
+        assert_eq!(
+            result.stats.all_edges_calls, 0,
+            "expected all_edges_calls == 0 (index should avoid full scan)"
+        );
+    }
+
+    #[test]
+    fn test_incoming_unbound_dst_const_type() {
+        let engine = setup_edge_type_graph();
+        let evaluator = Evaluator::new(&engine);
+
+        // incoming(X, Y, "CALLS") — dst unbound, type constant → should return results
+        let query = Atom::new("incoming", vec![
+            Term::var("X"),
+            Term::var("Y"),
+            Term::constant("CALLS"),
+        ]);
+
+        let results = evaluator.eval_atom(&query);
+        // Edge 1->2 CALLS: incoming to node 2, from node 1
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].get("X"), Some(&Value::Id(2))); // dst
+        assert_eq!(results[0].get("Y"), Some(&Value::Id(1))); // src
+    }
+
+    #[test]
+    fn test_incoming_unbound_dst_var_type_still_empty() {
+        let engine = setup_edge_type_graph();
+        let evaluator = Evaluator::new(&engine);
+
+        // incoming(X, Y, T) — both dst and type unbound → degenerate, returns empty
+        let query = Atom::new("incoming", vec![
+            Term::var("X"),
+            Term::var("Y"),
+            Term::var("T"),
+        ]);
+
+        let results = evaluator.eval_atom(&query);
+        assert!(results.is_empty(), "incoming with all-unbound should return empty");
+    }
+}
+
+// ============================================================================
+// Hash Join Tests
+// ============================================================================
+
+mod hash_join_tests {
+    use super::*;
+    use crate::graph::{GraphEngineV2, GraphStore};
+    use crate::storage::{NodeRecord, EdgeRecord};
+    use crate::datalog::eval::HASH_JOIN_THRESHOLD;
+    use std::collections::HashSet;
+
+    /// Build a graph with many FUNCTION nodes and CALLS edges to trigger hash join.
+    /// Creates `n` FUNCTION nodes (ids 1..=n) and CALL nodes (ids n+1..=2n),
+    /// with each FUNCTION having a CALLS edge to one CALL node.
+    fn setup_hash_join_graph(n: usize) -> GraphEngineV2 {
+        let mut engine = GraphEngineV2::create_ephemeral();
+
+        let mut nodes = Vec::with_capacity(2 * n);
+        for i in 1..=n {
+            nodes.push(NodeRecord {
+                id: i as u128,
+                node_type: Some("FUNCTION".to_string()),
+                name: Some(format!("fn_{}", i)),
+                file: Some("test.js".to_string()),
+                file_id: 0,
+                name_offset: 0,
+                version: "main".into(),
+                exported: false,
+                replaces: None,
+                deleted: false,
+                metadata: None,
+                semantic_id: None,
+            });
+            nodes.push(NodeRecord {
+                id: (n + i) as u128,
+                node_type: Some("CALL".to_string()),
+                name: Some(format!("call_{}", i)),
+                file: Some("test.js".to_string()),
+                file_id: 0,
+                name_offset: 0,
+                version: "main".into(),
+                exported: false,
+                replaces: None,
+                deleted: false,
+                metadata: None,
+                semantic_id: None,
+            });
+        }
+        engine.add_nodes(nodes);
+
+        let edges: Vec<EdgeRecord> = (1..=n).map(|i| EdgeRecord {
+            src: i as u128,
+            dst: (n + i) as u128,
+            edge_type: Some("CALLS".to_string()),
+            version: "main".into(),
+            metadata: None,
+            deleted: false,
+        }).collect();
+        engine.add_edges(edges, false);
+
+        engine
+    }
+
+    #[test]
+    fn test_hash_join_same_results_as_nested_loop() {
+        // Use enough nodes to trigger hash join (> HASH_JOIN_THRESHOLD)
+        let n = HASH_JOIN_THRESHOLD + 10;
+        let engine = setup_hash_join_graph(n);
+
+        // Query: node(F, "FUNCTION"), edge(F, C, "CALLS")
+        // This should trigger hash join for the edge literal
+        let evaluator = Evaluator::new(&engine);
+        let literals = parse_query(
+            "node(F, \"FUNCTION\"), edge(F, C, \"CALLS\")"
+        ).unwrap();
+        let hash_join_results = evaluator.eval_query(&literals).unwrap();
+
+        // Verify against manual nested-loop: for each function, get outgoing CALLS
+        let mut nested_results: HashSet<(u128, u128)> = HashSet::new();
+        let functions = engine.find_by_type("FUNCTION");
+        for fn_id in &functions {
+            let edges = engine.get_outgoing_edges(*fn_id, Some(&["CALLS"]));
+            for e in edges {
+                nested_results.insert((*fn_id, e.dst));
+            }
+        }
+
+        let hash_results: HashSet<(u128, u128)> = hash_join_results.iter()
+            .filter_map(|b| {
+                let f = b.get("F")?.as_id()?;
+                let c = b.get("C")?.as_id()?;
+                Some((f, c))
+            })
+            .collect();
+
+        assert_eq!(hash_results.len(), nested_results.len(),
+            "hash join and nested-loop should produce same count");
+        assert_eq!(hash_results, nested_results,
+            "hash join and nested-loop should produce same results");
+    }
+
+    #[test]
+    fn test_hash_join_not_activated_below_threshold() {
+        // Use fewer nodes than threshold — hash join should NOT activate
+        let n = HASH_JOIN_THRESHOLD - 1;
+        let engine = setup_hash_join_graph(n);
+
+        let evaluator = Evaluator::new(&engine);
+        let literals = parse_query(
+            "node(F, \"FUNCTION\"), edge(F, C, \"CALLS\")"
+        ).unwrap();
+        let results = evaluator.eval_query(&literals).unwrap();
+
+        // Should still produce correct results via nested-loop
+        assert_eq!(results.len(), n, "should find {} edges via nested-loop", n);
+    }
+
+    #[test]
+    fn test_hash_join_not_activated_variable_edge_type() {
+        let n = HASH_JOIN_THRESHOLD + 10;
+        let engine = setup_hash_join_graph(n);
+
+        let evaluator = Evaluator::new(&engine);
+        // Variable edge type T — hash join should NOT activate
+        let literals = parse_query(
+            "node(F, \"FUNCTION\"), edge(F, C, T)"
+        ).unwrap();
+        let results = evaluator.eval_query(&literals).unwrap();
+
+        // Should still produce results (nested-loop via get_all_edges)
+        assert!(results.len() >= n, "should find at least {} edges", n);
+    }
+
+    #[test]
+    fn test_hash_join_not_activated_constant_src() {
+        let n = HASH_JOIN_THRESHOLD + 10;
+        let engine = setup_hash_join_graph(n);
+
+        let evaluator = Evaluator::new(&engine);
+        // Constant src — already optimal, hash join should NOT activate
+        let literals = parse_query(
+            "edge(\"1\", C, \"CALLS\")"
+        ).unwrap();
+        let results = evaluator.eval_query(&literals).unwrap();
+
+        // Node 1 has exactly 1 CALLS edge
+        assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn test_incoming_hash_join_correctness() {
+        let n = HASH_JOIN_THRESHOLD + 10;
+        let engine = setup_hash_join_graph(n);
+
+        // Query: node(C, "CALL"), incoming(C, F, "CALLS")
+        let evaluator = Evaluator::new(&engine);
+        let literals = parse_query(
+            "node(C, \"CALL\"), incoming(C, F, \"CALLS\")"
+        ).unwrap();
+        let hash_join_results = evaluator.eval_query(&literals).unwrap();
+
+        // Each CALL node should have exactly one incoming CALLS edge from its FUNCTION
+        assert_eq!(hash_join_results.len(), n,
+            "each CALL should have one incoming CALLS edge");
+
+        // Verify specific mapping
+        for b in &hash_join_results {
+            let c = b.get("C").unwrap().as_id().unwrap();
+            let f = b.get("F").unwrap().as_id().unwrap();
+            // In our graph: function i → call n+i, so call_id - n = function_id
+            assert_eq!(c - n as u128, f, "CALL {} should come from FUNCTION {}", c, f);
+        }
+    }
+
+    #[test]
+    fn test_hash_join_negation_correctness() {
+        // Negation with hash join: \+ edge(F, _, "CALLS") uses existence set
+        let n = HASH_JOIN_THRESHOLD + 10;
+        let mut engine = setup_hash_join_graph(n);
+
+        // Add some FUNCTION nodes WITHOUT CALLS edges (orphans)
+        let mut orphan_nodes = Vec::new();
+        for i in (2 * n + 1)..=(2 * n + 5) {
+            orphan_nodes.push(NodeRecord {
+                id: i as u128,
+                node_type: Some("FUNCTION".to_string()),
+                name: Some(format!("orphan_fn_{}", i)),
+                file: Some("test.js".to_string()),
+                file_id: 0,
+                name_offset: 0,
+                version: "main".into(),
+                exported: false,
+                replaces: None,
+                deleted: false,
+                metadata: None,
+                semantic_id: None,
+            });
+        }
+        engine.add_nodes(orphan_nodes);
+
+        let mut evaluator = Evaluator::new(&engine);
+        let rule = parse_rule(
+            "no_calls(F) :- node(F, \"FUNCTION\"), \\+ edge(F, _, \"CALLS\")."
+        ).unwrap();
+        evaluator.add_rule(rule);
+
+        let goal = parse_atom("no_calls(F)").unwrap();
+        let results = evaluator.query(&goal);
+
+        // Only the 5 orphan functions should match
+        assert_eq!(results.len(), 5, "only orphan functions should have no CALLS edges");
+    }
+
+    #[test]
+    fn test_hash_join_3literal_with_attr() {
+        // Full 3-literal join: node(F, "FUNCTION"), edge(F, C, "CALLS"), attr(C, "name", Name)
+        let n = HASH_JOIN_THRESHOLD + 10;
+        let engine = setup_hash_join_graph(n);
+
+        let evaluator = Evaluator::new(&engine);
+        let literals = parse_query(
+            "node(F, \"FUNCTION\"), edge(F, C, \"CALLS\"), attr(C, \"name\", Name)"
+        ).unwrap();
+        let results = evaluator.eval_query(&literals).unwrap();
+
+        assert_eq!(results.len(), n, "should find name for each CALL via join");
+        for b in &results {
+            let name = b.get("Name").unwrap().as_str();
+            assert!(name.starts_with("call_"), "name should start with call_, got: {}", name);
+        }
+    }
+
+    #[test]
+    fn test_hash_join_2hop_pattern() {
+        // 2-hop: node(F, "FUNCTION"), edge(F, C, "CALLS"), edge(C, Q, "QUERIES_DB")
+        let n = HASH_JOIN_THRESHOLD + 10;
+        let mut engine = setup_hash_join_graph(n);
+
+        // Add some DB_QUERY nodes and QUERIES_DB edges from some CALL nodes
+        let db_count = 5;
+        let mut db_nodes = Vec::new();
+        let mut db_edges = Vec::new();
+        for i in 0..db_count {
+            let db_id = (3 * n + i + 1) as u128;
+            let call_id = (n + i + 1) as u128; // connect to first db_count call nodes
+            db_nodes.push(NodeRecord {
+                id: db_id,
+                node_type: Some("DATABASE_QUERY".to_string()),
+                name: Some(format!("query_{}", i)),
+                file: Some("test.js".to_string()),
+                file_id: 0,
+                name_offset: 0,
+                version: "main".into(),
+                exported: false,
+                replaces: None,
+                deleted: false,
+                metadata: None,
+                semantic_id: None,
+            });
+            db_edges.push(EdgeRecord {
+                src: call_id,
+                dst: db_id,
+                edge_type: Some("QUERIES_DB".to_string()),
+                version: "main".into(),
+                metadata: None,
+                deleted: false,
+            });
+        }
+        engine.add_nodes(db_nodes);
+        engine.add_edges(db_edges, false);
+
+        let mut evaluator = Evaluator::new(&engine);
+        let program = parse_program(
+            "db_caller(F, Q) :- node(F, \"FUNCTION\"), edge(F, C, \"CALLS\"), edge(C, Q, \"QUERIES_DB\")."
+        ).unwrap();
+        evaluator.load_rules(program.rules().to_vec());
+
+        let goal = parse_atom("db_caller(F, Q)").unwrap();
+        let results = evaluator.query(&goal);
+
+        assert_eq!(results.len(), db_count,
+            "should find {} functions calling DB queries", db_count);
+    }
+}

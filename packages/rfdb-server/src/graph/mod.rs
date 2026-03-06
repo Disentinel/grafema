@@ -58,6 +58,9 @@ pub trait GraphStore: Send + Sync {
     /// Получить ВСЕ рёбра из графа
     fn get_all_edges(&self) -> Vec<EdgeRecord>;
 
+    /// Get edges by type using edge-type index (avoids full scan).
+    fn get_edges_by_type(&self, edge_type: &str) -> Vec<EdgeRecord>;
+
     /// Подсчитать ноды по типам
     /// Возвращает HashMap<node_type, count>
     /// Поддерживает wildcard в filter (e.g., "http:*")
