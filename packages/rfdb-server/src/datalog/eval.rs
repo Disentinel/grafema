@@ -14,6 +14,11 @@ use super::utils::reorder_literals;
 /// Minimum number of current bindings to trigger hash join instead of nested-loop.
 pub const HASH_JOIN_THRESHOLD: usize = 16;
 
+/// Chunk size for pipelined generator evaluation.
+/// Each chunk of node IDs from a generator literal is converted to Bindings
+/// and processed through the remaining pipeline before fetching the next chunk.
+const PIPELINE_CHUNK_SIZE: usize = 4096;
+
 /// A value in Datalog bindings
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Value {
@@ -231,12 +236,39 @@ impl<'a> Evaluator<'a> {
     /// This allows queries like `node(X, "type"), attr(X, "url", U)`.
     pub fn eval_query(&self, literals: &[Literal]) -> Result<Vec<Bindings>, String> {
         let ordered = reorder_literals(literals)?;
-        let mut current = vec![Bindings::new()];
-        let mut bound_vars: HashSet<String> = HashSet::new();
         let state = EvalState { recursion_depth: 0 };
 
-        for literal in &ordered {
-            self.check_limits(&state, current.len())?;
+        // Pipelined evaluation: if the first literal is a generator (scans many nodes),
+        // process it in chunks through the remaining pipeline to avoid materializing
+        // all intermediate bindings at once.
+        if ordered.len() > 1 {
+            if let Some(Literal::Positive(first_atom)) = ordered.first() {
+                if Self::is_generator_atom(first_atom) {
+                    return self.eval_query_pipelined(first_atom, &ordered, &state);
+                }
+            }
+        }
+
+        self.process_literals(&ordered, vec![Bindings::new()], &HashSet::new(), &state)
+    }
+
+    /// Core literal-by-literal evaluation loop.
+    ///
+    /// Processes `literals` sequentially against `initial` bindings, applying
+    /// hash join optimization where applicable. Shared by both standard and
+    /// pipelined evaluation paths.
+    fn process_literals(
+        &self,
+        literals: &[Literal],
+        initial: Vec<Bindings>,
+        initial_bound_vars: &HashSet<String>,
+        state: &EvalState,
+    ) -> Result<Vec<Bindings>, String> {
+        let mut current = initial;
+        let mut bound_vars = initial_bound_vars.clone();
+
+        for literal in literals {
+            self.check_limits(state, current.len())?;
 
             // Check if hash join applies for positive edge/incoming literals
             if let Literal::Positive(atom) = literal {
@@ -273,7 +305,7 @@ impl<'a> Evaluator<'a> {
                 match literal {
                     Literal::Positive(atom) => {
                         let substituted = self.substitute_atom(atom, bindings);
-                        let results = self.eval_atom(&substituted, &state)?;
+                        let results = self.eval_atom(&substituted, state)?;
 
                         for result in results {
                             if let Some(merged) = bindings.extend(&result) {
@@ -283,7 +315,7 @@ impl<'a> Evaluator<'a> {
                     }
                     Literal::Negative(atom) => {
                         let substituted = self.substitute_atom(atom, bindings);
-                        let results = self.eval_atom(&substituted, &state)?;
+                        let results = self.eval_atom(&substituted, state)?;
 
                         if results.is_empty() {
                             next.push(bindings.clone());
@@ -303,6 +335,145 @@ impl<'a> Evaluator<'a> {
         }
 
         Ok(current)
+    }
+
+    /// Check if an atom is a "generator" — produces many results from a graph scan.
+    ///
+    /// Generator patterns:
+    /// - `node(Var, Const)` — scans all nodes of a type
+    /// - `node(Var, Var)` — full node scan
+    /// - `attr(Var, Const, Const)` — reverse lookup via find_by_attr
+    fn is_generator_atom(atom: &Atom) -> bool {
+        let args = atom.args();
+        match atom.predicate() {
+            "node" | "type" => {
+                args.len() >= 2 && matches!(&args[0], Term::Var(_))
+            }
+            "attr" => {
+                args.len() >= 3
+                    && matches!(&args[0], Term::Var(_))
+                    && matches!(&args[1], Term::Const(_))
+                    && matches!(&args[2], Term::Const(_))
+            }
+            _ => false,
+        }
+    }
+
+    /// Pipelined evaluation: process the first generator literal in chunks,
+    /// running each chunk through the remaining pipeline.
+    ///
+    /// Memory: O(chunk_size + final_results) instead of O(all_matching_nodes).
+    fn eval_query_pipelined(
+        &self,
+        generator: &Atom,
+        ordered: &[Literal],
+        state: &EvalState,
+    ) -> Result<Vec<Bindings>, String> {
+        let mut all_results: Vec<Bindings> = Vec::new();
+        let mut error: Option<String> = None;
+        let first_vars: HashSet<String> = ordered[0].variables().into_iter().collect();
+
+        self.eval_generator_chunked(generator, PIPELINE_CHUNK_SIZE, &mut |chunk| {
+            // Check cancellation/timeout between chunks
+            if let Err(e) = self.check_limits(state, 0) {
+                error = Some(e);
+                return false;
+            }
+
+            match self.process_literals(&ordered[1..], chunk, &first_vars, state) {
+                Ok(results) => {
+                    all_results.extend(results);
+                    true
+                }
+                Err(e) => {
+                    error = Some(e);
+                    false
+                }
+            }
+        });
+
+        match error {
+            Some(e) => Err(e),
+            None => Ok(all_results),
+        }
+    }
+
+    /// Evaluate a generator atom in chunks via find_by_attr_chunked.
+    ///
+    /// Converts each chunk of node IDs into Bindings and passes to callback.
+    /// Callback returns false to stop iteration.
+    fn eval_generator_chunked(
+        &self,
+        atom: &Atom,
+        chunk_size: usize,
+        callback: &mut dyn FnMut(Vec<Bindings>) -> bool,
+    ) {
+        let args = atom.args();
+        match atom.predicate() {
+            "node" | "type" => {
+                match (&args[0], &args[1]) {
+                    (Term::Var(var), Term::Const(node_type)) => {
+                        let query = AttrQuery {
+                            node_type: Some(node_type.clone()),
+                            ..AttrQuery::default()
+                        };
+                        let var = var.clone();
+                        self.engine.find_by_attr_chunked(&query, chunk_size, &mut |ids| {
+                            let bindings: Vec<Bindings> = ids.iter().map(|&id| {
+                                let mut b = Bindings::new();
+                                b.set(&var, Value::Id(id));
+                                b
+                            }).collect();
+                            callback(bindings)
+                        });
+                    }
+                    (Term::Var(id_var), Term::Var(type_var)) => {
+                        let type_counts = self.engine.count_nodes_by_type(None);
+                        let id_var = id_var.clone();
+                        let type_var = type_var.clone();
+                        let mut stopped = false;
+                        for node_type in type_counts.keys() {
+                            if stopped { break; }
+                            let query = AttrQuery {
+                                node_type: Some(node_type.clone()),
+                                ..AttrQuery::default()
+                            };
+                            self.engine.find_by_attr_chunked(&query, chunk_size, &mut |ids| {
+                                let bindings: Vec<Bindings> = ids.iter().map(|&id| {
+                                    let mut b = Bindings::new();
+                                    b.set(&id_var, Value::Id(id));
+                                    b.set(&type_var, Value::Str(node_type.clone()));
+                                    b
+                                }).collect();
+                                if !callback(bindings) {
+                                    stopped = true;
+                                    return false;
+                                }
+                                true
+                            });
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            "attr" => {
+                if let (Term::Var(id_var), Term::Const(attr_name), Term::Const(expected_value)) =
+                    (&args[0], &args[1], &args[2])
+                {
+                    let query = Self::attr_to_query(attr_name, expected_value);
+                    let id_var = id_var.clone();
+                    self.engine.find_by_attr_chunked(&query, chunk_size, &mut |ids| {
+                        let bindings: Vec<Bindings> = ids.iter().map(|&id| {
+                            let mut b = Bindings::new();
+                            b.set(&id_var, Value::Id(id));
+                            b
+                        }).collect();
+                        callback(bindings)
+                    });
+                }
+            }
+            _ => {}
+        }
     }
 
     /// Decide whether to use hash join for an edge/incoming literal.

@@ -687,6 +687,9 @@ impl Shard {
         self.l1_node_descriptor = node_descriptor;
         self.l1_edge_segment = edge_segment;
         self.l1_edge_descriptor = edge_descriptor;
+        // Rebuild edge-type index eagerly — L0 segments it was built from
+        // are replaced by L1 after compaction.
+        *self.edge_type_index.lock().unwrap() = Some(self.build_edge_type_index());
     }
 
     /// Set inverted indexes for L1 node segment (built during compaction).
@@ -1294,6 +1297,7 @@ impl Shard {
     /// Find node IDs by exact node type, avoiding full record clones.
     ///
     /// Optimized hot path for `find_by_type(\"EXACT\")`.
+    /// Scans write buffer → L0 segments → L1 segment.
     pub fn find_node_ids_by_type(&self, node_type: &str) -> Vec<u128> {
         let mut seen_ids: HashSet<u128> = HashSet::new();
         let mut results: Vec<u128> = Vec::new();
@@ -1309,7 +1313,7 @@ impl Shard {
             }
         }
 
-        // Step 2: segments newest-to-oldest.
+        // Step 2: L0 segments newest-to-oldest.
         for i in (0..self.node_segments.len()).rev() {
             let desc = &self.node_descriptors[i];
             let seg = &self.node_segments[i];
@@ -1338,6 +1342,34 @@ impl Shard {
             }
         }
 
+        // Step 3: L1 segment (oldest, compacted).
+        if let (Some(l1_desc), Some(l1_seg)) =
+            (&self.l1_node_descriptor, &self.l1_node_segment)
+        {
+            if !l1_desc.may_contain(Some(node_type), None, None) {
+                return results;
+            }
+            if !l1_seg.contains_node_type(node_type) {
+                return results;
+            }
+
+            for j in 0..l1_seg.record_count() {
+                let id = l1_seg.get_id(j);
+                if seen_ids.contains(&id) {
+                    continue;
+                }
+                if self.tombstones.contains_node(id) {
+                    seen_ids.insert(id);
+                    continue;
+                }
+                if l1_seg.get_node_type(j) != node_type {
+                    continue;
+                }
+                seen_ids.insert(id);
+                results.push(id);
+            }
+        }
+
         results
     }
 
@@ -1357,8 +1389,34 @@ impl Shard {
         metadata_filters: &[(String, String)],
         substring_match: bool,
     ) -> Vec<u128> {
-        let mut seen_ids: HashSet<u128> = HashSet::new();
         let mut results: Vec<u128> = Vec::new();
+        self.for_each_matching_id(
+            node_type, node_type_prefix, file, name,
+            exported, metadata_filters, substring_match,
+            &mut |id| { results.push(id); true },
+        );
+        results
+    }
+
+    /// Iterate matching node IDs via callback, without materializing a Vec.
+    ///
+    /// Same scan logic as `find_node_ids_by_attr` (write buffer → segments → L1),
+    /// but calls `emit(id)` instead of collecting. Return `false` from `emit` to
+    /// stop iteration early.
+    ///
+    /// Returns `true` if iteration completed, `false` if stopped early.
+    pub fn for_each_matching_id(
+        &self,
+        node_type: Option<&str>,
+        node_type_prefix: Option<&str>,
+        file: Option<&str>,
+        name: Option<&str>,
+        exported: Option<bool>,
+        metadata_filters: &[(String, String)],
+        substring_match: bool,
+        emit: &mut dyn FnMut(u128) -> bool,
+    ) -> bool {
+        let mut seen_ids: HashSet<u128> = HashSet::new();
 
         // When substring matching, file-based zone map pruning must be skipped
         // because zone maps store exact file paths and can't evaluate substrings.
@@ -1387,7 +1445,9 @@ impl Shard {
                 metadata_filters,
                 substring_match,
             ) {
-                results.push(node.id);
+                if !emit(node.id) {
+                    return false;
+                }
             }
         }
 
@@ -1452,7 +1512,9 @@ impl Shard {
                 }
 
                 seen_ids.insert(id);
-                results.push(id);
+                if !emit(id) {
+                    return false;
+                }
             }
         }
 
@@ -1463,14 +1525,14 @@ impl Shard {
             // Descriptor-level zone map pruning.
             if let Some(nt) = node_type {
                 if !l1_desc.may_contain(Some(nt), prune_file, None) {
-                    return results;
+                    return true;
                 }
             } else if !l1_desc.may_contain(None, prune_file, None) {
-                return results;
+                return true;
             }
             if let Some(prefix) = node_type_prefix {
                 if !l1_desc.node_types.is_empty() && !l1_desc.node_types.iter().any(|t| t.starts_with(prefix)) {
-                    return results;
+                    return true;
                 }
             }
 
@@ -1504,7 +1566,9 @@ impl Shard {
                             continue;
                         }
                         seen_ids.insert(entry.node_id);
-                        results.push(entry.node_id);
+                        if !emit(entry.node_id) {
+                            return false;
+                        }
                     }
                     used_index = true;
                 }
@@ -1514,12 +1578,12 @@ impl Shard {
                 // Segment-level zone map pruning.
                 if let Some(nt) = node_type {
                     if !l1_seg.contains_node_type(nt) {
-                        return results;
+                        return true;
                     }
                 }
                 if let Some(f) = prune_file {
                     if !l1_seg.contains_file(f) {
-                        return results;
+                        return true;
                     }
                 }
 
@@ -1548,12 +1612,14 @@ impl Shard {
                         continue;
                     }
                     seen_ids.insert(id);
-                    results.push(id);
+                    if !emit(id) {
+                        return false;
+                    }
                 }
             }
         }
 
-        results
+        true
     }
 }
 
@@ -3235,5 +3301,72 @@ mod tests {
         let shard = Shard::ephemeral();
         let result = shard.get_edges_by_type("NONEXISTENT");
         assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_for_each_matching_id_equivalence() {
+        let mut shard = Shard::ephemeral();
+        shard.add_nodes(vec![
+            make_node("fn1", "FUNCTION", "alpha", "src/a.js"),
+            make_node("fn2", "FUNCTION", "beta", "src/b.js"),
+            make_node("cls1", "CLASS", "gamma", "src/a.js"),
+            make_node("var1", "VARIABLE", "alpha", "src/c.js"),
+            make_node("mod1", "MODULE", "delta", "src/a.js"),
+        ]);
+        shard.flush_with_ids(Some(1), None).unwrap();
+
+        // Add more nodes to write buffer (unflushed)
+        shard.add_nodes(vec![
+            make_node("fn3", "FUNCTION", "epsilon", "src/d.js"),
+            make_node("cls2", "CLASS", "zeta", "src/a.js"),
+        ]);
+
+        let filter_combos: Vec<(Option<&str>, Option<&str>, Option<&str>, Option<&str>)> = vec![
+            (Some("FUNCTION"), None, None, None),
+            (None, None, Some("src/a.js"), None),
+            (None, None, None, Some("alpha")),
+            (Some("CLASS"), None, Some("src/a.js"), None),
+            (None, None, None, None), // all nodes
+        ];
+
+        for (nt, ntp, file, name) in &filter_combos {
+            let vec_result = shard.find_node_ids_by_attr(
+                *nt, *ntp, *file, *name, None, &[], false,
+            );
+
+            let mut callback_result: Vec<u128> = Vec::new();
+            shard.for_each_matching_id(
+                *nt, *ntp, *file, *name, None, &[], false,
+                &mut |id| { callback_result.push(id); true },
+            );
+
+            assert_eq!(
+                vec_result, callback_result,
+                "Mismatch for filter ({:?}, {:?}, {:?}, {:?})",
+                nt, ntp, file, name
+            );
+        }
+    }
+
+    #[test]
+    fn test_for_each_matching_id_early_stop() {
+        let mut shard = Shard::ephemeral();
+        shard.add_nodes(vec![
+            make_node("fn1", "FUNCTION", "a", "f.js"),
+            make_node("fn2", "FUNCTION", "b", "f.js"),
+            make_node("fn3", "FUNCTION", "c", "f.js"),
+        ]);
+
+        let mut collected: Vec<u128> = Vec::new();
+        let completed = shard.for_each_matching_id(
+            Some("FUNCTION"), None, None, None, None, &[], false,
+            &mut |id| {
+                collected.push(id);
+                collected.len() < 2 // stop after 2
+            },
+        );
+
+        assert!(!completed, "Should have stopped early");
+        assert_eq!(collected.len(), 2, "Should have collected exactly 2 IDs");
     }
 }

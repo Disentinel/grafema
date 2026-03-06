@@ -2073,57 +2073,115 @@ fn handle_query_nodes_streaming(
     };
 
     let engine = db.engine.read().unwrap();
+    let engine_ref: &dyn GraphStore = &**engine;
 
     let attr_query = wire_to_attr_query(query);
 
-    let ids = engine.find_by_attr(&attr_query);
-    let total = ids.len();
+    // Held-back chunk pattern:
+    // We buffer IDs until we know whether total exceeds STREAMING_THRESHOLD.
+    // Once it does, we switch to streaming mode with a held-back chunk so
+    // the final chunk can be sent with done=true.
+    let mut initial_buf: Vec<u128> = Vec::with_capacity(STREAMING_THRESHOLD + STREAMING_CHUNK_SIZE + 1);
+    let mut crossed_threshold = false;
+    let mut held_back: Option<Vec<WireNode>> = None;
+    let mut chunk_index: u32 = 0;
+    let mut write_error = false;
 
-    // Below threshold: single response (existing behavior)
-    if total <= STREAMING_THRESHOLD {
-        let nodes: Vec<WireNode> = ids.into_iter()
-            .filter_map(|id| engine.get_node(id))
+    let send_chunk = |nodes: Vec<WireNode>,
+                      done: bool,
+                      chunk_index: u32,
+                      request_id: &Option<String>,
+                      stream: &mut UnixStream| -> bool {
+        let envelope = ResponseEnvelope {
+            request_id: request_id.clone(),
+            response: Response::NodesChunk { nodes, done, chunk_index },
+        };
+        match rmp_serde::to_vec_named(&envelope) {
+            Ok(bytes) => {
+                if let Err(e) = write_message(stream, &bytes) {
+                    eprintln!("[rfdb-server] Write error during streaming (implicit cancel): {}", e);
+                    return false;
+                }
+                true
+            }
+            Err(e) => {
+                eprintln!("[rfdb-server] Serialize error during streaming: {}", e);
+                false
+            }
+        }
+    };
+
+    engine_ref.find_by_attr_chunked(&attr_query, STREAMING_CHUNK_SIZE, &mut |ids| {
+        if write_error {
+            return false;
+        }
+
+        if !crossed_threshold {
+            // Still accumulating into initial buffer
+            initial_buf.extend_from_slice(ids);
+            if initial_buf.len() <= STREAMING_THRESHOLD {
+                return true; // keep collecting
+            }
+            // Crossed threshold — switch to streaming mode.
+            // Convert everything accumulated so far into chunks.
+            crossed_threshold = true;
+            for chunk_ids in initial_buf.chunks(STREAMING_CHUNK_SIZE) {
+                let nodes: Vec<WireNode> = chunk_ids.iter()
+                    .filter_map(|&id| engine_ref.get_node(id))
+                    .map(|r| record_to_wire_node(&r))
+                    .collect();
+
+                // Send previous held-back chunk (if any) with done=false
+                if let Some(prev) = held_back.take() {
+                    if !send_chunk(prev, false, chunk_index, request_id, stream) {
+                        write_error = true;
+                        return false;
+                    }
+                    chunk_index += 1;
+                }
+                held_back = Some(nodes);
+            }
+            // Clear initial_buf — no longer needed
+            initial_buf = Vec::new();
+            return true;
+        }
+
+        // Already in streaming mode — process this chunk
+        let nodes: Vec<WireNode> = ids.iter()
+            .filter_map(|&id| engine_ref.get_node(id))
+            .map(|r| record_to_wire_node(&r))
+            .collect();
+
+        // Send previous held-back chunk with done=false
+        if let Some(prev) = held_back.take() {
+            if !send_chunk(prev, false, chunk_index, request_id, stream) {
+                write_error = true;
+                return false;
+            }
+            chunk_index += 1;
+        }
+        held_back = Some(nodes);
+        true
+    });
+
+    if write_error {
+        return HandleResult::Streamed;
+    }
+
+    if !crossed_threshold {
+        // Never crossed threshold — return single response
+        let nodes: Vec<WireNode> = initial_buf.into_iter()
+            .filter_map(|id| engine_ref.get_node(id))
             .map(|r| record_to_wire_node(&r))
             .collect();
         return HandleResult::Single(Response::Nodes { nodes });
     }
 
-    // Streaming path: send chunks
-    let mut chunk_index: u32 = 0;
-    let num_chunks = (total + STREAMING_CHUNK_SIZE - 1) / STREAMING_CHUNK_SIZE;
-
-    for chunk_ids in ids.chunks(STREAMING_CHUNK_SIZE) {
-        let nodes: Vec<WireNode> = chunk_ids.iter()
-            .filter_map(|&id| engine.get_node(id))
-            .map(|r| record_to_wire_node(&r))
-            .collect();
-
-        let is_last = (chunk_index as usize + 1) >= num_chunks;
-        let response = Response::NodesChunk {
-            nodes,
-            done: is_last,
-            chunk_index,
-        };
-
-        let envelope = ResponseEnvelope {
-            request_id: request_id.clone(),
-            response,
-        };
-
-        let resp_bytes = match rmp_serde::to_vec_named(&envelope) {
-            Ok(bytes) => bytes,
-            Err(e) => {
-                eprintln!("[rfdb-server] Serialize error during streaming: {}", e);
-                return HandleResult::Streamed;
-            }
-        };
-
-        if let Err(e) = write_message(stream, &resp_bytes) {
-            eprintln!("[rfdb-server] Write error during streaming (implicit cancel): {}", e);
+    // Send the held-back chunk with done=true
+    if let Some(last) = held_back.take() {
+        if !send_chunk(last, true, chunk_index, request_id, stream) {
             return HandleResult::Streamed;
         }
-
-        chunk_index += 1;
     }
 
     HandleResult::Streamed

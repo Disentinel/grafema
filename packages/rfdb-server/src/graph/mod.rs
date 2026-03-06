@@ -36,6 +36,25 @@ pub trait GraphStore: Send + Sync {
     /// Найти ноды по атрибутам
     fn find_by_attr(&self, query: &AttrQuery) -> Vec<u128>;
 
+    /// Iterate matching node IDs in chunks via callback.
+    ///
+    /// Default implementation materializes all IDs and chunks them.
+    /// Engines with lazy scan support (e.g. GraphEngineV2) override with
+    /// a streaming implementation that avoids upfront allocation.
+    fn find_by_attr_chunked(
+        &self,
+        query: &AttrQuery,
+        chunk_size: usize,
+        callback: &mut dyn FnMut(&[u128]) -> bool,
+    ) {
+        let ids = self.find_by_attr(query);
+        for chunk in ids.chunks(chunk_size) {
+            if !callback(chunk) {
+                break;
+            }
+        }
+    }
+
     /// Найти ноды по типу (поддерживает wildcard, e.g., "http:*")
     fn find_by_type(&self, node_type: &str) -> Vec<u128>;
 

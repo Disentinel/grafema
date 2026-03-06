@@ -594,26 +594,67 @@ impl MultiShardStore {
         metadata_filters: &[(String, String)],
         substring_match: bool,
     ) -> Vec<u128> {
-        let mut seen: HashSet<u128> = HashSet::new();
         let mut results: Vec<u128> = Vec::new();
+        self.find_node_ids_by_attr_chunked(
+            node_type, node_type_prefix, file, name,
+            exported, metadata_filters, substring_match,
+            usize::MAX,
+            &mut |chunk| { results.extend_from_slice(chunk); true },
+        );
+        results
+    }
+
+    /// Iterate matching node IDs in chunks via callback, without materializing all results.
+    ///
+    /// Iterates shards calling `for_each_matching_id`, deduplicates across shards,
+    /// buffers into chunks of `chunk_size`, and calls `callback` per full chunk.
+    /// Remaining items are flushed after all shards are scanned.
+    ///
+    /// Return `false` from `callback` to stop iteration early.
+    pub fn find_node_ids_by_attr_chunked(
+        &self,
+        node_type: Option<&str>,
+        node_type_prefix: Option<&str>,
+        file: Option<&str>,
+        name: Option<&str>,
+        exported: Option<bool>,
+        metadata_filters: &[(String, String)],
+        substring_match: bool,
+        chunk_size: usize,
+        callback: &mut dyn FnMut(&[u128]) -> bool,
+    ) {
+        let mut seen: HashSet<u128> = HashSet::new();
+        let mut buffer: Vec<u128> = Vec::with_capacity(chunk_size.min(65536));
+        let mut stopped = false;
 
         for shard in &self.shards {
-            for id in shard.find_node_ids_by_attr(
-                node_type,
-                node_type_prefix,
-                file,
-                name,
-                exported,
-                metadata_filters,
-                substring_match,
-            ) {
-                if seen.insert(id) {
-                    results.push(id);
-                }
+            if stopped {
+                break;
             }
+            shard.for_each_matching_id(
+                node_type, node_type_prefix, file, name,
+                exported, metadata_filters, substring_match,
+                &mut |id| {
+                    if !seen.insert(id) {
+                        return true; // duplicate, skip
+                    }
+                    buffer.push(id);
+                    if buffer.len() >= chunk_size {
+                        if !callback(&buffer) {
+                            stopped = true;
+                            return false;
+                        }
+                        buffer.clear();
+                    }
+                    true
+                },
+            );
         }
 
-        results
+        // Flush remaining buffer
+        if !stopped && !buffer.is_empty() {
+            callback(&buffer);
+        }
     }
 }
 
@@ -3619,5 +3660,76 @@ mod tests {
                 _ => panic!("shard {i}: L1 mismatch (one has segments, other doesn't)"),
             }
         }
+    }
+
+    #[test]
+    fn test_chunked_callback_receives_correct_chunks() {
+        let mut store = MultiShardStore::ephemeral(2);
+        let mut nodes = Vec::new();
+        for i in 0..25 {
+            nodes.push(make_node(
+                &format!("fn{i}"),
+                "FUNCTION",
+                &format!("func_{i}"),
+                &format!("src/f{}.js", i % 3),
+            ));
+        }
+        store.add_nodes(nodes);
+        // Nodes are queryable from write buffer; no flush needed.
+
+        // Verify chunked produces same total as non-chunked
+        let all_ids = store.find_node_ids_by_attr(
+            Some("FUNCTION"), None, None, None, None, &[], false,
+        );
+
+        let mut chunked_ids: Vec<u128> = Vec::new();
+        let mut chunk_count = 0;
+        let mut max_chunk_size = 0;
+        store.find_node_ids_by_attr_chunked(
+            Some("FUNCTION"), None, None, None, None, &[], false,
+            7, // small chunk size to verify multiple callbacks
+            &mut |chunk| {
+                chunk_count += 1;
+                if chunk.len() > max_chunk_size {
+                    max_chunk_size = chunk.len();
+                }
+                chunked_ids.extend_from_slice(chunk);
+                true
+            },
+        );
+
+        // Same IDs, same order
+        assert_eq!(all_ids, chunked_ids, "Chunked should produce same IDs as non-chunked");
+        assert!(chunk_count > 1, "Should have multiple chunks with chunk_size=7 and 25 nodes");
+        assert!(max_chunk_size <= 7, "No chunk should exceed chunk_size");
+    }
+
+    #[test]
+    fn test_chunked_callback_early_stop() {
+        let mut store = MultiShardStore::ephemeral(2);
+        let mut nodes = Vec::new();
+        for i in 0..20 {
+            nodes.push(make_node(
+                &format!("n{i}"),
+                "VARIABLE",
+                &format!("var_{i}"),
+                "src/x.js",
+            ));
+        }
+        store.add_nodes(nodes);
+        // Nodes are queryable from write buffer; no flush needed.
+
+        let mut collected: Vec<u128> = Vec::new();
+        store.find_node_ids_by_attr_chunked(
+            Some("VARIABLE"), None, None, None, None, &[], false,
+            5,
+            &mut |chunk| {
+                collected.extend_from_slice(chunk);
+                // Stop after first chunk
+                false
+            },
+        );
+
+        assert_eq!(collected.len(), 5, "Should stop after first chunk of 5");
     }
 }
