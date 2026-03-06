@@ -1,0 +1,112 @@
+# Knowledge Graph edges
+# Format: {type, from, to, evidence?}
+# All references use semantic IDs (kb:* for KB nodes, file:name:TYPE for code nodes)
+
+# Session produced decisions
+- type: PRODUCED
+  from: kb:session:2026-03-06-kb-architecture-design
+  to: kb:decision:kb-file-based-storage
+
+- type: PRODUCED
+  from: kb:session:2026-03-06-kb-architecture-design
+  to: kb:decision:three-lifecycle-types
+
+- type: PRODUCED
+  from: kb:session:2026-03-06-kb-architecture-design
+  to: kb:decision:frontmatter-and-yaml-formats
+
+- type: PRODUCED
+  from: kb:session:2026-03-06-kb-architecture-design
+  to: kb:decision:semantic-address-lazy-rebind
+
+- type: PRODUCED
+  from: kb:session:2026-03-06-kb-architecture-design
+  to: kb:decision:projections-are-lenses-not-storage
+
+- type: PRODUCED
+  from: kb:session:2026-03-06-kb-architecture-design
+  to: kb:decision:kb-semantic-id-format
+
+- type: PRODUCED
+  from: kb:session:2026-03-06-kb-architecture-design
+  to: kb:decision:knowledge-dir-at-project-root
+
+# Session produced facts
+- type: PRODUCED
+  from: kb:session:2026-03-06-kb-architecture-design
+  to: kb:fact:clear-deletes-filesystem-directory
+
+- type: PRODUCED
+  from: kb:session:2026-03-06-kb-architecture-design
+  to: kb:fact:rejected-shared-rfdb-server
+
+- type: PRODUCED
+  from: kb:session:2026-03-06-kb-architecture-design
+  to: kb:fact:twelve-projection-ontology
+
+# Session created tickets
+- type: CREATED_IN
+  from: kb:ticket:RFD-47
+  to: kb:session:2026-03-06-kb-architecture-design
+
+- type: CREATED_IN
+  from: kb:ticket:REG-626
+  to: kb:session:2026-03-06-kb-architecture-design
+
+- type: CREATED_IN
+  from: kb:ticket:REG-627
+  to: kb:session:2026-03-06-kb-architecture-design
+
+- type: CREATED_IN
+  from: kb:ticket:REG-628
+  to: kb:session:2026-03-06-kb-architecture-design
+
+- type: CREATED_IN
+  from: kb:ticket:REG-629
+  to: kb:session:2026-03-06-kb-architecture-design
+
+- type: CREATED_IN
+  from: kb:ticket:REG-630
+  to: kb:session:2026-03-06-kb-architecture-design
+
+# Tickets implement decisions
+- type: IMPLEMENTS
+  from: kb:ticket:REG-626
+  to: kb:decision:kb-file-based-storage
+
+- type: IMPLEMENTS
+  from: kb:ticket:REG-626
+  to: kb:decision:three-lifecycle-types
+
+- type: IMPLEMENTS
+  from: kb:ticket:REG-626
+  to: kb:decision:kb-semantic-id-format
+
+- type: IMPLEMENTS
+  from: kb:ticket:REG-627
+  to: kb:decision:semantic-address-lazy-rebind
+
+- type: IMPLEMENTS
+  from: kb:ticket:REG-630
+  to: kb:decision:frontmatter-and-yaml-formats
+
+# Decisions informed by facts
+- type: INFORMED_BY
+  from: kb:decision:three-lifecycle-types
+  to: kb:fact:twelve-projection-ontology
+  evidence: "soundness levels from paper mapped to lifecycle types"
+
+- type: INFORMED_BY
+  from: kb:decision:kb-file-based-storage
+  to: kb:fact:rejected-shared-rfdb-server
+  evidence: "shared server rejected, file-based chosen instead"
+
+- type: INFORMED_BY
+  from: kb:decision:knowledge-dir-at-project-root
+  to: kb:fact:clear-deletes-filesystem-directory
+  evidence: "can't store KB under .grafema/ because --clear destroys it"
+
+# Decision supersedes rejected approach
+- type: SUPERSEDES_APPROACH
+  from: kb:decision:kb-file-based-storage
+  to: kb:fact:rejected-shared-rfdb-server
