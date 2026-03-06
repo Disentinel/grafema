@@ -87,7 +87,15 @@ impl FileAnalysis {
         } else {
             format!("{root}/")
         };
+        // Strip root prefix from paths, handling "TYPE#/abs/path" patterns
+        // like "MODULE#/Users/x/project/src/app.ts" → "MODULE#src/app.ts"
         let strip = |s: &str| -> String {
+            if let Some(hash_pos) = s.find('#') {
+                let (tag, rest) = s.split_at(hash_pos + 1); // "MODULE#" + "/abs/path"
+                if let Some(stripped) = rest.strip_prefix(&prefix) {
+                    return format!("{tag}{stripped}");
+                }
+            }
             s.strip_prefix(&prefix).unwrap_or(s).to_string()
         };
         self.file = strip(&self.file);
@@ -135,10 +143,10 @@ pub struct AnalysisResult {
 /// Returns `Err` if the file cannot be parsed at all, the analyzer binary
 /// cannot be spawned, the analyzer exits non-zero, or its output is not
 /// valid `FileAnalysis` JSON.
-pub async fn analyze_file(file: &Path, ast_json: &str) -> Result<FileAnalysis> {
+pub async fn analyze_file(file: &Path, ast_json: &str, analyzer_bin: &str) -> Result<FileAnalysis> {
     let file_str = file.display().to_string();
 
-    let mut child = tokio::process::Command::new("grafema-analyzer")
+    let mut child = tokio::process::Command::new(analyzer_bin)
         .arg(&file_str)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -203,14 +211,14 @@ pub async fn analyze_file(file: &Path, ast_json: &str) -> Result<FileAnalysis> {
 /// Returns `Err` if the file cannot be read, the analyzer binary cannot be
 /// spawned, the analyzer exits non-zero, or its output is not valid
 /// `FileAnalysis` JSON.
-pub async fn analyze_haskell_file(file: &Path) -> Result<FileAnalysis> {
+pub async fn analyze_haskell_file(file: &Path, analyzer_bin: &str) -> Result<FileAnalysis> {
     let file_str = file.display().to_string();
 
     let source = tokio::fs::read_to_string(file)
         .await
         .with_context(|| format!("Failed to read Haskell source file {file_str}"))?;
 
-    let mut child = tokio::process::Command::new("haskell-analyzer")
+    let mut child = tokio::process::Command::new(analyzer_bin)
         .arg(&file_str)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -373,9 +381,10 @@ pub async fn analyze_haskell_file_pooled(
 pub async fn analyze_files_parallel_pooled(
     files: &[PathBuf],
     jobs: usize,
+    analyzers: &crate::config::AnalyzerBinaries,
 ) -> Vec<AnalysisResult> {
     let pool_config = PoolConfig {
-        command: "grafema-analyzer".to_string(),
+        command: analyzers.js_path(),
         args: vec!["--daemon".to_string()],
         ..PoolConfig::default()
     };
@@ -384,7 +393,7 @@ pub async fn analyze_files_parallel_pooled(
         Ok(p) => Arc::new(p),
         Err(e) => {
             tracing::warn!("Failed to create analyzer pool, falling back to spawn-per-file: {e}");
-            return analyze_files_parallel(files, jobs).await;
+            return analyze_files_parallel(files, jobs, &analyzers.js_path()).await;
         }
     };
 
@@ -502,9 +511,10 @@ pub async fn analyze_files_parallel_pooled(
 pub async fn analyze_haskell_files_parallel_pooled(
     files: &[PathBuf],
     jobs: usize,
+    analyzers: &crate::config::AnalyzerBinaries,
 ) -> Vec<AnalysisResult> {
     let pool_config = PoolConfig {
-        command: "haskell-analyzer".to_string(),
+        command: analyzers.haskell_path(),
         args: vec!["--daemon".to_string()],
         ..PoolConfig::default()
     };
@@ -515,7 +525,7 @@ pub async fn analyze_haskell_files_parallel_pooled(
             tracing::warn!(
                 "Failed to create haskell-analyzer pool, falling back to spawn-per-file: {e}"
             );
-            return analyze_haskell_files_parallel(files, jobs).await;
+            return analyze_haskell_files_parallel(files, jobs, &analyzers.haskell_path()).await;
         }
     };
 
@@ -600,9 +610,11 @@ pub async fn analyze_haskell_files_parallel_pooled(
 pub async fn analyze_haskell_files_parallel(
     files: &[PathBuf],
     jobs: usize,
+    analyzer_bin: &str,
 ) -> Vec<AnalysisResult> {
     let semaphore = Arc::new(Semaphore::new(jobs.max(1)));
     let total = files.len();
+    let analyzer_bin = analyzer_bin.to_string();
 
     let handles: Vec<_> = files
         .iter()
@@ -611,6 +623,7 @@ pub async fn analyze_haskell_files_parallel(
             let sem = Arc::clone(&semaphore);
             let file = file.clone();
             let file_display = file.display().to_string();
+            let bin = analyzer_bin.clone();
 
             tokio::spawn(async move {
                 let _permit = sem
@@ -627,7 +640,7 @@ pub async fn analyze_haskell_files_parallel(
 
                 let errors = Vec::new();
 
-                match analyze_haskell_file(&file).await {
+                match analyze_haskell_file(&file, &bin).await {
                     Ok(analysis) => AnalysisResult {
                         file,
                         analysis: Some(analysis),
@@ -676,10 +689,10 @@ pub async fn analyze_haskell_files_parallel(
 /// 1. Parse .rs file with syn (in orchestrator via crate::rust_parser) -> AST JSON
 /// 2. Spawn `grafema-rust-analyzer`, pipe {"file":"...","ast":...} to stdin
 /// 3. Read stdout as FileAnalysis JSON
-pub async fn analyze_rust_file(file: &Path, ast_json: &str) -> Result<FileAnalysis> {
+pub async fn analyze_rust_file(file: &Path, ast_json: &str, analyzer_bin: &str) -> Result<FileAnalysis> {
     let file_str = file.display().to_string();
 
-    let mut child = tokio::process::Command::new("grafema-rust-analyzer")
+    let mut child = tokio::process::Command::new(analyzer_bin)
         .arg(&file_str)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -768,9 +781,10 @@ pub async fn analyze_rust_file_pooled(
 pub async fn analyze_rust_files_parallel_pooled(
     files: &[PathBuf],
     jobs: usize,
+    analyzers: &crate::config::AnalyzerBinaries,
 ) -> Vec<AnalysisResult> {
     let pool_config = PoolConfig {
-        command: "grafema-rust-analyzer".to_string(),
+        command: analyzers.rust_path(),
         args: vec!["--daemon".to_string()],
         ..PoolConfig::default()
     };
@@ -781,7 +795,7 @@ pub async fn analyze_rust_files_parallel_pooled(
             tracing::warn!(
                 "Failed to create grafema-rust-analyzer pool, falling back to spawn-per-file: {e}"
             );
-            return analyze_rust_files_parallel(files, jobs).await;
+            return analyze_rust_files_parallel(files, jobs, &analyzers.rust_path()).await;
         }
     };
 
@@ -857,9 +871,11 @@ pub async fn analyze_rust_files_parallel_pooled(
 pub async fn analyze_rust_files_parallel(
     files: &[PathBuf],
     jobs: usize,
+    analyzer_bin: &str,
 ) -> Vec<AnalysisResult> {
     let semaphore = Arc::new(Semaphore::new(jobs.max(1)));
     let total = files.len();
+    let analyzer_bin = analyzer_bin.to_string();
 
     let handles: Vec<_> = files
         .iter()
@@ -868,6 +884,7 @@ pub async fn analyze_rust_files_parallel(
             let sem = Arc::clone(&semaphore);
             let file = file.clone();
             let file_display = file.display().to_string();
+            let bin = analyzer_bin.clone();
 
             tokio::spawn(async move {
                 let _permit = sem.acquire().await.expect("Semaphore closed unexpectedly");
@@ -885,7 +902,7 @@ pub async fn analyze_rust_files_parallel(
                 };
 
                 // Step 2: Spawn analyzer
-                match analyze_rust_file(&file, &ast_json).await {
+                match analyze_rust_file(&file, &ast_json, &bin).await {
                     Ok(analysis) => AnalysisResult { file, analysis: Some(analysis), errors },
                     Err(e) => {
                         errors.push(format!("Rust analyzer failed for {file_display}: {e}"));
@@ -1062,9 +1079,11 @@ pub fn collect_resolve_nodes_for_lang(
 pub async fn analyze_files_parallel(
     files: &[PathBuf],
     jobs: usize,
+    analyzer_bin: &str,
 ) -> Vec<AnalysisResult> {
     let semaphore = Arc::new(Semaphore::new(jobs.max(1)));
     let total = files.len();
+    let analyzer_bin = analyzer_bin.to_string();
 
     let handles: Vec<_> = files
         .iter()
@@ -1073,6 +1092,7 @@ pub async fn analyze_files_parallel(
             let sem = Arc::clone(&semaphore);
             let file = file.clone();
             let file_display = file.display().to_string();
+            let bin = analyzer_bin.clone();
 
             tokio::spawn(async move {
                 let _permit = sem
@@ -1125,7 +1145,7 @@ pub async fn analyze_files_parallel(
                 };
 
                 // Step 2: Spawn grafema-analyzer
-                match analyze_file(&file, &ast_json).await {
+                match analyze_file(&file, &ast_json, &bin).await {
                     Ok(analysis) => AnalysisResult {
                         file,
                         analysis: Some(analysis),
@@ -1341,6 +1361,40 @@ mod tests {
         assert_eq!(analysis.edges[0].src, "src/app.ts->FUNCTION->main");
         assert_eq!(analysis.edges[0].dst, "src/utils.ts->FUNCTION->helper");
         assert_eq!(analysis.exports[0].node_id, "src/app.ts->FUNCTION->main");
+    }
+
+    #[test]
+    fn relativize_paths_strips_hash_prefixed_ids() {
+        let mut analysis = FileAnalysis {
+            file: "/home/user/project/src/app.ts".to_string(),
+            module_id: "/home/user/project/src/app.ts".to_string(),
+            nodes: vec![GraphNode {
+                id: "MODULE#/home/user/project/src/app.ts".to_string(),
+                node_type: "MODULE".to_string(),
+                name: "/home/user/project/src/app.ts".to_string(),
+                file: "/home/user/project/src/app.ts".to_string(),
+                line: 1,
+                column: 0,
+                end_line: 1,
+                end_column: 0,
+                exported: false,
+                metadata: HashMap::new(),
+            }],
+            edges: vec![GraphEdge {
+                src: "MODULE#/home/user/project/src/app.ts".to_string(),
+                dst: "/home/user/project/src/app.ts->FUNCTION->main".to_string(),
+                edge_type: "CONTAINS".to_string(),
+                metadata: HashMap::new(),
+            }],
+            exports: vec![],
+        };
+
+        analysis.relativize_paths("/home/user/project");
+
+        assert_eq!(analysis.nodes[0].id, "MODULE#src/app.ts");
+        assert_eq!(analysis.nodes[0].file, "src/app.ts");
+        assert_eq!(analysis.edges[0].src, "MODULE#src/app.ts");
+        assert_eq!(analysis.edges[0].dst, "src/app.ts->FUNCTION->main");
     }
 
     #[test]

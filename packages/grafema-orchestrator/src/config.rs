@@ -34,9 +34,9 @@ pub struct AnalyzerConfig {
 
 /// Optional overrides for analyzer binary paths.
 /// When not specified, defaults are used:
-/// - JS/TS: "grafema-analyzer"
-/// - Haskell: "haskell-analyzer"
-/// - Rust: "grafema-rust-analyzer"
+/// - JS/TS: "grafema-analyzer" / "grafema-resolve"
+/// - Haskell: "haskell-analyzer" / "haskell-resolve"
+/// - Rust: "grafema-rust-analyzer" / "grafema-rust-resolve"
 #[derive(Debug, Clone, Deserialize)]
 pub struct AnalyzerBinaries {
     /// Path to JS/TS analyzer binary (default: "grafema-analyzer")
@@ -50,6 +50,18 @@ pub struct AnalyzerBinaries {
     /// Path to Rust analyzer binary (default: "grafema-rust-analyzer")
     #[serde(default = "default_rust_analyzer")]
     pub rust: String,
+
+    /// Path to JS/TS resolve binary (default: "grafema-resolve")
+    #[serde(default = "default_js_resolve")]
+    pub js_resolve: String,
+
+    /// Path to Haskell resolve binary (default: "haskell-resolve")
+    #[serde(default = "default_haskell_resolve")]
+    pub haskell_resolve: String,
+
+    /// Path to Rust resolve binary (default: "grafema-rust-resolve")
+    #[serde(default = "default_rust_resolve")]
+    pub rust_resolve: String,
 }
 
 impl Default for AnalyzerBinaries {
@@ -58,7 +70,93 @@ impl Default for AnalyzerBinaries {
             js: default_js_analyzer(),
             haskell: default_haskell_analyzer(),
             rust: default_rust_analyzer(),
+            js_resolve: default_js_resolve(),
+            haskell_resolve: default_haskell_resolve(),
+            rust_resolve: default_rust_resolve(),
         }
+    }
+}
+
+/// Resolve a bare binary name to a full path by checking known locations.
+///
+/// Search order:
+/// 1. If already an absolute path → return as-is
+/// 2. Same directory as the orchestrator binary (std::env::current_exe())
+/// 3. ~/.cabal/bin/
+/// 4. ~/.local/bin/
+/// 5. Return bare name unchanged (falls back to $PATH via Command::new)
+pub fn resolve_binary(name: &str) -> String {
+    let path = Path::new(name);
+
+    // Already absolute — use as-is
+    if path.is_absolute() {
+        return name.to_string();
+    }
+
+    // Check sibling of current executable
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let candidate = dir.join(name);
+            if candidate.is_file() {
+                let resolved = candidate.display().to_string();
+                tracing::debug!(binary = name, resolved = %resolved, "Resolved binary next to orchestrator");
+                return resolved;
+            }
+        }
+    }
+
+    // Check well-known directories
+    if let Some(home) = home_dir() {
+        for subdir in &["/.cabal/bin/", "/.local/bin/"] {
+            let mut candidate = home.clone();
+            candidate.push(&subdir[1..]); // strip leading /
+            candidate.push(name);
+            if candidate.is_file() {
+                let resolved = candidate.display().to_string();
+                tracing::debug!(binary = name, resolved = %resolved, "Resolved binary in well-known dir");
+                return resolved;
+            }
+        }
+    }
+
+    // Fall back to bare name ($PATH lookup by Command::new)
+    name.to_string()
+}
+
+/// Get the user's home directory.
+fn home_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME").map(PathBuf::from)
+}
+
+impl AnalyzerBinaries {
+    /// Resolved path for the JS/TS analyzer binary.
+    pub fn js_path(&self) -> String {
+        resolve_binary(&self.js)
+    }
+
+    /// Resolved path for the Haskell analyzer binary.
+    pub fn haskell_path(&self) -> String {
+        resolve_binary(&self.haskell)
+    }
+
+    /// Resolved path for the Rust analyzer binary.
+    pub fn rust_path(&self) -> String {
+        resolve_binary(&self.rust)
+    }
+
+    /// Resolved path for the JS/TS resolve binary.
+    pub fn js_resolve_path(&self) -> String {
+        resolve_binary(&self.js_resolve)
+    }
+
+    /// Resolved path for the Haskell resolve binary.
+    pub fn haskell_resolve_path(&self) -> String {
+        resolve_binary(&self.haskell_resolve)
+    }
+
+    /// Resolved path for the Rust resolve binary.
+    pub fn rust_resolve_path(&self) -> String {
+        resolve_binary(&self.rust_resolve)
     }
 }
 
@@ -155,6 +253,18 @@ fn default_haskell_analyzer() -> String {
 
 fn default_rust_analyzer() -> String {
     "grafema-rust-analyzer".to_string()
+}
+
+fn default_js_resolve() -> String {
+    "grafema-resolve".to_string()
+}
+
+fn default_haskell_resolve() -> String {
+    "haskell-resolve".to_string()
+}
+
+fn default_rust_resolve() -> String {
+    "grafema-rust-resolve".to_string()
 }
 
 /// Language detection based on file extension.
@@ -601,6 +711,9 @@ analyzers:
         assert_eq!(cfg.analyzers.js, "grafema-analyzer");
         assert_eq!(cfg.analyzers.haskell, "haskell-analyzer");
         assert_eq!(cfg.analyzers.rust, "grafema-rust-analyzer");
+        assert_eq!(cfg.analyzers.js_resolve, "grafema-resolve");
+        assert_eq!(cfg.analyzers.haskell_resolve, "haskell-resolve");
+        assert_eq!(cfg.analyzers.rust_resolve, "grafema-rust-resolve");
         cleanup(&dir);
     }
 
@@ -610,5 +723,53 @@ analyzers:
         assert_eq!(defaults.js, "grafema-analyzer");
         assert_eq!(defaults.haskell, "haskell-analyzer");
         assert_eq!(defaults.rust, "grafema-rust-analyzer");
+        assert_eq!(defaults.js_resolve, "grafema-resolve");
+        assert_eq!(defaults.haskell_resolve, "haskell-resolve");
+        assert_eq!(defaults.rust_resolve, "grafema-rust-resolve");
+    }
+
+    #[test]
+    fn resolve_binary_absolute_path_unchanged() {
+        let result = resolve_binary("/usr/local/bin/my-analyzer");
+        assert_eq!(result, "/usr/local/bin/my-analyzer");
+    }
+
+    #[test]
+    fn resolve_binary_bare_name_returns_bare_when_not_found() {
+        // A name that won't exist anywhere
+        let result = resolve_binary("nonexistent-binary-xyz-12345");
+        assert_eq!(result, "nonexistent-binary-xyz-12345");
+    }
+
+    #[test]
+    fn resolve_binary_finds_sibling_of_current_exe() {
+        // Create a temp file next to the current executable
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(dir) = exe.parent() {
+                let fake_bin = dir.join("test-resolve-binary-sentinel");
+                let _ = fs::write(&fake_bin, "");
+                let result = resolve_binary("test-resolve-binary-sentinel");
+                assert_eq!(result, fake_bin.display().to_string());
+                let _ = fs::remove_file(&fake_bin);
+            }
+        }
+    }
+
+    #[test]
+    fn analyzer_binaries_path_methods_with_absolute() {
+        let bins = AnalyzerBinaries {
+            js: "/abs/grafema-analyzer".to_string(),
+            haskell: "/abs/haskell-analyzer".to_string(),
+            rust: "/abs/grafema-rust-analyzer".to_string(),
+            js_resolve: "/abs/grafema-resolve".to_string(),
+            haskell_resolve: "/abs/haskell-resolve".to_string(),
+            rust_resolve: "/abs/grafema-rust-resolve".to_string(),
+        };
+        assert_eq!(bins.js_path(), "/abs/grafema-analyzer");
+        assert_eq!(bins.haskell_path(), "/abs/haskell-analyzer");
+        assert_eq!(bins.rust_path(), "/abs/grafema-rust-analyzer");
+        assert_eq!(bins.js_resolve_path(), "/abs/grafema-resolve");
+        assert_eq!(bins.haskell_resolve_path(), "/abs/haskell-resolve");
+        assert_eq!(bins.rust_resolve_path(), "/abs/grafema-rust-resolve");
     }
 }

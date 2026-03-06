@@ -155,7 +155,7 @@ export async function handleCheckInvariant(args: CheckInvariantArgs): Promise<To
 
   try {
     const checkFn = (db as unknown as { checkGuarantee: (q: string) => Promise<Array<{ bindings: Array<{ name: string; value: string }> }>> }).checkGuarantee;
-    const violations = await checkFn(rule);
+    const violations = await checkFn.call(db, rule);
     const total = violations.length;
 
     if (total === 0) {

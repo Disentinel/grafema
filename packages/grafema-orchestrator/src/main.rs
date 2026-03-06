@@ -119,21 +119,21 @@ async fn main() -> Result<()> {
             // 4a. Analyze JS/TS files (OXC parse → grafema-analyzer daemon pool)
             if !js_files.is_empty() {
                 tracing::info!(count = js_files.len(), "Analyzing JS/TS files");
-                let js_results = analyzer::analyze_files_parallel_pooled(&js_files, jobs).await;
+                let js_results = analyzer::analyze_files_parallel_pooled(&js_files, jobs, &cfg.analyzers).await;
                 results.extend(js_results);
             }
 
             // 4b. Analyze Haskell files (haskell-analyzer daemon pool, no OXC)
             if !hs_files.is_empty() {
                 tracing::info!(count = hs_files.len(), "Analyzing Haskell files");
-                let hs_results = analyzer::analyze_haskell_files_parallel_pooled(&hs_files, jobs).await;
+                let hs_results = analyzer::analyze_haskell_files_parallel_pooled(&hs_files, jobs, &cfg.analyzers).await;
                 results.extend(hs_results);
             }
 
             // 4c. Analyze Rust files (syn parse in orchestrator → grafema-rust-analyzer daemon pool)
             if !rs_files.is_empty() {
                 tracing::info!(count = rs_files.len(), "Analyzing Rust files");
-                let rs_results = analyzer::analyze_rust_files_parallel_pooled(&rs_files, jobs).await;
+                let rs_results = analyzer::analyze_rust_files_parallel_pooled(&rs_files, jobs, &cfg.analyzers).await;
                 results.extend(rs_results);
             }
 
@@ -222,7 +222,7 @@ async fn main() -> Result<()> {
                 );
 
                 let resolve_pool_config = process_pool::PoolConfig {
-                    command: "grafema-resolve".to_string(),
+                    command: cfg.analyzers.js_resolve_path(),
                     args: vec!["--daemon".to_string()],
                     ..process_pool::PoolConfig::default()
                 };
@@ -361,7 +361,7 @@ async fn main() -> Result<()> {
                     );
 
                     let hs_resolve_pool_config = process_pool::PoolConfig {
-                        command: "haskell-resolve".to_string(),
+                        command: cfg.analyzers.haskell_resolve_path(),
                         args: vec!["--daemon".to_string()],
                         ..process_pool::PoolConfig::default()
                     };
@@ -416,7 +416,7 @@ async fn main() -> Result<()> {
                     );
 
                     let rs_resolve_pool_config = process_pool::PoolConfig {
-                        command: "grafema-rust-resolve".to_string(),
+                        command: cfg.analyzers.rust_resolve_path(),
                         args: vec!["--daemon".to_string()],
                         ..process_pool::PoolConfig::default()
                     };
@@ -474,7 +474,7 @@ async fn main() -> Result<()> {
                 tracing::info!(count = user_plugins.len(), "Running user-defined plugins");
 
                 let resolve_pool_config = process_pool::PoolConfig {
-                    command: "grafema-resolve".to_string(),
+                    command: cfg.analyzers.js_resolve_path(),
                     args: vec!["--daemon".to_string()],
                     ..process_pool::PoolConfig::default()
                 };

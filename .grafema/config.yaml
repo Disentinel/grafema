@@ -1,6 +1,17 @@
 # Grafema Configuration — self-analysis (dogfooding)
+# Covers all production source code: TypeScript, Rust, Haskell
 
-# Explicit services: monorepo packages with src/ entry points
+root: ".."
+
+include:
+  # TypeScript packages
+  - "packages/*/src/**/*.ts"
+  # Rust packages (rfdb-server, grafema-orchestrator)
+  - "packages/*/src/**/*.rs"
+  # Haskell packages (grafema-common, grafema-resolve, haskell-analyzer, haskell-resolve, rust-analyzer, rust-resolve)
+  - "packages/*/src/**/*.hs"
+
+# Explicit services: monorepo packages with entry points
 services:
   - name: "util"
     path: "packages/util"
@@ -20,28 +31,17 @@ services:
   - name: "vscode"
     path: "packages/vscode"
     entryPoint: "src/extension.ts"
-
-plugins:
-  indexing:
-    - JSModuleIndexer
-  analysis:
-    - CoreV3Analyzer
-  enrichment:
-    - MethodCallResolver
-    - ArgumentParameterLinker
-    - AliasTracker
-    - ClosureCaptureEnricher
-    - RejectionPropagationEnricher
-    - ValueDomainAnalyzer
-    - ImportExportLinker
-    - ExportEntityLinker
-  validation:
-    - GraphConnectivityValidator
-    - DataFlowValidator
-    - BrokenImportValidator
+  - name: "rfdb-server"
+    path: "packages/rfdb-server"
+    entryPoint: "src/main.rs"
+  - name: "grafema-orchestrator"
+    path: "packages/grafema-orchestrator"
+    entryPoint: "src/main.rs"
 
 exclude:
   - "**/*.test.ts"
   - "**/__tests__/**"
   - "**/node_modules/**"
   - "**/dist/**"
+  - "**/dist-newstyle/**"
+  - "**/target/**"
