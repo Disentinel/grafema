@@ -54,6 +54,15 @@ pub enum GraphError {
 
     #[error("Database already in use. Lock file: {0}. If this is stale, remove the LOCK file manually.")]
     DatabaseLocked(String),
+
+    #[error("Query timeout: {0}")]
+    QueryTimeout(String),
+
+    #[error("Query cancelled")]
+    QueryCancelled,
+
+    #[error("Query limit exceeded: {0}")]
+    QueryLimitExceeded(String),
 }
 
 impl GraphError {
@@ -67,6 +76,9 @@ impl GraphError {
             GraphError::ReadOnlyMode => "READ_ONLY_MODE",
             GraphError::InvalidDatabaseName(_) => "INVALID_DATABASE_NAME",
             GraphError::DatabaseLocked(_) => "DATABASE_LOCKED",
+            GraphError::QueryTimeout(_) => "QUERY_TIMEOUT",
+            GraphError::QueryCancelled => "QUERY_CANCELLED",
+            GraphError::QueryLimitExceeded(_) => "QUERY_LIMIT_EXCEEDED",
             _ => "INTERNAL_ERROR",
         }
     }

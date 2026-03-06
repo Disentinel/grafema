@@ -369,7 +369,7 @@ mod eval_tests {
     use crate::storage::{NodeRecord, EdgeRecord};
 
 
-    fn setup_test_graph() -> GraphEngineV2 {
+    pub(super) fn setup_test_graph() -> GraphEngineV2 {
         let mut engine = GraphEngineV2::create_ephemeral();
 
         // Add test nodes
@@ -508,7 +508,7 @@ mod eval_tests {
             Term::constant("queue:publish"),
         ]);
 
-        let results = evaluator.eval_atom(&query);
+        let results = evaluator.query_atom(&query).unwrap();
         assert_eq!(results.len(), 2); // nodes 1 and 3
     }
 
@@ -527,8 +527,8 @@ mod eval_tests {
             Term::constant("queue:publish"),
         ]);
 
-        let node_results = evaluator.eval_atom(&node_query);
-        let type_results = evaluator.eval_atom(&type_query);
+        let node_results = evaluator.query_atom(&node_query).unwrap();
+        let type_results = evaluator.query_atom(&type_query).unwrap();
 
         assert_eq!(node_results.len(), type_results.len());
         assert_eq!(node_results.len(), 2);
@@ -557,7 +557,7 @@ mod eval_tests {
             Term::var("Type"),
         ]);
 
-        let results = evaluator.eval_atom(&query);
+        let results = evaluator.query_atom(&query).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].get("Type"), Some(&Value::Str("queue:publish".to_string())));
     }
@@ -573,7 +573,7 @@ mod eval_tests {
             Term::var("Type"),
         ]);
 
-        let results = evaluator.eval_atom(&query);
+        let results = evaluator.query_atom(&query).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].get("Type"), Some(&Value::Str("queue:publish".to_string())));
     }
@@ -590,7 +590,7 @@ mod eval_tests {
             Term::constant("CALLS"),
         ]);
 
-        let results = evaluator.eval_atom(&query);
+        let results = evaluator.query_atom(&query).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].get("X"), Some(&Value::Id(4)));
     }
@@ -606,7 +606,7 @@ mod eval_tests {
             Term::constant("2"),
         ]);
 
-        let results = evaluator.eval_atom(&query);
+        let results = evaluator.query_atom(&query).unwrap();
         assert_eq!(results.len(), 1); // path exists
     }
 
@@ -621,7 +621,7 @@ mod eval_tests {
             Term::constant("2"),
         ]);
 
-        let results = evaluator.eval_atom(&query);
+        let results = evaluator.query_atom(&query).unwrap();
         assert_eq!(results.len(), 0); // no path
     }
 
@@ -635,7 +635,7 @@ mod eval_tests {
         evaluator.add_rule(rule);
 
         let query = parse_atom("publisher(X)").unwrap();
-        let results = evaluator.query(&query);
+        let results = evaluator.query(&query).unwrap();
 
         assert_eq!(results.len(), 2); // two publishers
     }
@@ -651,7 +651,7 @@ mod eval_tests {
         evaluator.add_rule(rule);
 
         let query = parse_atom("orphan(X)").unwrap();
-        let results = evaluator.query(&query);
+        let results = evaluator.query(&query).unwrap();
 
         assert_eq!(results.len(), 1); // only node 3
         assert_eq!(results[0].get("X"), Some(&Value::Id(3)));
@@ -669,7 +669,7 @@ mod eval_tests {
             Term::constant("CALLS"),
         ]);
 
-        let results = evaluator.eval_atom(&query);
+        let results = evaluator.query_atom(&query).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].get("X"), Some(&Value::Id(1))); // node 1 calls node 4
     }
@@ -686,7 +686,7 @@ mod eval_tests {
             Term::constant("CALLS"),
         ]);
 
-        let results = evaluator.eval_atom(&query);
+        let results = evaluator.query_atom(&query).unwrap();
         assert_eq!(results.len(), 0);
     }
 
@@ -761,7 +761,7 @@ mod eval_tests {
         evaluator.add_rule(rule);
 
         let query = parse_atom("violation(X)").unwrap();
-        let results = evaluator.query(&query);
+        let results = evaluator.query(&query).unwrap();
 
         // Only y (11) violates the guarantee
         assert_eq!(results.len(), 1);
@@ -780,7 +780,7 @@ mod eval_tests {
             Term::var("X"),
         ]);
 
-        let results = evaluator.eval_atom(&query);
+        let results = evaluator.query_atom(&query).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].get("X"), Some(&Value::Str("orders-pub".to_string())));
     }
@@ -797,7 +797,7 @@ mod eval_tests {
             Term::var("X"),
         ]);
 
-        let results = evaluator.eval_atom(&query);
+        let results = evaluator.query_atom(&query).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].get("X"), Some(&Value::Str("api.js".to_string())));
     }
@@ -814,7 +814,7 @@ mod eval_tests {
             Term::var("X"),
         ]);
 
-        let results = evaluator.eval_atom(&query);
+        let results = evaluator.query_atom(&query).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].get("X"), Some(&Value::Str("queue:publish".to_string())));
     }
@@ -831,7 +831,7 @@ mod eval_tests {
             Term::constant("orders-pub"),
         ]);
 
-        let results = evaluator.eval_atom(&query);
+        let results = evaluator.query_atom(&query).unwrap();
         assert_eq!(results.len(), 1); // Match
     }
 
@@ -847,7 +847,7 @@ mod eval_tests {
             Term::constant("wrong-name"),
         ]);
 
-        let results = evaluator.eval_atom(&query);
+        let results = evaluator.query_atom(&query).unwrap();
         assert_eq!(results.len(), 0); // No match
     }
 
@@ -883,7 +883,7 @@ mod eval_tests {
             Term::var("X"),
         ]);
 
-        let results = evaluator.eval_atom(&query);
+        let results = evaluator.query_atom(&query).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].get("X"), Some(&Value::Str("arr".to_string())));
 
@@ -894,7 +894,7 @@ mod eval_tests {
             Term::var("X"),
         ]);
 
-        let results2 = evaluator.eval_atom(&query2);
+        let results2 = evaluator.query_atom(&query2).unwrap();
         assert_eq!(results2.len(), 1);
         assert_eq!(results2[0].get("X"), Some(&Value::Str("map".to_string())));
     }
@@ -911,7 +911,7 @@ mod eval_tests {
             Term::var("X"),
         ]);
 
-        let results = evaluator.eval_atom(&query);
+        let results = evaluator.query_atom(&query).unwrap();
         assert_eq!(results.len(), 0); // No results for missing attr
     }
 
@@ -947,7 +947,7 @@ mod eval_tests {
             Term::var("X"),
         ]);
 
-        let results = evaluator.eval_atom(&query);
+        let results = evaluator.query_atom(&query).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].get("X"), Some(&Value::Str("localhost".to_string())));
     }
@@ -983,7 +983,7 @@ mod eval_tests {
             Term::var("X"),
         ]);
 
-        let results = evaluator.eval_atom(&query);
+        let results = evaluator.query_atom(&query).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].get("X"), Some(&Value::Str("3000".to_string())));
     }
@@ -1021,7 +1021,7 @@ mod eval_tests {
             Term::var("X"),
         ]);
 
-        let results = evaluator.eval_atom(&query);
+        let results = evaluator.query_atom(&query).unwrap();
         assert_eq!(results.len(), 1);
         // Literal key takes precedence
         assert_eq!(results[0].get("X"), Some(&Value::Str("literal-value".to_string())));
@@ -1058,7 +1058,7 @@ mod eval_tests {
             Term::var("X"),
         ]);
 
-        let results = evaluator.eval_atom(&query);
+        let results = evaluator.query_atom(&query).unwrap();
         assert_eq!(results.len(), 0); // Path not found
     }
 
@@ -1153,7 +1153,7 @@ mod eval_tests {
         evaluator.add_rule(rule);
 
         let query = parse_atom("violation(X)").unwrap();
-        let results = evaluator.query(&query);
+        let results = evaluator.query(&query).unwrap();
 
         // Only node 2 should violate (CALL_SITE without CALLS)
         assert_eq!(results.len(), 1);
@@ -1171,7 +1171,7 @@ mod eval_tests {
             Term::constant("bar"),
         ]);
 
-        let results = evaluator.eval_atom(&query);
+        let results = evaluator.query_atom(&query).unwrap();
         assert_eq!(results.len(), 1);
     }
 
@@ -1186,7 +1186,7 @@ mod eval_tests {
             Term::constant("foo"),
         ]);
 
-        let results = evaluator.eval_atom(&query);
+        let results = evaluator.query_atom(&query).unwrap();
         assert_eq!(results.len(), 0);
     }
 
@@ -1201,7 +1201,7 @@ mod eval_tests {
             Term::constant("<"),
         ]);
 
-        let results = evaluator.eval_atom(&query);
+        let results = evaluator.query_atom(&query).unwrap();
         assert_eq!(results.len(), 1);
     }
 
@@ -1216,7 +1216,7 @@ mod eval_tests {
             Term::constant("<"),
         ]);
 
-        let results = evaluator.eval_atom(&query);
+        let results = evaluator.query_atom(&query).unwrap();
         assert_eq!(results.len(), 0);
     }
 
@@ -1231,7 +1231,7 @@ mod eval_tests {
             Term::constant("<"),
         ]);
 
-        let results = evaluator.eval_atom(&query);
+        let results = evaluator.query_atom(&query).unwrap();
         assert_eq!(results.len(), 1);
     }
 
@@ -1246,7 +1246,7 @@ mod eval_tests {
             Term::constant("<"),
         ]);
 
-        let results = evaluator.eval_atom(&query);
+        let results = evaluator.query_atom(&query).unwrap();
         assert_eq!(results.len(), 0);
     }
 
@@ -1260,7 +1260,7 @@ mod eval_tests {
             Term::constant("plugins"),
         ]);
 
-        let results = evaluator.eval_atom(&query);
+        let results = evaluator.query_atom(&query).unwrap();
         assert_eq!(results.len(), 1);
     }
 
@@ -1274,7 +1274,7 @@ mod eval_tests {
             Term::constant("plugins"),
         ]);
 
-        let results = evaluator.eval_atom(&query);
+        let results = evaluator.query_atom(&query).unwrap();
         assert_eq!(results.len(), 0);
     }
 
@@ -1338,7 +1338,7 @@ mod eval_tests {
         evaluator.add_rule(rule);
 
         let query = parse_atom("violation(X)").unwrap();
-        let results = evaluator.query(&query);
+        let results = evaluator.query(&query).unwrap();
 
         // Only node 1 (myFunc) should match
         assert_eq!(results.len(), 1);
@@ -1357,7 +1357,7 @@ mod eval_tests {
             Term::constant("CALLS"),
         ]);
 
-        let results = evaluator.eval_atom(&query);
+        let results = evaluator.query_atom(&query).unwrap();
         // Graph has 2 CALLS edges: 1->4 and 4->2
         assert_eq!(results.len(), 2);
 
@@ -1386,7 +1386,7 @@ mod eval_tests {
             Term::var("T"),
         ]);
 
-        let results = evaluator.eval_atom(&query);
+        let results = evaluator.query_atom(&query).unwrap();
         // Only edge 1->4 points to node 4
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].get("X"), Some(&Value::Id(1)));
@@ -1405,7 +1405,7 @@ mod eval_tests {
             Term::var("T"),
         ]);
 
-        let results = evaluator.eval_atom(&query);
+        let results = evaluator.query_atom(&query).unwrap();
         // Graph has 2 edges total
         assert_eq!(results.len(), 2);
 
@@ -1635,7 +1635,7 @@ mod eval_tests {
             Term::var("X"),
         ]);
 
-        let results = evaluator.eval_atom(&query);
+        let results = evaluator.query_atom(&query).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].get("X"), Some(&Value::Str("nodes".to_string())));
     }
@@ -1698,7 +1698,7 @@ mod eval_tests {
             Term::var("X"),
         ]);
 
-        let results = evaluator.eval_atom(&query);
+        let results = evaluator.query_atom(&query).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].get("X"), Some(&Value::Str("unbounded".to_string())));
     }
@@ -1761,7 +1761,7 @@ mod eval_tests {
             Term::constant("nodes"),
         ]);
 
-        let results = evaluator.eval_atom(&query_match);
+        let results = evaluator.query_atom(&query_match).unwrap();
         assert_eq!(results.len(), 1); // Match succeeds
 
         // No match: attr_edge(100, 200, "ITERATES_OVER", "scale", "constant")
@@ -1773,7 +1773,7 @@ mod eval_tests {
             Term::constant("constant"),
         ]);
 
-        let results = evaluator.eval_atom(&query_no_match);
+        let results = evaluator.query_atom(&query_no_match).unwrap();
         assert_eq!(results.len(), 0); // Match fails
     }
 
@@ -1836,7 +1836,7 @@ mod eval_tests {
             Term::var("X"),
         ]);
 
-        let results = evaluator.eval_atom(&query);
+        let results = evaluator.query_atom(&query).unwrap();
         assert_eq!(results.len(), 0); // No metadata = no results
     }
 
@@ -1898,7 +1898,7 @@ mod eval_tests {
             Term::var("X"),
         ]);
 
-        let results = evaluator.eval_atom(&query);
+        let results = evaluator.query_atom(&query).unwrap();
         assert_eq!(results.len(), 0); // Attribute doesn't exist
     }
 
@@ -1951,7 +1951,7 @@ mod eval_tests {
             Term::var("X"),
         ]);
 
-        let results = evaluator.eval_atom(&query);
+        let results = evaluator.query_atom(&query).unwrap();
         assert_eq!(results.len(), 0); // Edge doesn't exist
     }
 
@@ -2152,7 +2152,7 @@ mod eval_tests {
         evaluator.add_rule(rule);
 
         let query = parse_atom("large_iteration(Loop, Var, File)").unwrap();
-        let results = evaluator.query(&query);
+        let results = evaluator.query(&query).unwrap();
 
         // Only loop 1 should match (scale = "nodes")
         assert_eq!(results.len(), 1);
@@ -2535,7 +2535,7 @@ mod eval_tests {
         evaluator.add_rule(rule);
 
         let query = parse_atom("caller(X)").unwrap();
-        let results = evaluator.query(&query);
+        let results = evaluator.query(&query).unwrap();
 
         // Should find nodes 1 (handleRequest) and 2 (handleOrder)
         assert_eq!(results.len(), 2, "should find 2 CALL nodes starting with 'handle'");
@@ -3052,7 +3052,7 @@ mod eval_tests {
                 Term::var("F"),
             ]);
 
-            let results = evaluator.eval_atom(&query);
+            let results = evaluator.query_atom(&query).unwrap();
             assert_eq!(results.len(), 1, "should find exactly one parent function");
             assert_eq!(results[0].get("F"), Some(&Value::Id(10)),
                 "parent function of CALL(30) should be FUNCTION(10)");
@@ -3071,7 +3071,7 @@ mod eval_tests {
                 Term::var("F"),
             ]);
 
-            let results = evaluator.eval_atom(&query);
+            let results = evaluator.query_atom(&query).unwrap();
             assert_eq!(results.len(), 1, "should find exactly one parent function");
             assert_eq!(results[0].get("F"), Some(&Value::Id(10)),
                 "parent function of nested CALL(31) should still be FUNCTION(10)");
@@ -3089,7 +3089,7 @@ mod eval_tests {
                 Term::var("F"),
             ]);
 
-            let results = evaluator.eval_atom(&query);
+            let results = evaluator.query_atom(&query).unwrap();
             assert_eq!(results.len(), 0,
                 "module-level CALL(60) should have no parent function");
         }
@@ -3107,7 +3107,7 @@ mod eval_tests {
                 Term::var("F"),
             ]);
 
-            let results = evaluator.eval_atom(&query);
+            let results = evaluator.query_atom(&query).unwrap();
             assert_eq!(results.len(), 1, "should find exactly one parent function for VARIABLE");
             assert_eq!(results[0].get("F"), Some(&Value::Id(10)),
                 "parent function of VARIABLE(40) should be FUNCTION(10) via DECLARES edge");
@@ -3127,7 +3127,7 @@ mod eval_tests {
                 Term::var("F"),
             ]);
 
-            let results = evaluator.eval_atom(&query);
+            let results = evaluator.query_atom(&query).unwrap();
             assert_eq!(results.len(), 1, "should find exactly one parent function for PARAMETER");
             assert_eq!(results[0].get("F"), Some(&Value::Id(10)),
                 "parent function of PARAMETER(50) should be FUNCTION(10) via HAS_PARAMETER edge");
@@ -3146,7 +3146,7 @@ mod eval_tests {
                 Term::var("F"),
             ]);
 
-            let results = evaluator.eval_atom(&query);
+            let results = evaluator.query_atom(&query).unwrap();
             assert_eq!(results.len(), 1, "should find exactly one parent function for class method call");
             assert_eq!(results[0].get("F"), Some(&Value::Id(11)),
                 "parent function of CALL(32) should be class method FUNCTION(11)");
@@ -3163,7 +3163,7 @@ mod eval_tests {
                 Term::constant("10"),
             ]);
 
-            let results = evaluator.eval_atom(&query);
+            let results = evaluator.query_atom(&query).unwrap();
             assert_eq!(results.len(), 1,
                 "parent_function(30, \"10\") should match (FUNCTION 10 is the parent)");
             assert!(results[0].is_empty(),
@@ -3181,7 +3181,7 @@ mod eval_tests {
                 Term::constant("999"),
             ]);
 
-            let results = evaluator.eval_atom(&query);
+            let results = evaluator.query_atom(&query).unwrap();
             assert_eq!(results.len(), 0,
                 "parent_function(30, \"999\") should return empty (999 is not the parent)");
         }
@@ -3197,7 +3197,7 @@ mod eval_tests {
                 Term::wildcard(),
             ]);
 
-            let results = evaluator.eval_atom(&query);
+            let results = evaluator.query_atom(&query).unwrap();
             assert_eq!(results.len(), 1,
                 "parent_function(30, _) should succeed with one empty Bindings");
             assert!(results[0].is_empty(),
@@ -3215,7 +3215,7 @@ mod eval_tests {
                 Term::var("F"),
             ]);
 
-            let results = evaluator.eval_atom(&query);
+            let results = evaluator.query_atom(&query).unwrap();
             assert_eq!(results.len(), 0,
                 "nonexistent node 99999 should return empty results");
         }
@@ -3236,7 +3236,7 @@ mod eval_tests {
             evaluator.add_rule(rule);
 
             let query = parse_atom("answer(Name)").unwrap();
-            let results = evaluator.query(&query);
+            let results = evaluator.query(&query).unwrap();
 
             // CALL(30) → myFunc, CALL(31) → myFunc, CALL(32) → myMethod
             // CALL(60) is module-level → no result
@@ -3434,7 +3434,7 @@ mod attr_reverse_lookup_tests {
             Term::constant("orders-pub"),
         ]);
 
-        let results = evaluator.eval_atom(&query);
+        let results = evaluator.query_atom(&query).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].get("X"), Some(&Value::Id(1)));
     }
@@ -3451,7 +3451,7 @@ mod attr_reverse_lookup_tests {
             Term::constant("worker.js"),
         ]);
 
-        let results = evaluator.eval_atom(&query);
+        let results = evaluator.query_atom(&query).unwrap();
         let mut ids: Vec<u128> = results.iter()
             .filter_map(|b| b.get("X").and_then(|v| v.as_id()))
             .collect();
@@ -3471,7 +3471,7 @@ mod attr_reverse_lookup_tests {
             Term::constant("queue:publish"),
         ]);
 
-        let results = evaluator.eval_atom(&query);
+        let results = evaluator.query_atom(&query).unwrap();
         let mut ids: Vec<u128> = results.iter()
             .filter_map(|b| b.get("X").and_then(|v| v.as_id()))
             .collect();
@@ -3491,7 +3491,7 @@ mod attr_reverse_lookup_tests {
             Term::constant("orders"),
         ]);
 
-        let results = evaluator.eval_atom(&query);
+        let results = evaluator.query_atom(&query).unwrap();
         let mut ids: Vec<u128> = results.iter()
             .filter_map(|b| b.get("X").and_then(|v| v.as_id()))
             .collect();
@@ -3511,7 +3511,7 @@ mod attr_reverse_lookup_tests {
             Term::constant("nonexistent"),
         ]);
 
-        let results = evaluator.eval_atom(&query);
+        let results = evaluator.query_atom(&query).unwrap();
         assert!(results.is_empty());
     }
 
@@ -3679,7 +3679,7 @@ mod edge_type_index_tests {
             Term::constant("CALLS"),
         ]);
 
-        let results = evaluator.eval_atom(&query);
+        let results = evaluator.query_atom(&query).unwrap();
         // Edge 1->2 CALLS: incoming to node 2, from node 1
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].get("X"), Some(&Value::Id(2))); // dst
@@ -3698,7 +3698,7 @@ mod edge_type_index_tests {
             Term::var("T"),
         ]);
 
-        let results = evaluator.eval_atom(&query);
+        let results = evaluator.query_atom(&query).unwrap();
         assert!(results.is_empty(), "incoming with all-unbound should return empty");
     }
 }
@@ -3910,7 +3910,7 @@ mod hash_join_tests {
         evaluator.add_rule(rule);
 
         let goal = parse_atom("no_calls(F)").unwrap();
-        let results = evaluator.query(&goal);
+        let results = evaluator.query(&goal).unwrap();
 
         // Only the 5 orphan functions should match
         assert_eq!(results.len(), 5, "only orphan functions should have no CALLS edges");
@@ -3981,9 +3981,166 @@ mod hash_join_tests {
         evaluator.load_rules(program.rules().to_vec());
 
         let goal = parse_atom("db_caller(F, Q)").unwrap();
-        let results = evaluator.query(&goal);
+        let results = evaluator.query(&goal).unwrap();
 
         assert_eq!(results.len(), db_count,
             "should find {} functions calling DB queries", db_count);
+    }
+}
+
+// ============================================================================
+// Evaluation Limits Tests (RFD-45)
+// ============================================================================
+
+mod eval_limits_tests {
+    use super::*;
+    use super::eval_tests::setup_test_graph;
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn test_deadline_timeout() {
+        let engine = setup_test_graph();
+        // 1ns deadline — already expired
+        let limits = EvalLimits {
+            deadline: Some(Instant::now() - Duration::from_secs(1)),
+            max_intermediate_results: usize::MAX,
+            max_recursion_depth: usize::MAX,
+            cancelled: None,
+        };
+        let evaluator = Evaluator::with_limits(&engine, limits);
+
+        let query = parse_atom("node(X, \"queue:publish\")").unwrap();
+        let result = evaluator.query(&query);
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("timeout"), "should contain 'timeout'");
+    }
+
+    #[test]
+    fn test_intermediate_result_limit() {
+        let engine = setup_test_graph();
+        // Set a very low limit — even 1 result exceeds it
+        let limits = EvalLimits {
+            deadline: None,
+            max_intermediate_results: 0,
+            max_recursion_depth: usize::MAX,
+            cancelled: None,
+        };
+        let evaluator = Evaluator::with_limits(&engine, limits);
+
+        // This query produces results, and eval_query starts with 1 binding (Bindings::new())
+        // which triggers the limit check at current.len()=1 > max=0
+        let literals = parse_query("node(X, \"queue:publish\")").unwrap();
+        let result = evaluator.eval_query(&literals);
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("intermediate result limit"));
+    }
+
+    #[test]
+    fn test_recursion_depth_limit() {
+        let engine = setup_test_graph();
+        // Set depth limit to 0 — any derived predicate evaluation triggers it
+        let limits = EvalLimits {
+            deadline: None,
+            max_intermediate_results: usize::MAX,
+            max_recursion_depth: 0,
+            cancelled: None,
+        };
+        let mut evaluator = Evaluator::with_limits(&engine, limits);
+
+        // Define a derived rule
+        let rule = parse_rule("orphan(X) :- node(X, \"queue:publish\").").unwrap();
+        evaluator.add_rule(rule);
+
+        let query = parse_atom("orphan(X)").unwrap();
+        let result = evaluator.query(&query);
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("recursion depth"));
+    }
+
+    #[test]
+    fn test_cancellation_flag() {
+        let engine = setup_test_graph();
+        let flag = Arc::new(AtomicBool::new(true)); // Already cancelled
+        let limits = EvalLimits {
+            deadline: None,
+            max_intermediate_results: usize::MAX,
+            max_recursion_depth: usize::MAX,
+            cancelled: Some(flag),
+        };
+        let evaluator = Evaluator::with_limits(&engine, limits);
+
+        let query = parse_atom("node(X, \"queue:publish\")").unwrap();
+        let result = evaluator.query(&query);
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("cancelled"));
+    }
+
+    #[test]
+    fn test_default_limits_dont_break_normal_queries() {
+        let engine = setup_test_graph();
+        let evaluator = Evaluator::new(&engine); // Uses default limits (30s, 100k, 64 depth)
+
+        // Basic queries should work fine
+        let query = parse_atom("node(X, \"queue:publish\")").unwrap();
+        let results = evaluator.query(&query).unwrap();
+        assert_eq!(results.len(), 2);
+
+        // eval_query should also work
+        let literals = parse_query("node(X, \"queue:publish\"), attr(X, \"name\", N)").unwrap();
+        let results = evaluator.eval_query(&literals).unwrap();
+        assert!(!results.is_empty());
+    }
+
+    #[test]
+    fn test_no_limits() {
+        let engine = setup_test_graph();
+        let evaluator = Evaluator::with_limits(&engine, EvalLimits::none());
+
+        let query = parse_atom("node(X, \"queue:publish\")").unwrap();
+        let results = evaluator.query(&query).unwrap();
+        assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    fn test_explain_evaluator_deadline_timeout() {
+        let engine = setup_test_graph();
+        let limits = EvalLimits {
+            deadline: Some(Instant::now() - Duration::from_secs(1)),
+            max_intermediate_results: usize::MAX,
+            max_recursion_depth: usize::MAX,
+            cancelled: None,
+        };
+        let mut evaluator = EvaluatorExplain::with_limits(&engine, true, limits);
+
+        let literals = parse_query("node(X, \"queue:publish\")").unwrap();
+        let result = evaluator.eval_query(&literals);
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("timeout"));
+    }
+
+    #[test]
+    fn test_explain_evaluator_cancellation() {
+        let engine = setup_test_graph();
+        let flag = Arc::new(AtomicBool::new(true));
+        let limits = EvalLimits {
+            deadline: None,
+            max_intermediate_results: usize::MAX,
+            max_recursion_depth: usize::MAX,
+            cancelled: Some(flag),
+        };
+        let mut evaluator = EvaluatorExplain::with_limits(&engine, false, limits);
+
+        let literals = parse_query("node(X, \"queue:publish\")").unwrap();
+        let result = evaluator.eval_query(&literals);
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("cancelled"));
     }
 }

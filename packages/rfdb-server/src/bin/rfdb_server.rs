@@ -24,7 +24,7 @@ use std::io::{Read, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::thread;
 use std::time::Instant;
 
@@ -40,7 +40,7 @@ use futures_util::{StreamExt, SinkExt};
 // Import from library
 use rfdb::graph::{GraphEngineV2, GraphStore};
 use rfdb::storage::{NodeRecord, EdgeRecord, AttrQuery, FieldDecl, FieldType};
-use rfdb::datalog::{parse_program, parse_atom, parse_query, Evaluator, EvaluatorExplain, QueryResult};
+use rfdb::datalog::{parse_program, parse_atom, parse_query, Evaluator, EvaluatorExplain, EvalLimits, QueryResult};
 use rfdb::database_manager::{DatabaseManager, DatabaseInfo, AccessMode};
 use rfdb::session::ClientSession;
 use rfdb::metrics::{Metrics, MetricsSnapshot, SLOW_QUERY_THRESHOLD_MS};
@@ -303,6 +303,13 @@ pub enum Request {
         #[serde(rename = "edgeTypes")]
         edge_types: Option<Vec<String>>,
     },
+
+    /// Cancel a running query (WebSocket only).
+    /// The server sets the cancellation flag on the running evaluator.
+    CancelQuery {
+        #[serde(rename = "requestId")]
+        request_id: String,
+    },
 }
 
 fn default_rw_mode() -> String { "rw".to_string() }
@@ -458,6 +465,12 @@ pub enum Response {
         // Top slow queries
         #[serde(rename = "topSlowQueries")]
         top_slow_queries: Vec<WireSlowQuery>,
+
+        // Query limit stats
+        #[serde(rename = "timedOutCount")]
+        timed_out_count: u64,
+        #[serde(rename = "cancelledCount")]
+        cancelled_count: u64,
 
         // Uptime
         #[serde(rename = "uptimeSecs")]
@@ -867,6 +880,7 @@ fn get_operation_name(request: &Request) -> String {
         Request::DiffSnapshots { .. } => "DiffSnapshots".to_string(),
         Request::QueryEdges { .. } => "QueryEdges".to_string(),
         Request::FindDependentFiles { .. } => "FindDependentFiles".to_string(),
+        Request::CancelQuery { .. } => "CancelQuery".to_string(),
         _ => "Other".to_string(),
     }
 }
@@ -880,6 +894,16 @@ fn handle_request(
     session: &mut ClientSession,
     request: Request,
     metrics: &Option<Arc<Metrics>>,
+) -> Response {
+    handle_request_with_cancel(manager, session, request, metrics, Arc::new(AtomicBool::new(false)))
+}
+
+fn handle_request_with_cancel(
+    manager: &DatabaseManager,
+    session: &mut ClientSession,
+    request: Request,
+    metrics: &Option<Arc<Metrics>>,
+    cancel_flag: Arc<AtomicBool>,
 ) -> Response {
     match request {
         // ====================================================================
@@ -1214,8 +1238,9 @@ fn handle_request(
         }
 
         Request::CheckGuarantee { rule_source, explain } => {
+            let cf = cancel_flag.clone();
             with_engine_read(session, |engine| {
-                match execute_check_guarantee(engine, &rule_source, explain) {
+                match execute_check_guarantee(engine, &rule_source, explain, cf) {
                     Ok(DatalogResponse::Violations(violations)) => Response::Violations { violations },
                     Ok(DatalogResponse::Explain(result)) => Response::ExplainResult(result),
                     Err(e) => Response::Error { error: e },
@@ -1237,8 +1262,9 @@ fn handle_request(
         }
 
         Request::DatalogQuery { query, explain } => {
+            let cf = cancel_flag.clone();
             with_engine_read(session, |engine| {
-                match execute_datalog_query(engine, &query, explain) {
+                match execute_datalog_query(engine, &query, explain, cf) {
                     Ok(DatalogResponse::Violations(results)) => Response::DatalogResults { results },
                     Ok(DatalogResponse::Explain(result)) => Response::ExplainResult(result),
                     Err(e) => Response::Error { error: e },
@@ -1247,8 +1273,9 @@ fn handle_request(
         }
 
         Request::ExecuteDatalog { source, explain } => {
+            let cf = cancel_flag.clone();
             with_engine_read(session, |engine| {
-                match execute_datalog(engine, &source, explain) {
+                match execute_datalog(engine, &source, explain, cf) {
                     Ok(DatalogResponse::Violations(results)) => Response::DatalogResults { results },
                     Ok(DatalogResponse::Explain(result)) => Response::ExplainResult(result),
                     Err(e) => Response::Error { error: e },
@@ -1345,6 +1372,8 @@ fn handle_request(
                         timestamp_ms: sq.timestamp_ms,
                     })
                     .collect(),
+                timed_out_count: metrics_snapshot.timed_out_count,
+                cancelled_count: metrics_snapshot.cancelled_count,
                 uptime_secs: metrics_snapshot.uptime_secs,
             }
         }
@@ -1538,6 +1567,13 @@ fn handle_request(
 
                 Response::Files { files: files_vec }
             })
+        }
+
+        Request::CancelQuery { .. } => {
+            // CancelQuery is handled at the transport layer (WebSocket handler).
+            // If it reaches handle_request, it means it was sent over unix socket
+            // where cancellation is not supported.
+            Response::Error { error: "CancelQuery is only supported over WebSocket".to_string() }
         }
     }
 }
@@ -1793,6 +1829,7 @@ fn execute_check_guarantee(
     engine: &dyn GraphStore,
     rule_source: &str,
     explain: bool,
+    cancel_flag: Arc<AtomicBool>,
 ) -> std::result::Result<DatalogResponse, String> {
     let program = parse_program(rule_source)
         .map_err(|e| format!("Datalog parse error: {}", e))?;
@@ -1800,19 +1837,22 @@ fn execute_check_guarantee(
     let violation_query = parse_atom("violation(X)")
         .map_err(|e| format!("Internal error parsing violation query: {}", e))?;
 
+    let mut limits = EvalLimits::default();
+    limits.cancelled = Some(cancel_flag);
+
     if explain {
-        let mut evaluator = EvaluatorExplain::new(engine, true);
+        let mut evaluator = EvaluatorExplain::with_limits(engine, true, limits);
         for rule in program.rules() {
             evaluator.add_rule(rule.clone());
         }
         let result = evaluator.query(&violation_query);
         Ok(DatalogResponse::Explain(query_result_to_wire_explain(result)))
     } else {
-        let mut evaluator = Evaluator::new(engine);
+        let mut evaluator = Evaluator::with_limits(engine, limits);
         for rule in program.rules() {
             evaluator.add_rule(rule.clone());
         }
-        let bindings = evaluator.query(&violation_query);
+        let bindings = evaluator.query(&violation_query)?;
         let violations: Vec<WireViolation> = bindings.into_iter()
             .map(|b| {
                 let mut map = std::collections::HashMap::new();
@@ -1842,16 +1882,20 @@ fn execute_datalog_query(
     engine: &dyn GraphStore,
     query_source: &str,
     explain: bool,
+    cancel_flag: Arc<AtomicBool>,
 ) -> std::result::Result<DatalogResponse, String> {
     let literals = parse_query(query_source)
         .map_err(|e| format!("Datalog query parse error: {}", e))?;
 
+    let mut limits = EvalLimits::default();
+    limits.cancelled = Some(cancel_flag);
+
     if explain {
-        let mut evaluator = EvaluatorExplain::new(engine, true);
+        let mut evaluator = EvaluatorExplain::with_limits(engine, true, limits);
         let result = evaluator.eval_query(&literals)?;
         Ok(DatalogResponse::Explain(query_result_to_wire_explain(result)))
     } else {
-        let evaluator = Evaluator::new(engine);
+        let evaluator = Evaluator::with_limits(engine, limits);
         let bindings = evaluator.eval_query(&literals)?;
         let results: Vec<WireViolation> = bindings.into_iter()
             .map(|b| {
@@ -1875,12 +1919,16 @@ fn execute_datalog(
     engine: &dyn GraphStore,
     source: &str,
     explain: bool,
+    cancel_flag: Arc<AtomicBool>,
 ) -> std::result::Result<DatalogResponse, String> {
+    let mut limits = EvalLimits::default();
+    limits.cancelled = Some(cancel_flag.clone());
+
     // Try parsing as a program first
     if let Ok(program) = parse_program(source) {
         if !program.rules().is_empty() {
             if explain {
-                let mut evaluator = EvaluatorExplain::new(engine, true);
+                let mut evaluator = EvaluatorExplain::with_limits(engine, true, limits);
                 for rule in program.rules() {
                     evaluator.add_rule(rule.clone());
                 }
@@ -1888,12 +1936,12 @@ fn execute_datalog(
                 let result = evaluator.query(head);
                 return Ok(DatalogResponse::Explain(query_result_to_wire_explain(result)));
             } else {
-                let mut evaluator = Evaluator::new(engine);
+                let mut evaluator = Evaluator::with_limits(engine, limits);
                 for rule in program.rules() {
                     evaluator.add_rule(rule.clone());
                 }
                 let head = program.rules()[0].head();
-                let bindings = evaluator.query(head);
+                let bindings = evaluator.query(head)?;
                 let results: Vec<WireViolation> = bindings.into_iter()
                     .map(|b| {
                         let mut map = std::collections::HashMap::new();
@@ -1912,12 +1960,15 @@ fn execute_datalog(
     let literals = parse_query(source)
         .map_err(|e| format!("Datalog parse error: {}", e))?;
 
+    let mut fallback_limits = EvalLimits::default();
+    fallback_limits.cancelled = Some(cancel_flag);
+
     if explain {
-        let mut evaluator = EvaluatorExplain::new(engine, true);
+        let mut evaluator = EvaluatorExplain::with_limits(engine, true, fallback_limits);
         let result = evaluator.eval_query(&literals)?;
         Ok(DatalogResponse::Explain(query_result_to_wire_explain(result)))
     } else {
-        let evaluator = Evaluator::new(engine);
+        let evaluator = Evaluator::with_limits(engine, fallback_limits);
         let bindings = evaluator.eval_query(&literals)?;
         let results: Vec<WireViolation> = bindings.into_iter()
             .map(|b| {
@@ -2127,6 +2178,15 @@ fn handle_client_unix(
             let duration_ms = start.elapsed().as_millis() as u64;
             m.record_query(&op_name, duration_ms);
 
+            // Track timeout/cancelled queries
+            if let HandleResult::Single(Response::Error { ref error }) = handle_result {
+                if error.contains("timeout") || error.contains("deadline exceeded") {
+                    m.record_timeout();
+                } else if error.contains("cancelled") {
+                    m.record_cancelled();
+                }
+            }
+
             // Log slow queries to stderr (existing pattern)
             if duration_ms >= SLOW_QUERY_THRESHOLD_MS {
                 eprintln!("[RUST SLOW] {}: {}ms (client {})",
@@ -2193,6 +2253,7 @@ async fn handle_client_websocket(
 
     let (mut ws_write, mut ws_read) = ws_stream.split();
     let mut session = Some(ClientSession::new(client_id));
+    let mut active_cancel_flag: Option<Arc<AtomicBool>> = None;
 
     // WebSocket clients MUST send Hello first (no legacy mode)
 
@@ -2239,18 +2300,78 @@ async fn handle_client_websocket(
         };
 
         let is_shutdown = matches!(request, Request::Shutdown);
+
+        // Handle CancelQuery at the transport layer
+        if let Request::CancelQuery { request_id: cancel_target } = &request {
+            if let Some(ref flag) = active_cancel_flag {
+                flag.store(true, Ordering::Relaxed);
+                eprintln!("[rfdb-server] WebSocket client {}: cancel requested for {}", client_id, cancel_target);
+            }
+            let envelope = ResponseEnvelope {
+                request_id: request_id.clone(),
+                response: Response::Ok { ok: true },
+            };
+            if let Ok(resp_bytes) = rmp_serde::to_vec_named(&envelope) {
+                let _ = timeout(WS_SEND_TIMEOUT, ws_write.send(Message::Binary(resp_bytes))).await;
+            }
+            continue;
+        }
+
         let start = Instant::now();
         let op_name = get_operation_name(&request);
 
-        // Handle request -- NO streaming for WebSocket MVP, always single response.
-        // Wrap in spawn_blocking because handle_request may block (e.g., flush writes to disk).
+        // Create a cancellation flag for this request
+        let cancel_flag = Arc::new(AtomicBool::new(false));
+        active_cancel_flag = Some(Arc::clone(&cancel_flag));
+
+        // Wrap in spawn_blocking because handle_request may block.
         let manager_clone = Arc::clone(&manager);
         let metrics_clone = metrics.clone();
         let mut sess = session.take().unwrap();
-        let result = tokio::task::spawn_blocking(move || {
-            let resp = handle_request(&manager_clone, &mut sess, request, &metrics_clone);
+        let mut blocking_handle = tokio::task::spawn_blocking(move || {
+            let resp = handle_request_with_cancel(&manager_clone, &mut sess, request, &metrics_clone, cancel_flag);
             (resp, sess)
-        }).await;
+        });
+
+        // Use select! to listen for CancelQuery while the query runs.
+        // If a cancel message arrives, set the flag and then await the blocking task.
+        let result = loop {
+            tokio::select! {
+                res = &mut blocking_handle => {
+                    break res;
+                }
+                cancel_msg = ws_read.next() => {
+                    if let Some(Ok(Message::Binary(data))) = cancel_msg {
+                        if let Ok(env) = rmp_serde::from_slice::<RequestEnvelope>(&data) {
+                            if let Request::CancelQuery { .. } = env.request {
+                                if let Some(ref flag) = active_cancel_flag {
+                                    flag.store(true, Ordering::Relaxed);
+                                    eprintln!("[rfdb-server] WebSocket client {}: cancel signal sent", client_id);
+                                }
+                                let cancel_envelope = ResponseEnvelope {
+                                    request_id: env.request_id,
+                                    response: Response::Ok { ok: true },
+                                };
+                                if let Ok(resp_bytes) = rmp_serde::to_vec_named(&cancel_envelope) {
+                                    let _ = timeout(WS_SEND_TIMEOUT, ws_write.send(Message::Binary(resp_bytes))).await;
+                                }
+                            }
+                            // Non-cancel messages while a query is running are ignored
+                        }
+                    } else if cancel_msg.is_none() || matches!(cancel_msg, Some(Ok(Message::Close(_)))) {
+                        // Client disconnected — set cancel and wait for task
+                        if let Some(ref flag) = active_cancel_flag {
+                            flag.store(true, Ordering::Relaxed);
+                        }
+                        break blocking_handle.await;
+                    }
+                    // For Ping/Pong/Text/Frame, continue the select loop
+                }
+            }
+        };
+
+        active_cancel_flag = None;
+
         let response;
         match result {
             Ok((resp, sess_back)) => {
@@ -2266,6 +2387,15 @@ async fn handle_client_websocket(
         if let Some(ref m) = metrics {
             let duration_ms = start.elapsed().as_millis() as u64;
             m.record_query(&op_name, duration_ms);
+
+            if let Response::Error { ref error } = response {
+                if error.contains("timeout") || error.contains("deadline exceeded") {
+                    m.record_timeout();
+                } else if error.contains("cancelled") {
+                    m.record_cancelled();
+                }
+            }
+
             if duration_ms >= SLOW_QUERY_THRESHOLD_MS {
                 eprintln!("[RUST SLOW] {}: {}ms (ws client {})", op_name, duration_ms, client_id);
             }

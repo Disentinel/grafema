@@ -3,6 +3,9 @@
 //! Evaluates Datalog queries against a GraphStore.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Instant;
 use crate::graph::GraphStore;
 use crate::storage::AttrQuery;
 use crate::datalog::types::*;
@@ -95,18 +98,73 @@ impl Bindings {
     }
 }
 
+/// Cooperative limits for Datalog evaluation.
+///
+/// Checked at hot paths (after each literal, before each derived predicate entry).
+/// All limits are cooperative — the evaluator checks them periodically and returns
+/// an error if any limit is exceeded.
+pub struct EvalLimits {
+    /// Absolute wall-clock deadline (default: 30s from now)
+    pub deadline: Option<Instant>,
+    /// Cap on intermediate result count per evaluation step (default: 100_000)
+    pub max_intermediate_results: usize,
+    /// Cap on eval_derived nesting depth (default: 64)
+    pub max_recursion_depth: usize,
+    /// External cancellation signal (e.g. from CancelQuery)
+    pub cancelled: Option<Arc<AtomicBool>>,
+}
+
+impl Default for EvalLimits {
+    fn default() -> Self {
+        Self {
+            deadline: Some(Instant::now() + std::time::Duration::from_secs(30)),
+            max_intermediate_results: 100_000,
+            max_recursion_depth: 64,
+            cancelled: None,
+        }
+    }
+}
+
+impl EvalLimits {
+    /// Create limits with no deadline and generous defaults (for tests)
+    pub fn none() -> Self {
+        Self {
+            deadline: None,
+            max_intermediate_results: usize::MAX,
+            max_recursion_depth: usize::MAX,
+            cancelled: None,
+        }
+    }
+}
+
+/// Mutable state tracked during evaluation.
+struct EvalState {
+    recursion_depth: usize,
+}
+
 /// Datalog evaluator
 pub struct Evaluator<'a> {
     engine: &'a dyn GraphStore,
     rules: HashMap<String, Vec<Rule>>,
+    limits: EvalLimits,
 }
 
 impl<'a> Evaluator<'a> {
-    /// Create a new evaluator
+    /// Create a new evaluator with default limits
     pub fn new(engine: &'a dyn GraphStore) -> Self {
         Evaluator {
             engine,
             rules: HashMap::new(),
+            limits: EvalLimits::default(),
+        }
+    }
+
+    /// Create a new evaluator with custom limits
+    pub fn with_limits(engine: &'a dyn GraphStore, limits: EvalLimits) -> Self {
+        Evaluator {
+            engine,
+            rules: HashMap::new(),
+            limits,
         }
     }
 
@@ -123,9 +181,42 @@ impl<'a> Evaluator<'a> {
         }
     }
 
+    /// Check cooperative limits. Called at hot paths during evaluation.
+    fn check_limits(&self, state: &EvalState, current_count: usize) -> Result<(), String> {
+        if let Some(deadline) = self.limits.deadline {
+            if Instant::now() >= deadline {
+                return Err("Query execution timeout (deadline exceeded)".to_string());
+            }
+        }
+        if current_count > self.limits.max_intermediate_results {
+            return Err(format!(
+                "Query exceeded intermediate result limit ({})",
+                self.limits.max_intermediate_results
+            ));
+        }
+        if state.recursion_depth > self.limits.max_recursion_depth {
+            return Err(format!(
+                "Query exceeded maximum recursion depth ({})",
+                self.limits.max_recursion_depth
+            ));
+        }
+        if let Some(ref flag) = self.limits.cancelled {
+            if flag.load(Ordering::Relaxed) {
+                return Err("Query cancelled by client".to_string());
+            }
+        }
+        Ok(())
+    }
+
     /// Query for all bindings satisfying an atom
-    pub fn query(&self, goal: &Atom) -> Vec<Bindings> {
-        self.eval_atom(goal)
+    pub fn query(&self, goal: &Atom) -> Result<Vec<Bindings>, String> {
+        let state = EvalState { recursion_depth: 0 };
+        self.eval_atom(goal, &state)
+    }
+
+    /// Query for all bindings satisfying a single atom (public convenience for tests).
+    pub fn query_atom(&self, goal: &Atom) -> Result<Vec<Bindings>, String> {
+        self.query(goal)
     }
 
     /// Evaluate a query (conjunction of literals)
@@ -142,8 +233,11 @@ impl<'a> Evaluator<'a> {
         let ordered = reorder_literals(literals)?;
         let mut current = vec![Bindings::new()];
         let mut bound_vars: HashSet<String> = HashSet::new();
+        let state = EvalState { recursion_depth: 0 };
 
         for literal in &ordered {
+            self.check_limits(&state, current.len())?;
+
             // Check if hash join applies for positive edge/incoming literals
             if let Literal::Positive(atom) = literal {
                 if let Some(join_var) = self.should_hash_join(atom, &bound_vars, current.len()) {
@@ -179,7 +273,7 @@ impl<'a> Evaluator<'a> {
                 match literal {
                     Literal::Positive(atom) => {
                         let substituted = self.substitute_atom(atom, bindings);
-                        let results = self.eval_atom(&substituted);
+                        let results = self.eval_atom(&substituted, &state)?;
 
                         for result in results {
                             if let Some(merged) = bindings.extend(&result) {
@@ -189,7 +283,7 @@ impl<'a> Evaluator<'a> {
                     }
                     Literal::Negative(atom) => {
                         let substituted = self.substitute_atom(atom, bindings);
-                        let results = self.eval_atom(&substituted);
+                        let results = self.eval_atom(&substituted, &state)?;
 
                         if results.is_empty() {
                             next.push(bindings.clone());
@@ -406,8 +500,9 @@ impl<'a> Evaluator<'a> {
     }
 
     /// Evaluate an atom (built-in or derived)
-    pub fn eval_atom(&self, atom: &Atom) -> Vec<Bindings> {
-        match atom.predicate() {
+    fn eval_atom(&self, atom: &Atom, state: &EvalState) -> Result<Vec<Bindings>, String> {
+        self.check_limits(state, 0)?;
+        Ok(match atom.predicate() {
             "node" | "type" => self.eval_node(atom),
             "edge" => self.eval_edge(atom),
             "incoming" => self.eval_incoming(atom),
@@ -419,8 +514,8 @@ impl<'a> Evaluator<'a> {
             "not_starts_with" => self.eval_not_starts_with(atom),
             "string_contains" => self.eval_string_contains(atom),
             "parent_function" => self.eval_parent_function(atom),
-            _ => self.eval_derived(atom),
-        }
+            _ => self.eval_derived(atom, state)?,
+        })
     }
 
     /// Evaluate node(Id, Type) predicate
@@ -1201,30 +1296,24 @@ impl<'a> Evaluator<'a> {
     }
 
     /// Evaluate a derived predicate (user-defined rule)
-    fn eval_derived(&self, atom: &Atom) -> Vec<Bindings> {
+    fn eval_derived(&self, atom: &Atom, state: &EvalState) -> Result<Vec<Bindings>, String> {
+        let child_state = EvalState {
+            recursion_depth: state.recursion_depth + 1,
+        };
+        self.check_limits(&child_state, 0)?;
+
         let rules = match self.rules.get(atom.predicate()) {
             Some(rules) => rules,
-            None => return vec![],
+            None => return Ok(vec![]),
         };
 
         let mut results = vec![];
 
         for rule in rules {
-            // Push down bound args from query into rule body.
-            // Maps query constants through head variables into initial bindings,
-            // so body predicates see bound values instead of unbound variables.
-            // e.g. query has_edge("12345") + head has_edge(X) → X="12345"
             let initial = self.bind_from_query(rule, atom);
 
-            let body_results = match self.eval_rule_body_with(rule, initial) {
-                Ok(b) => b,
-                Err(e) => {
-                    eprintln!("datalog eval_derived: reorder error for rule {:?}: {}", rule, e);
-                    continue;
-                }
-            };
+            let body_results = self.eval_rule_body_with(rule, initial, &child_state)?;
 
-            // Project bindings to head variables
             for bindings in body_results {
                 if let Some(head_bindings) = self.project_to_head(rule, atom, &bindings) {
                     results.push(head_bindings);
@@ -1232,7 +1321,7 @@ impl<'a> Evaluator<'a> {
             }
         }
 
-        results
+        Ok(results)
     }
 
     /// Map bound arguments from the query atom into rule head variables.
@@ -1258,12 +1347,14 @@ impl<'a> Evaluator<'a> {
     ///
     /// Reorders body literals before evaluation to ensure correct variable binding order.
     /// Uses hash join optimization for edge/incoming predicates when applicable.
-    fn eval_rule_body_with(&self, rule: &Rule, initial: Bindings) -> Result<Vec<Bindings>, String> {
+    fn eval_rule_body_with(&self, rule: &Rule, initial: Bindings, state: &EvalState) -> Result<Vec<Bindings>, String> {
         let ordered = reorder_literals(rule.body())?;
         let mut current = vec![initial];
         let mut bound_vars: HashSet<String> = HashSet::new();
 
         for literal in &ordered {
+            self.check_limits(state, current.len())?;
+
             // Check if hash join applies for positive edge/incoming literals
             if let Literal::Positive(atom) = literal {
                 if let Some(join_var) = self.should_hash_join(atom, &bound_vars, current.len()) {
@@ -1299,7 +1390,7 @@ impl<'a> Evaluator<'a> {
                 match literal {
                     Literal::Positive(atom) => {
                         let substituted = self.substitute_atom(atom, bindings);
-                        let results = self.eval_atom(&substituted);
+                        let results = self.eval_atom(&substituted, state)?;
 
                         for result in results {
                             if let Some(merged) = bindings.extend(&result) {
@@ -1309,7 +1400,7 @@ impl<'a> Evaluator<'a> {
                     }
                     Literal::Negative(atom) => {
                         let substituted = self.substitute_atom(atom, bindings);
-                        let results = self.eval_atom(&substituted);
+                        let results = self.eval_atom(&substituted, state)?;
 
                         if results.is_empty() {
                             next.push(bindings.clone());

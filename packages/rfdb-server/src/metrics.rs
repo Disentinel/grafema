@@ -137,6 +137,15 @@ pub struct Metrics {
     slow_queries: Mutex<VecDeque<SlowQuery>>,
 
     // ========================================================================
+    // Query Limit Metrics
+    // ========================================================================
+    /// Number of queries that timed out
+    timed_out_count: AtomicU64,
+
+    /// Number of queries cancelled by client
+    cancelled_count: AtomicU64,
+
+    // ========================================================================
     // Timestamps
     // ========================================================================
     /// When metrics collection started
@@ -239,6 +248,12 @@ pub struct MetricsSnapshot {
     /// Server uptime in seconds
     pub uptime_secs: u64,
 
+    // Query limit stats
+    /// Number of queries that timed out
+    pub timed_out_count: u64,
+    /// Number of queries cancelled by client
+    pub cancelled_count: u64,
+
     // Per-operation averages (top 5 by count)
     /// Statistics for the top operations by count
     pub op_stats: Vec<OperationStat>,
@@ -325,6 +340,8 @@ impl Metrics {
             last_flush_nodes: AtomicU64::new(0),
             last_flush_edges: AtomicU64::new(0),
             slow_queries: Mutex::new(VecDeque::with_capacity(MAX_SLOW_QUERIES)),
+            timed_out_count: AtomicU64::new(0),
+            cancelled_count: AtomicU64::new(0),
             started_at: Instant::now(),
         }
     }
@@ -393,6 +410,16 @@ impl Metrics {
             }
             slow_queries.push_back(slow_query);
         }
+    }
+
+    /// Record a query timeout.
+    pub fn record_timeout(&self) {
+        self.timed_out_count.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Record a query cancellation.
+    pub fn record_cancelled(&self) {
+        self.cancelled_count.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Record a flush operation.
@@ -493,6 +520,8 @@ impl Metrics {
             last_flush_edges: self.last_flush_edges.load(Ordering::Relaxed),
             top_slow_queries: top_slow,
             uptime_secs: self.started_at.elapsed().as_secs(),
+            timed_out_count: self.timed_out_count.load(Ordering::Relaxed),
+            cancelled_count: self.cancelled_count.load(Ordering::Relaxed),
             op_stats,
         }
     }
@@ -1057,5 +1086,49 @@ mod tests {
 
         assert_eq!(sq1, sq2);
         assert_ne!(sq1, sq3);
+    }
+
+    // ========================================================================
+    // Timeout/Cancelled Counter Tests (RFD-45)
+    // ========================================================================
+
+    #[test]
+    fn test_timeout_counter() {
+        let m = Metrics::new();
+
+        assert_eq!(m.snapshot().timed_out_count, 0);
+
+        m.record_timeout();
+        m.record_timeout();
+
+        let snap = m.snapshot();
+        assert_eq!(snap.timed_out_count, 2);
+    }
+
+    #[test]
+    fn test_cancelled_counter() {
+        let m = Metrics::new();
+
+        assert_eq!(m.snapshot().cancelled_count, 0);
+
+        m.record_cancelled();
+        m.record_cancelled();
+        m.record_cancelled();
+
+        let snap = m.snapshot();
+        assert_eq!(snap.cancelled_count, 3);
+    }
+
+    #[test]
+    fn test_timeout_and_cancelled_independent() {
+        let m = Metrics::new();
+
+        m.record_timeout();
+        m.record_cancelled();
+        m.record_timeout();
+
+        let snap = m.snapshot();
+        assert_eq!(snap.timed_out_count, 2);
+        assert_eq!(snap.cancelled_count, 1);
     }
 }

@@ -309,7 +309,7 @@ fn scenario_datalog_guarantee(engine: &dyn GraphStore) -> (usize, Duration) {
     ).expect("parse guarantee rule");
     evaluator.add_rule(rule);
     let goal = rfdb::datalog::parse_atom("orphan(X)").expect("parse goal");
-    timed(|| evaluator.query(&goal).len())
+    timed(|| evaluator.query(&goal).unwrap().len())
 }
 
 /// 15. Name lookup via find_by_attr: find_by_attr(name="item_42") x1000
@@ -342,7 +342,7 @@ fn scenario_datalog_2hop(engine: &dyn GraphStore) -> (usize, Duration) {
     ).expect("parse 2-hop program");
     evaluator.load_rules(program.rules().to_vec());
     let goal = rfdb::datalog::parse_atom("db_caller(F, Q)").expect("parse goal");
-    timed(|| evaluator.query(&goal).len())
+    timed(|| evaluator.query(&goal).unwrap().len())
 }
 
 // ---------------------------------------------------------------------------
